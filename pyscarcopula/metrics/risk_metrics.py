@@ -519,7 +519,6 @@ def calculate_cvar(copula, latent_process_params, latent_process_type,
 
         rvs = get_rvs(current_marginals_params, MC_iterations, method = marginals_params_method)
         loss = 1 - np.exp(rvs) @ weight
-        loss = loss.flatten()
         pseudo_obs = jit_pobs(rvs)
         del rvs
         i3 = i0 * count_latent_process_params
@@ -530,6 +529,7 @@ def calculate_cvar(copula, latent_process_params, latent_process_type,
                                                shared_random_state_sequence[idx : idx + window_len], MC_iterations)
         copula_pdf_data = copula.np_pdf()(pseudo_obs.T, copula.transform(current_state))
         del pseudo_obs
+        del current_state
 
         x0 = 0
         min_result = minimize(F_cvar_q, x0 = x0,
@@ -575,6 +575,7 @@ def risk_metrics(copula, data, window_len,
 
     crns = copula.calculate_crns(T, latent_process_tr)
     latent_process_params = get_latent_process_params(copula, data, window_len, crns, latent_process_tr, latent_process_type, cpu_processes)
+    del crns
     marginals_params = get_marginals_params_params(data, window_len, marginals_params_method)
 
     gamma_list = []

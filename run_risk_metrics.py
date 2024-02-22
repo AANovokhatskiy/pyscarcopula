@@ -29,9 +29,10 @@ if __name__ == "__main__":
     copula = GumbelCopula(count_instruments)
 
     '''set params'''
-    MC_iterations = [int(10**4), int(10**5), int(10**6)]
+    MC_iterations = [int(10**3)]
     latent_process_tr = 200
-    gamma = [0.9, 0.95, 0.97, 0.99]
+    #gamma = [0.9, 0.95, 0.97, 0.99]
+    gamma = [0.95]
     window_len = 250
     method = 'MLE'
     cpus = 6
@@ -50,9 +51,12 @@ if __name__ == "__main__":
         os.mkdir(os.path.join(os.getcwd(),'risk_data'))
     for i in gamma:
         for j in MC_iterations:
-            pd_var = pd.Series(data = -result[i][j]['var'], index = moex_returns_pd.index).shift(1)
-            pd_cvar = pd.Series(data = -result[i][j]['cvar'], index = moex_returns_pd.index).shift(1)
-            pd_weight_data = pd.DataFrame(result[i][j]['weight'], columns = moex_returns_pd.columns, index = moex_returns_pd.index).shift(1)
+            pd_var = pd.DataFrame(data = -result[i][j]['var'], columns = ['var'], index = moex_returns_pd.index).shift(1)
+            pd_cvar = pd.DataFrame(data = -result[i][j]['cvar'], columns = ['cvar'], index = moex_returns_pd.index).shift(1)
+            if result[i][j]['weight'].ndim == 1:
+                pd_weight_data = pd.DataFrame([result[i][j]['weight']], columns = moex_returns_pd.columns)
+            else:
+                pd_weight_data = pd.DataFrame(result[i][j]['weight'], columns = moex_returns_pd.columns, index = moex_returns_pd.index).shift(1)
 
             pd_var.to_csv(f"risk_data/pd_var_{method}_{i}_{j}_.csv", sep = ';')
             pd_cvar.to_csv(f"risk_data/pd_cvar_{method}_{i}_{j}.csv", sep = ';')
