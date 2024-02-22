@@ -524,9 +524,9 @@ def calculate_cvar(copula, latent_process_params, latent_process_type,
         i3 = i0 * count_latent_process_params
         i4 = i3 + count_latent_process_params
         current_latent_process_params = np.array(shared_latent_process_params[i3:i4])[1:]
-
+        current_random_states = np.array(shared_random_state_sequence[idx : idx + window_len])
         current_state = latent_process_sampler(current_latent_process_params, latent_process_type, 
-                                               shared_random_state_sequence[idx : idx + window_len], MC_iterations)
+                                               current_random_states, MC_iterations)
         copula_pdf_data = copula.np_pdf()(pseudo_obs.T, copula.transform(current_state))
         del pseudo_obs
         del current_state
