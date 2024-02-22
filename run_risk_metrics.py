@@ -50,10 +50,10 @@ if __name__ == "__main__":
         os.mkdir(os.path.join(os.getcwd(),'risk_data'))
     for i in gamma:
         for j in MC_iterations:
-            pd_var = pd.Series(data = -var_data[i][j]['var'], index = moex_returns_pd.index).shift(1)
-            pd_cvar = pd.Series(data = -cvar_data[i][j]['cvar'], index = moex_returns_pd.index).shift(1)
-            pd_weight_data = pd.DataFrame(weight_data[i][j]['weight'], columns = moex_returns_pd.columns, index = moex_returns_pd.index).shift(1)
+            pd_var = pd.Series(data = -result[i][j]['var'], index = moex_returns_pd.index).shift(1)
+            pd_cvar = pd.Series(data = -result[i][j]['cvar'], index = moex_returns_pd.index).shift(1)
+            pd_weight_data = pd.DataFrame(result[i][j]['weight'], columns = moex_returns_pd.columns, index = moex_returns_pd.index).shift(1)
 
-            pd_var.to_csv(f"risk_data/pd_var_{copula_method}_{i}_{j}_.csv", sep = ';')
-            pd_cvar.to_csv(f"risk_data/pd_cvar_{copula_method}_{i}_{j}.csv", sep = ';')
-            pd_weight_data.to_csv(f"risk_data/pd_weight_data_{copula_method}_{i}_{j}.csv", sep = ';')
+            pd_var.to_csv(f"risk_data/pd_var_{method}_{i}_{j}_.csv", sep = ';')
+            pd_cvar.to_csv(f"risk_data/pd_cvar_{method}_{i}_{j}.csv", sep = ';')
+            pd_weight_data.to_csv(f"risk_data/pd_weight_data_{method}_{i}_{j}.csv", sep = ';')
