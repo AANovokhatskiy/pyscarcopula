@@ -29,13 +29,13 @@ if __name__ == "__main__":
     copula = GumbelCopula(count_instruments)
 
     '''set params'''
-    MC_iterations = [int(10**3)]
+    MC_iterations = [int(10**8)]
     latent_process_tr = 200
     #gamma = [0.9, 0.95, 0.97, 0.99]
     gamma = [0.95]
     window_len = 250
-    method = 'MLE'
-    cpus = 6
+    method = 'SCAR-M-OU'
+    cpus = 1
 
     result = risk_metrics(copula, moex_returns, window_len,
                                                     gamma, MC_iterations,
@@ -58,6 +58,6 @@ if __name__ == "__main__":
             else:
                 pd_weight_data = pd.DataFrame(result[i][j]['weight'], columns = moex_returns_pd.columns, index = moex_returns_pd.index).shift(1)
 
-            pd_var.to_csv(f"risk_data/pd_var_{method}_{i}_{j}_.csv", sep = ';')
+            pd_var.to_csv(f"risk_data/pd_var_{method}_{i}_{j}.csv", sep = ';')
             pd_cvar.to_csv(f"risk_data/pd_cvar_{method}_{i}_{j}.csv", sep = ';')
             pd_weight_data.to_csv(f"risk_data/pd_weight_data_{method}_{i}_{j}.csv", sep = ';')
