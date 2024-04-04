@@ -2,7 +2,7 @@ import numpy as np
 from numba import jit
 
 @jit(nopython = True)
-def jit_norm_marginals(data, window_len):
+def jit_normal_marginals(data, window_len):
     count_days = len(data)
     count_instruments = len(data[0])
     res = np.zeros(shape=(count_days, count_instruments, 2))
@@ -13,7 +13,7 @@ def jit_norm_marginals(data, window_len):
     return res
 
 @jit(nopython = True)
-def jit_norm_rvs(params, N):
+def jit_normal_rvs(params, N):
     count_instruments = len(params)
     res = np.zeros(shape=(N, count_instruments))
     for i in range(0, count_instruments):

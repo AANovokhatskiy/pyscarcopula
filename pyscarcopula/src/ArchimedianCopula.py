@@ -1,18 +1,17 @@
 import sympy as sp
 import numpy as np
-#from sympy.utilities.autowrap import autowrap
 from numba import njit, jit
 import math
 from typing import Callable 
 from functools import lru_cache
 from scipy.optimize import minimize, Bounds
 
-from pyscarcopula.sampler.scar_ou.sampler_ou import p_jit_mlog_likelihood_ou
-from pyscarcopula.sampler.scar_ou.sampler_ou import m_jit_mlog_likelihood_ou
-from pyscarcopula.sampler.scar_ld.sampler_ld import p_jit_mlog_likelihood_ld
-from pyscarcopula.sampler.scar_ds.sampler_ds import p_jit_mlog_likelihood_ds
-from pyscarcopula.sampler.scar_ds.sampler_ds import m_jit_mlog_likelihood_ds
-from pyscarcopula.sampler.mle.mle import jit_mlog_likelihood_mle
+from pyscarcopula.sampler.sampler_ou import p_jit_mlog_likelihood_ou
+from pyscarcopula.sampler.sampler_ou import m_jit_mlog_likelihood_ou
+from pyscarcopula.sampler.sampler_ld import p_jit_mlog_likelihood_ld
+from pyscarcopula.sampler.sampler_ds import p_jit_mlog_likelihood_ds
+from pyscarcopula.sampler.sampler_ds import m_jit_mlog_likelihood_ds
+from pyscarcopula.sampler.mle import jit_mlog_likelihood_mle
 
 from pyscarcopula.aux_functions.funcs import pobs
 
@@ -124,18 +123,18 @@ class ArchimedianCopula:
         return np.sum(np.log(self.pdf(data, r)))
 
     @staticmethod
-    def calculate_crns(T: int, latent_process_tr: int, seed: int = None):
+    def calculate_dwt(T: int, latent_process_tr: int, seed: int = None):
         '''Calculation of common random numbers (crn) with of T rows and latent_process_tr columns. Setting seed is also avilable'''
         shape = (T, latent_process_tr)
         if seed is None:
-            crns = np.random.normal(0 , 1 , size = (T, latent_process_tr) )
+            dwt = np.random.normal(0 , 1 , size = (T, latent_process_tr) )
         else:
             rng = np.random.RandomState(seed)
-            crns = rng.normal(0 , 1 , size = (T, latent_process_tr) )
-        return crns
+            dwt = rng.normal(0 , 1 , size = (T, latent_process_tr) )
+        return dwt * np.sqrt(1/T)
 
     def mlog_likelihood(self, alpha: np.array, data: np.array, latent_process_tr: int = 500, m_iters: int = 5,
-        method: str = 'MLE', seed: int = None, crns: np.array = None, print_path: bool = False) -> float:
+        method: str = 'MLE', seed: int = None, dwt: np.array = None, print_path: bool = False, init_state = None) -> float:
 
         if method.upper() not in self.list_of_methods():
             raise ValueError(f'given method {method} is not avialable. avialable methods: {self.list_of_methods()}')
@@ -146,26 +145,26 @@ class ArchimedianCopula:
 
         T = len(data)
         dt = 1 / T
-        if crns is None:
-            crns = calculate_crns(T, latent_process_tr, seed)
+        if dwt is None:
+            dwt = self.calculate_dwt(T, latent_process_tr, seed)
         else:
-            if crns.shape != (T, latent_process_tr):
-                raise ValueError(f"Common random numbers shape is not compatible to data: got {crns.shape}, expected: {(T, latent_process_tr)}")
+            if dwt.shape != (T, latent_process_tr):
+                raise ValueError(f"Common random numbers shape is not compatible to data: got {dwt.shape}, expected: {(T, latent_process_tr)}")
 
         if method == 'SCAR-P-OU':
-            res = p_jit_mlog_likelihood_ou(alpha, data, np.sqrt(dt) * crns, latent_process_tr, print_path, self.np_pdf(), self.transform)
-        if method == 'SCAR-M-OU':
-            res = m_jit_mlog_likelihood_ou(alpha, data, np.sqrt(dt) * crns, latent_process_tr, m_iters, print_path, self.np_pdf(), self.transform)
-        if method == 'SCAR-P-LD':
-            res = p_jit_mlog_likelihood_ld(alpha, data, np.sqrt(dt) * crns, latent_process_tr, print_path, self.np_pdf(), self.transform)
-        if method == 'SCAR-P-DS':
-            res = p_jit_mlog_likelihood_ds(alpha, data, crns, latent_process_tr, print_path, self.np_pdf(), self.transform)
-        if method == 'SCAR-M-DS':
-            res = m_jit_mlog_likelihood_ds(alpha, data, crns, latent_process_tr, m_iters, print_path, self.np_pdf(), self.transform)
+            res = p_jit_mlog_likelihood_ou(alpha, data, dwt, latent_process_tr, print_path, self.np_pdf(), self.transform, init_state)
+        elif method == 'SCAR-M-OU':
+            res = m_jit_mlog_likelihood_ou(alpha, data, dwt, latent_process_tr, m_iters, print_path, self.np_pdf(), self.transform, init_state)
+        elif method == 'SCAR-P-LD':
+            res = p_jit_mlog_likelihood_ld(alpha, data, dwt, latent_process_tr, print_path, self.np_pdf(), self.transform, init_state)
+        # if method == 'SCAR-P-DS':
+        #     res = p_jit_mlog_likelihood_ds(alpha, data, dwt, latent_process_tr, print_path, self.np_pdf(), self.transform)
+        # if method == 'SCAR-M-DS':
+        #     res = m_jit_mlog_likelihood_ds(alpha, data, dwt, latent_process_tr, m_iters, print_path, self.np_pdf(), self.transform)
         return res
 
     def fit(self, data: np.array, latent_process_tr: int = 500, m_iters: int = 5, accuracy = 1e-5,
-         method: str = 'MLE', alpha0: np.array = None, to_pobs = True, seed: int = None, crns: np.array = None, print_path: bool = False):
+         method: str = 'MLE', alpha0: np.array = None, to_pobs = True, seed: int = None, dwt: np.array = None, print_path: bool = False, init_state = None):
 
         if method.upper() not in self.list_of_methods():
             raise ValueError(f'given method {method} is not avialable. avialable methods: {self.list_of_methods()}')
@@ -183,25 +182,24 @@ class ArchimedianCopula:
         else:
             alpha = alpha0
 
-        if method == 'MLE':
-            bounds = None
+        if method == 'SCAR-M-OU':
+            bounds = Bounds([-100.,-100.999,-10.001],[100., 100.999, 10.999])
         else:
-            bounds = Bounds([-10.,-3.999,0.001],[10., 3.999, 0.999])
-        
+            bounds = None
+
         fit_data = data
         if to_pobs == True:
             fit_data = pobs(data)
 
         T = len(data)
         dt = 1 / T
-        if crns is None:
-            crns = self.calculate_crns(T, latent_process_tr, seed)
+        if dwt is None:
+            dwt = self.calculate_dwt(T, latent_process_tr, seed)
 
         log_min = minimize(self.mlog_likelihood, alpha,
-                                    args=(fit_data, latent_process_tr, m_iters, method.upper(), seed, crns, print_path),
-                                    method='L-BFGS-B', 
+                                    args=(fit_data, latent_process_tr, m_iters, method.upper(), seed, dwt, print_path, init_state),
+                                    method='SLSQP',
                                     bounds = bounds,
-                                    #options={'gtol': accuracy, 'ftol': accuracy} )
                                     options={'ftol': accuracy} )
         log_min.name = self.name
         log_min.fun = -log_min.fun

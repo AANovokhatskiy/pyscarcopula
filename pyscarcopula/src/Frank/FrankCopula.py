@@ -18,14 +18,16 @@ class FrankCopula(ArchimedianCopula):
     @staticmethod
     @njit
     def transform(r):
+        #r + 0.001 * (1 - sp.sign(r) * sp.sign(r))
         eps = 0.001
-        r0_index = np.argwhere(np.abs(r.ravel()) < 10**(-3))
-        if len(r0_index) > 0 :
-            for i in r0_index:
-                r[i] = eps
-            return r
-        else:
-            return r
+        return r + eps * (1 - np.sign(r)**2)
+        # r0_index = np.argwhere(np.abs(r.ravel()) < 10**(-3))
+        # if len(r0_index) > 0 :
+        #     for i in r0_index:
+        #         r[i] = eps
+        #     return r
+        # else:
+        #     return r
     
     @property
     def sp_generator(self):

@@ -1,74 +1,97 @@
 import numpy as np
-from numba import jit
+from numba import jit, prange
 import math
 
-@jit(nopython=True, cache = True)
-def p_sampler_ou(alpha, dwt):
+
+@jit(nopython=True, parallel = True, cache = True)
+def p_sampler_ou(alpha, dwt, init_state = None):
     alpha1, alpha2, alpha3 = alpha[0], alpha[1], alpha[2]
     T = len(dwt)
     dt = 1 / T
     xt = np.zeros(dwt.shape)
     mu = -alpha1 / alpha2
-    xt[0] = mu
+    if init_state is None:
+        xt[0] = mu
+    else:
+        xt[0] = init_state
     for k in range(1, T):
         xt[k] = xt[k - 1] + (alpha1 + alpha2 * xt[k - 1]) * dt + alpha3 * dwt[k]
     return xt
 
 
 @jit(nopython=True, cache = True)
-def p_sampler_no_hist_ou(alpha, random_states_sequence, MC_iterations, x0 = None):
+def p_sampler_init_state_ou(alpha, latent_process_tr):
     alpha1, alpha2, alpha3 = alpha[0], alpha[1], alpha[2]
+    mu = -alpha1 / alpha2
+    x0 = np.ones(latent_process_tr) * mu
+    return x0
+
+
+@jit(nopython=True, parallel = True, cache = True)
+def p_sampler_one_step_ou(alpha, dwt, dt, init_state):
+    alpha1, alpha2, alpha3 = alpha[0], alpha[1], alpha[2]
+    x1 = init_state + (alpha1 + alpha2 * init_state) * dt + alpha3 * dwt
+    return x1
+
+
+@jit(nopython=True, parallel = True, cache = True)
+def p_sampler_one_step_ou_rng(alpha, random_state, dt, init_state):
+    latent_process_tr = len(init_state)
+    alpha1, alpha2, alpha3 = alpha[0], alpha[1], alpha[2]
+    sqrt_dt = np.sqrt(dt)
+    rng = np.random.seed(random_state)
+    dwt = sqrt_dt * np.random.normal(0 , 1 , size = latent_process_tr)
+    x1 = init_state + (alpha1 + alpha2 * init_state) * dt + alpha3 * dwt
+    return x1
+
+
+@jit(nopython=True, parallel = True, cache = True)
+def p_sampler_no_hist_ou(alpha, dwt, dt, init_state):
+    alpha1, alpha2, alpha3 = alpha[0], alpha[1], alpha[2]
+    T = len(dwt)
+    xt_km1 = init_state
+
+    for k in range(1, T):
+        xt_k = xt_km1 + (alpha1 + alpha2 * xt_km1) * dt + alpha3 * dwt[k]
+        xt_km1 = xt_k
+    return xt_k
+
+
+@jit(nopython=True, parallel = True, cache = True)
+def p_sampler_no_hist_ou_rng(alpha, random_states_sequence, dt, init_state):
+    alpha1, alpha2, alpha3 = alpha[0], alpha[1], alpha[2]
+    latent_process_tr = len(init_state)
     T = len(random_states_sequence)
-    dt = 1 / T
     sqrt_dt = np.sqrt(dt)
     mu = -alpha1 / alpha2
-    if x0 is None:
-        xt_km1 = np.ones(MC_iterations) * mu
-    else:
-        xt_km1 = x0
+    xt_km1 = init_state
+
     for k in range(1, T):
         rng = np.random.seed(random_states_sequence[k])
-        dwt = sqrt_dt * np.random.normal(0 , 1 , size = MC_iterations)
+        dwt = sqrt_dt * np.random.normal(0 , 1 , size = latent_process_tr)
         xt_k = xt_km1 + (alpha1 + alpha2 * xt_km1) * dt + alpha3 * dwt
         xt_km1 = xt_k
     return xt_k
 
 
-@jit(nopython=True, cache = True)
-def p_sampler_1_step_ou(alpha, random_state, MC_iterations, x0, dt):
-    alpha1, alpha2, alpha3 = alpha[0], alpha[1], alpha[2]
-    sqrt_dt = np.sqrt(dt)
-    rng = np.random.seed(random_state)
-    dwt = sqrt_dt * np.random.normal(0 , 1 , size = MC_iterations)
-    x1 = x0 + (alpha1 + alpha2 * x0) * dt + alpha3 * dwt
-    return x1
-
-
-@jit(nopython=True, cache = True)
-def p_sampler_init_state(alpha, MC_iterations):
-    alpha1, alpha2, alpha3 = alpha[0], alpha[1], alpha[2]
-    mu = -alpha1 / alpha2
-    x0 = np.ones(MC_iterations) * mu
-    return x0
-
-
-@jit(nopython = True, cache = True)
-def get_avg_p_log_likelihood(data, lambda_data, n_tr, pdf, transform):
+@jit(nopython = True, cache = True, parallel = True)
+def get_avg_p_log_likelihood_ou(data, lambda_data, latent_process_tr, pdf, transform):
     avg_likelihood = 0
-    copula_log_data = np.zeros(n_tr)
+    copula_log_data = np.zeros(latent_process_tr)
 
-    for k in range(0, n_tr):
+    for k in prange(0, latent_process_tr):
         copula_log_data[k] = np.sum(np.log(pdf(data, transform(lambda_data[:,k]))))
 
     '''trick for calculation large values. calculate e^(sum(log_cop) - corr) instead of e^(sum(log_cop)).
     Do inverse correction at the end of calculations'''
     corr = max(copula_log_data)
-    avg_likelihood = np.sum(np.exp(copula_log_data - corr)) / n_tr
+    avg_likelihood = np.sum(np.exp(copula_log_data - corr)) / latent_process_tr
     return math.log(avg_likelihood) + corr
 
+
 @jit(nopython = True, cache = True)
-def p_jit_mlog_likelihood_ou(alpha: np.array, data: np.array, crns: np.array, n_tr: int,
-                      print_path: bool, pdf: callable, transform: callable) -> float:
+def p_jit_mlog_likelihood_ou(alpha: np.array, data: np.array, dwt: np.array, latent_process_tr: int,
+                      print_path: bool, pdf: callable, transform: callable, init_state: np.array = None) -> float:
     
     '''initial data check'''
     if np.isnan(np.sum(alpha)) == True:
@@ -77,8 +100,8 @@ def p_jit_mlog_likelihood_ou(alpha: np.array, data: np.array, crns: np.array, n_
             print(alpha, 'incorrect params', res)
         return res
     
-    lambda_data = p_sampler_ou(alpha, crns)
-    avg_log_likelihood = get_avg_p_log_likelihood(data.T, lambda_data, n_tr, pdf, transform)
+    lambda_data = p_sampler_ou(alpha, dwt, init_state)
+    avg_log_likelihood = get_avg_p_log_likelihood_ou(data.T, lambda_data, latent_process_tr, pdf, transform)
     res = - avg_log_likelihood
     if np.isnan(res) == True:
         if print_path == True:
@@ -154,8 +177,9 @@ def correction(t_data, x_data, alpha):
     exp_res = np.exp(-0.05*(max_res - x_data))
     return 1 / (1 + exp_res) * x_data
 
+
 @jit(nopython=True, cache = True)
-def m_sampler_ou(alpha, a1t, a2t, dwt):
+def m_sampler_ou(alpha, a1t, a2t, dwt, init_state = None):
     alpha1, alpha2, alpha3 = alpha[0], alpha[1], alpha[2]
     T = len(dwt)
     dt = 1 / T
@@ -163,15 +187,18 @@ def m_sampler_ou(alpha, a1t, a2t, dwt):
     mu = -alpha1 / alpha2
     theta = -alpha2
     nu = alpha3
-    x0 = mu
-    xt[0] = x0
-    for i in range(1, T): 
+    D = nu**2 / 2
+    if init_state is None:
+        xt[0] = mu
+    else:
+        xt[0] = init_state
+    for i in range(1, T):
         a1, a2 = a1t[i], a2t[i]
         a1dt, a2dt =  (a1t[i] - a1t[i - 1]) / dt, (a2t[i] - a2t[i - 1]) / dt
         t = i/T
-        xs = (x0 - mu) * np.exp(alpha2 * t)
+        xs = (xt[0] - mu) * np.exp(-theta * t)
         xsdt = -theta * xs
-        sigma2 = alpha3**2 / (- 2 * alpha2) * (1 - np.exp(2 * alpha2 * t))
+        sigma2 = D / theta * (1 - np.exp(- 2 * theta * t))
         sigma2dt = nu**2 - 2 * theta * sigma2
         p = (1 - 2 * a2 * sigma2)
         sigma2w = sigma2 / p
@@ -194,10 +221,10 @@ def log_norm_ou(alpha: np.array, a1: np.array, a2: np.array, t: np.array, x0: np
     return res
 
 
-@jit(nopython=True, cache = True)
-def m_jit_mlog_likelihood_ou(alpha, data, dwt, n_tr, m_iters, print_path, pdf, transform):
+@jit(nopython=True, parallel = True, cache = True)
+def m_jit_mlog_likelihood_ou(alpha, data, dwt, latent_process_tr, m_iters, print_path, pdf, transform, init_state = None):
     T = len(data)
-    norm_log_data = np.zeros((T, n_tr))
+    norm_log_data = np.zeros((T, latent_process_tr))
     dt = 1/T
     t_data = np.linspace(0, 1, T)
     a_data = np.zeros((T, 3))
@@ -207,9 +234,9 @@ def m_jit_mlog_likelihood_ou(alpha, data, dwt, n_tr, m_iters, print_path, pdf, t
     a2t = np.zeros(T)
     for j in range(0, m_iters):
         if j == 0:
-            lambda_data = p_sampler_ou(alpha, dwt)
+            lambda_data = p_sampler_ou(alpha, dwt, init_state)
         else:
-            lambda_data = m_sampler_ou(alpha, a1t, a2t, dwt)
+            lambda_data = m_sampler_ou(alpha, a1t, a2t, dwt, init_state)
             if np.isnan(np.sum(lambda_data)) == True:
                 res = 10000
                 if print_path == True:
@@ -217,7 +244,7 @@ def m_jit_mlog_likelihood_ou(alpha, data, dwt, n_tr, m_iters, print_path, pdf, t
                 return res
         for i in range(1, T):
             copula_log_data = np.log(pdf(data[i], transform(lambda_data[i])))
-            A = np.dstack( ( np.ones(n_tr) , (lambda_data[i] - mu) , (lambda_data[i] - mu)**2 ) )[0]
+            A = np.dstack( ( np.ones(latent_process_tr) , (lambda_data[i] - mu) , (lambda_data[i] - mu)**2 ) )[0]
             b = copula_log_data + norm_log_data[i - 1]
             sigma2 = alpha3**2 / (- 2 * alpha2) * (1 - np.exp(2 * alpha2 * (t_data[i])))
             try:
@@ -241,17 +268,17 @@ def m_jit_mlog_likelihood_ou(alpha, data, dwt, n_tr, m_iters, print_path, pdf, t
         #a1t = moving_average(a_data_a1, n = n) #50
         #a2t = correction(t_data, moving_average(a_data_a2, n = n), alpha)
 
-    log_likelihood = np.zeros(n_tr)
-    lambda_data = m_sampler_ou(alpha, a1t, a2t, dwt)
+    log_likelihood = np.zeros(latent_process_tr)
+    lambda_data = m_sampler_ou(alpha, a1t, a2t, dwt, init_state)
     for i in range(1, T):
         a1, a2 = a1t[i], a2t[i]
         norm_log_data[i] = log_norm_ou(alpha, a1, a2, dt, lambda_data[i - 1])
-    for k in range(0, n_tr):
+    for k in prange(0, latent_process_tr):
         copula_log_data = np.log(pdf(data.T, transform(lambda_data[:,k]) ))
         g = (a1t * (lambda_data[:,k] - mu)  + a2t * (lambda_data[:,k] - mu)**2)
         log_likelihood[k] = np.sum(copula_log_data + norm_log_data[:,k] - g)
     xc = np.max(log_likelihood)
-    avg_likelihood = np.sum(np.exp(log_likelihood - xc)) / n_tr
+    avg_likelihood = np.sum(np.exp(log_likelihood - xc)) / latent_process_tr
     res = np.log(avg_likelihood) + xc
     res = -res
     if print_path == True:
