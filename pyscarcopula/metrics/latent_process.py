@@ -1,4 +1,5 @@
 from numba import jit, prange
+from tqdm import tqdm
 import numpy as np
 from pyscarcopula.sampler.sampler_ou import p_sampler_no_hist_ou, p_sampler_no_hist_ou_rng, p_sampler_one_step_ou, p_sampler_one_step_ou_rng, p_sampler_init_state_ou
 from pyscarcopula.sampler.sampler_ld import p_sampler_no_hist_ld, p_sampler_no_hist_ld_rng, p_sampler_one_step_ld, p_sampler_one_step_ld_rng, p_sampler_init_state_ld
@@ -99,8 +100,8 @@ def get_latent_process_params(copula, returns_data, method, window_len, dwt):
     latent_process_params = np.zeros((T, 4))
     latent_process_tr = len(dwt[0])
 
-    #for k in tqdm(range(0, iters)):
-    for k in range(0, iters):
+    for k in tqdm(range(0, iters)):
+    #for k in range(0, iters):
         idx = k + window_len - 1
         pobs = jit_pobs(returns_data[k:window_len + k])
         if method == 'MLE':
@@ -115,7 +116,7 @@ def get_latent_process_params(copula, returns_data, method, window_len, dwt):
                                         alpha0 = alpha0,
                                         method = method,
                                         latent_process_tr = latent_process_tr,
-                                        accuracy = 1e-3,
+                                        accuracy = 1e-4,
                                         m_iters=5,
                                         to_pobs = False,
                                         dwt = dwt[k:window_len + k],
@@ -125,6 +126,6 @@ def get_latent_process_params(copula, returns_data, method, window_len, dwt):
                 latent_process_params[idx] = np.array([cop_fit_result.fun,*cop_fit_result.x])
             else:
                 latent_process_params[idx] = np.array([cop_fit_result.fun,*alpha0])
-        print(latent_process_params[idx])
+        #print(latent_process_params[idx])
     return latent_process_params
 

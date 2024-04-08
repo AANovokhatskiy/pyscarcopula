@@ -1,42 +1,50 @@
 import numpy as np
 from scipy.optimize import Bounds, minimize
 
-from numba import njit, jit, prange
+from numba import jit, prange
 from tqdm import tqdm
 
 from pyscarcopula.metrics.latent_process import get_latent_process_params, latent_process_init_state, latent_process_sampler_rng, latent_process_sampler_one_step_rng
 from pyscarcopula.metrics.marginals import get_marginals_params_params, get_rvs
 
 from pyscarcopula.aux_functions.funcs import jit_pobs
-
-from multiprocessing import Pool, cpu_count, RawArray
-from functools import partial
 import gc
 
-@jit(nopython=True, parallel = True, cache = True)
-def loss_func(rvs, weight):
-    loss = 1 - np.exp(rvs) @ weight
-    return loss
 
 @jit(nopython=True, parallel = True, cache = True)
-def F_cvar_wq(x, gamma, exp_log_returns, copula_pdf_data):
+def loss_func(log_returns, weight):
+    n = len(log_returns)
+    m = len(log_returns[0])
+    portfolio_return = 0.0
+    for k in prange(0, n):
+        temp = 0.0
+        for j in range(0, m):
+            temp += np.exp(log_returns[k][j]) * weight[j]
+        portfolio_return += temp
+    loss = 1.0 - portfolio_return
+    # loss = 1 - np.exp(log_returns) @ weight
+    return loss
+
+
+@jit(nopython=True, parallel = True, cache = True)
+def F_cvar_wq(x, gamma, log_returns, copula_pdf_data):
     q = x[0]
     weight = x[1:]
-    F = 0
+    F = 0.0
     n = len(copula_pdf_data)
-    m = len(exp_log_returns[0])
+    m = len(log_returns[0])
     for k in prange(0, n):
-        loss = 0
+        loss = 0.0
         for j in range(0, m):
-            loss += exp_log_returns[k][j] * weight[j]
-        loss = np.maximum(1 - loss - q, 0)
+            loss += np.exp(log_returns[k][j]) * weight[j]
+        loss = np.maximum(1.0 - loss - q, 0.0)
         F += copula_pdf_data[k] * loss
     F = q + 1 / (1 - gamma) * F / n
     return F
 
+
 @jit(nopython=True, parallel = True, cache = True)
 def F_cvar_q(q, gamma, loss, copula_pdf_data):
-    #F = q + 1 / (1 - gamma) * np.mean(copula_pdf_data * np.maximum(loss - q, 0))
     n = len(copula_pdf_data)
     mean = 0.0
     for k in prange(0, n):
@@ -44,59 +52,6 @@ def F_cvar_q(q, gamma, loss, copula_pdf_data):
     mean = mean / n
     F = q[0] + 1 / (1 - gamma) * mean
     return F
-
-'''start experimental'''
-@jit(nopython=True, cache = True, nogil = True)
-def neutralize(arr):
-    n = len(arr)
-    avg_arr = np.sum(arr) / n
-    return arr - np.ones(n) * avg_arr
-
-@jit(nopython=True, cache = True, nogil = True)
-def normalize(arr):
-    #norm_arr = np.linalg.norm(arr)
-    norm_arr = np.sum(np.abs(arr))
-    if norm_arr == 0:
-        return arr
-    else:
-        return arr / norm_arr
-    
-@jit(nopython=True, cache = True, nogil = True)
-def mod_abs(x):
-    b = 50
-    res = x * (2 / (1 + np.exp(-b * x)) - 1)
-    return res
-
-@jit(nopython=True, cache = True, nogil = True)
-def mod_abs_d(x):
-    b = 50
-    res = (b * x + np.sinh(b * x)) / (1 + np.cosh(b * x))
-    return res
-
-@jit(nopython=True, cache = True, nogil = True)
-def F_cvar_wq2(x, gamma, exp_log_returns, copula_pdf_data):
-    q = x[0]
-    weight = x[1:]
-    #loss = -(returns_data @ weight)
-    loss = np.sum(weight) - exp_log_returns @ weight
-    F = q + 1 / (1 - gamma) * np.mean(copula_pdf_data * 1/2 * (np.abs(loss - q) + loss) ) - q / (2 * (1 - gamma))
-    return F
-
-@jit(nopython=True, cache = True, nogil = True)
-def F_cvar_wq2_jac(x, gamma, exp_log_returns, copula_pdf_data):
-    q = x[0]
-    weight = x[1:]
-    loss = np.sum(weight) - exp_log_returns @ weight
-    res = np.zeros(len(x))
-    p1 = mod_abs_d(loss - q) 
-    df_dq = 1 - 1 / (2 * (1 - gamma)) - 1 / (1 - gamma) * np.mean(copula_pdf_data * 1/2 * p1 )
-    res[0] = df_dq
-    for i in range(0, len(x) - 1):
-        dloss_dwi = weight[i] - exp_log_returns[:,i]
-        df_dwi =  1 / (1 - gamma) * np.mean(copula_pdf_data * 1/2 * (dloss_dwi * p1 + dloss_dwi) )
-        res[i] = df_dwi
-    return res
-'''end experimental'''
 
 
 def calculate_cvar(copula,
@@ -107,19 +62,14 @@ def calculate_cvar(copula,
                    gamma,
                    window_len,
                    MC_iterations,
-                   portfolio_weight = None):
+                   portfolio_weight):
 
-    print('calc portfolio')
+    print('calc portfolio cvar')
     T = len(marginals_params)
     dt = 1/window_len
     dim = len(marginals_params[0])
 
-    if portfolio_weight is None:
-        weight = np.ones(dim) / dim
-    else:
-        weight = portfolio_weight
-
-    random_state_sequence = np.random.choice(range(1, 1000 * T), size = T, replace = False)
+    random_state_sequence = np.random.choice(range(1, 10000 * T), size = T, replace = False)
 
     var_data = np.zeros(T)
     cvar_data = np.zeros(T)
@@ -129,7 +79,7 @@ def calculate_cvar(copula,
     for k in tqdm(range(0, iters)):
         idx = k + window_len - 1
         rvs = get_rvs(marginals_params[idx], MC_iterations, method = marginals_params_method)
-        loss = loss_func(rvs, weight)
+        loss = loss_func(rvs, portfolio_weight)
         pseudo_obs = jit_pobs(rvs)
         del rvs
         if k == 0:
@@ -152,116 +102,84 @@ def calculate_cvar(copula,
         min_result = minimize(F_cvar_q, x0 = x0,
                                         args=(gamma, loss, copula_pdf_data),
                                         method='SLSQP',
-                                        tol = 1e-5)
+                                        tol = 1e-7)
         del copula_pdf_data
         del loss
         var_data[idx] = min_result.x[0]
         cvar_data[idx] = min_result.fun
         collected = gc.collect()
 
-    return var_data, cvar_data, weight
+    return var_data, cvar_data, portfolio_weight
 
 
-def optimal_portfolo(gamma, window_len, MC_iterations, marginals_params,
-                                        latent_process_params, copula, latent_process_type, marginals_params_method, portfolio_type, cpu_processes = None):
-    '''calculate optimal portfolio weights and its risk metrics VaR and CVaR
-    portfolio_type = 'I' -- investment portfolio; w_i > 0, Sum(w_i) = 1
-    portfolio_type = 'R' -- risk-neutral portfolio; Sum(w_i) = 0
+def calculate_cvar_optimal_portfolio(copula,
+                                     latent_process_params,
+                                     latent_process_type,
+                                     marginals_params,
+                                     marginals_params_method,
+                                     gamma,
+                                     window_len,
+                                     MC_iterations):
 
-    '''
-
-    print('calc portfolio')
-
+    print('calc portfolio optimization')
     T = len(marginals_params)
+    dt = 1/window_len
     dim = len(marginals_params[0])
-    count_marginal_params = len(marginals_params[0][0])
-    count_latent_process_params = len(latent_process_params[0])
 
-    '''initialize optimization params'''
-    if portfolio_type == 'I':
-        eq_weight = np.ones(dim) / dim
-        x0 = np.array([0, *eq_weight])
-        constr = {'type': 'eq', 'fun': lambda x: np.sum(x[1:]) - 1}
-        lb = np.zeros(dim + 1)
-        lb[0] = -1
-        lb[1:] = lb[1:]
-        rb =  np.ones(dim + 1)
-        bounds = Bounds(lb, rb)
+    eq_weight = np.ones(dim) / dim
 
-    if portfolio_type == 'R':
-        weight = normalize(neutralize( np.random.uniform(-1, 1, dim) ) )
-        constr1 = {'type': 'eq', 'fun': lambda x: np.sum(np.abs(x[1:])) - 1}
-        constr2 = {'type': 'eq', 'fun': lambda x: np.sum(x[1:]) - 0}
-        constr = [constr1, constr2]
-        x0 = np.array([0, *weight])
+    random_state_sequence = np.random.choice(range(1, 10000 * T), size = T, replace = False)
 
-    shared_marginals_params = RawArray('d', marginals_params.ravel())
-    shared_latent_process_params = RawArray('d', latent_process_params.ravel())
-    shared_var = RawArray('d', T)
-    shared_cvar = RawArray('d', T)
-    shared_weight = RawArray('d', T * dim)
-
-    global optimize_single
-    def optimize_single(idx):
-        i1 = (idx - 1 + window_len) * dim * count_marginal_params
-        i2 = i1 + dim * count_marginal_params
-
-        local_marginals_params = np.array(shared_marginals_params[i1:i2]).reshape((dim, count_marginal_params))
-        rvs = get_rvs(local_marginals_params, MC_iterations, method = marginals_params_method)
-        pseudo_obs = jit_pobs(rvs)
-        i3 = (idx - 1 + window_len) * count_latent_process_params
-        i4 = i3 + count_latent_process_params
-        local_latent_process_params = np.array(shared_latent_process_params[i3:i4])[1:]
-        copula_pdf_data = latent_process_sampler(copula.np_pdf(), copula.transform,
-                         local_latent_process_params, pseudo_obs, latent_process_type, window_len, MC_iterations)
-        del pseudo_obs
-        rvs = np.exp(rvs)
-        if portfolio_type == 'I': 
-            min_weight = minimize(F_cvar_wq, x0 = x0, 
-                                            args = (gamma, rvs, copula_pdf_data), 
-                                            method = 'SLSQP', 
-                                            bounds = bounds,
-                                            tol = 1e-7,
-                                            constraints = constr)
-        if portfolio_type == 'R':
-            min_weight = minimize(F_cvar_wq2, x0 = x0, 
-                                            args = (gamma, rvs, copula_pdf_data), 
-                                            method = 'SLSQP', 
-                                            jac = F_cvar_wq2_jac,
-                                            tol = 1e-3,
-                                            constraints = constr)            
-        del rvs
-        del copula_pdf_data
-        
-        i1 = idx - 1 + window_len
-        i2 = i1 + dim
-
-        shared_var[i1] = min_weight.x[0]
-        shared_cvar[i1] = min_weight.fun
-
-        i3 = (idx - 1 + window_len) *  dim
-        i4 = i3 + dim
-        shared_weight[i3:i4] = min_weight.x[1:]
-        del min_weight
-        collected = gc.collect()    
-    
-    if cpu_processes is None:
-        processes = cpu_count()
-    else:
-        processes = cpu_processes
-    pool = Pool(processes = processes)   
-
+    var_data = np.zeros(T)
+    cvar_data = np.zeros(T)
+    weight_data = np.zeros((T, dim))
+    dt = 1.0/window_len
     iters = T - window_len + 1
-    with pool:
-        generator = tqdm(pool.imap(optimize_single, range(0, iters)), total = iters)
-        for i in generator:
-            continue
 
-    del optimize_single
-    shared_var = np.frombuffer(shared_var)
-    shared_cvar = np.frombuffer(shared_cvar)
-    shared_weight = np.frombuffer(shared_weight).reshape((T,dim))
-    return shared_var, shared_cvar, shared_weight
+    constr = {'type': 'eq', 'fun': lambda x: np.sum(x[1:]) - 1}
+    lb = np.zeros(dim + 1)
+    lb[0] = -1
+    rb =  np.ones(dim + 1)
+    bounds = Bounds(lb, rb)
+    x0 = np.array([0, *eq_weight])
+
+    for k in tqdm(range(0, iters)):
+        idx = k + window_len - 1
+        rvs = get_rvs(marginals_params[idx], MC_iterations, method = marginals_params_method)
+        pseudo_obs = jit_pobs(rvs)
+        
+
+        if k == 0:
+            init_state = latent_process_init_state(latent_process_params[idx][1:], latent_process_type, MC_iterations)
+            current_state = latent_process_sampler_rng(latent_process_params[idx][1:],
+                                                       latent_process_type,
+                                                       random_state_sequence[0:idx],
+                                                       dt,
+                                                       init_state)
+        else:
+            current_state = latent_process_sampler_one_step_rng(latent_process_params[idx][1:],
+                                                                latent_process_type,
+                                                                random_state_sequence[idx],
+                                                                dt,
+                                                                current_state)
+
+        copula_pdf_data = copula.np_pdf()(pseudo_obs.T, copula.transform(current_state))
+        del pseudo_obs
+
+        min_result = minimize(F_cvar_wq, x0 = x0,
+                                        args=(gamma, rvs, copula_pdf_data),
+                                        method='SLSQP',
+                                        bounds = bounds,
+                                        constraints = constr,
+                                        tol = 1e-7)
+        del copula_pdf_data
+        var_data[idx] = min_result.x[0]
+        cvar_data[idx] = min_result.fun
+        weight_data[idx] = min_result.x[1:dim+1]
+        x0 = np.array(min_result.x)
+        collected = gc.collect()
+
+    return var_data, cvar_data, weight_data
 
 
 def risk_metrics(copula, 
@@ -273,18 +191,15 @@ def risk_metrics(copula,
                  latent_process_type, 
                  latent_process_tr = 500,
                  optimize_portfolio = True, 
-                 portfolio_type = 'I',
-                 portfolio_weight = None, 
-                 cpu_processes = None):
+                 portfolio_weight = None):
     '''calculate risk metrics VaR and CVaR and optimize portfolio weights'''
 
     T = len(data)
     if window_len > T:
         raise ValueError(f'Length of window = {window_len} is more than length of data = {T}')
 
-    # dwt = copula.calculate_dwt(T, latent_process_tr) * np.sqrt(T/window_len)
     dwt = np.random.normal(0, 1, size = (T, latent_process_tr)) * np.sqrt(1.0/window_len)
-    latent_process_params = get_latent_process_params(copula, data, latent_process_type, window_len, dwt)
+    latent_process_params = get_latent_process_params(copula, data, latent_process_type.upper(), window_len, dwt)
     del dwt
 
     # latent_process_params = np.zeros((T, 4))
@@ -311,16 +226,24 @@ def risk_metrics(copula,
         for MC_j in MC_iterations_list:
             print(f"gamma = {gamma_i}, MC_iterations = {MC_j}")
             if optimize_portfolio == True:
-                var_data, cvar_data, weight_data = optimal_portfolo(gamma_i, window_len, MC_j,
-                                                                    marginals_params, latent_process_params, 
-                                                                    copula, latent_process_type.upper(),
-                                                                    marginals_params_method, portfolio_type, 
-                                                                    cpu_processes)
+                var_data, cvar_data, weight_data = calculate_cvar_optimal_portfolio(copula, 
+                                                                                    latent_process_params, 
+                                                                                    latent_process_type.upper(),
+                                                                                    marginals_params, 
+                                                                                    marginals_params_method,
+                                                                                    gamma_i, 
+                                                                                    window_len,
+                                                                                    MC_j)
             else:
-                var_data, cvar_data, weight_data = calculate_cvar(copula, latent_process_params, latent_process_type.upper(),
-                                                                  marginals_params, marginals_params_method,
-                                                                  gamma_i, window_len,
-                                                                  MC_j, portfolio_weight)
+                var_data, cvar_data, weight_data = calculate_cvar(copula, 
+                                                                  latent_process_params, 
+                                                                  latent_process_type.upper(),
+                                                                  marginals_params, 
+                                                                  marginals_params_method,
+                                                                  gamma_i, 
+                                                                  window_len,
+                                                                  MC_j, 
+                                                                  portfolio_weight)
             res[gamma_i] = dict()
             res[gamma_i][MC_j] = dict()
             res[gamma_i][MC_j]['var'] = var_data
