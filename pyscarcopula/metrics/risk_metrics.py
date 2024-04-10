@@ -15,13 +15,13 @@ import gc
 def loss_func(log_returns, weight):
     n = len(log_returns)
     m = len(log_returns[0])
-    portfolio_return = 0.0
+    portfolio_return = np.zeros(n)
     for k in prange(0, n):
         temp = 0.0
         for j in range(0, m):
             temp += np.exp(log_returns[k][j]) * weight[j]
-        portfolio_return += temp
-    loss = 1.0 - portfolio_return
+        portfolio_return[k] = temp
+    loss = np.ones(n) - portfolio_return
     # loss = 1 - np.exp(log_returns) @ weight
     return loss
 
