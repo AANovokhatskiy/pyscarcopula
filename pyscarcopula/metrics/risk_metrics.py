@@ -53,6 +53,17 @@ def F_cvar_q(q, gamma, loss, copula_pdf_data):
     F = q[0] + 1 / (1 - gamma) * mean
     return F
 
+@jit(nopython=True, parallel = True, cache = True)
+def calculate_copula_pdf_data(data, state, pdf, transform):
+    n = len(data)
+    copula_pdf_data = np.zeros(n)
+    if len(state) == 1:
+        for k in prange(0, n):
+            copula_pdf_data[k] = pdf(data[k], transform(state[0]))
+    else:
+         for k in prange(0, n):
+            copula_pdf_data[k] = pdf(data[k], transform(state[k]))       
+    return copula_pdf_data
 
 def calculate_cvar(copula,
                    latent_process_params,
@@ -96,7 +107,8 @@ def calculate_cvar(copula,
                                                                 dt,
                                                                 current_state)
 
-        copula_pdf_data = copula.np_pdf()(pseudo_obs.T, copula.transform(current_state))
+        #copula_pdf_data = copula.np_pdf()(pseudo_obs.T, copula.transform(current_state))
+        copula_pdf_data = calculate_copula_pdf_data(pseudo_obs, current_state, copula.np_pdf(), copula.transform)
         del pseudo_obs
         x0 = 0
         min_result = minimize(F_cvar_q, x0 = x0,
@@ -148,7 +160,6 @@ def calculate_cvar_optimal_portfolio(copula,
         rvs = get_rvs(marginals_params[idx], MC_iterations, method = marginals_params_method)
         pseudo_obs = jit_pobs(rvs)
         
-
         if k == 0:
             init_state = latent_process_init_state(latent_process_params[idx][1:], latent_process_type, MC_iterations)
             current_state = latent_process_sampler_rng(latent_process_params[idx][1:],
@@ -163,7 +174,8 @@ def calculate_cvar_optimal_portfolio(copula,
                                                                 dt,
                                                                 current_state)
 
-        copula_pdf_data = copula.np_pdf()(pseudo_obs.T, copula.transform(current_state))
+        #copula_pdf_data = copula.np_pdf()(pseudo_obs.T, copula.transform(current_state))
+        copula_pdf_data = calculate_copula_pdf_data(pseudo_obs, current_state, copula.np_pdf(), copula.transform)
         del pseudo_obs
 
         min_result = minimize(F_cvar_wq, x0 = x0,
