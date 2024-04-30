@@ -80,7 +80,7 @@ def get_avg_p_log_likelihood_ou(data, lambda_data, latent_process_tr, pdf, trans
     copula_log_data = np.zeros(latent_process_tr)
 
     for k in prange(0, latent_process_tr):
-        copula_log_data[k] = np.sum(np.log(pdf(data, transform(lambda_data[:,k]))))
+        copula_log_data[k] = np.sum(np.log(np.maximum(pdf(data, transform(lambda_data[:,k])), 1e-100)))
 
     '''trick for calculation large values. calculate e^(sum(log_cop) - corr) instead of e^(sum(log_cop)).
     Do inverse correction at the end of calculations'''
@@ -95,7 +95,7 @@ def p_jit_mlog_likelihood_ou(alpha: np.array, data: np.array, dwt: np.array, lat
     
     '''initial data check'''
     if np.isnan(np.sum(alpha)) == True:
-        res = 10000
+        res = 10**10
         if print_path == True:
             print(alpha, 'incorrect params', res)
         return res
@@ -113,11 +113,14 @@ def p_jit_mlog_likelihood_ou(alpha: np.array, data: np.array, dwt: np.array, lat
 
 
 @jit(nopython=True, cache = True)
-def linear_least_squares(matA: np.array, matB: np.array) -> np.array:
-    '''input  Ax = b
-       output x = (A.T * A) ^ (-1) * A.T * b
+def linear_least_squares(matA: np.array, matB: np.array, alpha: float = 0.0) -> np.array:
+    '''Ridge regression
+       Input  Ax = b
+       Output x = (A.T * A + alpha * I) ^ (-1) * A.T * b
     '''
-    return np.linalg.inv( matA.T @ matA ) @ matA.T @ matB 
+    I = np.identity(len(matA[0]))
+    I[0][0] = 0
+    return np.linalg.inv( matA.T @ matA + alpha * I) @ matA.T @ matB 
 
 
 @jit(nopython=True, cache = True)
@@ -145,16 +148,25 @@ def poly(data, coef, intercept = True):
     return res
 
 
+# @jit(nopython=True, cache = True)
+# def mod_abs(x):
+#     b = 1
+#     res = x * np.tanh(b * x)
+#     return res
+
+
 @jit(nopython=True, cache = True)
-def poly_corr(t_data, coef, alpha, intercept):
+def poly_corr(t_data, coef, alpha, intercept = True):
     '''correct polynom fit result to be below a threshold that raises from norm constant'''
     res = poly(t_data, coef, intercept)
     alpha1, alpha2, alpha3 = alpha[0], alpha[1], alpha[2]
     sigma2 = alpha3**2 / (- 2 * alpha2) * (1 - np.exp(2 * alpha2 * t_data)) + 0.0001
-    max_res = 1 / (2 * sigma2) - 1
+    #max_res = 1 / (2 * sigma2) - 1
+    max_res = 0
     exp_res = np.exp(-0.05*(max_res - res))
     return 1 / (1 + exp_res) * res
-
+    # res = -(mod_abs(max_res - res) - max_res - res) / 2
+    # return res
 
 @jit(nopython=True, cache = True)
 def moving_average(a, n = 3):
@@ -196,8 +208,8 @@ def m_sampler_ou(alpha, a1t, a2t, dwt, init_state = None):
         a1, a2 = a1t[i], a2t[i]
         a1dt, a2dt =  (a1t[i] - a1t[i - 1]) / dt, (a2t[i] - a2t[i - 1]) / dt
         t = i/T
-        xs = (xt[0] - mu) * np.exp(-theta * t)
-        xsdt = -theta * xs
+        xs = mu + (xt[0] - mu) * np.exp(-theta * t)
+        xsdt = -theta * (xs - mu)
         sigma2 = D / theta * (1 - np.exp(- 2 * theta * t))
         sigma2dt = nu**2 - 2 * theta * sigma2
         p = (1 - 2 * a2 * sigma2)
@@ -206,7 +218,7 @@ def m_sampler_ou(alpha, a1t, a2t, dwt, init_state = None):
         xsw = (xs + a1 * sigma2) / p
         xswdt = (xsdt + a1 * sigma2dt + a1dt * sigma2) / p + 2 * xsw * (a2dt * sigma2 + a2 * sigma2dt) / p
         B = nu
-        A = xswdt - (xt[i - 1] - mu - xsw) * (B**2 - sigma2wdt) / (2 * sigma2w)
+        A = xswdt - (xt[i - 1] - xsw) * (B**2 - sigma2wdt) / (2 * sigma2w)
         xt[i] = xt[i - 1] + A * dt + B * dwt[i]
     return xt
 
@@ -215,9 +227,13 @@ def m_sampler_ou(alpha, a1t, a2t, dwt, init_state = None):
 def log_norm_ou(alpha: np.array, a1: np.array, a2: np.array, t: np.array, x0: np.array):
     alpha1, alpha2, alpha3 = alpha[0], alpha[1], alpha[2]
     mu = -alpha1 / alpha2
-    xs = (x0 - mu) * np.exp(alpha2 * t)
-    sigma2 = alpha3**2 / (- 2 * alpha2) * (1 - np.exp(2 * alpha2 * t))
-    res = (2*xs*(a1 + a2*xs) + a1**2*sigma2) / (2 - 4*a2*sigma2) - 0.5 * np.log(1 - 2*a2*sigma2)
+    theta = -alpha2
+    nu = alpha3
+    D = nu**2/2
+    sigma2 = D/theta * (1 - np.exp(-2 * theta * t))
+    #xs = mu + x0 * np.exp(alpha2 * t)
+    xs = (x0 - mu) * np.exp(-theta * t) + mu
+    res = (a1**2 * sigma2 + 2 * a1 * xs + 2 * a2 * xs**2) / (2 - 4 * a2 * sigma2) - 0.5 * np.log(1 - 2*a2*sigma2)
     return res
 
 
@@ -243,14 +259,14 @@ def m_jit_mlog_likelihood_ou(alpha, data, dwt, latent_process_tr, m_iters, print
                     print(alpha, 'm sampler nan', res)
                 return res
         for i in range(1, T):
-            copula_log_data = np.log(pdf(data[i], transform(lambda_data[i])))
-            A = np.dstack( ( np.ones(latent_process_tr) , (lambda_data[i] - mu) , (lambda_data[i] - mu)**2 ) )[0]
+            copula_log_data = np.log(np.maximum(pdf(data[i], transform(lambda_data[i])), 1e-100))
+            A = np.dstack( ( np.ones(latent_process_tr) , lambda_data[i] , lambda_data[i]**2 ) )[0]
             b = copula_log_data + norm_log_data[i - 1]
             sigma2 = alpha3**2 / (- 2 * alpha2) * (1 - np.exp(2 * alpha2 * (t_data[i])))
             try:
                 a_data[i] = linear_least_squares(A, b)
-                a_data[i][2] = np.minimum(a_data[i][2], 1/(2 * sigma2) - 10)
-                a_data[i] = np.maximum(np.minimum(a_data[i], 30),-30)
+                a_data[i][2] = np.minimum(a_data[i][2], 1/(2 * sigma2))#1/(2 * sigma2) - 10
+                a_data[i] = np.maximum(np.minimum(a_data[i], 100),-100)
             except:
                 res = 10000
                 if print_path == True:
@@ -274,8 +290,8 @@ def m_jit_mlog_likelihood_ou(alpha, data, dwt, latent_process_tr, m_iters, print
         a1, a2 = a1t[i], a2t[i]
         norm_log_data[i] = log_norm_ou(alpha, a1, a2, dt, lambda_data[i - 1])
     for k in prange(0, latent_process_tr):
-        copula_log_data = np.log(pdf(data.T, transform(lambda_data[:,k]) ))
-        g = (a1t * (lambda_data[:,k] - mu)  + a2t * (lambda_data[:,k] - mu)**2)
+        copula_log_data = np.log(np.maximum(pdf(data.T, transform(lambda_data[:,k])), 1e-100))
+        g = (a1t * lambda_data[:,k] + a2t * lambda_data[:,k]**2)
         log_likelihood[k] = np.sum(copula_log_data + norm_log_data[:,k] - g)
     xc = np.max(log_likelihood)
     avg_likelihood = np.sum(np.exp(log_likelihood - xc)) / latent_process_tr
@@ -284,7 +300,6 @@ def m_jit_mlog_likelihood_ou(alpha, data, dwt, latent_process_tr, m_iters, print
     if print_path == True:
         print(alpha, res)
     return res
-
 
 
 

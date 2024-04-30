@@ -19,11 +19,11 @@ def p_sampler_ld(alpha, dwt, init_state = None):
     D = nu**2 / 2
     for k in range(1, T):
         t = k * dt
-        xs = (xt[0] - mu) * np.exp(-theta * t)
-        xs_dt = -theta * xs
+        xs = mu + (xt[0] - mu) * np.exp(-theta * t)
+        xs_dt = -theta * (xs - mu)
         sigma2 = D / theta * (1 - np.exp(- 2 * theta * t))
         sigma2_dt = 2 * D - 2 * theta * sigma2
-        y = (xt[k - 1] - mu - xs) / sigma2
+        y = (xt[k - 1] - xs) / sigma2
         A = y * sigma2_dt + xs_dt - D * np.tanh(y/2)
         B = np.sqrt(nu**2 * sigma2)
         xt[k] = xt[k - 1] + A * dt + B * dwt[k]

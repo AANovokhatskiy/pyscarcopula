@@ -139,7 +139,7 @@ class ArchimedianCopula:
         if method.upper() not in self.list_of_methods():
             raise ValueError(f'given method {method} is not avialable. avialable methods: {self.list_of_methods()}')
 
-        if method == 'MLE':
+        if method.upper()  == 'MLE':
             res = jit_mlog_likelihood_mle(alpha, data.T, self.np_pdf(), self.transform)
             return res
 
@@ -151,15 +151,15 @@ class ArchimedianCopula:
             if dwt.shape != (T, latent_process_tr):
                 raise ValueError(f"Common random numbers shape is not compatible to data: got {dwt.shape}, expected: {(T, latent_process_tr)}")
 
-        if method == 'SCAR-P-OU':
+        if method.upper()  == 'SCAR-P-OU':
             res = p_jit_mlog_likelihood_ou(alpha, data, dwt, latent_process_tr, print_path, self.np_pdf(), self.transform, init_state)
-        elif method == 'SCAR-M-OU':
+        elif method.upper()  == 'SCAR-M-OU':
             res = m_jit_mlog_likelihood_ou(alpha, data, dwt, latent_process_tr, m_iters, print_path, self.np_pdf(), self.transform, init_state)
-        elif method == 'SCAR-P-LD':
+        elif method.upper()  == 'SCAR-P-LD':
             res = p_jit_mlog_likelihood_ld(alpha, data, dwt, latent_process_tr, print_path, self.np_pdf(), self.transform, init_state)
-        # if method == 'SCAR-P-DS':
+        # if method.upper()  == 'SCAR-P-DS':
         #     res = p_jit_mlog_likelihood_ds(alpha, data, dwt, latent_process_tr, print_path, self.np_pdf(), self.transform)
-        # if method == 'SCAR-M-DS':
+        # if method.upper()  == 'SCAR-M-DS':
         #     res = m_jit_mlog_likelihood_ds(alpha, data, dwt, latent_process_tr, m_iters, print_path, self.np_pdf(), self.transform)
         return res
 
@@ -182,8 +182,8 @@ class ArchimedianCopula:
         else:
             alpha = alpha0
 
-        if method == 'SCAR-M-OU':
-            bounds = Bounds([-100.,-100.999,-10.001],[100., 100.999, 10.999])
+        if method.upper() == 'SCAR-M-OU':
+            bounds = Bounds([-10, -10, -10], [10, 10, 10])
         else:
             bounds = None
 
@@ -203,7 +203,7 @@ class ArchimedianCopula:
                                     options={'ftol': accuracy} )
         log_min.name = self.name
         log_min.fun = -log_min.fun
-        log_min.method = method
-        if method == 'MLE':
+        log_min.method = method.upper()
+        if method.upper()  == 'MLE':
             log_min.x_transformed = self.transform(log_min.x)
         return log_min
