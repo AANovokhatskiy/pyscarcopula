@@ -7,8 +7,9 @@ from tqdm import tqdm
 from pyscarcopula.metrics.latent_process import get_latent_process_params, latent_process_init_state, latent_process_sampler_rng, latent_process_sampler_one_step_rng
 from pyscarcopula.metrics.marginals import get_marginals_params_params, get_rvs
 
-from pyscarcopula.aux_functions.funcs import jit_pobs
+from pyscarcopula.auxiliary.funcs import jit_pobs
 import gc
+import pandas as pd
 
 
 @jit(nopython=True, parallel = True, cache = True)
@@ -53,6 +54,7 @@ def F_cvar_q(q, gamma, loss, copula_pdf_data):
     F = q[0] + 1 / (1 - gamma) * mean
     return F
 
+
 @jit(nopython=True, parallel = True, cache = True)
 def calculate_copula_pdf_data(data, state, pdf, transform):
     n = len(data)
@@ -64,6 +66,7 @@ def calculate_copula_pdf_data(data, state, pdf, transform):
          for k in prange(0, n):
             copula_pdf_data[k] = pdf(data[k], transform(state[k]))       
     return copula_pdf_data
+
 
 def calculate_cvar(copula,
                    latent_process_params,
@@ -97,12 +100,14 @@ def calculate_cvar(copula,
             init_state = latent_process_init_state(latent_process_params[idx][1:], latent_process_type, MC_iterations)
             current_state = latent_process_sampler_rng(latent_process_params[idx][1:],
                                                        latent_process_type,
+                                                       MC_iterations,
                                                        random_state_sequence[0:idx],
                                                        dt,
                                                        init_state)
         else:
             current_state = latent_process_sampler_one_step_rng(latent_process_params[idx][1:],
                                                                 latent_process_type,
+                                                                MC_iterations,
                                                                 random_state_sequence[idx],
                                                                 dt,
                                                                 current_state)
@@ -164,12 +169,14 @@ def calculate_cvar_optimal_portfolio(copula,
             init_state = latent_process_init_state(latent_process_params[idx][1:], latent_process_type, MC_iterations)
             current_state = latent_process_sampler_rng(latent_process_params[idx][1:],
                                                        latent_process_type,
+                                                       MC_iterations,
                                                        random_state_sequence[0:idx],
                                                        dt,
                                                        init_state)
         else:
             current_state = latent_process_sampler_one_step_rng(latent_process_params[idx][1:],
                                                                 latent_process_type,
+                                                                MC_iterations,
                                                                 random_state_sequence[idx],
                                                                 dt,
                                                                 current_state)
@@ -193,7 +200,6 @@ def calculate_cvar_optimal_portfolio(copula,
 
     return var_data, cvar_data, weight_data
 
-
 def risk_metrics(copula, 
                  data, 
                  window_len, 
@@ -202,6 +208,7 @@ def risk_metrics(copula,
                  marginals_params_method,
                  latent_process_type, 
                  latent_process_tr = 500,
+                 seed = None,
                  optimize_portfolio = True, 
                  portfolio_weight = None):
     '''calculate risk metrics VaR and CVaR and optimize portfolio weights'''
@@ -210,8 +217,15 @@ def risk_metrics(copula,
     if window_len > T:
         raise ValueError(f'Length of window = {window_len} is more than length of data = {T}')
 
-    dwt = np.random.normal(0, 1, size = (T, latent_process_tr)) * np.sqrt(1.0/window_len)
-    latent_process_params = get_latent_process_params(copula, data, latent_process_type.upper(), window_len, dwt)
+    if seed is None:
+        s = np.random.randint(0, 100000)
+    else:
+        s = seed
+    rng = np.random.RandomState(seed = s)
+    dwt = rng.normal(0, 1, size = (T, latent_process_tr)) * np.sqrt(1.0/window_len)
+
+    #latent_process_params = get_latent_process_params(copula, data, latent_process_type.upper(), window_len, dwt)
+    latent_process_params = pd.read_csv(f"logs/Joe_SCAR-M-OU_500_2024-05-13_141831.csv", sep = ';', index_col=0).values
     del dwt
 
     # latent_process_params = np.zeros((T, 4))

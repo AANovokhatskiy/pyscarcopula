@@ -38,3 +38,13 @@ def jit_pobs(arr_data):
     for k in prange(0, dim):
         res[:,k] = jit_rank(arr_data[:,k])
     return res
+
+@jit(nopython=True, parallel = True, cache = True)
+def linear_least_squares(matA: np.array, matB: np.array, alpha) -> np.array:
+    '''Ridge regression
+       Input  Ax = b
+       Output x = (A.T * A + alpha * I) ^ (-1) * A.T * b
+    '''
+    I = np.identity(len(matA[0]))
+    I[0][0] = 0
+    return np.linalg.pinv( matA.T @ matA + alpha * I) @ matA.T @ matB

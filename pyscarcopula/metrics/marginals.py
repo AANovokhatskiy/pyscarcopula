@@ -1,7 +1,8 @@
 from pyscarcopula.marginal.normal import jit_normal_marginals, jit_normal_rvs
 from pyscarcopula.marginal.hyperbolic import hyperbolic_marginals, hyperbolic_rvs
+from typing import Literal
 
-def get_marginals_params_params(data, window_len, method):
+def get_marginals_params_params(data, window_len, method: Literal['normal', 'hyperbolic'] = 'normal'):
     print('calc marginals_params')
     available_methods = ['normal', 'hyperbolic']
     if method == 'normal':
@@ -12,7 +13,7 @@ def get_marginals_params_params(data, window_len, method):
         raise ValueError(f'given method {method} is not implemented. Available methods: {available_methods}')
     return res
 
-def get_rvs(params, N, method):
+def get_rvs(params, N, method: Literal['normal', 'hyperbolic'] = 'normal'):
     available_methods = ['normal', 'hyperbolic']
     if method == 'normal':
         res = jit_normal_rvs(params, N)

@@ -3,19 +3,25 @@ from numba import jit, prange
 import math
 
 
+@jit(nopython=True, cache = True)
+def p_sampler_init_state_ld(alpha, latent_process_tr):
+    theta, mu, nu = alpha[0], alpha[1], alpha[2]
+    x0 = np.ones(latent_process_tr) * mu
+    return x0
+
+
 @jit(nopython=True, parallel = True, cache = True)
 def p_sampler_ld(alpha, dwt, init_state = None):
-    alpha1, alpha2, alpha3 = alpha[0], alpha[1], alpha[2]
+    theta, mu, nu = alpha[0], alpha[1], alpha[2]
     T = len(dwt)
     dt = 1 / T
     xt = np.zeros(dwt.shape)
-    mu = -alpha1 / alpha2
-    theta = -alpha2
-    nu = alpha3
+    latent_process_tr = len(dwt[0])
+
     if init_state is None:
         xt[0] = mu
     else:
-        xt[0] = init_state
+        xt[0] = p_sampler_init_state_ld(alpha, latent_process_tr)
     D = nu**2 / 2
     for k in range(1, T):
         t = k/T
@@ -31,72 +37,72 @@ def p_sampler_ld(alpha, dwt, init_state = None):
     return xt
 
 
-@jit(nopython=True, cache = True)
-def p_sampler_init_state_ld(alpha, latent_process_tr):
-    alpha1, alpha2, alpha3 = alpha[0], alpha[1], alpha[2]
-    mu = -alpha1 / alpha2
-    x0 = np.ones(latent_process_tr) * mu
-    return x0
-
-
 @jit(nopython=True, parallel = True, cache = True)
 def p_sampler_one_step_ld(alpha, dwt, dt, init_state):
-    alpha1, alpha2, alpha3 = alpha[0], alpha[1], alpha[2]
-    mu = -alpha1 / alpha2
-    theta = -alpha2
-    nu = alpha3
+    theta, mu, nu = alpha[0], alpha[1], alpha[2]
     D = nu**2 / 2
+    latent_process_tr = len(dwt)
+    if init_state is None:
+        x0 = p_sampler_init_state_ld(alpha, latent_process_tr)
+    else:
+        x0 = init_state
 
     t = 1 * dt
-    xs = mu + (init_state - mu) * np.exp(-theta * t)
+    xs = mu + (x0 - mu) * np.exp(-theta * t)
     xs_dt = -theta * (xs - mu)
     sigma2 = D / theta * (1 - np.exp(- 2 * theta * t))
     sigma2_dt = 2 * D - 2 * theta * sigma2
-    y = (init_state - xs) / sigma2
+    y = (x0 - xs) / sigma2
     B = np.sqrt(12 * sigma2 * nu)
     A = y * sigma2_dt + xs_dt - B**2/(2 * sigma2) * np.tanh(y/2)
-    x1 = init_state + A * dt + B * dwt
+    x1 = x0 + A * dt + B * dwt
     return x1
 
 
 @jit(nopython=True, parallel = True, cache = True)
-def p_sampler_one_step_ld_rng(alpha, random_state, dt, init_state):
-    alpha1, alpha2, alpha3 = alpha[0], alpha[1], alpha[2]
-    mu = -alpha1 / alpha2
-    theta = -alpha2
-    nu = alpha3
+def p_sampler_one_step_ld_rng(alpha, latent_process_tr, random_state, dt, init_state):
+    theta, mu, nu = alpha[0], alpha[1], alpha[2]
     D = nu**2 / 2
 
-    latent_process_tr = len(init_state)
     sqrt_dt = np.sqrt(dt)
     rng = np.random.seed(random_state)
+
+    if init_state is None:
+        x0 = p_sampler_init_state_ld(alpha, latent_process_tr)
+    else:
+        x0 = init_state
+
     dwt = sqrt_dt * np.random.normal(0 , 1 , size = latent_process_tr)
 
     t = 1 * dt
-    xs = mu + (init_state - mu) * np.exp(-theta * t)
+    xs = mu + (x0 - mu) * np.exp(-theta * t)
     xs_dt = -theta * (xs - mu)
     sigma2 = D / theta * (1 - np.exp(- 2 * theta * t))
     sigma2_dt = 2 * D - 2 * theta * sigma2
-    y = (init_state - xs) / sigma2
+    y = (x0 - xs) / sigma2
     B = np.sqrt(12 * sigma2 * nu)
     A = y * sigma2_dt + xs_dt - B**2/(2 * sigma2) * np.tanh(y/2)
-    x1 = init_state + A * dt + B * dwt
+    x1 = x0 + A * dt + B * dwt
     return x1
 
 
 @jit(nopython=True, parallel = True, cache = True)
 def p_sampler_no_hist_ld(alpha, dwt, dt, init_state):
-    alpha1, alpha2, alpha3 = alpha[0], alpha[1], alpha[2]
-    mu = -alpha1 / alpha2
-    theta = -alpha2
-    nu = alpha3
+    theta, mu, nu = alpha[0], alpha[1], alpha[2]
     D = nu**2 / 2
     T = len(dwt)
-    xt_km1 = init_state
+
+    latent_process_tr = len(dwt[0])
+    if init_state is None:
+        x0 = p_sampler_init_state_ld(alpha, latent_process_tr)
+    else:
+        x0 = init_state
+
+    xt_km1 = x0
 
     for k in range(1, T):
         t = k * dt
-        xs = mu + (init_state - mu) * np.exp(-theta * t)
+        xs = mu + (xt_km1 - mu) * np.exp(-theta * t)
         xs_dt = -theta * (xs - mu)
         sigma2 = D / theta * (1 - np.exp(- 2 * theta * t))
         sigma2_dt = 2 * D - 2 * theta * sigma2
@@ -109,22 +115,24 @@ def p_sampler_no_hist_ld(alpha, dwt, dt, init_state):
 
 
 @jit(nopython=True, parallel = True, cache = True)
-def p_sampler_no_hist_ld_rng(alpha, random_states_sequence, dt, init_state):
-    alpha1, alpha2, alpha3 = alpha[0], alpha[1], alpha[2]
-    mu = -alpha1 / alpha2
-    theta = -alpha2
-    nu = alpha3
+def p_sampler_no_hist_ld_rng(alpha, latent_process_tr, random_states_sequence, dt, init_state):
+    theta, mu, nu = alpha[0], alpha[1], alpha[2]
     D = nu**2 / 2
-    latent_process_tr = len(init_state)
     T = len(random_states_sequence)
     sqrt_dt = np.sqrt(dt)
-    xt_km1 = init_state
+
+    if init_state is None:
+        x0 = p_sampler_init_state_ld(alpha, latent_process_tr)
+    else:
+        x0 = init_state
+
+    xt_km1 = x0
 
     for k in range(1, T):
         rng = np.random.seed(random_states_sequence[k])
         dwt = sqrt_dt * np.random.normal(0 , 1 , size = latent_process_tr)
         t = k * dt
-        xs = mu + (init_state - mu) * np.exp(-theta * t)
+        xs = mu + (xt_km1 - mu) * np.exp(-theta * t)
         xs_dt = -theta * (xs - mu)
         sigma2 = D / theta * (1 - np.exp(- 2 * theta * t))
         sigma2_dt = 2 * D - 2 * theta * sigma2
@@ -151,7 +159,7 @@ def get_avg_p_log_likelihood_ld(data, lambda_data, latent_process_tr, pdf, trans
     return math.log(avg_likelihood) + corr
 
 
-@jit(nopython=True)
+@jit(nopython=True, cache = True)
 def p_jit_mlog_likelihood_ld(alpha: np.array, data: np.array, dwt, latent_process_tr: int, 
                       print_path: bool, pdf: callable, transform: callable, init_state = None) -> float:
     if np.isnan(np.sum(alpha)) == True:

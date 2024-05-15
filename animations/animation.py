@@ -61,40 +61,6 @@ def p_sampler_ou(alpha, dwt, init_state = None):
         xt[k] = xt[k - 1] + (alpha1 + alpha2 * xt[k - 1]) * dt + alpha3 * dwt[k]
     return xt
 
-# @jit(nopython=True, cache = True)
-# def m_sampler_ou(alpha, a1t, a2t, dwt, init_state = None):
-#     alpha1, alpha2, alpha3 = alpha[0], alpha[1], alpha[2]
-#     T = len(dwt)
-#     dt = 1 / T
-#     xt = np.zeros(dwt.shape)
-#     mu = -alpha1 / alpha2
-#     theta = -alpha2
-#     nu = alpha3
-#     D = nu**2 / 2
-#     if init_state is None:
-#         xt[0] = mu
-#     else:
-#         xt[0] = init_state
-#     for i in range(1, T):
-#         a1, a2 = a1t[i], a2t[i]
-#         a1dt, a2dt =  (a1t[i] - a1t[i - 1]) / dt, (a2t[i] - a2t[i - 1]) / dt
-#         #a1dt, a2dt = 0, 0
-#         t = i/T
-#         sigma2 = D / theta * (1 - np.exp(- 2 * theta * t))
-#         p = (1 - 2 * a2 * sigma2)
-#         sigma2w = sigma2 / p
-#         #xs = mu + xt[0] * np.exp(-theta * t)
-#         xs = (xt[0] - mu) * np.exp(-theta * t) + mu
-#         xsw = (xs + a1 * sigma2) / p
-#         sigma2dt = nu**2 - 2 * theta * sigma2
-#         sigma2wdt = (sigma2dt + 2 * sigma2**2 * a2dt) / p**2
-#         xsdt = -theta * (xs - mu)
-#         xswdt = (xsdt + a1 * sigma2dt + a1dt * sigma2) / p + 2 * xsw * (a2dt * sigma2 + a2 * sigma2dt) / p
-#         B = nu
-#         A = xswdt - (xt[i - 1] - xsw) * (B**2 - sigma2wdt) / (2 * sigma2w)
-#         xt[i] = xt[i - 1] + A * dt + B * dwt[i]
-#     return xt
-
 @jit(nopython=True, cache = True)
 def m_sampler_ou(alpha, a1t, a2t, dwt, init_state = None):
     alpha1, alpha2, alpha3 = alpha[0], alpha[1], alpha[2]
@@ -112,21 +78,22 @@ def m_sampler_ou(alpha, a1t, a2t, dwt, init_state = None):
     for i in range(1, T):
         a1, a2 = a1t[i], a2t[i]
         a1dt, a2dt =  (a1t[i] - a1t[i - 1]) / dt, (a2t[i] - a2t[i - 1]) / dt
+        #a1dt, a2dt = 0, 0
         t = i/T
-        xs = mu + (xt[0] - mu) * np.exp(-theta * t)
-        xsdt = -theta * (xs - mu)
         sigma2 = D / theta * (1 - np.exp(- 2 * theta * t))
-        sigma2dt = nu**2 - 2 * theta * sigma2
         p = (1 - 2 * a2 * sigma2)
         sigma2w = sigma2 / p
-        sigma2wdt = (sigma2dt + 2 * sigma2**2 * a2dt) / p**2
+        #xs = mu + xt[0] * np.exp(-theta * t)
+        xs = (xt[0] - mu) * np.exp(-theta * t) + mu
         xsw = (xs + a1 * sigma2) / p
+        sigma2dt = nu**2 - 2 * theta * sigma2
+        sigma2wdt = (sigma2dt + 2 * sigma2**2 * a2dt) / p**2
+        xsdt = -theta * (xs - mu)
         xswdt = (xsdt + a1 * sigma2dt + a1dt * sigma2) / p + 2 * xsw * (a2dt * sigma2 + a2 * sigma2dt) / p
-        B = nu
+        B = nu / p
         A = xswdt - (xt[i - 1] - xsw) * (B**2 - sigma2wdt) / (2 * sigma2w)
         xt[i] = xt[i - 1] + A * dt + B * dwt[i]
     return xt
-
 
 @jit(nopython=True, cache = True)
 def pdf_p(x, t, alpha, x0):
@@ -176,12 +143,12 @@ x_data = np.linspace(-2, 2, 200)
 t_data = np.linspace(0, 1, T)
 # a1t = 40 * np.sin(8 * np.pi/2 * t_data) + t_data + 1
 # a2t = 1 - 30 * t_data + 4*t_data**2
-a1_params = np.array([ 1.22926716e+02, -9.18034709e+03,  1.49180472e+05, -1.09471747e+06,
-        4.37636070e+06, -1.03607933e+07,  1.49399148e+07, -1.28897980e+07,
-        6.11772940e+06, -1.22885234e+06])
-a2_params = np.array([ 4.38482739e+02, -2.31159093e+03,  1.88422857e+03,  3.46489738e+04,
-       -1.82846010e+05,  4.50592534e+05, -6.54475441e+05,  5.77984013e+05,
-       -2.87520608e+05,  6.15764018e+04])
+# a1_params = np.array([ 1.22926716e+02, -9.18034709e+03,  1.49180472e+05, -1.09471747e+06,
+#         4.37636070e+06, -1.03607933e+07,  1.49399148e+07, -1.28897980e+07,
+#         6.11772940e+06, -1.22885234e+06])
+# a2_params = np.array([ 4.38482739e+02, -2.31159093e+03,  1.88422857e+03,  3.46489738e+04,
+#        -1.82846010e+05,  4.50592534e+05, -6.54475441e+05,  5.77984013e+05,
+#        -2.87520608e+05,  6.15764018e+04])
 
 # a1_params = np.array([ 1.76763087e+01,  2.50533310e+03, -4.28922699e+04,  3.13559813e+05,
 #        -1.26658665e+06,  3.06559238e+06, -4.54539206e+06,  4.04058239e+06,
@@ -198,11 +165,11 @@ a2_params = np.array([ 4.38482739e+02, -2.31159093e+03,  1.88422857e+03,  3.4648
 #         2.97141973e+06, -7.90193195e+06,  1.25926609e+07, -1.18366580e+07,
 #         6.04782490e+06, -1.29482758e+06])
 
-a1t = poly(t_data, a1_params, intercept = False)
-a2t = poly_corr(t_data, a2_params, alpha, intercept = False)
+# a1t = poly(t_data, a1_params, intercept = False)
+# a2t = poly_corr(t_data, a2_params, alpha, intercept = False)
 
-# a1t = 14 * np.sin(8 * np.pi/2 * t_data)
-# a2t = -12 * np.cos(4 * np.pi/2 * t_data)**2
+a1t = 14 * np.sin(8 * np.pi/2 * t_data)
+a2t = -12 * np.cos(4 * np.pi/2 * t_data)**2
 
 m = m_sampler_ou(alpha, a1t, a2t, dwt, init_state=x0)
 

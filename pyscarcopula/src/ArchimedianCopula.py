@@ -13,7 +13,7 @@ from pyscarcopula.sampler.sampler_ds import p_jit_mlog_likelihood_ds
 from pyscarcopula.sampler.sampler_ds import m_jit_mlog_likelihood_ds
 from pyscarcopula.sampler.mle import jit_mlog_likelihood_mle
 
-from pyscarcopula.aux_functions.funcs import pobs
+from pyscarcopula.auxiliary.funcs import pobs
 
 class ArchimedianCopula:
     def __init__(self, dim: int) -> None:
@@ -134,12 +134,13 @@ class ArchimedianCopula:
         return dwt * np.sqrt(1/T)
 
     def mlog_likelihood(self, alpha: np.array, data: np.array, latent_process_tr: int = 500, m_iters: int = 5,
-        method: str = 'MLE', seed: int = None, dwt: np.array = None, print_path: bool = False, init_state = None) -> float:
+        method: str = 'MLE', seed: int = None, dwt: np.array = None, 
+        print_path: bool = False, init_state = None, max_log_lik_debug: int = -1000) -> float:
 
         if method.upper() not in self.list_of_methods():
             raise ValueError(f'given method {method} is not avialable. avialable methods: {self.list_of_methods()}')
 
-        if method.upper()  == 'MLE':
+        if method.upper() == 'MLE':
             res = jit_mlog_likelihood_mle(alpha, data.T, self.np_pdf(), self.transform)
             return res
 
@@ -151,20 +152,22 @@ class ArchimedianCopula:
             if dwt.shape != (T, latent_process_tr):
                 raise ValueError(f"Common random numbers shape is not compatible to data: got {dwt.shape}, expected: {(T, latent_process_tr)}")
 
-        if method.upper()  == 'SCAR-P-OU':
+        if method.upper() == 'SCAR-P-OU':
             res = p_jit_mlog_likelihood_ou(alpha, data, dwt, latent_process_tr, print_path, self.np_pdf(), self.transform, init_state)
-        elif method.upper()  == 'SCAR-M-OU':
-            res = m_jit_mlog_likelihood_ou(alpha, data, dwt, latent_process_tr, m_iters, print_path, self.np_pdf(), self.transform, init_state)
-        elif method.upper()  == 'SCAR-P-LD':
+        elif method.upper() == 'SCAR-M-OU':
+            res = m_jit_mlog_likelihood_ou(alpha, data, dwt, latent_process_tr, m_iters, print_path, self.np_pdf(), self.transform, init_state, max_log_lik_debug)
+        elif method.upper() == 'SCAR-P-LD':
             res = p_jit_mlog_likelihood_ld(alpha, data, dwt, latent_process_tr, print_path, self.np_pdf(), self.transform, init_state)
-        # if method.upper()  == 'SCAR-P-DS':
+        # if method == 'SCAR-P-DS':
         #     res = p_jit_mlog_likelihood_ds(alpha, data, dwt, latent_process_tr, print_path, self.np_pdf(), self.transform)
-        # if method.upper()  == 'SCAR-M-DS':
+        # if method == 'SCAR-M-DS':
         #     res = m_jit_mlog_likelihood_ds(alpha, data, dwt, latent_process_tr, m_iters, print_path, self.np_pdf(), self.transform)
         return res
 
     def fit(self, data: np.array, latent_process_tr: int = 500, m_iters: int = 5, accuracy = 1e-5,
-         method: str = 'MLE', alpha0: np.array = None, to_pobs = True, seed: int = None, dwt: np.array = None, print_path: bool = False, init_state = None):
+         method: str = 'MLE', alpha0: np.array = None, to_pobs = True, 
+         seed: int = None, dwt: np.array = None, print_path: bool = False, init_state = None,
+         max_log_lik_debug = -1000):
 
         if method.upper() not in self.list_of_methods():
             raise ValueError(f'given method {method} is not avialable. avialable methods: {self.list_of_methods()}')
@@ -173,9 +176,10 @@ class ArchimedianCopula:
         default_alpha0['MLE'] = 1/2
         default_alpha0['SCAR-P-DS'] = np.array([0.05, 0.95, 0.05])
         default_alpha0['SCAR-M-DS'] = np.array([0.05, 0.95, 0.05])
-        default_alpha0['SCAR-M-OU'] = np.array([0.05, 0.95, 0.05])
-        default_alpha0['SCAR-P-OU'] = np.array([0.05, 0.95, 0.05])
-        default_alpha0['SCAR-P-LD'] = np.array([0.5, 0.5, 0.5])
+        
+        default_alpha0['SCAR-M-OU'] = np.array([1.0, 0.5, 0.05])
+        default_alpha0['SCAR-P-OU'] = np.array([1.0, 0.5, 0.05])
+        default_alpha0['SCAR-P-LD'] = np.array([1.0, 0.5, 0.05])
 
         if alpha0 is None:
             alpha = default_alpha0[method.upper()]
@@ -183,9 +187,11 @@ class ArchimedianCopula:
             alpha = alpha0
 
         if method.upper() == 'SCAR-M-OU':
-            bounds = Bounds([-10, -10, -10], [10, 10, 10])
+            bounds = Bounds([-100.,-5,-5],[100., 5, 5])
+            constr = {'type': 'ineq', 'fun': lambda x: np.abs(x[1]) - x[2]**2 - 0.001}
         else:
             bounds = None
+            constr = None
 
         fit_data = data
         if to_pobs == True:
@@ -197,13 +203,15 @@ class ArchimedianCopula:
             dwt = self.calculate_dwt(T, latent_process_tr, seed)
 
         log_min = minimize(self.mlog_likelihood, alpha,
-                                    args=(fit_data, latent_process_tr, m_iters, method.upper(), seed, dwt, print_path, init_state),
+                                    args=(fit_data, latent_process_tr, m_iters, method.upper(), 
+                                          seed, dwt, print_path, init_state, max_log_lik_debug),
                                     method='SLSQP',
                                     bounds = bounds,
+                                    #constraints = constr,
                                     options={'ftol': accuracy} )
         log_min.name = self.name
         log_min.fun = -log_min.fun
-        log_min.method = method.upper()
-        if method.upper()  == 'MLE':
+        log_min.method = method
+        if method.upper() == 'MLE':
             log_min.x_transformed = self.transform(log_min.x)
         return log_min

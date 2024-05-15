@@ -1,76 +1,107 @@
 import numpy as np
 from numba import jit, prange
-import math
 from typing import Literal
-
-
-@jit(nopython=True, parallel = True, cache = True)
-def p_sampler_ou(alpha, dwt, init_state = None):
-    alpha1, alpha2, alpha3 = alpha[0], alpha[1], alpha[2]
-    T = len(dwt)
-    dt = 1 / T
-    xt = np.zeros(dwt.shape)
-    mu = -alpha1 / alpha2
-    if init_state is None:
-        xt[0] = mu
-    else:
-        xt[0] = init_state
-    for k in range(1, T):
-        xt[k] = xt[k - 1] + (alpha1 + alpha2 * xt[k - 1]) * dt + alpha3 * dwt[k]
-    return xt
+import math
+from pyscarcopula.auxiliary.funcs import linear_least_squares
 
 
 @jit(nopython=True, cache = True)
 def p_sampler_init_state_ou(alpha, latent_process_tr):
-    alpha1, alpha2, alpha3 = alpha[0], alpha[1], alpha[2]
-    mu = -alpha1 / alpha2
+    theta, mu, nu = alpha[0], alpha[1], alpha[2]
+
     x0 = np.ones(latent_process_tr) * mu
     return x0
 
 
 @jit(nopython=True, parallel = True, cache = True)
+def p_sampler_ou(alpha, dwt, init_state = None):
+    theta, mu, nu = alpha[0], alpha[1], alpha[2]
+    T = len(dwt)
+    dt = 1 / T
+    xt = np.zeros(dwt.shape)
+    latent_process_tr = len(dwt[0])
+    
+    if init_state is None:
+        xt[0] = p_sampler_init_state_ou(alpha, latent_process_tr)
+    else:
+        xt[0] = init_state
+
+    for k in range(1, T):
+        A = -theta * (xt[k - 1] - mu)
+        B = nu
+        xt[k] = xt[k - 1] + A * dt + B * dwt[k]
+    return xt
+
+
+@jit(nopython=True, parallel = True, cache = True)
 def p_sampler_one_step_ou(alpha, dwt, dt, init_state):
-    alpha1, alpha2, alpha3 = alpha[0], alpha[1], alpha[2]
-    x1 = init_state + (alpha1 + alpha2 * init_state) * dt + alpha3 * dwt
+    theta, mu, nu = alpha[0], alpha[1], alpha[2]
+    latent_process_tr = len(dwt)
+    if init_state is None:
+        x0 = p_sampler_init_state_ou(alpha, latent_process_tr)
+    else:
+        x0 = init_state
+    A = -theta * (x0 - mu)
+    B = nu
+    x1 = x0 + A * dt + B * dwt
     return x1
 
 
 @jit(nopython=True, parallel = True, cache = True)
-def p_sampler_one_step_ou_rng(alpha, random_state, dt, init_state):
-    latent_process_tr = len(init_state)
-    alpha1, alpha2, alpha3 = alpha[0], alpha[1], alpha[2]
+def p_sampler_one_step_ou_rng(alpha, latent_process_tr, random_state, dt, init_state):
+    theta, mu, nu = alpha[0], alpha[1], alpha[2]
+    if init_state is None:
+        x0 = p_sampler_init_state_ou(alpha, latent_process_tr)
+    else:
+        x0 = init_state
+
     sqrt_dt = np.sqrt(dt)
     rng = np.random.seed(random_state)
     dwt = sqrt_dt * np.random.normal(0 , 1 , size = latent_process_tr)
-    x1 = init_state + (alpha1 + alpha2 * init_state) * dt + alpha3 * dwt
+    A = -theta * (x0 - mu)
+    B = nu
+    x1 = x0 + A * dt + B * dwt
     return x1
 
 
 @jit(nopython=True, parallel = True, cache = True)
 def p_sampler_no_hist_ou(alpha, dwt, dt, init_state):
-    alpha1, alpha2, alpha3 = alpha[0], alpha[1], alpha[2]
+    theta, mu, nu = alpha[0], alpha[1], alpha[2]
     T = len(dwt)
-    xt_km1 = init_state
+
+    latent_process_tr = len(dwt[0])
+    if init_state is None:
+        x0 = p_sampler_init_state_ou(alpha, latent_process_tr)
+    else:
+        x0 = init_state
+    
+    xt_km1 = x0
 
     for k in range(1, T):
-        xt_k = xt_km1 + (alpha1 + alpha2 * xt_km1) * dt + alpha3 * dwt[k]
+        A = -theta * (xt_km1 - mu)
+        B = nu
+        xt_k = xt_km1 + A * dt + B * dwt[k]
         xt_km1 = xt_k
     return xt_k
 
 
 @jit(nopython=True, parallel = True, cache = True)
-def p_sampler_no_hist_ou_rng(alpha, random_states_sequence, dt, init_state):
-    alpha1, alpha2, alpha3 = alpha[0], alpha[1], alpha[2]
-    latent_process_tr = len(init_state)
+def p_sampler_no_hist_ou_rng(alpha, latent_process_tr, random_states_sequence, dt, init_state):
+    theta, mu, nu = alpha[0], alpha[1], alpha[2]
     T = len(random_states_sequence)
     sqrt_dt = np.sqrt(dt)
-    mu = -alpha1 / alpha2
-    xt_km1 = init_state
-
+    if init_state is None:
+        x0 = p_sampler_init_state_ou(alpha, latent_process_tr)
+    else:
+        x0 = init_state
+    
+    xt_km1 = x0
     for k in range(1, T):
         rng = np.random.seed(random_states_sequence[k])
         dwt = sqrt_dt * np.random.normal(0 , 1 , size = latent_process_tr)
-        xt_k = xt_km1 + (alpha1 + alpha2 * xt_km1) * dt + alpha3 * dwt
+        A = -theta * (xt_km1 - mu)
+        B = nu
+        xt_k = xt_km1 + A * dt + B * dwt
         xt_km1 = xt_k
     return xt_k
 
@@ -114,17 +145,6 @@ def p_jit_mlog_likelihood_ou(alpha: np.array, data: np.array, dwt: np.array, lat
 
 
 @jit(nopython=True, cache = True)
-def linear_least_squares(matA: np.array, matB: np.array, alpha: float = 0.0) -> np.array:
-    '''Ridge regression
-       Input  Ax = b
-       Output x = (A.T * A + alpha * I) ^ (-1) * A.T * b
-    '''
-    I = np.identity(len(matA[0]))
-    I[0][0] = 0
-    return np.linalg.inv( matA.T @ matA + alpha * I) @ matA.T @ matB 
-
-
-@jit(nopython=True, cache = True)
 def bounded_polynom_fit(x, y, dim, type: Literal['two-sided', 'left-sided', 'right-sided', 'no bounds'], ridge_alpha = 0.0):
     if type == 'two-sided':
         x0 = x[0]
@@ -162,8 +182,7 @@ def bounded_polynom_fit(x, y, dim, type: Literal['two-sided', 'left-sided', 'rig
         for i in range(0, dim):
             A[:,i] = x_i * (x - x0)
             x_i = x_i  * x
-        A[:,0] += np.ones(len(x)) * y0
-        res = linear_least_squares(A, y, ridge_alpha)
+        res = linear_least_squares(A, y - y0, ridge_alpha)
         return res
     elif type == 'right-sided':
         x0 = x[-1]
@@ -173,8 +192,7 @@ def bounded_polynom_fit(x, y, dim, type: Literal['two-sided', 'left-sided', 'rig
         for i in range(0, dim):
             A[:,i] = x_i * (x - x0)
             x_i = x_i  * x
-        A[:,0] += np.ones(len(x)) * y0
-        res = linear_least_squares(A, y, ridge_alpha)
+        res = linear_least_squares(A, y - y0, ridge_alpha)
         return res
     else:
         raise ValueError(f"type = {type} not implemented")
@@ -212,9 +230,9 @@ def bounded_polynom(x, y, coef, type: Literal['two-sided', 'left-sided', 'right-
         res = np.zeros(len(x))
         x_i = np.ones(len(x))
         for i in range(0, dim):
-            res += coef[i] * (x - x0) * x_i
+            res +=  coef[i] * x_i
             x_i = x_i * x
-        return res + y0
+        return y0 + (x - x0) * res
     elif type == 'right-sided':
         dim = len(coef)
         x0 = x[-1]
@@ -222,35 +240,35 @@ def bounded_polynom(x, y, coef, type: Literal['two-sided', 'left-sided', 'right-
         res = np.zeros(len(x))
         x_i = np.ones(len(x))
         for i in range(0, dim):
-            res += coef[i] * (x - x0) * x_i
+            res += coef[i] * x_i
             x_i = x_i * x
-        return res + y0
+        return y0 + (x - x0) * res
     else:
         raise ValueError(f"type = {type} not implemented")
 
 
 @jit(nopython=True, cache = True)
 def mod_abs(x):
-    b = 50
+    b = 1
+    #res = x * (2 / (1 + np.exp(-b * x)) - 1)
     res = x * np.tanh(b * x)
     return res
 
 
 @jit(nopython=True, cache = True)
 def correction(t_data, x_data, alpha):
-    alpha1, alpha2, alpha3 = alpha[0], alpha[1], alpha[2]
-    sigma2 = alpha3**2 / (- 2 * alpha2) * (1 - np.exp(2 * alpha2 * t_data)) + 0.0001
-    #max_res = 1 / (2 * sigma2) - 0.001
-    max_res = 0.0
-    return -(mod_abs(max_res - x_data) - max_res - x_data) / 2
+    theta, mu, nu = alpha[0], alpha[1], alpha[2]
+    sigma2 = nu**2 / (2 * theta) * (1 - np.exp(-2 * theta * t_data)) + 0.0001
+    #ub = 0.0
+    ub = np.maximum(1/(2 * sigma2) - 0.1, 0)
+    exp_res = np.exp(-0.5*(ub - x_data))
+    return 1 / (1 + exp_res) * x_data
+    #return -(mod_abs(max_res - x_data) - max_res - x_data) / 2
 
 
 @jit(nopython=True, cache = True)
 def log_norm_ou(alpha: np.array, a1: np.array, a2: np.array, t: np.array, x0: np.array):
-    alpha1, alpha2, alpha3 = alpha[0], alpha[1], alpha[2]
-    mu = -alpha1 / alpha2
-    theta = -alpha2
-    nu = alpha3
+    theta, mu, nu = alpha[0], alpha[1], alpha[2]
     D = nu**2/2
     sigma2 = D/theta * (1 - np.exp(-2 * theta * t))
     xs = (x0 - mu) * np.exp(-theta * t) + mu
@@ -260,13 +278,10 @@ def log_norm_ou(alpha: np.array, a1: np.array, a2: np.array, t: np.array, x0: np
 
 @jit(nopython=True, cache = True)
 def m_sampler_ou(alpha, a1t, a2t, dwt, init_state = None):
-    alpha1, alpha2, alpha3 = alpha[0], alpha[1], alpha[2]
+    theta, mu, nu = alpha[0], alpha[1], alpha[2]
     T = len(dwt)
     dt = 1 / T
     xt = np.zeros(dwt.shape)
-    mu = -alpha1 / alpha2
-    theta = -alpha2
-    nu = alpha3
     D = nu**2 / 2
     if init_state is None:
         xt[0] = mu
@@ -291,15 +306,15 @@ def m_sampler_ou(alpha, a1t, a2t, dwt, init_state = None):
     return xt
 
 
-@jit(nopython=True, parallel = True, cache = True)
-def m_jit_mlog_likelihood_ou(alpha, data, dwt, latent_process_tr, m_iters, print_path, pdf, transform, init_state = None):
+@jit(nopython=True, cache = True, parallel = True)
+def m_jit_mlog_likelihood_ou(alpha, data, dwt, latent_process_tr, m_iters, print_path, 
+                             pdf, transform, init_state = None, max_res = -1000):
     T = len(data)
     norm_log_data = np.zeros((T, latent_process_tr))
     dt = 1/T
     t_data = np.linspace(0, 1, T)
     a_data = np.zeros((T, 3))
-    alpha1, alpha2, alpha3 = alpha[0], alpha[1], alpha[2]
-    mu = - alpha1 / alpha2
+    theta, mu, nu = alpha[0], alpha[1], alpha[2]
     a1t = np.zeros(T)
     a2t = np.zeros(T)
     for j in range(0, m_iters):
@@ -312,50 +327,72 @@ def m_jit_mlog_likelihood_ou(alpha, data, dwt, latent_process_tr, m_iters, print
                 if print_path == True:
                     print(alpha, 'm sampler nan', res)
                 return res
+        norm_log_data = np.zeros((T, latent_process_tr))
+        a_mean = np.zeros(3)
+        a_mean[0] = np.mean(a_data[:,0])
+        a_mean[1] = np.mean(a_data[:,1])
+        a_mean[2] = np.mean(a_data[:,2])
+        a_data = np.zeros((T, 3))
+        a_data[-1] = a_mean
         for i in range(T - 1, 0 , -1):
             copula_log_data = np.log(np.maximum(pdf(data[i], transform(lambda_data[i])), 1e-100))
-            A = np.dstack( ( np.ones(latent_process_tr) , lambda_data[i] , lambda_data[i]**2 ) )[0]
+            A = np.dstack( ( np.ones(latent_process_tr) , (lambda_data[i] - 0 * mu) , (lambda_data[i] - 0 * mu)**2 ) )[0]
+            norm_log_data[i] = log_norm_ou(alpha, a_data[i][1], a_data[i][2], dt, lambda_data[i - 1])
+
             b = copula_log_data + norm_log_data[i]
-            sigma2 = alpha3**2 / (- 2 * alpha2) * (1 - np.exp(2 * alpha2 * (t_data[i])))
+            sigma2 = nu**2 / (2 * theta) * (1 - np.exp(-2 * theta * (t_data[i])))
+            #r = sigma2
+            r = 0.0
             try:
-                a_data[i - 1] = linear_least_squares(A, b, 0.0) #alpha3
-                a_data[i - 1][2] = np.minimum(a_data[i - 1][2], 0.0) #1/(2 * sigma2) - 0.001
+                a_data[i - 1] = linear_least_squares(A, b, r)
+                ub = np.maximum(1/(2 * sigma2) - 0.1, 0)
+                #ub = 0.0
+                a_data[i - 1][2] = np.minimum(a_data[i - 1][2], ub)
+                a_data[i - 1] = np.maximum(np.minimum(a_data[i - 1], 3000),-3000)
             except:
                 res = 10**10
                 if print_path == True:
                     print(alpha, 'ls problem fail', res, i)
                 return res
-            norm_log_data[i - 1] = log_norm_ou(alpha, a_data[i - 1][1], a_data[i - 1][2], dt, lambda_data[i - 1])
+            #norm_log_data[i - 1] = log_norm_ou(alpha, a_data[i - 1][1], a_data[i - 1][2], dt, lambda_data[i - 1])
         a_data_a1 = a_data[:,1].copy()
         a_data_a2 = a_data[:,2].copy()
 
-        fit_type = 'right-sided'
+        val = np.minimum(np.mean(a_data_a2), 0)
+        if a_data_a2[-1] > val:
+            a_data_a2[-1] = val
 
-        a1_params = bounded_polynom_fit(t_data, a_data_a1, dim = j, ridge_alpha = 0.0, type = fit_type)
-        a2_params = bounded_polynom_fit(t_data, a_data_a2, dim = j, ridge_alpha = 0.0, type = fit_type)
+        fit_type1 = 'no bounds'
+        fit_type2 = 'right-sided'
+        dim = j + 1
+        #dim = 2
+        a1_params = bounded_polynom_fit(t_data, a_data_a1, dim = dim, ridge_alpha = 0.0, type = fit_type1)
+        a2_params = bounded_polynom_fit(t_data, a_data_a2, dim = dim, ridge_alpha = 0.0, type = fit_type2)
 
-        a1t = bounded_polynom(t_data, a_data_a1, a1_params, type = fit_type)
-        a2t = bounded_polynom(t_data, a_data_a2, a2_params, type = fit_type)
+        a1t = bounded_polynom(t_data, a_data_a1, a1_params, type = fit_type1)
+        a2t = bounded_polynom(t_data, a_data_a2, a2_params, type = fit_type2)
         a2t = correction(t_data, a2t, alpha)
 
     log_likelihood = np.zeros(latent_process_tr)
     lambda_data = m_sampler_ou(alpha, a1t, a2t, dwt, init_state)
-    for i in range(1, T):
+    for i in range(T - 1, 0, -1):
         a1, a2 = a1t[i], a2t[i]
         norm_log_data[i] = log_norm_ou(alpha, a1, a2, dt, lambda_data[i - 1])
+    norm_log_data[0] = log_norm_ou(alpha, a1t[0], a2t[0], dt, lambda_data[0])
+
     for k in range(0, latent_process_tr):
         copula_log_data = np.log(np.maximum(pdf(data.T, transform(lambda_data[:,k]) ), 1e-100))
-        g = (a1t * lambda_data[:,k]  + a2t * lambda_data[:,k]**2)
+        g = (a1t * (lambda_data[:,k] - 0 * mu)  + a2t * (lambda_data[:,k] - 0 * mu)**2)
         log_likelihood[k] = np.sum(copula_log_data + norm_log_data[:,k] - g)
     xc = np.max(log_likelihood)
     avg_likelihood = np.sum(np.exp(log_likelihood - xc)) / latent_process_tr
     res = np.log(avg_likelihood) + xc
     res = -res
+    if res < max_res:
+        res = 10**10
+        if print_path == True:
+            print(alpha, 'instability detected', res)
+        return res
     if print_path == True:
         print(alpha, res)
     return res
-
-
-
-
-
