@@ -208,7 +208,7 @@ class ArchimedianCopula:
                                     method='SLSQP',
                                     bounds = bounds,
                                     #constraints = constr,
-                                    options={'ftol': accuracy} )
+                                    options={'ftol': accuracy, 'eps': accuracy} )
         log_min.name = self.name
         log_min.fun = -log_min.fun
         log_min.method = method
