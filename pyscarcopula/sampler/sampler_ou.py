@@ -160,9 +160,9 @@ def bounded_polynom_fit(x, y, dim, type: Literal['two-sided', 'left-sided', 'rig
         for i in range(0, dim):
             A[:,i] = x_i * x * x + d1 * x_i * x + d2 * x
             x_i = x_i  * x
-        A[:,0] += np.ones(len(x)) * c0
+        A[:,0] += np.ones(len(x))
         A[:,1] += x * c1
-        res = linear_least_squares(A, y, ridge_alpha)
+        res = linear_least_squares(A, y - c0, ridge_alpha)
         return res
     elif type == 'no bounds':
         fi = 1
