@@ -18,7 +18,7 @@ class JoeCopula(ArchimedianCopula):
     @staticmethod
     @njit
     def transform(r):
-        return np.cosh(r)
+        return 1 + r**2 #np.cosh(r)
     
     @property
     def sp_generator(self):

@@ -39,12 +39,21 @@ def jit_pobs(arr_data):
         res[:,k] = jit_rank(arr_data[:,k])
     return res
 
-@jit(nopython=True, parallel = True, cache = True)
-def linear_least_squares(matA: np.array, matB: np.array, alpha) -> np.array:
+@jit(nopython=True, cache = True)
+def linear_least_squares(matA: np.array, matB: np.array, ridge_alpha = 0.0, pseudo_inverse = False) -> np.array:
     '''Ridge regression
        Input  Ax = b
-       Output x = (A.T * A + alpha * I) ^ (-1) * A.T * b
+       Output x = (A.T * A + alpha * I)^(-1) * A.T * b
+
+       Solution with pseudoinverse matrix:
+       Input Ax = b
+       Output x = A^(+) * b
+       where A^(+) - pseudoinverse matrix
     '''
-    I = np.identity(len(matA[0]))
-    I[0][0] = 0
-    return np.linalg.pinv( matA.T @ matA + alpha * I) @ matA.T @ matB
+    if pseudo_inverse == False:
+        I = np.identity(len(matA[0]))
+        I[0][0] = 0
+        result = np.linalg.inv(matA.T @ matA + ridge_alpha * I) @ matA.T @ matB
+    else:
+        result = np.linalg.pinv(matA) @ matB
+    return result

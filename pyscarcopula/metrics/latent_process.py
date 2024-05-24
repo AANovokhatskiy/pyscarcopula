@@ -108,9 +108,9 @@ def get_latent_process_params(copula, returns_data, method, window_len, dwt):
     latent_process_tr = len(dwt[0])
     M = 5
 
-    for k in tqdm(range(0, iters)):
-    #for k in range(0, iters):
-        #print(f'========================={k}=========================')
+    #for k in tqdm(range(0, iters)):
+    for k in range(0, iters):
+        print(f'========================={k}=========================')
         idx = k + window_len - 1
         pobs = jit_pobs(returns_data[k:window_len + k])
         if method == 'MLE':
@@ -121,7 +121,6 @@ def get_latent_process_params(copula, returns_data, method, window_len, dwt):
                 init_state = None
             else:
                 init_state = latent_process_sampler_one_step(alpha0, method, dwt[k - 1], dt, init_state)
-                #init_state = None
             cop_fit_result = copula.fit(pobs,
                                         alpha0 = alpha0,
                                         method = method,
@@ -133,13 +132,13 @@ def get_latent_process_params(copula, returns_data, method, window_len, dwt):
                                         print_path = True,
                                         init_state = init_state)
             if np.isnan(cop_fit_result.fun) == True or int(cop_fit_result.fun) == -10**10:
-                #raise ValueError("nan encountered")
                 latent_process_params[idx] = latent_process_params[idx - 1]
                 init_state = None
             else:
                 alpha0 = np.array(cop_fit_result.x)
                 latent_process_params[idx] = np.array([cop_fit_result.fun,*cop_fit_result.x])
-        #print(latent_process_params[idx])
+        #print(init_state)
+        print(latent_process_params[idx])
 
     '''log copula parameters result'''
     df = pd.DataFrame(latent_process_params)

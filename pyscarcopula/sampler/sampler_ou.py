@@ -265,6 +265,17 @@ def correction(t_data, x_data, alpha):
     return 1 / (1 + exp_res) * x_data
     #return -(mod_abs(max_res - x_data) - max_res - x_data) / 2
 
+@jit(nopython=True, cache = True)
+def check_a2_bounds(alpha, x, t):
+    theta, mu, nu = alpha[0], alpha[1], alpha[2]
+    sigma2 = nu**2 / (2 * theta) * (1 - np.exp(-2 * theta * t))
+    ub = 1/(2 * sigma2 + 0.001)
+    bound_check = True
+    for k in range(0, len(x)):
+        if x[k] >= ub[k]:
+            bound_check = False
+            return bound_check
+    return bound_check
 
 @jit(nopython=True, cache = True)
 def log_norm_ou(alpha: np.array, a1: np.array, a2: np.array, t: np.array, x0: np.array):
@@ -306,9 +317,115 @@ def m_sampler_ou(alpha, a1t, a2t, dwt, init_state = None):
     return xt
 
 
+# @jit(nopython=True, cache = True, parallel = True)
+# def m_jit_mlog_likelihood_ou(alpha, data, dwt, latent_process_tr, m_iters, print_path, 
+#                              pdf, transform, init_state = None):
+#     T = len(data)
+#     norm_log_data = np.zeros((T, latent_process_tr))
+#     dt = 1/T
+#     t_data = np.linspace(0, 1, T)
+#     a_data = np.zeros((T, 3))
+#     theta, mu, nu = alpha[0], alpha[1], alpha[2]
+#     a1t = np.zeros(T)
+#     a2t = np.zeros(T)
+#     for j in range(0, m_iters):
+#         if j == 0:
+#             lambda_data = p_sampler_ou(alpha, dwt, init_state)
+#         else:
+#             lambda_data = m_sampler_ou(alpha, a1t, a2t, dwt, init_state)
+#             if np.isnan(np.sum(lambda_data)) == True:
+#                 res = 10**10
+#                 if print_path == True:
+#                     print(alpha, 'm sampler nan', res)
+#                 return res
+#         norm_log_data = np.zeros((T, latent_process_tr))
+#         a_mean = np.zeros(3)
+
+#         a_mean[0] = np.mean(a_data[:,0])
+#         a_mean[1] = np.mean(a_data[:,1])
+
+#         sigma2 = nu**2 / (2 * theta) * (1 - np.exp(-2 * theta))
+#         ub = np.maximum(1/(2 * sigma2) - 0.1, 0)
+#         a_mean[2] = np.minimum(np.mean(a_data[:,2]), ub)
+
+#         a_data = np.zeros((T, 3))
+#         a_data[-1] = a_mean
+#         for i in range(T - 1, 0 , -1):
+#             copula_log_data = np.log(np.maximum(pdf(data[i], transform(lambda_data[i])), 1e-100))
+#             A = np.dstack( ( np.ones(latent_process_tr) , (lambda_data[i] - 0 * mu) , (lambda_data[i] - 0 * mu)**2 ) )[0]
+#             norm_log_data[i] = log_norm_ou(alpha, a_data[i][1], a_data[i][2], dt, lambda_data[i - 1])
+
+#             b = copula_log_data + norm_log_data[i]
+#             sigma2 = nu**2 / (2 * theta) * (1 - np.exp(-2 * theta * (t_data[i])))
+#             #r = sigma2
+#             r = 0.0
+#             ub = np.maximum(1/(2 * sigma2) - 0.1, 0)
+#             #ub = 0.0
+#             a_data[i - 1] = linear_least_squares(A, b, r, pseudo_inverse = True)
+
+#             # try:
+#             #     a_data[i - 1] = linear_least_squares(A, b, r)
+#             # except:
+#             #     try:
+#             #         a_data[i - 1] = linear_least_squares(A, b, r, pseudo_inverse = True)
+#             #     except:
+#             #         res = 10**10
+#             #         if print_path == True:
+#             #             print(alpha, 'ls problem fail', res, i)
+#             #         return res
+#             a_data[i - 1][2] = np.minimum(a_data[i - 1][2], ub)
+#             #a_data[i - 1] = np.maximum(np.minimum(a_data[i - 1], 3000),-3000)
+
+#         a_data_a1 = a_data[:,1].copy()
+#         a_data_a2 = a_data[:,2].copy()
+
+#         val = np.minimum(np.mean(a_data_a2), 0)
+#         if a_data_a2[-1] > val:
+#             a_data_a2[-1] = val
+
+#         fit_type1 = 'no bounds'
+#         fit_type2 = 'right-sided'
+#         dim = j + 1
+#         #dim = 2
+
+#         a1_params = bounded_polynom_fit(t_data, a_data_a1, dim = dim, ridge_alpha = 0.0, type = fit_type1)
+#         a1t = bounded_polynom(t_data, a_data_a1, a1_params, type = fit_type1)
+
+#         rigde_alpha_list = np.array([0.05, 0.1, 0.5, 1.0, 5.0, 10.0])
+#         for r in rigde_alpha_list:
+#             a2_params = bounded_polynom_fit(t_data, a_data_a2, dim = dim, ridge_alpha = r, type = fit_type2)
+#             a2t = bounded_polynom(t_data, a_data_a2, a2_params, type = fit_type2)
+#             bound_check = check_a2_bounds(alpha, a2t, t_data)
+#             if bound_check == True:
+#                 break
+#             else:
+#                 continue
+#         if r == rigde_alpha_list[-1]:
+#             a2t = correction(t_data, a2t, alpha)
+
+#     log_likelihood = np.zeros(latent_process_tr)
+#     lambda_data = m_sampler_ou(alpha, a1t, a2t, dwt, init_state)
+#     for i in range(T - 1, 0, -1):
+#         a1, a2 = a1t[i], a2t[i]
+#         norm_log_data[i] = log_norm_ou(alpha, a1, a2, dt, lambda_data[i - 1])
+#     norm_log_data[0] = 0 * log_norm_ou(alpha, a1t[0], a2t[0], dt, lambda_data[0])
+
+#     for k in range(0, latent_process_tr):
+#         copula_log_data = np.log(np.maximum(pdf(data.T, transform(lambda_data[:,k])), 1e-100))
+#         g = (a1t * (lambda_data[:,k] - 0 * mu)  + a2t * (lambda_data[:,k] - 0 * mu)**2)
+#         g[0] - 0
+#         log_likelihood[k] = np.sum(copula_log_data + norm_log_data[:,k] - g)
+#     xc = np.max(log_likelihood)
+#     avg_likelihood = np.sum(np.exp(log_likelihood - xc)) / latent_process_tr
+#     res = np.log(avg_likelihood) + xc
+#     res = -res
+#     if print_path == True:
+#         print(alpha, res)
+#     return res
+
 @jit(nopython=True, cache = True, parallel = True)
 def m_jit_mlog_likelihood_ou(alpha, data, dwt, latent_process_tr, m_iters, print_path, 
-                             pdf, transform, init_state = None, max_res = -1000):
+                             pdf, transform, init_state = None):
     T = len(data)
     norm_log_data = np.zeros((T, latent_process_tr))
     dt = 1/T
@@ -329,9 +446,14 @@ def m_jit_mlog_likelihood_ou(alpha, data, dwt, latent_process_tr, m_iters, print
                 return res
         norm_log_data = np.zeros((T, latent_process_tr))
         a_mean = np.zeros(3)
+
         a_mean[0] = np.mean(a_data[:,0])
         a_mean[1] = np.mean(a_data[:,1])
-        a_mean[2] = np.mean(a_data[:,2])
+
+        sigma2 = nu**2 / (2 * theta) * (1 - np.exp(-2 * theta))
+        ub = np.maximum(1/(2 * sigma2) - 0.1, 0)
+        a_mean[2] = np.minimum(np.mean(a_data[:,2]), ub)
+
         a_data = np.zeros((T, 3))
         a_data[-1] = a_mean
         for i in range(T - 1, 0 , -1):
@@ -340,21 +462,32 @@ def m_jit_mlog_likelihood_ou(alpha, data, dwt, latent_process_tr, m_iters, print
             norm_log_data[i] = log_norm_ou(alpha, a_data[i][1], a_data[i][2], dt, lambda_data[i - 1])
 
             b = copula_log_data + norm_log_data[i]
+            #print(norm_log_data[i])
             sigma2 = nu**2 / (2 * theta) * (1 - np.exp(-2 * theta * (t_data[i])))
             #r = sigma2
             r = 0.0
+            ub = np.maximum(1/(2 * sigma2) - 0.1, 0)
+            #ub = 0.0
             try:
-                a_data[i - 1] = linear_least_squares(A, b, r)
-                ub = np.maximum(1/(2 * sigma2) - 0.1, 0)
-                #ub = 0.0
-                a_data[i - 1][2] = np.minimum(a_data[i - 1][2], ub)
-                a_data[i - 1] = np.maximum(np.minimum(a_data[i - 1], 3000),-3000)
+                a_data[i - 1] = linear_least_squares(A, b, r, pseudo_inverse = True)
             except:
                 res = 10**10
                 if print_path == True:
                     print(alpha, 'ls problem fail', res, i)
                 return res
-            #norm_log_data[i - 1] = log_norm_ou(alpha, a_data[i - 1][1], a_data[i - 1][2], dt, lambda_data[i - 1])
+            # try:
+            #     a_data[i - 1] = linear_least_squares(A, b, r)
+            # except:
+            #     try:
+            #         a_data[i - 1] = linear_least_squares(A, b, r, pseudo_inverse = True)
+            #     except:
+            #         res = 10**10
+            #         if print_path == True:
+            #             print(alpha, 'ls problem fail', res, i)
+            #         return res
+            a_data[i - 1][2] = np.minimum(a_data[i - 1][2], ub)
+            #a_data[i - 1] = np.maximum(np.minimum(a_data[i - 1], 3000),-3000)
+
         a_data_a1 = a_data[:,1].copy()
         a_data_a2 = a_data[:,2].copy()
 
@@ -366,33 +499,41 @@ def m_jit_mlog_likelihood_ou(alpha, data, dwt, latent_process_tr, m_iters, print
         fit_type2 = 'right-sided'
         dim = j + 1
         #dim = 2
-        a1_params = bounded_polynom_fit(t_data, a_data_a1, dim = dim, ridge_alpha = 0.0, type = fit_type1)
-        a2_params = bounded_polynom_fit(t_data, a_data_a2, dim = dim, ridge_alpha = 0.0, type = fit_type2)
 
+
+
+        rigde_alpha_list = np.array([0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0]) #delete 0.01?
+        for r in rigde_alpha_list:
+            a2_params = bounded_polynom_fit(t_data, a_data_a2, dim = dim, ridge_alpha = r, type = fit_type2)
+            a2t = bounded_polynom(t_data, a_data_a2, a2_params, type = fit_type2)
+            bound_check = check_a2_bounds(alpha, a2t, t_data)
+            if bound_check == True:
+                break
+            else:
+                continue
+        if r == rigde_alpha_list[-1]:
+            a2t = correction(t_data, a2t, alpha)
+
+        a1_params = bounded_polynom_fit(t_data, a_data_a1, dim = dim, ridge_alpha = r, type = fit_type1) #0.0
         a1t = bounded_polynom(t_data, a_data_a1, a1_params, type = fit_type1)
-        a2t = bounded_polynom(t_data, a_data_a2, a2_params, type = fit_type2)
-        a2t = correction(t_data, a2t, alpha)
 
     log_likelihood = np.zeros(latent_process_tr)
     lambda_data = m_sampler_ou(alpha, a1t, a2t, dwt, init_state)
     for i in range(T - 1, 0, -1):
         a1, a2 = a1t[i], a2t[i]
         norm_log_data[i] = log_norm_ou(alpha, a1, a2, dt, lambda_data[i - 1])
-    norm_log_data[0] = log_norm_ou(alpha, a1t[0], a2t[0], dt, lambda_data[0])
+    norm_log_data[0] = 0 * log_norm_ou(alpha, a1t[0], a2t[0], dt, lambda_data[0])
 
     for k in range(0, latent_process_tr):
-        copula_log_data = np.log(np.maximum(pdf(data.T, transform(lambda_data[:,k]) ), 1e-100))
+        copula_log_data = np.log(np.maximum(pdf(data.T, transform(lambda_data[:,k])), 1e-100))
         g = (a1t * (lambda_data[:,k] - 0 * mu)  + a2t * (lambda_data[:,k] - 0 * mu)**2)
+        g[0] = 0
         log_likelihood[k] = np.sum(copula_log_data + norm_log_data[:,k] - g)
+        #print(norm_log_data[:,k][0:10], g[0:10])
     xc = np.max(log_likelihood)
     avg_likelihood = np.sum(np.exp(log_likelihood - xc)) / latent_process_tr
     res = np.log(avg_likelihood) + xc
     res = -res
-    if res < max_res:
-        res = 10**10
-        if print_path == True:
-            print(alpha, 'instability detected', res)
-        return res
     if print_path == True:
         print(alpha, res)
     return res
