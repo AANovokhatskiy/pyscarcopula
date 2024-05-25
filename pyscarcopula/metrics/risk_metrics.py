@@ -210,28 +210,31 @@ def risk_metrics(copula,
                  latent_process_tr = 500,
                  seed = None,
                  optimize_portfolio = True, 
-                 portfolio_weight = None):
+                 portfolio_weight = None, 
+                 pre_calc_latent_process_params = None):
     '''calculate risk metrics VaR and CVaR and optimize portfolio weights'''
 
     T = len(data)
     if window_len > T:
         raise ValueError(f'Length of window = {window_len} is more than length of data = {T}')
 
-    if seed is None:
-        s = np.random.randint(0, 100000)
+    if pre_calc_latent_process_params is None:
+        if seed is None:
+            s = np.random.randint(0, 100000)
+        else:
+            s = seed
+        #s = 25400
+        rng = np.random.RandomState(seed = s)
+        dt = 1.0/window_len
+        print(f"seed = {s}")
+        dwt = rng.normal(0, 1, size = (T, latent_process_tr)) * np.sqrt(dt)
+        #dwt = copula.calculate_dwt(latent_process_type.upper(), T, latent_process_tr, seed, dt)
+        latent_process_params = get_latent_process_params(copula, data, latent_process_type.upper(), window_len, dwt)
+        del dwt
     else:
-        s = seed
-    s = 25400
-    rng = np.random.RandomState(seed = s)
-    dt = 1.0/window_len
-    print(s)
-    dwt = rng.normal(0, 1, size = (T, latent_process_tr)) * np.sqrt(dt)
-    #dwt = copula.calculate_dwt(latent_process_type.upper(), T, latent_process_tr, seed, dt)
-
-    latent_process_params = get_latent_process_params(copula, data, latent_process_type.upper(), window_len, dwt)
+        latent_process_params = pre_calc_latent_process_params
     #latent_process_params = pd.read_csv(f"logs/Joe_SCAR-M-OU_500_2024-05-13_141831.csv", sep = ';', index_col=0).values
-    del dwt
-
+    
     marginals_params = get_marginals_params_params(data, window_len, marginals_params_method)
 
     gamma_list = []

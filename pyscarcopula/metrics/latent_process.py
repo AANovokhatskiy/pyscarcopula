@@ -98,8 +98,8 @@ def latent_process_sampler_rng(latent_process_params,
 def get_latent_process_params(copula, returns_data, method, window_len, dwt):
     print('calc copula params')
 
-    #alpha0 = np.array([1.0, 0.5, 0.05])
-    alpha0 = None
+    alpha0 = np.array([0.5, 0.5, 0.05])
+    #alpha0 = None
     T = len(returns_data)
     dt = 1/window_len
     iters = T - window_len + 1
