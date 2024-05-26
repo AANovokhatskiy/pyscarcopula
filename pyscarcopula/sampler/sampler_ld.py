@@ -10,7 +10,7 @@ def p_sampler_init_state_ld(alpha, latent_process_tr):
     return x0
 
 
-@jit(nopython=True, parallel = True, cache = True)
+@jit(nopython=True, cache = True)#parallel = True,
 def p_sampler_ld(alpha, dwt, init_state = None):
     theta, mu, nu = alpha[0], alpha[1], alpha[2]
     T = len(dwt)
@@ -37,7 +37,7 @@ def p_sampler_ld(alpha, dwt, init_state = None):
     return xt
 
 
-@jit(nopython=True, parallel = True, cache = True)
+@jit(nopython=True, cache = True) #parallel = True,
 def p_sampler_one_step_ld(alpha, dwt, dt, init_state):
     theta, mu, nu = alpha[0], alpha[1], alpha[2]
     D = nu**2 / 2
@@ -59,7 +59,7 @@ def p_sampler_one_step_ld(alpha, dwt, dt, init_state):
     return x1
 
 
-@jit(nopython=True, parallel = True, cache = True)
+@jit(nopython=True, cache = True) #parallel = True,
 def p_sampler_one_step_ld_rng(alpha, latent_process_tr, random_state, dt, init_state):
     theta, mu, nu = alpha[0], alpha[1], alpha[2]
     D = nu**2 / 2
@@ -86,7 +86,7 @@ def p_sampler_one_step_ld_rng(alpha, latent_process_tr, random_state, dt, init_s
     return x1
 
 
-@jit(nopython=True, parallel = True, cache = True)
+@jit(nopython=True, cache = True) #parallel = True,
 def p_sampler_no_hist_ld(alpha, dwt, dt, init_state):
     theta, mu, nu = alpha[0], alpha[1], alpha[2]
     D = nu**2 / 2
@@ -114,7 +114,7 @@ def p_sampler_no_hist_ld(alpha, dwt, dt, init_state):
     return xt_k
 
 
-@jit(nopython=True, parallel = True, cache = True)
+@jit(nopython=True, cache = True) #parallel = True,
 def p_sampler_no_hist_ld_rng(alpha, latent_process_tr, random_states_sequence, dt, init_state):
     theta, mu, nu = alpha[0], alpha[1], alpha[2]
     D = nu**2 / 2

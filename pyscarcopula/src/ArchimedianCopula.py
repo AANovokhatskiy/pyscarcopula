@@ -200,7 +200,7 @@ class ArchimedianCopula:
         constr = None
 
         if method.upper() == 'SCAR-M-OU':
-            bounds = Bounds([-100.,-5, 0.01],[100., 5, 5])
+            bounds = Bounds([-10.,-5, 0.01],[10., 5, 5])
             constr = {'type': 'ineq', 'fun': lambda x: np.abs(x[1]) - x[2]**2 - 0.001}
         elif method.upper() in ['SCAR-P-DS', 'SCAR-M-DS']:
             bounds = Bounds([-5.0,-0.9999,0.0], [5.0, 0.9999, 0.9999])
