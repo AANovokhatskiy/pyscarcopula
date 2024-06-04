@@ -18,7 +18,7 @@ class ClaytonCopula(ArchimedianCopula):
     @staticmethod
     @njit
     def transform(r):
-        return r**2 + 0.0001
+        return np.minimum(r**2 + 0.0001, 40)
     
     @property
     def sp_generator(self):

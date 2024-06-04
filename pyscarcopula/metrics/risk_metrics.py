@@ -208,6 +208,7 @@ def risk_metrics(copula,
                  marginals_params_method,
                  latent_process_type, 
                  latent_process_tr = 500,
+                 M_iterations = 5,
                  seed = None,
                  optimize_portfolio = True, 
                  portfolio_weight = None, 
@@ -229,11 +230,11 @@ def risk_metrics(copula,
         print(f"seed = {s}")
         dwt = rng.normal(0, 1, size = (T, latent_process_tr)) * np.sqrt(dt)
         #dwt = copula.calculate_dwt(latent_process_type.upper(), T, latent_process_tr, seed, dt)
-        latent_process_params = get_latent_process_params(copula, data, latent_process_type.upper(), window_len, dwt)
+        latent_process_params = get_latent_process_params(copula, data, latent_process_type.upper(), 
+                                                          window_len, dwt, M_iterations)
         del dwt
     else:
         latent_process_params = pre_calc_latent_process_params
-    #latent_process_params = pd.read_csv(f"logs/Joe_SCAR-M-OU_500_2024-05-13_141831.csv", sep = ';', index_col=0).values
     
     marginals_params = get_marginals_params_params(data, window_len, marginals_params_method)
 

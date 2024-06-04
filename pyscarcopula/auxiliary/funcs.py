@@ -19,7 +19,7 @@ def pobs(arr_data):
         res[:,k] = rank(arr_data[:,k])
     return res
 
-@jit(nopython = True)
+@jit(nopython = True, cache = True)
 def jit_rank(arr_data):
     n = len(arr_data)
     order = arr_data.argsort()
@@ -27,7 +27,7 @@ def jit_rank(arr_data):
     ranks = (ranks + 1)/(n + 1)
     return ranks
 
-@jit(nopython = True, parallel = True)
+@jit(nopython = True, cache = True, parallel = True)
 def jit_pobs(arr_data):
     '''transform data to pseudo observations'''
     if arr_data.ndim == 1:

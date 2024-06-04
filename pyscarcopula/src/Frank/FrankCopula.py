@@ -18,9 +18,9 @@ class FrankCopula(ArchimedianCopula):
     @staticmethod
     @njit
     def transform(r):
-        # eps = 0.001
-        # return r + eps * (1 - np.sign(r)**2)
-        return r**2 + 0.00001
+        eps = 0.001
+        return np.clip(r + eps * (1 - np.sign(r)**2), -40, 40)
+        #return r**2 + 0.00001
     
     @property
     def sp_generator(self):

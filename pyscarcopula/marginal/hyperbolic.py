@@ -1,38 +1,37 @@
 import numpy as np
 from scipy.stats import genhyperbolic
-from tqdm import tqdm
-from multiprocessing import RawArray, Pool, cpu_count
+from joblib import Parallel, delayed
 
+def fit_hyperbolic(data_slice, m = 5):
+    dim = len(data_slice[0])
+    fit_result = np.zeros((dim, m))
+    for k in range(0, dim):
+        fit_result[k] = genhyperbolic.fit(data_slice[:,k], method='MLE')
+    return fit_result
 
 def hyperbolic_marginals(data, window_len):
-    T = len(data)
-    dim = len(data[0])
+    T, dim = data.shape
     m = 5
-    res = RawArray('d', T * dim * m)
-    shared_data = RawArray('d', (data.T).flatten())
-    global fit_single
-    def fit_single(i):
-        idx = i - 1 + window_len
-        for j in range(0, dim):
-            i1 = i + j * T
-            i2 = i1 + window_len
-            fit_result = genhyperbolic.fit(shared_data[i1:i2], method = 'MLE')
-            i3 = idx * dim * m + j * m
-            i4 = i3 + m
-            res[i3:i4] = fit_result
+    res = np.zeros((T, dim, m))
     iters = T - window_len + 1
-    pool = Pool(processes = cpu_count())   
-    with pool:
-        generator = tqdm(pool.imap(fit_single, range(0, iters)), total = iters)
-        for i in generator:
-            continue
-    res = np.frombuffer(res).reshape((T, dim, m))
+    fit_results = Parallel(n_jobs=-1)(
+        delayed(fit_hyperbolic)(data[i:i + window_len]) for i in range(0, iters)
+    )
+    for i in range(0, iters):
+        idx = i + window_len - 1
+        res[idx] = np.array(fit_results[i])
+
     return res
 
-
-def hyperbolic_rvs(params, N):
+def generate_batch(params, size):
     dim = len(params)
-    res = np.zeros(shape=(N, dim))
-    for i in range(0, dim):
-        res[:,i] = genhyperbolic.rvs(*params[i], size = N)
-    return res
+    batch_result = np.zeros(shape=(size, dim))
+    for i in range(dim):
+        batch_result[:, i] = genhyperbolic.rvs(*params[i], size=size)
+    return batch_result
+
+def hyperbolic_rvs(params, N, batch_size=10000):
+    dim = len(params)
+    num_batches = (N + batch_size - 1) // batch_size
+    results = Parallel(n_jobs=-1)(delayed(generate_batch)(params, batch_size) for _ in range(num_batches))
+    return np.vstack(results)[:N]

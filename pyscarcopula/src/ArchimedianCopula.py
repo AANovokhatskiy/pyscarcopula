@@ -144,7 +144,7 @@ class ArchimedianCopula:
 
     def mlog_likelihood(self, alpha: np.array, data: np.array, latent_process_tr: int = 500, m_iters: int = 5,
         method: str = 'MLE', seed: int = None, dwt: np.array = None, 
-        print_path: bool = False, init_state = None) -> float:
+        print_path: bool = False, init_state = None, max_log_lik_debug = -100000) -> float:
 
         if method.upper() not in self.list_of_methods():
             raise ValueError(f'given method {method} is not avialable. avialable methods: {self.list_of_methods()}')
@@ -164,7 +164,7 @@ class ArchimedianCopula:
         if method.upper() == 'SCAR-P-OU':
             res = p_jit_mlog_likelihood_ou(alpha, data, dwt, latent_process_tr, print_path, self.np_pdf(), self.transform, init_state)
         elif method.upper() == 'SCAR-M-OU':
-            res = m_jit_mlog_likelihood_ou(alpha, data, dwt, latent_process_tr, m_iters, print_path, self.np_pdf(), self.transform, init_state)
+            res = m_jit_mlog_likelihood_ou(alpha, data, dwt, latent_process_tr, m_iters, print_path, self.np_pdf(), self.transform, init_state, max_log_lik_debug)
         elif method.upper() == 'SCAR-P-LD':
             res = p_jit_mlog_likelihood_ld(alpha, data, dwt, latent_process_tr, print_path, self.np_pdf(), self.transform, init_state)
         elif method.upper() == 'SCAR-P-DS':
@@ -178,7 +178,7 @@ class ArchimedianCopula:
     def fit(self, data: np.array, latent_process_tr: int = 500, m_iters: int = 5, accuracy = 1e-5,
          method: str = 'MLE', alpha0: np.array = None, to_pobs = True, 
          seed: int = None, dwt: np.array = None, print_path: bool = False, init_state = None,
-         max_log_lik_debug = -1000):
+         max_log_lik_debug = -100000):
 
         if method.upper() not in self.list_of_methods():
             raise ValueError(f'given method {method} is not avialable. avialable methods: {self.list_of_methods()}')
@@ -200,7 +200,7 @@ class ArchimedianCopula:
         constr = None
 
         if method.upper() == 'SCAR-M-OU':
-            bounds = Bounds([-10.,-5, 0.01],[10., 5, 5])
+            #bounds = Bounds([-10.,-5, 0.01],[10., 5, 5])
             constr = {'type': 'ineq', 'fun': lambda x: np.abs(x[1]) - x[2]**2 - 0.001}
         elif method.upper() in ['SCAR-P-DS', 'SCAR-M-DS']:
             bounds = Bounds([-5.0,-0.9999,0.0], [5.0, 0.9999, 0.9999])
@@ -216,7 +216,7 @@ class ArchimedianCopula:
         log_min = minimize(self.mlog_likelihood, alpha,
                                     args=(fit_data, latent_process_tr, m_iters, method.upper(), 
                                           seed, dwt, print_path, init_state),
-                                    method='SLSQP',
+                                    method='L-BFGS-B',
                                     bounds = bounds,
                                     #constraints = constr,
                                     options={'ftol': accuracy, 'eps': accuracy} )

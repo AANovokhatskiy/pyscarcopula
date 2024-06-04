@@ -95,18 +95,21 @@ def latent_process_sampler_rng(latent_process_params,
     return current_state
 
 
-def get_latent_process_params(copula, returns_data, method, window_len, dwt):
+def get_latent_process_params(copula, returns_data, method, window_len, dwt, M_iterations = 5):
     print('calc copula params')
 
-    alpha0 = np.array([0.5, 0.5, 0.05])
-    #alpha0 = None
+    #alpha0 = np.array([0.5, 0.5, 0.05])
+    alpha0 = None
     T = len(returns_data)
     dt = 1/window_len
     iters = T - window_len + 1
 
     latent_process_params = np.zeros((T, 4))
     latent_process_tr = len(dwt[0])
-    M = 5
+    #M = 5
+    pobs = jit_pobs(returns_data)
+    mle_fit_result = copula.fit(pobs, method = 'mle')
+    max_log_lik_debug = -mle_fit_result.fun * 2
 
     #for k in tqdm(range(0, iters)):
     for k in range(0, iters):
@@ -120,20 +123,22 @@ def get_latent_process_params(copula, returns_data, method, window_len, dwt):
             if k == 0:
                 init_state = None
             else:
+                #init_state = None
                 init_state = latent_process_sampler_one_step(alpha0, method, dwt[k - 1], dt, init_state)
             cop_fit_result = copula.fit(pobs,
                                         alpha0 = alpha0,
                                         method = method,
                                         latent_process_tr = latent_process_tr,
                                         accuracy = 1e-3,
-                                        m_iters = M,
+                                        m_iters = M_iterations,
                                         to_pobs = False,
                                         dwt = dwt[k:window_len + k],
                                         print_path = True,
-                                        init_state = init_state)
+                                        init_state = init_state,
+                                        max_log_lik_debug = max_log_lik_debug)
             if np.isnan(cop_fit_result.fun) == True or int(cop_fit_result.fun) == -10**10:
                 latent_process_params[idx] = latent_process_params[idx - 1]
-                init_state = None
+                #init_state = None
             else:
                 alpha0 = np.array(cop_fit_result.x)
                 latent_process_params[idx] = np.array([cop_fit_result.fun,*cop_fit_result.x])
