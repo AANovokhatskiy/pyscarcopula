@@ -164,7 +164,7 @@ class ArchimedianCopula:
         if method.upper() == 'SCAR-P-OU':
             res = p_jit_mlog_likelihood_ou(alpha, data, dwt, latent_process_tr, print_path, self.np_pdf(), self.transform, init_state)
         elif method.upper() == 'SCAR-M-OU':
-            res = m_jit_mlog_likelihood_ou(alpha, data, dwt, latent_process_tr, m_iters, print_path, self.np_pdf(), self.transform, init_state, max_log_lik_debug)
+            res = m_jit_mlog_likelihood_ou(alpha, data, dwt, latent_process_tr, m_iters, print_path, self.np_pdf(), self.transform, init_state, max_log_lik_debug)[0]
         elif method.upper() == 'SCAR-P-LD':
             res = p_jit_mlog_likelihood_ld(alpha, data, dwt, latent_process_tr, print_path, self.np_pdf(), self.transform, init_state)
         elif method.upper() == 'SCAR-P-DS':

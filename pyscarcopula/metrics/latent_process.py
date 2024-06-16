@@ -4,7 +4,6 @@ import numpy as np
 import pandas as pd
 from pyscarcopula.sampler.sampler_ou import p_sampler_no_hist_ou, p_sampler_no_hist_ou_rng, p_sampler_one_step_ou
 from pyscarcopula.sampler.sampler_ou import p_sampler_one_step_ou_rng, p_sampler_init_state_ou
-#from pyscarcopula.sampler.sampler_ou import m_sampler_ou_params
 
 from pyscarcopula.sampler.sampler_ld import p_sampler_no_hist_ld, p_sampler_no_hist_ld_rng, p_sampler_one_step_ld, p_sampler_one_step_ld_rng, p_sampler_init_state_ld
 from pyscarcopula.auxiliary.funcs import jit_pobs
@@ -95,7 +94,7 @@ def latent_process_sampler_rng(latent_process_params,
     return current_state
 
 
-def get_latent_process_params(copula, returns_data, method, window_len, dwt, M_iterations = 5):
+def get_latent_process_params(copula, returns_data, method, window_len, dwt, M_iterations = 5, save_logs = True):
     print('calc copula params')
 
     #alpha0 = np.array([0.5, 0.5, 0.05])
@@ -111,9 +110,9 @@ def get_latent_process_params(copula, returns_data, method, window_len, dwt, M_i
     mle_fit_result = copula.fit(pobs, method = 'mle')
     max_log_lik_debug = -mle_fit_result.fun * 2
 
-    #for k in tqdm(range(0, iters)):
-    for k in range(0, iters):
-        print(f'========================={k}=========================')
+    for k in tqdm(range(0, iters)):
+    #for k in range(0, iters):
+        #print(f'========================={k}=========================')
         idx = k + window_len - 1
         pobs = jit_pobs(returns_data[k:window_len + k])
         if method == 'MLE':
@@ -123,7 +122,6 @@ def get_latent_process_params(copula, returns_data, method, window_len, dwt, M_i
             if k == 0:
                 init_state = None
             else:
-                #init_state = None
                 init_state = latent_process_sampler_one_step(alpha0, method, dwt[k - 1], dt, init_state)
             cop_fit_result = copula.fit(pobs,
                                         alpha0 = alpha0,
@@ -138,23 +136,24 @@ def get_latent_process_params(copula, returns_data, method, window_len, dwt, M_i
                                         max_log_lik_debug = max_log_lik_debug)
             if np.isnan(cop_fit_result.fun) == True or int(cop_fit_result.fun) == -10**10:
                 latent_process_params[idx] = latent_process_params[idx - 1]
-                #init_state = None
             else:
                 alpha0 = np.array(cop_fit_result.x)
                 latent_process_params[idx] = np.array([cop_fit_result.fun,*cop_fit_result.x])
         #print(init_state)
-        print(latent_process_params[idx])
+        #print(latent_process_params[idx])
 
-    '''log copula parameters result'''
-    df = pd.DataFrame(latent_process_params)
-    copula_name = copula.name.split(' ')[0]
-    current_time = strftime("%Y-%m-%d_%H%M%S", localtime())
 
-    directory = "logs"
+    if save_logs == True:
+        '''log copula parameters result'''
+        df = pd.DataFrame(latent_process_params)
+        copula_name = copula.name.split(' ')[0]
+        current_time = strftime("%Y-%m-%d_%H%M%S", localtime())
 
-    if not os.path.exists(directory):
-        os.makedirs(directory)
-    df.to_csv(f"{directory}/{copula_name}_{method}_{latent_process_tr}_{current_time}.csv", sep = ';')
+        directory = "logs"
+
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+        df.to_csv(f"{directory}/{copula_name}_{method}_{latent_process_tr}_{current_time}.csv", sep = ';')
 
     return latent_process_params
 

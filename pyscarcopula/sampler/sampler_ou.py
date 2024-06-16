@@ -157,6 +157,10 @@ def get_avg_p_log_likelihood_ou(data, lambda_data, latent_process_tr, pdf, trans
     for k in prange(0, latent_process_tr):
         copula_log_data[k] = np.sum(np.log(np.maximum(pdf(data, transform(lambda_data[:,k])), 1e-100)))
 
+    nan_idx = np.argwhere(np.isnan(copula_log_data)).flatten()
+    if len(nan_idx) < 0.05 * latent_process_tr:
+        copula_log_data = np.delete(copula_log_data, nan_idx)
+
     '''trick for calculation large values. calculate e^(sum(log_cop) - corr) instead of e^(sum(log_cop)).
     Do inverse correction at the end of calculations'''
     corr = max(copula_log_data)
@@ -179,6 +183,7 @@ def p_jit_mlog_likelihood_ou(alpha: np.array, data: np.array, dwt: np.array, lat
     avg_log_likelihood = get_avg_p_log_likelihood_ou(data.T, lambda_data, latent_process_tr, pdf, transform)
     res = - avg_log_likelihood
     if np.isnan(res) == True:
+        res = 10**10
         if print_path == True:
             print(alpha, 'unknown error', res)
     else:
@@ -397,13 +402,13 @@ def m_jit_mlog_likelihood_ou(alpha, data, dwt, latent_process_tr, m_iters, print
                 res = 10**10
                 if print_path == True:
                     print(alpha, 'm sampler nan', res)
-                return res
+                return res, a1t, a2t
             max_m = np.max(np.abs(lambda_data))
             if max_m > 50:
                 res = 10**10
                 if print_path == True:
                     print(alpha, 'm sampler bad trajectory', res)
-                return res        
+                return res, a1t, a2t
         norm_log_data = np.zeros((T, latent_process_tr))
 
         '''set initial values: a(T)'''
@@ -441,7 +446,7 @@ def m_jit_mlog_likelihood_ou(alpha, data, dwt, latent_process_tr, m_iters, print
                 res = 10**10
                 if print_path == True:
                     print(alpha, 'ls problem fail', res, i)
-                return res
+                return res, a1t, a2t
 
             '''check a2 bounds'''
             a_data[i - 1][2] = np.minimum(a_data[i - 1][2], ub)
@@ -487,14 +492,14 @@ def m_jit_mlog_likelihood_ou(alpha, data, dwt, latent_process_tr, m_iters, print
         res = 10**10
         if print_path == True:
             print(alpha, 'm sampler nan', res)
-            return res
+            return res, a1t, a2t
         
     max_m = np.max(np.abs(lambda_data))
     if max_m > 50:
         res = 10**10
         if print_path == True:
             print(alpha, 'm sampler bad trajectory', res)
-        return res   
+        return res, a1t, a2t
     
     '''calculate normalizing factors'''
     for i in range(T - 1, 0, -1):
@@ -519,8 +524,8 @@ def m_jit_mlog_likelihood_ou(alpha, data, dwt, latent_process_tr, m_iters, print
         res = 10**10
         if print_path == True:
             print(alpha, 'instability encountered', res)
-        return res
+        return res, a1t, a2t
 
     if print_path == True:
         print(alpha, res)
-    return res
+    return res, a1t, a2t

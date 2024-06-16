@@ -31,18 +31,18 @@ def p_sampler_ld(alpha, dwt, init_state = None):
         sigma2 = D / theta * (1 - np.exp(- 2 * theta * t))
         sigma2_dt = 2 * D - 2 * theta * sigma2
         y = (xt[k - 1] - xs) / sigma2
-        # B = np.sqrt(12 * sigma2 * nu)
-        # A = y * sigma2_dt + xs_dt - B**2/(2 * sigma2) * np.tanh(y/2)
-        # xt[k] = xt[k - 1] + A * dt + B * dwt[k - 1]
-
         B = np.sqrt(12 * sigma2 * nu)
-        Bx = 0
-        Bxx = 0
         A = y * sigma2_dt + xs_dt - B**2/(2 * sigma2) * np.tanh(y/2)
-        Ax = sigma2_dt/ sigma2 - B**2/(4 * sigma2**2) * 1/np.cosh(y/2)**2
-        Axx = B**2/(4 * sigma2**3) * np.tanh(y/2) /np.cosh(y/2)**2
-        xt[k] = xt[k-1] + (A - 1/2*B*Bx)*dt + B*dwt[k-1] + 1/2*B*Bx*dwt[k-1]**2 +\
-                    (1/2*A*Bx + 1/2*Ax*B + 1/4*B**2*Bxx)*dt*dwt[k-1] + (1/2*A*Ax + 1/4*Axx*B**2)*dt**2
+        xt[k] = xt[k - 1] + A * dt + B * dwt[k - 1]
+        #
+        # B = np.sqrt(12 * sigma2 * nu)
+        # Bx = 0
+        # Bxx = 0
+        # A = y * sigma2_dt + xs_dt - B**2/(2 * sigma2) * np.tanh(y/2)
+        # Ax = sigma2_dt/ sigma2 - B**2/(4 * sigma2**2) * 1/np.cosh(y/2)**2
+        # Axx = B**2/(4 * sigma2**3) * np.tanh(y/2) /np.cosh(y/2)**2
+        # xt[k] = xt[k-1] + (A - 1/2*B*Bx)*dt + B*dwt[k-1] + 1/2*B*Bx*dwt[k-1]**2 +\
+        #             (1/2*A*Bx + 1/2*Ax*B + 1/4*B**2*Bxx)*dt*dwt[k-1] + (1/2*A*Ax + 1/4*Axx*B**2)*dt**2
 
     return xt[1:]
 
@@ -63,18 +63,18 @@ def p_sampler_one_step_ld(alpha, dwt, dt, init_state):
     sigma2 = D / theta * (1 - np.exp(- 2 * theta * t))
     sigma2_dt = 2 * D - 2 * theta * sigma2
     y = (x0 - xs) / sigma2
-    # B = np.sqrt(12 * sigma2 * nu)
-    # A = y * sigma2_dt + xs_dt - B**2/(2 * sigma2) * np.tanh(y/2)
-    # x1 = x0 + A * dt + B * dwt
-
     B = np.sqrt(12 * sigma2 * nu)
-    Bx = 0
-    Bxx = 0
     A = y * sigma2_dt + xs_dt - B**2/(2 * sigma2) * np.tanh(y/2)
-    Ax = sigma2_dt/ sigma2 - B**2/(4 * sigma2**2) * 1/np.cosh(y/2)**2
-    Axx = B**2/(4 * sigma2**3) * np.tanh(y/2) /np.cosh(y/2)**2
-    x1 = x0 + (A - 1/2*B*Bx)*dt + B*dwt + 1/2*B*Bx*dwt**2 +\
-                (1/2*A*Bx + 1/2*Ax*B + 1/4*B**2*Bxx)*dt*dwt + (1/2*A*Ax + 1/4*Axx*B**2)*dt**2
+    x1 = x0 + A * dt + B * dwt
+
+    # B = np.sqrt(12 * sigma2 * nu)
+    # Bx = 0
+    # Bxx = 0
+    # A = y * sigma2_dt + xs_dt - B**2/(2 * sigma2) * np.tanh(y/2)
+    # Ax = sigma2_dt/ sigma2 - B**2/(4 * sigma2**2) * 1/np.cosh(y/2)**2
+    # Axx = B**2/(4 * sigma2**3) * np.tanh(y/2) /np.cosh(y/2)**2
+    # x1 = x0 + (A - 1/2*B*Bx)*dt + B*dwt + 1/2*B*Bx*dwt**2 +\
+    #             (1/2*A*Bx + 1/2*Ax*B + 1/4*B**2*Bxx)*dt*dwt + (1/2*A*Ax + 1/4*Axx*B**2)*dt**2
     return x1
 
 
@@ -99,18 +99,18 @@ def p_sampler_one_step_ld_rng(alpha, latent_process_tr, random_state, dt, init_s
     sigma2 = D / theta * (1 - np.exp(- 2 * theta * t))
     sigma2_dt = 2 * D - 2 * theta * sigma2
     y = (x0 - xs) / sigma2
-    # B = np.sqrt(12 * sigma2 * nu)
-    # A = y * sigma2_dt + xs_dt - B**2/(2 * sigma2) * np.tanh(y/2)
-    # x1 = x0 + A * dt + B * dwt
-
     B = np.sqrt(12 * sigma2 * nu)
-    Bx = 0
-    Bxx = 0
     A = y * sigma2_dt + xs_dt - B**2/(2 * sigma2) * np.tanh(y/2)
-    Ax = sigma2_dt/ sigma2 - B**2/(4 * sigma2**2) * 1/np.cosh(y/2)**2
-    Axx = B**2/(4 * sigma2**3) * np.tanh(y/2) /np.cosh(y/2)**2
-    x1 = x0 + (A - 1/2*B*Bx)*dt + B*dwt + 1/2*B*Bx*dwt**2 +\
-                (1/2*A*Bx + 1/2*Ax*B + 1/4*B**2*Bxx)*dt*dwt + (1/2*A*Ax + 1/4*Axx*B**2)*dt**2
+    x1 = x0 + A * dt + B * dwt
+
+    # B = np.sqrt(12 * sigma2 * nu)
+    # Bx = 0
+    # Bxx = 0
+    # A = y * sigma2_dt + xs_dt - B**2/(2 * sigma2) * np.tanh(y/2)
+    # Ax = sigma2_dt/ sigma2 - B**2/(4 * sigma2**2) * 1/np.cosh(y/2)**2
+    # Axx = B**2/(4 * sigma2**3) * np.tanh(y/2) /np.cosh(y/2)**2
+    # x1 = x0 + (A - 1/2*B*Bx)*dt + B*dwt + 1/2*B*Bx*dwt**2 +\
+    #             (1/2*A*Bx + 1/2*Ax*B + 1/4*B**2*Bxx)*dt*dwt + (1/2*A*Ax + 1/4*Axx*B**2)*dt**2
     return x1
 
 
@@ -135,18 +135,18 @@ def p_sampler_no_hist_ld(alpha, dwt, dt, init_state):
         sigma2 = D / theta * (1 - np.exp(- 2 * theta * t))
         sigma2_dt = 2 * D - 2 * theta * sigma2
         y = (xt_km1 - xs) / sigma2
-        # B = np.sqrt(12 * sigma2 * nu)
-        # A = y * sigma2_dt + xs_dt - B**2/(2 * sigma2) * np.tanh(y/2)
-        # xt_k = xt_km1 + A * dt + B * dwt[k - 1]
-
         B = np.sqrt(12 * sigma2 * nu)
-        Bx = 0
-        Bxx = 0
         A = y * sigma2_dt + xs_dt - B**2/(2 * sigma2) * np.tanh(y/2)
-        Ax = sigma2_dt/ sigma2 - B**2/(4 * sigma2**2) * 1/np.cosh(y/2)**2
-        Axx = B**2/(4 * sigma2**3) * np.tanh(y/2) /np.cosh(y/2)**2
-        xt_k = xt_km1 + (A - 1/2*B*Bx)*dt + B*dwt[k - 1] + 1/2*B*Bx*dwt[k - 1]**2 +\
-                    (1/2*A*Bx + 1/2*Ax*B + 1/4*B**2*Bxx)*dt*dwt[k - 1] + (1/2*A*Ax + 1/4*Axx*B**2)*dt**2
+        xt_k = xt_km1 + A * dt + B * dwt[k - 1]
+
+        # B = np.sqrt(12 * sigma2 * nu)
+        # Bx = 0
+        # Bxx = 0
+        # A = y * sigma2_dt + xs_dt - B**2/(2 * sigma2) * np.tanh(y/2)
+        # Ax = sigma2_dt/ sigma2 - B**2/(4 * sigma2**2) * 1/np.cosh(y/2)**2
+        # Axx = B**2/(4 * sigma2**3) * np.tanh(y/2) /np.cosh(y/2)**2
+        # xt_k = xt_km1 + (A - 1/2*B*Bx)*dt + B*dwt[k - 1] + 1/2*B*Bx*dwt[k - 1]**2 +\
+        #             (1/2*A*Bx + 1/2*Ax*B + 1/4*B**2*Bxx)*dt*dwt[k - 1] + (1/2*A*Ax + 1/4*Axx*B**2)*dt**2
 
         xt_km1 = xt_k
 
@@ -176,18 +176,18 @@ def p_sampler_no_hist_ld_rng(alpha, latent_process_tr, random_states_sequence, d
         sigma2 = D / theta * (1 - np.exp(- 2 * theta * t))
         sigma2_dt = 2 * D - 2 * theta * sigma2
         y = (xt_km1 - xs) / sigma2
-        # B = np.sqrt(12 * sigma2 * nu)
-        # A = y * sigma2_dt + xs_dt - B**2/(2 * sigma2) * np.tanh(y/2)
-        # xt_k = xt_km1 + A * dt + B * dwt
-
         B = np.sqrt(12 * sigma2 * nu)
-        Bx = 0
-        Bxx = 0
         A = y * sigma2_dt + xs_dt - B**2/(2 * sigma2) * np.tanh(y/2)
-        Ax = sigma2_dt/ sigma2 - B**2/(4 * sigma2**2) * 1/np.cosh(y/2)**2
-        Axx = B**2/(4 * sigma2**3) * np.tanh(y/2) /np.cosh(y/2)**2
-        xt_k = xt_km1 + (A - 1/2*B*Bx)*dt + B*dwt + 1/2*B*Bx*dwt**2 +\
-                    (1/2*A*Bx + 1/2*Ax*B + 1/4*B**2*Bxx)*dt*dwt + (1/2*A*Ax + 1/4*Axx*B**2)*dt**2
+        xt_k = xt_km1 + A * dt + B * dwt
+
+        # B = np.sqrt(12 * sigma2 * nu)
+        # Bx = 0
+        # Bxx = 0
+        # A = y * sigma2_dt + xs_dt - B**2/(2 * sigma2) * np.tanh(y/2)
+        # Ax = sigma2_dt/ sigma2 - B**2/(4 * sigma2**2) * 1/np.cosh(y/2)**2
+        # Axx = B**2/(4 * sigma2**3) * np.tanh(y/2) /np.cosh(y/2)**2
+        # xt_k = xt_km1 + (A - 1/2*B*Bx)*dt + B*dwt + 1/2*B*Bx*dwt**2 +\
+        #             (1/2*A*Bx + 1/2*Ax*B + 1/4*B**2*Bxx)*dt*dwt + (1/2*A*Ax + 1/4*Axx*B**2)*dt**2
 
         xt_km1 = xt_k
     return xt_k
