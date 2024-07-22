@@ -176,5 +176,24 @@ result = risk_metrics(copula = copula,
                       optimize_portfolio = False)
 ```
 
+Function *risk_metrics* description 
+1. ***copula*** -- object of class ArchimedianCopula (and inherited classes). Type *ArchimedianCopula*. Required parameter.
+2. ***data*** -- log-return dataset. Type *Numpy Array*. Required parameter.
+3. ***window_len*** -- window len. Type *int*. Required parameter. To use all available data use length of ***data***.  
+4. ***gamma*** -- significance level. Type *float* or *Numpy Array*. Required parameter. If *Numpy Array* then calculations is made for every element of array. Made for minimizaion of repeated calculations. Usually one set, for example, $0.95$, $0.97$, $0.99$ or array $[0.95, 0.97, 0.99]$. 
+5. ***latent_process_type*** -- type of stochastic process that used as copula parameter. Type *Literal*. Available methods: *mle*, *scar-p-ou*, *scar-m-ou*, *scar-p-ld*. Required parameter.
+6. ***latent_process_tr*** -- number of Monte-Carlo iterations that used for copula fit. Type *int*. Required parameter. 
+7. ***marginals_params_method*** -- method of marginal distribution fit. Type *Literal*. Available methods: *normal*, *hyperbolic*. Required parameter.
+8. ***MC_iterations*** -- number of Monte-Carlo iterations that used for risk metrics calculations. Type *int* or *Numpy Array*. Required parameter. If *Numpy Array* then calculations is made for every element of array. Possible value, for example, $10^4$, $10^5$, $10^6$ and so on.
+9. ***optimize_portfolio*** -- parameter responsible for the need to search for optimal CVaR weights.Type *Bool*. Optional parameter. Default value $True$.
+10. ***portfolio_weight*** -- portfolio weight. Type *Numpy Array*. Optional parameter. If ***optimize\_portfolio}} = True$ this value is ignored. Default value -- equal weighted investment portfolio.
+
+Calculated values could be extracted as follows
+```python
+var = result[0.95][1000000]['var']
+cvar = result[0.95][1000000]['cvar']
+portfolio_weight = result[0.95][1000000]['weight']
+```
+
 Examples of using this code coulde be found in example.ipynb notebook.
 
