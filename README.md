@@ -3,7 +3,7 @@
   * [Marginal distributions](#marginal-distributions)
   * [Joint distribution](#joint-distribution)
   * [Risk metrics](#risk-metrics)
-  * [Goodness of fit](#gof)
+  * [Goodness of fit](#goodness-of-fit)
 - [Examples](#examples)
 
 
@@ -22,6 +22,7 @@ This project is made during the MSc program "Financial mathematics and financial
 # Mathematical basis
 ## Marginal distributions
 We consider the following distributions for logarithmic returns:
+
 **Normal**
 ```math
     f(x, \mu, \sigma) = \frac{1}{\sqrt{2 \pi \sigma^2}} e^{-\frac{(x- \mu)^2}{2 \sigma^2}}
@@ -79,12 +80,33 @@ Let $w$ - vector of portfolio weights, $\gamma$ - significance level, $f(r,w) = 
 F_{\gamma}(w, q) = q + \frac{1}{1 - \gamma} \int\limits_{\mathbb{R}^d} \left( f(w, r) - q \right)_{+} p(r) \, dr
 ```
 Rockafellar and Uryasev in Optimization of conditional value-at-risk (2000) proved that:
-* $\textnormal{CVaR}_{\gamma}(w) = \underset{q \in \mathbb{R}} {\min} \; F_{\gamma}(w, q),$
-* $\textnormal{VaR}_{\gamma}(w) = $ left border of set  $\underset{q \in \mathbb{R}}{ \arg \min} \; F_{\gamma}(w, q)$
-* $\underset{w \in X}{\min} \; \textnormal{CVaR}_{\gamma}(w) = \underset{(w, q) \in X \times \mathbb{R}} {\min} \; F_{\gamma}(w, q)$
+```math
+  \textnormal{CVaR}_{\gamma}(w) = \underset{q \in \mathbb{R}} {\min} \; F_{\gamma}(w, q),
+  ```
+ ```math
+  \textnormal{VaR}_{\gamma}(w) =  \underset{q \in \mathbb{R}}{ \arg \min} \; F_{\gamma}(w, q)
+  ```
+```math
+  \underset{w \in X}{\min} \; \textnormal{CVaR}_{\gamma}(w) = \underset{(w, q) \in X \times \mathbb{R}} {\min} \; F_{\gamma}(w, q)
+  ````
+Here we solve this minimizations problems numerically using Monte-Carlo estimates of function $F$. This calculations could be made in runnig window.
 
-Here we solve this minimizations problems numerically using Monte-Carlo estimates of function $F$.
-  
+## Goodness of fit
+### GoF Copula
+For copula GoF we use Rosenblatt transform. For given multivariate pseudo observations dataset $U$ and copula $C$ could be constructed a new dataset $U'$ using Rosenblatt transform $R$. It can be shown that if copula parameters are found correctly then random variable $Y$
+```math
+Y = F_{\chi^2_d}\left( \sum\limits_{i = 1}^{d} \Phi^{-1}(u'_i)^2 \right)
+```
+is uniformly disturbed (see details in Hering and Hofert, Goodness-of-fit Tests for Archimedean
+Copulas in High Dimensions (2015)). This fact could be checked using various methods. We use a scipy implementation of Cramer-Von-Mises test.
+
+### GoF risk metrics
+We could also check a statistical significance of found risk metrics estimates. A simple likelihood ratio test proposed by Kupiec (Techniques for verifying the accuracy of risk measurement models (1995)) is following. Consider statistics
+```math
+LR_{POF} = - 2 \log{\left( \frac{\left(1 - p\right)^{N-x} p^x}{\left(1 - \frac{x}{N} \right)^{N - x}\left(\frac{x}{N}\right)^x} \right)}
+```
+where $N$ - number of observations, $p = 1 - \gamma$ - significance level, $x$ - number of risk level breakdowns. This statistics has asymptotically $\chi^2$ distribution. So if statistics exceed the critical value then we reject our estimations of risk metrics.
+
 # Examples
 Examples of using this code coulde be found in example.ipynb notebook.
 
