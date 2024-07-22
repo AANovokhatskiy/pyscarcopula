@@ -66,7 +66,7 @@ Here we use the following copulas
 | Clayton | $\frac{1}{\theta}\left(t^{-\theta} - 1 \right)$ | $\left( 1 + t \theta\right)^{-1/\theta}$ |  $[0, \infty)$ |
 
 Classical approach implies that $\theta$ is constant parameter. We can estimate it using Maximul likelihood method. Now consider that $\theta = \Lambda (x_t)$
-where $x_t$ is Ornstein-Uhlenbeck process
+where $x_t$ is Ornstein-Uhlenbeck process (this process cannot be observed and considered as latent process)
 ```math
 dx_t = \left( \alpha_1 +\alpha_2 x_t \right) dt + \alpha_3 dW_t
 ```
@@ -108,5 +108,73 @@ LR_{POF} = - 2 \log{\left( \frac{\left(1 - p\right)^{N-x} p^x}{\left(1 - \frac{x
 where $N$ - number of observations, $p = 1 - \gamma$ - significance level, $x$ - number of risk level breakdowns. This statistics has asymptotically $\chi^2$ distribution. So if statistics exceed the critical value then we reject our estimations of risk metrics.
 
 # Examples
+1. Read dataset and transform to log-returns
+```python
+import pandas as pd
+import numpy as np
+moex_data = pd.read_csv("data/moex_top.csv", index_col=0)
+tickers = ['AFLT', 'LSRG', 'GAZP', 'NLMK']
+
+moex_returns = np.log(moex_data[tickers] / moex_data[tickers].shift(1))[1:501].values
+```
+
+2. Initialize copula object
+```python
+from pyscarcopula.src.Gumbel.GumbelCopula import GumbelCopula
+copula = GumbelCopula(4)
+```
+
+3. Fit copula
+```python
+copula.fit(data = moex_returns, latent_process_tr = 10000, m_iters = 5, accuracy=1e-4,
+           method = 'scar-p-ou', seed = 10)
+```
+
+Function *fit* description:
+1. ***data*** -- initial dataset: log-returns or pseudo observations (see ***to_pobs*** description). Type *Numpy Array*, required parameter.
+2. ***method*** -- calculation method. Type *Literal*. Available methods: *mle*, *scar-p-ou*, *scar-m-ou*, *scar-p-ld*. Required parameter.
+* mle - classic method with constant parameter
+* scar-p-ou - stochastic model with Ornstein-Uhlenbeck process as a parameter. ***latent_process_tr*** = 10000 is good choice here
+* scar-m-ou - stochastic model with Ornstein-Uhlenbeck process as a parameter and implemented importance sampling Monte-Carlo techniques. ***latent_process_tr*** = 500 is good choice here
+* scar-p-ld - stochastic model with process with logistic distribution transition density (experimental). ***latent_process_tr*** = 10000 is good choice here
+3. ***accuracy*** -- calculation accuracy. Type *float*. Optional parameter. Default value: $10^{-5}$ для *mle*, $10^{-4}$ for other methods.
+4. ***latent_process_tr*** -- number of latent process trajectories (for *mle* is ignored). Type *int*. Optional parameter. Default value $500$.
+5. ***m_iters*** -- number of importance sampling steps (only for *scar-m-ou*). Type *int*. Optional parameter. Default value $5$.
+6. ***to_pobs*** -- transform ***data*** to pseudo observations. Type *bool*. Optional parameter. Default value *True*.
+7. ***dwt*** -- Wiener process values. Type *Numpy Array*. Optional parameter. Default value *None*. If *None* then function generate dataset automatically.
+8. ***seed*** -- random state. Type *int*. Optional parameter. Default value *None*. If *None* then every run of program would unique. Parameter is ignored if ***dwt*** is set explicitly.
+9. ***alpha0*** -- starting point for optimization problem. Type *Numpy Array*. Optional parameter.
+10. ***init_state*** -- initial state of latent process. Type *Numpy Array*. Optional parameter.
+
+fit result as following
+```python
+message: Optimization terminated successfully
+ success: True
+  status: 0
+     fun: 177.0892776512386
+       x: [ 4.399e-01 -6.596e-01  2.037e-01]
+     nit: 23
+     jac: [ 2.838e-01  3.853e-03  1.081e-01]
+    nfev: 123
+    njev: 23
+    name: Gumbel copula
+  method: scar-p-ou
+```
+Where ***fun*** is log likelihood and ***x*** - parameter set $\[\theta, \mu, \nu\]$. Note that real parameter (that is used in calculations) is *copula.transform(x)*.
+
+4. Calculate risk_metrics
+```python
+from pyscarcopula.metrics.risk_metrics import risk_metrics
+result = risk_metrics(copula = copula,
+                      data = moex_returns,
+                      window_len = 250,
+                      gamma = 0.95,
+                      MC_iterations = 1000000,
+                      marginals_params_method = 'normal',
+                      latent_process_type='scar-p-ou',
+                      latent_process_tr = 10000,
+                      optimize_portfolio = False)
+```
+
 Examples of using this code coulde be found in example.ipynb notebook.
 
