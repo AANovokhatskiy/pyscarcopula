@@ -146,7 +146,7 @@ Function *fit* description:
 9. ***alpha0*** -- starting point for optimization problem. Type *Numpy Array*. Optional parameter.
 10. ***init_state*** -- initial state of latent process. Type *Numpy Array*. Optional parameter.
 
-fit result as following
+fit result is mostly scipy.minimize output
 ```python
 message: Optimization terminated successfully
  success: True
