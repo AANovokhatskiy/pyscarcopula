@@ -131,7 +131,7 @@ def get_latent_process_params(copula, returns_data, method, window_len, dwt, M_i
                                         m_iters = M_iterations,
                                         to_pobs = False,
                                         dwt = dwt[k:window_len + k],
-                                        print_path = True,
+                                        print_path = False,
                                         init_state = init_state,
                                         max_log_lik_debug = max_log_lik_debug)
             if np.isnan(cop_fit_result.fun) == True or int(cop_fit_result.fun) == -10**10:

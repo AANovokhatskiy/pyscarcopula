@@ -212,7 +212,8 @@ def risk_metrics(copula,
                  seed = None,
                  optimize_portfolio = True, 
                  portfolio_weight = None, 
-                 pre_calc_latent_process_params = None):
+                 pre_calc_latent_process_params = None,
+                 save_logs = False):
     '''calculate risk metrics VaR and CVaR and optimize portfolio weights'''
 
     T = len(data)
@@ -231,7 +232,7 @@ def risk_metrics(copula,
         dwt = rng.normal(0, 1, size = (T, latent_process_tr)) * np.sqrt(dt)
         #dwt = copula.calculate_dwt(latent_process_type.upper(), T, latent_process_tr, seed, dt)
         latent_process_params = get_latent_process_params(copula, data, latent_process_type.upper(), 
-                                                          window_len, dwt, M_iterations)
+                                                          window_len, dwt, M_iterations, save_logs)
         del dwt
     else:
         latent_process_params = pre_calc_latent_process_params

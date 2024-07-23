@@ -1,3 +1,6 @@
+import numpy as np
+import sympy as sp
+
 from pyscarcopula.sampler.sampler_ou import p_sampler_ou, m_sampler_ou, m_jit_mlog_likelihood_ou
 from pyscarcopula.sampler.sampler_ld import p_sampler_ld
 from pyscarcopula.auxiliary.funcs import pobs
@@ -41,7 +44,7 @@ def cvm_test(pobs_data_rt):
     cvm_result = cramervonmises_2samp(set1, set2, method='auto')
     return cvm_result
 
-def get_smoothed_sample(copula, fit_result):
+def get_smoothed_sample(copula, fit_result, T):
     lp = 10000
 
     if fit_result.method.lower() == 'mle':
@@ -71,7 +74,7 @@ def gof_test(copula, data, fit_result, to_pobs = True):
     else:
         pobs_data = data
     T = len(pobs_data)
-    smoothed_sample = get_smoothed_sample(copula, fit_result)
+    smoothed_sample = get_smoothed_sample(copula, fit_result, T)
     Rosenblatt_tranformed = Rosenblatt_transform(copula, pobs_data, smoothed_sample)
     cvm_test_result = cvm_test(Rosenblatt_tranformed)
     return cvm_test_result

@@ -1,4 +1,5 @@
 - [What is it](#what-is-it)
+- [Install](#install)
 - [Mathematical basis](#mathematical-basis)
   * [Marginal distributions](#marginal-distributions)
   * [Joint distribution](#joint-distribution)
@@ -18,6 +19,14 @@ The main idea of calculations is the following. Consider a multivariate financia
 More information see below in Mathematical basis section.
 
 This project is made during the MSc program "Financial mathematics and financial technologies" in Sirius University, Sochi, Russia. 2023-2024.
+
+# Install
+Installation could be made using pip:
+```
+git clone https://github.com/AANovokhatskiy/pyscarcopula
+cd pyscarcopula
+pip install .
+```
 
 # Mathematical basis
 ## Marginal distributions
