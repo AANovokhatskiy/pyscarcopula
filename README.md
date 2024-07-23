@@ -229,6 +229,8 @@ portfolio_weight = result[0.95][1000000]['weight']
 Plot the CVaR metrics:
 ```python
 from pyscarcopula.metrics.Empirical import cvar_emp_window
+from matplotlib import pyplot as plt
+import matplotlib.ticker as plticker
 
 pd_var_95 = pd.Series(data = -result[0.95][MC_iterations[0]]['var'], index=moex_returns_pd.index).shift(1)
 pd_cvar_95 = pd.Series(data = -result[0.95][MC_iterations[0]]['cvar'], index=moex_returns_pd.index).shift(1)
