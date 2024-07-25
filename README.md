@@ -130,7 +130,7 @@ moex_returns = np.log(moex_data[tickers] / moex_data[tickers].shift(1))[1:501].v
 
 ### 2. Initialize copula object
 ```python
-from pyscarcopula.src.Gumbel.GumbelCopula import GumbelCopula
+from pyscarcopula.GumbelCopula import GumbelCopula
 copula = GumbelCopula(4)
 ```
 
