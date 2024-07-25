@@ -134,6 +134,18 @@ from pyscarcopula.src.Gumbel.GumbelCopula import GumbelCopula
 copula = GumbelCopula(4)
 ```
 
+For initialized copula it is possible to show a cdf as a sympy expression:
+```python
+copula.sp_cdf()
+```
+with output
+```math
+e^{- \\left(\\left(- \\log{\\left(u_{0} \\right)}\\right)^{r} + \\left(- \\log{\\left(u_{1} \\right)}\\right)^{r} + \\left(- \\log{\\left(u_{2} \\right)}\\right)^{r} + \\left(- \\log{\\left(u_{3} \\right)}\\right)^{r}\\right)^{\\frac{1}{r}}}
+```
+
+It is also possible to call *sp_pdf()* to show pdf expression. But the anwser would be much more complex.
+
+
 ### 3. Fit copula
 ```python
 fit_result = copula.fit(data = moex_returns, latent_process_tr = 10000, m_iters = 5, accuracy=1e-4,
