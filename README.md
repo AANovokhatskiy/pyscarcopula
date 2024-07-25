@@ -140,7 +140,7 @@ copula.sp_cdf()
 ```
 with output
 ```math
-e^{- \\left(\\left(- \\log{\\left(u_{0} \\right)}\\right)^{r} + \\left(- \\log{\\left(u_{1} \\right)}\\right)^{r} + \\left(- \\log{\\left(u_{2} \\right)}\\right)^{r} + \\left(- \\log{\\left(u_{3} \\right)}\\right)^{r}\\right)^{\\frac{1}{r}}}
+e^{- \left(\left(- \log{\left(u_{0} \right)}\right)^{r} + \left(- \log{\left(u_{1} \right)}\right)^{r} + \left(- \log{\left(u_{2} \right)}\right)^{r} + \left(- \log{\left(u_{3} \right)}\right)^{r}\right)^{\frac{1}{r}}}
 ```
 
 It is also possible to call *sp_pdf()* to show pdf expression. But the anwser would be much more complex.
