@@ -249,7 +249,7 @@ portfolio_weight = result[0.95][1000000]['weight']
 ```
 Plot the CVaR metrics:
 ```python
-from pyscarcopula.metrics.Empirical import cvar_emp_window
+from pyscarcopula.metrics.empirical import cvar_emp_window
 from matplotlib import pyplot as plt
 import matplotlib.ticker as plticker
 
