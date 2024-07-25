@@ -1,4 +1,4 @@
-import numpy as np
+import numpy as np 
 
 def var_emp_window(arr, gamma, window_len):
     res = np.zeros_like(arr)
