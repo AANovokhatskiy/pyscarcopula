@@ -8,7 +8,6 @@ setup(
     author_email='aanovokhatskiy@gmail.com', 
     packages=find_packages(),
     package_data={'pyscarcopula': ['auxiliary/*', 'marginal/*', 'metrics/*', 'sampler/*', 'stattests/*']},
-    packages=find_packages(),
     install_requires=[
         'numpy',
         'numba',
