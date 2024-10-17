@@ -130,7 +130,7 @@ moex_returns = np.log(moex_data[tickers] / moex_data[tickers].shift(1))[1:501].v
 
 ### 2. Initialize copula object
 ```python
-from pyscarcopula.GumbelCopula import GumbelCopula
+from pyscarcopula import GumbelCopula
 copula = GumbelCopula(4)
 ```
 
@@ -149,7 +149,7 @@ It is also possible to call *sp_pdf()* to show pdf expression. But the anwser wo
 ### 3. Fit copula
 ```python
 fit_result = copula.fit(data = moex_returns, latent_process_tr = 10000, m_iters = 5, accuracy=1e-4,
-                        method = 'scar-p-ou', seed = 10)
+                        method = 'scar-p-ou', seed = 333)
 fit_result
 ```
 
@@ -187,18 +187,18 @@ Where ***fun*** is log likelihood and ***x*** - parameter set $\[\theta, \mu, \n
 
 Goodness of fit for copula using Rosenblatt transform:
 ```python
-from pyscarcopula.stattests.gof_copula import gof_test
+from pyscarcopula.stattests import gof_test
 
 gof_test(copula, moex_returns, fit_result, to_pobs=True)
 ```
 with output
 ```python
-CramerVonMisesResult(statistic=0.42269434603173295, pvalue=0.06291909568389753)
+CramerVonMisesResult(statistic=0.31646679365076125, pvalue=0.12149449541898527)
 ```
 
 ### 4. Calculate risk_metrics
 ```python
-from pyscarcopula.metrics.risk_metrics import risk_metrics
+from pyscarcopula.metrics import risk_metrics
 
 gamma = [0.95]
 window_len = 250
@@ -222,7 +222,7 @@ result = risk_metrics(copula,
                       latent_process_tr = latent_process_tr,
                       optimize_portfolio = False,
                       portfolio_weight = portfolio_weight,
-                      seed = 10,
+                      seed = 111,
                       M_iterations = M_iterations,
                       save_logs = False
                       )
@@ -249,7 +249,7 @@ portfolio_weight = result[0.95][1000000]['weight']
 ```
 Plot the CVaR metrics:
 ```python
-from pyscarcopula.metrics.empirical import cvar_emp_window
+from pyscarcopula.metrics import cvar_emp_window
 from matplotlib import pyplot as plt
 import matplotlib.ticker as plticker
 
@@ -273,7 +273,7 @@ cvar_emp = cvar_emp_window(daily_returns.values, 1 - gamma, window_len)
 ax.plot(daily_returns[i1:i2], label = 'Portfolio log return')
 ax.plot(cvar_emp[i1:i2], label = 'Emperical CVaR', linestyle='dashed', color = 'gray')
 
-ax.plot(pd_cvar_95[i1:i2], label= 'scar-p-ou normal CVaR 95%')
+ax.plot(pd_cvar_95[i1:i2], label= f'{method} {marginals_method} CVaR 95%')
 
 ax.set_title(f'Daily returns', fontsize = 14)
 
@@ -289,7 +289,7 @@ ax.legend(fontsize=12, loc = 'upper right')
 
 Goodness of fit for found CVaR using Kupiec test. 
 ```python
-from pyscarcopula.stattests.Kupiec import Kupiec_POF
+from pyscarcopula.stattests import Kupiec_POF
 
 POF = Kupiec_POF(daily_returns.values[i1:i2], pd_cvar_95.values[i1:i2].flatten(), 1 - gamma)
 ```
