@@ -9,7 +9,7 @@
 
 
 # What is it
-This project is made to calculate to calculate portfolio risk metrics Value-at-risk (VaR) and Conditional Value-at-risk (CVaR) using stochastic multivariate copula approach.
+This project is made to calculate portfolio risk metrics Value-at-risk (VaR) and Conditional Value-at-risk (CVaR) using stochastic multivariate copula approach.
 The main idea of calculations is the following. Consider a multivariate financial time-series (stock prices for example) and transform them to log-returns. Then we do
 * Fit marginal distributions. Implemented: normal (best perfomance), Levy stable (heavy-tailed), generalized hyperbolic (heavy-tailed).
 * Fit joint distribution. We use multivariate Archimedian copla approach. Implemented Frank, Gumbel, Clayton and Joe copulas. For this copulas we consider a classical model with constant parameter (MLE) and time-dependend model where Ornstein-Uhlenbeck process is used as a copula parameter. This extension of model could improve joint distribution fit about 15-20% more for log-likelihood.
