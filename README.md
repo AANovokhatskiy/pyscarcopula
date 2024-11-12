@@ -301,7 +301,7 @@ ax.tick_params(axis='y', labelsize = 12)
 ax.grid(True)
 ax.legend(fontsize=12, loc = 'upper right')
 ```
-![output](https://github.com/user-attachments/assets/469a6a65-e773-42f1-a0f8-4f79b9a6cd82)
+![output](https://github.com/user-attachments/assets/673f5c1d-ede3-41ac-bdc0-be0e57c49585)
 
 Goodness of fit for found CVaR using Kupiec test. 
 ```python
