@@ -13,7 +13,7 @@ def p_sampler_init_state_ou(alpha, latent_process_tr):
     return x0
 
 
-@jit(nopython=True,  cache = True) #parallel = True,
+@jit(nopython=True,  cache = True)
 def p_sampler_ou(alpha, dwt, init_state = None):
     theta, mu, nu = alpha[0], alpha[1], alpha[2]
 
@@ -30,39 +30,39 @@ def p_sampler_ou(alpha, dwt, init_state = None):
     for i in range(1, T + 1):
         A = -theta * (xt[i - 1] - mu)
         B = nu
-        Ax = -theta
-        Axx = 0
-        Bx = 0
-        Bxx = 0
-        xt[i] = xt[i-1] + (A - 1/2*B*Bx)*dt + B*dwt[i-1] + 1/2*B*Bx*dwt[i-1]**2 +\
-                    (1/2*A*Bx + 1/2*Ax*B + 1/4*B**2*Bxx)*dt*dwt[i-1] + (1/2*A*Ax + 1/4*Axx*B**2)*dt**2
+        # Ax = -theta
+        # Axx = 0
+        # Bx = 0
+        # Bxx = 0
+        # xt[i] = xt[i-1] + (A - 1/2*B*Bx)*dt + B*dwt[i-1] + 1/2*B*Bx*dwt[i-1]**2 +\
+        #             (1/2*A*Bx + 1/2*Ax*B + 1/4*B**2*Bxx)*dt*dwt[i-1] + (1/2*A*Ax + 1/4*Axx*B**2)*dt**2
+        xt[i] = xt[i - 1] + A * dt + B * dwt[i - 1]
     return xt[1:]
 
 
-@jit(nopython=True,  cache = True) #parallel = True,
+@jit(nopython=True,  cache = True)
 def p_sampler_one_step_ou(alpha, dwt, dt, init_state):
     theta, mu, nu = alpha[0], alpha[1], alpha[2]
     latent_process_tr = len(dwt)
     if init_state is None:
         x0 = p_sampler_init_state_ou(alpha, latent_process_tr)
     else:
-        x0 = init_state
-    # A = -theta * (x0 - mu)
-    # B = nu
-    # x1 = x0 + A * dt + B * dwt
+        x0 = init_state    
 
     A = -theta * (x0 - mu)
     B = nu
-    Ax = -theta
-    Axx = 0
-    Bx = 0
-    Bxx = 0
-    x1 = x0 + (A - 1/2*B*Bx)*dt + B*dwt + 1/2*B*Bx*dwt**2 +\
-                (1/2*A*Bx + 1/2*Ax*B + 1/4*B**2*Bxx)*dt*dwt + (1/2*A*Ax + 1/4*Axx*B**2)*dt**2
+    # Ax = -theta
+    # Axx = 0
+    # Bx = 0
+    # Bxx = 0
+    # x1 = x0 + (A - 1/2*B*Bx)*dt + B*dwt + 1/2*B*Bx*dwt**2 +\
+    #             (1/2*A*Bx + 1/2*Ax*B + 1/4*B**2*Bxx)*dt*dwt + (1/2*A*Ax + 1/4*Axx*B**2)*dt**2
+    x1 = x0 + A * dt + B * dwt
+
     return x1
 
 
-@jit(nopython=True,  cache = True) #, parallel = True
+@jit(nopython=True,  cache = True)
 def p_sampler_one_step_ou_rng(alpha, latent_process_tr, random_state, dt, init_state):
     theta, mu, nu = alpha[0], alpha[1], alpha[2]
     if init_state is None:
@@ -73,17 +73,18 @@ def p_sampler_one_step_ou_rng(alpha, latent_process_tr, random_state, dt, init_s
     sqrt_dt = np.sqrt(dt)
     rng = np.random.seed(random_state)
     dwt = sqrt_dt * np.random.normal(0 , 1 , size = latent_process_tr)
-    # A = -theta * (x0 - mu)
-    # B = nu
-    # x1 = x0 + A * dt + B * dwt
+
+    
     A = -theta * (x0 - mu)
     B = nu
-    Ax = -theta
-    Axx = 0
-    Bx = 0
-    Bxx = 0
-    x1 = x0 + (A - 1/2*B*Bx)*dt + B*dwt + 1/2*B*Bx*dwt**2 +\
-                (1/2*A*Bx + 1/2*Ax*B + 1/4*B**2*Bxx)*dt*dwt + (1/2*A*Ax + 1/4*Axx*B**2)*dt**2
+    # Ax = -theta
+    # Axx = 0
+    # Bx = 0
+    # Bxx = 0
+    # x1 = x0 + (A - 1/2*B*Bx)*dt + B*dwt + 1/2*B*Bx*dwt**2 +\
+    #             (1/2*A*Bx + 1/2*Ax*B + 1/4*B**2*Bxx)*dt*dwt + (1/2*A*Ax + 1/4*Axx*B**2)*dt**2
+    x1 = x0 + A * dt + B * dwt
+
     return x1
 
 
@@ -101,24 +102,22 @@ def p_sampler_no_hist_ou(alpha, dwt, dt, init_state):
     xt_km1 = x0
 
     for k in range(1, T + 1):
-        # A = -theta * (xt_km1 - mu)
-        # B = nu
-        # xt_k = xt_km1 + A * dt + B * dwt[k - 1]
-
         A = -theta * (xt_km1 - mu)
         B = nu
-        Ax = -theta
-        Axx = 0
-        Bx = 0
-        Bxx = 0
-        xt_k = xt_km1 + (A - 1/2*B*Bx)*dt + B*dwt[k - 1] + 1/2*B*Bx*dwt[k - 1]**2 +\
-                    (1/2*A*Bx + 1/2*Ax*B + 1/4*B**2*Bxx)*dt*dwt[k - 1] + (1/2*A*Ax + 1/4*Axx*B**2)*dt**2
+        # Ax = -theta
+        # Axx = 0
+        # Bx = 0
+        # Bxx = 0
+        # xt_k = xt_km1 + (A - 1/2*B*Bx)*dt + B*dwt[k - 1] + 1/2*B*Bx*dwt[k - 1]**2 +\
+        #             (1/2*A*Bx + 1/2*Ax*B + 1/4*B**2*Bxx)*dt*dwt[k - 1] + (1/2*A*Ax + 1/4*Axx*B**2)*dt**2
+        
+        xt_k = xt_km1 + A * dt + B * dwt[k - 1]
 
         xt_km1 = xt_k
     return xt_k
 
 
-@jit(nopython=True,  cache = True) #, parallel = True
+@jit(nopython=True,  cache = True)
 def p_sampler_no_hist_ou_rng(alpha, latent_process_tr, random_states_sequence, dt, init_state):
     theta, mu, nu = alpha[0], alpha[1], alpha[2]
     T = len(random_states_sequence)
@@ -132,18 +131,18 @@ def p_sampler_no_hist_ou_rng(alpha, latent_process_tr, random_states_sequence, d
     for k in range(1, T + 1):
         rng = np.random.seed(random_states_sequence[k - 1])
         dwt = sqrt_dt * np.random.normal(0 , 1 , size = latent_process_tr)
-        # A = -theta * (xt_km1 - mu)
-        # B = nu
-        # xt_k = xt_km1 + A * dt + B * dwt
+        
 
         A = -theta * (xt_km1 - mu)
         B = nu
-        Ax = -theta
-        Axx = 0
-        Bx = 0
-        Bxx = 0
-        xt_k = xt_km1 + (A - 1/2*B*Bx)*dt + B*dwt + 1/2*B*Bx*dwt**2 +\
-                    (1/2*A*Bx + 1/2*Ax*B + 1/4*B**2*Bxx)*dt*dwt + (1/2*A*Ax + 1/4*Axx*B**2)*dt**2
+        # Ax = -theta
+        # Axx = 0
+        # Bx = 0
+        # Bxx = 0
+        # xt_k = xt_km1 + (A - 1/2*B*Bx)*dt + B*dwt + 1/2*B*Bx*dwt**2 +\
+        #             (1/2*A*Bx + 1/2*Ax*B + 1/4*B**2*Bxx)*dt*dwt + (1/2*A*Ax + 1/4*Axx*B**2)*dt**2
+        
+        xt_k = xt_km1 + A * dt + B * dwt
 
         xt_km1 = xt_k
     return xt_k
@@ -368,13 +367,13 @@ def m_sampler_ou(alpha, a1t, a2t, dwt, init_state = None):
         xswdt = (xsdt + a1 * sigma2dt + a1dt * sigma2) / p + 2 * xsw * (a2dt * sigma2 + a2 * sigma2dt) / p
         B = nu
         A = xswdt - (xt[i - 1] - xsw) * (B**2 - sigma2wdt) / (2 * sigma2w)
-        #xt[i] = xt[i - 1] + A * dt + B * dwt[i - 1]
-        Ax = -(B**2 - sigma2wdt) / (2 * sigma2w)
-        Axx = 0
-        Bx = 0
-        Bxx = 0
-        xt[i] = xt[i-1] + (A - 1/2*B*Bx)*dt + B*dwt[i-1] + 1/2*B*Bx*dwt[i-1]**2 +\
-                    (1/2*A*Bx + 1/2*Ax*B + 1/4*B**2*Bxx)*dt*dwt[i-1] + (1/2*A*Ax + 1/4*Axx*B**2)*dt**2  
+        xt[i] = xt[i - 1] + A * dt + B * dwt[i - 1]
+        # Ax = -(B**2 - sigma2wdt) / (2 * sigma2w)
+        # Axx = 0
+        # Bx = 0
+        # Bxx = 0
+        # xt[i] = xt[i-1] + (A - 1/2*B*Bx)*dt + B*dwt[i-1] + 1/2*B*Bx*dwt[i-1]**2 +\
+        #             (1/2*A*Bx + 1/2*Ax*B + 1/4*B**2*Bxx)*dt*dwt[i-1] + (1/2*A*Ax + 1/4*Axx*B**2)*dt**2  
     return xt[1:]
 
 
@@ -529,3 +528,93 @@ def m_jit_mlog_likelihood_ou(alpha, data, dwt, latent_process_tr, m_iters, print
     if print_path == True:
         print(alpha, res)
     return res, a1t, a2t
+
+
+#@jit(nopython=True, cache = True)
+def jit_latent_process_conditional_expectation_p_ou(pdf, transform, pobs_data, alpha, latent_process_tr):
+    T = len(pobs_data)
+    dwt = np.random.normal(0, 1, size = (T, latent_process_tr)) * np.sqrt(1/T)
+
+    lambda_data = transform(p_sampler_ou(alpha, dwt))
+    
+    copula_log_data = np.zeros((T, latent_process_tr))
+
+    for k in range(0, latent_process_tr):
+        copula_log_data[:,k] = np.log(np.maximum(pdf(pobs_data.T, lambda_data[:,k]), 1e-100))
+    
+    copula_cs_log_data = np.zeros(latent_process_tr)
+    
+    latent_process_conditional_sample = np.zeros(T)
+    for i in range(0, T):
+
+        copula_cs_log_data += copula_log_data[i]
+        xc = np.max(copula_cs_log_data)
+        
+        temp1 = np.exp(copula_cs_log_data - xc)
+
+        avg_likelihood = np.sum(temp1) / latent_process_tr
+        log_lik = np.log(avg_likelihood) + xc
+
+        avg_expectation = np.sum(lambda_data[i] * temp1) / latent_process_tr
+        avg_log_expectation = np.log(avg_expectation) + xc
+
+        latent_process_conditional_sample[i] = avg_log_expectation - log_lik
+
+    result = np.exp(latent_process_conditional_sample)
+    
+    return result
+
+
+#@jit(nopython=True, cache = True)
+def jit_latent_process_conditional_expectation_m_ou(pdf, transform, pobs_data, alpha, latent_process_tr, m_iters):
+    T = len(pobs_data)
+    dwt = np.random.normal(0, 1, size = (T, latent_process_tr)) * np.sqrt(1/T)
+
+    res, a1t, a2t = m_jit_mlog_likelihood_ou(alpha, pobs_data, 
+                                             dwt, latent_process_tr, m_iters, False, 
+                                             pdf, transform)
+
+
+    lambda_data = m_sampler_ou(alpha, a1t, a2t, dwt)
+    norm_log_data = np.zeros((T, latent_process_tr))
+    g = np.zeros((T, latent_process_tr))
+
+    dt = 1/T
+    for i in range(T - 1, 0, -1):
+        a1, a2 = a1t[i], a2t[i]
+        norm_log_data[i] = log_norm_ou(alpha, a1, a2, dt, lambda_data[i - 1])
+    
+    x0 = p_sampler_init_state_ou(alpha, latent_process_tr)
+    norm_log_data[0] =  log_norm_ou(alpha, a1t[0], a2t[0], dt, x0)
+
+    for i in range(0, T):
+        g[i] = (a1t[i] * lambda_data[i]  + a2t[i] * lambda_data[i]**2)
+
+    copula_log_data = np.zeros((T, latent_process_tr))
+
+    for k in range(0, latent_process_tr):
+        copula_log_data_temp = np.log(np.maximum(pdf(pobs_data.T, transform(lambda_data[:,k])), 1e-100))
+        copula_log_data[:,k] = copula_log_data_temp + norm_log_data[:,k] - g[:,k]
+    
+    copula_cs_log_data = np.zeros(latent_process_tr)
+    
+    latent_process_conditional_sample = np.zeros(T)
+    for i in range(0, T):
+
+        copula_cs_log_data += copula_log_data[i]
+
+        xc = np.max(copula_cs_log_data)
+        
+        temp1 = np.exp(copula_cs_log_data - xc)
+
+        avg_likelihood = np.sum(temp1) / latent_process_tr
+        log_lik = np.log(avg_likelihood) + xc
+
+        avg_expectation = np.sum(transform(lambda_data[i]) * temp1) / latent_process_tr
+        avg_log_expectation = np.log(avg_expectation) + xc
+
+        latent_process_conditional_sample[i] = avg_log_expectation - log_lik
+
+    result = np.exp(latent_process_conditional_sample)
+    
+    return result

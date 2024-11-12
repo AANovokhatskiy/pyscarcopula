@@ -1,32 +1,49 @@
 import numpy as np
 import sympy as sp
 
-from pyscarcopula.sampler.sampler_ou import p_sampler_ou, m_sampler_ou, m_jit_mlog_likelihood_ou
-from pyscarcopula.sampler.sampler_ld import p_sampler_ld
+from pyscarcopula.sampler.sampler_ou import jit_latent_process_conditional_expectation_p_ou
+from pyscarcopula.sampler.sampler_ou import jit_latent_process_conditional_expectation_m_ou
+from pyscarcopula.sampler.sampler_ld import jit_latent_process_conditional_expectation_p_ld
 from pyscarcopula.auxiliary.funcs import pobs
 
 from scipy.stats import chi2, norm, cramervonmises_2samp
+from functools import lru_cache
+from numba import njit
+
+
+@lru_cache
+def Rosenblatt_transform_funcs(copula):
+    funcs = []
+    expr = copula.sp_cdf()
+
+    d = copula.dim
+    u = sp.symbols('u0:%d'%(d), positive = True)
+    r = sp.symbols('r')
+
+    for i in range(1, d):
+        expr = expr.diff(u[i - 1], 1)
+        expr_func = sp.powsimp(expr)
+        expr_func = njit(sp.lambdify((u, r), expr, modules = 'numpy', cse = True))
+        funcs.append(expr_func)
+    return funcs 
 
 def Rosenblatt_transform(copula, pobs_data, param):
     T = len(pobs_data)
     d = copula.dim
-    u = sp.symbols('u0:%d'%(d))
-    r = sp.symbols('r')
-
     res = np.zeros_like(pobs_data)
-    expr = copula.sp_cdf()
+
+    funcs = Rosenblatt_transform_funcs(copula)
+
     for i in range(1, d):
-        #expr = sp.together(expr.diff(u[i], 1))
-        expr = expr.diff(u[i - 1], 1)
-        expr_func = sp.lambdify((u, r), expr, modules = 'numpy', cse = True)
         for k in range(0, T):
             arg1 = np.ones(d)
             arg1[0:i] = pobs_data[k][0:i]
             arg2 = np.ones(d)
             arg2[0:i + 1] = pobs_data[k][0:i + 1]
-            res[k][i] = expr_func(arg2, param[k]) / expr_func(arg1, param[k])
+            res[k][i] = funcs[i - 1](arg2, param[k]) / funcs[i - 1](arg1, param[k])
     res[:,0] = pobs_data[:,0]
     return res
+
 
 def cvm_test(pobs_data_rt):
     T = len(pobs_data_rt)
@@ -44,29 +61,47 @@ def cvm_test(pobs_data_rt):
     cvm_result = cramervonmises_2samp(set1, set2, method='auto')
     return cvm_result
 
-def get_smoothed_sample(copula, fit_result, T):
-    lp = 10000
+
+def latent_process_conditional_expectation_p_ou(copula, pobs_data, fit_result):
+    alpha = np.array(fit_result.x)
+    latent_process_tr = fit_result.latent_process_tr
+    result = jit_latent_process_conditional_expectation_p_ou(copula.np_pdf(), copula.transform, 
+                                                             pobs_data, alpha, latent_process_tr)
+    return result
+
+
+def latent_process_conditional_expectation_p_ld(copula, pobs_data, fit_result):
+    alpha = np.array(fit_result.x)
+    latent_process_tr = fit_result.latent_process_tr
+    result = jit_latent_process_conditional_expectation_p_ld(copula.np_pdf(), copula.transform, 
+                                                             pobs_data, alpha, latent_process_tr)
+    return result
+
+
+def latent_process_conditional_expectation_m_ou(copula, pobs_data, fit_result):
+    alpha = np.array(fit_result.x)
+    latent_process_tr = fit_result.latent_process_tr
+    m_iters = fit_result.m_iterations
+    result = jit_latent_process_conditional_expectation_m_ou(copula.np_pdf(), copula.transform, 
+                                                             pobs_data, alpha, latent_process_tr, m_iters)
+    return result
+
+
+def get_smoothed_sample(copula, pobs_data, fit_result):
+    T = len(pobs_data)
 
     if fit_result.method.lower() == 'mle':
         smoothed_sample = np.ones(T) * copula.transform(fit_result.x[0])
     elif fit_result.method.lower() == 'scar-p-ou':
-        dwt = np.random.normal(0, 1, size = (T, lp)) * np.sqrt(1/T)
-        # smoothed_sample = copula.transform(np.mean(sample, axis = 1))
-        sample = copula.transform(p_sampler_ou(fit_result.x, dwt))
-        smoothed_sample = np.mean(sample, axis = 1)
+        smoothed_sample = latent_process_conditional_expectation_p_ou(copula, pobs_data, fit_result)
     elif fit_result.method.lower() == 'scar-m-ou':
-        lp = 1000
-        dwt = np.random.normal(0, 1, size = (T, lp)) * np.sqrt(1/T)
-        res, a1t, a2t = m_jit_mlog_likelihood_ou(fit_result.x, pobs_data, dwt, lp, 10, False, copula.np_pdf(), copula.transform)
-        sample = copula.transform(m_sampler_ou(fit_result.x, a1t, a2t, dwt))
-        smoothed_sample = np.mean(sample, axis = 1)
+        smoothed_sample = latent_process_conditional_expectation_m_ou(copula, pobs_data, fit_result)
     elif fit_result.method.lower() == 'scar-p-ld':
-        dwt = np.random.normal(0, 1, size = (T, lp)) * np.sqrt(1/T)
-        sample = copula.transform(p_sampler_ld(fit_result.x, dwt))
-        smoothed_sample = np.mean(sample, axis = 1)
+        smoothed_sample = latent_process_conditional_expectation_p_ld(copula, pobs_data, fit_result)
     else:
         raise ValueError(f'method {fit_result.method} not implemented')
     return smoothed_sample
+
 
 def gof_test(copula, data, fit_result, to_pobs = True):
     if to_pobs == True:
@@ -74,7 +109,7 @@ def gof_test(copula, data, fit_result, to_pobs = True):
     else:
         pobs_data = data
     T = len(pobs_data)
-    smoothed_sample = get_smoothed_sample(copula, fit_result, T)
+    smoothed_sample = get_smoothed_sample(copula, pobs_data, fit_result)
     Rosenblatt_tranformed = Rosenblatt_transform(copula, pobs_data, smoothed_sample)
     cvm_test_result = cvm_test(Rosenblatt_tranformed)
     return cvm_test_result

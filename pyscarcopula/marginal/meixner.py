@@ -42,8 +42,11 @@ def generate_batch(params, size):
         batch_result[:, i] = ot.MeixnerDistribution(*params[i]).getSample(size).asDataFrame().values.flatten()
     return batch_result
 
-def meixner_rvs(params, N, batch_size=10000):
+def meixner_rvs(params, N, batch_size=20000):
     dim = len(params)
-    num_batches = (N + batch_size - 1) // batch_size
-    results = Parallel(n_jobs=-1)(delayed(generate_batch)(params, batch_size) for _ in range(num_batches))
-    return np.vstack(results)[:N]
+    if N > 10 * batch_size:
+        num_batches = (N + batch_size - 1) // batch_size
+        results = Parallel(n_jobs=-1)(delayed(generate_batch)(params, batch_size) for _ in range(num_batches))
+        return np.vstack(results)[:N]
+    else:
+        return generate_batch(params, N)

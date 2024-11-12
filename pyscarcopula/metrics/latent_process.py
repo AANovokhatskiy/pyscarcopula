@@ -94,10 +94,9 @@ def latent_process_sampler_rng(latent_process_params,
     return current_state
 
 
-def get_latent_process_params(copula, returns_data, method, window_len, dwt, M_iterations = 5, save_logs = True):
+def get_latent_process_params(copula, returns_data, method, window_len, dwt, M_iterations = 5, save_logs = False):
     print('calc copula params')
 
-    #alpha0 = np.array([0.5, 0.5, 0.05])
     alpha0 = None
     T = len(returns_data)
     dt = 1/window_len
@@ -105,19 +104,17 @@ def get_latent_process_params(copula, returns_data, method, window_len, dwt, M_i
 
     latent_process_params = np.zeros((T, 4))
     latent_process_tr = len(dwt[0])
-    #M = 5
+
     pobs = jit_pobs(returns_data)
     mle_fit_result = copula.fit(pobs, method = 'mle')
     max_log_lik_debug = -mle_fit_result.fun * 2
 
     for k in tqdm(range(0, iters)):
-    #for k in range(0, iters):
-        #print(f'========================={k}=========================')
         idx = k + window_len - 1
         pobs = jit_pobs(returns_data[k:window_len + k])
         if method == 'MLE':
             cop_fit_result = copula.fit(pobs, method = method, accuracy = 1e-5, to_pobs = False)
-            latent_process_params[idx] = np.array([cop_fit_result.fun,*cop_fit_result.x, 0, 0])
+            latent_process_params[idx] = np.array([cop_fit_result.fun, *cop_fit_result.x, 0, 0])
         else:
             if k == 0:
                 init_state = None
@@ -139,9 +136,6 @@ def get_latent_process_params(copula, returns_data, method, window_len, dwt, M_i
             else:
                 alpha0 = np.array(cop_fit_result.x)
                 latent_process_params[idx] = np.array([cop_fit_result.fun,*cop_fit_result.x])
-        #print(init_state)
-        #print(latent_process_params[idx])
-
 
     if save_logs == True:
         '''log copula parameters result'''

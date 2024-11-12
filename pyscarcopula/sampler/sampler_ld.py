@@ -231,4 +231,36 @@ def p_jit_mlog_likelihood_ld(alpha: np.array, data: np.array, dwt, latent_proces
     return res
 
 
+#@jit(nopython=True, cache = True)
+def jit_latent_process_conditional_expectation_p_ld(pdf, transform, pobs_data, alpha, latent_process_tr):
+    T = len(pobs_data)
+    dwt = np.random.normal(0, 1, size = (T, latent_process_tr)) * np.sqrt(1/T)
 
+    lambda_data = transform(p_sampler_ld(alpha, dwt))
+    
+    copula_log_data = np.zeros((T, latent_process_tr))
+
+    for k in range(0, latent_process_tr):
+        copula_log_data[:,k] = np.log(np.maximum(pdf(pobs_data.T, lambda_data[:,k]), 1e-100))
+    
+    copula_cs_log_data = np.zeros(latent_process_tr)
+    
+    latent_process_conditional_sample = np.zeros(T)
+    for i in range(0, T):
+
+        copula_cs_log_data += copula_log_data[i]
+        xc = np.max(copula_cs_log_data)
+        
+        temp1 = np.exp(copula_cs_log_data - xc)
+
+        avg_likelihood = np.sum(temp1) / latent_process_tr
+        log_lik = np.log(avg_likelihood) + xc
+
+        avg_expectation = np.sum(lambda_data[i] * temp1) / latent_process_tr
+        avg_log_expectation = np.log(avg_expectation) + xc
+
+        latent_process_conditional_sample[i] = avg_log_expectation - log_lik
+
+    result = np.exp(latent_process_conditional_sample)
+    
+    return result

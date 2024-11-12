@@ -4,7 +4,7 @@ from pyscarcopula.marginal.stable import stable_marginals, stable_rvs
 from typing import Literal
 
 def get_marginals_params_params(data, window_len, method: Literal['normal', 'hyperbolic', 'stable'] = 'normal'):
-    print('calc marginals_params')
+    print('calc marginals params')
     available_methods = ['normal', 'hyperbolic', 'stable']
     if method == 'normal':
         res = jit_normal_marginals(data, window_len)

@@ -3,6 +3,8 @@ import numpy as np
 
 from numba import njit
 from pyscarcopula.ArchimedianCopula import ArchimedianCopula
+#from scipy.stats import levy_stable
+from pyscarcopula.marginal.stable import generate_levy_stable
 
 class GumbelCopula(ArchimedianCopula):
     def __init__(self, dim: int) -> None:
@@ -28,3 +30,13 @@ class GumbelCopula(ArchimedianCopula):
     @property
     def sp_inverse_generator(self):
         return self.__sp_inverse_generator
+
+    @staticmethod
+    def psi(t, r):
+        return np.exp(-t**(1 / r))
+     
+    @staticmethod
+    def V(N, r):
+        #res = levy_stable.rvs(alpha = 1/r, beta = 1, loc = 0, scale = np.cos(np.pi / (2 * r))**r, size = N)
+        res = generate_levy_stable(alpha = 1/r, beta = 1, loc = 0, scale = np.cos(np.pi / (2 * r))**r, size = N)
+        return res

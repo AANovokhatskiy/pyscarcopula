@@ -121,18 +121,20 @@ where $N$ - number of observations, $p = 1 - \gamma$ - significance level, $x$ -
 ```python
 import pandas as pd
 import numpy as np
+
 moex_data = pd.read_csv("data/moex_top.csv", index_col=0)
 tickers = ['AFLT', 'LSRG', 'GAZP', 'NLMK']
 
-moex_returns_pd = np.log(moex_data[tickers] / moex_data[tickers].shift(1))[1:501]
-moex_returns = np.log(moex_data[tickers] / moex_data[tickers].shift(1))[1:501].values
+returns_pd = np.log(moex_data[tickers] / moex_data[tickers].shift(1))[1:501]
+returns = returns_pd.values
 ```
 
 ### 2. Initialize copula object
 ```python
 from pyscarcopula import GumbelCopula
-copula = GumbelCopula(4)
+copula = GumbelCopula(dim = 4)
 ```
+Also available `GumbelCopula`, `JoeCopula`, `ClaytonCopula`, `FrankCopula`.
 
 For initialized copula it is possible to show a cdf as a sympy expression:
 ```python
@@ -148,8 +150,8 @@ It is also possible to call *sp_pdf()* to show pdf expression. But the anwser wo
 
 ### 3. Fit copula
 ```python
-fit_result = copula.fit(data = moex_returns, latent_process_tr = 10000, m_iters = 5, accuracy=1e-4,
-                        method = 'scar-p-ou', seed = 333)
+fit_result = copula.fit(data = returns, latent_process_tr = 500, m_iters = 5, accuracy=1e-4,
+                        method = 'scar-m-ou', seed = 333)
 fit_result
 ```
 
@@ -171,19 +173,22 @@ Function *fit* description:
 
 fit result is mostly scipy.minimize output
 ```python
-message: Optimization terminated successfully
- success: True
-  status: 0
-     fun: 177.0892776512386
-       x: [ 4.399e-01 -6.596e-01  2.037e-01]
-     nit: 23
-     jac: [ 2.838e-01  3.853e-03  1.081e-01]
-    nfev: 123
-    njev: 23
-    name: Gumbel copula
-  method: scar-p-ou
+           message: CONVERGENCE: REL_REDUCTION_OF_F_<=_FACTR*EPSMCH
+           success: True
+            status: 0
+               fun: 184.55204171425615
+                 x: [ 9.903e-01  6.082e-01  6.261e-01]
+               nit: 6
+               jac: [ 2.171e-01  3.244e-01 -9.893e-02]
+              nfev: 32
+              njev: 8
+          hess_inv: <3x3 LbfgsInvHessProduct with dtype=float64>
+              name: Gumbel copula
+            method: scar-m-ou
+ latent_process_tr: 500
+      m_iterations: 5
 ```
-Where ***fun*** is log likelihood and ***x*** - parameter set $\[\theta, \mu, \nu\]$. Note that real parameter (that is used in calculations) is *copula.transform(x)*.
+Where ***fun*** is log likelihood and ***x*** - parameter set $\[\theta, \mu, \nu\]$. Note that real parameter (that is used in calculations) is transformed in suitable interval using *copula.transform()* function.
 
 Goodness of fit for copula using Rosenblatt transform:
 ```python
@@ -193,27 +198,37 @@ gof_test(copula, moex_returns, fit_result, to_pobs=True)
 ```
 with output
 ```python
-CramerVonMisesResult(statistic=0.31646679365076125, pvalue=0.12149449541898527)
+CramerVonMisesResult(statistic=0.11370981269840286, pvalue=0.5219822616590395)
 ```
+### 4. Sample from copula
+It is possible to get sample of pseudo observations from copula
+```python
+copula.get_sample(N = 1000, r = 1.2)
+```
+The output is array of shape = (N, dim). Copula parameter r should be set manually (array of size N is also supported).
 
-### 4. Calculate risk_metrics
+### 5. Calculate risk_metrics
 ```python
 from pyscarcopula.metrics import risk_metrics
 
 gamma = [0.95]
 window_len = 250
 latent_process_tr = 10000
-MC_iterations = [int(10**6)]
+MC_iterations = [int(10**5)]
 M_iterations = 5
 
-method = 'scar-p-ou'
+#fastest calculations
+# method = 'mle'
+# marginals_method = 'normal'
 
+#More precise calculations. For appropiate choice of latent_process_tr and M_iterations see README.md
+method = 'scar-p-ou' # or use 'scar-m-ou'
 marginals_method = 'hyperbolic'
 
 count_instruments = len(tickers)
 portfolio_weight = np.ones(count_instruments) / count_instruments
 result = risk_metrics(copula,
-                      moex_returns,
+                      returns,
                       window_len,
                       gamma,
                       MC_iterations,
@@ -235,7 +250,7 @@ Function *risk_metrics* description
 4. ***gamma*** -- significance level. Type *float* or *Numpy Array*. Required parameter. If *Numpy Array* then calculations is made for every element of array. Made for minimizaion of repeated calculations. Usually one set, for example, $0.95$, $0.97$, $0.99$ or array $[0.95, 0.97, 0.99]$. 
 5. ***latent_process_type*** -- type of stochastic process that used as copula parameter. Type *Literal*. Available methods: *mle*, *scar-p-ou*, *scar-m-ou*, *scar-p-ld*. Required parameter.
 6. ***latent_process_tr*** -- number of Monte-Carlo iterations that used for copula fit. Type *int*. Required parameter. 
-7. ***marginals_params_method*** -- method of marginal distribution fit. Type *Literal*. Available methods: *normal*, *hyperbolic*. Required parameter.
+7. ***marginals_params_method*** -- method of marginal distribution fit. Type *Literal*. Available methods: *normal*, *hyperbolic*, *stable*. Required parameter.
 8. ***MC_iterations*** -- number of Monte-Carlo iterations that used for risk metrics calculations. Type *int* or *Numpy Array*. Required parameter. If *Numpy Array* then calculations is made for every element of array. Possible value, for example, $10^4$, $10^5$, $10^6$ and so on.
 9. ***optimize_portfolio*** -- parameter responsible for the need to search for optimal CVaR weights.Type *Bool*. Optional parameter. Default value $True$.
 10. ***portfolio_weight*** -- portfolio weight. Type *Numpy Array*. Optional parameter. If ***optimize_portfolio*** = True this value is ignored. Default value -- equal weighted investment portfolio.
@@ -247,30 +262,31 @@ var = result[0.95][1000000]['var']
 cvar = result[0.95][1000000]['cvar']
 portfolio_weight = result[0.95][1000000]['weight']
 ```
+
 Plot the CVaR metrics:
 ```python
 from pyscarcopula.metrics import cvar_emp_window
 from matplotlib import pyplot as plt
 import matplotlib.ticker as plticker
 
-pd_var_95 = pd.Series(data = -result[0.95][MC_iterations[0]]['var'], index=moex_returns_pd.index).shift(1)
-pd_cvar_95 = pd.Series(data = -result[0.95][MC_iterations[0]]['cvar'], index=moex_returns_pd.index).shift(1)
+pd_var_95 = pd.Series(data = -result[gamma[0]][MC_iterations[0]]['var'], index=returns_pd.index).shift(1)
+pd_cvar_95 = pd.Series(data = -result[gamma[0]][MC_iterations[0]]['cvar'], index=returns_pd.index).shift(1)
 
-weight = result[0.95][MC_iterations[0]]['weight']
+
+weight = result[gamma[0]][MC_iterations[0]]['weight']
 
 n = 1
 m = 1
 i1 = 250
 i2 = 499
 
-gamma = 0.95
 fig,ax = plt.subplots(n,m,figsize=(10,6))
 loc = plticker.MultipleLocator(base=27.0)
 
-daily_returns = ((np.exp(moex_returns_pd) - 1) * weight).sum(axis=1)
-cvar_emp = cvar_emp_window(daily_returns.values, 1 - gamma, window_len)
+daily_returns = ((np.exp(returns_pd) - 1) * weight).sum(axis=1)
+cvar_emp = cvar_emp_window(daily_returns.values, 1 - gamma[0], window_len)
 
-ax.plot(daily_returns[i1:i2], label = 'Portfolio log return')
+ax.plot(np.clip(daily_returns, -0.2, 0.2)[i1:i2], label = 'Portfolio log return')
 ax.plot(cvar_emp[i1:i2], label = 'Emperical CVaR', linestyle='dashed', color = 'gray')
 
 ax.plot(pd_cvar_95[i1:i2], label= f'{method} {marginals_method} CVaR 95%')
@@ -291,12 +307,12 @@ Goodness of fit for found CVaR using Kupiec test.
 ```python
 from pyscarcopula.stattests import Kupiec_POF
 
-POF = Kupiec_POF(daily_returns.values[i1:i2], pd_cvar_95.values[i1:i2].flatten(), 1 - gamma)
+POF = Kupiec_POF(daily_returns.values[i1:i2], pd_cvar_95.values[i1:i2].flatten(), 1 - gamma[0])
 ```
 and the output:
 ```python
-N = 249, x = 7, x/N = 0.028112449799196786, p = 0.050000000000000044
-critical_value = 3.841e+00, estimated_statistics = 2.963e+00, accept = True
+N = 249, Expected drawdowns = 12.45, Observed drawdowns = 7, x/N = 0.0281, p = 0.05
+critical_value = 3.8415, estimated_statistics = 2.9633, accept = True
 ```
 
 Examples of usage of this code coulde be found in example.ipynb notebook.

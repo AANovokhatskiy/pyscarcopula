@@ -27,3 +27,12 @@ class ClaytonCopula(ArchimedianCopula):
     @property
     def sp_inverse_generator(self):
         return self.__sp_inverse_generator
+
+    @staticmethod
+    def psi(t, r):
+        return (1 + t)**(-1/r)
+     
+    @staticmethod
+    def V(N, r):
+        res = np.random.gamma(1/r, scale = 1, size = N)
+        return res

@@ -58,7 +58,7 @@ class ArchimedianCopula:
     @lru_cache
     def sp_cdf(self):
         '''Sympy expression of copula's cdf'''
-        u = sp.symbols('u0:%d'%(self.dim))
+        u = sp.symbols('u0:%d'%(self.dim), positive = True)
         params = sum([self.sp_generator.subs([(self.t, x)]) for x in u])
         func = self.sp_inverse_generator.subs([(self.t, params)])
         return func
@@ -66,12 +66,14 @@ class ArchimedianCopula:
     @lru_cache
     def sp_pdf(self):
         '''Sympy expression of copula's pdf'''
-        u = sp.symbols('u0:%d'%(self.dim))
+        u = sp.symbols('u0:%d'%(self.dim), positive = True)
         params = [self.sp_generator.subs([(self.t, x)]) for x in u]
-        #func = self.sp_inverse_generator.subs([(self.t, sum(params))])
+
         diff_inverse_generator = sp.together(self.sp_inverse_generator.diff((self.t, self.dim)))
         diff_generator = sp.together(self.sp_generator.diff(self.t, 1))
+
         func = diff_inverse_generator.subs([(self.t, sum(params))])
+
         for x in u:
             func = func * diff_generator.subs([(self.t, x)])
         return sp.powsimp(func)
@@ -113,6 +115,32 @@ class ArchimedianCopula:
         '''
         return r
 
+    @staticmethod
+    def psi(t, r):
+        return np.exp(-t)
+     
+
+    @staticmethod
+    def V(N, r):
+        if isinstance(r, (int, float)):
+            r_arr = np.ones(N) * 1
+        else:
+            r_arr = np.ones_like(r)
+        return r_arr
+    
+    def get_sample(self, N, r):
+        # M.Hofert, Sampling Archimedean copulas, 2008
+        pseudo_obs = np.zeros((N, self.dim))
+
+        x = np.random.uniform(0, 1, size = (N, self.dim))
+        
+        V_data = self.V(N, r)
+
+        for k in range(0, self.dim):
+            pseudo_obs[:,k] = self.psi(-np.log(x[:,k]) / V_data, r)
+
+        return pseudo_obs
+    
     def log_likelihood(self, data, r):
         '''Log of likelihood function
         
@@ -223,6 +251,14 @@ class ArchimedianCopula:
         log_min.name = self.name
         log_min.fun = -log_min.fun
         log_min.method = method
+        
         if method.upper() == 'MLE':
             log_min.x_transformed = self.transform(log_min.x)
+
+        if method.upper() != 'MLE':
+            log_min.latent_process_tr = latent_process_tr
+
+        if method.upper() == 'SCAR-M-OU' or method.upper() == 'SCAR-M-DS':
+            log_min.m_iterations = m_iters
+
         return log_min

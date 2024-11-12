@@ -11,6 +11,8 @@ from pyscarcopula.auxiliary.funcs import jit_pobs
 import gc
 import pandas as pd
 
+from pyscarcopula.marginal.inverse_CDF import inverse_CDF_matrix
+
 
 @jit(nopython=True, parallel = True, cache = True)
 def loss_func(log_returns, weight):
@@ -56,6 +58,35 @@ def F_cvar_q(q, gamma, loss, copula_pdf_data):
 
 
 @jit(nopython=True, parallel = True, cache = True)
+def F_cvar_q_no_copula(q, gamma, loss):
+    n = len(loss)
+    mean = 0.0
+    for k in prange(0, n):
+        mean += np.maximum(loss[k] - q[0], 0.0)
+    mean = mean / n
+    F = q[0] + 1 / (1 - gamma) * mean
+    return F
+
+
+@jit(nopython=True, parallel = True, cache = True)
+def F_cvar_wq_no_copula(x, gamma, log_returns):
+    q = x[0]
+    weight = x[1:]
+    mean = 0.0
+    n = len(log_returns)
+    m = len(log_returns[0])
+    for k in prange(0, n):
+        loss = 0.0
+        for j in range(0, m):
+            loss += np.exp(log_returns[k][j]) * weight[j]
+        loss = np.maximum(1.0 - loss - q, 0.0)
+        mean += loss
+    mean = mean / n
+    F = q + 1 / (1 - gamma) * mean
+    return F
+
+
+@jit(nopython=True, parallel = True, cache = True)
 def calculate_copula_pdf_data(data, state, pdf, transform):
     n = len(data)
     copula_pdf_data = np.zeros(n)
@@ -92,10 +123,7 @@ def calculate_cvar(copula,
 
     for k in tqdm(range(0, iters)):
         idx = k + window_len - 1
-        rvs = get_rvs(marginals_params[idx], MC_iterations, method = marginals_params_method)
-        loss = loss_func(rvs, portfolio_weight)
-        pseudo_obs = jit_pobs(rvs)
-        del rvs
+
         if k == 0:
             init_state = latent_process_init_state(latent_process_params[idx][1:], latent_process_type, MC_iterations)
             current_state = latent_process_sampler_rng(latent_process_params[idx][1:],
@@ -111,16 +139,21 @@ def calculate_cvar(copula,
                                                                 random_state_sequence[idx],
                                                                 dt,
                                                                 current_state)
+        
+        copula_sample = copula.get_sample(MC_iterations, copula.transform(current_state))
+        rvs = get_rvs(marginals_params[idx], MC_iterations, method = marginals_params_method)
 
-        #copula_pdf_data = copula.np_pdf()(pseudo_obs.T, copula.transform(current_state))
-        copula_pdf_data = calculate_copula_pdf_data(pseudo_obs, current_state, copula.np_pdf(), copula.transform)
-        del pseudo_obs
+        inv_cdf_copula_sample = inverse_CDF_matrix(copula_sample, rvs)
+        del rvs
+        del copula_sample
+        loss = loss_func(inv_cdf_copula_sample, portfolio_weight)
+        del inv_cdf_copula_sample
+
         x0 = 0
-        min_result = minimize(F_cvar_q, x0 = x0,
-                                        args=(gamma, loss, copula_pdf_data),
+        min_result = minimize(F_cvar_q_no_copula, x0 = x0,
+                                        args=(gamma, loss),
                                         method='SLSQP',
                                         tol = 1e-7)
-        del copula_pdf_data
         del loss
         var_data[idx] = min_result.x[0]
         cvar_data[idx] = min_result.fun
@@ -161,10 +194,8 @@ def calculate_cvar_optimal_portfolio(copula,
     x0 = np.array([0, *eq_weight])
 
     for k in tqdm(range(0, iters)):
-        idx = k + window_len - 1
-        rvs = get_rvs(marginals_params[idx], MC_iterations, method = marginals_params_method)
-        pseudo_obs = jit_pobs(rvs)
-        
+        idx = k + window_len - 1     
+
         if k == 0:
             init_state = latent_process_init_state(latent_process_params[idx][1:], latent_process_type, MC_iterations)
             current_state = latent_process_sampler_rng(latent_process_params[idx][1:],
@@ -181,17 +212,18 @@ def calculate_cvar_optimal_portfolio(copula,
                                                                 dt,
                                                                 current_state)
 
-        #copula_pdf_data = copula.np_pdf()(pseudo_obs.T, copula.transform(current_state))
-        copula_pdf_data = calculate_copula_pdf_data(pseudo_obs, current_state, copula.np_pdf(), copula.transform)
-        del pseudo_obs
+        copula_sample = copula.get_sample(MC_iterations, copula.transform(current_state))
+        rvs = get_rvs(marginals_params[idx], MC_iterations, method = marginals_params_method)
 
-        min_result = minimize(F_cvar_wq, x0 = x0,
-                                        args=(gamma, rvs, copula_pdf_data),
+        rvs = inverse_CDF_matrix(copula_sample, rvs)
+
+        min_result = minimize(F_cvar_wq_no_copula, x0 = x0,
+                                        args=(gamma, rvs),
                                         method='SLSQP',
                                         bounds = bounds,
                                         constraints = constr,
                                         tol = 1e-7)
-        del copula_pdf_data
+        del rvs
         var_data[idx] = min_result.x[0]
         cvar_data[idx] = min_result.fun
         weight_data[idx] = min_result.x[1:dim+1]

@@ -3,4 +3,7 @@ from pyscarcopula.FrankCopula import FrankCopula
 from pyscarcopula.JoeCopula import JoeCopula
 from pyscarcopula.ClaytonCopula import ClaytonCopula
 
-__all__ = ('GumbelCopula', 'FrankCopula', 'JoeCopula', 'ClaytonCopula')
+from pyscarcopula.auxiliary.funcs import pobs
+
+
+__all__ = ('GumbelCopula', 'FrankCopula', 'JoeCopula', 'ClaytonCopula', 'pobs')
