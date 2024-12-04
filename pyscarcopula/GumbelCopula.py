@@ -20,7 +20,7 @@ class GumbelCopula(ArchimedianCopula):
     @staticmethod
     @njit
     def transform(r):
-        return np.minimum(1.001 + r**2, 40)
+        return r * np.tanh(r) + 1.0001
     
     @property
     def sp_generator(self):

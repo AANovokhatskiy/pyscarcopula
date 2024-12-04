@@ -30,11 +30,15 @@ def generate_batch(params, size):
         batch_result[:, i] = genhyperbolic.rvs(*params[i], size=size)
     return batch_result
 
-def hyperbolic_rvs(params, N, batch_size=20000):
+def hyperbolic_rvs(params, N, batch_size = 20000):
     dim = len(params)
-    if N > 10 * batch_size:
-        num_batches = (N + batch_size - 1) // batch_size
-        results = Parallel(n_jobs=-1)(delayed(generate_batch)(params, batch_size) for _ in range(num_batches))
-        return np.vstack(results)[:N]
+
+    if dim > 4:
+        if N >= 100 * batch_size:
+            num_batches = (N + batch_size - 1) // batch_size
+            results = Parallel(n_jobs=-1)(delayed(generate_batch)(params, batch_size) for _ in range(num_batches))
+            return np.vstack(results)[:N]
+        else:
+            return generate_batch(params, N)
     else:
         return generate_batch(params, N)

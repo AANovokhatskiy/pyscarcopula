@@ -1,4 +1,4 @@
-- [What is it](#what-is-it)
+- [About project](#about-project)
 - [Install](#install)
 - [Mathematical basis](#mathematical-basis)
   * [Marginal distributions](#marginal-distributions)
@@ -6,9 +6,13 @@
   * [Risk metrics](#risk-metrics)
   * [Goodness of fit](#goodness-of-fit)
 - [Examples](#examples)
-
-
-# What is it
+  * [1. Read dataset and transform to log-returns](#read-dataset)
+  * [2. Initialize copula object](#initialize-copula)
+  * [3. Fit copula](#fit-copula)
+  * [4. Sample from copula](#sample-copula)
+  * [5. Calculate risk_metrics](#risk-metrics)
+  
+# About project
 This project is made to calculate portfolio risk metrics Value-at-risk (VaR) and Conditional Value-at-risk (CVaR) using stochastic multivariate copula approach.
 The main idea of calculations is the following. Consider a multivariate financial time-series (stock prices for example) and transform them to log-returns. Then we do
 * Fit marginal distributions. Implemented: normal (best perfomance), Levy stable (heavy-tailed), generalized hyperbolic (heavy-tailed).
@@ -70,7 +74,7 @@ Here we use the following copulas
 | Copula | $\phi(t; \theta)$ | $\phi^{-1}(t; \theta)$ | $\theta \in$ |
 |---------------|---------------|---------------|---------------|
 | Gumbel | $(-\log t)^\theta$ | $\exp{\left(-t^{1/\theta}\right)}$ |  $[1, \infty)$ |
-| Frank | $-\log{\left(\frac{\exp{(-\theta t)} - 1}{\exp{(\theta)} - 1}\right)}$ | $-\frac{1}{\theta} \log{\left(1 + \exp{(-t)} \right)}$ | $(-\infty, \infty)\setminus\lbrace 0 \rbrace$  |
+| Frank | $-\log{\left(\frac{\exp{(-\theta t)} - 1}{\exp{(-\theta)} - 1}\right)}$ | $-\frac{1}{\theta} \log{\left(1 + \exp{(-t)} \right)}$ | $[0, \infty)$  |
 | Joe | $-\log{\left( 1 - (1-t)^\theta \right)}$ | $1 - (1 - \exp{(-t)})^{(1 / \theta}$ | $[1, \infty)$ |
 | Clayton | $\frac{1}{\theta}\left(t^{-\theta} - 1 \right)$ | $\left( 1 + t \theta\right)^{-1/\theta}$ |  $[0, \infty)$ |
 
@@ -117,6 +121,7 @@ LR_{POF} = - 2 \log{\left( \frac{\left(1 - p\right)^{N-x} p^x}{\left(1 - \frac{x
 where $N$ - number of observations, $p = 1 - \gamma$ - significance level, $x$ - number of risk level breakdowns. This statistics has asymptotically $\chi^2$ distribution. So if statistics exceed the critical value then we reject our estimations of risk metrics.
 
 # Examples
+<a name="read-dataset"></a>
 ### 1. Read dataset and transform to log-returns
 ```python
 import pandas as pd
@@ -129,6 +134,7 @@ returns_pd = np.log(moex_data[tickers] / moex_data[tickers].shift(1))[1:501]
 returns = returns_pd.values
 ```
 
+<a name="initialize-copula"></a>
 ### 2. Initialize copula object
 ```python
 from pyscarcopula import GumbelCopula
@@ -147,10 +153,10 @@ e^{- \left(\left(- \log{\left(u_{0} \right)}\right)^{r} + \left(- \log{\left(u_{
 
 It is also possible to call *sp_pdf()* to show pdf expression. But the anwser would be much more complex.
 
-
+<a name="fit-copula"></a>
 ### 3. Fit copula
 ```python
-fit_result = copula.fit(data = returns, latent_process_tr = 500, m_iters = 5, accuracy=1e-4,
+fit_result = copula.fit(data = returns, latent_process_tr = 500, M_iterations = 5, accuracy=1e-4,
                         method = 'scar-m-ou', seed = 333)
 fit_result
 ```
@@ -164,7 +170,7 @@ Function *fit* description:
 * scar-p-ld - stochastic model with process with logistic distribution transition density (experimental). ***latent_process_tr*** = 10000 is good choice here
 3. ***accuracy*** -- calculation accuracy. Type *float*. Optional parameter. Default value: $10^{-5}$ для *mle*, $10^{-4}$ for other methods.
 4. ***latent_process_tr*** -- number of latent process trajectories (for *mle* is ignored). Type *int*. Optional parameter. Default value $500$.
-5. ***m_iters*** -- number of importance sampling steps (only for *scar-m-ou*). Type *int*. Optional parameter. Default value $5$.
+5. ***M_iterations*** -- number of importance sampling steps (only for *scar-m-ou*). Type *int*. Optional parameter. Default value $5$.
 6. ***to_pobs*** -- transform ***data*** to pseudo observations. Type *bool*. Optional parameter. Default value *True*.
 7. ***dwt*** -- Wiener process values. Type *Numpy Array*. Optional parameter. Default value *None*. If *None* then function generate dataset automatically.
 8. ***seed*** -- random state. Type *int*. Optional parameter. Default value *None*. If *None* then every run of program would unique. Parameter is ignored if ***dwt*** is set explicitly.
@@ -200,6 +206,8 @@ with output
 ```python
 CramerVonMisesResult(statistic=0.11370981269840286, pvalue=0.5219822616590395)
 ```
+
+<a name="sample-copula"></a>
 ### 4. Sample from copula
 It is possible to get sample of pseudo observations from copula
 ```python
@@ -207,6 +215,7 @@ copula.get_sample(N = 1000, r = 1.2)
 ```
 The output is array of shape = (N, dim). Copula parameter r should be set manually (array of size N is also supported).
 
+<a name="risk-metrics"></a>
 ### 5. Calculate risk_metrics
 ```python
 from pyscarcopula.metrics import risk_metrics
@@ -316,4 +325,3 @@ critical_value = 3.8415, estimated_statistics = 2.9633, accept = True
 ```
 
 Examples of usage of this code coulde be found in example.ipynb notebook.
-

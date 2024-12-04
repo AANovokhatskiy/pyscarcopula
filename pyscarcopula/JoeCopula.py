@@ -19,7 +19,7 @@ class JoeCopula(ArchimedianCopula):
     @staticmethod
     @njit
     def transform(r):
-        return 1 + r**2 #np.cosh(r)
+        return r * np.tanh(r) + 1.0001
     
     @property
     def sp_generator(self):
@@ -48,11 +48,11 @@ class JoeCopula(ArchimedianCopula):
                 p = multiplier * p
                 F = F + p
                 i = i + 1
-                if i > 1000:
-                    u = np.random.uniform(0, 1)
-                    i = 1
-                    p = p0
-                    F = p
+                # if i > 10000:
+                #     u = np.random.uniform(0, 1)
+                #     i = 1
+                #     p = p0
+                #     F = p
             res[k] = i
         return res
     

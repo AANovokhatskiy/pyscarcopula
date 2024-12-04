@@ -13,7 +13,7 @@ import pandas as pd
 
 from pyscarcopula.marginal.inverse_CDF import inverse_CDF_matrix
 
-
+from time import time
 @jit(nopython=True, parallel = True, cache = True)
 def loss_func(log_returns, weight):
     n = len(log_returns)
@@ -118,12 +118,11 @@ def calculate_cvar(copula,
 
     var_data = np.zeros(T)
     cvar_data = np.zeros(T)
-    dt = 1.0/window_len
+    dt = 1.0 / (window_len - 1)
     iters = T - window_len + 1
 
     for k in tqdm(range(0, iters)):
         idx = k + window_len - 1
-
         if k == 0:
             init_state = latent_process_init_state(latent_process_params[idx][1:], latent_process_type, MC_iterations)
             current_state = latent_process_sampler_rng(latent_process_params[idx][1:],
@@ -139,7 +138,7 @@ def calculate_cvar(copula,
                                                                 random_state_sequence[idx],
                                                                 dt,
                                                                 current_state)
-        
+
         copula_sample = copula.get_sample(MC_iterations, copula.transform(current_state))
         rvs = get_rvs(marginals_params[idx], MC_iterations, method = marginals_params_method)
 
@@ -173,7 +172,7 @@ def calculate_cvar_optimal_portfolio(copula,
 
     print('calc portfolio optimization')
     T = len(marginals_params)
-    dt = 1/window_len
+    dt = 1 / (window_len - 1)
     dim = len(marginals_params[0])
 
     eq_weight = np.ones(dim) / dim
@@ -257,12 +256,11 @@ def risk_metrics(copula,
             s = np.random.randint(0, 100000)
         else:
             s = seed
-        #s = 25400
-        rng = np.random.RandomState(seed = s)
-        dt = 1.0/window_len
+
+        dt = 1.0 / (window_len - 1)
+
         print(f"seed = {s}")
-        dwt = rng.normal(0, 1, size = (T, latent_process_tr)) * np.sqrt(dt)
-        #dwt = copula.calculate_dwt(latent_process_type.upper(), T, latent_process_tr, seed, dt)
+        dwt = copula.calculate_dwt(latent_process_type.upper(), T, latent_process_tr, seed, dt)
         latent_process_params = get_latent_process_params(copula, data, latent_process_type.upper(), 
                                                           window_len, dwt, M_iterations, save_logs)
         del dwt

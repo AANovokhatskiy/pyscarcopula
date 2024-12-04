@@ -18,10 +18,7 @@ class FrankCopula(ArchimedianCopula):
     @staticmethod
     @njit
     def transform(r):
-        eps = 0.001
-        #return np.clip(r + eps * (1 - np.sign(r)**2), -40, 40)
-        #return np.minimum(np.maximum(r + eps * (1 - np.sign(r)**2), -40), 40)
-        return r**2 + eps
+        return r * np.tanh(r) + 0.0001
     
     @property
     def sp_generator(self):
@@ -50,12 +47,38 @@ class FrankCopula(ArchimedianCopula):
                 p = multiplier * p
                 F = F + p
                 i = i + 1
-                if i > 1000:
-                    u = np.random.uniform(0, 1)
-                    i = 1
-                    p = p0
-                    F = p
+                # if i > 10000:
+                #     u = np.random.uniform(0, 1)
+                #     i = 1
+                #     p = p0
+                #     F = p
             res[k] = i
+        return res
+    
+    @staticmethod
+    @njit
+    def bivariate_sample(N, r):
+        res = np.zeros((N, 2))
+        for k in range(0, N):
+            u = np.random.uniform(0, 1)
+            v = np.random.uniform(0, 1)
+            u0 = u
+
+            t = np.exp(- r[k] * u0)
+            p = np.exp(-r[k])
+
+            f1 = v * (1 - p)
+            f2 = (t + v * (1 - t))
+            #safe calculations
+            if np.abs(f1 - f2) < 1e-9:
+                u1 = u0
+            else:
+                u1 = -np.log(1 - f1 / f2) / r[k]
+            res[k][0] = u0
+            res[k][1] = u1
+            if (u0 < 0 or u0 > 1) or (u1 < 0 or u1 > 1):
+                print(u0, u1, r[k], u, v)
+                raise ValueError('oppa')
         return res
     
     def V(self, N, r):
@@ -67,3 +90,27 @@ class FrankCopula(ArchimedianCopula):
             else:
                 r_arr = r
         return self.V_auxiliary(N, r_arr)
+
+
+    def get_sample(self, N, r):
+        # M.Hofert, Sampling Archimedean copulas, 2008
+        if self.dim == 2:
+            if isinstance(r, (int, float)):
+                r_arr = np.ones(N) * r
+            elif isinstance(r, np.ndarray):
+                if len(r) == 1:
+                    r_arr = np.ones(N) * r[0]
+                else:
+                    r_arr = r
+            return self.bivariate_sample(N, r_arr)
+        else:
+            pseudo_obs = np.zeros((N, self.dim))
+
+            x = np.random.uniform(0, 1, size = (N, self.dim))
+            
+            V_data = self.V(N, r)
+
+            for k in range(0, self.dim):
+                pseudo_obs[:,k] = self.psi(-np.log(x[:,k]) / V_data, r)
+
+            return pseudo_obs

@@ -32,9 +32,9 @@ def generate_batch(params, size):
         batch_result[:, i] = levy_stable.rvs(*params[i], size=size)
     return batch_result
 
-def stable_rvs(params, N, batch_size=20000):
+def stable_rvs(params, N, batch_size = 100000):
     dim = len(params)
-    if N > 10 * batch_size:
+    if N >= 100 * batch_size:
         num_batches = (N + batch_size - 1) // batch_size
         results = Parallel(n_jobs=-1)(delayed(generate_batch)(params, batch_size) for _ in range(num_batches))
         return np.vstack(results)[:N]

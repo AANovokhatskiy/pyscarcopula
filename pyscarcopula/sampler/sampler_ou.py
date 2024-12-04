@@ -19,25 +19,20 @@ def p_sampler_ou(alpha, dwt, init_state = None):
 
     T = len(dwt)
     latent_process_tr = len(dwt[0])
-    dt = 1 / T
-    xt = np.zeros((T + 1, latent_process_tr))
+    dt = 1 / (T - 1)
+    xt = np.zeros((T, latent_process_tr))
     
     if init_state is None:
         xt[0] = p_sampler_init_state_ou(alpha, latent_process_tr)
     else:
         xt[0] = init_state
 
-    for i in range(1, T + 1):
+    for i in range(1, T):
         A = -theta * (xt[i - 1] - mu)
         B = nu
-        # Ax = -theta
-        # Axx = 0
-        # Bx = 0
-        # Bxx = 0
-        # xt[i] = xt[i-1] + (A - 1/2*B*Bx)*dt + B*dwt[i-1] + 1/2*B*Bx*dwt[i-1]**2 +\
-        #             (1/2*A*Bx + 1/2*Ax*B + 1/4*B**2*Bxx)*dt*dwt[i-1] + (1/2*A*Ax + 1/4*Axx*B**2)*dt**2
+
         xt[i] = xt[i - 1] + A * dt + B * dwt[i - 1]
-    return xt[1:]
+    return xt
 
 
 @jit(nopython=True,  cache = True)
@@ -51,12 +46,7 @@ def p_sampler_one_step_ou(alpha, dwt, dt, init_state):
 
     A = -theta * (x0 - mu)
     B = nu
-    # Ax = -theta
-    # Axx = 0
-    # Bx = 0
-    # Bxx = 0
-    # x1 = x0 + (A - 1/2*B*Bx)*dt + B*dwt + 1/2*B*Bx*dwt**2 +\
-    #             (1/2*A*Bx + 1/2*Ax*B + 1/4*B**2*Bxx)*dt*dwt + (1/2*A*Ax + 1/4*Axx*B**2)*dt**2
+
     x1 = x0 + A * dt + B * dwt
 
     return x1
@@ -77,12 +67,7 @@ def p_sampler_one_step_ou_rng(alpha, latent_process_tr, random_state, dt, init_s
     
     A = -theta * (x0 - mu)
     B = nu
-    # Ax = -theta
-    # Axx = 0
-    # Bx = 0
-    # Bxx = 0
-    # x1 = x0 + (A - 1/2*B*Bx)*dt + B*dwt + 1/2*B*Bx*dwt**2 +\
-    #             (1/2*A*Bx + 1/2*Ax*B + 1/4*B**2*Bxx)*dt*dwt + (1/2*A*Ax + 1/4*Axx*B**2)*dt**2
+
     x1 = x0 + A * dt + B * dwt
 
     return x1
@@ -101,15 +86,9 @@ def p_sampler_no_hist_ou(alpha, dwt, dt, init_state):
     
     xt_km1 = x0
 
-    for k in range(1, T + 1):
+    for k in range(1, T):
         A = -theta * (xt_km1 - mu)
         B = nu
-        # Ax = -theta
-        # Axx = 0
-        # Bx = 0
-        # Bxx = 0
-        # xt_k = xt_km1 + (A - 1/2*B*Bx)*dt + B*dwt[k - 1] + 1/2*B*Bx*dwt[k - 1]**2 +\
-        #             (1/2*A*Bx + 1/2*Ax*B + 1/4*B**2*Bxx)*dt*dwt[k - 1] + (1/2*A*Ax + 1/4*Axx*B**2)*dt**2
         
         xt_k = xt_km1 + A * dt + B * dwt[k - 1]
 
@@ -128,20 +107,13 @@ def p_sampler_no_hist_ou_rng(alpha, latent_process_tr, random_states_sequence, d
         x0 = init_state
     
     xt_km1 = x0
-    for k in range(1, T + 1):
+    for k in range(1, T):
         rng = np.random.seed(random_states_sequence[k - 1])
         dwt = sqrt_dt * np.random.normal(0 , 1 , size = latent_process_tr)
-        
 
         A = -theta * (xt_km1 - mu)
         B = nu
-        # Ax = -theta
-        # Axx = 0
-        # Bx = 0
-        # Bxx = 0
-        # xt_k = xt_km1 + (A - 1/2*B*Bx)*dt + B*dwt + 1/2*B*Bx*dwt**2 +\
-        #             (1/2*A*Bx + 1/2*Ax*B + 1/4*B**2*Bxx)*dt*dwt + (1/2*A*Ax + 1/4*Axx*B**2)*dt**2
-        
+       
         xt_k = xt_km1 + A * dt + B * dwt
 
         xt_km1 = xt_k
@@ -342,39 +314,37 @@ def m_sampler_ou(alpha, a1t, a2t, dwt, init_state = None):
 
     T = len(dwt)
     latent_process_tr = len(dwt[0])
-    dt = 1 / T
-    xt = np.zeros((T + 1, latent_process_tr))
+    dt = 1 / (T - 1)
+    xt = np.zeros((T, latent_process_tr))
     D = nu**2 / 2
     if init_state is None:
         xt[0] = p_sampler_init_state_ou(alpha, latent_process_tr)
     else:
         xt[0] = init_state
-    for i in range(1, T + 1):
-        a1, a2 = a1t[i - 1], a2t[i - 1]
-        if i == 1:
-            a1dt, a2dt =  (a1t[i] - a1t[i - 1]) / dt, (a2t[i] - a2t[i - 1]) / dt
-        else:
-            a1dt, a2dt =  (a1t[i - 1] - a1t[i - 2]) / dt, (a2t[i - 1] - a2t[i - 2]) / dt
-        t = i/T
+
+    Ito_integral_sum = np.zeros(latent_process_tr)
+    for i in range(1, T):
+        a1, a2 = a1t[i], a2t[i]
+
+        t = i / (T - 1)
         sigma2 = D / theta * (1 - np.exp(- 2 * theta * t))
         p = (1 - 2 * a2 * sigma2)
-        sigma2w = sigma2 / p
+
+        if i == 1:
+            pm1 = 1
+        else:
+            tm1 = t - dt
+            sigma2m1 = D / theta * (1 - np.exp(- 2 * theta * tm1))
+            a2m1 = a2t[i - 1]
+            pm1 = (1 - 2 * a2m1 * sigma2m1)
+
         xs = (xt[0] - mu) * np.exp(-theta * t) + mu
         xsw = (xs + a1 * sigma2) / p
-        sigma2dt = nu**2 - 2 * theta * sigma2
-        sigma2wdt = (sigma2dt + 2 * sigma2**2 * a2dt) / p**2
-        xsdt = -theta * (xs - mu)
-        xswdt = (xsdt + a1 * sigma2dt + a1dt * sigma2) / p + 2 * xsw * (a2dt * sigma2 + a2 * sigma2dt) / p
-        B = nu
-        A = xswdt - (xt[i - 1] - xsw) * (B**2 - sigma2wdt) / (2 * sigma2w)
-        xt[i] = xt[i - 1] + A * dt + B * dwt[i - 1]
-        # Ax = -(B**2 - sigma2wdt) / (2 * sigma2w)
-        # Axx = 0
-        # Bx = 0
-        # Bxx = 0
-        # xt[i] = xt[i-1] + (A - 1/2*B*Bx)*dt + B*dwt[i-1] + 1/2*B*Bx*dwt[i-1]**2 +\
-        #             (1/2*A*Bx + 1/2*Ax*B + 1/4*B**2*Bxx)*dt*dwt[i-1] + (1/2*A*Ax + 1/4*Axx*B**2)*dt**2  
-    return xt[1:]
+
+        Determinated_part = xsw
+        Ito_integral_sum = (Ito_integral_sum  * np.sqrt(pm1 / p) + nu / np.sqrt(p) * dwt[i - 1]) * np.exp(-theta * dt)
+        xt[i] = Determinated_part + Ito_integral_sum
+    return xt
 
 
 @jit(nopython=True, cache = True)
@@ -391,23 +361,23 @@ def m_jit_mlog_likelihood_ou(alpha, data, dwt, latent_process_tr, m_iters, print
 
     '''get latent process sample'''
     for j in range(0, m_iters):
-        if j == 0:
-            lambda_data = p_sampler_ou(alpha, dwt, init_state)
-        else:
-            lambda_data = m_sampler_ou(alpha, a1t, a2t, dwt, init_state)
 
-            '''check nan values'''
-            if np.isnan(np.sum(lambda_data)) == True:
-                res = 10**10
-                if print_path == True:
-                    print(alpha, 'm sampler nan', res)
-                return res, a1t, a2t
-            max_m = np.max(np.abs(lambda_data))
-            if max_m > 50:
-                res = 10**10
-                if print_path == True:
-                    print(alpha, 'm sampler bad trajectory', res)
-                return res, a1t, a2t
+        lambda_data = m_sampler_ou(alpha, a1t, a2t, dwt, init_state)
+
+        '''check nan values'''
+        if np.isnan(np.sum(lambda_data)) == True:
+            res = float(10**10)
+            if print_path == True:
+                print(alpha, 'm sampler nan', res)
+            return res, a1t, a2t
+        
+        # max_m = np.max(np.abs(lambda_data))
+        # if max_m > 100:
+        #     res = float(10**10)
+        #     if print_path == True:
+        #         print(alpha, 'm sampler bad trajectory', res)
+        #     return res, a1t, a2t
+        
         norm_log_data = np.zeros((T, latent_process_tr))
 
         '''set initial values: a(T)'''
@@ -432,10 +402,10 @@ def m_jit_mlog_likelihood_ou(alpha, data, dwt, latent_process_tr, m_iters, print
 
             b = copula_log_data + norm_log_data[i]
             sigma2 = nu**2 / (2 * theta) * (1 - np.exp(-2 * theta * (t_data[i])))
-            r = 0.0 #sigma2
+            r = 0.0
             
             '''set upper bound for a2'''
-            ub = np.maximum(1/(2 * sigma2) - 0.1, 0) #0.0
+            ub = np.maximum(1/(2 * sigma2) - 0.1, 0)
             try:
                 a_data[i - 1] = linear_least_squares(A, b, r, pseudo_inverse = True)
                 '''if nan use previous result'''
@@ -449,7 +419,6 @@ def m_jit_mlog_likelihood_ou(alpha, data, dwt, latent_process_tr, m_iters, print
 
             '''check a2 bounds'''
             a_data[i - 1][2] = np.minimum(a_data[i - 1][2], ub)
-            #a_data[i - 1] = np.maximum(np.minimum(a_data[i - 1], 300),-300)
 
         a_data_a1 = a_data[:,1].copy()
         a_data_a2 = a_data[:,2].copy()
@@ -460,7 +429,7 @@ def m_jit_mlog_likelihood_ou(alpha, data, dwt, latent_process_tr, m_iters, print
             if a_data_a2[-1] > val:
                 a_data_a2[-1] = val
 
-        fit_type1 = 'right-sided' #'no bounds'
+        fit_type1 = 'right-sided'
         fit_type2 = 'right-sided'
         dim = j + 1
 
@@ -488,17 +457,16 @@ def m_jit_mlog_likelihood_ou(alpha, data, dwt, latent_process_tr, m_iters, print
     
     '''check nan values'''
     if np.isnan(np.sum(lambda_data)) == True:
-        res = 10**10
+        res = float(10**10)
         if print_path == True:
             print(alpha, 'm sampler nan', res)
-            return res, a1t, a2t
-        
-    max_m = np.max(np.abs(lambda_data))
-    if max_m > 50:
-        res = 10**10
-        if print_path == True:
-            print(alpha, 'm sampler bad trajectory', res)
         return res, a1t, a2t
+    # max_m = np.max(np.abs(lambda_data))
+    # if max_m > 100:
+    #     res = float(10**10)
+    #     if print_path == True:
+    #         print(alpha, 'm sampler bad trajectory', res)
+    #     return res, a1t, a2t     
     
     '''calculate normalizing factors'''
     for i in range(T - 1, 0, -1):
@@ -520,10 +488,18 @@ def m_jit_mlog_likelihood_ou(alpha, data, dwt, latent_process_tr, m_iters, print
     res = np.log(avg_likelihood) + xc
     res = -res
     if res < max_log_lik_debug:
-        res = 10**10
+        res = float(10**10)
         if print_path == True:
             print(alpha, 'instability encountered', res)
         return res, a1t, a2t
+
+    '''check nan values'''
+    if np.isnan(res) == True:
+        res = float(10**10)
+        if print_path == True:
+            print(alpha, 'unknown error', res)
+        return res, a1t, a2t
+
 
     if print_path == True:
         print(alpha, res)

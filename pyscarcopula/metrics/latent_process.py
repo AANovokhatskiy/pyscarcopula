@@ -99,42 +99,53 @@ def get_latent_process_params(copula, returns_data, method, window_len, dwt, M_i
 
     alpha0 = None
     T = len(returns_data)
-    dt = 1/window_len
+    dt = 1 / (window_len - 1)
     iters = T - window_len + 1
 
     latent_process_params = np.zeros((T, 4))
-    latent_process_tr = len(dwt[0])
+    if method == 'MLE':
+        latent_process_tr = None
+    else:
+        latent_process_tr = len(dwt[0])
 
     pobs = jit_pobs(returns_data)
-    mle_fit_result = copula.fit(pobs, method = 'mle')
-    max_log_lik_debug = -mle_fit_result.fun * 2
+    mle_fit_result = copula.fit(pobs, method = 'MLE')
+    max_log_lik_debug = -np.abs(mle_fit_result.fun) * 2
 
     for k in tqdm(range(0, iters)):
         idx = k + window_len - 1
-        pobs = jit_pobs(returns_data[k:window_len + k])
+        u = jit_pobs(returns_data[k:window_len + k])
         if method == 'MLE':
-            cop_fit_result = copula.fit(pobs, method = method, accuracy = 1e-5, to_pobs = False)
+            cop_fit_result = copula.fit(u, method = method, accuracy = 1e-6, to_pobs = False)
             latent_process_params[idx] = np.array([cop_fit_result.fun, *cop_fit_result.x, 0, 0])
         else:
             if k == 0:
                 init_state = None
             else:
-                init_state = latent_process_sampler_one_step(alpha0, method, dwt[k - 1], dt, init_state)
-            cop_fit_result = copula.fit(pobs,
+                if alpha0 is not None:
+                    init_state = latent_process_sampler_one_step(alpha0, method.upper(), dwt[k - 1], dt, init_state)
+                else:
+                    init_state = None
+
+            cop_fit_result = copula.fit(u,
                                         alpha0 = alpha0,
                                         method = method,
-                                        latent_process_tr = latent_process_tr,
                                         accuracy = 1e-3,
-                                        m_iters = M_iterations,
+                                        latent_process_tr = latent_process_tr,
+                                        M_iterations = M_iterations,
                                         to_pobs = False,
                                         dwt = dwt[k:window_len + k],
                                         print_path = False,
                                         init_state = init_state,
-                                        max_log_lik_debug = max_log_lik_debug)
-            if np.isnan(cop_fit_result.fun) == True or int(cop_fit_result.fun) == -10**10:
+                                        max_log_lik_debug = max_log_lik_debug
+                                        )
+        
+            if np.isnan(cop_fit_result.fun) == True or int(cop_fit_result.fun) == -10**10 \
+                or np.abs(cop_fit_result.fun) > np.abs(max_log_lik_debug):
+                #alpha0 = None
                 latent_process_params[idx] = latent_process_params[idx - 1]
             else:
-                alpha0 = np.array(cop_fit_result.x)
+                #alpha0 = np.array(cop_fit_result.x)
                 latent_process_params[idx] = np.array([cop_fit_result.fun,*cop_fit_result.x])
 
     if save_logs == True:
