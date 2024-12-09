@@ -30,7 +30,7 @@ class ClaytonCopula(ArchimedianCopula):
 
     @staticmethod
     def psi(t, r):
-        return (1 + t)**(-1/r)
+        return (1 + t * r)**(-1/r)
      
     @staticmethod
     def V(N, r):

@@ -348,7 +348,7 @@ def m_sampler_ou(alpha, a1t, a2t, dwt, init_state = None):
 
 
 @jit(nopython=True, cache = True)
-def m_jit_mlog_likelihood_ou(alpha, data, dwt, latent_process_tr, m_iters, print_path, 
+def m_jit_mlog_likelihood_ou(alpha, data, dwt, latent_process_tr, M_iterations, print_path, 
                              pdf, transform, init_state = None, max_log_lik_debug = -100000):
     T = len(data)
     norm_log_data = np.zeros((T, latent_process_tr))
@@ -360,7 +360,7 @@ def m_jit_mlog_likelihood_ou(alpha, data, dwt, latent_process_tr, m_iters, print
     a2t = np.zeros(T)
 
     '''get latent process sample'''
-    for j in range(0, m_iters):
+    for j in range(0, M_iterations):
 
         lambda_data = m_sampler_ou(alpha, a1t, a2t, dwt, init_state)
 
@@ -424,7 +424,7 @@ def m_jit_mlog_likelihood_ou(alpha, data, dwt, latent_process_tr, m_iters, print
         a_data_a2 = a_data[:,2].copy()
 
         '''set right bound for a2'''
-        if j == m_iters - 1:
+        if j == M_iterations - 1:
             val = np.minimum(np.mean(a_data_a2), 0)
             if a_data_a2[-1] > val:
                 a_data_a2[-1] = val
@@ -434,6 +434,7 @@ def m_jit_mlog_likelihood_ou(alpha, data, dwt, latent_process_tr, m_iters, print
         dim = j + 1
 
         '''check a2 lower then bounds and fit a2(t)'''
+        bound_check = False
         rigde_alpha_list = np.array([0.0, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0, 100.0])
         for r in rigde_alpha_list:
             a2_params = bounded_polynom_fit(t_data, a_data_a2, dim = dim, ridge_alpha = r, type = fit_type2)
@@ -441,14 +442,15 @@ def m_jit_mlog_likelihood_ou(alpha, data, dwt, latent_process_tr, m_iters, print
             bound_check = check_a2_bounds(alpha, a2t, t_data)
             if bound_check == True:
                 break
-            else:
-                continue
-        if r == rigde_alpha_list[-1]:
-            a2t = correction(t_data, a2t, alpha)
-
-        '''fit a1(t)'''
-        a1_params = bounded_polynom_fit(t_data, a_data_a1, dim = dim, ridge_alpha = r, type = fit_type1)
-        a1t = bounded_polynom(t_data, a_data_a1, a1_params, type = fit_type1)
+        # if r == rigde_alpha_list[-1]:
+        #     a2t = correction(t_data, a2t, alpha)
+        if bound_check == False:
+            a1t = np.zeros(T)
+            a2t = np.zeros(T)
+        else:
+            '''fit a1(t)'''
+            a1_params = bounded_polynom_fit(t_data, a_data_a1, dim = dim, ridge_alpha = r, type = fit_type1)
+            a1t = bounded_polynom(t_data, a_data_a1, a1_params, type = fit_type1)
 
     '''get latent process sample'''
     lambda_data = m_sampler_ou(alpha, a1t, a2t, dwt, init_state)
@@ -506,7 +508,7 @@ def m_jit_mlog_likelihood_ou(alpha, data, dwt, latent_process_tr, m_iters, print
     return res, a1t, a2t
 
 
-#@jit(nopython=True, cache = True)
+@jit(nopython=True, cache = True)
 def jit_latent_process_conditional_expectation_p_ou(pdf, transform, pobs_data, alpha, latent_process_tr):
     T = len(pobs_data)
     dwt = np.random.normal(0, 1, size = (T, latent_process_tr)) * np.sqrt(1/T)
@@ -541,13 +543,13 @@ def jit_latent_process_conditional_expectation_p_ou(pdf, transform, pobs_data, a
     return result
 
 
-#@jit(nopython=True, cache = True)
-def jit_latent_process_conditional_expectation_m_ou(pdf, transform, pobs_data, alpha, latent_process_tr, m_iters):
+@jit(nopython=True, cache = True)
+def jit_latent_process_conditional_expectation_m_ou(pdf, transform, pobs_data, alpha, latent_process_tr, M_iterations):
     T = len(pobs_data)
     dwt = np.random.normal(0, 1, size = (T, latent_process_tr)) * np.sqrt(1/T)
 
     res, a1t, a2t = m_jit_mlog_likelihood_ou(alpha, pobs_data, 
-                                             dwt, latent_process_tr, m_iters, False, 
+                                             dwt, latent_process_tr, M_iterations, False, 
                                              pdf, transform)
 
 
