@@ -6,8 +6,33 @@ from functools import lru_cache
 
 from numba import njit, jit
 from pyscarcopula.ArchimedianCopula import ArchimedianCopula
-from pyscarcopula.marginal.stable import generate_levy_stable
 
+@njit
+def generate_levy_stable(alpha, beta, loc = 0, scale = 1, size = 1):
+    # Weron, R. (1996). On the Chambers-Mallows-Stuck method for simulating skewed stable random variables
+    # Borak et. al. (2008), Stable Distributions
+
+    V = np.random.uniform(-np.pi/2, np.pi/2, size = size)
+    u = np.random.uniform(0, 1, size = size)
+    W = -np.log(1 - u)
+
+    indicator0 = (alpha != 1)
+    indicator1 = np.invert(indicator0)
+
+    B = np.arctan(beta * np.tan(np.pi/2 * alpha)) / alpha
+    S = (1 + beta**2 * np.tan(np.pi/2 * alpha)**2)**(1 / (2 * alpha))
+
+    X0 = S * np.sin(alpha * (V + B)) / np.cos(V)**(1/alpha) * (np.cos(V - alpha * (V + B)) / W)**((1 - alpha) / alpha)
+    X1 = 2 / np.pi * ((np.pi/2 + beta * V) * np.tan(V) - beta * np.log(np.pi/2 * W * np.cos(V) / (np.pi / 2 + beta * V)))
+
+    X = X0 * indicator0 + X1 * indicator1
+
+    Y0 = scale * X + loc
+    Y1 = scale * X + 2 / np.pi * beta * scale * np.log(scale) + loc
+
+    Y = Y0 * indicator0 + Y1 * indicator1
+        
+    return Y
 
 # @jit(nopython = True, cache = True)
 def bivariateGumbelPDF(u, r, rotate):

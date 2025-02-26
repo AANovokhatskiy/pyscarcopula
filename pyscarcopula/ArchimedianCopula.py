@@ -24,7 +24,24 @@ from pyscarcopula.auxiliary.funcs import pobs
 
 
 class ArchimedianCopula:
+    """
+    A base class for representing and working with Archimedean copulas.
+
+    This class provides a framework for defining Archimedean copulas,
+    calculating their CDFs and PDFs symbolically and numerically,
+    generating samples, and performing parameter estimation.
+    """
+
     def __init__(self, dim: int = 2, rotate: Literal[0, 90, 180, 270] = 0) -> None:
+        """
+        Initializes an ArchimedianCopula object.
+
+        Args:
+            dim (int): The dimension of the copula (e.g., 2 for bivariate, 3 for trivariate). Defaults to 2.
+            rotate (Literal[0, 90, 180, 270]): The rotation angle of the copula (only applicable for 2D).
+                Possible values are 0, 90, 180, or 270 degrees. Defaults to 0.
+        """
+
         self.__dim = dim
         self.__rotate = rotate
         self.__t, self.__r = sp.symbols('t r')
@@ -35,42 +52,93 @@ class ArchimedianCopula:
 
     @property
     def name(self):
+        """
+        Returns the name of the copula.
+
+        Returns:
+            str: The name of the copula.
+        """
         return self.__name
 
     @property
     def t(self):
+        """
+        Returns the symbolic variable 't' used in the generator function.
+
+        Returns:
+            sympy.Symbol: The symbolic variable 't'.
+        """
         return self.__t
     
     @property
     def r(self):
+        """
+        Returns the symbolic variable 'r' representing the copula parameter.
+
+        Returns:
+            sympy.Symbol: The symbolic variable 'r'.
+        """
         return self.__r
     
     @property
     def sp_generator(self):
-        '''generator function of copula'''
+        """
+        Returns the symbolic generator function of the copula.
+
+        Returns:
+            sympy.Expr: The symbolic generator function.
+        """
         return self.__sp_generator
     
     @property
     def sp_inverse_generator(self):
-        '''inverse generator function of copula'''
+        """
+        Returns the symbolic inverse generator function of the copula.
+
+        Returns:
+            sympy.Expr: The symbolic inverse generator function.
+        """
         return self.__sp_inverse_generator
     
     @property
     def dim(self):
+        """
+        Returns the dimension of the copula.
+
+        Returns:
+            int: The dimension of the copula.
+        """
         return self.__dim
 
     @property
     def rotate(self):
+        """
+        Returns the rotation angle of the copula.
+
+        Returns:
+            int: The rotation angle (0, 90, 180, or 270).
+        """
         return self.__rotate
     
     @staticmethod
     def list_of_methods():
+        """
+        Returns a list of available methods for parameter estimation.
+
+        Returns:
+            list: A list of available methods ('MLE', 'SCAR-M-OU', 'SCAR-P-OU', 'SCAR-P-LD', 'SCAR-P-DS', 'SCAR-M-DS', 'SCAR-S-OU').
+        """
         l = ['MLE', 'SCAR-M-OU', 'SCAR-P-OU', 'SCAR-P-LD', 'SCAR-P-DS', 'SCAR-M-DS', 'SCAR-S-OU']
         return l
 
     @lru_cache
     def sp_cdf_from_generator(self):
-        '''Sympy expression of copula's cdf'''
+        """
+        Generates the symbolic expression for the copula's CDF based on the generator.
+
+        Returns:
+            sympy.Expr: The symbolic expression for the copula's CDF.
+        """
         u = sp.symbols('u0:%d'%(self.dim), positive = True)
         u = list(u)
 
@@ -95,11 +163,22 @@ class ArchimedianCopula:
 
     @lru_cache
     def sp_cdf(self):
+        """
+        Returns the symbolic expression for the copula's CDF.
+
+        Returns:
+            sympy.Expr: The symbolic expression for the copula's CDF.
+        """
         return self.sp_cdf_from_generator()
 
     @lru_cache
     def sp_pdf_from_generator(self):
-        '''Sympy expression of copula's pdf'''
+        """
+        Generates the symbolic expression for the copula's PDF based on the generator.
+
+        Returns:
+            sympy.Expr: The symbolic expression for the copula's PDF.
+        """
         u = sp.symbols('u0:%d'%(self.dim), positive = True)
         params = [self.sp_generator.subs([(self.t, x)]) for x in u]
 
@@ -128,11 +207,27 @@ class ArchimedianCopula:
     
     @lru_cache
     def sp_pdf(self):
+        """
+        Returns the symbolic expression for the copula's PDF.
+
+        Returns:
+            sympy.Expr: The symbolic expression for the copula's PDF.
+        """
         return self.sp_pdf_from_generator()
         
     @lru_cache
     def np_pdf(self):
-        '''Numpy pdf function from sympy expression'''
+        """
+        Converts the symbolic PDF to a numerical function that can be evaluated with NumPy. 
+        For the convenience use `pdf` method
+
+        Returns:
+            Callable: A numerical function that takes (u, r) as input and returns the PDF value.
+
+        Example:
+            pdf = self.np_pdf()(u.T, r)
+        
+        """
         expr = self.sp_pdf()
         u = sp.symbols('u0:%d'%(self.dim))
         r = sp.symbols('r')
@@ -141,7 +236,17 @@ class ArchimedianCopula:
    
     @lru_cache
     def np_cdf(self):
-        '''Numpy cdf function from sympy expression'''
+        """
+        Converts the symbolic CDF to a numerical function that can be evaluated with NumPy.
+        For the convenience use `cdf` method
+
+        Returns:
+            Callable: A numerical function that takes (u, r) as input and returns the CDF value.
+
+        Example:
+            cdf = self.np_cdf()(u.T, r)
+
+        """
         expr = self.sp_cdf()
         u = sp.symbols('u0:%d'%(self.dim))
         r = sp.symbols('r')
@@ -149,7 +254,19 @@ class ArchimedianCopula:
         return func #njit(func)
 
     def _broadcasting(self, u, r):
-        """Broadcasts u and r to ensure compatible shapes."""
+        """
+        Broadcasts u and r to ensure compatible shapes for numerical calculations.
+
+        Args:
+            u (np.ndarray): An array of uniform marginal values.
+            r (np.ndarray or float): An array or a scalar representing the copula parameter.
+
+        Returns:
+            tuple: A tuple containing the broadcasted u and r arrays.
+
+        Raises:
+            ValueError: If the shapes of u and r are incompatible for broadcasting.
+        """
         u = np.asarray(u)
 
         if u.ndim == 1:
@@ -173,7 +290,16 @@ class ArchimedianCopula:
         return u, r
 
     def pdf(self, u: np.array, r: np.array):
-        '''Numpy pdf function'''
+        """
+        Calculates the numerical PDF of the copula.
+
+        Args:
+            u (np.ndarray): An array of uniform marginal values.
+            r (np.ndarray or float): An array or a scalar representing the copula parameter.
+
+        Returns:
+            np.ndarray: An array of PDF values or a single PDF value.
+        """
         func = self.np_pdf()
 
         u, r = self._broadcasting(u, r)
@@ -182,7 +308,16 @@ class ArchimedianCopula:
         return res
     
     def cdf(self, u, r):
-        '''Numpy cdf function'''
+        """
+        Calculates the numerical CDF of the copula.
+
+        Args:
+            u (np.ndarray): An array of uniform marginal values.
+            r (np.ndarray or float): An array or a scalar representing the copula parameter.
+
+        Returns:
+            np.ndarray or float: An array of CDF values or a single CDF value.
+        """
         func = self.np_cdf()
 
         u, r = self._broadcasting(u, r)
@@ -200,17 +335,43 @@ class ArchimedianCopula:
     
     @staticmethod
     def transform(r):
-        '''Function that transfroms interval (-inf, inf) to avialable range for copula parameter.
-        Function used for solving non-constrained minimization problem.
-        '''
+        """
+        Function that transfroms interval (-inf, inf) to avialable range for copula parameter.
+
+        Args:
+            r (np.ndarray or float): The copula parameter to be transformed.
+
+        Returns:
+            np.ndarray or float: The transformed copula parameter.
+        """
         return r
 
     @staticmethod
     def psi(t, r):
+        """
+        Placeholder for the 'psi' function used in sampling (default is exp(-t)).
+
+        Args:
+            t (float): Input value.
+            r (float): Copula parameter.
+
+        Returns:
+            float: The result of the psi function.
+        """
         return np.exp(-t)
      
     @staticmethod
     def V(N, r):
+        """
+        Placeholder for the 'V' function used in sampling (default is ones).
+
+        Args:
+            N (int): Number of samples
+            r (float): Copula parameter or array of copula parameters
+
+        Returns:
+            np.ndarray: Array of ones with shape (N,) or shape of r
+        """
         if isinstance(r, (int, float)):
             r_arr = np.ones(N) * 1
         else:
@@ -218,7 +379,16 @@ class ArchimedianCopula:
         return r_arr
     
     def get_sample(self, N, r):
-        # M.Hofert, Sampling Archimedean copulas, 2008
+        """
+        Generates samples from the copula. Based on M.Hofert, Sampling Archimedean copulas, 2008
+
+        Args:
+            N (int): The number of samples to generate.
+            r (np.ndarray or float): The copula parameter (can be an array or a scalar).
+
+        Returns:
+            np.ndarray: An array of shape (N, dim) containing the generated samples.
+        """
         u = np.zeros((N, self.dim))
 
         x = np.random.uniform(0, 1, size = (N, self.dim))
@@ -239,12 +409,16 @@ class ArchimedianCopula:
         return u
     
     def log_likelihood(self, u, r):
-        '''Log of likelihood function
-        
-        Parameters.
-        1. data - dataset for calculation. Type - Numpy Array
-        2. r - copula parameter. Type - Numpy Array. 
-        '''
+        """
+        Calculates the log-likelihood of the copula.
+
+        Args:
+            u (np.ndarray): An array of uniform marginal values.
+            r (np.ndarray or float): An array or a scalar representing the copula parameter.
+
+        Returns:
+            float: The log-likelihood value.
+        """
         u, r = self._broadcasting(u, r)
 
         return np.sum(np.log(self.pdf(u, r)))
@@ -252,8 +426,19 @@ class ArchimedianCopula:
     @staticmethod
     def calculate_dwt(method: Literal['mle', 'scar-p-ou', 'scar-m-ou', 'scar-p-ld'],
                       T: int, latent_process_tr: int, seed: int = None, dt: float = None):
-        '''Calculation of common random numbers (crn) with of T rows and latent_process_tr columns. Setting seed is also avilable'''
+        """
+        Calculates increments of Wiener process for stochastic methods.
 
+        Args:
+            method (Literal['mle', 'scar-p-ou', 'scar-m-ou', 'scar-p-ld']): The estimation method.
+            T (int): The number of time steps.
+            latent_process_tr (int): The number of latent process trajectories.
+            seed (int, optional): The random seed for generating common random numbers. Defaults to None.
+            dt (float, optional): The time step (for 'SCAR-M-OU', 'SCAR-P-OU', 'SCAR-P-LD'). Defaults to None.
+
+        Returns:
+            np.ndarray: An array of Wiener process increments.
+        """
         if method.upper() in ['MLE']:
             return
     
@@ -283,7 +468,46 @@ class ArchimedianCopula:
                         stationary: bool = False,
                         print_path: bool = False, 
                         init_state = None) -> float:
-        '''Calculation of -log_likelihood'''
+        """
+        Calculates the negative log-likelihood of the copula for a given dataset and parameters.
+
+        This function supports both Maximum Likelihood Estimation (MLE) and stochastic methods
+        for parameter estimation. For stochastic methods, it approximates the likelihood by
+        integrating over the latent process trajectories.
+
+        Args:
+            alpha (np.ndarray): The parameter vector. The interpretation of the parameters depends
+                on the chosen method:
+                - 'mle': `alpha` should be a scalar representing the copula parameter.
+                - 'scar-p-ou', 'scar-m-ou', 'scar-p-ld': `alpha` should be a vector `[theta, mu, nu]` where:
+                    - `theta` is the rate of mean reversion.
+                    - `mu` is the long-term mean.
+                    - `nu` is the volatility of the latent process.
+                - other scar methods: parameter set depends on method (see README for details).
+            u (np.ndarray): An array of uniform marginal values (pseudo observations).
+            method (Literal['mle', 'scar-p-ou', 'scar-m-ou', 'scar-p-ld']): The estimation method:
+                - 'mle': Maximum Likelihood Estimation with a constant copula parameter.
+                - 'scar-p-ou': Stochastic Copula with Autoregressive parameter using Ornstein-Uhlenbeck (OU) process.
+                - 'scar-m-ou': Stochastic Copula with OU process and Monte Carlo importance sampling.
+                - 'scar-p-ld': Stochastic Copula with Logistic Distribution transition density (experimental).
+            latent_process_tr (int, optional): The number of latent process trajectories used for stochastic methods.
+                Defaults to 500.
+            M_iterations (int, optional): The number of Monte Carlo importance sampling steps (only for 'scar-m-ou').
+                Defaults to 5.
+            seed (int, optional): The random seed for generating Wiener process increments. Defaults to None.
+            dwt (np.ndarray, optional): Pre-calculated Wiener process increments. If provided, the `calculate_dwt`
+                function is not called. Defaults to None.
+            stationary (bool, optional): If True, uses stationary distribution for generating initial latent process states.
+                Defaults to False.
+            print_path (bool, optional): If True, save and return all latent process values. Defaults to False.
+            init_state (np.ndarray, optional): Initial state of the latent process. Defaults to None.
+
+        Returns:
+            float: The negative log-likelihood value.
+
+        Raises:
+            ValueError: If the given `method` is not available.
+        """
 
         if method.upper() not in self.list_of_methods():
             raise ValueError(f'given method {method} is not avialable. avialable methods: {self.list_of_methods()}')
@@ -340,10 +564,52 @@ class ArchimedianCopula:
             print_path: bool = False,
             init_state: np.array = None,
             ):
-        '''fit stochastic or classic copula
+        """
+        Fits the copula to the given data using the specified method.
 
-        methods: scar-p-ou, scar-m-ou, scar-p-ld, mle
-        '''
+        This function estimates the copula parameters, either as a constant value (for MLE)
+        or as parameters of a latent stochastic process (for SCAR methods).
+
+        Args:
+            data (np.ndarray): The dataset to fit the copula to. It can be either log-returns or
+                pseudo-observations (uniform marginals), depending on the `to_pobs` parameter.
+            method (Literal['mle', 'scar-p-ou', 'scar-m-ou', 'scar-p-ld']): The parameter estimation method:
+                - 'mle': Maximum Likelihood Estimation (constant parameter).
+                - 'scar-p-ou': Stochastic Copula with OU process (stochastic parameter).
+                - 'scar-m-ou': Stochastic Copula with OU process and Monte Carlo importance sampling (stochastic parameter).
+                - 'scar-p-ld': Stochastic Copula with Logistic Distribution transition density(stochastic parameter, experimental).
+                - 'scar-p-ds': Stochastic Copula with Discrete transition density(stochastic parameter, experimental).
+                - 'scar-m-ds': Stochastic Copula with Discrete transition density and Monte Carlo importance sampling(stochastic parameter, experimental).
+            alpha0 (np.ndarray, optional): The initial guess for the parameters. If None, a reasonable initial
+                guess is calculated automatically. Defaults to None.
+            tol (float, optional): The tolerance for the optimization stopping criterion (gradient norm). Defaults to 1e-2.
+            to_pobs (bool, optional): If True, the input data is transformed to pseudo-observations (uniform marginals).
+                Defaults to True.
+            latent_process_tr (int, optional): The number of latent process trajectories used for stochastic methods.
+                Defaults to 500.
+            M_iterations (int, optional): The number of Monte Carlo importance sampling steps (only for 'scar-m-ou' and 'scar-m-ds').
+                Defaults to 5.
+            seed (int, optional): The random seed for generating Wiener process increments. Defaults to None.
+            dwt (np.ndarray, optional): Pre-calculated Wiener process increments. If provided, the `calculate_dwt`
+                function is not called. Defaults to None.
+            stationary (bool, optional): If True, uses stationary distribution for generating initial latent process states.
+                Defaults to False.
+            print_path (bool, optional): If True, save and return all latent process values. Defaults to False.
+            init_state (np.ndarray, optional): Initial state of the latent process. Defaults to None.
+        Returns:
+            scipy.optimize.OptimizeResult: The optimization result object.
+                - `x`: The estimated parameter(s).
+                - `fun`: The negative log-likelihood at the optimum.
+                - `message`: Description of the cause of termination.
+                - other attributes of `scipy.optimize.OptimizeResult` class.
+                - `name`: The name of copula.
+                - `method`: The method that was used to fit the copula.
+                - `latent_process_tr`: The number of latent process trajectories (if any).
+                - `stationary`: True if stationary state was used.
+                - `M_iterations`: The number of M_iterations (if any).
+        Raises:
+            ValueError: If the given `method` is not available.
+        """
         if method.upper() not in self.list_of_methods():
             raise ValueError(f'given method {method} is not avialable. avialable methods: {self.list_of_methods()}') 
 
