@@ -3,14 +3,20 @@
 - [Mathematical basis](#mathematical-basis)
   * [Joint distribution](#joint-distribution)
   * [Goodness of fit](#goodness-of-fit)
+  * [Risk metrics](#risk-metrics)
 - [Examples](#examples)
   * [1. Read dataset and transform to log-returns](#read-dataset)
   * [2. Initialize copula object](#initialize-copula)
   * [3. Fit copula](#fit-copula)
   * [4. Sample from copula](#sample-copula)
-  
+  * [5. Calculation of risk metrics](#risk-metrics)
+
 # About project
-This project is made to fit multivaiate distribution using copula approach. To consider complex dependencies between the random vaiables we extend the classical model with constant parameters to stochastic model, where parameter considered as Ornstein-Uhlenbeck process. For that model we introduce a likelihood function as an expectation over all random process states and use Monte Carlo estimates for that expectation while solving parameter estimation problem. The approach discussed in detail in our article (link will be availble when it will published). For brief description and code examples see below. Frank, Gumbel, Clayton and Joe copulas were implemented in the code. Goodness-of-fit (GoF) metrics based on Rosenblatt transform is also available.
+This project is made to fit multivaiate distribution using copula approach. To consider complex dependencies between the random vaiables we extend the classical model with constant parameters to stochastic model, where parameter considered as Ornstein-Uhlenbeck process. The idea based on discrete model suggested in Liesenfeld and Richard, Univariate and multivariate stochastic volatility models (2003).
+
+For that model we introduce a likelihood function as an expectation over all random process states and use Monte Carlo estimates for that expectation while solving parameter estimation problem. The approach discussed in detail in our article (link will be availble when it will published). For brief description and code examples see below. Frank, Gumbel, Clayton and Joe copulas were implemented in the code. Goodness-of-fit (GoF) metrics based on Rosenblatt transform is also available.
+
+The stochastic models is used here to calculate metrics VaR and CVaR and build a CVaR-optimized portfolio. The calculation based on paper Rockafellar, Uryasev Optimization of conditional value-at-risk (2000).
 
 This project is made during the MSc program "Financial mathematics and financial technologies" in Sirius University, Sochi, Russia. 2023-2024.
 
@@ -58,6 +64,23 @@ Y = F_{\chi^2_d}\left( \sum\limits_{i = 1}^{d} \Phi^{-1}(u'_i)^2 \right)
 ```
 is uniformly disturbed (see details in Hering and Hofert, Goodness-of-fit Tests for Archimedean
 Copulas in High Dimensions (2015)). This fact could be checked using various methods. We use a scipy implementation of Cramer-Von-Mises test.
+
+## Risk metrics
+Let $w$ - vector of portfolio weights, $\gamma$ - significance level, $f(r,w) = - (r,w)$ - portfolio loss function where $r$ - vector of portfolio return. Consider a function:
+```math
+F_{\gamma}(w, q) = q + \frac{1}{1 - \gamma} \int\limits_{\mathbb{R}^d} \left( f(w, r) - q \right)_{+} p(r) \, dr
+```
+Rockafellar and Uryasev in Optimization of conditional value-at-risk (2000) proved that:
+```math
+  \textnormal{CVaR}_{\gamma}(w) = \underset{q \in \mathbb{R}} {\min} \; F_{\gamma}(w, q),
+  ```
+ ```math
+  \textnormal{VaR}_{\gamma}(w) =  \underset{q \in \mathbb{R}}{ \arg \min} \; F_{\gamma}(w, q)
+  ```
+```math
+  \underset{w \in X}{\min} \; \textnormal{CVaR}_{\gamma}(w) = \underset{(w, q) \in X \times \mathbb{R}} {\min} \; F_{\gamma}(w, q)
+  ````
+Here we solve this minimizations problems numerically using Monte-Carlo estimates of function $F$. This calculations could be made in a runnig window.
 
 # Examples
 <a name="read-dataset"></a>
@@ -144,7 +167,7 @@ gof_test(copula, moex_returns, fit_result, to_pobs=True)
 ```
 with output
 ```python
-CramerVonMisesResult(statistic=0.12957361510979126, pvalue=0.45838687740863493)
+CramerVonMisesResult(statistic=0.0952262373517101, pvalue=0.6090629093721028)
 ```
 
 <a name="sample-copula"></a>
@@ -164,3 +187,102 @@ random_process_state = copula.transform(stationary_state_ou(fit_result.x, size))
 
 copula.get_sample(N = size, r = random_process_state)
 ```
+
+## 5. Calculation of risk metrics
+```python
+from pyscarcopula.metrics import risk_metrics
+
+gamma = [0.95]
+window_len = 250
+latent_process_tr = 500
+MC_iterations = [int(10**5)]
+M_iterations = 5
+
+#fastest calculations
+# method = 'mle'
+# marginals_method = 'normal'
+
+#More precise calculations. For appropiate choice of latent_process_tr and M_iterations see README.md
+method = 'scar-p-ou' # or use 'scar-m-ou'
+marginals_method = 'johnsonsu'
+
+count_instruments = len(tickers)
+portfolio_weight = np.ones(count_instruments) / count_instruments
+result = risk_metrics(copula,
+                      returns,
+                      window_len,
+                      gamma,
+                      MC_iterations,
+                      marginals_method = marginals_method,
+                      latent_process_type = method,
+                      latent_process_tr = latent_process_tr,
+                      optimize_portfolio = False,
+                      portfolio_weight = portfolio_weight,
+                      seed = 111,
+                      M_iterations = M_iterations,
+                      save_logs = False
+                      )
+```
+
+Function *risk_metrics* description 
+1. ***copula*** -- object of class ArchimedianCopula (and inherited classes). Type *ArchimedianCopula*. Required parameter.
+2. ***data*** -- log-return dataset. Type *Numpy Array*. Required parameter.
+3. ***window_len*** -- window len. Type *int*. Required parameter. To use all available data use length of ***data***.  
+4. ***gamma*** -- significance level. Type *float* or *Numpy Array*. Required parameter. If *Numpy Array* then calculations is made for every element of array. Made for minimizaion of repeated calculations. Usually one set, for example, $0.95$, $0.97$, $0.99$ or array $[0.95, 0.97, 0.99]$. 
+5. ***latent_process_type*** -- type of stochastic process that used as copula parameter. Type *Literal*. Available methods: *mle*, *scar-p-ou*, *scar-m-ou*, *scar-p-ld*. Required parameter.
+6. ***latent_process_tr*** -- number of Monte-Carlo iterations that used for copula fit. Type *int*. Required parameter. 
+7. ***marginals_params_method*** -- method of marginal distribution fit. Type *Literal*. Available methods: *normal*, *hyperbolic*, *stable*. Required parameter.
+8. ***MC_iterations*** -- number of Monte-Carlo iterations that used for risk metrics calculations. Type *int* or *Numpy Array*. Required parameter. If *Numpy Array* then calculations is made for every element of array. Possible value, for example, $10^4$, $10^5$, $10^6$ and so on.
+9. ***optimize_portfolio*** -- parameter responsible for the need to search for optimal CVaR weights.Type *Bool*. Optional parameter. Default value $True$.
+10. ***portfolio_weight*** -- portfolio weight. Type *Numpy Array*. Optional parameter. If ***optimize_portfolio*** = True this value is ignored. Default value -- equal weighted investment portfolio.
+11. ***save_logs*** -- parameter responsible for the need to save logs of copula parameters search. If ***save_logs*** = True then function would create folder logs in the current directory and save copula parameters in csv file. Optional parameter. Default value $False$.
+12. ***logs_path*** -- An optional string specifying the path to save the log file. If None and save_logs is True, a default directory "logs" in the current working directory will be used. Defaults to None.
+13. ***stationary*** -- stochastic model with stationary transition density. Type *bool*. Default value *False*. Optional parameter.
+
+Calculated values could be extracted as follows
+```python
+var = result[0.95][1000000]['var']
+cvar = result[0.95][1000000]['cvar']
+portfolio_weight = result[0.95][1000000]['weight']
+```
+
+Plot the CVaR metrics:
+```python
+from pyscarcopula.metrics import cvar_emp_window
+from matplotlib import pyplot as plt
+import matplotlib.ticker as plticker
+
+pd_var_95 = pd.Series(data = -result[gamma[0]][MC_iterations[0]]['var'], index=returns_pd.index).shift(1)
+pd_cvar_95 = pd.Series(data = -result[gamma[0]][MC_iterations[0]]['cvar'], index=returns_pd.index).shift(1)
+
+
+weight = result[gamma[0]][MC_iterations[0]]['weight']
+
+n = 1
+m = 1
+i1 = window_len
+i2 = len(returns) - 1
+
+fig,ax = plt.subplots(n,m,figsize=(10,6))
+loc = plticker.MultipleLocator(base=27.0)
+
+daily_returns = ((np.exp(returns_pd) - 1) * weight).sum(axis=1)
+cvar_emp = cvar_emp_window(daily_returns.values, 1 - gamma[0], window_len)
+
+ax.plot(np.clip(daily_returns, -0.2, 0.2)[i1:i2], label = 'Portfolio log return')
+ax.plot(cvar_emp[i1:i2], label = 'Emperical CVaR', linestyle='dashed', color = 'gray')
+
+ax.plot(pd_cvar_95[i1:i2], label= f'{method} {marginals_method} CVaR 95%')
+
+ax.set_title(f'Daily returns', fontsize = 14)
+
+ax.xaxis.set_major_locator(loc)
+ax.set_xlabel('Date', fontsize = 12, loc = 'center')
+ax.set_ylabel('Log return', fontsize = 12, loc = 'center')
+ax.tick_params(axis='x', labelrotation = 15, labelsize = 12)
+ax.tick_params(axis='y', labelsize = 12)
+ax.grid(True)
+ax.legend(fontsize=12, loc = 'upper right')
+```
+
+Examples of usage of this code coulde be found in example.ipynb notebook.

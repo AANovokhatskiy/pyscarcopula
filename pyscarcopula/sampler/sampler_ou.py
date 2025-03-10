@@ -18,6 +18,7 @@ def stationary_state_ou(alpha, latent_process_tr, seed = None):
 
     if seed is None:
         seed = np.random.randint(1, 1000000)
+        
     rng = np.random.seed(seed)
     xs = mu
     sigma2 = nu**2 / (2 * theta)
@@ -260,10 +261,10 @@ def m_jit_mlog_likelihood_ou(alpha, u, dwt, M_iterations,
     a_data = np.zeros((T, 3))
     theta, mu, nu = alpha[0], alpha[1], alpha[2]
     
-    # a1t = np.zeros(T)
-    # a2t = np.zeros(T)
-    a1t = 10 * np.ones(T)
-    a2t = -5 * np.ones(T)
+    a1t = np.zeros(T)
+    a2t = np.zeros(T)
+    # a1t = 10 * np.ones(T)
+    # a2t = -5 * np.ones(T)
 
     a1_hat = np.zeros(T)
     a2_hat = np.zeros(T)

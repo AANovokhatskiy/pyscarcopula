@@ -1,8 +1,6 @@
 import sympy as sp
 import numpy as np
-from numba import njit, jit
-import math
-from typing import Callable, Literal
+from typing import Literal
 import warnings
 
 from functools import lru_cache
@@ -19,7 +17,6 @@ from pyscarcopula.sampler.sampler_ds import p_jit_mlog_likelihood_ds
 from pyscarcopula.sampler.sampler_ds import m_jit_mlog_likelihood_ds
 
 from pyscarcopula.sampler.mle import jit_mlog_likelihood_mle
-
 from pyscarcopula.auxiliary.funcs import pobs
 
 
@@ -44,10 +41,11 @@ class ArchimedianCopula:
 
         self.__dim = dim
         self.__rotate = rotate
-        self.__t, self.__r = sp.symbols('t r')
+
+        if self.dim != 2 and self.rotate != 0:
+            warnings.warn("Rotation is implemented only for dim = 2 and this parameter will be ignored")
+
         '''independent copula by default'''
-        self.__sp_generator = - sp.log(self.t)
-        self.__sp_inverse_generator = sp.exp(-self.t)
         self.__name = 'Independent copula'
 
     @property
@@ -59,28 +57,8 @@ class ArchimedianCopula:
             str: The name of the copula.
         """
         return self.__name
-
-    @property
-    def t(self):
-        """
-        Returns the symbolic variable 't' used in the generator function.
-
-        Returns:
-            sympy.Symbol: The symbolic variable 't'.
-        """
-        return self.__t
-    
-    @property
-    def r(self):
-        """
-        Returns the symbolic variable 'r' representing the copula parameter.
-
-        Returns:
-            sympy.Symbol: The symbolic variable 'r'.
-        """
-        return self.__r
-    
-    @property
+   
+    @lru_cache
     def sp_generator(self):
         """
         Returns the symbolic generator function of the copula.
@@ -88,9 +66,12 @@ class ArchimedianCopula:
         Returns:
             sympy.Expr: The symbolic generator function.
         """
-        return self.__sp_generator
+        t, r = sp.symbols('t r')
+        
+        result = -sp.log(t)
+        return result
     
-    @property
+    @lru_cache
     def sp_inverse_generator(self):
         """
         Returns the symbolic inverse generator function of the copula.
@@ -98,7 +79,10 @@ class ArchimedianCopula:
         Returns:
             sympy.Expr: The symbolic inverse generator function.
         """
-        return self.__sp_inverse_generator
+        t, r = sp.symbols('t r')
+
+        result = sp.exp(-t)
+        return result
     
     @property
     def dim(self):
@@ -142,11 +126,10 @@ class ArchimedianCopula:
         u = sp.symbols('u0:%d'%(self.dim), positive = True)
         u = list(u)
 
-        if self.dim != 2 and self.rotate != 0:
-            warnings.warn("Rotation is implemented only for dim = 2 and this parameter will be ignored")
+        t, r = sp.symbols('t r')
 
-        params = sum([self.sp_generator.subs([(self.t, x)]) for x in u])
-        func = self.sp_inverse_generator.subs([(self.t, params)])
+        params = sum([self.sp_generator().subs([(t, x)]) for x in u])
+        func = self.sp_inverse_generator().subs([(t, params)])
 
         if self.dim == 2 and self.rotate == 90:
             func = func.subs(u[0], 1 - u[0])
@@ -179,19 +162,19 @@ class ArchimedianCopula:
         Returns:
             sympy.Expr: The symbolic expression for the copula's PDF.
         """
+
+        t, r = sp.symbols('t r')
+
         u = sp.symbols('u0:%d'%(self.dim), positive = True)
-        params = [self.sp_generator.subs([(self.t, x)]) for x in u]
+        params = [self.sp_generator().subs([(t, x)]) for x in u]
 
-        if self.dim != 2 and self.rotate != 0:
-            warnings.warn("Rotation is implemented only for dim = 2 and this parameter will be ignored")
+        diff_inverse_generator = sp.together(self.sp_inverse_generator().diff((t, self.dim)))
+        diff_generator = sp.together(self.sp_generator().diff(t, 1))
 
-        diff_inverse_generator = sp.together(self.sp_inverse_generator.diff((self.t, self.dim)))
-        diff_generator = sp.together(self.sp_generator.diff(self.t, 1))
-
-        func = diff_inverse_generator.subs([(self.t, sum(params))])
+        func = diff_inverse_generator.subs([(t, sum(params))])
 
         for x in u:
-            func = func * diff_generator.subs([(self.t, x)])
+            func = func * diff_generator.subs([(t, x)])
         
         func = sp.powsimp(func)
 
@@ -225,15 +208,15 @@ class ArchimedianCopula:
             Callable: A numerical function that takes (u, r) as input and returns the PDF value.
 
         Example:
-            pdf = self.np_pdf()(u.T, r)
+            # pdf = self.np_pdf()(u.T, r)
         
         """
         expr = self.sp_pdf()
         u = sp.symbols('u0:%d'%(self.dim))
         r = sp.symbols('r')
         func = sp.lambdify((u, r), expr, modules = 'numpy', cse = True)
-        return func #njit(func)
-   
+        return func
+
     @lru_cache
     def np_cdf(self):
         """
@@ -251,7 +234,7 @@ class ArchimedianCopula:
         u = sp.symbols('u0:%d'%(self.dim))
         r = sp.symbols('r')
         func = sp.lambdify((u, r), expr, modules = 'numpy', cse = True)
-        return func #njit(func)
+        return func
 
     def _broadcasting(self, u, r):
         """
@@ -478,7 +461,7 @@ class ArchimedianCopula:
         Args:
             alpha (np.ndarray): The parameter vector. The interpretation of the parameters depends
                 on the chosen method:
-                - 'mle': `alpha` should be a scalar representing the copula parameter.
+                - 'mle': `alpha` should be a scalar representing the copula parameter (should also be non transformed: see `fit` method). 
                 - 'scar-p-ou', 'scar-m-ou', 'scar-p-ld': `alpha` should be a vector `[theta, mu, nu]` where:
                     - `theta` is the rate of mean reversion.
                     - `mu` is the long-term mean.
@@ -506,8 +489,10 @@ class ArchimedianCopula:
             float: The negative log-likelihood value.
 
         Raises:
-            ValueError: If the given `method` is not available.
+            ValueError: If the given `method` is not available or dimension mismatch.
         """
+        if self.dim != u.shape[1]:
+            raise ValueError(f'Dimension of copula = {self.dim} does not correspond to dimension of data = {u.shape[1]}')
 
         if method.upper() not in self.list_of_methods():
             raise ValueError(f'given method {method} is not avialable. avialable methods: {self.list_of_methods()}')
@@ -582,7 +567,7 @@ class ArchimedianCopula:
                 - 'scar-m-ds': Stochastic Copula with Discrete transition density and Monte Carlo importance sampling(stochastic parameter, experimental).
             alpha0 (np.ndarray, optional): The initial guess for the parameters. If None, a reasonable initial
                 guess is calculated automatically. Defaults to None.
-            tol (float, optional): The tolerance for the optimization stopping criterion (gradient norm). Defaults to 1e-2.
+            tol (float, optional): The tolerance for the optimization stopping criterion (gradient norm). Only for stochastic models. Defaults to 1e-2.
             to_pobs (bool, optional): If True, the input data is transformed to pseudo-observations (uniform marginals).
                 Defaults to True.
             latent_process_tr (int, optional): The number of latent process trajectories used for stochastic methods.
@@ -598,7 +583,7 @@ class ArchimedianCopula:
             init_state (np.ndarray, optional): Initial state of the latent process. Defaults to None.
         Returns:
             scipy.optimize.OptimizeResult: The optimization result object.
-                - `x`: The estimated parameter(s).
+                - `x`: The estimated parameter(s). The real parameter is self.transform(x): see `x_transformed`. The transformation is used for solving unconstrained problem for stochastic models.
                 - `fun`: The negative log-likelihood at the optimum.
                 - `message`: Description of the cause of termination.
                 - other attributes of `scipy.optimize.OptimizeResult` class.
@@ -607,9 +592,10 @@ class ArchimedianCopula:
                 - `latent_process_tr`: The number of latent process trajectories (if any).
                 - `stationary`: True if stationary state was used.
                 - `M_iterations`: The number of M_iterations (if any).
+                - `x_transformed`: Transformed (real) copula parameter (only for MLe method).
         Raises:
             ValueError: If the given `method` is not available.
-        """
+        """        
         if method.upper() not in self.list_of_methods():
             raise ValueError(f'given method {method} is not avialable. avialable methods: {self.list_of_methods()}') 
 
@@ -661,13 +647,20 @@ class ArchimedianCopula:
             else:
                 _alpha0 = alpha0
 
+            _seed = None
+
+            if seed is not None:
+                _seed = seed
+            else:
+                _seed = np.random.randint(1, 1000000)
+
             log_min = minimize(self.mlog_likelihood, _alpha0,
                                     args = (u,
                                             method.upper(),
                                             latent_process_tr, 
                                             M_iterations,
-                                            seed, 
-                                            dwt, 
+                                            _seed,
+                                            dwt,
                                             stationary,
                                             print_path, 
                                             init_state),

@@ -4,13 +4,15 @@ import numpy as np
 from typing import Literal
 from functools import lru_cache
 
-from numba import njit, jit
+from numba import njit
 from pyscarcopula.ArchimedianCopula import ArchimedianCopula
 
 @njit
 def generate_levy_stable(alpha, beta, loc = 0, scale = 1, size = 1):
-    # Weron, R. (1996). On the Chambers-Mallows-Stuck method for simulating skewed stable random variables
-    # Borak et. al. (2008), Stable Distributions
+    '''
+    Weron, R. (1996). On the Chambers-Mallows-Stuck method for simulating skewed stable random variables
+    Borak et. al. (2008), Stable Distributions
+    '''
 
     V = np.random.uniform(-np.pi/2, np.pi/2, size = size)
     u = np.random.uniform(0, 1, size = size)
@@ -34,7 +36,6 @@ def generate_levy_stable(alpha, beta, loc = 0, scale = 1, size = 1):
         
     return Y
 
-# @jit(nopython = True, cache = True)
 def bivariateGumbelPDF(u, r, rotate):
     u1 = u[0]
     u2 = u[1]
@@ -121,8 +122,6 @@ def bivariateGumbelPDF(u, r, rotate):
 class GumbelCopula(ArchimedianCopula):
     def __init__(self, dim: int = 2, rotate: Literal[0, 90, 180, 270] = 0) -> None:
         super().__init__(dim, rotate)
-        self.__sp_generator = (-sp.log(self.t))**self.r
-        self.__sp_inverse_generator = sp.exp(-self.t**(1/self.r))
         self.__name = 'Gumbel copula'
 
     @property
@@ -130,17 +129,34 @@ class GumbelCopula(ArchimedianCopula):
         return self.__name
         
     @staticmethod
-    @njit
     def transform(r):
         return r * np.tanh(r) + 1.0001
     
-    @property
+    @lru_cache
     def sp_generator(self):
-        return self.__sp_generator
+        """
+        Returns the symbolic generator function of the copula.
+
+        Returns:
+            sympy.Expr: The symbolic generator function.
+        """
+        t, r = sp.symbols('t r')
+        
+        result = (-sp.log(t))**r
+        return result
     
-    @property
+    @lru_cache
     def sp_inverse_generator(self):
-        return self.__sp_inverse_generator
+        """
+        Returns the symbolic inverse generator function of the copula.
+
+        Returns:
+            sympy.Expr: The symbolic inverse generator function.
+        """
+        t, r = sp.symbols('t r')
+
+        result = sp.exp(-t**(1/r))
+        return result
 
     @staticmethod
     def psi(t, r):
@@ -156,7 +172,6 @@ class GumbelCopula(ArchimedianCopula):
         if self.dim == 2:
             rotate = self.rotate
 
-            # @njit(cache = True)
             def bivariate_np_pdf(u, r):
                 return bivariateGumbelPDF(u, r, rotate)
             
@@ -168,5 +183,20 @@ class GumbelCopula(ArchimedianCopula):
             u = sp.symbols('u0:%d'%(self.dim))
             r = sp.symbols('r')
             func = sp.lambdify((u, r), expr, modules = 'numpy', cse = True)
-        # return njit(func)
         return func
+    
+    @staticmethod
+    def h(u0, u1, r):
+        eps = 1e-6
+        _u0 = np.clip(u0, eps, 1 - eps)
+        _u1 = np.clip(u1, eps, 1 - eps)
+        
+        x0 = np.log(_u1)
+        x1 = (-x0)**r
+        x2 = x1 + (-np.log(_u0))**r
+        x3 = x2**(r**(-1.0))
+        return -x1*x3*np.exp(-x3)/(_u1*x0*x2)
+    
+    @staticmethod
+    def h_inverse(u1, u2, r):
+        pass

@@ -100,7 +100,7 @@ def latent_process_conditional_expectation_p_ld(copula, pobs_data, fit_result, i
 
     stationary = fit_result.stationary
     if stationary == True:
-        init_state = stationary_state_ou(alpha, latent_process_tr)
+        init_state = stationary_state_ld(alpha, latent_process_tr)
 
     dwt = copula.calculate_dwt(method = fit_result.method, 
                                T = len(pobs_data), latent_process_tr = latent_process_tr)
