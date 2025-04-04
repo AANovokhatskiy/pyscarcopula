@@ -7,12 +7,13 @@ setup(
     author='Alexey Novokhatskiy', 
     author_email='aanovokhatskiy@gmail.com', 
     packages=find_packages(),
-    package_data={'pyscarcopula': ['auxiliary/*', 'marginal/*', 'sampler/*', 'stattests/*']},
+    package_data={'pyscarcopula': ['auxiliary/*', 'marginal/*', 'sampler/*', 'stattests/*'],
+                  'pyscarcopula.cython_ext': ['*.pxd']},
     install_requires=[
         'numpy',
         'numba',
         'scipy',
         'sympy',
-        'joblib'
+        'joblib',
     ]
 )

@@ -12,7 +12,8 @@ import os
 
 def latent_process_init_state(alpha, latent_process_type, MC_iterations):
     if latent_process_type.upper() == 'MLE':
-        init_state = np.array([alpha[0]])
+        # init_state = np.array([alpha[0]])
+        final_state = alpha
     elif latent_process_type.upper() in ['SCAR-P-OU', 'SCAR-M-OU', 'SCAR-S-OU']:
         init_state = init_state_ou(alpha, MC_iterations)
     elif latent_process_type.upper() == 'SCAR-P-LD':
@@ -23,7 +24,8 @@ def latent_process_final_state(alpha,
                                latent_process_type,
                                latent_process_tr):
     if latent_process_type.upper() == 'MLE':
-        final_state = np.array([alpha[0]])
+        # final_state = np.array([alpha[0]])
+        final_state = alpha
     elif latent_process_type.upper() in ['SCAR-P-OU', 'SCAR-M-OU']:
         theta, mu, nu = alpha[0], alpha[1], alpha[2]
         xs = mu

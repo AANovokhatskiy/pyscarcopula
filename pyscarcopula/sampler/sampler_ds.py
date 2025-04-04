@@ -26,7 +26,7 @@ def p_sampler_no_hist_ds(alpha: np.array, T: int, N_mc: int) -> np.array:
 
 
 @jit(nopython = True, cache = True)
-def get_avg_p_log_likelihood(data, lambda_data, pdf, transform):
+def get_avg_p_log_likelihood(data, lambda_data, log_pdf, transform):
     avg_likelihood = 0
 
     latent_process_tr = lambda_data.shape[1]
@@ -34,7 +34,7 @@ def get_avg_p_log_likelihood(data, lambda_data, pdf, transform):
     copula_log_data = np.zeros(latent_process_tr)
 
     for k in prange(0, latent_process_tr):
-        copula_log_data[k] = np.sum(np.log(pdf(data, transform(lambda_data[:,k]))))
+        copula_log_data[k] = np.sum(log_pdf(data, transform(lambda_data[:,k])))
 
     '''trick for calculation large values. calculate e^(sum(log_cop) - corr) instead of e^(sum(log_cop)).
     Do inverse correction at the end of calculations'''
@@ -44,7 +44,7 @@ def get_avg_p_log_likelihood(data, lambda_data, pdf, transform):
 
 @jit(nopython = True, cache = True)
 def p_jit_mlog_likelihood_ds(alpha: np.array, data: np.array, crns: np.array,
-                      pdf: callable, transform: callable, print_path: bool) -> float:
+                      log_pdf: callable, transform: callable, print_path: bool) -> float:
     
     '''initial data check'''
     if np.isnan(np.sum(alpha)) == True:
@@ -60,7 +60,7 @@ def p_jit_mlog_likelihood_ds(alpha: np.array, data: np.array, crns: np.array,
         return res
 
     lambda_data = p_sampler_ds(alpha, crns)
-    avg_log_likelihood = get_avg_p_log_likelihood(data.T, lambda_data, pdf, transform)
+    avg_log_likelihood = get_avg_p_log_likelihood(data.T, lambda_data, log_pdf, transform)
     res = - avg_log_likelihood
     if np.isnan(res) == True:
         if print_path == True:
@@ -115,7 +115,7 @@ def log_xi(x: np.array, params: np.array, xm1: np.array) -> np.array:
 
 
 @jit(nopython=True, cache = True)
-def get_avg_m_log_likelihood(omega, data, a, lambda_data, log_xi_data, pdf, transform):
+def get_avg_m_log_likelihood(omega, data, a, lambda_data, log_xi_data, log_pdf, transform):
 
     latent_process_tr = lambda_data.shape[1]
 
@@ -129,7 +129,7 @@ def get_avg_m_log_likelihood(omega, data, a, lambda_data, log_xi_data, pdf, tran
     
     log_likelihood = np.zeros(latent_process_tr)
     for k in prange(0, latent_process_tr):
-        copula_log_data = np.log(pdf(data.T , transform(lambda_data[:,k]) ))
+        copula_log_data = log_pdf(data.T , transform(lambda_data[:,k]))
         log_likelihood[k] = np.sum(copula_log_data + log_xi_data[:,k] - ( a[:,1] * lambda_data[:,k] + a[:,2] * lambda_data[:,k]**2 )\
                                          -0.5 * np.log(nu**2) + 0.5 * np.log(var) )
     corr = max(log_likelihood)
@@ -139,7 +139,7 @@ def get_avg_m_log_likelihood(omega, data, a, lambda_data, log_xi_data, pdf, tran
 
 @jit(nopython = True, cache = True)
 def m_jit_mlog_likelihood_ds(alpha: np.array, data: np.array, crns: np.array, m_iters: int, 
-                          pdf: callable, transform: callable, print_path: bool) -> float:
+                          log_pdf: callable, transform: callable, print_path: bool) -> float:
     
     latent_process_tr = crns.shape[1]
     
@@ -175,7 +175,7 @@ def m_jit_mlog_likelihood_ds(alpha: np.array, data: np.array, crns: np.array, m_
                 return res
         '''solve linear least-squares problem for search optimal parameters [a] for each t in (T, 0)'''
         for t in range(T - 1, 0 , -1):
-            copula_log_data = np.sum(np.log(pdf(data[t], transform(lambda_data[t]) )) )
+            copula_log_data = np.sum(log_pdf(data[t], transform(lambda_data[t])))
             
             '''set A and b in LS problem Ax = b'''
             A = np.dstack( (np.ones(latent_process_tr) , lambda_data[t] , lambda_data[t]**2 ) )[0]           
@@ -192,7 +192,7 @@ def m_jit_mlog_likelihood_ds(alpha: np.array, data: np.array, crns: np.array, m_
             #a[t] = linear_least_squares(A, b)
             log_xi_data[t - 1] = log_xi(a[t][1:3], alpha, lambda_data[t - 1] )
 
-    avg_log_likelihood = get_avg_m_log_likelihood(alpha, data, a, lambda_data, log_xi_data, pdf, transform)
+    avg_log_likelihood = get_avg_m_log_likelihood(alpha, data, a, lambda_data, log_xi_data, log_pdf, transform)
     res = - avg_log_likelihood
 
     if np.isnan(res) == True:

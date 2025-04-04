@@ -7,6 +7,8 @@ from pyscarcopula.sampler.sampler_ld import jit_latent_process_conditional_expec
 from pyscarcopula.auxiliary.funcs import pobs
 
 from scipy.stats import chi2, norm, cramervonmises_2samp
+from scipy.special import roots_hermite
+
 from functools import lru_cache
 from numba import njit
 
@@ -77,81 +79,86 @@ def cvm_test(pobs_data_rt, seed = None):
     return cvm_result
 
 
-def latent_process_conditional_expectation_p_ou(copula, pobs_data, fit_result, init_state = None):
+def latent_process_conditional_expectation_p_ou(copula, pobs_data, fit_result):
     alpha = np.array(fit_result.x)
-    latent_process_tr = np.maximum(fit_result.latent_process_tr, 10000)
+    # latent_process_tr = np.maximum(fit_result.latent_process_tr, 10000)
+    latent_process_tr = fit_result.latent_process_tr
 
     stationary = fit_result.stationary
-    if stationary == True:
-        init_state = stationary_state_ou(alpha, latent_process_tr)
 
     dwt = copula.calculate_dwt(method = fit_result.method, 
                                T = len(pobs_data), latent_process_tr = latent_process_tr)
 
     result = jit_latent_process_conditional_expectation_p_ou(alpha, pobs_data, dwt, 
-                                                             copula.np_pdf(), copula.transform, 
-                                                             init_state)
+                                                             copula.log_pdf, copula.transform, 
+                                                             stationary)
     return result
 
 
-def latent_process_conditional_expectation_p_ld(copula, pobs_data, fit_result, init_state = None):
+def latent_process_conditional_expectation_p_ld(copula, pobs_data, fit_result):
     alpha = np.array(fit_result.x)
-    latent_process_tr = np.maximum(fit_result.latent_process_tr, 10000)
+    # latent_process_tr = np.maximum(fit_result.latent_process_tr, 10000)
+    latent_process_tr = fit_result.latent_process_tr
 
     stationary = fit_result.stationary
-    if stationary == True:
-        init_state = stationary_state_ld(alpha, latent_process_tr)
 
     dwt = copula.calculate_dwt(method = fit_result.method, 
                                T = len(pobs_data), latent_process_tr = latent_process_tr)
 
     result = jit_latent_process_conditional_expectation_p_ld(alpha, pobs_data, dwt, 
-                                                             copula.np_pdf(), copula.transform,
-                                                             init_state)
+                                                             copula.log_pdf, copula.transform,
+                                                             stationary)
     return result
 
 
-def latent_process_conditional_expectation_m_ou(copula, pobs_data, fit_result, init_state = None):
+def latent_process_conditional_expectation_m_ou(copula, pobs_data, fit_result):
     alpha = np.array(fit_result.x)
-    latent_process_tr = np.maximum(fit_result.latent_process_tr, 500)
+    # latent_process_tr = np.maximum(fit_result.latent_process_tr, 500)
+    latent_process_tr = fit_result.latent_process_tr
+    
     M_iterations = fit_result.M_iterations
     
     stationary = fit_result.stationary
-    if stationary == True:
-        init_state = stationary_state_ou(alpha, latent_process_tr)
 
     dwt = copula.calculate_dwt(method = fit_result.method, 
                                T = len(pobs_data), latent_process_tr = latent_process_tr)
 
+    z, w = roots_hermite(250)
+    args = w > 1e-3
+    w = w[args]
+    z = z[args]
+
     result = jit_latent_process_conditional_expectation_m_ou(alpha, pobs_data, M_iterations, dwt,
-                                                             copula.np_pdf(), copula.transform,
-                                                             init_state)
+                                                             copula.np_log_pdf(numba_jit = True), 
+                                                             copula.transform_jit,
+                                                             z, w,
+                                                             stationary)
     return result
 
 
-def get_smoothed_sample(copula, pobs_data, fit_result, init_state = None):
+def get_smoothed_sample(copula, pobs_data, fit_result):
     T = len(pobs_data)
 
     if fit_result.method.lower() == 'mle':
-        smoothed_sample = np.ones(T) * copula.transform(fit_result.x[0])
+        smoothed_sample = np.ones(T) * fit_result.x[0]
     elif fit_result.method.lower() == 'scar-p-ou':
-        smoothed_sample = latent_process_conditional_expectation_p_ou(copula, pobs_data, fit_result, init_state)
+        smoothed_sample = latent_process_conditional_expectation_p_ou(copula, pobs_data, fit_result)
     elif fit_result.method.lower() == 'scar-m-ou':
-        smoothed_sample = latent_process_conditional_expectation_m_ou(copula, pobs_data, fit_result, init_state)
+        smoothed_sample = latent_process_conditional_expectation_m_ou(copula, pobs_data, fit_result)
     elif fit_result.method.lower() == 'scar-p-ld':
-        smoothed_sample = latent_process_conditional_expectation_p_ld(copula, pobs_data, fit_result, init_state)
+        smoothed_sample = latent_process_conditional_expectation_p_ld(copula, pobs_data, fit_result)
     else:
         raise ValueError(f'method {fit_result.method} not implemented')
     return smoothed_sample
 
 
-def gof_test(copula, data, fit_result, to_pobs = True, init_state = None):
+def gof_test(copula, data, fit_result, to_pobs = True):
     if to_pobs == True:
         pobs_data = pobs(data)
     else:
         pobs_data = data
     T = len(pobs_data)
-    smoothed_sample = get_smoothed_sample(copula, pobs_data, fit_result, init_state)
+    smoothed_sample = get_smoothed_sample(copula, pobs_data, fit_result)
     Rosenblatt_tranformed = Rosenblatt_transform(copula, pobs_data, smoothed_sample)
     cvm_test_result = cvm_test(Rosenblatt_tranformed)
     return cvm_test_result

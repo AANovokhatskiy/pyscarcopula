@@ -58,20 +58,76 @@ def bivariateClaytonPDF(u, r, rotate):
     
     return res
 
+@njit
+def ClaytonPDF2_jit(u, r, rotate):
+    u1 = u[0]
+    u2 = u[1]
+
+    if rotate == 0:
+        v1 = u1
+        v2 = u2
+    elif rotate == 90:
+        v1 = 1 - u1
+        v2 = u2
+    elif rotate == 180:
+        v1 = 1 - u1
+        v2 = 1 - u2
+    elif rotate == 270:
+        v1 = u1
+        v2 = 1 - u2
+
+    mask_r = r > 100
+
+    mask1 = ~mask_r
+    mask2 = mask_r
+
+    res = 0.0
+
+    if mask1:
+        temp1 = v1**(-r)
+        temp2 = v2**(-r)
+        res = (temp1 * temp2 / (v1 * v2) * (r + 1) *
+                    (-1 + temp1 + temp2)**(-2 - 1/r))
+        return res
+    
+    if mask2:
+        min_v = np.minimum(v1, v2)
+        max_v = np.maximum(v1, v2)
+        temp3 = (min_v / max_v)**r
+        res = (min_v / (v1 * v2) *
+                    temp3 / (1 + temp3)**2 * (r - temp3 - (-1/r - 1) * 1/2 * temp3**2))
+        return res
+    
+    return res
+
 
 class ClaytonCopula(ArchimedianCopula):
     def __init__(self, dim: int = 2, rotate: Literal[0, 90, 180, 270] = 0) -> None:
         super().__init__(dim, rotate)
         self.__name = 'Clayton copula'
+        self.__bounds = [(0.0001, np.inf)]
 
     @property
     def name(self):
         return self.__name
+
+    @property
+    def bounds(self):
+        return self.__bounds
         
     @staticmethod
     def transform(r):
         return r * np.tanh(r) + 0.0001
-    
+
+    @staticmethod
+    @njit
+    def transform_jit(r):
+        return r * np.tanh(r) + 0.0001
+
+    @staticmethod
+    def inv_transform(r):
+        return r
+
     @lru_cache
     def sp_generator(self):
         """
@@ -131,14 +187,22 @@ class ClaytonCopula(ArchimedianCopula):
         return res
     
     @lru_cache
-    def np_pdf(self):
+    def np_pdf(self, numba_jit = False):
         if self.dim == 2:
             rotate = self.rotate
 
-            def bivariate_np_pdf(u, r):
-                return bivariateClaytonPDF(u, r, rotate)
-            
-            func = bivariate_np_pdf
+            if numba_jit == False:
+                def bivariate_np_pdf(u, r):
+                    return bivariateClaytonPDF(u, r, rotate)
+                
+                func = bivariate_np_pdf
+            else:
+                @njit
+                def bivariate_np_pdf(u, r):
+                    return ClaytonPDF2_jit(u, r, rotate)
+                
+                func = bivariate_np_pdf
+
             return func
         else:
             '''Numpy pdf function from sympy expression'''
@@ -146,18 +210,57 @@ class ClaytonCopula(ArchimedianCopula):
             u = sp.symbols('u0:%d'%(self.dim))
             r = sp.symbols('r')
             func = sp.lambdify((u, r), expr, modules = 'numpy', cse = True)
+
+            if numba_jit == True:
+                func = njit(func)
+
+        return func
+
+    @lru_cache
+    def np_log_pdf(self, numba_jit = False):
+        if self.dim == 2:
+            rotate = self.rotate
+
+            if numba_jit == False:
+                def bivariate_np_log_pdf(u, r):
+                    return np.log(bivariateClaytonPDF(u, r, rotate))
+                
+                func = bivariate_np_log_pdf
+            else:
+                @njit
+                def bivariate_np_log_pdf(u, r):
+                    return np.log(ClaytonPDF2_jit(u, r, rotate))
+                
+                func = bivariate_np_log_pdf
+            return func
+        else:
+            '''Numpy pdf function from sympy expression'''
+            expr = sp.log(self.sp_pdf())
+            u = sp.symbols('u0:%d'%(self.dim))
+            r = sp.symbols('r')
+            func = sp.lambdify((u, r), expr, modules = 'numpy', cse = True)
+
+            if numba_jit == True:
+                func = njit(func)
+
         return func
 
     @staticmethod
-    def h(u0, u1, r):
+    def h_unrotated(u0, u1, r):
         eps = 1e-6
         _u0 = np.clip(u0, eps, 1 - eps)
         _u1 = np.clip(u1, eps, 1 - eps)
-        
-        x0 = _u1**(-r)
-        x1 = x0 - 1 + _u0**(-r)
-        return x0 * x1**(-1/r) / (_u1 * x1)        
+
+        # x0 = _u1**(-r)
+        # x1 = x0 - 1 + _u0**(-r)
+        # return x0 * x1**(-1/r) / (_u1 * x1)
+        return _u1**(-r - 1) * (_u0**(-r) + _u1**(-r)- 1)**(-1-1/r)       
     
     @staticmethod
-    def h_inverse(u1, u2, r):
-        pass
+    def h_inverse_unrotated(u0, u1, r):
+        eps = 1e-6
+        _u0 = np.clip(u0, eps, 1 - eps)
+        _u1 = np.clip(u1, eps, 1 - eps)
+
+        # return ((_u1 ** (-r / (1 + r)) - 1) * _u0 ** r + 1) ** (-1 / r)
+        return ((_u0 * _u1**(r + 1))**(-r / (1 + r)) + 1 - _u1**(-r))**(-1/r)

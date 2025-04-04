@@ -118,20 +118,97 @@ def bivariateGumbelPDF(u, r, rotate):
                 )
     return res
 
+@njit
+def GumbelPDF2_jit(u, r, rotate):
+    u1 = u[0]
+    u2 = u[1]
+
+    if rotate == 0:
+        v1 = u1
+        v2 = u2
+    elif rotate == 90:
+        v1 = 1 - u1
+        v2 = u2
+    elif rotate == 180:
+        v1 = 1 - u1
+        v2 = 1 - u2
+    elif rotate == 270:
+        v1 = u1
+        v2 = 1 - u2
+
+    p1 = -np.log(v1)
+    p2 = -np.log(v2)
+
+    res = 0.0
+
+    mask_r_ub = r > 100
+
+    mask_eq = v1 == v2
+    mask1 = ~mask_eq & mask_r_ub
+    mask2 = ~mask_eq & ~mask_r_ub
+
+    if mask_eq:
+        temp_eq = 2**(1/r) * p1
+        
+        res = (1 / (v1**2) * np.exp(-temp_eq) * (-1 + r + temp_eq) * 
+                        2**(1/r - 2) / p1)
+        return res
+    
+    if mask1:
+        max_p = np.maximum(p1, p2)
+        min_p = np.minimum(p1, p2)
+        val1_temp = (min_p / max_p)**r
+        val1 = max_p * (1 + 1/r * val1_temp + 1/2 * 1/r * (1/r - 1) * val1_temp**2)
+
+        val2 = (p1**r + p2**r)**(1/r)
+
+        res = (1 / (v1 * v2) * 1 / (p1 * p2) * np.exp(-val1) *
+                    (-1 + r + val1) * val1 * val1_temp  /
+                    (1 + 2 * val1_temp + val1_temp**2)
+                    )
+        return res
+    
+    if mask2:
+        max_p = np.maximum(p1, p2)
+        min_p = np.minimum(p1, p2)
+        val2 = (p1**r + p2**r)**(1/r)
+        temp2 = (min_p / max_p)**r
+
+        res = (1 / (v1 * v2) * 1 / (p1 * p2) * 
+                    np.exp(-val2) * (-1 + r + val2) * 
+                    val2 * temp2 * (1 + temp2)**(-2)
+                    )
+        return res
+    return res
+
 
 class GumbelCopula(ArchimedianCopula):
     def __init__(self, dim: int = 2, rotate: Literal[0, 90, 180, 270] = 0) -> None:
         super().__init__(dim, rotate)
         self.__name = 'Gumbel copula'
+        self.__bounds = [(1.0001, np.inf)]
 
     @property
     def name(self):
         return self.__name
-        
+
+    @property
+    def bounds(self):
+        return self.__bounds
+    
     @staticmethod
     def transform(r):
         return r * np.tanh(r) + 1.0001
-    
+
+    @staticmethod
+    @njit
+    def transform_jit(r):
+        return r * np.tanh(r) + 1.0001
+
+    @staticmethod
+    def inv_transform(r):
+        return r - 1
+
     @lru_cache
     def sp_generator(self):
         """
@@ -168,14 +245,22 @@ class GumbelCopula(ArchimedianCopula):
         return res
 
     @lru_cache
-    def np_pdf(self):
+    def np_pdf(self, numba_jit = False):
         if self.dim == 2:
             rotate = self.rotate
 
-            def bivariate_np_pdf(u, r):
-                return bivariateGumbelPDF(u, r, rotate)
-            
-            func = bivariate_np_pdf
+            if numba_jit == False:
+                def bivariate_np_pdf(u, r):
+                    return bivariateGumbelPDF(u, r, rotate)
+                
+                func = bivariate_np_pdf
+            else:
+                @njit
+                def bivariate_np_pdf(u, r):
+                    return GumbelPDF2_jit(u, r, rotate)
+                
+                func = bivariate_np_pdf
+
             return func
         else:
             '''Numpy pdf function from sympy expression'''
@@ -183,10 +268,43 @@ class GumbelCopula(ArchimedianCopula):
             u = sp.symbols('u0:%d'%(self.dim))
             r = sp.symbols('r')
             func = sp.lambdify((u, r), expr, modules = 'numpy', cse = True)
+
+            if numba_jit == True:
+                func = njit(func)
+
         return func
-    
+
+    @lru_cache
+    def np_log_pdf(self, numba_jit = False):
+        if self.dim == 2:
+            rotate = self.rotate
+
+            if numba_jit == False:
+                def bivariate_np_log_pdf(u, r):
+                    return np.log(bivariateGumbelPDF(u, r, rotate))
+                
+                func = bivariate_np_log_pdf
+            else:
+                @njit
+                def bivariate_np_log_pdf(u, r):
+                    return np.log(GumbelPDF2_jit(u, r, rotate))
+                
+                func = bivariate_np_log_pdf
+            return func
+        else:
+            '''Numpy pdf function from sympy expression'''
+            expr = sp.log(self.sp_pdf())
+            u = sp.symbols('u0:%d'%(self.dim))
+            r = sp.symbols('r')
+            func = sp.lambdify((u, r), expr, modules = 'numpy', cse = True)
+
+            if numba_jit == True:
+                func = njit(func)
+
+        return func
+
     @staticmethod
-    def h(u0, u1, r):
+    def h_unrotated(u0, u1, r):
         eps = 1e-6
         _u0 = np.clip(u0, eps, 1 - eps)
         _u1 = np.clip(u1, eps, 1 - eps)
@@ -198,5 +316,5 @@ class GumbelCopula(ArchimedianCopula):
         return -x1*x3*np.exp(-x3)/(_u1*x0*x2)
     
     @staticmethod
-    def h_inverse(u1, u2, r):
-        pass
+    def h_inverse_unrotated(u1, u2, r):
+        raise NotImplementedError("Not implemented for Gumbel copula")

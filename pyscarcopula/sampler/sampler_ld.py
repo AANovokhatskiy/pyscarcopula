@@ -3,14 +3,14 @@ from numba import jit, prange
 import math
 
 
-@jit(nopython=True)
+# @jit(nopython=True)
 def init_state_ld(alpha, latent_process_tr):
     theta, mu, nu = alpha[0], alpha[1], alpha[2]
     x0 = np.ones(latent_process_tr) * mu
     return x0
 
 
-@jit(nopython=True,  cache = True)
+# @jit(nopython=True,  cache = True)
 def stationary_state_ld(alpha, latent_process_tr, seed = None):
     theta, mu, nu = alpha[0], alpha[1], alpha[2]
 
@@ -25,7 +25,7 @@ def stationary_state_ld(alpha, latent_process_tr, seed = None):
     return state
 
 
-@jit(nopython=True)
+# @jit(nopython=True)
 def p_sampler_ld(alpha, dwt, init_state = None):
     theta, mu, nu = alpha[0], alpha[1], alpha[2]
     T = len(dwt)
@@ -54,7 +54,7 @@ def p_sampler_ld(alpha, dwt, init_state = None):
 
 
 # @jit(nopython = True, parallel = True)
-def get_avg_p_log_likelihood_ld(data, lambda_data, pdf, transform):
+def get_avg_p_log_likelihood_ld(u, lambda_data, log_pdf, transform):
     avg_likelihood = 0
 
     latent_process_tr = lambda_data.shape[1]
@@ -62,7 +62,7 @@ def get_avg_p_log_likelihood_ld(data, lambda_data, pdf, transform):
     copula_log_data = np.zeros(latent_process_tr)
 
     for k in prange(0, latent_process_tr):
-        copula_log_data[k] = np.sum(np.log(np.maximum(pdf(data, transform(lambda_data[:,k])), 1e-100)))
+        copula_log_data[k] = np.sum(log_pdf(u, transform(lambda_data[:,k])))
 
     '''trick for calculation large values. calculate e^(sum(log_cop) - corr) instead of e^(sum(log_cop)).
     Do inverse correction at the end of calculations'''
@@ -72,8 +72,8 @@ def get_avg_p_log_likelihood_ld(data, lambda_data, pdf, transform):
 
 
 # @jit(nopython=True)
-def p_jit_mlog_likelihood_ld(alpha: np.array, data: np.array, dwt,
-                      pdf: callable, transform: callable, print_path: bool, init_state = None) -> float:
+def p_jit_mlog_likelihood_ld(alpha: np.array, u: np.array, dwt,
+                      log_pdf: callable, transform: callable, print_path: bool, stationary = False) -> float:
     
     if np.isnan(np.sum(alpha)) == True:
         res = 10**10
@@ -81,8 +81,13 @@ def p_jit_mlog_likelihood_ld(alpha: np.array, data: np.array, dwt,
             print(alpha, 'incorrect params', res)
         return res
 
+    if stationary == True:
+        init_state = stationary_state_ld(alpha, dwt.shape[1])
+    else:
+        init_state = init_state_ld(alpha, dwt.shape[1])
+
     lambda_data = p_sampler_ld(alpha, dwt, init_state)
-    avg_log_likelihood = get_avg_p_log_likelihood_ld(data.T, lambda_data, pdf, transform)
+    avg_log_likelihood = get_avg_p_log_likelihood_ld(u, lambda_data, log_pdf, transform)
     res = - avg_log_likelihood
 
     if np.isnan(res) == True:
@@ -96,19 +101,24 @@ def p_jit_mlog_likelihood_ld(alpha: np.array, data: np.array, dwt,
 
 
 # @jit(nopython=True)
-def jit_latent_process_conditional_expectation_p_ld(alpha, pobs_data, dwt, 
-                                                    pdf, transform, init_state = None):
+def jit_latent_process_conditional_expectation_p_ld(alpha, u, dwt, 
+                                                    log_pdf, transform, stationary = False):
 
     latent_process_tr = dwt.shape[1]
     
-    T = len(pobs_data)
+    T = len(u)
+
+    if stationary == True:
+        init_state = stationary_state_ld(alpha, dwt.shape[1])
+    else:
+        init_state = init_state_ld(alpha, dwt.shape[1])
 
     lambda_data = transform(p_sampler_ld(alpha, dwt, init_state))
     
     copula_log_data = np.zeros((T, latent_process_tr))
 
     for k in range(0, latent_process_tr):
-        copula_log_data[:,k] = np.log(np.maximum(pdf(pobs_data.T, lambda_data[:,k]), 1e-100))
+        copula_log_data[:,k] = log_pdf(u, lambda_data[:,k])
     
     copula_cs_log_data = np.zeros(latent_process_tr)
     

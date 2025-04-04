@@ -89,22 +89,20 @@ Here we solve this minimizations problems numerically using Monte-Carlo estimate
 import pandas as pd
 import numpy as np
 
-moex_data = pd.read_csv("data/moex_top.csv", index_col=0)
-tickers = ['AFLT', 'LSRG', 'GAZP', 'NLMK']
-
-returns_pd = np.log(moex_data[tickers] / moex_data[tickers].shift(1))[1:501]
-returns = returns_pd.values
+crypto_prices = pd.read_csv("data/crypto_prices.csv", index_col=0, sep = ';')
 ```
 
 <a name="initialize-copula"></a>
 ### 2. Initialize copula object
 ```python
-from pyscarcopula import GumbelCopula
-copula = GumbelCopula(dim = 4)
-```
-Also available `GumbelCopula`, `JoeCopula`, `ClaytonCopula`, `FrankCopula`.
+from pyscarcopula import GumbelCopula, FrankCopula, JoeCopula, ClaytonCopula
+from pyscarcopula import VineCopula, GaussianCopula, StudentCopula
 
-For initialized copula it is possible to show a cdf as a sympy expression:
+copula = GumbelCopula(dim = 2)
+```
+Also available `GumbelCopula`, `JoeCopula`, `ClaytonCopula`, `FrankCopula`, 'VineCopula', 'GaussianCopula', `StudentCopula`
+
+For initialized copula it is possible to show a cdf as a sympy expression (only for Archimedian):
 ```python
 copula.sp_cdf()
 ```
@@ -116,9 +114,15 @@ e^{- \left(\left(- \log{\left(u_{0} \right)}\right)^{r} + \left(- \log{\left(u_{
 It is also possible to call *sp_pdf()* to show pdf expression. But the anwser would be much more complex.
 
 <a name="fit-copula"></a>
-### 3. Fit copula
+### 3. Fit copula (bivariate example)
+Stochastic methods also available for VineCopula() with specified parameter method (mle by default)
 ```python
-fit_result = copula.fit(data = returns, method = 'scar-m-ou', seed = 333)
+tickers = ['BTC-USD', 'ETH-USD']
+
+returns_pd = np.log(crypto_prices[tickers] / crypto_prices[tickers].shift(1))[1:501]
+returns = returns_pd.values
+
+fit_result = copula.fit(data = returns, method = 'scar-m-ou', seed = 333, to_pobs = True)
 fit_result
 ```
 
@@ -129,35 +133,35 @@ Function *fit* description:
 * scar-p-ou - stochastic model with Ornstein-Uhlenbeck process as a parameter. ***latent_process_tr*** = 10000 is good choice here
 * scar-m-ou - stochastic model with Ornstein-Uhlenbeck process as a parameter and implemented importance sampling Monte-Carlo techniques. ***latent_process_tr*** = 500 is good choice here
 * scar-p-ld - stochastic model with process with logistic distribution transition density (experimental). ***latent_process_tr*** = 10000 is good choice here
-3. ***tol*** -- stop criteria (gradient norm). Type *float*. Optional parameter. Default value: $10^{-5}$ for *mle*, $10^{-2}$ for other methods.
-4. ***latent_process_tr*** -- number of latent process trajectories (for *mle* is ignored). Type *int*. Optional parameter. Default value $500$.
-5. ***M_iterations*** -- number of importance sampling steps (only for *scar-m-ou*). Type *int*. Optional parameter. Default value $5$.
-6. ***to_pobs*** -- transform ***data*** to pseudo observations. Type *bool*. Optional parameter. Default value *True*.
-7. ***dwt*** -- Wiener process values. Type *Numpy Array*. Optional parameter. Default value *None*. If *None* then function generate dataset automatically.
+3. ***alpha0*** -- starting point for optimization problem. Type *Numpy Array*. Optional parameter.
+4. ***tol*** -- stop criteria (gradient norm). Type *float*. Optional parameter. Default value: $10^{-5}$ for *mle*, $10^{-2}$ for other methods.
+5. ***to_pobs*** -- transform ***data*** to pseudo observations. Type *bool*. Optional parameter. Default value *False*.
+6. ***latent_process_tr*** -- number of latent process trajectories (for *mle* is ignored). Type *int*. Optional parameter. Default value $500$.
+7. ***M_iterations*** -- number of importance sampling steps (only for *scar-m-ou*). Type *int*. Optional parameter. Default value $3$.
 8. ***seed*** -- random state. Type *int*. Optional parameter. Default value *None*. If *None* then every run of program would unique. Parameter is ignored if ***dwt*** is set explicitly.
-9. ***alpha0*** -- starting point for optimization problem. Type *Numpy Array*. Optional parameter.
-10. ***init_state*** -- initial state of latent process. Type *Numpy Array*. Optional parameter.
-11. ***stationary*** -- stochastic model with stationary transition density. Type *bool*. Default value *False*. Optional parameter.
+9. ***dwt*** -- Wiener process values. Type *Numpy Array*. Optional parameter. Default value *None*. If *None* then function generate dataset automatically.
+10. ***stationary*** -- stochastic model with stationary transition density. Type *bool*. Default value *False*. Optional parameter.
+10. ***print_path*** -- If True shows all output of optimization process (useful for debugging). Type *bool*. Default value *False*. Optional parameter.
 
 fit result is mostly scipy.minimize output
 ```python
-message: CONVERGENCE: NORM_OF_PROJECTED_GRADIENT_<=_PGTOL
+           message: CONVERGENCE: NORM_OF_PROJECTED_GRADIENT_<=_PGTOL
            success: True
             status: 0
-               fun: 184.1481158495324
-                 x: [ 1.636e+01  5.775e-01  1.355e+00]
-               nit: 15
-               jac: [-8.664e-05 -1.237e-03  4.949e-04]
-              nfev: 80
-              njev: 20
+               fun: 219.33843671302438
+                 x: [ 9.619e-01  2.346e+00  1.451e+00]
+               nit: 6
+               jac: [-2.045e-03  5.006e-03  2.361e-03]
+              nfev: 28
+              njev: 7
           hess_inv: <3x3 LbfgsInvHessProduct with dtype=float64>
               name: Gumbel copula
             method: scar-m-ou
  latent_process_tr: 500
         stationary: False
-      M_iterations: 5
+      M_iterations: 3
 ```
-Where ***fun*** is log likelihood and ***x*** - parameter set $\[\theta, \mu, \nu\]$. Note that real parameter (that is used in calculations) is transformed in suitable interval using *copula.transform()* function.
+Where ***fun*** is log likelihood and ***x*** - parameter set $\[\theta, \mu, \nu\]$. For the MLE method here is real estimated parameter.
 
 Goodness of fit for copula using Rosenblatt transform:
 ```python
@@ -167,28 +171,45 @@ gof_test(copula, moex_returns, fit_result, to_pobs=True)
 ```
 with output
 ```python
-CramerVonMisesResult(statistic=0.0952262373517101, pvalue=0.6090629093721028)
+CramerVonMisesResult(statistic=0.19260862172251336, pvalue=0.28221824469771717)
 ```
 
 <a name="sample-copula"></a>
 ### 4. Sample from copula
 It is possible to get sample of pseudo observations from copula
 ```python
-copula.get_sample(N = 1000, r = 1.2)
+#sampling from copula with constant parameter
+
+copula.get_sample(size = 1000, r = 1.2)
 ```
-The output is array of shape = (N, dim). Copula parameter r should be set manually (array of size N is also supported).
+The output is array of shape = (N, dim). Copula parameter r should be set manually (array of size N is also supported for sampling time dependent parameter).
 
 Sampling from random process state also available
 ```python
+#sampling from copula with time-dependent parameter
+
 from pyscarcopula.sampler.sampler_ou import stationary_state_ou
 
 size = 2000
 random_process_state = copula.transform(stationary_state_ou(fit_result.x, size))
 
-copula.get_sample(N = size, r = random_process_state)
+copula.get_sample(size = size, r = random_process_state)
 ```
 
 ## 5. Calculation of risk metrics
+```python
+#consider multivariate case
+
+tickers = ['BTC-USD', 'ETH-USD', 'BNB-USD', 'ADA-USD', 'XRP-USD', 'DOGE-USD']
+
+returns_pd = np.log(crypto_prices[tickers] / crypto_prices[tickers].shift(1))[1:]
+returns = returns_pd.values
+```
+
+```python
+copula = StudentCopula()
+```
+
 ```python
 from pyscarcopula.metrics import risk_metrics
 
@@ -198,12 +219,7 @@ latent_process_tr = 500
 MC_iterations = [int(10**5)]
 M_iterations = 5
 
-#fastest calculations
-# method = 'mle'
-# marginals_method = 'normal'
-
-#More precise calculations. For appropiate choice of latent_process_tr and M_iterations see README.md
-method = 'scar-p-ou' # or use 'scar-m-ou'
+method = 'mle'
 marginals_method = 'johnsonsu'
 
 count_instruments = len(tickers)
@@ -215,12 +231,11 @@ result = risk_metrics(copula,
                       MC_iterations,
                       marginals_method = marginals_method,
                       latent_process_type = method,
-                      latent_process_tr = latent_process_tr,
                       optimize_portfolio = False,
                       portfolio_weight = portfolio_weight,
-                      seed = 111,
+
+                      latent_process_tr = latent_process_tr,
                       M_iterations = M_iterations,
-                      save_logs = False
                       )
 ```
 
@@ -228,16 +243,14 @@ Function *risk_metrics* description
 1. ***copula*** -- object of class ArchimedianCopula (and inherited classes). Type *ArchimedianCopula*. Required parameter.
 2. ***data*** -- log-return dataset. Type *Numpy Array*. Required parameter.
 3. ***window_len*** -- window len. Type *int*. Required parameter. To use all available data use length of ***data***.  
-4. ***gamma*** -- significance level. Type *float* or *Numpy Array*. Required parameter. If *Numpy Array* then calculations is made for every element of array. Made for minimizaion of repeated calculations. Usually one set, for example, $0.95$, $0.97$, $0.99$ or array $[0.95, 0.97, 0.99]$. 
-5. ***latent_process_type*** -- type of stochastic process that used as copula parameter. Type *Literal*. Available methods: *mle*, *scar-p-ou*, *scar-m-ou*, *scar-p-ld*. Required parameter.
-6. ***latent_process_tr*** -- number of Monte-Carlo iterations that used for copula fit. Type *int*. Required parameter. 
-7. ***marginals_params_method*** -- method of marginal distribution fit. Type *Literal*. Available methods: *normal*, *hyperbolic*, *stable*. Required parameter.
-8. ***MC_iterations*** -- number of Monte-Carlo iterations that used for risk metrics calculations. Type *int* or *Numpy Array*. Required parameter. If *Numpy Array* then calculations is made for every element of array. Possible value, for example, $10^4$, $10^5$, $10^6$ and so on.
-9. ***optimize_portfolio*** -- parameter responsible for the need to search for optimal CVaR weights.Type *Bool*. Optional parameter. Default value $True$.
-10. ***portfolio_weight*** -- portfolio weight. Type *Numpy Array*. Optional parameter. If ***optimize_portfolio*** = True this value is ignored. Default value -- equal weighted investment portfolio.
-11. ***save_logs*** -- parameter responsible for the need to save logs of copula parameters search. If ***save_logs*** = True then function would create folder logs in the current directory and save copula parameters in csv file. Optional parameter. Default value $False$.
-12. ***logs_path*** -- An optional string specifying the path to save the log file. If None and save_logs is True, a default directory "logs" in the current working directory will be used. Defaults to None.
-13. ***stationary*** -- stochastic model with stationary transition density. Type *bool*. Default value *False*. Optional parameter.
+4. ***gamma*** -- significance level. Type *float* or *Numpy Array*. Required parameter. If *Numpy Array* then calculations is made for every element of array. Made for minimizaion of repeated calculations. Usually one set, for example, $0.95$, $0.97$, $0.99$ or array $[0.95, 0.97, 0.99]$.  Default value $0.95$. Optional parameter.
+5. ***MC_iterations*** -- number of Monte-Carlo iterations that used for risk metrics calculations. Type *int* or *Numpy Array*. Required parameter. If *Numpy Array* then calculations is made for every element of array. Possible value, for example, $10^4$, $10^5$, $10^6$ and so on. Default value $10^5$. Optional parameter.
+6. ***marginals_params_method*** -- method of marginal distribution fit. Type *Literal*. Available methods: *normal*, *hyperbolic*, *stable*, *logistic*, *johnsonsu*, *laplace*. Default value *johnsonsu*. Optional parameter.
+7. ***latent_process_type*** -- type of stochastic process that used as copula parameter. Type *Literal*. Available methods: *mle*, *scar-p-ou*, *scar-m-ou*, *scar-p-ld*. Default value *mle*. Optional parameter.
+8. ***optimize_portfolio*** -- parameter responsible for the need to search for optimal CVaR weights.Type *Bool*. Optional parameter. Default value $True$.
+9. ***portfolio_weight*** -- portfolio weight. Type *Numpy Array*. Optional parameter. If ***optimize_portfolio*** = True, this value is ignored. Default value -- equal weighted investment portfolio.
+10. ***kwargs*** -- keyworded arguments for copula fit (see fit method desctiption). Type *int*. Optional parameter. 
+
 
 Calculated values could be extracted as follows
 ```python
@@ -264,7 +277,7 @@ i1 = window_len
 i2 = len(returns) - 1
 
 fig,ax = plt.subplots(n,m,figsize=(10,6))
-loc = plticker.MultipleLocator(base=27.0)
+loc = plticker.MultipleLocator(base=127.0)
 
 daily_returns = ((np.exp(returns_pd) - 1) * weight).sum(axis=1)
 cvar_emp = cvar_emp_window(daily_returns.values, 1 - gamma[0], window_len)

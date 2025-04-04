@@ -12,15 +12,29 @@ class JoeCopula(ArchimedianCopula):
     def __init__(self, dim: int = 2, rotate: Literal[0, 90, 180, 270] = 0) -> None:
         super().__init__(dim, rotate)
         self.__name = 'Joe copula'
+        self.__bounds = [(1.0001, np.inf)]
 
     @property
     def name(self):
         return self.__name
+
+    @property
+    def bounds(self):
+        return self.__bounds
           
     @staticmethod
     def transform(r):
         return r * np.tanh(r) + 1.0001
-    
+
+    @staticmethod
+    @njit
+    def transform_jit(r):
+        return r * np.tanh(r) + 1.0001
+
+    @staticmethod
+    def inv_transform(r):
+        return r - 1
+
     @lru_cache
     def sp_generator(self):
         """
@@ -75,27 +89,19 @@ class JoeCopula(ArchimedianCopula):
         return res
     
     def V(self, N, r):
-        if isinstance(r, (int, float)):
-            r_arr = np.ones(N) * r
-        elif isinstance(r, np.ndarray):
-            if len(r) == 1:
-                r_arr = np.ones(N) * r[0]
-            else:
-                r_arr = r
-        return self.V_auxiliary(N, r_arr)
+        return self.V_auxiliary(N, r)
     
     @staticmethod
-    def h(u0, u1, r):
+    def h_unrotated(u, v, r):
         eps = 1e-6
-        _u0 = np.clip(u0, eps, 1 - eps)
-        _u1 = np.clip(u1, eps, 1 - eps)
+        _u = np.clip(u, eps, 1 - eps)
+        _v = np.clip(v, eps, 1 - eps)
 
-        x0 = 1 - _u1
-        x1 = x0**r
-        x2 = 1 - (1 - _u0)**r
-        x3 = -x2 * (1 - x1) + 1
-        return x1 * x2 * x3**(r**(-1.0)) / (x0 * x3)
+        x1 = (1 - _u)**r
+        x2 = (1 - _v)**r
+        x3 = -1 + x1
+        return -(x3 * (x1 - x3 * x2)**(-1 + 1/r) * x2 / (1 - _v))
 
     @staticmethod
-    def h_inverse(u1, u2, r):
-        pass
+    def h_inverse_unrotated(u1, u2, r):
+        raise NotImplementedError("Not implemented for Joe copula")
