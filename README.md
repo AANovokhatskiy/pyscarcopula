@@ -138,7 +138,6 @@ Stochastic model via Trasfer matrix:
 log_likelihood = 1045.4997, copula paramter = [58.99857924  1.48765678  4.53265176]
 GoF statistic=0.0718, p-value=0.7404
 ```
-Where ***fun*** is log likelihood and ***x*** - parameter set $\[\theta, \mu, \nu\]$. For the MLE method here is real estimated parameter.
 
 <a name="sample-copula"></a>
 ### 4. Sample from copula
@@ -149,7 +148,6 @@ copula_mle.sample(n = 1000, r = 1.1)
 
 Sampling next state from stochastic copula
 ```python
-#sampling from copula with time-dependent parameter
 copula_tm.predict(n = 1000)
 ```
 
