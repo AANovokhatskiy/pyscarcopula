@@ -63,7 +63,10 @@ pip install .
 **Diagnostics**
 - Goodness-of-fit test via Rosenblatt transform + Cramér–von Mises statistic
 - Mixture Rosenblatt transform for stochastic models (accounts for latent state uncertainty)
-- Smoothed copula parameter $\bar{\theta}_k = \mathbb{E}[\Psi(x_k) | u_{1:k-1}]$
+- Smoothed copula parameter:
+```math
+\bar{\theta}_k = \mathbb{E}[\Psi(x_k) \mid u_{1:k-1}]
+```
 
 **Risk metrics**
 - VaR and CVaR calculation via Monte Carlo sampling from fitted copula
