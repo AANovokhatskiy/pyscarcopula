@@ -14,5 +14,5 @@ from pyscarcopula.latent.ou_process import OULatentProcess
 __all__ = ('GumbelCopula', 'FrankCopula', 'JoeCopula', 'ClaytonCopula',
            'CVineCopula',
            'OULatentProcess',
-           'GaussianCopula', 'StudentCopula', 'BivariateGaussianCopula',
+           'GaussianCopula', 'StudentCopula', 'BivariateGaussianCopula'
            )

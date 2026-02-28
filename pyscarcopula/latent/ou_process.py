@@ -13,6 +13,7 @@ import numpy as np
 from numba import njit
 from scipy.optimize import minimize, Bounds
 from scipy.signal import savgol_filter
+from scipy.sparse import csr_matrix
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -131,7 +132,8 @@ def _p_sampler_loglik(theta, mu, nu, u, dwt, copula, stationary):
     else:
         x0 = _ou_init_state(mu, n_tr)
 
-    xt = _ou_sample_paths_exact(theta, mu, nu, dwt, x0)
+    z = np.zeros(T)
+    xt = _ou_sample_paths(theta, mu, nu, z, z, dwt, x0)
 
     if np.isnan(np.sum(xt)):
         return 1e10
@@ -269,48 +271,301 @@ def _eis_find_auxiliary(alpha, u, M_iterations, dwt, copula, stationary):
 
 
 # ══════════════════════════════════════════════════════════════════
-# Transfer matrix (SCAR-TM-OU)
+# Transfer matrix infrastructure (shared by all TM functions)
 # ══════════════════════════════════════════════════════════════════
 
-def _tm_loglik(theta, mu, nu, u, copula, K, grid_range):
-    """Transfer matrix backward pass. Returns minus log-likelihood."""
-    n = len(u)
-    dt = 1.0 / (n - 1)
+class _TMGrid:
+    """
+    Precomputed transfer-matrix grid and operator for the OU process.
 
-    rho = np.exp(-theta * dt)
-    sigma = np.sqrt(0.5 * nu ** 2 / theta)
-    sigma_cond = sigma * np.sqrt(1.0 - rho ** 2)
+    Encapsulates:
+      - adaptive grid z with trapezoidal weights
+      - stationary density p0
+      - transfer operator (dense or sparse matrix)
+      - method selection logic
 
-    z = np.linspace(-grid_range * sigma, grid_range * sigma, K)
-    dz = z[1] - z[0]
+    All TM-based functions (_tm_loglik, _tm_forward_Jk, etc.) share
+    this infrastructure through a common forward/backward pass.
+    """
 
-    trap_w = np.full(K, dz)
-    trap_w[0] *= 0.5
-    trap_w[-1] *= 0.5
+    __slots__ = (
+        'z', 'K', 'dz', 'trap_w', 'p0', 'rho', 'sigma', 'sigma_cond',
+        'mu', '_T_op', '_method', '_band',
+    )
 
+    def __init__(self, theta, mu, nu, n, K=300, grid_range=5.0,
+                 method='auto'):
+        """
+        Build grid and transfer operator.
+
+        Parameters
+        ----------
+        theta, mu, nu : float
+            OU parameters.
+        n : int
+            Number of observations (determines dt).
+        K : int
+            Minimum grid size.
+        grid_range : float
+            Grid extent in units of stationary sigma.
+        method : str
+            'auto', 'dense', or 'sparse'.
+        """
+        dt = 1.0 / (n - 1)
+        rho = np.exp(-theta * dt)
+        sigma = np.sqrt(0.5 * nu ** 2 / theta)
+        sigma_cond = sigma * np.sqrt(1.0 - rho ** 2)
+
+        self.rho = rho
+        self.sigma = sigma
+        self.sigma_cond = sigma_cond
+        self.mu = mu
+
+        # ── adaptive grid: at least 4 points per sigma_cond ──────
+        dz_target = sigma_cond / 4.0
+        K_min = int(np.ceil(2.0 * grid_range * sigma / dz_target)) + 1
+        K_eff = max(K, K_min)
+
+        z = np.linspace(-grid_range * sigma, grid_range * sigma, K_eff)
+        dz = z[1] - z[0]
+
+        trap_w = np.full(K_eff, dz)
+        trap_w[0] *= 0.5
+        trap_w[-1] *= 0.5
+
+        self.z = z
+        self.K = K_eff
+        self.dz = dz
+        self.trap_w = trap_w
+
+        # ── stationary density ───────────────────────────────────
+        self.p0 = (np.exp(-0.5 * (z / sigma) ** 2)
+                    / (sigma * np.sqrt(2.0 * np.pi)))
+
+        # ── choose and build transfer operator ───────────────────
+        half_width = 5.0 * sigma_cond
+        self._band = int(np.ceil(half_width / dz))
+
+        if method == 'auto':
+            if self._band >= K_eff // 4:
+                method = 'dense'
+            else:
+                method = 'sparse'
+        self._method = method
+
+        if method == 'sparse':
+            self._T_op = _build_sparse_T_vectorized(
+                z, rho, sigma_cond, trap_w, K_eff, self._band)
+        else:
+            self._T_op = _build_dense_T(z, rho, sigma_cond, trap_w, K_eff)
+
+    # ── matrix-vector products ───────────────────────────────────
+
+    def matvec(self, v):
+        """T_trap @ v  (transition kernel applied to vector)."""
+        return self._T_op @ v
+
+    def rmatvec(self, v):
+        """T_trap.T @ v  (adjoint/transpose application)."""
+        return self._T_op.T @ v
+
+    # ── copula density on grid ───────────────────────────────────
+
+    def copula_grid(self, u, copula):
+        """
+        Evaluate copula density on grid for all observations.
+
+        Returns (n, K) array: fi_grid[t, j] = c(u1t, u2t; Psi(z_j + mu)).
+        """
+        n = len(u)
+        fi_grid = np.empty((n, self.K))
+        x_grid = self.z + self.mu
+        for i in range(n):
+            fi_grid[i] = copula.pdf_on_grid(u[i], x_grid)
+        return fi_grid
+
+    # ── generic backward pass (used by _tm_loglik) ───────────────
+
+    def backward_pass(self, fi_grid):
+        """
+        Backward message pass with normalization.
+
+        Parameters
+        ----------
+        fi_grid : (n, K)
+
+        Returns
+        -------
+        log_scale : float
+        msg : (K,) or None on failure.
+        """
+        n = fi_grid.shape[0]
+        msg = np.ones(self.K)
+        log_scale = 0.0
+
+        for i in range(n - 1, 0, -1):
+            msg = self.matvec(fi_grid[i] * msg)
+            mx = np.max(np.abs(msg))
+            if mx > 0:
+                log_scale += np.log(mx)
+                msg /= mx
+            else:
+                return log_scale, None
+
+        return log_scale, msg
+
+    # ── generic forward pass (used by all forward functions) ─────
+
+    def forward_pass(self, fi_grid, callback):
+        """
+        Forward message pass with per-step callback.
+
+        At each step k the callback receives:
+            callback(k, alpha, trap_w, is_last)
+        where alpha is the (unnormalized) forward message *before*
+        observing u_k (i.e., the predictive density).
+
+        The callback can return False to stop early.
+
+        Parameters
+        ----------
+        fi_grid : (n, K)
+        callback : callable(k, alpha, trap_w, is_last) -> bool
+        """
+        n = fi_grid.shape[0]
+        alpha = self.p0.copy()
+
+        for k in range(n):
+            is_last = (k == n - 1)
+            cont = callback(k, alpha, self.trap_w, is_last)
+            if cont is False:
+                break
+
+            # Update: absorb observation u_k and propagate
+            if not is_last:
+                source = fi_grid[k] * alpha * self.trap_w
+                alpha = self.rmatvec(source)
+                mx = np.max(np.abs(alpha))
+                if mx > 0:
+                    alpha /= mx
+                else:
+                    # Propagation collapsed — let callback handle tail
+                    for kk in range(k + 1, n):
+                        callback(kk, None, self.trap_w, kk == n - 1)
+                    break
+
+
+# ══════════════════════════════════════════════════════════════════
+# Transfer operator builders
+# ══════════════════════════════════════════════════════════════════
+
+def _build_dense_T(z, rho, sigma_cond, trap_w, K):
+    """Dense K×K transfer matrix with trapezoidal weights baked in."""
     means = rho * z
     diff = z[np.newaxis, :] - means[:, np.newaxis]
-    T_mat = np.exp(-0.5 * (diff / sigma_cond) ** 2) / (sigma_cond * np.sqrt(2.0 * np.pi))
-    T_trap = T_mat * trap_w[np.newaxis, :]
+    T_mat = (np.exp(-0.5 * (diff / sigma_cond) ** 2)
+             / (sigma_cond * np.sqrt(2.0 * np.pi)))
+    return T_mat * trap_w[np.newaxis, :]
 
-    fi_grid = np.empty((n, K))
-    for i in range(n):
-        fi_grid[i] = copula.pdf_on_grid(u[i], z + mu)
 
-    msg = np.ones(K)
-    log_scale = 0.0
+def _build_sparse_T_vectorized(z, rho, sigma_cond, trap_w, K, band):
+    """
+    Sparse banded transfer matrix (vectorized construction).
 
-    for i in range(n - 1, 0, -1):
-        msg = T_trap @ (fi_grid[i] * msg)
-        mx = np.max(np.abs(msg))
-        if mx > 0:
-            log_scale += np.log(mx)
-            msg /= mx
-        else:
-            return 1e10
+    For each row j, only columns within [i_lo, i_hi) around the
+    kernel center rho*z[j] are stored.  This version avoids the
+    Python-level per-row loop using vectorized index computation.
+    """
+    z0 = z[0]
+    dz = z[1] - z[0]
+    inv_dz = 1.0 / dz
+    coeff = 1.0 / (sigma_cond * np.sqrt(2.0 * np.pi))
 
-    p_z1 = np.exp(-0.5 * (z / sigma) ** 2) / (sigma * np.sqrt(2.0 * np.pi))
-    result = np.sum(fi_grid[0] * p_z1 * msg * trap_w)
+    # Centre of kernel for each row j
+    centers = rho * z                          # (K,)
+    i_centers = (centers - z0) * inv_dz        # fractional index
+
+    # Band limits per row
+    i_lo = np.maximum(0, np.floor(i_centers).astype(np.intp) - band)
+    i_hi = np.minimum(K, np.ceil(i_centers).astype(np.intp) + band + 1)
+    widths = i_hi - i_lo                       # elements per row
+
+    total_nnz = int(np.sum(widths))
+
+    rows = np.empty(total_nnz, dtype=np.int32)
+    cols = np.empty(total_nnz, dtype=np.int32)
+    vals = np.empty(total_nnz, dtype=np.float64)
+
+    ptr = 0
+    for j in range(K):
+        w = widths[j]
+        if w <= 0:
+            continue
+        sl = slice(ptr, ptr + w)
+        i_range = np.arange(i_lo[j], i_hi[j])
+        rows[sl] = j
+        cols[sl] = i_range
+        diff = z[i_range] - centers[j]
+        vals[sl] = coeff * np.exp(-0.5 * (diff / sigma_cond) ** 2) * trap_w[i_range]
+        ptr += w
+
+    return csr_matrix((vals[:ptr], (rows[:ptr], cols[:ptr])), shape=(K, K))
+
+
+# ══════════════════════════════════════════════════════════════════
+# Transfer matrix log-likelihood (SCAR-TM-OU)
+# ══════════════════════════════════════════════════════════════════
+
+def _tm_loglik(theta, mu, nu, u, copula, K=300, grid_range=5.0,
+               method='auto'):
+    """
+    Transfer matrix backward pass.  Returns minus log-likelihood.
+
+    Parameters
+    ----------
+    theta, mu, nu : float
+        OU process parameters  (theta > 0, nu > 0).
+    u : ndarray (n, 2)
+        Pseudo-observations.
+    copula : BivariateCopula
+        Must expose  copula.pdf_on_grid(u_row, z_grid) -> (K,).
+    K : int
+        Minimum number of grid points.
+    grid_range : float
+        Grid spans  [-grid_range*sigma, +grid_range*sigma].
+    method : str
+        'auto', 'dense', or 'sparse'.
+
+    Returns
+    -------
+    float : minus log-likelihood  (1e10 on numerical failure).
+    """
+    if theta <= 0 or nu <= 0:
+        return 1e10
+
+    n = len(u)
+    if n < 2:
+        return 1e10
+
+    sigma = np.sqrt(0.5 * nu ** 2 / theta)
+    sigma_cond = sigma * np.sqrt(1.0 - np.exp(-2.0 * theta / (n - 1)))
+    if sigma <= 0 or sigma_cond <= 0:
+        return 1e10
+
+    try:
+        grid = _TMGrid(theta, mu, nu, n, K, grid_range, method)
+    except Exception:
+        return 1e10
+
+    fi_grid = grid.copula_grid(u, copula)
+
+    log_scale, msg = grid.backward_pass(fi_grid)
+
+    if msg is None:
+        return 1e10
+
+    # Final convolution with stationary density
+    result = np.sum(fi_grid[0] * grid.p0 * msg * grid.trap_w)
 
     if result <= 0:
         return 1e10
@@ -318,141 +573,80 @@ def _tm_loglik(theta, mu, nu, u, copula, K, grid_range):
     return -(np.log(result) + log_scale)
 
 
-def _tm_forward_Jk(theta, mu, nu, u, copula, K, grid_range):
+# ══════════════════════════════════════════════════════════════════
+# Forward-pass functions (all use _TMGrid)
+# ══════════════════════════════════════════════════════════════════
+
+def _tm_forward_Jk(theta, mu, nu, u, copula, K=300, grid_range=5.0,
+                   method='auto'):
     """
-    Forward pass: E[Psi(x_k) | u_{1:k-1}] (predictive).
+    Forward pass: E[Psi(x_k) | u_{1:k-1}] (predictive smoothed parameter).
     J_k uses data BEFORE time k (not including u_k).
-    Returns (n,).
+
+    Returns (n,) array.
     """
     n = len(u)
-    dt = 1.0 / (n - 1)
+    grid = _TMGrid(theta, mu, nu, n, K, grid_range, method)
+    fi_grid = grid.copula_grid(u, copula)
+    g_grid = copula.transform(grid.z + grid.mu)
 
-    rho = np.exp(-theta * dt)
-    sigma = np.sqrt(0.5 * nu ** 2 / theta)
-    sigma_cond = sigma * np.sqrt(1.0 - rho ** 2)
+    J = np.full(n, np.nan)
 
-    z = np.linspace(-grid_range * sigma, grid_range * sigma, K)
-    dz = z[1] - z[0]
+    def _cb(k, alpha, trap_w, is_last):
+        if alpha is None:
+            # Collapsed — leave NaN
+            return False
+        raw_w = alpha * trap_w
+        den = np.sum(raw_w)
+        if den > 0:
+            J[k] = np.sum(g_grid * raw_w) / den
+        return True
 
-    trap_w = np.full(K, dz)
-    trap_w[0] *= 0.5
-    trap_w[-1] *= 0.5
-
-    means = rho * z
-    diff = z[np.newaxis, :] - means[:, np.newaxis]
-    T_mat = np.exp(-0.5 * (diff / sigma_cond) ** 2) / (sigma_cond * np.sqrt(2.0 * np.pi))
-
-    fi_grid = np.empty((n, K))
-    for i in range(n):
-        fi_grid[i] = copula.pdf_on_grid(u[i], z + mu)
-
-    g_grid = copula.transform(z + mu)
-
-    # Prior: p(x_0)
-    p_z1 = np.exp(-0.5 * (z / sigma) ** 2) / (sigma * np.sqrt(2.0 * np.pi))
-    alpha = p_z1.copy()
-
-    J = np.empty(n)
-    for k in range(n):
-        # Predictive: E[Psi(x_k) | u_{1:k-1}] — BEFORE observing u_k
-        num = np.sum(g_grid * alpha * trap_w)
-        den = np.sum(alpha * trap_w)
-        J[k] = num / den if den != 0 else np.nan
-
-        # Update with u_k and propagate: p(x_{k+1} | u_{1:k})
-        if k < n - 1:
-            source = fi_grid[k] * alpha * trap_w
-            alpha = T_mat.T @ source
-            mx = np.max(np.abs(alpha))
-            if mx > 0:
-                alpha /= mx
-            else:
-                J[k + 1:] = np.nan
-                break
-
+    grid.forward_pass(fi_grid, _cb)
     return J
 
 
-def _tm_forward_rosenblatt(theta, mu, nu, u, copula, K, grid_range):
+def _tm_forward_rosenblatt(theta, mu, nu, u, copula, K=300,
+                           grid_range=5.0, method='auto'):
     """
-    Forward pass: mixture Rosenblatt transform for gof test.
+    Forward pass: mixture Rosenblatt transform for GoF test.
 
     For each k, computes:
         e_{k,1} = u_{k,1}
         e_{k,2} = E[h(u_{k,2}, u_{k,1}, Psi(x_k)) | u_{1:k-1}]
-               = integral h(u_{k,2}, u_{k,1}, Psi(z)) * p(z | u_{1:k-1}) dz
-
-    This is the correct predictive conditional CDF, accounting for
-    uncertainty in x_k. Using E[Psi(x)] instead introduces Jensen bias.
 
     Returns (n, 2) — Rosenblatt-transformed pseudo-observations.
     """
     n = len(u)
-    dt = 1.0 / (n - 1)
-
-    rho = np.exp(-theta * dt)
-    sigma = np.sqrt(0.5 * nu ** 2 / theta)
-    sigma_cond = sigma * np.sqrt(1.0 - rho ** 2)
-
-    z = np.linspace(-grid_range * sigma, grid_range * sigma, K)
-    dz = z[1] - z[0]
-
-    trap_w = np.full(K, dz)
-    trap_w[0] *= 0.5
-    trap_w[-1] *= 0.5
-
-    means = rho * z
-    diff = z[np.newaxis, :] - means[:, np.newaxis]
-    T_mat = np.exp(-0.5 * (diff / sigma_cond) ** 2) / (sigma_cond * np.sqrt(2.0 * np.pi))
-
-    fi_grid = np.empty((n, K))
-    for i in range(n):
-        fi_grid[i] = copula.pdf_on_grid(u[i], z + mu)
-
-    r_grid = copula.transform(z + mu)  # (K,) — copula param at each grid point
-
-    # Prior
-    p_z1 = np.exp(-0.5 * (z / sigma) ** 2) / (sigma * np.sqrt(2.0 * np.pi))
-    alpha = p_z1.copy()
+    grid = _TMGrid(theta, mu, nu, n, K, grid_range, method)
+    fi_grid = grid.copula_grid(u, copula)
+    r_grid = copula.transform(grid.z + grid.mu)
 
     e = np.empty((n, 2))
     e[:, 0] = u[:, 0]
 
-    for k in range(n):
-        # Predictive weights: w_j = alpha_j * trap_w_j / sum(alpha * trap_w)
+    def _cb(k, alpha, trap_w, is_last):
+        if alpha is None:
+            e[k, 1] = 0.5
+            return True
         raw_w = alpha * trap_w
         total = np.sum(raw_w)
-        if total > 0:
-            pred_w = raw_w / total
-        else:
-            pred_w = np.ones(K) / K
+        pred_w = raw_w / total if total > 0 else np.ones(grid.K) / grid.K
 
-        # Mixture h-function: E[h(u2, u1, Psi(z)) | u_{1:k-1}]
-        # Evaluate h at each grid point
-        u2_vec = np.full(K, u[k, 1])
-        u1_vec = np.full(K, u[k, 0])
-        h_vals = copula.h(u2_vec, u1_vec, r_grid)  # (K,)
-
+        u2_vec = np.full(grid.K, u[k, 1])
+        u1_vec = np.full(grid.K, u[k, 0])
+        h_vals = copula.h(u2_vec, u1_vec, r_grid)
         e[k, 1] = np.sum(h_vals * pred_w)
+        return True
 
-        # Update and propagate
-        if k < n - 1:
-            source = fi_grid[k] * alpha * trap_w
-            alpha = T_mat.T @ source
-            mx = np.max(np.abs(alpha))
-            if mx > 0:
-                alpha /= mx
-            else:
-                # Fallback: use mean param
-                e[k + 1:, 1] = 0.5
-                break
+    grid.forward_pass(fi_grid, _cb)
 
     eps = 1e-6
-    e = np.clip(e, eps, 1.0 - eps)
-    return e
+    return np.clip(e, eps, 1.0 - eps)
 
 
-def _tm_forward_mixture_h(theta, mu, nu, u, copula, K, grid_range):
+def _tm_forward_mixture_h(theta, mu, nu, u, copula, K=300,
+                          grid_range=5.0, method='auto'):
     """
     Mixture h-function via TM forward pass.
 
@@ -463,96 +657,67 @@ def _tm_forward_mixture_h(theta, mu, nu, u, copula, K, grid_range):
     for use in vine Rosenblatt where we need per-edge mixture h-values.
     """
     n = len(u)
-    dt = 1.0 / (n - 1)
-
-    rho = np.exp(-theta * dt)
-    sigma = np.sqrt(0.5 * nu ** 2 / theta)
-    sigma_cond = sigma * np.sqrt(1.0 - rho ** 2)
-
-    z = np.linspace(-grid_range * sigma, grid_range * sigma, K)
-    dz = z[1] - z[0]
-
-    trap_w = np.full(K, dz)
-    trap_w[0] *= 0.5
-    trap_w[-1] *= 0.5
-
-    means = rho * z
-    diff = z[np.newaxis, :] - means[:, np.newaxis]
-    T_mat = np.exp(-0.5 * (diff / sigma_cond) ** 2) / (sigma_cond * np.sqrt(2.0 * np.pi))
-
-    fi_grid = np.empty((n, K))
-    for i in range(n):
-        fi_grid[i] = copula.pdf_on_grid(u[i], z + mu)
-
-    r_grid = copula.transform(z + mu)
-
-    p_z1 = np.exp(-0.5 * (z / sigma) ** 2) / (sigma * np.sqrt(2.0 * np.pi))
-    alpha = p_z1.copy()
+    grid = _TMGrid(theta, mu, nu, n, K, grid_range, method)
+    fi_grid = grid.copula_grid(u, copula)
+    r_grid = copula.transform(grid.z + grid.mu)
 
     h_mix = np.empty(n)
 
-    for k in range(n):
+    def _cb(k, alpha, trap_w, is_last):
+        if alpha is None:
+            h_mix[k] = 0.5
+            return True
         raw_w = alpha * trap_w
         total = np.sum(raw_w)
-        pred_w = raw_w / total if total > 0 else np.ones(K) / K
+        pred_w = raw_w / total if total > 0 else np.ones(grid.K) / grid.K
 
-        u2_vec = np.full(K, u[k, 1])
-        u1_vec = np.full(K, u[k, 0])
+        u2_vec = np.full(grid.K, u[k, 1])
+        u1_vec = np.full(grid.K, u[k, 0])
         h_vals = copula.h(u2_vec, u1_vec, r_grid)
         h_mix[k] = np.sum(h_vals * pred_w)
+        return True
 
-        if k < n - 1:
-            source = fi_grid[k] * alpha * trap_w
-            alpha = T_mat.T @ source
-            mx = np.max(np.abs(alpha))
-            if mx > 0:
-                alpha /= mx
-            else:
-                h_mix[k + 1:] = 0.5
-                break
-
+    grid.forward_pass(fi_grid, _cb)
     return np.clip(h_mix, 1e-6, 1.0 - 1e-6)
 
 
-def _tm_xT_distribution(theta, mu, nu, u, copula, K, grid_range):
-    """Forward pass: distribution of x_T on grid. Returns (z, prob)."""
+def _tm_xT_distribution(theta, mu, nu, u, copula, K=300,
+                        grid_range=5.0, method='auto'):
+    """
+    Forward pass: distribution of x_T on grid.
+
+    Unlike the other forward functions, this uses the *absolute*
+    x-grid (z + mu) and accumulates all observations (including the
+    last one) into the density before returning.
+
+    Returns (z_grid, prob) where z_grid includes mu offset.
+    """
     n = len(u)
-    dt = 1.0 / (n - 1)
+    grid = _TMGrid(theta, mu, nu, n, K, grid_range, method)
+    fi_grid = grid.copula_grid(u, copula)
 
-    rho = np.exp(-theta * dt)
-    sigma = np.sqrt(0.5 * nu ** 2 / theta)
-    sigma_cond = sigma * np.sqrt(1.0 - rho ** 2)
-
-    z = np.linspace(-grid_range * sigma + mu, grid_range * sigma + mu, K)
-    dz = z[1] - z[0]
-
-    trap_w = np.full(K, dz)
-    trap_w[0] *= 0.5
-    trap_w[-1] *= 0.5
-
-    means_centered = rho * (z - mu) + mu
-    diff = z[np.newaxis, :] - means_centered[:, np.newaxis]
-    T_mat = np.exp(-0.5 * (diff / sigma_cond) ** 2) / (sigma_cond * np.sqrt(2.0 * np.pi))
-
-    alpha = np.exp(-0.5 * ((z - mu) / sigma) ** 2) / (sigma * np.sqrt(2.0 * np.pi))
+    alpha = grid.p0.copy()
     log_scale = 0.0
 
     for t in range(n):
-        fi = copula.pdf_on_grid(u[t], z)
-        alpha *= fi
+        alpha *= fi_grid[t]
 
         if t < n - 1:
-            alpha = T_mat.T @ (alpha * trap_w)
+            alpha = grid.rmatvec(alpha * grid.trap_w)
 
         mx = np.max(np.abs(alpha))
         if mx > 0:
             log_scale += np.log(mx)
             alpha /= mx
 
-    total = np.sum(alpha * trap_w)
-    prob = (alpha * trap_w) / total if total > 0 else np.ones(K) / K
+    total = np.sum(alpha * grid.trap_w)
+    if total > 0:
+        prob = (alpha * grid.trap_w) / total
+    else:
+        prob = np.ones(grid.K) / grid.K
 
-    return z, prob
+    z_grid = grid.z + grid.mu
+    return z_grid, prob
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -623,6 +788,10 @@ class OULatentProcess:
 
         bounds = Bounds([0.001, -np.inf, 0.001], [np.inf, np.inf, np.inf])
 
+        # For TM method during optimization: reuse grid when parameters
+        # don't change drastically.  The _TMGrid is cheap to build but
+        # caching the copula grid evaluation (the bottleneck) requires
+        # the same (theta, mu, nu), so we don't cache across calls.
         def objective(alpha):
             if np.isnan(np.sum(alpha)):
                 return 1e10
@@ -637,7 +806,8 @@ class OULatentProcess:
                     return _m_sampler_loglik(th, mu_v, nu_v, u, dwt,
                                             a1t, a2t, copula, stationary)
                 elif method == 'SCAR-TM-OU':
-                    return _tm_loglik(th, mu_v, nu_v, u, copula, K, grid_range)
+                    return _tm_loglik(th, mu_v, nu_v, u, copula, K,
+                                     grid_range)
             except Exception as e:
                 if verbose:
                     print(f"  error at alpha={alpha}: {e}")
@@ -666,23 +836,49 @@ class OULatentProcess:
 
         return result
 
-    def smoothed_params(self, u, alpha=None, K=300, grid_range=5.0):
+    def smoothed_params(self, u, alpha=None, K=300, grid_range=5.0,
+                        method='auto'):
         """E[Psi(x_k) | u_{1:k-1}] via transfer matrix."""
         if alpha is None:
             if self.fit_result is None:
                 raise ValueError("Fit first or provide alpha")
             alpha = self.fit_result.alpha
         theta, mu, nu = alpha
-        return _tm_forward_Jk(theta, mu, nu, u, self.copula, K, grid_range)
+        return _tm_forward_Jk(theta, mu, nu, u, self.copula, K, grid_range,
+                              method)
 
-    def xT_distribution(self, u, alpha=None, K=300, grid_range=5.0):
+    def rosenblatt(self, u, alpha=None, K=300, grid_range=5.0,
+                   method='auto'):
+        """Mixture Rosenblatt transform for GoF test."""
+        if alpha is None:
+            if self.fit_result is None:
+                raise ValueError("Fit first or provide alpha")
+            alpha = self.fit_result.alpha
+        theta, mu, nu = alpha
+        return _tm_forward_rosenblatt(theta, mu, nu, u, self.copula, K,
+                                      grid_range, method)
+
+    def mixture_h(self, u, alpha=None, K=300, grid_range=5.0,
+                  method='auto'):
+        """Mixture h-function for vine Rosenblatt."""
+        if alpha is None:
+            if self.fit_result is None:
+                raise ValueError("Fit first or provide alpha")
+            alpha = self.fit_result.alpha
+        theta, mu, nu = alpha
+        return _tm_forward_mixture_h(theta, mu, nu, u, self.copula, K,
+                                     grid_range, method)
+
+    def xT_distribution(self, u, alpha=None, K=300, grid_range=5.0,
+                        method='auto'):
         """Distribution of x_T on grid. Returns (z_grid, prob)."""
         if alpha is None:
             if self.fit_result is None:
                 raise ValueError("Fit first or provide alpha")
             alpha = self.fit_result.alpha
         theta, mu, nu = alpha
-        return _tm_xT_distribution(theta, mu, nu, u, self.copula, K, grid_range)
+        return _tm_xT_distribution(theta, mu, nu, u, self.copula, K,
+                                   grid_range, method)
 
     def final_state_sample(self, alpha, n, method='SCAR-TM-OU'):
         """Sample x_T from stationary distribution."""
