@@ -223,8 +223,8 @@ class BivariateCopula:
                         method: Literal['mle', 'scar-p-ou', 'scar-m-ou', 
                                         'scar-tm-ou'],
                         n_tr=500, M_iterations=3, seed=None,
-                        dwt=None, stationary=True, K=300,
-                        grid_range=5.0):
+                        dwt=None, stationary=True,
+                        **kwargs):
         """
         Compute minus log-likelihood for given parameters.
 
@@ -240,8 +240,8 @@ class BivariateCopula:
         seed : int or None
         dwt : (T, n_tr) or None
         stationary : bool
-        K : int — grid size (SCAR-TM)
-        grid_range : float
+        **kwargs
+        Forwarded to OULatentProcess.fit() for SCAR-TM method: K, grid_range, verbose, grid_method, adaptive, pts_per_sigma
 
         Returns
         -------
@@ -268,7 +268,7 @@ class BivariateCopula:
         T_len = len(u)
 
         if method_up == 'SCAR-TM-OU':
-            return _tm_loglik(theta, mu, nu, u, self, K, grid_range)
+            return _tm_loglik(theta, mu, nu, u, self, **kwargs)
 
         # MC methods need dwt
         if dwt is None:

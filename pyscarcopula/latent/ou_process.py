@@ -293,8 +293,8 @@ class _TMGrid:
         'mu', '_T_op', '_method', '_band',
     )
 
-    def __init__(self, theta, mu, nu, n, K=300, grid_range=5.0,
-                 method='auto'):
+    def __init__(self, theta, mu, nu, n, K=300, grid_range=5.0, 
+                 method='auto', adaptive=True, pts_per_sigma = 2):
         """
         Build grid and transfer operator.
 
@@ -310,6 +310,8 @@ class _TMGrid:
             Grid extent in units of stationary sigma.
         method : str
             'auto', 'dense', or 'sparse'.
+        adaptive : bool
+            Use adaptive grid size. If True then K can be extended to K_eff depending on initial data
         """
         dt = 1.0 / (n - 1)
         rho = np.exp(-theta * dt)
@@ -321,10 +323,13 @@ class _TMGrid:
         self.sigma_cond = sigma_cond
         self.mu = mu
 
-        # ── adaptive grid: at least 4 points per sigma_cond ──────
-        dz_target = sigma_cond / 4.0
-        K_min = int(np.ceil(2.0 * grid_range * sigma / dz_target)) + 1
-        K_eff = max(K, K_min)
+        # ── adaptive grid: at least pts_per_sigma points per sigma_cond ──────
+        if adaptive:
+            dz_target = sigma_cond / pts_per_sigma
+            K_min = int(np.ceil(2.0 * grid_range * sigma / dz_target)) + 1
+            K_eff = max(K, K_min)
+        else:
+            K_eff = K
 
         z = np.linspace(-grid_range * sigma, grid_range * sigma, K_eff)
         dz = z[1] - z[0]
@@ -516,8 +521,8 @@ def _build_sparse_T_vectorized(z, rho, sigma_cond, trap_w, K, band):
 # Transfer matrix log-likelihood (SCAR-TM-OU)
 # ══════════════════════════════════════════════════════════════════
 
-def _tm_loglik(theta, mu, nu, u, copula, K=300, grid_range=5.0,
-               method='auto'):
+def _tm_loglik(theta, mu, nu, u, copula, K=300, grid_range=5.0, 
+               method='auto', adaptive=True, pts_per_sigma = 2):
     """
     Transfer matrix backward pass.  Returns minus log-likelihood.
 
@@ -553,7 +558,7 @@ def _tm_loglik(theta, mu, nu, u, copula, K=300, grid_range=5.0,
         return 1e10
 
     try:
-        grid = _TMGrid(theta, mu, nu, n, K, grid_range, method)
+        grid = _TMGrid(theta, mu, nu, n, K, grid_range, method, adaptive, pts_per_sigma)
     except Exception:
         return 1e10
 
@@ -578,7 +583,7 @@ def _tm_loglik(theta, mu, nu, u, copula, K=300, grid_range=5.0,
 # ══════════════════════════════════════════════════════════════════
 
 def _tm_forward_Jk(theta, mu, nu, u, copula, K=300, grid_range=5.0,
-                   method='auto'):
+                   method='auto', adaptive=True, pts_per_sigma = 2):
     """
     Forward pass: E[Psi(x_k) | u_{1:k-1}] (predictive smoothed parameter).
     J_k uses data BEFORE time k (not including u_k).
@@ -586,7 +591,7 @@ def _tm_forward_Jk(theta, mu, nu, u, copula, K=300, grid_range=5.0,
     Returns (n,) array.
     """
     n = len(u)
-    grid = _TMGrid(theta, mu, nu, n, K, grid_range, method)
+    grid = _TMGrid(theta, mu, nu, n, K, grid_range, method, adaptive, pts_per_sigma)
     fi_grid = grid.copula_grid(u, copula)
     g_grid = copula.transform(grid.z + grid.mu)
 
@@ -606,8 +611,8 @@ def _tm_forward_Jk(theta, mu, nu, u, copula, K=300, grid_range=5.0,
     return J
 
 
-def _tm_forward_rosenblatt(theta, mu, nu, u, copula, K=300,
-                           grid_range=5.0, method='auto'):
+def _tm_forward_rosenblatt(theta, mu, nu, u, copula, K=300, grid_range=5.0, 
+                           method='auto', adaptive=True, pts_per_sigma = 2):
     """
     Forward pass: mixture Rosenblatt transform for GoF test.
 
@@ -618,7 +623,7 @@ def _tm_forward_rosenblatt(theta, mu, nu, u, copula, K=300,
     Returns (n, 2) — Rosenblatt-transformed pseudo-observations.
     """
     n = len(u)
-    grid = _TMGrid(theta, mu, nu, n, K, grid_range, method)
+    grid = _TMGrid(theta, mu, nu, n, K, grid_range, method, adaptive, pts_per_sigma)
     fi_grid = grid.copula_grid(u, copula)
     r_grid = copula.transform(grid.z + grid.mu)
 
@@ -645,8 +650,8 @@ def _tm_forward_rosenblatt(theta, mu, nu, u, copula, K=300,
     return np.clip(e, eps, 1.0 - eps)
 
 
-def _tm_forward_mixture_h(theta, mu, nu, u, copula, K=300,
-                          grid_range=5.0, method='auto'):
+def _tm_forward_mixture_h(theta, mu, nu, u, copula, K=300, grid_range=5.0, 
+                          method='auto', adaptive=True, pts_per_sigma = 2):
     """
     Mixture h-function via TM forward pass.
 
@@ -657,7 +662,7 @@ def _tm_forward_mixture_h(theta, mu, nu, u, copula, K=300,
     for use in vine Rosenblatt where we need per-edge mixture h-values.
     """
     n = len(u)
-    grid = _TMGrid(theta, mu, nu, n, K, grid_range, method)
+    grid = _TMGrid(theta, mu, nu, n, K, grid_range, method, adaptive, pts_per_sigma)
     fi_grid = grid.copula_grid(u, copula)
     r_grid = copula.transform(grid.z + grid.mu)
 
@@ -681,8 +686,8 @@ def _tm_forward_mixture_h(theta, mu, nu, u, copula, K=300,
     return np.clip(h_mix, 1e-6, 1.0 - 1e-6)
 
 
-def _tm_xT_distribution(theta, mu, nu, u, copula, K=300,
-                        grid_range=5.0, method='auto'):
+def _tm_xT_distribution(theta, mu, nu, u, copula, K=300, grid_range=5.0, 
+                        method='auto', adaptive=True, pts_per_sigma = 2):
     """
     Forward pass: distribution of x_T on grid.
 
@@ -693,7 +698,7 @@ def _tm_xT_distribution(theta, mu, nu, u, copula, K=300,
     Returns (z_grid, prob) where z_grid includes mu offset.
     """
     n = len(u)
-    grid = _TMGrid(theta, mu, nu, n, K, grid_range, method)
+    grid = _TMGrid(theta, mu, nu, n, K, grid_range, method, adaptive, pts_per_sigma)
     fi_grid = grid.copula_grid(u, copula)
 
     alpha = grid.p0.copy()
@@ -744,6 +749,7 @@ class OULatentProcess:
     def fit(self, u, method='SCAR-TM-OU', alpha0=None, tol=1e-2,
             n_tr=500, M_iterations=5, seed=None, dwt=None,
             stationary=True, K=300, grid_range=5.0,
+            grid_method = 'auto', adaptive = True, pts_per_sigma = 2,
             verbose=False):
         """
         Fit the stochastic copula model.
@@ -807,7 +813,8 @@ class OULatentProcess:
                                             a1t, a2t, copula, stationary)
                 elif method == 'SCAR-TM-OU':
                     return _tm_loglik(th, mu_v, nu_v, u, copula, K,
-                                     grid_range)
+                                     grid_range, grid_method,
+                                     adaptive, pts_per_sigma)
             except Exception as e:
                 if verbose:
                     print(f"  error at alpha={alpha}: {e}")
