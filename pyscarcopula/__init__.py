@@ -9,10 +9,11 @@ from pyscarcopula.copula.elliptical import (
 )
 
 from pyscarcopula.latent.ou_process import OULatentProcess
+from pyscarcopula.latent.gas_process import GASProcess
 
 
 __all__ = ('GumbelCopula', 'FrankCopula', 'JoeCopula', 'ClaytonCopula',
            'CVineCopula',
-           'OULatentProcess',
+           'OULatentProcess', 'GASProcess',
            'GaussianCopula', 'StudentCopula', 'BivariateGaussianCopula'
            )

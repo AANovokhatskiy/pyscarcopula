@@ -78,6 +78,13 @@ def rosenblatt_transform_scar(copula, u, alpha, K=300, grid_range=5.0):
     return _tm_forward_rosenblatt(theta, mu, nu, u, copula, K, grid_range)
 
 
+def rosenblatt_transform_gas(copula, u, gas_params, scaling='unit'):
+    """Rosenblatt for GAS (bivariate). Returns (T, 2)."""
+    from pyscarcopula.latent.gas_process import _gas_rosenblatt
+    omega, alpha_g, beta = gas_params
+    return _gas_rosenblatt(omega, alpha_g, beta, u, copula, scaling)
+
+
 # ══════════════════════════════════════════════════════════════════
 # Unified tests
 # ══════════════════════════════════════════════════════════════════
@@ -130,6 +137,7 @@ def _gof_bivariate(copula, data, to_pobs=True, seed=None, K=300, grid_range=5.0)
 
     MLE: constant parameter Rosenblatt.
     SCAR: mixture Rosenblatt (integrates h over predictive distribution).
+    GAS: deterministic Rosenblatt (h evaluated at filtered theta_t).
     """
     from pyscarcopula.utils import pobs as compute_pobs
 
@@ -144,6 +152,10 @@ def _gof_bivariate(copula, data, to_pobs=True, seed=None, K=300, grid_range=5.0)
 
     if method == 'MLE':
         e = rosenblatt_transform_mle(copula, u, copula.fit_result.copula_param)
+    elif method == 'GAS':
+        scaling = getattr(copula.fit_result, 'scaling', 'unit')
+        e = rosenblatt_transform_gas(copula, u,
+                                      copula.fit_result.gas_params, scaling)
     else:
         e = rosenblatt_transform_scar(copula, u, copula.fit_result.alpha,
                                        K, grid_range)
@@ -162,6 +174,7 @@ def _vine_edge_h(edge, u2, u1, u_pair, K=300, grid_range=5.0):
     Each vine edge is an independent bivariate copula, so this is
     identical to the bivariate Rosenblatt approach:
       MLE:  h(u2, u1; r) with constant r
+      GAS:  h(u2, u1; Psi(f_t)) with GAS-filtered f_t
       SCAR: E[h(u2, u1; Psi(z)) | u_{1:k-1}] via TM forward pass
     """
     method = edge.method.upper() if edge.method else 'MLE'
@@ -169,6 +182,12 @@ def _vine_edge_h(edge, u2, u1, u_pair, K=300, grid_range=5.0):
     if method == 'MLE':
         r = edge.get_r(u_pair)
         return edge.copula.h(u2, u1, r)
+    elif method == 'GAS':
+        from pyscarcopula.latent.gas_process import _gas_mixture_h
+        alpha = edge.fit_result.alpha
+        scaling = getattr(edge.fit_result, 'scaling', 'unit')
+        return _gas_mixture_h(alpha[0], alpha[1], alpha[2],
+                              u_pair, edge.copula, scaling)
     else:
         from pyscarcopula.latent.ou_process import _tm_forward_mixture_h
         alpha = edge.fit_result.alpha

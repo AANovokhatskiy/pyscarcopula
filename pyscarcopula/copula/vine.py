@@ -293,6 +293,24 @@ class CVineCopula:
 
     # ── Log-likelihood ────────────────────────────────────────────
 
+    def _edge_log_likelihood(self, edge, u_pair):
+        """Compute log-likelihood for one edge with correct method."""
+        method = edge.method.lower()
+        cop = edge.copula
+        
+        if method == 'mle':
+            alpha = cop.fit_result.copula_param
+            ll = cop.mlog_likelihood(alpha = alpha, u = u_pair, method = method)
+        elif method == 'gas':
+            alpha = cop.fit_result.alpha
+            ll = cop.mlog_likelihood(alpha = alpha, u = u_pair, method = method)   
+        elif 'scar' in method:
+            alpha = cop.fit_result.alpha
+            ll = cop.mlog_likelihood(alpha = alpha, u = u_pair, method = method)
+        else:
+            raise ValueError(f"Unknown method: {method}")               
+        return -ll
+
     def log_likelihood(self, data, to_pobs=False):
         """
         Compute total log-likelihood of the C-vine.
@@ -321,7 +339,8 @@ class CVineCopula:
 
                 edge = self.edges[j][i]
                 r = edge.get_r(u_pair)
-                total_ll += np.sum(edge.copula.log_pdf(u1, u2, r))
+                # total_ll += np.sum(edge.copula.log_pdf(u1, u2, r))
+                total_ll += self._edge_log_likelihood(edge, u_pair)
 
             if j < d - 2:
                 for i in range(n_edges):

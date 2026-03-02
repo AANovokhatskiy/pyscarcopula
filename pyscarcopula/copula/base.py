@@ -19,7 +19,7 @@ from typing import Literal
 
 from pyscarcopula.utils import pobs
 
-METHODS = ('MLE', 'SCAR-P-OU', 'SCAR-M-OU', 'SCAR-TM-OU')
+METHODS = ('MLE', 'SCAR-P-OU', 'SCAR-M-OU', 'SCAR-TM-OU', 'GAS')
 
 
 # ── broadcast helper ──────────────────────────────────────────────
@@ -48,6 +48,7 @@ class BivariateCopula:
         self._bounds = [(-np.inf, np.inf)]
         self.fit_result = None
         self._latent = None  # OULatentProcess, created on demand
+        self._gas = None     # GASProcess, created on demand
 
     @property
     def name(self):
@@ -221,7 +222,7 @@ class BivariateCopula:
 
     def mlog_likelihood(self, alpha, u, 
                         method: Literal['mle', 'scar-p-ou', 'scar-m-ou', 
-                                        'scar-tm-ou'],
+                                        'scar-tm-ou', 'gas'],
                         n_tr=500, M_iterations=3, seed=None,
                         dwt=None, stationary=True,
                         **kwargs):
@@ -233,8 +234,9 @@ class BivariateCopula:
         alpha : array
             MLE: scalar or (1,) — copula parameter (untransformed).
             SCAR: (3,) — [theta, mu, nu].
+            GAS: (3,) — [omega, alpha_gas, beta].
         u : array (T, 2) — pseudo-observations
-        method : str — 'mle', 'scar-p-ou', 'scar-m-ou', 'scar-tm-ou'
+        method : str — 'mle', 'scar-p-ou', 'scar-m-ou', 'scar-tm-ou', 'gas'
         n_tr : int — MC trajectories (SCAR-P/M)
         M_iterations : int — EIS iterations (SCAR-M)
         seed : int or None
@@ -261,8 +263,13 @@ class BivariateCopula:
                 f"Unknown method '{method}'. Available: {list(METHODS)}")
 
         if method_up == 'MLE':
-            r = self.transform(alpha[0]) if alpha.ndim > 0 else self.transform(alpha)
+            r = alpha
             return -self.log_likelihood(u, r)
+
+        if method_up == 'GAS':
+            from pyscarcopula.latent.gas_process import _gas_loglik
+            scaling = kwargs.get('scaling', 'unit')
+            return _gas_loglik(alpha[0], alpha[1], alpha[2], u, self, scaling)
 
         theta, mu, nu = alpha[0], alpha[1], alpha[2]
         T_len = len(u)
@@ -290,7 +297,7 @@ class BivariateCopula:
     # ══════════════════════════════════════════════════════════════
 
     def fit(self, data, method: Literal['mle', 'scar-p-ou', 'scar-m-ou', 
-                                        'scar-tm-ou'] = 'scar-tm-ou', 
+                                        'scar-tm-ou', 'gas'] = 'scar-tm-ou', 
             to_pobs=False, **kwargs):
         """
         Fit the copula to data.
@@ -300,19 +307,19 @@ class BivariateCopula:
         data : array (T, 2)
             Log-returns or pseudo-observations.
         method : str
-            'mle', 'scar-p-ou', 'scar-m-ou', 'scar-tm-ou'
+            'mle', 'scar-p-ou', 'scar-m-ou', 'scar-tm-ou', 'gas'
         to_pobs : bool
             If True, transform data to pseudo-observations first.
         **kwargs
-            Forwarded to OULatentProcess.fit() for SCAR methods:
-            alpha0, tol, n_tr, M_iterations, seed, dwt,
-            stationary, K, grid_range, verbose
+            SCAR methods: alpha0, tol, n_tr, M_iterations, seed, dwt,
+                          stationary, K, grid_range, verbose
+            GAS method:   alpha0, tol, verbose, scaling
 
         Returns
         -------
         scipy.optimize.OptimizeResult with extra fields:
             .method, .name, .log_likelihood
-            .copula_param (MLE) or .alpha (SCAR)
+            .copula_param (MLE), .alpha (SCAR), or .gas_params (GAS)
         """
         u = np.asarray(data, dtype=np.float64)
         if to_pobs:
@@ -325,6 +332,8 @@ class BivariateCopula:
 
         if method_up == 'MLE':
             return self._fit_mle(u)
+        elif method_up == 'GAS':
+            return self._fit_gas(u, **kwargs)
         else:
             return self._fit_scar(u, method_up, **kwargs)
 
@@ -354,17 +363,33 @@ class BivariateCopula:
         result = ou.fit(u, method=method, **kwargs)
         self.fit_result = result
         self._latent = ou
+        self._gas = None
+        return result
+
+    def _fit_gas(self, u, **kwargs):
+        """Delegate GAS fitting to GASProcess."""
+        from pyscarcopula.latent.gas_process import GASProcess
+
+        scaling = kwargs.pop('scaling', 'unit')
+        gas = GASProcess(self, scaling=scaling)
+        result = gas.fit(u, **kwargs)
+        self.fit_result = result
+        self._gas = gas
+        self._latent = None
         return result
 
     # ══════════════════════════════════════════════════════════════
-    # Forwarding methods (require prior SCAR fit)
+    # Forwarding methods (require prior SCAR or GAS fit)
     # ══════════════════════════════════════════════════════════════
 
     def smoothed_params(self, u, **kwargs):
         """
-        Smoothed copula parameter E[Psi(x_k) | u_{1:k-1}] for all k.
-        Requires prior SCAR fit (uses transfer matrix forward pass).
+        Smoothed copula parameter for all time steps.
+        SCAR: E[Psi(x_k) | u_{1:k-1}] via transfer matrix forward pass.
+        GAS:  deterministic Psi(f_t).
         """
+        if self._gas is not None:
+            return self._gas.smoothed_params(u, **kwargs)
         self._require_latent('smoothed_params')
         return self._latent.smoothed_params(u, **kwargs)
 
@@ -380,13 +405,23 @@ class BivariateCopula:
     def predict(self, n):
         """
         Generate pseudo-observations for prediction.
-        Uses fitted parameters (MLE: constant param, SCAR: sample from x_T).
+        MLE: constant param.
+        SCAR: sample from x_T distribution.
+        GAS: use last filtered f_T.
         """
         if self.fit_result is None:
             raise ValueError("Fit the model first")
 
-        if self.fit_result.method == 'MLE':
+        method = self.fit_result.method.upper()
+
+        if method == 'MLE':
             r = self.fit_result.copula_param
+        elif method == 'GAS':
+            # Use the last filtered copula parameter
+            r = self.fit_result.gas_params  # will need actual data; fall back to stationary mean
+            omega, alpha_g, beta = self.fit_result.gas_params
+            f_bar = omega / (1.0 - beta) if abs(beta) < 1.0 else omega
+            r = self.transform(f_bar)
         else:
             self._require_latent('predict')
             alpha = self.fit_result.alpha
