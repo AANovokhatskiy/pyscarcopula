@@ -159,6 +159,66 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
 
 
 # ══════════════════════════════════════════════════════════════════
+# Helper: h-function dispatch (MLE / GAS / SCAR)
+# ══════════════════════════════════════════════════════════════════
+
+def _edge_h(edge, u2, u1, u_pair, K=300, grid_range=5.0):
+    """
+    Compute h(u2 | u1; r) for a vine edge using the correct method.
+
+    MLE:  h(u2, u1; theta_mle) — constant parameter.
+    GAS:  h(u2, u1; Psi(f_t)) — along deterministic GAS path.
+    SCAR: E[h(u2, u1; Psi(x)) | data] — mixture over predictive
+          distribution via transfer matrix forward pass.
+
+    This is the same logic as _vine_edge_h in stattests.py.
+    """
+    method = edge.method.upper() if edge.method else 'MLE'
+
+    if method == 'MLE':
+        r = edge.get_r(u_pair)
+        return edge.copula.h(u2, u1, r)
+
+    elif method == 'GAS':
+        from pyscarcopula.latent.gas_process import _gas_mixture_h
+        alpha = edge.fit_result.alpha
+        scaling = getattr(edge.fit_result, 'scaling', 'unit')
+        return _gas_mixture_h(alpha[0], alpha[1], alpha[2],
+                              u_pair, edge.copula, scaling)
+
+    else:
+        # SCAR-TM-OU: mixture h via transfer matrix
+        from pyscarcopula.latent.ou_process import _tm_forward_mixture_h
+        alpha = edge.fit_result.alpha
+        theta, mu, nu = alpha
+        return _tm_forward_mixture_h(theta, mu, nu, u_pair,
+                                      edge.copula, K, grid_range)
+
+
+# ══════════════════════════════════════════════════════════════════
+# Helper: edge log-likelihood dispatch
+# ══════════════════════════════════════════════════════════════════
+
+def _edge_log_likelihood(edge, u_pair):
+    """
+    Compute log-likelihood for one edge using the correct method.
+
+    MLE:  sum log c(u1, u2; theta_mle)
+    GAS:  sum log c(u1, u2; Psi(f_t))  (score-driven filter)
+    SCAR: log integral (transfer matrix likelihood)
+    """
+    method = edge.method.lower()
+    cop = edge.copula
+    alpha = edge.fit_result.alpha if hasattr(edge.fit_result, 'alpha') else edge.fit_result.copula_param
+
+    if method == 'mle':
+        alpha = edge.fit_result.copula_param
+    
+    ll = cop.mlog_likelihood(alpha=alpha, u=u_pair, method=method)
+    return -ll  # mlog_likelihood returns minus log-likelihood
+
+
+# ══════════════════════════════════════════════════════════════════
 # C-Vine Copula
 # ══════════════════════════════════════════════════════════════════
 
@@ -203,19 +263,21 @@ class CVineCopula:
     # ── Fit ────────────────────────────────────────────────────────
 
     def fit(self, data, method='mle', to_pobs=False,
-            copulas=None, **kwargs):
+            copulas=None, K=300, grid_range=5.0, **kwargs):
         """
         Fit the C-vine copula.
 
         Parameters
         ----------
         data : (T, d) array
-        method : str — 'mle' or SCAR method name
+        method : str — 'mle', 'gas', or SCAR method name
         to_pobs : bool
         copulas : None (auto-select) or list-of-lists of
                   (copula_class, rotation) tuples for manual specification.
                   copulas[j][i] = (GumbelCopula, 180)
-        **kwargs : forwarded to copula.fit() for SCAR methods
+        K : int — grid size for SCAR transfer matrix (ignored for MLE/GAS)
+        grid_range : float — grid range for SCAR (ignored for MLE/GAS)
+        **kwargs : forwarded to copula.fit() for SCAR/GAS methods
 
         Returns
         -------
@@ -248,7 +310,7 @@ class CVineCopula:
 
                 edge = VineEdge(tree=j, idx=i)
 
-                # Step 1: select copula (MLE always)
+                # Step 1: select copula family (always via MLE)
                 if copulas is not None:
                     # Manual specification
                     cop_class, rotation = copulas[j][i]
@@ -260,7 +322,7 @@ class CVineCopula:
                         u1, u2, self._get_candidates(),
                         self.allow_rotations, self.criterion)
 
-                # Step 2: if SCAR, refit with SCAR method
+                # Step 2: if not MLE, refit with dynamic method
                 if self.method != 'MLE':
                     scar_kwargs = {kk: vv for kk, vv in kwargs.items()
                                    if kk != 'alpha0'}
@@ -276,7 +338,11 @@ class CVineCopula:
 
                 self.edges[j].append(edge)
 
-            # Compute pseudo-obs for next tree level
+            # Compute pseudo-obs for next tree level using correct
+            # h-function for each method:
+            #   MLE:  h(u2, u1; theta_mle)
+            #   GAS:  h along GAS-filtered path
+            #   SCAR: mixture h (integral over predictive distribution)
             if j < d - 2:
                 for i in range(n_edges):
                     u1 = _clip_unit(v[j][0])
@@ -284,36 +350,25 @@ class CVineCopula:
                     u_pair = np.column_stack((u1, u2))
 
                     edge = self.edges[j][i]
-                    r = edge.get_r(u_pair)
-                    # h(u2 | u1; r) — conditional CDF of u2 given u1
                     v[j + 1][i] = _clip_unit(
-                        edge.copula.h(u2, u1, r))
+                        _edge_h(edge, u2, u1, u_pair, K, grid_range))
 
         return self
 
     # ── Log-likelihood ────────────────────────────────────────────
 
-    def _edge_log_likelihood(self, edge, u_pair):
-        """Compute log-likelihood for one edge with correct method."""
-        method = edge.method.lower()
-        cop = edge.copula
-        
-        if method == 'mle':
-            alpha = cop.fit_result.copula_param
-            ll = cop.mlog_likelihood(alpha = alpha, u = u_pair, method = method)
-        elif method == 'gas':
-            alpha = cop.fit_result.alpha
-            ll = cop.mlog_likelihood(alpha = alpha, u = u_pair, method = method)   
-        elif 'scar' in method:
-            alpha = cop.fit_result.alpha
-            ll = cop.mlog_likelihood(alpha = alpha, u = u_pair, method = method)
-        else:
-            raise ValueError(f"Unknown method: {method}")               
-        return -ll
-
-    def log_likelihood(self, data, to_pobs=False):
+    def log_likelihood(self, data, to_pobs=False, K=300, grid_range=5.0):
         """
         Compute total log-likelihood of the C-vine.
+
+        For each edge, uses the correct likelihood:
+          MLE:  sum log c(u1, u2; theta)
+          GAS:  sum log c(u1, u2; Psi(f_t))
+          SCAR: transfer matrix integrated likelihood
+
+        Pseudo-observations for higher trees are computed using
+        the correct h-function (mixture h for SCAR, GAS-filtered
+        h for GAS, constant-parameter h for MLE).
         """
         if self.edges is None:
             raise ValueError("Fit first")
@@ -338,10 +393,9 @@ class CVineCopula:
                 u_pair = np.column_stack((u1, u2))
 
                 edge = self.edges[j][i]
-                r = edge.get_r(u_pair)
-                # total_ll += np.sum(edge.copula.log_pdf(u1, u2, r))
-                total_ll += self._edge_log_likelihood(edge, u_pair)
+                total_ll += _edge_log_likelihood(edge, u_pair)
 
+            # Pseudo-obs for next tree: same h-dispatch as in fit()
             if j < d - 2:
                 for i in range(n_edges):
                     u1 = _clip_unit(v[j][0])
@@ -349,25 +403,27 @@ class CVineCopula:
                     u_pair = np.column_stack((u1, u2))
 
                     edge = self.edges[j][i]
-                    r = edge.get_r(u_pair)
                     v[j + 1][i] = _clip_unit(
-                        edge.copula.h(u2, u1, r))
+                        _edge_h(edge, u2, u1, u_pair, K, grid_range))
 
         return total_ll
 
     # ── Sampling (using fitted parameters on training data) ───────
 
-    def sample(self, n, u_train=None):
+    def sample(self, n, u_train=None, K=300, grid_range=5.0):
         """
         Sample from fitted C-vine using Rosenblatt inverse.
 
-        For SCAR: uses smoothed_params from u_train (must provide).
-        For MLE: u_train not needed.
+        For SCAR: uses mixture_h from u_train (must provide).
+        For GAS:  uses GAS-filtered h from u_train.
+        For MLE:  u_train not needed.
 
         Parameters
         ----------
         n : int — number of samples
-        u_train : (T, d) or None — training data for SCAR smoothed params
+        u_train : (T, d) or None — training data for dynamic models
+        K : int — grid size for SCAR mixture h
+        grid_range : float
 
         Returns
         -------
@@ -386,6 +442,9 @@ class CVineCopula:
         v_samp[0][0] = w[:, 0]
 
         # Precompute r for all edges (from training data)
+        # For MLE: constant r
+        # For GAS/SCAR: we need the h-transformed pseudo-obs from
+        # training data to get the last parameter value
         r_cache = [[None] * (d - 1) for _ in range(d - 1)]
         if self.method != 'MLE' and u_train is not None:
             v_train = [[None] * d for _ in range(d)]
@@ -401,9 +460,9 @@ class CVineCopula:
                     r_cache[j][i] = edge.get_r(u_pair)
 
                     if j < d - 2:
-                        r_here = r_cache[j][i]
+                        # Use correct h-function for pseudo-obs
                         v_train[j + 1][i] = _clip_unit(
-                            edge.copula.h(u2, u1, r_here))
+                            _edge_h(edge, u2, u1, u_pair, K, grid_range))
 
         def _get_r_for_sampling(j, i, n_samples):
             """Get scalar r for sampling (last value of smoothed, or constant)."""
