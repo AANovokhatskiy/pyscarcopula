@@ -126,7 +126,7 @@ class BivariateCopula:
             _r = np.full(n, _r[0])
 
         x = rng.uniform(0, 1, size=(n, 2))
-        V_data = np.clip(self.V(n, _r), 1e-20, 1e+20)
+        V_data = np.clip(self.V(n, _r), 1e-50, None)
 
         u = np.empty((n, 2))
         u[:, 0] = self.psi(-np.log(x[:, 0]) / V_data, _r)

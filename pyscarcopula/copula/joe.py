@@ -89,13 +89,14 @@ def _joe_h(u0, u1, r):
 
 
 @njit(cache=True)
-def _joe_V(n, r_val):
+def _joe_V(n, r):
     """Sample V for Joe copula (Sibuya distribution)."""
     out = np.empty(n)
-    p0 = 1.0 / r_val
+    
     for k in range(n):
         u = np.random.uniform(0, 1)
         i = 1
+        p0 = 1.0 / r[k]
         p = p0
         F = p
         while u > F:
@@ -138,11 +139,14 @@ class JoeCopula(BivariateCopula):
         return 1.0 - (1.0 - np.exp(-t)) ** (1.0 / r)
 
     def V(self, n, r):
-        _r = np.atleast_1d(np.asarray(r, dtype=np.float64))
-        return _joe_V(n, _r[0])
+        _r_input = np.asarray(r, dtype=np.float64)
+
+        if _r_input.ndim == 0:
+            _r = np.full(n, _r_input.item())
+        else:
+            _r = _r_input
+        
+        return _joe_V(n, _r)
 
     def h_unrotated(self, u, v, r):
         return _joe_h(*_broadcast(u, v, r))
-
-    # def h_inverse_unrotated(self, u, v, r):
-    #     raise NotImplementedError("Joe h_inverse requires numerical inversion")

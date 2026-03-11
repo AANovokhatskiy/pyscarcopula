@@ -117,7 +117,7 @@ class ClaytonCopula(BivariateCopula):
 
     def V(self, n, r):
         _r = np.atleast_1d(np.asarray(r, dtype=np.float64))
-        return np.random.gamma(1.0 / _r[0], scale=1.0, size=n)
+        return np.random.gamma(1.0 / _r, scale=_r, size=n)
 
     def h_unrotated(self, u, v, r):
         return _clayton_h(*_broadcast(u, v, r))

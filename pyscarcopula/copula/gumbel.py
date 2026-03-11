@@ -104,12 +104,12 @@ def _generate_levy_stable(alpha, beta, loc = 0, scale = 1, size = 1):
 
 @njit(cache=True)
 def _gumbel_transform(x):
-    return x * x + 1.00001
+    return x * np.tanh(x) + 1.0001
 
 
 @njit(cache=True)
 def _gumbel_inv_transform(r):
-    return np.sqrt(max(r - 1.00001, 0.0))
+    return r - 1.0
 
 
 # ══════════════════════════════════════════════════════════════════
