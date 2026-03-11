@@ -1,7 +1,7 @@
 """
 Ornstein-Uhlenbeck latent process for stochastic copula models.
 
-Supports fitting methods:
+Supports fitting grid_methods:
   SCAR-P-OU   — MC without importance sampling (p-sampler)
   SCAR-M-OU   — MC with efficient importance sampling (m-sampler)
   SCAR-TM-OU  — transfer matrix (deterministic quadrature)
@@ -282,7 +282,7 @@ class _TMGrid:
       - adaptive grid z with trapezoidal weights
       - stationary density p0
       - transfer operator (dense or sparse matrix)
-      - method selection logic
+      - grid_method selection logic
 
     All TM-based functions (_tm_loglik, _tm_forward_Jk, etc.) share
     this infrastructure through a common forward/backward pass.
@@ -290,11 +290,11 @@ class _TMGrid:
 
     __slots__ = (
         'z', 'K', 'dz', 'trap_w', 'p0', 'rho', 'sigma', 'sigma_cond',
-        'mu', '_T_op', '_method', '_band',
+        'mu', '_T_op', '_grid_method', '_band',
     )
 
     def __init__(self, theta, mu, nu, n, K=300, grid_range=5.0, 
-                 method='auto', adaptive=True, pts_per_sigma = 2):
+                 grid_method='auto', adaptive=True, pts_per_sigma = 2):
         """
         Build grid and transfer operator.
 
@@ -308,7 +308,7 @@ class _TMGrid:
             Minimum grid size.
         grid_range : float
             Grid extent in units of stationary sigma.
-        method : str
+        grid_method : str
             'auto', 'dense', or 'sparse'.
         adaptive : bool
             Use adaptive grid size. If True then K can be extended to K_eff depending on initial data
@@ -351,14 +351,14 @@ class _TMGrid:
         half_width = 5.0 * sigma_cond
         self._band = int(np.ceil(half_width / dz))
 
-        if method == 'auto':
+        if grid_method == 'auto':
             if self._band >= K_eff // 4:
-                method = 'dense'
+                grid_method = 'dense'
             else:
-                method = 'sparse'
-        self._method = method
+                grid_method = 'sparse'
+        self._grid_method = grid_method
 
-        if method == 'sparse':
+        if grid_method == 'sparse':
             self._T_op = _build_sparse_T_vectorized(
                 z, rho, sigma_cond, trap_w, K_eff, self._band)
         else:
@@ -522,7 +522,7 @@ def _build_sparse_T_vectorized(z, rho, sigma_cond, trap_w, K, band):
 # ══════════════════════════════════════════════════════════════════
 
 def _tm_loglik(theta, mu, nu, u, copula, K=300, grid_range=5.0, 
-               method='auto', adaptive=True, pts_per_sigma = 2):
+               grid_method='auto', adaptive=True, pts_per_sigma = 2):
     """
     Transfer matrix backward pass.  Returns minus log-likelihood.
 
@@ -538,7 +538,7 @@ def _tm_loglik(theta, mu, nu, u, copula, K=300, grid_range=5.0,
         Minimum number of grid points.
     grid_range : float
         Grid spans  [-grid_range*sigma, +grid_range*sigma].
-    method : str
+    grid_method : str
         'auto', 'dense', or 'sparse'.
 
     Returns
@@ -558,7 +558,7 @@ def _tm_loglik(theta, mu, nu, u, copula, K=300, grid_range=5.0,
         return 1e10
 
     try:
-        grid = _TMGrid(theta, mu, nu, n, K, grid_range, method, adaptive, pts_per_sigma)
+        grid = _TMGrid(theta, mu, nu, n, K, grid_range, grid_method, adaptive, pts_per_sigma)
     except Exception:
         return 1e10
 
@@ -583,7 +583,7 @@ def _tm_loglik(theta, mu, nu, u, copula, K=300, grid_range=5.0,
 # ══════════════════════════════════════════════════════════════════
 
 def _tm_forward_Jk(theta, mu, nu, u, copula, K=300, grid_range=5.0,
-                   method='auto', adaptive=True, pts_per_sigma = 2):
+                   grid_method='auto', adaptive=True, pts_per_sigma = 2):
     """
     Forward pass: E[Psi(x_k) | u_{1:k-1}] (predictive smoothed parameter).
     J_k uses data BEFORE time k (not including u_k).
@@ -591,7 +591,7 @@ def _tm_forward_Jk(theta, mu, nu, u, copula, K=300, grid_range=5.0,
     Returns (n,) array.
     """
     n = len(u)
-    grid = _TMGrid(theta, mu, nu, n, K, grid_range, method, adaptive, pts_per_sigma)
+    grid = _TMGrid(theta, mu, nu, n, K, grid_range, grid_method, adaptive, pts_per_sigma)
     fi_grid = grid.copula_grid(u, copula)
     g_grid = copula.transform(grid.z + grid.mu)
 
@@ -612,7 +612,7 @@ def _tm_forward_Jk(theta, mu, nu, u, copula, K=300, grid_range=5.0,
 
 
 def _tm_forward_rosenblatt(theta, mu, nu, u, copula, K=300, grid_range=5.0, 
-                           method='auto', adaptive=True, pts_per_sigma = 2):
+                           grid_method='auto', adaptive=True, pts_per_sigma = 2):
     """
     Forward pass: mixture Rosenblatt transform for GoF test.
 
@@ -623,7 +623,7 @@ def _tm_forward_rosenblatt(theta, mu, nu, u, copula, K=300, grid_range=5.0,
     Returns (n, 2) — Rosenblatt-transformed pseudo-observations.
     """
     n = len(u)
-    grid = _TMGrid(theta, mu, nu, n, K, grid_range, method, adaptive, pts_per_sigma)
+    grid = _TMGrid(theta, mu, nu, n, K, grid_range, grid_method, adaptive, pts_per_sigma)
     fi_grid = grid.copula_grid(u, copula)
     r_grid = copula.transform(grid.z + grid.mu)
 
@@ -651,7 +651,7 @@ def _tm_forward_rosenblatt(theta, mu, nu, u, copula, K=300, grid_range=5.0,
 
 
 def _tm_forward_mixture_h(theta, mu, nu, u, copula, K=300, grid_range=5.0, 
-                          method='auto', adaptive=True, pts_per_sigma = 2):
+                          grid_method='auto', adaptive=True, pts_per_sigma = 2):
     """
     Mixture h-function via TM forward pass.
 
@@ -662,7 +662,7 @@ def _tm_forward_mixture_h(theta, mu, nu, u, copula, K=300, grid_range=5.0,
     for use in vine Rosenblatt where we need per-edge mixture h-values.
     """
     n = len(u)
-    grid = _TMGrid(theta, mu, nu, n, K, grid_range, method, adaptive, pts_per_sigma)
+    grid = _TMGrid(theta, mu, nu, n, K, grid_range, grid_method, adaptive, pts_per_sigma)
     fi_grid = grid.copula_grid(u, copula)
     r_grid = copula.transform(grid.z + grid.mu)
 
@@ -687,7 +687,7 @@ def _tm_forward_mixture_h(theta, mu, nu, u, copula, K=300, grid_range=5.0,
 
 
 def _tm_xT_distribution(theta, mu, nu, u, copula, K=300, grid_range=5.0, 
-                        method='auto', adaptive=True, pts_per_sigma = 2):
+                        grid_method='auto', adaptive=True, pts_per_sigma = 2):
     """
     Forward pass: distribution of x_T on grid.
 
@@ -698,7 +698,7 @@ def _tm_xT_distribution(theta, mu, nu, u, copula, K=300, grid_range=5.0,
     Returns (z_grid, prob) where z_grid includes mu offset.
     """
     n = len(u)
-    grid = _TMGrid(theta, mu, nu, n, K, grid_range, method, adaptive, pts_per_sigma)
+    grid = _TMGrid(theta, mu, nu, n, K, grid_range, grid_method, adaptive, pts_per_sigma)
     fi_grid = grid.copula_grid(u, copula)
 
     alpha = grid.p0.copy()
@@ -766,6 +766,7 @@ class OULatentProcess:
         dwt : array (T, n_tr) or None
         stationary : bool
         K : int — grid size (TM)
+        grid_method : str — 'auto', 'dense', 'sparse' - type of transfer matrix computation
         grid_range : float
         verbose : bool
         """
@@ -834,7 +835,7 @@ class OULatentProcess:
         result.log_likelihood = -result.fun
         result.method = method
         result.name = copula.name
-        result.n_tr = n_tr if method != 'SCAR-TM-OU' else None
+        result.n_tr = n_tr if method not in ['MLE', 'SCAR-TM-OU'] else None
         result.K = K if method == 'SCAR-TM-OU' else None
         self.fit_result = result
 
@@ -844,7 +845,7 @@ class OULatentProcess:
         return result
 
     def smoothed_params(self, u, alpha=None, K=300, grid_range=5.0,
-                        method='auto'):
+                        grid_method='auto'):
         """E[Psi(x_k) | u_{1:k-1}] via transfer matrix."""
         if alpha is None:
             if self.fit_result is None:
@@ -852,10 +853,10 @@ class OULatentProcess:
             alpha = self.fit_result.alpha
         theta, mu, nu = alpha
         return _tm_forward_Jk(theta, mu, nu, u, self.copula, K, grid_range,
-                              method)
+                              grid_method)
 
     def rosenblatt(self, u, alpha=None, K=300, grid_range=5.0,
-                   method='auto'):
+                   grid_method='auto'):
         """Mixture Rosenblatt transform for GoF test."""
         if alpha is None:
             if self.fit_result is None:
@@ -863,10 +864,10 @@ class OULatentProcess:
             alpha = self.fit_result.alpha
         theta, mu, nu = alpha
         return _tm_forward_rosenblatt(theta, mu, nu, u, self.copula, K,
-                                      grid_range, method)
+                                      grid_range, grid_method)
 
     def mixture_h(self, u, alpha=None, K=300, grid_range=5.0,
-                  method='auto'):
+                  grid_method='auto'):
         """Mixture h-function for vine Rosenblatt."""
         if alpha is None:
             if self.fit_result is None:
@@ -874,10 +875,10 @@ class OULatentProcess:
             alpha = self.fit_result.alpha
         theta, mu, nu = alpha
         return _tm_forward_mixture_h(theta, mu, nu, u, self.copula, K,
-                                     grid_range, method)
+                                     grid_range, grid_method)
 
     def xT_distribution(self, u, alpha=None, K=300, grid_range=5.0,
-                        method='auto'):
+                        grid_method='auto'):
         """Distribution of x_T on grid. Returns (z_grid, prob)."""
         if alpha is None:
             if self.fit_result is None:
@@ -885,7 +886,7 @@ class OULatentProcess:
             alpha = self.fit_result.alpha
         theta, mu, nu = alpha
         return _tm_xT_distribution(theta, mu, nu, u, self.copula, K,
-                                   grid_range, method)
+                                   grid_range, grid_method)
 
     def final_state_sample(self, alpha, n, method='SCAR-TM-OU'):
         """Sample x_T from stationary distribution."""
