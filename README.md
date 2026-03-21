@@ -248,7 +248,7 @@ result = risk_metrics(
     gamma=[0.95],
     MC_iterations=[100_000],
     marginals_method='johnsonsu',
-    method='mle',
+    method='scar-tm-ou',
     optimize_portfolio=False,
     portfolio_weight=np.ones(d) / d,
 )

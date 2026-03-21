@@ -224,57 +224,62 @@ def cvar_empirical(arr, gamma, window_len):
 # Rolling CVaR with fixed weights (MC and TM pipelines)
 # ══════════════════════════════════════════════════════════════════
 
-def _calculate_cvar_fixed(copula, data, method, marginal_model,
-                          marg_params, gamma, window_len, N_mc,
-                          portfolio_weight, **kwargs):
-    """CVaR with fixed portfolio weights."""
-    T = len(data)
-    dim = data.shape[1]
-    var = np.zeros(T)
-    cvar = np.zeros(T)
+def _process_chunk_fixed(args):
+    """
+    Process a chunk of rolling windows (fixed weights).
 
-    for k in tqdm(range(T - window_len + 1)):
+    Runs in a separate process. Numba compiles once per process,
+    then all windows in the chunk run without overhead.
+    """
+    (chunk_start, chunk_end, data, method, copula_class, copula_kwargs,
+     marginal_model, marg_params, gamma, window_len, N_mc,
+     portfolio_weight, fit_kwargs) = args
+
+    dim = data.shape[1]
+    results = []
+    use_tm_pipeline = (method.upper() == 'SCAR-TM-OU'
+                       and hasattr(copula_class, 'xT_distribution'))
+
+    for k in range(chunk_start, chunk_end):
         idx = k + window_len - 1
         uk = pobs(data[k:k + window_len])
+        cop = copula_class(**copula_kwargs)
+        cop.fit(uk, method=method, **fit_kwargs)
 
-        if method.upper() == 'SCAR-TM-OU':
-            # Transfer-matrix pipeline
-            copula.fit(uk, method=method, **kwargs)
-            z, prob = copula.xT_distribution(uk)
+        if use_tm_pipeline and hasattr(cop, 'xT_distribution'):
+            z, prob = cop.xT_distribution(uk)
             ppf_func = lambda u, _idx=idx: marginal_model.ppf(u, marg_params[_idx])
             r, sw = precompute_scenarios(
-                z, prob, copula.sample, ppf_func,
-                copula.transform, N_mc, dim)
+                z, prob, cop.sample, ppf_func,
+                cop.transform, N_mc, dim)
             loss = loss_func(r, portfolio_weight)
             v, c = cvar_from_weighted_losses(loss, sw, gamma)
-            var[idx] = v
-            cvar[idx] = c
         else:
-            # MC pipeline
-            copula.fit(uk, method=method, **kwargs)
-            u_pred = copula.predict(N_mc)
+            u_pred = cop.predict(N_mc) if hasattr(cop, 'predict') else cop.sample(N_mc)
             r = marginal_model.ppf(u_pred, marg_params[idx])
             loss = loss_func(r, portfolio_weight)
             x0 = np.array([0.0])
             res = minimize(F_cvar_q, x0, args=(gamma, loss),
                            method='SLSQP', tol=1e-7)
-            var[idx] = res.x[0]
-            cvar[idx] = res.fun
+            v, c = res.x[0], res.fun
 
-    return var, cvar, portfolio_weight
+        results.append((idx, v, c))
+
+    return results
 
 
-def _calculate_cvar_optimal(copula, data, method, marginal_model,
-                            marg_params, gamma, window_len, N_mc, **kwargs):
-    """CVaR with portfolio weight optimization."""
-    T = len(data)
+def _process_chunk_optimal(args):
+    """
+    Process a chunk of rolling windows (portfolio optimization).
+
+    Same as _process_chunk_fixed but optimizes weights jointly.
+    """
+    (chunk_start, chunk_end, data, method, copula_class, copula_kwargs,
+     marginal_model, marg_params, gamma, window_len, N_mc,
+     fit_kwargs) = args
+
     dim = data.shape[1]
     eq_w = np.ones(dim) / dim
-
-    var = np.zeros(T)
-    cvar = np.zeros(T)
-    weight_data = np.zeros((T, dim))
-
     constr = {'type': 'eq', 'fun': lambda x: np.sum(x[1:]) - 1.0}
     lb = np.zeros(dim + 1)
     lb[0] = -1.0
@@ -282,32 +287,218 @@ def _calculate_cvar_optimal(copula, data, method, marginal_model,
     bounds = Bounds(lb, rb)
     x0 = np.array([0.0, *eq_w])
 
-    for k in tqdm(range(T - window_len + 1)):
+    use_tm_pipeline = (method.upper() == 'SCAR-TM-OU'
+                       and hasattr(copula_class, 'xT_distribution'))
+
+    results = []
+
+    for k in range(chunk_start, chunk_end):
         idx = k + window_len - 1
         uk = pobs(data[k:k + window_len])
+        cop = copula_class(**copula_kwargs)
+        cop.fit(uk, method=method, **fit_kwargs)
 
-        if method.upper() == 'SCAR-TM-OU':
-            copula.fit(uk, method=method, **kwargs)
-            z, prob = copula.xT_distribution(uk)
+        if use_tm_pipeline and hasattr(cop, 'xT_distribution'):
+            z, prob = cop.xT_distribution(uk)
             ppf_func = lambda u, _idx=idx: marginal_model.ppf(u, marg_params[_idx])
             r, sw = precompute_scenarios(
-                z, prob, copula.sample, ppf_func,
-                copula.transform, N_mc, dim)
+                z, prob, cop.sample, ppf_func,
+                cop.transform, N_mc, dim)
             res = minimize(F_sc_gamma_wq, x0, args=(gamma, r, sw),
                            method='SLSQP', bounds=bounds,
                            constraints=constr, tol=1e-7)
         else:
-            copula.fit(uk, method=method, **kwargs)
-            u_pred = copula.predict(N_mc)
+            u_pred = cop.predict(N_mc) if hasattr(cop, 'predict') else cop.sample(N_mc)
             r = marginal_model.ppf(u_pred, marg_params[idx])
             res = minimize(F_cvar_wq, x0, args=(gamma, r),
                            method='SLSQP', bounds=bounds,
                            constraints=constr, tol=1e-7)
 
-        var[idx] = res.x[0]
-        cvar[idx] = res.fun
-        weight_data[idx] = res.x[1:dim + 1]
+        results.append((idx, res.x[0], res.fun, res.x[1:dim + 1].copy()))
         x0 = res.x.copy()
+
+    return results
+
+
+def _make_chunks(n_windows, n_jobs):
+    """Split n_windows into n_jobs roughly equal chunks."""
+    if n_jobs <= 0:
+        import os
+        n_jobs = max(os.cpu_count() or 1, 1)
+    n_jobs = min(n_jobs, n_windows)
+    chunk_size = (n_windows + n_jobs - 1) // n_jobs
+    chunks = []
+    for i in range(n_jobs):
+        start = i * chunk_size
+        end = min(start + chunk_size, n_windows)
+        if start < end:
+            chunks.append((start, end))
+    return chunks
+
+
+def _get_copula_constructor(copula):
+    """Extract copula class and kwargs for reconstruction in workers."""
+    from pyscarcopula.copula.vine import CVineCopula
+    if isinstance(copula, CVineCopula):
+        return (CVineCopula,
+                dict(candidates=copula.candidates,
+                     allow_rotations=copula.allow_rotations,
+                     criterion=copula.criterion))
+    else:
+        return (type(copula), dict(rotate=copula._rotate))
+
+
+def _calculate_cvar_fixed(copula, data, method, marginal_model,
+                          marg_params, gamma, window_len, N_mc,
+                          portfolio_weight, n_jobs=1, **kwargs):
+    """
+    CVaR with fixed portfolio weights.
+
+    Parameters
+    ----------
+    n_jobs : int
+        Number of parallel workers. Default 1 (sequential).
+        Use -1 for all CPU cores. Parallelization is over
+        rolling windows via multiprocessing with chunk-based
+        work distribution to amortize numba compilation.
+    """
+    T = len(data)
+    dim = data.shape[1]
+    var = np.zeros(T)
+    cvar = np.zeros(T)
+    n_windows = T - window_len + 1
+    copula_class, copula_kwargs = _get_copula_constructor(copula)
+
+    if n_jobs == 1:
+        # Sequential (original behavior with tqdm)
+        _has_xT = hasattr(copula, 'xT_distribution')
+        for k in tqdm(range(n_windows)):
+            idx = k + window_len - 1
+            uk = pobs(data[k:k + window_len])
+
+            if method.upper() == 'SCAR-TM-OU' and _has_xT:
+                copula.fit(uk, method=method, **kwargs)
+                z, prob = copula.xT_distribution(uk)
+                ppf_func = lambda u, _idx=idx: marginal_model.ppf(
+                    u, marg_params[_idx])
+                r, sw = precompute_scenarios(
+                    z, prob, copula.sample, ppf_func,
+                    copula.transform, N_mc, dim)
+                loss = loss_func(r, portfolio_weight)
+                v, c = cvar_from_weighted_losses(loss, sw, gamma)
+                var[idx] = v
+                cvar[idx] = c
+            else:
+                copula.fit(uk, method=method, **kwargs)
+                u_pred = (copula.predict(N_mc) if hasattr(copula, 'predict')
+                          else copula.sample(N_mc))
+                r = marginal_model.ppf(u_pred, marg_params[idx])
+                loss = loss_func(r, portfolio_weight)
+                x0 = np.array([0.0])
+                res = minimize(F_cvar_q, x0, args=(gamma, loss),
+                               method='SLSQP', tol=1e-7)
+                var[idx] = res.x[0]
+                cvar[idx] = res.fun
+    else:
+        import multiprocessing as mp
+
+        chunks = _make_chunks(n_windows, n_jobs)
+        pool_args = [
+            (start, end, data, method, copula_class, copula_kwargs,
+             marginal_model, marg_params, gamma, window_len, N_mc,
+             portfolio_weight, kwargs)
+            for start, end in chunks
+        ]
+
+        with mp.Pool(len(chunks)) as pool:
+            chunk_results = pool.map(_process_chunk_fixed, pool_args)
+
+        for chunk in chunk_results:
+            for idx, v, c in chunk:
+                var[idx] = v
+                cvar[idx] = c
+
+    return var, cvar, portfolio_weight
+
+
+def _calculate_cvar_optimal(copula, data, method, marginal_model,
+                            marg_params, gamma, window_len, N_mc,
+                            n_jobs=1, **kwargs):
+    """
+    CVaR with portfolio weight optimization.
+
+    Parameters
+    ----------
+    n_jobs : int
+        Number of parallel workers. Default 1 (sequential).
+        Note: with n_jobs > 1, x0 warm-starting between adjacent
+        windows is lost within each chunk boundary.
+    """
+    T = len(data)
+    dim = data.shape[1]
+    eq_w = np.ones(dim) / dim
+    copula_class, copula_kwargs = _get_copula_constructor(copula)
+
+    var = np.zeros(T)
+    cvar = np.zeros(T)
+    weight_data = np.zeros((T, dim))
+
+    if n_jobs == 1:
+        constr = {'type': 'eq', 'fun': lambda x: np.sum(x[1:]) - 1.0}
+        lb = np.zeros(dim + 1)
+        lb[0] = -1.0
+        rb = np.ones(dim + 1)
+        bounds = Bounds(lb, rb)
+        x0 = np.array([0.0, *eq_w])
+        _has_xT = hasattr(copula, 'xT_distribution')
+
+        for k in tqdm(range(T - window_len + 1)):
+            idx = k + window_len - 1
+            uk = pobs(data[k:k + window_len])
+
+            if method.upper() == 'SCAR-TM-OU' and _has_xT:
+                copula.fit(uk, method=method, **kwargs)
+                z, prob = copula.xT_distribution(uk)
+                ppf_func = lambda u, _idx=idx: marginal_model.ppf(
+                    u, marg_params[_idx])
+                r, sw = precompute_scenarios(
+                    z, prob, copula.sample, ppf_func,
+                    copula.transform, N_mc, dim)
+                res = minimize(F_sc_gamma_wq, x0, args=(gamma, r, sw),
+                               method='SLSQP', bounds=bounds,
+                               constraints=constr, tol=1e-7)
+            else:
+                copula.fit(uk, method=method, **kwargs)
+                u_pred = (copula.predict(N_mc) if hasattr(copula, 'predict')
+                          else copula.sample(N_mc))
+                r = marginal_model.ppf(u_pred, marg_params[idx])
+                res = minimize(F_cvar_wq, x0, args=(gamma, r),
+                               method='SLSQP', bounds=bounds,
+                               constraints=constr, tol=1e-7)
+
+            var[idx] = res.x[0]
+            cvar[idx] = res.fun
+            weight_data[idx] = res.x[1:dim + 1]
+            x0 = res.x.copy()
+    else:
+        import multiprocessing as mp
+
+        chunks = _make_chunks(T - window_len + 1, n_jobs)
+        pool_args = [
+            (start, end, data, method, copula_class, copula_kwargs,
+             marginal_model, marg_params, gamma, window_len, N_mc,
+             kwargs)
+            for start, end in chunks
+        ]
+
+        with mp.Pool(len(chunks)) as pool:
+            chunk_results = pool.map(_process_chunk_optimal, pool_args)
+
+        for chunk in chunk_results:
+            for idx, v, c, w in chunk:
+                var[idx] = v
+                cvar[idx] = c
+                weight_data[idx] = w
 
     return var, cvar, weight_data
 
@@ -323,13 +514,14 @@ def risk_metrics(copula, data, window_len,
                                         'scar-tm-ou'] = 'scar-tm-ou',
                  optimize_portfolio=True,
                  portfolio_weight=None,
+                 n_jobs=1,
                  **kwargs):
     """
     Rolling VaR/CVaR estimation with copula models.
 
     Parameters
     ----------
-    copula : BivariateCopula
+    copula : BivariateCopula or CVineCopula
     data : (T, dim) log-returns
     window_len : int
     gamma : float or list — confidence level(s)
@@ -338,6 +530,11 @@ def risk_metrics(copula, data, window_len,
     method : str — 'mle', 'scar-p-ou', 'scar-m-ou', 'scar-tm-ou'
     optimize_portfolio : bool
     portfolio_weight : (dim,) or None (equal weights)
+    n_jobs : int
+        Number of parallel workers for rolling window computation.
+        Default 1 (sequential). Use -1 for all CPU cores.
+        Each worker processes a contiguous chunk of windows,
+        so numba compilation overhead is paid once per worker.
     **kwargs : forwarded to copula.fit()
 
     Returns
@@ -368,16 +565,17 @@ def risk_metrics(copula, data, window_len,
     for g in gammas:
         res[g] = {}
         for n in N_mcs:
-            print(f"gamma={g}, N_mc={n}, method={method}")
+            print(f"gamma={g}, N_mc={n}, method={method}, n_jobs={n_jobs}")
             if optimize_portfolio:
                 var, cvar, w = _calculate_cvar_optimal(
                     copula, data, method, marginal_model,
-                    marg_params, g, window_len, n, **kwargs)
+                    marg_params, g, window_len, n,
+                    n_jobs=n_jobs, **kwargs)
             else:
                 var, cvar, w = _calculate_cvar_fixed(
                     copula, data, method, marginal_model,
                     marg_params, g, window_len, n,
-                    portfolio_weight, **kwargs)
+                    portfolio_weight, n_jobs=n_jobs, **kwargs)
             res[g][n] = {'var': var, 'cvar': cvar, 'weight': w}
 
     return res
