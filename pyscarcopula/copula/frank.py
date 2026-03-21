@@ -187,6 +187,102 @@ def _frank_transform(x):
     return x * np.tanh(x) + 0.0001
 
 
+@njit(cache=True)
+def _frank_dtransform(x):
+    n = len(x)
+    out = np.empty(n)
+    for i in range(n):
+        th = np.tanh(x[i])
+        out[i] = th + x[i] * (1.0 - th * th)
+    return out
+
+
+@njit(cache=True)
+def _frank_dlogc_dr(u1, u2, r):
+    """Analytical d(log c)/dr for Frank copula."""
+    n = len(u1)
+    out = np.empty(n)
+    for i in range(n):
+        eps = 1e-300
+        v1 = min(max(u1[i], eps), 1.0 - eps)
+        v2 = min(max(u2[i], eps), 1.0 - eps)
+        ri = r[i] if r.shape[0] > 1 else r[0]
+
+        if abs(ri) < 1e-10:
+            out[i] = 0.0
+            continue
+
+        emr = np.exp(-ri)
+        emrv1 = np.exp(-ri * v1)
+        emrv2 = np.exp(-ri * v2)
+        emr1v2 = np.exp(-ri * (1.0 - v2))
+
+        A = emrv1 * (1.0 - emrv2)
+        B = emrv2 * (1.0 - emr1v2)
+        D = A + B
+        if D < eps:
+            D = eps
+
+        dA = emrv1 * (-v1 * (1.0 - emrv2) + v2 * emrv2)
+        dB = emrv2 * (-v2 * (1.0 - emr1v2) + (1.0 - v2) * emr1v2)
+
+        out[i] = (1.0 / ri
+                  + emr / (1.0 - emr)
+                  - (v1 + v2)
+                  - 2.0 * (dA + dB) / D)
+    return out
+
+
+@njit(cache=True)
+def _frank_pdf_and_grad_batch(u_all, r_grid, dpsi):
+    """Fused batch for Frank (no rotation support — Frank is symmetric)."""
+    T = u_all.shape[0]
+    K = len(r_grid)
+    fi = np.empty((T, K))
+    dfi = np.empty((T, K))
+    eps = 1e-300
+
+    for t in range(T):
+        v1 = u_all[t, 0]
+        v2 = u_all[t, 1]
+
+        for j in range(K):
+            ri = r_grid[j]
+            a = ri * v1
+            b = ri * v2
+            s = ri
+
+            log_num = np.log(ri) + _log1mexp(s) - a - b
+            log_t1 = -a + _log1mexp(b)
+            log_t2 = -b + _log1mexp(s - b)
+            log_max = max(log_t1, log_t2)
+            log_min = min(log_t1, log_t2)
+            log_absD = log_max + np.log1p(np.exp(log_min - log_max))
+
+            log_c = log_num - 2.0 * log_absD
+            c_val = np.exp(log_c)
+            fi[t, j] = c_val
+
+            # d(log c)/dr
+            emr = np.exp(-ri)
+            emrv1 = np.exp(-ri * v1)
+            emrv2 = np.exp(-ri * v2)
+            emr1v2 = np.exp(-ri * (1.0 - v2))
+            A_d = emrv1 * (1.0 - emrv2)
+            B_d = emrv2 * (1.0 - emr1v2)
+            D = A_d + B_d
+            if D < eps:
+                D = eps
+            dA_d = emrv1 * (-v1 * (1.0 - emrv2) + v2 * emrv2)
+            dB_d = emrv2 * (-v2 * (1.0 - emr1v2) + (1.0 - v2) * emr1v2)
+
+            dlogc = (1.0 / ri + emr / (1.0 - emr)
+                     - (v1 + v2) - 2.0 * (dA_d + dB_d) / D)
+            dfi[t, j] = c_val * dlogc * dpsi[j]
+
+    return fi, dfi
+
+
 class FrankCopula(BivariateCopula):
     """Frank copula. No rotation support (symmetric)."""
 
@@ -202,6 +298,10 @@ class FrankCopula(BivariateCopula):
         return _frank_transform(x)
 
     @staticmethod
+    def dtransform(x):
+        return _frank_dtransform(np.atleast_1d(np.asarray(x, dtype=np.float64)))
+
+    @staticmethod
     def inv_transform(r):
         return r
 
@@ -210,6 +310,9 @@ class FrankCopula(BivariateCopula):
 
     def log_pdf_unrotated(self, u1, u2, r):
         return _frank_log_pdf(*_broadcast(u1, u2, r))
+
+    def dlog_pdf_dr_unrotated(self, u1, u2, r):
+        return _frank_dlogc_dr(*_broadcast(u1, u2, r))
 
     def sample(self, n, r, rng=None):
         _r = np.atleast_1d(np.asarray(r, dtype=np.float64))
@@ -222,3 +325,18 @@ class FrankCopula(BivariateCopula):
 
     def h_inverse_unrotated(self, u, v, r):
         return _frank_h_inv(*_broadcast(u, v, r))
+
+    def pdf_and_grad_on_grid_batch(self, u, x_grid):
+        x = np.asarray(x_grid, dtype=np.float64)
+        r_grid = _frank_transform(x)
+        dpsi = _frank_dtransform(x)
+        return _frank_pdf_and_grad_batch(
+            np.asarray(u, dtype=np.float64), r_grid, dpsi)
+
+    def copula_grid_batch(self, u, x_grid):
+        x = np.asarray(x_grid, dtype=np.float64)
+        r_grid = _frank_transform(x)
+        dpsi = _frank_dtransform(x)
+        fi, _ = _frank_pdf_and_grad_batch(
+            np.asarray(u, dtype=np.float64), r_grid, dpsi)
+        return fi

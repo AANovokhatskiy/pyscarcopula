@@ -109,6 +109,10 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
     """
     Select best bivariate copula for (u1, u2) by AIC/BIC/logL.
 
+    Always includes IndependentCopula as a baseline competitor.
+    If no parametric copula beats independence, the edge is
+    set to independent (zero cost for SCAR/GAS).
+
     Parameters
     ----------
     u1, u2 : (T,) arrays
@@ -121,14 +125,30 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
     best_copula : fitted BivariateCopula instance
     best_result : fit result
     """
+    from pyscarcopula.copula.independent import IndependentCopula
+
     u_pair = np.column_stack((u1, u2))
     T = len(u1)
 
-    best_copula = None
-    best_result = None
-    best_score = np.inf  # minimize AIC/BIC, or maximize logL
+    # Start with independence as baseline (AIC=0, BIC=0, logL=0)
+    indep = IndependentCopula()
+    indep_result = indep.fit(u_pair)
+
+    if criterion == 'aic':
+        best_score = 0.0   # AIC = -2*0 + 2*0 = 0
+    elif criterion == 'bic':
+        best_score = 0.0   # BIC = -2*0 + 0*log(T) = 0
+    else:
+        best_score = 0.0   # -logL = 0
+
+    best_copula = indep
+    best_result = indep_result
 
     for cop_class in candidates:
+        # Skip IndependentCopula if it's in candidates (already baseline)
+        if cop_class is IndependentCopula:
+            continue
+
         rotations = _all_rotations(cop_class) if allow_rotations else [0]
 
         for angle in rotations:
@@ -152,9 +172,6 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
             except Exception:
                 continue
 
-    if best_copula is None:
-        raise RuntimeError("No copula could be fitted")
-
     return best_copula, best_result
 
 
@@ -170,9 +187,12 @@ def _edge_h(edge, u2, u1, u_pair, K=300, grid_range=5.0):
     GAS:  h(u2, u1; Psi(f_t)) — along deterministic GAS path.
     SCAR: E[h(u2, u1; Psi(x)) | data] — mixture over predictive
           distribution via transfer matrix forward pass.
-
-    This is the same logic as _vine_edge_h in stattests.py.
+    Independent: h(u2 | u1) = u2 — trivial pass-through.
     """
+    from pyscarcopula.copula.independent import IndependentCopula
+    if isinstance(edge.copula, IndependentCopula):
+        return u2.copy()
+
     method = edge.method.upper() if edge.method else 'MLE'
 
     if method == 'MLE':
@@ -232,11 +252,40 @@ class CVineCopula:
     """
     C-vine copula for d dimensions.
 
-    Tree structure (0-indexed):
-        Tree j, edge i: copula for pair (variable j+1, variable j+i+2 | variables 1..j+1)
+    Decomposes d-dimensional dependence into d(d-1)/2 bivariate copulas
+    arranged in a tree structure. Each edge copula can be from a different
+    family (Gumbel, Clayton, Frank, Joe, Gaussian, or Independent),
+    selected automatically via AIC/BIC.
 
-    The first variable is the root of tree 0, the second variable
-    is the root of tree 1, etc.
+    Tree structure (0-indexed):
+        Tree j, edge i: copula for pair (j+1, j+i+2 | 1..j+1)
+        Tree 0: unconditional pairs (1,2), (1,3), ..., (1,d)
+        Tree 1: conditional pairs (2,3|1), (2,4|1), ...
+        etc.
+
+    Estimation supports mixed models: strong edges (Tree 0-1) use
+    SCAR-TM-OU for time-varying parameters, while weak edges (upper
+    trees) fall back to MLE for efficiency. The GoF test handles
+    this correctly via per-edge h-function dispatch.
+
+    Key parameters for vine.fit():
+        method : 'mle', 'scar-tm-ou', 'gas'
+        truncation_level : int — trees >= level stay MLE
+        min_edge_logL : float — edges with MLE logL < threshold stay MLE
+        tol : float — L-BFGS-B tolerance (5e-2 recommended for vine)
+
+    Example
+    -------
+    >>> vine = CVineCopula(criterion='aic')
+    >>> vine.fit(u, method='scar-tm-ou', min_edge_logL=10)
+    >>> vine.summary()
+    >>> gof = vine_gof_test(vine, u)
+
+    Parameters
+    ----------
+    candidates : list of copula classes, or None (default: 5 families)
+    allow_rotations : bool (default True)
+    criterion : 'aic', 'bic', or 'loglik'
     """
 
     def __init__(self, candidates=None, allow_rotations=True,
@@ -263,7 +312,9 @@ class CVineCopula:
     # ── Fit ────────────────────────────────────────────────────────
 
     def fit(self, data, method='mle', to_pobs=False,
-            copulas=None, K=300, grid_range=5.0, **kwargs):
+            copulas=None, K=300, grid_range=5.0,
+            truncation_level=None, min_edge_logL=None,
+            **kwargs):
         """
         Fit the C-vine copula.
 
@@ -277,6 +328,16 @@ class CVineCopula:
                   copulas[j][i] = (GumbelCopula, 180)
         K : int — grid size for SCAR transfer matrix (ignored for MLE/GAS)
         grid_range : float — grid range for SCAR (ignored for MLE/GAS)
+        truncation_level : int or None
+            If set, edges at tree levels >= truncation_level keep their
+            MLE fit and are not refitted with SCAR/GAS. This is the
+            standard vine truncation approach (Joe 2014). Example:
+            truncation_level=2 means only trees 0 and 1 use SCAR.
+        min_edge_logL : float or None
+            If set, edges whose MLE log-likelihood is below this
+            threshold are not refitted with SCAR/GAS. Weak edges
+            contribute little to the total logL but cost the same
+            to fit. Typical value: 5-10.
         **kwargs : forwarded to copula.fit() for SCAR/GAS methods
 
         Returns
@@ -322,8 +383,17 @@ class CVineCopula:
                         u1, u2, self._get_candidates(),
                         self.allow_rotations, self.criterion)
 
-                # Step 2: if not MLE, refit with dynamic method
-                if self.method != 'MLE':
+                # Step 2: decide whether to refit with dynamic method
+                from pyscarcopula.copula.independent import IndependentCopula
+                skip_dynamic = (
+                    self.method == 'MLE'
+                    or isinstance(cop, IndependentCopula)
+                    or (truncation_level is not None and j >= truncation_level)
+                    or (min_edge_logL is not None
+                        and result.log_likelihood < min_edge_logL)
+                )
+
+                if not skip_dynamic:
                     scar_kwargs = {kk: vv for kk, vv in kwargs.items()
                                    if kk != 'alpha0'}
                     result = cop.fit(u_pair, method=method,
@@ -332,9 +402,10 @@ class CVineCopula:
 
                 edge.copula = cop
                 edge.fit_result = result
-                edge.copula_param = (result.copula_param
-                                     if self.method == 'MLE'
-                                     else result.alpha)
+                edge.copula_param = (result.alpha
+                                     if hasattr(result, 'alpha')
+                                     and len(np.atleast_1d(result.alpha)) == 3
+                                     else result.copula_param)
 
                 self.edges[j].append(edge)
 

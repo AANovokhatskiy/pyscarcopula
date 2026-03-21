@@ -39,6 +39,35 @@ def _broadcast(u1, u2, r):
 
 
 class BivariateCopula:
+    """
+    Base class for bivariate copulas (dim=2).
+
+    Provides a unified interface for fitting, evaluation, sampling, and
+    diagnostics. Subclasses must override the core density methods;
+    optional overrides enable analytical gradients and batch evaluation.
+
+    Subclass contract — must override:
+        pdf_unrotated, log_pdf_unrotated, transform, inv_transform, psi, V
+
+    Recommended overrides (enable analytical gradient in TM):
+        dtransform(x)                    — d Psi / dx
+        dlog_pdf_dr_unrotated(u1, u2, r) — d(log c) / dr
+
+    Optional overrides (fused numba batch kernels for speed):
+        pdf_and_grad_on_grid_batch(u, x_grid)
+        copula_grid_batch(u, x_grid)
+
+    Estimation methods (via .fit()):
+        'mle'        — constant parameter (1 param)
+        'scar-tm-ou' — transfer matrix (3 params: theta, mu, nu)
+        'gas'        — GAS score-driven (3 params: omega, alpha, beta)
+        'scar-p-ou'  — MC p-sampler, 'scar-m-ou' — MC m-sampler with EIS
+
+    Parameters
+    ----------
+    rotate : int
+        Copula rotation: 0, 90, 180, or 270 degrees.
+    """
 
     def __init__(self, rotate: int = 0):
         if rotate not in (0, 90, 180, 270):
@@ -77,6 +106,11 @@ class BivariateCopula:
         """Copula parameter domain -> R."""
         return r
 
+    @staticmethod
+    def dtransform(x):
+        """d Psi(x) / dx.  Override per copula."""
+        return np.ones_like(np.asarray(x, dtype=np.float64))
+
     # ── PDF / log-PDF ─────────────────────────────────────────────
     def pdf_unrotated(self, u1, u2, r):
         raise NotImplementedError
@@ -91,6 +125,24 @@ class BivariateCopula:
     def log_pdf(self, u1, u2, r):
         v1, v2 = self._apply_rotation(u1, u2)
         return self.log_pdf_unrotated(v1, v2, r)
+
+    def dlog_pdf_dr_unrotated(self, u1, u2, r):
+        """d(log c)/dr — analytical derivative w.r.t. copula parameter.
+
+        Default: central finite differences. Override for analytical version.
+        """
+        u1a = np.atleast_1d(np.asarray(u1, dtype=np.float64)).ravel()
+        u2a = np.atleast_1d(np.asarray(u2, dtype=np.float64)).ravel()
+        ra = np.atleast_1d(np.asarray(r, dtype=np.float64)).ravel()
+        eps = 1e-6
+        lp = self.log_pdf_unrotated(u1a, u2a, ra + eps)
+        lm = self.log_pdf_unrotated(u1a, u2a, ra - eps)
+        return (lp - lm) / (2.0 * eps)
+
+    def dlog_pdf_dr(self, u1, u2, r):
+        """d(log c)/dr with rotation applied."""
+        v1, v2 = self._apply_rotation(u1, u2)
+        return self.dlog_pdf_dr_unrotated(v1, v2, r)
 
     def _apply_rotation(self, u1, u2):
         rot = self._rotate
@@ -215,6 +267,62 @@ class BivariateCopula:
         u1 = np.full(len(z_grid), u_row[0])
         u2 = np.full(len(z_grid), u_row[1])
         return self.pdf(u1, u2, self.transform(z_grid))
+
+    def pdf_and_grad_on_grid(self, u_row, z_grid):
+        """
+        Compute fi(z) and dfi/dz on the grid analytically.
+
+        Uses chain rule: dfi/dz = fi * d(log c)/dr * Psi'(z).
+
+        u_row: (2,), z_grid: (K,).
+        Returns (fi, dfi_dz) each of shape (K,).
+        """
+        z = np.asarray(z_grid, dtype=np.float64)
+        r = self.transform(z)
+        u1 = np.full(len(z), u_row[0])
+        u2 = np.full(len(z), u_row[1])
+
+        v1, v2 = self._apply_rotation(u1, u2)
+        fi = self.pdf_unrotated(v1, v2, r)
+        dlogc = self.dlog_pdf_dr_unrotated(v1, v2, r)
+        dpsi = self.dtransform(z)
+
+        dfi_dz = fi * dlogc * dpsi
+        return fi, dfi_dz
+
+    def pdf_and_grad_on_grid_batch(self, u, x_grid):
+        """
+        Batch version: compute fi and dfi_dx for all T observations.
+
+        u : (T, 2), x_grid : (K,).
+        Returns (fi, dfi_dx) each of shape (T, K).
+
+        Default: Python loop over pdf_and_grad_on_grid.
+        Override in subclasses with a fused numba kernel for speed.
+        """
+        n = len(u)
+        K = len(x_grid)
+        fi = np.empty((n, K))
+        dfi = np.empty((n, K))
+        for i in range(n):
+            fi[i], dfi[i] = self.pdf_and_grad_on_grid(u[i], x_grid)
+        return fi, dfi
+
+    def copula_grid_batch(self, u, x_grid):
+        """
+        Batch version of pdf_on_grid (value only, no gradient).
+
+        u : (T, 2), x_grid : (K,).
+        Returns fi of shape (T, K).
+
+        Default: Python loop. Override for speed.
+        """
+        n = len(u)
+        K = len(x_grid)
+        fi = np.empty((n, K))
+        for i in range(n):
+            fi[i] = self.pdf_on_grid(u[i], x_grid)
+        return fi
 
     # ══════════════════════════════════════════════════════════════
     # Negative log-likelihood evaluation

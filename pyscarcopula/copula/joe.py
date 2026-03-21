@@ -113,6 +113,113 @@ def _joe_transform(x):
     return x * np.tanh(x) + 1.0001
 
 
+@njit(cache=True)
+def _joe_dtransform(x):
+    n = len(x)
+    out = np.empty(n)
+    for i in range(n):
+        th = np.tanh(x[i])
+        out[i] = th + x[i] * (1.0 - th * th)
+    return out
+
+
+@njit(cache=True)
+def _joe_dlogc_dr(u1, u2, r):
+    """Analytical d(log c)/dr for Joe copula."""
+    n = len(u1)
+    out = np.empty(n)
+    for i in range(n):
+        eps = 1e-300
+        v1 = min(max(u1[i], eps), 1.0 - eps)
+        v2 = min(max(u2[i], eps), 1.0 - eps)
+        ri = r[i] if r.shape[0] > 1 else r[0]
+
+        q1 = max(1.0 - v1, eps)
+        q2 = max(1.0 - v2, eps)
+        log_q1 = np.log(q1)
+        log_q2 = np.log(q2)
+
+        q1r = q1 ** ri
+        q2r = q2 ** ri
+        B = q1r + q2r - q1r * q2r
+        if B < eps:
+            B = eps
+
+        dB = q1r * log_q1 * (1.0 - q2r) + q2r * log_q2 * (1.0 - q1r)
+
+        term1 = log_q1 + log_q2
+        term2 = (1.0 + dB) / (ri - 1.0 + B)
+        term3 = -np.log(B) / (ri * ri) - (2.0 - 1.0 / ri) * dB / B
+
+        out[i] = term1 + term2 + term3
+    return out
+
+
+@njit(cache=True)
+def _joe_pdf_and_grad_batch(u_all, r_grid, dpsi, rotation):
+    """Fused batch: fi and dfi_dx for all T observations at once."""
+    T = u_all.shape[0]
+    K = len(r_grid)
+    fi = np.empty((T, K))
+    dfi = np.empty((T, K))
+    eps = 1e-300
+
+    for t in range(T):
+        u1_raw = u_all[t, 0]
+        u2_raw = u_all[t, 1]
+        if rotation == 90:
+            u1_raw = 1.0 - u1_raw
+        elif rotation == 180:
+            u1_raw = 1.0 - u1_raw
+            u2_raw = 1.0 - u2_raw
+        elif rotation == 270:
+            u2_raw = 1.0 - u2_raw
+
+        v1 = min(max(u1_raw, eps), 1.0 - eps)
+        v2 = min(max(u2_raw, eps), 1.0 - eps)
+        q1 = max(1.0 - v1, eps)
+        q2 = max(1.0 - v2, eps)
+        log_q1 = np.log(q1)
+        log_q2 = np.log(q2)
+
+        for j in range(K):
+            ri = r_grid[j]
+
+            q1r = q1 ** ri
+            q2r = q2 ** ri
+
+            log_t1 = ri * log_q1 + _log1mexp(-ri * log_q2)
+            log_t2 = ri * log_q2
+            log_max = max(log_t1, log_t2)
+            log_min = min(log_t1, log_t2)
+            log_B = log_max + np.log1p(np.exp(log_min - log_max))
+
+            B = np.exp(log_B)
+            if B > ri - 1.0:
+                log_rp = log_B + np.log1p((ri - 1.0) / B)
+            else:
+                log_rp = np.log(ri - 1.0) + np.log1p(B / (ri - 1.0))
+
+            log_c = ((ri - 1.0) * (log_q1 + log_q2)
+                     + log_rp
+                     - (2.0 - 1.0 / ri) * log_B)
+            c_val = np.exp(log_c)
+            fi[t, j] = c_val
+
+            # d(log c)/dr
+            B2 = q1r + q2r - q1r * q2r
+            if B2 < eps:
+                B2 = eps
+            dB = q1r * log_q1 * (1.0 - q2r) + q2r * log_q2 * (1.0 - q1r)
+
+            dlogc = (log_q1 + log_q2
+                     + (1.0 + dB) / (ri - 1.0 + B2)
+                     - np.log(B2) / (ri * ri) - (2.0 - 1.0 / ri) * dB / B2)
+            dfi[t, j] = c_val * dlogc * dpsi[j]
+
+    return fi, dfi
+
+
 class JoeCopula(BivariateCopula):
 
     def __init__(self, rotate: int = 0):
@@ -125,6 +232,10 @@ class JoeCopula(BivariateCopula):
         return _joe_transform(x)
 
     @staticmethod
+    def dtransform(x):
+        return _joe_dtransform(np.atleast_1d(np.asarray(x, dtype=np.float64)))
+
+    @staticmethod
     def inv_transform(r):
         return r - 1.0
 
@@ -133,6 +244,9 @@ class JoeCopula(BivariateCopula):
 
     def log_pdf_unrotated(self, u1, u2, r):
         return _joe_log_pdf(*_broadcast(u1, u2, r))
+
+    def dlog_pdf_dr_unrotated(self, u1, u2, r):
+        return _joe_dlogc_dr(*_broadcast(u1, u2, r))
 
     @staticmethod
     def psi(t, r):
@@ -150,3 +264,18 @@ class JoeCopula(BivariateCopula):
 
     def h_unrotated(self, u, v, r):
         return _joe_h(*_broadcast(u, v, r))
+
+    def pdf_and_grad_on_grid_batch(self, u, x_grid):
+        x = np.asarray(x_grid, dtype=np.float64)
+        r_grid = _joe_transform(x)
+        dpsi = _joe_dtransform(x)
+        return _joe_pdf_and_grad_batch(
+            np.asarray(u, dtype=np.float64), r_grid, dpsi, self._rotate)
+
+    def copula_grid_batch(self, u, x_grid):
+        x = np.asarray(x_grid, dtype=np.float64)
+        r_grid = _joe_transform(x)
+        dpsi = _joe_dtransform(x)
+        fi, _ = _joe_pdf_and_grad_batch(
+            np.asarray(u, dtype=np.float64), r_grid, dpsi, self._rotate)
+        return fi

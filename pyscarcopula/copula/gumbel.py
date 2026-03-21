@@ -108,6 +108,115 @@ def _gumbel_transform(x):
 
 
 @njit(cache=True)
+def _gumbel_dtransform(x):
+    n = len(x)
+    out = np.empty(n)
+    for i in range(n):
+        th = np.tanh(x[i])
+        out[i] = th + x[i] * (1.0 - th * th)
+    return out
+
+
+@njit(cache=True)
+def _gumbel_dlogc_dr(u1, u2, r):
+    """Analytical d(log c)/dr for Gumbel copula."""
+    n = len(u1)
+    out = np.empty(n)
+    for i in range(n):
+        eps = 1e-300
+        v1 = min(max(u1[i], eps), 1.0 - eps)
+        v2 = min(max(u2[i], eps), 1.0 - eps)
+        ri = r[i] if r.shape[0] > 1 else r[0]
+
+        log_v1 = np.log(v1)
+        log_v2 = np.log(v2)
+        log_p1 = np.log(max(-log_v1, eps))
+        log_p2 = np.log(max(-log_v2, eps))
+
+        log_max = max(log_p1, log_p2)
+        log_min = min(log_p1, log_p2)
+        delta = ri * (log_min - log_max)
+
+        S_log = ri * log_max + np.log1p(np.exp(delta))
+
+        ed = np.exp(delta)
+        sig = ed / (1.0 + ed)
+        dS_dr = log_max + (log_min - log_max) * sig
+
+        log_A = S_log / ri
+        A = np.exp(log_A)
+        dlogA_dr = (dS_dr * ri - S_log) / (ri * ri)
+        dA_dr = A * dlogA_dr
+
+        term1 = log_p1 + log_p2
+        term2 = -S_log / (ri * ri) + (1.0 / ri - 2.0) * dS_dr
+        term3 = (1.0 + dA_dr) / (ri - 1.0 + A)
+        term4 = -dA_dr
+
+        out[i] = term1 + term2 + term3 + term4
+    return out
+
+
+@njit(cache=True)
+def _gumbel_pdf_and_grad_batch(u_all, r_grid, dpsi, rotation):
+    """Fused batch: fi and dfi_dx for all T observations at once."""
+    T = u_all.shape[0]
+    K = len(r_grid)
+    fi = np.empty((T, K))
+    dfi = np.empty((T, K))
+
+    for t in range(T):
+        eps = 1e-300
+        u1_raw = u_all[t, 0]
+        u2_raw = u_all[t, 1]
+        if rotation == 90:
+            u1_raw = 1.0 - u1_raw
+        elif rotation == 180:
+            u1_raw = 1.0 - u1_raw
+            u2_raw = 1.0 - u2_raw
+        elif rotation == 270:
+            u2_raw = 1.0 - u2_raw
+
+        v1 = min(max(u1_raw, eps), 1.0 - eps)
+        v2 = min(max(u2_raw, eps), 1.0 - eps)
+
+        log_v1 = np.log(v1)
+        log_v2 = np.log(v2)
+        log_p1 = np.log(max(-log_v1, eps))
+        log_p2 = np.log(max(-log_v2, eps))
+        log_max = max(log_p1, log_p2)
+        log_min = min(log_p1, log_p2)
+
+        for j in range(K):
+            ri = r_grid[j]
+            delta = ri * (log_min - log_max)
+            exp_delta = np.exp(delta)
+            S = ri * log_max + np.log1p(exp_delta)
+            log_A = S / ri
+            A = np.exp(log_A)
+
+            log_c = ((ri - 1.0) * (log_p1 + log_p2)
+                     + (1.0 / ri - 2.0) * S
+                     + np.log(ri - 1.0 + A)
+                     - A - log_v1 - log_v2)
+            c_val = np.exp(log_c)
+            fi[t, j] = c_val
+
+            sig = exp_delta / (1.0 + exp_delta)
+            dS_dr = log_max + (log_min - log_max) * sig
+            dlogA_dr = (dS_dr * ri - S) / (ri * ri)
+            dA_dr = A * dlogA_dr
+
+            dlogc = (log_p1 + log_p2
+                     - S / (ri * ri) + (1.0 / ri - 2.0) * dS_dr
+                     + (1.0 + dA_dr) / (ri - 1.0 + A)
+                     - dA_dr)
+            dfi[t, j] = c_val * dlogc * dpsi[j]
+
+    return fi, dfi
+
+
+@njit(cache=True)
 def _gumbel_inv_transform(r):
     return r - 1.0
 
@@ -128,6 +237,10 @@ class GumbelCopula(BivariateCopula):
         return _gumbel_transform(x)
 
     @staticmethod
+    def dtransform(x):
+        return _gumbel_dtransform(np.atleast_1d(np.asarray(x, dtype=np.float64)))
+
+    @staticmethod
     def inv_transform(r):
         return _gumbel_inv_transform(r)
 
@@ -138,6 +251,10 @@ class GumbelCopula(BivariateCopula):
     def log_pdf_unrotated(self, u1, u2, r):
         u1a, u2a, ra = _broadcast(u1, u2, r)
         return _gumbel_log_pdf(u1a, u2a, ra)
+
+    def dlog_pdf_dr_unrotated(self, u1, u2, r):
+        u1a, u2a, ra = _broadcast(u1, u2, r)
+        return _gumbel_dlogc_dr(u1a, u2a, ra)
 
     @staticmethod
     def psi(t, r):
@@ -156,6 +273,21 @@ class GumbelCopula(BivariateCopula):
     def h_unrotated(self, u, v, r):
         ua, va, ra = _broadcast(u, v, r)
         return _gumbel_h(ua, va, ra)
+
+    def pdf_and_grad_on_grid_batch(self, u, x_grid):
+        x = np.asarray(x_grid, dtype=np.float64)
+        r_grid = _gumbel_transform(x)
+        dpsi = _gumbel_dtransform(x)
+        return _gumbel_pdf_and_grad_batch(
+            np.asarray(u, dtype=np.float64), r_grid, dpsi, self._rotate)
+
+    def copula_grid_batch(self, u, x_grid):
+        x = np.asarray(x_grid, dtype=np.float64)
+        r_grid = _gumbel_transform(x)
+        dpsi = _gumbel_dtransform(x)
+        fi, _ = _gumbel_pdf_and_grad_batch(
+            np.asarray(u, dtype=np.float64), r_grid, dpsi, self._rotate)
+        return fi
 
     # def h_inverse_unrotated(self, u, v, r):
     #     raise NotImplementedError("Gumbel h_inverse requires numerical inversion")

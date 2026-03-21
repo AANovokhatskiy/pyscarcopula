@@ -6,6 +6,11 @@ Supports fitting grid_methods:
   SCAR-M-OU   — MC with efficient importance sampling (m-sampler)
   SCAR-TM-OU  — transfer matrix (deterministic quadrature)
 
+Features:
+  - Analytical gradient of TM log-likelihood (xi-coordinates)
+  - Smart initial point via GAS moment matching
+  - Coarse-grid multi-start initialization
+
 MLE is handled directly by BivariateCopula._fit_mle.
 """
 
@@ -382,12 +387,8 @@ class _TMGrid:
 
         Returns (n, K) array: fi_grid[t, j] = c(u1t, u2t; Psi(z_j + mu)).
         """
-        n = len(u)
-        fi_grid = np.empty((n, self.K))
         x_grid = self.z + self.mu
-        for i in range(n):
-            fi_grid[i] = copula.pdf_on_grid(u[i], x_grid)
-        return fi_grid
+        return copula.copula_grid_batch(u, x_grid)
 
     # ── generic backward pass (used by _tm_loglik) ───────────────
 
@@ -726,6 +727,251 @@ def _tm_xT_distribution(theta, mu, nu, u, copula, K=300, grid_range=5.0,
 
 
 # ══════════════════════════════════════════════════════════════════
+# Analytical gradient of TM log-likelihood (xi-coordinates)
+# ══════════════════════════════════════════════════════════════════
+#
+# Key insight:  working in normalised coordinates  xi = z / sigma
+# (fixed grid), several parameter dependencies cancel:
+#
+#   T_w[i,j] depends on theta ONLY through  rho = exp(-theta*dt).
+#             Does NOT depend on nu (or mu).
+#
+#   p0[j] * trap_w[j] is completely independent of (theta, mu, nu).
+#
+#   fi[t,j] = c(u_1t, u_2t; Psi(sigma*xi_j + mu))
+#             depends on theta and nu through sigma, and on mu directly.
+
+def _build_Tw_and_grad_dense(xi, rho, base_w, K):
+    """
+    Build T_w and dT_w/drho (dense) in xi-coordinates.
+
+    T_w[i,j] = base_w[j]/(sqrt(1-rho^2)*sqrt(2pi)) * exp(-0.5*q^2/(1-rho^2))
+    where q = xi_j - rho*xi_i.
+    """
+    omr2 = 1.0 - rho ** 2
+    q = xi[np.newaxis, :] - rho * xi[:, np.newaxis]
+    gauss = np.exp(-0.5 * q ** 2 / omr2) / (np.sqrt(omr2) * np.sqrt(2.0 * np.pi))
+    T_w = gauss * base_w[np.newaxis, :]
+
+    dlog_drho = (rho / omr2
+                 + q * xi[:, np.newaxis] / omr2
+                 - rho * q ** 2 / omr2 ** 2)
+    dTw_drho = dlog_drho * T_w
+
+    return T_w, dTw_drho
+
+
+def _build_Tw_and_grad_sparse(xi, rho, base_w, K, band):
+    """
+    Sparse version of T_w and dT_w/drho in xi-coordinates.
+
+    Returns T_w (CSR), dTw_drho (CSR).
+    """
+    omr2 = 1.0 - rho ** 2
+    inv_omr2 = 1.0 / omr2
+    coeff = 1.0 / (np.sqrt(omr2) * np.sqrt(2.0 * np.pi))
+
+    d_xi = xi[1] - xi[0]
+    xi0 = xi[0]
+    inv_dxi = 1.0 / d_xi
+
+    centers_idx = (rho * xi - xi0) * inv_dxi
+    i_lo = np.maximum(0, np.floor(centers_idx).astype(np.intp) - band)
+    i_hi = np.minimum(K, np.ceil(centers_idx).astype(np.intp) + band + 1)
+    widths = i_hi - i_lo
+    total_nnz = int(np.sum(widths))
+
+    rows = np.empty(total_nnz, dtype=np.int32)
+    cols = np.empty(total_nnz, dtype=np.int32)
+    t_vals = np.empty(total_nnz, dtype=np.float64)
+    g_vals = np.empty(total_nnz, dtype=np.float64)
+
+    ptr = 0
+    for i in range(K):
+        w = widths[i]
+        if w <= 0:
+            continue
+        sl = slice(ptr, ptr + w)
+        j_range = np.arange(i_lo[i], i_hi[i])
+        rows[sl] = i
+        cols[sl] = j_range
+
+        q = xi[j_range] - rho * xi[i]
+        gauss = coeff * np.exp(-0.5 * q ** 2 * inv_omr2)
+        tw = gauss * base_w[j_range]
+        t_vals[sl] = tw
+
+        dlog = rho * inv_omr2 + q * xi[i] * inv_omr2 - rho * q ** 2 * inv_omr2 ** 2
+        g_vals[sl] = dlog * tw
+
+        ptr += w
+
+    shape = (K, K)
+    T_sp = csr_matrix((t_vals[:ptr], (rows[:ptr], cols[:ptr])), shape=shape)
+    G_sp = csr_matrix((g_vals[:ptr], (rows[:ptr], cols[:ptr])), shape=shape)
+    return T_sp, G_sp
+
+
+def _tm_loglik_with_grad(theta, mu, nu, u, copula, K=300, grid_range=5.0,
+                          grid_method='auto', adaptive=True, pts_per_sigma=2):
+    """
+    Transfer matrix log-likelihood with analytical gradient.
+
+    Uses normalised coordinates xi = z / sigma so that:
+    - T_w depends on theta only through rho = exp(-theta*dt)
+    - p0 * w is parameter-independent
+    - fi depends on (theta, nu) through sigma and on mu directly
+
+    Parameters
+    ----------
+    theta, mu, nu : float
+        OU process parameters  (theta > 0, nu > 0).
+    u : ndarray (n, 2)
+        Pseudo-observations.
+    copula : BivariateCopula
+    K, grid_range, grid_method, adaptive, pts_per_sigma : grid params
+
+    Returns
+    -------
+    neg_logL : float
+        Minus log-likelihood (1e10 on failure).
+    neg_grad : ndarray (3,)
+        Minus gradient w.r.t. (theta, mu, nu).  Zero on failure.
+    """
+    FAIL = 1e10, np.zeros(3)
+
+    if theta <= 0 or nu <= 0:
+        return FAIL
+
+    n = len(u)
+    if n < 2:
+        return FAIL
+
+    dt = 1.0 / (n - 1)
+    rho = np.exp(-theta * dt)
+    sigma2 = 0.5 * nu ** 2 / theta
+    sigma = np.sqrt(sigma2)
+    sigma_c = sigma * np.sqrt(1.0 - rho ** 2)
+
+    if sigma <= 0 or sigma_c <= 0:
+        return FAIL
+
+    # ── fixed normalised grid ────────────────────────────────────
+    if adaptive:
+        dz_target = sigma_c / pts_per_sigma
+        K_min = int(np.ceil(2.0 * grid_range * sigma / dz_target)) + 1
+        K_eff = max(K, K_min)
+    else:
+        K_eff = K
+
+    xi = np.linspace(-grid_range, grid_range, K_eff)
+    d_xi = xi[1] - xi[0]
+
+    base_w = np.full(K_eff, d_xi)
+    base_w[0] *= 0.5
+    base_w[-1] *= 0.5
+
+    # p0 * trap_w is constant (sigma cancels in xi-coordinates)
+    pw_const = np.exp(-0.5 * xi ** 2) / np.sqrt(2.0 * np.pi) * base_w
+
+    # ── build T_w and dT_w/drho ──────────────────────────────────
+    half_width_xi = 5.0 * np.sqrt(1.0 - rho ** 2)
+    band = int(np.ceil(half_width_xi / d_xi))
+
+    if grid_method == 'auto':
+        grid_method = 'dense' if band >= K_eff // 4 else 'sparse'
+
+    try:
+        if grid_method == 'sparse':
+            T_w, dTw_drho = _build_Tw_and_grad_sparse(
+                xi, rho, base_w, K_eff, band)
+        else:
+            T_w, dTw_drho = _build_Tw_and_grad_dense(
+                xi, rho, base_w, K_eff)
+    except Exception:
+        return FAIL
+
+    drho_dtheta = -dt * rho
+
+    # ── copula density and its derivative on grid ─────────────────
+    x_grid = sigma * xi + mu
+
+    # Use batch method (fused numba kernel if available, else loop fallback)
+    fi, dfi_dx = copula.pdf_and_grad_on_grid_batch(u, x_grid)
+
+    # dx/dalpha:  x = sigma*xi + mu
+    d_sigma_dtheta = -0.5 * nu ** 2 / theta ** 2 / (2.0 * sigma)
+    d_sigma_dnu = nu / (theta * 2.0 * sigma)
+
+    dx_dalpha = np.zeros((3, K_eff))
+    dx_dalpha[0] = d_sigma_dtheta * xi   # dx/dtheta
+    dx_dalpha[1] = 1.0                    # dx/dmu
+    dx_dalpha[2] = d_sigma_dnu * xi       # dx/dnu
+
+    # ══════════════════════════════════════════════════════════════
+    # BACKWARD PASS — compute and store beta[t] and c_vals[t]
+    # ══════════════════════════════════════════════════════════════
+
+    def matvec(v):
+        return T_w @ v
+
+    beta = [None] * n
+    beta[n - 1] = np.ones(K_eff)
+    c_vals = np.empty(n - 1)
+    cumul_logc = 0.0
+
+    for t in range(n - 2, -1, -1):
+        v = fi[t + 1] * beta[t + 1]
+        b = matvec(v)
+        mx = np.max(np.abs(b))
+        if mx <= 0:
+            return FAIL
+        c_vals[t] = mx
+        cumul_logc += np.log(mx)
+        b /= mx
+        beta[t] = b
+
+    # Log-likelihood
+    Z0 = np.sum(fi[0] * pw_const * beta[0])
+    if Z0 <= 0:
+        return FAIL
+    logL = np.log(Z0) + cumul_logc
+    neg_logL = -logL
+
+    # ══════════════════════════════════════════════════════════════
+    # GRADIENT via recursive d_beta propagation
+    # ══════════════════════════════════════════════════════════════
+
+    d_beta = np.zeros((3, K_eff))
+
+    for t in range(n - 2, -1, -1):
+        target = fi[t + 1] * beta[t + 1]
+        inv_c = 1.0 / c_vals[t]
+
+        new_d_beta = np.empty((3, K_eff))
+        for k in range(3):
+            dfi_k = dfi_dx[t + 1] * dx_dalpha[k]
+            d_target_k = dfi_k * beta[t + 1] + fi[t + 1] * d_beta[k]
+
+            contrib = matvec(d_target_k)
+            if k == 0:
+                contrib += (dTw_drho @ target) * drho_dtheta
+
+            new_d_beta[k] = contrib * inv_c
+
+        d_beta = new_d_beta
+
+    # ── Assemble gradient ────────────────────────────────────────
+    grad = np.zeros(3)
+    for k in range(3):
+        dfi_k_0 = dfi_dx[0] * dx_dalpha[k]
+        num = np.sum((dfi_k_0 * beta[0] + fi[0] * d_beta[k]) * pw_const)
+        grad[k] = num / Z0
+
+    return neg_logL, -grad
+
+
+# ══════════════════════════════════════════════════════════════════
 # Main class
 # ══════════════════════════════════════════════════════════════════
 
@@ -749,26 +995,66 @@ class OULatentProcess:
     def fit(self, u, method='SCAR-TM-OU', alpha0=None, tol=1e-2,
             n_tr=500, M_iterations=5, seed=None, dwt=None,
             stationary=True, K=300, grid_range=5.0,
-            grid_method = 'auto', adaptive = True, pts_per_sigma = 2,
-            verbose=False):
+            grid_method='auto', adaptive=True, pts_per_sigma=2,
+            analytical_grad=True, smart_init=True, verbose=False):
         """
         Fit the stochastic copula model.
 
+        Estimates the OU process parameters alpha = (theta, mu, nu) by
+        maximizing the log-likelihood. For SCAR-TM-OU (recommended),
+        uses the transfer matrix method with analytical gradient and
+        automatic parameter rescaling for L-BFGS-B.
+
         Parameters
         ----------
-        u : array (T, 2) — pseudo-observations
-        method : str — 'SCAR-P-OU', 'SCAR-M-OU', 'SCAR-TM-OU'
-        alpha0 : array (3,) or None — initial (theta, mu, nu)
-        tol : float — gradient tolerance
-        n_tr : int — MC trajectories (P/M samplers)
-        M_iterations : int — EIS iterations (M-sampler)
+        u : array (T, 2)
+            Pseudo-observations in [0, 1]^2.
+        method : str
+            'SCAR-TM-OU' (recommended), 'SCAR-P-OU', 'SCAR-M-OU', or 'MLE'.
+        alpha0 : array (3,) or None
+            Initial (theta, mu, nu). If None, computed automatically:
+            - smart_init=True: analytical heuristic from MLE (zero cost)
+            - smart_init=False: [1.0, inv_transform(theta_mle), 1.0]
+        tol : float
+            L-BFGS-B gradient tolerance. Default 1e-2. Use 5e-2 for
+            ~2x speedup with < 1 logL loss (recommended for vine).
+        K : int
+            Minimum grid size. Auto-increased by adaptive rule.
+            Default 300. K=150 is usually sufficient.
+        grid_range : float
+            Grid spans [-grid_range*sigma, +grid_range*sigma]. Default 5.0.
+        grid_method : str
+            'auto' (recommended), 'dense', or 'sparse'.
+        adaptive : bool
+            Adaptive grid refinement (default True).
+        pts_per_sigma : int
+            Points per conditional sigma for adaptive rule. Default 2.
+        analytical_grad : bool
+            Use analytical gradient for SCAR-TM-OU (default True).
+            Reduces nfev by ~3-4x. Parameters are auto-rescaled to
+            help L-BFGS-B estimate the initial Hessian correctly.
+        smart_init : bool
+            Compute initial point via analytical heuristic (default True).
+            Uses MLE to set mu, then estimates theta and nu from target
+            autocorrelation (rho=0.95) and volatility (sigma=0.3*|mu|).
+            Zero computational cost. Up to 5x speedup on long series.
+        n_tr : int
+            MC trajectories for P/M samplers (ignored for TM).
+        M_iterations : int
+            EIS iterations for M-sampler.
         seed : int or None
         dwt : array (T, n_tr) or None
         stationary : bool
-        K : int — grid size (TM)
-        grid_method : str — 'auto', 'dense', 'sparse' - type of transfer matrix computation
-        grid_range : float
         verbose : bool
+
+        Returns
+        -------
+        scipy.optimize.OptimizeResult with extra fields:
+            .alpha : ndarray (3,) — fitted (theta, mu, nu)
+            .log_likelihood : float
+            .method : str
+            .name : str — copula name
+            .K : int — grid size used (TM only)
         """
         method = method.upper()
         if method not in METHODS:
@@ -789,47 +1075,103 @@ class OULatentProcess:
 
         # Initial guess
         if alpha0 is None:
-            mle_result = copula._fit_mle(u)
-            mu0 = copula.inv_transform(mle_result.copula_param)
-            alpha0 = np.array([1.0, mu0, 1.0])
+            if smart_init and method == 'SCAR-TM-OU':
+                try:
+                    from pyscarcopula.latent.initial_point import \
+                        smart_initial_point
+                    alpha0, init_info = smart_initial_point(
+                        u, copula, verbose=verbose)
+                    if verbose:
+                        print(f"Smart init: {init_info.get('chosen_method')}, "
+                              f"alpha0={alpha0}")
+                except Exception:
+                    pass  # fall through to default
+
+            if alpha0 is None:
+                mle_result = copula._fit_mle(u)
+                mu0 = copula.inv_transform(mle_result.copula_param)
+                alpha0 = np.array([1.0, mu0, 1.0])
 
         bounds = Bounds([0.001, -np.inf, 0.001], [np.inf, np.inf, np.inf])
 
-        # For TM method during optimization: reuse grid when parameters
-        # don't change drastically.  The _TMGrid is cheap to build but
-        # caching the copula grid evaluation (the bottleneck) requires
-        # the same (theta, mu, nu), so we don't cache across calls.
-        def objective(alpha):
-            if np.isnan(np.sum(alpha)):
-                return 1e10
-            th, mu_v, nu_v = alpha
-            try:
-                if method == 'SCAR-P-OU':
-                    return _p_sampler_loglik(th, mu_v, nu_v, u, dwt,
-                                            copula, stationary)
-                elif method == 'SCAR-M-OU':
-                    a1t, a2t = _eis_find_auxiliary(alpha, u, M_iterations,
-                                                   dwt, copula, stationary)
-                    return _m_sampler_loglik(th, mu_v, nu_v, u, dwt,
-                                            a1t, a2t, copula, stationary)
-                elif method == 'SCAR-TM-OU':
-                    return _tm_loglik(th, mu_v, nu_v, u, copula, K,
-                                     grid_range, grid_method,
-                                     adaptive, pts_per_sigma)
-            except Exception as e:
-                if verbose:
-                    print(f"  error at alpha={alpha}: {e}")
-                return 1e10
+        # ── SCAR-TM-OU with analytical gradient ─────────────────
+        if method == 'SCAR-TM-OU' and analytical_grad:
 
-        if verbose:
-            print(f"Fitting {method}, alpha0={alpha0}")
+            # Rescale parameters so that all three are O(1) at start.
+            # This helps L-BFGS-B estimate the initial Hessian correctly.
+            scale = np.array([
+                max(abs(alpha0[0]), 1.0),
+                max(abs(alpha0[1]), 1.0),
+                max(abs(alpha0[2]), 1.0),
+            ])
+            x0_scaled = alpha0 / scale
+            bounds_scaled = Bounds(
+                [0.001 / scale[0], -np.inf, 0.001 / scale[2]],
+                [np.inf, np.inf, np.inf]
+            )
 
-        result = minimize(
-            objective, alpha0,
-            method='L-BFGS-B',
-            bounds=bounds,
-            options={'gtol': tol, 'eps': 1e-4, 'maxfun': 100},
-        )
+            def objective_and_grad(x_scaled):
+                alpha = x_scaled * scale
+                if np.isnan(np.sum(alpha)):
+                    return 1e10, np.zeros(3)
+                th, mu_v, nu_v = alpha
+                try:
+                    val, grad = _tm_loglik_with_grad(
+                        th, mu_v, nu_v, u, copula, K, grid_range,
+                        grid_method, adaptive, pts_per_sigma)
+                    return val, grad * scale   # chain rule: d/dx = d/dalpha * scale
+                except Exception as e:
+                    if verbose:
+                        print(f"  error at alpha={alpha}: {e}")
+                    return 1e10, np.zeros(3)
+
+            if verbose:
+                print(f"Fitting {method} (analytical gradient), alpha0={alpha0}")
+
+            result = minimize(
+                objective_and_grad, x0_scaled,
+                method='L-BFGS-B',
+                jac=True,
+                bounds=bounds_scaled,
+                options={'gtol': tol, 'maxfun': 100, 'maxiter': 100},
+            )
+
+            # Unscale result
+            result.x = result.x * scale
+
+        # ── All other methods (numerical gradient) ───────────────
+        else:
+            def objective(alpha):
+                if np.isnan(np.sum(alpha)):
+                    return 1e10
+                th, mu_v, nu_v = alpha
+                try:
+                    if method == 'SCAR-P-OU':
+                        return _p_sampler_loglik(th, mu_v, nu_v, u, dwt,
+                                                copula, stationary)
+                    elif method == 'SCAR-M-OU':
+                        a1t, a2t = _eis_find_auxiliary(alpha, u, M_iterations,
+                                                       dwt, copula, stationary)
+                        return _m_sampler_loglik(th, mu_v, nu_v, u, dwt,
+                                                a1t, a2t, copula, stationary)
+                    elif method == 'SCAR-TM-OU':
+                        return _tm_loglik(th, mu_v, nu_v, u, copula, K,
+                                         grid_range, grid_method,
+                                         adaptive, pts_per_sigma)
+                except Exception as e:
+                    if verbose:
+                        print(f"  error at alpha={alpha}: {e}")
+                    return 1e10
+
+            if verbose:
+                print(f"Fitting {method}, alpha0={alpha0}")
+
+            result = minimize(
+                objective, alpha0,
+                method='L-BFGS-B',
+                bounds=bounds,
+                options={'gtol': tol, 'eps': 1e-4, 'maxfun': 100},
+            )
 
         result.alpha = result.x.copy()
         result.log_likelihood = -result.fun
