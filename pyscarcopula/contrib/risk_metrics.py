@@ -541,7 +541,7 @@ def risk_metrics(copula, data, window_len,
     -------
     dict: res[gamma][N_mc] = {'var': ..., 'cvar': ..., 'weight': ...}
     """
-    from pyscarcopula.marginal import MarginalModel
+    from pyscarcopula.contrib.marginal import MarginalModel
 
     data = np.asarray(data, dtype=np.float64)
     T, dim = data.shape

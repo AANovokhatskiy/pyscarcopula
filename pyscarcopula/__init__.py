@@ -22,8 +22,13 @@ from pyscarcopula.latent.ou_process import OULatentProcess
 from pyscarcopula.latent.gas_process import GASProcess
 
 
-__all__ = ('GumbelCopula', 'FrankCopula', 'JoeCopula', 'ClaytonCopula',
-           'IndependentCopula', 'CVineCopula',
-           'OULatentProcess', 'GASProcess',
-           'GaussianCopula', 'StudentCopula', 'BivariateGaussianCopula'
-           )
+__all__ = (
+    # Archimedean
+    'GumbelCopula', 'FrankCopula', 'JoeCopula', 'ClaytonCopula',
+    # Special
+    'IndependentCopula',
+    # Elliptical
+    'GaussianCopula', 'StudentCopula', 'BivariateGaussianCopula',
+    # Vine
+    'CVineCopula',
+)

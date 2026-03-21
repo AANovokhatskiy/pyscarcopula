@@ -72,7 +72,7 @@ pip install .
 - Goodness-of-fit via Rosenblatt transform + Cramér–von Mises test
 - Mixture Rosenblatt transform for stochastic models
 - Smoothed time-varying copula parameter $\bar{\theta}_k = \mathbb{E}[\Psi(x_k) \mid u_{1:k-1}]$
-- VaR / CVaR with CVaR-optimized portfolio weights
+- VaR / CVaR via `pyscarcopula.contrib` (rolling window, marginals, portfolio optimization, parallel)
 
 ## Mathematical background
 
@@ -238,19 +238,22 @@ The C-vine with SCAR-TM substantially outperforms all alternatives. With truncat
 <a name="risk-metrics"></a>
 ### 5. Risk metrics (VaR / CVaR)
 
+Risk metrics are provided in `pyscarcopula.contrib` — optional modules for rolling VaR/CVaR estimation, marginal distribution fitting, and portfolio optimization.
+
 ```python
-from pyscarcopula.metrics import risk_metrics
+from pyscarcopula.contrib.risk_metrics import risk_metrics
 
 d = len(tickers)
 result = risk_metrics(
     vine, returns, 
     window_len=100,
     gamma=[0.95],
-    MC_iterations=[100_000],
+    N_mc=[100_000],
     marginals_method='johnsonsu',
-    method='scar-tm-ou',
+    method='mle',
     optimize_portfolio=False,
     portfolio_weight=np.ones(d) / d,
+    n_jobs=-1,  # parallel over rolling windows
 )
 
 var = result[0.95][100_000]['var']

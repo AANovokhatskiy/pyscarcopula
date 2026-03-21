@@ -424,6 +424,22 @@ class CVineCopula:
                     v[j + 1][i] = _clip_unit(
                         _edge_h(edge, u2, u1, u_pair, K, grid_range))
 
+        # ── Build aggregate fit_result ─────────────────────────────
+        from scipy.optimize import OptimizeResult
+
+        total_ll = sum(e.fit_result.log_likelihood
+                       for tree in self.edges for e in tree)
+        total_nfev = sum(getattr(e.fit_result, 'nfev', 0)
+                         for tree in self.edges for e in tree)
+        n_edges = sum(len(tree) for tree in self.edges)
+
+        self.fit_result = OptimizeResult()
+        self.fit_result.log_likelihood = total_ll
+        self.fit_result.method = method
+        self.fit_result.name = f"C-vine ({d}d, {n_edges} edges)"
+        self.fit_result.nfev = total_nfev
+        self.fit_result.success = True
+
         return self
 
     # ── Log-likelihood ────────────────────────────────────────────
