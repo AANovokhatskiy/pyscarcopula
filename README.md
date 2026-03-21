@@ -24,14 +24,14 @@ Stochastic copula models with Ornstein-Uhlenbeck latent process in Python.
 
 **pyscarcopula** fits multivariate distributions using the copula approach with time-varying dependence. The classical constant-parameter model is extended to a stochastic model where the copula parameter follows an Ornstein-Uhlenbeck process. The idea is based on the discrete SCAR model of Liesenfeld and Richard (2003) and Hafner and Manner (2012); here we develop it in the continuous-time setting.
 
-For parameter estimation we provide three methods:
+For parameter estimation we provide five methods:
 | Method | Key | Description |
 |---|---|---|
 | Maximum likelihood | `mle` | Classical fit with constant copula parameter |
 | MC p-sampler | `scar-p-ou` | Monte Carlo without importance sampling |
 | MC m-sampler | `scar-m-ou` | Monte Carlo with efficient importance sampling (EIS) |
 | **Transfer matrix** | **`scar-tm-ou`** | **Deterministic quadrature on a grid — numerically exact, no MC bias** |
-| GAS | `gas` | Generalized autoregressive score (GAS) model (time-varying, deterministic) |
+| GAS | `gas` | Generalized autoregressive score (observation-driven, deterministic) |
 
 The transfer matrix method exploits the Markov structure and known Gaussian transition density of the OU process to evaluate the likelihood function as a sequence of matrix-vector products with complexity $O(TK^2)$. The implementation automatically selects between dense and sparse transfer matrices depending on the kernel bandwidth, and adaptively refines the grid to resolve the transition kernel.
 
@@ -54,42 +54,25 @@ pip install .
 **Copula families**
 - Archimedean: Gumbel, Frank, Clayton, Joe (with rotations 0°/90°/180°/270°)
 - Elliptical: Gaussian, Student-t (MLE only)
-- Independence copula (zero-parameter null model)
-- C-vine copula (MLE, GAS, and SCAR-TM-OU)
+- Independence copula (null model for automatic vine pruning)
+- C-vine pair copula construction
 
 **Estimation methods**
-- MLE with constant parameter
-- SCAR-P-OU (Monte Carlo p-sampler)
-- SCAR-M-OU (Monte Carlo m-sampler with EIS)
-- SCAR-TM-OU (transfer matrix — recommended)
-- GAS (observation-driven, score-based)
+- MLE — constant copula parameter
+- SCAR-TM-OU — transfer matrix with analytical gradient (recommended)
+- GAS — observation-driven score model
+- SCAR-P-OU / SCAR-M-OU — Monte Carlo alternatives
 
-**Optimization features (SCAR-TM-OU)**
-- Analytical gradient of the transfer matrix log-likelihood via normalized xi-coordinates
-- Analytical d(log c)/dr for all Archimedean copulas (eliminates finite-difference overhead)
-- Fused batch numba kernels for copula density + gradient evaluation on grid
-- Smart initial point via analytical heuristic (zero-cost) with L-BFGS-B parameter rescaling
-- Automatic dense/sparse transfer matrix selection
-
-**Vine copula features**
+**Vine copulas**
 - Automatic copula family and rotation selection per edge (AIC/BIC)
-- Independence copula as AIC baseline — edges with negligible dependence are pruned automatically
-- Tree-level truncation (`truncation_level`) — upper trees fall back to MLE
-- Edge-level truncation (`min_edge_logL`) — weak edges fall back to MLE
-- Mixed SCAR/MLE model with correct GoF test support
+- Automatic pruning of weak edges via independence copula baseline
+- Tree-level and edge-level truncation for scalability to large d
 
-**Diagnostics**
-- Goodness-of-fit test via Rosenblatt transform + Cramér–von Mises statistic
-- Mixture Rosenblatt transform for stochastic models (accounts for latent state uncertainty)
-- Smoothed copula parameter:
-```math
-\bar{\theta}_k = \mathbb{E}[\Psi(x_k) \mid u_{1:k-1}]
-```
-
-**Risk metrics**
-- VaR and CVaR calculation via Monte Carlo sampling from fitted copula
-- CVaR-optimized portfolio weights (Rockafellar & Uryasev, 2000)
-- Rolling window computation
+**Diagnostics and risk**
+- Goodness-of-fit via Rosenblatt transform + Cramér–von Mises test
+- Mixture Rosenblatt transform for stochastic models
+- Smoothed time-varying copula parameter $\bar{\theta}_k = \mathbb{E}[\Psi(x_k) \mid u_{1:k-1}]$
+- VaR / CVaR with CVaR-optimized portfolio weights
 
 ## Mathematical background
 
@@ -177,33 +160,30 @@ u = pobs(returns)
 ```python
 copula_mle = GumbelCopula(rotate=180)
 copula_tm = GumbelCopula(rotate=180)
+copula_gas = GumbelCopula(rotate=180)
 
 # Static model (constant parameter)
 fit_result_mle = copula_mle.fit(data=returns, method='mle', to_pobs=True)
 gof_result_mle = gof_test(copula_mle, returns, to_pobs=True)
 
-print(f"MLE: logL = {fit_result_mle.log_likelihood:.4f}, "
-      f"theta = {fit_result_mle.copula_param:.4f}")
-print(f"GoF: statistic={gof_result_mle.statistic:.4f}, "
-      f"p-value={gof_result_mle.pvalue:.4f}")
-
 # Stochastic model (transfer matrix)
 fit_result_tm = copula_tm.fit(data=returns, method='scar-tm-ou', to_pobs=True)
 gof_result_tm = gof_test(copula_tm, returns, to_pobs=True)
 
-print(f"SCAR-TM: logL = {fit_result_tm.log_likelihood:.4f}, "
-      f"alpha = {fit_result_tm.alpha}")
-print(f"GoF: statistic={gof_result_tm.statistic:.4f}, "
-      f"p-value={gof_result_tm.pvalue:.4f}")
+# GAS model
+fit_result_gas = copula_gas.fit(data=returns, method='gas', to_pobs=True)
+gof_result_gas = gof_test(copula_gas, returns, to_pobs=True)
 ```
 
-```
-MLE: logL = 955.6275, theta = 2.8318
-GoF: statistic=0.7536, p-value=0.0094
+Results on daily BTC-ETH data (T = 1460):
 
-SCAR-TM: logL = 1045.4997, alpha = [58.99857924  1.48765678  4.53265176]
-GoF: statistic=0.0718, p-value=0.7404
-```
+| Model | logL | GoF p-value |
+|-------|------|-------------|
+| MLE | 955.63 | 0.0087 |
+| GAS | 1031.42 | 0.5282 |
+| **SCAR-TM** | **1042.47** | **0.6201** |
+
+SCAR-TM achieves the highest log-likelihood and the best GoF calibration. MLE is rejected at the 1% level; both dynamic models pass comfortably.
 
 Available rotations: `[0, 90, 180, 270]`. Available methods: `['mle', 'scar-p-ou', 'scar-m-ou', 'scar-tm-ou', 'gas']`.
 
@@ -227,14 +207,13 @@ returns_pd = np.log(crypto_prices[tickers] / crypto_prices[tickers].shift(1))[1:
 returns = returns_pd.values
 u = pobs(returns)
 
+# C-vine with SCAR-TM (truncated for speed)
 vine = CVineCopula()
-vine.fit(u, method='scar-tm-ou')
+vine.fit(u, method='scar-tm-ou',
+         truncation_level=2, min_edge_logL=10)
 vine.summary()
 
-# With truncation for faster fitting (weak edges stay MLE)
-vine_fast = CVineCopula()
-vine_fast.fit(u, method='scar-tm-ou', min_edge_logL=10)
-
+# Comparison models
 copula_s = StudentCopula()
 copula_g = GaussianCopula()
 copula_s.fit(u)
@@ -243,17 +222,18 @@ copula_g.fit(u)
 gof_result_vine = gof_test(vine, u, to_pobs=False)
 gof_result_s = gof_test(copula_s, u, to_pobs=False)
 gof_result_g = gof_test(copula_g, u, to_pobs=False)
-
-print(f"C-vine (SCAR):  logL={vine.log_likelihood(u):.1f}, p={gof_result_vine.pvalue:.4f}")
-print(f"Student:        logL={copula_s.log_likelihood(u):.1f}, p={gof_result_s.pvalue:.4f}")
-print(f"Gaussian:       logL={copula_g.log_likelihood(u):.1f}, p={gof_result_g.pvalue:.4f}")
 ```
 
-```
-C-vine (SCAR):  logL=890.3, p=0.7609
-Student:        logL=764.4, p=0.0001
-Gaussian:       logL=761.0, p=0.0000
-```
+Results on 6-dimensional crypto data (T = 250):
+
+| Model | logL | GoF p-value | Fit time |
+|-------|------|-------------|----------|
+| **C-vine SCAR-TM** | **921.9** | **0.8971** | 13.4s |
+| C-vine MLE | 869.2 | 0.2072 | 0.6s |
+| Student-t | 764.4 | 0.0001 | — |
+| Gaussian | 761.0 | 0.0000 | — |
+
+The C-vine with SCAR-TM substantially outperforms all alternatives. With truncation (`truncation_level=2, min_edge_logL=10`), only 9 of 15 edges use SCAR — the remaining 6 fall back to MLE — achieving a good speed/accuracy tradeoff.
 
 <a name="risk-metrics"></a>
 ### 5. Risk metrics (VaR / CVaR)
@@ -288,13 +268,10 @@ The SCAR-TM-OU method has several parameters that control the speed/accuracy tra
 ```python
 copula = GumbelCopula(rotate=180)
 
-# Default (good accuracy, moderate speed)
+# Default (analytical gradient + smart init, both enabled by default)
 copula.fit(u, method='scar-tm-ou')
 
-# Faster (analytical gradient + smart initial point, enabled by default)
-copula.fit(u, method='scar-tm-ou', analytical_grad=True, smart_init=True)
-
-# Disable optimizations for debugging
+# Disable optimizations for debugging / backward compatibility
 copula.fit(u, method='scar-tm-ou', analytical_grad=False, smart_init=False)
 
 # Relaxed tolerance (faster, slight logL loss)
@@ -303,44 +280,34 @@ copula.fit(u, method='scar-tm-ou', tol=5e-2)
 
 | Parameter | Default | Effect |
 |---|---|---|
-| `analytical_grad` | `True` | Analytical gradient via xi-coordinates. ~3-4x fewer function evaluations. |
-| `smart_init` | `True` | Heuristic initial point from MLE. Up to 5x speedup on long series. |
-| `tol` | `1e-2` | L-BFGS-B gradient tolerance. `5e-2` is ~2x faster with < 1 logL loss. |
-| `K` | `300` | Grid size. `150` is usually sufficient; `K` is auto-increased by the adaptive rule. |
-| `pts_per_sigma` | `2` | Grid points per conditional sigma. Adaptive rule: `K_eff = max(K, ceil(2R·σ / (σ_c / pts_per_sigma)))`. |
+| `analytical_grad` | `True` | Analytical gradient. ~3-4x fewer function evaluations. |
+| `smart_init` | `True` | Heuristic initial point. Up to 5x speedup on long series. |
+| `tol` | `1e-2` | Gradient tolerance. `5e-2` is ~2x faster with negligible logL loss. |
+| `K` | `300` | Grid size (auto-increased by adaptive rule). `150` usually sufficient. |
 
 ### Vine copula
 
 ```python
 vine = CVineCopula()
 
-# Full model (all edges dynamic)
-vine.fit(u, method='scar-tm-ou')
-
-# Recommended for d > 6: skip SCAR on weak edges
-vine.fit(u, method='scar-tm-ou', min_edge_logL=10)
-
-# Tree truncation: only first k trees use SCAR
-vine.fit(u, method='scar-tm-ou', truncation_level=2)
-
-# Both (aggressive, for large d)
-vine.fit(u, method='scar-tm-ou', truncation_level=3, min_edge_logL=5)
+# Recommended: skip SCAR on weak edges and upper trees
+vine.fit(u, method='scar-tm-ou', truncation_level=2, min_edge_logL=10)
 ```
 
 | Parameter | Default | Effect |
 |---|---|---|
-| `truncation_level` | `None` | Trees at level ≥ this stay MLE. Recommended: 2-3 for d > 10. |
+| `truncation_level` | `None` | Trees ≥ this level stay MLE. Recommended: 2-3 for d > 10. |
 | `min_edge_logL` | `None` | Edges with MLE logL below threshold stay MLE. Recommended: 5-10. |
 
-Truncated edges use MLE (constant parameter). The GoF test handles mixed SCAR/MLE models correctly — each edge uses its own h-function dispatch.
+Truncated edges use MLE (constant parameter). The GoF test handles mixed SCAR/MLE models correctly.
 
-**Typical speedups on d=6, T=250:**
+**d=6 crypto, T=250:**
 
 | Configuration | Time | logL | GoF p-value |
 |---|---|---|---|
-| Full SCAR (15 edges) | 23s | 891 | 0.98 |
-| `min_edge_logL=10` | 12s | 887 | 0.99 |
-| `truncation_level=2` | 13s | 887 | — |
+| `truncation_level=2, min_edge_logL=10` | ~13s | ~922 | ~0.90 |
+| Full SCAR (15 edges) | ~30s | ~891 | ~0.90 |
+| MLE only | ~0.6s | ~869 | ~0.21 |
 
 <!-- ## Citation
 
