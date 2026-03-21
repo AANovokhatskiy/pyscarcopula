@@ -286,7 +286,8 @@ copula.fit(u, method='scar-tm-ou', tol=5e-2)
 | `analytical_grad` | `True` | Analytical gradient. ~3-4x fewer function evaluations. |
 | `smart_init` | `True` | Heuristic initial point. Up to 5x speedup on long series. |
 | `tol` | `1e-2` | Gradient tolerance. `5e-2` is ~2x faster with negligible logL loss. |
-| `K` | `300` | Grid size (auto-increased by adaptive rule). `150` usually sufficient. |
+| `K` | `300` | Minimum grid size. The adaptive rule may increase it to ensure adequate resolution of the transition kernel. |
+| `pts_per_sigma` | `2` | Grid density: number of points per conditional standard deviation $\sigma_c$. The adaptive rule computes $K_\text{eff} = \max(K,\, \lceil 2R\sigma / (\sigma_c / \texttt{pts\_per\_sigma}) \rceil)$, where $R$ is the grid half-range in $\sigma$ units. Higher values improve quadrature accuracy at the cost of larger $K$ and longer runtime. The default of 2 is sufficient for most cases; increasing to 4 may help for very peaked transition kernels (large $\theta$, small $\nu$). |
 
 ### Vine copula
 

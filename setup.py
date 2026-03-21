@@ -14,5 +14,6 @@ setup(
         'numba',
         'scipy',
         'joblib',
+        'pytest'
     ]
 )
