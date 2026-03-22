@@ -1,19 +1,3 @@
-from setuptools import setup, find_packages
-
-setup(
-    name='pyscarcopula',
-    version='1.0.0',
-    description='Stochastc copula models for VaR and CVaR risk assessment', 
-    author='Alexey Novokhatskiy', 
-    author_email='aanovokhatskiy@gmail.com', 
-    packages=find_packages(),
-    package_data={'pyscarcopula': ['auxiliary/*', 'marginal/*', 'sampler/*', 'stattests/*'],
-                  'pyscarcopula.cython_ext': ['*.pxd']},
-    install_requires=[
-        'numpy',
-        'numba',
-        'scipy',
-        'joblib',
-        'pytest'
-    ]
-)
+"""Backward-compatible setup.py — configuration is in pyproject.toml."""
+from setuptools import setup
+setup()

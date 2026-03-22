@@ -42,12 +42,19 @@ The transfer matrix method exploits the Markov structure and known Gaussian tran
 ## Install
 
 ```bash
-git clone https://github.com/AANovokhatskiy/pyscarcopula
-cd pyscarcopula
-pip install .
+pip install pyscarcopula
 ```
 
-**Dependencies:** numpy, numba, scipy, sympy, joblib.
+For development (includes data files and tests):
+
+```bash
+git clone https://github.com/AANovokhatskiy/pyscarcopula
+cd pyscarcopula
+pip install -e ".[test]"
+pytest tests/
+```
+
+**Dependencies:** numpy, numba, scipy, joblib, tqdm.
 
 ## Features
 

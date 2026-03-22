@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pyscarcopula"
+version = "0.1.0"
+description = "Stochastic copula models with Ornstein-Uhlenbeck latent process"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+authors = [
+    {name = "Alexey Novokhatskiy", email = "aanovokhatskiy@gmail.com"},
+]
+keywords = [
+    "copula", "stochastic", "SCAR", "vine copula", "transfer matrix",
+    "risk management", "VaR", "CVaR", "time-varying dependence",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Financial and Insurance Industry",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Topic :: Office/Business :: Financial",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "numpy>=1.22",
+    "numba>=0.56",
+    "scipy>=1.9",
+    "joblib>=1.0",
+    "tqdm>=4.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
+
+[project.urls]
+Homepage = "https://github.com/AANovokhatskiy/pyscarcopula"
+Repository = "https://github.com/AANovokhatskiy/pyscarcopula"
+Issues = "https://github.com/AANovokhatskiy/pyscarcopula/issues"
+
+[tool.setuptools.packages.find]
+include = ["pyscarcopula*"]
+exclude = ["tests*", "data*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "data: tests requiring data/ directory (csv files)",
+]
