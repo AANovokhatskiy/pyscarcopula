@@ -1,0 +1,66 @@
+site_name: pyscarcopula
+site_url: https://AANovokhatskiy.github.io/pyscarcopula
+site_description: Stochastic copula models with Ornstein-Uhlenbeck latent process
+repo_url: https://github.com/AANovokhatskiy/pyscarcopula
+repo_name: AANovokhatskiy/pyscarcopula
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.expand
+    - content.code.copy
+    - toc.follow
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            show_source: false
+            show_root_heading: true
+            heading_level: 3
+            docstring_style: numpy
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.arithmatex:
+      generic: true
+  - admonition
+  - pymdownx.details
+  - toc:
+      permalink: true
+
+extra_javascript:
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started/installation.md
+    - Quick Start: getting-started/quickstart.md
+  - User Guide:
+    - Bivariate Copulas: guide/bivariate.md
+    - Vine Copulas: guide/vine.md
+    - Performance Tuning: guide/performance.md
+  - API Reference:
+    - Copulas: api/copulas.md
+    - Vine: api/vine.md
+    - Diagnostics: api/diagnostics.md
+    - Contrib: api/contrib.md
