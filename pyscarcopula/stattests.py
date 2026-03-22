@@ -115,8 +115,11 @@ def gof_test(model, data, to_pobs=True, seed=None, K=300, grid_range=5.0):
     from pyscarcopula.copula.base import BivariateCopula
     from pyscarcopula.copula.elliptical import GaussianCopula, StudentCopula
     from pyscarcopula.copula.vine import CVineCopula
+    from pyscarcopula.copula.equicorr import EquicorrGaussianCopula
 
-    if isinstance(model, BivariateCopula):
+    if isinstance(model, EquicorrGaussianCopula):
+        return equicorr_gof_test(model, data, to_pobs, seed, K, grid_range)
+    elif isinstance(model, BivariateCopula):
         return _gof_bivariate(model, data, to_pobs, seed, K, grid_range)
     elif isinstance(model, CVineCopula):
         return vine_gof_test(model, data, to_pobs, seed, K, grid_range)
@@ -462,4 +465,113 @@ def student_gof_test(copula, data, to_pobs=True, seed=None):
         raise ValueError("Fit the copula first")
 
     e = student_rosenblatt_transform(copula.shape, copula.df, u)
+    return cvm_test(e, seed=seed)
+
+
+# ══════════════════════════════════════════════════════════════════
+# Equicorrelation Gaussian copula GoF
+# ══════════════════════════════════════════════════════════════════
+
+def equicorr_rosenblatt_transform(copula, u, K=300, grid_range=5.0):
+    """
+    Rosenblatt transform for EquicorrGaussianCopula.
+
+    MLE: constant rho, Cholesky-based sequential conditioning.
+    SCAR: mixture over predictive rho(t) distribution from TM forward pass.
+
+    For equicorrelation R = (1-rho)*I + rho*11':
+        E[x_i | x_{1:i-1}] = rho * sum(x_{1:i-1}) / (1 + (i-2)*rho)
+        Var(x_i | x_{1:i-1}) = 1 - i*rho^2 / (1 + (i-1)*rho)
+
+    Parameters
+    ----------
+    copula : EquicorrGaussianCopula (fitted)
+    u : (T, d)
+    K, grid_range : TM grid params (SCAR only)
+
+    Returns
+    -------
+    e : (T, d) — should be iid U[0,1]^d under correct model
+    """
+    eps = 1e-10
+    u_c = np.clip(u, eps, 1.0 - eps)
+    x_norm = norm.ppf(u_c)
+    T, d = u.shape
+
+    method = copula.fit_result.method.upper() if copula.fit_result else 'MLE'
+
+    if method == 'MLE':
+        rho = copula.fit_result.copula_param
+        e = np.empty((T, d))
+        e[:, 0] = u[:, 0]
+        for i in range(1, d):
+            sx = np.sum(x_norm[:, :i], axis=1)
+            cond_mean = rho * sx / (1.0 + (i - 1) * rho)
+            cond_var = 1.0 - i * rho ** 2 / (1.0 + (i - 1) * rho)
+            cond_var = max(cond_var, 1e-10)
+            z_i = (x_norm[:, i] - cond_mean) / np.sqrt(cond_var)
+            e[:, i] = norm.cdf(z_i)
+        return np.clip(e, eps, 1.0 - eps)
+
+    # SCAR: mixture Rosenblatt via TM forward pass
+    from pyscarcopula.latent.ou_process import _TMGrid
+
+    theta, mu, nu = copula.fit_result.alpha
+    grid = _TMGrid(theta, mu, nu, T, K, grid_range)
+    x_grid = grid.z + grid.mu
+    rho_grid = copula.transform(x_grid)
+    fi_grid = copula.copula_grid_batch(u, x_grid)
+    K_eff = grid.K
+
+    weights = grid.forward_weights(fi_grid)
+
+    e = np.empty((T, d))
+    e[:, 0] = u[:, 0]
+
+    for k in range(T):
+        x = x_norm[k]
+        for i in range(1, d):
+            sx = np.sum(x[:i])
+            mix = 0.0
+            for j in range(K_eff):
+                rho = rho_grid[j]
+                cond_mean = rho * sx / (1.0 + (i - 1) * rho)
+                cond_var = 1.0 - i * rho ** 2 / (1.0 + (i - 1) * rho)
+                if cond_var < 1e-10:
+                    cond_var = 1e-10
+                z_i = (x[i] - cond_mean) / np.sqrt(cond_var)
+                mix += weights[k, j] * norm.cdf(z_i)
+            e[k, i] = np.clip(mix, eps, 1.0 - eps)
+
+    return np.clip(e, eps, 1.0 - eps)
+
+
+def equicorr_gof_test(copula, data, to_pobs=True, seed=None,
+                      K=300, grid_range=5.0):
+    """
+    Goodness-of-fit test for EquicorrGaussianCopula.
+
+    Parameters
+    ----------
+    copula : EquicorrGaussianCopula (fitted)
+    data : (T, d)
+    to_pobs : bool
+    seed : int or None
+    K : int
+    grid_range : float
+
+    Returns
+    -------
+    CramérVonMisesResult
+    """
+    from pyscarcopula.utils import pobs as compute_pobs
+
+    u = np.asarray(data, dtype=np.float64)
+    if to_pobs:
+        u = compute_pobs(u)
+
+    if copula.fit_result is None:
+        raise ValueError("Fit the copula first")
+
+    e = equicorr_rosenblatt_transform(copula, u, K, grid_range)
     return cvm_test(e, seed=seed)

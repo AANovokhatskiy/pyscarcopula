@@ -171,7 +171,22 @@ def precompute_scenarios(z_grid, prob,
     n_nodes = len(active_z)
 
     n_per_node = np.maximum(np.round(active_p * N_mc).astype(np.int64), 1)
-    n_per_node[np.argmax(active_p)] += N_mc - n_per_node.sum()
+    # Ensure total doesn't exceed N_mc
+    total = n_per_node.sum()
+    if total > N_mc:
+        # Scale down proportionally, keeping at least 1 per node
+        excess = total - N_mc
+        # Remove from largest nodes first
+        order = np.argsort(-n_per_node)
+        for idx in order:
+            if excess <= 0:
+                break
+            can_remove = n_per_node[idx] - 1
+            remove = min(can_remove, excess)
+            n_per_node[idx] -= remove
+            excess -= remove
+    elif total < N_mc:
+        n_per_node[np.argmax(active_p)] += N_mc - total
 
     r = np.empty((N_mc, dim), dtype=np.float64)
     sw = np.empty(N_mc, dtype=np.float64)
@@ -182,7 +197,7 @@ def precompute_scenarios(z_grid, prob,
         if nj <= 0:
             continue
         end = offset + nj
-        u_j = copula_sample_func(nj, transform(active_z[j]))
+        u_j = copula_sample_func(nj, float(np.atleast_1d(transform(active_z[j]))[0]))
         r[offset:end] = marginal_ppf_func(u_j)
         sw[offset:end] = active_p[j] / nj
         offset = end

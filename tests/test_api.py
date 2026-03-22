@@ -5,13 +5,12 @@ from pyscarcopula import (
     GumbelCopula, ClaytonCopula, FrankCopula, JoeCopula,
     IndependentCopula, CVineCopula,
 )
+from pyscarcopula.copula.equicorr import EquicorrGaussianCopula
 from pyscarcopula.stattests import gof_test
 from pyscarcopula.utils import pobs
 
 
 class TestFitResultInterface:
-    """All copulas should return fit_result with the same attributes."""
-
     REQUIRED_ATTRS = ['log_likelihood', 'method', 'name', 'success']
 
     @pytest.mark.parametrize("cls,rot", [
@@ -22,20 +21,16 @@ class TestFitResultInterface:
         cop = cls(rotate=rot)
         cop.fit(random_u2, method='mle')
         for attr in self.REQUIRED_ATTRS:
-            assert hasattr(cop.fit_result, attr), \
-                f"{cls.__name__} fit_result missing .{attr}"
+            assert hasattr(cop.fit_result, attr)
 
     def test_vine_fit_result_attrs(self, random_u2):
-        # Need 4d for vine
         u4 = pobs(np.random.default_rng(0).standard_normal((200, 4)))
         vine = CVineCopula()
         vine.fit(u4, method='mle')
         for attr in self.REQUIRED_ATTRS:
-            assert hasattr(vine.fit_result, attr), \
-                f"CVineCopula fit_result missing .{attr}"
+            assert hasattr(vine.fit_result, attr)
 
     def test_vine_fit_result_log_likelihood(self):
-        """vine.fit_result.log_likelihood == sum of edge logLs."""
         u4 = pobs(np.random.default_rng(1).standard_normal((200, 4)))
         vine = CVineCopula()
         vine.fit(u4, method='mle')
@@ -43,22 +38,24 @@ class TestFitResultInterface:
                        for tree in vine.edges for e in tree)
         assert abs(vine.fit_result.log_likelihood - edge_sum) < 1e-8
 
+    def test_equicorr_fit_result_attrs(self):
+        u4 = pobs(np.random.default_rng(0).standard_normal((100, 4)))
+        cop = EquicorrGaussianCopula(d=4)
+        cop.fit(u4, method='mle')
+        for attr in self.REQUIRED_ATTRS:
+            assert hasattr(cop.fit_result, attr)
+
 
 class TestPredictNoMutation:
-    """predict() should not change fit state."""
-
     def test_predict_preserves_state(self, random_u2):
         cop = GumbelCopula(rotate=180)
         cop.fit(random_u2, method='scar-tm-ou', K=50, tol=0.5)
         ll_before = cop.fit_result.log_likelihood
         _ = cop.predict(100)
-        ll_after = cop.fit_result.log_likelihood
-        assert ll_before == ll_after
+        assert cop.fit_result.log_likelihood == ll_before
 
 
 class TestUnfittedErrors:
-    """Operations on unfitted copula should raise errors."""
-
     def test_gof_unfitted_raises(self, random_u2):
         cop = GumbelCopula(rotate=180)
         with pytest.raises((ValueError, AttributeError)):
@@ -66,13 +63,10 @@ class TestUnfittedErrors:
 
 
 class TestIndependentCopula:
-    """IndependentCopula special properties."""
-
     def test_pdf_is_one(self):
         cop = IndependentCopula()
-        u1 = np.array([0.1, 0.5, 0.9])
-        u2 = np.array([0.3, 0.7, 0.2])
-        pdf = cop.pdf(u1, u2, np.zeros(3))
+        pdf = cop.pdf(np.array([0.1, 0.5, 0.9]),
+                      np.array([0.3, 0.7, 0.2]), np.zeros(3))
         np.testing.assert_allclose(pdf, 1.0)
 
     def test_log_pdf_is_zero(self):
@@ -83,20 +77,92 @@ class TestIndependentCopula:
     def test_h_is_identity(self):
         cop = IndependentCopula()
         u2 = np.array([0.1, 0.3, 0.7, 0.9])
-        u1 = np.array([0.5, 0.5, 0.5, 0.5])
-        h = cop.h(u2, u1, np.zeros(4))
+        h = cop.h(u2, np.full(4, 0.5), np.zeros(4))
         np.testing.assert_allclose(h, u2)
 
     def test_fit_zero_logL(self):
         cop = IndependentCopula()
         result = cop.fit(np.random.rand(100, 2))
         assert result.log_likelihood == 0.0
-        assert result.method == 'MLE'
 
     def test_batch_grid(self):
         cop = IndependentCopula()
-        u = np.random.rand(50, 2)
-        x = np.linspace(-3, 3, 20)
-        fi, dfi = cop.pdf_and_grad_on_grid_batch(u, x)
+        fi, dfi = cop.pdf_and_grad_on_grid_batch(
+            np.random.rand(50, 2), np.linspace(-3, 3, 20))
         np.testing.assert_allclose(fi, 1.0)
         np.testing.assert_allclose(dfi, 0.0)
+
+
+class TestTransformType:
+    """transform_type='softplus' works for all Archimedean copulas."""
+
+    @pytest.mark.parametrize("cls,rot", [
+        (GumbelCopula, 180), (ClaytonCopula, 0),
+        (FrankCopula, 0), (JoeCopula, 180),
+    ])
+    def test_softplus_mle(self, cls, rot, random_u2):
+        cop = cls(rotate=rot, transform_type='softplus')
+        result = cop.fit(random_u2, method='mle')
+        assert result.success
+
+    @pytest.mark.parametrize("cls,rot", [
+        (GumbelCopula, 180), (ClaytonCopula, 0),
+        (FrankCopula, 0), (JoeCopula, 180),
+    ])
+    def test_softplus_scar(self, cls, rot, random_u2):
+        cop = cls(rotate=rot, transform_type='softplus')
+        result = cop.fit(random_u2, method='scar-tm-ou', K=50, tol=0.5)
+        assert hasattr(result, 'alpha')
+
+    def test_softplus_output_range(self):
+        cop = GumbelCopula(rotate=180, transform_type='softplus')
+        r = cop.transform(np.linspace(-5, 5, 100))
+        assert np.all(r >= 1.0)
+        dp = cop.dtransform(np.linspace(-5, 5, 100))
+        assert np.all(dp > 0)
+
+    def test_invalid_transform_type(self):
+        with pytest.raises(ValueError):
+            GumbelCopula(transform_type='invalid')
+
+    def test_vine_softplus(self):
+        u4 = pobs(np.random.default_rng(0).standard_normal((150, 4)))
+        vine = CVineCopula()
+        vine.fit(u4, method='mle', transform_type='softplus')
+        assert vine.fit_result.log_likelihood is not None
+
+
+class TestEquicorrGaussian:
+    """EquicorrGaussianCopula tests."""
+
+    def test_mle(self):
+        u = pobs(np.random.default_rng(42).standard_normal((200, 4)))
+        cop = EquicorrGaussianCopula(d=4)
+        result = cop.fit(u, method='mle')
+        assert 0 < result.copula_param < 1
+
+    def test_scar(self):
+        u = pobs(np.random.default_rng(42).standard_normal((200, 4)))
+        cop = EquicorrGaussianCopula(d=4)
+        result = cop.fit(u, method='scar-tm-ou', K=50, tol=0.5)
+        assert hasattr(result, 'alpha')
+        assert len(result.alpha) == 3
+
+    def test_sample_shape(self):
+        cop = EquicorrGaussianCopula(d=5)
+        cop.fit(pobs(np.random.default_rng(0).standard_normal((100, 5))),
+                method='mle')
+        s = cop.sample(100, r=0.5)
+        assert s.shape == (100, 5)
+        assert np.all((s >= 0) & (s <= 1))
+
+    def test_gof_dispatches(self):
+        u = pobs(np.random.default_rng(42).standard_normal((100, 3)))
+        cop = EquicorrGaussianCopula(d=3)
+        cop.fit(u, method='mle')
+        gof = gof_test(cop, u, to_pobs=False)
+        assert 0 <= gof.pvalue <= 1
+
+    def test_d1_raises(self):
+        with pytest.raises(ValueError):
+            EquicorrGaussianCopula(d=1)

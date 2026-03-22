@@ -1,16 +1,18 @@
 # pyscarcopula
 
-**Stochastic copula models with Ornstein-Uhlenbeck latent process in Python.**
+**Stochastic copula models with Ornstein-Uhlenbeck latent process.**
 
-pyscarcopula fits multivariate distributions using the copula approach with time-varying dependence. The copula parameter follows a latent Ornstein-Uhlenbeck process, estimated via a deterministic transfer matrix method — no Monte Carlo bias.
+pyscarcopula models time-varying dependence between financial assets. The copula parameter follows a latent stochastic process, estimated via a deterministic transfer matrix method — no Monte Carlo required.
 
 ## Key Features
 
 - **Archimedean copulas**: Gumbel, Frank, Clayton, Joe (with rotations)
 - **Elliptical copulas**: Gaussian, Student-t
+- **Equicorrelation Gaussian copula**: single dynamic correlation for d assets
 - **C-vine copulas**: automatic family selection, truncation, mixed SCAR/MLE
-- **Transfer matrix method**: exact likelihood, analytical gradient, $O(TKb)$ complexity
-- **Diagnostics**: GoF via mixture Rosenblatt transform, smoothed parameters
+- **Estimation**: MLE, GAS, SCAR-TM-OU (transfer matrix with analytical gradient)
+- **Transform functions**: `xtanh` (default), `softplus` (asymmetric)
+- **Diagnostics**: GoF test, smoothed parameters, predictive distribution
 
 ## Quick Example
 
@@ -18,16 +20,13 @@ pyscarcopula fits multivariate distributions using the copula approach with time
 from pyscarcopula import GumbelCopula
 from pyscarcopula.stattests import gof_test
 from pyscarcopula.utils import pobs
-import numpy as np
 
-u = pobs(returns)  # pseudo-observations from log-returns
+u = pobs(returns)
 
-copula = GumbelCopula(rotate=180)
+copula = GumbelCopula(rotate=180, transform_type='softplus')
 copula.fit(u, method='scar-tm-ou')
 
 print(f"logL = {copula.fit_result.log_likelihood:.2f}")
-print(f"alpha = {copula.fit_result.alpha}")
-
 gof = gof_test(copula, u, to_pobs=False)
 print(f"GoF p-value = {gof.pvalue:.4f}")
 ```
@@ -38,4 +37,5 @@ print(f"GoF p-value = {gof.pvalue:.4f}")
 |-------|------|-------------|
 | MLE (constant) | 955.63 | 0.009 |
 | GAS (score-driven) | 1031.42 | 0.528 |
-| **SCAR-TM (this package)** | **1042.47** | **0.620** |
+| SCAR-TM xtanh | 1042.47 | 0.620 |
+| **SCAR-TM softplus** | **1045.78** | **0.737** |

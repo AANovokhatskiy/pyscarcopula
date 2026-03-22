@@ -250,7 +250,7 @@ class GASProcess:
         # Initial guess: start near the MLE level with mild dynamics
         if alpha0 is None:
             mle = copula._fit_mle(u)
-            f_mle = copula.inv_transform(mle.copula_param)
+            f_mle = float(np.atleast_1d(copula.inv_transform(np.atleast_1d(mle.copula_param)))[0])
             # omega ≈ f_bar * (1 - beta),  beta = 0.95
             alpha0 = np.array([f_mle * 0.05, 0.05, 0.95])
 

@@ -460,6 +460,41 @@ class _TMGrid:
                         callback(kk, None, self.trap_w, kk == n - 1)
                     break
 
+    def forward_weights(self, fi_grid):
+        """
+        Forward pass returning normalized predictive weights.
+
+        At each step k, returns the predictive distribution p(x_k | u_{1:k-1})
+        as normalized weights on the grid.
+
+        Parameters
+        ----------
+        fi_grid : (n, K) — copula density on grid for each observation
+
+        Returns
+        -------
+        weights : (n, K) — normalized predictive weights, rows sum to 1.
+            weights[k, j] = p(x_k = z_j | u_{1:k-1})
+        """
+        n = fi_grid.shape[0]
+        K = self.K
+        weights = np.zeros((n, K))
+
+        def _cb(k, alpha, trap_w, is_last):
+            if alpha is None:
+                weights[k] = 1.0 / K
+                return True
+            raw_w = alpha * trap_w
+            total = np.sum(raw_w)
+            if total > 0:
+                weights[k] = raw_w / total
+            else:
+                weights[k] = 1.0 / K
+            return True
+
+        self.forward_pass(fi_grid, _cb)
+        return weights
+
 
 # ══════════════════════════════════════════════════════════════════
 # Transfer operator builders
@@ -596,19 +631,8 @@ def _tm_forward_Jk(theta, mu, nu, u, copula, K=300, grid_range=5.0,
     fi_grid = grid.copula_grid(u, copula)
     g_grid = copula.transform(grid.z + grid.mu)
 
-    J = np.full(n, np.nan)
-
-    def _cb(k, alpha, trap_w, is_last):
-        if alpha is None:
-            # Collapsed — leave NaN
-            return False
-        raw_w = alpha * trap_w
-        den = np.sum(raw_w)
-        if den > 0:
-            J[k] = np.sum(g_grid * raw_w) / den
-        return True
-
-    grid.forward_pass(fi_grid, _cb)
+    weights = grid.forward_weights(fi_grid)
+    J = np.sum(weights * g_grid[np.newaxis, :], axis=1)
     return J
 
 
@@ -628,24 +652,16 @@ def _tm_forward_rosenblatt(theta, mu, nu, u, copula, K=300, grid_range=5.0,
     fi_grid = grid.copula_grid(u, copula)
     r_grid = copula.transform(grid.z + grid.mu)
 
+    weights = grid.forward_weights(fi_grid)
+
     e = np.empty((n, 2))
     e[:, 0] = u[:, 0]
 
-    def _cb(k, alpha, trap_w, is_last):
-        if alpha is None:
-            e[k, 1] = 0.5
-            return True
-        raw_w = alpha * trap_w
-        total = np.sum(raw_w)
-        pred_w = raw_w / total if total > 0 else np.ones(grid.K) / grid.K
-
+    for k in range(n):
         u2_vec = np.full(grid.K, u[k, 1])
         u1_vec = np.full(grid.K, u[k, 0])
         h_vals = copula.h(u2_vec, u1_vec, r_grid)
-        e[k, 1] = np.sum(h_vals * pred_w)
-        return True
-
-    grid.forward_pass(fi_grid, _cb)
+        e[k, 1] = np.sum(h_vals * weights[k])
 
     eps = 1e-6
     return np.clip(e, eps, 1.0 - eps)
@@ -667,23 +683,15 @@ def _tm_forward_mixture_h(theta, mu, nu, u, copula, K=300, grid_range=5.0,
     fi_grid = grid.copula_grid(u, copula)
     r_grid = copula.transform(grid.z + grid.mu)
 
+    weights = grid.forward_weights(fi_grid)
+
     h_mix = np.empty(n)
-
-    def _cb(k, alpha, trap_w, is_last):
-        if alpha is None:
-            h_mix[k] = 0.5
-            return True
-        raw_w = alpha * trap_w
-        total = np.sum(raw_w)
-        pred_w = raw_w / total if total > 0 else np.ones(grid.K) / grid.K
-
+    for k in range(n):
         u2_vec = np.full(grid.K, u[k, 1])
         u1_vec = np.full(grid.K, u[k, 0])
         h_vals = copula.h(u2_vec, u1_vec, r_grid)
-        h_mix[k] = np.sum(h_vals * pred_w)
-        return True
+        h_mix[k] = np.sum(h_vals * weights[k])
 
-    grid.forward_pass(fi_grid, _cb)
     return np.clip(h_mix, 1e-6, 1.0 - 1e-6)
 
 
@@ -1089,7 +1097,7 @@ class OULatentProcess:
 
             if alpha0 is None:
                 mle_result = copula._fit_mle(u)
-                mu0 = copula.inv_transform(mle_result.copula_param)
+                mu0 = float(np.atleast_1d(copula.inv_transform(np.atleast_1d(mle_result.copula_param)))[0])
                 alpha0 = np.array([1.0, mu0, 1.0])
 
         bounds = Bounds([0.001, -np.inf, 0.001], [np.inf, np.inf, np.inf])

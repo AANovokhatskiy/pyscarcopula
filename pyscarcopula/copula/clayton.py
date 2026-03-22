@@ -99,6 +99,50 @@ def _clayton_dtransform(x):
     return out
 
 
+
+@njit(cache=True)
+def _clayton_softplus_transform(x):
+    n = len(x)
+    out = np.empty(n)
+    for i in range(n):
+        if x[i] > 20.0:
+            out[i] = x[i] + 0.0001
+        elif x[i] < -20.0:
+            out[i] = 0.0001
+        else:
+            out[i] = np.log1p(np.exp(x[i])) + 0.0001
+    return out
+
+
+@njit(cache=True)
+def _clayton_softplus_dtransform(x):
+    n = len(x)
+    out = np.empty(n)
+    for i in range(n):
+        if x[i] > 20.0:
+            out[i] = 1.0
+        elif x[i] < -20.0:
+            out[i] = np.exp(x[i])
+        else:
+            out[i] = 1.0 / (1.0 + np.exp(-x[i]))
+    return out
+
+
+@njit(cache=True)
+def _clayton_softplus_inv_transform(r):
+    n = len(r)
+    out = np.empty(n)
+    for i in range(n):
+        y = r[i] - 0.0001
+        if y > 20.0:
+            out[i] = y
+        elif y < 1e-10:
+            out[i] = -20.0
+        else:
+            out[i] = np.log(np.exp(y) - 1.0)
+    return out
+
+
 @njit(cache=True)
 def _clayton_dlogc_dr(u1, u2, r):
     """Analytical d(log c)/dr for Clayton copula."""
@@ -189,18 +233,25 @@ def _clayton_pdf_and_grad_batch(u_all, r_grid, dpsi, rotation):
 
 class ClaytonCopula(BivariateCopula):
 
-    def __init__(self, rotate: int = 0):
+    def __init__(self, rotate: int = 0, transform_type: str = 'xtanh'):
         super().__init__(rotate)
         self._name = "Clayton copula"
+        if transform_type not in ('xtanh', 'softplus'):
+            raise ValueError(f"transform_type must be 'xtanh' or 'softplus', got '{transform_type}'")
+        self._transform_type = transform_type
         self._bounds = [(0.0001, np.inf)]
 
-    @staticmethod
-    def transform(x):
+    def transform(self, x):
+        x = np.atleast_1d(np.asarray(x, dtype=np.float64))
+        if self._transform_type == 'softplus':
+            return _clayton_softplus_transform(x)
         return _clayton_transform(x)
 
-    @staticmethod
-    def dtransform(x):
-        return _clayton_dtransform(np.atleast_1d(np.asarray(x, dtype=np.float64)))
+    def dtransform(self, x):
+        x = np.atleast_1d(np.asarray(x, dtype=np.float64))
+        if self._transform_type == 'softplus':
+            return _clayton_softplus_dtransform(x)
+        return _clayton_dtransform(x)
 
     @staticmethod
     def inv_transform(r):
@@ -234,15 +285,15 @@ class ClaytonCopula(BivariateCopula):
 
     def pdf_and_grad_on_grid_batch(self, u, x_grid):
         x = np.asarray(x_grid, dtype=np.float64)
-        r_grid = _clayton_transform(x)
-        dpsi = _clayton_dtransform(x)
+        r_grid = self.transform(x)
+        dpsi = self.dtransform(x)
         return _clayton_pdf_and_grad_batch(
             np.asarray(u, dtype=np.float64), r_grid, dpsi, self._rotate)
 
     def copula_grid_batch(self, u, x_grid):
         x = np.asarray(x_grid, dtype=np.float64)
-        r_grid = _clayton_transform(x)
-        dpsi = _clayton_dtransform(x)
+        r_grid = self.transform(x)
+        dpsi = self.dtransform(x)
         fi, _ = _clayton_pdf_and_grad_batch(
             np.asarray(u, dtype=np.float64), r_grid, dpsi, self._rotate)
         return fi

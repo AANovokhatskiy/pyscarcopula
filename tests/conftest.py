@@ -40,10 +40,19 @@ def archimedean(request):
 # Data fixtures
 # ═══════════════════════════════════════════════════════════
 
+import os
+
+_DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
+_HAS_DATA = os.path.isfile(os.path.join(_DATA_DIR, "crypto_prices.csv"))
+
+
 @pytest.fixture(scope="session")
 def crypto_data():
     """Load crypto dataset, return pseudo-obs (T, 2)."""
-    df = pd.read_csv("data/crypto_prices.csv", index_col=0, sep=";")
+    if not _HAS_DATA:
+        pytest.skip("data/crypto_prices.csv not found")
+    df = pd.read_csv(os.path.join(_DATA_DIR, "crypto_prices.csv"),
+                     index_col=0, sep=";")
     prices = df[["BTC-USD", "ETH-USD"]].dropna().values
     lr = np.diff(np.log(prices), axis=0)
     return pobs(lr)
@@ -52,7 +61,10 @@ def crypto_data():
 @pytest.fixture(scope="session")
 def crypto_data_6d():
     """Load 6-crypto dataset, return pseudo-obs (250, 6)."""
-    df = pd.read_csv("data/crypto_prices.csv", index_col=0, sep=";")
+    if not _HAS_DATA:
+        pytest.skip("data/crypto_prices.csv not found")
+    df = pd.read_csv(os.path.join(_DATA_DIR, "crypto_prices.csv"),
+                     index_col=0, sep=";")
     tickers = ["BTC-USD", "ETH-USD", "BNB-USD", "ADA-USD", "XRP-USD", "DOGE-USD"]
     prices = df[tickers].dropna().values
     lr = np.diff(np.log(prices), axis=0)[:250]

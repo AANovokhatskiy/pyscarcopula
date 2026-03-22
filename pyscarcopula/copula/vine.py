@@ -105,7 +105,7 @@ def _all_rotations(copula_class):
 # ══════════════════════════════════════════════════════════════════
 
 def select_best_copula(u1, u2, candidates, allow_rotations=True,
-                       criterion='aic'):
+                       criterion='aic', transform_type='xtanh'):
     """
     Select best bivariate copula for (u1, u2) by AIC/BIC/logL.
 
@@ -153,7 +153,10 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
 
         for angle in rotations:
             try:
-                cop = cop_class(rotate=angle)
+                try:
+                    cop = cop_class(rotate=angle, transform_type=transform_type)
+                except TypeError:
+                    cop = cop_class(rotate=angle)
                 result = cop.fit(u_pair, method='mle')
                 logL = result.log_likelihood
                 n_params = 1  # MLE has 1 parameter for archimedean
@@ -314,6 +317,7 @@ class CVineCopula:
     def fit(self, data, method='mle', to_pobs=False,
             copulas=None, K=300, grid_range=5.0,
             truncation_level=None, min_edge_logL=None,
+            transform_type='xtanh',
             **kwargs):
         """
         Fit the C-vine copula.
@@ -375,13 +379,17 @@ class CVineCopula:
                 if copulas is not None:
                     # Manual specification
                     cop_class, rotation = copulas[j][i]
-                    cop = cop_class(rotate=rotation)
+                    try:
+                        cop = cop_class(rotate=rotation, transform_type=transform_type)
+                    except TypeError:
+                        cop = cop_class(rotate=rotation)
                     result = cop.fit(u_pair, method='mle')
                 else:
                     # Automatic selection via AIC/BIC
                     cop, result = select_best_copula(
                         u1, u2, self._get_candidates(),
-                        self.allow_rotations, self.criterion)
+                        self.allow_rotations, self.criterion,
+                        transform_type=transform_type)
 
                 # Step 2: decide whether to refit with dynamic method
                 from pyscarcopula.copula.independent import IndependentCopula

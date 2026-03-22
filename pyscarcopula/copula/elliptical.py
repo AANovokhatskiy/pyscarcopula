@@ -81,29 +81,45 @@ class BivariateGaussianCopula(BivariateCopula):
     """
     Bivariate Gaussian copula.
     Parameter: rho in (-1, 1). No rotation.
-    Transform: rho = 0.9999 * tanh(x/4), so x is unconstrained.
+
+    Transform types:
+        'xtanh' (default): rho = 0.9999 * tanh(x/4) — slow saturation
+        'softplus': rho = 0.9999 * tanh(x) — faster saturation, sharper transitions
     """
 
-    def __init__(self, rotate: int = 0):
+    def __init__(self, rotate: int = 0, transform_type: str = 'xtanh'):
         if rotate != 0:
             raise ValueError("Rotation not supported for Gaussian copula")
         super().__init__(0)
         self._name = "Gaussian copula"
         self._bounds = [(-0.9999, 0.9999)]
+        if transform_type not in ('xtanh', 'softplus'):
+            raise ValueError(f"transform_type must be 'xtanh' or 'softplus', got '{transform_type}'")
+        self._transform_type = transform_type
 
     @property
     def rotatable(self):
         return False
 
-    @staticmethod
-    def transform(x):
+    def transform(self, x):
         """x -> rho: maps R to (-0.9999, 0.9999)."""
-        return 0.9999 * np.tanh(np.asarray(x) / 4.0)
+        x = np.atleast_1d(np.asarray(x, dtype=np.float64))
+        if self._transform_type == 'softplus':
+            return 0.9999 * np.tanh(x)
+        return 0.9999 * np.tanh(x / 4.0)
 
-    @staticmethod
-    def inv_transform(rho):
+    def inv_transform(self, rho):
         """rho -> x."""
-        return 4.0 * np.arctanh(np.asarray(rho) / 0.9999)
+        rho = np.atleast_1d(np.asarray(rho, dtype=np.float64))
+        if self._transform_type == 'softplus':
+            return np.arctanh(np.clip(rho / 0.9999, -0.9999, 0.9999))
+        return 4.0 * np.arctanh(np.clip(rho / 0.9999, -0.9999, 0.9999))
+
+    def dtransform(self, x):
+        x = np.atleast_1d(np.asarray(x, dtype=np.float64))
+        if self._transform_type == 'softplus':
+            return 0.9999 * (1.0 - np.tanh(x) ** 2)
+        return 0.9999 / 4.0 * (1.0 - np.tanh(x / 4.0) ** 2)
 
     def pdf_unrotated(self, u1, u2, r):
         u1a, u2a, ra = _broadcast(u1, u2, r)

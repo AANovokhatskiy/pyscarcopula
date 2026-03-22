@@ -42,7 +42,7 @@ def _heuristic_initial_point(u, copula, rho_target=0.95,
     dt = 1.0 / (T - 1)
 
     mle_result = copula._fit_mle(u)
-    mu = copula.inv_transform(mle_result.copula_param)
+    mu = float(np.atleast_1d(copula.inv_transform(np.atleast_1d(mle_result.copula_param)))[0])
 
     # theta from target autocorrelation: rho = exp(-theta*dt)
     theta = -np.log(rho_target) / dt
@@ -82,7 +82,7 @@ def _gas_initial_point(u, copula, verbose=False):
 
     try:
         mle_result = copula._fit_mle(u)
-        f_mle = copula.inv_transform(mle_result.copula_param)
+        f_mle = float(np.atleast_1d(copula.inv_transform(np.atleast_1d(mle_result.copula_param)))[0])
     except Exception:
         return np.array([1.0, 0.0, 1.0])
 
@@ -163,7 +163,7 @@ def smart_initial_point(u, copula, use_gas=False, verbose=False):
         # Fallback
         try:
             mle = copula._fit_mle(u)
-            mu = copula.inv_transform(mle.copula_param)
+            mu = float(np.atleast_1d(copula.inv_transform(np.atleast_1d(mle.copula_param)))[0])
             alpha0 = np.array([1.0, mu, 1.0])
         except Exception:
             alpha0 = np.array([1.0, 0.0, 1.0])

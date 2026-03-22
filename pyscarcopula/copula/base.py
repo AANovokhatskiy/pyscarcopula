@@ -447,7 +447,8 @@ class BivariateCopula:
 
     def _fit_mle(self, u):
         """Fit constant copula parameter via MLE."""
-        x0 = np.array([self.transform(1.5)])
+        x0_val = self.transform(np.array([1.5]))[0]
+        x0 = np.array([x0_val])
         result = minimize(
             lambda x: -self.log_likelihood(u, x[0]),
             x0,
