@@ -199,7 +199,7 @@ class GASStrategy:
                 copula.inv_transform(np.atleast_1d(mle_result.copula_param))
             )[0])
             alpha0 = np.array([
-                mu_mle * 0.01,   # omega: small
+                mu_mle * 0.05,    # omega ≈ f_bar * (1 - beta)
                 0.05,             # alpha: moderate sensitivity
                 0.95,             # beta: high persistence
             ])
@@ -207,10 +207,11 @@ class GASStrategy:
         if verbose:
             print(f"GAS fit: alpha0={alpha0}, scaling={self.scaling}")
 
-        # Bounds: omega free, alpha >= 0, |beta| < 1
+        # Bounds match original GASProcess.fit():
+        # omega: free, alpha in [-5, 5], beta in (-0.999, 0.999)
         bounds = Bounds(
-            [-np.inf, 0.0, -0.999],
-            [np.inf, 10.0, 0.999],
+            [-np.inf, -5.0, -0.999],
+            [np.inf, 5.0, 0.999],
         )
 
         result = minimize(
@@ -219,7 +220,7 @@ class GASStrategy:
             alpha0,
             method='L-BFGS-B',
             bounds=bounds,
-            options={'gtol': tol, 'maxfun': self.config.default_maxfun},
+            options={'gtol': tol, 'eps': 1e-5, 'maxfun': 200},
         )
 
         params = gas_params(
