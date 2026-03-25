@@ -16,6 +16,8 @@ Stochastic copula models with Ornstein-Uhlenbeck latent process in Python.
   * [3. Sample from copula](#sample-copula)
   * [4. Fit a multivariate C-vine copula](#fit-vine)
   * [5. Risk metrics (VaR / CVaR)](#risk-metrics)
+- [New stateless API (v0.3+)](#new-stateless-api-v03)
+- [Architecture](#architecture)
 - [Performance tuning](#performance-tuning)
 <!-- - [Citation](#citation) -->
 - [License](#license)
@@ -269,6 +271,50 @@ cvar = result[0.95][100_000]['cvar']
 
 See `example.ipynb` for a complete walkthrough with plots.
 
+## New stateless API (v0.3+)
+
+Starting from v0.3, `pyscarcopula` provides a functional API where copulas are stateless and fit results are immutable typed dataclasses. The old `copula.fit()` API continues to work for backward compatibility.
+
+```python
+from pyscarcopula import GumbelCopula
+from pyscarcopula.api import fit, smoothed_params, mixture_h
+from pyscarcopula._utils import pobs
+
+# Copula is stateless — no .fit_result attribute
+copula = GumbelCopula(rotate=180)
+
+# fit() returns an immutable LatentResult (not OptimizeResult)
+result = fit(copula, returns, method='scar-tm-ou', to_pobs=True)
+
+# result is a typed frozen dataclass
+result.log_likelihood   # float
+result.params.theta     # OU mean-reversion rate
+result.params.mu        # OU mean level
+result.params.nu        # OU diffusion coefficient
+result.K                # grid size used
+
+# Time-varying copula parameter: E[Psi(x_k) | u_{1:k-1}]
+u = pobs(returns)
+r_t = smoothed_params(copula, u, result)
+
+# Vine pseudo-observation propagation
+h_vals = mixture_h(copula, u, result)
+```
+
+The strategy pattern makes it easy to add new estimation methods:
+
+```python
+from pyscarcopula.strategy import get_strategy, list_methods
+
+list_methods()
+# ['GAS', 'MLE', 'SCAR-M-OU', 'SCAR-P-OU', 'SCAR-TM-OU']
+
+strategy = get_strategy('scar-tm-ou', K=500, pts_per_sigma=4)
+result = strategy.fit(copula, u)
+```
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the full module map and design decisions.
+
 ## Performance tuning
 
 The SCAR-TM-OU method has several parameters that control the speed/accuracy tradeoff. Here are recommended configurations:
@@ -320,13 +366,33 @@ Truncated edges use MLE (constant parameter). The GoF test handles mixed SCAR/ML
 | Full SCAR (15 edges) | ~30s | ~891 | ~0.90 |
 | MLE only | ~0.6s | ~869 | ~0.21 |
 
+## Architecture
+
+The codebase is organized in 5 layers with strictly top-down dependencies:
+
+| Layer | Directory | Responsibility |
+|-------|-----------|----------------|
+| API | `api.py` | Stateless entry points: `fit()`, `smoothed_params()` |
+| Strategy | `strategy/` | Estimation methods: MLE, SCAR-TM, GAS (Strategy pattern) |
+| Copula | `copula/` | Pure math: PDF, h-functions, transforms (stateless) |
+| Numerical | `numerical/` | TM grid, gradient, MC samplers, OU kernels (Numba) |
+| Types | `_types.py`, `_utils.py` | Typed results, config, shared utilities |
+
+Key design decisions:
+- **Copulas have no mutable state** — `fit()` lives in `api.py`, not on the copula object
+- **Fit results are frozen dataclasses** — `MLEResult`, `LatentResult`, `GASResult`
+- **`LatentProcessParams`** supports any number of named parameters — OU has 3, future Lévy may have 4
+- **`@register_strategy`** decorator — adding a new method = adding one file
+
+For the full module map, see [ARCHITECTURE.md](ARCHITECTURE.md).
+
 <!-- ## Citation
 
 If you use this package in your research, please cite:
 
 ```bibtex
 @article{novokhatskiy2026scar,
-  title={Robust numerical scheme for stochastic copula models},
+  title={A Transfer Matrix Approach for Deterministic Likelihood Evaluation in Stochastic Copula Models},
   author={Novokhatskiy, A. A. and Semenov, M. E.},
   year={2026}
 }

@@ -89,7 +89,8 @@ def rosenblatt_transform_gas(copula, u, gas_params, scaling='unit'):
 # Unified tests
 # ══════════════════════════════════════════════════════════════════
 
-def gof_test(model, data, to_pobs=True, seed=None, K=300, grid_range=5.0):
+def gof_test(model, data, to_pobs=True, seed=None, K=300, grid_range=5.0,
+             fit_result=None):
     """
     Unified goodness-of-fit test for any copula model.
 
@@ -107,6 +108,9 @@ def gof_test(model, data, to_pobs=True, seed=None, K=300, grid_range=5.0):
     seed : int or None
     K : int — grid size (SCAR only)
     grid_range : float (SCAR only)
+    fit_result : FitResult or None
+        If provided, use this instead of model.fit_result.
+        Enables the stateless API: gof_test(copula, u, fit_result=result)
 
     Returns
     -------
@@ -118,9 +122,11 @@ def gof_test(model, data, to_pobs=True, seed=None, K=300, grid_range=5.0):
     from pyscarcopula.copula.equicorr import EquicorrGaussianCopula
 
     if isinstance(model, EquicorrGaussianCopula):
-        return equicorr_gof_test(model, data, to_pobs, seed, K, grid_range)
+        return equicorr_gof_test(model, data, to_pobs, seed, K, grid_range,
+                                 fit_result=fit_result)
     elif isinstance(model, BivariateCopula):
-        return _gof_bivariate(model, data, to_pobs, seed, K, grid_range)
+        return _gof_bivariate(model, data, to_pobs, seed, K, grid_range,
+                              fit_result=fit_result)
     elif isinstance(model, CVineCopula):
         return vine_gof_test(model, data, to_pobs, seed, K, grid_range)
     elif isinstance(model, GaussianCopula):
@@ -134,13 +140,25 @@ def gof_test(model, data, to_pobs=True, seed=None, K=300, grid_range=5.0):
 # Bivariate gof_test
 # ══════════════════════════════════════════════════════════════════
 
-def _gof_bivariate(copula, data, to_pobs=True, seed=None, K=300, grid_range=5.0):
+def _gof_bivariate(copula, data, to_pobs=True, seed=None, K=300, grid_range=5.0,
+                   fit_result=None):
     """
     Goodness-of-fit for a fitted BivariateCopula.
 
     MLE: constant parameter Rosenblatt.
     SCAR: mixture Rosenblatt (integrates h over predictive distribution).
     GAS: deterministic Rosenblatt (h evaluated at filtered theta_t).
+
+    Parameters
+    ----------
+    copula : BivariateCopula
+    data : (T, 2) array
+    to_pobs : bool
+    seed : int or None
+    K : int
+    grid_range : float
+    fit_result : FitResult or None
+        If provided, use this instead of copula.fit_result.
     """
     from pyscarcopula.utils import pobs as compute_pobs
 
@@ -148,20 +166,22 @@ def _gof_bivariate(copula, data, to_pobs=True, seed=None, K=300, grid_range=5.0)
     if to_pobs:
         u = compute_pobs(u)
 
-    if copula.fit_result is None:
-        raise ValueError("Fit the copula first")
+    fr = fit_result if fit_result is not None else copula.fit_result
+    if fr is None:
+        raise ValueError("Fit the copula first, or pass fit_result=")
 
-    method = copula.fit_result.method.upper()
+    method = fr.method.upper()
 
     if method == 'MLE':
-        e = rosenblatt_transform_mle(copula, u, copula.fit_result.copula_param)
+        r = fr.copula_param
+        e = rosenblatt_transform_mle(copula, u, r)
     elif method == 'GAS':
-        scaling = getattr(copula.fit_result, 'scaling', 'unit')
-        e = rosenblatt_transform_gas(copula, u,
-                                      copula.fit_result.gas_params, scaling)
+        scaling = getattr(fr, 'scaling', 'unit')
+        gp = fr.gas_params if hasattr(fr, 'gas_params') else fr.params.values
+        e = rosenblatt_transform_gas(copula, u, gp, scaling)
     else:
-        e = rosenblatt_transform_scar(copula, u, copula.fit_result.alpha,
-                                       K, grid_range)
+        alpha = fr.alpha if hasattr(fr, 'alpha') else fr.params.values
+        e = rosenblatt_transform_scar(copula, u, alpha, K, grid_range)
 
     return cvm_test(e, seed=seed)
 
@@ -547,7 +567,7 @@ def equicorr_rosenblatt_transform(copula, u, K=300, grid_range=5.0):
 
 
 def equicorr_gof_test(copula, data, to_pobs=True, seed=None,
-                      K=300, grid_range=5.0):
+                      K=300, grid_range=5.0, fit_result=None):
     """
     Goodness-of-fit test for EquicorrGaussianCopula.
 
@@ -559,6 +579,7 @@ def equicorr_gof_test(copula, data, to_pobs=True, seed=None,
     seed : int or None
     K : int
     grid_range : float
+    fit_result : FitResult or None
 
     Returns
     -------
@@ -570,8 +591,9 @@ def equicorr_gof_test(copula, data, to_pobs=True, seed=None,
     if to_pobs:
         u = compute_pobs(u)
 
-    if copula.fit_result is None:
-        raise ValueError("Fit the copula first")
+    fr = fit_result if fit_result is not None else copula.fit_result
+    if fr is None:
+        raise ValueError("Fit the copula first, or pass fit_result=")
 
     e = equicorr_rosenblatt_transform(copula, u, K, grid_range)
     return cvm_test(e, seed=seed)
