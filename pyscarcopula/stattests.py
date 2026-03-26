@@ -191,32 +191,9 @@ def _gof_bivariate(copula, data, to_pobs=True, seed=None, K=300, grid_range=5.0,
 # ══════════════════════════════════════════════════════════════════
 
 def _vine_edge_h(edge, u2, u1, u_pair, K=300, grid_range=5.0):
-    """
-    Compute h(u2 | u1; r) for a vine edge.
-
-    Each vine edge is an independent bivariate copula, so this is
-    identical to the bivariate Rosenblatt approach:
-      MLE:  h(u2, u1; r) with constant r
-      GAS:  h(u2, u1; Psi(f_t)) with GAS-filtered f_t
-      SCAR: E[h(u2, u1; Psi(z)) | u_{1:k-1}] via TM forward pass
-    """
-    method = edge.method.upper() if edge.method else 'MLE'
-
-    if method == 'MLE':
-        r = edge.get_r(u_pair)
-        return edge.copula.h(u2, u1, r)
-    elif method == 'GAS':
-        from pyscarcopula.latent.gas_process import _gas_mixture_h
-        alpha = edge.fit_result.alpha
-        scaling = getattr(edge.fit_result, 'scaling', 'unit')
-        return _gas_mixture_h(alpha[0], alpha[1], alpha[2],
-                              u_pair, edge.copula, scaling)
-    else:
-        from pyscarcopula.numerical.tm_functions import tm_forward_mixture_h as _tm_forward_mixture_h
-        alpha = edge.fit_result.alpha
-        theta, mu, nu = alpha
-        return _tm_forward_mixture_h(theta, mu, nu, u_pair,
-                                      edge.copula, K, grid_range)
+    """Delegate to copula.vine._edge_h (single source of truth)."""
+    from pyscarcopula.copula.vine import _edge_h
+    return _edge_h(edge, u2, u1, u_pair, K, grid_range)
 
 
 def vine_rosenblatt_transform(vine, u, K=300, grid_range=5.0):
