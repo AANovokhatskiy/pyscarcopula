@@ -13,15 +13,12 @@ Each edge copula is selected automatically from all available families via AIC.
 
 ```python
 from pyscarcopula import CVineCopula
+from pyscarcopula._utils import pobs
 
 vine = CVineCopula()
 vine.fit(u, method='scar-tm-ou',
          truncation_level=2,
-         min_edge_logL=10,
-         transform_type='softplus')
-
-print(vine.fit_result.log_likelihood)
-print(vine.fit_result.name)  # "C-vine (6d, 15 edges)"
+         min_edge_logL=10)
 vine.summary()
 ```
 
