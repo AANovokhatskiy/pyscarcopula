@@ -1,11 +1,14 @@
-import os as _os
+"""
+pyscarcopula — stochastic copula models with Ornstein-Uhlenbeck latent process.
 
-# Limit BLAS to single thread to prevent oversubscription
-# when using multiprocessing for parallel CVaR or vine fitting.
-# Users can override by setting these env vars before importing.
-for _var in ('OMP_NUM_THREADS', 'MKL_NUM_THREADS', 'OPENBLAS_NUM_THREADS'):
-    _os.environ.setdefault(_var, '1')
-del _os, _var
+Usage:
+    from pyscarcopula import GumbelCopula
+    from pyscarcopula.api import fit, smoothed_params
+    from pyscarcopula.stattests import gof_test
+
+    copula = GumbelCopula(rotate=180)
+    result = fit(copula, u, method='scar-tm-ou')
+"""
 
 from pyscarcopula.copula.gumbel import GumbelCopula
 from pyscarcopula.copula.frank import FrankCopula
@@ -17,9 +20,6 @@ from pyscarcopula.copula.vine import CVineCopula
 from pyscarcopula.copula.elliptical import (
     BivariateGaussianCopula, GaussianCopula, StudentCopula
 )
-
-from pyscarcopula.latent.ou_process import OULatentProcess
-from pyscarcopula.latent.gas_process import GASProcess
 
 
 __all__ = (

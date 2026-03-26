@@ -2,7 +2,7 @@
 import pytest
 import numpy as np
 import pandas as pd
-from pyscarcopula.utils import pobs
+from pyscarcopula._utils import pobs
 from pyscarcopula import (
     GumbelCopula, ClaytonCopula, FrankCopula, JoeCopula,
     IndependentCopula, CVineCopula, GaussianCopula, StudentCopula,
