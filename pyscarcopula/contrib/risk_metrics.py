@@ -23,7 +23,7 @@ from scipy.optimize import minimize, Bounds
 from tqdm import tqdm
 from typing import Literal
 
-from pyscarcopula.utils import pobs
+from pyscarcopula._utils import pobs
 
 
 # ══════════════════════════════════════════════════════════════════
