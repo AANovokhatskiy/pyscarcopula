@@ -17,7 +17,7 @@ import numpy as np
 from scipy.optimize import minimize
 from typing import Literal
 
-from pyscarcopula.utils import pobs
+from pyscarcopula._utils import pobs
 
 METHODS = ('MLE', 'SCAR-P-OU', 'SCAR-M-OU', 'SCAR-TM-OU', 'GAS')
 

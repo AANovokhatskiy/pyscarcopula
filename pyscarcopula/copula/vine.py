@@ -22,7 +22,7 @@ Usage:
 import numpy as np
 from dataclasses import dataclass, field
 from typing import List, Optional
-from pyscarcopula.utils import pobs
+from pyscarcopula._utils import pobs
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -211,7 +211,7 @@ def _edge_h(edge, u2, u1, u_pair, K=300, grid_range=5.0):
 
     else:
         # SCAR-TM-OU: mixture h via transfer matrix
-        from pyscarcopula.latent.ou_process import _tm_forward_mixture_h
+        from pyscarcopula.numerical.tm_functions import tm_forward_mixture_h as _tm_forward_mixture_h
         alpha = edge.fit_result.alpha
         theta, mu, nu = alpha
         return _tm_forward_mixture_h(theta, mu, nu, u_pair,

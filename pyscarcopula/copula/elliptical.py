@@ -27,7 +27,7 @@ from scipy.optimize import minimize
 from numba import njit
 
 from pyscarcopula.copula.base import BivariateCopula
-from pyscarcopula.utils import pobs
+from pyscarcopula._utils import pobs
 
 
 def _gauss_log_pdf_scipy(u1, u2, rho):

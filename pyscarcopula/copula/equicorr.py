@@ -366,7 +366,7 @@ class EquicorrGaussianCopula(BivariateCopula):
     # ── Fit (MLE + SCAR) ─────────────────────────────────────
 
     def fit(self, data, method='scar-tm-ou', to_pobs=False, **kwargs):
-        from pyscarcopula.utils import pobs as _pobs
+        from pyscarcopula._utils import pobs as _pobs
 
         u = np.asarray(data, dtype=np.float64)
         if to_pobs:

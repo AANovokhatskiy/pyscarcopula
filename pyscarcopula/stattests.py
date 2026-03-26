@@ -73,7 +73,7 @@ def rosenblatt_transform_mle(copula, u, r):
 
 def rosenblatt_transform_scar(copula, u, alpha, K=300, grid_range=5.0):
     """Mixture Rosenblatt for SCAR (bivariate). Returns (T, 2)."""
-    from pyscarcopula.latent.ou_process import _tm_forward_rosenblatt
+    from pyscarcopula.numerical.tm_functions import tm_forward_rosenblatt as _tm_forward_rosenblatt
     theta, mu, nu = alpha
     return _tm_forward_rosenblatt(theta, mu, nu, u, copula, K, grid_range)
 
@@ -160,7 +160,7 @@ def _gof_bivariate(copula, data, to_pobs=True, seed=None, K=300, grid_range=5.0,
     fit_result : FitResult or None
         If provided, use this instead of copula.fit_result.
     """
-    from pyscarcopula.utils import pobs as compute_pobs
+    from pyscarcopula._utils import pobs as compute_pobs
 
     u = np.asarray(data, dtype=np.float64)
     if to_pobs:
@@ -212,7 +212,7 @@ def _vine_edge_h(edge, u2, u1, u_pair, K=300, grid_range=5.0):
         return _gas_mixture_h(alpha[0], alpha[1], alpha[2],
                               u_pair, edge.copula, scaling)
     else:
-        from pyscarcopula.latent.ou_process import _tm_forward_mixture_h
+        from pyscarcopula.numerical.tm_functions import tm_forward_mixture_h as _tm_forward_mixture_h
         alpha = edge.fit_result.alpha
         theta, mu, nu = alpha
         return _tm_forward_mixture_h(theta, mu, nu, u_pair,
@@ -307,7 +307,7 @@ def vine_gof_test(vine, data, to_pobs=True, seed=None, K=500, grid_range=7.0):
     -------
     CramérVonMisesResult with .statistic and .pvalue
     """
-    from pyscarcopula.utils import pobs as compute_pobs
+    from pyscarcopula._utils import pobs as compute_pobs
 
     u = np.asarray(data, dtype=np.float64)
     if to_pobs:
@@ -371,7 +371,7 @@ def gaussian_gof_test(copula, data, to_pobs=True, seed=None):
     -------
     CramérVonMisesResult
     """
-    from pyscarcopula.utils import pobs as compute_pobs
+    from pyscarcopula._utils import pobs as compute_pobs
 
     u = np.asarray(data, dtype=np.float64)
     if to_pobs:
@@ -475,7 +475,7 @@ def student_gof_test(copula, data, to_pobs=True, seed=None):
     -------
     CramérVonMisesResult
     """
-    from pyscarcopula.utils import pobs as compute_pobs
+    from pyscarcopula._utils import pobs as compute_pobs
 
     u = np.asarray(data, dtype=np.float64)
     if to_pobs:
@@ -534,7 +534,7 @@ def equicorr_rosenblatt_transform(copula, u, K=300, grid_range=5.0):
         return np.clip(e, eps, 1.0 - eps)
 
     # SCAR: mixture Rosenblatt via TM forward pass
-    from pyscarcopula.latent.ou_process import _TMGrid
+    from pyscarcopula.numerical.tm_grid import TMGrid as _TMGrid
 
     theta, mu, nu = copula.fit_result.alpha
     grid = _TMGrid(theta, mu, nu, T, K, grid_range)
@@ -585,7 +585,7 @@ def equicorr_gof_test(copula, data, to_pobs=True, seed=None,
     -------
     CramérVonMisesResult
     """
-    from pyscarcopula.utils import pobs as compute_pobs
+    from pyscarcopula._utils import pobs as compute_pobs
 
     u = np.asarray(data, dtype=np.float64)
     if to_pobs:
