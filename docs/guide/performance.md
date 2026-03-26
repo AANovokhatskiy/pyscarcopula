@@ -3,14 +3,14 @@
 ## Bivariate copula
 
 ```python
-copula.fit(u, method='scar-tm-ou',
-           analytical_grad=True,   # default
-           smart_init=True,        # default
-           tol=1e-2,               # gradient tolerance
-           K=300,                  # minimum grid size
-           pts_per_sigma=2,        # grid density
-           transform_type='softplus',  # or 'xtanh'
-)
+from pyscarcopula import GumbelCopula
+from pyscarcopula.api import fit
+
+copula = GumbelCopula(rotate=180)
+result = fit(copula, u, method='scar-tm-ou')
+
+# Relaxed tolerance (faster)
+result = fit(copula, u, method='scar-tm-ou', tol=5e-2)
 ```
 
 | Parameter | Default | Effect |
@@ -25,12 +25,13 @@ copula.fit(u, method='scar-tm-ou',
 ## Vine copula
 
 ```python
+from pyscarcopula import CVineCopula
+
+vine = CVineCopula()
 vine.fit(u, method='scar-tm-ou',
-         truncation_level=2,    # trees >= 2 stay MLE
-         min_edge_logL=10,      # weak edges stay MLE
-         tol=5e-2,              # relaxed tolerance for speed
-         transform_type='softplus',
-)
+         truncation_level=2,
+         min_edge_logL=10,
+         tol=5e-2)
 ```
 
 | Parameter | Default | Effect |
@@ -46,12 +47,13 @@ vine.fit(u, method='scar-tm-ou',
 | Truncated SCAR (level=2, logL≥10) | ~13s | ~922 | ~0.90 |
 | MLE only | ~0.6s | ~869 | ~0.21 |
 
-## BLAS thread control
+## NumericalConfig
 
-The package sets `OMP_NUM_THREADS=1` at import to prevent thread oversubscription. Override before importing if needed:
+Override default numerical parameters:
 
 ```python
-import os
-os.environ['OMP_NUM_THREADS'] = '4'
-import pyscarcopula
+from pyscarcopula._types import NumericalConfig
+
+cfg = NumericalConfig(default_K=500, default_tol_scar=5e-2)
+result = fit(copula, u, method='scar-tm-ou', config=cfg)
 ```

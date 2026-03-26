@@ -6,27 +6,17 @@ Stochastic copula models with Ornstein-Uhlenbeck latent process in Python.
 - [Install](#install)
 - [Features](#features)
 - [Mathematical background](#mathematical-background)
-  * [Copula models](#copula-models)
-  * [Stochastic copula (SCAR)](#stochastic-copula-scar)
-  * [Transfer matrix method](#transfer-matrix-method)
-  * [Goodness of fit](#goodness-of-fit)
 - [Examples](#examples)
-  * [1. Read dataset](#read-dataset)
-  * [2. Initialize and fit a bivariate copula](#fit-bivariate)
-  * [3. Sample from copula](#sample-copula)
-  * [4. Fit a multivariate C-vine copula](#fit-vine)
-  * [5. Risk metrics (VaR / CVaR)](#risk-metrics)
-- [New stateless API (v0.3+)](#new-stateless-api-v03)
-- [Architecture](#architecture)
 - [Performance tuning](#performance-tuning)
-<!-- - [Citation](#citation) -->
+- [Architecture](#architecture)
 - [License](#license)
 
 ## About
 
-**pyscarcopula** fits multivariate distributions using the copula approach with time-varying dependence. The classical constant-parameter model is extended to a stochastic model where the copula parameter follows an Ornstein-Uhlenbeck process. The idea is based on the discrete SCAR model of Liesenfeld and Richard (2003) and Hafner and Manner (2012); here we develop it in the continuous-time setting.
+**pyscarcopula** fits multivariate distributions using the copula approach with time-varying dependence. The classical constant-parameter model is extended to a stochastic model where the copula parameter follows an Ornstein-Uhlenbeck process.
 
 For parameter estimation we provide five methods:
+
 | Method | Key | Description |
 |---|---|---|
 | Maximum likelihood | `mle` | Classical fit with constant copula parameter |
@@ -35,11 +25,7 @@ For parameter estimation we provide five methods:
 | **Transfer matrix** | **`scar-tm-ou`** | **Deterministic quadrature on a grid — numerically exact, no MC bias** |
 | GAS | `gas` | Generalized autoregressive score (observation-driven, deterministic) |
 
-The transfer matrix method exploits the Markov structure and known Gaussian transition density of the OU process to evaluate the likelihood function as a sequence of matrix-vector products with complexity $O(TK^2)$. The implementation automatically selects between dense and sparse transfer matrices depending on the kernel bandwidth, and adaptively refines the grid to resolve the transition kernel.
-
-<!-- For details see our paper:
-
-> A. A. Novokhatskiy, M. E. Semenov, *Robust numerical scheme for stochastic copula models* (2026). -->
+The transfer matrix method exploits the Markov structure and known Gaussian transition density of the OU process to evaluate the likelihood function as a sequence of matrix-vector products. The implementation automatically selects between dense and sparse transfer matrices depending on the kernel bandwidth, and adaptively refines the grid to resolve the transition kernel.
 
 ## Install
 
@@ -64,6 +50,7 @@ pytest tests/
 - Archimedean: Gumbel, Frank, Clayton, Joe (with rotations 0°/90°/180°/270°)
 - Elliptical: Gaussian, Student-t (MLE only)
 - Independence copula (null model for automatic vine pruning)
+- Equicorrelation Gaussian (single dynamic correlation for d assets)
 - C-vine pair copula construction
 
 **Estimation methods**
@@ -75,13 +62,13 @@ pytest tests/
 **Vine copulas**
 - Automatic copula family and rotation selection per edge (AIC/BIC)
 - Automatic pruning of weak edges via independence copula baseline
-- Tree-level and edge-level truncation for scalability to large d
+- Tree-level and edge-level truncation for scalability
 
 **Diagnostics and risk**
 - Goodness-of-fit via Rosenblatt transform + Cramér–von Mises test
 - Mixture Rosenblatt transform for stochastic models
-- Smoothed time-varying copula parameter $\bar{\theta}_k = \mathbb{E}[\Psi(x_k) \mid u_{1:k-1}]$
-- VaR / CVaR via `pyscarcopula.contrib` (rolling window, marginals, portfolio optimization, parallel)
+- Smoothed time-varying copula parameter
+- VaR / CVaR via `pyscarcopula.contrib` (rolling window, marginals, portfolio optimization)
 
 ## Mathematical background
 
@@ -89,99 +76,74 @@ pytest tests/
 
 By Sklar's theorem, any joint distribution can be decomposed as
 
-```math
-F(x_1, \ldots, x_d) = C(F_1(x_1), \ldots, F_d(x_d))
-```
+$$F(x_1, \ldots, x_d) = C(F_1(x_1), \ldots, F_d(x_d))$$
 
-We focus on single-parameter Archimedean copulas defined via a generator $\phi(t; \theta)$:
+We focus on single-parameter Archimedean copulas defined via a generator φ(t; θ):
 
-```math
-C(u_1, \ldots, u_d) = \phi^{-1}(\phi(u_1; \theta) + \cdots + \phi(u_d; \theta))
-```
+$$C(u_1, \ldots, u_d) = \phi^{-1}(\phi(u_1; \theta) + \cdots + \phi(u_d; \theta))$$
 
-| Copula  | $\phi(t; \theta)$ | $\phi^{-1}(t; \theta)$ | $\theta \in$ |
-|---------|-------------------|------------------------|--------------|
-| Gumbel  | $(-\log t)^\theta$ | $\exp(-t^{1/\theta})$ | $[1, \infty)$ |
-| Frank   | $-\log\left(\frac{e^{-\theta t} - 1}{e^{-\theta} - 1}\right)$ | $-\frac{1}{\theta}\log(1 + e^{-t}(e^{-\theta} - 1))$ | $(0, \infty)$ |
-| Joe     | $-\log(1 - (1-t)^\theta)$ | $1 - (1 - e^{-t})^{1/\theta}$ | $[1, \infty)$ |
-| Clayton | $\frac{1}{\theta}(t^{-\theta} - 1)$ | $(1 + t\theta)^{-1/\theta}$ | $(0, \infty)$ |
+| Copula  | Generator | Inverse generator | Domain |
+|---------|-----------|-------------------|--------|
+| Gumbel  | (-log t)^θ | exp(-t^(1/θ)) | θ ∈ [1, ∞) |
+| Frank   | -log((e^(-θt) - 1)/(e^(-θ) - 1)) | -(1/θ)log(1 + e^(-t)(e^(-θ) - 1)) | θ ∈ (0, ∞) |
+| Joe     | -log(1 - (1-t)^θ) | 1 - (1 - e^(-t))^(1/θ) | θ ∈ [1, ∞) |
+| Clayton | (1/θ)(t^(-θ) - 1) | (1 + tθ)^(-1/θ) | θ ∈ (0, ∞) |
 
 ### Stochastic copula (SCAR)
 
 In the stochastic model the copula parameter is driven by a latent Ornstein-Uhlenbeck process:
 
-```math
-\theta_t = \Psi(x_t), \qquad dx_t = \theta_{\text{OU}}(\mu - x_t)\,dt + \nu\,dW_t
-```
+$$\theta_t = \Psi(x_t), \qquad dx_t = \theta_{\text{OU}}(\mu - x_t)\,dt + \nu\,dW_t$$
 
-where $\Psi$ maps the OU state to the copula parameter domain. The likelihood function is an integral over all latent paths:
+where Ψ maps the OU state to the copula parameter domain. The likelihood function is an integral over all latent paths:
 
-```math
-L = \int \prod_{t} c(u_{1t}, u_{2t}; \Psi(x_t))\;p(x_t | x_{t-1})\;dx_0 \cdots dx_T
-```
+$$L = \int \prod_{t} c(u_{1t}, u_{2t}; \Psi(x_t))\;p(x_t | x_{t-1})\;dx_0 \cdots dx_T$$
 
 ### Transfer matrix method
 
-The Markov property allows this high-dimensional integral to be factored into a chain of one-dimensional integrals, each computed as a matrix-vector product on a discretized grid. The backward recursion is:
-
-```math
-\mathbf{m}_t = \widetilde{\mathbf{T}}(\mathbf{f}_t \odot \mathbf{m}_{t+1}), \qquad t = T-1, \ldots, 1
-```
-
-where $\widetilde{\mathbf{T}}$ is the transition kernel with trapezoidal weights baked in, $\mathbf{f}_t$ is the copula density evaluated at observation $t$, and $\odot$ is the element-wise product. Total complexity: $O(TK^2)$ (dense) or $O(TKb)$ (sparse, where $b$ is the kernel bandwidth).
+The Markov property allows this high-dimensional integral to be factored into a chain of one-dimensional integrals, each computed as a matrix-vector product on a discretized grid. Total complexity: O(TK²) (dense) or O(TKb) (sparse, where b is the kernel bandwidth).
 
 ### Goodness of fit
 
-Model quality is assessed via the Rosenblatt transform. For the stochastic model we use the **mixture Rosenblatt transform**:
-
-```math
-u'_{2,t} = \mathbb{E}\left[h(u_{2t}, u_{1t}; \Psi(x_t)) \mid u_{1:t-1}\right]
-```
-
-which integrates the h-function over the predictive distribution of the latent state, avoiding the Jensen bias from plugging in a point estimate. Uniformity of the transformed sample is tested with the Cramér–von Mises statistic.
+Model quality is assessed via the Rosenblatt transform. For the stochastic model we use the **mixture Rosenblatt transform**, which integrates the h-function over the predictive distribution of the latent state, avoiding the Jensen bias from plugging in a point estimate. Uniformity of the transformed sample is tested with the Cramér–von Mises statistic.
 
 
 ## Examples
 
-<a name="read-dataset"></a>
 ### 1. Read dataset
 
 ```python
 import pandas as pd
 import numpy as np
-from pyscarcopula.utils import pobs
-from pyscarcopula import (GumbelCopula, FrankCopula, JoeCopula, ClaytonCopula,
-                          IndependentCopula, GaussianCopula, StudentCopula,
-                          CVineCopula)
+from pyscarcopula._utils import pobs
+from pyscarcopula import GumbelCopula, CVineCopula, GaussianCopula, StudentCopula
+from pyscarcopula.api import fit, smoothed_params
 from pyscarcopula.stattests import gof_test
 
 crypto_prices = pd.read_csv("data/crypto_prices.csv", index_col=0, sep=';')
 tickers = ['BTC-USD', 'ETH-USD']
 
-returns_pd = np.log(crypto_prices[tickers] / crypto_prices[tickers].shift(1))[1:]
-returns = returns_pd.values
+returns = np.log(crypto_prices[tickers] / crypto_prices[tickers].shift(1))[1:].values
 u = pobs(returns)
 ```
 
-<a name="fit-bivariate"></a>
-### 2. Initialize and fit a bivariate copula
+### 2. Fit a bivariate copula
 
 ```python
-copula_mle = GumbelCopula(rotate=180)
-copula_tm = GumbelCopula(rotate=180)
-copula_gas = GumbelCopula(rotate=180)
+copula = GumbelCopula(rotate=180)
 
-# Static model (constant parameter)
-fit_result_mle = copula_mle.fit(data=returns, method='mle', to_pobs=True)
-gof_result_mle = gof_test(copula_mle, returns, to_pobs=True)
+result_mle = fit(copula, u, method='mle')
+result_tm  = fit(copula, u, method='scar-tm-ou')
+result_gas = fit(copula, u, method='gas')
 
-# Stochastic model (transfer matrix)
-fit_result_tm = copula_tm.fit(data=returns, method='scar-tm-ou', to_pobs=True)
-gof_result_tm = gof_test(copula_tm, returns, to_pobs=True)
+# Typed results — access parameters directly
+print(f"MLE:     logL={result_mle.log_likelihood:.2f}, r={result_mle.copula_param:.4f}")
+print(f"SCAR-TM: logL={result_tm.log_likelihood:.2f}, theta={result_tm.params.theta:.2f}")
+print(f"GAS:     logL={result_gas.log_likelihood:.2f}, beta={result_gas.beta:.4f}")
 
-# GAS model
-fit_result_gas = copula_gas.fit(data=returns, method='gas', to_pobs=True)
-gof_result_gas = gof_test(copula_gas, returns, to_pobs=True)
+# GoF test
+gof = gof_test(copula, u, fit_result=result_tm, to_pobs=False)
+print(f"GoF p-value: {gof.pvalue:.4f}")
 ```
 
 Results on daily BTC-ETH data (T = 1460):
@@ -192,146 +154,74 @@ Results on daily BTC-ETH data (T = 1460):
 | GAS | 1031.42 | 0.5282 |
 | **SCAR-TM** | **1042.47** | **0.6201** |
 
-SCAR-TM achieves the highest log-likelihood and the best GoF calibration. MLE is rejected at the 1% level; both dynamic models pass comfortably.
-
-Available rotations: `[0, 90, 180, 270]`. Available methods: `['mle', 'scar-p-ou', 'scar-m-ou', 'scar-tm-ou', 'gas']`.
-
-<a name="sample-copula"></a>
-### 3. Sample from copula
+### 3. Smoothed copula parameter
 
 ```python
-# Sample from constant-parameter copula
-samples_mle = copula_mle.sample(n=1000, r=fit_result_mle.copula_param)
-
-# Sample next state from stochastic copula
-samples_tm = copula_tm.predict(n=1000)
+r_t = smoothed_params(copula, u, result_tm)
+# r_t[k] = E[Psi(x_k) | u_{1:k-1}]
 ```
 
-<a name="fit-vine"></a>
-### 4. Fit a multivariate C-vine copula
+### 4. Sample from copula
+
+```python
+samples = copula.sample(n=1000, r=result_mle.copula_param)
+```
+
+### 5. Fit a multivariate C-vine copula
 
 ```python
 tickers = ['BTC-USD', 'ETH-USD', 'BNB-USD', 'ADA-USD', 'XRP-USD', 'DOGE-USD']
-returns_pd = np.log(crypto_prices[tickers] / crypto_prices[tickers].shift(1))[1:251]
-returns = returns_pd.values
-u = pobs(returns)
+returns_6d = np.log(crypto_prices[tickers] / crypto_prices[tickers].shift(1))[1:251].values
+u6 = pobs(returns_6d)
 
-# C-vine with SCAR-TM (truncated for speed)
 vine = CVineCopula()
-vine.fit(u, method='scar-tm-ou',
+vine.fit(u6, method='scar-tm-ou',
          truncation_level=2, min_edge_logL=10)
 vine.summary()
 
-# Comparison models
-copula_s = StudentCopula()
-copula_g = GaussianCopula()
-copula_s.fit(u)
-copula_g.fit(u)
-
-gof_result_vine = gof_test(vine, u, to_pobs=False)
-gof_result_s = gof_test(copula_s, u, to_pobs=False)
-gof_result_g = gof_test(copula_g, u, to_pobs=False)
+gof_vine = gof_test(vine, u6, to_pobs=False)
 ```
 
 Results on 6-dimensional crypto data (T = 250):
 
-| Model | logL | GoF p-value | Fit time |
-|-------|------|-------------|----------|
-| **C-vine SCAR-TM** | **921.9** | **0.8971** | 13.4s |
-| C-vine MLE | 869.2 | 0.2072 | 0.6s |
-| Student-t | 764.4 | 0.0001 | — |
-| Gaussian | 761.0 | 0.0000 | — |
+| Model | logL | GoF p-value |
+|-------|------|-------------|
+| **C-vine SCAR-TM** | **921.9** | **0.90** |
+| C-vine MLE | 869.2 | 0.21 |
+| Student-t | 764.4 | 0.00 |
 
-The C-vine with SCAR-TM substantially outperforms all alternatives. With truncation (`truncation_level=2, min_edge_logL=10`), only 9 of 15 edges use SCAR — the remaining 6 fall back to MLE — achieving a good speed/accuracy tradeoff.
-
-<a name="risk-metrics"></a>
-### 5. Risk metrics (VaR / CVaR)
-
-Risk metrics are provided in `pyscarcopula.contrib` — optional modules for rolling VaR/CVaR estimation, marginal distribution fitting, and portfolio optimization.
+### 6. Risk metrics (VaR / CVaR)
 
 ```python
 from pyscarcopula.contrib.risk_metrics import risk_metrics
 
-d = len(tickers)
 result = risk_metrics(
-    vine, returns, 
-    window_len=100,
-    gamma=[0.95],
-    N_mc=[100_000],
+    GumbelCopula(rotate=180),
+    returns_6d, window_len=100,
+    gamma=[0.95], N_mc=[100_000],
     marginals_method='johnsonsu',
     method='mle',
     optimize_portfolio=False,
-    portfolio_weight=np.ones(d) / d,
-    n_jobs=-1,  # parallel over rolling windows
+    portfolio_weight=np.ones(6) / 6,
+    n_jobs=-1,
 )
 
 var = result[0.95][100_000]['var']
 cvar = result[0.95][100_000]['cvar']
 ```
 
-See `example.ipynb` for a complete walkthrough with plots.
-
-## New stateless API (v0.3+)
-
-Starting from v0.3, `pyscarcopula` provides a functional API where copulas are stateless and fit results are immutable typed dataclasses. The old `copula.fit()` API continues to work for backward compatibility.
-
-```python
-from pyscarcopula import GumbelCopula
-from pyscarcopula.api import fit, smoothed_params, mixture_h
-from pyscarcopula._utils import pobs
-
-# Copula is stateless — no .fit_result attribute
-copula = GumbelCopula(rotate=180)
-
-# fit() returns an immutable LatentResult (not OptimizeResult)
-result = fit(copula, returns, method='scar-tm-ou', to_pobs=True)
-
-# result is a typed frozen dataclass
-result.log_likelihood   # float
-result.params.theta     # OU mean-reversion rate
-result.params.mu        # OU mean level
-result.params.nu        # OU diffusion coefficient
-result.K                # grid size used
-
-# Time-varying copula parameter: E[Psi(x_k) | u_{1:k-1}]
-u = pobs(returns)
-r_t = smoothed_params(copula, u, result)
-
-# Vine pseudo-observation propagation
-h_vals = mixture_h(copula, u, result)
-```
-
-The strategy pattern makes it easy to add new estimation methods:
-
-```python
-from pyscarcopula.strategy import get_strategy, list_methods
-
-list_methods()
-# ['GAS', 'MLE', 'SCAR-M-OU', 'SCAR-P-OU', 'SCAR-TM-OU']
-
-strategy = get_strategy('scar-tm-ou', K=500, pts_per_sigma=4)
-result = strategy.fit(copula, u)
-```
-
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the full module map and design decisions.
+See `example_new_api.ipynb` for a complete walkthrough with plots.
 
 ## Performance tuning
-
-The SCAR-TM-OU method has several parameters that control the speed/accuracy tradeoff. Here are recommended configurations:
 
 ### Bivariate copula
 
 ```python
 copula = GumbelCopula(rotate=180)
-
-# Default (analytical gradient + smart init, both enabled by default)
-copula.fit(u, method='scar-tm-ou')
-
-# Disable optimizations for debugging / backward compatibility
-copula.fit(u, method='scar-tm-ou', analytical_grad=False, smart_init=False)
+result = fit(copula, u, method='scar-tm-ou')
 
 # Relaxed tolerance (faster, slight logL loss)
-copula.fit(u, method='scar-tm-ou', tol=5e-2)
+result = fit(copula, u, method='scar-tm-ou', tol=5e-2)
 ```
 
 | Parameter | Default | Effect |
@@ -339,64 +229,35 @@ copula.fit(u, method='scar-tm-ou', tol=5e-2)
 | `analytical_grad` | `True` | Analytical gradient. ~3-4x fewer function evaluations. |
 | `smart_init` | `True` | Heuristic initial point. Up to 5x speedup on long series. |
 | `tol` | `1e-2` | Gradient tolerance. `5e-2` is ~2x faster with negligible logL loss. |
-| `K` | `300` | Minimum grid size. The adaptive rule may increase it to ensure adequate resolution of the transition kernel. |
-| `pts_per_sigma` | `2` | Grid density: number of points per conditional standard deviation $\sigma_c$. The adaptive rule computes $K_\text{eff} = \max(K,\, \lceil 2R\sigma / (\sigma_c / \texttt{pts\_per\_sigma}) \rceil)$, where $R$ is the grid half-range in $\sigma$ units. Higher values improve quadrature accuracy at the cost of larger $K$ and longer runtime. The default of 2 is sufficient for most cases; increasing to 4 may help for very peaked transition kernels (large $\theta$, small $\nu$). |
+| `K` | `300` | Minimum grid size. The adaptive rule may increase it. |
+| `pts_per_sigma` | `2` | Grid density: points per conditional standard deviation. Higher values improve quadrature accuracy at the cost of larger K. |
 
 ### Vine copula
 
 ```python
 vine = CVineCopula()
-
-# Recommended: skip SCAR on weak edges and upper trees
 vine.fit(u, method='scar-tm-ou', truncation_level=2, min_edge_logL=10)
 ```
 
 | Parameter | Default | Effect |
 |---|---|---|
-| `truncation_level` | `None` | Trees ≥ this level stay MLE. Recommended: 2-3 for d > 10. |
+| `truncation_level` | `None` | Trees >= this level stay MLE. Recommended: 2-3 for d > 10. |
 | `min_edge_logL` | `None` | Edges with MLE logL below threshold stay MLE. Recommended: 5-10. |
 
-Truncated edges use MLE (constant parameter). The GoF test handles mixed SCAR/MLE models correctly.
-
-**d=6 crypto, T=250:**
-
-| Configuration | Time | logL | GoF p-value |
-|---|---|---|---|
-| `truncation_level=2, min_edge_logL=10` | ~13s | ~922 | ~0.90 |
-| Full SCAR (15 edges) | ~30s | ~891 | ~0.90 |
-| MLE only | ~0.6s | ~869 | ~0.21 |
 
 ## Architecture
 
-The codebase is organized in 5 layers with strictly top-down dependencies:
+The codebase is organized in layers with top-down dependencies:
 
 | Layer | Directory | Responsibility |
 |-------|-----------|----------------|
-| API | `api.py` | Stateless entry points: `fit()`, `smoothed_params()` |
-| Strategy | `strategy/` | Estimation methods: MLE, SCAR-TM, GAS (Strategy pattern) |
-| Copula | `copula/` | Pure math: PDF, h-functions, transforms (stateless) |
-| Numerical | `numerical/` | TM grid, gradient, MC samplers, OU kernels (Numba) |
+| API | `api.py` | Entry points: `fit()`, `smoothed_params()`, `mixture_h()` |
+| Strategy | `strategy/` | Estimation methods: MLE, SCAR-TM, GAS |
+| Copula | `copula/` | Pure math: PDF, h-functions, transforms |
+| Numerical | `numerical/` | TM grid, gradient, MC samplers, OU kernels |
 | Types | `_types.py`, `_utils.py` | Typed results, config, shared utilities |
 
-Key design decisions:
-- **Copulas have no mutable state** — `fit()` lives in `api.py`, not on the copula object
-- **Fit results are frozen dataclasses** — `MLEResult`, `LatentResult`, `GASResult`
-- **`LatentProcessParams`** supports any number of named parameters — OU has 3, future Lévy may have 4
-- **`@register_strategy`** decorator — adding a new method = adding one file
-
-For the full module map, see [ARCHITECTURE.md](ARCHITECTURE.md).
-
-<!-- ## Citation
-
-If you use this package in your research, please cite:
-
-```bibtex
-@article{novokhatskiy2026scar,
-  title={A Transfer Matrix Approach for Deterministic Likelihood Evaluation in Stochastic Copula Models},
-  author={Novokhatskiy, A. A. and Semenov, M. E.},
-  year={2026}
-}
-``` -->
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the full module map.
 
 ## License
 

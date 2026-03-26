@@ -7,7 +7,7 @@ pyscarcopula works with pseudo-observations — uniform marginals obtained from 
 ```python
 import pandas as pd
 import numpy as np
-from pyscarcopula.utils import pobs
+from pyscarcopula._utils import pobs
 
 prices = pd.read_csv("data/crypto_prices.csv", index_col=0, sep=';')
 returns = np.log(prices[['BTC-USD', 'ETH-USD']] /
@@ -19,17 +19,18 @@ u = pobs(returns)
 
 ```python
 from pyscarcopula import GumbelCopula
+from pyscarcopula.api import fit, smoothed_params
+
+copula = GumbelCopula(rotate=180)
 
 # Constant parameter (MLE)
-copula_mle = GumbelCopula(rotate=180)
-copula_mle.fit(u, method='mle')
+result_mle = fit(copula, u, method='mle')
 
 # Time-varying parameter (SCAR)
-copula = GumbelCopula(rotate=180, transform_type='softplus')
-copula.fit(u, method='scar-tm-ou')
+result_tm = fit(copula, u, method='scar-tm-ou')
 
-print(f"MLE:  logL = {copula_mle.fit_result.log_likelihood:.2f}")
-print(f"SCAR: logL = {copula.fit_result.log_likelihood:.2f}")
+print(f"MLE:  logL = {result_mle.log_likelihood:.2f}")
+print(f"SCAR: logL = {result_tm.log_likelihood:.2f}")
 ```
 
 ## Goodness-of-fit test
@@ -37,15 +38,15 @@ print(f"SCAR: logL = {copula.fit_result.log_likelihood:.2f}")
 ```python
 from pyscarcopula.stattests import gof_test
 
-gof = gof_test(copula, u, to_pobs=False)
+gof = gof_test(copula, u, fit_result=result_tm, to_pobs=False)
 print(f"p-value = {gof.pvalue:.4f}")
 ```
 
 ## Smoothed copula parameter
 
 ```python
-theta_t = copula.smoothed_params(u)
-# theta_t[k] = E[Psi(x_k) | u_{1:k-1}]
+r_t = smoothed_params(copula, u, result_tm)
+# r_t[k] = E[Psi(x_k) | u_{1:k-1}]
 ```
 
 ## Fit a multivariate C-vine
@@ -59,15 +60,14 @@ u6 = pobs(returns_6d)
 
 vine = CVineCopula()
 vine.fit(u6, method='scar-tm-ou',
-         truncation_level=2, min_edge_logL=10,
-         transform_type='softplus')
+         truncation_level=2, min_edge_logL=10)
 vine.summary()
 ```
 
 ## Available copula families
 
 | Family | Class | Rotations | SCAR support |
-|--------|-------|-----------|--------------|
+|--------|-------|-----------|--------------| 
 | Gumbel | `GumbelCopula` | 0, 90, 180, 270 | Yes |
 | Clayton | `ClaytonCopula` | 0, 90, 180, 270 | Yes |
 | Frank | `FrankCopula` | 0 | Yes |

@@ -8,21 +8,21 @@ $$\theta_t = \Psi(x_t), \qquad dx_t = \theta_\text{OU}(\mu - x_t)\,dt + \nu\,dW_
 
 The three OU parameters control:
 
-- $\theta_\text{OU}$ — mean-reversion speed
-- $\mu$ — long-run mean of the latent process
-- $\nu$ — volatility of the latent process
+- θ_OU — mean-reversion speed
+- μ — long-run mean of the latent process
+- ν — volatility of the latent process
 
 ## Fitting
 
 ```python
 from pyscarcopula import GumbelCopula
+from pyscarcopula.api import fit
 
-copula = GumbelCopula(rotate=180, transform_type='softplus')
-result = copula.fit(u, method='scar-tm-ou')
+copula = GumbelCopula(rotate=180)
+result = fit(copula, u, method='scar-tm-ou')
 
-print(result.alpha)            # (theta_OU, mu, nu)
+print(result.params.theta, result.params.mu, result.params.nu)
 print(result.log_likelihood)
-print(result.nfev)             # function evaluations
 ```
 
 ## Rotations
@@ -43,24 +43,19 @@ For financial data (joint crashes), `GumbelCopula(rotate=180)` or `ClaytonCopula
 ### Smoothed parameter
 
 ```python
-theta_t = copula.smoothed_params(u)
+from pyscarcopula.api import smoothed_params
+
+r_t = smoothed_params(copula, u, result)
 ```
 
-Returns the filtered copula parameter at each time step — the expectation under the predictive distribution.
+Returns the filtered copula parameter at each time step.
 
 ### Goodness of fit
 
 ```python
 from pyscarcopula.stattests import gof_test
-gof = gof_test(copula, u, to_pobs=False)
+
+gof = gof_test(copula, u, fit_result=result, to_pobs=False)
 ```
 
-Uses the Rosenblatt transform with Cramér-von Mises statistic. For SCAR models, integrates the h-function over the predictive distribution of the latent state (mixture Rosenblatt).
-
-### Predictive distribution
-
-```python
-z_grid, prob = copula.xT_distribution(u)
-```
-
-Returns the grid and probability weights for the latent state at time T.
+Uses the Rosenblatt transform with Cramér-von Mises statistic. For SCAR models, integrates the h-function over the predictive distribution (mixture Rosenblatt).

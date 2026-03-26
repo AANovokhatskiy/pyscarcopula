@@ -1,24 +1,25 @@
 # Copulas API
 
+## Top-level API
+
+::: pyscarcopula.api.fit
+
+::: pyscarcopula.api.smoothed_params
+
+::: pyscarcopula.api.mixture_h
+
 ## BivariateCopula (base class)
 
 ::: pyscarcopula.copula.base.BivariateCopula
     options:
       members:
-        - fit
         - pdf
         - log_pdf
         - h
         - h_inverse
         - sample
-        - predict
-        - smoothed_params
-        - xT_distribution
         - transform
         - inv_transform
-        - pdf_on_grid
-        - pdf_and_grad_on_grid
-        - pdf_and_grad_on_grid_batch
 
 ## GumbelCopula
 
@@ -53,9 +54,7 @@
 ::: pyscarcopula.copula.independent.IndependentCopula
     options:
       show_bases: false
-      members:
-        - fit
-        - h_unrotated
+      members: false
 
 ## GaussianCopula
 
