@@ -4,9 +4,9 @@ import pytest
 from pyscarcopula import (
     GumbelCopula, ClaytonCopula, FrankCopula, JoeCopula,
 )
-from pyscarcopula.copula.base import _broadcast
-from pyscarcopula.latent.ou_process import _tm_loglik_with_grad, _tm_loglik
-from pyscarcopula.utils import pobs
+from pyscarcopula._utils import broadcast
+from pyscarcopula.numerical.tm_gradient import tm_loglik_with_grad
+from pyscarcopula.numerical.tm_functions import tm_loglik
 
 
 # ═══════════════════════════════════════════════════════════
@@ -36,7 +36,7 @@ def test_dlogc_dr(cls, rot, r_vals):
     for r_val in r_vals:
         for u1_val in u_vals:
             for u2_val in u_vals:
-                u1a, u2a, ra = _broadcast(
+                u1a, u2a, ra = broadcast(
                     np.array([u1_val]), np.array([u2_val]), np.array([r_val]))
                 v1, v2 = cop._apply_rotation(u1a, u2a)
                 ana = cop.dlog_pdf_dr_unrotated(v1, v2, ra)[0]
@@ -69,7 +69,6 @@ def test_pdf_and_grad_on_grid(cls, rot, r_vals):
     fi_m = cop.copula_grid_batch(u_test, x_grid - eps)
     dfi_num = (fi_p - fi_m) / (2.0 * eps)
 
-    # Relative error, ignoring near-zero values
     mask = np.abs(dfi_num) > 1e-10
     if mask.any():
         rel_err = np.abs(dfi[mask] - dfi_num[mask]) / np.abs(dfi_num[mask])
@@ -92,15 +91,15 @@ def test_tm_loglik_gradient(cls, rot, crypto_data):
     u = crypto_data[:300]
     alpha = np.array([10.0, 2.0, 5.0])
 
-    val, grad = _tm_loglik_with_grad(*alpha, u, cop, K=80)
+    val, grad = tm_loglik_with_grad(*alpha, u, cop, K=80)
 
     eps = 1e-5
     grad_num = np.zeros(3)
     for k in range(3):
         a_p = alpha.copy(); a_p[k] += eps
         a_m = alpha.copy(); a_m[k] -= eps
-        vp = _tm_loglik(*a_p, u, cls(rotate=rot), K=80)
-        vm = _tm_loglik(*a_m, u, cls(rotate=rot), K=80)
+        vp = tm_loglik(*a_p, u, cls(rotate=rot), K=80)
+        vm = tm_loglik(*a_m, u, cls(rotate=rot), K=80)
         grad_num[k] = (vp - vm) / (2 * eps)
 
     rel_errs = np.abs(grad - grad_num) / (np.abs(grad_num) + 1e-10)
