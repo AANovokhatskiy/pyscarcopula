@@ -513,7 +513,11 @@ def equicorr_rosenblatt_transform(copula, u, K=300, grid_range=5.0):
     # SCAR: mixture Rosenblatt via TM forward pass
     from pyscarcopula.numerical.tm_grid import TMGrid as _TMGrid
 
-    theta, mu, nu = copula.fit_result.alpha
+    fr = copula.fit_result
+    if hasattr(fr, 'params') and hasattr(fr.params, 'values'):
+        theta, mu, nu = fr.params.values
+    else:
+        theta, mu, nu = fr.alpha
     grid = _TMGrid(theta, mu, nu, T, K, grid_range)
     x_grid = grid.z + grid.mu
     rho_grid = copula.transform(x_grid)

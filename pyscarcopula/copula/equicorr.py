@@ -375,11 +375,9 @@ class EquicorrGaussianCopula(BivariateCopula):
         if method.upper() == 'MLE':
             return self._fit_mle(u)
 
-        # For SCAR: delegate to OULatentProcess
-        from pyscarcopula.latent.ou_process import OULatentProcess
-        if self._latent is None:
-            self._latent = OULatentProcess(self)
-        result = self._latent.fit(u, method=method, **kwargs)
+        # For SCAR/GAS: use strategy
+        from pyscarcopula.api import fit as _api_fit
+        result = _api_fit(self, u, method=method, **kwargs)
         self.fit_result = result
         return result
 
@@ -411,8 +409,15 @@ class EquicorrGaussianCopula(BivariateCopula):
         """Sample from stationary OU distribution."""
         if self.fit_result is None:
             raise ValueError("Fit first")
-        if hasattr(self.fit_result, 'alpha') and len(self.fit_result.alpha) == 3:
-            theta, mu, nu = self.fit_result.alpha
+        # Extract alpha from either old (result.alpha) or new (result.params.values)
+        alpha = None
+        if hasattr(self.fit_result, 'params') and hasattr(self.fit_result.params, 'values'):
+            alpha = self.fit_result.params.values
+        elif hasattr(self.fit_result, 'alpha') and len(self.fit_result.alpha) == 3:
+            alpha = self.fit_result.alpha
+
+        if alpha is not None:
+            theta, mu, nu = alpha
             sigma2 = nu ** 2 / (2.0 * theta)
             if rng is None:
                 rng = np.random.default_rng()
@@ -426,11 +431,29 @@ class EquicorrGaussianCopula(BivariateCopula):
 
     def smoothed_params(self, u):
         """Return smoothed rho(t) from TM forward pass."""
-        if self._latent is None:
+        if self.fit_result is None:
             raise ValueError("Fit with SCAR first")
-        return self._latent.smoothed_params(u)
+        alpha = None
+        if hasattr(self.fit_result, 'params') and hasattr(self.fit_result.params, 'values'):
+            alpha = self.fit_result.params.values
+        elif hasattr(self.fit_result, 'alpha'):
+            alpha = self.fit_result.alpha
+        if alpha is None:
+            raise ValueError("No SCAR parameters found")
+        from pyscarcopula.numerical.tm_functions import tm_forward_smoothed
+        theta, mu, nu = alpha
+        return tm_forward_smoothed(theta, mu, nu, u, self)
 
     def xT_distribution(self, u, K=300, grid_range=5.0):
-        if self._latent is None:
+        if self.fit_result is None:
             raise ValueError("Fit with SCAR first")
-        return self._latent.xT_distribution(u, K=K, grid_range=grid_range)
+        alpha = None
+        if hasattr(self.fit_result, 'params') and hasattr(self.fit_result.params, 'values'):
+            alpha = self.fit_result.params.values
+        elif hasattr(self.fit_result, 'alpha'):
+            alpha = self.fit_result.alpha
+        if alpha is None:
+            raise ValueError("No SCAR parameters found")
+        from pyscarcopula.numerical.tm_functions import tm_xT_distribution
+        theta, mu, nu = alpha
+        return tm_xT_distribution(theta, mu, nu, u, self, K, grid_range)
