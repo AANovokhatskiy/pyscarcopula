@@ -22,7 +22,7 @@ For parameter estimation we provide five methods:
 | Maximum likelihood | `mle` | Classical fit with constant copula parameter |
 | MC p-sampler | `scar-p-ou` | Monte Carlo without importance sampling |
 | MC m-sampler | `scar-m-ou` | Monte Carlo with efficient importance sampling (EIS) |
-| **Transfer matrix** | **`scar-tm-ou`** | **Deterministic quadrature on a grid — numerically exact, no MC bias** |
+| **Transfer matrix** | **`scar-tm-ou`** | **Deterministic quadrature on a grid — no MC variance or bias** |
 | GAS | `gas` | Generalized autoregressive score (observation-driven, deterministic) |
 
 The transfer matrix method exploits the Markov structure and known Gaussian transition density of the OU process to evaluate the likelihood function as a sequence of matrix-vector products. The implementation automatically selects between dense and sparse transfer matrices depending on the kernel bandwidth, and adaptively refines the grid to resolve the transition kernel.
