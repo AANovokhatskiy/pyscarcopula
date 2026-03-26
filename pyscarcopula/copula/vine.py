@@ -58,7 +58,10 @@ class VineEdge:
             n = T if T is not None else len(u_pair)
             return np.full(n, self.fit_result.copula_param)
         else:
-            return self.copula.smoothed_params(u_pair)
+            alpha = _get_alpha(self.fit_result)
+            from pyscarcopula.numerical.tm_functions import tm_forward_smoothed
+            theta, mu, nu = alpha
+            return tm_forward_smoothed(theta, mu, nu, u_pair, self.copula)
 
     def get_r_predict(self, n):
         """
@@ -70,11 +73,29 @@ class VineEdge:
         if method.upper() == 'MLE':
             return np.full(n, self.fit_result.copula_param)
         else:
-            alpha = self.fit_result.alpha
+            alpha = _get_alpha(self.fit_result)
             theta, mu, nu = alpha
             sigma2 = nu ** 2 / (2.0 * theta)
             x_T = np.random.normal(mu, np.sqrt(sigma2), n)
             return self.copula.transform(x_T)
+
+
+def _get_alpha(fit_result):
+    """Extract (theta, mu, nu) from fit_result (old or new API)."""
+    if hasattr(fit_result, 'params') and hasattr(fit_result.params, 'values'):
+        return fit_result.params.values
+    if hasattr(fit_result, 'alpha'):
+        return fit_result.alpha
+    raise AttributeError(f"Cannot extract alpha from {type(fit_result)}")
+
+
+def _get_gas_params(fit_result):
+    """Extract (omega, alpha, beta) from fit_result (old or new API)."""
+    if hasattr(fit_result, 'params') and hasattr(fit_result.params, 'values'):
+        return fit_result.params.values
+    if hasattr(fit_result, 'gas_params'):
+        return fit_result.gas_params
+    raise AttributeError(f"Cannot extract gas_params from {type(fit_result)}")
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -157,7 +178,8 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
                     cop = cop_class(rotate=angle, transform_type=transform_type)
                 except TypeError:
                     cop = cop_class(rotate=angle)
-                result = cop.fit(u_pair, method='mle')
+                from pyscarcopula.api import fit as _api_fit
+                result = _api_fit(cop, u_pair, method='mle')
                 logL = result.log_likelihood
                 n_params = 1  # MLE has 1 parameter for archimedean
 
@@ -204,7 +226,7 @@ def _edge_h(edge, u2, u1, u_pair, K=300, grid_range=5.0):
 
     elif method == 'GAS':
         from pyscarcopula.latent.gas_process import _gas_mixture_h
-        alpha = edge.fit_result.alpha
+        alpha = _get_gas_params(edge.fit_result)
         scaling = getattr(edge.fit_result, 'scaling', 'unit')
         return _gas_mixture_h(alpha[0], alpha[1], alpha[2],
                               u_pair, edge.copula, scaling)
@@ -212,7 +234,7 @@ def _edge_h(edge, u2, u1, u_pair, K=300, grid_range=5.0):
     else:
         # SCAR-TM-OU: mixture h via transfer matrix
         from pyscarcopula.numerical.tm_functions import tm_forward_mixture_h as _tm_forward_mixture_h
-        alpha = edge.fit_result.alpha
+        alpha = _get_alpha(edge.fit_result)
         theta, mu, nu = alpha
         return _tm_forward_mixture_h(theta, mu, nu, u_pair,
                                       edge.copula, K, grid_range)
@@ -222,7 +244,7 @@ def _edge_h(edge, u2, u1, u_pair, K=300, grid_range=5.0):
 # Helper: edge log-likelihood dispatch
 # ══════════════════════════════════════════════════════════════════
 
-def _edge_log_likelihood(edge, u_pair):
+def _edge_log_likelihood(edge, u_pair, K=300, grid_range=5.0):
     """
     Compute log-likelihood for one edge using the correct method.
 
@@ -230,15 +252,31 @@ def _edge_log_likelihood(edge, u_pair):
     GAS:  sum log c(u1, u2; Psi(f_t))  (score-driven filter)
     SCAR: log integral (transfer matrix likelihood)
     """
-    method = edge.method.lower()
+    from pyscarcopula.copula.independent import IndependentCopula
+    if isinstance(edge.copula, IndependentCopula):
+        return 0.0
+
+    method = edge.method.lower() if edge.method else 'mle'
     cop = edge.copula
-    alpha = edge.fit_result.alpha if hasattr(edge.fit_result, 'alpha') else edge.fit_result.copula_param
 
     if method == 'mle':
-        alpha = edge.fit_result.copula_param
-    
-    ll = cop.mlog_likelihood(alpha=alpha, u=u_pair, method=method)
-    return -ll  # mlog_likelihood returns minus log-likelihood
+        r = edge.fit_result.copula_param
+        u1 = u_pair[:, 0]
+        u2 = u_pair[:, 1]
+        return np.sum(cop.log_pdf(u1, u2, np.full(len(u1), float(r))))
+
+    elif method == 'gas':
+        from pyscarcopula.latent.gas_process import _gas_loglik
+        alpha = _get_gas_params(edge.fit_result)
+        scaling = getattr(edge.fit_result, 'scaling', 'unit')
+        return -_gas_loglik(alpha[0], alpha[1], alpha[2],
+                            u_pair, cop, scaling)
+
+    else:
+        from pyscarcopula.numerical.tm_functions import tm_loglik
+        alpha = _get_alpha(edge.fit_result)
+        theta, mu, nu = alpha
+        return -tm_loglik(theta, mu, nu, u_pair, cop, K, grid_range)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -383,7 +421,8 @@ class CVineCopula:
                         cop = cop_class(rotate=rotation, transform_type=transform_type)
                     except TypeError:
                         cop = cop_class(rotate=rotation)
-                    result = cop.fit(u_pair, method='mle')
+                    from pyscarcopula.api import fit as _api_fit
+                    result = _api_fit(cop, u_pair, method='mle')
                 else:
                     # Automatic selection via AIC/BIC
                     cop, result = select_best_copula(
@@ -402,18 +441,22 @@ class CVineCopula:
                 )
 
                 if not skip_dynamic:
+                    from pyscarcopula.api import fit as _api_fit
                     scar_kwargs = {kk: vv for kk, vv in kwargs.items()
                                    if kk != 'alpha0'}
-                    result = cop.fit(u_pair, method=method,
-                                     alpha0=kwargs.get('alpha0'),
-                                     **scar_kwargs)
+                    result = _api_fit(cop, u_pair, method=method,
+                                      alpha0=kwargs.get('alpha0'),
+                                      **scar_kwargs)
 
                 edge.copula = cop
                 edge.fit_result = result
-                edge.copula_param = (result.alpha
-                                     if hasattr(result, 'alpha')
-                                     and len(np.atleast_1d(result.alpha)) == 3
-                                     else result.copula_param)
+                # Store copula_param: scalar for MLE, array for SCAR
+                if hasattr(result, 'params') and hasattr(result.params, 'values'):
+                    edge.copula_param = result.params.values
+                elif hasattr(result, 'alpha') and len(np.atleast_1d(result.alpha)) == 3:
+                    edge.copula_param = result.alpha
+                else:
+                    edge.copula_param = result.copula_param
 
                 self.edges[j].append(edge)
 
@@ -488,7 +531,7 @@ class CVineCopula:
                 u_pair = np.column_stack((u1, u2))
 
                 edge = self.edges[j][i]
-                total_ll += _edge_log_likelihood(edge, u_pair)
+                total_ll += _edge_log_likelihood(edge, u_pair, K, grid_range)
 
             # Pseudo-obs for next tree: same h-dispatch as in fit()
             if j < d - 2:
@@ -655,12 +698,15 @@ class CVineCopula:
                 cop = edge.copula
                 name = cop.name
                 rot = cop._rotate
-                if edge.method == 'MLE':
+                if edge.method.upper() == 'MLE':
                     param = f"r={edge.fit_result.copula_param:.4f}"
-                    ll = edge.fit_result.log_likelihood
                 else:
-                    param = f"alpha={edge.fit_result.alpha}"
-                    ll = edge.fit_result.log_likelihood
+                    try:
+                        alpha = _get_alpha(edge.fit_result)
+                        param = f"alpha={alpha}"
+                    except AttributeError:
+                        param = f"params={edge.copula_param}"
+                ll = edge.fit_result.log_likelihood
                 total_ll += ll
                 rot_str = f" rot={rot}" if rot != 0 else ""
                 print(f"  Edge {edge.idx}: {name}{rot_str}, {param}, logL={ll:.2f}")
