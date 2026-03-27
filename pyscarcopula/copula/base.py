@@ -15,11 +15,8 @@ Optional overrides:
 
 import numpy as np
 from scipy.optimize import minimize
-from typing import Literal
 
 from pyscarcopula._utils import pobs
-
-METHODS = ('MLE', 'SCAR-P-OU', 'SCAR-M-OU', 'SCAR-TM-OU', 'GAS')
 
 
 # ── broadcast helper ──────────────────────────────────────────────
@@ -76,8 +73,6 @@ class BivariateCopula:
         self._name = "BivariateCopula"
         self._bounds = [(-np.inf, np.inf)]
         self.fit_result = None
-        self._latent = None  # OULatentProcess, created on demand
-        self._gas = None     # GASProcess, created on demand
 
     @property
     def name(self):
@@ -328,47 +323,12 @@ class BivariateCopula:
     # Negative log-likelihood evaluation
     # ══════════════════════════════════════════════════════════════
 
-    def mlog_likelihood(self, alpha, u, 
-                        method: Literal['mle', 'scar-p-ou', 'scar-m-ou', 
-                                        'scar-tm-ou', 'gas'],
-                        n_tr=500, M_iterations=3, seed=None,
-                        dwt=None, stationary=True,
-                        **kwargs):
-        """
-        Compute minus log-likelihood for given parameters.
-
-        Parameters
-        ----------
-        alpha : array
-            MLE: scalar or (1,) — copula parameter (untransformed).
-            SCAR: (3,) — [theta, mu, nu].
-            GAS: (3,) — [omega, alpha_gas, beta].
-        u : array (T, 2) — pseudo-observations
-        method : str — 'mle', 'scar-p-ou', 'scar-m-ou', 'scar-tm-ou', 'gas'
-        n_tr : int — MC trajectories (SCAR-P/M)
-        M_iterations : int — EIS iterations (SCAR-M)
-        seed : int or None
-        dwt : (T, n_tr) or None
-        stationary : bool
-        **kwargs
-        Forwarded to OULatentProcess.fit() for SCAR-TM method: K, grid_range, verbose, grid_method, adaptive, pts_per_sigma
-
-        Returns
-        -------
-        float : minus log-likelihood
-        """
-        from pyscarcopula.latent.ou_process import (
-            _p_sampler_loglik, _m_sampler_loglik,
-            _eis_find_auxiliary, _tm_loglik, OULatentProcess
-        )
-
+    def mlog_likelihood(self, alpha, u,
+                        method='mle', **kwargs):
+        """Compute minus log-likelihood. Delegates to numerical modules."""
         u = np.asarray(u, dtype=np.float64)
         alpha = np.asarray(alpha, dtype=np.float64)
         method_up = method.upper()
-
-        if method_up not in METHODS:
-            raise ValueError(
-                f"Unknown method '{method}'. Available: {list(METHODS)}")
 
         if method_up == 'MLE':
             r = alpha
@@ -379,71 +339,55 @@ class BivariateCopula:
             scaling = kwargs.get('scaling', 'unit')
             return _gas_loglik(alpha[0], alpha[1], alpha[2], u, self, scaling)
 
-        theta, mu, nu = alpha[0], alpha[1], alpha[2]
-        T_len = len(u)
-
         if method_up == 'SCAR-TM-OU':
-            return _tm_loglik(theta, mu, nu, u, self, **kwargs)
-
-        # MC methods need dwt
-        if dwt is None:
-            _seed = seed if seed is not None else np.random.randint(1, 1000000)
-            dwt = OULatentProcess.calculate_dwt(T_len, n_tr, _seed)
+            from pyscarcopula.numerical.tm_functions import tm_loglik
+            return tm_loglik(alpha[0], alpha[1], alpha[2], u, self, **kwargs)
 
         if method_up == 'SCAR-P-OU':
-            return _p_sampler_loglik(theta, mu, nu, u, dwt,
-                                    self, stationary)
+            from pyscarcopula.numerical.mc_samplers import p_sampler_loglik
+            from pyscarcopula.numerical.ou_kernels import calculate_dwt
+            dwt = kwargs.get('dwt')
+            if dwt is None:
+                dwt = calculate_dwt(len(u), kwargs.get('n_tr', 500),
+                                    kwargs.get('seed'))
+            return p_sampler_loglik(alpha[0], alpha[1], alpha[2],
+                                   u, dwt, self, kwargs.get('stationary', True))
 
-        elif method_up == 'SCAR-M-OU':
-            a1t, a2t = _eis_find_auxiliary(alpha, u, M_iterations,
-                                           dwt, self, stationary)
-            return _m_sampler_loglik(theta, mu, nu, u, dwt,
-                                    a1t, a2t, self, stationary)
+        if method_up == 'SCAR-M-OU':
+            from pyscarcopula.numerical.mc_samplers import (
+                m_sampler_loglik, eis_find_auxiliary)
+            from pyscarcopula.numerical.ou_kernels import calculate_dwt
+            dwt = kwargs.get('dwt')
+            if dwt is None:
+                dwt = calculate_dwt(len(u), kwargs.get('n_tr', 500),
+                                    kwargs.get('seed'))
+            a1t, a2t = eis_find_auxiliary(
+                alpha, u, kwargs.get('M_iterations', 3),
+                dwt, self, kwargs.get('stationary', True))
+            return m_sampler_loglik(alpha[0], alpha[1], alpha[2],
+                                   u, dwt, a1t, a2t, self,
+                                   kwargs.get('stationary', True))
+
+        raise ValueError(f"Unknown method '{method}'")
 
     # ══════════════════════════════════════════════════════════════
-    # Unified fit — single entry point for all methods
+    # Fit — delegates to api.fit()
     # ══════════════════════════════════════════════════════════════
 
-    def fit(self, data, method: Literal['mle', 'scar-p-ou', 'scar-m-ou', 
-                                        'scar-tm-ou', 'gas'] = 'scar-tm-ou', 
-            to_pobs=False, **kwargs):
-        """
-        Fit the copula to data.
+    def fit(self, data, method='scar-tm-ou', to_pobs=False, **kwargs):
+        """Fit the copula. Delegates to pyscarcopula.api.fit()."""
+        from pyscarcopula.api import fit as _api_fit
 
-        Parameters
-        ----------
-        data : array (T, 2)
-            Log-returns or pseudo-observations.
-        method : str
-            'mle', 'scar-p-ou', 'scar-m-ou', 'scar-tm-ou', 'gas'
-        to_pobs : bool
-            If True, transform data to pseudo-observations first.
-        **kwargs
-            SCAR methods: alpha0, tol, n_tr, M_iterations, seed, dwt,
-                          stationary, K, grid_range, verbose
-            GAS method:   alpha0, tol, verbose, scaling
-
-        Returns
-        -------
-        scipy.optimize.OptimizeResult with extra fields:
-            .method, .name, .log_likelihood
-            .copula_param (MLE), .alpha (SCAR), or .gas_params (GAS)
-        """
         u = np.asarray(data, dtype=np.float64)
         if to_pobs:
             u = pobs(u)
 
-        method_up = method.upper()
-        if method_up not in METHODS:
-            raise ValueError(
-                f"Unknown method '{method}'. Available: {list(METHODS)}")
-
-        if method_up == 'MLE':
+        if method.upper() == 'MLE':
             return self._fit_mle(u)
-        elif method_up == 'GAS':
-            return self._fit_gas(u, **kwargs)
-        else:
-            return self._fit_scar(u, method_up, **kwargs)
+
+        result = _api_fit(self, u, method=method, **kwargs)
+        self.fit_result = result
+        return result
 
     def _fit_mle(self, u):
         """Fit constant copula parameter via MLE."""
@@ -461,88 +405,4 @@ class BivariateCopula:
         result.method = 'MLE'
         result.name = self.name
         self.fit_result = result
-        self._latent = None
         return result
-
-    def _fit_scar(self, u, method, **kwargs):
-        """Delegate SCAR fitting to OULatentProcess."""
-        from pyscarcopula.latent.ou_process import OULatentProcess
-
-        ou = OULatentProcess(self)
-        result = ou.fit(u, method=method, **kwargs)
-        self.fit_result = result
-        self._latent = ou
-        self._gas = None
-        return result
-
-    def _fit_gas(self, u, **kwargs):
-        """Delegate GAS fitting to GASProcess."""
-        from pyscarcopula.latent.gas_process import GASProcess
-
-        scaling = kwargs.pop('scaling', 'unit')
-        gas = GASProcess(self, scaling=scaling)
-        result = gas.fit(u, **kwargs)
-        self.fit_result = result
-        self._gas = gas
-        self._latent = None
-        return result
-
-    # ══════════════════════════════════════════════════════════════
-    # Forwarding methods (require prior SCAR or GAS fit)
-    # ══════════════════════════════════════════════════════════════
-
-    def smoothed_params(self, u, **kwargs):
-        """
-        Smoothed copula parameter for all time steps.
-        SCAR: E[Psi(x_k) | u_{1:k-1}] via transfer matrix forward pass.
-        GAS:  deterministic Psi(f_t).
-        """
-        if self._gas is not None:
-            return self._gas.smoothed_params(u, **kwargs)
-        self._require_latent('smoothed_params')
-        return self._latent.smoothed_params(u, **kwargs)
-
-    def xT_distribution(self, u, **kwargs):
-        """
-        Distribution of x_T on grid for VaR/CVaR scenarios.
-        Returns (z_grid, prob_weights).
-        Requires prior SCAR fit.
-        """
-        self._require_latent('xT_distribution')
-        return self._latent.xT_distribution(u, **kwargs)
-
-    def predict(self, n):
-        """
-        Generate pseudo-observations for prediction.
-        MLE: constant param.
-        SCAR: sample from x_T distribution.
-        GAS: use last filtered f_T.
-        """
-        if self.fit_result is None:
-            raise ValueError("Fit the model first")
-
-        method = self.fit_result.method.upper()
-
-        if method == 'MLE':
-            r = self.fit_result.copula_param
-        elif method == 'GAS':
-            # Use the last filtered copula parameter
-            r = self.fit_result.gas_params  # will need actual data; fall back to stationary mean
-            omega, alpha_g, beta = self.fit_result.gas_params
-            f_bar = omega / (1.0 - beta) if abs(beta) < 1.0 else omega
-            r = self.transform(f_bar)
-        else:
-            self._require_latent('predict')
-            alpha = self.fit_result.alpha
-            x_T = self._latent.final_state_sample(
-                alpha, n, method=self.fit_result.method)
-            r = self.transform(x_T)
-
-        return self.sample(n, r)
-
-    def _require_latent(self, method_name):
-        if self._latent is None:
-            raise ValueError(
-                f"{method_name}() requires a prior SCAR fit. "
-                f"Call copula.fit(data, method='scar-tm-ou') first."
-            )
