@@ -95,6 +95,25 @@ class FitStrategy(Protocol):
         """
         ...
 
+    def objective(self, copula, u: np.ndarray,
+                  alpha: np.ndarray, **kwargs) -> float:
+        """Minus log-likelihood at raw parameter array.
+
+        This is the function that optimizers minimize during fit().
+        Exposed for manual exploration, plotting, diagnostics.
+
+        Parameters
+        ----------
+        copula : CopulaProtocol
+        u : (T, 2) pseudo-observations
+        alpha : (n_params,) raw parameters
+
+        Returns
+        -------
+        float : -logL (returns 1e10 on failure)
+        """
+        ...
+
 
 # ══════════════════════════════════════════════════════════════════
 # Strategy registry — the one and only place with method dispatch

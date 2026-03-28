@@ -320,6 +320,38 @@ class BivariateCopula:
         return fi
 
     # ══════════════════════════════════════════════════════════════
+    # Negative log-likelihood evaluation (convenience)
+    # ══════════════════════════════════════════════════════════════
+
+    def mlog_likelihood(self, alpha, u, method='mle', **kwargs):
+        """Compute minus log-likelihood at given parameters.
+
+        Convenience method that delegates to the strategy's objective.
+        Useful for manual exploration, plotting likelihood surfaces, etc.
+
+        Parameters
+        ----------
+        alpha : array-like
+            Parameters: scalar for MLE, (3,) for SCAR/GAS.
+        u : (T, 2) pseudo-observations
+        method : str
+            'mle', 'scar-tm-ou', 'gas', 'scar-p-ou', 'scar-m-ou'
+        **kwargs
+            Forwarded to the strategy (K, grid_range, scaling, etc.)
+
+        Returns
+        -------
+        float : minus log-likelihood (for minimization)
+        """
+        from pyscarcopula.strategy._base import get_strategy
+
+        u = np.asarray(u, dtype=np.float64)
+        alpha = np.atleast_1d(np.asarray(alpha, dtype=np.float64))
+        strategy = get_strategy(method, **kwargs)
+
+        return strategy.objective(self, u, alpha, **kwargs)
+
+    # ══════════════════════════════════════════════════════════════
     # Fit — delegates to api.fit() / strategy
     # ══════════════════════════════════════════════════════════════
 
