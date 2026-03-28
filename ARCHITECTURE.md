@@ -23,17 +23,16 @@ pyscarcopula/
 │   ├── mle.py               # Constant parameter
 │   ├── scar_tm.py           # Transfer matrix + analytical gradient
 │   ├── scar_mc.py           # Monte Carlo (p-sampler, m-sampler with EIS)
-│   └── gas.py               # Score-driven (unit / fisher scaling)
+│   ├── gas.py               # Score-driven (unit / fisher scaling)
+│   └── initial_point.py     # Smart initial point for SCAR-TM-OU
 │
 ├── numerical/               # Computational kernels
 │   ├── ou_kernels.py        # Numba: OU path generation
 │   ├── tm_grid.py           # TMGrid: adaptive grid, dense/sparse operator
 │   ├── tm_functions.py      # loglik, smoothed, rosenblatt, mixture_h
 │   ├── tm_gradient.py       # Analytical gradient in xi-coordinates
-│   └── mc_samplers.py       # p-sampler, m-sampler, EIS regression
-│
-├── vine/                    # Vine constructions
-│   └── forward_pass.py      # vine_forward_iter(), vine_rosenblatt()
+│   ├── mc_samplers.py       # p-sampler, m-sampler, EIS regression
+│   └── gas_filter.py        # GAS filter, Rosenblatt, h-functions
 │
 ├── stattests.py             # GoF tests (Rosenblatt + CvM)
 │
@@ -75,7 +74,7 @@ FitResultBase (log_likelihood, method, copula_name, success)
 ├── MLEResult (copula_param)
 ├── LatentResult (params: LatentProcessParams, K, grid_range, ...)
 ├── GASResult (params: LatentProcessParams, scaling)
-└── IndependentResult ()
+└── IndependentResult (copula_param=0.0)
 ```
 
 ### NumericalConfig

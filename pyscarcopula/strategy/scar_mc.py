@@ -129,6 +129,19 @@ class SCARPStrategy(_SCARMCBase):
     def mixture_h(self, copula, u, result):
         raise NotImplementedError("Use SCAR-TM-OU for vine h-functions.")
 
+    def objective(self, copula, u: np.ndarray,
+                  alpha: np.ndarray, **kwargs) -> float:
+        """Minus log-likelihood via p-sampler (stochastic)."""
+        seed = kwargs.get('seed')
+        dwt = kwargs.get('dwt')
+        dwt_data = self._get_dwt(len(u), seed, dwt)
+        try:
+            return p_sampler_loglik(
+                alpha[0], alpha[1], alpha[2],
+                u, dwt_data, copula, self.stationary)
+        except Exception:
+            return 1e10
+
 
 @register_strategy('SCAR-M-OU')
 class SCARMStrategy(_SCARMCBase):
@@ -204,3 +217,19 @@ class SCARMStrategy(_SCARMCBase):
 
     def mixture_h(self, copula, u, result):
         raise NotImplementedError("Use SCAR-TM-OU for vine h-functions.")
+
+    def objective(self, copula, u: np.ndarray,
+                  alpha: np.ndarray, **kwargs) -> float:
+        """Minus log-likelihood via m-sampler with EIS (stochastic)."""
+        seed = kwargs.get('seed')
+        dwt = kwargs.get('dwt')
+        dwt_data = self._get_dwt(len(u), seed, dwt)
+        try:
+            a1t, a2t = eis_find_auxiliary(
+                alpha, u, self.M_iterations,
+                dwt_data, copula, self.stationary)
+            return m_sampler_loglik(
+                alpha[0], alpha[1], alpha[2],
+                u, dwt_data, a1t, a2t, copula, self.stationary)
+        except Exception:
+            return 1e10

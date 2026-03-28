@@ -85,3 +85,11 @@ class MLEStrategy:
                   result: MLEResult) -> np.ndarray:
         """h(u2, u1; r_mle) — same as rosenblatt_e2 for MLE."""
         return self.rosenblatt_e2(copula, u, result)
+
+    def objective(self, copula, u: np.ndarray,
+                  alpha: np.ndarray, **kwargs) -> float:
+        """Minus log-likelihood: -sum log c(u1, u2; alpha[0])."""
+        try:
+            return -float(np.sum(copula.log_pdf(u[:, 0], u[:, 1], alpha)))
+        except Exception:
+            return 1e10

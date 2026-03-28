@@ -96,7 +96,7 @@ class SCARTMStrategy:
         if alpha0 is None:
             if self.smart_init:
                 try:
-                    from pyscarcopula.latent.initial_point import smart_initial_point
+                    from pyscarcopula.strategy.initial_point import smart_initial_point
                     alpha0, init_info = smart_initial_point(
                         u, copula, verbose=verbose)
                     if verbose:
@@ -253,3 +253,14 @@ class SCARTMStrategy:
             p.theta, p.mu, p.nu, u, copula,
             self.K, self.grid_range, self.grid_method,
             self.adaptive, self.pts_per_sigma)
+
+    def objective(self, copula, u: np.ndarray,
+                  alpha: np.ndarray, **kwargs) -> float:
+        """Minus log-likelihood: TM integrated -logL(theta, mu, nu)."""
+        try:
+            return tm_loglik(
+                alpha[0], alpha[1], alpha[2], u, copula,
+                self.K, self.grid_range, self.grid_method,
+                self.adaptive, self.pts_per_sigma)
+        except Exception:
+            return 1e10

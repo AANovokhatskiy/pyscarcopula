@@ -137,3 +137,10 @@ class GASStrategy:
         return gas_mixture_h(
             p.omega, p.alpha, p.beta, u, copula,
             result.scaling, self.config.gas_score_eps)
+
+    def objective(self, copula, u: np.ndarray,
+                  alpha: np.ndarray, **kwargs) -> float:
+        """Minus log-likelihood: -logL(omega, alpha, beta)."""
+        return gas_negloglik(
+            alpha[0], alpha[1], alpha[2], u, copula,
+            self.scaling, self.config.gas_score_eps)
