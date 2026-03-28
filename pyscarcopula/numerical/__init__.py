@@ -7,6 +7,7 @@ Modules:
   tm_functions  — TM log-likelihood and forward-pass computations
   tm_gradient   — Analytical gradient in xi-coordinates
   mc_samplers   — Monte Carlo p-sampler, m-sampler, EIS
+  gas_filter    — GAS filter, Rosenblatt, h-functions
 """
 
 from pyscarcopula.numerical.tm_grid import TMGrid
@@ -19,6 +20,9 @@ from pyscarcopula.numerical.tm_functions import (
 )
 from pyscarcopula.numerical.tm_gradient import tm_loglik_with_grad
 from pyscarcopula.numerical.ou_kernels import calculate_dwt
+from pyscarcopula.numerical.gas_filter import (
+    gas_filter, gas_negloglik, gas_rosenblatt, gas_mixture_h,
+)
 
 __all__ = [
     'TMGrid',
@@ -26,4 +30,5 @@ __all__ = [
     'tm_forward_smoothed', 'tm_forward_rosenblatt',
     'tm_forward_mixture_h', 'tm_xT_distribution',
     'calculate_dwt',
+    'gas_filter', 'gas_negloglik', 'gas_rosenblatt', 'gas_mixture_h',
 ]

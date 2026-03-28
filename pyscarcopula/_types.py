@@ -181,6 +181,24 @@ class FitResultBase:
     nfev: int = 0
     message: str = ''
 
+    def _repr_lines(self) -> list[str]:
+        """Override in subclasses to add method-specific fields."""
+        return []
+
+    def __repr__(self) -> str:
+        lines = [
+            f"         copula: {self.copula_name}",
+            f"         method: {self.method}",
+            f" log_likelihood: {self.log_likelihood:.6f}",
+        ]
+        lines.extend(self._repr_lines())
+        lines.extend([
+            f"        success: {self.success}",
+            f"           nfev: {self.nfev}",
+            f"        message: {self.message}",
+        ])
+        return '\n'.join(lines)
+
 
 @dataclass(frozen=True)
 class MLEResult(FitResultBase):
@@ -191,6 +209,9 @@ class MLEResult(FitResultBase):
     @property
     def n_params(self) -> int:
         return 1
+
+    def _repr_lines(self) -> list[str]:
+        return [f"   copula_param: {self.copula_param:.6f}"]
 
 
 @dataclass(frozen=True)
@@ -221,6 +242,20 @@ class LatentResult(FitResultBase):
     def n_params(self) -> int:
         return self.params.n_params
 
+    def _repr_lines(self) -> list[str]:
+        lines = []
+        for name, val in zip(self.params.names, self.params.values):
+            lines.append(f"         {name:>5s}: {val:.6f}")
+        if self.K is not None:
+            lines.append(f"              K: {self.K}")
+        if self.grid_range is not None:
+            lines.append(f"     grid_range: {self.grid_range}")
+        if self.n_tr is not None:
+            lines.append(f"           n_tr: {self.n_tr}")
+        if self.M_iterations is not None:
+            lines.append(f"   M_iterations: {self.M_iterations}")
+        return lines
+
 
 @dataclass(frozen=True)
 class GASResult(FitResultBase):
@@ -246,10 +281,24 @@ class GASResult(FitResultBase):
     def n_params(self) -> int:
         return self.params.n_params
 
+    def _repr_lines(self) -> list[str]:
+        lines = []
+        for name, val in zip(self.params.names, self.params.values):
+            lines.append(f"         {name:>5s}: {val:.6f}")
+        lines.append(f"        scaling: {self.scaling}")
+        return lines
+
 
 @dataclass(frozen=True)
 class IndependentResult(FitResultBase):
-    """Result for IndependentCopula: 0 params, logL=0."""
+    """Result for IndependentCopula: 0 params, logL=0.
+
+    copula_param is always 0.0 — present for interface uniformity
+    so that code like edge.fit_result.copula_param works without
+    isinstance checks.
+    """
+
+    copula_param: float = 0.0
 
     @property
     def n_params(self) -> int:

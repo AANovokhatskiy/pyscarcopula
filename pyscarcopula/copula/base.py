@@ -14,7 +14,6 @@ Optional overrides:
 """
 
 import numpy as np
-from scipy.optimize import minimize
 
 from pyscarcopula._utils import pobs
 
@@ -88,7 +87,8 @@ class BivariateCopula:
 
     @staticmethod
     def list_of_methods():
-        return list(METHODS)
+        from pyscarcopula.strategy._base import list_methods
+        return list_methods()
 
     # ── transform ──────────────────────────────────────────────────
     @staticmethod
@@ -320,89 +320,26 @@ class BivariateCopula:
         return fi
 
     # ══════════════════════════════════════════════════════════════
-    # Negative log-likelihood evaluation
-    # ══════════════════════════════════════════════════════════════
-
-    def mlog_likelihood(self, alpha, u,
-                        method='mle', **kwargs):
-        """Compute minus log-likelihood. Delegates to numerical modules."""
-        u = np.asarray(u, dtype=np.float64)
-        alpha = np.asarray(alpha, dtype=np.float64)
-        method_up = method.upper()
-
-        if method_up == 'MLE':
-            r = alpha
-            return -self.log_likelihood(u, r)
-
-        if method_up == 'GAS':
-            from pyscarcopula.latent.gas_process import _gas_loglik
-            scaling = kwargs.get('scaling', 'unit')
-            return _gas_loglik(alpha[0], alpha[1], alpha[2], u, self, scaling)
-
-        if method_up == 'SCAR-TM-OU':
-            from pyscarcopula.numerical.tm_functions import tm_loglik
-            return tm_loglik(alpha[0], alpha[1], alpha[2], u, self, **kwargs)
-
-        if method_up == 'SCAR-P-OU':
-            from pyscarcopula.numerical.mc_samplers import p_sampler_loglik
-            from pyscarcopula.numerical.ou_kernels import calculate_dwt
-            dwt = kwargs.get('dwt')
-            if dwt is None:
-                dwt = calculate_dwt(len(u), kwargs.get('n_tr', 500),
-                                    kwargs.get('seed'))
-            return p_sampler_loglik(alpha[0], alpha[1], alpha[2],
-                                   u, dwt, self, kwargs.get('stationary', True))
-
-        if method_up == 'SCAR-M-OU':
-            from pyscarcopula.numerical.mc_samplers import (
-                m_sampler_loglik, eis_find_auxiliary)
-            from pyscarcopula.numerical.ou_kernels import calculate_dwt
-            dwt = kwargs.get('dwt')
-            if dwt is None:
-                dwt = calculate_dwt(len(u), kwargs.get('n_tr', 500),
-                                    kwargs.get('seed'))
-            a1t, a2t = eis_find_auxiliary(
-                alpha, u, kwargs.get('M_iterations', 3),
-                dwt, self, kwargs.get('stationary', True))
-            return m_sampler_loglik(alpha[0], alpha[1], alpha[2],
-                                   u, dwt, a1t, a2t, self,
-                                   kwargs.get('stationary', True))
-
-        raise ValueError(f"Unknown method '{method}'")
-
-    # ══════════════════════════════════════════════════════════════
-    # Fit — delegates to api.fit()
+    # Fit — delegates to api.fit() / strategy
     # ══════════════════════════════════════════════════════════════
 
     def fit(self, data, method='scar-tm-ou', to_pobs=False, **kwargs):
-        """Fit the copula. Delegates to pyscarcopula.api.fit()."""
+        """Fit the copula. Delegates to pyscarcopula.api.fit().
+
+        Convenience method: equivalent to
+            from pyscarcopula.api import fit
+            result = fit(copula, data, method=method, ...)
+
+        Returns
+        -------
+        FitResult (immutable dataclass)
+        """
         from pyscarcopula.api import fit as _api_fit
 
         u = np.asarray(data, dtype=np.float64)
         if to_pobs:
             u = pobs(u)
 
-        if method.upper() == 'MLE':
-            return self._fit_mle(u)
-
         result = _api_fit(self, u, method=method, **kwargs)
-        self.fit_result = result
-        return result
-
-    def _fit_mle(self, u):
-        """Fit constant copula parameter via MLE."""
-        x0_val = self.transform(np.array([1.5]))[0]
-        x0 = np.array([x0_val])
-        result = minimize(
-            lambda x: -self.log_likelihood(u, x[0]),
-            x0,
-            method='L-BFGS-B',
-            bounds=self.bounds,
-            options={'gtol': 1e-4, 'eps': 1e-5},
-        )
-        result.copula_param = result.x[0]
-        result.log_likelihood = -result.fun
-        result.method = 'MLE'
-        result.name = self.name
         self.fit_result = result
         return result

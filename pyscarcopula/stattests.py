@@ -80,9 +80,9 @@ def rosenblatt_transform_scar(copula, u, alpha, K=300, grid_range=5.0):
 
 def rosenblatt_transform_gas(copula, u, gas_params, scaling='unit'):
     """Rosenblatt for GAS (bivariate). Returns (T, 2)."""
-    from pyscarcopula.latent.gas_process import _gas_rosenblatt
+    from pyscarcopula.numerical.gas_filter import gas_rosenblatt
     omega, alpha_g, beta = gas_params
-    return _gas_rosenblatt(omega, alpha_g, beta, u, copula, scaling)
+    return gas_rosenblatt(omega, alpha_g, beta, u, copula, scaling)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -158,7 +158,7 @@ def _gof_bivariate(copula, data, to_pobs=True, seed=None, K=300, grid_range=5.0,
     K : int
     grid_range : float
     fit_result : FitResult or None
-        If provided, use this instead of copula.fit_result.
+        If None, uses copula.fit_result (set by copula.fit()).
     """
     from pyscarcopula._utils import pobs as compute_pobs
 
@@ -166,9 +166,10 @@ def _gof_bivariate(copula, data, to_pobs=True, seed=None, K=300, grid_range=5.0,
     if to_pobs:
         u = compute_pobs(u)
 
-    fr = fit_result if fit_result is not None else copula.fit_result
+    fr = fit_result if fit_result is not None else getattr(copula, 'fit_result', None)
     if fr is None:
-        raise ValueError("Fit the copula first, or pass fit_result=")
+        raise ValueError("No fit_result provided and copula has no fit_result. "
+                         "Call copula.fit() first or pass fit_result=.")
 
     method = fr.method.upper()
 
@@ -177,10 +178,10 @@ def _gof_bivariate(copula, data, to_pobs=True, seed=None, K=300, grid_range=5.0,
         e = rosenblatt_transform_mle(copula, u, r)
     elif method == 'GAS':
         scaling = getattr(fr, 'scaling', 'unit')
-        gp = fr.gas_params if hasattr(fr, 'gas_params') else fr.params.values
+        gp = fr.params.values
         e = rosenblatt_transform_gas(copula, u, gp, scaling)
     else:
-        alpha = fr.alpha if hasattr(fr, 'alpha') else fr.params.values
+        alpha = fr.params.values
         e = rosenblatt_transform_scar(copula, u, alpha, K, grid_range)
 
     return cvm_test(e, seed=seed)
@@ -469,7 +470,7 @@ def student_gof_test(copula, data, to_pobs=True, seed=None):
 # Equicorrelation Gaussian copula GoF
 # ══════════════════════════════════════════════════════════════════
 
-def equicorr_rosenblatt_transform(copula, u, K=300, grid_range=5.0):
+def equicorr_rosenblatt_transform(copula, u, fit_result, K=300, grid_range=5.0):
     """
     Rosenblatt transform for EquicorrGaussianCopula.
 
@@ -482,8 +483,10 @@ def equicorr_rosenblatt_transform(copula, u, K=300, grid_range=5.0):
 
     Parameters
     ----------
-    copula : EquicorrGaussianCopula (fitted)
+    copula : EquicorrGaussianCopula
     u : (T, d)
+    fit_result : FitResult
+        Estimation result. Required.
     K, grid_range : TM grid params (SCAR only)
 
     Returns
@@ -495,10 +498,10 @@ def equicorr_rosenblatt_transform(copula, u, K=300, grid_range=5.0):
     x_norm = norm.ppf(u_c)
     T, d = u.shape
 
-    method = copula.fit_result.method.upper() if copula.fit_result else 'MLE'
+    method = fit_result.method.upper()
 
     if method == 'MLE':
-        rho = copula.fit_result.copula_param
+        rho = fit_result.copula_param
         e = np.empty((T, d))
         e[:, 0] = u[:, 0]
         for i in range(1, d):
@@ -513,11 +516,7 @@ def equicorr_rosenblatt_transform(copula, u, K=300, grid_range=5.0):
     # SCAR: mixture Rosenblatt via TM forward pass
     from pyscarcopula.numerical.tm_grid import TMGrid as _TMGrid
 
-    fr = copula.fit_result
-    if hasattr(fr, 'params') and hasattr(fr.params, 'values'):
-        theta, mu, nu = fr.params.values
-    else:
-        theta, mu, nu = fr.alpha
+    theta, mu, nu = fit_result.params.values
     grid = _TMGrid(theta, mu, nu, T, K, grid_range)
     x_grid = grid.z + grid.mu
     rho_grid = copula.transform(x_grid)
@@ -554,13 +553,14 @@ def equicorr_gof_test(copula, data, to_pobs=True, seed=None,
 
     Parameters
     ----------
-    copula : EquicorrGaussianCopula (fitted)
+    copula : EquicorrGaussianCopula
     data : (T, d)
     to_pobs : bool
     seed : int or None
     K : int
     grid_range : float
     fit_result : FitResult or None
+        If None, uses copula.fit_result (set by copula.fit()).
 
     Returns
     -------
@@ -572,9 +572,10 @@ def equicorr_gof_test(copula, data, to_pobs=True, seed=None,
     if to_pobs:
         u = compute_pobs(u)
 
-    fr = fit_result if fit_result is not None else copula.fit_result
+    fr = fit_result if fit_result is not None else getattr(copula, 'fit_result', None)
     if fr is None:
-        raise ValueError("Fit the copula first, or pass fit_result=")
+        raise ValueError("No fit_result provided and copula has no fit_result. "
+                         "Call copula.fit() first or pass fit_result=.")
 
-    e = equicorr_rosenblatt_transform(copula, u, K, grid_range)
+    e = equicorr_rosenblatt_transform(copula, u, fr, K, grid_range)
     return cvm_test(e, seed=seed)

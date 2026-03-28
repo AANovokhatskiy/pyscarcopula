@@ -11,7 +11,6 @@ is set to independent, saving all fit/TM/GAS computation.
 """
 
 import numpy as np
-from scipy.optimize import OptimizeResult
 from pyscarcopula.copula.base import BivariateCopula
 
 
@@ -106,21 +105,14 @@ class IndependentCopula(BivariateCopula):
         'Fit' the independence copula.
 
         Always instant: logL = 0, no parameters.
-        Returns a result compatible with other copulas.
+        Returns an IndependentResult.
         """
-        result = OptimizeResult()
-        result.x = np.array([])
-        result.fun = 0.0
-        result.success = True
-        result.nfev = 0
-        result.copula_param = 0.0
-        result.alpha = np.array([])
-        result.log_likelihood = 0.0
-        result.method = 'MLE'
-        result.name = self._name
+        from pyscarcopula._types import IndependentResult
+        result = IndependentResult(
+            log_likelihood=0.0,
+            method='MLE',
+            copula_name=self._name,
+            success=True,
+        )
         self.fit_result = result
         return result
-
-    def _fit_mle(self, u):
-        """Override to skip optimization."""
-        return self.fit(u, method='mle')
