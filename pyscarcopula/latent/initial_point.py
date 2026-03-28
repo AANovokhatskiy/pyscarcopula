@@ -19,6 +19,15 @@ and adds zero overhead. (2) can be enabled for extra precision.
 import numpy as np
 
 
+def _mle_mu(copula, u):
+    """Fit MLE via strategy and return mu = inv_transform(copula_param)."""
+    from pyscarcopula.strategy.mle import MLEStrategy
+    mle_result = MLEStrategy().fit(copula, u)
+    return float(np.atleast_1d(
+        copula.inv_transform(np.atleast_1d(mle_result.copula_param))
+    )[0])
+
+
 def _heuristic_initial_point(u, copula, rho_target=0.95,
                               sigma_frac=0.3):
     """
@@ -41,8 +50,7 @@ def _heuristic_initial_point(u, copula, rho_target=0.95,
     T = len(u)
     dt = 1.0 / (T - 1)
 
-    mle_result = copula._fit_mle(u)
-    mu = float(np.atleast_1d(copula.inv_transform(np.atleast_1d(mle_result.copula_param)))[0])
+    mu = _mle_mu(copula, u)
 
     # theta from target autocorrelation: rho = exp(-theta*dt)
     theta = -np.log(rho_target) / dt
@@ -75,14 +83,13 @@ def _gas_initial_point(u, copula, verbose=False):
     -------
     alpha0 : ndarray (3,) — (theta, mu, nu)
     """
-    from pyscarcopula.latent.gas_process import _gas_filter_full
+    from pyscarcopula.numerical.gas_filter import gas_filter
 
     T = len(u)
     dt = 1.0 / (T - 1)
 
     try:
-        mle_result = copula._fit_mle(u)
-        f_mle = float(np.atleast_1d(copula.inv_transform(np.atleast_1d(mle_result.copula_param)))[0])
+        f_mle = _mle_mu(copula, u)
     except Exception:
         return np.array([1.0, 0.0, 1.0])
 
@@ -93,7 +100,7 @@ def _gas_initial_point(u, copula, verbose=False):
         omega = f_mle * (1.0 - beta)
         for alpha_g in [0.01, 0.05, 0.1, 0.3, 0.5]:
             try:
-                f_path, _, ll = _gas_filter_full(
+                f_path, _, ll = gas_filter(
                     omega, alpha_g, beta, u, copula, 'unit')
                 if ll > best_ll:
                     best_ll = ll
@@ -162,8 +169,7 @@ def smart_initial_point(u, copula, use_gas=False, verbose=False):
             return alpha_h, info
         # Fallback
         try:
-            mle = copula._fit_mle(u)
-            mu = float(np.atleast_1d(copula.inv_transform(np.atleast_1d(mle.copula_param)))[0])
+            mu = _mle_mu(copula, u)
             alpha0 = np.array([1.0, mu, 1.0])
         except Exception:
             alpha0 = np.array([1.0, 0.0, 1.0])
@@ -177,16 +183,10 @@ def smart_initial_point(u, copula, use_gas=False, verbose=False):
     except Exception:
         alpha_gas = None
 
-    # Pick the better one (use GAS logL as cheap proxy)
+    # Pick the better one
     if alpha_h is not None and alpha_gas is not None:
-        from pyscarcopula.latent.gas_process import _gas_filter_full
-        try:
-            # Evaluate both at the best GAS (omega, alpha, beta)
-            # Actually just use heuristic — it's usually as good or better
-            info['method'] = 'heuristic'
-            return alpha_h, info
-        except Exception:
-            pass
+        info['method'] = 'heuristic'
+        return alpha_h, info
 
     if alpha_gas is not None:
         info['method'] = 'gas'

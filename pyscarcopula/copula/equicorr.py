@@ -336,7 +336,7 @@ class EquicorrGaussianCopula(BivariateCopula):
 
     def _fit_mle(self, u):
         """Fit constant rho via MLE."""
-        from scipy.optimize import OptimizeResult
+        from pyscarcopula._types import MLEResult
 
         u = np.asarray(u, dtype=np.float64)
         z = norm.ppf(np.clip(u, 1e-10, 1 - 1e-10))
@@ -351,15 +351,15 @@ class EquicorrGaussianCopula(BivariateCopula):
         res = minimize(neg_ll, x0, method='L-BFGS-B',
                        bounds=[(-8.0, 8.0)], options={'gtol': 1e-4})
 
-        result = OptimizeResult()
-        result.x = res.x
-        result.fun = res.fun
-        result.success = res.success
-        result.nfev = res.nfev
-        result.copula_param = self.transform(res.x)[0]
-        result.log_likelihood = -res.fun
-        result.method = 'MLE'
-        result.name = self._name
+        result = MLEResult(
+            log_likelihood=-res.fun,
+            method='MLE',
+            copula_name=self._name,
+            success=res.success,
+            nfev=res.nfev,
+            message=str(getattr(res, 'message', '')),
+            copula_param=self.transform(res.x)[0],
+        )
         self.fit_result = result
         return result
 
@@ -409,22 +409,16 @@ class EquicorrGaussianCopula(BivariateCopula):
         """Sample from stationary OU distribution."""
         if self.fit_result is None:
             raise ValueError("Fit first")
-        # Extract alpha from either old (result.alpha) or new (result.params.values)
-        alpha = None
-        if hasattr(self.fit_result, 'params') and hasattr(self.fit_result.params, 'values'):
-            alpha = self.fit_result.params.values
-        elif hasattr(self.fit_result, 'alpha') and len(self.fit_result.alpha) == 3:
-            alpha = self.fit_result.alpha
-
-        if alpha is not None:
-            theta, mu, nu = alpha
+        from pyscarcopula._types import MLEResult
+        if isinstance(self.fit_result, MLEResult):
+            rho = self.fit_result.copula_param
+        else:
+            theta, mu, nu = self.fit_result.params.values
             sigma2 = nu ** 2 / (2.0 * theta)
             if rng is None:
                 rng = np.random.default_rng()
             x_T = rng.normal(mu, np.sqrt(sigma2))
             rho = self.transform(np.array([x_T]))[0]
-        else:
-            rho = self.fit_result.copula_param
         return self.sample(n, r=rho, rng=rng)
 
     # ── Smoothed params ──────────────────────────────────────
@@ -433,27 +427,13 @@ class EquicorrGaussianCopula(BivariateCopula):
         """Return smoothed rho(t) from TM forward pass."""
         if self.fit_result is None:
             raise ValueError("Fit with SCAR first")
-        alpha = None
-        if hasattr(self.fit_result, 'params') and hasattr(self.fit_result.params, 'values'):
-            alpha = self.fit_result.params.values
-        elif hasattr(self.fit_result, 'alpha'):
-            alpha = self.fit_result.alpha
-        if alpha is None:
-            raise ValueError("No SCAR parameters found")
+        theta, mu, nu = self.fit_result.params.values
         from pyscarcopula.numerical.tm_functions import tm_forward_smoothed
-        theta, mu, nu = alpha
         return tm_forward_smoothed(theta, mu, nu, u, self)
 
     def xT_distribution(self, u, K=300, grid_range=5.0):
         if self.fit_result is None:
             raise ValueError("Fit with SCAR first")
-        alpha = None
-        if hasattr(self.fit_result, 'params') and hasattr(self.fit_result.params, 'values'):
-            alpha = self.fit_result.params.values
-        elif hasattr(self.fit_result, 'alpha'):
-            alpha = self.fit_result.alpha
-        if alpha is None:
-            raise ValueError("No SCAR parameters found")
+        theta, mu, nu = self.fit_result.params.values
         from pyscarcopula.numerical.tm_functions import tm_xT_distribution
-        theta, mu, nu = alpha
         return tm_xT_distribution(theta, mu, nu, u, self, K, grid_range)
