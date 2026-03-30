@@ -93,3 +93,12 @@ class MLEStrategy:
             return -float(np.sum(copula.log_pdf(u[:, 0], u[:, 1], alpha)))
         except Exception:
             return 1e10
+
+    def sample(self, copula, u, result, n, rng=None, **kwargs):
+        """Sample n observations with constant r = theta_mle."""
+        r = np.full(n, result.copula_param)
+        return copula.sample(n, r, rng=rng)
+
+    def predict(self, copula, u, result, n, rng=None, **kwargs):
+        """Predict = sample for MLE (constant parameter)."""
+        return self.sample(copula, u, result, n, rng=rng)

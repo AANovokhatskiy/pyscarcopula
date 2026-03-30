@@ -374,4 +374,66 @@ class BivariateCopula:
 
         result = _api_fit(self, u, method=method, **kwargs)
         self.fit_result = result
+        self._last_u = u  # store for predict
         return result
+
+    def predict(self, n, u=None, rng=None):
+        """Sample n observations for next-step prediction.
+
+        Delegates to api.predict() which dispatches to the correct
+        strategy (MLE/SCAR-TM/GAS/SCAR-MC).
+
+        Parameters
+        ----------
+        n : int — number of samples
+        u : (T, 2) or None — conditioning data.
+            If None, uses data from last fit() call.
+        rng : np.random.Generator or None
+
+        Returns
+        -------
+        (n, 2) pseudo-observations
+        """
+        if self.fit_result is None:
+            raise ValueError("Fit first")
+
+        from pyscarcopula.api import predict as _api_predict
+
+        u_data = u if u is not None else getattr(self, '_last_u', None)
+        if u_data is None:
+            raise ValueError(
+                "No data for predict. "
+                "Either call fit() first or pass u= explicitly.")
+        return _api_predict(self, u_data, self.fit_result, n, rng=rng)
+
+    def sample_model(self, n, u=None, rng=None):
+        """Generate n observations reproducing the fitted model.
+
+        Delegates to api.sample() which dispatches to the correct
+        strategy. fit(copula, sample_model(...)) should recover
+        similar parameters.
+
+        Named sample_model to avoid collision with the base
+        sample(n, r) method which takes an explicit parameter.
+
+        Parameters
+        ----------
+        n : int — number of observations
+        u : (T, 2) or None — reference data (for GAS init, etc.)
+        rng : np.random.Generator or None
+
+        Returns
+        -------
+        (n, 2) pseudo-observations
+        """
+        if self.fit_result is None:
+            raise ValueError("Fit first")
+
+        from pyscarcopula.api import sample as _api_sample
+
+        u_data = u if u is not None else getattr(self, '_last_u', None)
+        if u_data is None:
+            raise ValueError(
+                "No data for sample_model. "
+                "Either call fit() first or pass u= explicitly.")
+        return _api_sample(self, u_data, self.fit_result, n, rng=rng)

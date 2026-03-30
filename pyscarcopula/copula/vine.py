@@ -480,6 +480,7 @@ class CVineCopula:
         self.fit_result.name = f"C-vine ({d}d, {n_edges} edges)"
         self.fit_result.nfev = total_nfev
         self.fit_result.success = True
+        self._last_u = u  # store for predict
 
         return self
 
@@ -536,22 +537,25 @@ class CVineCopula:
 
         return total_ll
 
-    # ── Sampling (using fitted parameters on training data) ───────
+    # ── Sampling (reproduces fitted model) ───────────────────────
 
     def sample(self, n, u_train=None, K=300, grid_range=5.0):
         """
         Sample from fitted C-vine using Rosenblatt inverse.
 
-        For SCAR: uses mixture_h from u_train (must provide).
-        For GAS:  uses GAS-filtered h from u_train.
-        For MLE:  u_train not needed.
+        For MLE: constant r per edge.
+        For SCAR-TM/SCAR-MC: OU trajectory per edge, r(t) = Psi(x(t)).
+        For GAS: recursive simulation — at each step t, generate one
+            observation, compute score, update f_{t+1}.
+
+        fit(vine, sample(...)) should recover similar parameters.
 
         Parameters
         ----------
         n : int — number of samples
-        u_train : (T, d) or None — training data for dynamic models
-        K : int — grid size for SCAR mixture h
-        grid_range : float
+        u_train : ignored (kept for backward compatibility)
+        K : int — ignored
+        grid_range : float — ignored
 
         Returns
         -------
@@ -561,54 +565,43 @@ class CVineCopula:
             raise ValueError("Fit first")
 
         d = self.d
-        w = np.random.uniform(0, 1, (n, d))
+        rng = np.random.default_rng()
+
+        from pyscarcopula._types import GASResult
+
+        # Check if any edge uses GAS — need step-by-step simulation
+        has_gas = any(
+            isinstance(edge.fit_result, GASResult)
+            for tree in self.edges for edge in tree)
+
+        if has_gas:
+            return self._sample_stepwise(n, d, rng)
+        else:
+            return self._sample_vectorized(n, d, rng)
+
+    def _sample_vectorized(self, n, d, rng):
+        """Vectorized sample for MLE/SCAR (no GAS edges)."""
+        w = rng.uniform(0, 1, (n, d))
         x = np.zeros((n, d))
-        # v_samp[j][i] = (n,) — intermediate h-transformed values
         v_samp = [[None] * d for _ in range(d)]
 
         x[:, 0] = w[:, 0]
         v_samp[0][0] = w[:, 0]
 
-        # Precompute r for all edges (from training data)
-        # For MLE: constant r
-        # For GAS/SCAR: we need the h-transformed pseudo-obs from
-        # training data to get the last parameter value
-        r_cache = [[None] * (d - 1) for _ in range(d - 1)]
-        if self.method != 'MLE' and u_train is not None:
-            v_train = [[None] * d for _ in range(d)]
-            for i in range(d):
-                v_train[0][i] = u_train[:, i].copy()
-
-            for j in range(d - 1):
-                for i in range(d - j - 1):
-                    u1 = _clip_unit(v_train[j][0])
-                    u2 = _clip_unit(v_train[j][i + 1])
-                    u_pair = np.column_stack((u1, u2))
-                    edge = self.edges[j][i]
-                    r_cache[j][i] = edge.get_r(u_pair)
-
-                    if j < d - 2:
-                        # Use correct h-function for pseudo-obs
-                        v_train[j + 1][i] = _clip_unit(
-                            _edge_h(edge, u2, u1, u_pair, K, grid_range))
-
-        def _get_r_for_sampling(j, i, n_samples):
-            """Get scalar r for sampling (last value of smoothed, or constant)."""
-            edge = self.edges[j][i]
-            if self.method == 'MLE':
-                return np.full(n_samples, edge.fit_result.copula_param)
-            elif r_cache[j][i] is not None:
-                # Use last smoothed value for all samples
-                return np.full(n_samples, r_cache[j][i][-1])
-            else:
-                return edge.get_r_predict(n_samples)
+        # Generate r trajectory for each edge ONCE
+        r_sampling = [[None] * (d - 1) for _ in range(d - 1)]
+        for j in range(d - 1):
+            for i in range(d - j - 1):
+                edge = self.edges[j][i]
+                r_sampling[j][i] = self._generate_r_for_sample(
+                    edge, n, rng)
 
         for i in range(1, d):
             v_samp[i][0] = w[:, i]
 
             for k in range(i - 1, -1, -1):
                 edge = self.edges[k][i - k - 1]
-                r = _get_r_for_sampling(k, i - k - 1, n)
+                r = r_sampling[k][i - k - 1]
                 v_samp[i][0] = _clip_unit(
                     edge.copula.h_inverse(v_samp[i][0], v_samp[k][k], r))
 
@@ -617,31 +610,287 @@ class CVineCopula:
             if i < d - 1:
                 for j_idx in range(i):
                     edge = self.edges[j_idx][i - j_idx - 1]
-                    r = _get_r_for_sampling(j_idx, i - j_idx - 1, n)
+                    r = r_sampling[j_idx][i - j_idx - 1]
                     v_samp[i][j_idx + 1] = _clip_unit(
                         edge.copula.h(v_samp[i][j_idx], v_samp[j_idx][j_idx], r))
 
         return x
 
-    # ── Prediction (sample from x_T distribution) ────────────────
+    def _sample_stepwise(self, n, d, rng):
+        """Step-by-step sample for GAS edges.
 
-    def predict(self, n):
+        At each time step t:
+          1. Use current r_t per edge for Rosenblatt inverse → one obs
+          2. Compute pseudo-obs for each edge from the generated obs
+          3. Update GAS edges: f_{t+1} = omega + beta*f_t + alpha*score_t
         """
-        Predict: sample using x_T from latent process.
+        from pyscarcopula._types import GASResult, LatentResult, MLEResult
+        from pyscarcopula.copula.independent import IndependentCopula
 
-        For MLE: same as sample (constant params).
-        For SCAR: samples x_T from stationary OU distribution.
+        x = np.zeros((n, d))
+
+        # Initialize r state for each edge
+        n_trees = d - 1
+        # r_state[j][i] = current scalar r for edge (j, i)
+        r_state = [[None] * (d - 1) for _ in range(n_trees)]
+        # f_state[j][i] = current f for GAS edges
+        f_state = [[None] * (d - 1) for _ in range(n_trees)]
+        # For SCAR: precompute full OU trajectories
+        r_ou_path = [[None] * (d - 1) for _ in range(n_trees)]
+
+        for j in range(n_trees):
+            for i in range(d - j - 1):
+                edge = self.edges[j][i]
+                if isinstance(edge.copula, IndependentCopula):
+                    r_state[j][i] = 0.0
+                elif isinstance(edge.fit_result, MLEResult):
+                    r_state[j][i] = edge.fit_result.copula_param
+                elif isinstance(edge.fit_result, GASResult):
+                    p = edge.fit_result.params
+                    if abs(p.beta) < 1.0 - 1e-8:
+                        f_state[j][i] = p.omega / (1.0 - p.beta)
+                    else:
+                        f_state[j][i] = p.omega
+                    r_state[j][i] = float(
+                        edge.copula.transform(np.array([f_state[j][i]]))[0])
+                elif isinstance(edge.fit_result, LatentResult):
+                    # Precompute OU trajectory
+                    r_ou_path[j][i] = self._generate_r_for_sample(
+                        edge, n, rng)
+                    r_state[j][i] = float(r_ou_path[j][i][0])
+
+        score_eps = 1e-4
+
+        for t in range(n):
+            # Update r from OU paths
+            for j in range(n_trees):
+                for i in range(d - j - 1):
+                    if r_ou_path[j][i] is not None:
+                        r_state[j][i] = float(r_ou_path[j][i][t])
+
+            # Generate one d-dimensional observation via Rosenblatt inverse
+            w = rng.uniform(0, 1, d)
+            # v_samp[k][k] = pivot pseudo-obs at tree level k
+            v_samp = [[None] * d for _ in range(d)]
+
+            x[t, 0] = w[0]
+            v_samp[0][0] = w[0]
+
+            for i in range(1, d):
+                val = w[i]
+
+                for k in range(i - 1, -1, -1):
+                    edge = self.edges[k][i - k - 1]
+                    r_k = r_state[k][i - k - 1]
+                    val = float(_clip_unit(np.atleast_1d(
+                        edge.copula.h_inverse(
+                            np.array([val]),
+                            np.array([v_samp[k][k]]),
+                            np.array([r_k]))))[0])
+
+                x[t, i] = val
+                v_samp[i][0] = val
+
+                # Compute h-transformed pseudo-obs for higher trees
+                if i < d - 1:
+                    for j_idx in range(i):
+                        edge = self.edges[j_idx][i - j_idx - 1]
+                        r_ji = r_state[j_idx][i - j_idx - 1]
+                        v_samp[i][j_idx + 1] = float(_clip_unit(np.atleast_1d(
+                            edge.copula.h(
+                                np.array([v_samp[i][j_idx]]),
+                                np.array([v_samp[j_idx][j_idx]]),
+                                np.array([r_ji]))))[0])
+
+            # Update GAS state using generated observation
+            # Build pseudo-obs for each edge from x[t]
+            v_obs = [[None] * d for _ in range(d)]
+            for i in range(d):
+                v_obs[0][i] = x[t, i]
+
+            for j in range(n_trees):
+                for i in range(d - j - 1):
+                    edge = self.edges[j][i]
+                    u1_t = float(_clip_unit(np.atleast_1d(v_obs[j][0]))[0])
+                    u2_t = float(_clip_unit(np.atleast_1d(v_obs[j][i + 1]))[0])
+
+                    # Update GAS state
+                    if isinstance(edge.fit_result, GASResult):
+                        p = edge.fit_result.params
+                        f_t = f_state[j][i]
+                        r_t = r_state[j][i]
+                        scaling = getattr(edge.fit_result, 'scaling', 'unit')
+
+                        u1a = np.array([u1_t])
+                        u2a = np.array([u2_t])
+
+                        f_plus = f_t + score_eps
+                        f_minus = f_t - score_eps
+                        r_plus = float(edge.copula.transform(np.array([f_plus]))[0])
+                        r_minus = float(edge.copula.transform(np.array([f_minus]))[0])
+
+                        ll_plus = float(edge.copula.log_pdf(u1a, u2a, np.array([r_plus]))[0])
+                        ll_minus = float(edge.copula.log_pdf(u1a, u2a, np.array([r_minus]))[0])
+
+                        nabla = (ll_plus - ll_minus) / (2.0 * score_eps)
+
+                        if scaling == 'fisher':
+                            ll_t = float(edge.copula.log_pdf(u1a, u2a, np.array([r_t]))[0])
+                            d2 = (ll_plus - 2.0 * ll_t + ll_minus) / (score_eps ** 2)
+                            fisher = max(-d2, 1e-6)
+                            s_t = nabla / fisher
+                        else:
+                            s_t = nabla
+
+                        s_t = np.clip(s_t, -100.0, 100.0)
+                        f_new = p.omega + p.beta * f_t + p.alpha * s_t
+                        f_new = np.clip(f_new, -50.0, 50.0)
+                        f_state[j][i] = float(f_new)
+                        r_state[j][i] = float(
+                            edge.copula.transform(np.array([f_new]))[0])
+
+                    # Compute h for pseudo-obs at next tree level
+                    if j < n_trees - 1:
+                        r_ji = r_state[j][i]
+                        h_val = float(_clip_unit(np.atleast_1d(
+                            edge.copula.h(
+                                np.array([u2_t]),
+                                np.array([u1_t]),
+                                np.array([r_ji]))
+                        ))[0])
+                        v_obs[j + 1][i] = h_val
+
+        return x
+
+    def sample_model(self, n, u=None, rng=None):
+        """Alias for sample (interface compatibility with BivariateCopula)."""
+        return self.sample(n)
+
+    def _generate_r_for_sample(self, edge, n, rng):
+        """Generate r trajectory for sample (model reproduction).
+
+        MLE: constant r.
+        SCAR: OU trajectory with dt = 1/(n-1).
+        GAS: unconditional mean f_bar.
+        """
+        from pyscarcopula.copula.independent import IndependentCopula
+        from pyscarcopula._types import LatentResult, MLEResult, GASResult
+
+        if isinstance(edge.copula, IndependentCopula):
+            return np.zeros(n)
+
+        if isinstance(edge.fit_result, MLEResult):
+            return np.full(n, edge.fit_result.copula_param)
+
+        if isinstance(edge.fit_result, LatentResult):
+            alpha = _get_alpha(edge.fit_result)
+            theta, mu, nu = alpha
+            dt = 1.0 / (n - 1) if n > 1 else 1.0
+            rho_ou = np.exp(-theta * dt)
+            sigma_cond = np.sqrt(
+                nu ** 2 / (2.0 * theta) * (1.0 - rho_ou ** 2))
+            x_path = np.empty(n)
+            x_path[0] = rng.normal(mu, nu / np.sqrt(2.0 * theta))
+            for t in range(1, n):
+                x_path[t] = (mu + rho_ou * (x_path[t - 1] - mu)
+                             + sigma_cond * rng.standard_normal())
+            return edge.copula.transform(x_path)
+
+        if isinstance(edge.fit_result, GASResult):
+            p = edge.fit_result.params
+            omega, _, beta = p.omega, p.alpha, p.beta
+            if abs(beta) < 1.0 - 1e-8:
+                f_bar = omega / (1.0 - beta)
+            else:
+                f_bar = omega
+            r_bar = edge.copula.transform(np.array([f_bar]))[0]
+            return np.full(n, r_bar)
+
+        return edge.get_r_predict(n)
+
+    # ── Prediction (conditional on fitted data) ────────────────
+
+    def _generate_r_for_predict(self, edge, j, i, n,
+                                v_train, K, grid_range):
+        """Generate r for predict (next-step conditional).
+
+        MLE: constant r.
+        SCAR-TM: mixture sampling from posterior p(x_T | data).
+        GAS: last filtered value f_T.
+        """
+        from pyscarcopula.copula.independent import IndependentCopula
+        from pyscarcopula._types import LatentResult, MLEResult, GASResult
+
+        if isinstance(edge.copula, IndependentCopula):
+            return np.zeros(n)
+
+        if isinstance(edge.fit_result, MLEResult):
+            return np.full(n, edge.fit_result.copula_param)
+
+        if isinstance(edge.fit_result, LatentResult):
+            if v_train is not None:
+                alpha = _get_alpha(edge.fit_result)
+                theta, mu, nu = alpha
+                u1 = _clip_unit(v_train[j][0])
+                u2 = _clip_unit(v_train[j][i + 1])
+                u_pair = np.column_stack((u1, u2))
+                from pyscarcopula.numerical.tm_functions import tm_xT_distribution
+                z_grid, prob = tm_xT_distribution(
+                    theta, mu, nu, u_pair, edge.copula, K, grid_range)
+                idx = np.random.choice(len(z_grid), size=n, p=prob)
+                return edge.copula.transform(z_grid[idx])
+            else:
+                return edge.get_r_predict(n)
+
+        if isinstance(edge.fit_result, GASResult):
+            # Use cached r_last from fit (avoids expensive gas_filter rerun)
+            r_last = getattr(edge.fit_result, 'r_last', None)
+            if r_last is not None and r_last != 0.0:
+                return np.full(n, r_last)
+            # Fallback: run gas_filter if r_last not available
+            if v_train is not None:
+                from pyscarcopula.numerical.gas_filter import gas_filter
+                p = edge.fit_result.params
+                u1 = _clip_unit(v_train[j][0])
+                u2 = _clip_unit(v_train[j][i + 1])
+                u_pair = np.column_stack((u1, u2))
+                scaling = getattr(edge.fit_result, 'scaling', 'unit')
+                _, r_path, _ = gas_filter(
+                    p.omega, p.alpha, p.beta,
+                    u_pair, edge.copula, scaling)
+                return np.full(n, r_path[-1])
+            else:
+                p = edge.fit_result.params
+                f_bar = p.omega / (1.0 - p.beta) if abs(p.beta) < 0.999 else p.omega
+                return np.full(n, edge.copula.transform(np.array([f_bar]))[0])
+
+        return edge.get_r_predict(n)
+
+    def predict(self, n, u=None, K=300, grid_range=5.0):
+        """
+        Conditional predict: sample from vine for next-step prediction.
+
+        For MLE: constant parameter.
+        For SCAR-TM: mixture sampling from posterior p(x_T | data)
+            for each edge independently.
+        For GAS: uses last filtered value f_T.
 
         Parameters
         ----------
-        n : int
+        n : int — number of samples
+        u : (T, d) or None — data for conditioning.
+            If None, uses data from last fit() call.
+        K : int — grid size for SCAR
+        grid_range : float
 
         Returns
         -------
-        x : (n, d)
+        x : (n, d) — samples in [0,1]^d
         """
         if self.edges is None:
             raise ValueError("Fit first")
+
+        u_data = u if u is not None else getattr(self, '_last_u', None)
 
         d = self.d
         w = np.random.uniform(0, 1, (n, d))
@@ -651,12 +900,44 @@ class CVineCopula:
         x[:, 0] = w[:, 0]
         v_samp[0][0] = w[:, 0]
 
+        # Build v_train only if needed (SCAR-TM edges need it for
+        # posterior computation on pseudo-obs at higher trees).
+        # GAS edges use cached r_last and don't need v_train.
+        v_train = None
+        from pyscarcopula._types import LatentResult
+        needs_v_train = any(
+            isinstance(self.edges[j][i].fit_result, LatentResult)
+            for j in range(d - 1)
+            for i in range(d - j - 1))
+
+        if u_data is not None and needs_v_train:
+            v_train = [[None] * d for _ in range(d)]
+            for ii in range(d):
+                v_train[0][ii] = u_data[:, ii].copy()
+            for j in range(d - 1):
+                for ii in range(d - j - 1):
+                    u1 = _clip_unit(v_train[j][0])
+                    u2 = _clip_unit(v_train[j][ii + 1])
+                    u_pair = np.column_stack((u1, u2))
+                    edge = self.edges[j][ii]
+                    if j < d - 2:
+                        v_train[j + 1][ii] = _clip_unit(
+                            _edge_h(edge, u2, u1, u_pair, K, grid_range))
+
+        # Precompute r for each edge
+        r_pred = [[None] * (d - 1) for _ in range(d - 1)]
+        for j in range(d - 1):
+            for i in range(d - j - 1):
+                edge = self.edges[j][i]
+                r_pred[j][i] = self._generate_r_for_predict(
+                    edge, j, i, n, v_train, K, grid_range)
+
         for i in range(1, d):
             v_samp[i][0] = w[:, i]
 
             for k in range(i - 1, -1, -1):
                 edge = self.edges[k][i - k - 1]
-                r = edge.get_r_predict(n)
+                r = r_pred[k][i - k - 1]
                 v_samp[i][0] = _clip_unit(
                     edge.copula.h_inverse(v_samp[i][0], v_samp[k][k], r))
 
@@ -665,7 +946,7 @@ class CVineCopula:
             if i < d - 1:
                 for j_idx in range(i):
                     edge = self.edges[j_idx][i - j_idx - 1]
-                    r = edge.get_r_predict(n)
+                    r = r_pred[j_idx][i - j_idx - 1]
                     v_samp[i][j_idx + 1] = _clip_unit(
                         edge.copula.h(v_samp[i][j_idx], v_samp[j_idx][j_idx], r))
 

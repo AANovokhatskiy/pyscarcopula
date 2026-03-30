@@ -372,6 +372,8 @@ class EquicorrGaussianCopula(BivariateCopula):
         if to_pobs:
             u = _pobs(u)
 
+        self._last_u = u  # store for predict
+
         if method.upper() == 'MLE':
             return self._fit_mle(u)
 
@@ -405,21 +407,47 @@ class EquicorrGaussianCopula(BivariateCopula):
 
         return norm.cdf(z)
 
-    def predict(self, n, rng=None):
-        """Sample from stationary OU distribution."""
+    def predict(self, n, u=None, rng=None):
+        """Sample from copula using conditional distribution from last fit.
+
+        For MLE: constant rho.
+        For SCAR-TM: mixture sampling from posterior p(x_T | data).
+
+        Parameters
+        ----------
+        n : int
+        u : (T, d) or None — data for conditioning.
+            If None, uses data from last fit() call.
+        rng : np.random.Generator or None
+        """
         if self.fit_result is None:
             raise ValueError("Fit first")
+        if rng is None:
+            rng = np.random.default_rng()
+
         from pyscarcopula._types import MLEResult
         if isinstance(self.fit_result, MLEResult):
-            rho = self.fit_result.copula_param
+            return self.sample(n, r=self.fit_result.copula_param, rng=rng)
+
+        u_data = u if u is not None else getattr(self, '_last_u', None)
+        if u_data is not None:
+            # Mixture sampling from posterior
+            z_grid, prob = self.xT_distribution(u_data)
+            idx = rng.choice(len(z_grid), size=n, p=prob)
+            rho_samples = self.transform(z_grid[idx])
+            # Sample each observation with its own rho
+            # (sample handles scalar r, so we loop or vectorize)
+            result = np.empty((n, self._d))
+            for j in range(n):
+                result[j] = self.sample(1, r=float(rho_samples[j]), rng=rng)[0]
+            return result
         else:
+            # Fallback: stationary OU sample
             theta, mu, nu = self.fit_result.params.values
             sigma2 = nu ** 2 / (2.0 * theta)
-            if rng is None:
-                rng = np.random.default_rng()
             x_T = rng.normal(mu, np.sqrt(sigma2))
             rho = self.transform(np.array([x_T]))[0]
-        return self.sample(n, r=rho, rng=rng)
+            return self.sample(n, r=rho, rng=rng)
 
     # ── Smoothed params ──────────────────────────────────────
 

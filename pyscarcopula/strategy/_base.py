@@ -114,6 +114,56 @@ class FitStrategy(Protocol):
         """
         ...
 
+    def sample(self, copula, u: np.ndarray,
+               result: FitResult, n: int, **kwargs) -> np.ndarray:
+        """Generate n observations reproducing the fitted model.
+
+        Simulates a path of length n with time-varying parameter:
+          MLE:     r = const for all t
+          SCAR-TM: r(t) = Psi(x(t)), x(t) simulated from OU process
+          GAS:     r(t) = Psi(f(t)), f(t) via score-driven recursion
+                   on the generated observations
+
+        fit(copula, sample(...)) should recover similar parameters.
+
+        Parameters
+        ----------
+        copula : CopulaProtocol
+        u : (T, 2) — not used by all methods, but needed for GAS init
+        result : FitResult from fit()
+        n : int — number of observations to generate
+
+        Returns
+        -------
+        (n, 2) pseudo-observations
+        """
+        ...
+
+    def predict(self, copula, u: np.ndarray,
+                result: FitResult, n: int, **kwargs) -> np.ndarray:
+        """Sample n observations for next-step prediction.
+
+        Conditional on observed data u_{1:T}, generate n i.i.d.
+        samples from the predictive copula distribution at T+1:
+          MLE:     r = theta_mle (constant)
+          SCAR-TM: mixture sampling from posterior p(x_T | data)
+          GAS:     r = Psi(f_T), last filtered value
+
+        Used for risk metrics (VaR/CVaR estimation).
+
+        Parameters
+        ----------
+        copula : CopulaProtocol
+        u : (T, 2) pseudo-observations (conditioning data)
+        result : FitResult from fit()
+        n : int — number of samples
+
+        Returns
+        -------
+        (n, 2) pseudo-observations
+        """
+        ...
+
 
 # ══════════════════════════════════════════════════════════════════
 # Strategy registry — the one and only place with method dispatch
@@ -160,8 +210,12 @@ def get_strategy(method: str, config: NumericalConfig | None = None,
     """
     m = method.upper()
 
-    # Lazy registration: import strategies on first use
-    if not _REGISTRY:
+    # Lazy registration: import strategies if requested method is missing.
+    # Using `m not in _REGISTRY` instead of `not _REGISTRY` to avoid a
+    # race condition: if one strategy module is imported early (e.g. GAS
+    # init triggers MLE import), _REGISTRY is non-empty but incomplete,
+    # and other methods like SCAR-M-OU would not be found.
+    if m not in _REGISTRY:
         _import_all_strategies()
 
     if m not in _REGISTRY:
@@ -199,6 +253,5 @@ def _import_all_strategies():
 
 def list_methods() -> list[str]:
     """List all registered estimation methods."""
-    if not _REGISTRY:
-        _import_all_strategies()
+    _import_all_strategies()
     return sorted(_REGISTRY.keys())

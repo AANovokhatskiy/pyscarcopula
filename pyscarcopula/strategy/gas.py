@@ -95,6 +95,12 @@ class GASStrategy:
             beta=result.x[2],
         )
 
+        # Compute last filtered value for predict (avoids re-running filter)
+        _, r_path, _ = gas_filter(
+            result.x[0], result.x[1], result.x[2], u, copula,
+            self.scaling, score_eps)
+        r_last = float(r_path[-1]) if len(r_path) > 0 else 0.0
+
         return GASResult(
             log_likelihood=-result.fun,
             method='GAS',
@@ -104,6 +110,7 @@ class GASStrategy:
             message=str(result.message),
             params=params,
             scaling=self.scaling,
+            r_last=r_last,
         )
 
     def log_likelihood(self, copula, u: np.ndarray,
@@ -144,3 +151,79 @@ class GASStrategy:
         return gas_negloglik(
             alpha[0], alpha[1], alpha[2], u, copula,
             self.scaling, self.config.gas_score_eps)
+
+    def sample(self, copula, u, result, n, rng=None, **kwargs):
+        """Recursive GAS simulation.
+
+        At each step t:
+          1. r_t = Psi(f_t)
+          2. Sample (u1_t, u2_t) from copula with r_t
+          3. Compute score s_t from the sampled observation
+          4. f_{t+1} = omega + beta*f_t + alpha*s_t
+        """
+        if rng is None:
+            rng = np.random.default_rng()
+
+        p = result.params
+        omega, alpha_gas, beta = p.omega, p.alpha, p.beta
+        score_eps = self.config.gas_score_eps
+
+        F_CLIP = 50.0
+        S_CLIP = 100.0
+
+        # Initial f
+        if abs(beta) < 1.0 - 1e-8:
+            f_t = omega / (1.0 - beta)
+        else:
+            f_t = omega
+
+        samples = np.empty((n, 2))
+
+        for t in range(n):
+            r_t = float(copula.transform(np.array([f_t]))[0])
+
+            # Sample one observation from copula with r_t
+            obs = copula.sample(1, np.array([r_t]), rng=rng)
+            samples[t] = obs[0]
+
+            # Compute score for next step
+            if t < n - 1:
+                u1 = obs[0:1, 0]
+                u2 = obs[0:1, 1]
+
+                f_plus = f_t + score_eps
+                f_minus = f_t - score_eps
+                r_plus = float(copula.transform(np.array([f_plus]))[0])
+                r_minus = float(copula.transform(np.array([f_minus]))[0])
+
+                ll_plus = float(copula.log_pdf(u1, u2, np.array([r_plus]))[0])
+                ll_minus = float(copula.log_pdf(u1, u2, np.array([r_minus]))[0])
+
+                nabla_t = (ll_plus - ll_minus) / (2.0 * score_eps)
+
+                if self.scaling == 'fisher':
+                    ll_t = float(copula.log_pdf(u1, u2, np.array([r_t]))[0])
+                    d2 = (ll_plus - 2.0 * ll_t + ll_minus) / (score_eps ** 2)
+                    fisher = max(-d2, 1e-6)
+                    s_t = nabla_t / fisher
+                else:
+                    s_t = nabla_t
+
+                s_t = np.clip(s_t, -S_CLIP, S_CLIP)
+                f_t = omega + beta * f_t + alpha_gas * s_t
+                f_t = np.clip(f_t, -F_CLIP, F_CLIP)
+
+        return samples
+
+    def predict(self, copula, u, result, n, rng=None, **kwargs):
+        """Predict using last GAS-filtered value f_T.
+
+        GAS path is deterministic given data, so the predictive
+        distribution is a point mass at r = Psi(f_T).
+        """
+        if rng is None:
+            rng = np.random.default_rng()
+
+        r_path = self.smoothed_params(copula, u, result)
+        r_T = float(r_path[-1])
+        return copula.sample(n, np.full(n, r_T), rng=rng)

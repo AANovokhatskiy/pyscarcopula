@@ -59,6 +59,10 @@ pytest tests/
 - GAS — observation-driven score model
 - SCAR-P-OU / SCAR-M-OU — Monte Carlo alternatives
 
+**Sampling and prediction**
+- `sample` — generate synthetic data reproducing the fitted model (for model validation). For SCAR models an OU trajectory is simulated with the correct time discretization; for GAS a recursive score-driven simulation is used.
+- `predict` — generate samples for next-step forecasting (for risk metrics). For SCAR-TM uses mixture sampling from the posterior distribution p(x_T | data), accounting for parameter uncertainty. For GAS uses the last filtered value.
+
 **Vine copulas**
 - Automatic copula family and rotation selection per edge (AIC/BIC)
 - Automatic pruning of weak edges via independence copula baseline
@@ -117,7 +121,7 @@ import pandas as pd
 import numpy as np
 from pyscarcopula._utils import pobs
 from pyscarcopula import GumbelCopula, CVineCopula, GaussianCopula, StudentCopula
-from pyscarcopula.api import fit, smoothed_params
+from pyscarcopula.api import fit, sample, predict, smoothed_params
 from pyscarcopula.stattests import gof_test
 
 crypto_prices = pd.read_csv("data/crypto_prices.csv", index_col=0, sep=';')
@@ -136,7 +140,6 @@ result_mle = fit(copula, u, method='mle')
 result_tm  = fit(copula, u, method='scar-tm-ou')
 result_gas = fit(copula, u, method='gas')
 
-# Typed results — access parameters directly
 print(f"MLE:     logL={result_mle.log_likelihood:.2f}, r={result_mle.copula_param:.4f}")
 print(f"SCAR-TM: logL={result_tm.log_likelihood:.2f}, theta={result_tm.params.theta:.2f}")
 print(f"GAS:     logL={result_gas.log_likelihood:.2f}, beta={result_gas.beta:.4f}")
@@ -161,11 +164,38 @@ r_t = smoothed_params(copula, u, result_tm)
 # r_t[k] = E[Psi(x_k) | u_{1:k-1}]
 ```
 
-### 4. Sample from copula
+### 4. Sampling and prediction
+
+The API provides two distinct sampling functions:
+
+- `sample` generates synthetic data that reproduces the fitted model. Useful for validation: `fit(copula, sample(...))` should recover similar parameters.
+- `predict` generates samples for next-step forecasting, conditional on the observed data. Used for risk metrics.
 
 ```python
-samples = copula.sample(n=1000, r=result_mle.copula_param)
+from pyscarcopula.api import sample, predict
+
+# Model validation: sample -> refit -> compare parameters
+v = sample(copula, u, result_tm, n=2000)
+result_refit = fit(copula, pobs(v), method='scar-tm-ou')
+
+# GoF on sampled data (should pass)
+gof_v = gof_test(copula, pobs(v), fit_result=result_refit, to_pobs=False)
+print(f"GoF on sample: p={gof_v.pvalue:.4f}")
+
+# Prediction: conditional on current market state
+u_pred = predict(copula, u, result_tm, n=100_000)
 ```
+
+How `sample` and `predict` work for each method:
+
+| Method | `sample(n)` | `predict(n)` |
+|--------|-------------|--------------|
+| MLE | n observations with constant r | same as sample |
+| SCAR-TM | OU trajectory r(t) → copula.sample(n, r) | mixture sampling from posterior p(x_T \| data) |
+| GAS | recursive simulation: sample → score → update f | copula.sample(n, r=Ψ(f_T)) |
+| SCAR-MC | OU trajectory (same as SCAR-TM) | sample from stationary OU |
+
+For SCAR-TM, `predict` accounts for parameter uncertainty by sampling the copula parameter from the posterior distribution over the latent state, rather than using a point estimate.
 
 ### 5. Fit a multivariate C-vine copula
 
@@ -190,7 +220,20 @@ Results on 6-dimensional crypto data (T = 250):
 | C-vine MLE | 869.2 | 0.21 |
 | Student-t | 764.4 | 0.00 |
 
+Sampling and prediction are also available for vine copulas:
+
+```python
+# Model validation
+v6 = vine.sample(2000)
+gof_v6 = gof_test(vine, pobs(v6), to_pobs=False)
+
+# Prediction (for risk metrics)
+u_pred_6d = vine.predict(100_000, u=u6)
+```
+
 ### 6. Risk metrics (VaR / CVaR)
+
+Rolling VaR and CVaR estimation with copula models. Supports bivariate, vine, and elliptical copulas (Gaussian, Student-t).
 
 ```python
 from pyscarcopula.contrib.risk_metrics import risk_metrics
@@ -208,6 +251,17 @@ result = risk_metrics(
 
 var = result[0.95][100_000]['var']
 cvar = result[0.95][100_000]['cvar']
+```
+
+For elliptical copulas:
+
+```python
+result = risk_metrics(
+    GaussianCopula(), returns_6d, window_len=100,
+    gamma=[0.95], N_mc=[100_000],
+    marginals_method='johnsonsu',
+    method='mle',  # ignored for Gaussian/Student (uses its own MLE)
+)
 ```
 
 See `example_new_api.ipynb` for a complete walkthrough with plots.
@@ -244,6 +298,10 @@ vine.fit(u, method='scar-tm-ou', truncation_level=2, min_edge_logL=10)
 | `truncation_level` | `None` | Trees >= this level stay MLE. Recommended: 2-3 for d > 10. |
 | `min_edge_logL` | `None` | Edges with MLE logL below threshold stay MLE. Recommended: 5-10. |
 
+### Sampling performance
+
+For vine copulas with GAS edges, `sample` uses step-by-step simulation (required by the recursive score update), which is slower than the vectorized sampling used for MLE and SCAR models.
+
 
 ## Architecture
 
@@ -251,11 +309,14 @@ The codebase is organized in layers with top-down dependencies:
 
 | Layer | Directory | Responsibility |
 |-------|-----------|----------------|
-| API | `api.py` | Entry points: `fit()`, `smoothed_params()`, `mixture_h()` |
-| Strategy | `strategy/` | Estimation methods: MLE, SCAR-TM, GAS |
-| Copula | `copula/` | Pure math: PDF, h-functions, transforms |
-| Numerical | `numerical/` | TM grid, gradient, MC samplers, OU kernels |
+| API | `api.py` | Entry points: `fit()`, `sample()`, `predict()`, `smoothed_params()`, `mixture_h()` |
+| Strategy | `strategy/` | Estimation methods: MLE, SCAR-TM, GAS. Each implements `fit`, `sample`, `predict`. |
+| Copula | `copula/` | Pure math: PDF, h-functions, transforms, base sampling |
+| Numerical | `numerical/` | TM grid, gradient, MC samplers, GAS filter, OU kernels |
 | Types | `_types.py`, `_utils.py` | Typed results, config, shared utilities |
+| Contrib | `contrib/` | Risk metrics, marginal distributions |
+
+All functions in `api.py` are stateless: they accept a copula object, data, and a result, and return new values without mutation. Convenience methods on copula classes (`copula.fit()`, `copula.predict()`) delegate to the API internally and store state for chained calls.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the full module map.
 

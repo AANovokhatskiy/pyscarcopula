@@ -49,6 +49,21 @@ r_t = smoothed_params(copula, u, result_tm)
 # r_t[k] = E[Psi(x_k) | u_{1:k-1}]
 ```
 
+## Sample and predict
+
+```python
+from pyscarcopula.api import sample, predict
+
+# sample: reproduce the fitted model (for validation)
+v = sample(copula, u, result_tm, n=2000)
+result_refit = fit(copula, pobs(v), method='scar-tm-ou')
+gof_v = gof_test(copula, pobs(v), fit_result=result_refit, to_pobs=False)
+print(f"GoF on sample: p={gof_v.pvalue:.4f}")  # should pass
+
+# predict: next-step forecast (for risk metrics)
+u_pred = predict(copula, u, result_tm, n=100_000)
+```
+
 ## Fit a multivariate C-vine
 
 ```python
@@ -62,12 +77,16 @@ vine = CVineCopula()
 vine.fit(u6, method='scar-tm-ou',
          truncation_level=2, min_edge_logL=10)
 vine.summary()
+
+# Vine sampling and prediction
+v6 = vine.sample(2000)
+u_pred_6d = vine.predict(100_000, u=u6)
 ```
 
 ## Available copula families
 
 | Family | Class | Rotations | SCAR support |
-|--------|-------|-----------|--------------| 
+|--------|-------|-----------|--------------|
 | Gumbel | `GumbelCopula` | 0, 90, 180, 270 | Yes |
 | Clayton | `ClaytonCopula` | 0, 90, 180, 270 | Yes |
 | Frank | `FrankCopula` | 0 | Yes |

@@ -2,7 +2,13 @@
 
 ## Top-level API
 
+All API functions are stateless — they accept a copula object, data, and a result, and return new values without mutation.
+
 ::: pyscarcopula.api.fit
+
+::: pyscarcopula.api.sample
+
+::: pyscarcopula.api.predict
 
 ::: pyscarcopula.api.smoothed_params
 
@@ -18,6 +24,8 @@
         - h
         - h_inverse
         - sample
+        - predict
+        - sample_model
         - transform
         - inv_transform
 

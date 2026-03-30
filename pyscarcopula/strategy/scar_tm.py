@@ -264,3 +264,52 @@ class SCARTMStrategy:
                 self.adaptive, self.pts_per_sigma)
         except Exception:
             return 1e10
+
+    def sample(self, copula, u, result, n, rng=None, **kwargs):
+        """Simulate n observations with OU-driven copula parameter.
+
+        Generates an OU trajectory x(t), transforms to r(t) = Psi(x(t)),
+        and samples from the copula with time-varying r(t).
+
+        Uses the same time discretization as the model: dt = 1/(n-1),
+        so the full trajectory covers [0, 1].
+        """
+        if rng is None:
+            rng = np.random.default_rng()
+
+        p = result.params
+        theta, mu, nu = p.theta, p.mu, p.nu
+
+        # Same dt convention as ou_sample_paths_exact
+        dt = 1.0 / (n - 1) if n > 1 else 1.0
+        rho_ou = np.exp(-theta * dt)
+        sigma_cond = np.sqrt(nu ** 2 / (2.0 * theta) * (1.0 - rho_ou ** 2))
+
+        x = np.empty(n)
+        # Start from stationary distribution
+        x[0] = rng.normal(mu, nu / np.sqrt(2.0 * theta))
+        for t in range(1, n):
+            x[t] = mu + rho_ou * (x[t - 1] - mu) + sigma_cond * rng.standard_normal()
+
+        r = copula.transform(x)
+        return copula.sample(n, r, rng=rng)
+
+    def predict(self, copula, u, result, n, rng=None, **kwargs):
+        """Mixture sampling from posterior p(x_T | data).
+
+        Uses transfer matrix forward pass to compute the posterior
+        distribution of x_T, then samples r from it.
+        """
+        if rng is None:
+            rng = np.random.default_rng()
+
+        p = result.params
+        from pyscarcopula.numerical.tm_functions import tm_xT_distribution
+        z_grid, prob = tm_xT_distribution(
+            p.theta, p.mu, p.nu, u, copula,
+            self.K, self.grid_range, self.grid_method,
+            self.adaptive, self.pts_per_sigma)
+
+        idx = rng.choice(len(z_grid), size=n, p=prob)
+        r_samples = copula.transform(z_grid[idx])
+        return copula.sample(n, r_samples, rng=rng)

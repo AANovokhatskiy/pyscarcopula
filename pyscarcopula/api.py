@@ -5,13 +5,26 @@ This module provides a functional interface that does NOT mutate
 copula objects. It replaces the old pattern of copula.fit() + copula.fit_result.
 
 Usage:
-    from pyscarcopula.api import fit, smoothed_params
+    from pyscarcopula.api import fit, sample, predict, smoothed_params
 
-    result = fit(copula, data, method='scar-tm-ou', to_pobs=True)
-    r_t = smoothed_params(copula, data, result)
+    copula = GumbelCopula(rotate=180)
+    result = fit(copula, u, method='scar-tm-ou')
+
+    # Simulate from fitted model (fit(copula, v) ≈ result)
+    v = sample(copula, u, result, n=2000)
+
+    # Predict next observation (for risk metrics)
+    u_pred = predict(copula, u, result, n=100000)
+
+    # Smoothed parameter path
+    r_t = smoothed_params(copula, u, result)
 
 All functions accept a copula (stateless) + data + result (immutable),
 and return new immutable values. No side effects.
+
+Note: BivariateCopula also has convenience methods (copula.predict,
+copula.sample_model) that work after copula.fit(). These delegate
+to this API internally but require copula.fit() to have been called.
 """
 
 import numpy as np
@@ -124,3 +137,58 @@ def configure(blas_threads: int = 1):
     import os
     for var in ('OMP_NUM_THREADS', 'MKL_NUM_THREADS', 'OPENBLAS_NUM_THREADS'):
         os.environ.setdefault(var, str(blas_threads))
+
+
+def sample(copula, data, result: FitResult, n: int,
+           config: NumericalConfig | None = None, **kwargs) -> np.ndarray:
+    """Generate n observations reproducing the fitted model.
+
+    Simulates a path of length n with time-varying parameter:
+      MLE:     r = const for all t
+      SCAR-TM: r(t) = Psi(x(t)), x(t) simulated from OU process
+      GAS:     r(t) = Psi(f(t)), f(t) via score-driven recursion
+
+    fit(copula, sample(...)) should recover similar parameters.
+
+    Parameters
+    ----------
+    copula : CopulaProtocol
+    data : (T, 2) pseudo-observations (used for GAS init, etc.)
+    result : FitResult from fit()
+    n : int — number of observations to generate
+
+    Returns
+    -------
+    (n, 2) pseudo-observations
+    """
+    u = np.asarray(data, dtype=np.float64)
+    strategy = get_strategy(result.method, config=config, **kwargs)
+    return strategy.sample(copula, u, result, n, **kwargs)
+
+
+def predict(copula, data, result: FitResult, n: int,
+            config: NumericalConfig | None = None, **kwargs) -> np.ndarray:
+    """Sample n observations for next-step prediction.
+
+    Conditional on data u_{1:T}, generate n i.i.d. samples from
+    the predictive copula distribution at T+1:
+      MLE:     r = theta_mle (constant)
+      SCAR-TM: mixture sampling from posterior p(x_T | data)
+      GAS:     r = Psi(f_T), last filtered value
+
+    Used for risk metrics (VaR/CVaR).
+
+    Parameters
+    ----------
+    copula : CopulaProtocol
+    data : (T, 2) pseudo-observations (conditioning data)
+    result : FitResult from fit()
+    n : int — number of samples
+
+    Returns
+    -------
+    (n, 2) pseudo-observations
+    """
+    u = np.asarray(data, dtype=np.float64)
+    strategy = get_strategy(result.method, config=config, **kwargs)
+    return strategy.predict(copula, u, result, n, **kwargs)

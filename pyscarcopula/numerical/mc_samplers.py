@@ -82,6 +82,9 @@ def m_sampler_loglik(theta, mu, nu, u, dwt, a1t, a2t, copula, stationary):
         norm_log[i] = log_norm_ou(theta, mu, nu, a1t[i], a2t[i], dt, xt[i - 1])
     norm_log[0] = log_norm_ou(theta, mu, nu, a1t[0], a2t[0], dt, x0)
 
+    if np.isnan(np.sum(norm_log)):
+        return 1e10
+
     # Copula log-likelihood with IS correction
     log_lik = np.zeros(n_tr)
     for t in range(T):
@@ -89,8 +92,13 @@ def m_sampler_loglik(theta, mu, nu, u, dwt, a1t, a2t, copula, stationary):
         u1 = np.full(n_tr, u[t, 0])
         u2 = np.full(n_tr, u[t, 1])
         c_vals = copula.log_pdf(u1, u2, r_vals)
-        g_vals = a1t[t] * xt[t] + a2t[t] * xt[t] ** 2
+        # Clip xt to avoid overflow in x^2
+        xt_clipped = np.clip(xt[t], -500, 500)
+        g_vals = a1t[t] * xt_clipped + a2t[t] * xt_clipped ** 2
         log_lik += c_vals + norm_log[t] - g_vals
+
+    if np.isnan(np.sum(log_lik)):
+        return 1e10
 
     return -log_mean_exp(log_lik)
 
@@ -120,9 +128,36 @@ def eis_find_auxiliary(alpha, u, M_iterations, dwt, copula, stationary):
     n_tr = dwt.shape[1]
     dt = 1.0 / (T - 1)
     t_data = np.linspace(0, 1, T)
+    D = nu ** 2 / 2.0
+
+    # Initial variance Dx0 — must match ou_sample_paths
+    if stationary:
+        Dx0 = D / theta
+    else:
+        Dx0 = 0.0
+
+    # Precompute upper bounds on a2t for each time step.
+    # In ou_sample_paths: p = 1 - 2*a2*sigma2 must be > 0.
+    # sigma2(t) = D/theta * (1-exp(-2*theta*t)) + Dx0*exp(-2*theta*t)
+    a2_ub = np.zeros(T)
+    for k in range(T):
+        t = k * dt
+        sigma2 = D / theta * (1.0 - np.exp(-2.0 * theta * t)) \
+            + Dx0 * np.exp(-2.0 * theta * t)
+        if sigma2 > 1e-15:
+            # Leave 10% safety margin so p >= 0.1
+            a2_ub[k] = 0.9 / (2.0 * sigma2)
+        else:
+            a2_ub[k] = 1e6
+
+    # EIS damping factor — blend new estimate with old to avoid oscillation
+    damping = 0.5
 
     a1t = np.zeros(T)
     a2t = np.zeros(T)
+    best_a1t = np.zeros(T)
+    best_a2t = np.zeros(T)
+    best_loglik = -np.inf
 
     for j in range(M_iterations):
         if stationary:
@@ -133,7 +168,9 @@ def eis_find_auxiliary(alpha, u, M_iterations, dwt, copula, stationary):
         xt = ou_sample_paths(theta, mu, nu, a1t, a2t, dwt, x0)
 
         if np.isnan(np.sum(xt)):
-            return np.zeros(T), np.zeros(T)
+            a1t = np.zeros(T)
+            a2t = np.zeros(T)
+            continue
 
         a_data = np.zeros((T, 3))
         a_data[-1] = np.array([0.0, np.mean(a1t), min(np.mean(a2t), 0.0)])
@@ -152,15 +189,16 @@ def eis_find_auxiliary(alpha, u, M_iterations, dwt, copula, stationary):
             A = np.column_stack((np.ones(n_tr), xt[i], xt[i] ** 2))
             b = copula_log + norm_log_vals
 
-            sigma2 = nu ** 2 / (2.0 * theta) * (1.0 - np.exp(-2.0 * theta * t_data[i]))
-            ub = max(1.0 / (2.0 * sigma2) - 0.001, 0.0) if sigma2 > 0 else 0.0
-
             try:
-                lr = linear_least_squares(A, b, 0.0, pseudo_inverse=True)
+                # Normal equations with small ridge regularization
+                # (faster than pinv for 3x3 system, equally stable)
+                lr = linear_least_squares(A, b, 1e-6, pseudo_inverse=False)
                 if np.isnan(np.sum(lr)):
                     a_data[i - 1] = a_data[i]
                 else:
-                    a_data[i - 1] = np.array([lr[0], lr[1], min(lr[2], ub)])
+                    # Clamp a2 to upper bound
+                    a2_val = min(lr[2], a2_ub[i])
+                    a_data[i - 1] = np.array([lr[0], lr[1], a2_val])
             except Exception:
                 a_data[i - 1] = a_data[i]
 
@@ -172,15 +210,35 @@ def eis_find_auxiliary(alpha, u, M_iterations, dwt, copula, stationary):
         if wl % 2 == 0:
             wl += 1
         d = min(2, wl - 1)
-        a1t = savgol_filter(a1_hat, wl, d)
-        a2t = savgol_filter(a2_hat, wl, d)
+        a1_new = savgol_filter(a1_hat, wl, d)
+        a2_new = savgol_filter(a2_hat, wl, d)
 
-        # Enforce a2 upper bounds
-        for k in range(1, T):
-            t = k * dt
-            sigma2 = nu ** 2 / (2.0 * theta) * (1.0 - np.exp(-2.0 * theta * t))
-            if sigma2 > 0:
-                ub = max(1.0 / (2.0 * sigma2) - 0.01, 0.0)
-                a2t[k] = min(a2t[k], ub)
+        # Enforce a2 upper bounds from the condition 1 - 2*a2*sigma2 > 0
+        # (Eq. (condition) in the article). sigma2 here is the unconditional
+        # variance from t'=0 used in the SDE solution (m_sampler_solution).
+        # a2 can be positive, but must satisfy a2 < 1/(2*sigma2).
+        # We keep a safety margin (p >= p_min) because as p -> 0,
+        # the volatility B(t) = nu/sqrt(p) -> inf and paths explode.
+        for k in range(T):
+            a2_new[k] = min(a2_new[k], a2_ub[k])
 
-    return a1t, a2t
+        # Apply damping: blend new with old to stabilize iterations
+        if j > 0:
+            a1t = damping * a1_new + (1.0 - damping) * a1t
+            a2t = damping * a2_new + (1.0 - damping) * a2t
+        else:
+            a1t = a1_new
+            a2t = a2_new
+
+        # Track best EIS parameters by evaluating current loglik
+        try:
+            ll_val = -m_sampler_loglik(
+                theta, mu, nu, u, dwt, a1t, a2t, copula, stationary)
+            if ll_val > best_loglik:
+                best_loglik = ll_val
+                best_a1t = a1t.copy()
+                best_a2t = a2t.copy()
+        except Exception:
+            pass
+
+    return best_a1t, best_a2t

@@ -264,6 +264,7 @@ class GASResult(FitResultBase):
     params: LatentProcessParams = field(
         default_factory=lambda: gas_params(0.0, 0.0, 0.0))
     scaling: str = 'unit'                    # 'unit' or 'fisher'
+    r_last: float = 0.0                      # last filtered r value (for predict)
 
     @property
     def omega(self) -> float:

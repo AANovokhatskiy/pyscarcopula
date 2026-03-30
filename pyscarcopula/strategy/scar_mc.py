@@ -35,11 +35,13 @@ class _SCARMCBase:
                  n_tr: int | None = None,
                  M_iterations: int = 3,
                  stationary: bool = True,
+                 smart_init: bool = True,
                  **kwargs):
         self.config = config or DEFAULT_CONFIG
         self.n_tr = n_tr if n_tr is not None else self.config.default_n_tr
         self.M_iterations = M_iterations
         self.stationary = stationary
+        self.smart_init = smart_init
 
     def _get_dwt(self, T, seed=None, dwt=None):
         """Get or generate Wiener increments."""
@@ -48,15 +50,27 @@ class _SCARMCBase:
         _seed = seed if seed is not None else np.random.randint(1, 1000000)
         return calculate_dwt(T, self.n_tr, _seed)
 
-    def _get_alpha0(self, copula, u):
-        """Default initial point from MLE."""
-        from pyscarcopula.strategy.mle import MLEStrategy
-        mle = MLEStrategy(config=self.config)
-        mle_result = mle.fit(copula, u)
-        mu0 = float(np.atleast_1d(
-            copula.inv_transform(np.atleast_1d(mle_result.copula_param))
-        )[0])
-        return np.array([1.0, mu0, 1.0])
+    def _get_alpha0(self, copula, u, verbose):
+        if self.smart_init:
+            try:
+                from pyscarcopula.strategy.initial_point import smart_initial_point
+                alpha0, init_info = smart_initial_point(
+                    u, copula, verbose=verbose)
+                if verbose:
+                    print(f"Smart init: {init_info.get('chosen_method')}, "
+                            f"alpha0={alpha0}")
+            except Exception:
+                alpha0 = None
+        if alpha0 is None:
+            """Default initial point from MLE."""
+            from pyscarcopula.strategy.mle import MLEStrategy
+            mle = MLEStrategy(config=self.config)
+            mle_result = mle.fit(copula, u)
+            mu0 = float(np.atleast_1d(
+                copula.inv_transform(np.atleast_1d(mle_result.copula_param))
+            )[0])
+            alpha0 = np.array([1.0, mu0, 1.0])
+        return alpha0
 
 
 @register_strategy('SCAR-P-OU')
@@ -77,7 +91,7 @@ class SCARPStrategy(_SCARMCBase):
         dwt_data = self._get_dwt(T, seed, dwt)
 
         if alpha0 is None:
-            alpha0 = self._get_alpha0(copula, u)
+            alpha0 = self._get_alpha0(copula, u, verbose)
 
         bounds = Bounds([0.001, -np.inf, 0.001], [np.inf, np.inf, np.inf])
 
@@ -161,7 +175,7 @@ class SCARMStrategy(_SCARMCBase):
         dwt_data = self._get_dwt(T, seed, dwt)
 
         if alpha0 is None:
-            alpha0 = self._get_alpha0(copula, u)
+            alpha0 = self._get_alpha0(copula, u, verbose)
 
         bounds = Bounds([0.001, -np.inf, 0.001], [np.inf, np.inf, np.inf])
 
@@ -233,3 +247,29 @@ class SCARMStrategy(_SCARMCBase):
                 u, dwt_data, a1t, a2t, copula, self.stationary)
         except Exception:
             return 1e10
+        
+    def sample(self, copula, u, result, n, rng=None, **kwargs):
+        """Simulate n observations with OU-driven parameter (same as SCAR-TM)."""
+        if rng is None:
+            rng = np.random.default_rng()
+        p = result.params
+        theta, mu, nu = p.theta, p.mu, p.nu
+        dt = 1.0 / (n - 1) if n > 1 else 1.0
+        rho_ou = np.exp(-theta * dt)
+        sigma_cond = np.sqrt(nu ** 2 / (2.0 * theta) * (1.0 - rho_ou ** 2))
+        x = np.empty(n)
+        x[0] = rng.normal(mu, nu / np.sqrt(2.0 * theta))
+        for t in range(1, n):
+            x[t] = mu + rho_ou * (x[t - 1] - mu) + sigma_cond * rng.standard_normal()
+        r = copula.transform(x)
+        return copula.sample(n, r, rng=rng)
+ 
+    def predict(self, copula, u, result, n, rng=None, **kwargs):
+        """Predict: sample from stationary OU (no grid posterior available)."""
+        if rng is None:
+            rng = np.random.default_rng()
+        p = result.params
+        sigma = p.nu / np.sqrt(2.0 * p.theta)
+        x_T = rng.normal(p.mu, sigma, n)
+        r = copula.transform(x_T)
+        return copula.sample(n, r, rng=rng)
