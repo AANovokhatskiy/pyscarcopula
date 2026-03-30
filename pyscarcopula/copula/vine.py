@@ -116,10 +116,81 @@ def _all_rotations(copula_class):
 # Copula selection for one edge
 # ══════════════════════════════════════════════════════════════════
 
+def _kendall_tau(u1, u2):
+    """Fast Kendall's tau via numpy (O(n log n) would be better, but this is simple)."""
+    from scipy.stats import kendalltau
+    tau, _ = kendalltau(u1, u2)
+    return tau
+
+
+def _itau_initial_param(cop_class, tau_abs, rotate):
+    """Compute initial copula parameter from Kendall's tau.
+
+    Returns parameter in the copula's natural domain (before inv_transform).
+    Returns None if no closed-form available.
+    """
+    from pyscarcopula.copula.gumbel import GumbelCopula
+    from pyscarcopula.copula.clayton import ClaytonCopula
+    from pyscarcopula.copula.frank import FrankCopula
+    from pyscarcopula.copula.joe import JoeCopula
+    from pyscarcopula.copula.elliptical import BivariateGaussianCopula
+
+    tau = max(tau_abs, 0.01)  # avoid division by zero
+
+    if cop_class is GumbelCopula:
+        # tau = 1 - 1/theta => theta = 1/(1-tau)
+        theta = 1.0 / (1.0 - min(tau, 0.95))
+        return max(theta, 1.001)
+
+    if cop_class is ClaytonCopula:
+        # tau = theta/(theta+2) => theta = 2*tau/(1-tau)
+        theta = 2.0 * tau / (1.0 - min(tau, 0.95))
+        return max(theta, 0.01)
+
+    if cop_class is BivariateGaussianCopula:
+        # tau = 2/pi * arcsin(rho) => rho = sin(pi*tau/2)
+        rho = np.sin(np.pi * tau / 2.0)
+        return np.clip(rho, -0.99, 0.99)
+
+    if cop_class is FrankCopula:
+        # Approximation: tau ≈ 1 - 4/theta + 4/theta^2 * (1-e^{-theta})
+        # For moderate tau: theta ≈ 9*tau (rough but reasonable start)
+        return max(9.0 * tau, 0.1)
+
+    if cop_class is JoeCopula:
+        # Rough approximation from Joe (1997):
+        # tau ≈ 1 - 2/(theta*(theta-1)) for theta > 1
+        # => theta ≈ 1 + 1/(1-tau) (crude)
+        theta = 1.0 + 1.0 / (1.0 - min(tau, 0.9))
+        return max(theta, 1.001)
+
+    return None
+
+
+def _rotation_compatible(tau, rotate):
+    """Check if rotation is compatible with sign of Kendall's tau.
+
+    Returns False only for clear incompatibility (strong tau
+    with wrong rotation). Weak dependence passes all rotations.
+    """
+    # Weak dependence — don't prune, let AIC decide
+    if abs(tau) < 0.15:
+        return True
+
+    if rotate == 0 or rotate == 180:
+        return tau > 0
+    else:  # 90, 270
+        return tau < 0
+
+
 def select_best_copula(u1, u2, candidates, allow_rotations=True,
                        criterion='aic', transform_type='xtanh'):
     """
     Select best bivariate copula for (u1, u2) by AIC/BIC/logL.
+
+    Uses Kendall's tau for:
+    1. Pre-screening: skip families/rotations incompatible with tau sign
+    2. Initial point: itau(tau) gives a better x0 for L-BFGS-B
 
     Always includes IndependentCopula as a baseline competitor.
     If no parametric copula beats independence, the edge is
@@ -143,48 +214,62 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
     u_pair = np.column_stack((u1, u2))
     T = len(u1)
 
+    # Compute Kendall's tau once
+    tau = _kendall_tau(u1, u2)
+
     # Start with independence as baseline (AIC=0, BIC=0, logL=0)
     indep = IndependentCopula()
     indep_result = IndependentResult(
-        log_likelihood=0.0,
-        method='MLE',
-        copula_name=indep.name,
-        success=True,
-    )
+        log_likelihood=0.0, method='MLE',
+        copula_name=indep.name, success=True)
 
     if criterion == 'aic':
-        best_score = 0.0   # AIC = -2*0 + 2*0 = 0
+        best_score = 0.0
     elif criterion == 'bic':
-        best_score = 0.0   # BIC = -2*0 + 0*log(T) = 0
+        best_score = 0.0
     else:
-        best_score = 0.0   # -logL = 0
+        best_score = 0.0
 
     best_copula = indep
     best_result = indep_result
 
     for cop_class in candidates:
-        # Skip IndependentCopula if it's in candidates (already baseline)
         if cop_class is IndependentCopula:
             continue
 
         rotations = _all_rotations(cop_class) if allow_rotations else [0]
 
         for angle in rotations:
+            # Pre-screening: skip incompatible rotation+tau
+            if not _rotation_compatible(tau, angle):
+                continue
+
             try:
                 try:
                     cop = cop_class(rotate=angle, transform_type=transform_type)
                 except TypeError:
                     cop = cop_class(rotate=angle)
+
+                # Compute initial point from Kendall's tau
+                tau_for_family = abs(tau)
+                r0 = _itau_initial_param(cop_class, tau_for_family, angle)
+
+                alpha0 = None
+                if r0 is not None:
+                    x0 = cop.inv_transform(np.atleast_1d(np.array([r0], dtype=np.float64)))
+                    alpha0 = np.atleast_1d(x0)[0:1]
+
                 from pyscarcopula.api import fit as _api_fit
-                result = _api_fit(cop, u_pair, method='mle')
+                result = _api_fit(cop, u_pair, method='mle',
+                                  alpha0=alpha0)
                 logL = result.log_likelihood
-                n_params = 1  # MLE has 1 parameter for archimedean
+                n_params = 1
 
                 if criterion == 'aic':
                     score = -2 * logL + 2 * n_params
                 elif criterion == 'bic':
                     score = -2 * logL + n_params * np.log(T)
-                else:  # loglik
+                else:
                     score = -logL
 
                 if score < best_score:

@@ -30,6 +30,92 @@ from pyscarcopula.copula.base import BivariateCopula
 from pyscarcopula._utils import pobs
 
 
+from pyscarcopula.copula.equicorr import _ndtri
+
+
+@njit(cache=True)
+def _gauss_log_pdf_numba(u1, u2, rho):
+    """Bivariate Gaussian copula log-density (numba-compiled)."""
+    n = len(u1)
+    out = np.empty(n)
+    for i in range(n):
+        v1 = min(max(u1[i], 1e-10), 1.0 - 1e-10)
+        v2 = min(max(u2[i], 1e-10), 1.0 - 1e-10)
+        x1 = _ndtri(v1)
+        x2 = _ndtri(v2)
+        r = rho[i]
+        r2 = r * r
+        out[i] = (-0.5 * np.log(1.0 - r2)
+                  - 0.5 * (r2 * (x1 * x1 + x2 * x2) - 2.0 * r * x1 * x2)
+                  / (1.0 - r2))
+    return out
+
+
+@njit(cache=True)
+def _gauss_dlog_pdf_drho(u1, u2, rho):
+    """d(log c)/d(rho) for bivariate Gaussian copula."""
+    n = len(u1)
+    out = np.empty(n)
+    for i in range(n):
+        v1 = min(max(u1[i], 1e-10), 1.0 - 1e-10)
+        v2 = min(max(u2[i], 1e-10), 1.0 - 1e-10)
+        x1 = _ndtri(v1)
+        x2 = _ndtri(v2)
+        r = rho[i]
+        r2 = r * r
+        omr2 = 1.0 - r2
+        s1 = x1 * x1 + x2 * x2
+        s12 = x1 * x2
+        dlog_det = r / omr2
+        num = (2.0 * r * s1 - 2.0 * s12) * omr2 + 2.0 * r * (r2 * s1 - 2.0 * r * s12)
+        dquad = num / (omr2 * omr2)
+        out[i] = dlog_det - 0.5 * dquad
+    return out
+
+
+@njit(cache=True)
+def _gauss_precompute_x(u1, u2):
+    """Precompute Phi^{-1}(u) once for repeated evaluation."""
+    n = len(u1)
+    x1 = np.empty(n)
+    x2 = np.empty(n)
+    for i in range(n):
+        x1[i] = _ndtri(min(max(u1[i], 1e-10), 1.0 - 1e-10))
+        x2[i] = _ndtri(min(max(u2[i], 1e-10), 1.0 - 1e-10))
+    return x1, x2
+
+
+@njit(cache=True)
+def _gauss_negloglik_and_grad_from_x(x1, x2, rho_scalar):
+    """Fused -logL and d(-logL)/drho from precomputed x1, x2.
+
+    rho_scalar: single float (MLE case).
+    Returns (negloglik, grad) as scalars.
+    """
+    n = len(x1)
+    r = rho_scalar
+    r2 = r * r
+    omr2 = 1.0 - r2
+
+    sum_ll = 0.0
+    sum_grad = 0.0
+    log_det = -0.5 * np.log(omr2)
+    dlog_det = r / omr2
+
+    for i in range(n):
+        s1 = x1[i] * x1[i] + x2[i] * x2[i]
+        s12 = x1[i] * x2[i]
+
+        quad = (r2 * s1 - 2.0 * r * s12) / omr2
+        sum_ll += log_det - 0.5 * quad
+
+        num = (2.0 * r * s1 - 2.0 * s12) * omr2 + 2.0 * r * (r2 * s1 - 2.0 * r * s12)
+        dquad = num / (omr2 * omr2)
+        sum_grad += dlog_det - 0.5 * dquad
+
+    return -sum_ll, -sum_grad
+
+
 def _gauss_log_pdf_scipy(u1, u2, rho):
     """Bivariate Gaussian copula log-density (scipy-based, vectorized)."""
     eps = 1e-10
@@ -92,7 +178,7 @@ class BivariateGaussianCopula(BivariateCopula):
             raise ValueError("Rotation not supported for Gaussian copula")
         super().__init__(0)
         self._name = "Gaussian copula"
-        self._bounds = [(-0.9999, 0.9999)]
+        self._bounds = [(-0.9999, 0.9999)]  # bounds in rho-space (copula parameter)
         if transform_type not in ('xtanh', 'softplus'):
             raise ValueError(f"transform_type must be 'xtanh' or 'softplus', got '{transform_type}'")
         self._transform_type = transform_type
@@ -123,11 +209,31 @@ class BivariateGaussianCopula(BivariateCopula):
 
     def pdf_unrotated(self, u1, u2, r):
         u1a, u2a, ra = _broadcast(u1, u2, r)
-        return _gauss_pdf_scipy(u1a, u2a, ra)
+        return np.exp(_gauss_log_pdf_numba(u1a, u2a, ra))
 
     def log_pdf_unrotated(self, u1, u2, r):
         u1a, u2a, ra = _broadcast(u1, u2, r)
-        return _gauss_log_pdf_scipy(u1a, u2a, ra)
+        return _gauss_log_pdf_numba(u1a, u2a, ra)
+
+    def dlog_pdf_dr_unrotated(self, u1, u2, r):
+        u1a, u2a, ra = _broadcast(u1, u2, r)
+        return _gauss_dlog_pdf_drho(u1a, u2a, ra)
+
+    def mle_objective_fused(self, u):
+        """Return fused (neg_loglik, neg_grad) callable with precomputed Phi^{-1}.
+
+        Works directly in rho-space (copula parameter).
+        Avoids recomputing norm.ppf on every L-BFGS-B iteration.
+        Returns a function: rho_arr -> (float, ndarray).
+        """
+        x1, x2 = _gauss_precompute_x(u[:, 0], u[:, 1])
+
+        def objective_and_grad(rho_arr):
+            rho = rho_arr[0]
+            nll, ngrad = _gauss_negloglik_and_grad_from_x(x1, x2, rho)
+            return float(nll), np.array([float(ngrad)])
+
+        return objective_and_grad
 
     def h_unrotated(self, u, v, r):
         ua, va, ra = _broadcast(u, v, r)

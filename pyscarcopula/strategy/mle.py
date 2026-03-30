@@ -23,36 +23,58 @@ class MLEStrategy:
     def __init__(self, config: NumericalConfig | None = None, **kwargs):
         self.config = config or DEFAULT_CONFIG
 
-    def fit(self, copula, u: np.ndarray, **kwargs) -> MLEResult:
+    def fit(self, copula, u: np.ndarray,
+            alpha0: np.ndarray | None = None, **kwargs) -> MLEResult:
         """Fit constant copula parameter.
 
         Parameters
         ----------
         copula : CopulaProtocol
         u : (T, 2) pseudo-observations
+        alpha0 : (1,) initial point in x-space, or None
         **kwargs : ignored (for interface compatibility)
 
         Returns
         -------
         MLEResult
         """
-        # Starting point: transform(1.5) is a reasonable default for
-        # most Archimedean copulas (parameter ~1.5 in natural domain)
-        x0_val = copula.transform(np.array([1.5]))[0]
-        x0 = np.array([x0_val])
+        if alpha0 is not None:
+            x0 = np.atleast_1d(np.asarray(alpha0, dtype=np.float64))[:1]
+        else:
+            x0_val = copula.transform(np.array([1.5]))[0]
+            x0 = np.array([x0_val])
 
-        def neg_loglik(x):
-            return -np.sum(copula.log_pdf(u[:, 0], u[:, 1], x))
+        # Pre-extract columns to avoid repeated slicing
+        u1 = u[:, 0]
+        u2 = u[:, 1]
 
-        result = minimize(
-            neg_loglik, x0,
-            method='L-BFGS-B',
-            bounds=copula.bounds,
-            options={
-                'gtol': self.config.default_tol_mle,
-                'eps': 1e-5,
-            },
-        )
+        # Use fused kernel if copula provides one (avoids redundant
+        # Phi^{-1} recomputation for Gaussian copula).
+        # With jac=True, minimize calls fun once and gets both f and g.
+        fused = getattr(copula, 'mle_objective_fused', None)
+        if fused is not None:
+            obj_and_grad = fused(u)
+            result = minimize(
+                obj_and_grad, x0,
+                jac=True,
+                method='L-BFGS-B',
+                bounds=copula.bounds,
+                options={'gtol': self.config.default_tol_mle},
+            )
+        else:
+            def neg_loglik(x):
+                return -np.sum(copula.log_pdf(u1, u2, x))
+
+            def neg_loglik_grad(x):
+                return -np.sum(copula.dlog_pdf_dr(u1, u2, x))
+
+            result = minimize(
+                neg_loglik, x0,
+                jac=neg_loglik_grad,
+                method='L-BFGS-B',
+                bounds=copula.bounds,
+                options={'gtol': self.config.default_tol_mle},
+            )
 
         return MLEResult(
             log_likelihood=-result.fun,
