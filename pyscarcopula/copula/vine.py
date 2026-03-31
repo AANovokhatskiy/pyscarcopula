@@ -158,10 +158,14 @@ def _itau_initial_param(cop_class, tau_abs, rotate):
         return max(9.0 * tau, 0.1)
 
     if cop_class is JoeCopula:
-        # Rough approximation from Joe (1997):
-        # tau ≈ 1 - 2/(theta*(theta-1)) for theta > 1
-        # => theta ≈ 1 + 1/(1-tau) (crude)
-        theta = 1.0 + 1.0 / (1.0 - min(tau, 0.9))
+        # Joe (1997): tau = 1 + 4/theta * integral...
+        # For small tau, theta ≈ 1 + 2*tau (linearization near independence)
+        # For larger tau, use: tau ≈ 1 - 2/(theta*(theta-1))
+        #   => theta ≈ (1 + sqrt(1 + 8/(1-tau))) / 2
+        if tau < 0.2:
+            theta = 1.0 + 2.0 * tau
+        else:
+            theta = (1.0 + np.sqrt(1.0 + 8.0 / (1.0 - min(tau, 0.95)))) / 2.0
         return max(theta, 1.001)
 
     return None
@@ -188,13 +192,14 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
     """
     Select best bivariate copula for (u1, u2) by AIC/BIC/logL.
 
-    Uses Kendall's tau for:
-    1. Pre-screening: skip families/rotations incompatible with tau sign
-    2. Initial point: itau(tau) gives a better x0 for L-BFGS-B
+    Two-phase approach (mirroring pyvinecopulib):
+      Phase 1 — Itau screening: compute r = itau(tau) for each
+        (family, rotation), evaluate logL analytically (no optimizer).
+        Rank by AIC/BIC and keep top-N candidates.
+      Phase 2 — Refinement: run L-BFGS-B on the top-N candidates
+        starting from their itau points. Pick the final winner.
 
     Always includes IndependentCopula as a baseline competitor.
-    If no parametric copula beats independence, the edge is
-    set to independent (zero cost for SCAR/GAS).
 
     Parameters
     ----------
@@ -210,9 +215,10 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
     """
     from pyscarcopula.copula.independent import IndependentCopula
     from pyscarcopula._types import IndependentResult
+    from pyscarcopula.api import fit as _api_fit
 
-    u_pair = np.column_stack((u1, u2))
     T = len(u1)
+    u_pair = np.column_stack((u1, u2))
 
     # Compute Kendall's tau once
     tau = _kendall_tau(u1, u2)
@@ -223,15 +229,9 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
         log_likelihood=0.0, method='MLE',
         copula_name=indep.name, success=True)
 
-    if criterion == 'aic':
-        best_score = 0.0
-    elif criterion == 'bic':
-        best_score = 0.0
-    else:
-        best_score = 0.0
-
-    best_copula = indep
-    best_result = indep_result
+    # ── Phase 1: itau screening (no optimizer) ───────────────────
+    # Collect (score, copula, r0) for all viable candidates
+    itau_candidates = []
 
     for cop_class in candidates:
         if cop_class is IndependentCopula:
@@ -240,31 +240,28 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
         rotations = _all_rotations(cop_class) if allow_rotations else [0]
 
         for angle in rotations:
-            # Pre-screening: skip incompatible rotation+tau
             if not _rotation_compatible(tau, angle):
                 continue
 
             try:
+                tau_for_family = abs(tau)
+                r0 = _itau_initial_param(cop_class, tau_for_family, angle)
+                if r0 is None:
+                    continue
+
                 try:
                     cop = cop_class(rotate=angle, transform_type=transform_type)
                 except TypeError:
                     cop = cop_class(rotate=angle)
 
-                # Compute initial point from Kendall's tau
-                tau_for_family = abs(tau)
-                r0 = _itau_initial_param(cop_class, tau_for_family, angle)
+                # Evaluate logL at itau point directly (no optimizer)
+                r0_arr = np.atleast_1d(np.asarray(r0, dtype=np.float64))
+                logL = float(np.sum(cop.log_pdf(u1, u2, r0_arr)))
 
-                alpha0 = None
-                if r0 is not None:
-                    x0 = cop.inv_transform(np.atleast_1d(np.array([r0], dtype=np.float64)))
-                    alpha0 = np.atleast_1d(x0)[0:1]
+                if not np.isfinite(logL):
+                    continue
 
-                from pyscarcopula.api import fit as _api_fit
-                result = _api_fit(cop, u_pair, method='mle',
-                                  alpha0=alpha0)
-                logL = result.log_likelihood
                 n_params = 1
-
                 if criterion == 'aic':
                     score = -2 * logL + 2 * n_params
                 elif criterion == 'bic':
@@ -272,12 +269,42 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
                 else:
                     score = -logL
 
-                if score < best_score:
-                    best_score = score
-                    best_copula = cop
-                    best_result = result
+                itau_candidates.append((score, cop, r0))
             except Exception:
                 continue
+
+    # ── Phase 2: refine top-3 with L-BFGS-B ─────────────────────
+    # Sort by score (lower is better), take top 3
+    itau_candidates.sort(key=lambda x: x[0])
+    n_refine = min(3, len(itau_candidates))
+
+    best_score = 0.0  # independence baseline
+    best_copula = indep
+    best_result = indep_result
+
+    for idx in range(n_refine):
+        _, cop, r0 = itau_candidates[idx]
+        try:
+            x0 = cop.inv_transform(
+                np.atleast_1d(np.array([r0], dtype=np.float64)))
+            alpha0 = np.atleast_1d(x0)[0:1]
+            result = _api_fit(cop, u_pair, method='mle', alpha0=alpha0)
+            logL = result.log_likelihood
+
+            n_params = 1
+            if criterion == 'aic':
+                score = -2 * logL + 2 * n_params
+            elif criterion == 'bic':
+                score = -2 * logL + n_params * np.log(T)
+            else:
+                score = -logL
+
+            if score < best_score:
+                best_score = score
+                best_copula = cop
+                best_result = result
+        except Exception:
+            continue
 
     return best_copula, best_result
 

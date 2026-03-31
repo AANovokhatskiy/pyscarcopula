@@ -89,6 +89,77 @@ def _joe_h(u0, u1, r):
 
 
 @njit(cache=True)
+def _joe_h_inverse_newton(u, v, r):
+    """Bracketed Newton-Raphson inversion of Joe h-function.
+
+    Finds t such that h(t, v, r) = u using Newton's method
+    with numerical derivative and bisection fallback.
+    """
+    n = len(u)
+    out = np.empty(n)
+    eps = 1e-10
+
+    for i in range(n):
+        ui = min(max(u[i], eps), 1.0 - eps)
+        vi = min(max(v[i], eps), 1.0 - eps)
+        ri = r[i] if r.shape[0] > 1 else r[0]
+
+        if ri < 1.0 + 1e-8:
+            out[i] = ui
+            continue
+
+        q1 = (1.0 - vi) ** ri
+        lo = eps
+        hi = 1.0 - eps
+        t = ui
+
+        for _ in range(40):
+            t = min(max(t, lo), hi)
+            q0 = (1.0 - t) ** ri
+            x3 = q0 - 1.0
+            inner = q0 - x3 * q1
+            if inner < 1e-300:
+                t = 0.5 * (lo + hi)
+                continue
+
+            h_val = -(x3 * inner ** (1.0 / ri - 1.0) * q1 / (1.0 - vi))
+
+            err = h_val - ui
+            if abs(err) < 1e-10:
+                break
+
+            # Update bracket
+            if err > 0:
+                hi = t
+            else:
+                lo = t
+
+            # Numerical derivative via forward FD
+            dt_fd = max(t * 1e-7, 1e-12)
+            t_p = min(t + dt_fd, 1.0 - eps)
+            q0_p = (1.0 - t_p) ** ri
+            x3_p = q0_p - 1.0
+            inner_p = q0_p - x3_p * q1
+            if inner_p < 1e-300:
+                t = 0.5 * (lo + hi)
+                continue
+            h_p = -(x3_p * inner_p ** (1.0 / ri - 1.0) * q1 / (1.0 - vi))
+            dh_dt = (h_p - h_val) / (t_p - t)
+
+            if abs(dh_dt) < 1e-300:
+                t = 0.5 * (lo + hi)
+            else:
+                t_new = t - err / dh_dt
+                if t_new > lo and t_new < hi:
+                    t = t_new
+                else:
+                    t = 0.5 * (lo + hi)
+
+        out[i] = min(max(t, eps), 1.0 - eps)
+    return out
+
+
+@njit(cache=True)
 def _joe_V(n, r):
     """Sample V for Joe copula (Sibuya distribution)."""
     out = np.empty(n)
@@ -315,6 +386,9 @@ class JoeCopula(BivariateCopula):
 
     def h_unrotated(self, u, v, r):
         return _joe_h(*_broadcast(u, v, r))
+
+    def h_inverse_unrotated(self, u, v, r):
+        return _joe_h_inverse_newton(*_broadcast(u, v, r))
 
     def pdf_and_grad_on_grid_batch(self, u, x_grid):
         x = np.asarray(x_grid, dtype=np.float64)

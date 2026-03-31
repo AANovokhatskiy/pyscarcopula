@@ -351,3 +351,86 @@ class GumbelCopula(BivariateCopula):
 
     # def h_inverse_unrotated(self, u, v, r):
     #     raise NotImplementedError("Gumbel h_inverse requires numerical inversion")
+
+    def h_inverse_unrotated(self, u, v, r):
+        ua, va, ra = _broadcast(u, v, r)
+        return _gumbel_h_inverse_newton(ua, va, ra)
+
+
+@njit(cache=True)
+def _gumbel_h_inverse_newton(u, v, r):
+    """Newton-Raphson inversion of Gumbel h-function.
+
+    Finds t such that h(t, v, r) = u using Newton's method
+    with numerical derivative. Converges in ~5-10 iterations
+    (vs 60 for bisection).
+    """
+    n = len(u)
+    out = np.empty(n)
+    eps = 1e-10
+
+    for i in range(n):
+        ui = min(max(u[i], eps), 1.0 - eps)
+        vi = min(max(v[i], eps), 1.0 - eps)
+        ri = r[i] if r.shape[0] > 1 else r[0]
+
+        if ri < 1.0 + 1e-8:
+            out[i] = ui
+            continue
+
+        log_vi = np.log(vi)
+        t1_base = (-log_vi) ** ri
+
+        # Bracketed Newton: maintain [lo, hi] and use Newton when safe
+        lo = eps
+        hi = 1.0 - eps
+        t = ui  # initial guess
+
+        for _ in range(40):
+            t = min(max(t, lo), hi)
+
+            # Evaluate h(t, v; r)
+            log_t = np.log(t)
+            t2 = (-log_t) ** ri
+            S = t1_base + t2
+            if S < 1e-300:
+                t = 0.5 * (lo + hi)
+                continue
+            A = S ** (1.0 / ri)
+            h_val = t1_base / S * A * np.exp(-A) / (-log_vi * vi)
+
+            err = h_val - ui
+            if abs(err) < 1e-10:
+                break
+
+            # Update bracket
+            if err > 0:
+                hi = t
+            else:
+                lo = t
+
+            # Numerical derivative via forward FD
+            dt_fd = max(t * 1e-7, 1e-12)
+            t_p = min(t + dt_fd, 1.0 - eps)
+            log_tp = np.log(t_p)
+            t2_p = (-log_tp) ** ri
+            S_p = t1_base + t2_p
+            if S_p < 1e-300:
+                t = 0.5 * (lo + hi)
+                continue
+            A_p = S_p ** (1.0 / ri)
+            h_p = t1_base / S_p * A_p * np.exp(-A_p) / (-log_vi * vi)
+            dh_dt = (h_p - h_val) / (t_p - t)
+
+            if abs(dh_dt) < 1e-300:
+                t = 0.5 * (lo + hi)
+            else:
+                t_new = t - err / dh_dt
+                # Accept Newton step only if it stays in bracket
+                if t_new > lo and t_new < hi:
+                    t = t_new
+                else:
+                    t = 0.5 * (lo + hi)
+
+        out[i] = min(max(t, eps), 1.0 - eps)
+    return out

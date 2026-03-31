@@ -20,11 +20,13 @@ This makes the gradient computation efficient: only 3 chain-rule terms.
 Contents:
   - tm_loglik_with_grad: neg logL + analytical gradient (3 components)
   - _build_Tw_and_grad_dense: T_w and dT_w/drho in xi-coordinates (dense)
-  - _build_Tw_and_grad_sparse: same, sparse CSR version
+  - _build_Tw_and_grad_sparse: same, sparse CSR version (numba-accelerated)
 """
 
 import numpy as np
+from numba import njit
 from scipy.sparse import csr_matrix
+from scipy.sparse._sparsetools import csr_matvec as _raw_csr_matvec
 
 
 def _build_Tw_and_grad_dense(xi, rho, base_w, K):
@@ -47,11 +49,13 @@ def _build_Tw_and_grad_dense(xi, rho, base_w, K):
     return T_w, dTw_drho
 
 
-def _build_Tw_and_grad_sparse(xi, rho, base_w, K, band):
+@njit(cache=True)
+def _build_Tw_and_grad_sparse_core(xi, rho, base_w, K, band):
     """
-    Sparse version of T_w and dT_w/drho in xi-coordinates.
+    Numba-accelerated COO builder for sparse T_w and dT_w/drho.
 
-    Returns T_w (CSR), dTw_drho (CSR).
+    Returns (rows, cols, t_vals, g_vals) as flat arrays.
+    Caller wraps into scipy CSR.
     """
     omr2 = 1.0 - rho ** 2
     inv_omr2 = 1.0 / omr2
@@ -62,40 +66,84 @@ def _build_Tw_and_grad_sparse(xi, rho, base_w, K, band):
     inv_dxi = 1.0 / d_xi
 
     centers_idx = (rho * xi - xi0) * inv_dxi
-    i_lo = np.maximum(0, np.floor(centers_idx).astype(np.intp) - band)
-    i_hi = np.minimum(K, np.ceil(centers_idx).astype(np.intp) + band + 1)
-    widths = i_hi - i_lo
-    total_nnz = int(np.sum(widths))
 
-    rows = np.empty(total_nnz, dtype=np.int32)
-    cols = np.empty(total_nnz, dtype=np.int32)
-    t_vals = np.empty(total_nnz, dtype=np.float64)
-    g_vals = np.empty(total_nnz, dtype=np.float64)
+    # Count total nnz
+    total = 0
+    for i in range(K):
+        i_lo = max(0, int(np.floor(centers_idx[i])) - band)
+        i_hi = min(K, int(np.ceil(centers_idx[i])) + band + 1)
+        w = i_hi - i_lo
+        if w > 0:
+            total += w
+
+    rows = np.empty(total, dtype=np.int32)
+    cols = np.empty(total, dtype=np.int32)
+    t_vals = np.empty(total, dtype=np.float64)
+    g_vals = np.empty(total, dtype=np.float64)
 
     ptr = 0
     for i in range(K):
-        w = widths[i]
-        if w <= 0:
-            continue
-        sl = slice(ptr, ptr + w)
-        j_range = np.arange(i_lo[i], i_hi[i])
-        rows[sl] = i
-        cols[sl] = j_range
+        i_lo = max(0, int(np.floor(centers_idx[i])) - band)
+        i_hi = min(K, int(np.ceil(centers_idx[i])) + band + 1)
 
-        q = xi[j_range] - rho * xi[i]
-        gauss = coeff * np.exp(-0.5 * q ** 2 * inv_omr2)
-        tw = gauss * base_w[j_range]
-        t_vals[sl] = tw
+        for j in range(i_lo, i_hi):
+            q = xi[j] - rho * xi[i]
+            gauss = coeff * np.exp(-0.5 * q * q * inv_omr2)
+            tw = gauss * base_w[j]
 
-        dlog = rho * inv_omr2 + q * xi[i] * inv_omr2 - rho * q ** 2 * inv_omr2 ** 2
-        g_vals[sl] = dlog * tw
+            rows[ptr] = i
+            cols[ptr] = j
+            t_vals[ptr] = tw
 
-        ptr += w
+            dlog = (rho * inv_omr2
+                    + q * xi[i] * inv_omr2
+                    - rho * q * q * inv_omr2 * inv_omr2)
+            g_vals[ptr] = dlog * tw
+            ptr += 1
+
+    return rows[:ptr], cols[:ptr], t_vals[:ptr], g_vals[:ptr]
+
+
+def _build_Tw_and_grad_sparse(xi, rho, base_w, K, band):
+    """
+    Sparse version of T_w and dT_w/drho in xi-coordinates.
+
+    Uses numba-accelerated COO construction + scipy CSR conversion.
+    Returns T_w (CSR), dTw_drho (CSR).
+    """
+    rows, cols, t_vals, g_vals = _build_Tw_and_grad_sparse_core(
+        xi, rho, base_w, K, band)
 
     shape = (K, K)
-    T_sp = csr_matrix((t_vals[:ptr], (rows[:ptr], cols[:ptr])), shape=shape)
-    G_sp = csr_matrix((g_vals[:ptr], (rows[:ptr], cols[:ptr])), shape=shape)
+    T_sp = csr_matrix((t_vals, (rows, cols)), shape=shape)
+    G_sp = csr_matrix((g_vals, (rows, cols)), shape=shape)
     return T_sp, G_sp
+
+
+def _make_fast_matvec(mat):
+    """Create a fast matvec closure bypassing scipy dispatch overhead.
+
+    For CSR matrices, extracts internal arrays and calls the C-level
+    csr_matvec directly (~25% faster than ``mat @ v`` at K=300).
+    For dense matrices, uses numpy ``@`` which is already optimal.
+    """
+    if hasattr(mat, 'indptr'):
+        K = mat.shape[0]
+        Ap = mat.indptr
+        Aj = mat.indices
+        Ax = mat.data
+
+        def _fast_matvec(v):
+            out = np.zeros(K)
+            _raw_csr_matvec(K, K, Ap, Aj, Ax, v, out)
+            return out
+
+        return _fast_matvec
+    else:
+        def _dense_matvec(v):
+            return mat @ v
+
+        return _dense_matvec
 
 
 def tm_loglik_with_grad(theta, mu, nu, u, copula, K=300, grid_range=5.0,
@@ -194,12 +242,13 @@ def tm_loglik_with_grad(theta, mu, nu, u, copula, K=300, grid_range=5.0,
     dx_dalpha[1] = 1.0                    # dx/dmu
     dx_dalpha[2] = d_sigma_dnu * xi       # dx/dnu
 
+    # ── fast matvec: bypass scipy dispatch for sparse matrices ────
+    matvec = _make_fast_matvec(T_w)
+    dTw_matvec = _make_fast_matvec(dTw_drho)
+
     # ══════════════════════════════════════════════════════════════
     # BACKWARD PASS — compute and store beta[t] and c_vals[t]
     # ══════════════════════════════════════════════════════════════
-
-    def matvec(v):
-        return T_w @ v
 
     beta = [None] * n
     beta[n - 1] = np.ones(K_eff)
@@ -241,7 +290,7 @@ def tm_loglik_with_grad(theta, mu, nu, u, copula, K=300, grid_range=5.0,
 
             contrib = matvec(d_target_k)
             if k == 0:
-                contrib += (dTw_drho @ target) * drho_dtheta
+                contrib += dTw_matvec(target) * drho_dtheta
 
             new_d_beta[k] = contrib * inv_c
 
