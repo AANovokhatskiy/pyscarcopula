@@ -24,11 +24,12 @@ from pyscarcopula.copula.frank import FrankCopula
 from pyscarcopula.copula.joe import JoeCopula
 from pyscarcopula.copula.clayton import ClaytonCopula
 from pyscarcopula.copula.independent import IndependentCopula
-from pyscarcopula.copula.vine import CVineCopula
+from pyscarcopula.vine.cvine import CVineCopula
 
 from pyscarcopula.copula.elliptical import (
     BivariateGaussianCopula, GaussianCopula, StudentCopula
 )
+from pyscarcopula.copula.stochastic_student import StochasticStudentCopula
 
 
 __all__ = (
@@ -38,6 +39,8 @@ __all__ = (
     'IndependentCopula',
     # Elliptical
     'GaussianCopula', 'StudentCopula', 'BivariateGaussianCopula',
+    # Stochastic multivariate
+    'StochasticStudentCopula',
     # Vine
     'CVineCopula',
 )

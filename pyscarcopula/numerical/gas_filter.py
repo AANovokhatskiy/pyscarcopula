@@ -17,7 +17,7 @@ Used by:
     - strategy/gas.py (GASStrategy) for fitting and evaluation
     - latent/initial_point.py for GAS-based initial point estimation
     - stattests.py for GAS Rosenblatt transform
-    - copula/vine.py for GAS h-functions in vine edges
+    - vine/_edge.py for GAS h-functions in vine edges
 """
 
 import numpy as np

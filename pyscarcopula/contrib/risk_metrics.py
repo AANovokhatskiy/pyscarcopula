@@ -149,7 +149,7 @@ def _predict_copula(copula, uk, N_mc):
 
 def _get_copula_constructor(copula):
     """Extract copula class and kwargs for reconstruction in workers."""
-    from pyscarcopula.copula.vine import CVineCopula
+    from pyscarcopula.vine.cvine import CVineCopula
     from pyscarcopula.copula.elliptical import GaussianCopula, StudentCopula
 
     if isinstance(copula, CVineCopula):

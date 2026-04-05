@@ -1,14 +1,97 @@
-"""Test C-vine copula: structure, truncation, independence selection."""
+"""Test C-vine copula: structure, truncation, independence selection, GoF, sample/predict."""
 import numpy as np
 import pytest
-from pyscarcopula import CVineCopula, IndependentCopula
+from pyscarcopula.vine.cvine import CVineCopula
+from pyscarcopula.vine._edge import VineEdge, _edge_h, _edge_log_likelihood
+from pyscarcopula.vine._selection import (
+    select_best_copula, _default_candidates, _kendall_tau,
+)
+from pyscarcopula.vine._helpers import _clip_unit, generate_r_for_sample
+from pyscarcopula.copula.independent import IndependentCopula
 from pyscarcopula.stattests import gof_test
 from pyscarcopula._utils import pobs
 
 
-class TestVineStructure:
-    """Basic vine structure properties."""
+# ══════════════════════════════════════════════════════════════
+# Edge module tests
+# ══════════════════════════════════════════════════════════════
 
+class TestVineEdge:
+    def test_edge_creation(self):
+        edge = VineEdge(tree=0, idx=0)
+        assert edge.tree == 0
+        assert edge.idx == 0
+        assert edge.copula is None
+        assert edge.method is None
+
+    def test_edge_method_after_fit(self):
+        u = pobs(np.random.default_rng(42).standard_normal((200, 4)))
+        vine = CVineCopula()
+        vine.fit(u, method='mle')
+        edge = vine.edges[0][0]
+        assert edge.method is not None
+        assert edge.method.upper() == 'MLE'
+
+
+# ══════════════════════════════════════════════════════════════
+# Selection module tests
+# ══════════════════════════════════════════════════════════════
+
+class TestSelection:
+    def test_default_candidates_not_empty(self):
+        cands = _default_candidates()
+        assert len(cands) >= 4
+
+    def test_kendall_tau_range(self):
+        rng = np.random.default_rng(42)
+        u1 = rng.uniform(0, 1, 200)
+        u2 = rng.uniform(0, 1, 200)
+        tau = _kendall_tau(u1, u2)
+        assert -1.0 <= tau <= 1.0
+
+    def test_select_best_copula_returns_fitted(self):
+        rng = np.random.default_rng(42)
+        u = pobs(rng.standard_normal((200, 2)))
+        cop, result = select_best_copula(
+            u[:, 0], u[:, 1], _default_candidates())
+        assert cop is not None
+        assert result is not None
+        assert hasattr(result, 'log_likelihood')
+
+    def test_independent_data_selects_independence(self):
+        rng = np.random.default_rng(99)
+        u1 = rng.uniform(0, 1, 500)
+        u2 = rng.uniform(0, 1, 500)
+        cop, result = select_best_copula(u1, u2, _default_candidates())
+        assert isinstance(cop, IndependentCopula)
+
+
+# ══════════════════════════════════════════════════════════════
+# Helpers module tests
+# ══════════════════════════════════════════════════════════════
+
+class TestHelpers:
+    def test_clip_unit(self):
+        x = np.array([-0.1, 0.0, 0.5, 1.0, 1.1])
+        clipped = _clip_unit(x)
+        assert np.all(clipped > 0)
+        assert np.all(clipped < 1)
+
+    def test_generate_r_for_sample_mle(self):
+        u = pobs(np.random.default_rng(42).standard_normal((200, 3)))
+        vine = CVineCopula()
+        vine.fit(u, method='mle')
+        edge = vine.edges[0][0]
+        rng = np.random.default_rng(0)
+        r = generate_r_for_sample(edge, 100, rng)
+        assert r.shape == (100,)
+
+
+# ══════════════════════════════════════════════════════════════
+# CVineCopula structure tests
+# ══════════════════════════════════════════════════════════════
+
+class TestVineStructure:
     @pytest.mark.parametrize("d", [3, 4, 6])
     def test_number_of_edges(self, d):
         u = pobs(np.random.default_rng(42).standard_normal((200, d)))
@@ -33,6 +116,10 @@ class TestVineStructure:
             assert len(tree_edges) == d - j - 1
 
 
+# ══════════════════════════════════════════════════════════════
+# Truncation tests
+# ══════════════════════════════════════════════════════════════
+
 class TestVineTruncation:
     def test_truncation_level(self, crypto_data_6d):
         vine = CVineCopula()
@@ -52,6 +139,10 @@ class TestVineTruncation:
         assert n_mle > 0
 
 
+# ══════════════════════════════════════════════════════════════
+# Independence selection tests
+# ══════════════════════════════════════════════════════════════
+
 class TestVineIndependence:
     def test_independent_data_selects_independence(self):
         rng = np.random.default_rng(99)
@@ -64,6 +155,10 @@ class TestVineIndependence:
         assert n_indep >= total // 2
 
 
+# ══════════════════════════════════════════════════════════════
+# GoF tests
+# ══════════════════════════════════════════════════════════════
+
 class TestVineGoF:
     def test_vine_gof_runs(self, crypto_data_6d):
         vine = CVineCopula()
@@ -71,6 +166,10 @@ class TestVineGoF:
         gof = gof_test(vine, crypto_data_6d, to_pobs=False)
         assert 0 <= gof.pvalue <= 1
 
+
+# ══════════════════════════════════════════════════════════════
+# Sample / predict tests
+# ══════════════════════════════════════════════════════════════
 
 class TestVineSamplePredict:
     def test_predict_shape(self):
@@ -94,3 +193,13 @@ class TestVineSamplePredict:
         vine.fit(u, method='mle')
         samples = vine.predict(1000)
         assert np.all(samples >= 0) and np.all(samples <= 1)
+
+    def test_log_likelihood_consistent(self):
+        """log_likelihood(data) should match fit_result.log_likelihood."""
+        d = 3
+        u = pobs(np.random.default_rng(42).standard_normal((200, d)))
+        vine = CVineCopula()
+        vine.fit(u, method='mle')
+        ll_fit = vine.fit_result.log_likelihood
+        ll_eval = vine.log_likelihood(u)
+        assert abs(ll_fit - ll_eval) < 1e-6
