@@ -49,9 +49,17 @@ pytest tests/
 **Copula families**
 - Archimedean: Gumbel, Frank, Clayton, Joe (with rotations 0°/90°/180°/270°)
 - Elliptical: Gaussian, Student-t (MLE only)
+- Stochastic Student-t: d-dimensional t-copula with OU-driven degrees of freedom
 - Independence copula (null model for automatic vine pruning)
 - Equicorrelation Gaussian (single dynamic correlation for d assets)
-- C-vine pair copula construction
+
+**Vine copulas**
+- C-vine pair copula construction (fixed star structure)
+- R-vine pair copula construction (data-driven structure via Dissmann's MST algorithm)
+- Automatic copula family and rotation selection per edge (AIC/BIC)
+- Automatic pruning of weak edges via independence copula baseline
+- Tree-level and edge-level truncation for scalability
+- Mixed SCAR/MLE edges within a single vine
 
 **Estimation methods**
 - MLE — constant copula parameter
@@ -62,11 +70,6 @@ pytest tests/
 **Sampling and prediction**
 - `sample` — generate synthetic data reproducing the fitted model (for model validation). For SCAR models an OU trajectory is simulated with the correct time discretization; for GAS a recursive score-driven simulation is used.
 - `predict` — generate samples for next-step forecasting (for risk metrics). For SCAR-TM uses mixture sampling from the posterior distribution p(x_T | data), accounting for parameter uncertainty. For GAS uses the last filtered value.
-
-**Vine copulas**
-- Automatic copula family and rotation selection per edge (AIC/BIC)
-- Automatic pruning of weak edges via independence copula baseline
-- Tree-level and edge-level truncation for scalability
 
 **Diagnostics and risk**
 - Goodness-of-fit via Rosenblatt transform + Cramér–von Mises test
@@ -107,6 +110,15 @@ $$L = \int \prod_{t} c(u_{1t}, u_{2t}; \Psi(x_t))\;p(x_t | x_{t-1})\;dx_0 \cdots
 
 The Markov property allows this high-dimensional integral to be factored into a chain of one-dimensional integrals, each computed as a matrix-vector product on a discretized grid. Total complexity: O(TK²) (dense) or O(TKb) (sparse, where b is the kernel bandwidth).
 
+### Vine copulas
+
+Vine copulas decompose a d-dimensional dependence structure into d(d-1)/2 bivariate copulas arranged in a tree hierarchy. Two types are supported:
+
+- **C-vine**: fixed star structure where one variable is the root of each tree.
+- **R-vine**: data-driven structure selected by Dissmann's algorithm — at each tree level a maximum spanning tree is built on |Kendall's τ|, subject to the proximity condition. R-vines are more flexible and typically achieve higher log-likelihood than C-vines.
+
+Each edge in the vine can use a different copula family and estimation method (MLE, SCAR-TM, or GAS). Weak edges are automatically replaced with independence copulas.
+
 ### Goodness of fit
 
 Model quality is assessed via the Rosenblatt transform. For the stochastic model we use the **mixture Rosenblatt transform**, which integrates the h-function over the predictive distribution of the latent state, avoiding the Jensen bias from plugging in a point estimate. Uniformity of the transformed sample is tested with the Cramér–von Mises statistic.
@@ -120,7 +132,10 @@ Model quality is assessed via the Rosenblatt transform. For the stochastic model
 import pandas as pd
 import numpy as np
 from pyscarcopula._utils import pobs
-from pyscarcopula import GumbelCopula, CVineCopula, GaussianCopula, StudentCopula
+from pyscarcopula import (
+    GumbelCopula, CVineCopula, RVineCopula,
+    GaussianCopula, StudentCopula, StochasticStudentCopula,
+)
 from pyscarcopula.api import fit, sample, predict, smoothed_params
 from pyscarcopula.stattests import gof_test
 
@@ -197,7 +212,9 @@ How `sample` and `predict` work for each method:
 
 For SCAR-TM, `predict` accounts for parameter uncertainty by sampling the copula parameter from the posterior distribution over the latent state, rather than using a point estimate.
 
-### 5. Fit a multivariate C-vine copula
+### 5. Fit a vine copula
+
+C-vine (fixed star structure):
 
 ```python
 tickers = ['BTC-USD', 'ETH-USD', 'BNB-USD', 'ADA-USD', 'XRP-USD', 'DOGE-USD']
@@ -208,19 +225,28 @@ vine = CVineCopula()
 vine.fit(u6, method='scar-tm-ou',
          truncation_level=2, min_edge_logL=10)
 vine.summary()
+```
 
-gof_vine = gof_test(vine, u6, to_pobs=False)
+R-vine (data-driven structure via Dissmann's MST algorithm):
+
+```python
+vine = RVineCopula()
+vine.fit(u6, method='scar-tm-ou',
+         truncation_level=2, min_edge_logL=10)
+vine.summary()
 ```
 
 Results on 6-dimensional crypto data (T = 250):
 
 | Model | logL | GoF p-value |
 |-------|------|-------------|
-| **C-vine SCAR-TM** | **921.9** | **0.90** |
+| **C-vine SCAR-TM** | **921.9** | **0.89** |
+| R-vine SCAR-TM | 919.1 | 0.62 |
+| R-vine MLE | 873.0 | 0.19 |
 | C-vine MLE | 869.2 | 0.21 |
 | Student-t | 764.4 | 0.00 |
 
-Sampling and prediction are also available for vine copulas:
+Sampling and prediction are available for both vine types:
 
 ```python
 # Model validation
@@ -231,7 +257,25 @@ gof_v6 = gof_test(vine, pobs(v6), to_pobs=False)
 u_pred_6d = vine.predict(100_000, u=u6)
 ```
 
-### 6. Risk metrics (VaR / CVaR)
+### 6. Stochastic Student-t copula
+
+A d-dimensional t-copula where the degrees-of-freedom parameter follows an OU process:
+
+```python
+cop = StochasticStudentCopula(d=6)
+cop.fit(returns_6d, method='scar-tm-ou', to_pobs=True)
+
+# Smoothed df(t) path
+df_t = cop.smoothed_params()
+
+# Predict with time-varying df
+pred = cop.predict(10000)
+
+# GoF
+gof = gof_test(cop, returns_6d, to_pobs=True)
+```
+
+### 7. Risk metrics (VaR / CVaR)
 
 Rolling VaR and CVaR estimation with copula models. Supports bivariate, vine, and elliptical copulas (Gaussian, Student-t).
 
@@ -289,7 +333,7 @@ result = fit(copula, u, method='scar-tm-ou', tol=5e-2)
 ### Vine copula
 
 ```python
-vine = CVineCopula()
+vine = RVineCopula()
 vine.fit(u, method='scar-tm-ou', truncation_level=2, min_edge_logL=10)
 ```
 
@@ -312,6 +356,7 @@ The codebase is organized in layers with top-down dependencies:
 | API | `api.py` | Entry points: `fit()`, `sample()`, `predict()`, `smoothed_params()`, `mixture_h()` |
 | Strategy | `strategy/` | Estimation methods: MLE, SCAR-TM, GAS. Each implements `fit`, `sample`, `predict`. |
 | Copula | `copula/` | Pure math: PDF, h-functions, transforms, base sampling |
+| Vine | `vine/` | Vine copula models: C-vine, R-vine, edge/selection/structure utilities |
 | Numerical | `numerical/` | TM grid, gradient, MC samplers, GAS filter, OU kernels |
 | Types | `_types.py`, `_utils.py` | Typed results, config, shared utilities |
 | Contrib | `contrib/` | Risk metrics, marginal distributions |
