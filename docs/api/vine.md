@@ -2,7 +2,7 @@
 
 ## CVineCopula
 
-::: pyscarcopula.copula.vine.CVineCopula
+::: pyscarcopula.vine.cvine.CVineCopula
     options:
       members:
         - fit
@@ -11,12 +11,37 @@
         - predict
         - summary
 
+## RVineCopula
+
+::: pyscarcopula.vine.rvine.RVineCopula
+    options:
+      members:
+        - fit
+        - log_likelihood
+        - sample
+        - predict
+        - summary
+
+## RVineMatrix
+
+::: pyscarcopula.vine._structure.RVineMatrix
+    options:
+      members:
+        - edge
+        - edges_at_tree
+        - n_trees
+        - n_edges
+
+## build_rvine_structure
+
+::: pyscarcopula.vine._structure.build_rvine_structure
+
 ## VineEdge
 
-::: pyscarcopula.copula.vine.VineEdge
+::: pyscarcopula.vine._edge.VineEdge
     options:
       members: false
 
 ## select_best_copula
 
-::: pyscarcopula.copula.vine.select_best_copula
+::: pyscarcopula.vine._selection.select_best_copula

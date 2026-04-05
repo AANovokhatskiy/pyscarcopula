@@ -77,3 +77,15 @@ All API functions are stateless — they accept a copula object, data, and a res
     options:
       show_bases: false
       members: false
+
+## StochasticStudentCopula
+
+::: pyscarcopula.copula.stochastic_student.StochasticStudentCopula
+    options:
+      members:
+        - fit
+        - sample
+        - predict
+        - smoothed_params
+        - transform
+        - inv_transform

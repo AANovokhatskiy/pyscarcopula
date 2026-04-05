@@ -150,13 +150,25 @@ def _predict_copula(copula, uk, N_mc):
 def _get_copula_constructor(copula):
     """Extract copula class and kwargs for reconstruction in workers."""
     from pyscarcopula.vine.cvine import CVineCopula
+    from pyscarcopula.vine.rvine import RVineCopula
     from pyscarcopula.copula.elliptical import GaussianCopula, StudentCopula
+    from pyscarcopula.copula.stochastic_student import StochasticStudentCopula
+    from pyscarcopula.copula.equicorr import EquicorrGaussianCopula
 
     if isinstance(copula, CVineCopula):
         return (CVineCopula,
                 dict(candidates=copula.candidates,
                      allow_rotations=copula.allow_rotations,
                      criterion=copula.criterion))
+    elif isinstance(copula, RVineCopula):
+        return (RVineCopula,
+                dict(candidates=copula.candidates,
+                     allow_rotations=copula.allow_rotations,
+                     criterion=copula.criterion))
+    elif isinstance(copula, StochasticStudentCopula):
+        return (StochasticStudentCopula, dict(d=copula.d))
+    elif isinstance(copula, EquicorrGaussianCopula):
+        return (EquicorrGaussianCopula, dict(d=copula.d))
     elif isinstance(copula, (GaussianCopula, StudentCopula)):
         return (type(copula), {})
     else:

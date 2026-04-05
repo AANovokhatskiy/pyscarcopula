@@ -203,3 +203,141 @@ class TestVineSamplePredict:
         ll_fit = vine.fit_result.log_likelihood
         ll_eval = vine.log_likelihood(u)
         assert abs(ll_fit - ll_eval) < 1e-6
+
+
+# ══════════════════════════════════════════════════════════════
+# R-vine structure module tests
+# ══════════════════════════════════════════════════════════════
+
+from pyscarcopula.vine._structure import (
+    RVineMatrix, build_rvine_structure, cvine_structure,
+    _maximum_spanning_tree,
+)
+from pyscarcopula.vine.rvine import RVineCopula
+
+
+class TestRVineMatrix:
+    def test_cvine_structure(self):
+        M = cvine_structure(4)
+        assert M.d == 4
+        # diagonal should be a permutation of 0..3
+        diag = [M.matrix[i, i] for i in range(4)]
+        assert sorted(diag) == [0, 1, 2, 3]
+
+    def test_edge_extraction(self):
+        M = cvine_structure(4)
+        edges_t0 = M.edges_at_tree(0)
+        assert len(edges_t0) == 3  # d-1 edges in tree 0
+
+    def test_invalid_matrix(self):
+        with pytest.raises(ValueError):
+            RVineMatrix(np.array([[0, 0], [1, 0]]))  # not a permutation
+
+    def test_mst_basic(self):
+        nodes = [0, 1, 2, 3]
+        edges = [(0, 1), (1, 2), (2, 3), (0, 3)]
+        weights = [0.9, 0.8, 0.7, 0.1]
+        mst = _maximum_spanning_tree(nodes, edges, weights)
+        assert len(mst) == 3  # d-1 edges
+
+
+class TestBuildStructure:
+    def test_build_returns_valid(self):
+        rng = np.random.default_rng(42)
+        u = pobs(rng.standard_normal((200, 4)))
+        matrix, trees = build_rvine_structure(u)
+        assert matrix.d == 4
+        assert len(trees) == 3  # d-1 trees
+        assert len(trees[0]) == 3  # d-1 edges in tree 0
+
+    def test_build_6d(self):
+        rng = np.random.default_rng(42)
+        u = pobs(rng.standard_normal((200, 6)))
+        matrix, trees = build_rvine_structure(u)
+        total_edges = sum(len(t) for t in trees)
+        assert total_edges == 15  # 6*5/2
+
+
+# ══════════════════════════════════════════════════════════════
+# R-vine copula tests
+# ══════════════════════════════════════════════════════════════
+
+class TestRVineStructure:
+    @pytest.mark.parametrize("d", [3, 4, 6])
+    def test_number_of_edges(self, d):
+        u = pobs(np.random.default_rng(42).standard_normal((200, d)))
+        vine = RVineCopula()
+        vine.fit(u, method='mle')
+        assert len(vine.edges) == d * (d - 1) // 2
+
+    @pytest.mark.parametrize("d", [3, 4, 6])
+    def test_number_of_trees(self, d):
+        u = pobs(np.random.default_rng(42).standard_normal((200, d)))
+        vine = RVineCopula()
+        vine.fit(u, method='mle')
+        assert len(vine.trees) == d - 1
+
+
+class TestRVineSamplePredict:
+    def test_predict_shape(self):
+        d = 4
+        u = pobs(np.random.default_rng(0).standard_normal((200, d)))
+        vine = RVineCopula()
+        vine.fit(u, method='mle')
+        assert vine.predict(100).shape == (100, d)
+
+    def test_sample_shape(self):
+        d = 4
+        u = pobs(np.random.default_rng(0).standard_normal((200, d)))
+        vine = RVineCopula()
+        vine.fit(u, method='mle')
+        assert vine.sample(100).shape == (100, d)
+
+    def test_samples_in_unit_cube(self):
+        d = 4
+        u = pobs(np.random.default_rng(0).standard_normal((200, d)))
+        vine = RVineCopula()
+        vine.fit(u, method='mle')
+        samples = vine.predict(1000)
+        assert np.all(samples >= 0) and np.all(samples <= 1)
+
+    def test_log_likelihood_consistent(self):
+        d = 3
+        u = pobs(np.random.default_rng(42).standard_normal((200, d)))
+        vine = RVineCopula()
+        vine.fit(u, method='mle')
+        ll_fit = vine.fit_result.log_likelihood
+        ll_eval = vine.log_likelihood(u)
+        assert abs(ll_fit - ll_eval) < 1e-4
+
+
+class TestRVineGoF:
+    def test_rvine_gof_runs(self, crypto_data_6d):
+        vine = RVineCopula()
+        vine.fit(crypto_data_6d, method='mle')
+        gof = gof_test(vine, crypto_data_6d, to_pobs=False)
+        assert 0 <= gof.pvalue <= 1
+
+
+class TestRVineSCAR:
+    def test_scar_truncated(self, crypto_data_6d):
+        vine = RVineCopula()
+        vine.fit(crypto_data_6d, method='scar-tm-ou',
+                 K=50, tol=0.5, truncation_level=1, min_edge_logL=10)
+        for key, edge in vine.edges.items():
+            tree_level = key[0]
+            if tree_level >= 1:
+                assert edge.fit_result.method.upper() == 'MLE'
+
+    def test_scar_improves_logL(self, crypto_data_6d):
+        vine_mle = RVineCopula()
+        vine_mle.fit(crypto_data_6d, method='mle')
+
+        vine_scar = RVineCopula()
+        vine_scar.fit(crypto_data_6d, method='scar-tm-ou',
+                      truncation_level=2, min_edge_logL=10,
+                      tol=5e-2, K=100)
+
+        assert (vine_scar.fit_result.log_likelihood
+                >= vine_mle.fit_result.log_likelihood - 5)
+
