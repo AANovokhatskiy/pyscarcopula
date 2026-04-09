@@ -5,7 +5,7 @@ from pyscarcopula import (
     GumbelCopula, ClaytonCopula, FrankCopula, JoeCopula,
     IndependentCopula, CVineCopula,
 )
-from pyscarcopula.copula.equicorr import EquicorrGaussianCopula
+from pyscarcopula.copula.experimental.equicorr import EquicorrGaussianCopula
 from pyscarcopula.api import fit, smoothed_params
 from pyscarcopula.stattests import gof_test
 from pyscarcopula._utils import pobs

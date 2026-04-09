@@ -120,10 +120,14 @@ def gof_test(model, data, to_pobs=True, seed=None, K=300, grid_range=5.0,
     from pyscarcopula.copula.elliptical import GaussianCopula, StudentCopula
     from pyscarcopula.vine.cvine import CVineCopula
     from pyscarcopula.vine.rvine import RVineCopula
-    from pyscarcopula.copula.equicorr import EquicorrGaussianCopula
-    from pyscarcopula.copula.stochastic_student import StochasticStudentCopula
+    from pyscarcopula.copula.experimental.equicorr import EquicorrGaussianCopula
+    from pyscarcopula.copula.experimental.stochastic_student import StochasticStudentCopula
+    from pyscarcopula.copula.experimental.stochastic_student_dcc import StochasticStudentDCCCopula
 
-    if isinstance(model, StochasticStudentCopula):
+    if isinstance(model, StochasticStudentDCCCopula):
+        return stochastic_student_dcc_gof_test(model, data, to_pobs, seed, K,
+                                                grid_range, fit_result=fit_result)
+    elif isinstance(model, StochasticStudentCopula):
         return stochastic_student_gof_test(model, data, to_pobs, seed, K,
                                            grid_range, fit_result=fit_result)
     elif isinstance(model, EquicorrGaussianCopula):
@@ -842,4 +846,153 @@ def stochastic_student_gof_test(copula, data, to_pobs=True, seed=None,
                          "Call copula.fit() first or pass fit_result=.")
 
     e = stochastic_student_rosenblatt_transform(copula, u, fr, K, grid_range)
+    return cvm_test(e, seed=seed)
+
+
+# ══════════════════════════════════════════════════════════════════
+# Stochastic Student-t DCC copula GoF
+# ══════════════════════════════════════════════════════════════════
+
+def stochastic_student_dcc_rosenblatt_transform(copula, u, fit_result,
+                                                 K=300, grid_range=5.0):
+    """
+    Rosenblatt transform for StochasticStudentDCCCopula.
+
+    Like the fixed-R stochastic Student-t, but uses time-varying R_t
+    from the DCC(1,1) path at each observation.
+
+    MLE: constant df, time-varying R_t.
+    SCAR: mixture over predictive df(t) from TM forward pass, time-varying R_t.
+
+    Parameters
+    ----------
+    copula : StochasticStudentDCCCopula
+    u : (T, d) pseudo-observations
+    fit_result : FitResult
+    K, grid_range : TM grid params (SCAR only)
+
+    Returns
+    -------
+    e : (T, d) — should be iid U[0,1]^d under correct model
+    """
+    from scipy.stats import t as t_dist_fn
+
+    eps = 1e-10
+    T, d = u.shape
+    R_path = copula.R_path
+    if R_path is None:
+        raise ValueError("DCC R_t path not available. Call fit_R_t() first.")
+    if len(R_path) != T:
+        raise ValueError(f"u has length {T}, but R_path has length {len(R_path)}")
+
+    method = fit_result.method.upper()
+
+    # Precompute R sub-matrices for each time step
+    def _sequential_rosenblatt_one(x_row, R, df):
+        """Rosenblatt for one observation with given R and df."""
+        e_row = np.empty(d)
+        e_row[0] = t_dist_fn.cdf(x_row[0], df=df)
+        for i in range(1, d):
+            R_11 = R[:i, :i]
+            R_21 = R[i, :i]
+            R_22 = R[i, i]
+            R_11_inv = np.linalg.inv(R_11)
+            beta = R_21 @ R_11_inv
+            sigma2 = R_22 - R_21 @ R_11_inv @ R_21
+            sigma_c = np.sqrt(max(sigma2, 1e-12))
+
+            mu_c = beta @ x_row[:i]
+            quad = x_row[:i] @ R_11_inv @ x_row[:i]
+            df_cond = df + i
+            scale = (df + quad) / df_cond
+            z_i = (x_row[i] - mu_c) / (sigma_c * np.sqrt(max(scale, 1e-12)))
+            e_row[i] = t_dist_fn.cdf(z_i, df=df_cond)
+        return e_row
+
+    if method == 'MLE':
+        df = fit_result.copula_param
+        e = np.empty((T, d))
+        for t_idx in range(T):
+            u_c = np.clip(u[t_idx], eps, 1.0 - eps)
+            x = t_dist_fn.ppf(u_c, df=df)
+            e[t_idx] = _sequential_rosenblatt_one(x, R_path[t_idx], df)
+        return np.clip(e, eps, 1.0 - eps)
+
+    # SCAR: mixture Rosenblatt via TM forward pass
+    from pyscarcopula.numerical.tm_grid import TMGrid as _TMGrid
+
+    theta, mu, nu_ou = fit_result.params.values
+    grid = _TMGrid(theta, mu, nu_ou, T, K, grid_range)
+    x_grid = grid.z + grid.mu
+    df_grid = copula.transform(x_grid)
+    fi_grid = copula.copula_grid_batch(u, x_grid)
+    K_eff = grid.K
+
+    weights = grid.forward_weights(fi_grid)
+
+    e = np.empty((T, d))
+    e[:, 0] = u[:, 0]
+
+    for t_idx in range(T):
+        R_t = R_path[t_idx]
+        for i in range(1, d):
+            R_11 = R_t[:i, :i]
+            R_21 = R_t[i, :i]
+            R_22 = R_t[i, i]
+            R_11_inv = np.linalg.inv(R_11)
+            beta = R_21 @ R_11_inv
+            sigma2 = R_22 - R_21 @ R_11_inv @ R_21
+            sigma_c = np.sqrt(max(sigma2, 1e-12))
+
+            mix = 0.0
+            for j in range(K_eff):
+                df_j = df_grid[j]
+                u_c = np.clip(u[t_idx, :i + 1], eps, 1.0 - eps)
+                x = t_dist_fn.ppf(u_c, df=df_j)
+
+                mu_c = beta @ x[:i]
+                quad = x[:i] @ R_11_inv @ x[:i]
+                df_cond = df_j + i
+                scale = (df_j + quad) / df_cond
+                z_i = (x[i] - mu_c) / (sigma_c * np.sqrt(max(scale, 1e-12)))
+                cdf_val = t_dist_fn.cdf(z_i, df=df_cond)
+
+                mix += weights[t_idx, j] * cdf_val
+
+            e[t_idx, i] = np.clip(mix, eps, 1.0 - eps)
+
+    return np.clip(e, eps, 1.0 - eps)
+
+
+def stochastic_student_dcc_gof_test(copula, data, to_pobs=True, seed=None,
+                                     K=300, grid_range=5.0, fit_result=None):
+    """
+    Goodness-of-fit test for StochasticStudentDCCCopula.
+
+    Parameters
+    ----------
+    copula : StochasticStudentDCCCopula
+    data : (T, d)
+    to_pobs : bool
+    seed : int or None
+    K : int
+    grid_range : float
+    fit_result : FitResult or None
+
+    Returns
+    -------
+    CramérVonMisesResult
+    """
+    from pyscarcopula._utils import pobs as compute_pobs
+
+    u = np.asarray(data, dtype=np.float64)
+    if to_pobs:
+        u = compute_pobs(u)
+
+    fr = fit_result if fit_result is not None else getattr(copula, 'fit_result', None)
+    if fr is None:
+        raise ValueError("No fit_result provided and copula has no fit_result. "
+                         "Call copula.fit() first or pass fit_result=.")
+
+    e = stochastic_student_dcc_rosenblatt_transform(copula, u, fr, K, grid_range)
     return cvm_test(e, seed=seed)

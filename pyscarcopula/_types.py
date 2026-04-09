@@ -200,7 +200,7 @@ class FitResultBase:
         return '\n'.join(lines)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class MLEResult(FitResultBase):
     """Result of MLE fit: single constant copula parameter."""
 
@@ -214,7 +214,7 @@ class MLEResult(FitResultBase):
         return [f"   copula_param: {self.copula_param:.6f}"]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class LatentResult(FitResultBase):
     """Result of any latent-process fit (SCAR-OU, SCAR-Lévy, ...).
 
@@ -257,7 +257,7 @@ class LatentResult(FitResultBase):
         return lines
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class GASResult(FitResultBase):
     """Result of GAS fit."""
 
@@ -290,7 +290,7 @@ class GASResult(FitResultBase):
         return lines
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class IndependentResult(FitResultBase):
     """Result for IndependentCopula: 0 params, logL=0.
 

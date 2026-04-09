@@ -2,7 +2,7 @@
 
 ## EquicorrGaussianCopula
 
-::: pyscarcopula.copula.equicorr.EquicorrGaussianCopula
+::: pyscarcopula.copula.experimental.equicorr.EquicorrGaussianCopula
     options:
       members:
         - fit

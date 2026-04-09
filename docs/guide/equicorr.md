@@ -11,7 +11,7 @@ All pairwise correlations equal ρ(t), which follows an OU process via SCAR. Thi
 ## Usage
 
 ```python
-from pyscarcopula.copula.equicorr import EquicorrGaussianCopula
+from pyscarcopula.copula.experimental.equicorr import EquicorrGaussianCopula
 
 cop = EquicorrGaussianCopula(d=6)
 

@@ -30,7 +30,8 @@ from pyscarcopula.vine.rvine import RVineCopula
 from pyscarcopula.copula.elliptical import (
     BivariateGaussianCopula, GaussianCopula, StudentCopula
 )
-from pyscarcopula.copula.stochastic_student import StochasticStudentCopula
+from pyscarcopula.copula.experimental.stochastic_student import StochasticStudentCopula
+from pyscarcopula.copula.experimental.stochastic_student_dcc import StochasticStudentDCCCopula
 
 
 __all__ = (
@@ -42,6 +43,7 @@ __all__ = (
     'GaussianCopula', 'StudentCopula', 'BivariateGaussianCopula',
     # Stochastic multivariate
     'StochasticStudentCopula',
+    'StochasticStudentDCCCopula',
     # Vine
     'CVineCopula',
     'RVineCopula',

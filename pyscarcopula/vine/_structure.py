@@ -218,9 +218,140 @@ def _proximity_condition(edge_a, edge_b):
     return shared_node, frozenset(new_cond_vars), new_conditioning
 
 
+def _build_tree_0(u):
+    """
+    Build the first tree (tree 0) of Dissmann's algorithm.
+
+    Parameters
+    ----------
+    u : (T, d) pseudo-observations
+
+    Returns
+    -------
+    tree_0 : list of (var1, var2, cond_set)
+    edge_repr_0 : list of (conditioned_frozenset, conditioning_frozenset)
+    """
+    T, d = u.shape
+    nodes = list(range(d))
+    edges = []
+    weights = []
+    for i in range(d):
+        for j in range(i + 1, d):
+            tau, _ = kendalltau(u[:, i], u[:, j])
+            edges.append((i, j))
+            weights.append(abs(tau))
+
+    mst = _maximum_spanning_tree(nodes, edges, weights)
+
+    tree_0 = [(min(a, b), max(a, b), ()) for a, b in mst]
+    edge_repr_0 = [
+        (frozenset([v1, v2]), frozenset())
+        for v1, v2, _ in tree_0
+    ]
+    return tree_0, edge_repr_0
+
+
+def _build_next_tree(tree_level, prev_edge_repr, pseudo_obs,
+                     truncation_level=None):
+    """
+    Build tree at the given level using pseudo-observations for tau weights.
+
+    Parameters
+    ----------
+    tree_level : int (>= 1)
+    prev_edge_repr : list of (conditioned_frozenset, conditioning_frozenset)
+    pseudo_obs : dict mapping (var, frozenset_cond) -> (T,) array
+        h-transformed pseudo-observations from fitting previous trees.
+    truncation_level : int or None
+
+    Returns
+    -------
+    new_tree : list of (var1, var2, cond_set)
+    new_edge_repr : list of (conditioned_frozenset, conditioning_frozenset)
+        Returns (None, None) if no valid edges can be built.
+    """
+    n_prev = len(prev_edge_repr)
+
+    if truncation_level is not None and tree_level >= truncation_level:
+        d_minus_1 = n_prev  # n_prev = d - 1 - (tree_level - 1)
+        n_needed = n_prev - 1
+        remaining = _build_trivial_remaining(prev_edge_repr, n_needed)
+        if remaining is None:
+            return None, None
+        new_tree = [
+            (min(cv), max(cv), tuple(sorted(cs)))
+            for cv, cs in remaining
+        ]
+        return new_tree, remaining
+
+    candidate_edges = []
+    candidate_weights = []
+    candidate_repr = []
+
+    for i in range(n_prev):
+        for j in range(i + 1, n_prev):
+            result = _proximity_condition(
+                prev_edge_repr[i], prev_edge_repr[j])
+            if result is None:
+                continue
+
+            shared_node, new_cond_vars, new_conditioning = result
+
+            # Compute |tau| on h-transformed pseudo-observations
+            v_list = sorted(new_cond_vars)
+            if len(v_list) == 2:
+                key_a = (v_list[0], frozenset(new_conditioning))
+                key_b = (v_list[1], frozenset(new_conditioning))
+                obs_a = pseudo_obs.get(key_a)
+                obs_b = pseudo_obs.get(key_b)
+                if obs_a is not None and obs_b is not None:
+                    tau_val, _ = kendalltau(obs_a, obs_b)
+                else:
+                    tau_val = 0.0
+            else:
+                tau_val = 0.0
+
+            candidate_edges.append((i, j))
+            candidate_weights.append(abs(tau_val))
+            candidate_repr.append(
+                (frozenset(new_cond_vars), new_conditioning))
+
+    if len(candidate_edges) == 0:
+        return None, None
+
+    tree_nodes = list(range(n_prev))
+    mst_idx = _maximum_spanning_tree(
+        tree_nodes, candidate_edges, candidate_weights)
+
+    new_tree = []
+    new_repr = []
+    edge_lookup = {
+        (e[0], e[1]): idx for idx, e in enumerate(candidate_edges)
+    }
+    edge_lookup.update({
+        (e[1], e[0]): idx for idx, e in enumerate(candidate_edges)
+    })
+
+    for a, b in mst_idx:
+        key = (a, b) if (a, b) in edge_lookup else (b, a)
+        idx = edge_lookup[key]
+        cv, cs = candidate_repr[idx]
+        new_tree.append((
+            min(cv), max(cv), tuple(sorted(cs))
+        ))
+        new_repr.append((cv, cs))
+
+    return new_tree, new_repr
+
+
 def build_rvine_structure(u, truncation_level=None):
     """
     Build R-vine structure using Dissmann's sequential MST algorithm.
+
+    NOTE: This function computes tau on the original data for all trees.
+    For better accuracy (especially d > 6), use the incremental approach
+    via _build_tree_0 / _build_next_tree with h-transformed pseudo-obs,
+    as done in RVineCopula.fit().
 
     Parameters
     ----------
@@ -236,108 +367,22 @@ def build_rvine_structure(u, truncation_level=None):
     """
     T, d = u.shape
 
-    # ── Tree 1: MST on |tau_ij| ─────────────────────────────
-    # Nodes = variable indices 0..d-1
-    # Edges = all pairs, weight = |tau|
-    nodes = list(range(d))
-    edges = []
-    weights = []
+    tree_0, edge_repr_0 = _build_tree_0(u)
+    trees = [tree_0]
+    edge_repr = [edge_repr_0]
+
+    # Fallback pseudo_obs: use original data columns
+    # (kept for backward compatibility; prefer incremental approach)
+    pseudo_obs = {}
     for i in range(d):
-        for j in range(i + 1, d):
-            tau, _ = kendalltau(u[:, i], u[:, j])
-            edges.append((i, j))
-            weights.append(abs(tau))
+        pseudo_obs[(i, frozenset())] = u[:, i]
 
-    mst = _maximum_spanning_tree(nodes, edges, weights)
-
-    # Build tree structure: list of (var1, var2, cond_set)
-    # For tree 0: cond_set = ()
-    trees = []
-    tree_0 = [(min(a, b), max(a, b), ()) for a, b in mst]
-    trees.append(tree_0)
-
-    # Track edges as abstract objects for proximity condition
-    # edge_repr[k] = list of (conditioned_frozenset, conditioning_frozenset)
-    edge_repr = []
-    edge_repr.append([
-        (frozenset([v1, v2]), frozenset())
-        for v1, v2, _ in tree_0
-    ])
-
-    # ── Trees 2..d-1: MST on pseudo-obs with proximity condition ──
     for tree_level in range(1, d - 1):
-        prev_edges = edge_repr[tree_level - 1]
-        n_prev = len(prev_edges)
-
-        if truncation_level is not None and tree_level >= truncation_level:
-            # Build arbitrary valid structure for remaining trees
-            remaining = _build_trivial_remaining(
-                prev_edges, d - 1 - tree_level)
-            if remaining is None:
-                break
-            trees.append([
-                (min(cv), max(cv), tuple(sorted(cs)))
-                for cv, cs in remaining
-            ])
-            edge_repr.append(remaining)
-            continue
-
-        # Find all valid pairs (proximity condition)
-        candidate_edges = []
-        candidate_weights = []
-        candidate_repr = []
-
-        for i in range(n_prev):
-            for j in range(i + 1, n_prev):
-                result = _proximity_condition(prev_edges[i], prev_edges[j])
-                if result is None:
-                    continue
-
-                shared_node, new_cond_vars, new_conditioning = result
-
-                # Compute |tau| on pseudo-observations for this pair
-                # We use a heuristic: |tau| from the original data
-                # between the two "new" conditioned variables.
-                # (Proper pseudo-obs will be computed during fit.)
-                v_list = sorted(new_cond_vars)
-                if len(v_list) == 2:
-                    tau_val, _ = kendalltau(u[:, v_list[0]], u[:, v_list[1]])
-                else:
-                    tau_val = 0.0
-
-                candidate_edges.append((i, j))
-                candidate_weights.append(abs(tau_val))
-                candidate_repr.append(
-                    (frozenset(new_cond_vars), new_conditioning))
-
-        if len(candidate_edges) == 0:
+        new_tree, new_repr = _build_next_tree(
+            tree_level, edge_repr[tree_level - 1], pseudo_obs,
+            truncation_level=truncation_level)
+        if new_tree is None:
             break
-
-        # MST on candidate edges
-        # Nodes for this tree = indices into prev_edges
-        tree_nodes = list(range(n_prev))
-        mst_idx = _maximum_spanning_tree(
-            tree_nodes, candidate_edges, candidate_weights)
-
-        # Map MST edges back to edge representations
-        new_tree = []
-        new_repr = []
-        edge_lookup = {
-            (e[0], e[1]): idx for idx, e in enumerate(candidate_edges)
-        }
-        edge_lookup.update({
-            (e[1], e[0]): idx for idx, e in enumerate(candidate_edges)
-        })
-
-        for a, b in mst_idx:
-            key = (a, b) if (a, b) in edge_lookup else (b, a)
-            idx = edge_lookup[key]
-            cv, cs = candidate_repr[idx]
-            new_tree.append((
-                min(cv), max(cv), tuple(sorted(cs))
-            ))
-            new_repr.append((cv, cs))
-
         trees.append(new_tree)
         edge_repr.append(new_repr)
 

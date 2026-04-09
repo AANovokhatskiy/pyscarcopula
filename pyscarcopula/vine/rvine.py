@@ -35,6 +35,7 @@ from pyscarcopula.vine._helpers import (
 )
 from pyscarcopula.vine._structure import (
     RVineMatrix, build_rvine_structure,
+    _build_tree_0, _build_next_tree, _trees_to_matrix,
 )
 
 
@@ -158,71 +159,55 @@ class RVineCopula:
         self.d = d
         self.method = method.upper()
 
-        # Step 1: structure selection
-        if self._structure is not None:
-            vine_matrix = self._structure
-            self.trees = []
-            for t in range(d - 1):
-                self.trees.append(vine_matrix.edges_at_tree(t))
-        else:
-            vine_matrix, self.trees = build_rvine_structure(
-                u, truncation_level=truncation_level)
-            self._structure = vine_matrix
-
-        # Step 2: fit each edge, propagating pseudo-obs
         pseudo_obs = {}
         for i in range(d):
             pseudo_obs[(i, frozenset())] = u[:, i].copy()
 
         self.edges = {}
 
-        for tree_level, tree_edges in enumerate(self.trees):
-            for edge_idx, (v1, v2, cond) in enumerate(tree_edges):
-                cond_set = frozenset(cond)
+        if self._structure is not None:
+            # Pre-defined structure: extract all trees, fit sequentially
+            vine_matrix = self._structure
+            self.trees = []
+            for t in range(d - 1):
+                self.trees.append(vine_matrix.edges_at_tree(t))
 
-                u1 = _clip_unit(pseudo_obs[(v1, cond_set)])
-                u2 = _clip_unit(pseudo_obs[(v2, cond_set)])
-                u_pair = np.column_stack((u1, u2))
+            for tree_level, tree_edges in enumerate(self.trees):
+                self._fit_tree(tree_level, tree_edges, pseudo_obs,
+                               d, K, grid_range, truncation_level,
+                               min_edge_logL, transform_type,
+                               method, kwargs)
+        else:
+            # Incremental Dissmann: build each tree using tau on
+            # h-transformed pseudo-obs from fitted previous trees.
+            tree_0, edge_repr_0 = _build_tree_0(u)
+            self.trees = [tree_0]
+            edge_repr = [edge_repr_0]
 
-                edge = VineEdge(tree=tree_level, idx=edge_idx)
+            # Fit tree 0
+            self._fit_tree(0, tree_0, pseudo_obs,
+                           d, K, grid_range, truncation_level,
+                           min_edge_logL, transform_type,
+                           method, kwargs)
 
-                cop, result = select_best_copula(
-                    u1, u2, self._get_candidates(),
-                    self.allow_rotations, self.criterion,
-                    transform_type=transform_type)
+            # Build and fit subsequent trees
+            for tree_level in range(1, d - 1):
+                new_tree, new_repr = _build_next_tree(
+                    tree_level, edge_repr[tree_level - 1],
+                    pseudo_obs, truncation_level=truncation_level)
+                if new_tree is None:
+                    break
+                self.trees.append(new_tree)
+                edge_repr.append(new_repr)
 
-                from pyscarcopula.copula.independent import IndependentCopula
-                skip_dynamic = (
-                    self.method == 'MLE'
-                    or isinstance(cop, IndependentCopula)
-                    or (truncation_level is not None
-                        and tree_level >= truncation_level)
-                    or (min_edge_logL is not None
-                        and result.log_likelihood < min_edge_logL)
-                )
+                self._fit_tree(tree_level, new_tree, pseudo_obs,
+                               d, K, grid_range, truncation_level,
+                               min_edge_logL, transform_type,
+                               method, kwargs)
 
-                if not skip_dynamic:
-                    from pyscarcopula.api import fit as _api_fit
-                    scar_kwargs = {kk: vv for kk, vv in kwargs.items()
-                                   if kk != 'alpha0'}
-                    result = _api_fit(cop, u_pair, method=method,
-                                      alpha0=kwargs.get('alpha0'),
-                                      **scar_kwargs)
-
-                edge.copula = cop
-                edge.fit_result = result
-                self.edges[(tree_level, edge_idx)] = edge
-
-                # Propagate pseudo-obs for next trees
-                if tree_level < d - 2:
-                    h_2given1 = _clip_unit(
-                        _edge_h(edge, u2, u1, u_pair, K, grid_range))
-                    pseudo_obs[(v2, cond_set | {v1})] = h_2given1
-
-                    u_pair_rev = np.column_stack((u2, u1))
-                    h_1given2 = _clip_unit(
-                        _edge_h(edge, u1, u2, u_pair_rev, K, grid_range))
-                    pseudo_obs[(v1, cond_set | {v2})] = h_1given2
+            # Build R-vine matrix from the final trees
+            matrix = _trees_to_matrix(d, self.trees)
+            self._structure = RVineMatrix(matrix)
 
         # Aggregate
         total_ll = sum(e.fit_result.log_likelihood
@@ -240,6 +225,58 @@ class RVineCopula:
         self._pair_lookup = _build_edge_index(self.trees, self.edges)
 
         return self
+
+    def _fit_tree(self, tree_level, tree_edges, pseudo_obs,
+                  d, K, grid_range, truncation_level,
+                  min_edge_logL, transform_type, method, kwargs):
+        """Fit all edges at one tree level and propagate pseudo-obs."""
+        from pyscarcopula.copula.independent import IndependentCopula
+
+        for edge_idx, (v1, v2, cond) in enumerate(tree_edges):
+            cond_set = frozenset(cond)
+
+            u1 = _clip_unit(pseudo_obs[(v1, cond_set)])
+            u2 = _clip_unit(pseudo_obs[(v2, cond_set)])
+            u_pair = np.column_stack((u1, u2))
+
+            edge = VineEdge(tree=tree_level, idx=edge_idx)
+
+            cop, result = select_best_copula(
+                u1, u2, self._get_candidates(),
+                self.allow_rotations, self.criterion,
+                transform_type=transform_type)
+
+            skip_dynamic = (
+                self.method == 'MLE'
+                or isinstance(cop, IndependentCopula)
+                or (truncation_level is not None
+                    and tree_level >= truncation_level)
+                or (min_edge_logL is not None
+                    and result.log_likelihood < min_edge_logL)
+            )
+
+            if not skip_dynamic:
+                from pyscarcopula.api import fit as _api_fit
+                scar_kwargs = {kk: vv for kk, vv in kwargs.items()
+                               if kk != 'alpha0'}
+                result = _api_fit(cop, u_pair, method=method,
+                                  alpha0=kwargs.get('alpha0'),
+                                  **scar_kwargs)
+
+            edge.copula = cop
+            edge.fit_result = result
+            self.edges[(tree_level, edge_idx)] = edge
+
+            # Propagate pseudo-obs for next trees
+            if tree_level < d - 2:
+                h_2given1 = _clip_unit(
+                    _edge_h(edge, u2, u1, u_pair, K, grid_range))
+                pseudo_obs[(v2, cond_set | {v1})] = h_2given1
+
+                u_pair_rev = np.column_stack((u2, u1))
+                h_1given2 = _clip_unit(
+                    _edge_h(edge, u1, u2, u_pair_rev, K, grid_range))
+                pseudo_obs[(v1, cond_set | {v2})] = h_1given2
 
     # ── Log-likelihood ────────────────────────────────────────────
 

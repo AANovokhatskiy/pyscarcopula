@@ -152,8 +152,8 @@ def _get_copula_constructor(copula):
     from pyscarcopula.vine.cvine import CVineCopula
     from pyscarcopula.vine.rvine import RVineCopula
     from pyscarcopula.copula.elliptical import GaussianCopula, StudentCopula
-    from pyscarcopula.copula.stochastic_student import StochasticStudentCopula
-    from pyscarcopula.copula.equicorr import EquicorrGaussianCopula
+    from pyscarcopula.copula.experimental.stochastic_student import StochasticStudentCopula
+    from pyscarcopula.copula.experimental.equicorr import EquicorrGaussianCopula
 
     if isinstance(copula, CVineCopula):
         return (CVineCopula,

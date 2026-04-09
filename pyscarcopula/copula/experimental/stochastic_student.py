@@ -13,7 +13,7 @@ d-dimensional data, the latent process is scalar (one OU drives df),
 so all transfer-matrix machinery works unchanged.
 
 Usage:
-    from pyscarcopula.copula.stochastic_student import StochasticStudentCopula
+    from pyscarcopula.copula.experimental.stochastic_student import StochasticStudentCopula
 
     cop = StochasticStudentCopula(d=6)
     result = cop.fit(returns, method='scar-tm-ou', to_pobs=True)
@@ -31,6 +31,7 @@ from scipy.optimize import minimize
 
 from pyscarcopula.copula.base import BivariateCopula
 from pyscarcopula._utils import pobs
+from pyscarcopula.copula.experimental.stochastic_student_dcc import _PPFTable
 
 
 # ══════════════════════════════════════════════════════════════
@@ -149,6 +150,38 @@ def _student_copula_dlogpdf_ddf(u, R, df, L_inv=None, log_det=None, eps_fd=1e-5)
     return (lp - lm) / (2.0 * eps_fd)
 
 
+def _log_copula_inlined(x, df, d, L_inv, log_det):
+    """
+    Inlined log copula density given precomputed x = t_ppf(u, df).
+
+    Avoids scipy wrapper overhead. Used by batch evaluation.
+
+    x : (T, d) — precomputed t-quantiles
+    df : float
+    d : int — dimension
+    L_inv : (d, d) — inverse Cholesky of R
+    log_det : float — log-det of R
+
+    Returns: (T,) log copula density
+    """
+    # Joint multivariate t log-pdf
+    y = x @ L_inv.T              # (T, d)
+    quad = np.sum(y * y, axis=1) # (T,)
+
+    log_norm_joint = (gammaln(0.5 * (df + d)) - gammaln(0.5 * df)
+                      - 0.5 * d * np.log(df * np.pi) - 0.5 * log_det)
+    log_joint = log_norm_joint - 0.5 * (df + d) * np.log(1.0 + quad / df)
+
+    # Sum of marginal log-pdfs (inlined, no scipy wrapper)
+    log_norm_marg = (gammaln(0.5 * (df + 1.0)) - gammaln(0.5 * df)
+                     - 0.5 * np.log(df * np.pi))
+    log_marg = np.sum(
+        log_norm_marg - 0.5 * (df + 1.0) * np.log(1.0 + x * x / df),
+        axis=1)
+
+    return log_joint - log_marg
+
+
 # ══════════════════════════════════════════════════════════════
 # Class
 # ══════════════════════════════════════════════════════════════
@@ -193,6 +226,10 @@ class StochasticStudentCopula(BivariateCopula):
         self._L_inv = None
         self._log_det = None
 
+        # PPF lookup table (built lazily in batch methods)
+        self._ppf_table = None
+        self._ppf_table_u_id = None
+
     @property
     def d(self):
         return self._d
@@ -226,6 +263,15 @@ class StochasticStudentCopula(BivariateCopula):
         """d(Psi)/dx = sigmoid(x)."""
         x = np.atleast_1d(np.asarray(x, dtype=np.float64))
         return _softplus_deriv(x)
+
+    def _get_ppf_table(self, u):
+        """Get or build PPF lookup table for given data."""
+        u_id = id(u)
+        if self._ppf_table is not None and self._ppf_table_u_id == u_id:
+            return self._ppf_table
+        self._ppf_table = _PPFTable(u)
+        self._ppf_table_u_id = u_id
+        return self._ppf_table
 
     # ── Density ──────────────────────────────────────────────
 
@@ -312,6 +358,9 @@ class StochasticStudentCopula(BivariateCopula):
         """
         Batch evaluation for all T observations.
 
+        Optimized: uses precomputed PPF lookup table (~300× faster ppf calls),
+        inlined density computation, single table build per fit.
+
         u : (T, d) pseudo-observations
         x_grid : (K,) latent grid values
 
@@ -324,39 +373,56 @@ class StochasticStudentCopula(BivariateCopula):
         x_grid = np.asarray(x_grid, dtype=np.float64)
         T = len(u)
         K = len(x_grid)
+        d = self._d
         df_grid = self.transform(x_grid)
-        dpsi = self.dtransform(x_grid)  # (K,)
+        dpsi = self.dtransform(x_grid)
+        L_inv = self._L_inv
+        log_det = self._log_det
+        eps = 1e-5
+
+        ppf = self._get_ppf_table(u)
 
         fi = np.empty((T, K))
         dfi = np.empty((T, K))
 
         for k in range(K):
-            # Evaluate log copula density for ALL observations at df_grid[k]
-            ll = _student_copula_logpdf(u, self._R, df_grid[k],
-                                        self._L_inv, self._log_det)
-            fi[:, k] = np.exp(ll)
+            df_c = df_grid[k]
+            df_p = df_c + eps
+            df_m = max(df_c - eps, 2.001)
 
-            dll = _student_copula_dlogpdf_ddf(u, self._R, df_grid[k],
-                                              self._L_inv, self._log_det)
-            dfi[:, k] = fi[:, k] * dll * dpsi[k]
+            x_c = ppf(df_c)
+            x_p = ppf(df_p)
+            x_m = ppf(df_m)
+
+            lc_c = _log_copula_inlined(x_c, df_c, d, L_inv, log_det)
+            lc_p = _log_copula_inlined(x_p, df_p, d, L_inv, log_det)
+            lc_m = _log_copula_inlined(x_m, df_m, d, L_inv, log_det)
+
+            fi[:, k] = np.exp(lc_c)
+            dfi[:, k] = fi[:, k] * (lc_p - lc_m) / (df_p - df_m) * dpsi[k]
 
         return fi, dfi
 
     def copula_grid_batch(self, u, x_grid):
-        """Batch version of pdf_on_grid (value only, no gradient)."""
+        """Batch version of pdf_on_grid (value only)."""
         if self._R is None:
             raise ValueError("R not set")
 
         u = np.asarray(u, dtype=np.float64)
         x_grid = np.asarray(x_grid, dtype=np.float64)
         K = len(x_grid)
+        d = self._d
         df_grid = self.transform(x_grid)
+        L_inv = self._L_inv
+        log_det = self._log_det
+
+        ppf = self._get_ppf_table(u)
 
         fi = np.empty((len(u), K))
         for k in range(K):
-            ll = _student_copula_logpdf(u, self._R, df_grid[k],
-                                        self._L_inv, self._log_det)
-            fi[:, k] = np.exp(ll)
+            x = ppf(df_grid[k])
+            fi[:, k] = np.exp(
+                _log_copula_inlined(x, df_grid[k], d, L_inv, log_det))
 
         return fi
 

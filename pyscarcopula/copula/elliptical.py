@@ -30,7 +30,7 @@ from pyscarcopula.copula.base import BivariateCopula
 from pyscarcopula._utils import pobs
 
 
-from pyscarcopula.copula.equicorr import _ndtri
+from pyscarcopula.copula.experimental.equicorr import _ndtri
 
 
 @njit(cache=True)
