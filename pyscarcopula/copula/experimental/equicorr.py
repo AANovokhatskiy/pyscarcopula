@@ -285,7 +285,12 @@ class EquicorrGaussianCopula(BivariateCopula):
         z = norm.ppf(np.clip(u, 1e-10, 1 - 1e-10))
 
         if r is None:
-            r = self.fit_result.copula_param if self.fit_result else 0.0
+            from pyscarcopula._types import MLEResult
+            if isinstance(self.fit_result, MLEResult):
+                r = self.fit_result.copula_param
+            else:
+                r = float(self.transform(
+                    np.array([self.fit_result.params.mu]))[0])
 
         rho_arr = np.full(len(u), r)
         ll = _equicorr_log_pdf(z, rho_arr, self._d)

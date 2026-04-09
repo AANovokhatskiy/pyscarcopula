@@ -662,22 +662,23 @@ def equicorr_rosenblatt_transform(copula, u, fit_result, K=300, grid_range=5.0):
     e = np.empty((T, d))
     e[:, 0] = u[:, 0]
 
-    for k in range(T):
-        x = x_norm[k]
+    # Vectorized over T: loop over grid points and dimensions only
+    for j in range(K_eff):
+        rho = rho_grid[j]
         for i in range(1, d):
-            sx = np.sum(x[:i])
-            mix = 0.0
-            for j in range(K_eff):
-                rho = rho_grid[j]
-                cond_mean = rho * sx / (1.0 + (i - 1) * rho)
-                cond_var = 1.0 - i * rho ** 2 / (1.0 + (i - 1) * rho)
-                if cond_var < 1e-10:
-                    cond_var = 1e-10
-                z_i = (x[i] - cond_mean) / np.sqrt(cond_var)
-                mix += weights[k, j] * norm.cdf(z_i)
-            e[k, i] = np.clip(mix, eps, 1.0 - eps)
+            sx = np.sum(x_norm[:, :i], axis=1)              # (T,)
+            cond_mean = rho * sx / (1.0 + (i - 1) * rho)
+            cond_var = max(1.0 - i * rho ** 2 / (1.0 + (i - 1) * rho), 1e-10)
+            z_i = (x_norm[:, i] - cond_mean) / np.sqrt(cond_var)
+            cdf_val = norm.cdf(z_i)                          # (T,)
 
-    return np.clip(e, eps, 1.0 - eps)
+            if j == 0:
+                e[:, i] = weights[:, j] * cdf_val
+            else:
+                e[:, i] += weights[:, j] * cdf_val
+
+    e = np.clip(e, eps, 1.0 - eps)
+    return e
 
 
 def equicorr_gof_test(copula, data, to_pobs=True, seed=None,
@@ -784,35 +785,34 @@ def stochastic_student_rosenblatt_transform(copula, u, fit_result,
         sigma_cond_sub.append(np.sqrt(max(sigma2, 1e-12)))
         R_inv_sub.append(R_11_inv)
 
+    u_c = np.clip(u, eps, 1.0 - eps)
+
     e = np.empty((T, d))
-    e[:, 0] = u[:, 0]  # first variable is PIT with marginal
+    e[:, 0] = u[:, 0]
 
-    for t_idx in range(T):
-        # For each grid point, compute x = t_df^{-1}(u) and
-        # then conditional CDF for each dimension
+    # Vectorized over T: loop over grid points and dimensions only
+    for j in range(K_eff):
+        df_j = df_grid[j]
+        x_all = t_dist_fn.ppf(u_c, df=df_j)  # (T, d)
+
         for i in range(1, d):
-            mix = 0.0
-            for j in range(K_eff):
-                df_j = df_grid[j]
-                # Transform observations to t-quantiles at this df
-                u_c = np.clip(u[t_idx, :i + 1], eps, 1.0 - eps)
-                x = t_dist_fn.ppf(u_c, df=df_j)
+            x_prev = x_all[:, :i]                          # (T, i)
+            mu_cond = x_prev @ beta_sub[i - 1]             # (T,)
+            quad = np.sum(x_prev @ R_inv_sub[i - 1] * x_prev, axis=1)
 
-                x_prev = x[:i]
-                mu_cond = beta_sub[i - 1] @ x_prev
-                quad = x_prev @ R_inv_sub[i - 1] @ x_prev
+            df_cond = df_j + i
+            scale = (df_j + quad) / df_cond
+            z_i = (x_all[:, i] - mu_cond) / (
+                sigma_cond_sub[i - 1] * np.sqrt(np.maximum(scale, 1e-12)))
+            cdf_val = t_dist_fn.cdf(z_i, df=df_cond)       # (T,)
 
-                df_cond = df_j + i
-                scale = (df_j + quad) / df_cond
-                z_i = (x[i] - mu_cond) / (sigma_cond_sub[i - 1]
-                                            * np.sqrt(max(scale, 1e-12)))
-                cdf_val = t_dist_fn.cdf(z_i, df=df_cond)
+            if j == 0:
+                e[:, i] = weights[:, j] * cdf_val
+            else:
+                e[:, i] += weights[:, j] * cdf_val
 
-                mix += weights[t_idx, j] * cdf_val
-
-            e[t_idx, i] = np.clip(mix, eps, 1.0 - eps)
-
-    return np.clip(e, eps, 1.0 - eps)
+    e = np.clip(e, eps, 1.0 - eps)
+    return e
 
 
 def stochastic_student_gof_test(copula, data, to_pobs=True, seed=None,
@@ -930,38 +930,58 @@ def stochastic_student_dcc_rosenblatt_transform(copula, u, fit_result,
 
     weights = grid.forward_weights(fi_grid)
 
-    e = np.empty((T, d))
-    e[:, 0] = u[:, 0]
-
-    for t_idx in range(T):
-        R_t = R_path[t_idx]
-        for i in range(1, d):
+    # Precompute R sub-matrices for each time step
+    beta_path = []    # beta_path[i-1] shape (T, i)
+    sigma_path = []   # sigma_path[i-1] shape (T,)
+    R_inv_path = []   # R_inv_path[i-1] shape (T, i, i)
+    for i in range(1, d):
+        betas = np.empty((T, i))
+        sigmas = np.empty(T)
+        R_invs = np.empty((T, i, i))
+        for t_idx in range(T):
+            R_t = R_path[t_idx]
             R_11 = R_t[:i, :i]
             R_21 = R_t[i, :i]
             R_22 = R_t[i, i]
             R_11_inv = np.linalg.inv(R_11)
-            beta = R_21 @ R_11_inv
+            betas[t_idx] = R_21 @ R_11_inv
             sigma2 = R_22 - R_21 @ R_11_inv @ R_21
-            sigma_c = np.sqrt(max(sigma2, 1e-12))
+            sigmas[t_idx] = np.sqrt(max(sigma2, 1e-12))
+            R_invs[t_idx] = R_11_inv
+        beta_path.append(betas)
+        sigma_path.append(sigmas)
+        R_inv_path.append(R_invs)
 
-            mix = 0.0
-            for j in range(K_eff):
-                df_j = df_grid[j]
-                u_c = np.clip(u[t_idx, :i + 1], eps, 1.0 - eps)
-                x = t_dist_fn.ppf(u_c, df=df_j)
+    u_c = np.clip(u, eps, 1.0 - eps)
 
-                mu_c = beta @ x[:i]
-                quad = x[:i] @ R_11_inv @ x[:i]
-                df_cond = df_j + i
-                scale = (df_j + quad) / df_cond
-                z_i = (x[i] - mu_c) / (sigma_c * np.sqrt(max(scale, 1e-12)))
-                cdf_val = t_dist_fn.cdf(z_i, df=df_cond)
+    e = np.empty((T, d))
+    e[:, 0] = u[:, 0]
 
-                mix += weights[t_idx, j] * cdf_val
+    # Vectorized over T: loop over grid points and dimensions only
+    for j in range(K_eff):
+        df_j = df_grid[j]
+        x_all = t_dist_fn.ppf(u_c, df=df_j)  # (T, d)
 
-            e[t_idx, i] = np.clip(mix, eps, 1.0 - eps)
+        for i in range(1, d):
+            x_prev = x_all[:, :i]                                    # (T, i)
+            mu_c = np.sum(beta_path[i - 1] * x_prev, axis=1)        # (T,)
+            quad = np.sum(
+                np.einsum('ti,tij->tj', x_prev, R_inv_path[i - 1]) * x_prev,
+                axis=1)                                               # (T,)
 
-    return np.clip(e, eps, 1.0 - eps)
+            df_cond = df_j + i
+            scale = (df_j + quad) / df_cond
+            z_i = (x_all[:, i] - mu_c) / (
+                sigma_path[i - 1] * np.sqrt(np.maximum(scale, 1e-12)))
+            cdf_val = t_dist_fn.cdf(z_i, df=df_cond)                 # (T,)
+
+            if j == 0:
+                e[:, i] = weights[:, j] * cdf_val
+            else:
+                e[:, i] += weights[:, j] * cdf_val
+
+    e = np.clip(e, eps, 1.0 - eps)
+    return e
 
 
 def stochastic_student_dcc_gof_test(copula, data, to_pobs=True, seed=None,

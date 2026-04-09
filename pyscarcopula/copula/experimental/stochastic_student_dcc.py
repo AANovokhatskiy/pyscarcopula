@@ -779,9 +779,7 @@ class StochasticStudentDCCCopula(BivariateCopula):
             raise ValueError(f"u has length {T}, but R_path has length {len(self._R_path)}")
 
         if r is None:
-            if self.fit_result is None:
-                r = 5.0
-            elif isinstance(self.fit_result, MLEResult):
+            if isinstance(self.fit_result, MLEResult):
                 r = self.fit_result.copula_param
             else:
                 r = float(self.transform(np.array([self.fit_result.params.mu]))[0])
@@ -995,8 +993,6 @@ class StochasticStudentDCCCopula(BivariateCopula):
     # ── Sampling helpers ─────────────────────────────────────
 
     def _infer_df_scalar(self):
-        if self.fit_result is None:
-            return 5.0
         if isinstance(self.fit_result, MLEResult):
             return float(self.fit_result.copula_param)
         return float(self.transform(np.array([self.fit_result.params.mu]))[0])

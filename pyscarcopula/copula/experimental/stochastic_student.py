@@ -288,7 +288,12 @@ class StochasticStudentCopula(BivariateCopula):
         u = np.asarray(u, dtype=np.float64)
 
         if r is None:
-            r = self.fit_result.copula_param if self.fit_result else 5.0
+            from pyscarcopula._types import MLEResult
+            if isinstance(self.fit_result, MLEResult):
+                r = self.fit_result.copula_param
+            else:
+                r = float(self.transform(
+                    np.array([self.fit_result.params.mu]))[0])
 
         ll = _student_copula_logpdf(u, self._R, r, self._L_inv, self._log_det)
         return np.sum(ll)
@@ -527,16 +532,13 @@ class StochasticStudentCopula(BivariateCopula):
             rng = np.random.default_rng()
 
         if r is None:
-            if self.fit_result is not None:
-                from pyscarcopula._types import MLEResult
-                if isinstance(self.fit_result, MLEResult):
-                    r = self.fit_result.copula_param
-                else:
-                    # SCAR: use stationary OU mean
-                    r = self.transform(
-                        np.array([self.fit_result.params.mu]))[0]
+            from pyscarcopula._types import MLEResult
+            if isinstance(self.fit_result, MLEResult):
+                r = self.fit_result.copula_param
             else:
-                r = 5.0
+                # SCAR: use stationary OU mean
+                r = self.transform(
+                    np.array([self.fit_result.params.mu]))[0]
 
         r_arr = np.atleast_1d(np.asarray(r, dtype=np.float64))
         is_scalar = (r_arr.size == 1)
