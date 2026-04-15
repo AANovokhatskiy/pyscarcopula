@@ -8,7 +8,7 @@ pyscarcopula models time-varying dependence between financial assets. The copula
 
 - **Archimedean copulas**: Gumbel, Frank, Clayton, Joe (with rotations)
 - **Elliptical copulas**: Gaussian, Student-t
-- **Equicorrelation Gaussian copula**: single dynamic correlation for d assets
+- **Experimental models**: equicorrelation Gaussian, stochastic Student-t, stochastic Student-t DCC
 - **C-vine copulas**: automatic family selection, truncation, mixed SCAR/MLE
 - **Estimation**: MLE, GAS, SCAR-TM-OU (transfer matrix with analytical gradient)
 - **Transform functions**: `xtanh` (default), `softplus` (asymmetric)

@@ -50,9 +50,8 @@ pytest tests/
 
 * Archimedean: Gumbel, Frank, Clayton, Joe (with rotations 0°/90°/180°/270°)
 * Elliptical: Gaussian, Student-t (MLE only)
-* Stochastic Student-t: d-dimensional t-copula with OU-driven degrees of freedom
 * Independence copula (null model for automatic vine pruning)
-* Equicorrelation Gaussian (single dynamic correlation for d assets)
+* Experimental: Equicorrelation Gaussian, Stochastic Student-t, Stochastic Student-t DCC (see `pyscarcopula.copula.experimental`)
 
 **Vine copulas**
 
@@ -356,7 +355,7 @@ vine.fit(u, method='scar-tm-ou', truncation_level=2, min_edge_logL=10)
 | Parameter          | Default | Effect                                                                                        |
 | ------------------ | ------- | --------------------------------------------------------------------------------------------- |
 | `truncation_level` | `None`  | Trees at or above this level are not fitted with dynamic SCAR updates.                        |
-| `truncation_fill`  | `'mle'` | Policy for edges above `truncation_level`: static MLE selection or forced independence.       |
+| `truncation_fill`  | `'mle'` | Policy for edges above `truncation_level`: static MLE selection or forced independence. Avaiable parameters: `mle` and `independent`       |
 | `min_edge_logL`    | `None`  | Edges with low MLE log-likelihood can be kept static rather than upgraded to a dynamic model. |
 
 ### Sampling performance

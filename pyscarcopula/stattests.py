@@ -22,35 +22,45 @@ Usage:
 """
 
 import numpy as np
-from scipy.stats import chi2, norm, cramervonmises_2samp
+from scipy.stats import chi2, norm, cramervonmises
 
 
 # ══════════════════════════════════════════════════════════════════
 # CvM test (shared)
 # ══════════════════════════════════════════════════════════════════
 
-def cvm_test(e, seed=None):
+def cvm_test(e):
     """
-    Cramér-von Mises test.
-    e: (T, d). Under H0: y = chi2.cdf(sum(Phi^{-1}(e_j)^2), df=d) ~ U[0,1].
+    One-sample Cramér-von Mises test.
+
+    Parameters
+    ----------
+    e : array-like, shape (T, d)
+        Under H0:
+            y_t = chi2.cdf(sum_j Phi^{-1}(e_tj)^2, df=d) ~ U[0,1]
+
+    Returns
+    -------
+    CramerVonMisesResult
+        Has .statistic and .pvalue
     """
+    e = np.asarray(e, dtype=np.float64)
+    if e.ndim != 2:
+        raise ValueError(f"e must have shape (T, d), got {e.shape}")
+
     T, d = e.shape
+    if T == 0:
+        raise ValueError("e must contain at least one observation")
 
-    y = np.empty(T)
-    for k in range(T):
-        val = 0.0
-        for j in range(d):
-            val += norm.ppf(e[k, j]) ** 2
-        y[k] = chi2.cdf(val, df=d)
+    # Avoid inf in norm.ppf at exactly 0 or 1
+    eps = 1e-10
+    e = np.clip(e, eps, 1.0 - eps)
 
-    size = 1_000_000
-    if seed is None:
-        ref = np.random.uniform(0, 1, size=size)
-    else:
-        rng = np.random.default_rng(seed)
-        ref = rng.random(size=size)
+    z = norm.ppf(e)                       # (T, d)
+    q = np.sum(z * z, axis=1)             # (T,)
+    y = chi2.cdf(q, df=d)                 # should be U[0,1] under H0
 
-    return cramervonmises_2samp(ref, y, method='auto')
+    return cramervonmises(y, "uniform")
 
 
 def _clip(x):
@@ -89,7 +99,7 @@ def rosenblatt_transform_gas(copula, u, gas_params, scaling='unit'):
 # Unified tests
 # ══════════════════════════════════════════════════════════════════
 
-def gof_test(model, data, to_pobs=True, seed=None, K=300, grid_range=5.0,
+def gof_test(model, data, to_pobs=True, K=300, grid_range=5.0,
              fit_result=None):
     """
     Unified goodness-of-fit test for any copula model.
@@ -105,7 +115,6 @@ def gof_test(model, data, to_pobs=True, seed=None, K=300, grid_range=5.0,
     model : BivariateCopula, CVineCopula, GaussianCopula, or StudentCopula
     data : (T, d) array
     to_pobs : bool
-    seed : int or None
     K : int — grid size (SCAR only)
     grid_range : float (SCAR only)
     fit_result : FitResult or None
@@ -125,25 +134,25 @@ def gof_test(model, data, to_pobs=True, seed=None, K=300, grid_range=5.0,
     from pyscarcopula.copula.experimental.stochastic_student_dcc import StochasticStudentDCCCopula
 
     if isinstance(model, StochasticStudentDCCCopula):
-        return stochastic_student_dcc_gof_test(model, data, to_pobs, seed, K,
+        return stochastic_student_dcc_gof_test(model, data, to_pobs, K,
                                                 grid_range, fit_result=fit_result)
     elif isinstance(model, StochasticStudentCopula):
-        return stochastic_student_gof_test(model, data, to_pobs, seed, K,
+        return stochastic_student_gof_test(model, data, to_pobs, K,
                                            grid_range, fit_result=fit_result)
     elif isinstance(model, EquicorrGaussianCopula):
-        return equicorr_gof_test(model, data, to_pobs, seed, K, grid_range,
+        return equicorr_gof_test(model, data, to_pobs, K, grid_range,
                                  fit_result=fit_result)
     elif isinstance(model, BivariateCopula):
-        return _gof_bivariate(model, data, to_pobs, seed, K, grid_range,
+        return _gof_bivariate(model, data, to_pobs, K, grid_range,
                               fit_result=fit_result)
     elif isinstance(model, CVineCopula):
-        return vine_gof_test(model, data, to_pobs, seed, K, grid_range)
+        return vine_gof_test(model, data, to_pobs, K, grid_range)
     elif isinstance(model, RVineCopula):
-        return rvine_gof_test(model, data, to_pobs, seed, K, grid_range)
+        return rvine_gof_test(model, data, to_pobs, K, grid_range)
     elif isinstance(model, GaussianCopula):
-        return gaussian_gof_test(model, data, to_pobs, seed)
+        return gaussian_gof_test(model, data, to_pobs)
     elif isinstance(model, StudentCopula):
-        return student_gof_test(model, data, to_pobs, seed)
+        return student_gof_test(model, data, to_pobs)
     else:
         raise TypeError(f"Unsupported model type: {type(model).__name__}")
 
@@ -151,7 +160,7 @@ def gof_test(model, data, to_pobs=True, seed=None, K=300, grid_range=5.0,
 # Bivariate gof_test
 # ══════════════════════════════════════════════════════════════════
 
-def _gof_bivariate(copula, data, to_pobs=True, seed=None, K=300, grid_range=5.0,
+def _gof_bivariate(copula, data, to_pobs=True, K=300, grid_range=5.0,
                    fit_result=None):
     """
     Goodness-of-fit for a fitted BivariateCopula.
@@ -165,7 +174,6 @@ def _gof_bivariate(copula, data, to_pobs=True, seed=None, K=300, grid_range=5.0,
     copula : BivariateCopula
     data : (T, 2) array
     to_pobs : bool
-    seed : int or None
     K : int
     grid_range : float
     fit_result : FitResult or None
@@ -195,7 +203,7 @@ def _gof_bivariate(copula, data, to_pobs=True, seed=None, K=300, grid_range=5.0,
         alpha = fr.params.values
         e = rosenblatt_transform_scar(copula, u, alpha, K, grid_range)
 
-    return cvm_test(e, seed=seed)
+    return cvm_test(e)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -273,7 +281,7 @@ def vine_rosenblatt_transform(vine, u, K=300, grid_range=5.0):
 # Vine gof_test
 # ══════════════════════════════════════════════════════════════════
 
-def vine_gof_test(vine, data, to_pobs=True, seed=None, K=500, grid_range=7.0):
+def vine_gof_test(vine, data, to_pobs=True, K=500, grid_range=7.0):
     """
     Goodness-of-fit test for a fitted C-vine copula.
 
@@ -288,7 +296,6 @@ def vine_gof_test(vine, data, to_pobs=True, seed=None, K=500, grid_range=7.0):
     vine : CVineCopula (fitted)
     data : (T, d)
     to_pobs : bool
-    seed : int or None
     K : int — grid size for SCAR mixture Rosenblatt
     grid_range : float
 
@@ -306,106 +313,7 @@ def vine_gof_test(vine, data, to_pobs=True, seed=None, K=500, grid_range=7.0):
         raise ValueError("Fit the vine first")
 
     e = vine_rosenblatt_transform(vine, u, K=K, grid_range=grid_range)
-    return cvm_test(e, seed=seed)
-
-
-# ══════════════════════════════════════════════════════════════════
-# R-Vine Rosenblatt transform and GoF
-# ══════════════════════════════════════════════════════════════════
-
-# def rvine_rosenblatt_transform(vine, u, K=300, grid_range=5.0):
-#     """
-#     Rosenblatt transform for a fitted R-vine copula.
-
-#     Inverse of the sampling procedure: applies h-functions (forward)
-#     using the same variable ordering as sampling to strip dependence.
-
-#     For variable order [v0, v1, v2, ...]:
-#         e_0 = u_{v0}
-#         e_i = h(u_{vi} | u_{v0}, ..., u_{v(i-1)})  (deepest h-transform)
-
-#     Under the correct model, e should be iid U[0,1]^d.
-
-#     Parameters
-#     ----------
-#     vine : RVineCopula (fitted)
-#     u : (T, d) pseudo-observations
-
-#     Returns
-#     -------
-#     e : (T, d) — should be iid U[0,1]^d under correct model
-#     """
-#     from pyscarcopula.vine.rvine import _build_matrix_edge_map
-
-#     T, d = u.shape
-#     eps = 1e-10
-
-#     M = vine._structure.matrix
-#     edge_map = _build_matrix_edge_map(vine._structure, vine.trees, vine.edges)
-
-#     # Forward Rosenblatt transform using the R-vine matrix.
-#     # Process columns right-to-left (same order as sampling).
-#     # v_direct[(s, m)] and v_indirect[(s, m)] mirror the sampling arrays
-#     # but are computed from data rather than inverted from uniforms.
-#     v_direct = {}
-#     v_indirect = {}
-
-#     # Initialize: raw observations for each variable
-#     raw = {}
-#     for i in range(d):
-#         raw[i] = np.clip(u[:, i].copy(), eps, 1 - eps)
-
-#     # Rightmost column: no conditioning
-#     v_direct[(d - 1, 0)] = raw[M[d - 1, d - 1]]
-
-#     e = np.empty((T, d))
-#     e[:, 0] = v_direct[(d - 1, 0)]
-
-#     for s in range(d - 2, -1, -1):
-#         n_levels = d - s - 1
-#         v_direct[(s, 0)] = raw[M[s, s]]
-
-#         # Forward h-transforms: shallowest to deepest
-#         for m in range(n_levels):
-#             edge_key = edge_map.get((m, s))
-#             if edge_key is None:
-#                 continue
-#             edge = vine.edges[edge_key]
-
-#             if M[s + m + 1, s] == M[s + 1, s + 1]:
-#                 z = v_direct.get((s + 1, m))
-#             else:
-#                 z = v_indirect.get((s + 1, m))
-
-#             if z is None:
-#                 continue
-
-#             cur = v_direct.get((s, m))
-#             if cur is None:
-#                 continue
-
-#             # Compute r for this edge
-#             u_pair = np.column_stack((
-#                 np.clip(cur, eps, 1 - eps),
-#                 np.clip(z, eps, 1 - eps)))
-#             h_val = np.clip(
-#                 _vine_edge_h(edge, cur, z, u_pair, K, grid_range),
-#                 eps, 1 - eps)
-#             v_direct[(s, m + 1)] = h_val
-
-#             u_pair_rev = np.column_stack((
-#                 np.clip(z, eps, 1 - eps),
-#                 np.clip(cur, eps, 1 - eps)))
-#             h_val_rev = np.clip(
-#                 _vine_edge_h(edge, z, cur, u_pair_rev, K, grid_range),
-#                 eps, 1 - eps)
-#             v_indirect[(s, m + 1)] = h_val_rev
-
-#         # Rosenblatt component: deepest h-transform for column s
-#         deepest = v_direct.get((s, n_levels), v_direct.get((s, 0)))
-#         e[:, d - 1 - s] = np.clip(deepest, eps, 1 - eps)
-
-#     return _clip(e)
+    return cvm_test(e)
 
 
 def rvine_rosenblatt_transform(vine, u, K=300, grid_range=5.0):
@@ -501,7 +409,7 @@ def rvine_rosenblatt_transform(vine, u, K=300, grid_range=5.0):
 
     return _clip(e)
 
-def rvine_gof_test(vine, data, to_pobs=True, seed=None,
+def rvine_gof_test(vine, data, to_pobs=True,
                     K=500, grid_range=7.0):
     """
     Goodness-of-fit test for a fitted R-vine copula.
@@ -511,7 +419,6 @@ def rvine_gof_test(vine, data, to_pobs=True, seed=None,
     vine : RVineCopula (fitted)
     data : (T, d)
     to_pobs : bool
-    seed : int or None
     K : int
     grid_range : float
 
@@ -529,7 +436,7 @@ def rvine_gof_test(vine, data, to_pobs=True, seed=None,
         raise ValueError("Fit the vine first")
 
     e = rvine_rosenblatt_transform(vine, u, K=K, grid_range=grid_range)
-    return cvm_test(e, seed=seed)
+    return cvm_test(e)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -569,7 +476,7 @@ def gaussian_rosenblatt_transform(R, u):
     return np.clip(e, eps, 1.0 - eps)
 
 
-def gaussian_gof_test(copula, data, to_pobs=True, seed=None):
+def gaussian_gof_test(copula, data, to_pobs=True):
     """
     Goodness-of-fit test for a fitted GaussianCopula.
 
@@ -578,7 +485,6 @@ def gaussian_gof_test(copula, data, to_pobs=True, seed=None):
     copula : GaussianCopula (fitted, has .corr)
     data : (T, d)
     to_pobs : bool
-    seed : int or None
 
     Returns
     -------
@@ -594,7 +500,7 @@ def gaussian_gof_test(copula, data, to_pobs=True, seed=None):
         raise ValueError("Fit the copula first")
 
     e = gaussian_rosenblatt_transform(copula.corr, u)
-    return cvm_test(e, seed=seed)
+    return cvm_test(e)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -673,7 +579,7 @@ def student_rosenblatt_transform(R, df, u):
     return np.clip(e, eps, 1.0 - eps)
 
 
-def student_gof_test(copula, data, to_pobs=True, seed=None):
+def student_gof_test(copula, data, to_pobs=True):
     """
     Goodness-of-fit test for a fitted StudentCopula.
 
@@ -682,7 +588,6 @@ def student_gof_test(copula, data, to_pobs=True, seed=None):
     copula : StudentCopula (fitted, has .shape and .df)
     data : (T, d)
     to_pobs : bool
-    seed : int or None
 
     Returns
     -------
@@ -698,7 +603,7 @@ def student_gof_test(copula, data, to_pobs=True, seed=None):
         raise ValueError("Fit the copula first")
 
     e = student_rosenblatt_transform(copula.shape, copula.df, u)
-    return cvm_test(e, seed=seed)
+    return cvm_test(e)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -782,7 +687,7 @@ def equicorr_rosenblatt_transform(copula, u, fit_result, K=300, grid_range=5.0):
     return e
 
 
-def equicorr_gof_test(copula, data, to_pobs=True, seed=None,
+def equicorr_gof_test(copula, data, to_pobs=True,
                       K=300, grid_range=5.0, fit_result=None):
     """
     Goodness-of-fit test for EquicorrGaussianCopula.
@@ -792,7 +697,6 @@ def equicorr_gof_test(copula, data, to_pobs=True, seed=None,
     copula : EquicorrGaussianCopula
     data : (T, d)
     to_pobs : bool
-    seed : int or None
     K : int
     grid_range : float
     fit_result : FitResult or None
@@ -814,7 +718,7 @@ def equicorr_gof_test(copula, data, to_pobs=True, seed=None,
                          "Call copula.fit() first or pass fit_result=.")
 
     e = equicorr_rosenblatt_transform(copula, u, fr, K, grid_range)
-    return cvm_test(e, seed=seed)
+    return cvm_test(e)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -916,7 +820,7 @@ def stochastic_student_rosenblatt_transform(copula, u, fit_result,
     return e
 
 
-def stochastic_student_gof_test(copula, data, to_pobs=True, seed=None,
+def stochastic_student_gof_test(copula, data, to_pobs=True,
                                  K=300, grid_range=5.0, fit_result=None):
     """
     Goodness-of-fit test for StochasticStudentCopula.
@@ -926,7 +830,6 @@ def stochastic_student_gof_test(copula, data, to_pobs=True, seed=None,
     copula : StochasticStudentCopula
     data : (T, d)
     to_pobs : bool
-    seed : int or None
     K : int
     grid_range : float
     fit_result : FitResult or None
@@ -947,7 +850,7 @@ def stochastic_student_gof_test(copula, data, to_pobs=True, seed=None,
                          "Call copula.fit() first or pass fit_result=.")
 
     e = stochastic_student_rosenblatt_transform(copula, u, fr, K, grid_range)
-    return cvm_test(e, seed=seed)
+    return cvm_test(e)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -1085,7 +988,7 @@ def stochastic_student_dcc_rosenblatt_transform(copula, u, fit_result,
     return e
 
 
-def stochastic_student_dcc_gof_test(copula, data, to_pobs=True, seed=None,
+def stochastic_student_dcc_gof_test(copula, data, to_pobs=True,
                                      K=300, grid_range=5.0, fit_result=None):
     """
     Goodness-of-fit test for StochasticStudentDCCCopula.
@@ -1095,7 +998,6 @@ def stochastic_student_dcc_gof_test(copula, data, to_pobs=True, seed=None,
     copula : StochasticStudentDCCCopula
     data : (T, d)
     to_pobs : bool
-    seed : int or None
     K : int
     grid_range : float
     fit_result : FitResult or None
@@ -1116,4 +1018,4 @@ def stochastic_student_dcc_gof_test(copula, data, to_pobs=True, seed=None,
                          "Call copula.fit() first or pass fit_result=.")
 
     e = stochastic_student_dcc_rosenblatt_transform(copula, u, fr, K, grid_range)
-    return cvm_test(e, seed=seed)
+    return cvm_test(e)

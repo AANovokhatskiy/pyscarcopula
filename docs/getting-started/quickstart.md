@@ -94,6 +94,8 @@ u_pred_6d = vine.predict(100_000, u=u6)
 | Independence | `IndependentCopula` | — | — |
 | Gaussian | `BivariateGaussianCopula` | — | Yes |
 | Equicorrelation | `EquicorrGaussianCopula` | — | Yes |
+| Stochastic Student-t | `StochasticStudentCopula` | — | Yes |
+| Stochastic Student-t DCC | `StochasticStudentDCCCopula` | — | Yes |
 | Gaussian (d-dim) | `GaussianCopula` | — | MLE only |
 | Student-t (d-dim) | `StudentCopula` | — | MLE only |
 

@@ -58,12 +58,12 @@ nav:
   - User Guide:
     - Bivariate Copulas: guide/bivariate.md
     - Vine Copulas: guide/vine.md
-    - Equicorrelation Model: guide/equicorr.md
+    - Experimental Models: guide/experimental_models.md
     - Transform Functions: guide/transforms.md
     - Performance Tuning: guide/performance.md
   - API Reference:
     - Copulas: api/copulas.md
     - Vine: api/vine.md
-    - Equicorrelation: api/equicorr.md
+    - Experimental Models: api/experimental_models.md
     - Diagnostics: api/diagnostics.md
     - Contrib: api/contrib.md
