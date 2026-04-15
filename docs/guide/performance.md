@@ -22,6 +22,19 @@ result = fit(copula, u, method='scar-tm-ou', tol=5e-2)
 | `pts_per_sigma` | `2` | Grid density. Increase to 4 for very peaked transition kernels. |
 | `transform_type` | `'xtanh'` | `'softplus'` often gives better logL on financial data. |
 
+**Adaptive grid size.** When `adaptive=True` (the default), the grid is automatically
+enlarged so that the OU transition kernel is resolved with at least `pts_per_sigma`
+points per conditional standard deviation. The resulting grid size is
+K_min = O(1 / sqrt(theta * dt)), where dt = 1/(n-1). For small theta (slow
+mean-reversion) this can produce very large grids. In dense mode the cost is
+O(K^2); in sparse mode — O(K * b) where b is the kernel bandwidth, which is
+usually manageable. Workarounds for excessive grid sizes:
+
+- Use `grid_method='sparse'` (or leave `'auto'`, which prefers sparse for large grids).
+- Set `adaptive=False` and specify an explicit `K`.
+- Increase theta or decrease n (fewer observations → larger dt → wider
+  conditional kernel → smaller grid).
+
 ## Vine copula
 
 ```python

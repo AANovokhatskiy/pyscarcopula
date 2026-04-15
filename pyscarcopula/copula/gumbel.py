@@ -321,14 +321,9 @@ class GumbelCopula(BivariateCopula):
         return np.exp(-t ** (1.0 / r))
 
     def V(self, n, r):
-        # _r = np.atleast_1d(np.asarray(r, dtype=np.float64))
-        # if _r.size == 1:
-        #     return _generate_levy_stable(1.0 / _r[0], n)
-        # # vector r — use first element (all equal in Marshall-Olkin with scalar param)
-        # return _generate_levy_stable(1.0 / _r[0], n)
-        res = _generate_levy_stable(alpha = 1/r, beta = 1, loc = 0, 
+        res = _generate_levy_stable(alpha = 1/r, beta = 1, loc = 0,
                                     scale = np.cos(np.pi / (2 * r))**r, size = n)
-        return res
+        return np.maximum(res, 1e-300)
     
     def h_unrotated(self, u, v, r):
         ua, va, ra = _broadcast(u, v, r)

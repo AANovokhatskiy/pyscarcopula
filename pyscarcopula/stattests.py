@@ -313,92 +313,193 @@ def vine_gof_test(vine, data, to_pobs=True, seed=None, K=500, grid_range=7.0):
 # R-Vine Rosenblatt transform and GoF
 # ══════════════════════════════════════════════════════════════════
 
+# def rvine_rosenblatt_transform(vine, u, K=300, grid_range=5.0):
+#     """
+#     Rosenblatt transform for a fitted R-vine copula.
+
+#     Inverse of the sampling procedure: applies h-functions (forward)
+#     using the same variable ordering as sampling to strip dependence.
+
+#     For variable order [v0, v1, v2, ...]:
+#         e_0 = u_{v0}
+#         e_i = h(u_{vi} | u_{v0}, ..., u_{v(i-1)})  (deepest h-transform)
+
+#     Under the correct model, e should be iid U[0,1]^d.
+
+#     Parameters
+#     ----------
+#     vine : RVineCopula (fitted)
+#     u : (T, d) pseudo-observations
+
+#     Returns
+#     -------
+#     e : (T, d) — should be iid U[0,1]^d under correct model
+#     """
+#     from pyscarcopula.vine.rvine import _build_matrix_edge_map
+
+#     T, d = u.shape
+#     eps = 1e-10
+
+#     M = vine._structure.matrix
+#     edge_map = _build_matrix_edge_map(vine._structure, vine.trees, vine.edges)
+
+#     # Forward Rosenblatt transform using the R-vine matrix.
+#     # Process columns right-to-left (same order as sampling).
+#     # v_direct[(s, m)] and v_indirect[(s, m)] mirror the sampling arrays
+#     # but are computed from data rather than inverted from uniforms.
+#     v_direct = {}
+#     v_indirect = {}
+
+#     # Initialize: raw observations for each variable
+#     raw = {}
+#     for i in range(d):
+#         raw[i] = np.clip(u[:, i].copy(), eps, 1 - eps)
+
+#     # Rightmost column: no conditioning
+#     v_direct[(d - 1, 0)] = raw[M[d - 1, d - 1]]
+
+#     e = np.empty((T, d))
+#     e[:, 0] = v_direct[(d - 1, 0)]
+
+#     for s in range(d - 2, -1, -1):
+#         n_levels = d - s - 1
+#         v_direct[(s, 0)] = raw[M[s, s]]
+
+#         # Forward h-transforms: shallowest to deepest
+#         for m in range(n_levels):
+#             edge_key = edge_map.get((m, s))
+#             if edge_key is None:
+#                 continue
+#             edge = vine.edges[edge_key]
+
+#             if M[s + m + 1, s] == M[s + 1, s + 1]:
+#                 z = v_direct.get((s + 1, m))
+#             else:
+#                 z = v_indirect.get((s + 1, m))
+
+#             if z is None:
+#                 continue
+
+#             cur = v_direct.get((s, m))
+#             if cur is None:
+#                 continue
+
+#             # Compute r for this edge
+#             u_pair = np.column_stack((
+#                 np.clip(cur, eps, 1 - eps),
+#                 np.clip(z, eps, 1 - eps)))
+#             h_val = np.clip(
+#                 _vine_edge_h(edge, cur, z, u_pair, K, grid_range),
+#                 eps, 1 - eps)
+#             v_direct[(s, m + 1)] = h_val
+
+#             u_pair_rev = np.column_stack((
+#                 np.clip(z, eps, 1 - eps),
+#                 np.clip(cur, eps, 1 - eps)))
+#             h_val_rev = np.clip(
+#                 _vine_edge_h(edge, z, cur, u_pair_rev, K, grid_range),
+#                 eps, 1 - eps)
+#             v_indirect[(s, m + 1)] = h_val_rev
+
+#         # Rosenblatt component: deepest h-transform for column s
+#         deepest = v_direct.get((s, n_levels), v_direct.get((s, 0)))
+#         e[:, d - 1 - s] = np.clip(deepest, eps, 1 - eps)
+
+#     return _clip(e)
+
+
 def rvine_rosenblatt_transform(vine, u, K=300, grid_range=5.0):
     """
     Rosenblatt transform for a fitted R-vine copula.
 
-    Inverse of the sampling procedure: applies h-functions (forward)
-    using the same variable ordering as sampling to strip dependence.
+    Uses the same pseudo-observation dictionary semantics as
+    RVineCopula.fit() / RVineCopula.log_likelihood() and mirrors
+    the sampling recursion above.
 
-    For variable order [v0, v1, v2, ...]:
-        e_0 = u_{v0}
-        e_i = h(u_{vi} | u_{v0}, ..., u_{v(i-1)})  (deepest h-transform)
+    For each matrix column s:
+      - start from raw u[:, M[s,s]]
+      - apply h-transforms shallowest -> deepest
+      - the deepest transform is the Rosenblatt component
 
-    Under the correct model, e should be iid U[0,1]^d.
-
-    Parameters
-    ----------
-    vine : RVineCopula (fitted)
-    u : (T, d) pseudo-observations
-
-    Returns
-    -------
-    e : (T, d) — should be iid U[0,1]^d under correct model
+    This avoids the broken v_direct / v_indirect bookkeeping.
     """
-    from pyscarcopula.vine.rvine import _build_sampling_order
+    from pyscarcopula.vine.rvine import _build_matrix_edge_map
 
+    if vine.edges is None:
+        raise ValueError("Fit the vine first")
+
+    u = np.asarray(u, dtype=np.float64)
     T, d = u.shape
+    if d != vine.d:
+        raise ValueError(f"u has d={d}, but fitted vine has d={vine.d}")
+
     eps = 1e-10
+    M = vine._structure.matrix
+    edge_map = _build_matrix_edge_map(vine._structure, vine.trees, vine.edges)
 
-    var_order = _build_sampling_order(vine.trees, d)
+    pseudo = {
+        (var, frozenset()): np.clip(u[:, var].copy(), eps, 1.0 - eps)
+        for var in range(d)
+    }
 
-    # Build pseudo-obs dict (same as in sampling, but forward direction)
-    pseudo_obs = {}
-    for i in range(d):
-        pseudo_obs[(i, frozenset())] = np.clip(u[:, i].copy(), eps, 1 - eps)
+    e = np.empty((T, d), dtype=np.float64)
 
-    # Propagate h-transforms through the tree structure
-    for tree_level, tree_edges in enumerate(vine.trees):
-        for edge_idx, (v1, v2, cond) in enumerate(tree_edges):
-            cond_set = frozenset(cond)
-            edge = vine.edges[(tree_level, edge_idx)]
+    # Rightmost column: unconditional Rosenblatt component
+    e[:, 0] = pseudo[(M[d - 1, d - 1], frozenset())]
 
-            u1_key = (v1, cond_set)
-            u2_key = (v2, cond_set)
-            if u1_key not in pseudo_obs or u2_key not in pseudo_obs:
-                continue
+    # Remaining columns right-to-left
+    for s in range(d - 2, -1, -1):
+        var = M[s, s]
+        n_levels = d - s - 1
+        cur = pseudo[(var, frozenset())]
 
-            u1 = np.clip(pseudo_obs[u1_key], eps, 1 - eps)
-            u2 = np.clip(pseudo_obs[u2_key], eps, 1 - eps)
-            u_pair = np.column_stack((u1, u2))
+        for m in range(n_levels):
+            edge_key = edge_map.get((m, s))
+            if edge_key is None:
+                raise RuntimeError(
+                    f"Missing edge_map entry for tree={m}, column={s}"
+                )
 
-            if tree_level < d - 2:
-                h_2given1 = np.clip(
-                    _vine_edge_h(edge, u2, u1, u_pair, K, grid_range),
-                    eps, 1 - eps)
-                pseudo_obs[(v2, cond_set | {v1})] = h_2given1
+            edge = vine.edges[edge_key]
 
-                u_pair_rev = np.column_stack((u2, u1))
-                h_1given2 = np.clip(
-                    _vine_edge_h(edge, u1, u2, u_pair_rev, K, grid_range),
-                    eps, 1 - eps)
-                pseudo_obs[(v1, cond_set | {v2})] = h_1given2
+            partner_var = M[s + m + 1, s]
+            cond_set = frozenset(M[s + 1:s + m + 1, s])
+            next_cond = frozenset(M[s + 1:s + m + 2, s])
 
-    # Extract Rosenblatt components:
-    # For each variable in the ordering, find the deepest h-transform.
-    e = np.empty((T, d))
+            partner_val = pseudo.get((partner_var, cond_set))
+            if partner_val is None:
+                raise RuntimeError(
+                    "Missing partner pseudo-observation during Rosenblatt: "
+                    f"var={partner_var}, cond_set={sorted(cond_set)}, "
+                    f"column={s}, level={m}"
+                )
 
-    # First variable: no conditioning
-    e[:, 0] = pseudo_obs[(var_order[0], frozenset())]
+            var_at_cond = pseudo.get((var, cond_set), pseudo[(var, frozenset())])
 
-    for idx in range(1, d):
-        var = var_order[idx]
-        prev_vars = set(var_order[:idx])
+            # _vine_edge_h(edge, u2, u1, u_pair) expects u_pair=(u1,u2)
+            u_pair = np.column_stack((
+                np.clip(partner_val, eps, 1.0 - eps),  # u1
+                np.clip(var_at_cond, eps, 1.0 - eps)   # u2
+            ))
+            cur = np.clip(
+                _vine_edge_h(edge, var_at_cond, partner_val, u_pair, K, grid_range),
+                eps, 1.0 - eps
+            )
+            pseudo[(var, next_cond)] = cur
 
-        # Find the deepest pseudo-obs for this variable
-        # i.e. (var, cond_set) where cond_set is the largest subset of prev_vars
-        best_key = (var, frozenset())
-        best_depth = 0
+            u_pair_rev = np.column_stack((
+                np.clip(var_at_cond, eps, 1.0 - eps),  # u1
+                np.clip(partner_val, eps, 1.0 - eps)   # u2
+            ))
+            rev = np.clip(
+                _vine_edge_h(edge, partner_val, var_at_cond, u_pair_rev, K, grid_range),
+                eps, 1.0 - eps
+            )
+            pseudo[(partner_var, cond_set | {var})] = rev
 
-        for key in pseudo_obs:
-            if key[0] == var and key[1] <= prev_vars and len(key[1]) > best_depth:
-                best_key = key
-                best_depth = len(key[1])
-
-        e[:, idx] = np.clip(pseudo_obs[best_key], eps, 1 - eps)
+        e[:, d - 1 - s] = cur
 
     return _clip(e)
-
 
 def rvine_gof_test(vine, data, to_pobs=True, seed=None,
                     K=500, grid_range=7.0):

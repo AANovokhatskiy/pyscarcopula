@@ -10,7 +10,11 @@ from pyscarcopula.vine._helpers import _clip_unit, generate_r_for_sample
 from pyscarcopula.copula.independent import IndependentCopula
 from pyscarcopula.stattests import gof_test
 from pyscarcopula._utils import pobs
-
+from pyscarcopula.vine.rvine import RVineCopula, _build_matrix_edge_map
+from pyscarcopula.vine._structure import (
+    RVineMatrix, cvine_structure,
+    _maximum_spanning_tree, validate_rvine_matrix,
+)
 
 # ══════════════════════════════════════════════════════════════
 # Edge module tests
@@ -209,13 +213,6 @@ class TestVineSamplePredict:
 # R-vine structure module tests
 # ══════════════════════════════════════════════════════════════
 
-from pyscarcopula.vine._structure import (
-    RVineMatrix, build_rvine_structure, cvine_structure,
-    _maximum_spanning_tree,
-)
-from pyscarcopula.vine.rvine import RVineCopula
-
-
 class TestRVineMatrix:
     def test_cvine_structure(self):
         M = cvine_structure(4)
@@ -240,22 +237,6 @@ class TestRVineMatrix:
         mst = _maximum_spanning_tree(nodes, edges, weights)
         assert len(mst) == 3  # d-1 edges
 
-
-class TestBuildStructure:
-    def test_build_returns_valid(self):
-        rng = np.random.default_rng(42)
-        u = pobs(rng.standard_normal((200, 4)))
-        matrix, trees = build_rvine_structure(u)
-        assert matrix.d == 4
-        assert len(trees) == 3  # d-1 trees
-        assert len(trees[0]) == 3  # d-1 edges in tree 0
-
-    def test_build_6d(self):
-        rng = np.random.default_rng(42)
-        u = pobs(rng.standard_normal((200, 6)))
-        matrix, trees = build_rvine_structure(u)
-        total_edges = sum(len(t) for t in trees)
-        assert total_edges == 15  # 6*5/2
 
 
 # ══════════════════════════════════════════════════════════════
@@ -341,3 +322,197 @@ class TestRVineSCAR:
         assert (vine_scar.fit_result.log_likelihood
                 >= vine_mle.fit_result.log_likelihood - 5)
 
+
+# ══════════════════════════════════════════════════════════════
+# R-vine matrix validation tests
+# ══════════════════════════════════════════════════════════════
+
+class TestRVineMatrixValidation:
+    def test_cvine_structure_valid(self):
+        """C-vine structure should always satisfy the proximity condition."""
+        for d in [3, 4, 5, 6]:
+            M = cvine_structure(d)
+            assert validate_rvine_matrix(M), f"C-vine d={d} failed validation"
+
+    @pytest.mark.parametrize("d", [3, 4, 5, 6])
+    def test_fit_produces_valid_matrix(self, d):
+        """RVineCopula.fit() should produce valid R-vine matrices."""
+        rng = np.random.default_rng(42)
+        u = pobs(rng.standard_normal((200, d)))
+        vine = RVineCopula()
+        vine.fit(u, method='mle')
+        assert validate_rvine_matrix(vine._structure), \
+            f"RVineCopula.fit() produced invalid matrix for d={d}"
+
+    def test_known_valid_matrix(self):
+        """A hand-constructed valid 4x4 C-vine matrix should pass."""
+        M = np.array([
+            [0, 0, 0, 0],
+            [1, 1, 0, 0],
+            [2, 2, 2, 0],
+            [3, 3, 3, 3],
+        ])
+        assert validate_rvine_matrix(M)
+
+    def test_known_invalid_matrix(self):
+        """A matrix violating proximity should fail validation.
+        M[2,0]=2 but column 1 rows 1..2 = {1, 3} — 2 not present."""
+        M = np.array([
+            [0, 0, 0, 0],
+            [1, 1, 0, 0],
+            [2, 3, 2, 0],
+            [3, 2, 3, 3],
+        ])
+        assert not validate_rvine_matrix(M)
+
+    def test_truncated_rvine_matrix_valid(self, crypto_data_6d):
+        """Truncated R-vine must produce valid matrix without warnings."""
+        import warnings
+        vine = RVineCopula()
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            vine.fit(crypto_data_6d, method='mle', truncation_level=1)
+        assert validate_rvine_matrix(vine._structure)
+
+
+# ═════════════════════════════════════════════════════════════
+#  R-vine invariant tests
+# ═════════════════════════════════════════════════════════════
+
+class TestRVineRoundtrip:
+    @pytest.mark.parametrize("d", [4, 5, 6])
+    def test_trees_matrix_roundtrip_exact(self, d):
+        rng = np.random.default_rng(123)
+        u = pobs(rng.standard_normal((250, d)))
+
+        vine = RVineCopula()
+        vine.fit(u, method="mle")
+
+        assert validate_rvine_matrix(vine._structure)
+
+        for tl, tree_edges in enumerate(vine.trees):
+            tree_edge_sets = {
+                (frozenset({v1, v2}), frozenset(cond))
+                for v1, v2, cond in tree_edges
+            }
+            matrix_edge_sets = {
+                (frozenset({v1, v2}), frozenset(cond))
+                for v1, v2, cond in vine._structure.edges_at_tree(tl)
+            }
+            assert tree_edge_sets == matrix_edge_sets, \
+                f"Roundtrip mismatch at tree {tl}"
+
+
+class TestRVineEdgeMap:
+    @pytest.mark.parametrize("d", [4, 5, 6])
+    def test_matrix_edge_map_is_complete_and_consistent(self, d):
+        rng = np.random.default_rng(321)
+        u = pobs(rng.standard_normal((250, d)))
+
+        vine = RVineCopula()
+        vine.fit(u, method="mle")
+
+        edge_map = _build_matrix_edge_map(vine._structure, vine.trees, vine.edges)
+        expected = d * (d - 1) // 2
+        assert len(edge_map) == expected
+
+        for t in range(d - 1):
+            for s, (v1, v2, cond) in enumerate(vine._structure.edges_at_tree(t)):
+                key = edge_map[(t, s)]
+                vv1, vv2, ccond = vine.trees[key[0]][key[1]]
+                assert frozenset({v1, v2}) == frozenset({vv1, vv2})
+                assert frozenset(cond) == frozenset(ccond)
+
+
+class TestRVineGivenStructure:
+    def test_fit_with_given_structure_path(self):
+        rng = np.random.default_rng(777)
+        u = pobs(rng.standard_normal((300, 4)))
+
+        vine0 = RVineCopula()
+        vine0.fit(u, method="mle")
+
+        M = vine0._structure.matrix
+        structure = RVineMatrix(M)
+
+        vine1 = RVineCopula(structure=structure)
+        vine1.fit(u, method="mle")
+
+        assert validate_rvine_matrix(vine1._structure)
+        assert np.isfinite(vine1.fit_result.log_likelihood)
+
+        ll_eval = vine1.log_likelihood(u)
+        assert np.isfinite(ll_eval)
+        assert abs(ll_eval - vine1.fit_result.log_likelihood) < 1e-4
+
+        gof = gof_test(vine1, u, to_pobs=False)
+        assert 0 <= gof.pvalue <= 1
+
+
+class TestRVineGoFRegression:
+    def test_gof_on_model_samples_not_systematically_zero(self):
+        rng = np.random.default_rng(2024)
+        u = pobs(rng.standard_normal((350, 5)))
+
+        vine = RVineCopula()
+        vine.fit(u, method="mle")
+
+        pvals = []
+        for seed in range(10):
+            # use fresh model samples; sample() uses internal RNG, so just repeat
+            u_sim = vine.sample(400)
+            gof = gof_test(vine, u_sim, to_pobs=False)
+            pvals.append(gof.pvalue)
+
+        pvals = np.asarray(pvals)
+        assert np.all((0 <= pvals) & (pvals <= 1))
+        # weak but useful regression guard against the old "everything ~ 0" bug
+        assert pvals.mean() > 0.15
+        assert np.sum(pvals < 1e-6) == 0
+
+
+class TestRVineRefitSanity:
+    def test_sample_refit_gof_reasonable_on_average(self):
+        rng = np.random.default_rng(999)
+        u = pobs(rng.standard_normal((300, 4)))
+
+        base = RVineCopula()
+        base.fit(u, method="mle")
+
+        pvals = []
+        for _ in range(12):
+            u_sim = base.sample(350)
+
+            refit = RVineCopula()
+            refit.fit(u_sim, method="mle")
+
+            assert validate_rvine_matrix(refit._structure)
+            assert np.isfinite(refit.fit_result.log_likelihood)
+
+            gof = gof_test(refit, u_sim, to_pobs=False)
+            pvals.append(gof.pvalue)
+
+        pvals = np.asarray(pvals)
+        assert np.all((0 <= pvals) & (pvals <= 1))
+        # soft calibration sanity check; not too strict to avoid flaky CI
+        assert pvals.mean() > 0.20
+
+class TestRVineMatrixValidationExtra:
+    def test_invalid_matrix_duplicate_in_column(self):
+        M = np.array([
+            [0, 0, 0, 0],
+            [1, 1, 0, 0],
+            [1, 2, 2, 0],  # duplicate "1" in column 0
+            [3, 3, 3, 3],
+        ])
+        with pytest.raises(ValueError):
+            RVineMatrix(M)
+
+    def test_invalid_matrix_value_out_of_range(self):
+        M = np.array([
+            [0, 0, 0],
+            [1, 1, 0],
+            [5, 2, 2],  # out of range for d=3
+        ])
+        with pytest.raises(ValueError):
+            RVineMatrix(M)

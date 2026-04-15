@@ -157,18 +157,28 @@ def _clayton_dlogc_dr(u1, u2, r):
         log_v1 = np.log(v1)
         log_v2 = np.log(v2)
 
-        t1 = v1 ** (-ri)
-        t2 = v2 ** (-ri)
-        S = t1 + t2 - 1.0
-        if S < eps:
-            S = eps
+        # log-space computation of S
+        a = -ri * log_v1
+        b = -ri * log_v2
+        log_max = max(a, b)
+        log_min = min(a, b)
+        correction = np.exp(log_min - log_max) - np.exp(-log_max)
+        log_S = log_max + np.log1p(correction)
 
-        dS = -log_v1 * t1 - log_v2 * t2
+        # log-space computation of dS/S
+        log_abs_logv1 = np.log(-log_v1)
+        log_abs_logv2 = np.log(-log_v2)
+        p = log_abs_logv1 + a
+        q = log_abs_logv2 + b
+        pq_max = max(p, q)
+        pq_min = min(p, q)
+        log_dS = pq_max + np.log1p(np.exp(pq_min - pq_max))
+        dS_over_S = np.exp(log_dS - log_S)
 
         out[i] = (1.0 / (1.0 + ri)
                   - log_v1 - log_v2
-                  + np.log(S) / (ri * ri)
-                  + (-2.0 - 1.0 / ri) * dS / S)
+                  + log_S / (ri * ri)
+                  + (-2.0 - 1.0 / ri) * dS_over_S)
     return out
 
 
@@ -196,6 +206,8 @@ def _clayton_pdf_and_grad_batch(u_all, r_grid, dpsi, rotation):
         v2 = min(max(u2_raw, eps), 1.0 - eps)
         log_v1 = np.log(v1)
         log_v2 = np.log(v2)
+        log_abs_logv1 = np.log(-log_v1)
+        log_abs_logv2 = np.log(-log_v2)
 
         for j in range(K):
             ri = r_grid[j]
@@ -214,18 +226,18 @@ def _clayton_pdf_and_grad_batch(u_all, r_grid, dpsi, rotation):
             c_val = np.exp(log_c)
             fi[t, j] = c_val
 
-            # d(log c)/dr
-            t1 = v1 ** (-ri)
-            t2 = v2 ** (-ri)
-            S = t1 + t2 - 1.0
-            if S < eps:
-                S = eps
-            dS = -log_v1 * t1 - log_v2 * t2
+            # d(log c)/dr — log-scale (reuses a, b, log_S from PDF block)
+            p = log_abs_logv1 + a
+            q = log_abs_logv2 + b
+            pq_max = max(p, q)
+            pq_min = min(p, q)
+            log_dS = pq_max + np.log1p(np.exp(pq_min - pq_max))
+            dS_over_S = np.exp(log_dS - log_S)
 
             dlogc = (1.0 / (1.0 + ri)
                      - log_v1 - log_v2
-                     + np.log(S) / (ri * ri)
-                     + (-2.0 - 1.0 / ri) * dS / S)
+                     + log_S / (ri * ri)
+                     + (-2.0 - 1.0 / ri) * dS_over_S)
             dfi[t, j] = c_val * dlogc * dpsi[j]
 
     return fi, dfi

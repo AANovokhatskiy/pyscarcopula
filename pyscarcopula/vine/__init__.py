@@ -14,14 +14,13 @@ from pyscarcopula.vine.cvine import CVineCopula
 from pyscarcopula.vine.rvine import RVineCopula
 from pyscarcopula.vine._edge import VineEdge, _edge_h, _edge_log_likelihood
 from pyscarcopula.vine._selection import select_best_copula
-from pyscarcopula.vine._structure import RVineMatrix, build_rvine_structure
+from pyscarcopula.vine._structure import RVineMatrix
 
 __all__ = [
     'CVineCopula',
     'RVineCopula',
     'VineEdge',
     'RVineMatrix',
-    'build_rvine_structure',
     'select_best_copula',
     '_edge_h',
     '_edge_log_likelihood',

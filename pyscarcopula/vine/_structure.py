@@ -17,6 +17,8 @@ This module is independent of copula fitting — it only determines which
 pairs are connected at each tree level.
 """
 
+import warnings
+
 import numpy as np
 from scipy.stats import kendalltau
 
@@ -64,12 +66,39 @@ class RVineMatrix:
         return self._matrix.copy()
 
     def _validate(self):
-        """Check that all variables 0..d-1 appear on the diagonal."""
+        """Validate R-vine matrix structure.
+
+        Checks:
+        1. Diagonal is a permutation of 0..d-1.
+        2. Off-diagonal values are in range 0..d-1.
+        3. Each column has no duplicate variable entries.
+        4. Proximity condition (Joe 2014, Ch.6) holds.
+        """
         d = self._d
-        diag = set(self._matrix[i, i] for i in range(d))
+        M = self._matrix
+        # 1. Diagonal = permutation of 0..d-1
+        diag = set(M[i, i] for i in range(d))
         if diag != set(range(d)):
             raise ValueError(
                 f"Diagonal must be a permutation of 0..{d-1}, got {sorted(diag)}")
+        # 2. Off-diagonal values in valid range
+        for i in range(d):
+            for k in range(i + 1, d):
+                val = M[k, i]
+                if val < 0 or val >= d:
+                    raise ValueError(
+                        f"M[{k},{i}]={val} out of range 0..{d-1}")
+        # 3. Column uniqueness: all entries from diagonal down must be distinct
+        for i in range(d):
+            col_vals = [M[k, i] for k in range(i, d)]
+            if len(col_vals) != len(set(col_vals)):
+                raise ValueError(
+                    f"Column {i} has duplicate variable entries: {col_vals}")
+        # 4. Proximity condition
+        if not validate_rvine_matrix(M):
+            raise ValueError(
+                "R-vine matrix fails the proximity condition "
+                "(Joe 2014, Ch.6)")
 
     def n_trees(self):
         return self._d - 1
@@ -110,6 +139,40 @@ class RVineMatrix:
 
     def __repr__(self):
         return f"RVineMatrix(d={self._d})\n{self._matrix}"
+
+
+def validate_rvine_matrix(M):
+    """
+    Check the proximity condition on an R-vine matrix (Joe 2014, Ch.6).
+
+    For every entry M[k, i] with k - i >= 2, the variable M[k, i]
+    must appear in column (i+1) at some row j with i+1 <= j <= k:
+
+        M[k, i] ∈ {M[i+1, i+1], M[i+2, i+1], ..., M[k, i+1]}
+
+    This ensures that the edge at tree level (k-i) in column i is
+    reachable from an edge at tree level (k-i-1) via the proximity
+    condition.
+
+    Parameters
+    ----------
+    M : ndarray (d, d) or RVineMatrix
+        R-vine matrix (0-indexed, lower-triangular).
+
+    Returns
+    -------
+    bool
+        True if the proximity condition holds, False otherwise.
+    """
+    if isinstance(M, RVineMatrix):
+        M = M.matrix
+    d = M.shape[0]
+    for i in range(d - 2):
+        for k in range(i + 2, d):
+            target = M[k, i]
+            if not any(M[j, i + 1] == target for j in range(i + 1, k + 1)):
+                return False
+    return True
 
 
 # ══════════════════════════════════════════════════════════════
@@ -187,12 +250,30 @@ def _proximity_condition(edge_a, edge_b):
     -------
     (shared_node, new_conditioned, new_conditioning) or None
     """
-    # An edge's two "endpoints" (nodes in the tree graph) are:
-    # node_left = {var1} | cond_set
-    # node_right = {var2} | cond_set
     ca, da = edge_a  # conditioned frozenset, conditioning frozenset
     cb, db = edge_b
 
+    # Strict input validation
+    if len(ca) != 2:
+        raise ValueError(
+            f"_proximity_condition: edge_a conditioned set must have "
+            f"exactly 2 variables, got {ca}")
+    if len(cb) != 2:
+        raise ValueError(
+            f"_proximity_condition: edge_b conditioned set must have "
+            f"exactly 2 variables, got {cb}")
+    if ca & da:
+        raise ValueError(
+            f"_proximity_condition: edge_a conditioned {ca} and "
+            f"conditioning {da} sets overlap")
+    if cb & db:
+        raise ValueError(
+            f"_proximity_condition: edge_b conditioned {cb} and "
+            f"conditioning {db} sets overlap")
+
+    # An edge's two "endpoints" (nodes in the tree graph) are:
+    # node_left = {var1} | cond_set
+    # node_right = {var2} | cond_set
     node_a1 = frozenset([min(ca)]) | da
     node_a2 = frozenset([max(ca)]) | da
     node_b1 = frozenset([min(cb)]) | db
@@ -214,6 +295,16 @@ def _proximity_condition(edge_a, edge_b):
     new_cond_vars = (diff_a | diff_b) - shared_node
     # New conditioning set: the shared node
     new_conditioning = shared_node
+
+    # Validate output invariants
+    if len(new_cond_vars) != 2:
+        raise ValueError(
+            f"_proximity_condition: resulting conditioned set must have "
+            f"exactly 2 variables, got {new_cond_vars}")
+    if len(new_conditioning) != len(da) + 1:
+        raise ValueError(
+            f"_proximity_condition: conditioning set should grow by 1, "
+            f"got size {len(new_conditioning)} (expected {len(da) + 1})")
 
     return shared_node, frozenset(new_cond_vars), new_conditioning
 
@@ -275,7 +366,8 @@ def _build_next_tree(tree_level, prev_edge_repr, pseudo_obs,
     if truncation_level is not None and tree_level >= truncation_level:
         d_minus_1 = n_prev  # n_prev = d - 1 - (tree_level - 1)
         n_needed = n_prev - 1
-        remaining = _build_trivial_remaining(prev_edge_repr, n_needed)
+        remaining = _complete_structure_above_truncation(
+            prev_edge_repr, n_needed)
         if remaining is None:
             return None, None
         new_tree = [
@@ -299,17 +391,37 @@ def _build_next_tree(tree_level, prev_edge_repr, pseudo_obs,
 
             # Compute |tau| on h-transformed pseudo-observations
             v_list = sorted(new_cond_vars)
-            if len(v_list) == 2:
-                key_a = (v_list[0], frozenset(new_conditioning))
-                key_b = (v_list[1], frozenset(new_conditioning))
-                obs_a = pseudo_obs.get(key_a)
-                obs_b = pseudo_obs.get(key_b)
-                if obs_a is not None and obs_b is not None:
-                    tau_val, _ = kendalltau(obs_a, obs_b)
-                else:
-                    tau_val = 0.0
-            else:
+            if len(v_list) != 2:
+                warnings.warn(
+                    f"_build_next_tree: proximity returned {len(v_list)} "
+                    f"conditioned vars (expected 2) at tree {tree_level}, "
+                    f"edges ({i}, {j}). Skipping candidate.",
+                    stacklevel=2)
+                continue
+
+            key_a = (v_list[0], frozenset(new_conditioning))
+            key_b = (v_list[1], frozenset(new_conditioning))
+            obs_a = pseudo_obs.get(key_a)
+            obs_b = pseudo_obs.get(key_b)
+
+            if obs_a is None or obs_b is None:
+                warnings.warn(
+                    f"_build_next_tree: missing pseudo-observations for "
+                    f"edge ({v_list[0]},{v_list[1]}|"
+                    f"{set(new_conditioning)}) at tree {tree_level}. "
+                    f"Skipping candidate.",
+                    stacklevel=2)
+                continue
+
+            tau_val, _ = kendalltau(obs_a, obs_b)
+            if np.isnan(tau_val):
                 tau_val = 0.0
+                warnings.warn(
+                    f"_build_next_tree: NaN Kendall's tau for "
+                    f"({v_list[0]},{v_list[1]}|"
+                    f"{set(new_conditioning)}) at tree {tree_level}, "
+                    f"using 0.0",
+                    stacklevel=2)
 
             candidate_edges.append((i, j))
             candidate_weights.append(abs(tau_val))
@@ -344,158 +456,208 @@ def _build_next_tree(tree_level, prev_edge_repr, pseudo_obs,
     return new_tree, new_repr
 
 
-def build_rvine_structure(u, truncation_level=None):
+
+def _complete_structure_above_truncation(prev_edges, n_needed):
+    """Complete vine structure above the truncation level.
+
+    Even when the vine is truncated (edges above truncation_level are
+    treated as independent or fitted with static MLE only), a valid
+    R-vine matrix requires a complete tree structure at every level.
+    This function builds the minimal structure satisfying the proximity
+    condition, using uniform weights so the MST selection is arbitrary.
+
+    The *copula fitting* policy for these edges is controlled by the
+    ``truncation_fill`` parameter in ``RVineCopula.fit()``.
     """
-    Build R-vine structure using Dissmann's sequential MST algorithm.
-
-    NOTE: This function computes tau on the original data for all trees.
-    For better accuracy (especially d > 6), use the incremental approach
-    via _build_tree_0 / _build_next_tree with h-transformed pseudo-obs,
-    as done in RVineCopula.fit().
-
-    Parameters
-    ----------
-    u : (T, d) pseudo-observations
-    truncation_level : int or None
-        If set, trees beyond this level use a trivial (arbitrary) structure.
-
-    Returns
-    -------
-    RVineMatrix
-    trees : list of lists of (var1, var2, cond_set) — the edge list per tree,
-            in the order they should be fitted.
-    """
-    T, d = u.shape
-
-    tree_0, edge_repr_0 = _build_tree_0(u)
-    trees = [tree_0]
-    edge_repr = [edge_repr_0]
-
-    # Fallback pseudo_obs: use original data columns
-    # (kept for backward compatibility; prefer incremental approach)
-    pseudo_obs = {}
-    for i in range(d):
-        pseudo_obs[(i, frozenset())] = u[:, i]
-
-    for tree_level in range(1, d - 1):
-        new_tree, new_repr = _build_next_tree(
-            tree_level, edge_repr[tree_level - 1], pseudo_obs,
-            truncation_level=truncation_level)
-        if new_tree is None:
-            break
-        trees.append(new_tree)
-        edge_repr.append(new_repr)
-
-    # Build R-vine matrix from trees
-    matrix = _trees_to_matrix(d, trees)
-    return RVineMatrix(matrix), trees
-
-
-def _build_trivial_remaining(prev_edges, n_needed):
-    """Build trivial edges satisfying proximity for truncated trees."""
     n_prev = len(prev_edges)
-    result = []
+    candidate_edges = []
+    candidate_repr = []
 
     for i in range(n_prev):
         for j in range(i + 1, n_prev):
             prox = _proximity_condition(prev_edges[i], prev_edges[j])
             if prox is not None:
                 _, new_cv, new_cs = prox
-                result.append((new_cv, new_cs))
-                if len(result) == n_needed:
-                    return result
-    return result if len(result) == n_needed else None
+                candidate_edges.append((i, j))
+                candidate_repr.append((new_cv, new_cs))
+
+    if len(candidate_edges) < n_needed:
+        return None
+
+    nodes = list(range(n_prev))
+    weights = [1.0] * len(candidate_edges)
+    mst_idx = _maximum_spanning_tree(nodes, candidate_edges, weights)
+
+    if len(mst_idx) < n_needed:
+        return None
+
+    edge_lookup = {}
+    for idx, (i, j) in enumerate(candidate_edges):
+        edge_lookup[(i, j)] = idx
+        edge_lookup[(j, i)] = idx
+
+    result = []
+    for a, b in mst_idx:
+        key = (a, b) if (a, b) in edge_lookup else (b, a)
+        result.append(candidate_repr[edge_lookup[key]])
+    return result
 
 
-def _trees_to_matrix(d, trees):
+def _trees_to_matrix(d, trees, n_strict_levels=None):
     """
     Convert a list of tree edges to an R-vine matrix.
 
-    This is the inverse of the edge extraction: given the tree structure,
-    produce the d x d lower-triangular matrix M.
+    Uses backtracking search over diagonal orderings and edge assignments
+    (Czado 2019, Joe 2014).  For each column the algorithm:
 
-    Uses the natural order construction (Dißmann §3.2):
-    columns correspond to variables in the order they appear
-    as "leaf" nodes through the vine.
+    1. Picks a candidate diagonal variable, prioritising leaf nodes in
+       the current tree-0 subgraph (fewest connections among remaining
+       nodes).
+    2. Fills the column by matching edges from each tree level via their
+       full variable set (conditioned ∪ conditioning), tracking which
+       edges are already used.
+    3. Checks the proximity condition (Joe 2014, Ch.6) between adjacent
+       columns.  If it fails, the algorithm backtracks and tries the
+       next candidate or edge assignment.
+
+    Parameters
+    ----------
+    n_strict_levels : int or None
+        Number of tree levels that must be matched exactly from the
+        input trees.  Levels at or above this threshold may use free
+        variable choice when no matching edge exists (useful for
+        truncated vines).  Default: all levels are strict.
     """
-    # For small d, use a direct construction approach.
-    # Build an ordering of variables and fill the matrix column by column.
-
     M = np.zeros((d, d), dtype=int)
 
-    # Collect all edges with their full conditioned/conditioning info
-    all_edges = []
-    for tree_level, tree in enumerate(trees):
-        for v1, v2, cond in tree:
-            all_edges.append((tree_level, v1, v2, set(cond)))
-
-    # Determine variable ordering: use the first tree's structure.
-    # Start from the node with highest degree in tree 0.
     if len(trees) == 0 or len(trees[0]) == 0:
-        # Trivial case
         for i in range(d):
             M[i, i] = i
         return M
 
-    # Build adjacency for tree 0
-    adj = {i: [] for i in range(d)}
+    n_strict = n_strict_levels if n_strict_levels is not None else len(trees)
+
+    # Build adjacency for tree 0 (used for leaf-priority heuristic).
+    adj0 = {i: set() for i in range(d)}
     for v1, v2, _ in trees[0]:
-        adj[v1].append(v2)
-        adj[v2].append(v1)
+        adj0[v1].add(v2)
+        adj0[v2].add(v1)
 
-    # DFS ordering from highest-degree node
-    start = max(adj, key=lambda x: len(adj[x]))
-    visited = set()
-    order = []
+    # Index edges with unique IDs and their full variable sets.
+    # full_index[t] = [(edge_id, frozenset_of_all_vars), ...]
+    full_index = []
+    eid = 0
+    for tree in trees:
+        level_edges = []
+        for v1, v2, cond in tree:
+            full_vars = frozenset({v1, v2}) | frozenset(cond)
+            level_edges.append((eid, full_vars))
+            eid += 1
+        full_index.append(level_edges)
 
-    def dfs(node):
-        visited.add(node)
-        order.append(node)
-        for nb in sorted(adj[node], key=lambda x: -len(adj[x])):
-            if nb not in visited:
-                dfs(nb)
+    def _column_options(col, leaf, used_edges, remaining_vars):
+        """Return all valid column fills as (entries_list, used_edges_set)."""
+        results = []
 
-    dfs(start)
+        def _fill(t, current_cond, entries, used):
+            row = col + t + 1
+            if row >= d:
+                results.append((list(entries), set(used)))
+                return
+            target = frozenset({leaf}) | current_cond
 
-    # Reverse order gives the column assignment:
-    # column 0 gets order[-1], column 1 gets order[-2], etc.
-    col_var = list(reversed(order))
+            # For tree levels with known edges, match strictly.
+            if t < n_strict:
+                for edge_id, full_vars in full_index[t]:
+                    if edge_id in used:
+                        continue
+                    if target < full_vars and len(full_vars) == len(target) + 1:
+                        other = next(iter(full_vars - target))
+                        _fill(t + 1, current_cond | {other},
+                               entries + [other], used | {edge_id})
+                return
 
-    # Fill diagonal
-    for i in range(d):
-        M[i, i] = col_var[i]
+            # Above strict levels: try matching first, fall back to
+            # free variable choice for truncated/incomplete levels.
+            if t < len(full_index):
+                for edge_id, full_vars in full_index[t]:
+                    if edge_id in used:
+                        continue
+                    if target < full_vars and len(full_vars) == len(target) + 1:
+                        other = next(iter(full_vars - target))
+                        _fill(t + 1, current_cond | {other},
+                               entries + [other], used | {edge_id})
+                if results:
+                    return  # found at least one match, skip free choice
 
-    # Fill below diagonal using the tree edges
-    # For each column i, we need to find the edges at successive tree levels
-    # that involve variable col_var[i].
-    for i in range(d - 1):
-        var_i = col_var[i]
-        current_set = {var_i}  # grows as we go down rows
+            # No matching edge — allow any remaining variable.
+            used_in_col = frozenset({leaf}) | frozenset(entries)
+            for other in sorted(remaining_vars - used_in_col):
+                _fill(t + 1, current_cond | {other},
+                       entries + [other], used)
 
-        for t in range(len(trees)):
-            if i + t + 1 >= d:
-                break
-            # Find edge at tree level t that involves var_i
-            # and whose conditioning set is a subset of current_set - {var_i}
-            found = False
-            for v1, v2, cond in trees[t]:
-                cond_s = set(cond)
-                pair = {v1, v2}
-                if var_i in pair and cond_s <= (current_set - {var_i}):
-                    other = (pair - {var_i}).pop()
-                    M[i + t + 1, i] = other
-                    current_set.add(other)
-                    found = True
-                    break
+        _fill(0, frozenset(), [], used_edges)
+        return results
 
-            if not found:
-                # Fill with first available variable not yet in column
-                used = set(M[k, i] for k in range(i + t + 1))
-                for v in range(d):
-                    if v not in used and v not in current_set:
-                        M[i + t + 1, i] = v
-                        current_set.add(v)
-                        break
+    def _proximity_ok(col):
+        """Check proximity of column *col* against column col+1."""
+        if col >= d - 2:
+            return True
+        for k in range(col + 2, d):
+            target = M[k, col]
+            if not any(M[j, col + 1] == target
+                       for j in range(col + 1, k + 1)):
+                return False
+        return True
+
+    def _solve(col, remaining, used_edges, adj):
+        if len(remaining) <= 1:
+            if remaining:
+                M[col, col] = next(iter(remaining))
+            return True
+
+        # Prioritise leaf nodes (degree <= 1 in remaining tree-0 subgraph),
+        # then sort by degree ascending (most constrained first).
+        candidates = sorted(remaining,
+                            key=lambda v: (len(adj[v] & remaining), v))
+
+        for leaf in candidates:
+            new_remaining = remaining - {leaf}
+            for entries, new_used in _column_options(
+                    col, leaf, used_edges, new_remaining):
+                M[col, col] = leaf
+                for idx, val in enumerate(entries):
+                    M[col + idx + 1, col] = val
+
+                # Check proximity of previous column now that this
+                # column is filled (needed for backtracking to work).
+                if col > 0 and not _proximity_ok(col - 1):
+                    M[col, col] = 0
+                    for idx in range(len(entries)):
+                        M[col + idx + 1, col] = 0
+                    continue
+
+                # Update adjacency: remove leaf from tree-0 subgraph.
+                new_adj = {k: set(v) for k, v in adj.items()}
+                for nb in new_adj.get(leaf, []):
+                    new_adj[nb].discard(leaf)
+                new_adj.pop(leaf, None)
+
+                if _solve(col + 1, new_remaining, new_used, new_adj):
+                    return True
+
+                # Backtrack
+                M[col, col] = 0
+                for idx in range(len(entries)):
+                    M[col + idx + 1, col] = 0
+
+        return False
+
+    adj = {k: set(v) for k, v in adj0.items()}
+    if not _solve(0, set(range(d)), set(), adj):
+        raise RuntimeError(
+            "_trees_to_matrix: backtracking failed to produce a valid "
+            "R-vine matrix. The input trees may not form a proper vine.")
 
     return M
 

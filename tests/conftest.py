@@ -16,12 +16,16 @@ from pyscarcopula import (
 
 ARCHIMEDEAN_COPULAS = [
     (GumbelCopula, 0, 2.0),
+    (GumbelCopula, 90, 2.0),
     (GumbelCopula, 180, 2.0),
+    (GumbelCopula, 270, 2.0),
     (ClaytonCopula, 0, 2.0),
     (ClaytonCopula, 180, 2.0),
     (FrankCopula, 0, 5.0),
     (JoeCopula, 0, 2.0),
+    (JoeCopula, 90, 2.0),
     (JoeCopula, 180, 2.0),
+    (JoeCopula, 270, 2.0),
 ]
 
 ARCHIMEDEAN_IDS = [

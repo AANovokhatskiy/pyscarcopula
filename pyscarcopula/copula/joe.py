@@ -8,8 +8,10 @@ from pyscarcopula.copula.base import BivariateCopula, _broadcast
 def _log1mexp(x):
     if x > 0.693:
         return np.log1p(-np.exp(-x))
-    else:
+    elif x > 0:
         return np.log(-np.expm1(-x))
+    else:
+        return -np.inf
 
 
 @njit(cache=True)
@@ -73,11 +75,6 @@ def _joe_h(u0, u1, r):
             if B < 1e-300:
                 out[i] = v0
             else:
-                val = q1 * (1.0 - q0) * B ** (1.0 / ri - 2.0) / (1.0 - v1)
-                # At r=1 limit: val = (1-v1)*(v0) / (1-v1) = v0
-                # General: h = dC/dv1 with sign
-                # The formula: -(x3 * (x1 - x3*x2)^(1/r-1) * x2 / (1-v1))
-                # where x1 = q0, x2 = q1, x3 = q0 - 1
                 x3 = q0 - 1.0
                 inner = q0 - x3 * q1
                 if inner < 1e-300:

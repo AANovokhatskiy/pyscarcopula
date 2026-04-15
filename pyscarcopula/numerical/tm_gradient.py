@@ -26,7 +26,6 @@ Contents:
 import numpy as np
 from numba import njit
 from scipy.sparse import csr_matrix
-from scipy.sparse._sparsetools import csr_matvec as _raw_csr_matvec
 
 
 def _build_Tw_and_grad_dense(xi, rho, base_w, K):
@@ -121,29 +120,10 @@ def _build_Tw_and_grad_sparse(xi, rho, base_w, K, band):
 
 
 def _make_fast_matvec(mat):
-    """Create a fast matvec closure bypassing scipy dispatch overhead.
-
-    For CSR matrices, extracts internal arrays and calls the C-level
-    csr_matvec directly (~25% faster than ``mat @ v`` at K=300).
-    For dense matrices, uses numpy ``@`` which is already optimal.
-    """
-    if hasattr(mat, 'indptr'):
-        K = mat.shape[0]
-        Ap = mat.indptr
-        Aj = mat.indices
-        Ax = mat.data
-
-        def _fast_matvec(v):
-            out = np.zeros(K)
-            _raw_csr_matvec(K, K, Ap, Aj, Ax, v, out)
-            return out
-
-        return _fast_matvec
-    else:
-        def _dense_matvec(v):
-            return mat @ v
-
-        return _dense_matvec
+    """Create a matvec closure that pre-binds the matrix."""
+    def _matvec(v):
+        return mat @ v
+    return _matvec
 
 
 def tm_loglik_with_grad(theta, mu, nu, u, copula, K=300, grid_range=5.0,

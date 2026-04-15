@@ -32,10 +32,6 @@
         - n_trees
         - n_edges
 
-## build_rvine_structure
-
-::: pyscarcopula.vine._structure.build_rvine_structure
-
 ## VineEdge
 
 ::: pyscarcopula.vine._edge.VineEdge
