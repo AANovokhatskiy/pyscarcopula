@@ -377,7 +377,7 @@ class BivariateCopula:
         self._last_u = u  # store for predict
         return result
 
-    def predict(self, n, u=None, rng=None):
+    def predict(self, n, u=None, rng=None, given=None, horizon='next'):
         """Sample n observations for next-step prediction.
 
         Delegates to api.predict() which dispatches to the correct
@@ -389,6 +389,10 @@ class BivariateCopula:
         u : (T, 2) or None — conditioning data.
             If None, uses data from last fit() call.
         rng : np.random.Generator or None
+        given : dict[int, float] or None
+            Fixed pseudo-observation coordinates for conditional generation.
+        horizon : {'current', 'next'}
+            Predictive state timing for SCAR-TM.
 
         Returns
         -------
@@ -404,7 +408,9 @@ class BivariateCopula:
             raise ValueError(
                 "No data for predict. "
                 "Either call fit() first or pass u= explicitly.")
-        return _api_predict(self, u_data, self.fit_result, n, rng=rng)
+        return _api_predict(
+            self, u_data, self.fit_result, n,
+            rng=rng, given=given, horizon=horizon)
 
     def sample_model(self, n, u=None, rng=None):
         """Generate n observations reproducing the fitted model.

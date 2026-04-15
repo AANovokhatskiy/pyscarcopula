@@ -16,6 +16,7 @@ from pyscarcopula.strategy._base import register_strategy
 from pyscarcopula.numerical.gas_filter import (
     gas_filter, gas_negloglik, gas_rosenblatt, gas_mixture_h,
 )
+from pyscarcopula.strategy.predict_helpers import conditional_sample_bivariate
 
 
 @register_strategy('GAS')
@@ -226,4 +227,6 @@ class GASStrategy:
 
         r_path = self.smoothed_params(copula, u, result)
         r_T = float(r_path[-1])
-        return copula.sample(n, np.full(n, r_T), rng=rng)
+        return conditional_sample_bivariate(
+            copula, n, np.full(n, r_T),
+            given=kwargs.get('given'), rng=rng)

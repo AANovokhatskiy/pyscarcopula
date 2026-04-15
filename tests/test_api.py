@@ -6,10 +6,11 @@ from pyscarcopula import (
     IndependentCopula, CVineCopula,
 )
 from pyscarcopula.copula.experimental.equicorr import EquicorrGaussianCopula
-from pyscarcopula.api import fit, smoothed_params
+from pyscarcopula.api import fit, predict, smoothed_params
 from pyscarcopula.stattests import gof_test
 from pyscarcopula._utils import pobs
 from pyscarcopula._types import MLEResult, LatentResult, GASResult
+from pyscarcopula.numerical.predictive_tm import tm_state_distribution
 
 
 class TestFitResultTypes:
@@ -200,3 +201,42 @@ class TestEquicorrGaussian:
     def test_d1_raises(self):
         with pytest.raises(ValueError):
             EquicorrGaussianCopula(d=1)
+
+
+class TestConditionalPredict:
+    def test_mle_given_first_coordinate_fixed(self, random_u2):
+        cop = GumbelCopula(rotate=180)
+        result = fit(cop, random_u2, method='mle')
+        samples = predict(cop, random_u2, result, 256, given={0: 0.37})
+        assert samples.shape == (256, 2)
+        np.testing.assert_allclose(samples[:, 0], 0.37)
+        assert np.all((samples[:, 1] > 0) & (samples[:, 1] < 1))
+
+    def test_independent_conditional_stays_uniform(self, random_u2):
+        cop = IndependentCopula()
+        result = cop.fit(random_u2)
+        samples = predict(cop, random_u2, result, 4000, given={0: 0.42})
+        np.testing.assert_allclose(samples[:, 0], 0.42)
+        assert abs(np.mean(samples[:, 1]) - 0.5) < 0.03
+
+    def test_invalid_given_raises(self, random_u2):
+        cop = GumbelCopula(rotate=180)
+        result = fit(cop, random_u2, method='mle')
+        with pytest.raises(ValueError):
+            predict(cop, random_u2, result, 16, given={2: 0.5})
+        with pytest.raises(ValueError):
+            predict(cop, random_u2, result, 16, given={0: 1.0})
+
+    def test_scar_tm_current_and_next_state_distributions_differ(self, random_u2):
+        cop = GumbelCopula(rotate=180)
+        result = fit(cop, random_u2, method='scar-tm-ou', K=50, tol=0.5)
+        p = result.params
+        z_cur, prob_cur = tm_state_distribution(
+            p.theta, p.mu, p.nu, random_u2, cop, K=50, grid_range=5.0,
+            horizon='current')
+        z_next, prob_next = tm_state_distribution(
+            p.theta, p.mu, p.nu, random_u2, cop, K=50, grid_range=5.0,
+            horizon='next')
+        np.testing.assert_allclose(z_cur, z_next)
+        assert prob_cur.shape == prob_next.shape
+        assert np.max(np.abs(prob_cur - prob_next)) > 1e-8

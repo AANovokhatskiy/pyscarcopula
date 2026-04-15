@@ -2,7 +2,7 @@
 
 ## Prepare data
 
-pyscarcopula works with pseudo-observations — uniform marginals obtained from ranked data.
+pyscarcopula works with pseudo-observations - uniform marginals obtained from ranked data.
 
 ```python
 import pandas as pd
@@ -62,6 +62,9 @@ print(f"GoF on sample: p={gof_v.pvalue:.4f}")  # should pass
 
 # predict: next-step forecast (for risk metrics)
 u_pred = predict(copula, u, result_tm, n=100_000)
+
+# conditional forecast in pseudo-observation space
+u_cond = predict(copula, u, result_tm, n=20_000, given={0: 0.35})
 ```
 
 ## Fit a multivariate C-vine
@@ -81,6 +84,9 @@ vine.summary()
 # Vine sampling and prediction
 v6 = vine.sample(2000)
 u_pred_6d = vine.predict(100_000, u=u6)
+
+# Conditional vine forecast: fix one variable
+u_pred_6d_cond = vine.predict(20_000, u=u6, given={2: 0.6})
 ```
 
 ## Available copula families
@@ -91,13 +97,13 @@ u_pred_6d = vine.predict(100_000, u=u6)
 | Clayton | `ClaytonCopula` | 0, 90, 180, 270 | Yes |
 | Frank | `FrankCopula` | 0 | Yes |
 | Joe | `JoeCopula` | 0, 90, 180, 270 | Yes |
-| Independence | `IndependentCopula` | — | — |
-| Gaussian | `BivariateGaussianCopula` | — | Yes |
-| Equicorrelation | `EquicorrGaussianCopula` | — | Yes |
-| Stochastic Student-t | `StochasticStudentCopula` | — | Yes |
-| Stochastic Student-t DCC | `StochasticStudentDCCCopula` | — | Yes |
-| Gaussian (d-dim) | `GaussianCopula` | — | MLE only |
-| Student-t (d-dim) | `StudentCopula` | — | MLE only |
+| Independence | `IndependentCopula` | - | - |
+| Gaussian | `BivariateGaussianCopula` | - | Yes |
+| Equicorrelation | `EquicorrGaussianCopula` | - | Yes |
+| Stochastic Student-t | `StochasticStudentCopula` | - | Yes |
+| Stochastic Student-t DCC | `StochasticStudentDCCCopula` | - | Yes |
+| Gaussian (d-dim) | `GaussianCopula` | - | MLE only |
+| Student-t (d-dim) | `StudentCopula` | - | MLE only |
 
 ## Available estimation methods
 

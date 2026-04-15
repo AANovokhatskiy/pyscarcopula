@@ -73,6 +73,14 @@ def log_likelihood(copula, data, result: FitResult,
     copula : CopulaProtocol
     data : (T, 2) pseudo-observations
     result : FitResult from fit()
+    **kwargs
+        Optional arguments:
+          - given : dict[int, float]
+              Fixed pseudo-observation coordinates, e.g. {0: 0.4}.
+          - horizon : {'current', 'next'}
+              For SCAR-TM, whether to use p(x_T | data) or
+              p(x_{T+1} | data). Ignored by MLE and currently identical
+              for GAS.
 
     Returns
     -------
@@ -173,7 +181,7 @@ def predict(copula, data, result: FitResult, n: int,
     Conditional on data u_{1:T}, generate n i.i.d. samples from
     the predictive copula distribution at T+1:
       MLE:     r = theta_mle (constant)
-      SCAR-TM: mixture sampling from posterior p(x_T | data)
+      SCAR-TM: mixture sampling from p(x_T | data) or p(x_{T+1} | data)
       GAS:     r = Psi(f_T), last filtered value
 
     Used for risk metrics (VaR/CVaR).

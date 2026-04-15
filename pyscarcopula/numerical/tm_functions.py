@@ -15,6 +15,7 @@ what they compute from the forward/backward messages:
 
 import numpy as np
 from pyscarcopula.numerical.tm_grid import TMGrid
+from pyscarcopula.numerical.predictive_tm import tm_state_distribution
 
 
 def tm_loglik(theta, mu, nu, u, copula, K=300, grid_range=5.0,
@@ -167,30 +168,6 @@ def tm_xT_distribution(theta, mu, nu, u, copula, K=300, grid_range=5.0,
     Returns (z_grid, prob) where z_grid includes the mu offset,
     so z_grid[j] = z_j + mu = actual x values.
     """
-    n = len(u)
-    grid = TMGrid(theta, mu, nu, n, K, grid_range,
-                  grid_method, adaptive, pts_per_sigma)
-    fi_grid = grid.copula_grid(u, copula)
-
-    alpha = grid.p0.copy()
-    log_scale = 0.0
-
-    for t in range(n):
-        alpha *= fi_grid[t]
-
-        if t < n - 1:
-            alpha = grid.rmatvec(alpha * grid.trap_w)
-
-        mx = np.max(np.abs(alpha))
-        if mx > 0:
-            log_scale += np.log(mx)
-            alpha /= mx
-
-    total = np.sum(alpha * grid.trap_w)
-    if total > 0:
-        prob = (alpha * grid.trap_w) / total
-    else:
-        prob = np.ones(grid.K) / grid.K
-
-    z_grid = grid.z + grid.mu
-    return z_grid, prob
+    return tm_state_distribution(
+        theta, mu, nu, u, copula, K, grid_range,
+        grid_method, adaptive, pts_per_sigma, horizon='current')

@@ -10,6 +10,7 @@ from scipy.optimize import minimize
 
 from pyscarcopula._types import MLEResult, NumericalConfig, DEFAULT_CONFIG
 from pyscarcopula.strategy._base import register_strategy
+from pyscarcopula.strategy.predict_helpers import conditional_sample_bivariate
 
 
 @register_strategy('MLE')
@@ -123,4 +124,6 @@ class MLEStrategy:
 
     def predict(self, copula, u, result, n, rng=None, **kwargs):
         """Predict = sample for MLE (constant parameter)."""
-        return self.sample(copula, u, result, n, rng=rng)
+        r = np.full(n, result.copula_param)
+        return conditional_sample_bivariate(
+            copula, n, r, given=kwargs.get('given'), rng=rng)

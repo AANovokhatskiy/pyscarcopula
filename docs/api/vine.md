@@ -1,5 +1,10 @@
 # Vine API
 
+Both `CVineCopula.predict(...)` and `RVineCopula.predict(...)` support:
+
+- `given={var_index: u_value}` for conditional generation
+- `horizon='current'|'next'` for SCAR-TM-OU edge mixtures
+
 ## CVineCopula
 
 ::: pyscarcopula.vine.cvine.CVineCopula

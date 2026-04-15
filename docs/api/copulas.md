@@ -1,8 +1,13 @@
 # Copulas API
 
+`predict(...)` also supports:
+
+- `given={0: 0.4}` for conditional generation in pseudo-observation space
+- `horizon='current'|'next'` for SCAR-TM predictive mixtures
+
 ## Top-level API
 
-All API functions are stateless — they accept a copula object, data, and a result, and return new values without mutation.
+All API functions are stateless - they accept a copula object, data, and a result, and return new values without mutation.
 
 ::: pyscarcopula.api.fit
 
@@ -15,6 +20,9 @@ All API functions are stateless — they accept a copula object, data, and a res
 ::: pyscarcopula.api.mixture_h
 
 ## BivariateCopula (base class)
+
+`BivariateCopula.predict(...)` mirrors the top-level API and accepts
+`given` and `horizon`.
 
 ::: pyscarcopula.copula.base.BivariateCopula
     options:

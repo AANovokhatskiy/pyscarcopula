@@ -20,7 +20,7 @@ pip install -e ".[test]"
 pytest tests/
 ```
 
-Tests require the `data/` directory (included in the git repository but not in the PyPI package).
+Tests require the `data/` directory, which is included in the git repository but not in the PyPI package.
 
 ## Dependencies
 
@@ -34,4 +34,4 @@ Tests require the `data/` directory (included in the git repository but not in t
 
 ## Python version
 
-Python 3.9 or newer is required. Tested on 3.9–3.13.
+Python 3.9 or newer is required. Tested on 3.9-3.13.

@@ -208,6 +208,111 @@ class TestVineSamplePredict:
         ll_eval = vine.log_likelihood(u)
         assert abs(ll_fit - ll_eval) < 1e-6
 
+    def test_predict_given_prefix_fixes_columns(self):
+        d = 4
+        u = pobs(np.random.default_rng(7).standard_normal((200, d)))
+        vine = CVineCopula()
+        vine.fit(u, method='mle')
+        samples = vine.predict(120, given={0: 0.2, 1: 0.8})
+        assert samples.shape == (120, d)
+        np.testing.assert_allclose(samples[:, 0], 0.2)
+        np.testing.assert_allclose(samples[:, 1], 0.8)
+        assert np.all((samples[:, 2:] > 0) & (samples[:, 2:] < 1))
+
+    def test_predict_all_given_returns_constant_rows(self):
+        d = 4
+        u = pobs(np.random.default_rng(8).standard_normal((200, d)))
+        vine = CVineCopula()
+        vine.fit(u, method='mle')
+        given = {0: 0.1, 1: 0.3, 2: 0.6, 3: 0.9}
+        samples = vine.predict(25, given=given)
+        expected = np.array([0.1, 0.3, 0.6, 0.9])
+        assert samples.shape == (25, d)
+        np.testing.assert_allclose(samples, np.tile(expected, (25, 1)))
+
+    def test_predict_given_non_prefix_fixes_column(self):
+        d = 4
+        u = pobs(np.random.default_rng(9).standard_normal((200, d)))
+        vine = CVineCopula()
+        vine.fit(u, method='mle')
+        samples = vine.predict(50, given={1: 0.4})
+        assert samples.shape == (50, d)
+        np.testing.assert_allclose(samples[:, 1], 0.4)
+        assert np.all((samples[:, [0, 2, 3]] > 0) & (samples[:, [0, 2, 3]] < 1))
+
+    def test_predict_given_invalid_value_raises(self):
+        d = 4
+        u = pobs(np.random.default_rng(10).standard_normal((200, d)))
+        vine = CVineCopula()
+        vine.fit(u, method='mle')
+        with pytest.raises(ValueError):
+            vine.predict(50, given={0: 1.0})
+
+    def test_predict_given_dynamic_edges_not_implemented(self):
+        d = 3
+        u = pobs(np.random.default_rng(11).standard_normal((200, d)))
+        vine = CVineCopula()
+        vine.fit(u, method='scar-m-ou', tol=0.5)
+        with pytest.raises(NotImplementedError):
+            vine.predict(50, given={0: 0.5})
+
+    def test_predict_given_non_prefix_independence_sanity(self):
+        from pyscarcopula.copula.independent import IndependentCopula
+
+        d = 4
+        u = np.random.default_rng(12).uniform(0, 1, size=(300, d))
+        copulas = [[(IndependentCopula, 0) for _ in range(d - j - 1)]
+                   for j in range(d - 1)]
+        vine = CVineCopula(candidates=[IndependentCopula])
+        vine.fit(u, method='mle', copulas=copulas)
+        samples = vine.predict(150, given={2: 0.65})
+        np.testing.assert_allclose(samples[:, 2], 0.65)
+        assert abs(np.mean(samples[:, 0]) - 0.5) < 0.08
+        assert abs(np.mean(samples[:, 1]) - 0.5) < 0.08
+        assert abs(np.mean(samples[:, 3]) - 0.5) < 0.08
+
+    def test_predict_given_prefix_with_gas(self):
+        d = 4
+        u = pobs(np.random.default_rng(13).standard_normal((220, d)))
+        vine = CVineCopula()
+        vine.fit(u, method='gas')
+        samples = vine.predict(80, given={0: 0.25, 1: 0.75})
+        assert samples.shape == (80, d)
+        np.testing.assert_allclose(samples[:, 0], 0.25)
+        np.testing.assert_allclose(samples[:, 1], 0.75)
+        assert np.all((samples[:, 2:] > 0) & (samples[:, 2:] < 1))
+
+    def test_predict_given_non_prefix_with_gas(self):
+        d = 4
+        u = pobs(np.random.default_rng(14).standard_normal((220, d)))
+        vine = CVineCopula()
+        vine.fit(u, method='gas')
+        samples = vine.predict(40, given={2: 0.6})
+        assert samples.shape == (40, d)
+        np.testing.assert_allclose(samples[:, 2], 0.6)
+        assert np.all((samples[:, [0, 1, 3]] > 0) & (samples[:, [0, 1, 3]] < 1))
+
+    def test_predict_given_prefix_with_scar_tm(self):
+        d = 3
+        u = pobs(np.random.default_rng(15).standard_normal((180, d)))
+        vine = CVineCopula()
+        vine.fit(u, method='scar-tm-ou', K=40, tol=0.5)
+        samples = vine.predict(30, given={0: 0.35}, K=40, grid_range=5.0)
+        assert samples.shape == (30, d)
+        np.testing.assert_allclose(samples[:, 0], 0.35)
+        assert np.all((samples[:, 1:] > 0) & (samples[:, 1:] < 1))
+
+    def test_predict_given_non_prefix_with_scar_tm(self):
+        d = 3
+        u = pobs(np.random.default_rng(16).standard_normal((180, d)))
+        vine = CVineCopula()
+        vine.fit(u, method='scar-tm-ou', K=40, tol=0.5)
+        samples = vine.predict(20, given={1: 0.55}, K=40, grid_range=5.0,
+                               horizon='current')
+        assert samples.shape == (20, d)
+        np.testing.assert_allclose(samples[:, 1], 0.55)
+        assert np.all((samples[:, [0, 2]] > 0) & (samples[:, [0, 2]] < 1))
+
 
 # ══════════════════════════════════════════════════════════════
 # R-vine structure module tests
@@ -290,6 +395,44 @@ class TestRVineSamplePredict:
         ll_fit = vine.fit_result.log_likelihood
         ll_eval = vine.log_likelihood(u)
         assert abs(ll_fit - ll_eval) < 1e-4
+
+    def test_predict_given_with_mle(self):
+        d = 4
+        u = pobs(np.random.default_rng(17).standard_normal((220, d)))
+        vine = RVineCopula()
+        vine.fit(u, method='mle')
+        samples = vine.predict(50, given={1: 0.4})
+        assert samples.shape == (50, d)
+        np.testing.assert_allclose(samples[:, 1], 0.4)
+        assert np.all((samples[:, [0, 2, 3]] > 0) & (samples[:, [0, 2, 3]] < 1))
+
+    def test_predict_given_with_gas(self):
+        d = 4
+        u = pobs(np.random.default_rng(18).standard_normal((220, d)))
+        vine = RVineCopula()
+        vine.fit(u, method='gas')
+        samples = vine.predict(30, given={2: 0.65})
+        assert samples.shape == (30, d)
+        np.testing.assert_allclose(samples[:, 2], 0.65)
+        assert np.all((samples[:, [0, 1, 3]] > 0) & (samples[:, [0, 1, 3]] < 1))
+
+    def test_predict_given_with_scar_tm(self):
+        d = 3
+        u = pobs(np.random.default_rng(19).standard_normal((180, d)))
+        vine = RVineCopula()
+        vine.fit(u, method='scar-tm-ou', truncation_level=1, tol=0.5, K=40)
+        samples = vine.predict(20, given={0: 0.3}, K=40, horizon='current')
+        assert samples.shape == (20, d)
+        np.testing.assert_allclose(samples[:, 0], 0.3)
+        assert np.all((samples[:, 1:] > 0) & (samples[:, 1:] < 1))
+
+    def test_predict_given_unsupported_method_raises(self):
+        d = 3
+        u = pobs(np.random.default_rng(20).standard_normal((180, d)))
+        vine = RVineCopula()
+        vine.fit(u, method='scar-m-ou', truncation_level=1, tol=0.5)
+        with pytest.raises(NotImplementedError):
+            vine.predict(20, given={0: 0.4})
 
 
 class TestRVineGoF:

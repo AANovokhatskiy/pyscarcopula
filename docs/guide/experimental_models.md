@@ -15,13 +15,13 @@ The `experimental` module contains d-dimensional copula models that extend the S
 
 ## Equicorrelation Gaussian Copula
 
-For d assets, the standard Gaussian copula has d(d-1)/2 correlation parameters — all static. The equicorrelation model uses a single dynamic correlation:
+For d assets, the standard Gaussian copula has `d(d-1)/2` correlation parameters, all static. The equicorrelation model uses a single dynamic correlation:
 
 $$R(t) = (1-\rho(t)) \cdot I + \rho(t) \cdot \mathbf{1}\mathbf{1}^\top$$
 
-All pairwise correlations equal $\rho(t)$, which follows an OU process via SCAR. This gives 3 parameters instead of d(d-1)/2.
+All pairwise correlations equal $\rho(t)$, which follows an OU process via SCAR. This gives 3 parameters instead of `d(d-1)/2`.
 
-The density is analytical and O(d) per evaluation — no matrix inversion required.
+The density is analytical and `O(d)` per evaluation, with no matrix inversion required.
 
 ### Usage
 
@@ -41,9 +41,9 @@ cop.fit(u, method='scar-tm-ou')
 
 Equicorrelation SCAR is a good fit when:
 
-- All pairwise correlations move together (common in equity/crypto markets)
-- You need fast estimation for large d (O(d) per density evaluation)
-- You want a simple interpretable model (3 parameters)
+- All pairwise correlations move together, common in equity and crypto markets
+- You need fast estimation for large `d`, with `O(d)` density evaluation
+- You want a simple interpretable model with 3 parameters
 
 For heterogeneous dependence, use C-vine or R-vine instead.
 
@@ -78,7 +78,7 @@ gof = gof_test(cop, returns, to_pobs=True)
 
 ### When to use
 
-- When tail dependence varies over time (crisis vs. calm periods)
+- When tail dependence varies over time
 - When the correlation structure is relatively stable but tail thickness changes
 - As an alternative to vine copulas for moderate dimensions
 
@@ -90,7 +90,7 @@ $$U_t \mid x_t, R_t \sim \text{t-copula}(R_t, \nu_t)$$
 
 where $\nu_t = 2 + \mathrm{softplus}(x_t)$ is OU-driven and $R_t$ is a deterministic DCC path.
 
-The latent state remains scalar (only the df process is stochastic), so all SCAR-TM-OU machinery works unchanged. The DCC estimation is a separate step.
+The latent state remains scalar, so all SCAR-TM-OU machinery works unchanged. The DCC estimation is a separate step.
 
 ### Usage
 

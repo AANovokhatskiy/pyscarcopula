@@ -8,9 +8,9 @@ $$\theta_t = \Psi(x_t), \qquad dx_t = \theta_\text{OU}(\mu - x_t)\,dt + \nu\,dW_
 
 The three OU parameters control:
 
-- θ_OU — mean-reversion speed
-- μ — long-run mean of the latent process
-- ν — volatility of the latent process
+- `theta_OU` - mean-reversion speed
+- `mu` - long-run mean of the latent process
+- `nu` - volatility of the latent process
 
 ## Fitting
 
@@ -31,10 +31,10 @@ Rotations capture different tail dependence patterns:
 
 | Rotation | Tail dependence |
 |----------|-----------------|
-| 0° | Upper tail (Gumbel, Joe) or lower tail (Clayton) |
-| 90° | Mixed |
-| 180° | Opposite tail |
-| 270° | Mixed |
+| 0 deg | Upper tail (Gumbel, Joe) or lower tail (Clayton) |
+| 90 deg | Mixed |
+| 180 deg | Opposite tail |
+| 270 deg | Mixed |
 
 For financial data (joint crashes), `GumbelCopula(rotate=180)` or `ClaytonCopula(rotate=0)` are common choices.
 
@@ -51,17 +51,23 @@ v = sample(copula, u, result, n=2000)
 result_refit = fit(copula, pobs(v), method='scar-tm-ou')
 ```
 
-**`predict`** generates samples for next-step forecasting. For SCAR-TM, it uses mixture sampling from the posterior distribution p(x_T | data), accounting for parameter uncertainty. Used in risk metrics.
+**`predict`** generates samples for next-step forecasting. It also supports conditional generation via `given={idx: u_value}`. For SCAR-TM, `horizon='current'` uses `p(x_T | data)`, while `horizon='next'` uses the one-step-ahead predictive distribution `p(x_{T+1} | data)`.
 
 ```python
 u_pred = predict(copula, u, result, n=100_000)
+
+# Conditional forecast: sample U2 | U1 = 0.4
+u_cond = predict(copula, u, result, n=20_000, given={0: 0.4})
+
+# SCAR-TM: choose current-step or one-step-ahead latent mixture
+u_current = predict(copula, u, result, n=20_000, horizon='current')
 ```
 
 | Method | `sample` | `predict` |
 |--------|----------|-----------|
 | MLE | constant r | constant r |
-| SCAR-TM | OU trajectory | posterior mixture sampling |
-| GAS | recursive score-driven simulation | last filtered value f_T |
+| SCAR-TM | OU trajectory | current/posterior or one-step-ahead mixture |
+| GAS | recursive score-driven simulation | last filtered value `f_T` |
 
 ## Diagnostics
 
@@ -83,4 +89,4 @@ from pyscarcopula.stattests import gof_test
 gof = gof_test(copula, u, fit_result=result, to_pobs=False)
 ```
 
-Uses the Rosenblatt transform with Cramér-von Mises statistic. For SCAR models, integrates the h-function over the predictive distribution (mixture Rosenblatt).
+Uses the Rosenblatt transform with the Cramer-von Mises statistic. For SCAR models, it integrates the h-function over the predictive distribution (mixture Rosenblatt).

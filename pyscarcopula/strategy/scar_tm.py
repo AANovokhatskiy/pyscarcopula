@@ -25,6 +25,8 @@ from pyscarcopula.numerical.tm_functions import (
     tm_forward_rosenblatt, tm_forward_mixture_h,
 )
 from pyscarcopula.numerical.tm_gradient import tm_loglik_with_grad
+from pyscarcopula.numerical.predictive_tm import tm_state_distribution
+from pyscarcopula.strategy.predict_helpers import conditional_sample_bivariate
 
 
 @register_strategy('SCAR-TM-OU')
@@ -304,12 +306,13 @@ class SCARTMStrategy:
             rng = np.random.default_rng()
 
         p = result.params
-        from pyscarcopula.numerical.tm_functions import tm_xT_distribution
-        z_grid, prob = tm_xT_distribution(
+        z_grid, prob = tm_state_distribution(
             p.theta, p.mu, p.nu, u, copula,
             self.K, self.grid_range, self.grid_method,
-            self.adaptive, self.pts_per_sigma)
+            self.adaptive, self.pts_per_sigma,
+            horizon=kwargs.get('horizon', 'next'))
 
         idx = rng.choice(len(z_grid), size=n, p=prob)
         r_samples = copula.transform(z_grid[idx])
-        return copula.sample(n, r_samples, rng=rng)
+        return conditional_sample_bivariate(
+            copula, n, r_samples, given=kwargs.get('given'), rng=rng)

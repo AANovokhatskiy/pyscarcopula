@@ -92,7 +92,14 @@ predictions = vine.predict(n=10000)
 samples = vine.sample(n=10000)
 ```
 
-For SCAR edges, `predict` uses the posterior distribution p(x_T | data) via transfer matrix, while `sample` simulates independent OU trajectories.
+Conditional generation is also supported via `given={var_index: u_value}`:
+
+```python
+pred_cond = vine.predict(n=5000, given={2: 0.6})
+pred_cond2 = vine.predict(n=5000, given={0: 0.2, 3: 0.8})
+```
+
+For SCAR-TM edges, `predict(..., horizon='current')` uses `p(x_T | data)` and `predict(..., horizon='next')` uses `p(x_{T+1} | data)`. `sample` still simulates independent OU trajectories.
 
 ## Results on 6-crypto data (T=250)
 

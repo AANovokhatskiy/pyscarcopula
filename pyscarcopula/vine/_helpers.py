@@ -59,11 +59,11 @@ def generate_r_for_sample(edge, n, rng):
     return edge.get_r_predict(n)
 
 
-def generate_r_for_predict(edge, n, v_train_pair, K, grid_range):
+def generate_r_for_predict(edge, n, v_train_pair, K, grid_range, horizon='next'):
     """Generate r for predict (next-step conditional).
 
     MLE: constant r.
-    SCAR-TM: mixture sampling from posterior p(x_T | data).
+    SCAR-TM: mixture sampling from p(x_T | data) or p(x_{T+1} | data).
     GAS: last filtered value f_T.
 
     Parameters
@@ -87,9 +87,10 @@ def generate_r_for_predict(edge, n, v_train_pair, K, grid_range):
         if v_train_pair is not None:
             alpha = _get_alpha(edge.fit_result)
             theta, mu, nu = alpha
-            from pyscarcopula.numerical.tm_functions import tm_xT_distribution
-            z_grid, prob = tm_xT_distribution(
-                theta, mu, nu, v_train_pair, edge.copula, K, grid_range)
+            from pyscarcopula.numerical.predictive_tm import tm_state_distribution
+            z_grid, prob = tm_state_distribution(
+                theta, mu, nu, v_train_pair, edge.copula, K, grid_range,
+                horizon=horizon)
             idx = np.random.choice(len(z_grid), size=n, p=prob)
             return edge.copula.transform(z_grid[idx])
         else:

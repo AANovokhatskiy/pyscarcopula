@@ -33,6 +33,11 @@ from pyscarcopula.vine._selection import (
 from pyscarcopula.vine._helpers import (
     _clip_unit, generate_r_for_sample, generate_r_for_predict,
 )
+from pyscarcopula.vine._conditional_rvine import (
+    ensure_rvine_conditional_supported,
+    sample_rvine_conditional_with_r,
+    validate_rvine_given,
+)
 from pyscarcopula.vine._structure import (
     RVineMatrix,
     _build_tree_0, _build_next_tree, _trees_to_matrix,
@@ -277,6 +282,8 @@ class RVineCopula:
         self.fit_result.success = True
         self._last_u = u
         self._pair_lookup = _build_edge_index(self.trees, self.edges)
+        self._edge_map = _build_matrix_edge_map(
+            self._structure, self.trees, self.edges)
 
         return self
 
@@ -429,7 +436,9 @@ class RVineCopula:
 
         d = self.d
         M = self._structure.matrix
-        edge_map = _build_matrix_edge_map(self._structure, self.trees, self.edges)
+        edge_map = getattr(self, '_edge_map', None)
+        if edge_map is None:
+            edge_map = _build_matrix_edge_map(self._structure, self.trees, self.edges)
 
         eps = 1e-10
         pseudo = {}
@@ -513,14 +522,27 @@ class RVineCopula:
 
     # ── Prediction ───────────────────────────────────────────────
 
-    def predict(self, n, u=None, K=300, grid_range=5.0):
-        """Conditional predict: sample for next-step prediction."""
+    def predict(self, n, u=None, K=300, grid_range=5.0,
+                given=None, horizon='next'):
+        """Conditional predict: sample for next-step prediction.
+
+        `given` fixes selected variables in pseudo-observation space,
+        e.g. ``given={1: 0.4}``. For SCAR-TM-OU edges, `horizon`
+        selects between p(x_T | data) and p(x_{T+1} | data).
+        """
         if self.edges is None:
             raise ValueError("Fit first")
 
         u_data = u if u is not None else getattr(self, '_last_u', None)
+        given = validate_rvine_given(given, self.d)
         d = self.d
         rng = np.random.default_rng()
+
+        if len(given) == d:
+            out = np.empty((n, d), dtype=np.float64)
+            for i in range(d):
+                out[:, i] = given[i]
+            return out
 
         # Build training pseudo-obs if needed
         train_pseudo = None
@@ -549,7 +571,11 @@ class RVineCopula:
                         _clip_unit(train_pseudo[u2_key])))
 
             r_all[key] = generate_r_for_predict(
-                edge, n, v_pair, K, grid_range)
+                edge, n, v_pair, K, grid_range, horizon=horizon)
+
+        if given:
+            ensure_rvine_conditional_supported(self)
+            return sample_rvine_conditional_with_r(self, n, r_all, given, rng)
 
         return self._sample_with_r(n, r_all, rng)
 

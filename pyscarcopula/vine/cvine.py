@@ -31,6 +31,13 @@ from pyscarcopula.vine._selection import (
 from pyscarcopula.vine._helpers import (
     _clip_unit, generate_r_for_sample, generate_r_for_predict,
 )
+from pyscarcopula.vine._conditional_cvine import (
+    ensure_cvine_conditional_supported,
+    is_prefix_conditioning,
+    sample_cvine_conditional_general_with_r,
+    sample_cvine_conditional_prefix_with_r,
+    validate_cvine_given,
+)
 
 
 class CVineCopula:
@@ -132,8 +139,12 @@ class CVineCopula:
                                         transform_type=transform_type)
                     except TypeError:
                         cop = cop_class(rotate=rotation)
-                    from pyscarcopula.api import fit as _api_fit
-                    result = _api_fit(cop, u_pair, method='mle')
+                    from pyscarcopula.copula.independent import IndependentCopula
+                    if isinstance(cop, IndependentCopula):
+                        result = cop.fit(u_pair)
+                    else:
+                        from pyscarcopula.api import fit as _api_fit
+                        result = _api_fit(cop, u_pair, method='mle')
                 else:
                     cop, result = select_best_copula(
                         u1, u2, self._get_candidates(),
@@ -429,20 +440,28 @@ class CVineCopula:
 
     # ── Prediction ───────────────────────────────────────────────
 
-    def predict(self, n, u=None, K=300, grid_range=5.0):
-        """Conditional predict: sample from vine for next-step."""
+    def predict(self, n, u=None, K=300, grid_range=5.0,
+                given=None, horizon='next'):
+        """Conditional predict: sample from vine for next-step.
+
+        `given` fixes selected variables in pseudo-observation space,
+        e.g. ``given={2: 0.6}``. For SCAR-TM-OU edges, `horizon`
+        selects between p(x_T | data) and p(x_{T+1} | data).
+        """
         if self.edges is None:
             raise ValueError("Fit first")
 
         u_data = u if u is not None else getattr(self, '_last_u', None)
+        given = validate_cvine_given(given, self.d)
 
         d = self.d
-        w = np.random.uniform(0, 1, (n, d))
-        x = np.zeros((n, d))
-        v_samp = [[None] * d for _ in range(d)]
+        rng = np.random.default_rng()
 
-        x[:, 0] = w[:, 0]
-        v_samp[0][0] = w[:, 0]
+        if len(given) == d:
+            out = np.empty((n, d), dtype=np.float64)
+            for i in range(d):
+                out[:, i] = given[i]
+            return out
 
         # Build v_train if needed for SCAR edges
         v_train = None
@@ -477,7 +496,22 @@ class CVineCopula:
                     u2 = _clip_unit(v_train[j][i + 1])
                     v_pair = np.column_stack((u1, u2))
                 r_pred[j][i] = generate_r_for_predict(
-                    edge, n, v_pair, K, grid_range)
+                    edge, n, v_pair, K, grid_range, horizon=horizon)
+
+        if given:
+            ensure_cvine_conditional_supported(self)
+            if is_prefix_conditioning(given):
+                return sample_cvine_conditional_prefix_with_r(
+                    self, n, r_pred, given, rng)
+            return sample_cvine_conditional_general_with_r(
+                self, n, r_pred, given, rng)
+
+        w = rng.uniform(0, 1, (n, d))
+        x = np.zeros((n, d))
+        v_samp = [[None] * d for _ in range(d)]
+
+        x[:, 0] = w[:, 0]
+        v_samp[0][0] = w[:, 0]
 
         for i in range(1, d):
             v_samp[i][0] = w[:, i]
