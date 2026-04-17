@@ -224,20 +224,27 @@ class TMGrid:
         n = fi_grid.shape[0]
         K = self.K
         weights = np.zeros((n, K))
+        alpha = self.p0.copy()
 
-        def _cb(k, alpha, trap_w, is_last):
-            if alpha is None:
-                weights[k] = 1.0 / K
-                return True
-            raw_w = alpha * trap_w
+        for k in range(n):
+            is_last = (k == n - 1)
+            raw_w = alpha * self.trap_w
             total = np.sum(raw_w)
             if total > 0:
                 weights[k] = raw_w / total
             else:
                 weights[k] = 1.0 / K
-            return True
 
-        self.forward_pass(fi_grid, _cb)
+            if not is_last:
+                source = fi_grid[k] * alpha * self.trap_w
+                alpha = self.rmatvec(source)
+                mx = np.max(np.abs(alpha))
+                if mx > 0:
+                    alpha /= mx
+                else:
+                    weights[k + 1:] = 1.0 / K
+                    break
+
         return weights
 
 

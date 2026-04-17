@@ -7,8 +7,21 @@ from pyscarcopula.vine._selection import (
     select_best_copula, _default_candidates, _kendall_tau,
 )
 from pyscarcopula.vine._helpers import _clip_unit, generate_r_for_sample
+from pyscarcopula.vine._conditional_rvine import (
+    _copula_h_inverse_scalar,
+    _copula_h_scalar,
+    _copula_pdf_scalar,
+    _sample_from_tabulated_weight,
+    sample_rvine_conditional_with_r,
+)
+from pyscarcopula.copula.clayton import ClaytonCopula
+from pyscarcopula.copula.elliptical import BivariateGaussianCopula
+from pyscarcopula.copula.frank import FrankCopula
+from pyscarcopula.copula.gumbel import GumbelCopula
 from pyscarcopula.copula.independent import IndependentCopula
+from pyscarcopula.copula.joe import JoeCopula
 from pyscarcopula.stattests import gof_test
+from pyscarcopula._types import MLEResult
 from pyscarcopula._utils import pobs
 from pyscarcopula.vine.rvine import RVineCopula, _build_matrix_edge_map
 from pyscarcopula.vine._structure import (
@@ -68,6 +81,18 @@ class TestSelection:
         u2 = rng.uniform(0, 1, 500)
         cop, result = select_best_copula(u1, u2, _default_candidates())
         assert isinstance(cop, IndependentCopula)
+
+    def test_gaussian_selection_allows_negative_dependence(self):
+        rng = np.random.default_rng(101)
+        z1 = rng.standard_normal(600)
+        z2 = -0.7 * z1 + 0.4 * rng.standard_normal(600)
+        u = pobs(np.column_stack((z1, z2)))
+
+        cop, result = select_best_copula(
+            u[:, 0], u[:, 1], [BivariateGaussianCopula])
+
+        assert isinstance(cop, BivariateGaussianCopula)
+        assert result.copula_param < -0.3
 
 
 # ══════════════════════════════════════════════════════════════
@@ -363,8 +388,433 @@ class TestRVineStructure:
         vine.fit(u, method='mle')
         assert len(vine.trees) == d - 1
 
+    def test_conditional_structure_prioritizes_conditioning_edge(self):
+        rng = np.random.default_rng(2201)
+        z = rng.standard_normal((300, 4))
+        z[:, 2] = z[:, 0] + 0.05 * rng.standard_normal(300)
+        z[:, 3] = z[:, 1] + 0.05 * rng.standard_normal(300)
+        u = pobs(z)
+
+        vine = RVineCopula(
+            structure_mode='conditional',
+            conditional_vars={0, 1},
+            conditional_structure_policy='priority',
+            candidates=[IndependentCopula],
+        )
+        vine.fit(u, method='mle')
+
+        first_tree_pairs = {
+            frozenset({v1, v2})
+            for v1, v2, _ in vine.trees[0]
+        }
+        assert frozenset({0, 1}) in first_tree_pairs
+        assert validate_rvine_matrix(vine._structure)
+        assert vine.is_conditioning_optimized_for({0: 0.2, 1: 0.8})
+        assert vine.is_conditioning_optimized_for({0: 0.2})
+        assert not vine.is_conditioning_optimized_for({2: 0.2})
+
+    def test_dissmann_matrix_conversion_failure_falls_back(self, monkeypatch):
+        import pyscarcopula.vine.rvine as rvine_module
+
+        original = rvine_module._trees_to_matrix
+        calls = {'n': 0}
+
+        def fail_once(*args, **kwargs):
+            calls['n'] += 1
+            if calls['n'] == 1:
+                raise RuntimeError("synthetic conversion failure")
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(rvine_module, '_trees_to_matrix', fail_once)
+        u = pobs(np.random.default_rng(2210).standard_normal((180, 5)))
+        vine = RVineCopula(candidates=[IndependentCopula])
+
+        with pytest.warns(RuntimeWarning, match='Dissmann R-vine structure'):
+            vine.fit(u, method='mle')
+
+        assert calls['n'] == 1
+        assert vine.edges is not None
+        assert vine.conditional_structure_status is None
+        assert validate_rvine_matrix(vine._structure)
+        samples = vine.predict(8)
+        assert samples.shape == (8, 5)
+
+    def test_conditional_structure_predict_fixes_given_columns(self):
+        d = 5
+        u = pobs(np.random.default_rng(2202).standard_normal((260, d)))
+        vine = RVineCopula(
+            structure_mode='conditional',
+            conditional_vars={0, 3},
+            candidates=[IndependentCopula],
+        )
+        with pytest.warns(RuntimeWarning, match='posterior dimension'):
+            vine.fit(u, method='mle')
+
+        samples = vine.predict(
+            12, given={0: 0.25, 3: 0.75}, quad_order=3,
+            conditional_method='grid')
+        assert samples.shape == (12, d)
+        np.testing.assert_allclose(samples[:, 0], 0.25)
+        np.testing.assert_allclose(samples[:, 3], 0.75)
+        assert np.all((samples[:, [1, 2, 4]] > 0)
+                      & (samples[:, [1, 2, 4]] < 1))
+
+    def test_conditional_plan_reports_posterior_workload(self):
+        d = 4
+        rng = np.random.default_rng(2204)
+        z = rng.standard_normal((240, d))
+        z[:, 2] = z[:, 0] + 0.05 * rng.standard_normal(240)
+        z[:, 3] = z[:, 1] + 0.05 * rng.standard_normal(240)
+        u = pobs(z)
+        vine = RVineCopula(
+            structure_mode='conditional',
+            conditional_vars={0, 1},
+            conditional_structure_policy='priority',
+            candidates=[IndependentCopula],
+        )
+        vine.fit(u, method='mle')
+
+        plan = vine.conditional_plan({0: 0.2, 1: 0.8}, quad_order=3)
+
+        assert plan['given_vars'] == (0, 1)
+        assert plan['optimized_for_given']
+        assert plan['posterior_dim'] == len(plan['posterior_indices'])
+        assert plan['graph_feasible'] == (plan['posterior_dim'] == 0)
+        assert len(plan['graph_steps']) == d
+        assert all('idx' in step and 'action' in step and 'posterior' in step
+                   for step in plan['graph_steps'])
+        assert plan['posterior_vars'] == tuple(
+            plan['order_vars'][idx] for idx in plan['posterior_indices'])
+        assert plan['structure_status'] == 'priority'
+        if plan['posterior_dim']:
+            assert plan['joint_grid_points'] == 3 ** plan['posterior_dim']
+        else:
+            assert plan['joint_grid_points'] == 0
+
+    def test_conditional_structure_cvine_fallback_keeps_optimization(self):
+        d = 6
+        u = pobs(np.random.default_rng(2206).standard_normal((250, d)))
+        vine = RVineCopula(
+            structure_mode='conditional',
+            conditional_vars={0, 3},
+            candidates=[IndependentCopula],
+        )
+
+        with pytest.warns(RuntimeWarning, match='conditional C-vine'):
+            vine.fit(u, method='mle')
+
+        plan = vine.conditional_plan({0: 0.2, 3: 0.8}, quad_order=4)
+        assert vine.conditional_structure_status == 'cvine_fallback'
+        assert plan['structure_status'] == 'cvine_fallback'
+        assert plan['optimized_for_given']
+        assert plan['posterior_dim'] == 0
+        assert plan['joint_grid_points'] == 0
+
+    def test_predict_given_graph_method_uses_no_posterior_plan(self):
+        d = 6
+        u = pobs(np.random.default_rng(2208).standard_normal((250, d)))
+        vine = RVineCopula(
+            structure_mode='conditional',
+            conditional_vars={0, 3},
+            candidates=[IndependentCopula],
+        )
+
+        with pytest.warns(RuntimeWarning):
+            vine.fit(u, method='mle')
+
+        plan = vine.conditional_plan({0: 0.2, 3: 0.8}, quad_order=4)
+        assert plan['posterior_dim'] == 0
+        assert plan['graph_feasible']
+        assert not any(step['posterior'] for step in plan['graph_steps'])
+
+        samples = vine.predict(
+            16, given={0: 0.2, 3: 0.8},
+            conditional_method='graph')
+        assert samples.shape == (16, d)
+        np.testing.assert_allclose(samples[:, 0], 0.2)
+        np.testing.assert_allclose(samples[:, 3], 0.8)
+        assert np.all((samples[:, [1, 2, 4, 5]] > 0)
+                      & (samples[:, [1, 2, 4, 5]] < 1))
+
+    def test_predict_given_graph_method_uses_higher_tree_executor(self):
+        d = 4
+        rng = np.random.default_rng(2209)
+        z0 = rng.standard_normal(260)
+        z1 = 0.7 * z0 + 0.3 * rng.standard_normal(260)
+        z2 = 0.5 * z0 + 0.4 * z1 + 0.3 * rng.standard_normal(260)
+        z3 = 0.4 * z1 + 0.5 * z2 + 0.3 * rng.standard_normal(260)
+        u = pobs(np.column_stack((z0, z1, z2, z3)))
+        vine = RVineCopula(
+            structure=cvine_structure(d),
+            candidates=[BivariateGaussianCopula],
+        )
+        vine.fit(u, method='mle')
+
+        plan = vine.conditional_plan({0: 0.2}, quad_order=4)
+        flex_plan = vine.flexible_graph_plan({0: 0.2})
+        assert plan['posterior_dim'] > 0
+        assert not plan['graph_feasible']
+        assert any(step['posterior'] for step in plan['graph_steps'])
+        assert flex_plan['complete']
+        assert not flex_plan['higher_tree_independent']
+        assert flex_plan['sampleable']
+        assert any(
+            step['action'] == 'sample_pseudo'
+            for step in flex_plan['steps'])
+
+        samples = vine.predict(
+            8, given={0: 0.2},
+            conditional_method='graph')
+        assert samples.shape == (8, d)
+        np.testing.assert_allclose(samples[:, 0], 0.2)
+        assert np.all((samples[:, 1:] > 0) & (samples[:, 1:] < 1))
+
+    @pytest.mark.parametrize(
+        "copula_cls,param,rotation",
+        [
+            (ClaytonCopula, 0.8, 90),
+            (ClaytonCopula, 0.8, 270),
+            (GumbelCopula, 1.4, 90),
+            (JoeCopula, 1.4, 270),
+        ],
+    )
+    def test_graph_higher_tree_executor_handles_rotations(
+            self, copula_cls, param, rotation):
+        d = 4
+        u = pobs(np.random.default_rng(2214).standard_normal((260, d)))
+        vine = RVineCopula(
+            structure=cvine_structure(d),
+            candidates=[IndependentCopula],
+        )
+        vine.fit(u, method='mle')
+
+        for edge in vine.edges.values():
+            copula = copula_cls(rotate=rotation)
+            edge.copula = copula
+            edge.fit_result = MLEResult(
+                log_likelihood=0.0,
+                method='MLE',
+                copula_name=copula.name,
+                success=True,
+                copula_param=param,
+            )
+
+        n = 24
+        r_all = {
+            key: np.full(n, param, dtype=np.float64)
+            for key in vine.edges
+        }
+        plan = vine.flexible_graph_plan({0: 0.35})
+        assert plan['sampleable']
+        assert any(step['action'] == 'sample_pseudo'
+                   for step in plan['steps'])
+
+        samples = sample_rvine_conditional_with_r(
+            vine, n, r_all, {0: 0.35}, np.random.default_rng(2215),
+            conditional_method='graph')
+        assert samples.shape == (n, d)
+        np.testing.assert_allclose(samples[:, 0], 0.35)
+        assert np.all(np.isfinite(samples))
+        assert np.all((samples[:, 1:] > 0) & (samples[:, 1:] < 1))
+
+    def test_graph_higher_tree_executor_accepts_dynamic_r_arrays(self):
+        d = 4
+        u = pobs(np.random.default_rng(2216).standard_normal((260, d)))
+        vine = RVineCopula(
+            structure=cvine_structure(d),
+            candidates=[BivariateGaussianCopula],
+        )
+        vine.fit(u, method='mle')
+
+        n = 32
+        r_path = np.linspace(0.15, 0.65, n, dtype=np.float64)
+        r_all = {key: r_path.copy() for key in vine.edges}
+        plan = vine.flexible_graph_plan({0: 0.45})
+        assert plan['sampleable']
+        assert any(step['action'] == 'sample_pseudo'
+                   for step in plan['steps'])
+
+        samples = sample_rvine_conditional_with_r(
+            vine, n, r_all, {0: 0.45}, np.random.default_rng(2217),
+            conditional_method='graph')
+        assert samples.shape == (n, d)
+        np.testing.assert_allclose(samples[:, 0], 0.45)
+        assert np.all(np.isfinite(samples))
+        assert np.all((samples[:, 1:] > 0) & (samples[:, 1:] < 1))
+
+    def test_flexible_graph_rejects_multi_given_posterior_pattern(self):
+        d = 6
+        u = pobs(np.random.default_rng(2218).standard_normal((260, d)))
+        vine = RVineCopula(
+            structure=cvine_structure(d),
+            candidates=[BivariateGaussianCopula],
+        )
+        vine.fit(u, method='mle')
+
+        given = {0: 0.2, 3: 0.8}
+        matrix_plan = vine.conditional_plan(given, quad_order=4)
+        flex_plan = vine.flexible_graph_plan(given)
+
+        assert matrix_plan['posterior_dim'] > 0
+        assert flex_plan['complete']
+        assert not flex_plan['flexible_given_supported']
+        assert not flex_plan['sampleable']
+        with pytest.raises(ValueError, match='flexible_graph_plan'):
+            vine.predict(4, given=given, conditional_method='graph')
+
+    def test_flexible_graph_plan_reaches_tree0_connected_bases(self):
+        d = 5
+        u = pobs(np.random.default_rng(2210).standard_normal((240, d)))
+        vine = RVineCopula(
+            structure=cvine_structure(d),
+            candidates=[IndependentCopula],
+        )
+        vine.fit(u, method='mle')
+
+        plan = vine.flexible_graph_plan({0: 0.5})
+
+        assert plan['complete']
+        assert plan['higher_tree_independent']
+        assert plan['sampleable']
+        assert plan['missing_base_vars'] == ()
+        assert plan['sampled_base_vars'] == tuple(range(d))
+        assert any(step['action'] == 'sample_base' for step in plan['steps'])
+
+    def test_predict_given_graph_method_uses_flexible_tree0_executor(self):
+        d = 5
+        u = pobs(np.random.default_rng(2213).standard_normal((240, d)))
+        vine = RVineCopula(
+            structure=cvine_structure(d),
+            candidates=[IndependentCopula],
+        )
+        vine.fit(u, method='mle')
+
+        matrix_plan = vine.conditional_plan({0: 0.5}, quad_order=4)
+        flex_plan = vine.flexible_graph_plan({0: 0.5})
+        assert matrix_plan['posterior_dim'] > 0
+        assert flex_plan['sampleable']
+
+        samples = vine.predict(
+            20, given={0: 0.5}, conditional_method='graph')
+        assert samples.shape == (20, d)
+        np.testing.assert_allclose(samples[:, 0], 0.5)
+        assert np.all((samples[:, 1:] > 0) & (samples[:, 1:] < 1))
+
+    def test_flexible_graph_plan_reports_frontier_shape(self):
+        d = 5
+        u = pobs(np.random.default_rng(2211).standard_normal((240, d)))
+        vine = RVineCopula()
+        vine.fit(u, method='mle')
+
+        plan = vine.flexible_graph_plan({0: 0.5})
+
+        assert plan['given_vars'] == (0,)
+        assert 'known_nodes' in plan
+        assert 'higher_tree_frontier' in plan
+        assert isinstance(plan['complete'], bool)
+        assert isinstance(plan['steps'], tuple)
+
+    def test_flexible_graph_plan_validates_given(self):
+        u = pobs(np.random.default_rng(2212).standard_normal((200, 4)))
+        vine = RVineCopula()
+        vine.fit(u, method='mle')
+
+        with pytest.raises(ValueError):
+            vine.flexible_graph_plan({0: 1.0})
+
+    def test_conditional_structure_policy_rejects_worse_priority_plan(self):
+        u = pobs(np.random.default_rng(2207).standard_normal((250, 6)))
+        vine = RVineCopula(
+            structure_mode='conditional',
+            conditional_vars={0, 2},
+            candidates=[IndependentCopula],
+        )
+
+        with pytest.warns(RuntimeWarning, match='posterior dimension'):
+            vine.fit(u, method='mle')
+
+        plan = vine.conditional_plan({0: 0.2, 2: 0.8}, quad_order=4)
+        assert vine.conditional_structure_status == 'cvine_fallback'
+        assert plan['optimized_for_given']
+        assert plan['posterior_dim'] == 0
+
+    def test_conditional_plan_validates_given(self):
+        u = pobs(np.random.default_rng(2205).standard_normal((200, 4)))
+        vine = RVineCopula()
+        vine.fit(u, method='mle')
+
+        with pytest.raises(ValueError):
+            vine.conditional_plan({4: 0.5})
+
+    def test_conditional_structure_requires_conditional_mode(self):
+        with pytest.raises(ValueError):
+            RVineCopula(conditional_vars={0, 1})
+
+    def test_conditional_structure_rejects_unknown_policy(self):
+        with pytest.raises(ValueError):
+            RVineCopula(
+                structure_mode='conditional',
+                conditional_vars={0, 1},
+                conditional_structure_policy='unknown',
+            )
+
+    def test_conditional_structure_rejects_explicit_structure(self):
+        with pytest.raises(ValueError):
+            RVineCopula(
+                structure=cvine_structure(4),
+                structure_mode='conditional',
+                conditional_vars={0, 1},
+            )
+
+    def test_conditional_structure_validates_variables_at_fit(self):
+        u = pobs(np.random.default_rng(2203).standard_normal((200, 4)))
+        vine = RVineCopula(
+            structure_mode='conditional',
+            conditional_vars={0, 4},
+        )
+        with pytest.raises(ValueError):
+            vine.fit(u, method='mle')
+
 
 class TestRVineSamplePredict:
+    def test_tabulated_weight_sampler_avoids_endpoints(self):
+        def weight_fn(w):
+            if w <= 0.0 or w >= 1.0:
+                raise ZeroDivisionError
+            return 1.0
+
+        rng = np.random.default_rng(123)
+        sample = _sample_from_tabulated_weight(weight_fn, rng, 33)
+        assert 0.0 <= sample <= 1.0
+
+    def test_conditional_scalar_fast_calls_match_class_methods(self):
+        copulas = [
+            (ClaytonCopula, 0.7, (0, 90, 180, 270)),
+            (FrankCopula, 2.0, (0,)),
+            (GumbelCopula, 1.5, (0, 90, 180, 270)),
+            (IndependentCopula, 0.0, (0,)),
+            (JoeCopula, 1.5, (0, 90, 180, 270)),
+            (BivariateGaussianCopula, 0.4, (0,)),
+        ]
+        points = [(0.37, 0.62), (0.13, 0.91), (0.82, 0.21)]
+
+        for copula_cls, r, rotations in copulas:
+            for rotation in rotations:
+                copula = copula_cls(rotate=rotation)
+                for u, v in points:
+                    ra = np.array([r], dtype=np.float64)
+                    ua = np.array([u], dtype=np.float64)
+                    va = np.array([v], dtype=np.float64)
+                    assert np.isclose(
+                        _copula_pdf_scalar(copula, u, v, r),
+                        copula.pdf(ua, va, ra)[0])
+                    assert np.isclose(
+                        _copula_h_scalar(copula, u, v, r),
+                        copula.h(ua, va, ra)[0])
+                    assert np.isclose(
+                        _copula_h_inverse_scalar(copula, u, v, r),
+                        copula.h_inverse(ua, va, ra)[0])
+
     def test_predict_shape(self):
         d = 4
         u = pobs(np.random.default_rng(0).standard_normal((200, d)))
@@ -406,6 +856,50 @@ class TestRVineSamplePredict:
         np.testing.assert_allclose(samples[:, 1], 0.4)
         assert np.all((samples[:, [0, 2, 3]] > 0) & (samples[:, [0, 2, 3]] < 1))
 
+    def test_predict_given_accepts_quad_order(self):
+        d = 4
+        u = pobs(np.random.default_rng(171).standard_normal((220, d)))
+        vine = RVineCopula()
+        vine.fit(u, method='mle')
+        samples = vine.predict(5, given={0: 0.2, 2: 0.7}, quad_order=4)
+        assert samples.shape == (5, d)
+        np.testing.assert_allclose(samples[:, 0], 0.2)
+        np.testing.assert_allclose(samples[:, 2], 0.7)
+
+    def test_predict_given_multi_condition_fast_path(self):
+        d = 6
+        u = pobs(np.random.default_rng(172).standard_normal((240, d)))
+        vine = RVineCopula(structure=cvine_structure(d))
+        vine.fit(u, method='mle')
+        samples = vine.predict(
+            4, given={0: 0.2, 3: 0.8}, quad_order=3,
+            conditional_method='grid')
+        assert samples.shape == (4, d)
+        np.testing.assert_allclose(samples[:, 0], 0.2)
+        np.testing.assert_allclose(samples[:, 3], 0.8)
+        assert np.all((samples[:, [1, 2, 4, 5]] > 0)
+                      & (samples[:, [1, 2, 4, 5]] < 1))
+
+    def test_predict_given_exact_method(self):
+        d = 4
+        u = pobs(np.random.default_rng(173).standard_normal((220, d)))
+        vine = RVineCopula(structure=cvine_structure(d))
+        vine.fit(u, method='mle')
+        samples = vine.predict(
+            3, given={0: 0.2, 2: 0.7}, quad_order=2,
+            conditional_method='exact')
+        assert samples.shape == (3, d)
+        np.testing.assert_allclose(samples[:, 0], 0.2)
+        np.testing.assert_allclose(samples[:, 2], 0.7)
+
+    def test_predict_given_invalid_conditional_method_raises(self):
+        d = 4
+        u = pobs(np.random.default_rng(174).standard_normal((220, d)))
+        vine = RVineCopula()
+        vine.fit(u, method='mle')
+        with pytest.raises(ValueError):
+            vine.predict(3, given={0: 0.2}, conditional_method='unknown')
+
     def test_predict_given_with_gas(self):
         d = 4
         u = pobs(np.random.default_rng(18).standard_normal((220, d)))
@@ -425,6 +919,32 @@ class TestRVineSamplePredict:
         assert samples.shape == (20, d)
         np.testing.assert_allclose(samples[:, 0], 0.3)
         assert np.all((samples[:, 1:] > 0) & (samples[:, 1:] < 1))
+
+    def test_scar_fit_preserves_grid_settings(self):
+        d = 3
+        rng = np.random.default_rng(191)
+        z0 = rng.standard_normal(160)
+        z1 = 0.75 * z0 + 0.35 * rng.standard_normal(160)
+        z2 = 0.65 * z1 + 0.35 * rng.standard_normal(160)
+        u = pobs(np.column_stack((z0, z1, z2)))
+        vine = RVineCopula(candidates=[BivariateGaussianCopula])
+        vine.fit(
+            u,
+            method='scar-tm-ou',
+            truncation_level=1,
+            K=25,
+            grid_range=4.0,
+            tol=0.8,
+        )
+
+        dynamic_edges = [
+            edge for edge in vine.edges.values()
+            if edge.fit_result.method.upper() == 'SCAR-TM-OU'
+        ]
+        assert dynamic_edges
+        for edge in dynamic_edges:
+            assert edge.fit_result.K == 25
+            assert edge.fit_result.grid_range == 4.0
 
     def test_predict_given_unsupported_method_raises(self):
         d = 3

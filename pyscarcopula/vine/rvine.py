@@ -8,6 +8,14 @@ Each edge stores a fitted BivariateCopula (with rotation).
 Pseudo-observations are tracked as (variable, conditioning_set) pairs
 through the vine tree structure.
 
+The arbitrary-conditioning sampler uses a vine computational graph view:
+known nodes are propagated through h-functions, graph-compatible variables are
+sampled by inverse h-functions, and non-graph-compatible patterns fall back to
+posterior grid or exact integration. This implements the conditional-sampling
+and conditioning-structure ideas from Cheng et al. (2025), "Vine Copulas as
+Differentiable Computational Graphs", arXiv:2506.13318, without the PyTorch /
+autograd layer from that paper.
+
 Usage:
     from pyscarcopula.vine.rvine import RVineCopula
 
@@ -35,12 +43,16 @@ from pyscarcopula.vine._helpers import (
 )
 from pyscarcopula.vine._conditional_rvine import (
     ensure_rvine_conditional_supported,
+    rvine_flexible_graph_plan,
+    rvine_conditional_plan,
     sample_rvine_conditional_with_r,
     validate_rvine_given,
 )
 from pyscarcopula.vine._structure import (
+    cvine_structure,
     RVineMatrix,
-    _build_tree_0, _build_next_tree, _trees_to_matrix,
+    _build_tree_0, _build_tree_0_conditional,
+    _build_next_tree, _build_next_tree_conditional, _trees_to_matrix,
 )
 
 
@@ -109,6 +121,12 @@ class RVineCopula:
     via Dissmann's algorithm (MST on |Kendall's tau|) and can be
     optionally truncated.
 
+    Conditional prediction uses a computational-graph interpretation of the
+    vine, following the conditional-sampling and conditioning-variable
+    structure ideas of Cheng et al. (2025), arXiv:2506.13318. The
+    implementation here is NumPy/SciPy based and is not a differentiable
+    PyTorch graph.
+
     Parameters
     ----------
     candidates : list of copula classes, or None (default: 5 families)
@@ -116,15 +134,50 @@ class RVineCopula:
     criterion : 'aic', 'bic', or 'loglik'
     structure : RVineMatrix or None
         If provided, use this structure instead of Dissmann selection.
+    structure_mode : {'dissmann', 'conditional'}, default 'dissmann'
+        Structure selection rule used when ``structure`` is not provided.
+        ``'conditional'`` prioritises edges inside ``conditional_vars``.
+    conditional_vars : iterable of int or None
+        Variables expected to be fixed in later conditional sampling.
+    conditional_structure_policy : {'min_posterior', 'priority'}
+        ``'min_posterior'`` falls back to a conditional C-vine when the
+        priority structure has a larger posterior dimension for
+        ``conditional_vars``. ``'priority'`` keeps any encodable priority
+        structure.
     """
 
     def __init__(self, candidates=None, allow_rotations=True,
-                 criterion='aic', structure=None):
+                 criterion='aic', structure=None,
+                 structure_mode='dissmann', conditional_vars=None,
+                 conditional_structure_policy='min_posterior'):
+        if structure_mode not in ('dissmann', 'conditional'):
+            raise ValueError(
+                "structure_mode must be 'dissmann' or 'conditional'")
+        if conditional_structure_policy not in ('min_posterior', 'priority'):
+            raise ValueError(
+                "conditional_structure_policy must be 'min_posterior' "
+                "or 'priority'")
+        if structure is not None and structure_mode == 'conditional':
+            raise ValueError(
+                "structure_mode='conditional' cannot be used with an "
+                "explicit structure")
+        if conditional_vars is not None and structure_mode != 'conditional':
+            raise ValueError(
+                "conditional_vars requires structure_mode='conditional'")
+
         self.candidates = candidates
         self.allow_rotations = allow_rotations
         self.criterion = criterion
 
         self._structure = structure
+        self.structure_mode = structure_mode
+        self.conditional_structure_policy = conditional_structure_policy
+        self.conditional_vars = (
+            None if conditional_vars is None
+            else frozenset(int(v) for v in conditional_vars)
+        )
+        self._conditional_structure_applied = False
+        self.conditional_structure_status = None
         self.trees = None
         self.edges = None       # dict: (tree, edge_idx) -> VineEdge
         self.d = None
@@ -134,6 +187,98 @@ class RVineCopula:
         if self.candidates is not None:
             return self.candidates
         return _default_candidates()
+
+    def _conditional_vars_for_fit(self, d):
+        """Validate conditional_vars once the data dimension is known."""
+        if self.structure_mode != 'conditional':
+            return None
+        if self.conditional_vars is None or len(self.conditional_vars) == 0:
+            raise ValueError(
+                "conditional_vars must be a non-empty iterable when "
+                "structure_mode='conditional'")
+        bad = [v for v in self.conditional_vars if v < 0 or v >= d]
+        if bad:
+            raise ValueError(
+                f"conditional_vars must be in [0, {d - 1}], got {bad}")
+        if len(self.conditional_vars) >= d:
+            raise ValueError(
+                "conditional_vars must be a proper subset of variables")
+        return self.conditional_vars
+
+    def is_conditioning_optimized_for(self, given):
+        """Return True when this vine was structured for the given variables."""
+        if (self.structure_mode != 'conditional'
+                or self.conditional_vars is None
+                or not getattr(self, '_conditional_structure_applied', False)):
+            return False
+        if isinstance(given, dict):
+            given_vars = frozenset(int(v) for v in given)
+        else:
+            given_vars = frozenset(int(v) for v in given)
+        return given_vars <= self.conditional_vars
+
+    def _conditional_cvine_fallback(self, d, conditional_vars):
+        """Matrix-encodable fallback with conditioning variables sampled first."""
+        cond_order = sorted(int(v) for v in conditional_vars)
+        rest_order = [v for v in range(d) if v not in conditional_vars]
+        return cvine_structure(d, order=rest_order + cond_order)
+
+    def _cvine_fallback(self, d):
+        """Matrix-encodable fallback for non-encodable Dissmann structures."""
+        if self.trees and len(self.trees) > 0:
+            degree = {v: 0 for v in range(d)}
+            for v1, v2, _ in self.trees[0]:
+                degree[int(v1)] += 1
+                degree[int(v2)] += 1
+            order = sorted(range(d), key=lambda v: (-degree[v], v))
+        else:
+            order = list(range(d))
+        return cvine_structure(d, order=order)
+
+    def _posterior_dim_for_structure(self, structure, conditional_vars):
+        """Posterior dimension for the intended full conditioning pattern."""
+        original = self._structure
+        try:
+            self._structure = structure
+            given = {int(v): 0.5 for v in conditional_vars}
+            plan = rvine_conditional_plan(self, given, quad_order=2)
+            return int(plan['posterior_dim'])
+        finally:
+            self._structure = original
+
+    def conditional_plan(self, given, quad_order=10):
+        """
+        Describe the current conditional sampling workload.
+
+        The plan reports the matrix-based sampling order and the latent
+        Rosenblatt variables that must be sampled from a posterior because
+        fixed variables appear later in that order.  It is an introspection
+        helper; it does not change the fitted model.
+
+        The reported graph/pseudo-observation workload is based on the vine
+        computational graph view used for conditional sampling in
+        arXiv:2506.13318.
+        """
+        if self.edges is None:
+            raise ValueError("Fit first")
+        given = validate_rvine_given(given, self.d)
+        return rvine_conditional_plan(self, given, quad_order=quad_order)
+
+    def flexible_graph_plan(self, given):
+        """
+        Reachability plan for flexible graph conditional sampling.
+
+        This helper reports which pseudo-observation nodes are known from
+        `given`, reachable by deterministic h-propagation, or sampleable by
+        inverse h-functions. It follows the computational-graph scheduling idea
+        from arXiv:2506.13318. The current executor enables this path for
+        graph-compatible single-given patterns; other patterns fall back to
+        matrix-order grid or exact integration.
+        """
+        if self.edges is None:
+            raise ValueError("Fit first")
+        given = validate_rvine_given(given, self.d)
+        return rvine_flexible_graph_plan(self, given)
 
     # ── Fit ────────────────────────────────────────────────────────
 
@@ -166,6 +311,23 @@ class RVineCopula:
         self.d = d
         self.method = method.upper()
         self.truncation_fill = truncation_fill
+        self._predict_cache = {}
+        active_structure_mode = (
+            getattr(self, '_fit_structure_mode_override', None)
+            or self.structure_mode
+        )
+        if active_structure_mode not in ('dissmann', 'conditional'):
+            raise ValueError(
+                "structure_mode must be 'dissmann' or 'conditional'")
+        self._conditional_structure_applied = (
+            active_structure_mode == 'conditional')
+        self.conditional_structure_status = (
+            'pending' if active_structure_mode == 'conditional' else None)
+        conditional_vars = (
+            self._conditional_vars_for_fit(d)
+            if active_structure_mode == 'conditional'
+            else None
+        )
 
         pseudo_obs = {}
         for i in range(d):
@@ -188,7 +350,11 @@ class RVineCopula:
         else:
             # Incremental Dissmann: build each tree using tau on
             # h-transformed pseudo-obs from fitted previous trees.
-            tree_0, edge_repr_0 = _build_tree_0(u)
+            if active_structure_mode == 'conditional':
+                tree_0, edge_repr_0 = _build_tree_0_conditional(
+                    u, conditional_vars)
+            else:
+                tree_0, edge_repr_0 = _build_tree_0(u)
             self.trees = [tree_0]
             edge_repr = [edge_repr_0]
 
@@ -200,9 +366,15 @@ class RVineCopula:
 
             # Build and fit subsequent trees
             for tree_level in range(1, d - 1):
-                new_tree, new_repr = _build_next_tree(
-                    tree_level, edge_repr[tree_level - 1],
-                    pseudo_obs, truncation_level=truncation_level)
+                if active_structure_mode == 'conditional':
+                    new_tree, new_repr = _build_next_tree_conditional(
+                        tree_level, edge_repr[tree_level - 1],
+                        pseudo_obs, conditional_vars,
+                        truncation_level=truncation_level)
+                else:
+                    new_tree, new_repr = _build_next_tree(
+                        tree_level, edge_repr[tree_level - 1],
+                        pseudo_obs, truncation_level=truncation_level)
                 if new_tree is None:
                     break
                 self.trees.append(new_tree)
@@ -219,9 +391,92 @@ class RVineCopula:
             n_strict = (truncation_level
                         if truncation_level is not None
                         else None)
-            matrix = _trees_to_matrix(d, self.trees,
-                                      n_strict_levels=n_strict)
+            try:
+                matrix = _trees_to_matrix(d, self.trees,
+                                          n_strict_levels=n_strict)
+            except RuntimeError:
+                if active_structure_mode != 'conditional':
+                    import warnings
+                    warnings.warn(
+                        "Dissmann R-vine structure could not be encoded as "
+                        "an RVineMatrix; falling back to a matrix-encodable "
+                        "C-vine structure.",
+                        RuntimeWarning,
+                        stacklevel=2)
+                    self._structure = self._cvine_fallback(d)
+                    try:
+                        result = self.fit(
+                            data, method=method, to_pobs=to_pobs, K=K,
+                            grid_range=grid_range,
+                            truncation_level=truncation_level,
+                            truncation_fill=truncation_fill,
+                            min_edge_logL=min_edge_logL,
+                            transform_type=transform_type,
+                            **kwargs)
+                    finally:
+                        self._fit_structure_mode_override = None
+                    self._conditional_structure_applied = False
+                    self.conditional_structure_status = None
+                    return result
+                import warnings
+                warnings.warn(
+                    "Conditional R-vine structure could not be encoded as an "
+                    "RVineMatrix; falling back to a conditional C-vine "
+                    "structure.",
+                    RuntimeWarning,
+                    stacklevel=2)
+                self._structure = self._conditional_cvine_fallback(
+                    d, conditional_vars)
+                self.conditional_structure_status = 'cvine_fallback'
+                try:
+                    result = self.fit(
+                        data, method=method, to_pobs=to_pobs, K=K,
+                        grid_range=grid_range,
+                        truncation_level=truncation_level,
+                        truncation_fill=truncation_fill,
+                        min_edge_logL=min_edge_logL,
+                        transform_type=transform_type,
+                        **kwargs)
+                finally:
+                    self._fit_structure_mode_override = None
+                self._conditional_structure_applied = True
+                self.conditional_structure_status = 'cvine_fallback'
+                return result
             self._structure = RVineMatrix(matrix)
+            if active_structure_mode == 'conditional':
+                self.conditional_structure_status = 'priority'
+                if self.conditional_structure_policy == 'min_posterior':
+                    priority_structure = self._structure
+                    fallback_structure = self._conditional_cvine_fallback(
+                        d, conditional_vars)
+                    priority_dim = self._posterior_dim_for_structure(
+                        priority_structure, conditional_vars)
+                    fallback_dim = self._posterior_dim_for_structure(
+                        fallback_structure, conditional_vars)
+                    if fallback_dim < priority_dim:
+                        import warnings
+                        warnings.warn(
+                            "Conditional priority structure increases the "
+                            "matrix-order posterior dimension; falling back "
+                            "to a conditional C-vine structure.",
+                            RuntimeWarning,
+                            stacklevel=2)
+                        self._structure = fallback_structure
+                        self.conditional_structure_status = 'cvine_fallback'
+                        try:
+                            result = self.fit(
+                                data, method=method, to_pobs=to_pobs, K=K,
+                                grid_range=grid_range,
+                                truncation_level=truncation_level,
+                                truncation_fill=truncation_fill,
+                                min_edge_logL=min_edge_logL,
+                                transform_type=transform_type,
+                                **kwargs)
+                        finally:
+                            self._fit_structure_mode_override = None
+                        self._conditional_structure_applied = True
+                        self.conditional_structure_status = 'cvine_fallback'
+                        return result
 
             # Roundtrip check: matrix edges must match self.trees.
             # For truncated levels, the matrix may have rebuilt the
@@ -332,8 +587,9 @@ class RVineCopula:
             if not skip_dynamic:
                 from pyscarcopula.api import fit as _api_fit
                 scar_kwargs = {kk: vv for kk, vv in kwargs.items()
-                               if kk != 'alpha0'}
+                               if kk not in ('alpha0', 'K', 'grid_range')}
                 result = _api_fit(cop, u_pair, method=method,
+                                  K=K, grid_range=grid_range,
                                   alpha0=kwargs.get('alpha0'),
                                   **scar_kwargs)
 
@@ -523,12 +779,23 @@ class RVineCopula:
     # ── Prediction ───────────────────────────────────────────────
 
     def predict(self, n, u=None, K=300, grid_range=5.0,
-                given=None, horizon='next'):
+                given=None, horizon='next', quad_order=10,
+                conditional_method='auto'):
         """Conditional predict: sample for next-step prediction.
 
         `given` fixes selected variables in pseudo-observation space,
         e.g. ``given={1: 0.4}``. For SCAR-TM-OU edges, `horizon`
         selects between p(x_T | data) and p(x_{T+1} | data).
+        `quad_order` controls Gauss-Legendre integration accuracy for
+        arbitrary R-vine conditional sampling with non-prefix `given`.
+        `conditional_method` selects the arbitrary-conditioning algorithm:
+        'auto' uses the graph/no-posterior path or joint-grid fast path when
+        suitable, 'graph' requires no posterior latent variables, 'exact' uses
+        recursive quadrature, and 'grid' requires the joint-grid fast path.
+
+        The graph paths implement the conditional-sampling idea from the vine
+        computational graph formulation in arXiv:2506.13318. This method does
+        not expose differentiable/autograd behavior.
         """
         if self.edges is None:
             raise ValueError("Fit first")
@@ -551,8 +818,22 @@ class RVineCopula:
             isinstance(e.fit_result, LatentResult)
             for e in self.edges.values())
 
+        predict_cache = getattr(self, '_predict_cache', None)
+        if predict_cache is None:
+            predict_cache = {}
+            self._predict_cache = predict_cache
+        u_token = None
+
         if u_data is not None and needs_train:
-            train_pseudo = self._compute_pseudo_obs(u_data, K, grid_range)
+            u_arr = np.asarray(u_data)
+            u_token = (id(u_arr), u_arr.shape, str(u_arr.dtype))
+            train_key = ('train_pseudo', u_token, int(K), float(grid_range))
+            train_pseudo = predict_cache.get(train_key)
+            if train_pseudo is None:
+                train_pseudo = self._compute_pseudo_obs(
+                    u_data, K, grid_range, state_cache=predict_cache,
+                    u_token=u_token)
+                predict_cache[train_key] = train_pseudo
 
         # Generate r for each edge
         r_all = {}
@@ -570,16 +851,27 @@ class RVineCopula:
                         _clip_unit(train_pseudo[u1_key]),
                         _clip_unit(train_pseudo[u2_key])))
 
+            state_key = None
+            if v_pair is not None and u_token is not None:
+                state_key = (
+                    'state_dist', key, u_token, int(K), float(grid_range),
+                    horizon,
+                )
+
             r_all[key] = generate_r_for_predict(
-                edge, n, v_pair, K, grid_range, horizon=horizon)
+                edge, n, v_pair, K, grid_range, horizon=horizon,
+                state_cache=predict_cache, cache_key=state_key)
 
         if given:
             ensure_rvine_conditional_supported(self)
-            return sample_rvine_conditional_with_r(self, n, r_all, given, rng)
+            return sample_rvine_conditional_with_r(
+                self, n, r_all, given, rng, quad_order=quad_order,
+                conditional_method=conditional_method)
 
         return self._sample_with_r(n, r_all, rng)
 
-    def _compute_pseudo_obs(self, u, K=300, grid_range=5.0):
+    def _compute_pseudo_obs(self, u, K=300, grid_range=5.0,
+                            state_cache=None, u_token=None):
         """Compute pseudo-observations for all edges from data."""
         d = self.d
         pseudo_obs = {}
@@ -596,8 +888,23 @@ class RVineCopula:
                 u_pair = np.column_stack((u1, u2))
 
                 if tree_level < d - 2:
+                    current_key = None
+                    next_key = None
+                    if state_cache is not None and u_token is not None:
+                        current_key = (
+                            'state_dist', (tree_level, edge_idx), u_token,
+                            int(K), float(grid_range), 'current',
+                        )
+                        next_key = (
+                            'state_dist', (tree_level, edge_idx), u_token,
+                            int(K), float(grid_range), 'next',
+                        )
                     h_2given1 = _clip_unit(
-                        _edge_h(edge, u2, u1, u_pair, K, grid_range))
+                        _edge_h(
+                            edge, u2, u1, u_pair, K, grid_range,
+                            state_cache=state_cache,
+                            current_cache_key=current_key,
+                            next_cache_key=next_key))
                     pseudo_obs[(v2, cond_set | {v1})] = h_2given1
 
                     u_pair_rev = np.column_stack((u2, u1))

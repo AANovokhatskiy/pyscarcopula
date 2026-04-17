@@ -22,6 +22,7 @@ Usage:
 """
 
 import numpy as np
+from math import erf, sqrt
 from scipy.stats import norm, t as t_dist, multivariate_normal, multivariate_t, kendalltau
 from scipy.optimize import minimize
 from numba import njit
@@ -146,6 +147,37 @@ def _gauss_h_inv(u, v, rho):
     u_c = np.clip(u, eps, 1.0 - eps)
     v_c = np.clip(v, eps, 1.0 - eps)
     return norm.cdf(norm.ppf(u_c) * np.sqrt(1.0 - rho ** 2) + rho * norm.ppf(v_c))
+
+
+@njit(cache=True)
+def _norm_cdf_numba(x):
+    return 0.5 * (1.0 + erf(x / sqrt(2.0)))
+
+
+@njit(cache=True)
+def _gauss_h_numba(u, v, rho):
+    n = len(u)
+    out = np.empty(n)
+    for i in range(n):
+        u_c = min(max(u[i], 1e-10), 1.0 - 1e-10)
+        v_c = min(max(v[i], 1e-10), 1.0 - 1e-10)
+        r = rho[i]
+        z = (_ndtri(u_c) - r * _ndtri(v_c)) / np.sqrt(1.0 - r * r)
+        out[i] = _norm_cdf_numba(z)
+    return out
+
+
+@njit(cache=True)
+def _gauss_h_inv_numba(u, v, rho):
+    n = len(u)
+    out = np.empty(n)
+    for i in range(n):
+        u_c = min(max(u[i], 1e-10), 1.0 - 1e-10)
+        v_c = min(max(v[i], 1e-10), 1.0 - 1e-10)
+        r = rho[i]
+        z = _ndtri(u_c) * np.sqrt(1.0 - r * r) + r * _ndtri(v_c)
+        out[i] = _norm_cdf_numba(z)
+    return out
 
 
 def _broadcast(u1, u2, r):

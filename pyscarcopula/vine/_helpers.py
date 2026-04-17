@@ -59,7 +59,8 @@ def generate_r_for_sample(edge, n, rng):
     return edge.get_r_predict(n)
 
 
-def generate_r_for_predict(edge, n, v_train_pair, K, grid_range, horizon='next'):
+def generate_r_for_predict(edge, n, v_train_pair, K, grid_range, horizon='next',
+                           state_cache=None, cache_key=None):
     """Generate r for predict (next-step conditional).
 
     MLE: constant r.
@@ -85,12 +86,19 @@ def generate_r_for_predict(edge, n, v_train_pair, K, grid_range, horizon='next')
 
     if isinstance(edge.fit_result, LatentResult):
         if v_train_pair is not None:
-            alpha = _get_alpha(edge.fit_result)
-            theta, mu, nu = alpha
-            from pyscarcopula.numerical.predictive_tm import tm_state_distribution
-            z_grid, prob = tm_state_distribution(
-                theta, mu, nu, v_train_pair, edge.copula, K, grid_range,
-                horizon=horizon)
+            cached = None
+            if state_cache is not None and cache_key is not None:
+                cached = state_cache.get(cache_key)
+            if cached is None:
+                alpha = _get_alpha(edge.fit_result)
+                theta, mu, nu = alpha
+                from pyscarcopula.numerical.predictive_tm import tm_state_distribution
+                cached = tm_state_distribution(
+                    theta, mu, nu, v_train_pair, edge.copula, K, grid_range,
+                    horizon=horizon)
+                if state_cache is not None and cache_key is not None:
+                    state_cache[cache_key] = cached
+            z_grid, prob = cached
             idx = np.random.choice(len(z_grid), size=n, p=prob)
             return edge.copula.transform(z_grid[idx])
         else:
