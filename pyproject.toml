@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyscarcopula"
-version = "0.7.0"
+version = "0.7.1"
 description = "Stochastic copula models with Ornstein-Uhlenbeck latent process"
 readme = "README.md"
 license = "MIT"
@@ -54,4 +54,6 @@ exclude = ["tests*", "data*"]
 testpaths = ["tests"]
 markers = [
     "data: tests requiring data/ directory (csv files)",
+    "benchmark: optional performance regression checks",
+    "validation: optional distributional validation checks",
 ]

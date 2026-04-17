@@ -232,6 +232,76 @@ def _maximum_spanning_tree(nodes, edges, weights):
 # Dissmann algorithm
 # ══════════════════════════════════════════════════════════════
 
+def _priority_spanning_tree(nodes, edges, weights, priority_flags,
+                            priority_limit=None):
+    """
+    Kruskal's algorithm with a primary priority group.
+
+    Priority edges are considered before all other edges, up to
+    ``priority_limit`` accepted priority edges when a limit is provided.
+    Within each group, edges are sorted by descending weight.
+    """
+    priority_order = sorted(
+        [idx for idx, flag in enumerate(priority_flags) if flag],
+        key=lambda idx: (-weights[idx], idx),
+    )
+    other_order = sorted(
+        [idx for idx, flag in enumerate(priority_flags) if not flag],
+        key=lambda idx: (-weights[idx], idx),
+    )
+
+    parent = {n: n for n in nodes}
+    rank = {n: 0 for n in nodes}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(x, y):
+        rx, ry = find(x), find(y)
+        if rx == ry:
+            return False
+        if rank[rx] < rank[ry]:
+            rx, ry = ry, rx
+        parent[ry] = rx
+        if rank[rx] == rank[ry]:
+            rank[rx] += 1
+        return True
+
+    mst_edges = []
+    n_priority = 0
+
+    def add_edge(idx):
+        a, b = edges[idx]
+        if union(a, b):
+            mst_edges.append((a, b))
+            return True
+        return False
+
+    for idx in priority_order:
+        if priority_limit is not None and n_priority >= priority_limit:
+            break
+        if add_edge(idx):
+            n_priority += 1
+            if len(mst_edges) == len(nodes) - 1:
+                return mst_edges
+
+    for idx in other_order:
+        if add_edge(idx):
+            if len(mst_edges) == len(nodes) - 1:
+                return mst_edges
+
+    if priority_limit is not None and len(mst_edges) < len(nodes) - 1:
+        for idx in priority_order:
+            if add_edge(idx):
+                if len(mst_edges) == len(nodes) - 1:
+                    return mst_edges
+
+    return mst_edges
+
+
 def _proximity_condition(edge_a, edge_b):
     """
     Check proximity condition and return the shared node.
@@ -451,6 +521,145 @@ def _build_next_tree(tree_level, prev_edge_repr, pseudo_obs,
         new_tree.append((
             min(cv), max(cv), tuple(sorted(cs))
         ))
+        new_repr.append((cv, cs))
+
+    return new_tree, new_repr
+
+
+def _build_tree_0_conditional(u, conditional_vars):
+    """
+    Build the first tree, prioritising edges inside conditional_vars.
+
+    This keeps the usual absolute Kendall tau ranking within each priority
+    group while forcing edges whose conditioned pair is fully contained in
+    the pre-specified conditioning variables to be considered first.
+    """
+    _, d = u.shape
+    cond = frozenset(conditional_vars)
+    nodes = list(range(d))
+    edges = []
+    weights = []
+    priority = []
+    for i in range(d):
+        for j in range(i + 1, d):
+            tau, _ = kendalltau(u[:, i], u[:, j])
+            if np.isnan(tau):
+                tau = 0.0
+            edges.append((i, j))
+            weights.append(abs(tau))
+            priority.append(frozenset((i, j)) <= cond)
+
+    priority_limit = max(len(cond) - 1, 0)
+    mst = _priority_spanning_tree(
+        nodes, edges, weights, priority,
+        priority_limit=priority_limit)
+
+    tree_0 = [(min(a, b), max(a, b), ()) for a, b in mst]
+    edge_repr_0 = [
+        (frozenset([v1, v2]), frozenset())
+        for v1, v2, _ in tree_0
+    ]
+    return tree_0, edge_repr_0
+
+
+def _build_next_tree_conditional(tree_level, prev_edge_repr, pseudo_obs,
+                                 conditional_vars, truncation_level=None):
+    """
+    Build a higher tree, prioritising conditioned sets in conditional_vars.
+
+    Candidate enumeration matches ``_build_next_tree``.  The MST selection
+    uses a two-stage Kruskal order: candidates whose new conditioned pair is
+    a subset of ``conditional_vars`` first, then all remaining candidates.
+    """
+    n_prev = len(prev_edge_repr)
+
+    if truncation_level is not None and tree_level >= truncation_level:
+        n_needed = n_prev - 1
+        remaining = _complete_structure_above_truncation(
+            prev_edge_repr, n_needed)
+        if remaining is None:
+            return None, None
+        new_tree = [
+            (min(cv), max(cv), tuple(sorted(cs)))
+            for cv, cs in remaining
+        ]
+        return new_tree, remaining
+
+    cond = frozenset(conditional_vars)
+    candidate_edges = []
+    candidate_weights = []
+    candidate_repr = []
+    candidate_priority = []
+
+    for i in range(n_prev):
+        for j in range(i + 1, n_prev):
+            result = _proximity_condition(
+                prev_edge_repr[i], prev_edge_repr[j])
+            if result is None:
+                continue
+
+            _, new_cond_vars, new_conditioning = result
+            v_list = sorted(new_cond_vars)
+            if len(v_list) != 2:
+                warnings.warn(
+                    f"_build_next_tree_conditional: proximity returned "
+                    f"{len(v_list)} conditioned vars (expected 2) at tree "
+                    f"{tree_level}, edges ({i}, {j}). Skipping candidate.",
+                    stacklevel=2)
+                continue
+
+            key_a = (v_list[0], frozenset(new_conditioning))
+            key_b = (v_list[1], frozenset(new_conditioning))
+            obs_a = pseudo_obs.get(key_a)
+            obs_b = pseudo_obs.get(key_b)
+
+            if obs_a is None or obs_b is None:
+                warnings.warn(
+                    f"_build_next_tree_conditional: missing "
+                    f"pseudo-observations for edge ({v_list[0]},"
+                    f"{v_list[1]}|{set(new_conditioning)}) at tree "
+                    f"{tree_level}. Skipping candidate.",
+                    stacklevel=2)
+                continue
+
+            tau_val, _ = kendalltau(obs_a, obs_b)
+            if np.isnan(tau_val):
+                tau_val = 0.0
+                warnings.warn(
+                    f"_build_next_tree_conditional: NaN Kendall's tau for "
+                    f"({v_list[0]},{v_list[1]}|{set(new_conditioning)}) "
+                    f"at tree {tree_level}, using 0.0",
+                    stacklevel=2)
+
+            candidate_edges.append((i, j))
+            candidate_weights.append(abs(tau_val))
+            candidate_repr.append(
+                (frozenset(new_cond_vars), new_conditioning))
+            candidate_priority.append(frozenset(new_cond_vars) <= cond)
+
+    if len(candidate_edges) == 0:
+        return None, None
+
+    tree_nodes = list(range(n_prev))
+    priority_limit = max(len(cond) - tree_level - 1, 0)
+    mst_idx = _priority_spanning_tree(
+        tree_nodes, candidate_edges, candidate_weights, candidate_priority,
+        priority_limit=priority_limit)
+
+    new_tree = []
+    new_repr = []
+    edge_lookup = {
+        (e[0], e[1]): idx for idx, e in enumerate(candidate_edges)
+    }
+    edge_lookup.update({
+        (e[1], e[0]): idx for idx, e in enumerate(candidate_edges)
+    })
+
+    for a, b in mst_idx:
+        key = (a, b) if (a, b) in edge_lookup else (b, a)
+        idx = edge_lookup[key]
+        cv, cs = candidate_repr[idx]
+        new_tree.append((min(cv), max(cv), tuple(sorted(cs))))
         new_repr.append((cv, cs))
 
     return new_tree, new_repr

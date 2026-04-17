@@ -71,7 +71,8 @@ def _get_gas_params(fit_result):
     return fit_result.params.values
 
 
-def _edge_h(edge, u2, u1, u_pair, K=300, grid_range=5.0):
+def _edge_h(edge, u2, u1, u_pair, K=300, grid_range=5.0,
+            state_cache=None, current_cache_key=None, next_cache_key=None):
     """
     Compute h(u2 | u1; r) for a vine edge using the correct method.
 
@@ -106,7 +107,10 @@ def _edge_h(edge, u2, u1, u_pair, K=300, grid_range=5.0):
         alpha = _get_alpha(edge.fit_result)
         theta, mu, nu = alpha
         return _tm_forward_mixture_h(theta, mu, nu, u_pair,
-                                      edge.copula, K, grid_range)
+                                      edge.copula, K, grid_range,
+                                      state_cache=state_cache,
+                                      current_cache_key=current_cache_key,
+                                      next_cache_key=next_cache_key)
 
 
 def _edge_log_likelihood(edge, u_pair, K=300, grid_range=5.0):

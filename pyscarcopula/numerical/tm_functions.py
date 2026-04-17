@@ -14,6 +14,10 @@ what they compute from the forward/backward messages:
 """
 
 import numpy as np
+from pyscarcopula.copula.elliptical import (
+    BivariateGaussianCopula,
+    _gauss_h_numba,
+)
 from pyscarcopula.numerical.tm_grid import TMGrid
 from pyscarcopula.numerical.predictive_tm import tm_state_distribution
 
@@ -129,7 +133,9 @@ def tm_forward_rosenblatt(theta, mu, nu, u, copula, K=300, grid_range=5.0,
 
 
 def tm_forward_mixture_h(theta, mu, nu, u, copula, K=300, grid_range=5.0,
-                         grid_method='auto', adaptive=True, pts_per_sigma=2):
+                         grid_method='auto', adaptive=True, pts_per_sigma=2,
+                         state_cache=None, current_cache_key=None,
+                         next_cache_key=None):
     """
     Mixture h-function via TM forward pass.
 
@@ -145,14 +151,60 @@ def tm_forward_mixture_h(theta, mu, nu, u, copula, K=300, grid_range=5.0,
     fi_grid = grid.copula_grid(u, copula)
     r_grid = copula.transform(grid.z + grid.mu)
 
-    weights = grid.forward_weights(fi_grid)
+    if state_cache is None or (
+            current_cache_key is None and next_cache_key is None):
+        weights = grid.forward_weights(fi_grid)
+    else:
+        weights = np.zeros((n, grid.K))
+        alpha = grid.p0.copy()
+        for k in range(n):
+            raw_w = alpha * grid.trap_w
+            total = np.sum(raw_w)
+            if total > 0:
+                weights[k] = raw_w / total
+            else:
+                weights[k] = 1.0 / grid.K
 
-    h_mix = np.empty(n)
-    for k in range(n):
-        u2_vec = np.full(grid.K, u[k, 1])
-        u1_vec = np.full(grid.K, u[k, 0])
-        h_vals = copula.h(u2_vec, u1_vec, r_grid)
-        h_mix[k] = np.sum(h_vals * weights[k])
+            alpha *= fi_grid[k]
+            if k < n - 1:
+                alpha = grid.rmatvec(alpha * grid.trap_w)
+                mx = np.max(np.abs(alpha))
+                if mx > 0:
+                    alpha /= mx
+
+        if current_cache_key is not None:
+            z_grid = grid.z + grid.mu
+            prob = alpha * grid.trap_w
+            total = np.sum(prob)
+            if total > 0:
+                prob = prob / total
+            else:
+                prob = np.full(grid.K, 1.0 / grid.K, dtype=np.float64)
+            state_cache[current_cache_key] = (z_grid, prob)
+
+        if next_cache_key is not None:
+            alpha_next = grid.rmatvec(alpha * grid.trap_w)
+            mx = np.max(np.abs(alpha_next))
+            if mx > 0:
+                alpha_next /= mx
+            z_grid = grid.z + grid.mu
+            prob = alpha_next * grid.trap_w
+            total = np.sum(prob)
+            if total > 0:
+                prob = prob / total
+            else:
+                prob = np.full(grid.K, 1.0 / grid.K, dtype=np.float64)
+            state_cache[next_cache_key] = (z_grid, prob)
+
+    u2_grid = np.repeat(u[:, 1], grid.K)
+    u1_grid = np.repeat(u[:, 0], grid.K)
+    r_eval = np.tile(r_grid, n)
+    if isinstance(copula, BivariateGaussianCopula):
+        h_vals = _gauss_h_numba(u2_grid, u1_grid, r_eval)
+    else:
+        h_vals = copula.h(u2_grid, u1_grid, r_eval)
+    h_vals = h_vals.reshape(n, grid.K)
+    h_mix = np.sum(h_vals * weights, axis=1)
 
     return np.clip(h_mix, 1e-6, 1.0 - 1e-6)
 

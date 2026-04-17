@@ -225,10 +225,12 @@ def vine_rosenblatt_transform(vine, u, K=300, grid_range=5.0):
     simply applies h-functions level by level, reusing the bivariate
     approach on every edge — no vine-specific modifications needed.
 
+    ```
     v[0][i] = u_i
     v[j+1][i] = h(v[j][i+1] | v[j][0]; edge_{j,i})
     e_0 = u_0
     e_{j+1} = h(v[j][1] | v[j][0]; edge_{j,0})
+    ```
 
     Parameters
     ----------

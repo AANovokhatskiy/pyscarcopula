@@ -165,8 +165,9 @@ class CVineCopula:
                 if not skip_dynamic:
                     from pyscarcopula.api import fit as _api_fit
                     scar_kwargs = {kk: vv for kk, vv in kwargs.items()
-                                   if kk != 'alpha0'}
+                                   if kk not in ('alpha0', 'K', 'grid_range')}
                     result = _api_fit(cop, u_pair, method=method,
+                                      K=K, grid_range=grid_range,
                                       alpha0=kwargs.get('alpha0'),
                                       **scar_kwargs)
 

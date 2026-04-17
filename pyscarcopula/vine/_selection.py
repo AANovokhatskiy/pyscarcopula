@@ -37,7 +37,7 @@ def _kendall_tau(u1, u2):
     return tau
 
 
-def _itau_initial_param(cop_class, tau_abs, rotate):
+def _itau_initial_param(cop_class, tau_value, rotate):
     """Compute initial copula parameter from Kendall's tau.
 
     Returns parameter in the copula's natural domain (before inv_transform).
@@ -49,7 +49,11 @@ def _itau_initial_param(cop_class, tau_abs, rotate):
     from pyscarcopula.copula.joe import JoeCopula
     from pyscarcopula.copula.elliptical import BivariateGaussianCopula
 
-    tau = max(tau_abs, 0.01)
+    if cop_class is BivariateGaussianCopula:
+        rho = np.sin(np.pi * tau_value / 2.0)
+        return np.clip(rho, -0.99, 0.99)
+
+    tau = max(abs(tau_value), 0.01)
 
     if cop_class is GumbelCopula:
         theta = 1.0 / (1.0 - min(tau, 0.95))
@@ -58,10 +62,6 @@ def _itau_initial_param(cop_class, tau_abs, rotate):
     if cop_class is ClaytonCopula:
         theta = 2.0 * tau / (1.0 - min(tau, 0.95))
         return max(theta, 0.01)
-
-    if cop_class is BivariateGaussianCopula:
-        rho = np.sin(np.pi * tau / 2.0)
-        return np.clip(rho, -0.99, 0.99)
 
     if cop_class is FrankCopula:
         return max(9.0 * tau, 0.1)
@@ -110,6 +110,7 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
     best_result : fit result
     """
     from pyscarcopula.copula.independent import IndependentCopula
+    from pyscarcopula.copula.elliptical import BivariateGaussianCopula
     from pyscarcopula._types import IndependentResult
     from pyscarcopula.api import fit as _api_fit
 
@@ -133,11 +134,15 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
         rotations = _all_rotations(cop_class) if allow_rotations else [0]
 
         for angle in rotations:
-            if not _rotation_compatible(tau, angle):
+            if (cop_class is not BivariateGaussianCopula
+                    and not _rotation_compatible(tau, angle)):
                 continue
 
             try:
-                tau_for_family = abs(tau)
+                tau_for_family = (
+                    tau if cop_class is BivariateGaussianCopula
+                    else abs(tau)
+                )
                 r0 = _itau_initial_param(cop_class, tau_for_family, angle)
                 if r0 is None:
                     continue
