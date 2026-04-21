@@ -272,6 +272,26 @@ gof_v6 = gof_test(vine, pobs(v6), to_pobs=False)
 u_pred_6d = vine.predict(100_000, u=u6)
 ```
 
+Vine prediction also supports conditional sampling in pseudo-observation
+space via `given={var_index: u_value}`. For `RVineCopula`, fixed variables
+must be placeable at the end of the R-vine variable order, read from the
+anti-diagonal of the natural-order matrix:
+
+```python
+variable_order = [
+    int(vine.matrix[vine.d - 1 - col, col])
+    for col in range(vine.d)
+]
+
+u_cond_6d = vine.predict(
+    20_000,
+    u=u6,
+    given={variable_order[-1]: 0.6},
+)
+```
+
+For more conditional sampling examples, see `example.ipynb`.
+
 ### 6. Stochastic Student-t copula
 
 A d-dimensional t-copula where the degrees-of-freedom parameter follows an OU process:

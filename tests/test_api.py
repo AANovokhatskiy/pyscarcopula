@@ -204,28 +204,30 @@ class TestEquicorrGaussian:
 
 
 class TestConditionalPredict:
-    def test_mle_given_first_coordinate_fixed(self, random_u2):
+    def test_bivariate_mle_ignores_given(self, random_u2):
         cop = GumbelCopula(rotate=180)
         result = fit(cop, random_u2, method='mle')
         samples = predict(cop, random_u2, result, 256, given={0: 0.37})
         assert samples.shape == (256, 2)
-        np.testing.assert_allclose(samples[:, 0], 0.37)
-        assert np.all((samples[:, 1] > 0) & (samples[:, 1] < 1))
+        assert np.all((samples > 0) & (samples < 1))
+        assert not np.allclose(samples[:, 0], 0.37)
 
-    def test_independent_conditional_stays_uniform(self, random_u2):
+    def test_bivariate_independent_ignores_given(self, random_u2):
         cop = IndependentCopula()
         result = cop.fit(random_u2)
         samples = predict(cop, random_u2, result, 4000, given={0: 0.42})
-        np.testing.assert_allclose(samples[:, 0], 0.42)
+        assert samples.shape == (4000, 2)
+        assert not np.allclose(samples[:, 0], 0.42)
+        assert abs(np.mean(samples[:, 0]) - 0.5) < 0.03
         assert abs(np.mean(samples[:, 1]) - 0.5) < 0.03
 
-    def test_invalid_given_raises(self, random_u2):
+    def test_bivariate_invalid_given_is_ignored(self, random_u2):
         cop = GumbelCopula(rotate=180)
         result = fit(cop, random_u2, method='mle')
-        with pytest.raises(ValueError):
-            predict(cop, random_u2, result, 16, given={2: 0.5})
-        with pytest.raises(ValueError):
-            predict(cop, random_u2, result, 16, given={0: 1.0})
+        samples = predict(cop, random_u2, result, 16, given={2: 0.5})
+        assert samples.shape == (16, 2)
+        samples = predict(cop, random_u2, result, 16, given={0: 1.0})
+        assert samples.shape == (16, 2)
 
     def test_scar_tm_current_and_next_state_distributions_differ(self, random_u2):
         cop = GumbelCopula(rotate=180)

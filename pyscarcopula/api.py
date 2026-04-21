@@ -74,13 +74,7 @@ def log_likelihood(copula, data, result: FitResult,
     data : (T, 2) pseudo-observations
     result : FitResult from fit()
     **kwargs
-        Optional arguments:
-          - given : dict[int, float]
-              Fixed pseudo-observation coordinates, e.g. {0: 0.4}.
-          - horizon : {'current', 'next'}
-              For SCAR-TM, whether to use p(x_T | data) or
-              p(x_{T+1} | data). Ignored by MLE and currently identical
-              for GAS.
+        Forwarded to the strategy constructor when applicable.
 
     Returns
     -------
@@ -167,36 +161,72 @@ def sample(copula, data, result: FitResult, n: int,
 
     Returns
     -------
-    (n, 2) pseudo-observations
+    (n, d) pseudo-observations
     """
+    if _is_vine_copula(copula):
+        return copula.sample(n, u_train=data, **kwargs)
+
     u = np.asarray(data, dtype=np.float64)
     strategy = get_strategy(result.method, config=config, **kwargs)
     return strategy.sample(copula, u, result, n, **kwargs)
 
 
 def predict(copula, data, result: FitResult, n: int,
-            config: NumericalConfig | None = None, **kwargs) -> np.ndarray:
-    """Sample n observations for next-step prediction.
+            config: NumericalConfig | None = None, given=None,
+            horizon='next', **kwargs) -> np.ndarray:
+    """Sample n observations from the predictive copula distribution.
 
-    Conditional on data u_{1:T}, generate n i.i.d. samples from
-    the predictive copula distribution at T+1:
+    For edge models, the predictive parameter semantics are:
       MLE:     r = theta_mle (constant)
       SCAR-TM: mixture sampling from p(x_T | data) or p(x_{T+1} | data)
-      GAS:     r = Psi(f_T), last filtered value
+      GAS:     point estimate Psi(f_T) or Psi(f_{T+1})
 
-    Used for risk metrics (VaR/CVaR).
+    ``given`` is a vine-level conditional sampling argument. It is
+    forwarded to CVineCopula/RVineCopula and ignored for bivariate copulas.
 
     Parameters
     ----------
     copula : CopulaProtocol
-    data : (T, 2) pseudo-observations (conditioning data)
+    data : pseudo-observations used as conditioning data
     result : FitResult from fit()
+        Ignored for vine copulas, which hold fitted edge state internally.
+    given : dict[int, float] or None
+        For vine copulas only, fixed pseudo-observation coordinates.
+        Ignored for bivariate copulas.
+    horizon : {'current', 'next'}
+        Predictive state timing for GAS and SCAR-TM.
     n : int — number of samples
 
     Returns
     -------
-    (n, 2) pseudo-observations
+    (n, d) pseudo-observations
     """
+    vine_kind = _vine_kind(copula)
+    if vine_kind == 'cvine':
+        return copula.predict(
+            n, u=data, given=given, horizon=horizon, **kwargs)
+    if vine_kind == 'rvine':
+        return copula.predict(
+            n, u_train=data, given=given, horizon=horizon, **kwargs)
+
     u = np.asarray(data, dtype=np.float64)
     strategy = get_strategy(result.method, config=config, **kwargs)
-    return strategy.predict(copula, u, result, n, **kwargs)
+    return strategy.predict(copula, u, result, n, horizon=horizon, **kwargs)
+
+
+def _is_vine_copula(obj) -> bool:
+    return _vine_kind(obj) is not None
+
+
+def _vine_kind(obj):
+    try:
+        from pyscarcopula.vine.cvine import CVineCopula
+        from pyscarcopula.vine.rvine import RVineCopula
+    except ImportError:
+        return None
+
+    if isinstance(obj, CVineCopula):
+        return 'cvine'
+    if isinstance(obj, RVineCopula):
+        return 'rvine'
+    return None

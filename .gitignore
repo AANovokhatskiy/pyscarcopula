@@ -6,5 +6,7 @@ __pycache__/
 pytest-cache-files-*/
 *.egg-info/
 site/
+tools/
+benchmarks/
 scripts/
 AGENTS.md

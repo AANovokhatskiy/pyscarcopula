@@ -381,7 +381,9 @@ class BivariateCopula:
         """Sample n observations for next-step prediction.
 
         Delegates to api.predict() which dispatches to the correct
-        strategy (MLE/SCAR-TM/GAS/SCAR-MC).
+        strategy (MLE/SCAR-TM/GAS/SCAR-MC). For bivariate copulas,
+        ``given`` is accepted for API compatibility with vines but is
+        ignored.
 
         Parameters
         ----------
@@ -390,9 +392,10 @@ class BivariateCopula:
             If None, uses data from last fit() call.
         rng : np.random.Generator or None
         given : dict[int, float] or None
-            Fixed pseudo-observation coordinates for conditional generation.
+            Ignored for bivariate copulas. Conditional ``given`` sampling is
+            supported by vine copulas through the top-level API.
         horizon : {'current', 'next'}
-            Predictive state timing for SCAR-TM.
+            Predictive state timing for GAS and SCAR-TM.
 
         Returns
         -------
