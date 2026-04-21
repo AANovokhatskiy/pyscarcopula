@@ -322,20 +322,13 @@ def rvine_rosenblatt_transform(vine, u, K=300, grid_range=5.0):
     """
     Rosenblatt transform for a fitted R-vine copula.
 
-    Uses the same pseudo-observation dictionary semantics as
-    RVineCopula.fit() / RVineCopula.log_likelihood() and mirrors
-    the sampling recursion above.
-
-    For each matrix column s:
-      - start from raw u[:, M[s,s]]
-      - apply h-transforms shallowest -> deepest
-      - the deepest transform is the Rosenblatt component
-
-    This avoids the broken v_direct / v_indirect bookkeeping.
+    Mirrors ``RVineCopula.sample`` for the natural-order matrix:
+    columns are traversed right-to-left, and each anti-diagonal leaf is
+    transformed by h-functions from tree 0 up to the column's top tree.
     """
-    from pyscarcopula.vine.rvine import _build_matrix_edge_map
+    from pyscarcopula.vine._rvine_edges import _edge_h
 
-    if vine.edges is None:
+    if getattr(vine, 'matrix', None) is None:
         raise ValueError("Fit the vine first")
 
     u = np.asarray(u, dtype=np.float64)
@@ -344,8 +337,7 @@ def rvine_rosenblatt_transform(vine, u, K=300, grid_range=5.0):
         raise ValueError(f"u has d={d}, but fitted vine has d={vine.d}")
 
     eps = 1e-10
-    M = vine._structure.matrix
-    edge_map = _build_matrix_edge_map(vine._structure, vine.trees, vine.edges)
+    M = vine.matrix
 
     pseudo = {
         (var, frozenset()): np.clip(u[:, var].copy(), eps, 1.0 - eps)
@@ -354,60 +346,53 @@ def rvine_rosenblatt_transform(vine, u, K=300, grid_range=5.0):
 
     e = np.empty((T, d), dtype=np.float64)
 
-    # Rightmost column: unconditional Rosenblatt component
-    e[:, 0] = pseudo[(M[d - 1, d - 1], frozenset())]
+    last_var = int(M[0, d - 1])
+    e[:, d - 1] = pseudo[(last_var, frozenset())]
 
-    # Remaining columns right-to-left
-    for s in range(d - 2, -1, -1):
-        var = M[s, s]
-        n_levels = d - s - 1
-        cur = pseudo[(var, frozenset())]
+    for col in range(d - 2, -1, -1):
+        leaf = int(M[d - 1 - col, col])
+        top_tree = d - 2 - col
+        cur = pseudo[(leaf, frozenset())]
 
-        for m in range(n_levels):
-            edge_key = edge_map.get((m, s))
-            if edge_key is None:
+        for t in range(top_tree + 1):
+            row = d - 2 - col - t
+            partner = int(M[row, col])
+            conditioning = frozenset(
+                int(M[r, col])
+                for r in range(row + 1, d - 1 - col)
+            )
+            next_leaf_cond = conditioning | {partner}
+            next_partner_cond = conditioning | {leaf}
+
+            edge = vine.pair_copulas[(t, col)]
+            leaf_val = pseudo.get((leaf, conditioning))
+            partner_val = pseudo.get((partner, conditioning))
+            if leaf_val is None:
                 raise RuntimeError(
-                    f"Missing edge_map entry for tree={m}, column={s}"
+                    "Missing leaf pseudo-observation during Rosenblatt: "
+                    f"var={leaf}, cond_set={sorted(conditioning)}, "
+                    f"column={col}, tree={t}"
                 )
-
-            edge = vine.edges[edge_key]
-
-            partner_var = M[s + m + 1, s]
-            cond_set = frozenset(M[s + 1:s + m + 1, s])
-            next_cond = frozenset(M[s + 1:s + m + 2, s])
-
-            partner_val = pseudo.get((partner_var, cond_set))
             if partner_val is None:
                 raise RuntimeError(
                     "Missing partner pseudo-observation during Rosenblatt: "
-                    f"var={partner_var}, cond_set={sorted(cond_set)}, "
-                    f"column={s}, level={m}"
+                    f"var={partner}, cond_set={sorted(conditioning)}, "
+                    f"column={col}, tree={t}"
                 )
 
-            var_at_cond = pseudo.get((var, cond_set), pseudo[(var, frozenset())])
-
-            # _vine_edge_h(edge, u2, u1, u_pair) expects u_pair=(u1,u2)
-            u_pair = np.column_stack((
-                np.clip(partner_val, eps, 1.0 - eps),  # u1
-                np.clip(var_at_cond, eps, 1.0 - eps)   # u2
-            ))
             cur = np.clip(
-                _vine_edge_h(edge, var_at_cond, partner_val, u_pair, K, grid_range),
-                eps, 1.0 - eps
+                _edge_h(edge, leaf_val, partner_val),
+                eps,
+                1.0 - eps,
             )
-            pseudo[(var, next_cond)] = cur
-
-            u_pair_rev = np.column_stack((
-                np.clip(var_at_cond, eps, 1.0 - eps),  # u1
-                np.clip(partner_val, eps, 1.0 - eps)   # u2
-            ))
-            rev = np.clip(
-                _vine_edge_h(edge, partner_val, var_at_cond, u_pair_rev, K, grid_range),
-                eps, 1.0 - eps
+            pseudo[(leaf, next_leaf_cond)] = cur
+            pseudo[(partner, next_partner_cond)] = np.clip(
+                _edge_h(edge, partner_val, leaf_val),
+                eps,
+                1.0 - eps,
             )
-            pseudo[(partner_var, cond_set | {var})] = rev
 
-        e[:, d - 1 - s] = cur
+        e[:, col] = cur
 
     return _clip(e)
 
@@ -434,7 +419,7 @@ def rvine_gof_test(vine, data, to_pobs=True,
     if to_pobs:
         u = compute_pobs(u)
 
-    if vine.edges is None:
+    if getattr(vine, 'matrix', None) is None:
         raise ValueError("Fit the vine first")
 
     e = rvine_rosenblatt_transform(vine, u, K=K, grid_range=grid_range)

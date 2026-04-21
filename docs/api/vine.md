@@ -5,21 +5,17 @@ Both `CVineCopula.predict(...)` and `RVineCopula.predict(...)` support:
 - `given={var_index: u_value}` for conditional generation
 - `horizon='current'|'next'` for SCAR-TM-OU edge mixtures
 
-`RVineCopula.predict(...)` also accepts `quad_order` for arbitrary
-conditional generation. Smaller values are faster but use coarser numerical
-integration for non-prefix `given` sets. When several latent variables must
-be conditioned on future fixed coordinates, RVine prediction uses a joint
-posterior grid; the grid resolution is controlled by `quad_order`.
-Use `conditional_method='auto'` for the default behavior,
-`conditional_method='graph'` to require the no-posterior or flexible graph
-path, `conditional_method='grid'` to require the joint-grid fast path, or
-`conditional_method='exact'` to force recursive quadrature.
+`RVineCopula.predict(...)` supports conditional generation when the fixed
+variables can be placed at the end of the R-vine variable order. This order is
+read from the anti-diagonal of the natural-order matrix. The fixed variables
+must already be last in the fitted matrix, or the same fitted tree structure
+must be rebuildable into an equivalent natural-order matrix where they are
+last. Internally this is the suffix rebuild path. If the `given` set cannot be
+placed last this way, `predict` raises `ValueError`.
 
-`RVineCopula(structure_mode='conditional', conditional_vars={...})` can fit a
-structure for a known future conditioning pattern. Use
-`conditional_plan(given)` to inspect posterior dimension, grid size, and graph
-feasibility before calling `predict`, and `flexible_graph_plan(given)` for
-experimental graph reachability diagnostics.
+The current R-vine API does not include arbitrary conditional posterior
+samplers. `conditional_method`, R-vine `quad_order`, `conditional_plan`, and
+`flexible_graph_plan` are not supported.
 
 ## CVineCopula
 
@@ -41,9 +37,6 @@ experimental graph reachability diagnostics.
         - log_likelihood
         - sample
         - predict
-        - conditional_plan
-        - flexible_graph_plan
-        - is_conditioning_optimized_for
         - summary
 
 ## RVineMatrix

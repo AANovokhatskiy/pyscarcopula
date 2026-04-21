@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyscarcopula"
-version = "0.7.1"
+version = "0.8.0"
 description = "Stochastic copula models with Ornstein-Uhlenbeck latent process"
 readme = "README.md"
 license = "MIT"
