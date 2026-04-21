@@ -2,9 +2,9 @@
 include LICENSE.txt
 include README.md
 include pyproject.toml
-recursive-include data *.csv
 recursive-include tests *.py
+prune data
 
-# Exclude from wheel (data files stay in repo, not in installed package)
+# Exclude generated/cache files
 global-exclude __pycache__
 global-exclude *.pyc
