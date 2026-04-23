@@ -9,8 +9,22 @@ from pyscarcopula.copula.experimental.equicorr import EquicorrGaussianCopula
 from pyscarcopula.api import fit, predict, smoothed_params
 from pyscarcopula.stattests import gof_test
 from pyscarcopula._utils import pobs
-from pyscarcopula._types import MLEResult, LatentResult, GASResult
-from pyscarcopula.numerical.predictive_tm import tm_state_distribution
+from pyscarcopula._types import MLEResult, LatentResult, GASResult, gas_params
+from pyscarcopula.numerical.gas_filter import gas_predict_param
+from pyscarcopula.numerical.predictive_tm import (
+    sample_grid_distribution, tm_state_distribution,
+)
+from pyscarcopula.strategy.gas import GASStrategy
+
+
+class LinearScoreCopula:
+    name = 'linear-score'
+
+    def transform(self, x):
+        return np.asarray(x, dtype=np.float64)
+
+    def log_pdf(self, u1, u2, r):
+        return np.asarray(r) * (np.asarray(u1) + 2.0 * np.asarray(u2))
 
 
 class TestFitResultTypes:
@@ -204,30 +218,54 @@ class TestEquicorrGaussian:
 
 
 class TestConditionalPredict:
-    def test_bivariate_mle_ignores_given(self, random_u2):
+    def test_gumbel_sample_uses_passed_rng(self):
+        cop = GumbelCopula(rotate=180)
+        r = np.full(64, 2.0)
+
+        s1 = cop.sample(64, r, rng=np.random.default_rng(123))
+        s2 = cop.sample(64, r, rng=np.random.default_rng(123))
+        s3 = cop.sample(64, r, rng=np.random.default_rng(124))
+
+        np.testing.assert_allclose(s1, s2)
+        assert not np.allclose(s1, s3)
+
+    def test_sample_grid_distribution_histogram_removes_atoms(self):
+        z_grid = np.array([-1.0, 0.0, 1.0])
+        prob = np.array([0.0, 1.0, 0.0])
+
+        z_grid_samples = sample_grid_distribution(
+            z_grid, prob, 200, np.random.default_rng(1))
+        z_hist_samples = sample_grid_distribution(
+            z_grid, prob, 200, np.random.default_rng(1), mode='histogram')
+
+        np.testing.assert_allclose(z_grid_samples, 0.0)
+        assert np.all(z_hist_samples >= -0.5)
+        assert np.all(z_hist_samples <= 0.5)
+        assert len(np.unique(np.round(z_hist_samples, 12))) > 100
+
+    def test_bivariate_mle_honors_given(self, random_u2):
         cop = GumbelCopula(rotate=180)
         result = fit(cop, random_u2, method='mle')
         samples = predict(cop, random_u2, result, 256, given={0: 0.37})
         assert samples.shape == (256, 2)
         assert np.all((samples > 0) & (samples < 1))
-        assert not np.allclose(samples[:, 0], 0.37)
+        assert np.allclose(samples[:, 0], 0.37)
 
-    def test_bivariate_independent_ignores_given(self, random_u2):
+    def test_bivariate_independent_honors_given(self, random_u2):
         cop = IndependentCopula()
         result = cop.fit(random_u2)
         samples = predict(cop, random_u2, result, 4000, given={0: 0.42})
         assert samples.shape == (4000, 2)
-        assert not np.allclose(samples[:, 0], 0.42)
-        assert abs(np.mean(samples[:, 0]) - 0.5) < 0.03
+        assert np.allclose(samples[:, 0], 0.42)
         assert abs(np.mean(samples[:, 1]) - 0.5) < 0.03
 
-    def test_bivariate_invalid_given_is_ignored(self, random_u2):
+    def test_bivariate_invalid_given_is_rejected(self, random_u2):
         cop = GumbelCopula(rotate=180)
         result = fit(cop, random_u2, method='mle')
-        samples = predict(cop, random_u2, result, 16, given={2: 0.5})
-        assert samples.shape == (16, 2)
-        samples = predict(cop, random_u2, result, 16, given={0: 1.0})
-        assert samples.shape == (16, 2)
+        with pytest.raises(ValueError, match="given key"):
+            predict(cop, random_u2, result, 16, given={2: 0.5})
+        with pytest.raises(ValueError, match="pseudo-observation"):
+            predict(cop, random_u2, result, 16, given={0: 1.0})
 
     def test_scar_tm_current_and_next_state_distributions_differ(self, random_u2):
         cop = GumbelCopula(rotate=180)
@@ -242,3 +280,37 @@ class TestConditionalPredict:
         np.testing.assert_allclose(z_cur, z_next)
         assert prob_cur.shape == prob_next.shape
         assert np.max(np.abs(prob_cur - prob_next)) > 1e-8
+
+    def test_gas_predict_uses_final_observation_score(self, monkeypatch):
+        cop = LinearScoreCopula()
+        u = np.array([[0.2, 0.1], [0.3, 0.4]])
+        omega, alpha, beta = 0.1, 0.5, 0.2
+        result = GASResult(
+            log_likelihood=0.0,
+            method='GAS',
+            copula_name=cop.name,
+            success=True,
+            nfev=1,
+            message='ok',
+            params=gas_params(omega, alpha, beta),
+            scaling='unit',
+        )
+
+        f0 = omega / (1.0 - beta)
+        f1 = omega + beta * f0 + alpha * (u[0, 0] + 2.0 * u[0, 1])
+        expected_next = omega + beta * f1 + alpha * (u[1, 0] + 2.0 * u[1, 1])
+
+        captured = {}
+
+        def fake_conditional_sample(copula, n, r_values, given=None, rng=None):
+            captured['r'] = r_values.copy()
+            return np.zeros((n, 2))
+
+        monkeypatch.setattr(
+            'pyscarcopula.strategy.gas.conditional_sample_bivariate',
+            fake_conditional_sample)
+
+        GASStrategy().predict(cop, u, result, 4, horizon='next')
+        np.testing.assert_allclose(captured['r'], expected_next)
+        assert gas_predict_param(
+            omega, alpha, beta, u, cop, horizon='current') == pytest.approx(f1)

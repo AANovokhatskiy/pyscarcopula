@@ -285,9 +285,13 @@ class ClaytonCopula(BivariateCopula):
     def psi(t, r):
         return (1.0 + t * r) ** (-1.0 / r)
 
-    def V(self, n, r):
+    def V(self, n, r, rng=None):
+        if rng is None:
+            rng = np.random.default_rng()
         _r = np.atleast_1d(np.asarray(r, dtype=np.float64))
-        return np.random.gamma(1.0 / _r, scale=_r, size=n)
+        if _r.size == 1:
+            _r = np.full(n, _r[0])
+        return rng.gamma(1.0 / _r, scale=_r)
 
     def h_unrotated(self, u, v, r):
         return _clayton_h(*_broadcast(u, v, r))

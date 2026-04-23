@@ -102,6 +102,29 @@ def _generate_levy_stable(alpha, beta, loc = 0, scale = 1, size = 1):
         
     return Y
 
+
+@njit(cache=True)
+def _generate_levy_stable_from_uniforms(alpha, beta, loc, scale, V, u):
+    W = -np.log(1 - u)
+
+    indicator0 = (alpha != 1)
+    indicator1 = np.invert(indicator0)
+
+    B = np.arctan(beta * np.tan(np.pi/2 * alpha)) / alpha
+    S = (1 + beta**2 * np.tan(np.pi/2 * alpha)**2)**(1 / (2 * alpha))
+
+    X0 = S * np.sin(alpha * (V + B)) / np.cos(V)**(1/alpha) * (np.cos(V - alpha * (V + B)) / W)**((1 - alpha) / alpha)
+    X1 = 2 / np.pi * ((np.pi/2 + beta * V) * np.tan(V) - beta * np.log(np.pi/2 * W * np.cos(V) / (np.pi / 2 + beta * V)))
+
+    X = X0 * indicator0 + X1 * indicator1
+
+    Y0 = scale * X + loc
+    Y1 = scale * X + 2 / np.pi * beta * scale * np.log(scale) + loc
+
+    Y = Y0 * indicator0 + Y1 * indicator1
+        
+    return Y
+
 @njit(cache=True)
 def _gumbel_transform(x):
     return x * np.tanh(x) + 1.0001
@@ -320,9 +343,18 @@ class GumbelCopula(BivariateCopula):
     def psi(t, r):
         return np.exp(-t ** (1.0 / r))
 
-    def V(self, n, r):
-        res = _generate_levy_stable(alpha = 1/r, beta = 1, loc = 0,
-                                    scale = np.cos(np.pi / (2 * r))**r, size = n)
+    def V(self, n, r, rng=None):
+        if rng is None:
+            rng = np.random.default_rng()
+        _r = np.atleast_1d(np.asarray(r, dtype=np.float64))
+        if _r.size == 1:
+            _r = np.full(n, _r[0])
+        uniforms_v = rng.uniform(-np.pi / 2.0, np.pi / 2.0, size=n)
+        uniforms_u = rng.uniform(0.0, 1.0, size=n)
+        alpha = 1.0 / _r
+        scale = np.cos(np.pi / (2.0 * _r)) ** _r
+        res = _generate_levy_stable_from_uniforms(
+            alpha, 1.0, 0.0, scale, uniforms_v, uniforms_u)
         return np.maximum(res, 1e-300)
     
     def h_unrotated(self, u, v, r):

@@ -124,6 +124,10 @@ class MLEStrategy:
 
     def predict(self, copula, u, result, n, rng=None, **kwargs):
         """Predict = sample for MLE (constant parameter)."""
-        r = np.full(n, result.copula_param)
+        r = self.predictive_params(copula, u, result, n, rng=rng, **kwargs)
         return conditional_sample_bivariate(
             copula, n, r, given=kwargs.get('given'), rng=rng)
+
+    def predictive_params(self, copula, u, result, n, rng=None, **kwargs):
+        """Constant predictive parameter for MLE."""
+        return np.full(n, result.copula_param)

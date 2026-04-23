@@ -20,8 +20,10 @@ from pyscarcopula.numerical.tm_functions import (
 )
 from pyscarcopula.numerical.tm_gradient import tm_loglik_with_grad
 from pyscarcopula.numerical.ou_kernels import calculate_dwt
+from pyscarcopula.numerical.predictive_tm import sample_grid_distribution
 from pyscarcopula.numerical.gas_filter import (
-    gas_filter, gas_negloglik, gas_rosenblatt, gas_mixture_h,
+    gas_filter, gas_predict_param, gas_negloglik, gas_rosenblatt,
+    gas_mixture_h,
 )
 
 __all__ = [
@@ -29,6 +31,7 @@ __all__ = [
     'tm_loglik', 'tm_loglik_with_grad',
     'tm_forward_smoothed', 'tm_forward_rosenblatt',
     'tm_forward_mixture_h', 'tm_xT_distribution',
-    'calculate_dwt',
-    'gas_filter', 'gas_negloglik', 'gas_rosenblatt', 'gas_mixture_h',
+    'calculate_dwt', 'sample_grid_distribution',
+    'gas_filter', 'gas_predict_param', 'gas_negloglik', 'gas_rosenblatt',
+    'gas_mixture_h',
 ]

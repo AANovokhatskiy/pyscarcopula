@@ -21,7 +21,7 @@ def generate_r_for_sample(edge, n, rng):
 
     MLE: constant r.
     SCAR: OU trajectory with dt = 1/(n-1).
-    GAS: unconditional mean f_bar.
+    GAS: unsupported here; use vine stepwise GAS sampling.
     """
     from pyscarcopula.copula.independent import IndependentCopula
     from pyscarcopula._types import LatentResult, MLEResult, GASResult
@@ -47,20 +47,17 @@ def generate_r_for_sample(edge, n, rng):
         return edge.copula.transform(x_path)
 
     if isinstance(edge.fit_result, GASResult):
-        p = edge.fit_result.params
-        omega, _, beta = p.omega, p.alpha, p.beta
-        if abs(beta) < 1.0 - 1e-8:
-            f_bar = omega / (1.0 - beta)
-        else:
-            f_bar = omega
-        r_bar = edge.copula.transform(np.array([f_bar]))[0]
-        return np.full(n, r_bar)
+        raise ValueError(
+            "GAS sample paths require stepwise score updates and cannot be "
+            "precomputed by generate_r_for_sample"
+        )
 
     return edge.get_r_predict(n)
 
 
 def generate_r_for_predict(edge, n, v_train_pair, K, grid_range, horizon='next',
-                           state_cache=None, cache_key=None):
+                           state_cache=None, cache_key=None, rng=None,
+                           **kwargs):
     """Generate r for predict (next-step conditional).
 
     MLE: constant r.
@@ -76,49 +73,28 @@ def generate_r_for_predict(edge, n, v_train_pair, K, grid_range, horizon='next',
     grid_range : float
     """
     from pyscarcopula.copula.independent import IndependentCopula
-    from pyscarcopula._types import LatentResult, MLEResult, GASResult
+    from pyscarcopula._types import IndependentResult
 
     if isinstance(edge.copula, IndependentCopula):
         return np.zeros(n)
 
-    if isinstance(edge.fit_result, MLEResult):
-        return np.full(n, edge.fit_result.copula_param)
+    if isinstance(edge.fit_result, IndependentResult):
+        return np.zeros(n)
 
-    if isinstance(edge.fit_result, LatentResult):
-        if v_train_pair is not None:
-            cached = None
-            if state_cache is not None and cache_key is not None:
-                cached = state_cache.get(cache_key)
-            if cached is None:
-                alpha = _get_alpha(edge.fit_result)
-                theta, mu, nu = alpha
-                from pyscarcopula.numerical.predictive_tm import tm_state_distribution
-                cached = tm_state_distribution(
-                    theta, mu, nu, v_train_pair, edge.copula, K, grid_range,
-                    horizon=horizon)
-                if state_cache is not None and cache_key is not None:
-                    state_cache[cache_key] = cached
-            z_grid, prob = cached
-            idx = np.random.choice(len(z_grid), size=n, p=prob)
-            return edge.copula.transform(z_grid[idx])
-        else:
-            return edge.get_r_predict(n)
-
-    if isinstance(edge.fit_result, GASResult):
-        r_last = getattr(edge.fit_result, 'r_last', None)
-        if r_last is not None and r_last != 0.0:
-            return np.full(n, r_last)
-        if v_train_pair is not None:
-            from pyscarcopula.numerical.gas_filter import gas_filter
-            p = edge.fit_result.params
-            scaling = getattr(edge.fit_result, 'scaling', 'unit')
-            _, r_path, _ = gas_filter(
-                p.omega, p.alpha, p.beta,
-                v_train_pair, edge.copula, scaling)
-            return np.full(n, r_path[-1])
-        else:
-            p = edge.fit_result.params
-            f_bar = p.omega / (1.0 - p.beta) if abs(p.beta) < 0.999 else p.omega
-            return np.full(n, edge.copula.transform(np.array([f_bar]))[0])
+    if edge.fit_result is not None:
+        from pyscarcopula.strategy._base import get_strategy_for_result
+        strategy = get_strategy_for_result(
+            edge.fit_result, K=K, grid_range=grid_range)
+        return strategy.predictive_params(
+            edge.copula,
+            v_train_pair,
+            edge.fit_result,
+            n,
+            horizon=horizon,
+            state_cache=state_cache,
+            cache_key=cache_key,
+            rng=rng,
+            predictive_r_mode=kwargs.get('predictive_r_mode'),
+        )
 
     return edge.get_r_predict(n)

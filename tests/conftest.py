@@ -50,6 +50,27 @@ _DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
 _HAS_DATA = os.path.isfile(os.path.join(_DATA_DIR, "crypto_prices.csv"))
 
 
+def pytest_addoption(parser):
+    parser.addoption(
+        "--run-validation",
+        action="store_true",
+        default=False,
+        help="run optional validation tests marked with @pytest.mark.validation",
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    if config.getoption("--run-validation"):
+        return
+
+    skip_validation = pytest.mark.skip(
+        reason="need --run-validation option to run"
+    )
+    for item in items:
+        if "validation" in item.keywords:
+            item.add_marker(skip_validation)
+
+
 @pytest.fixture(scope="session")
 def crypto_data():
     """Load crypto dataset, return pseudo-obs (T, 2)."""

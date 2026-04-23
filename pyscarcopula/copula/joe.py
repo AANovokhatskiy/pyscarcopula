@@ -177,6 +177,26 @@ def _joe_V(n, r):
 
 
 @njit(cache=True)
+def _joe_V_from_uniforms(n, r, uniforms):
+    """Sample V for Joe copula from fixed uniforms."""
+    out = np.empty(n)
+
+    for k in range(n):
+        u = uniforms[k]
+        i = 1
+        p0 = 1.0 / r[k]
+        p = p0
+        F = p
+        while u > F:
+            mult = (-1.0) * (p0 - float(i + 1) + 1.0) / float(i + 1)
+            p = mult * p
+            F = F + p
+            i += 1
+        out[k] = float(i)
+    return out
+
+
+@njit(cache=True)
 def _joe_transform(x):
     return x * np.tanh(x) + 1.0001
 
@@ -371,15 +391,19 @@ class JoeCopula(BivariateCopula):
     def psi(t, r):
         return 1.0 - (1.0 - np.exp(-t)) ** (1.0 / r)
 
-    def V(self, n, r):
+    def V(self, n, r, rng=None):
+        if rng is None:
+            rng = np.random.default_rng()
         _r_input = np.asarray(r, dtype=np.float64)
 
         if _r_input.ndim == 0:
             _r = np.full(n, _r_input.item())
         else:
             _r = _r_input
-        
-        return _joe_V(n, _r)
+            if _r.size == 1:
+                _r = np.full(n, _r[0])
+        uniforms = rng.uniform(0.0, 1.0, size=n)
+        return _joe_V_from_uniforms(n, _r, uniforms)
 
     def h_unrotated(self, u, v, r):
         return _joe_h(*_broadcast(u, v, r))

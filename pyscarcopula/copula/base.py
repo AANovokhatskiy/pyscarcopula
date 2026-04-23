@@ -155,7 +155,7 @@ class BivariateCopula:
         """Inverse generator (Laplace-Stieltjes)."""
         return np.exp(-t)
 
-    def V(self, n, r):
+    def V(self, n, r, rng=None):
         """Sample from F = LS^{-1}(psi). Override per copula."""
         return np.ones(n)
 
@@ -173,7 +173,7 @@ class BivariateCopula:
             _r = np.full(n, _r[0])
 
         x = rng.uniform(0, 1, size=(n, 2))
-        V_data = np.clip(self.V(n, _r), 1e-50, None)
+        V_data = np.clip(self.V(n, _r, rng=rng), 1e-50, None)
 
         u = np.empty((n, 2))
         u[:, 0] = self.psi(-np.log(x[:, 0]) / V_data, _r)
@@ -377,7 +377,8 @@ class BivariateCopula:
         self._last_u = u  # store for predict
         return result
 
-    def predict(self, n, u=None, rng=None, given=None, horizon='next'):
+    def predict(self, n, u=None, rng=None, given=None, horizon='next',
+                predictive_r_mode=None):
         """Sample n observations for next-step prediction.
 
         Delegates to api.predict() which dispatches to the correct
@@ -396,6 +397,8 @@ class BivariateCopula:
             supported by vine copulas through the top-level API.
         horizon : {'current', 'next'}
             Predictive state timing for GAS and SCAR-TM.
+        predictive_r_mode : {'grid', 'histogram'} or None
+            SCAR-TM predictive parameter sampling mode.
 
         Returns
         -------
@@ -413,7 +416,8 @@ class BivariateCopula:
                 "Either call fit() first or pass u= explicitly.")
         return _api_predict(
             self, u_data, self.fit_result, n,
-            rng=rng, given=given, horizon=horizon)
+            rng=rng, given=given, horizon=horizon,
+            predictive_r_mode=predictive_r_mode)
 
     def sample_model(self, n, u=None, rng=None):
         """Generate n observations reproducing the fitted model.

@@ -14,7 +14,8 @@ from pyscarcopula._types import (
 )
 from pyscarcopula.strategy._base import register_strategy
 from pyscarcopula.numerical.gas_filter import (
-    gas_filter, gas_negloglik, gas_rosenblatt, gas_mixture_h,
+    gas_filter, gas_predict_param, gas_negloglik, gas_rosenblatt,
+    gas_mixture_h,
 )
 from pyscarcopula.strategy.predict_helpers import conditional_sample_bivariate
 
@@ -96,11 +97,10 @@ class GASStrategy:
             beta=result.x[2],
         )
 
-        # Compute last filtered value for predict (avoids re-running filter)
-        _, r_path, _ = gas_filter(
+        # Compute one-step-ahead value for predict (uses the final score).
+        r_last = gas_predict_param(
             result.x[0], result.x[1], result.x[2], u, copula,
             self.scaling, score_eps)
-        r_last = float(r_path[-1]) if len(r_path) > 0 else 0.0
 
         return GASResult(
             log_likelihood=-result.fun,
@@ -225,8 +225,19 @@ class GASStrategy:
         if rng is None:
             rng = np.random.default_rng()
 
-        r_path = self.smoothed_params(copula, u, result)
-        r_T = float(r_path[-1])
+        r = self.predictive_params(copula, u, result, n, rng=rng, **kwargs)
         return conditional_sample_bivariate(
-            copula, n, np.full(n, r_T),
+            copula, n, r,
             given=kwargs.get('given'), rng=rng)
+
+    def predictive_params(self, copula, u, result, n, rng=None, **kwargs):
+        """Deterministic GAS predictive parameter path."""
+        if u is None or len(u) == 0:
+            return np.full(n, float(result.r_last))
+
+        horizon = kwargs.get('horizon', 'next')
+        p = result.params
+        r_T = gas_predict_param(
+            p.omega, p.alpha, p.beta, u, copula,
+            result.scaling, self.config.gas_score_eps, horizon=horizon)
+        return np.full(n, r_T)

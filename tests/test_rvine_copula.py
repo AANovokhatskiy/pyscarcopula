@@ -409,6 +409,20 @@ class TestRVineEdgePropagation:
         r = _edge_r_for_sample(edge, 5, np.random.default_rng(0))
         assert r == pytest.approx(np.full(5, 0.25))
 
+    def test_gas_r_for_sample_requires_stepwise_updates(self):
+        cop = BivariateGaussianCopula()
+        result = GASResult(
+            log_likelihood=0.0,
+            method='GAS',
+            copula_name=cop.name,
+            success=True,
+            params=gas_params(0.1, 0.2, 0.3),
+        )
+        edge = PairCopula(cop, 0.0, 0.0, 0, 0.0, result)
+
+        with pytest.raises(ValueError, match="stepwise score updates"):
+            _edge_r_for_sample(edge, 5, np.random.default_rng(0))
+
     @pytest.mark.parametrize(
         "copula_class,param,rotations",
         [

@@ -25,7 +25,6 @@ from pyscarcopula.numerical.tm_functions import (
     tm_forward_rosenblatt, tm_forward_mixture_h,
 )
 from pyscarcopula.numerical.tm_gradient import tm_loglik_with_grad
-from pyscarcopula.numerical.predictive_tm import tm_state_distribution
 from pyscarcopula.strategy.predict_helpers import conditional_sample_bivariate
 
 
@@ -305,14 +304,47 @@ class SCARTMStrategy:
         if rng is None:
             rng = np.random.default_rng()
 
-        p = result.params
-        z_grid, prob = tm_state_distribution(
-            p.theta, p.mu, p.nu, u, copula,
-            self.K, self.grid_range, self.grid_method,
-            self.adaptive, self.pts_per_sigma,
-            horizon=kwargs.get('horizon', 'next'))
-
-        idx = rng.choice(len(z_grid), size=n, p=prob)
-        r_samples = copula.transform(z_grid[idx])
+        r_samples = self.predictive_params(
+            copula, u, result, n, rng=rng, **kwargs)
         return conditional_sample_bivariate(
             copula, n, r_samples, given=kwargs.get('given'), rng=rng)
+
+    def predictive_params(self, copula, u, result, n, rng=None, **kwargs):
+        """Sample predictive copula parameters for SCAR-TM."""
+        if rng is None:
+            rng = np.random.default_rng()
+
+        p = result.params
+        if u is None:
+            sigma2 = p.nu ** 2 / (2.0 * p.theta)
+            x_t = rng.normal(p.mu, np.sqrt(sigma2), n)
+            return copula.transform(x_t)
+
+        state_cache = kwargs.get('state_cache')
+        cache_key = kwargs.get('cache_key')
+        cached = None
+        if state_cache is not None and cache_key is not None:
+            cached = state_cache.get(cache_key)
+
+        if cached is None:
+            from pyscarcopula.numerical import predictive_tm
+            cached = predictive_tm.tm_state_distribution(
+                p.theta, p.mu, p.nu, u, copula,
+                K=self.K,
+                grid_range=self.grid_range,
+                grid_method=self.grid_method,
+                adaptive=self.adaptive,
+                pts_per_sigma=self.pts_per_sigma,
+                horizon=kwargs.get('horizon', 'next'))
+            if state_cache is not None and cache_key is not None:
+                state_cache[cache_key] = cached
+
+        z_grid, prob = cached
+        from pyscarcopula.numerical.predictive_tm import sample_grid_distribution
+        mode = kwargs.get('predictive_r_mode')
+        if mode is None:
+            z_samples = sample_grid_distribution(z_grid, prob, n, rng)
+        else:
+            z_samples = sample_grid_distribution(
+                z_grid, prob, n, rng, mode=mode)
+        return copula.transform(z_samples)

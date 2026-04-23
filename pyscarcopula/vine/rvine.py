@@ -926,7 +926,8 @@ class RVineCopula:
         return pseudo_obs
 
     def _predict_r_for_edges(self, edge_keys, pair_copulas, edge_map, n,
-                             train_pseudo, horizon, rng):
+                             train_pseudo, horizon, rng,
+                             predictive_r_mode=None):
         edge_horizon = 1 if horizon == 'next' else horizon
         r_all = {}
         for key in edge_keys:
@@ -941,11 +942,12 @@ class RVineCopula:
                 u_train_pair=u_pair,
                 horizon=edge_horizon,
                 rng=rng,
+                predictive_r_mode=predictive_r_mode,
             )
         return r_all
 
     def predict(self, n, u_train=None, horizon='next', rng=None, given=None,
-                u=None):
+                u=None, predictive_r_mode=None):
         """Predictive sampling from fitted edge states.
 
         ``given`` fixes variables in pseudo-observation space. Conditional
@@ -1014,6 +1016,7 @@ class RVineCopula:
                 train_pseudo,
                 horizon,
                 rng,
+                predictive_r_mode=predictive_r_mode,
             )
             return self._sample_suffix_given_with_r(
                 n,
@@ -1032,5 +1035,6 @@ class RVineCopula:
             train_pseudo,
             horizon,
             rng,
+            predictive_r_mode=predictive_r_mode,
         )
         return self._sample_with_r(n, r_all, rng)

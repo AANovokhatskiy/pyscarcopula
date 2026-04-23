@@ -374,9 +374,9 @@ class GaussianCopula:
         x = rng.multivariate_normal(np.zeros(d), self.corr, size=n)
         return norm.cdf(x)
 
-    def predict(self, n):
+    def predict(self, n, rng=None):
         """Alias for sample (no latent dynamics)."""
-        return self.sample(n)
+        return self.sample(n, rng=rng)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -500,11 +500,13 @@ class StudentCopula:
         """Sample from fitted Student-t copula."""
         if self.shape is None:
             raise ValueError("Fit first")
+        if rng is None:
+            rng = np.random.default_rng()
 
         d = self.shape.shape[0]
         x = multivariate_t.rvs(loc=np.zeros(d), shape=self.shape,
-                                df=self.df, size=n)
+                                df=self.df, size=n, random_state=rng)
         return t_dist.cdf(x, df=self.df)
 
-    def predict(self, n):
-        return self.sample(n)
+    def predict(self, n, rng=None):
+        return self.sample(n, rng=rng)
