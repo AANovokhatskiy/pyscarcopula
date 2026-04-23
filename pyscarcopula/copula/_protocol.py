@@ -119,7 +119,7 @@ class CopulaProtocol(Protocol):
         """Inverse generator (Laplace-Stieltjes transform)."""
         ...
 
-    def V(self, n: int, r: np.ndarray) -> np.ndarray:
+    def V(self, n: int, r: np.ndarray, rng=None) -> np.ndarray:
         """Sample from F = LS^{-1}(psi). For Marshall-Olkin."""
         ...
 

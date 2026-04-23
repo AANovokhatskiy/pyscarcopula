@@ -164,6 +164,15 @@ class FitStrategy(Protocol):
         """
         ...
 
+    def predictive_params(self, copula, u: np.ndarray | None,
+                          result: FitResult, n: int, **kwargs) -> np.ndarray:
+        """Generate copula parameter values for predictive sampling.
+
+        This is the vine-facing counterpart of ``predict``: it returns the
+        predictive copula parameters rather than drawing observations.
+        """
+        ...
+
 
 # ══════════════════════════════════════════════════════════════════
 # Strategy registry — the one and only place with method dispatch
@@ -226,6 +235,19 @@ def get_strategy(method: str, config: NumericalConfig | None = None,
     cls = _REGISTRY[m]
     cfg = config or DEFAULT_CONFIG
     return cls(config=cfg, **kwargs)
+
+
+def get_strategy_for_result(result: FitResult,
+                            config: NumericalConfig | None = None,
+                            **kwargs) -> FitStrategy:
+    """Instantiate the strategy matching an existing FitResult."""
+    result_kwargs = {}
+    for name in ('K', 'grid_range', 'pts_per_sigma', 'scaling'):
+        value = getattr(result, name, None)
+        if value is not None:
+            result_kwargs[name] = value
+    result_kwargs.update(kwargs)
+    return get_strategy(result.method, config=config, **result_kwargs)
 
 
 def _import_all_strategies():

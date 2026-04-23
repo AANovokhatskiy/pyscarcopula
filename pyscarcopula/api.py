@@ -181,8 +181,9 @@ def predict(copula, data, result: FitResult, n: int,
       SCAR-TM: mixture sampling from p(x_T | data) or p(x_{T+1} | data)
       GAS:     point estimate Psi(f_T) or Psi(f_{T+1})
 
-    ``given`` is a vine-level conditional sampling argument. It is
-    forwarded to CVineCopula/RVineCopula and ignored for bivariate copulas.
+    ``given`` is a conditional sampling argument in pseudo-observation
+    space. For bivariate copulas it may fix coordinate 0 or 1; for vines it
+    fixes vine-level coordinates.
 
     Parameters
     ----------
@@ -191,8 +192,7 @@ def predict(copula, data, result: FitResult, n: int,
     result : FitResult from fit()
         Ignored for vine copulas, which hold fitted edge state internally.
     given : dict[int, float] or None
-        For vine copulas only, fixed pseudo-observation coordinates.
-        Ignored for bivariate copulas.
+        Fixed pseudo-observation coordinates.
     horizon : {'current', 'next'}
         Predictive state timing for GAS and SCAR-TM.
     n : int — number of samples
@@ -211,7 +211,8 @@ def predict(copula, data, result: FitResult, n: int,
 
     u = np.asarray(data, dtype=np.float64)
     strategy = get_strategy(result.method, config=config, **kwargs)
-    return strategy.predict(copula, u, result, n, horizon=horizon, **kwargs)
+    return strategy.predict(
+        copula, u, result, n, given=given, horizon=horizon, **kwargs)
 
 
 def _is_vine_copula(obj) -> bool:

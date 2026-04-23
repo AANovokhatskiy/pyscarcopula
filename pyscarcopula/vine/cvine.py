@@ -241,13 +241,14 @@ class CVineCopula:
 
     # ── Sampling ─────────────────────────────────────────────────
 
-    def sample(self, n, u_train=None, K=300, grid_range=5.0):
+    def sample(self, n, u_train=None, K=300, grid_range=5.0, rng=None):
         """Sample from fitted C-vine using Rosenblatt inverse."""
         if self.edges is None:
             raise ValueError("Fit first")
 
         d = self.d
-        rng = np.random.default_rng()
+        if rng is None:
+            rng = np.random.default_rng()
 
         from pyscarcopula._types import GASResult
 
@@ -437,17 +438,18 @@ class CVineCopula:
 
     def sample_model(self, n, u=None, rng=None):
         """Alias for sample."""
-        return self.sample(n)
+        return self.sample(n, rng=rng)
 
     # ── Prediction ───────────────────────────────────────────────
 
     def predict(self, n, u=None, K=300, grid_range=5.0,
-                given=None, horizon='next'):
+                given=None, horizon='next', rng=None,
+                predictive_r_mode=None):
         """Conditional predict: sample from vine for next-step.
 
         `given` fixes selected variables in pseudo-observation space,
-        e.g. ``given={2: 0.6}``. For SCAR-TM-OU edges, `horizon`
-        selects between p(x_T | data) and p(x_{T+1} | data).
+        e.g. ``given={2: 0.6}``. For GAS and SCAR-TM-OU edges, `horizon`
+        selects the predictive state timing.
         """
         if self.edges is None:
             raise ValueError("Fit first")
@@ -456,7 +458,8 @@ class CVineCopula:
         given = validate_cvine_given(given, self.d)
 
         d = self.d
-        rng = np.random.default_rng()
+        if rng is None:
+            rng = np.random.default_rng()
 
         if len(given) == d:
             out = np.empty((n, d), dtype=np.float64)
@@ -464,11 +467,11 @@ class CVineCopula:
                 out[:, i] = given[i]
             return out
 
-        # Build v_train if needed for SCAR edges
+        # Build v_train if needed for dynamic predictive edge states.
         v_train = None
-        from pyscarcopula._types import LatentResult
+        from pyscarcopula._types import GASResult, LatentResult
         needs_v_train = any(
-            isinstance(self.edges[j][i].fit_result, LatentResult)
+            isinstance(self.edges[j][i].fit_result, (GASResult, LatentResult))
             for j in range(d - 1)
             for i in range(d - j - 1))
 
@@ -497,7 +500,8 @@ class CVineCopula:
                     u2 = _clip_unit(v_train[j][i + 1])
                     v_pair = np.column_stack((u1, u2))
                 r_pred[j][i] = generate_r_for_predict(
-                    edge, n, v_pair, K, grid_range, horizon=horizon)
+                    edge, n, v_pair, K, grid_range, horizon=horizon,
+                    rng=rng, predictive_r_mode=predictive_r_mode)
 
         if given:
             ensure_cvine_conditional_supported(self)

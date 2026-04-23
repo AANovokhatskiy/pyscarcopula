@@ -72,6 +72,15 @@ class _SCARMCBase:
             alpha0 = np.array([1.0, mu0, 1.0])
         return alpha0
 
+    def predictive_params(self, copula, u, result, n, rng=None, **kwargs):
+        """Stationary OU predictive parameters for MC SCAR variants."""
+        if rng is None:
+            rng = np.random.default_rng()
+        p = result.params
+        sigma = p.nu / np.sqrt(2.0 * p.theta)
+        x_t = rng.normal(p.mu, sigma, n)
+        return copula.transform(x_t)
+
 
 @register_strategy('SCAR-P-OU')
 class SCARPStrategy(_SCARMCBase):
@@ -268,8 +277,5 @@ class SCARMStrategy(_SCARMCBase):
         """Predict: sample from stationary OU (no grid posterior available)."""
         if rng is None:
             rng = np.random.default_rng()
-        p = result.params
-        sigma = p.nu / np.sqrt(2.0 * p.theta)
-        x_T = rng.normal(p.mu, sigma, n)
-        r = copula.transform(x_T)
+        r = self.predictive_params(copula, u, result, n, rng=rng, **kwargs)
         return copula.sample(n, r, rng=rng)

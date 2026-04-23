@@ -99,19 +99,16 @@ def _edge_r_for_sample(edge, n, rng=None):
         return edge.copula.transform(x_path)
 
     if isinstance(result, GASResult):
-        p = result.params
-        if abs(p.beta) < 1.0 - 1e-8:
-            f_bar = p.omega / (1.0 - p.beta)
-        else:
-            f_bar = p.omega
-        r_bar = edge.copula.transform(np.array([f_bar]))[0]
-        return np.full(n, r_bar, dtype=np.float64)
+        raise ValueError(
+            "GAS sample paths require stepwise score updates and cannot be "
+            "precomputed by _edge_r_for_sample"
+        )
 
     raise TypeError(f"Unsupported fit_result type: {type(result).__name__}")
 
 
 def _edge_r_for_predict(edge, n, u_train_pair=None, horizon='next',
-                        rng=None, config=None):
+                        rng=None, config=None, predictive_r_mode=None):
     """Generate an r vector for one-step predictive sampling."""
     if rng is None:
         rng = np.random.default_rng()
@@ -132,59 +129,19 @@ def _edge_r_for_predict(edge, n, u_train_pair=None, horizon='next',
     if isinstance(result, IndependentResult):
         return np.zeros(n, dtype=np.float64)
 
-    if isinstance(result, MLEResult):
-        return np.full(n, result.copula_param, dtype=np.float64)
-
-    if isinstance(result, GASResult):
-        if u_train_pair is not None:
-            strategy = _strategy_for_result(result, config=config)
-            if horizon == 'current':
-                r_path = strategy.smoothed_params(
-                    edge.copula, u_train_pair, result)
-                r = float(r_path[-1])
-            else:
-                r = _gas_one_step_r(edge, u_train_pair, result, config=config)
-            return np.full(n, r, dtype=np.float64)
-        return np.full(n, float(result.r_last), dtype=np.float64)
-
-    if isinstance(result, LatentResult):
-        if u_train_pair is None:
-            raise ValueError("SCAR-TM predict requires u_train_pair")
-        p = result.params
-        from pyscarcopula.numerical.predictive_tm import tm_state_distribution
-        kwargs = _tm_kwargs_from_result(result)
-        z_grid, prob = tm_state_distribution(
-            p.theta,
-            p.mu,
-            p.nu,
-            u_train_pair,
+    if isinstance(result, (MLEResult, GASResult, LatentResult)):
+        strategy = _strategy_for_result(result, config=config)
+        return strategy.predictive_params(
             edge.copula,
+            u_train_pair,
+            result,
+            n,
+            rng=rng,
             horizon=horizon,
-            **kwargs,
+            predictive_r_mode=predictive_r_mode,
         )
-        idx = rng.choice(len(z_grid), size=n, p=prob)
-        return edge.copula.transform(z_grid[idx])
 
     raise TypeError(f"Unsupported fit_result type: {type(result).__name__}")
-
-
-def _gas_one_step_r(edge, u_train_pair, result, config=None):
-    cfg = config or DEFAULT_CONFIG
-    p = result.params
-    from pyscarcopula.numerical.gas_filter import gas_filter
-
-    f_path, _, _ = gas_filter(
-        p.omega,
-        p.alpha,
-        p.beta,
-        u_train_pair,
-        edge.copula,
-        result.scaling,
-        cfg.gas_score_eps,
-    )
-    _, r_new = _gas_update_from_last_observation(
-        edge, f_path[-1], u_train_pair[-1:, :], result, cfg)
-    return r_new
 
 
 def _gas_update_from_last_observation(edge, f_t, u_pair, result, config):
@@ -250,26 +207,6 @@ def _is_gas_edge(edge):
 
 
 def _strategy_for_result(result, config=None):
-    from pyscarcopula.strategy._base import get_strategy
+    from pyscarcopula.strategy._base import get_strategy_for_result
 
-    kwargs = {}
-    if getattr(result, 'K', None) is not None:
-        kwargs['K'] = result.K
-    if getattr(result, 'grid_range', None) is not None:
-        kwargs['grid_range'] = result.grid_range
-    if getattr(result, 'pts_per_sigma', None) is not None:
-        kwargs['pts_per_sigma'] = result.pts_per_sigma
-    if getattr(result, 'scaling', None) is not None:
-        kwargs['scaling'] = result.scaling
-    return get_strategy(result.method, config=config, **kwargs)
-
-
-def _tm_kwargs_from_result(result):
-    kwargs = {}
-    if getattr(result, 'K', None) is not None:
-        kwargs['K'] = result.K
-    if getattr(result, 'grid_range', None) is not None:
-        kwargs['grid_range'] = result.grid_range
-    if getattr(result, 'pts_per_sigma', None) is not None:
-        kwargs['pts_per_sigma'] = result.pts_per_sigma
-    return kwargs
+    return get_strategy_for_result(result, config=config)

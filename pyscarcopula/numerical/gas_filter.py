@@ -22,6 +22,9 @@ Used by:
 
 import numpy as np
 
+F_CLIP = 50.0
+S_CLIP = 100.0
+
 
 # ══════════════════════════════════════════════════════════════════
 # Core GAS filter
@@ -56,9 +59,6 @@ def gas_filter(omega, alpha, beta, u, copula, scaling='unit',
     total_logL : float
     """
     T = len(u)
-    F_CLIP = 50.0        # prevent divergence of f
-    S_CLIP = 100.0       # clip score to prevent explosions
-
     f_path = np.empty(T)
     r_path = np.empty(T)
     total_logL = 0.0
@@ -111,6 +111,58 @@ def gas_filter(omega, alpha, beta, u, copula, scaling='unit',
             f_t = np.clip(f_t, -F_CLIP, F_CLIP)
 
     return f_path, r_path, total_logL
+
+
+def gas_predict_param(omega, alpha, beta, u, copula, scaling='unit',
+                      score_eps=1e-4, horizon='next'):
+    """Return Psi(f) for GAS predictive sampling.
+
+    ``current`` returns the last in-sample parameter Psi(f_{T-1}).
+    ``next`` applies the final observation score and returns Psi(f_T).
+    """
+    f_path, r_path, _ = gas_filter(
+        omega, alpha, beta, u, copula, scaling, score_eps)
+    if len(f_path) == 0:
+        raise ValueError("GAS predict requires at least one observation")
+
+    if horizon in (0, '0'):
+        horizon = 'current'
+    elif horizon in (1, '1'):
+        horizon = 'next'
+    else:
+        horizon = str(horizon).lower()
+
+    if horizon == 'current':
+        return float(r_path[-1])
+    if horizon != 'next':
+        raise ValueError("horizon must be 'current' or 'next'")
+
+    f_t = float(f_path[-1])
+    u1 = u[-1:, 0]
+    u2 = u[-1:, 1]
+
+    f_plus = f_t + score_eps
+    f_minus = f_t - score_eps
+    r_t = float(copula.transform(np.array([f_t]))[0])
+    r_plus = float(copula.transform(np.array([f_plus]))[0])
+    r_minus = float(copula.transform(np.array([f_minus]))[0])
+
+    ll_t = float(copula.log_pdf(u1, u2, np.array([r_t]))[0])
+    ll_plus = float(copula.log_pdf(u1, u2, np.array([r_plus]))[0])
+    ll_minus = float(copula.log_pdf(u1, u2, np.array([r_minus]))[0])
+
+    nabla_t = (ll_plus - ll_minus) / (2.0 * score_eps)
+    if scaling == 'fisher':
+        d2 = (ll_plus - 2.0 * ll_t + ll_minus) / (score_eps ** 2)
+        fisher = max(-d2, 1e-6)
+        s_t = nabla_t / fisher
+    else:
+        s_t = nabla_t
+
+    s_t = np.clip(s_t, -S_CLIP, S_CLIP)
+    f_next = omega + beta * f_t + alpha * s_t
+    f_next = np.clip(f_next, -F_CLIP, F_CLIP)
+    return float(copula.transform(np.array([f_next]))[0])
 
 
 def gas_negloglik(omega, alpha, beta, u, copula, scaling='unit',

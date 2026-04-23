@@ -133,14 +133,38 @@ def _fit_copula(copula, uk, method, **kwargs):
         copula.fit(uk, method=method, **kwargs)
 
 
-def _predict_copula(copula, uk, N_mc):
+def _risk_predict_kwargs(copula, kwargs):
+    out = {}
+    for name in ('horizon', 'predictive_r_mode'):
+        if name in kwargs:
+            out[name] = kwargs[name]
+
+    from pyscarcopula.vine.cvine import CVineCopula
+    if isinstance(copula, CVineCopula):
+        for name in ('K', 'grid_range'):
+            if name in kwargs:
+                out[name] = kwargs[name]
+    return out
+
+
+def _predict_copula(copula, uk, N_mc, rng=None, **kwargs):
     """Sample from fitted copula for next-step prediction."""
     if _is_elliptical_multivariate(copula):
         # GaussianCopula/StudentCopula: simple predict (no method param)
-        return copula.predict(N_mc)
+        return copula.predict(N_mc, rng=rng)
     else:
         # BivariateCopula and CVineCopula: pass u explicitly
-        return copula.predict(N_mc, u=uk)
+        return copula.predict(
+            N_mc, u=uk, rng=rng, **_risk_predict_kwargs(copula, kwargs))
+
+
+def _coerce_seed_sequence(rng=None):
+    """Create a SeedSequence root for independent per-window RNGs."""
+    if isinstance(rng, np.random.SeedSequence):
+        return rng
+    if isinstance(rng, np.random.Generator):
+        return np.random.SeedSequence(rng.bit_generator.random_raw(4))
+    return np.random.SeedSequence(rng)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -188,7 +212,7 @@ def _process_chunk_fixed(args):
     """
     (chunk_start, chunk_end, data, method, copula_class, copula_kwargs,
      marginal_model, marg_params, gamma, window_len, N_mc,
-     portfolio_weight, fit_kwargs) = args
+     portfolio_weight, fit_kwargs, window_seeds) = args
 
     results = []
 
@@ -198,7 +222,8 @@ def _process_chunk_fixed(args):
         cop = copula_class(**copula_kwargs)
         _fit_copula(cop, uk, method, **fit_kwargs)
 
-        u_pred = _predict_copula(cop, uk, N_mc)
+        rng = np.random.default_rng(window_seeds[k - chunk_start])
+        u_pred = _predict_copula(cop, uk, N_mc, rng=rng, **fit_kwargs)
         r = marginal_model.ppf(u_pred, marg_params[idx])
         loss = loss_func(r, portfolio_weight)
         x0 = np.array([0.0])
@@ -217,7 +242,7 @@ def _process_chunk_optimal(args):
     """
     (chunk_start, chunk_end, data, method, copula_class, copula_kwargs,
      marginal_model, marg_params, gamma, window_len, N_mc,
-     fit_kwargs) = args
+     fit_kwargs, window_seeds) = args
 
     dim = data.shape[1]
     eq_w = np.ones(dim) / dim
@@ -236,7 +261,8 @@ def _process_chunk_optimal(args):
         cop = copula_class(**copula_kwargs)
         _fit_copula(cop, uk, method, **fit_kwargs)
 
-        u_pred = _predict_copula(cop, uk, N_mc)
+        rng = np.random.default_rng(window_seeds[k - chunk_start])
+        u_pred = _predict_copula(cop, uk, N_mc, rng=rng, **fit_kwargs)
         r = marginal_model.ppf(u_pred, marg_params[idx])
         res = minimize(F_cvar_wq, x0, args=(gamma, r),
                        method='SLSQP', bounds=bounds,
@@ -266,7 +292,8 @@ def _make_chunks(n_windows, n_jobs):
 
 def _calculate_cvar_fixed(copula, data, method, marginal_model,
                           marg_params, gamma, window_len, N_mc,
-                          portfolio_weight, n_jobs=1, **kwargs):
+                          portfolio_weight, n_jobs=1,
+                          window_seed_sequences=None, **kwargs):
     """
     CVaR with fixed portfolio weights.
 
@@ -283,6 +310,8 @@ def _calculate_cvar_fixed(copula, data, method, marginal_model,
     cvar = np.zeros(T)
     n_windows = T - window_len + 1
     copula_class, copula_kwargs = _get_copula_constructor(copula)
+    if window_seed_sequences is None:
+        window_seed_sequences = np.random.SeedSequence().spawn(n_windows)
 
     if n_jobs == 1:
         for k in tqdm(range(n_windows)):
@@ -290,7 +319,8 @@ def _calculate_cvar_fixed(copula, data, method, marginal_model,
             uk = pobs(data[k:k + window_len])
 
             _fit_copula(copula, uk, method, **kwargs)
-            u_pred = _predict_copula(copula, uk, N_mc)
+            rng = np.random.default_rng(window_seed_sequences[k])
+            u_pred = _predict_copula(copula, uk, N_mc, rng=rng, **kwargs)
             r = marginal_model.ppf(u_pred, marg_params[idx])
             loss = loss_func(r, portfolio_weight)
             x0 = np.array([0.0])
@@ -305,7 +335,7 @@ def _calculate_cvar_fixed(copula, data, method, marginal_model,
         pool_args = [
             (start, end, data, method, copula_class, copula_kwargs,
              marginal_model, marg_params, gamma, window_len, N_mc,
-             portfolio_weight, kwargs)
+             portfolio_weight, kwargs, window_seed_sequences[start:end])
             for start, end in chunks
         ]
 
@@ -322,7 +352,7 @@ def _calculate_cvar_fixed(copula, data, method, marginal_model,
 
 def _calculate_cvar_optimal(copula, data, method, marginal_model,
                             marg_params, gamma, window_len, N_mc,
-                            n_jobs=1, **kwargs):
+                            n_jobs=1, window_seed_sequences=None, **kwargs):
     """
     CVaR with portfolio weight optimization.
 
@@ -341,6 +371,9 @@ def _calculate_cvar_optimal(copula, data, method, marginal_model,
     var = np.zeros(T)
     cvar = np.zeros(T)
     weight_data = np.zeros((T, dim))
+    n_windows = T - window_len + 1
+    if window_seed_sequences is None:
+        window_seed_sequences = np.random.SeedSequence().spawn(n_windows)
 
     if n_jobs == 1:
         constr = {'type': 'eq', 'fun': lambda x: np.sum(x[1:]) - 1.0}
@@ -350,12 +383,13 @@ def _calculate_cvar_optimal(copula, data, method, marginal_model,
         bounds = Bounds(lb, rb)
         x0 = np.array([0.0, *eq_w])
 
-        for k in tqdm(range(T - window_len + 1)):
+        for k in tqdm(range(n_windows)):
             idx = k + window_len - 1
             uk = pobs(data[k:k + window_len])
 
             _fit_copula(copula, uk, method, **kwargs)
-            u_pred = _predict_copula(copula, uk, N_mc)
+            rng = np.random.default_rng(window_seed_sequences[k])
+            u_pred = _predict_copula(copula, uk, N_mc, rng=rng, **kwargs)
             r = marginal_model.ppf(u_pred, marg_params[idx])
             res = minimize(F_cvar_wq, x0, args=(gamma, r),
                            method='SLSQP', bounds=bounds,
@@ -368,11 +402,11 @@ def _calculate_cvar_optimal(copula, data, method, marginal_model,
     else:
         import multiprocessing as mp
 
-        chunks = _make_chunks(T - window_len + 1, n_jobs)
+        chunks = _make_chunks(n_windows, n_jobs)
         pool_args = [
             (start, end, data, method, copula_class, copula_kwargs,
              marginal_model, marg_params, gamma, window_len, N_mc,
-             kwargs)
+             kwargs, window_seed_sequences[start:end])
             for start, end in chunks
         ]
 
@@ -400,6 +434,7 @@ def risk_metrics(copula, data, window_len,
                  optimize_portfolio=True,
                  portfolio_weight=None,
                  n_jobs=1,
+                 rng=None,
                  **kwargs):
     """
     Rolling VaR/CVaR estimation with copula models.
@@ -422,6 +457,9 @@ def risk_metrics(copula, data, window_len,
         Default 1 (sequential). Use -1 for all CPU cores.
         Each worker processes a contiguous chunk of windows,
         so numba compilation overhead is paid once per worker.
+    rng : int, np.random.Generator, np.random.SeedSequence, or None
+        Root randomness source. Independent child SeedSequences are spawned
+        per rolling window, so parallel workers never share one Generator.
     **kwargs : forwarded to copula.fit()
 
     Returns
@@ -447,22 +485,29 @@ def risk_metrics(copula, data, window_len,
     # Normalize gamma / N_mc to lists
     gammas = [gamma] if not hasattr(gamma, '__iter__') else list(gamma)
     N_mcs = [N_mc] if not hasattr(N_mc, '__iter__') else list(N_mc)
+    root_seed_seq = _coerce_seed_sequence(rng)
+    n_windows = T - window_len + 1
 
     res = {}
     for g in gammas:
         res[g] = {}
         for n in N_mcs:
             print(f"gamma={g}, N_mc={n}, method={method}, n_jobs={n_jobs}")
+            window_seed_sequences = root_seed_seq.spawn(n_windows)
             if optimize_portfolio:
                 var, cvar, w = _calculate_cvar_optimal(
                     copula, data, method, marginal_model,
                     marg_params, g, window_len, n,
-                    n_jobs=n_jobs, **kwargs)
+                    n_jobs=n_jobs,
+                    window_seed_sequences=window_seed_sequences,
+                    **kwargs)
             else:
                 var, cvar, w = _calculate_cvar_fixed(
                     copula, data, method, marginal_model,
                     marg_params, g, window_len, n,
-                    portfolio_weight, n_jobs=n_jobs, **kwargs)
+                    portfolio_weight, n_jobs=n_jobs,
+                    window_seed_sequences=window_seed_sequences,
+                    **kwargs)
             res[g][n] = {'var': var, 'cvar': cvar, 'weight': w}
 
     return res

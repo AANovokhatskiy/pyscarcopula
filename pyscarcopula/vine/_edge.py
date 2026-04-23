@@ -29,36 +29,40 @@ class VineEdge:
         """
         Get copula parameter r for given data.
         MLE: constant (uses fit_result.copula_param).
+        GAS: deterministic score-driven path.
         SCAR: smoothed_params via TM forward pass.
         """
+        from pyscarcopula._types import IndependentResult
+
         method = self.method
         if method is None:
             raise ValueError("Edge not fitted")
 
-        if method.upper() == 'MLE':
+        if isinstance(self.fit_result, IndependentResult):
             n = T if T is not None else len(u_pair)
-            return np.full(n, self.fit_result.copula_param)
-        else:
-            alpha = _get_alpha(self.fit_result)
-            from pyscarcopula.numerical.tm_functions import tm_forward_smoothed
-            theta, mu, nu = alpha
-            return tm_forward_smoothed(theta, mu, nu, u_pair, self.copula)
+            return np.zeros(n)
+
+        from pyscarcopula.strategy._base import get_strategy_for_result
+        strategy = get_strategy_for_result(self.fit_result)
+        return strategy.smoothed_params(self.copula, u_pair, self.fit_result)
 
     def get_r_predict(self, n):
         """
         Get copula parameter r for prediction (sampling from x_T).
         MLE: constant (uses fit_result.copula_param).
+        GAS: one-step-ahead value cached in fit_result.r_last.
         SCAR: sample from stationary OU.
         """
-        method = self.method
-        if method.upper() == 'MLE':
-            return np.full(n, self.fit_result.copula_param)
-        else:
-            alpha = _get_alpha(self.fit_result)
-            theta, mu, nu = alpha
-            sigma2 = nu ** 2 / (2.0 * theta)
-            x_T = np.random.normal(mu, np.sqrt(sigma2), n)
-            return self.copula.transform(x_T)
+        from pyscarcopula._types import IndependentResult
+
+        if self.fit_result is None:
+            raise ValueError("Edge not fitted")
+        if isinstance(self.fit_result, IndependentResult):
+            return np.zeros(n)
+
+        from pyscarcopula.strategy._base import get_strategy_for_result
+        strategy = get_strategy_for_result(self.fit_result)
+        return strategy.predictive_params(self.copula, None, self.fit_result, n)
 
 
 def _get_alpha(fit_result):

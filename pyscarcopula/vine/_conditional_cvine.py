@@ -36,8 +36,14 @@ def validate_cvine_given(given, d):
 
 def ensure_cvine_conditional_supported(vine):
     """Reject conditional predict for unsupported dynamic edge methods."""
+    from pyscarcopula._types import IndependentResult
+    from pyscarcopula.copula.independent import IndependentCopula
+
     for tree in vine.edges:
         for edge in tree:
+            if (isinstance(edge.copula, IndependentCopula)
+                    or isinstance(edge.fit_result, IndependentResult)):
+                continue
             method = edge.method.upper() if edge.method is not None else ''
             if method not in ('MLE', 'GAS', 'SCAR-TM-OU'):
                 raise NotImplementedError(

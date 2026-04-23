@@ -183,6 +183,27 @@ def _frank_bivariate_sample(n, r):
 
 
 @njit(cache=True)
+def _frank_bivariate_sample_from_uniforms(n, r, u0_data, v_data):
+    """Direct conditional inversion sampling for Frank from fixed uniforms."""
+    out = np.empty((n, 2))
+    for k in range(n):
+        ri = r[k] if r.shape[0] > 1 else r[0]
+        u0 = u0_data[k]
+        v = v_data[k]
+        t = np.exp(-ri * u0)
+        p = np.exp(-ri)
+        f1 = v * (1.0 - p)
+        f2 = t + v * (1.0 - t)
+        if abs(f1 - f2) < 1e-9:
+            u1 = u0
+        else:
+            u1 = -np.log(1.0 - f1 / f2) / ri
+        out[k, 0] = u0
+        out[k, 1] = u1
+    return out
+
+
+@njit(cache=True)
 def _frank_transform(x):
     return x * np.tanh(x) + 0.0001
 
@@ -366,10 +387,14 @@ class FrankCopula(BivariateCopula):
         return _frank_dlogc_dr(*_broadcast(u1, u2, r))
 
     def sample(self, n, r, rng=None):
+        if rng is None:
+            rng = np.random.default_rng()
         _r = np.atleast_1d(np.asarray(r, dtype=np.float64))
         if _r.size == 1:
             _r = np.full(n, _r[0])
-        return _frank_bivariate_sample(n, _r)
+        u0 = rng.uniform(0.0, 1.0, size=n)
+        v = rng.uniform(0.0, 1.0, size=n)
+        return _frank_bivariate_sample_from_uniforms(n, _r, u0, v)
 
     def h_unrotated(self, u, v, r):
         return _frank_h(*_broadcast(u, v, r))
