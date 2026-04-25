@@ -234,11 +234,14 @@ class TestConditionalPredict:
         prob = np.array([0.0, 1.0, 0.0])
 
         z_grid_samples = sample_grid_distribution(
-            z_grid, prob, 200, np.random.default_rng(1))
+            z_grid, prob, 200, np.random.default_rng(1), mode='grid')
         z_hist_samples = sample_grid_distribution(
             z_grid, prob, 200, np.random.default_rng(1), mode='histogram')
+        z_default_samples = sample_grid_distribution(
+            z_grid, prob, 200, np.random.default_rng(1))
 
         np.testing.assert_allclose(z_grid_samples, 0.0)
+        np.testing.assert_allclose(z_default_samples, z_hist_samples)
         assert np.all(z_hist_samples >= -0.5)
         assert np.all(z_hist_samples <= 0.5)
         assert len(np.unique(np.round(z_hist_samples, 12))) > 100

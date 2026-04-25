@@ -1720,7 +1720,8 @@ class TestPredict:
         expected /= np.sum(expected)
         calls = []
 
-        def fake_sample_grid_distribution(z_arg, prob_arg, n, rng, mode='grid'):
+        def fake_sample_grid_distribution(
+                z_arg, prob_arg, n, rng, mode='histogram'):
             calls.append((z_arg.copy(), prob_arg.copy(), n, mode))
             np.testing.assert_allclose(z_arg, z_grid)
             np.testing.assert_allclose(prob_arg, expected)
@@ -2061,6 +2062,7 @@ class TestPredict:
             u_train_pair=u_train_pair,
             horizon='current',
             rng=np.random.default_rng(1),
+            predictive_r_mode='grid',
         )
 
         assert np.allclose(r, cop.transform(np.full(4, 0.5)))
