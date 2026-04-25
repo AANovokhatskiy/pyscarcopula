@@ -2,12 +2,18 @@
 import numpy as np
 import pytest
 
+from pyscarcopula import PredictConfig as PublicPredictConfig
 from pyscarcopula._types import (
     NumericalConfig, DEFAULT_CONFIG,
     LatentProcessParams, ou_params, gas_params,
     MLEResult, LatentResult, GASResult, IndependentResult,
+    PredictConfig, PredictiveState,
 )
 from pyscarcopula._utils import broadcast, pobs, clip_unit
+
+
+def test_predict_config_exported_from_package_root():
+    assert PublicPredictConfig is PredictConfig
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -32,6 +38,76 @@ class TestNumericalConfig:
         cfg = NumericalConfig()
         with pytest.raises(Exception):  # FrozenInstanceError
             cfg.default_K = 999
+
+
+class TestPredictConfig:
+    def test_defaults_validate(self):
+        cfg = PredictConfig().validated()
+        assert cfg.given is None
+        assert cfg.horizon == 'next'
+        assert cfg.predictive_r_mode is None
+        assert cfg.dynamic_conditioning == 'ignore'
+        assert cfg.mcmc_steps is None
+        assert cfg.mcmc_burnin is None
+
+    def test_normalizes_and_copies_given(self):
+        given = {0: 0.4}
+        cfg = PredictConfig(
+            given=given,
+            horizon='CURRENT',
+            predictive_r_mode='HISTOGRAM',
+            dynamic_conditioning='GIVEN_ONLY',
+            mcmc_steps=np.int64(12),
+            mcmc_burnin=np.int64(3),
+        ).validated()
+        assert cfg.horizon == 'current'
+        assert cfg.predictive_r_mode == 'histogram'
+        assert cfg.dynamic_conditioning == 'given_only'
+        assert cfg.given == {0: 0.4}
+        assert cfg.given is not given
+        assert cfg.mcmc_steps == 12
+        assert cfg.mcmc_burnin == 3
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"horizon": "bad"},
+            {"predictive_r_mode": "bad"},
+            {"dynamic_conditioning": "bad"},
+            {"mcmc_steps": -1},
+            {"mcmc_burnin": -1},
+        ],
+    )
+    def test_rejects_bad_options(self, kwargs):
+        with pytest.raises(ValueError):
+            PredictConfig(**kwargs).validated()
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"mcmc_steps": 1.2},
+            {"mcmc_burnin": True},
+        ],
+    )
+    def test_rejects_bad_mcmc_option_types(self, kwargs):
+        with pytest.raises(TypeError):
+            PredictConfig(**kwargs).validated()
+
+    def test_replace_validates(self):
+        cfg = PredictConfig().replace(horizon='current')
+        assert cfg.horizon == 'current'
+
+
+class TestPredictiveState:
+    def test_point_state(self):
+        state = PredictiveState(
+            method='MLE',
+            horizon='next',
+            kind='point',
+            r=np.array([0.25]),
+        )
+        assert state.method == 'MLE'
+        assert state.r[0] == pytest.approx(0.25)
 
 
 # ══════════════════════════════════════════════════════════════════

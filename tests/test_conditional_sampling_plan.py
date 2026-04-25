@@ -660,7 +660,7 @@ class TestConditionalSamplingPlanLayer:
             for method, v_pair, *_ in r_calls
         )
 
-    def test_rvine_rejects_unsupported_arbitrary_conditioning(self):
+    def test_rvine_arbitrary_conditioning_uses_dag_mcmc_fallback(self):
         u_train = _mvn_pobs(np.eye(4), 400, seed=120)
         vine = RVineCopula(candidates=[IndependentCopula]).fit(
             u_train, method='mle')
@@ -672,8 +672,16 @@ class TestConditionalSamplingPlanLayer:
 
         if vine._suffix_sampling_state(given) is not None:
             return
-        with np.testing.assert_raises_regex(ValueError, "R-vine variable order"):
-            vine.predict(10, given=given, rng=np.random.default_rng(121))
+        samples, diagnostics = vine.predict(
+            100,
+            given=given,
+            return_diagnostics=True,
+            rng=np.random.default_rng(121),
+        )
+        assert samples.shape == (100, 4)
+        for var, value in given.items():
+            assert np.allclose(samples[:, var], value)
+        assert diagnostics['conditional_method'] == 'dag_mcmc'
 
     def test_extreme_given_values_remain_finite(self):
         sigma = np.array([[1.0, 0.85], [0.85, 1.0]])

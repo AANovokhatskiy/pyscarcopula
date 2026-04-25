@@ -11,6 +11,7 @@ from scipy.optimize import minimize, Bounds
 from pyscarcopula._types import (
     GASResult, NumericalConfig, DEFAULT_CONFIG,
     gas_params,
+    PredictiveState,
 )
 from pyscarcopula.strategy._base import register_strategy
 from pyscarcopula.numerical.gas_filter import (
@@ -232,12 +233,73 @@ class GASStrategy:
 
     def predictive_params(self, copula, u, result, n, rng=None, **kwargs):
         """Deterministic GAS predictive parameter path."""
-        if u is None or len(u) == 0:
-            return np.full(n, float(result.r_last))
+        state = self.predictive_state(copula, u, result, **kwargs)
+        return self.sample_params(copula, state, n, rng=rng, **kwargs)
 
-        horizon = kwargs.get('horizon', 'next')
+    def predictive_state(self, copula, u, result, **kwargs):
+        """Point-mass GAS predictive state."""
+        if u is None or len(u) == 0:
+            r_T = float(result.r_last)
+        else:
+            horizon = kwargs.get('horizon', 'next')
+            p = result.params
+            r_T = gas_predict_param(
+                p.omega, p.alpha, p.beta, u, copula,
+                result.scaling, self.config.gas_score_eps, horizon=horizon)
+        return PredictiveState(
+            method='GAS',
+            horizon=str(kwargs.get('horizon', 'next')).lower(),
+            kind='point',
+            r=np.array([r_T], dtype=np.float64),
+        )
+
+    def condition_state(self, copula, state, observation, result, **kwargs):
+        """Apply one GAS score update using a fully observed pair."""
+        if observation is None:
+            return state
+        u = np.asarray(observation, dtype=np.float64)
+        if u.ndim != 2 or u.shape[1] != 2 or len(u) == 0:
+            return state
+        # Prediction-time conditioning contributes one partial observation.
+        # RVine samplers pass n identical rows, one per Monte Carlo draw.
+        u = u[:1]
+
         p = result.params
-        r_T = gas_predict_param(
-            p.omega, p.alpha, p.beta, u, copula,
-            result.scaling, self.config.gas_score_eps, horizon=horizon)
-        return np.full(n, r_T)
+        f_t = float(copula.inv_transform(np.array([float(state.r[0])]))[0])
+        score_eps = self.config.gas_score_eps
+        f_plus = f_t + score_eps
+        f_minus = f_t - score_eps
+        r_t = float(copula.transform(np.array([f_t]))[0])
+        r_plus = float(copula.transform(np.array([f_plus]))[0])
+        r_minus = float(copula.transform(np.array([f_minus]))[0])
+
+        u1 = u[:, 0]
+        u2 = u[:, 1]
+        ll_t = float(np.sum(copula.log_pdf(u1, u2, np.full(len(u), r_t))))
+        ll_plus = float(np.sum(
+            copula.log_pdf(u1, u2, np.full(len(u), r_plus))))
+        ll_minus = float(np.sum(
+            copula.log_pdf(u1, u2, np.full(len(u), r_minus))))
+
+        nabla = (ll_plus - ll_minus) / (2.0 * score_eps)
+        if result.scaling == 'fisher':
+            d2 = (ll_plus - 2.0 * ll_t + ll_minus) / (score_eps ** 2)
+            fisher = max(-d2, 1e-6)
+            score = nabla / fisher
+        else:
+            score = nabla
+
+        score = float(np.clip(score, -100.0, 100.0))
+        f_new = p.omega + p.beta * f_t + p.alpha * score
+        f_new = float(np.clip(f_new, -50.0, 50.0))
+        r_new = float(copula.transform(np.array([f_new]))[0])
+        return PredictiveState(
+            method=state.method,
+            horizon=state.horizon,
+            kind=state.kind,
+            r=np.array([r_new], dtype=np.float64),
+            metadata=dict(state.metadata),
+        )
+
+    def sample_params(self, copula, state, n, rng=None, **kwargs):
+        return np.full(n, float(np.asarray(state.r)[0]), dtype=np.float64)

@@ -10,7 +10,11 @@ pyscarcopula models time-varying dependence between financial assets. The copula
 - **Elliptical copulas**: Gaussian, Student-t
 - **Experimental models**: equicorrelation Gaussian, stochastic Student-t, stochastic Student-t DCC
 - **C-vine copulas**: automatic family selection, truncation, mixed SCAR/MLE
+- **R-vine conditional sampling**: exact suffix/rebuild path plus arbitrary
+  runtime-DAG + MCMC fallback
 - **Estimation**: MLE, GAS, SCAR-TM-OU (transfer matrix with analytical gradient)
+- **Prediction controls**: `PredictConfig`, diagnostics, dynamic conditioning,
+  reproducible `rng`
 - **Transform functions**: `xtanh` (default), `softplus` (asymmetric)
 - **Diagnostics**: GoF test, smoothed parameters
 

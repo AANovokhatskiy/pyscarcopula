@@ -18,6 +18,7 @@ from scipy.optimize import minimize, Bounds
 from pyscarcopula._types import (
     LatentResult, NumericalConfig, DEFAULT_CONFIG,
     LatentProcessParams, ou_params,
+    PredictiveState,
 )
 from pyscarcopula.strategy._base import register_strategy
 from pyscarcopula.numerical.tm_functions import (
@@ -314,11 +315,22 @@ class SCARTMStrategy:
         if rng is None:
             rng = np.random.default_rng()
 
+        state = self.predictive_state(copula, u, result, **kwargs)
+        return self.sample_params(copula, state, n, rng=rng, **kwargs)
+
+    def predictive_state(self, copula, u, result, **kwargs):
+        """Return SCAR-TM predictive state as a grid distribution."""
         p = result.params
         if u is None:
-            sigma2 = p.nu ** 2 / (2.0 * p.theta)
-            x_t = rng.normal(p.mu, np.sqrt(sigma2), n)
-            return copula.transform(x_t)
+            return PredictiveState(
+                method='SCAR-TM-OU',
+                horizon=str(kwargs.get('horizon', 'next')).lower(),
+                kind='stationary_normal',
+                metadata={
+                    'mu': p.mu,
+                    'sigma': np.sqrt(p.nu ** 2 / (2.0 * p.theta)),
+                },
+            )
 
         state_cache = kwargs.get('state_cache')
         cache_key = kwargs.get('cache_key')
@@ -340,11 +352,67 @@ class SCARTMStrategy:
                 state_cache[cache_key] = cached
 
         z_grid, prob = cached
+        return PredictiveState(
+            method='SCAR-TM-OU',
+            horizon=str(kwargs.get('horizon', 'next')).lower(),
+            kind='grid',
+            z_grid=np.asarray(z_grid, dtype=np.float64),
+            prob=np.asarray(prob, dtype=np.float64),
+        )
+
+    def condition_state(self, copula, state, observation, result, **kwargs):
+        """Bayes-reweight a SCAR-TM grid state by one observed pair."""
+        if observation is None or state.kind != 'grid':
+            return state
+        u = np.asarray(observation, dtype=np.float64)
+        if u.ndim != 2 or u.shape[1] != 2 or len(u) == 0:
+            return state
+        u = u[:1]
+
+        z_grid = np.asarray(state.z_grid, dtype=np.float64)
+        prob = np.asarray(state.prob, dtype=np.float64)
+        r_grid = copula.transform(z_grid)
+        u1 = np.full(len(r_grid), float(u[0, 0]), dtype=np.float64)
+        u2 = np.full(len(r_grid), float(u[0, 1]), dtype=np.float64)
+        log_w = np.asarray(copula.log_pdf(u1, u2, r_grid), dtype=np.float64)
+        finite = np.isfinite(log_w)
+        if not np.any(finite):
+            return state
+
+        weights = np.zeros_like(prob, dtype=np.float64)
+        weights[finite] = (
+            prob[finite] * np.exp(log_w[finite] - np.max(log_w[finite]))
+        )
+        total = np.sum(weights)
+        if total <= 0.0:
+            return state
+        weights /= total
+        return PredictiveState(
+            method=state.method,
+            horizon=state.horizon,
+            kind=state.kind,
+            z_grid=z_grid,
+            prob=weights,
+            metadata=dict(state.metadata),
+        )
+
+    def sample_params(self, copula, state, n, rng=None, **kwargs):
+        if rng is None:
+            rng = np.random.default_rng()
+        if state.kind == 'stationary_normal':
+            x_t = rng.normal(
+                state.metadata['mu'],
+                state.metadata['sigma'],
+                n,
+            )
+            return copula.transform(x_t)
+
         from pyscarcopula.numerical.predictive_tm import sample_grid_distribution
         mode = kwargs.get('predictive_r_mode')
         if mode is None:
-            z_samples = sample_grid_distribution(z_grid, prob, n, rng)
+            z_samples = sample_grid_distribution(
+                state.z_grid, state.prob, n, rng)
         else:
             z_samples = sample_grid_distribution(
-                z_grid, prob, n, rng, mode=mode)
+                state.z_grid, state.prob, n, rng, mode=mode)
         return copula.transform(z_samples)

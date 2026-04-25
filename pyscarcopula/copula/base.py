@@ -378,7 +378,7 @@ class BivariateCopula:
         return result
 
     def predict(self, n, u=None, rng=None, given=None, horizon='next',
-                predictive_r_mode=None):
+                predictive_r_mode=None, predict_config=None):
         """Sample n observations for next-step prediction.
 
         Delegates to api.predict() which dispatches to the correct
@@ -417,7 +417,8 @@ class BivariateCopula:
         return _api_predict(
             self, u_data, self.fit_result, n,
             rng=rng, given=given, horizon=horizon,
-            predictive_r_mode=predictive_r_mode)
+            predictive_r_mode=predictive_r_mode,
+            predict_config=predict_config)
 
     def sample_model(self, n, u=None, rng=None):
         """Generate n observations reproducing the fitted model.

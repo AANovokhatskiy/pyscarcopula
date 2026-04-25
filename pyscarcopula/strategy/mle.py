@@ -8,7 +8,12 @@ This is the simplest strategy and serves as a reference implementation.
 import numpy as np
 from scipy.optimize import minimize
 
-from pyscarcopula._types import MLEResult, NumericalConfig, DEFAULT_CONFIG
+from pyscarcopula._types import (
+    MLEResult,
+    NumericalConfig,
+    DEFAULT_CONFIG,
+    PredictiveState,
+)
 from pyscarcopula.strategy._base import register_strategy
 from pyscarcopula.strategy.predict_helpers import conditional_sample_bivariate
 
@@ -130,4 +135,20 @@ class MLEStrategy:
 
     def predictive_params(self, copula, u, result, n, rng=None, **kwargs):
         """Constant predictive parameter for MLE."""
-        return np.full(n, result.copula_param)
+        state = self.predictive_state(copula, u, result, **kwargs)
+        return self.sample_params(copula, state, n, rng=rng, **kwargs)
+
+    def predictive_state(self, copula, u, result, **kwargs):
+        horizon = str(kwargs.get('horizon', 'next')).lower()
+        return PredictiveState(
+            method='MLE',
+            horizon=horizon,
+            kind='point',
+            r=np.array([result.copula_param], dtype=np.float64),
+        )
+
+    def condition_state(self, copula, state, observation, result, **kwargs):
+        return state
+
+    def sample_params(self, copula, state, n, rng=None, **kwargs):
+        return np.full(n, float(np.asarray(state.r)[0]), dtype=np.float64)

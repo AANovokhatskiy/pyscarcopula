@@ -10,7 +10,7 @@ Design decisions:
 """
 
 from __future__ import annotations
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace as dataclass_replace
 from typing import Any
 import numpy as np
 
@@ -58,6 +58,82 @@ class NumericalConfig:
 
 
 DEFAULT_CONFIG = NumericalConfig()
+
+
+@dataclass(frozen=True)
+class PredictConfig:
+    """Prediction-time options shared by API, copulas, vines, and strategies."""
+
+    given: dict[int, float] | None = None
+    horizon: str = 'next'
+    predictive_r_mode: str | None = None
+    dynamic_conditioning: str = 'ignore'
+    return_diagnostics: bool = False
+    mcmc_steps: int | None = None
+    mcmc_burnin: int | None = None
+
+    def validated(self) -> "PredictConfig":
+        horizon = str(self.horizon).lower()
+        if horizon not in ('current', 'next'):
+            raise ValueError("horizon must be 'current' or 'next'")
+
+        mode = self.predictive_r_mode
+        if mode is not None:
+            mode = str(mode).lower()
+            if mode not in ('grid', 'histogram'):
+                raise ValueError(
+                    "predictive_r_mode must be 'grid' or 'histogram'"
+                )
+
+        dynamic_conditioning = str(self.dynamic_conditioning).lower()
+        if dynamic_conditioning not in ('ignore', 'given_only'):
+            raise ValueError(
+                "dynamic_conditioning must be 'ignore' or 'given_only'"
+            )
+
+        mcmc_steps = self._validate_optional_nonnegative_int(
+            self.mcmc_steps, 'mcmc_steps')
+        mcmc_burnin = self._validate_optional_nonnegative_int(
+            self.mcmc_burnin, 'mcmc_burnin')
+
+        given = dict(self.given) if isinstance(self.given, dict) else self.given
+        return dataclass_replace(
+            self,
+            given=given,
+            horizon=horizon,
+            predictive_r_mode=mode,
+            dynamic_conditioning=dynamic_conditioning,
+            mcmc_steps=mcmc_steps,
+            mcmc_burnin=mcmc_burnin,
+        )
+
+    def replace(self, **kwargs) -> "PredictConfig":
+        return dataclass_replace(self, **kwargs).validated()
+
+    @staticmethod
+    def _validate_optional_nonnegative_int(value, name):
+        if value is None:
+            return None
+        if isinstance(value, (bool, np.bool_)) or not isinstance(
+                value, (int, np.integer)):
+            raise TypeError(f"{name} must be a non-negative integer or None")
+        value = int(value)
+        if value < 0:
+            raise ValueError(f"{name} must be non-negative")
+        return value
+
+
+@dataclass(frozen=True)
+class PredictiveState:
+    """Strategy-level predictive state used to sample copula parameters."""
+
+    method: str
+    horizon: str
+    kind: str
+    r: np.ndarray | None = None
+    z_grid: np.ndarray | None = None
+    prob: np.ndarray | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 # ══════════════════════════════════════════════════════════════════

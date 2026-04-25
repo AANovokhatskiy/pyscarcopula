@@ -108,7 +108,8 @@ def _edge_r_for_sample(edge, n, rng=None):
 
 
 def _edge_r_for_predict(edge, n, u_train_pair=None, horizon='next',
-                        rng=None, config=None, predictive_r_mode=None):
+                        rng=None, config=None, predictive_r_mode=None,
+                        state_cache=None, cache_key=None):
     """Generate an r vector for one-step predictive sampling."""
     if rng is None:
         rng = np.random.default_rng()
@@ -139,6 +140,8 @@ def _edge_r_for_predict(edge, n, u_train_pair=None, horizon='next',
             rng=rng,
             horizon=horizon,
             predictive_r_mode=predictive_r_mode,
+            state_cache=state_cache,
+            cache_key=cache_key,
         )
 
     raise TypeError(f"Unsupported fit_result type: {type(result).__name__}")

@@ -4,6 +4,11 @@
 
 - `given={0: 0.4}` for conditional generation in pseudo-observation space
 - `horizon='current'|'next'` for SCAR-TM predictive mixtures
+- `predict_config=PredictConfig(...)` for explicit prediction options
+- `rng=np.random.default_rng(seed)` for reproducible Monte Carlo output
+
+See [Prediction Semantics](../guide/prediction-semantics.md) for the
+mathematical meaning of these options.
 
 ## Top-level API
 
@@ -22,7 +27,7 @@ All API functions are stateless - they accept a copula object, data, and a resul
 ## BivariateCopula (base class)
 
 `BivariateCopula.predict(...)` mirrors the top-level API and accepts
-`given` and `horizon`.
+`given`, `horizon`, and `predict_config`.
 
 ::: pyscarcopula.copula.base.BivariateCopula
     options:

@@ -36,12 +36,24 @@ Usage
     new_ll = vine.log_likelihood(u_new)  # re-evaluate on new data
 """
 
+from copy import deepcopy
+
 import numpy as np
 
 from pyscarcopula._utils import pobs
-from pyscarcopula._types import GASResult, LatentResult, MLEResult
+from pyscarcopula._types import (
+    GASResult,
+    LatentResult,
+    MLEResult,
+    PredictConfig,
+    PredictiveState,
+)
 from pyscarcopula.copula.independent import IndependentCopula
-from pyscarcopula.vine._conditional_rvine import validate_rvine_given
+from pyscarcopula.vine._conditional_rvine import (
+    find_rvine_peel_order_for_given_suffix,
+    validate_rvine_given_vars,
+    validate_rvine_given,
+)
 from pyscarcopula.vine._rvine_dissmann import PairCopula, select_rvine
 from pyscarcopula.vine._rvine_edges import (
     _edge_h,
@@ -52,6 +64,11 @@ from pyscarcopula.vine._rvine_edges import (
     _edge_update_gas_state,
     _is_gas_edge,
     _strategy_for_result,
+)
+from pyscarcopula.vine._rvine_dag import (
+    build_runtime_rvine_dag,
+    execute_conditional_plan,
+    plan_conditional_sample,
 )
 from pyscarcopula.vine._rvine_matrix_builder import (
     build_rvine_matrix_with_edge_map,
@@ -214,11 +231,16 @@ class RVineCopula:
         self._T = None
         self._log_likelihood = None
         self.method = None
+        self._target_given_vars = ()
+        self._conditional_fit_supported = None
+        self._conditional_mode = None
+        self._fit_diagnostics = None
 
     # ── Fit ────────────────────────────────────────────────────
 
     def fit(self, data, method='mle', *, to_pobs=False, copulas=None,
-            config=None, **kwargs):
+            config=None, given_vars=None, conditional_strict=True,
+            conditional_mode='suffix', **kwargs):
         """Fit the R-vine on pseudo-observations.
 
         Parameters
@@ -235,8 +257,22 @@ class RVineCopula:
             the Dissmann edge order for each tree.
         config : NumericalConfig or None
             Optional numerical configuration passed to strategies.
+        given_vars : iterable[int] or None
+            Optional target set of variables that subsequent conditional
+            sampling should support exactly under the current R-vine sampler,
+            where the fixed variables must be placeable at the end of the
+            R-vine variable order.
+        conditional_strict : bool, default True
+            Whether fit should reject structures that do not support exact
+            conditional sampling for the target fit-time given set.
+        conditional_mode : {'suffix'}, default 'suffix'
+            Conditioning support mode enforced during fit. The current public
+            implementation supports only the exact sampler that places the
+            fixed variables at the end of the R-vine variable order.
         **kwargs
-            Forwarded to the selected strategy.
+            Forwarded to the selected strategy. The fit-time structure search
+            also accepts ``structure_search='beam'|'multi-start'`` and
+            ``beam_width=<positive int>`` when ``given_vars`` is used.
 
         Returns
         -------
@@ -252,6 +288,12 @@ class RVineCopula:
         T, d = u.shape
         if d < 2:
             raise ValueError(f"RVineCopula.fit: need d >= 2, got d={d}")
+        given_vars = validate_rvine_given_vars(given_vars, d)
+        conditional_mode = str(conditional_mode).lower()
+        if conditional_mode != 'suffix':
+            raise ValueError(
+                f"conditional_mode must be 'suffix', got {conditional_mode!r}"
+            )
 
         truncation_level = kwargs.pop('truncation_level', self.truncation_level)
         truncation_fill = kwargs.pop('truncation_fill', self.truncation_fill)
@@ -277,7 +319,7 @@ class RVineCopula:
         if threshold is not None and threshold < 0:
             raise ValueError(f"threshold must be >= 0 or None, got {threshold}")
 
-        trees_repr, fitted = select_rvine(
+        select_result = select_rvine(
             u,
             candidates=self.candidates,
             allow_rotations=self.allow_rotations,
@@ -290,13 +332,83 @@ class RVineCopula:
             threshold=threshold,
             min_edge_logL=min_edge_logL,
             transform_type=transform_type,
+            given_vars=given_vars,
+            return_diagnostics=True,
             **kwargs,
         )
+        if len(select_result) == 3:
+            trees_repr, fitted, selection_diagnostics = select_result
+        else:
+            trees_repr, fitted = select_result
+            selection_diagnostics = {
+                'target_given_vars': tuple(given_vars),
+                'selected_mode': None,
+                'selected_index': None,
+                'selected_candidate': {
+                    'mode': None,
+                    'exact_supported': False,
+                    'dag_complete': False,
+                    'fit_score': 0.0,
+                    'missing_base_vars': tuple(given_vars),
+                    'reachable_base_vars': (),
+                    'n_known_nodes': 0,
+                    'n_steps': 0,
+                    'n_inverse_steps': 0,
+                },
+                'candidates': (),
+            }
         M, edge_map = build_rvine_matrix_with_edge_map(d, trees_repr)
 
         pair_copulas = {}
         for (t, col), orig_idx in edge_map.items():
             pair_copulas[(t, col)] = fitted[t][orig_idx]
+
+        conditional_supported = True
+        reject_reason = None
+        if given_vars:
+            probe = self.__class__()
+            probe.d = d
+            probe.matrix = M
+            probe.trees = trees_repr
+            probe.pair_copulas = pair_copulas
+            probe._edge_map = dict(edge_map)
+            conditional_supported = probe._suffix_sampling_state({
+                var: 0.5 for var in given_vars
+            }) is not None
+            if not conditional_supported:
+                reject_reason = 'unsupported_given_vars'
+            self._fit_diagnostics = self._build_fit_diagnostics(
+                given_vars,
+                conditional_mode,
+                conditional_strict,
+                selection_diagnostics,
+                conditional_supported,
+                reject_reason=reject_reason,
+            )
+            if conditional_strict and not conditional_supported:
+                missing_base_vars = ()
+                selected_mode = None
+                if selection_diagnostics['selected_candidate'] is not None:
+                    missing_base_vars = selection_diagnostics[
+                        'selected_candidate']['missing_base_vars']
+                    selected_mode = selection_diagnostics['selected_mode']
+                raise ValueError(
+                    "RVineCopula.fit: could not construct an R-vine structure "
+                    "supporting exact conditional sampling for "
+                    f"given_vars={list(given_vars)}; "
+                    f"selected_mode={selected_mode}; "
+                    "missing_base_vars="
+                    f"{list(missing_base_vars)}"
+                )
+        else:
+            self._fit_diagnostics = self._build_fit_diagnostics(
+                given_vars,
+                None,
+                conditional_strict,
+                selection_diagnostics,
+                conditional_supported,
+                reject_reason=reject_reason,
+            )
 
         self.d = d
         self.matrix = M
@@ -309,7 +421,28 @@ class RVineCopula:
         ))
         self.method = method.upper()
         self._last_u = u
+        self._target_given_vars = given_vars
+        self._conditional_fit_supported = conditional_supported
+        self._conditional_mode = conditional_mode if given_vars else None
         return self
+
+    def _build_fit_diagnostics(
+            self,
+            given_vars,
+            conditional_mode,
+            conditional_strict,
+            selection_diagnostics,
+            conditional_supported,
+            *,
+            reject_reason):
+        return {
+            'target_given_vars': tuple(given_vars),
+            'conditional_mode': conditional_mode,
+            'conditional_strict': bool(conditional_strict),
+            'conditional_fit_supported': bool(conditional_supported),
+            'reject_reason': reject_reason,
+            'selection': deepcopy(selection_diagnostics),
+        }
 
     # ── Convenience predicates ─────────────────────────────────
 
@@ -318,6 +451,13 @@ class RVineCopula:
             raise RuntimeError(
                 "RVineCopula: call fit(...) before accessing fitted state"
             )
+
+    @property
+    def fit_diagnostics(self):
+        """Fit-time structure-selection diagnostics, if available."""
+        if self._fit_diagnostics is None:
+            return None
+        return deepcopy(self._fit_diagnostics)
 
     # ── Log-likelihood ─────────────────────────────────────────
 
@@ -698,80 +838,19 @@ class RVineCopula:
             for t, level in enumerate(self.trees)
             for orig_idx in range(len(level))
         }
-        pair_copulas = {
-            key: pair_by_orig[(key[0], orig_idx)]
-            for key, orig_idx in edge_map.items()
-        }
+        pair_copulas = {}
+        for key, orig_idx in edge_map.items():
+            # edge_map indices refer to relabeled_trees[t][orig_idx]. Because
+            # relabeled_trees preserves self.trees order within each level,
+            # the same orig_idx points back to the fitted pair-copula edge.
+            t = key[0]
+            assert 0 <= orig_idx < len(self.trees[t])
+            pair_copulas[key] = pair_by_orig[(t, orig_idx)]
         return start_col, matrix, edge_map, pair_copulas
 
     def _find_peel_order_for_given_suffix(self, given_vars):
-        prefix_len = self.d - len(given_vars)
-
-        def search(col, claimed, peeled):
-            if col == self.d - 1:
-                remaining = set(range(self.d)) - set(peeled)
-                if len(remaining) == 1 and remaining <= given_vars:
-                    return peeled + [remaining.pop()]
-                return None
-
-            tree_level = self.d - 2 - col
-            top_candidates = [
-                idx for idx in range(len(self.trees[tree_level]))
-                if idx not in claimed[tree_level]
-            ]
-            if len(top_candidates) != 1:
-                return None
-
-            idx_top = top_candidates[0]
-            conditioned_top, conditioning_top = self.trees[tree_level][idx_top]
-            candidates = sorted(conditioned_top)
-            if col < prefix_len:
-                candidates = [v for v in candidates if v not in given_vars]
-            if not candidates:
-                return None
-
-            for leaf in candidates:
-                cond_accum = set()
-                walk_claims = []
-                valid = True
-                for t in range(tree_level):
-                    target_cc = frozenset(cond_accum)
-                    hits = [
-                        idx
-                        for idx, (conditioned, conditioning)
-                        in enumerate(self.trees[t])
-                        if (idx not in claimed[t]
-                            and leaf in conditioned
-                            and conditioning == target_cc)
-                    ]
-                    if len(hits) != 1:
-                        valid = False
-                        break
-                    idx_t = hits[0]
-                    conditioned_t, _ = self.trees[t][idx_t]
-                    other = next(iter(conditioned_t - {leaf}))
-                    cond_accum.add(other)
-                    walk_claims.append((t, idx_t))
-
-                if not valid or cond_accum != set(conditioning_top):
-                    continue
-
-                next_claimed = [set(level) for level in claimed]
-                next_claimed[tree_level].add(idx_top)
-                for t, idx_t in walk_claims:
-                    next_claimed[t].add(idx_t)
-
-                result = search(
-                    col + 1,
-                    tuple(frozenset(level) for level in next_claimed),
-                    peeled + [leaf],
-                )
-                if result is not None:
-                    return result
-            return None
-
-        empty_claimed = tuple(frozenset() for _ in range(self.d - 1))
-        return search(0, empty_claimed, [])
+        return find_rvine_peel_order_for_given_suffix(
+            self.trees, self.d, given_vars)
 
     def _sample_suffix_given_with_r(self, n, r_all, rng, given, start_col,
                                     matrix=None, pair_copulas=None):
@@ -862,6 +941,259 @@ class RVineCopula:
             out[:, var] = pseudo_obs[(var, frozenset())]
         return out
 
+    def _given_suffix_edge_observations_with_r(
+            self, n, r_all, given, start_col, matrix=None, pair_copulas=None,
+            edge_map=None):
+        """Return edge observations fully determined by fixed suffix values."""
+        d = self.d
+        M = self.matrix if matrix is None else matrix
+        pair_copulas = self.pair_copulas if pair_copulas is None else pair_copulas
+        edge_map = self._edge_map if edge_map is None else edge_map
+        pseudo_obs = {}
+        observed = {}
+
+        last_var = int(M[0, d - 1])
+        if d - 1 >= start_col:
+            pseudo_obs[(last_var, frozenset())] = np.full(
+                n, given[last_var], dtype=np.float64)
+        else:
+            return observed
+
+        for col in range(d - 2, start_col - 1, -1):
+            leaf = int(M[d - 1 - col, col])
+            top_tree = d - 2 - col
+            pseudo_obs[(leaf, frozenset())] = np.full(
+                n, given[leaf], dtype=np.float64)
+            for t in range(top_tree + 1):
+                row = d - 2 - col - t
+                partner = int(M[row, col])
+                conditioning = frozenset(
+                    int(M[r, col])
+                    for r in range(row + 1, d - 1 - col)
+                )
+                next_leaf_cond = conditioning | {partner}
+                next_partner_cond = conditioning | {leaf}
+                edge = pair_copulas[(t, col)]
+                r = r_all[(t, col)]
+
+                leaf_val = pseudo_obs[(leaf, conditioning)]
+                partner_val = pseudo_obs[(partner, conditioning)]
+                observed[(t, col)] = self._edge_pair_from_pseudo_map(
+                    (t, col), pseudo_obs, edge_map)
+                pseudo_obs[(leaf, next_leaf_cond)] = _clip(
+                    _edge_h(edge, leaf_val, partner_val, config={'r': r})
+                )
+                pseudo_obs[(partner, next_partner_cond)] = _clip(
+                    _edge_h(edge, partner_val, leaf_val, config={'r': r})
+                )
+
+        return observed
+
+    def _scar_tm_given_update_r(self, edge, u_train_pair, u_observed_pair,
+                                n, horizon, rng, predictive_r_mode,
+                                state_cache=None, cache_key=None):
+        result = getattr(edge, 'fit_result', None)
+        if not isinstance(result, LatentResult):
+            return None
+        if str(result.method).upper() != 'SCAR-TM-OU':
+            return None
+        if u_train_pair is None or len(u_train_pair) == 0:
+            return None
+
+        strategy = _strategy_for_result(result)
+        state = strategy.predictive_state(
+            edge.copula,
+            u_train_pair,
+            result,
+            horizon=horizon,
+            predictive_r_mode=predictive_r_mode,
+            state_cache=state_cache,
+            cache_key=cache_key,
+        )
+        conditioned = strategy.condition_state(
+            edge.copula,
+            state,
+            u_observed_pair,
+            result,
+        )
+        if (
+                conditioned.kind != 'grid'
+                or conditioned.prob is None
+                or np.array_equal(
+                    np.asarray(conditioned.prob, dtype=np.float64),
+                    np.asarray(state.prob, dtype=np.float64),
+                )):
+            return None
+        return strategy.sample_params(
+            edge.copula,
+            conditioned,
+            n,
+            rng=rng,
+            predictive_r_mode=predictive_r_mode,
+        )
+
+    def _dynamic_edge_update_from_observation(
+            self, key, edge, r_current, u_pair, edge_map, train_pseudo,
+            horizon, rng, predictive_r_mode, state_cache=None):
+        result = getattr(edge, 'fit_result', None)
+        if _is_gas_edge(edge):
+            if str(horizon).lower() == 'next':
+                return None
+            strategy = _strategy_for_result(result)
+            state = PredictiveState(
+                method=result.method,
+                horizon=horizon,
+                kind='point',
+                r=np.array([float(np.asarray(r_current)[0])], dtype=np.float64),
+            )
+            conditioned_state = strategy.condition_state(
+                edge.copula,
+                state,
+                u_pair,
+                result,
+            )
+            return strategy.sample_params(
+                edge.copula,
+                conditioned_state,
+                len(r_current),
+                rng=rng,
+                predictive_r_mode=predictive_r_mode,
+            )
+
+        if isinstance(result, LatentResult) and str(result.method).upper() == 'SCAR-TM-OU':
+            if train_pseudo is None:
+                return None
+            u_train_pair = self._edge_pair_from_pseudo_map(
+                key, train_pseudo, edge_map)
+            return self._scar_tm_given_update_r(
+                edge,
+                u_train_pair,
+                u_pair,
+                len(r_current),
+                horizon,
+                rng,
+                predictive_r_mode,
+                state_cache=state_cache,
+                cache_key=('predictive_state', key, horizon),
+            )
+
+        return None
+
+    def _dynamic_edge_skip_reason(self, edge, train_pseudo, horizon):
+        if _is_gas_edge(edge) and str(horizon).lower() == 'next':
+            return 'gas_next_horizon_would_advance_filter'
+        if (
+                isinstance(getattr(edge, 'fit_result', None), LatentResult)
+                and train_pseudo is None):
+            return 'no_training_history'
+        return 'unsupported_or_noop'
+
+    def _dynamic_update_record(
+            self, key, edge, edge_map, r_before, r_after, status, reason=None):
+        orig_idx = edge_map[key]
+        conditioned, conditioning = self.trees[key[0]][orig_idx]
+        record = {
+            'key': tuple(int(v) for v in key),
+            'tree': int(key[0]),
+            'col': int(key[1]),
+            'conditioned': tuple(sorted(int(v) for v in conditioned)),
+            'conditioning': tuple(sorted(int(v) for v in conditioning)),
+            'method': str(getattr(getattr(edge, 'fit_result', None), 'method', '')),
+            'family': type(edge.copula).__name__,
+            'status': status,
+        }
+        if reason is not None:
+            record['reason'] = reason
+        if r_before is not None:
+            r_before = np.asarray(r_before, dtype=np.float64)
+            record['r_before_mean'] = float(np.mean(r_before))
+        if r_after is not None:
+            r_after = np.asarray(r_after, dtype=np.float64)
+            record['r_after_mean'] = float(np.mean(r_after))
+        return record
+
+    def _apply_given_only_dynamic_updates_ordered(
+            self, n, r_all, given, start_col, matrix, pair_copulas, edge_map,
+            train_pseudo, horizon, rng, predictive_r_mode, state_cache=None):
+        d = self.d
+        M = matrix
+        updated = {
+            key: value.copy()
+            for key, value in r_all.items()
+        }
+        pseudo_obs = {}
+        diagnostics = {
+            'mode': 'given_only',
+            'updated_edges': [],
+            'skipped_edges': [],
+        }
+
+        last_var = int(M[0, d - 1])
+        if d - 1 >= start_col:
+            pseudo_obs[(last_var, frozenset())] = np.full(
+                n, given[last_var], dtype=np.float64)
+        else:
+            return updated, diagnostics
+
+        for col in range(d - 2, start_col - 1, -1):
+            leaf = int(M[d - 1 - col, col])
+            top_tree = d - 2 - col
+            pseudo_obs[(leaf, frozenset())] = np.full(
+                n, given[leaf], dtype=np.float64)
+            for t in range(top_tree + 1):
+                key = (t, col)
+                row = d - 2 - col - t
+                partner = int(M[row, col])
+                conditioning = frozenset(
+                    int(M[r, col])
+                    for r in range(row + 1, d - 1 - col)
+                )
+                next_leaf_cond = conditioning | {partner}
+                next_partner_cond = conditioning | {leaf}
+                edge = pair_copulas[key]
+                leaf_val = pseudo_obs[(leaf, conditioning)]
+                partner_val = pseudo_obs[(partner, conditioning)]
+                u_pair = self._edge_pair_from_pseudo_map(
+                    key, pseudo_obs, edge_map)
+
+                r_before = updated[key]
+                r_new = self._dynamic_edge_update_from_observation(
+                    key,
+                    edge,
+                    r_before,
+                    u_pair,
+                    edge_map,
+                    train_pseudo,
+                    horizon,
+                    rng,
+                    predictive_r_mode,
+                    state_cache=state_cache,
+                )
+                if r_new is not None:
+                    updated[key] = np.asarray(r_new, dtype=np.float64)
+                    diagnostics['updated_edges'].append(
+                        self._dynamic_update_record(
+                            key, edge, edge_map, r_before, updated[key],
+                            'updated'))
+                elif _is_gas_edge(edge) or isinstance(
+                        getattr(edge, 'fit_result', None), LatentResult):
+                    reason = self._dynamic_edge_skip_reason(
+                        edge, train_pseudo, horizon)
+                    diagnostics['skipped_edges'].append(
+                        self._dynamic_update_record(
+                            key, edge, edge_map, r_before, None,
+                            'skipped', reason=reason))
+
+                r = updated[key]
+                pseudo_obs[(leaf, next_leaf_cond)] = _clip(
+                    _edge_h(edge, leaf_val, partner_val, config={'r': r})
+                )
+                pseudo_obs[(partner, next_partner_cond)] = _clip(
+                    _edge_h(edge, partner_val, leaf_val, config={'r': r})
+                )
+
+        return updated, diagnostics
+
     def _sample_stepwise_gas(self, n, rng):
         gas_state = {
             key: _edge_initial_gas_state(edge)
@@ -927,7 +1259,7 @@ class RVineCopula:
 
     def _predict_r_for_edges(self, edge_keys, pair_copulas, edge_map, n,
                              train_pseudo, horizon, rng,
-                             predictive_r_mode=None):
+                             predictive_r_mode=None, state_cache=None):
         edge_horizon = 1 if horizon == 'next' else horizon
         r_all = {}
         for key in edge_keys:
@@ -943,11 +1275,155 @@ class RVineCopula:
                 horizon=edge_horizon,
                 rng=rng,
                 predictive_r_mode=predictive_r_mode,
+                state_cache=state_cache,
+                cache_key=('predictive_state', key, edge_horizon),
             )
         return r_all
 
+    def _sample_dag_given_with_r(self, n, r_all, rng, given, plan, pair_copulas):
+        missing = sorted(set(plan.edges_used) - set(r_all))
+        if missing:
+            raise KeyError(
+                "RVineCopula._sample_dag_given_with_r: missing predicted "
+                f"parameters for DAG edges {missing}"
+            )
+        r_payload = {
+            key: {
+                'edge': pair_copulas[key],
+                'r': r_all[key],
+            }
+            for key in plan.edges_used
+        }
+        return execute_conditional_plan(plan, r_payload, given, n, rng)
+
+    def _log_pdf_rows_with_r(self, u, r_all, pair_copulas=None, edge_map=None):
+        pair_copulas = self.pair_copulas if pair_copulas is None else pair_copulas
+        edge_map = self._edge_map if edge_map is None else edge_map
+        pseudo_obs = {
+            (i, frozenset()): u[:, i].copy()
+            for i in range(self.d)
+        }
+        logp = np.zeros(len(u), dtype=np.float64)
+        for t, level in enumerate(self.trees):
+            for orig_idx, (conditioned, conditioning) in enumerate(level):
+                key = self._matrix_key_from_map(t, orig_idx, edge_map)
+                pc = pair_copulas[key]
+                v1, v2 = sorted(conditioned)
+                u1 = _clip(pseudo_obs[(v1, conditioning)])
+                u2 = _clip(pseudo_obs[(v2, conditioning)])
+                r = np.asarray(r_all[key], dtype=np.float64)
+                # MLE/GAS may provide a scalar parameter path; SCAR-TM
+                # predictive sampling normally provides one parameter per row.
+                if len(r) == 1 and len(u) != 1:
+                    r = np.full(len(u), float(r[0]), dtype=np.float64)
+                elif len(r) != len(u):
+                    raise ValueError(
+                        "RVineCopula._log_pdf_rows_with_r: parameter path "
+                        f"for edge {key} has length {len(r)}, expected 1 "
+                        f"or {len(u)}"
+                    )
+                if not isinstance(pc.copula, IndependentCopula):
+                    logp += pc.copula.log_pdf(u1, u2, r)
+                if t < self.d - 2:
+                    pseudo_obs[(v2, conditioning | {v1})] = _clip(
+                        _edge_h(pc, u2, u1, config={'r': r}))
+                    pseudo_obs[(v1, conditioning | {v2})] = _clip(
+                        _edge_h(pc, u1, u2, config={'r': r}))
+        return logp
+
+    def _matrix_key_from_map(self, tree_level, orig_idx, edge_map):
+        for key, mapped_idx in edge_map.items():
+            if key[0] == tree_level and mapped_idx == orig_idx:
+                return key
+        raise KeyError((tree_level, orig_idx))
+
+    def _sample_arbitrary_given_mcmc(
+            self, n, r_all, rng, given, initial=None, n_steps=None,
+            burnin_steps=None):
+        free_vars = [var for var in range(self.d) if var not in given]
+        if not free_vars:
+            out = np.empty((n, self.d), dtype=np.float64)
+            for var in range(self.d):
+                out[:, var] = given[var]
+            return out, {
+                'accepted': {},
+                'proposed': {},
+                'acceptance_rate': {},
+                'acceptance_min': None,
+                'acceptance_mean': None,
+                'acceptance_max': None,
+                'low_acceptance_warning': False,
+                'n_steps': 0,
+                'burnin_steps': 0,
+                'total_steps': 0,
+            }
+
+        if initial is None:
+            current = rng.uniform(_EPS, 1.0 - _EPS, size=(n, self.d))
+            for var, value in given.items():
+                current[:, var] = value
+        else:
+            current = np.asarray(initial, dtype=np.float64).copy()
+            for var, value in given.items():
+                current[:, var] = value
+
+        current_logp = self._log_pdf_rows_with_r(current, r_all)
+        n_steps = (
+            max(80, 30 * len(free_vars))
+            if n_steps is None else int(n_steps)
+        )
+        burnin_steps = (
+            max(40, 10 * len(free_vars))
+            if burnin_steps is None else int(burnin_steps)
+        )
+        total_steps = burnin_steps + n_steps
+        accepted = {int(var): 0 for var in free_vars}
+        proposed = {int(var): 0 for var in free_vars}
+
+        for step_idx in range(total_steps):
+            var = free_vars[step_idx % len(free_vars)]
+            proposal = current.copy()
+            proposal[:, var] = rng.uniform(_EPS, 1.0 - _EPS, size=n)
+            proposal_logp = self._log_pdf_rows_with_r(proposal, r_all)
+            log_alpha = proposal_logp - current_logp
+            accept = np.log(rng.uniform(_EPS, 1.0, size=n)) < log_alpha
+            if np.any(accept):
+                current[accept, var] = proposal[accept, var]
+                current_logp[accept] = proposal_logp[accept]
+            accepted[int(var)] += int(np.sum(accept))
+            proposed[int(var)] += int(n)
+
+        rates = {
+            var: accepted[var] / proposed[var] if proposed[var] else 0.0
+            for var in free_vars
+        }
+        rate_values = np.array(list(rates.values()), dtype=np.float64)
+        has_proposals = any(proposed[var] > 0 for var in free_vars)
+        acceptance_min = float(np.min(rate_values)) if has_proposals else None
+        acceptance_mean = float(np.mean(rate_values)) if has_proposals else None
+        acceptance_max = float(np.max(rate_values)) if has_proposals else None
+        low_acceptance_warning = (
+            bool(has_proposals)
+            and acceptance_min is not None
+            and acceptance_min < 0.02
+        )
+        return _clip(current), {
+            'accepted': accepted,
+            'proposed': proposed,
+            'acceptance_rate': rates,
+            'acceptance_min': acceptance_min,
+            'acceptance_mean': acceptance_mean,
+            'acceptance_max': acceptance_max,
+            'low_acceptance_warning': low_acceptance_warning,
+            'n_steps': n_steps,
+            'burnin_steps': burnin_steps,
+            'total_steps': total_steps,
+        }
+
     def predict(self, n, u_train=None, horizon='next', rng=None, given=None,
-                u=None, predictive_r_mode=None):
+                u=None, predictive_r_mode=None, dynamic_conditioning='ignore',
+                predict_config=None, return_diagnostics=False,
+                mcmc_steps=None, mcmc_burnin=None):
         """Predictive sampling from fitted edge states.
 
         ``given`` fixes variables in pseudo-observation space. Conditional
@@ -957,10 +1433,24 @@ class RVineCopula:
         after rebuilding the same fitted tree structure into an equivalent
         natural-order matrix with those variables last.
 
+        When the model was fitted with ``given_vars=...``, that exact
+        target set is treated as the supported conditioning contract for the
+        current exact sampler. Other ``given`` patterns still follow the usual
+        best-effort check for whether the fixed variables can be placed at the
+        end of the R-vine variable order.
+
         For GAS edges, ``horizon='current'`` uses Psi(f_T) and ``'next'`` uses
         one score update to Psi(f_{T+1}). For SCAR-TM edges, the same argument
         selects p(x_T | data) or p(x_{T+1} | data) before sampling the
         posterior mixture path.
+
+        ``dynamic_conditioning='given_only'`` additionally lets fixed suffix
+        observations update dynamic edge states when an edge pair is fully
+        determined before any free variable is sampled. GAS updates are
+        applied only with ``horizon='current'``; with ``'next'`` they are
+        skipped because another score update would advance the filter again
+        rather than condition the same predictive state. Other dynamic methods
+        keep the default ``'ignore'`` behavior.
         """
         self._require_fit()
         if u is not None:
@@ -969,18 +1459,67 @@ class RVineCopula:
             u_train = u
         if not isinstance(n, (int, np.integer)) or n <= 0:
             raise ValueError(f"RVineCopula.predict: n must be positive int, got {n!r}")
-        horizon = str(horizon).lower()
-        if horizon not in ('current', 'next'):
-            raise ValueError("horizon must be 'current' or 'next'")
+        if predict_config is None:
+            pcfg = PredictConfig(
+                given=given,
+                horizon=horizon,
+                predictive_r_mode=predictive_r_mode,
+                dynamic_conditioning=dynamic_conditioning,
+                return_diagnostics=return_diagnostics,
+                mcmc_steps=mcmc_steps,
+                mcmc_burnin=mcmc_burnin,
+            ).validated()
+        elif isinstance(predict_config, PredictConfig):
+            pcfg = predict_config.validated()
+            if given is not None:
+                pcfg = pcfg.replace(given=given)
+            if str(horizon).lower() != 'next':
+                pcfg = pcfg.replace(horizon=horizon)
+            if predictive_r_mode is not None:
+                pcfg = pcfg.replace(predictive_r_mode=predictive_r_mode)
+            if str(dynamic_conditioning).lower() != 'ignore':
+                pcfg = pcfg.replace(dynamic_conditioning=dynamic_conditioning)
+            if return_diagnostics:
+                pcfg = pcfg.replace(return_diagnostics=True)
+            if mcmc_steps is not None:
+                pcfg = pcfg.replace(mcmc_steps=mcmc_steps)
+            if mcmc_burnin is not None:
+                pcfg = pcfg.replace(mcmc_burnin=mcmc_burnin)
+        else:
+            raise TypeError("predict_config must be PredictConfig or None")
+        horizon = pcfg.horizon
+        dynamic_conditioning = pcfg.dynamic_conditioning
+        predictive_r_mode = pcfg.predictive_r_mode
         if rng is None:
             rng = np.random.default_rng()
 
         n = int(n)
-        given = validate_rvine_given(given, self.d)
+        given = validate_rvine_given(pcfg.given, self.d)
+        target_given = (
+            bool(given)
+            and self._target_given_vars
+            and tuple(sorted(given)) == self._target_given_vars
+        )
+        if target_given and not self._conditional_fit_supported:
+            raise ValueError(
+                "RVineCopula.predict: model was fitted with "
+                f"given_vars={list(self._target_given_vars)}, "
+                "but the fitted structure does not support exact conditional "
+                "sampling for that target set"
+            )
         if len(given) == self.d:
             out = np.empty((n, self.d), dtype=np.float64)
             for i in range(self.d):
                 out[:, i] = given[i]
+            if pcfg.return_diagnostics:
+                return out, {
+                    'given': dict(given),
+                    'dynamic_conditioning': dynamic_conditioning,
+                    'suffix_start_col': 0,
+                    'updated_edges': [],
+                    'skipped_edges': [],
+                    'all_variables_given': True,
+                }
             return out
         suffix_state = self._suffix_sampling_state(given) if given else None
 
@@ -1001,13 +1540,59 @@ class RVineCopula:
         else:
             suffix_start_col, matrix, edge_map, pair_copulas = suffix_state
 
+        diagnostics = {
+            'given': dict(given),
+            'dynamic_conditioning': dynamic_conditioning,
+            'suffix_start_col': suffix_start_col,
+            'matrix_rebuilt': (
+                suffix_state is not None
+                and not np.array_equal(matrix, self.matrix)
+            ),
+            'conditional_method': 'unconditional' if not given else 'suffix',
+            'updated_edges': [],
+            'skipped_edges': [],
+        }
+        state_cache = {}
+
         if given:
             if suffix_start_col is None:
-                raise ValueError(
-                    "RVineCopula.predict: fixed variables cannot be placed "
-                    "last in the R-vine variable order; arbitrary "
-                    "conditional sampling is not supported"
+                dag = build_runtime_rvine_dag(self.matrix, self._edge_map)
+                plan = plan_conditional_sample(dag, given, self.d)
+                r_all = self._predict_r_for_edges(
+                    self.pair_copulas.keys(),
+                    self.pair_copulas,
+                    self._edge_map,
+                    n,
+                    train_pseudo,
+                    horizon,
+                    rng,
+                    predictive_r_mode=predictive_r_mode,
+                    state_cache=state_cache,
                 )
+                initial = self._sample_dag_given_with_r(
+                    n,
+                    r_all,
+                    rng,
+                    given,
+                    plan,
+                    self.pair_copulas,
+                )
+                samples, mcmc_diag = self._sample_arbitrary_given_mcmc(
+                    n,
+                    r_all,
+                    rng,
+                    given,
+                    initial=initial,
+                    n_steps=pcfg.mcmc_steps,
+                    burnin_steps=pcfg.mcmc_burnin,
+                )
+                if pcfg.return_diagnostics:
+                    diagnostics['conditional_method'] = 'dag_mcmc'
+                    diagnostics['dag_steps'] = tuple(dict(step) for step in plan)
+                    diagnostics['dag_edges_used'] = tuple(plan.edges_used)
+                    diagnostics['mcmc'] = mcmc_diag
+                    return samples, diagnostics
+                return samples
             r_all = self._predict_r_for_edges(
                 pair_copulas.keys(),
                 pair_copulas,
@@ -1017,8 +1602,26 @@ class RVineCopula:
                 horizon,
                 rng,
                 predictive_r_mode=predictive_r_mode,
+                state_cache=state_cache,
             )
-            return self._sample_suffix_given_with_r(
+            if dynamic_conditioning == 'given_only':
+                r_all, dynamic_diag = self._apply_given_only_dynamic_updates_ordered(
+                    n,
+                    r_all,
+                    given,
+                    suffix_start_col,
+                    matrix=matrix,
+                    pair_copulas=pair_copulas,
+                    edge_map=edge_map,
+                    train_pseudo=train_pseudo,
+                    horizon=horizon,
+                    rng=rng,
+                    predictive_r_mode=predictive_r_mode,
+                    state_cache=state_cache,
+                )
+                diagnostics['updated_edges'] = dynamic_diag['updated_edges']
+                diagnostics['skipped_edges'] = dynamic_diag['skipped_edges']
+            samples = self._sample_suffix_given_with_r(
                 n,
                 r_all,
                 rng,
@@ -1027,6 +1630,9 @@ class RVineCopula:
                 matrix=matrix,
                 pair_copulas=pair_copulas,
             )
+            if pcfg.return_diagnostics:
+                return samples, diagnostics
+            return samples
         r_all = self._predict_r_for_edges(
             pair_copulas.keys(),
             pair_copulas,
@@ -1036,5 +1642,9 @@ class RVineCopula:
             horizon,
             rng,
             predictive_r_mode=predictive_r_mode,
+            state_cache=state_cache,
         )
-        return self._sample_with_r(n, r_all, rng)
+        samples = self._sample_with_r(n, r_all, rng)
+        if pcfg.return_diagnostics:
+            return samples, diagnostics
+        return samples

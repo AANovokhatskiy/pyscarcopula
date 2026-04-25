@@ -526,16 +526,16 @@ def _build_next_tree(tree_level, prev_edge_repr, pseudo_obs,
     return new_tree, new_repr
 
 
-def _build_tree_0_conditional(u, conditional_vars):
+def _build_tree_0_conditional(u, given_vars, priority_limit_override=None):
     """
-    Build the first tree, prioritising edges inside conditional_vars.
+    Build the first tree, prioritising edges inside given_vars.
 
     This keeps the usual absolute Kendall tau ranking within each priority
     group while forcing edges whose conditioned pair is fully contained in
     the pre-specified conditioning variables to be considered first.
     """
     _, d = u.shape
-    cond = frozenset(conditional_vars)
+    cond = frozenset(given_vars)
     nodes = list(range(d))
     edges = []
     weights = []
@@ -550,6 +550,8 @@ def _build_tree_0_conditional(u, conditional_vars):
             priority.append(frozenset((i, j)) <= cond)
 
     priority_limit = max(len(cond) - 1, 0)
+    if priority_limit_override is not None:
+        priority_limit = max(int(priority_limit_override), 0)
     mst = _priority_spanning_tree(
         nodes, edges, weights, priority,
         priority_limit=priority_limit)
@@ -563,13 +565,14 @@ def _build_tree_0_conditional(u, conditional_vars):
 
 
 def _build_next_tree_conditional(tree_level, prev_edge_repr, pseudo_obs,
-                                 conditional_vars, truncation_level=None):
+                                 given_vars, truncation_level=None,
+                                 priority_limit_override=None):
     """
-    Build a higher tree, prioritising conditioned sets in conditional_vars.
+    Build a higher tree, prioritising conditioned sets in given_vars.
 
     Candidate enumeration matches ``_build_next_tree``.  The MST selection
     uses a two-stage Kruskal order: candidates whose new conditioned pair is
-    a subset of ``conditional_vars`` first, then all remaining candidates.
+    a subset of ``given_vars`` first, then all remaining candidates.
     """
     n_prev = len(prev_edge_repr)
 
@@ -585,7 +588,7 @@ def _build_next_tree_conditional(tree_level, prev_edge_repr, pseudo_obs,
         ]
         return new_tree, remaining
 
-    cond = frozenset(conditional_vars)
+    cond = frozenset(given_vars)
     candidate_edges = []
     candidate_weights = []
     candidate_repr = []
@@ -642,6 +645,8 @@ def _build_next_tree_conditional(tree_level, prev_edge_repr, pseudo_obs,
 
     tree_nodes = list(range(n_prev))
     priority_limit = max(len(cond) - tree_level - 1, 0)
+    if priority_limit_override is not None:
+        priority_limit = max(int(priority_limit_override), 0)
     mst_idx = _priority_spanning_tree(
         tree_nodes, candidate_edges, candidate_weights, candidate_priority,
         priority_limit=priority_limit)

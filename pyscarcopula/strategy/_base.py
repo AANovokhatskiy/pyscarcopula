@@ -17,7 +17,12 @@ from __future__ import annotations
 from typing import Protocol, runtime_checkable
 import numpy as np
 
-from pyscarcopula._types import FitResult, NumericalConfig, DEFAULT_CONFIG
+from pyscarcopula._types import (
+    FitResult,
+    NumericalConfig,
+    DEFAULT_CONFIG,
+    PredictiveState,
+)
 
 
 @runtime_checkable
@@ -171,6 +176,22 @@ class FitStrategy(Protocol):
         This is the vine-facing counterpart of ``predict``: it returns the
         predictive copula parameters rather than drawing observations.
         """
+        ...
+
+    def predictive_state(self, copula, u: np.ndarray | None,
+                         result: FitResult, **kwargs) -> PredictiveState:
+        """Return a strategy-specific predictive state before sampling."""
+        ...
+
+    def condition_state(self, copula, state: PredictiveState,
+                        observation: np.ndarray | None,
+                        result: FitResult, **kwargs) -> PredictiveState:
+        """Condition a predictive state on a partial prediction-time observation."""
+        ...
+
+    def sample_params(self, copula, state: PredictiveState, n: int,
+                      rng=None, **kwargs) -> np.ndarray:
+        """Sample copula parameters from a predictive state."""
         ...
 
 
