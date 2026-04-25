@@ -50,7 +50,7 @@ def tm_state_distribution(theta, mu, nu, u, copula, K=300, grid_range=5.0,
     return z_grid, prob
 
 
-def sample_grid_distribution(z_grid, prob, n, rng, mode='grid'):
+def sample_grid_distribution(z_grid, prob, n, rng, mode='histogram'):
     """Sample states from a discrete grid distribution.
 
     ``grid`` returns atoms exactly on ``z_grid``. ``histogram`` treats each

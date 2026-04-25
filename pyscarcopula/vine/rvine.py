@@ -241,38 +241,74 @@ class RVineCopula:
     def fit(self, data, method='mle', *, to_pobs=False, copulas=None,
             config=None, given_vars=None, conditional_strict=True,
             conditional_mode='suffix', **kwargs):
-        """Fit the R-vine on pseudo-observations.
+        """Fit the R-vine and its pair-copula edge models.
+
+        The input must already be in pseudo-observation space unless
+        ``to_pobs=True``. Structure selection uses the instance-level family
+        pool and selection options, while several structure and strategy
+        options can be overridden for this call via ``**kwargs``.
 
         Parameters
         ----------
         data : (T, d) array-like
-            Observations in ``(0, 1)`` unless ``to_pobs=True``.
-        method : {'mle', 'gas', 'scar-tm-ou'}, default 'mle'
-            Estimation strategy for each selected pair copula.
+            Pseudo-observations in ``(0, 1)``. If ``to_pobs=True``, raw
+            observations are converted column-wise with empirical ranks.
+        method : str, default 'mle'
+            Estimation strategy for every non-independent selected pair
+            copula. Common built-in values are ``'mle'``, ``'gas'`` and
+            ``'scar-tm-ou'``; any method registered in the strategy registry
+            may be used.
         to_pobs : bool, default False
-            If True, transform rows of ``data`` to pseudo-observations
-            via the empirical distribution function.
+            If True, transform ``data`` to pseudo-observations before fitting.
         copulas : list-of-lists or None
             Optional fixed edge families as ``(copula_class, rotation)`` in
-            the Dissmann edge order for each tree.
+            the Dissmann edge order for each tree. If ``None``, the best
+            family is selected for each edge from the candidate pool.
         config : NumericalConfig or None
-            Optional numerical configuration passed to strategies.
+            Optional numerical configuration passed to pair-copula strategies.
         given_vars : iterable[int] or None
-            Optional target set of variables that subsequent conditional
-            sampling should support exactly under the current R-vine sampler,
-            where the fixed variables must be placeable at the end of the
-            R-vine variable order.
+            Optional target set of variable indices for later conditional
+            prediction. When provided, structure search prefers vines where
+            these variables can be fixed exactly by the current suffix sampler.
         conditional_strict : bool, default True
-            Whether fit should reject structures that do not support exact
-            conditional sampling for the target fit-time given set.
+            If True and ``given_vars`` is set, raise ``ValueError`` when the
+            selected structure cannot support exact conditional sampling for
+            that target set. If False, fit succeeds and the result is reported
+            through ``fit_diagnostics``.
         conditional_mode : {'suffix'}, default 'suffix'
-            Conditioning support mode enforced during fit. The current public
-            implementation supports only the exact sampler that places the
-            fixed variables at the end of the R-vine variable order.
+            Conditioning support mode enforced during fit. Currently only
+            ``'suffix'`` is supported.
+        truncation_level : int or None, optional
+            ``**kwargs`` option overriding the instance setting for this fit.
+            Tree levels ``>= truncation_level`` use ``truncation_fill``.
+        truncation_fill : {'mle', 'independent'}, optional
+            ``**kwargs`` option overriding how truncated trees are handled:
+            fit MLE-only edges or force ``IndependentCopula``.
+        threshold : float or None, optional
+            ``**kwargs`` option overriding the pre-fit Kendall's tau filter.
+            Edges with ``abs(tau) < threshold`` are made independent. ``0.0``
+            disables filtering; ``None`` also disables filtering.
+        min_edge_logL : float or None, optional
+            ``**kwargs`` option overriding the post-fit edge log-likelihood
+            filter. Non-independent edges with log-likelihood below this value
+            are replaced by ``IndependentCopula``.
+        transform_type : str, optional
+            ``**kwargs`` option overriding the parameter transform passed when
+            constructing candidate copulas.
+        structure_search : {'beam', 'multi-start'}, optional
+            ``**kwargs`` option controlling conditional structure search.
+            Mainly relevant when ``given_vars`` is provided. The default in
+            the selector is ``'beam'``.
+        beam_width : int, optional
+            ``**kwargs`` option giving the number of partial structures kept
+            per level by beam search. Must be a positive integer.
         **kwargs
-            Forwarded to the selected strategy. The fit-time structure search
-            also accepts ``structure_search='beam'|'multi-start'`` and
-            ``beam_width=<positive int>`` when ``given_vars`` is used.
+            Remaining keyword arguments are forwarded to the selected
+            pair-copula strategy. Built-in strategy options include
+            ``alpha0``, ``tol`` and ``verbose`` for fitting; ``scaling`` for
+            GAS; ``K``, ``grid_range``, ``grid_method``, ``adaptive``,
+            ``pts_per_sigma``, ``analytical_grad`` and ``smart_init`` for
+            SCAR-TM; and ``n_tr`` / ``M_iterations`` for SCAR-MC strategies.
 
         Returns
         -------
@@ -1424,7 +1460,7 @@ class RVineCopula:
                 u=None, predictive_r_mode=None, dynamic_conditioning='ignore',
                 predict_config=None, return_diagnostics=False,
                 mcmc_steps=None, mcmc_burnin=None):
-        """Predictive sampling from fitted edge states.
+        """Draw predictive samples from the fitted R-vine.
 
         ``given`` fixes variables in pseudo-observation space. Conditional
         sampling is supported when the fixed variables can be placed at the
@@ -1446,11 +1482,65 @@ class RVineCopula:
 
         ``dynamic_conditioning='given_only'`` additionally lets fixed suffix
         observations update dynamic edge states when an edge pair is fully
-        determined before any free variable is sampled. GAS updates are
-        applied only with ``horizon='current'``; with ``'next'`` they are
-        skipped because another score update would advance the filter again
-        rather than condition the same predictive state. Other dynamic methods
-        keep the default ``'ignore'`` behavior.
+        determined before any free variable is sampled. Per-strategy behaviour:
+
+        * **GAS** updates apply only with ``horizon='current'``; with
+          ``'next'`` they are skipped, because another score update would
+          advance the filter again rather than condition the same predictive
+          state.
+        * **SCAR-TM-OU** updates apply at both horizons via Bayes-reweighting
+          of the transfer-matrix predictive grid by the observation
+          likelihood ``p(u_pair | r=Psi(z_grid))``.
+        * **MLE** edges have no dynamic state, so ``'given_only'`` is a no-op.
+
+        Parameters
+        ----------
+        n : int
+            Number of predictive samples to draw.
+        u_train : (T, d) array-like or None, default None
+            Reference pseudo-observations used to build current predictive
+            edge states. If ``None``, uses the data stored by the last
+            ``fit`` call.
+        horizon : {'current', 'next'}, default 'next'
+            Predictive state timing for dynamic edges. Static MLE edges ignore
+            this option.
+        rng : numpy.random.Generator or None, default None
+            Random number generator. If ``None``, a fresh default generator is
+            created.
+        given : dict[int, float] or None, default None
+            Fixed variable values in pseudo-observation space, keyed by
+            zero-based variable index. Values must be in ``(0, 1)``.
+        u : (T, d) array-like or None, default None
+            Deprecated alias for ``u_train``. Pass only one of ``u`` and
+            ``u_train``.
+        predictive_r_mode : {'grid', 'histogram'} or None, default None
+            SCAR-TM predictive parameter sampling mode. ``None`` uses the
+            strategy default. MLE and GAS edges ignore this option.
+        dynamic_conditioning : {'ignore', 'given_only'}, default 'ignore'
+            Whether fixed suffix observations may update eligible dynamic edge
+            states before sampling free variables.
+        predict_config : PredictConfig or None, default None
+            Optional bundled prediction options. Explicit non-default
+            arguments passed to this method override the corresponding fields.
+        return_diagnostics : bool, default False
+            If True, return ``(samples, diagnostics)`` instead of only
+            samples.
+        mcmc_steps : int or None, default None
+            Number of Metropolis-within-Gibbs sampling sweeps used after the
+            DAG initializer for arbitrary non-suffix ``given`` patterns. If
+            ``None``, a dimension-based default is used.
+        mcmc_burnin : int or None, default None
+            Number of burn-in sweeps for the arbitrary-``given`` MCMC fallback.
+            If ``None``, a dimension-based default is used.
+
+        Returns
+        -------
+        samples : (n, d) ndarray
+            Predictive pseudo-observations.
+        samples, diagnostics : tuple
+            Returned when ``return_diagnostics=True``. Diagnostics include the
+            conditioning method, suffix position, dynamic edge updates and
+            MCMC acceptance information when applicable.
         """
         self._require_fit()
         if u is not None:

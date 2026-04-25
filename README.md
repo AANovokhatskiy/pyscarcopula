@@ -18,12 +18,12 @@ Stochastic copula models with Ornstein-Uhlenbeck latent process in Python.
 For parameter estimation we provide five methods:
 
 | Method              | Key              | Description                                                                                                                   |
-| ------------------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| Maximum likelihood  | `mle`            | Classical fit with constant copula parameter                                                                                  |
-| MC p-sampler        | `scar-p-ou`      | Monte Carlo without importance sampling                                                                                       |
-| MC m-sampler        | `scar-m-ou`      | Monte Carlo with efficient importance sampling (EIS)                                                                          |
-| **Transfer matrix** | **`scar-tm-ou`** | **Deterministic quadrature on a grid — no Monte Carlo variance; accuracy depends on grid resolution and truncation settings** |
-| GAS                 | `gas`            | Generalized autoregressive score (observation-driven, deterministic)                                                          |
+| ------------------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Maximum likelihood  | `mle`               | Classical fit with constant copula parameter                                                                               |
+| MC p-sampler        | `scar-p-ou`         | Monte Carlo without importance sampling                                                                                    |
+| MC m-sampler        | `scar-m-ou`         | Monte Carlo with efficient importance sampling (EIS)                                                                       |
+| **Transfer matrix** | **`scar-tm-ou`**    | **Deterministic quadrature on a grid — no Monte Carlo variance; accuracy depends on grid resolution and truncation settings** |
+| GAS                 | `gas`               | Generalized autoregressive score (observation-driven, deterministic)                                                          |
 
 The transfer matrix method exploits the Markov structure and known Gaussian transition density of the OU process to evaluate the likelihood function as a sequence of matrix-vector products. The implementation automatically selects between dense and sparse transfer matrices depending on the kernel bandwidth, and adaptively refines the grid to resolve the transition kernel.
 
@@ -375,7 +375,7 @@ result = fit(copula, u, method='scar-tm-ou', tol=5e-2)
 | ----------------- | ------- | --------------------------------------------------------------------------------------------------------------------------- |
 | `analytical_grad` | `True`  | Analytical gradient. ~3–4x fewer function evaluations.                                                                      |
 | `smart_init`      | `True`  | Heuristic initial point. Up to 5x speedup on long series.                                                                   |
-| `tol`             | `1e-2`  | Gradient tolerance. `5e-2` is often faster with small logL loss.                                                            |
+| `tol`             | `1e-2`  | Gradient tolerance.                                 |
 | `K`               | `300`   | Minimum grid size. The adaptive rule may increase it.                                                                       |
 | `pts_per_sigma`   | `2`     | Grid density: points per conditional standard deviation. Higher values improve quadrature accuracy at the cost of larger K. |
 

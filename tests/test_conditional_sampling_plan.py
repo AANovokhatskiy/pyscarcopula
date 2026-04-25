@@ -1,9 +1,18 @@
 import numpy as np
 import pytest
-from scipy.stats import cramervonmises, kendalltau, kstest, norm, spearmanr
+from scipy.stats import (
+    cramervonmises,
+    cramervonmises_2samp,
+    kendalltau,
+    ks_2samp,
+    kstest,
+    norm,
+    spearmanr,
+)
 
 from pyscarcopula import (
     BivariateGaussianCopula,
+    ClaytonCopula,
     CVineCopula,
     FrankCopula,
     GumbelCopula,
@@ -268,6 +277,674 @@ class TestConditionalSamplingPlanLayer:
 
         assert np.allclose(samples[:, peel_order[-1]], 0.35)
         _assert_conditional_mvn_moments(samples, sigma, given)
+
+    def test_rvine_two_given_matches_mvn_full_conditional_covariance(self):
+        sigma = np.array([
+            [1.00, 0.60, 0.30, 0.10],
+            [0.60, 1.00, 0.50, 0.20],
+            [0.30, 0.50, 1.00, 0.40],
+            [0.10, 0.20, 0.40, 1.00],
+        ])
+        n_train = 6000
+        n_pred = 4000
+
+        u_train = _mvn_pobs(sigma, n_train, seed=210)
+        vine = RVineCopula(candidates=[BivariateGaussianCopula]).fit(
+            u_train, method='mle')
+
+        peel_order = [
+            int(vine.matrix[vine.d - 1 - col, col])
+            for col in range(vine.d)
+        ]
+        given_idx = sorted([peel_order[-1], peel_order[-2]])
+        free_idx = [i for i in range(vine.d) if i not in given_idx]
+        given_u = {given_idx[0]: 0.30, given_idx[1]: 0.80}
+        x_given = np.array([norm.ppf(given_u[i]) for i in given_idx])
+
+        samples, diagnostics = vine.predict(
+            n_pred,
+            given=given_u,
+            return_diagnostics=True,
+            rng=np.random.default_rng(211),
+        )
+
+        for i, val in given_u.items():
+            assert np.allclose(samples[:, i], val)
+
+        x_free = norm.ppf(np.clip(samples[:, free_idx], 1e-10, 1.0 - 1e-10))
+        mu_oracle, cov_oracle = _analytical_conditional_mvn(
+            sigma, given_idx, x_given, free_idx)
+
+        mu_emp = np.mean(x_free, axis=0)
+        cov_emp = np.cov(x_free, rowvar=False)
+        sd_oracle = np.sqrt(np.diag(cov_oracle))
+
+        mean_err = np.abs(mu_emp - mu_oracle) / sd_oracle
+        assert np.all(mean_err < 0.15), (
+            f"conditional mean error (in oracle-sigma units): {mean_err}, "
+            f"oracle={mu_oracle}, emp={mu_emp}, "
+            f"method={diagnostics.get('conditional_method')}"
+        )
+
+        diag_rel_err = (
+            np.abs(np.diag(cov_emp) - np.diag(cov_oracle)) / np.diag(cov_oracle)
+        )
+        assert np.all(diag_rel_err < 0.20), (
+            f"conditional variance rel-err: {diag_rel_err}, "
+            f"oracle diag={np.diag(cov_oracle)}, emp diag={np.diag(cov_emp)}"
+        )
+
+        off_mask = ~np.eye(len(free_idx), dtype=bool)
+        off_scale = np.sqrt(np.outer(sd_oracle, sd_oracle))
+        off_err_norm = np.abs(cov_emp - cov_oracle)[off_mask] / off_scale[off_mask]
+        assert np.all(off_err_norm < 0.20), (
+            f"conditional off-diagonal err (rel to oracle sigma_i*sigma_j): "
+            f"{off_err_norm}, oracle off={cov_oracle[off_mask]}, "
+            f"emp off={cov_emp[off_mask]}"
+        )
+
+        frob_rel = (
+            np.linalg.norm(cov_emp - cov_oracle, ord='fro')
+            / np.linalg.norm(cov_oracle, ord='fro')
+        )
+        assert frob_rel < 0.15, (
+            f"Frobenius relative error of conditional covariance: {frob_rel}, "
+            f"oracle=\n{cov_oracle}\nemp=\n{cov_emp}"
+        )
+
+    def test_rvine_conditional_samples_pass_marginal_uniformity_and_independence(
+            self):
+        sigma = np.array([
+            [1.00, 0.60, 0.30, 0.10],
+            [0.60, 1.00, 0.50, 0.20],
+            [0.30, 0.50, 1.00, 0.40],
+            [0.10, 0.20, 0.40, 1.00],
+        ])
+        u_train = _mvn_pobs(sigma, 6000, seed=610)
+        vine = RVineCopula(candidates=[BivariateGaussianCopula]).fit(
+            u_train, method='mle')
+
+        peel_order = [
+            int(vine.matrix[vine.d - 1 - col, col])
+            for col in range(vine.d)
+        ]
+        given_idx = sorted([peel_order[-1], peel_order[-2]])
+        free_idx = [i for i in range(vine.d) if i not in given_idx]
+        given_u = {given_idx[0]: 0.30, given_idx[1]: 0.80}
+        x_given = np.array([norm.ppf(given_u[i]) for i in given_idx])
+
+        n_pred = 4000
+        samples = vine.predict(
+            n_pred,
+            given=given_u,
+            rng=np.random.default_rng(611),
+        )
+        for v, val in given_u.items():
+            assert np.allclose(samples[:, v], val)
+
+        _, cov_oracle = _analytical_conditional_mvn(
+            sigma, given_idx, x_given, free_idx)
+        mu_oracle, _ = _analytical_conditional_mvn(
+            sigma, given_idx, x_given, free_idx)
+        L_inv = np.linalg.inv(np.linalg.cholesky(cov_oracle))
+
+        x_free = norm.ppf(np.clip(samples[:, free_idx], 1e-10, 1.0 - 1e-10))
+        z_white = (x_free - mu_oracle) @ L_inv.T
+        w = norm.cdf(z_white)
+
+        cvm_pvalues = [
+            cramervonmises(w[:, j], 'uniform').pvalue
+            for j in range(len(free_idx))
+        ]
+        assert min(cvm_pvalues) > 0.05, (
+            f"marginal Cramér-von Mises p-values on whitened conditional "
+            f"sample: {cvm_pvalues}; conditional law is not Uniform[0,1] "
+            f"on at least one free coordinate"
+        )
+
+        pair_tau = []
+        for i in range(len(free_idx)):
+            for j in range(i + 1, len(free_idx)):
+                tau, _ = kendalltau(w[:, i], w[:, j])
+                pair_tau.append((free_idx[i], free_idx[j], abs(tau)))
+        max_tau = max(t for *_ , t in pair_tau)
+        assert max_tau < 0.03, (
+            f"max |Kendall tau| between free conditional coords = "
+            f"{max_tau:.4f}; pairs={pair_tau}; conditional independence "
+            f"after whitening is violated"
+        )
+
+        cov_w = np.cov(z_white, rowvar=False)
+        frob_to_id = np.linalg.norm(
+            cov_w - np.eye(len(free_idx)), ord='fro')
+        assert frob_to_id < 0.10, (
+            f"whitened conditional sample covariance differs from I: "
+            f"||Cov_w - I||_F = {frob_to_id:.4f}, Cov_w=\n{cov_w}"
+        )
+
+    def test_risk_metrics_chunk_partition_invariant_across_n_jobs(self):
+        from pyscarcopula.contrib.risk_metrics import _make_chunks
+
+        rng = np.random.default_rng(2024)
+        data = rng.normal(0.0, 0.01, size=(20, 2))
+        window_len = 8
+        n_windows = data.shape[0] - window_len + 1
+        seed_sequences = np.random.SeedSequence(42).spawn(n_windows)
+        marginal = _IdentityMarginalModel()
+        marg_params = [None] * data.shape[0]
+        portfolio = np.array([0.5, 0.5])
+
+        var_ref, cvar_ref, _ = _calculate_cvar_fixed(
+            _RiskMetricsFakeCopula(),
+            data, 'mle', marginal, marg_params,
+            0.95, window_len, 1000, portfolio,
+            n_jobs=1, window_seed_sequences=seed_sequences,
+        )
+        assert np.any(var_ref != 0.0), "reference must be non-trivial"
+
+        for n_jobs in (1, 2, 3, 4, 7, n_windows):
+            chunks = _make_chunks(n_windows, n_jobs)
+            var = np.zeros(data.shape[0])
+            cvar = np.zeros(data.shape[0])
+            for start, end in chunks:
+                args = (
+                    start, end, data, 'mle',
+                    _RiskMetricsFakeCopula, {'rotate': 0},
+                    marginal, marg_params,
+                    0.95, window_len, 1000, portfolio, {},
+                    seed_sequences[start:end],
+                )
+                for idx, v, c in _process_chunk_fixed(args):
+                    var[idx] = v
+                    cvar[idx] = c
+            np.testing.assert_array_equal(
+                var, var_ref,
+                err_msg=(
+                    f"n_jobs={n_jobs} chunk partition {chunks} broke "
+                    f"VAR bit-exactness vs sequential reference"
+                ),
+            )
+            np.testing.assert_array_equal(
+                cvar, cvar_ref,
+                err_msg=(
+                    f"n_jobs={n_jobs} chunk partition {chunks} broke "
+                    f"CVaR bit-exactness vs sequential reference"
+                ),
+            )
+
+        var_rerun, cvar_rerun, _ = _calculate_cvar_fixed(
+            _RiskMetricsFakeCopula(),
+            data, 'mle', marginal, marg_params,
+            0.95, window_len, 1000, portfolio,
+            n_jobs=1, window_seed_sequences=seed_sequences,
+        )
+        np.testing.assert_array_equal(var_rerun, var_ref)
+        np.testing.assert_array_equal(cvar_rerun, cvar_ref)
+
+        seed_alt = np.random.SeedSequence(43).spawn(n_windows)
+        var_alt, _, _ = _calculate_cvar_fixed(
+            _RiskMetricsFakeCopula(),
+            data, 'mle', marginal, marg_params,
+            0.95, window_len, 1000, portfolio,
+            n_jobs=1, window_seed_sequences=seed_alt,
+        )
+        assert not np.array_equal(var_alt, var_ref), (
+            "changing window_seed_sequences must change the result; "
+            "sanity check that seeds are actually consumed by the sampler"
+        )
+
+    def test_fit_given_vars_then_arbitrary_predict_keys_remain_correct(self):
+        sigma = np.array([
+            [1.00, 0.60, 0.30, 0.10],
+            [0.60, 1.00, 0.50, 0.20],
+            [0.30, 0.50, 1.00, 0.40],
+            [0.10, 0.20, 0.40, 1.00],
+        ])
+        u_train = _mvn_pobs(sigma, 5000, seed=820)
+
+        advertised = 3
+        vine = RVineCopula(candidates=[BivariateGaussianCopula]).fit(
+            u_train,
+            method='mle',
+            given_vars=[advertised],
+            conditional_strict=True,
+        )
+        assert vine._target_given_vars == (advertised,)
+        assert vine._conditional_fit_supported is True
+
+        s_target, diag_target = vine.predict(
+            2000,
+            given={advertised: 0.5},
+            return_diagnostics=True,
+            rng=np.random.default_rng(831),
+        )
+        assert diag_target['conditional_method'] == 'suffix'
+        assert np.allclose(s_target[:, advertised], 0.5)
+
+        for non_target_key in (0, 1, 2):
+            for u_value in (0.30, 0.70):
+                samples = vine.predict(
+                    2000,
+                    given={non_target_key: u_value},
+                    rng=np.random.default_rng(
+                        840 + non_target_key + int(u_value * 100)),
+                )
+                assert np.allclose(samples[:, non_target_key], u_value)
+                assert np.all(np.isfinite(samples))
+                assert np.all((samples > 0.0) & (samples < 1.0))
+
+                free = [i for i in range(vine.d) if i != non_target_key]
+                x_given = np.array([norm.ppf(u_value)])
+                mu_oracle, cov_oracle = _analytical_conditional_mvn(
+                    sigma, [non_target_key], x_given, free)
+                sd_oracle = np.sqrt(np.diag(cov_oracle))
+                x_free = norm.ppf(
+                    np.clip(samples[:, free], 1e-10, 1.0 - 1e-10))
+                mean_err = np.max(
+                    np.abs(np.mean(x_free, axis=0) - mu_oracle) / sd_oracle)
+                assert mean_err < 0.15, (
+                    f"non-target predict given={{{non_target_key}: {u_value}}}: "
+                    f"||sample_mean - oracle||_inf / sigma = {mean_err:.4f}; "
+                    f"fit-time given_vars={list(vine._target_given_vars)} "
+                    f"contract should not silently corrupt non-target predicts"
+                )
+
+        for bad_value in (-0.1, 0.0, 1.0, 1.5, np.nan):
+            with pytest.raises(ValueError, match=r"pseudo-observation space"):
+                vine.predict(10, given={1: bad_value})
+
+        for bad_key in (-1, vine.d, 99):
+            with pytest.raises(ValueError, match=r"given key must be in"):
+                vine.predict(10, given={bad_key: 0.5})
+
+        with pytest.raises(TypeError, match=r"given keys must be integers"):
+            vine.predict(10, given={'foo': 0.5})
+
+        with pytest.raises(TypeError, match=r"given must be a dict"):
+            vine.predict(10, given=[0, 0.5])
+
+    def test_conditional_sample_mean_scales_as_one_over_sqrt_n(self):
+        sigma = np.array([
+            [1.00, 0.60, 0.30, 0.10],
+            [0.60, 1.00, 0.50, 0.20],
+            [0.30, 0.50, 1.00, 0.40],
+            [0.10, 0.20, 0.40, 1.00],
+        ])
+        u_train = _mvn_pobs(sigma, 6000, seed=710)
+        vine = RVineCopula(candidates=[BivariateGaussianCopula]).fit(
+            u_train, method='mle')
+
+        peel_order = [
+            int(vine.matrix[vine.d - 1 - col, col])
+            for col in range(vine.d)
+        ]
+        given_idx = sorted([peel_order[-1], peel_order[-2]])
+        free_idx = [i for i in range(vine.d) if i not in given_idx]
+        given_u = {given_idx[0]: 0.30, given_idx[1]: 0.80}
+
+        big_sample = vine.predict(
+            50000, given=given_u, rng=np.random.default_rng(999))
+        ref_std = np.std(big_sample[:, free_idx], axis=0, ddof=1)
+
+        K = 8
+        n_levels = (500, 2000, 8000)
+        se = {}
+        for n_pred in n_levels:
+            means = np.empty((K, len(free_idx)), dtype=np.float64)
+            for r in range(K):
+                seed = 4000 + 7 * n_pred + r
+                samples = vine.predict(
+                    n_pred,
+                    given=given_u,
+                    rng=np.random.default_rng(seed),
+                )
+                means[r] = np.mean(samples[:, free_idx], axis=0)
+            se[n_pred] = np.std(means, axis=0, ddof=1)
+
+        for n_pred in n_levels:
+            ratio = se[n_pred] * np.sqrt(n_pred) / ref_std
+            assert np.all((ratio > 0.5) & (ratio < 1.8)), (
+                f"n={n_pred}: per-level ratio SE(mean)*sqrt(n)/ref_std={ratio}; "
+                f"expected ~1.0; conditional sample mean SE does not follow "
+                f"1/sqrt(n) Monte Carlo theory"
+            )
+
+        for n_small, n_large in ((500, 2000), (2000, 8000)):
+            scaling_obs = se[n_small] / se[n_large]
+            scaling_theory = np.sqrt(n_large / n_small)
+            rel = scaling_obs / scaling_theory
+            assert np.all((rel > 0.55) & (rel < 1.8)), (
+                f"cross-level scaling for n={n_small} vs {n_large}: "
+                f"observed SE ratio = {scaling_obs}, "
+                f"theoretical = {scaling_theory:.3f}, "
+                f"obs/theory = {rel}; deviates from 1/sqrt(n) scaling"
+            )
+
+    def _gas_end_to_end_train(self, seed):
+        copula = BivariateGaussianCopula()
+        base = GASResult(
+            log_likelihood=0.0,
+            method='GAS',
+            copula_name=copula.name,
+            success=True,
+            params=gas_params(0.0, 1.4, 0.7),
+            scaling='unit',
+            r_last=0.0,
+        )
+        u = get_strategy_for_result(base).sample(
+            copula, None, base, 240, rng=np.random.default_rng(seed))
+        return u, {'method': 'gas', 'tol': 0.05}
+
+    def _scar_tm_end_to_end_train(self, seed):
+        rng = np.random.default_rng(seed)
+        T, theta, mu, nu = 500, 1.5, 0.5, 0.4
+        dt = 1.0 / (T - 1)
+        rho_ou = np.exp(-theta * dt)
+        sigma_cond = np.sqrt(nu ** 2 / (2.0 * theta) * (1.0 - rho_ou ** 2))
+        x = np.empty(T)
+        x[0] = rng.normal(mu, nu / np.sqrt(2.0 * theta))
+        for t in range(1, T):
+            x[t] = (mu + rho_ou * (x[t - 1] - mu)
+                    + sigma_cond * rng.standard_normal())
+        copula = BivariateGaussianCopula()
+        u = copula.sample(T, copula.transform(x), rng=rng)
+        return u, {'method': 'scar-tm-ou', 'K': 40, 'tol': 0.05}
+
+    @pytest.mark.parametrize(
+        ('label', 'train_factory', 'predict_kwargs'),
+        [
+            ('gas',     '_gas_end_to_end_train',     {}),
+            ('scar-tm', '_scar_tm_end_to_end_train', {'K': 40}),
+        ],
+    )
+    @pytest.mark.parametrize('given_u', [0.30, 0.85])
+    def test_end_to_end_fit_predict_conditional_matches_predictive_state_oracle(
+            self, label, train_factory, predict_kwargs, given_u):
+        train_seed = {'gas': 701, 'scar-tm': 801}[label]
+        pred_seed = {'gas': 7702, 'scar-tm': 8802}[label] + int(given_u * 100)
+
+        u_train, fit_kwargs = getattr(self, train_factory)(train_seed)
+        copula = BivariateGaussianCopula()
+        result = api_fit(copula, u_train, **fit_kwargs)
+        assert result.success
+
+        n_pred = 4000
+        samples = api_predict(
+            copula,
+            u_train,
+            result,
+            n_pred,
+            given={0: given_u},
+            horizon='current',
+            rng=np.random.default_rng(pred_seed),
+            **predict_kwargs,
+        )
+
+        assert np.allclose(samples[:, 0], given_u)
+        assert np.all(np.isfinite(samples))
+
+        if label == 'gas':
+            strategy = get_strategy_for_result(result)
+            r_state = float(strategy.predictive_params(
+                copula, u_train, result, 1, horizon='current')[0])
+            expected = _gaussian_conditional_u_mean(r_state, given_u)
+            oracle_descr = f"point oracle r_state={r_state:.4f}"
+        else:
+            from pyscarcopula.numerical.predictive_tm import (
+                tm_state_distribution,
+            )
+            p = result.params
+            z_grid, prob = tm_state_distribution(
+                p.theta, p.mu, p.nu, u_train, copula,
+                K=predict_kwargs['K'], horizon='current',
+            )
+            r_grid = copula.transform(np.asarray(z_grid, dtype=np.float64))
+            expected = float(np.sum(
+                prob * _gaussian_conditional_u_mean(r_grid, given_u)))
+            oracle_descr = (
+                f"integral oracle over posterior grid (K={predict_kwargs['K']})"
+            )
+
+        sample_mean = float(np.mean(samples[:, 1]))
+        assert abs(sample_mean - expected) < 0.020, (
+            f"{label} given={given_u}: end-to-end conditional mean disagrees "
+            f"with {oracle_descr}; oracle={expected:.4f}, "
+            f"sample_mean={sample_mean:.4f}, "
+            f"|diff|={abs(sample_mean - expected):.4f}"
+        )
+
+    def test_dag_mcmc_convergence_reduces_distance_to_mvn_oracle(self):
+        sigma = np.array([
+            [1.00, 0.75, 0.55, 0.35, 0.20],
+            [0.75, 1.00, 0.70, 0.45, 0.30],
+            [0.55, 0.70, 1.00, 0.65, 0.40],
+            [0.35, 0.45, 0.65, 1.00, 0.55],
+            [0.20, 0.30, 0.40, 0.55, 1.00],
+        ])
+        u_train = _mvn_pobs(sigma, 6000, seed=410)
+        vine = RVineCopula(candidates=[BivariateGaussianCopula]).fit(
+            u_train, method='mle')
+
+        given_idx = [0, 2]
+        free_idx = [1, 3, 4]
+        given_u = {0: 0.25, 2: 0.85}
+        assert vine._suffix_sampling_state(given_u) is None, (
+            "test premise broken: chosen given is suffix-supported, "
+            "the MCMC path will not be exercised"
+        )
+
+        x_given = np.array([norm.ppf(given_u[i]) for i in given_idx])
+        mu_oracle, cov_oracle = _analytical_conditional_mvn(
+            sigma, given_idx, x_given, free_idx)
+        sd_oracle = np.sqrt(np.diag(cov_oracle))
+        L_inv = np.linalg.inv(np.linalg.cholesky(cov_oracle))
+        frob_oracle = np.linalg.norm(cov_oracle, ord='fro')
+
+        n = 2000
+        n_steps_warm = 200
+
+        def measure(steps, seed):
+            samples, diag = vine.predict(
+                n,
+                given=given_u,
+                return_diagnostics=True,
+                mcmc_steps=steps,
+                mcmc_burnin=max(0, steps // 4),
+                rng=np.random.default_rng(seed),
+            )
+            assert diag['conditional_method'] == 'dag_mcmc'
+            x_free = norm.ppf(
+                np.clip(samples[:, free_idx], 1e-10, 1.0 - 1e-10))
+            z_w = (x_free - mu_oracle) @ L_inv.T
+            ks_stat = max(
+                kstest(z_w[:, j], 'norm').statistic
+                for j in range(len(free_idx))
+            )
+            mean_err = np.max(
+                np.abs(np.mean(x_free, axis=0) - mu_oracle) / sd_oracle)
+            cov_emp = np.cov(x_free, rowvar=False)
+            frob_rel = (
+                np.linalg.norm(cov_emp - cov_oracle, ord='fro') / frob_oracle
+            )
+            acc = diag['mcmc']['acceptance_mean']
+            return ks_stat, mean_err, frob_rel, (0.0 if acc is None else acc)
+
+        seeds = (601, 602, 603)
+
+        ks0, me0, fr0, acc0 = (
+            np.mean([m[i] for m in (measure(0, s) for s in seeds)])
+            for i in range(4)
+        )
+        ks_warm, me_warm, fr_warm, acc_warm = (
+            np.mean([m[i] for m in (measure(n_steps_warm, s) for s in seeds)])
+            for i in range(4)
+        )
+
+        assert ks0 > 0.20, (
+            f"DAG-only KS={ks0:.4f} too low; setup is not stressful enough "
+            "to demonstrate MCMC convergence"
+        )
+        assert me0 > 0.30, f"DAG-only mean error too low: {me0:.4f}"
+
+        assert acc0 == 0.0, f"steps=0 should not accept any move; got {acc0}"
+        assert acc_warm > 0.10, (
+            f"MCMC acceptance after warm run too low: {acc_warm:.4f}"
+        )
+
+        assert ks0 / ks_warm > 5.0, (
+            f"MCMC failed to reduce KS-to-oracle by 5x: "
+            f"steps=0 -> {ks0:.4f}, steps={n_steps_warm} -> {ks_warm:.4f}"
+        )
+        assert me0 / me_warm > 8.0, (
+            f"MCMC failed to reduce mean error: "
+            f"steps=0 -> {me0:.4f}, steps={n_steps_warm} -> {me_warm:.4f}"
+        )
+        assert fr0 / fr_warm > 2.0, (
+            f"MCMC failed to reduce Frobenius-rel: "
+            f"steps=0 -> {fr0:.4f}, steps={n_steps_warm} -> {fr_warm:.4f}"
+        )
+
+        assert ks_warm < 0.05, (
+            f"warm-MCMC samples still far from oracle: KS={ks_warm:.4f}"
+        )
+        assert me_warm < 0.10, (
+            f"warm-MCMC mean error too large: {me_warm:.4f}"
+        )
+        assert fr_warm < 0.10, (
+            f"warm-MCMC Frobenius-rel too large: {fr_warm:.4f}"
+        )
+
+    def test_rvine_suffix_path_and_dag_mcmc_path_agree_distributionally(
+            self, monkeypatch):
+        sigma = np.array([
+            [1.00, 0.60, 0.30, 0.10],
+            [0.60, 1.00, 0.50, 0.20],
+            [0.30, 0.50, 1.00, 0.40],
+            [0.10, 0.20, 0.40, 1.00],
+        ])
+        u_train = _mvn_pobs(sigma, 6000, seed=310)
+        vine = RVineCopula(candidates=[BivariateGaussianCopula]).fit(
+            u_train, method='mle')
+
+        peel_order = [
+            int(vine.matrix[vine.d - 1 - col, col])
+            for col in range(vine.d)
+        ]
+        given_var = peel_order[-1]
+        free_vars = [v for v in range(vine.d) if v != given_var]
+        given_u = {given_var: 0.35}
+
+        n = 5000
+        samples_suffix, diag_suffix = vine.predict(
+            n,
+            given=given_u,
+            return_diagnostics=True,
+            rng=np.random.default_rng(311),
+        )
+        assert diag_suffix['conditional_method'] == 'suffix'
+
+        monkeypatch.setattr(vine, '_suffix_sampling_state', lambda g: None)
+
+        samples_dag, diag_dag = vine.predict(
+            n,
+            given=given_u,
+            return_diagnostics=True,
+            mcmc_steps=300,
+            mcmc_burnin=150,
+            rng=np.random.default_rng(312),
+        )
+        assert diag_dag['conditional_method'] == 'dag_mcmc'
+        acc_mean = diag_dag['mcmc']['acceptance_mean']
+        assert 0.10 < acc_mean < 0.95, (
+            f"MCMC acceptance rate {acc_mean} outside healthy range"
+        )
+
+        for v, val in given_u.items():
+            assert np.allclose(samples_suffix[:, v], val)
+            assert np.allclose(samples_dag[:, v], val)
+
+        for v in free_vars:
+            ks_stat = ks_2samp(
+                samples_suffix[:, v], samples_dag[:, v]).statistic
+            cvm = cramervonmises_2samp(
+                samples_suffix[:, v], samples_dag[:, v])
+            assert ks_stat < 0.05, (
+                f"two-sample KS for free var {v} too large: {ks_stat:.4f}; "
+                f"suffix vs DAG+MCMC distributions differ"
+            )
+            assert cvm.pvalue > 0.01, (
+                f"Cramér-von Mises 2-sample p-value for var {v} "
+                f"too small: {cvm.pvalue:.4f} (KS={ks_stat:.4f})"
+            )
+
+        mean_suffix = np.mean(samples_suffix[:, free_vars], axis=0)
+        mean_dag = np.mean(samples_dag[:, free_vars], axis=0)
+        assert np.max(np.abs(mean_suffix - mean_dag)) < 0.025, (
+            f"marginal mean disagreement: suffix={mean_suffix}, dag={mean_dag}"
+        )
+
+        cov_suffix = np.cov(samples_suffix[:, free_vars], rowvar=False)
+        cov_dag = np.cov(samples_dag[:, free_vars], rowvar=False)
+        assert np.max(np.abs(cov_suffix - cov_dag)) < 0.025, (
+            f"covariance disagreement (max abs): "
+            f"{np.max(np.abs(cov_suffix - cov_dag)):.4f}"
+        )
+
+    @pytest.mark.parametrize(
+        ('label', 'copula_factory', 'theta'),
+        [
+            ('clayton',     ClaytonCopula,                          2.0),
+            ('gumbel-180',  lambda: GumbelCopula(rotate=180),       2.2),
+            ('frank',       FrankCopula,                            5.0),
+        ],
+    )
+    @pytest.mark.parametrize('u1_value', [0.1, 0.5, 0.9])
+    def test_bivariate_archimedean_conditional_matches_h_function_oracle(
+            self, label, copula_factory, theta, u1_value):
+        copula = copula_factory()
+        result = MLEResult(
+            log_likelihood=0.0,
+            method='MLE',
+            copula_name=copula.name,
+            success=True,
+            copula_param=float(theta),
+        )
+
+        n = 8000
+        seed = 1000 + int(u1_value * 100) + abs(hash(label)) % 997
+        samples = api_predict(
+            copula,
+            np.array([[0.5, 0.5]]),
+            result,
+            n,
+            given={0: u1_value},
+            rng=np.random.default_rng(seed),
+        )
+
+        assert np.allclose(samples[:, 0], u1_value)
+        assert np.all(np.isfinite(samples))
+        assert np.all(samples[:, 1] > 0.0)
+        assert np.all(samples[:, 1] < 1.0)
+
+        u2 = samples[:, 1]
+        z = copula.h(u2, np.full(n, u1_value), np.full(n, float(theta)))
+
+        ks_stat, _ = kstest(z, 'uniform')
+        assert ks_stat < 0.030, (
+            f"{label} u1={u1_value}: KS={ks_stat:.4f} too large; "
+            f"empirical conditional law does not match h-function oracle"
+        )
+
+        grid = np.array([0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95])
+        theo_cdf = copula.h(grid,
+                            np.full(len(grid), u1_value),
+                            np.full(len(grid), float(theta)))
+        emp_cdf = np.array([np.mean(u2 <= g) for g in grid])
+        cdf_err = np.max(np.abs(emp_cdf - theo_cdf))
+        assert cdf_err < 0.020, (
+            f"{label} u1={u1_value}: max pointwise CDF err={cdf_err:.4f}; "
+            f"theoretical={theo_cdf}, empirical={emp_cdf}"
+        )
 
     def test_rvine_mle_rosenblatt_residuals_are_uniform_and_independent(self):
         sigma = np.array([
