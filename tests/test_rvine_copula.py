@@ -1,5 +1,6 @@
 """Unit tests for the MLE-only RVineCopula (Block 1 refactor)."""
 import re
+from collections import Counter
 
 import numpy as np
 import pytest
@@ -21,6 +22,18 @@ from pyscarcopula._utils import pobs
 from pyscarcopula.api import predict as api_predict
 from pyscarcopula.api import sample as api_sample
 from pyscarcopula.stattests import gof_test, rvine_rosenblatt_transform
+from pyscarcopula.vine import _rvine_dissmann as dissmann_module
+from pyscarcopula.vine import rvine as rvine_module
+from pyscarcopula.vine._conditional_rvine import (
+    find_rvine_peel_order_for_given_suffix,
+)
+from pyscarcopula.vine._rvine_dag import (
+    ConditionalSamplePlan,
+    execute_conditional_plan,
+    _find_sample_candidate,
+    _inverse_chain_to_base,
+    _node_key,
+)
 from pyscarcopula.vine._rvine_dissmann import PairCopula
 from pyscarcopula.vine._rvine_edges import (
     _edge_h,
@@ -28,7 +41,10 @@ from pyscarcopula.vine._rvine_edges import (
     _edge_r_for_predict,
     _edge_r_for_sample,
 )
-from pyscarcopula.vine._rvine_matrix_builder import validate_natural_order_matrix
+from pyscarcopula.vine._rvine_matrix_builder import (
+    build_rvine_matrix_with_edge_map,
+    validate_natural_order_matrix,
+)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -51,6 +67,335 @@ def _sample_dvine_gumbel(T, d, theta, seed=0):
 
 def _independent(T, d, seed=0):
     return np.random.default_rng(seed).uniform(0, 1, (T, d))
+
+
+def test_find_peel_order_explicitly_keeps_given_vars_in_suffix():
+    trees = [
+        [
+            (frozenset({0, 1}), frozenset()),
+            (frozenset({1, 2}), frozenset()),
+            (frozenset({2, 3}), frozenset()),
+        ],
+        [
+            (frozenset({0, 2}), frozenset({1})),
+            (frozenset({1, 3}), frozenset({2})),
+        ],
+        [
+            (frozenset({0, 3}), frozenset({1, 2})),
+        ],
+    ]
+
+    order = find_rvine_peel_order_for_given_suffix(trees, 4, {2, 3})
+
+    assert order is not None
+    assert set(order[-2:]) == {2, 3}
+    assert set(order[:2]).isdisjoint({2, 3})
+
+
+def test_dag_inverse_chain_prefers_matrix_position_over_variable_id():
+    dag = {
+        'edges': {
+            (frozenset({0, 1}), frozenset()): (0, 2),
+            (frozenset({0, 1}), frozenset({2})): (1, 0),
+            (frozenset({0, 2}), frozenset()): (0, 1),
+            (frozenset({0, 2}), frozenset({1})): (1, 3),
+        }
+    }
+    known = {
+        _node_key(1): 'known',
+        _node_key(1, {2}): 'known',
+        _node_key(2): 'known',
+        _node_key(2, {1}): 'known',
+    }
+
+    chain = _inverse_chain_to_base(dag, known, 0, {1, 2})
+
+    assert chain is not None
+    assert chain[0]['partner'] == 2
+    assert chain[0]['edge'] == (1, 3)
+
+
+def test_dag_inverse_chain_is_independent_of_edge_insertion_order():
+    items = [
+        ((frozenset({0, 1}), frozenset()), (0, 2)),
+        ((frozenset({0, 1}), frozenset({2})), (1, 0)),
+        ((frozenset({0, 2}), frozenset()), (0, 1)),
+        ((frozenset({0, 2}), frozenset({1})), (1, 3)),
+    ]
+    known = {
+        _node_key(1): 'known',
+        _node_key(1, {2}): 'known',
+        _node_key(2): 'known',
+        _node_key(2, {1}): 'known',
+    }
+
+    forward = _inverse_chain_to_base({'edges': dict(items)}, known, 0, {1, 2})
+    reverse = _inverse_chain_to_base(
+        {'edges': dict(reversed(items))}, known, 0, {1, 2})
+
+    assert forward is not None
+    assert reverse is not None
+    assert [step['edge'] for step in forward] == [step['edge'] for step in reverse]
+    assert [step['partner'] for step in forward] == [
+        step['partner'] for step in reverse]
+
+
+def test_dag_sample_candidate_order_is_documented_matrix_heuristic():
+    dag = {
+        'edges': {
+            (frozenset({0, 1}), frozenset()): (0, 1),
+            (frozenset({0, 2}), frozenset()): (0, 3),
+        }
+    }
+    known = {
+        _node_key(1): 'known',
+        _node_key(2): 'known',
+    }
+
+    candidate = _find_sample_candidate(dag, known)
+
+    assert candidate is not None
+    assert candidate['edge'] == (0, 3)
+    assert candidate['partner'] == 2
+
+
+def test_dag_execute_rejects_legacy_tuple_edge_payload():
+    plan = ConditionalSamplePlan([
+        {
+            'action': 'h_prop',
+            'edge': (0, 0),
+            'leaf': 0,
+            'partner': 1,
+            'cond': frozenset(),
+            'to': _node_key(0, {1}),
+        },
+    ], d=2)
+    payload = {
+        (0, 0): (_independent_pair(), np.array([0.0], dtype=np.float64))
+    }
+
+    with pytest.raises(TypeError, match="edge payloads"):
+        execute_conditional_plan(
+            plan,
+            payload,
+            given={0: 0.4, 1: 0.6},
+            n=1,
+            rng=np.random.default_rng(1),
+        )
+
+
+def test_rvine_dag_sampling_reports_missing_edge_parameters():
+    vine = RVineCopula()
+    vine.d = 2
+    vine.pair_copulas = {(0, 0): _independent_pair()}
+    plan = ConditionalSamplePlan([
+        {
+            'action': 'h_prop',
+            'edge': (0, 0),
+            'leaf': 0,
+            'partner': 1,
+            'cond': frozenset(),
+            'to': _node_key(0, {1}),
+        },
+    ], d=2)
+
+    with pytest.raises(KeyError, match="missing predicted parameters"):
+        vine._sample_dag_given_with_r(
+            1,
+            r_all={},
+            rng=np.random.default_rng(2),
+            given={0: 0.4, 1: 0.6},
+            plan=plan,
+            pair_copulas=vine.pair_copulas,
+        )
+
+
+def test_log_pdf_rows_rejects_parameter_path_length_mismatch():
+    u = _sample_dvine_gumbel(200, 3, 2.0, seed=0)
+    vine = RVineCopula(candidates=[BivariateGaussianCopula]).fit(u)
+    rows = np.clip(u[:5], 1e-9, 1.0 - 1e-9)
+    r_all = {
+        key: np.full(2, 0.1, dtype=np.float64)
+        for key in vine.pair_copulas
+    }
+
+    with pytest.raises(ValueError, match="parameter path"):
+        vine._log_pdf_rows_with_r(rows, r_all)
+
+
+def _independent_pair():
+    copula = IndependentCopula()
+    result = IndependentResult(
+        log_likelihood=0.0,
+        method='INDEPENDENT',
+        copula_name=copula.name,
+        success=True,
+    )
+    return PairCopula(
+        copula=copula,
+        param=0.0,
+        log_likelihood=0.0,
+        nfev=0,
+        tau=0.0,
+        fit_result=result,
+    )
+
+
+def _pair_with_tau(tau):
+    pc = _independent_pair()
+    return PairCopula(
+        copula=pc.copula,
+        param=pc.param,
+        log_likelihood=pc.log_likelihood,
+        nfev=pc.nfev,
+        tau=float(tau),
+        fit_result=pc.fit_result,
+    )
+
+
+def _mle_gaussian_pair(rho):
+    copula = BivariateGaussianCopula()
+    result = MLEResult(
+        log_likelihood=0.0,
+        method='MLE',
+        copula_name=copula.name,
+        success=True,
+        copula_param=float(rho),
+    )
+    return PairCopula(
+        copula=copula,
+        param=float(rho),
+        log_likelihood=0.0,
+        nfev=0,
+        tau=0.0,
+        fit_result=result,
+    )
+
+
+def _gas_gaussian_pair(r_last=0.0, alpha=1.0):
+    copula = BivariateGaussianCopula()
+    result = GASResult(
+        log_likelihood=0.0,
+        method='GAS',
+        copula_name=copula.name,
+        success=True,
+        params=gas_params(0.0, alpha, 0.0),
+        scaling='unit',
+        r_last=float(r_last),
+    )
+    return PairCopula(
+        copula=copula,
+        param=float(r_last),
+        log_likelihood=0.0,
+        nfev=0,
+        tau=0.0,
+        fit_result=result,
+    )
+
+
+def _scar_tm_gaussian_pair(theta=1.0, mu=0.0, nu=4.0):
+    copula = BivariateGaussianCopula()
+    result = LatentResult(
+        log_likelihood=0.0,
+        method='SCAR-TM-OU',
+        copula_name=copula.name,
+        success=True,
+        params=ou_params(theta, mu, nu),
+        K=41,
+        grid_range=3.0,
+        pts_per_sigma=2,
+    )
+    return PairCopula(
+        copula=copula,
+        param=0.0,
+        log_likelihood=0.0,
+        nfev=0,
+        tau=0.0,
+        fit_result=result,
+    )
+
+
+def _manual_suffix_dynamic_rvine():
+    vine = RVineCopula(candidates=[BivariateGaussianCopula])
+    vine.d = 3
+    vine.matrix = np.array([
+        [0, 0, 0],
+        [1, 1, 0],
+        [2, 0, 0],
+    ], dtype=int)
+    vine.trees = [
+        [
+            (frozenset({1, 2}), frozenset()),
+            (frozenset({0, 1}), frozenset()),
+        ],
+        [
+            (frozenset({0, 2}), frozenset({1})),
+        ],
+    ]
+    vine._edge_map = {(0, 0): 0, (0, 1): 1, (1, 0): 0}
+    vine.pair_copulas = {
+        (0, 0): _independent_pair(),
+        (0, 1): _gas_gaussian_pair(r_last=0.0, alpha=1.0),
+        (1, 0): _mle_gaussian_pair(0.85),
+    }
+    vine._last_u = None
+    vine._target_given_vars = ()
+    vine._conditional_fit_supported = True
+    vine.method = 'MIXED'
+    return vine
+
+
+def _manual_suffix_scar_rvine():
+    vine = _manual_suffix_dynamic_rvine()
+    vine.pair_copulas[(0, 1)] = _scar_tm_gaussian_pair()
+    rng = np.random.default_rng(400)
+    vine._last_u = np.clip(
+        rng.uniform(0.05, 0.95, size=(25, 3)),
+        1e-9,
+        1.0 - 1e-9,
+    )
+    return vine
+
+
+def _manual_multi_edge_dynamic_rvine():
+    trees = [
+        [
+            (frozenset({2, 3}), frozenset()),
+            (frozenset({1, 2}), frozenset()),
+            (frozenset({0, 1}), frozenset()),
+        ],
+        [
+            (frozenset({1, 3}), frozenset({2})),
+            (frozenset({0, 2}), frozenset({1})),
+        ],
+        [
+            (frozenset({0, 3}), frozenset({1, 2})),
+        ],
+    ]
+    matrix, edge_map = build_rvine_matrix_with_edge_map(4, trees)
+    vine = RVineCopula(candidates=[BivariateGaussianCopula])
+    vine.d = 4
+    vine.matrix = matrix
+    vine.trees = trees
+    vine._edge_map = dict(edge_map)
+    vine.pair_copulas = {
+        key: _independent_pair()
+        for key in edge_map
+    }
+    vine.pair_copulas[(0, 2)] = _gas_gaussian_pair(r_last=0.0, alpha=0.7)
+    vine.pair_copulas[(0, 1)] = _gas_gaussian_pair(r_last=0.0, alpha=0.8)
+    vine.pair_copulas[(1, 1)] = _scar_tm_gaussian_pair()
+    vine.pair_copulas[(2, 0)] = _mle_gaussian_pair(0.75)
+    rng = np.random.default_rng(401)
+    vine._last_u = np.clip(
+        rng.uniform(0.05, 0.95, size=(30, 4)),
+        1e-9,
+        1.0 - 1e-9,
+    )
+    vine._target_given_vars = ()
+    vine._conditional_fit_supported = True
+    vine.method = 'MIXED'
+    return vine
 
 
 def _sample_dynamic_gaussian_chain(T, d, seed=0):
@@ -126,10 +471,339 @@ class TestFitContract:
         with pytest.raises(ValueError, match="2D"):
             RVineCopula().fit(u)
 
+    def test_given_vars_fit_marks_supported_target(self):
+        rng = np.random.default_rng(7)
+        sigma = np.array([
+            [1.0, 0.7, 0.3, 0.1],
+            [0.7, 1.0, 0.6, 0.2],
+            [0.3, 0.6, 1.0, 0.5],
+            [0.1, 0.2, 0.5, 1.0],
+        ])
+        u = norm.cdf(rng.multivariate_normal(np.zeros(4), sigma, size=1200))
+
+        vine = RVineCopula(candidates=[BivariateGaussianCopula]).fit(
+            u,
+            given_vars=[0, 2],
+        )
+
+        assert vine._target_given_vars == (0, 2)
+        assert vine._conditional_mode == 'suffix'
+        assert vine._conditional_fit_supported is True
+        assert vine._suffix_sampling_state({0: 0.5, 2: 0.5}) is not None
+        diagnostics = vine.fit_diagnostics
+        assert diagnostics['target_given_vars'] == (0, 2)
+        assert diagnostics['conditional_mode'] == 'suffix'
+        assert diagnostics['conditional_fit_supported'] is True
+        assert diagnostics['reject_reason'] is None
+        assert diagnostics['selection']['selected_mode'] in {
+            'given_first', 'balanced', 'fit_first'
+        }
+        assert diagnostics['selection']['selected_candidate']['exact_supported'] is True
+
+    def test_given_vars_strict_rejects_unsupported_structure(
+            self, monkeypatch):
+        trees_repr = [
+            [
+                (frozenset({0, 1}), frozenset()),
+                (frozenset({1, 2}), frozenset()),
+                (frozenset({2, 3}), frozenset()),
+            ],
+            [
+                (frozenset({0, 2}), frozenset({1})),
+                (frozenset({1, 3}), frozenset({2})),
+            ],
+            [
+                (frozenset({0, 3}), frozenset({1, 2})),
+            ],
+        ]
+        fitted = [
+            [_independent_pair(), _independent_pair(), _independent_pair()],
+            [_independent_pair(), _independent_pair()],
+            [_independent_pair()],
+        ]
+
+        def fake_select_rvine(*args, **kwargs):
+            return trees_repr, fitted
+
+        monkeypatch.setattr(rvine_module, 'select_rvine', fake_select_rvine)
+
+        vine = RVineCopula()
+        with pytest.raises(
+                ValueError,
+                match="given_vars=\\[0, 2\\].*missing_base_vars=\\[0, 2\\]"):
+            vine.fit(
+                _independent(200, 4, seed=8),
+                given_vars=[0, 2],
+                conditional_strict=True,
+            )
+        diagnostics = vine.fit_diagnostics
+        assert diagnostics['target_given_vars'] == (0, 2)
+        assert diagnostics['conditional_fit_supported'] is False
+        assert diagnostics['reject_reason'] == 'unsupported_given_vars'
+        assert diagnostics['selection']['selected_candidate']['missing_base_vars'] == (0, 2)
+
+    def test_given_vars_nonstrict_predict_rejects_target_set(
+            self, monkeypatch):
+        trees_repr = [
+            [
+                (frozenset({0, 1}), frozenset()),
+                (frozenset({1, 2}), frozenset()),
+                (frozenset({2, 3}), frozenset()),
+            ],
+            [
+                (frozenset({0, 2}), frozenset({1})),
+                (frozenset({1, 3}), frozenset({2})),
+            ],
+            [
+                (frozenset({0, 3}), frozenset({1, 2})),
+            ],
+        ]
+        fitted = [
+            [_independent_pair(), _independent_pair(), _independent_pair()],
+            [_independent_pair(), _independent_pair()],
+            [_independent_pair()],
+        ]
+
+        def fake_select_rvine(*args, **kwargs):
+            return trees_repr, fitted
+
+        monkeypatch.setattr(rvine_module, 'select_rvine', fake_select_rvine)
+
+        vine = RVineCopula().fit(
+            _independent(200, 4, seed=9),
+            given_vars=[0, 2],
+            conditional_strict=False,
+        )
+
+        assert vine._target_given_vars == (0, 2)
+        assert vine._conditional_fit_supported is False
+        diagnostics = vine.fit_diagnostics
+        assert diagnostics['conditional_fit_supported'] is False
+        assert diagnostics['reject_reason'] == 'unsupported_given_vars'
+        with pytest.raises(ValueError, match="does not support exact conditional"):
+            vine.predict(5, given={0: 0.2, 2: 0.8}, rng=np.random.default_rng(10))
+
+    def test_select_rvine_prefers_supported_candidate_for_given_vars(
+            self, monkeypatch):
+        supported = [
+            [
+                (frozenset({0, 1}), frozenset()),
+                (frozenset({0, 2}), frozenset()),
+                (frozenset({0, 3}), frozenset()),
+            ],
+            [
+                (frozenset({1, 2}), frozenset({0})),
+                (frozenset({2, 3}), frozenset({0})),
+            ],
+            [
+                (frozenset({1, 3}), frozenset({0, 2})),
+            ],
+        ]
+        unsupported = [
+            [
+                (frozenset({0, 1}), frozenset()),
+                (frozenset({1, 2}), frozenset()),
+                (frozenset({2, 3}), frozenset()),
+            ],
+            [
+                (frozenset({0, 2}), frozenset({1})),
+                (frozenset({1, 3}), frozenset({2})),
+            ],
+            [
+                (frozenset({0, 3}), frozenset({1, 2})),
+            ],
+        ]
+        fitted_supported = [
+            [_pair_with_tau(0.3), _pair_with_tau(0.3), _pair_with_tau(0.3)],
+            [_pair_with_tau(0.2), _pair_with_tau(0.2)],
+            [_pair_with_tau(0.1)],
+        ]
+        fitted_unsupported = [
+            [_pair_with_tau(0.9), _pair_with_tau(0.9), _pair_with_tau(0.9)],
+            [_pair_with_tau(0.8), _pair_with_tau(0.8)],
+            [_pair_with_tau(0.7)],
+        ]
+
+        def fake_build_and_fit_candidate(*args, mode=None, **kwargs):
+            if mode == 'given_first':
+                return supported, fitted_supported
+            return unsupported, fitted_unsupported
+
+        monkeypatch.setattr(
+            dissmann_module,
+            '_build_and_fit_candidate',
+            fake_build_and_fit_candidate,
+        )
+
+        trees_repr, fitted = dissmann_module.select_rvine(
+            _independent(100, 4, seed=12),
+            candidates=[IndependentCopula],
+            given_vars=[0, 2],
+            structure_search='multi-start',
+        )
+
+        assert trees_repr == supported
+        assert fitted == fitted_supported
+
+
 
 # ═══════════════════════════════════════════════════════════
 # Matrix and pair copulas agree with each other
 # ═══════════════════════════════════════════════════════════
+
+    @pytest.mark.parametrize(
+        "method,fit_kwargs",
+        [
+            ("mle", {}),
+            ("gas", {}),
+            ("scar-tm-ou", {"K": 12, "grid_range": 3.0}),
+        ],
+    )
+    def test_given_vars_fit_path_supported_across_methods(
+            self, method, fit_kwargs):
+        u = _sample_dynamic_gaussian_chain(45, 4, seed=40)
+        vine = RVineCopula(candidates=[BivariateGaussianCopula]).fit(
+            u,
+            method=method,
+            given_vars=[3],
+            **fit_kwargs,
+        )
+
+        assert vine._target_given_vars == (3,)
+        assert vine._conditional_mode == 'suffix'
+        assert vine._conditional_fit_supported is True
+
+        diagnostics = vine.fit_diagnostics
+        assert diagnostics['target_given_vars'] == (3,)
+        assert diagnostics['conditional_mode'] == 'suffix'
+        assert diagnostics['conditional_fit_supported'] is True
+        assert diagnostics['reject_reason'] is None
+        assert diagnostics['selection']['selected_mode'] in {
+            'given_first', 'balanced', 'fit_first'
+        }
+        assert diagnostics['selection']['selected_candidate']['exact_supported'] is True
+
+        samples = vine.predict(
+            8,
+            given={3: 0.4},
+            horizon='current',
+            rng=np.random.default_rng(41),
+        )
+        assert samples.shape == (8, 4)
+        assert np.all(samples > 0.0)
+        assert np.all(samples < 1.0)
+        assert np.allclose(samples[:, 3], 0.4)
+
+    def test_select_rvine_stable_winner_selection_on_equal_scores(
+            self, monkeypatch):
+        supported = [
+            [
+                (frozenset({0, 1}), frozenset()),
+                (frozenset({0, 2}), frozenset()),
+                (frozenset({0, 3}), frozenset()),
+            ],
+            [
+                (frozenset({1, 2}), frozenset({0})),
+                (frozenset({2, 3}), frozenset({0})),
+            ],
+            [
+                (frozenset({1, 3}), frozenset({0, 2})),
+            ],
+        ]
+        fitted = [
+            [_pair_with_tau(0.3), _pair_with_tau(0.3), _pair_with_tau(0.3)],
+            [_pair_with_tau(0.2), _pair_with_tau(0.2)],
+            [_pair_with_tau(0.1)],
+        ]
+
+        candidate_a = dissmann_module._score_candidate_structure(
+            supported,
+            fitted,
+            4,
+            (0, 2),
+            'given_first',
+            mode_path=('given_first', 'given_first', 'given_first'),
+        )
+        candidate_b = dissmann_module._score_candidate_structure(
+            supported,
+            fitted,
+            4,
+            (0, 2),
+            'balanced',
+            mode_path=('balanced', 'balanced', 'balanced'),
+        )
+
+        def fake_beam_search_candidates(*args, **kwargs):
+            return [candidate_b, candidate_a]
+
+        monkeypatch.setattr(
+            dissmann_module,
+            '_beam_search_candidates',
+            fake_beam_search_candidates,
+        )
+
+        _, _, diagnostics = dissmann_module.select_rvine(
+            _independent(100, 4, seed=13),
+            candidates=[IndependentCopula],
+            given_vars=[0, 2],
+            return_diagnostics=True,
+            structure_search='beam',
+        )
+
+        assert diagnostics['selected_mode'] == 'given_first'
+        assert diagnostics['selected_candidate']['mode_path'] == (
+            'given_first', 'given_first', 'given_first')
+
+    def test_fit_uses_beam_search_diagnostics(self):
+        u = _sample_dynamic_gaussian_chain(45, 4, seed=42)
+        vine = RVineCopula(candidates=[BivariateGaussianCopula]).fit(
+            u,
+            given_vars=[3],
+            structure_search='beam',
+            beam_width=3,
+        )
+
+        diagnostics = vine.fit_diagnostics
+        assert diagnostics['selection']['selected_candidate']['mode_path']
+        assert len(diagnostics['selection']['selected_candidate']['mode_path']) == 3
+
+    def test_beam_search_failure_message_has_diagnostics(
+            self, monkeypatch):
+        def fake_build_tree_level_repr(
+                tree_level, u, prev_repr, pseudo_obs, mode, given_vars,
+                truncation_level):
+            if tree_level == 0:
+                return [
+                    (frozenset({0, 1}), frozenset()),
+                    (frozenset({1, 2}), frozenset()),
+                    (frozenset({2, 3}), frozenset()),
+                ]
+            return None
+
+        monkeypatch.setattr(
+            dissmann_module,
+            '_build_tree_level_repr',
+            fake_build_tree_level_repr,
+        )
+
+        with pytest.raises(RuntimeError) as excinfo:
+            dissmann_module.select_rvine(
+                _independent(40, 4, seed=14),
+                candidates=[IndependentCopula],
+                given_vars=[0, 2],
+                structure_search='beam',
+                beam_width=2,
+            )
+
+        message = str(excinfo.value)
+        assert "tree_level=1" in message
+        assert "expected_edges=2" in message
+        assert "beam_size=" in message
+        assert "beam_width=2" in message
+        assert "given_vars=(0, 2)" in message
+        assert "modes_tried=" in message
+        assert "partial_mode_paths=" in message
+
 
 class TestMatrixAgreement:
 
@@ -880,6 +1554,475 @@ class TestPredict:
         assert np.allclose(r_next, r_next[0])
         assert not np.isclose(r_current[0], r_next[0])
 
+    def test_dynamic_conditioning_ignore_matches_default(self):
+        vine = _manual_suffix_dynamic_rvine()
+        given = {0: 0.99, 1: 0.99}
+
+        default = vine.predict(
+            200,
+            given=given,
+            rng=np.random.default_rng(120),
+        )
+        explicit = vine.predict(
+            200,
+            given=given,
+            dynamic_conditioning='ignore',
+            rng=np.random.default_rng(120),
+        )
+
+        np.testing.assert_allclose(default, explicit, rtol=0.0, atol=0.0)
+
+    def test_api_predict_forwards_dynamic_conditioning_to_rvine(self):
+        vine = _manual_suffix_dynamic_rvine()
+        u_train = np.full((3, 3), 0.5, dtype=np.float64)
+        given = {0: 0.99, 1: 0.99}
+
+        direct = vine.predict(
+            200,
+            u_train=u_train,
+            given=given,
+            horizon='current',
+            dynamic_conditioning='given_only',
+            rng=np.random.default_rng(1201),
+        )
+        via_api = api_predict(
+            vine,
+            u_train,
+            result=None,
+            n=200,
+            given=given,
+            horizon='current',
+            dynamic_conditioning='given_only',
+            rng=np.random.default_rng(1201),
+        )
+
+        np.testing.assert_allclose(direct, via_api, rtol=0.0, atol=0.0)
+
+    def test_given_only_noops_when_gas_edge_not_fully_observed(self):
+        vine = _manual_suffix_dynamic_rvine()
+        given = {0: 0.99}
+
+        ignored = vine.predict(
+            300,
+            given=given,
+            horizon='current',
+            dynamic_conditioning='ignore',
+            rng=np.random.default_rng(1202),
+        )
+        updated = vine.predict(
+            300,
+            given=given,
+            horizon='current',
+            dynamic_conditioning='given_only',
+            rng=np.random.default_rng(1202),
+        )
+
+        np.testing.assert_allclose(ignored, updated, rtol=0.0, atol=0.0)
+
+    def test_given_only_dynamic_conditioning_updates_gas_suffix_edge(self):
+        vine = _manual_suffix_dynamic_rvine()
+        given = {0: 0.99, 1: 0.99}
+
+        ignored = vine.predict(
+            3000,
+            given=given,
+            horizon='current',
+            dynamic_conditioning='ignore',
+            rng=np.random.default_rng(121),
+        )
+        updated = vine.predict(
+            3000,
+            given=given,
+            horizon='current',
+            dynamic_conditioning='given_only',
+            rng=np.random.default_rng(121),
+        )
+
+        assert np.allclose(updated[:, 0], given[0])
+        assert np.allclose(updated[:, 1], given[1])
+        assert abs(np.mean(updated[:, 2]) - np.mean(ignored[:, 2])) > 0.03
+
+    def test_given_only_noops_when_scar_edge_not_fully_observed(self):
+        vine = _manual_suffix_scar_rvine()
+        given = {0: 0.99}
+
+        ignored = vine.predict(
+            300,
+            given=given,
+            dynamic_conditioning='ignore',
+            horizon='current',
+            rng=np.random.default_rng(1204),
+        )
+        updated = vine.predict(
+            300,
+            given=given,
+            dynamic_conditioning='given_only',
+            horizon='current',
+            rng=np.random.default_rng(1204),
+        )
+
+        np.testing.assert_allclose(ignored, updated, rtol=0.0, atol=0.0)
+
+    def test_given_only_noops_for_scar_without_training_history(self):
+        vine = _manual_suffix_scar_rvine()
+        vine._last_u = None
+        given = {0: 0.99, 1: 0.99}
+
+        ignored = vine.predict(
+            300,
+            given=given,
+            dynamic_conditioning='ignore',
+            horizon='current',
+            rng=np.random.default_rng(1205),
+        )
+        updated = vine.predict(
+            300,
+            given=given,
+            dynamic_conditioning='given_only',
+            horizon='current',
+            rng=np.random.default_rng(1205),
+        )
+
+        np.testing.assert_allclose(ignored, updated, rtol=0.0, atol=0.0)
+
+    def test_scar_given_only_reweights_grid_by_observed_pair_likelihood(
+            self, monkeypatch):
+        from pyscarcopula.numerical.predictive_tm import tm_state_distribution
+
+        vine = _manual_suffix_scar_rvine()
+        key = (0, 1)
+        edge = vine.pair_copulas[key]
+        train_pseudo = vine._compute_pseudo_obs(vine._last_u)
+        u_train_pair = vine._edge_pair_from_pseudo_map(
+            key, train_pseudo, vine._edge_map)
+        u_observed = np.tile([0.99, 0.99], (7, 1))
+
+        result = edge.fit_result
+        p = result.params
+        z_grid, prior_prob = tm_state_distribution(
+            p.theta,
+            p.mu,
+            p.nu,
+            u_train_pair,
+            edge.copula,
+            K=result.K,
+            grid_range=result.grid_range,
+            pts_per_sigma=result.pts_per_sigma,
+            horizon='current',
+        )
+        r_grid = edge.copula.transform(z_grid)
+        log_w = edge.copula.log_pdf(
+            np.full(len(r_grid), 0.99),
+            np.full(len(r_grid), 0.99),
+            r_grid,
+        )
+        expected = prior_prob * np.exp(log_w - np.max(log_w))
+        expected /= np.sum(expected)
+        calls = []
+
+        def fake_sample_grid_distribution(z_arg, prob_arg, n, rng, mode='grid'):
+            calls.append((z_arg.copy(), prob_arg.copy(), n, mode))
+            np.testing.assert_allclose(z_arg, z_grid)
+            np.testing.assert_allclose(prob_arg, expected)
+            return np.full(n, z_arg[int(np.argmax(prob_arg))])
+
+        monkeypatch.setattr(
+            'pyscarcopula.numerical.predictive_tm.sample_grid_distribution',
+            fake_sample_grid_distribution,
+        )
+
+        r = vine._scar_tm_given_update_r(
+            edge,
+            u_train_pair,
+            u_observed,
+            n=7,
+            horizon='current',
+            rng=np.random.default_rng(1206),
+            predictive_r_mode=None,
+        )
+
+        assert len(calls) == 1
+        expected_r = edge.copula.transform(
+            np.array([z_grid[int(np.argmax(expected))]])
+        )[0]
+        np.testing.assert_allclose(r, np.full(7, expected_r))
+
+    def test_scar_given_only_noop_detects_equal_prob_copy(
+            self, monkeypatch):
+        from pyscarcopula._types import PredictiveState
+
+        vine = _manual_suffix_scar_rvine()
+        key = (0, 1)
+        edge = vine.pair_copulas[key]
+        train_pseudo = vine._compute_pseudo_obs(vine._last_u)
+        u_train_pair = vine._edge_pair_from_pseudo_map(
+            key, train_pseudo, vine._edge_map)
+        u_observed = np.tile([0.99, 0.99], (7, 1))
+
+        class CopyNoopStrategy:
+            def predictive_state(self, copula, u, result, **kwargs):
+                return PredictiveState(
+                    method='SCAR-TM-OU',
+                    horizon='current',
+                    kind='grid',
+                    z_grid=np.array([-1.0, 0.0, 1.0], dtype=np.float64),
+                    prob=np.array([0.2, 0.5, 0.3], dtype=np.float64),
+                )
+
+            def condition_state(self, copula, state, observation, result):
+                return PredictiveState(
+                    method=state.method,
+                    horizon=state.horizon,
+                    kind=state.kind,
+                    z_grid=state.z_grid.copy(),
+                    prob=state.prob.copy(),
+                    metadata=dict(state.metadata),
+                )
+
+            def sample_params(self, copula, state, n, rng=None, **kwargs):
+                raise AssertionError("no-op equal-prob state must not sample")
+
+        monkeypatch.setattr(
+            rvine_module,
+            '_strategy_for_result',
+            lambda result: CopyNoopStrategy(),
+        )
+
+        r = vine._scar_tm_given_update_r(
+            edge,
+            u_train_pair,
+            u_observed,
+            n=7,
+            horizon='current',
+            rng=np.random.default_rng(12061),
+            predictive_r_mode=None,
+        )
+
+        assert r is None
+
+    def test_scar_predictive_state_cache_reused_for_given_only(
+            self, monkeypatch):
+        from pyscarcopula.numerical import predictive_tm
+
+        vine = _manual_suffix_scar_rvine()
+        calls = Counter()
+        original = predictive_tm.tm_state_distribution
+
+        def counted_tm_state_distribution(*args, **kwargs):
+            calls[kwargs.get('horizon')] += 1
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(
+            predictive_tm,
+            'tm_state_distribution',
+            counted_tm_state_distribution,
+        )
+
+        samples, diagnostics = vine.predict(
+            20,
+            given={0: 0.99, 1: 0.99},
+            horizon='current',
+            dynamic_conditioning='given_only',
+            return_diagnostics=True,
+            rng=np.random.default_rng(12062),
+        )
+
+        assert samples.shape == (20, 3)
+        assert diagnostics['updated_edges']
+        assert calls['current'] == 1
+
+    def test_given_only_dynamic_conditioning_updates_scar_suffix_edge(self):
+        vine = _manual_suffix_scar_rvine()
+        given = {0: 0.99, 1: 0.99}
+
+        ignored = vine.predict(
+            3000,
+            given=given,
+            dynamic_conditioning='ignore',
+            horizon='current',
+            rng=np.random.default_rng(122),
+        )
+        updated = vine.predict(
+            3000,
+            given=given,
+            dynamic_conditioning='given_only',
+            horizon='current',
+            rng=np.random.default_rng(122),
+        )
+
+        assert np.allclose(updated[:, 0], given[0])
+        assert np.allclose(updated[:, 1], given[1])
+        assert abs(np.mean(updated[:, 2]) - np.mean(ignored[:, 2])) > 0.03
+
+    def test_scar_given_only_horizon_changes_conditioned_state(self):
+        vine = _manual_suffix_scar_rvine()
+        given = {0: 0.99, 1: 0.99}
+
+        _, current_diag = vine.predict(
+            400,
+            given=given,
+            horizon='current',
+            dynamic_conditioning='given_only',
+            return_diagnostics=True,
+            rng=np.random.default_rng(1221),
+        )
+        _, next_diag = vine.predict(
+            400,
+            given=given,
+            horizon='next',
+            dynamic_conditioning='given_only',
+            return_diagnostics=True,
+            rng=np.random.default_rng(1221),
+        )
+
+        current_update = current_diag['updated_edges'][0]
+        next_update = next_diag['updated_edges'][0]
+        assert current_update['method'] == 'SCAR-TM-OU'
+        assert next_update['method'] == 'SCAR-TM-OU'
+        assert current_update['key'] == next_update['key'] == (0, 1)
+        assert abs(
+            current_update['r_after_mean'] - next_update['r_after_mean']
+        ) > 1e-4
+
+    def test_dynamic_conditioning_return_diagnostics_lists_updated_edges(self):
+        vine = _manual_suffix_dynamic_rvine()
+        given = {0: 0.99, 1: 0.99}
+
+        samples, diagnostics = vine.predict(
+            200,
+            given=given,
+            horizon='current',
+            dynamic_conditioning='given_only',
+            return_diagnostics=True,
+            rng=np.random.default_rng(123),
+        )
+
+        assert samples.shape == (200, 3)
+        assert diagnostics['dynamic_conditioning'] == 'given_only'
+        assert diagnostics['given'] == given
+        assert diagnostics['suffix_start_col'] == 1
+        assert diagnostics['updated_edges']
+        assert diagnostics['updated_edges'][0]['key'] == (0, 1)
+        assert diagnostics['updated_edges'][0]['method'] == 'GAS'
+        assert 'r_before_mean' in diagnostics['updated_edges'][0]
+        assert 'r_after_mean' in diagnostics['updated_edges'][0]
+
+    def test_gas_given_only_skips_next_horizon_to_avoid_double_advance(self):
+        vine = _manual_suffix_dynamic_rvine()
+        given = {0: 0.99, 1: 0.99}
+
+        ignored = vine.predict(
+            200,
+            given=given,
+            horizon='next',
+            dynamic_conditioning='ignore',
+            rng=np.random.default_rng(1231),
+        )
+        samples, diagnostics = vine.predict(
+            200,
+            given=given,
+            horizon='next',
+            dynamic_conditioning='given_only',
+            return_diagnostics=True,
+            rng=np.random.default_rng(1231),
+        )
+
+        np.testing.assert_allclose(samples, ignored, rtol=0.0, atol=0.0)
+        assert diagnostics['updated_edges'] == []
+        assert diagnostics['skipped_edges'][0]['key'] == (0, 1)
+        assert diagnostics['skipped_edges'][0]['method'] == 'GAS'
+        assert diagnostics['skipped_edges'][0]['reason'] == (
+            'gas_next_horizon_would_advance_filter'
+        )
+
+    def test_dynamic_conditioning_multi_edge_order_updates_conditional_scar(self):
+        vine = _manual_multi_edge_dynamic_rvine()
+        given = {1: 0.98, 2: 0.97, 3: 0.96}
+
+        samples, diagnostics = vine.predict(
+            400,
+            given=given,
+            horizon='current',
+            dynamic_conditioning='given_only',
+            return_diagnostics=True,
+            rng=np.random.default_rng(124),
+        )
+
+        assert samples.shape == (400, 4)
+        assert np.allclose(samples[:, 1], given[1])
+        assert np.allclose(samples[:, 2], given[2])
+        assert np.allclose(samples[:, 3], given[3])
+        updated_keys = [item['key'] for item in diagnostics['updated_edges']]
+        assert updated_keys == [(0, 2), (0, 1), (1, 1)]
+        scar_record = diagnostics['updated_edges'][2]
+        assert scar_record['method'] == 'SCAR-TM-OU'
+        assert scar_record['conditioning'] == (2,)
+        assert 'r_after_mean' in scar_record
+
+    def test_dynamic_conditioning_mixed_vine_diagnostics(self):
+        vine = _manual_multi_edge_dynamic_rvine()
+        given = {1: 0.98, 2: 0.97, 3: 0.96}
+
+        _, diagnostics = vine.predict(
+            120,
+            given=given,
+            horizon='next',
+            dynamic_conditioning='given_only',
+            return_diagnostics=True,
+            rng=np.random.default_rng(1241),
+        )
+
+        updated = diagnostics['updated_edges']
+        skipped = diagnostics['skipped_edges']
+        assert [item['method'] for item in updated] == ['SCAR-TM-OU']
+        assert updated[0]['key'] == (1, 1)
+        assert sorted(item['key'] for item in skipped) == [(0, 1), (0, 2)]
+        assert {item['method'] for item in skipped} == {'GAS'}
+        assert {
+            item['reason'] for item in skipped
+        } == {'gas_next_horizon_would_advance_filter'}
+
+        diagnostic_methods = (
+            [item['method'] for item in updated]
+            + [item['method'] for item in skipped]
+        )
+        assert 'MLE' not in diagnostic_methods
+        assert 'INDEPENDENT' not in diagnostic_methods
+
+    def test_predict_config_return_diagnostics_via_api(self):
+        from pyscarcopula._types import PredictConfig
+
+        vine = _manual_suffix_dynamic_rvine()
+        u_train = np.full((3, 3), 0.5, dtype=np.float64)
+        config = PredictConfig(
+            given={0: 0.99, 1: 0.99},
+            horizon='current',
+            dynamic_conditioning='given_only',
+            return_diagnostics=True,
+        )
+
+        samples, diagnostics = api_predict(
+            vine,
+            u_train,
+            result=None,
+            n=100,
+            predict_config=config,
+            rng=np.random.default_rng(125),
+        )
+
+        assert samples.shape == (100, 3)
+        assert diagnostics['updated_edges'][0]['key'] == (0, 1)
+
+    def test_predict_rejects_bad_dynamic_conditioning_mode(self):
+        vine = _manual_suffix_dynamic_rvine()
+
+        with pytest.raises(ValueError, match="dynamic_conditioning"):
+            vine.predict(
+                10,
+                given={0: 0.99, 1: 0.99},
+                dynamic_conditioning='refit',
+            )
+
     def test_scar_predict_r_samples_from_tm_posterior(self, monkeypatch):
         cop = BivariateGaussianCopula()
         result = LatentResult(
@@ -944,7 +2087,7 @@ class TestPredict:
         with pytest.raises(exc):
             v.predict(10, given=given)
 
-    def test_predict_partial_given_rejects_non_rebuildable_pattern(self):
+    def test_predict_partial_given_non_rebuildable_pattern_uses_dag_mcmc(self):
         u = _sample_dvine_gumbel(250, 4, 2.0, seed=0)
         v = RVineCopula().fit(u)
         peel_order = [
@@ -954,8 +2097,17 @@ class TestPredict:
         given = {peel_order[0]: 0.5, peel_order[2]: 0.6}
         assert v._suffix_sampling_state(given) is None
 
-        with pytest.raises(ValueError, match="R-vine variable order"):
-            v.predict(10, given=given, rng=np.random.default_rng(33))
+        samples, diagnostics = v.predict(
+            20,
+            given=given,
+            return_diagnostics=True,
+            rng=np.random.default_rng(33),
+        )
+
+        assert samples.shape == (20, 4)
+        for var, value in given.items():
+            assert np.allclose(samples[:, var], value)
+        assert diagnostics['conditional_method'] == 'dag_mcmc'
 
 
 class TestGoF:
@@ -1153,7 +2305,7 @@ class TestConditionalPredict:
         with pytest.raises(exc):
             v.predict(10, given=given)
 
-    def test_non_prefix_non_rebuildable_given_is_rejected(self):
+    def test_non_prefix_non_rebuildable_given_uses_dag_fallback(self):
         u = _sample_dvine_gumbel(250, 4, 2.0, seed=0)
         v = RVineCopula().fit(u)
         peel_order = [
@@ -1162,8 +2314,55 @@ class TestConditionalPredict:
         ]
         given = {peel_order[0]: 0.25, peel_order[2]: 0.75}
 
-        with pytest.raises(ValueError, match="R-vine variable order"):
-            v.predict(10, given=given, rng=np.random.default_rng(34))
+        samples, diagnostics = v.predict(
+            40,
+            given=given,
+            return_diagnostics=True,
+            rng=np.random.default_rng(34),
+        )
+
+        assert samples.shape == (40, 4)
+        assert np.all(samples > 0.0)
+        assert np.all(samples < 1.0)
+        for var, value in given.items():
+            assert np.allclose(samples[:, var], value)
+        assert diagnostics['conditional_method'] == 'dag_mcmc'
+        assert diagnostics['dag_steps']
+        assert diagnostics['dag_edges_used']
+        assert diagnostics['mcmc']['n_steps'] > 0
+        assert diagnostics['mcmc']['burnin_steps'] > 0
+        assert diagnostics['mcmc']['total_steps'] == (
+            diagnostics['mcmc']['n_steps']
+            + diagnostics['mcmc']['burnin_steps']
+        )
+
+    def test_dag_mcmc_accepts_explicit_steps_and_burnin(self):
+        u = _sample_dvine_gumbel(250, 4, 2.0, seed=0)
+        v = RVineCopula().fit(u)
+        peel_order = [
+            int(v.matrix[v.d - 1 - col, col])
+            for col in range(v.d)
+        ]
+        given = {peel_order[0]: 0.25, peel_order[2]: 0.75}
+
+        _, diagnostics = v.predict(
+            12,
+            given=given,
+            return_diagnostics=True,
+            mcmc_steps=7,
+            mcmc_burnin=3,
+            rng=np.random.default_rng(341),
+        )
+
+        mcmc = diagnostics['mcmc']
+        assert diagnostics['conditional_method'] == 'dag_mcmc'
+        assert mcmc['n_steps'] == 7
+        assert mcmc['burnin_steps'] == 3
+        assert mcmc['total_steps'] == 10
+        assert mcmc['acceptance_min'] is not None
+        assert mcmc['acceptance_mean'] is not None
+        assert mcmc['acceptance_max'] is not None
+        assert isinstance(mcmc['low_acceptance_warning'], bool)
 
     def test_gaussian_conditional_matches_closed_form_oracle(self):
         rng = np.random.default_rng(31)
@@ -1204,3 +2403,88 @@ class TestConditionalPredict:
             stat, pvalue = kstest(samples[:, col], "uniform")
             assert stat < 0.04
             assert pvalue > 0.01
+
+    def test_arbitrary_given_gaussian_dag_mcmc_matches_mvn_oracle(self):
+        rng = np.random.default_rng(35)
+        sigma = np.array([
+            [1.0, 0.55, 0.25, 0.15],
+            [0.55, 1.0, 0.45, 0.20],
+            [0.25, 0.45, 1.0, 0.35],
+            [0.15, 0.20, 0.35, 1.0],
+        ])
+        x = rng.multivariate_normal(np.zeros(4), sigma, size=5000)
+        u = np.clip(norm.cdf(x), 1e-10, 1.0 - 1e-10)
+        v = RVineCopula(candidates=[BivariateGaussianCopula]).fit(u)
+        given = {0: 0.25, 2: 0.75}
+        assert v._suffix_sampling_state(given) is None
+
+        samples, diagnostics = v.predict(
+            2500,
+            given=given,
+            return_diagnostics=True,
+            rng=np.random.default_rng(36),
+        )
+
+        given_idx = sorted(given)
+        free_idx = [i for i in range(4) if i not in given_idx]
+        x_given = np.array([norm.ppf(given[i]) for i in given_idx])
+        s11 = sigma[np.ix_(free_idx, free_idx)]
+        s12 = sigma[np.ix_(free_idx, given_idx)]
+        s22 = sigma[np.ix_(given_idx, given_idx)]
+        sigma_cond = s11 - s12 @ np.linalg.inv(s22) @ s12.T
+        mu_cond = s12 @ np.linalg.inv(s22) @ x_given
+        x_free = norm.ppf(np.clip(samples[:, free_idx], 1e-10, 1.0 - 1e-10))
+
+        assert diagnostics['conditional_method'] == 'dag_mcmc'
+        assert np.allclose(samples[:, 0], given[0])
+        assert np.allclose(samples[:, 2], given[2])
+        np.testing.assert_allclose(np.mean(x_free, axis=0), mu_cond, atol=0.12)
+        rel_var_err = np.abs(
+            np.var(x_free, axis=0) - np.diag(sigma_cond)
+        ) / np.diag(sigma_cond)
+        assert np.all(rel_var_err < 0.30)
+
+    def test_arbitrary_given_dag_mcmc_default_close_to_longer_run(self):
+        rng = np.random.default_rng(37)
+        sigma = np.array([
+            [1.0, 0.50, 0.20, 0.10],
+            [0.50, 1.0, 0.40, 0.15],
+            [0.20, 0.40, 1.0, 0.30],
+            [0.10, 0.15, 0.30, 1.0],
+        ])
+        x = rng.multivariate_normal(np.zeros(4), sigma, size=4000)
+        u = np.clip(norm.cdf(x), 1e-10, 1.0 - 1e-10)
+        v = RVineCopula(candidates=[BivariateGaussianCopula]).fit(u)
+        given = {0: 0.30, 2: 0.70}
+        assert v._suffix_sampling_state(given) is None
+
+        default, default_diag = v.predict(
+            1200,
+            given=given,
+            return_diagnostics=True,
+            rng=np.random.default_rng(38),
+        )
+        longer, longer_diag = v.predict(
+            1200,
+            given=given,
+            mcmc_steps=800,
+            mcmc_burnin=200,
+            return_diagnostics=True,
+            rng=np.random.default_rng(38),
+        )
+
+        free_idx = [1, 3]
+        z_default = norm.ppf(
+            np.clip(default[:, free_idx], 1e-10, 1.0 - 1e-10))
+        z_longer = norm.ppf(
+            np.clip(longer[:, free_idx], 1e-10, 1.0 - 1e-10))
+
+        assert default_diag['conditional_method'] == 'dag_mcmc'
+        assert longer_diag['conditional_method'] == 'dag_mcmc'
+        assert default_diag['mcmc']['acceptance_min'] > 0.01
+        assert longer_diag['mcmc']['acceptance_min'] > 0.01
+        np.testing.assert_allclose(
+            np.mean(z_default, axis=0),
+            np.mean(z_longer, axis=0),
+            atol=0.12,
+        )

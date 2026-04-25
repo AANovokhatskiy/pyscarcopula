@@ -55,16 +55,18 @@ r_t = smoothed_params(copula, u, result_tm)
 from pyscarcopula.api import sample, predict
 
 # sample: reproduce the fitted model (for validation)
-v = sample(copula, u, result_tm, n=2000)
+v = sample(copula, u, result_tm, n=2000, rng=np.random.default_rng(2024))
 result_refit = fit(copula, pobs(v), method='scar-tm-ou')
 gof_v = gof_test(copula, pobs(v), fit_result=result_refit, to_pobs=False)
 print(f"GoF on sample: p={gof_v.pvalue:.4f}")  # should pass
 
 # predict: next-step forecast (for risk metrics)
-u_pred = predict(copula, u, result_tm, n=100_000)
+u_pred = predict(copula, u, result_tm, n=100_000,
+                 rng=np.random.default_rng(2025))
 
 # conditional forecast in pseudo-observation space
-u_cond = predict(copula, u, result_tm, n=20_000, given={0: 0.35})
+u_cond = predict(copula, u, result_tm, n=20_000, given={0: 0.35},
+                 horizon='current', rng=np.random.default_rng(2026))
 ```
 
 ## Fit a multivariate C-vine
@@ -72,22 +74,64 @@ u_cond = predict(copula, u, result_tm, n=20_000, given={0: 0.35})
 ```python
 from pyscarcopula import CVineCopula
 
-tickers = ['BTC-USD', 'ETH-USD', 'BNB-USD', 'ADA-USD', 'XRP-USD', 'DOGE-USD']
-returns_6d = np.log(prices[tickers] / prices[tickers].shift(1))[1:251].values
-u6 = pobs(returns_6d)
+tickers_6d = ['BTC-USD', 'ETH-USD', 'BNB-USD', 'ADA-USD', 'XRP-USD', 'DOGE-USD']
+returns_6d = np.log(prices[tickers_6d] / prices[tickers_6d].shift(1))[1:251].values
+u_6d = pobs(returns_6d)
 
 vine = CVineCopula()
-vine.fit(u6, method='scar-tm-ou',
+vine.fit(u_6d, method='scar-tm-ou',
          truncation_level=2, min_edge_logL=10)
 vine.summary()
 
 # Vine sampling and prediction
-v6 = vine.sample(2000)
-u_pred_6d = vine.predict(100_000, u=u6)
+v6 = vine.sample(2000, rng=np.random.default_rng(2027))
+u_pred_6d = vine.predict(100_000, u_train=u_6d,
+                         rng=np.random.default_rng(2028))
 
 # Conditional vine forecast: fix one variable
-u_pred_6d_cond = vine.predict(20_000, u=u6, given={2: 0.6})
+u_pred_6d_cond = vine.predict(20_000, u_train=u_6d, given={2: 0.6},
+                              rng=np.random.default_rng(2029))
 ```
+
+If you know the target conditioning set before fitting an `RVineCopula`, pass
+it to `fit`:
+
+```python
+from pyscarcopula import PredictConfig, RVineCopula
+
+rvine = RVineCopula().fit(
+    u_6d,
+    method='scar-tm-ou',
+    given_vars=[2],
+)
+
+cfg = PredictConfig(
+    given={2: 0.6},
+    horizon='next',
+    return_diagnostics=True,
+    mcmc_steps=200,
+    mcmc_burnin=80,
+)
+u_pred_6d_cond, diagnostics = rvine.predict(
+    20_000,
+    u_train=u_6d,
+    predict_config=cfg,
+    rng=np.random.default_rng(2030),
+)
+print(diagnostics["conditional_method"])  # "suffix" or "dag_mcmc"
+```
+
+This targets the fast exact R-vine conditional sampler. With the default
+`conditional_strict=True`, `fit` raises `ValueError` if it cannot construct a
+suffix-compatible structure. If a later `given` set is not suffix-compatible,
+`RVineCopula.predict` can still use the arbitrary DAG + MCMC fallback.
+
+Use a fresh `np.random.default_rng(seed)` when you need exactly reproducible
+Monte Carlo output.
+
+For the precise meaning of `given`, `given_vars`, `horizon`, and
+`dynamic_conditioning`, see
+[Prediction Semantics](../guide/prediction-semantics.md).
 
 ## Available copula families
 

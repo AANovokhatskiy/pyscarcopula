@@ -32,6 +32,7 @@ from pyscarcopula.copula.elliptical import (
 )
 from pyscarcopula.copula.experimental.stochastic_student import StochasticStudentCopula
 from pyscarcopula.copula.experimental.stochastic_student_dcc import StochasticStudentDCCCopula
+from pyscarcopula._types import PredictConfig
 
 
 __all__ = (
@@ -47,4 +48,6 @@ __all__ = (
     # Vine
     'CVineCopula',
     'RVineCopula',
+    # Prediction options
+    'PredictConfig',
 )

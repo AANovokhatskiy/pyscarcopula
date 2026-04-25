@@ -72,7 +72,8 @@ pytest tests/
 **Sampling and prediction**
 
 * `sample` — generate synthetic data reproducing the fitted model. For SCAR models an OU trajectory is simulated with the correct time discretization; for GAS a recursive score-driven simulation is used.
-* `predict` — generate samples for next-step forecasting, conditional on the observed data. For SCAR-TM this uses mixture sampling from the posterior distribution `p(x_T | data)`, accounting for latent-state uncertainty. For GAS it uses the last filtered value.
+* `predict` — generate samples for current-state or next-step forecasting, conditional on the observed data. For SCAR-TM this uses mixture sampling from the posterior or predictive latent-state distribution, accounting for latent-state uncertainty. For GAS it uses the fitted score-driven state. `PredictConfig` can make prediction options explicit.
+* R-vine conditional sampling with exact suffix/rebuild paths, arbitrary `given` fallback via runtime-DAG + MCMC, diagnostics, dynamic conditioning, and reproducible `rng` support.
 
 **Diagnostics and risk**
 
@@ -227,16 +228,16 @@ For SCAR-TM, `predict` accounts for latent-state uncertainty by sampling the cop
 
 ### 5. Fit a vine copula
 
-C-vine (fixed star structure):
-
 ```python
-tickers = ['BTC-USD', 'ETH-USD', 'BNB-USD', 'ADA-USD', 'XRP-USD', 'DOGE-USD']
-returns_6d = np.log(crypto_prices[tickers] / crypto_prices[tickers].shift(1))[1:251].values
-u6 = pobs(returns_6d)
+tickers_6d = ['BTC-USD', 'ETH-USD', 'BNB-USD', 'ADA-USD', 'XRP-USD', 'DOGE-USD']
+returns_6d = np.log(
+    crypto_prices[tickers_6d] / crypto_prices[tickers_6d].shift(1)
+)[1:251].values
+u_6d = pobs(returns_6d)
 
 vine = CVineCopula()
-vine.fit(u6, method='scar-tm-ou',
-         truncation_level=2, min_edge_logL=10)
+vine.fit(u_6d, method='scar-tm-ou',
+         truncation_level=2)
 vine.summary()
 ```
 
@@ -244,8 +245,8 @@ R-vine (data-driven structure via Dissmann's MST algorithm):
 
 ```python
 vine = RVineCopula()
-vine.fit(u6, method='scar-tm-ou',
-         truncation_level=2, min_edge_logL=10)
+vine.fit(u_6d, method='scar-tm-ou',
+         truncation_level=2)
 vine.summary()
 ```
 
@@ -253,44 +254,57 @@ Results on 6-dimensional crypto data (`T = 250`):
 
 | Model              | logL      | GoF p-value |
 | ------------------ | --------- | ----------- |
-| **C-vine SCAR-TM** | **924.8** | **0.63**    |
-| R-vine SCAR-TM     | 919.1     | 0.62        |
-| R-vine MLE         | 873.0     | 0.19        |
-| C-vine MLE         | 869.2     | 0.21        |
+| **R-vine SCAR-TM** | **885.2** | **0.98**    |
+| R-vine MLE         | 837.0     | 0.06        |
 | Student-t          | 764.4     | 0.00        |
+| Gaussian           | 761.0     | 0.00        |
 
-These numbers are dataset-specific and seed-dependent.
+These numbers are dataset-specific.
 
 Sampling and prediction are implemented for both vine types:
 
 ```python
 # Model validation
-v6 = vine.sample(2000)
-gof_v6 = gof_test(vine, pobs(v6), to_pobs=False)
+v6 = vine.sample(2000, rng=np.random.default_rng(2024))
+gof_v6 = gof_test(vine, v6, to_pobs=False)
 
 # Prediction (for risk metrics)
-u_pred_6d = vine.predict(100_000, u=u6)
-```
-
-Vine prediction also supports conditional sampling in pseudo-observation
-space via `given={var_index: u_value}`. For `RVineCopula`, fixed variables
-must be placeable at the end of the R-vine variable order, read from the
-anti-diagonal of the natural-order matrix:
-
-```python
-variable_order = [
-    int(vine.matrix[vine.d - 1 - col, col])
-    for col in range(vine.d)
-]
-
-u_cond_6d = vine.predict(
-    20_000,
-    u=u6,
-    given={variable_order[-1]: 0.6},
+u_pred_6d = vine.predict(
+    100_000,
+    u_train=u_6d,
+    horizon='next',
+    rng=np.random.default_rng(2025),
 )
 ```
 
-For more conditional sampling examples, see `example.ipynb`.
+Vine prediction also supports conditional sampling in pseudo-observation
+space via `given={var_index: u_value}`:
+
+```python
+u_cond_6d = vine.predict(
+    20_000,
+    u_train=u_6d,
+    given={2: 0.6},
+    horizon='current',
+    rng=np.random.default_rng(2026),
+)
+```
+
+R-vine conditional prediction supports:
+
+- exact suffix/rebuild sampling when fixed variables can be placed at the end
+  of the R-vine variable order;
+- arbitrary non-suffix `given` sets through runtime-DAG initialization plus
+  MCMC refinement;
+- `PredictConfig` for explicit prediction options;
+- `return_diagnostics=True` for method, DAG, MCMC, and dynamic-conditioning
+  diagnostics;
+- `dynamic_conditioning='given_only'` for supported dynamic SCAR-TM/GAS edges;
+- reproducible Monte Carlo through `rng=np.random.default_rng(seed)`.
+
+For detailed conditional sampling, `PredictConfig`, diagnostics, and RNG
+examples, see `example.ipynb`, `docs/guide/rvine-conditioning.md`, and
+`docs/guide/prediction-semantics.md`.
 
 ### 6. Stochastic Student-t copula
 
@@ -375,8 +389,12 @@ vine.fit(u, method='scar-tm-ou', truncation_level=2, min_edge_logL=10)
 | Parameter          | Default | Effect                                                                                        |
 | ------------------ | ------- | --------------------------------------------------------------------------------------------- |
 | `truncation_level` | `None`  | Trees at or above this level are not fitted with dynamic SCAR updates.                        |
-| `truncation_fill`  | `'mle'` | Policy for edges above `truncation_level`: static MLE selection or forced independence. Avaiable parameters: `mle` and `independent`       |
+| `truncation_fill`  | `'independent'` | Policy for edges above `truncation_level`: static MLE selection or forced independence. Available values: `mle` and `independent` |
 | `min_edge_logL`    | `None`  | Edges with low MLE log-likelihood can be kept static rather than upgraded to a dynamic model. |
+| `given_vars` | `None`  | Optional fit-time target set for suffix-compatible exact R-vine conditioning. Arbitrary predict-time `given` can still use DAG + MCMC. |
+| `conditional_strict` | `True` | Reject `RVineCopula.fit()` if the target `given_vars` set cannot be supported by the exact suffix path. |
+| `structure_search` | `'beam'` | Fit-time structure search for `given_vars`. Available values: `beam` and `multi-start`. |
+| `beam_width` | `4` | Number of partial candidates retained per tree level during beam search. |
 
 ### Sampling performance
 

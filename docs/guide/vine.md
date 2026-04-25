@@ -39,27 +39,30 @@ vine.fit(u, method='scar-tm-ou',
 vine.summary()
 ```
 
-The R-vine typically achieves higher log-likelihood than C-vine because it can capture the strongest pairwise dependencies at each tree level, rather than being constrained to a star structure.
+The R-vine typically achieves higher log-likelihood than C-vine because it can
+capture the strongest pairwise dependencies at each tree level, rather than
+being constrained to a star structure.
 
-Some Dissmann-selected regular-vine tree sets are not encodable by the current
-`RVineMatrix` sampler. In that case `RVineCopula.fit` emits a
-`RuntimeWarning` and refits a matrix-encodable C-vine fallback instead of
-failing. This keeps `sample`, `predict`, and rolling risk workflows usable,
-but the fitted fallback structure can have a lower log-likelihood than the
-original selected tree set.
-
-You can also provide a custom structure:
+If the conditioning set is known in advance, you can bias structure selection
+toward an R-vine that supports the fast exact conditional sampler for that
+set, with the fixed variables placed at the end of the R-vine variable order:
 
 ```python
-from pyscarcopula.vine._structure import RVineMatrix
-
-M = np.array([[0, 0, 0, 0],
-              [1, 1, 0, 0],
-              [2, 2, 2, 0],
-              [3, 3, 3, 3]])
-vine = RVineCopula(structure=RVineMatrix(M))
-vine.fit(u, method='mle')
+vine = RVineCopula()
+vine.fit(
+    u,
+    method='scar-tm-ou',
+    truncation_level=2,
+    min_edge_logL=10,
+    to_pobs=True,
+    given_vars=[0, 2],
+)
 ```
+
+`given_vars` is a fit-time structure-selection target. With the default
+`conditional_strict=True`, `fit` raises `ValueError` if no suffix-compatible
+exact structure is constructed. With `conditional_strict=False`, prediction can
+still fall back to the arbitrary DAG + MCMC path.
 
 ## Truncation
 
@@ -92,14 +95,21 @@ The `gof_test` function auto-dispatches to the correct Rosenblatt transform for 
 ## Sampling and prediction
 
 ```python
+import numpy as np
+
 # Predict: next-step conditional sampling (for VaR/CVaR)
-predictions = vine.predict(n=10000)
+predictions = vine.predict(
+    n=10000,
+    u_train=u,
+    horizon='next',
+    rng=np.random.default_rng(2025),
+)
 
 # Sample: reproduce fitted model (for parameter recovery)
-samples = vine.sample(n=10000)
+samples = vine.sample(n=10000, rng=np.random.default_rng(2024))
 ```
 
-Conditional generation is also supported via `given={var_index: u_value}` in
+Conditional generation is supported via `given={var_index: u_value}` in
 pseudo-observation space:
 
 ```python
@@ -108,41 +118,69 @@ variable_order = [
     for col in range(vine.d)
 ]
 
-# Always valid for an R-vine: fix the last variables in the R-vine order.
-pred_cond = vine.predict(n=5000, u=u, given={variable_order[-1]: 0.6})
+# Fast exact path: fix the last variables in the R-vine order.
+pred_cond = vine.predict(
+    n=5000,
+    u_train=u,
+    given={variable_order[-1]: 0.6},
+    horizon='current',
+    rng=np.random.default_rng(2026),
+)
 pred_cond2 = vine.predict(
     n=5000,
-    u=u,
+    u_train=u,
     given={variable_order[-2]: 0.35, variable_order[-1]: 0.75},
+    rng=np.random.default_rng(2027),
 )
 ```
 
-For `RVineCopula`, conditional sampling requires the fixed variables to be at
-the end of the R-vine variable order. This order is read from the anti-diagonal
-of the natural-order matrix. The fixed variables must already be last in the
-fitted matrix, or the fitted tree structure must be rebuildable into an
-equivalent natural-order matrix where they are last. Internally this is the
-suffix rebuild path. If that is not possible, `predict` raises `ValueError`.
+For `RVineCopula`, the fast exact conditional sampler requires the fixed
+variables to be at the end of the R-vine variable order. This order is read
+from the anti-diagonal of the natural-order matrix. The fixed variables must
+already be last in the fitted matrix, or the fitted tree structure must be
+rebuildable into an equivalent natural-order matrix where they are last.
+Internally this is the suffix rebuild path.
+
+If that is not possible, `predict` uses the arbitrary runtime DAG + MCMC
+fallback. This path is general, but approximate and more expensive than suffix
+sampling.
 
 You can inspect the fitted variable order before choosing `given`:
 
 ```python
 print(variable_order)
 
-try:
-    samples = vine.predict(n=5000, u=u, given={variable_order[0]: 0.45})
-except ValueError:
-    samples = None  # this set cannot be placed last for this fitted structure
+samples, diagnostics = vine.predict(
+    n=5000,
+    u_train=u,
+    given={variable_order[0]: 0.45},
+    mcmc_steps=300,
+    mcmc_burnin=100,
+    return_diagnostics=True,
+    rng=np.random.default_rng(2028),
+)
+print(diagnostics["conditional_method"])  # "suffix" or "dag_mcmc"
+if diagnostics["conditional_method"] == "dag_mcmc":
+    print(diagnostics["mcmc"]["acceptance_mean"])
 ```
+
+Use a fresh `np.random.default_rng(seed)` for each call when exact
+reproducibility is required. Reusing the same generator object advances its
+random stream.
 
 Current limitations:
 
-- R-vine conditioning patterns that cannot be placed last in an equivalent
-  natural-order matrix are rejected.
+- R-vine `fit(..., conditional_mode=...)` currently supports only
+  `conditional_mode='suffix'`.
 - R-vine `predict` does not accept `conditional_method` or `quad_order`.
-- There is no R-vine DAG/graph/grid/exact posterior conditional sampler.
+- Arbitrary R-vine conditioning uses DAG + MCMC, not an exact closed-form
+  posterior sampler.
 - C-vine conditional sampling is separate and supports its own prefix/general
   paths.
+
+For a focused description of prediction semantics, see
+[Prediction Semantics](prediction-semantics.md). For R-vine-specific details,
+see [R-vine Conditioning](rvine-conditioning.md).
 
 For SCAR-TM edges, `predict(..., horizon='current')` uses `p(x_T | data)` and `predict(..., horizon='next')` uses `p(x_{T+1} | data)`. `sample` still simulates independent OU trajectories.
 
