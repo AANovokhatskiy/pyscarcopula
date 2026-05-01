@@ -87,6 +87,63 @@ def _gauss_precompute_x(u1, u2):
 
 
 @njit(cache=True)
+def _gauss_precompute_x1(u):
+    """Precompute Phi^{-1}(u) for one pseudo-observation vector."""
+    n = len(u)
+    x = np.empty(n)
+    for i in range(n):
+        x[i] = _ndtri(min(max(u[i], 1e-10), 1.0 - 1e-10))
+    return x
+
+
+@njit(cache=True)
+def _gauss_log_pdf_from_x_numba(x1, x2, rho):
+    """Bivariate Gaussian copula log-density from prepared normal scores."""
+    n = len(x1)
+    out = np.empty(n)
+    for i in range(n):
+        r = rho[i]
+        r2 = r * r
+        out[i] = (-0.5 * np.log(1.0 - r2)
+                  - 0.5 * (r2 * (x1[i] * x1[i] + x2[i] * x2[i])
+                            - 2.0 * r * x1[i] * x2[i])
+                  / (1.0 - r2))
+    return out
+
+
+@njit(cache=True)
+def _gauss_h_from_x_numba(xu, xv, rho):
+    """h(u|v; rho) from prepared normal scores.
+
+    Returns both the uniform pseudo-observation and its normal score so
+    downstream Gaussian edges do not need to run Phi^{-1}(Phi(z)).
+    """
+    n = len(xu)
+    u = np.empty(n)
+    z = np.empty(n)
+    for i in range(n):
+        r = rho[i]
+        zi = (xu[i] - r * xv[i]) / np.sqrt(1.0 - r * r)
+        z[i] = zi
+        u[i] = _norm_cdf_numba(zi)
+    return u, z
+
+
+@njit(cache=True)
+def _gauss_h_inv_from_x_numba(xu, xv, rho):
+    """h^{-1}(u|v; rho) from prepared normal scores."""
+    n = len(xu)
+    u = np.empty(n)
+    z = np.empty(n)
+    for i in range(n):
+        r = rho[i]
+        zi = xu[i] * np.sqrt(1.0 - r * r) + r * xv[i]
+        z[i] = zi
+        u[i] = _norm_cdf_numba(zi)
+    return u, z
+
+
+@njit(cache=True)
 def _gauss_negloglik_and_grad_from_x(x1, x2, rho_scalar):
     """Fused -logL and d(-logL)/drho from precomputed x1, x2.
 
@@ -247,6 +304,14 @@ class BivariateGaussianCopula(BivariateCopula):
         u1a, u2a, ra = _broadcast(u1, u2, r)
         return _gauss_log_pdf_numba(u1a, u2a, ra)
 
+    def prepare_univariate(self, u):
+        ua = np.atleast_1d(np.asarray(u, dtype=np.float64)).ravel()
+        return _gauss_precompute_x1(ua)
+
+    def log_pdf_prepared(self, x1, x2, r):
+        x1a, x2a, ra = _broadcast(x1, x2, r)
+        return _gauss_log_pdf_from_x_numba(x1a, x2a, ra)
+
     def dlog_pdf_dr_unrotated(self, u1, u2, r):
         u1a, u2a, ra = _broadcast(u1, u2, r)
         return _gauss_dlog_pdf_drho(u1a, u2a, ra)
@@ -274,6 +339,14 @@ class BivariateGaussianCopula(BivariateCopula):
     def h_inverse_unrotated(self, u, v, r):
         ua, va, ra = _broadcast(u, v, r)
         return _gauss_h_inv(ua, va, ra)
+
+    def h_prepared(self, xu, xv, r):
+        xua, xva, ra = _broadcast(xu, xv, r)
+        return _gauss_h_from_x_numba(xua, xva, ra)
+
+    def h_inverse_prepared(self, xu, xv, r):
+        xua, xva, ra = _broadcast(xu, xv, r)
+        return _gauss_h_inv_from_x_numba(xua, xva, ra)
 
     def sample(self, n, r, rng=None):
         """Sample from bivariate Gaussian copula."""
@@ -377,6 +450,19 @@ class GaussianCopula:
     def predict(self, n, rng=None):
         """Alias for sample (no latent dynamics)."""
         return self.sample(n, rng=rng)
+
+    def save(self, path, *, include_data=True):
+        """Save this model to disk."""
+        from pyscarcopula.io import save_model
+
+        save_model(self, path, include_data=include_data)
+
+    @classmethod
+    def load(cls, path):
+        """Load a saved model from disk."""
+        from pyscarcopula.io import load_model
+
+        return load_model(path, expected_type=cls)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -510,3 +596,16 @@ class StudentCopula:
 
     def predict(self, n, rng=None):
         return self.sample(n, rng=rng)
+
+    def save(self, path, *, include_data=True):
+        """Save this model to disk."""
+        from pyscarcopula.io import save_model
+
+        save_model(self, path, include_data=include_data)
+
+    @classmethod
+    def load(cls, path):
+        """Load a saved model from disk."""
+        from pyscarcopula.io import load_model
+
+        return load_model(path, expected_type=cls)

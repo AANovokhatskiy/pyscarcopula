@@ -42,6 +42,7 @@ from pyscarcopula.vine._structure import (
     _build_next_tree_conditional,
     _build_tree_0,
     _build_tree_0_conditional,
+    _kendall_tau_value,
 )
 
 
@@ -563,14 +564,25 @@ def _prune_beam(states, beam_width):
 
 def _score_candidate_structure(
         trees_repr, fitted, d, given_vars, mode, *, mode_path=None):
-    matrix, edge_map = build_rvine_matrix_with_edge_map(d, trees_repr)
-    dag = build_rvine_dag(matrix, edge_map)
-    dag_info = analyze_conditional_reachability(dag, given_vars, d)
     fit_score = _fit_score_levels(fitted)
-    exact_supported = (
-        find_rvine_peel_order_for_given_suffix(trees_repr, d, given_vars)
-        is not None
-    )
+    if given_vars:
+        matrix, edge_map = build_rvine_matrix_with_edge_map(d, trees_repr)
+        dag = build_rvine_dag(matrix, edge_map)
+        dag_info = analyze_conditional_reachability(dag, given_vars, d)
+        exact_supported = (
+            find_rvine_peel_order_for_given_suffix(trees_repr, d, given_vars)
+            is not None
+        )
+    else:
+        dag_info = {
+            'complete': True,
+            'missing_base_vars': (),
+            'reachable_base_vars': (),
+            'n_known_nodes': 0,
+            'n_steps': 0,
+            'n_inverse_steps': 0,
+        }
+        exact_supported = True
     if mode_path is None:
         mode_path = (mode,)
     mode_path = tuple(mode_path)
@@ -644,8 +656,6 @@ def _fit_tree_level(
     fit_kwargs,
 ):
     """Fit all edges at one tree level; populate pseudo_obs for next tree."""
-    from scipy.stats import kendalltau
-
     is_truncated = (truncation_level is not None and t >= truncation_level)
 
     fitted_level = []
@@ -656,12 +666,16 @@ def _fit_tree_level(
         u2 = _clip(pseudo_obs[(v2, conditioning)])
         u_pair = np.column_stack((u1, u2))
 
-        tau_val, _ = kendalltau(u1, u2)
-        if np.isnan(tau_val):
+        force_independent = is_truncated and truncation_fill == 'independent'
+        if force_independent:
             tau_val = 0.0
+        else:
+            tau_val = _kendall_tau_value(u1, u2)
+            if np.isnan(tau_val):
+                tau_val = 0.0
 
         if (
-            is_truncated and truncation_fill == 'independent'
+            force_independent
             or threshold is not None and abs(tau_val) < threshold
         ):
             cop = IndependentCopula()

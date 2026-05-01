@@ -101,6 +101,59 @@ def _frank_h(u, v, r):
 
 
 @njit(cache=True)
+def _frank_h_pair(u, v, r):
+    n = len(u)
+    out01 = np.empty(n)
+    out10 = np.empty(n)
+    eps = 1e-10
+    for i in range(n):
+        _u = min(max(u[i], eps), 1.0 - eps)
+        _v = min(max(v[i], eps), 1.0 - eps)
+        ri = r[i] if r.shape[0] > 1 else r[0]
+
+        if abs(ri) < 1e-8:
+            out01[i] = _u
+            out10[i] = _v
+            continue
+
+        ru = ri * _u
+        rv = ri * _v
+        r_1mu = ri * (1.0 - _u)
+        r_1mv = ri * (1.0 - _v)
+
+        log_A = -ru + _log1mexp(rv)
+        log_B = -rv + _log1mexp(r_1mv)
+        log_max_d = max(log_A, log_B)
+        log_D = log_max_d + np.log1p(np.exp(min(log_A, log_B) - log_max_d))
+
+        log_h01 = -rv + _log1mexp(ru) - log_D
+        if log_h01 < -700.0:
+            out01[i] = eps
+        elif log_h01 > -eps:
+            out01[i] = 1.0 - eps
+        else:
+            out01[i] = np.exp(log_h01)
+
+        log_A_sw = -rv + _log1mexp(ru)
+        log_B_sw = -ru + _log1mexp(r_1mu)
+        log_max_sw = max(log_A_sw, log_B_sw)
+        log_D_sw = (
+            log_max_sw
+            + np.log1p(np.exp(min(log_A_sw, log_B_sw) - log_max_sw))
+        )
+
+        log_h10 = -ru + _log1mexp(rv) - log_D_sw
+        if log_h10 < -700.0:
+            out10[i] = eps
+        elif log_h10 > -eps:
+            out10[i] = 1.0 - eps
+        else:
+            out10[i] = np.exp(log_h10)
+
+    return out01, out10
+
+
+@njit(cache=True)
 def _frank_h_inv(u, v, r):
     """
     Inverse h-function for Frank copula: find t such that h(t, v; r) = u.
@@ -398,6 +451,9 @@ class FrankCopula(BivariateCopula):
 
     def h_unrotated(self, u, v, r):
         return _frank_h(*_broadcast(u, v, r))
+
+    def h_pair(self, u, v, r):
+        return _frank_h_pair(*_broadcast(u, v, r))
 
     def h_inverse_unrotated(self, u, v, r):
         return _frank_h_inv(*_broadcast(u, v, r))

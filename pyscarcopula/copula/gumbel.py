@@ -74,6 +74,40 @@ def _gumbel_h(u0, u1, r):
 
 
 @njit(cache=True)
+def _gumbel_h_pair(u0, u1, r):
+    """Both Gumbel h-functions for one pair, sharing common terms."""
+    n = len(u0)
+    out01 = np.empty(n)
+    out10 = np.empty(n)
+    eps = 1e-6
+    for i in range(n):
+        v0 = min(max(u0[i], eps), 1.0 - eps)
+        v1 = min(max(u1[i], eps), 1.0 - eps)
+        ri = r[i] if r.shape[0] > 1 else r[0]
+
+        if ri < 1.0 + 1e-8:
+            out01[i] = v0
+            out10[i] = v1
+        else:
+            y0 = -np.log(v0)
+            y1 = -np.log(v1)
+            t0 = y0 ** ri
+            t1 = y1 ** ri
+            S = t0 + t1
+            if S < 1e-300:
+                out01[i] = v0
+                out10[i] = v1
+            else:
+                A = S ** (1.0 / ri)
+                common = A * np.exp(-A) / S
+                val01 = t1 * common / (y1 * v1)
+                val10 = t0 * common / (y0 * v0)
+                out01[i] = min(max(val01, eps), 1.0 - eps)
+                out10[i] = min(max(val10, eps), 1.0 - eps)
+    return out01, out10
+
+
+@njit(cache=True)
 def _generate_levy_stable(alpha, beta, loc = 0, scale = 1, size = 1):
     '''
     Weron, R. (1996). On the Chambers-Mallows-Stuck method for simulating skewed stable random variables
@@ -361,6 +395,12 @@ class GumbelCopula(BivariateCopula):
         ua, va, ra = _broadcast(u, v, r)
         return _gumbel_h(ua, va, ra)
 
+    def h_pair(self, u, v, r):
+        ua, va, ra = _broadcast(u, v, r)
+        if self._rotate == 0:
+            return _gumbel_h_pair(ua, va, ra)
+        return self.h(ua, va, ra), self.h(va, ua, ra)
+
     def pdf_and_grad_on_grid_batch(self, u, x_grid):
         x = np.asarray(x_grid, dtype=np.float64)
         r_grid = self.transform(x)
@@ -386,11 +426,16 @@ class GumbelCopula(BivariateCopula):
 
 @njit(cache=True)
 def _gumbel_h_inverse_newton(u, v, r):
-    """Newton-Raphson inversion of Gumbel h-function.
+    """Invert the Gumbel h-function.
 
-    Finds t such that h(t, v, r) = u using Newton's method
-    with numerical derivative. Converges in ~5-10 iterations
-    (vs 60 for bisection).
+    The direct inverse has no elementary closed form, but after setting
+    ``A = ((-log(t))**r + (-log(v))**r)**(1/r)`` the equation is scalar and
+    monotone:
+
+        log(u) = (r - 1) * log(-log(v)) - log(v) + (1 - r) * log(A) - A
+
+    Solving for ``A`` avoids finite-difference derivatives in the old
+    bracketed Newton loop.
     """
     n = len(u)
     out = np.empty(n)
@@ -405,59 +450,39 @@ def _gumbel_h_inverse_newton(u, v, r):
             out[i] = ui
             continue
 
-        log_vi = np.log(vi)
-        t1_base = (-log_vi) ** ri
+        y = -np.log(vi)
+        target = np.log(ui) - ((ri - 1.0) * np.log(y) - np.log(vi))
 
-        # Bracketed Newton: maintain [lo, hi] and use Newton when safe
-        lo = eps
-        hi = 1.0 - eps
-        t = ui  # initial guess
+        lo = y
+        hi = max(y - np.log(ui) + ri, y + 1.0)
 
-        for _ in range(40):
-            t = min(max(t, lo), hi)
-
-            # Evaluate h(t, v; r)
-            log_t = np.log(t)
-            t2 = (-log_t) ** ri
-            S = t1_base + t2
-            if S < 1e-300:
-                t = 0.5 * (lo + hi)
-                continue
-            A = S ** (1.0 / ri)
-            h_val = t1_base / S * A * np.exp(-A) / (-log_vi * vi)
-
-            err = h_val - ui
-            if abs(err) < 1e-10:
+        # Ensure the upper bracket has log_h(A) <= log(ui).
+        for _ in range(24):
+            f_hi = (1.0 - ri) * np.log(hi) - hi - target
+            if f_hi <= 0.0:
                 break
+            hi *= 2.0
 
-            # Update bracket
-            if err > 0:
-                hi = t
+        A = min(max(y - np.log(ui), lo), hi)
+        for _ in range(32):
+            f = (1.0 - ri) * np.log(A) - A - target
+            if abs(f) < 1e-12:
+                break
+            if f > 0.0:
+                lo = A
             else:
-                lo = t
+                hi = A
 
-            # Numerical derivative via forward FD
-            dt_fd = max(t * 1e-7, 1e-12)
-            t_p = min(t + dt_fd, 1.0 - eps)
-            log_tp = np.log(t_p)
-            t2_p = (-log_tp) ** ri
-            S_p = t1_base + t2_p
-            if S_p < 1e-300:
-                t = 0.5 * (lo + hi)
-                continue
-            A_p = S_p ** (1.0 / ri)
-            h_p = t1_base / S_p * A_p * np.exp(-A_p) / (-log_vi * vi)
-            dh_dt = (h_p - h_val) / (t_p - t)
-
-            if abs(dh_dt) < 1e-300:
-                t = 0.5 * (lo + hi)
+            fp = (1.0 - ri) / A - 1.0
+            A_new = A - f / fp
+            if A_new > lo and A_new < hi:
+                A = A_new
             else:
-                t_new = t - err / dh_dt
-                # Accept Newton step only if it stays in bracket
-                if t_new > lo and t_new < hi:
-                    t = t_new
-                else:
-                    t = 0.5 * (lo + hi)
+                A = 0.5 * (lo + hi)
 
-        out[i] = min(max(t, eps), 1.0 - eps)
+        z_pow = A ** ri - y ** ri
+        if z_pow <= 0.0:
+            out[i] = 1.0 - eps
+        else:
+            out[i] = min(max(np.exp(-(z_pow ** (1.0 / ri))), eps), 1.0 - eps)
     return out

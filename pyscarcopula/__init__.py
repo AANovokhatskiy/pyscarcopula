@@ -33,6 +33,7 @@ from pyscarcopula.copula.elliptical import (
 from pyscarcopula.copula.experimental.stochastic_student import StochasticStudentCopula
 from pyscarcopula.copula.experimental.stochastic_student_dcc import StochasticStudentDCCCopula
 from pyscarcopula._types import PredictConfig
+from pyscarcopula.io import load_model, save_model
 
 
 __all__ = (
@@ -50,4 +51,6 @@ __all__ = (
     'RVineCopula',
     # Prediction options
     'PredictConfig',
+    # Persistence
+    'save_model', 'load_model',
 )
