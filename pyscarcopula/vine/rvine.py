@@ -82,6 +82,24 @@ def _clip(u):
     return np.clip(u, _EPS, 1.0 - _EPS)
 
 
+def _prepared_cache_key(obs_key, copula):
+    return obs_key, type(copula)
+
+
+def _get_prepared_obs(copula, obs_key, pseudo_obs, prepared_obs):
+    prepare = getattr(copula, 'prepare_univariate', None)
+    if prepare is None:
+        return None
+    cache_key = _prepared_cache_key(obs_key, copula)
+    if cache_key not in prepared_obs:
+        prepared_obs[cache_key] = prepare(_clip(pseudo_obs[obs_key]))
+    return prepared_obs[cache_key]
+
+
+def _set_prepared_obs(copula, obs_key, value, prepared_obs):
+    prepared_obs[_prepared_cache_key(obs_key, copula)] = value
+
+
 def _summary_family_name(copula):
     name = type(copula).__name__
     if name == 'BivariateGaussianCopula':
@@ -228,6 +246,7 @@ class RVineCopula:
         self.trees = None
         self.pair_copulas = None
         self._edge_map = None  # (t, col) -> orig_idx in trees[t]
+        self._orig_edge_key = None  # (t, orig_idx) -> (t, col)
         self._T = None
         self._log_likelihood = None
         self.method = None
@@ -398,6 +417,10 @@ class RVineCopula:
         pair_copulas = {}
         for (t, col), orig_idx in edge_map.items():
             pair_copulas[(t, col)] = fitted[t][orig_idx]
+        orig_edge_key = {
+            (t, orig_idx): (t, col)
+            for (t, col), orig_idx in edge_map.items()
+        }
 
         conditional_supported = True
         reject_reason = None
@@ -408,6 +431,7 @@ class RVineCopula:
             probe.trees = trees_repr
             probe.pair_copulas = pair_copulas
             probe._edge_map = dict(edge_map)
+            probe._orig_edge_key = orig_edge_key
             conditional_supported = probe._suffix_sampling_state({
                 var: 0.5 for var in given_vars
             }) is not None
@@ -451,6 +475,7 @@ class RVineCopula:
         self.trees = trees_repr
         self.pair_copulas = pair_copulas
         self._edge_map = dict(edge_map)
+        self._orig_edge_key = orig_edge_key
         self._T = int(T)
         self._log_likelihood = float(sum(
             pc.log_likelihood for pc in pair_copulas.values()
@@ -497,6 +522,19 @@ class RVineCopula:
 
     # ── Log-likelihood ─────────────────────────────────────────
 
+    def save(self, path, *, include_data=True):
+        """Save this fitted R-vine model to disk."""
+        from pyscarcopula.io import save_model
+
+        save_model(self, path, include_data=include_data)
+
+    @classmethod
+    def load(cls, path):
+        """Load a saved R-vine model from disk."""
+        from pyscarcopula.io import load_model
+
+        return load_model(path, expected_type=cls)
+
     def log_likelihood(self, data=None, to_pobs=False):
         """Total log-likelihood.
 
@@ -519,38 +557,101 @@ class RVineCopula:
                 f"got {u.shape}"
             )
 
+        max_active_tree = self._max_non_independent_tree_level()
+        if max_active_tree < 0:
+            return 0.0
+
         pseudo_obs = {(i, frozenset()): u[:, i].copy() for i in range(self.d)}
+        prepared_obs = {}
         total = 0.0
-        for t, level in enumerate(self.trees):
+        for t, level in enumerate(self.trees[:max_active_tree + 1]):
             for orig_idx, (conditioned, conditioning) in enumerate(level):
                 pc = self.pair_copulas[self._matrix_key(t, orig_idx)]
                 v1, v2 = sorted(conditioned)
-                u1 = _clip(pseudo_obs[(v1, conditioning)])
-                u2 = _clip(pseudo_obs[(v2, conditioning)])
+                key1 = (v1, conditioning)
+                key2 = (v2, conditioning)
+                u1 = _clip(pseudo_obs[key1])
+                u2 = _clip(pseudo_obs[key2])
+
+                r_const = None
+                if pc.fit_result is None:
+                    r_const = pc.param
+                elif isinstance(pc.fit_result, MLEResult):
+                    r_const = pc.fit_result.copula_param
 
                 if not isinstance(pc.copula, IndependentCopula):
-                    u_pair = np.column_stack((u1, u2))
-                    if pc.fit_result is not None:
+                    log_pdf_prepared = getattr(
+                        pc.copula, 'log_pdf_prepared', None)
+                    if log_pdf_prepared is not None and r_const is not None:
+                        x1 = _get_prepared_obs(
+                            pc.copula, key1, pseudo_obs, prepared_obs)
+                        x2 = _get_prepared_obs(
+                            pc.copula, key2, pseudo_obs, prepared_obs)
+                        r = np.full(len(u1), r_const, dtype=np.float64)
+                        total += float(np.sum(log_pdf_prepared(x1, x2, r)))
+                    elif pc.fit_result is not None:
+                        u_pair = np.column_stack((u1, u2))
                         strategy = _strategy_for_result(pc.fit_result)
                         total += strategy.log_likelihood(
                             pc.copula, u_pair, pc.fit_result)
                     else:
-                        r = np.full(len(u1), pc.param, dtype=np.float64)
+                        r = np.full(len(u1), r_const, dtype=np.float64)
                         total += float(np.sum(pc.copula.log_pdf(u1, u2, r)))
 
-                if t < self.d - 2:
-                    pseudo_obs[(v2, conditioning | {v1})] = _clip(pc.h(u2, u1))
-                    pseudo_obs[(v1, conditioning | {v2})] = _clip(pc.h(u1, u2))
+                if t < max_active_tree:
+                    h_prepared = getattr(pc.copula, 'h_prepared', None)
+                    if h_prepared is not None and r_const is not None:
+                        x1 = _get_prepared_obs(
+                            pc.copula, key1, pseudo_obs, prepared_obs)
+                        x2 = _get_prepared_obs(
+                            pc.copula, key2, pseudo_obs, prepared_obs)
+                        r = np.full(len(u1), r_const, dtype=np.float64)
+                        key2_next = (v2, conditioning | {v1})
+                        key1_next = (v1, conditioning | {v2})
+                        u2_next, x2_next = h_prepared(x2, x1, r)
+                        u1_next, x1_next = h_prepared(x1, x2, r)
+                        pseudo_obs[key2_next] = _clip(u2_next)
+                        pseudo_obs[key1_next] = _clip(u1_next)
+                        _set_prepared_obs(
+                            pc.copula, key2_next, x2_next, prepared_obs)
+                        _set_prepared_obs(
+                            pc.copula, key1_next, x1_next, prepared_obs)
+                    else:
+                        pseudo_obs[(v2, conditioning | {v1})] = _clip(
+                            pc.h(u2, u1))
+                        pseudo_obs[(v1, conditioning | {v2})] = _clip(
+                            pc.h(u1, u2))
         return total
 
     def _matrix_key(self, tree_level, orig_idx):
         """Invert edge_map: (tree, orig_idx) -> (tree, col)."""
-        for (t, col), idx in self._edge_map.items():
-            if t == tree_level and idx == orig_idx:
-                return (t, col)
-        raise KeyError(
-            f"RVineCopula: no matrix column for tree {tree_level}, edge {orig_idx}"
-        )
+        lookup = self._ensure_orig_edge_key()
+        try:
+            return lookup[(tree_level, orig_idx)]
+        except KeyError as exc:
+            raise KeyError(
+                "RVineCopula: no matrix column for tree "
+                f"{tree_level}, edge {orig_idx}"
+            ) from exc
+
+    def _ensure_orig_edge_key(self):
+        lookup = getattr(self, '_orig_edge_key', None)
+        if lookup is None:
+            lookup = {
+                (t, orig_idx): (t, col)
+                for (t, col), orig_idx in self._edge_map.items()
+            }
+            self._orig_edge_key = lookup
+        return lookup
+
+    def _max_non_independent_tree_level(self):
+        """Highest tree level that can affect static loglik/sample paths."""
+        self._require_fit()
+        max_level = -1
+        for (t, _), edge in self.pair_copulas.items():
+            if not isinstance(edge.copula, IndependentCopula):
+                max_level = max(max_level, int(t))
+        return max_level
 
     # ── Introspection ──────────────────────────────────────────
 
@@ -762,7 +863,18 @@ class RVineCopula:
         d = self.d
         M = self.matrix
         w = rng.uniform(_EPS, 1.0 - _EPS, size=(n, d))
+        max_active_tree = self._max_non_independent_tree_level()
+        if max_active_tree < 0:
+            if return_pseudo:
+                pseudo_obs = {
+                    (var, frozenset()): w[:, var].copy()
+                    for var in range(d)
+                }
+                return w, pseudo_obs
+            return w
+
         pseudo_obs = {}
+        prepared_obs = {}
 
         last_var = int(M[0, d - 1])
         pseudo_obs[(last_var, frozenset())] = w[:, d - 1].copy()
@@ -770,9 +882,11 @@ class RVineCopula:
         for col in range(d - 2, -1, -1):
             leaf = int(M[d - 1 - col, col])
             top_tree = d - 2 - col
+            active_top = min(top_tree, max_active_tree)
             current = w[:, col].copy()
+            current_prepared = {}
 
-            for t in range(top_tree, -1, -1):
+            for t in range(active_top, -1, -1):
                 row = d - 2 - col - t
                 partner = int(M[row, col])
                 conditioning = frozenset(
@@ -781,15 +895,35 @@ class RVineCopula:
                 )
                 partner_val = pseudo_obs[(partner, conditioning)]
                 edge = self.pair_copulas[(t, col)]
-                current = _clip(_edge_h_inverse(
-                    edge,
-                    current,
-                    partner_val,
-                    config={'r': r_all[(t, col)]},
-                ))
+                r = r_all[(t, col)]
+                h_inverse_prepared = getattr(
+                    edge.copula, 'h_inverse_prepared', None)
+                if h_inverse_prepared is not None:
+                    copula_key = type(edge.copula)
+                    current_x = current_prepared.get(copula_key)
+                    if current_x is None:
+                        current_x = edge.copula.prepare_univariate(current)
+                    partner_x = _get_prepared_obs(
+                        edge.copula, (partner, conditioning),
+                        pseudo_obs, prepared_obs)
+                    current, current_x = h_inverse_prepared(
+                        current_x, partner_x, r)
+                    current = _clip(current)
+                    current_prepared = {copula_key: current_x}
+                    _set_prepared_obs(
+                        edge.copula, (leaf, conditioning),
+                        current_x, prepared_obs)
+                else:
+                    current = _clip(_edge_h_inverse(
+                        edge,
+                        current,
+                        partner_val,
+                        config={'r': r},
+                    ))
+                    current_prepared = {}
                 pseudo_obs[(leaf, conditioning)] = current
 
-            for t in range(top_tree + 1):
+            for t in range(active_top + 1):
                 row = d - 2 - col - t
                 partner = int(M[row, col])
                 conditioning = frozenset(
@@ -803,12 +937,43 @@ class RVineCopula:
 
                 leaf_val = pseudo_obs[(leaf, conditioning)]
                 partner_val = pseudo_obs[(partner, conditioning)]
-                pseudo_obs[(leaf, next_leaf_cond)] = _clip(
-                    _edge_h(edge, leaf_val, partner_val, config={'r': r})
-                )
-                pseudo_obs[(partner, next_partner_cond)] = _clip(
-                    _edge_h(edge, partner_val, leaf_val, config={'r': r})
-                )
+                h_prepared = getattr(edge.copula, 'h_prepared', None)
+                if h_prepared is not None:
+                    leaf_key = (leaf, conditioning)
+                    partner_key = (partner, conditioning)
+                    leaf_x = _get_prepared_obs(
+                        edge.copula, leaf_key, pseudo_obs, prepared_obs)
+                    partner_x = _get_prepared_obs(
+                        edge.copula, partner_key, pseudo_obs, prepared_obs)
+                    leaf_next, leaf_next_x = h_prepared(leaf_x, partner_x, r)
+                    partner_next, partner_next_x = h_prepared(
+                        partner_x, leaf_x, r)
+                    pseudo_obs[(leaf, next_leaf_cond)] = _clip(leaf_next)
+                    pseudo_obs[(partner, next_partner_cond)] = _clip(
+                        partner_next)
+                    _set_prepared_obs(
+                        edge.copula, (leaf, next_leaf_cond),
+                        leaf_next_x, prepared_obs)
+                    _set_prepared_obs(
+                        edge.copula, (partner, next_partner_cond),
+                        partner_next_x, prepared_obs)
+                else:
+                    h_pair = getattr(edge.copula, 'h_pair', None)
+                    if h_pair is not None:
+                        leaf_next, partner_next = h_pair(
+                            leaf_val, partner_val, r)
+                        pseudo_obs[(leaf, next_leaf_cond)] = _clip(leaf_next)
+                        pseudo_obs[(partner, next_partner_cond)] = _clip(
+                            partner_next)
+                    else:
+                        pseudo_obs[(leaf, next_leaf_cond)] = _clip(
+                            _edge_h(edge, leaf_val, partner_val,
+                                    config={'r': r})
+                        )
+                        pseudo_obs[(partner, next_partner_cond)] = _clip(
+                            _edge_h(edge, partner_val, leaf_val,
+                                    config={'r': r})
+                        )
 
         out = np.empty((n, d), dtype=np.float64)
         for var in range(d):

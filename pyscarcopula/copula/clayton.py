@@ -58,6 +58,36 @@ def _clayton_h(u0, u1, r):
 
 
 @njit(cache=True)
+def _clayton_h_pair(u0, u1, r):
+    n = len(u0)
+    out01 = np.empty(n)
+    out10 = np.empty(n)
+    eps = 1e-6
+    for i in range(n):
+        v0 = min(max(u0[i], eps), 1.0 - eps)
+        v1 = min(max(u1[i], eps), 1.0 - eps)
+        ri = r[i] if r.shape[0] > 1 else r[0]
+
+        if ri < 1e-8:
+            out01[i] = v0
+            out10[i] = v1
+        else:
+            v0_pow = v0 ** (-ri)
+            v1_pow = v1 ** (-ri)
+            S = v0_pow + v1_pow - 1.0
+            if S < 1e-300:
+                out01[i] = v0
+                out10[i] = v1
+            else:
+                common = S ** (-1.0 - 1.0 / ri)
+                val01 = v1 ** (-ri - 1.0) * common
+                val10 = v0 ** (-ri - 1.0) * common
+                out01[i] = min(max(val01, eps), 1.0 - eps)
+                out10[i] = min(max(val10, eps), 1.0 - eps)
+    return out01, out10
+
+
+@njit(cache=True)
 def _clayton_h_inv(u0, u1, r):
     n = len(u0)
     out = np.empty(n)
@@ -295,6 +325,12 @@ class ClaytonCopula(BivariateCopula):
 
     def h_unrotated(self, u, v, r):
         return _clayton_h(*_broadcast(u, v, r))
+
+    def h_pair(self, u, v, r):
+        ua, va, ra = _broadcast(u, v, r)
+        if self._rotate == 0:
+            return _clayton_h_pair(ua, va, ra)
+        return self.h(ua, va, ra), self.h(va, ua, ra)
 
     def h_inverse_unrotated(self, u, v, r):
         return _clayton_h_inv(*_broadcast(u, v, r))

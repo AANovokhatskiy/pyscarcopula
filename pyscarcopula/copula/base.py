@@ -383,8 +383,9 @@ class BivariateCopula:
 
         Delegates to api.predict() which dispatches to the correct
         strategy (MLE/SCAR-TM/GAS/SCAR-MC). For bivariate copulas,
-        ``given`` is accepted for API compatibility with vines but is
-        ignored.
+        ``given`` may fix coordinate 0 or 1 in pseudo-observation space;
+        the remaining coordinate is sampled conditionally through the
+        fitted copula h-function.
 
         Parameters
         ----------
@@ -393,8 +394,9 @@ class BivariateCopula:
             If None, uses data from last fit() call.
         rng : np.random.Generator or None
         given : dict[int, float] or None
-            Ignored for bivariate copulas. Conditional ``given`` sampling is
-            supported by vine copulas through the top-level API.
+            Optional fixed pseudo-observation coordinate. Keys must be 0 or 1,
+            values must lie in ``(0, 1)``. If both coordinates are fixed, the
+            returned samples repeat those values.
         horizon : {'current', 'next'}
             Predictive state timing for GAS and SCAR-TM.
         predictive_r_mode : {'grid', 'histogram'} or None
@@ -451,3 +453,16 @@ class BivariateCopula:
                 "No data for sample_model. "
                 "Either call fit() first or pass u= explicitly.")
         return _api_sample(self, u_data, self.fit_result, n, rng=rng)
+
+    def save(self, path, *, include_data=True):
+        """Save this model to disk."""
+        from pyscarcopula.io import save_model
+
+        save_model(self, path, include_data=include_data)
+
+    @classmethod
+    def load(cls, path):
+        """Load a saved model from disk."""
+        from pyscarcopula.io import load_model
+
+        return load_model(path, expected_type=cls)

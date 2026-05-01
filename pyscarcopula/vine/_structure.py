@@ -22,6 +22,64 @@ import warnings
 import numpy as np
 from scipy.stats import kendalltau
 
+try:
+    from scipy.stats._stats_py import _kendall_dis
+except Exception:  # pragma: no cover - scipy private API fallback
+    _kendall_dis = None
+
+
+def _dense_ranks_no_ties(x):
+    x = np.asarray(x, dtype=np.float64)
+    if x.ndim != 1 or x.size < 2 or not np.all(np.isfinite(x)):
+        return None
+    order = np.argsort(x, kind='mergesort')
+    xs = x[order]
+    if np.any(xs[1:] == xs[:-1]):
+        return None
+    ranks = np.empty_like(order, dtype=np.intp)
+    ranks[order] = np.arange(1, x.size + 1, dtype=np.intp)
+    return ranks
+
+
+def _dense_rank_matrix_no_ties(u):
+    if _kendall_dis is None:
+        return None
+    u = np.asarray(u, dtype=np.float64)
+    if u.ndim != 2 or u.shape[0] < 2 or not np.all(np.isfinite(u)):
+        return None
+    order = np.argsort(u, axis=0, kind='mergesort')
+    sorted_u = np.take_along_axis(u, order, axis=0)
+    if np.any(sorted_u[1:, :] == sorted_u[:-1, :]):
+        return None
+    ranks = np.empty_like(order, dtype=np.intp)
+    values = np.arange(1, u.shape[0] + 1, dtype=np.intp)[:, None]
+    np.put_along_axis(ranks, order, values, axis=0)
+    return ranks
+
+
+def _kendall_tau_from_dense_ranks(x, y):
+    n = x.size
+    tot = n * (n - 1) // 2
+    if tot == 0:
+        return np.nan
+    perm = np.argsort(y)
+    x_sorted_y = x[perm]
+    y_sorted = y[perm]
+    perm = np.argsort(x_sorted_y, kind='mergesort')
+    x_dense = x_sorted_y[perm]
+    y_dense = y_sorted[perm]
+    dis = _kendall_dis(x_dense, y_dense)
+    return float((tot - 2 * dis) / tot)
+
+def _kendall_tau_value(u1, u2):
+    """Fast Kendall tau-b value for continuous data, with scipy fallback."""
+    if _kendall_dis is not None:
+        x = _dense_ranks_no_ties(u1)
+        y = _dense_ranks_no_ties(u2)
+        if x is not None and y is not None:
+            return _kendall_tau_from_dense_ranks(x, y)
+    return kendalltau(u1, u2).statistic
+
 
 # ══════════════════════════════════════════════════════════════
 # R-vine matrix
@@ -396,9 +454,14 @@ def _build_tree_0(u):
     nodes = list(range(d))
     edges = []
     weights = []
+    rank_matrix = _dense_rank_matrix_no_ties(u)
     for i in range(d):
         for j in range(i + 1, d):
-            tau, _ = kendalltau(u[:, i], u[:, j])
+            if rank_matrix is None:
+                tau = _kendall_tau_value(u[:, i], u[:, j])
+            else:
+                tau = _kendall_tau_from_dense_ranks(
+                    rank_matrix[:, i], rank_matrix[:, j])
             edges.append((i, j))
             weights.append(abs(tau))
 
@@ -483,7 +546,7 @@ def _build_next_tree(tree_level, prev_edge_repr, pseudo_obs,
                     stacklevel=2)
                 continue
 
-            tau_val, _ = kendalltau(obs_a, obs_b)
+            tau_val = _kendall_tau_value(obs_a, obs_b)
             if np.isnan(tau_val):
                 tau_val = 0.0
                 warnings.warn(
@@ -540,9 +603,14 @@ def _build_tree_0_conditional(u, given_vars, priority_limit_override=None):
     edges = []
     weights = []
     priority = []
+    rank_matrix = _dense_rank_matrix_no_ties(u)
     for i in range(d):
         for j in range(i + 1, d):
-            tau, _ = kendalltau(u[:, i], u[:, j])
+            if rank_matrix is None:
+                tau = _kendall_tau_value(u[:, i], u[:, j])
+            else:
+                tau = _kendall_tau_from_dense_ranks(
+                    rank_matrix[:, i], rank_matrix[:, j])
             if np.isnan(tau):
                 tau = 0.0
             edges.append((i, j))
@@ -625,7 +693,7 @@ def _build_next_tree_conditional(tree_level, prev_edge_repr, pseudo_obs,
                     stacklevel=2)
                 continue
 
-            tau_val, _ = kendalltau(obs_a, obs_b)
+            tau_val = _kendall_tau_value(obs_a, obs_b)
             if np.isnan(tau_val):
                 tau_val = 0.0
                 warnings.warn(

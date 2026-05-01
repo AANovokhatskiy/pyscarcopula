@@ -166,6 +166,18 @@ class TestHInverseBoundary:
         np.testing.assert_allclose(u_rec, u, atol=1e-3,
                                    err_msg=f"h_inverse roundtrip failed for r={r}")
 
+    def test_gumbel_h_inverse_extreme_quantiles(self):
+        cop = GumbelCopula()
+        rng = np.random.default_rng(1)
+        u = rng.uniform(1e-8, 1.0 - 1e-8, 2000)
+        v = rng.uniform(1e-8, 1.0 - 1e-8, 2000)
+        r_arr = np.full(2000, 30.0)
+
+        x = cop.h_inverse(u, v, r_arr)
+        u_rec = cop.h(x, v, r_arr)
+
+        np.testing.assert_allclose(u_rec, u, atol=1e-8)
+
 
 class TestFrankStability:
     """Edge-case stability for Frank copula numerical routines."""

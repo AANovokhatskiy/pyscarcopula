@@ -442,6 +442,19 @@ class CVineCopula:
 
     # ── Prediction ───────────────────────────────────────────────
 
+    def save(self, path, *, include_data=True):
+        """Save this fitted C-vine model to disk."""
+        from pyscarcopula.io import save_model
+
+        save_model(self, path, include_data=include_data)
+
+    @classmethod
+    def load(cls, path):
+        """Load a saved C-vine model from disk."""
+        from pyscarcopula.io import load_model
+
+        return load_model(path, expected_type=cls)
+
     def predict(self, n, u=None, K=300, grid_range=5.0,
                 given=None, horizon='next', rng=None,
                 predictive_r_mode=None):

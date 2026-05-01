@@ -31,10 +31,9 @@ def _all_rotations(copula_class):
 
 
 def _kendall_tau(u1, u2):
-    """Kendall's tau via scipy."""
-    from scipy.stats import kendalltau
-    tau, _ = kendalltau(u1, u2)
-    return tau
+    """Kendall's tau value with the same fast path used by vine structure."""
+    from pyscarcopula.vine._structure import _kendall_tau_value
+    return _kendall_tau_value(u1, u2)
 
 
 def _itau_initial_param(cop_class, tau_value, rotate):
@@ -112,7 +111,6 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
     from pyscarcopula.copula.independent import IndependentCopula
     from pyscarcopula.copula.elliptical import BivariateGaussianCopula
     from pyscarcopula._types import IndependentResult
-    from pyscarcopula.api import fit as _api_fit
 
     T = len(u1)
     u_pair = np.column_stack((u1, u2))
@@ -184,7 +182,7 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
             x0 = cop.inv_transform(
                 np.atleast_1d(np.array([r0], dtype=np.float64)))
             alpha0 = np.atleast_1d(x0)[0:1]
-            result = _api_fit(cop, u_pair, method='mle', alpha0=alpha0)
+            result = _fit_mle_direct(cop, u_pair, alpha0=alpha0)
             logL = result.log_likelihood
 
             n_params = 1
@@ -203,3 +201,10 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
             continue
 
     return best_copula, best_result
+
+
+def _fit_mle_direct(copula, u_pair, alpha0=None):
+    """Fit MLE without the public API dispatch overhead."""
+    from pyscarcopula.strategy.mle import MLEStrategy
+
+    return MLEStrategy().fit(copula, u_pair, alpha0=alpha0)
