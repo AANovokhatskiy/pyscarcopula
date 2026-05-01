@@ -1,4 +1,4 @@
-# pyscarcopula: copula Python library
+# pyscarcopula
 
 A Python library for copula modelling: bivariate, multivariate, vine, and
 stochastic copula models for financial time series and risk analytics.
