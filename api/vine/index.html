@@ -1,0 +1,3722 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Python library for bivariate, multivariate, vine, and stochastic copula models">
+      
+      
+      
+        <link rel="canonical" href="https://AANovokhatskiy.github.io/pyscarcopula/api/vine/">
+      
+      
+        <link rel="prev" href="../copulas/">
+      
+      
+        <link rel="next" href="../equicorr/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Vine - pyscarcopula</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#vine-api" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="pyscarcopula" class="md-header__button md-logo" aria-label="pyscarcopula" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            pyscarcopula
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Vine
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/AANovokhatskiy/pyscarcopula" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    AANovokhatskiy/pyscarcopula
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="pyscarcopula" class="md-nav__button md-logo" aria-label="pyscarcopula" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    pyscarcopula
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/AANovokhatskiy/pyscarcopula" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    AANovokhatskiy/pyscarcopula
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    User Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/bivariate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bivariate Copulas
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/vine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Vine Copulas
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/prediction-semantics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Prediction Semantics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/rvine-conditioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    R-vine Conditioning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/equicorr/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Equicorrelation Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/experimental_models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Experimental Models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/transforms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Transform Functions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/performance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Performance Tuning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development Notes
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development Notes
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rvine-conditional-notes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    R-vine Conditional Sampling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../copulas/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Copulas
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Vine
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Vine
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#prediction-semantics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prediction Semantics
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#r-vine-conditional-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        R-vine Conditional Paths
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cvinecopula" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CVineCopula
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="CVineCopula">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.vine.cvine.CVineCopula" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CVineCopula
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="CVineCopula">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.vine.cvine.CVineCopula.fit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        fit
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.vine.cvine.CVineCopula.log_likelihood" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        log_likelihood
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.vine.cvine.CVineCopula.sample" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        sample
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.vine.cvine.CVineCopula.predict" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        predict
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.vine.cvine.CVineCopula.summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        summary
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rvinecopula" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RVineCopula
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="RVineCopula">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.vine.rvine.RVineCopula" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RVineCopula
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="RVineCopula">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.vine.rvine.RVineCopula.fit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        fit
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.vine.rvine.RVineCopula.log_likelihood" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        log_likelihood
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.vine.rvine.RVineCopula.sample" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        sample
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.vine.rvine.RVineCopula.predict" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        predict
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.vine.rvine.RVineCopula.summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        summary
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#predictconfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        PredictConfig
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="PredictConfig">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula._types.PredictConfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        PredictConfig
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rvinematrix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RVineMatrix
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="RVineMatrix">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.vine._structure.RVineMatrix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RVineMatrix
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="RVineMatrix">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.vine._structure.RVineMatrix.edge" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        edge
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.vine._structure.RVineMatrix.edges_at_tree" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        edges_at_tree
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.vine._structure.RVineMatrix.n_trees" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        n_trees
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.vine._structure.RVineMatrix.n_edges" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        n_edges
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#vineedge" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        VineEdge
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="VineEdge">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.vine._edge.VineEdge" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        VineEdge
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#select_best_copula" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        select_best_copula
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="select_best_copula">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.vine._selection.select_best_copula" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        select_best_copula
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../equicorr/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Equicorrelation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../experimental_models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Experimental Models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../diagnostics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Diagnostics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contrib/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contrib
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#prediction-semantics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prediction Semantics
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#r-vine-conditional-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        R-vine Conditional Paths
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cvinecopula" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CVineCopula
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="CVineCopula">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.vine.cvine.CVineCopula" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CVineCopula
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="CVineCopula">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.vine.cvine.CVineCopula.fit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        fit
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.vine.cvine.CVineCopula.log_likelihood" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        log_likelihood
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.vine.cvine.CVineCopula.sample" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        sample
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.vine.cvine.CVineCopula.predict" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        predict
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.vine.cvine.CVineCopula.summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        summary
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rvinecopula" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RVineCopula
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="RVineCopula">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.vine.rvine.RVineCopula" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RVineCopula
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="RVineCopula">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.vine.rvine.RVineCopula.fit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        fit
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.vine.rvine.RVineCopula.log_likelihood" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        log_likelihood
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.vine.rvine.RVineCopula.sample" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        sample
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.vine.rvine.RVineCopula.predict" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        predict
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.vine.rvine.RVineCopula.summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        summary
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#predictconfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        PredictConfig
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="PredictConfig">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula._types.PredictConfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        PredictConfig
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rvinematrix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RVineMatrix
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="RVineMatrix">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.vine._structure.RVineMatrix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RVineMatrix
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="RVineMatrix">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.vine._structure.RVineMatrix.edge" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        edge
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.vine._structure.RVineMatrix.edges_at_tree" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        edges_at_tree
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.vine._structure.RVineMatrix.n_trees" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        n_trees
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.vine._structure.RVineMatrix.n_edges" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        n_edges
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#vineedge" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        VineEdge
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="VineEdge">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.vine._edge.VineEdge" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        VineEdge
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#select_best_copula" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        select_best_copula
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="select_best_copula">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyscarcopula.vine._selection.select_best_copula" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        select_best_copula
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="vine-api">Vine API<a class="headerlink" href="#vine-api" title="Permanent link">&para;</a></h1>
+<p>Both <code>CVineCopula.predict(...)</code> and <code>RVineCopula.predict(...)</code> support:</p>
+<ul>
+<li><code>given={var_index: u_value}</code> for conditional generation;</li>
+<li><code>horizon='current'|'next'</code> for dynamic edge prediction;</li>
+<li><code>predict_config=PredictConfig(...)</code> as an explicit options object;</li>
+<li><code>rng=np.random.default_rng(seed)</code> for reproducible Monte Carlo output.</li>
+</ul>
+<p><code>RVineCopula.predict(...)</code> also supports:</p>
+<ul>
+<li><code>dynamic_conditioning='ignore'|'given_only'</code>;</li>
+<li><code>mcmc_steps=&lt;non-negative int&gt;</code> and <code>mcmc_burnin=&lt;non-negative int&gt;</code> for
+  arbitrary <code>dag_mcmc</code> conditioning;</li>
+<li><code>return_diagnostics=True</code>.</li>
+</ul>
+<p><code>RVineCopula.fit(...)</code> supports:</p>
+<ul>
+<li><code>given_vars=[...]</code> to target a known conditioning set at fit time;</li>
+<li><code>conditional_strict=True|False</code> to reject or keep fitted structures that are
+  not suffix-compatible for <code>given_vars</code>;</li>
+<li><code>conditional_mode='suffix'</code> for the exact fit-time support contract;</li>
+<li><code>structure_search='beam'|'multi-start'</code> to control fit-time structure search;</li>
+<li><code>beam_width=&lt;positive int&gt;</code> to control beam-search width for <code>given_vars</code>.</li>
+</ul>
+<h2 id="prediction-semantics">Prediction Semantics<a class="headerlink" href="#prediction-semantics" title="Permanent link">&para;</a></h2>
+<p><code>predict</code> is a forecasting API. It samples from the fitted copula conditional
+on the training data. <code>given</code> additionally fixes selected components of the
+next pseudo-observation. <code>dynamic_conditioning</code> optionally lets those fixed
+components update supported dynamic edge states before the remaining
+components are sampled.</p>
+<p>See <a href="../../guide/prediction-semantics/">Prediction Semantics</a> for the
+mathematical contract.</p>
+<h2 id="r-vine-conditional-paths">R-vine Conditional Paths<a class="headerlink" href="#r-vine-conditional-paths" title="Permanent link">&para;</a></h2>
+<p><code>RVineCopula.predict(..., given=...)</code> uses the suffix exact path when the fixed
+variables can be placed at the end of the R-vine variable order. This order is
+read from the anti-diagonal of the natural-order matrix. The fixed variables
+must already be last in the fitted matrix, or the same fitted tree structure
+must be rebuildable into an equivalent natural-order matrix where they are
+last.</p>
+<p>If the <code>given</code> set is not suffix-compatible, <code>predict</code> uses the arbitrary
+runtime DAG + MCMC fallback. The DAG builds an h/inverse-h execution plan from
+available nodes; MCMC then targets the full fitted R-vine density with fixed
+<code>given</code> values.</p>
+<p><code>mcmc_steps</code> and <code>mcmc_burnin</code> tune only this fallback. Diagnostics include
+acceptance-rate summaries and <code>low_acceptance_warning</code>.</p>
+<p>With <code>return_diagnostics=True</code>, <code>predict</code> returns <code>(samples, diagnostics)</code>.
+The <code>diagnostics["conditional_method"]</code> value is one of:</p>
+<ul>
+<li><code>unconditional</code>;</li>
+<li><code>suffix</code>;</li>
+<li><code>dag_mcmc</code>.</li>
+</ul>
+<p>When the model was fitted with <code>given_vars=...</code>, that set becomes the
+advertised exact-support target. With <code>conditional_strict=True</code>, fit rejects
+unsupported structures. With <code>conditional_strict=False</code>, fit may keep the
+structure and prediction can still use the DAG + MCMC fallback.</p>
+<p>Fit-time diagnostics are available through <code>vine.fit_diagnostics</code>. The
+selection block includes the chosen candidate, all scored candidates, and for
+beam search the selected per-tree <code>mode_path</code>.</p>
+<h2 id="cvinecopula">CVineCopula<a class="headerlink" href="#cvinecopula" title="Permanent link">&para;</a></h2>
+
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="pyscarcopula.vine.cvine.CVineCopula" class="doc doc-heading">
+            <code>pyscarcopula.vine.cvine.CVineCopula</code>
+
+
+<a href="#pyscarcopula.vine.cvine.CVineCopula" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents first">
+
+
+
+        <p>C-vine copula for d dimensions.</p>
+<p>Decomposes d-dimensional dependence into d(d-1)/2 bivariate copulas
+arranged in a tree structure. Each edge copula can be from a different
+family (Gumbel, Clayton, Frank, Joe, Gaussian, or Independent),
+selected automatically via AIC/BIC.</p>
+<p>Tree structure (0-indexed):
+    Tree j, edge i: copula for pair (j+1, j+i+2 | 1..j+1)
+    Tree 0: unconditional pairs (1,2), (1,3), ..., (1,d)
+    Tree 1: conditional pairs (2,3|1), (2,4|1), ...
+    etc.</p>
+<p>Estimation supports mixed models: strong edges (Tree 0-1) use
+SCAR-TM-OU for time-varying parameters, while weak edges (upper
+trees) fall back to MLE for efficiency.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>candidates</code>
+            </td>
+            <td>
+                  <code>list of copula classes, or None (default: 5 families)</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>allow_rotations</code>
+            </td>
+            <td>
+                  <code>bool (default True)</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                
+              </div>
+            </td>
+            <td>
+                  <code>True</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>criterion</code>
+            </td>
+            <td>
+                  <code>&#39;aic&#39;, &#39;bic&#39;, or &#39;loglik&#39;</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                
+              </div>
+            </td>
+            <td>
+                  <code>&#39;aic&#39;</code>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.vine.cvine.CVineCopula.fit" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">fit</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="s1">&#39;mle&#39;</span><span class="p">,</span> <span class="n">to_pobs</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">copulas</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">K</span><span class="o">=</span><span class="mi">300</span><span class="p">,</span> <span class="n">grid_range</span><span class="o">=</span><span class="mf">5.0</span><span class="p">,</span> <span class="n">truncation_level</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">min_edge_logL</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">transform_type</span><span class="o">=</span><span class="s1">&#39;xtanh&#39;</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span></code>
+
+<a href="#pyscarcopula.vine.cvine.CVineCopula.fit" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Fit the C-vine copula.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>data</code>
+            </td>
+            <td>
+                  <code>(T, d) array</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>method</code>
+            </td>
+            <td>
+                  <code>str — &#39;mle&#39;, &#39;gas&#39;, or SCAR method name</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                
+              </div>
+            </td>
+            <td>
+                  <code>&#39;mle&#39;</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>to_pobs</code>
+            </td>
+            <td>
+                  <code><span title="bool">bool</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                
+              </div>
+            </td>
+            <td>
+                  <code>False</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>copulas</code>
+            </td>
+            <td>
+                  <code>None (auto-select) or list-of-lists of</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <div class="highlight"><pre><span></span><code>  (copula_class, rotation) tuples
+</code></pre></div>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>K</code>
+            </td>
+            <td>
+                  <code>int — grid size for SCAR</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                
+              </div>
+            </td>
+            <td>
+                  <code>300</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>grid_range</code>
+            </td>
+            <td>
+                  <code><span title="float">float</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                
+              </div>
+            </td>
+            <td>
+                  <code>5.0</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>truncation_level</code>
+            </td>
+            <td>
+                  <code><span title="int">int</span> or None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>min_edge_logL</code>
+            </td>
+            <td>
+                  <code><span title="float">float</span> or None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>**kwargs</code>
+            </td>
+            <td>
+                  <code>forwarded to copula.fit()</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                
+              </div>
+            </td>
+            <td>
+                  <code>{}</code>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    <p><span class="doc-section-title">Returns:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="self">self</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.vine.cvine.CVineCopula.log_likelihood" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">log_likelihood</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">to_pobs</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">K</span><span class="o">=</span><span class="mi">300</span><span class="p">,</span> <span class="n">grid_range</span><span class="o">=</span><span class="mf">5.0</span><span class="p">)</span></code>
+
+<a href="#pyscarcopula.vine.cvine.CVineCopula.log_likelihood" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Compute total log-likelihood of the C-vine.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.vine.cvine.CVineCopula.sample" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">sample</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">u_train</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">K</span><span class="o">=</span><span class="mi">300</span><span class="p">,</span> <span class="n">grid_range</span><span class="o">=</span><span class="mf">5.0</span><span class="p">,</span> <span class="n">rng</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span></code>
+
+<a href="#pyscarcopula.vine.cvine.CVineCopula.sample" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Sample from fitted C-vine using Rosenblatt inverse.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.vine.cvine.CVineCopula.predict" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">predict</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">u</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">K</span><span class="o">=</span><span class="mi">300</span><span class="p">,</span> <span class="n">grid_range</span><span class="o">=</span><span class="mf">5.0</span><span class="p">,</span> <span class="n">given</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">horizon</span><span class="o">=</span><span class="s1">&#39;next&#39;</span><span class="p">,</span> <span class="n">rng</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">predictive_r_mode</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span></code>
+
+<a href="#pyscarcopula.vine.cvine.CVineCopula.predict" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Conditional predict: sample from vine for next-step.</p>
+<p><code>given</code> fixes selected variables in pseudo-observation space,
+e.g. <code>given={2: 0.6}</code>. For GAS and SCAR-TM-OU edges, <code>horizon</code>
+selects the predictive state timing.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.vine.cvine.CVineCopula.summary" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">summary</span><span class="p">()</span></code>
+
+<a href="#pyscarcopula.vine.cvine.CVineCopula.summary" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Print vine structure summary.</p>
+
+
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div><h2 id="rvinecopula">RVineCopula<a class="headerlink" href="#rvinecopula" title="Permanent link">&para;</a></h2>
+
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="pyscarcopula.vine.rvine.RVineCopula" class="doc doc-heading">
+            <code>pyscarcopula.vine.rvine.RVineCopula</code>
+
+
+<a href="#pyscarcopula.vine.rvine.RVineCopula" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents first">
+
+
+
+        <p>Regular vine copula.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>candidates</code>
+            </td>
+            <td>
+                  <code>list of copula classes or None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Family pool for per-edge selection. <code>None</code> uses the package
+default from <code>_selection._default_candidates</code>.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>allow_rotations</code>
+            </td>
+            <td>
+                  <code><span title="bool">bool</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Whether to search over rotations for rotatable Archimedean
+families.</p>
+              </div>
+            </td>
+            <td>
+                  <code>True</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>criterion</code>
+            </td>
+            <td>
+                  <code>(<span title="pyscarcopula.vine.rvine.RVineCopula.aic">aic</span>, <span title="pyscarcopula.vine.rvine.RVineCopula.bic">bic</span>, <span title="loglik">loglik</span>)</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Model selection criterion used within and between families.</p>
+              </div>
+            </td>
+            <td>
+                  <code>&#39;aic&#39;</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>truncation_level</code>
+            </td>
+            <td>
+                  <code><span title="int">int</span> or None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>If set, tree levels <code>&gt;= truncation_level</code> use
+<code>truncation_fill</code>.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>truncation_fill</code>
+            </td>
+            <td>
+                  <code>(<span title="mle">mle</span>, <span title="independent">independent</span>)</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>For truncated trees, either fit edges with MLE only or force
+<code>IndependentCopula</code>.</p>
+              </div>
+            </td>
+            <td>
+                  <code>&#39;mle&#39;</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>threshold</code>
+            </td>
+            <td>
+                  <code><span title="float">float</span> or None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Pre-fit Kendall's tau threshold. If <code>abs(tau) &lt; threshold</code>,
+an edge is set to <code>IndependentCopula</code> without fitting.</p>
+              </div>
+            </td>
+            <td>
+                  <code>0.0</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>min_edge_logL</code>
+            </td>
+            <td>
+                  <code><span title="float">float</span> or None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>If set, any fitted edge with log-likelihood strictly below this
+threshold is replaced by <code>IndependentCopula</code>.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>transform_type</code>
+            </td>
+            <td>
+                  <code><span title="str">str</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Parameter transform passed through to candidate copulas.</p>
+              </div>
+            </td>
+            <td>
+                  <code>&#39;xtanh&#39;</code>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+<details class="attributes-(after-``fit``)" open>
+  <summary>Attributes (after <code>fit</code>)</summary>
+  <p>d : int
+    Number of variables.
+matrix : (d, d) int ndarray
+    Natural-order R-vine matrix (Czado 2019 Alg. 5.4; matches
+    <code>pyvinecopulib</code>). Non-zero entries occupy the upper-left
+    anti-triangle; the anti-diagonal <code>M[d-1-col, col]</code> is the
+    leaf peeled at column <code>col</code>.
+trees : list of <code>(d - 1)</code> lists
+    <code>trees[t][i]</code> = <code>(conditioned_frozenset, conditioning_frozenset)</code>
+    returned by the Dissmann selection step.
+pair_copulas : dict
+    <code>pair_copulas[(t, col)]</code> = <code>PairCopula</code> for the edge encoded
+    at matrix tree level <code>t</code> and column <code>col</code>
+    (<code>0 &lt;= col &lt;= d-2-t</code>).</p>
+</details>
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.vine.rvine.RVineCopula.fit" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">fit</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="s1">&#39;mle&#39;</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">to_pobs</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">copulas</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">config</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">given_vars</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">conditional_strict</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">conditional_mode</span><span class="o">=</span><span class="s1">&#39;suffix&#39;</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span></code>
+
+<a href="#pyscarcopula.vine.rvine.RVineCopula.fit" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Fit the R-vine and its pair-copula edge models.</p>
+<p>The input must already be in pseudo-observation space unless
+<code>to_pobs=True</code>. Structure selection uses the instance-level family
+pool and selection options, while several structure and strategy
+options can be overridden for this call via <code>**kwargs</code>.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>data</code>
+            </td>
+            <td>
+                  <code>(T, d) array-like</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Pseudo-observations in <code>(0, 1)</code>. If <code>to_pobs=True</code>, raw
+observations are converted column-wise with empirical ranks.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>method</code>
+            </td>
+            <td>
+                  <code><span title="str">str</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Estimation strategy for every non-independent selected pair
+copula. Common built-in values are <code>'mle'</code>, <code>'gas'</code> and
+<code>'scar-tm-ou'</code>; any method registered in the strategy registry
+may be used.</p>
+              </div>
+            </td>
+            <td>
+                  <code>&#39;mle&#39;</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>to_pobs</code>
+            </td>
+            <td>
+                  <code><span title="bool">bool</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>If True, transform <code>data</code> to pseudo-observations before fitting.</p>
+              </div>
+            </td>
+            <td>
+                  <code>False</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>copulas</code>
+            </td>
+            <td>
+                  <code><span title="list">list</span> - <span title="of">of</span> - <span title="lists">lists</span> or None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Optional fixed edge families as <code>(copula_class, rotation)</code> in
+the Dissmann edge order for each tree. If <code>None</code>, the best
+family is selected for each edge from the candidate pool.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>config</code>
+            </td>
+            <td>
+                  <code><span title="NumericalConfig">NumericalConfig</span> or None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Optional numerical configuration passed to pair-copula strategies.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>given_vars</code>
+            </td>
+            <td>
+                  <code><span title="iterable">iterable</span>[<span title="int">int</span>] or None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Optional target set of variable indices for later conditional
+prediction. When provided, structure search prefers vines where
+these variables can be fixed exactly by the current suffix sampler.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>conditional_strict</code>
+            </td>
+            <td>
+                  <code><span title="bool">bool</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>If True and <code>given_vars</code> is set, raise <code>ValueError</code> when the
+selected structure cannot support exact conditional sampling for
+that target set. If False, fit succeeds and the result is reported
+through <code>fit_diagnostics</code>.</p>
+              </div>
+            </td>
+            <td>
+                  <code>True</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>conditional_mode</code>
+            </td>
+            <td>
+                  <code><span title="suffix">suffix</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Conditioning support mode enforced during fit. Currently only
+<code>'suffix'</code> is supported.</p>
+              </div>
+            </td>
+            <td>
+                  <code>&#39;suffix&#39;</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>truncation_level</code>
+            </td>
+            <td>
+                  <code><span title="int">int</span> or None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p><code>**kwargs</code> option overriding the instance setting for this fit.
+Tree levels <code>&gt;= truncation_level</code> use <code>truncation_fill</code>.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>truncation_fill</code>
+            </td>
+            <td>
+                  <code>(<span title="mle">mle</span>, <span title="independent">independent</span>)</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p><code>**kwargs</code> option overriding how truncated trees are handled:
+fit MLE-only edges or force <code>IndependentCopula</code>.</p>
+              </div>
+            </td>
+            <td>
+                  <code>&#39;mle&#39;</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>threshold</code>
+            </td>
+            <td>
+                  <code><span title="float">float</span> or None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p><code>**kwargs</code> option overriding the pre-fit Kendall's tau filter.
+Edges with <code>abs(tau) &lt; threshold</code> are made independent. <code>0.0</code>
+disables filtering; <code>None</code> also disables filtering.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>min_edge_logL</code>
+            </td>
+            <td>
+                  <code><span title="float">float</span> or None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p><code>**kwargs</code> option overriding the post-fit edge log-likelihood
+filter. Non-independent edges with log-likelihood below this value
+are replaced by <code>IndependentCopula</code>.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>transform_type</code>
+            </td>
+            <td>
+                  <code><span title="str">str</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p><code>**kwargs</code> option overriding the parameter transform passed when
+constructing candidate copulas.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>structure_search</code>
+            </td>
+            <td>
+                  <code>(<span title="beam">beam</span>, <span title="multi">multi</span> - <span title="start">start</span>)</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p><code>**kwargs</code> option controlling conditional structure search.
+Mainly relevant when <code>given_vars</code> is provided. The default in
+the selector is <code>'beam'</code>.</p>
+              </div>
+            </td>
+            <td>
+                  <code>&#39;beam&#39;</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>beam_width</code>
+            </td>
+            <td>
+                  <code><span title="int">int</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p><code>**kwargs</code> option giving the number of partial structures kept
+per level by beam search. Must be a positive integer.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>**kwargs</code>
+            </td>
+            <td>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Remaining keyword arguments are forwarded to the selected
+pair-copula strategy. Built-in strategy options include
+<code>alpha0</code>, <code>tol</code> and <code>verbose</code> for fitting; <code>scaling</code> for
+GAS; <code>K</code>, <code>grid_range</code>, <code>grid_method</code>, <code>adaptive</code>,
+<code>pts_per_sigma</code>, <code>analytical_grad</code> and <code>smart_init</code> for
+SCAR-TM; and <code>n_tr</code> / <code>M_iterations</code> for SCAR-MC strategies.</p>
+              </div>
+            </td>
+            <td>
+                  <code>{}</code>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    <p><span class="doc-section-title">Returns:</span></p>
+    <table>
+      <thead>
+        <tr>
+<th>Name</th>          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+<td><code>self</code></td>            <td>
+                  <code><a class="autorefs autorefs-internal" title="pyscarcopula.vine.rvine.RVineCopula" href="#pyscarcopula.vine.rvine.RVineCopula">RVineCopula</a></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Enables chained calls, e.g. <code>RVineCopula().fit(u).summary()</code>.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.vine.rvine.RVineCopula.log_likelihood" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">log_likelihood</span><span class="p">(</span><span class="n">data</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">to_pobs</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span></code>
+
+<a href="#pyscarcopula.vine.rvine.RVineCopula.log_likelihood" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Total log-likelihood.</p>
+<p>With no argument returns the cached fitted log-likelihood
+(sum of per-edge MLE log-likelihoods). With an explicit
+<code>data</code> array, walks the fitted vine and evaluates the
+log-likelihood on the new observations using the stored pair
+copulas and the h-function propagation rule.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.vine.rvine.RVineCopula.sample" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">sample</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">u_train</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">rng</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span></code>
+
+<a href="#pyscarcopula.vine.rvine.RVineCopula.sample" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Unconditional sampling from the fitted vine.</p>
+<p>Samples in natural-order matrix order: columns are processed from
+right to left, and each new anti-diagonal leaf is recovered by
+applying inverse h-functions from the top tree down to tree 0.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.vine.rvine.RVineCopula.predict" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">predict</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">u_train</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">horizon</span><span class="o">=</span><span class="s1">&#39;next&#39;</span><span class="p">,</span> <span class="n">rng</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">given</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">u</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">predictive_r_mode</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">dynamic_conditioning</span><span class="o">=</span><span class="s1">&#39;ignore&#39;</span><span class="p">,</span> <span class="n">predict_config</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">return_diagnostics</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">mcmc_steps</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">mcmc_burnin</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span></code>
+
+<a href="#pyscarcopula.vine.rvine.RVineCopula.predict" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Draw predictive samples from the fitted R-vine.</p>
+<p><code>given</code> fixes variables in pseudo-observation space. Conditional
+sampling is supported when the fixed variables can be placed at the
+end of the R-vine variable order, read from the anti-diagonal of the
+natural-order matrix. This can be true in the fitted matrix itself or
+after rebuilding the same fitted tree structure into an equivalent
+natural-order matrix with those variables last.</p>
+<p>When the model was fitted with <code>given_vars=...</code>, that exact
+target set is treated as the supported conditioning contract for the
+current exact sampler. Other <code>given</code> patterns still follow the usual
+best-effort check for whether the fixed variables can be placed at the
+end of the R-vine variable order.</p>
+<p>For GAS edges, <code>horizon='current'</code> uses Psi(f_T) and <code>'next'</code> uses
+one score update to Psi(f_{T+1}). For SCAR-TM edges, the same argument
+selects p(x_T | data) or p(x_{T+1} | data) before sampling the
+posterior mixture path.</p>
+<p><code>dynamic_conditioning='given_only'</code> additionally lets fixed suffix
+observations update dynamic edge states when an edge pair is fully
+determined before any free variable is sampled. Per-strategy behaviour:</p>
+<ul>
+<li><strong>GAS</strong> updates apply only with <code>horizon='current'</code>; with
+  <code>'next'</code> they are skipped, because another score update would
+  advance the filter again rather than condition the same predictive
+  state.</li>
+<li><strong>SCAR-TM-OU</strong> updates apply at both horizons via Bayes-reweighting
+  of the transfer-matrix predictive grid by the observation
+  likelihood <code>p(u_pair | r=Psi(z_grid))</code>.</li>
+<li><strong>MLE</strong> edges have no dynamic state, so <code>'given_only'</code> is a no-op.</li>
+</ul>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>n</code>
+            </td>
+            <td>
+                  <code><span title="int">int</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Number of predictive samples to draw.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>u_train</code>
+            </td>
+            <td>
+                  <code>(T, d) array-like or None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Reference pseudo-observations used to build current predictive
+edge states. If <code>None</code>, uses the data stored by the last
+<code>fit</code> call.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>horizon</code>
+            </td>
+            <td>
+                  <code>(<span title="current">current</span>, <span title="next">next</span>)</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Predictive state timing for dynamic edges. Static MLE edges ignore
+this option.</p>
+              </div>
+            </td>
+            <td>
+                  <code>&#39;current&#39;</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>rng</code>
+            </td>
+            <td>
+                  <code><span title="numpy.random.Generator">Generator</span> or None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Random number generator. If <code>None</code>, a fresh default generator is
+created.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>given</code>
+            </td>
+            <td>
+                  <code><span title="dict">dict</span>[<span title="int">int</span>, <span title="float">float</span>] or None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Fixed variable values in pseudo-observation space, keyed by
+zero-based variable index. Values must be in <code>(0, 1)</code>.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>u</code>
+            </td>
+            <td>
+                  <code>(T, d) array-like or None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Deprecated alias for <code>u_train</code>. Pass only one of <code>u</code> and
+<code>u_train</code>.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>predictive_r_mode</code>
+            </td>
+            <td>
+                  <code>(<span title="grid">grid</span>, <span title="histogram">histogram</span>)</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>SCAR-TM predictive parameter sampling mode. <code>None</code> uses the
+strategy default. MLE and GAS edges ignore this option.</p>
+              </div>
+            </td>
+            <td>
+                  <code>&#39;grid&#39;</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>dynamic_conditioning</code>
+            </td>
+            <td>
+                  <code>(<span title="ignore">ignore</span>, <span title="given_only">given_only</span>)</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Whether fixed suffix observations may update eligible dynamic edge
+states before sampling free variables.</p>
+              </div>
+            </td>
+            <td>
+                  <code>&#39;ignore&#39;</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>predict_config</code>
+            </td>
+            <td>
+                  <code><a class="autorefs autorefs-internal" title="pyscarcopula._types.PredictConfig
+
+
+  
+      dataclass
+  " href="#pyscarcopula._types.PredictConfig">PredictConfig</a> or None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Optional bundled prediction options. Explicit non-default
+arguments passed to this method override the corresponding fields.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>return_diagnostics</code>
+            </td>
+            <td>
+                  <code><span title="bool">bool</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>If True, return <code>(samples, diagnostics)</code> instead of only
+samples.</p>
+              </div>
+            </td>
+            <td>
+                  <code>False</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>mcmc_steps</code>
+            </td>
+            <td>
+                  <code><span title="int">int</span> or None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Number of Metropolis-within-Gibbs sampling sweeps used after the
+DAG initializer for arbitrary non-suffix <code>given</code> patterns. If
+<code>None</code>, a dimension-based default is used.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>mcmc_burnin</code>
+            </td>
+            <td>
+                  <code><span title="int">int</span> or None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Number of burn-in sweeps for the arbitrary-<code>given</code> MCMC fallback.
+If <code>None</code>, a dimension-based default is used.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    <p><span class="doc-section-title">Returns:</span></p>
+    <table>
+      <thead>
+        <tr>
+<th>Name</th>          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+<td><code>samples</code></td>            <td>
+                  <code>(n, d) ndarray</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Predictive pseudo-observations.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+<td></td>            <td>
+                  <code>samples, diagnostics : tuple</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Returned when <code>return_diagnostics=True</code>. Diagnostics include the
+conditioning method, suffix position, dynamic edge updates and
+MCMC acceptance information when applicable.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.vine.rvine.RVineCopula.summary" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">summary</span><span class="p">(</span><span class="n">as_string</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span></code>
+
+<a href="#pyscarcopula.vine.rvine.RVineCopula.summary" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Print R-vine structure summary.</p>
+<p>Matches <code>CVineCopula.summary()</code> behavior: by default the summary is
+printed and <code>None</code> is returned. Use <code>summary(as_string=True)</code> when
+a string value is needed.</p>
+
+
+    <p><span class="doc-section-title">Returns:</span></p>
+    <table>
+      <thead>
+        <tr>
+<th>Name</th>          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+<td><code>text</code></td>            <td>
+                  <code><span title="str">str</span> or None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div><h2 id="predictconfig">PredictConfig<a class="headerlink" href="#predictconfig" title="Permanent link">&para;</a></h2>
+
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="pyscarcopula._types.PredictConfig" class="doc doc-heading">
+            <code>pyscarcopula._types.PredictConfig</code>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
+  </span>
+
+<a href="#pyscarcopula._types.PredictConfig" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents first">
+
+
+
+        <p>Prediction-time options shared by API, copulas, vines, and strategies.</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div><h2 id="rvinematrix">RVineMatrix<a class="headerlink" href="#rvinematrix" title="Permanent link">&para;</a></h2>
+
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="pyscarcopula.vine._structure.RVineMatrix" class="doc doc-heading">
+            <code>pyscarcopula.vine._structure.RVineMatrix</code>
+
+
+<a href="#pyscarcopula.vine._structure.RVineMatrix" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents first">
+
+
+
+        <p>R-vine structure encoded as a d x d lower-triangular matrix.</p>
+<p>Convention (Dißmann et al. 2013, Joe 2014 Ch.6):
+    - M is d x d, 0-indexed.
+    - Diagonal M[i,i] = variable label at position i.
+    - Below diagonal: M[k,i] for k &gt; i gives the conditioned/conditioning
+      structure at tree level (k - i).</p>
+<p>For tree level t (1-indexed, t = 1..d-1):
+    Edge at column i (i = 0..d-t-1):
+        conditioned pair: (M[i,i], M[i+t, i])
+        conditioning set: {M[i+1,i], M[i+2,i], ..., M[i+t-1,i]}</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>matrix</code>
+            </td>
+            <td>
+                  <code>(d, d) int array</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>R-vine matrix in the convention above.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.vine._structure.RVineMatrix.edge" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">edge</span><span class="p">(</span><span class="n">tree</span><span class="p">,</span> <span class="n">edge_idx</span><span class="p">)</span></code>
+
+<a href="#pyscarcopula.vine._structure.RVineMatrix.edge" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Return the edge at (tree, edge_idx).</p>
+<p>tree: 0-indexed tree level (0 = first tree)
+edge_idx: 0-indexed edge within tree</p>
+
+
+    <p><span class="doc-section-title">Returns:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                  <code>(var1, var2, cond_set) where:</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>var1, var2 : int — conditioned variables
+cond_set : tuple of int — conditioning variables (empty for tree 0)</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.vine._structure.RVineMatrix.edges_at_tree" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">edges_at_tree</span><span class="p">(</span><span class="n">tree</span><span class="p">)</span></code>
+
+<a href="#pyscarcopula.vine._structure.RVineMatrix.edges_at_tree" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>All edges at a given tree level.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.vine._structure.RVineMatrix.n_trees" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">n_trees</span><span class="p">()</span></code>
+
+<a href="#pyscarcopula.vine._structure.RVineMatrix.n_trees" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="pyscarcopula.vine._structure.RVineMatrix.n_edges" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">n_edges</span><span class="p">()</span></code>
+
+<a href="#pyscarcopula.vine._structure.RVineMatrix.n_edges" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div><h2 id="vineedge">VineEdge<a class="headerlink" href="#vineedge" title="Permanent link">&para;</a></h2>
+
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="pyscarcopula.vine._edge.VineEdge" class="doc doc-heading">
+            <code>pyscarcopula.vine._edge.VineEdge</code>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
+  </span>
+
+<a href="#pyscarcopula.vine._edge.VineEdge" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents first">
+
+
+
+        <p>One edge in the vine: a fitted bivariate copula.</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div><h2 id="select_best_copula">select_best_copula<a class="headerlink" href="#select_best_copula" title="Permanent link">&para;</a></h2>
+
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="pyscarcopula.vine._selection.select_best_copula" class="doc doc-heading">
+            <code class="highlight language-python"><span class="n">pyscarcopula</span><span class="o">.</span><span class="n">vine</span><span class="o">.</span><span class="n">_selection</span><span class="o">.</span><span class="n">select_best_copula</span><span class="p">(</span><span class="n">u1</span><span class="p">,</span> <span class="n">u2</span><span class="p">,</span> <span class="n">candidates</span><span class="p">,</span> <span class="n">allow_rotations</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">criterion</span><span class="o">=</span><span class="s1">&#39;aic&#39;</span><span class="p">,</span> <span class="n">transform_type</span><span class="o">=</span><span class="s1">&#39;xtanh&#39;</span><span class="p">)</span></code>
+
+<a href="#pyscarcopula.vine._selection.select_best_copula" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents first">
+
+        <p>Select best bivariate copula for (u1, u2) by AIC/BIC/logL.</p>
+<p>Two-phase approach:
+  Phase 1 — Itau screening: rank by AIC/BIC, keep top-N.
+  Phase 2 — Refinement: L-BFGS-B on top-N, pick winner.</p>
+<p>Always includes IndependentCopula as a baseline competitor.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>u1</code>
+            </td>
+            <td>
+                  <code>(T,) arrays</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>u2</code>
+            </td>
+            <td>
+                  <code>(T,) arrays</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>candidates</code>
+            </td>
+            <td>
+                  <code>list of copula classes</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>allow_rotations</code>
+            </td>
+            <td>
+                  <code><span title="bool">bool</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                
+              </div>
+            </td>
+            <td>
+                  <code>True</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>criterion</code>
+            </td>
+            <td>
+                  <code>&#39;aic&#39;, &#39;bic&#39;, or &#39;loglik&#39;</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                
+              </div>
+            </td>
+            <td>
+                  <code>&#39;aic&#39;</code>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    <p><span class="doc-section-title">Returns:</span></p>
+    <table>
+      <thead>
+        <tr>
+<th>Name</th>          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+<td><code>best_copula</code></td>            <td>
+                  <code>fitted BivariateCopula instance</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+<td><code>best_result</code></td>            <td>
+                  <code>fit result</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    </div>
+
+</div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "content.code.copy", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+        <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
+</html>
