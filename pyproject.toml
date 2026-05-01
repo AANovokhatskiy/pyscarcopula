@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyscarcopula"
-version = "0.10.0"
-description = "Stochastic copula models with Ornstein-Uhlenbeck latent process"
+version = "0.10.1"
+description = "Python library for bivariate, multivariate, vine, and stochastic copula models"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.9"
@@ -13,8 +13,10 @@ authors = [
     {name = "Alexey Novokhatskiy", email = "aanovokhatskiy@gmail.com"},
 ]
 keywords = [
-    "copula", "stochastic", "SCAR", "vine copula", "transfer matrix",
-    "risk management", "VaR", "CVaR", "time-varying dependence",
+    "copula", "python", "copula python", "stochastic", "SCAR",
+    "vine copula", "bivariate copula", "multivariate copula",
+    "transfer matrix", "risk management", "VaR", "CVaR",
+    "time-varying dependence",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",

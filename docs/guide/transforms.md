@@ -2,7 +2,9 @@
 
 ## Overview
 
-The transform function `Psi(x)` maps the latent OU process `x(t)` to the copula parameter domain. For example, Gumbel requires `theta >= 1`, so `Psi: R -> [1, inf)`.
+The transform function `Psi(x)` maps the latent OU process `x(t)` to the
+copula parameter domain. For example, Gumbel requires `theta >= 1`, so
+`Psi: R -> [1, inf)`.
 
 pyscarcopula provides two transforms:
 
@@ -27,11 +29,16 @@ result = fit(copula, u, method='scar-tm-ou')
 
 ### softplus advantages
 
-The softplus transform has a natural floor - the copula parameter cannot go below a minimum value, e.g. `theta = 1` for Gumbel, which corresponds to independence. This matches financial data where correlations have a lower bound but can spike arbitrarily high.
+The softplus transform has a natural floor: the copula parameter cannot go
+below a minimum value. For Gumbel, `theta = 1` corresponds to independence.
+This is useful for financial data where correlations may have a lower bound
+but can spike sharply.
 
 ### xtanh advantages
 
-Symmetric - treats upward and downward movements equally. It may be preferable when the copula parameter can meaningfully decrease below the long-run mean.
+This transform is symmetric and treats upward and downward movements equally.
+It may be preferable when the copula parameter can meaningfully decrease below
+the long-run mean.
 
 ## Using with vine
 

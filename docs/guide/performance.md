@@ -22,11 +22,17 @@ result = fit(copula, u, method='scar-tm-ou', tol=5e-2)
 | `pts_per_sigma` | `2` | Grid density. Increase to 4 for very peaked transition kernels. |
 | `transform_type` | `'xtanh'` | `'softplus'` often gives better logL on financial data. |
 
-**Adaptive grid size.** When `adaptive=True` (the default), the grid is automatically enlarged so that the OU transition kernel is resolved with at least `pts_per_sigma` points per conditional standard deviation. The resulting grid size is
+**Adaptive grid size.** When `adaptive=True` (the default), the grid is
+automatically enlarged so that the OU transition kernel is resolved with at
+least `pts_per_sigma` points per conditional standard deviation. The resulting
+grid size is
 
 `K_min = O(1 / sqrt(theta * dt))`, where `dt = 1/(n-1)`.
 
-For small `theta` (slow mean-reversion) this can produce very large grids. In dense mode the cost is `O(K^2)`; in sparse mode it is `O(K * b)`, where `b` is the kernel bandwidth, which is usually manageable. Workarounds for excessive grid sizes:
+For small `theta` (slow mean-reversion) this can produce very large grids. In
+dense mode the cost is `O(K^2)`; in sparse mode it is `O(K * b)`, where `b` is
+the kernel bandwidth, which is usually manageable. Workarounds for excessive
+grid sizes:
 
 - Use `grid_method='sparse'` or leave `'auto'`, which prefers sparse for large grids
 - Set `adaptive=False` and specify an explicit `K`
@@ -35,9 +41,9 @@ For small `theta` (slow mean-reversion) this can produce very large grids. In de
 ## Vine copula
 
 ```python
-from pyscarcopula import CVineCopula
+from pyscarcopula import RVineCopula
 
-vine = CVineCopula()
+vine = RVineCopula()
 vine.fit(u, method='scar-tm-ou',
          truncation_level=2,
          min_edge_logL=10,
@@ -51,11 +57,19 @@ vine.fit(u, method='scar-tm-ou',
 
 **d=6 crypto, T=250:**
 
-| Configuration | Time | logL | GoF p-value |
-|---|---|---|---|
-| Full SCAR (15 edges) | ~30s | ~928 | ~0.90 |
-| Truncated SCAR (level=2, logL>=10) | ~13s | ~922 | ~0.90 |
-| MLE only | ~0.6s | ~869 | ~0.21 |
+The current example notebook uses a truncated R-vine with
+`truncation_level=2`. On the bundled crypto data it gives:
+
+| Configuration | logL | GoF p-value |
+|---|---:|---:|
+| R-vine SCAR-TM, truncated at level 2 | 885.19 | 0.9839 |
+| R-vine MLE, truncated at level 2 | 836.96 | 0.0639 |
+| Student-t baseline | 764.42 | 0.0001 |
+| Gaussian baseline | 761.00 | 0.0000 |
+
+Wall-clock time depends strongly on CPU, BLAS, Numba cache state, and fit
+settings. Use `examples/03_vine.ipynb` when you need a reproducible local
+comparison.
 
 ## NumericalConfig
 

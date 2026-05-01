@@ -1,8 +1,12 @@
-# pyscarcopula
+# pyscarcopula: copula Python library
 
-**Stochastic copula models with Ornstein-Uhlenbeck latent process.**
+**A Python library for bivariate, multivariate, vine, and stochastic copula models.**
 
-pyscarcopula models time-varying dependence between financial assets. The copula parameter follows a latent stochastic process, estimated via a deterministic transfer matrix method.
+pyscarcopula models dependence between variables in Python for financial time
+series, risk analytics, and experiments with dynamic dependence. Alongside
+classical constant-parameter copulas, it supports SCAR models where the copula
+parameter follows a latent Ornstein-Uhlenbeck stochastic process estimated via
+a deterministic transfer matrix method.
 
 ## Key Features
 
@@ -42,6 +46,6 @@ r_t = smoothed_params(copula, u, result)
 
 | Model | logL | GoF p-value |
 |-------|------|-------------|
-| MLE (constant) | 955.63 | 0.009 |
-| GAS (score-driven) | 1031.42 | 0.528 |
-| **SCAR-TM** | **1042.47** | **0.620** |
+| MLE (constant) | 955.63 | 0.0105 |
+| GAS (score-driven) | 1031.42 | 0.5187 |
+| **SCAR-TM** | **1042.47** | **0.6544** |

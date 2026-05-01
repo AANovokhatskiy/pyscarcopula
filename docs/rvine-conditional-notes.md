@@ -173,40 +173,6 @@ been advanced one score step; applying `condition_state` again would produce
 the next filter state, not a posterior update of the same forecast state. Such
 edges are skipped with reason `gas_next_horizon_would_advance_filter`.
 
-## Future Work
-
-### Probit Random-Walk MCMC Proposal
-
-The current `dag_mcmc` fallback uses componentwise independence Metropolis
-updates with uniform proposals in pseudo-observation space. A useful extension
-would be an optional `mcmc_proposal='probit_rw'` mode:
-
-```text
-z = Phi^{-1}(u)
-z' = z + Normal(0, scale)
-u' = Phi(z')
-```
-
-Potential usefulness:
-
-- improves acceptance for strongly dependent conditional targets where the
-  posterior mass is narrow, for example Gaussian-like edges with high
-  correlation;
-- reduces wasted global proposals compared with independent `Uniform(0, 1)`
-  moves;
-- may reduce initializer bias for arbitrary non-suffix conditioning when the
-  default number of MCMC steps is modest.
-
-Potential limitations:
-
-- requires a scale parameter such as `mcmc_rw_scale`;
-- a poor scale can still mix badly: too small gives slow exploration, too
-  large gives low acceptance;
-- adaptive tuning would improve robustness but adds API and diagnostic
-  complexity;
-- independence proposals can remain faster for weakly dependent targets, so
-  this should be an optional mode rather than an unconditional replacement.
-
 ## Verification
 
 Focused checks:

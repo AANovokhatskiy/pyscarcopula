@@ -85,9 +85,9 @@ When `conditional_method == "dag_mcmc"`, diagnostics include:
 - `dag_edges_used`: fitted R-vine edges used by the DAG initializer;
 - `mcmc`: proposed moves, accepted moves, acceptance rate, and step count.
 
-This fallback makes arbitrary conditioning a first-class feature, but it is
-not the same cost profile as suffix sampling. Prefer suffix-compatible
-structures for high-volume production paths when possible.
+This fallback supports arbitrary conditioning, but it is more expensive than
+suffix sampling. Prefer suffix-compatible structures for high-volume
+production paths when possible.
 
 For strongly dependent or high-dimensional conditional targets, increase
 `mcmc_steps` and inspect `diagnostics["mcmc"]["low_acceptance_warning"]`.

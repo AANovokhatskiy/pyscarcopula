@@ -1,6 +1,7 @@
-# pyscarcopula
+# pyscarcopula: copula Python library
 
-Stochastic copula models with Ornstein-Uhlenbeck latent processes in Python.
+A Python library for copula modelling: bivariate, multivariate, vine, and
+stochastic copula models for financial time series and risk analytics.
 
 * [About](#about)
 * [Install](#install)
@@ -11,10 +12,10 @@ Stochastic copula models with Ornstein-Uhlenbeck latent processes in Python.
 
 ## About
 
-**pyscarcopula** fits bivariate and multivariate dependence models using copulas.
-Alongside classical constant-parameter copulas, it supports stochastic copula
-autoregressive (SCAR) models where the copula parameter is driven by a latent
-Ornstein-Uhlenbeck process.
+**pyscarcopula** fits bivariate and multivariate dependence models using
+copulas in Python. Alongside classical constant-parameter copulas, it supports
+stochastic copula autoregressive (SCAR) models where the copula parameter is
+driven by a latent Ornstein-Uhlenbeck process.
 
 The package is aimed at financial time series, risk modelling, and experiments
 with dynamic dependence. It provides bivariate copulas, C-vines, R-vines,

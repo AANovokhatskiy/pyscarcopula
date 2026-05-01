@@ -42,7 +42,10 @@ For financial data (joint crashes), `GumbelCopula(rotate=180)` or `ClaytonCopula
 
 Two functions serve different purposes:
 
-**`sample`** generates synthetic data reproducing the fitted model. For SCAR, it simulates an OU trajectory with the fitted parameters and samples from the copula with the time-varying parameter. Useful for model validation: `fit(copula, sample(...))` should recover similar parameters.
+**`sample`** generates synthetic data from the fitted model. For SCAR, it
+simulates an OU trajectory with the fitted parameters and samples from the
+copula with the time-varying parameter. This is useful for model validation:
+`fit(copula, sample(...))` should recover similar parameters.
 
 ```python
 import numpy as np
@@ -52,7 +55,10 @@ v = sample(copula, u, result, n=2000, rng=np.random.default_rng(2024))
 result_refit = fit(copula, pobs(v), method='scar-tm-ou')
 ```
 
-**`predict`** generates samples for next-step forecasting. It also supports conditional generation via `given={idx: u_value}`. For SCAR-TM, `horizon='current'` uses `p(x_T | data)`, while `horizon='next'` uses the one-step-ahead predictive distribution `p(x_{T+1} | data)`.
+**`predict`** generates samples for next-step forecasting. It also supports
+conditional generation via `given={idx: u_value}`. For SCAR-TM,
+`horizon='current'` uses `p(x_T | data)`, while `horizon='next'` uses the
+one-step-ahead predictive distribution `p(x_{T+1} | data)`.
 
 For the shared prediction terminology used by bivariate and vine models, see
 [Prediction Semantics](prediction-semantics.md).
@@ -96,4 +102,6 @@ from pyscarcopula.stattests import gof_test
 gof = gof_test(copula, u, fit_result=result, to_pobs=False)
 ```
 
-Uses the Rosenblatt transform with the Cramer-von Mises statistic. For SCAR models, it integrates the h-function over the predictive distribution (mixture Rosenblatt).
+The GoF test uses the Rosenblatt transform with the Cramer-von Mises
+statistic. For SCAR models, it integrates the h-function over the predictive
+distribution (mixture Rosenblatt).

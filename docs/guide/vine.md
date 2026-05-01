@@ -2,16 +2,20 @@
 
 ## Overview
 
-Vine copulas decompose a d-dimensional copula into d(d-1)/2 bivariate copulas arranged in a tree structure. Two vine types are supported:
+Vine copulas decompose a `d`-dimensional copula into `d(d-1)/2` bivariate
+copulas arranged in a tree structure. Two vine types are supported:
 
 - **C-vine**: fixed star structure (one "root" variable per tree)
 - **R-vine**: data-driven structure selected via Dissmann's MST algorithm
 
-Each edge copula is selected automatically from all available families via AIC, and can use constant (MLE) or time-varying (SCAR, GAS) parameters.
+Each edge copula is selected automatically from the configured candidate
+families via AIC, and can use constant (MLE) or time-varying (SCAR, GAS)
+parameters.
 
 ## C-vine
 
-A C-vine uses a star structure where variable 1 is the root of tree 0, variable 2 is the root of tree 1, etc.
+A C-vine uses a star structure where the first variable is the root of tree 0,
+the second variable is the root of tree 1, and so on.
 
 ```python
 from pyscarcopula import CVineCopula
@@ -26,7 +30,9 @@ vine.summary()
 
 ## R-vine
 
-An R-vine selects the tree structure from data using Dissmann's algorithm: at each tree level, a maximum spanning tree is built on |Kendall's tau|, subject to the proximity condition.
+An R-vine selects the tree structure from data using Dissmann's algorithm: at
+each tree level, a maximum spanning tree is built on `abs(Kendall's tau)`,
+subject to the proximity condition.
 
 ```python
 from pyscarcopula import RVineCopula
@@ -90,7 +96,8 @@ from pyscarcopula.stattests import gof_test
 gof = gof_test(vine, u, to_pobs=False)
 ```
 
-The `gof_test` function auto-dispatches to the correct Rosenblatt transform for both C-vine and R-vine models, handling mixed SCAR/MLE edges correctly.
+The `gof_test` function dispatches to the correct Rosenblatt transform for
+both C-vine and R-vine models, including mixed SCAR/MLE edges.
 
 ## Sampling and prediction
 
@@ -182,15 +189,15 @@ For a focused description of prediction semantics, see
 [Prediction Semantics](prediction-semantics.md). For R-vine-specific details,
 see [R-vine Conditioning](rvine-conditioning.md).
 
-For SCAR-TM edges, `predict(..., horizon='current')` uses `p(x_T | data)` and `predict(..., horizon='next')` uses `p(x_{T+1} | data)`. `sample` still simulates independent OU trajectories.
+For SCAR-TM edges, `predict(..., horizon='current')` uses `p(x_T | data)` and
+`predict(..., horizon='next')` uses `p(x_{T+1} | data)`. `sample` still
+simulates independent OU trajectories.
 
 ## Results on 6-crypto data (T=250)
 
 | Model | logL | GoF p-value |
 |-------|------|-------------|
-| **C-vine SCAR-TM** | **921.9** | **0.89** |
-| R-vine SCAR-TM | 919.1 | 0.62 |
-| R-vine MLE | 873.0 | 0.19 |
-| C-vine MLE | 869.2 | 0.21 |
-| Student-t | 764.4 | 0.0001 |
-| Gaussian | 761.0 | 0.0000 |
+| **R-vine SCAR-TM** | **885.19** | **0.9839** |
+| R-vine MLE | 836.96 | 0.0639 |
+| Student-t | 764.42 | 0.0001 |
+| Gaussian | 761.00 | 0.0000 |

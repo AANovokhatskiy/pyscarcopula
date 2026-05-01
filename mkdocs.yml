@@ -1,6 +1,6 @@
 site_name: pyscarcopula
 site_url: https://AANovokhatskiy.github.io/pyscarcopula
-site_description: Stochastic copula models with Ornstein-Uhlenbeck latent process
+site_description: Python library for bivariate, multivariate, vine, and stochastic copula models
 repo_url: https://github.com/AANovokhatskiy/pyscarcopula
 repo_name: AANovokhatskiy/pyscarcopula
 

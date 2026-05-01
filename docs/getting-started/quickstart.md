@@ -58,7 +58,7 @@ from pyscarcopula.api import sample, predict
 v = sample(copula, u, result_tm, n=2000, rng=np.random.default_rng(2024))
 result_refit = fit(copula, pobs(v), method='scar-tm-ou')
 gof_v = gof_test(copula, pobs(v), fit_result=result_refit, to_pobs=False)
-print(f"GoF on sample: p={gof_v.pvalue:.4f}")  # should pass
+print(f"GoF on sample: p={gof_v.pvalue:.4f}")  # expected to pass
 
 # predict: next-step forecast (for risk metrics)
 u_pred = predict(copula, u, result_tm, n=100_000,

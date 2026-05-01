@@ -1,11 +1,15 @@
 # Experimental Models
 
 !!! warning "Experimental API"
-    The models in `pyscarcopula.copula.experimental` are under active development. Their API may change in future releases.
+    The models in `pyscarcopula.copula.experimental` are under active
+    development. Their API may change in future releases.
 
 ## Overview
 
-The `experimental` module contains d-dimensional copula models that extend the SCAR framework beyond bivariate Archimedean families. All models use a **single scalar latent OU process**, so the existing transfer matrix infrastructure works unchanged.
+The `experimental` module contains `d`-dimensional copula models that extend
+the SCAR framework beyond bivariate Archimedean families. All models use a
+**single scalar latent OU process**, so the existing transfer matrix
+infrastructure works unchanged.
 
 | Model | Class | Latent parameter | Description |
 |-------|-------|-----------------|-------------|
@@ -15,11 +19,14 @@ The `experimental` module contains d-dimensional copula models that extend the S
 
 ## Equicorrelation Gaussian Copula
 
-For d assets, the standard Gaussian copula has `d(d-1)/2` correlation parameters, all static. The equicorrelation model uses a single dynamic correlation:
+For `d` assets, the standard Gaussian copula has `d(d-1)/2` static
+correlation parameters. The equicorrelation model uses a single dynamic
+correlation:
 
 $$R(t) = (1-\rho(t)) \cdot I + \rho(t) \cdot \mathbf{1}\mathbf{1}^\top$$
 
-All pairwise correlations equal $\rho(t)$, which follows an OU process via SCAR. This gives 3 parameters instead of `d(d-1)/2`.
+All pairwise correlations equal $\rho(t)$, which follows an OU process via
+SCAR. This gives 3 parameters instead of `d(d-1)/2`.
 
 The density is analytical and `O(d)` per evaluation, with no matrix inversion required.
 
@@ -43,13 +50,15 @@ Equicorrelation SCAR is a good fit when:
 
 - All pairwise correlations move together, common in equity and crypto markets
 - You need fast estimation for large `d`, with `O(d)` density evaluation
-- You want a simple interpretable model with 3 parameters
+- You want a compact, interpretable model with 3 parameters
 
 For heterogeneous dependence, use C-vine or R-vine instead.
 
 ## Stochastic Student-t Copula
 
-A d-dimensional t-copula where the correlation matrix $R$ is estimated once (via Kendall's $\tau$) and fixed, while the degrees-of-freedom parameter $\nu(t)$ follows a latent OU process:
+A `d`-dimensional t-copula where the correlation matrix $R$ is estimated once
+via Kendall's $\tau$ and fixed, while the degrees-of-freedom parameter
+$\nu(t)$ follows a latent OU process:
 
 $$\nu(t) = 2 + \mathrm{softplus}(x(t)), \qquad x(t) \sim \text{OU}(\theta, \mu, \sigma)$$
 
