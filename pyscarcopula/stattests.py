@@ -22,7 +22,21 @@ Usage:
 """
 
 import numpy as np
+import time
+from dataclasses import dataclass
 from scipy.stats import chi2, norm, cramervonmises
+
+
+@dataclass(frozen=True)
+class BootstrapGoFResult:
+    """Goodness-of-fit result with bootstrap-calibrated p-value."""
+
+    statistic: float
+    pvalue: float
+    bootstrap_statistics: np.ndarray
+    n_bootstrap: int
+    calibration: str = 'parametric_bootstrap'
+    bootstrap_diagnostics: tuple[dict, ...] = ()
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -100,7 +114,8 @@ def rosenblatt_transform_gas(copula, u, gas_params, scaling='unit'):
 # ══════════════════════════════════════════════════════════════════
 
 def gof_test(model, data, to_pobs=True, K=300, grid_range=5.0,
-             fit_result=None):
+             fit_result=None, bootstrap=False, n_bootstrap=199,
+             bootstrap_refit=True, bootstrap_fit_kwargs=None, rng=None):
     """
     Unified goodness-of-fit test for any copula model.
 
@@ -120,6 +135,17 @@ def gof_test(model, data, to_pobs=True, K=300, grid_range=5.0,
     fit_result : FitResult or None
         If provided, use this instead of model.fit_result.
         Enables the stateless API: gof_test(copula, u, fit_result=result)
+    bootstrap : bool
+        If True, calibrate the bivariate CvM statistic by parametric
+        bootstrap instead of using the one-sample asymptotic p-value.
+    n_bootstrap : int
+        Number of bootstrap replications.
+    bootstrap_refit : bool
+        If True, re-estimate the model on each bootstrap sample.
+    bootstrap_fit_kwargs : dict or None
+        Extra keyword arguments for each bootstrap fit.
+    rng : int, Generator, or None
+        Random seed/source for bootstrap simulation.
 
     Returns
     -------
@@ -134,24 +160,56 @@ def gof_test(model, data, to_pobs=True, K=300, grid_range=5.0,
     from pyscarcopula.copula.experimental.stochastic_student_dcc import StochasticStudentDCCCopula
 
     if isinstance(model, StochasticStudentDCCCopula):
+        if bootstrap:
+            raise NotImplementedError(
+                "Bootstrap GoF is currently implemented for bivariate "
+                "copulas only.")
         return stochastic_student_dcc_gof_test(model, data, to_pobs, K,
                                                 grid_range, fit_result=fit_result)
     elif isinstance(model, StochasticStudentCopula):
+        if bootstrap:
+            raise NotImplementedError(
+                "Bootstrap GoF is currently implemented for bivariate "
+                "copulas only.")
         return stochastic_student_gof_test(model, data, to_pobs, K,
                                            grid_range, fit_result=fit_result)
     elif isinstance(model, EquicorrGaussianCopula):
+        if bootstrap:
+            raise NotImplementedError(
+                "Bootstrap GoF is currently implemented for bivariate "
+                "copulas only.")
         return equicorr_gof_test(model, data, to_pobs, K, grid_range,
                                  fit_result=fit_result)
     elif isinstance(model, BivariateCopula):
         return _gof_bivariate(model, data, to_pobs, K, grid_range,
-                              fit_result=fit_result)
+                              fit_result=fit_result, bootstrap=bootstrap,
+                              n_bootstrap=n_bootstrap,
+                              bootstrap_refit=bootstrap_refit,
+                              bootstrap_fit_kwargs=bootstrap_fit_kwargs,
+                              rng=rng)
     elif isinstance(model, CVineCopula):
+        if bootstrap:
+            raise NotImplementedError(
+                "Bootstrap GoF is currently implemented for bivariate "
+                "copulas only.")
         return vine_gof_test(model, data, to_pobs, K, grid_range)
     elif isinstance(model, RVineCopula):
+        if bootstrap:
+            raise NotImplementedError(
+                "Bootstrap GoF is currently implemented for bivariate "
+                "copulas only.")
         return rvine_gof_test(model, data, to_pobs, K, grid_range)
     elif isinstance(model, GaussianCopula):
+        if bootstrap:
+            raise NotImplementedError(
+                "Bootstrap GoF is currently implemented for bivariate "
+                "copulas only.")
         return gaussian_gof_test(model, data, to_pobs)
     elif isinstance(model, StudentCopula):
+        if bootstrap:
+            raise NotImplementedError(
+                "Bootstrap GoF is currently implemented for bivariate "
+                "copulas only.")
         return student_gof_test(model, data, to_pobs)
     else:
         raise TypeError(f"Unsupported model type: {type(model).__name__}")
@@ -161,7 +219,9 @@ def gof_test(model, data, to_pobs=True, K=300, grid_range=5.0,
 # ══════════════════════════════════════════════════════════════════
 
 def _gof_bivariate(copula, data, to_pobs=True, K=300, grid_range=5.0,
-                   fit_result=None):
+                   fit_result=None, bootstrap=False, n_bootstrap=199,
+                   bootstrap_refit=True, bootstrap_fit_kwargs=None,
+                   rng=None):
     """
     Goodness-of-fit for a fitted BivariateCopula.
 
@@ -190,20 +250,150 @@ def _gof_bivariate(copula, data, to_pobs=True, K=300, grid_range=5.0,
         raise ValueError("No fit_result provided and copula has no fit_result. "
                          "Call copula.fit() first or pass fit_result=.")
 
-    method = fr.method.upper()
+    e = _bivariate_rosenblatt_from_result(copula, u, fr, K, grid_range)
+    result = cvm_test(e)
+
+    if not bootstrap:
+        return result
+
+    return _bootstrap_gof_bivariate(
+        copula, u, fr, float(result.statistic), K, grid_range,
+        n_bootstrap=n_bootstrap, bootstrap_refit=bootstrap_refit,
+        bootstrap_fit_kwargs=bootstrap_fit_kwargs, rng=rng)
+
+
+def _bivariate_rosenblatt_from_result(copula, u, fit_result,
+                                      K=300, grid_range=5.0):
+    method = fit_result.method.upper()
 
     if method == 'MLE':
-        r = fr.copula_param
-        e = rosenblatt_transform_mle(copula, u, r)
-    elif method == 'GAS':
-        scaling = getattr(fr, 'scaling', 'unit')
-        gp = fr.params.values
-        e = rosenblatt_transform_gas(copula, u, gp, scaling)
-    else:
-        alpha = fr.params.values
-        e = rosenblatt_transform_scar(copula, u, alpha, K, grid_range)
+        r = getattr(fit_result, 'copula_param', 0.0)
+        return rosenblatt_transform_mle(copula, u, r)
+    if method == 'GAS':
+        scaling = getattr(fit_result, 'scaling', 'unit')
+        return rosenblatt_transform_gas(
+            copula, u, fit_result.params.values, scaling)
 
-    return cvm_test(e)
+    return rosenblatt_transform_scar(
+        copula, u, fit_result.params.values, K, grid_range)
+
+
+def _as_rng(rng):
+    if isinstance(rng, np.random.Generator):
+        return rng
+    return np.random.default_rng(rng)
+
+
+def _bootstrap_fit_kwargs(fit_result, fit_kwargs):
+    """Warm-start bootstrap refits from the original fitted parameters."""
+    out = dict(fit_kwargs)
+    if 'alpha0' in out:
+        return out
+
+    method = fit_result.method.upper()
+    if method == 'MLE' and hasattr(fit_result, 'copula_param'):
+        out['alpha0'] = np.array([fit_result.copula_param], dtype=np.float64)
+    else:
+        params = getattr(fit_result, 'params', None)
+        if params is not None:
+            out['alpha0'] = np.asarray(params.values, dtype=np.float64)
+    return out
+
+
+def _fit_result_diagnostics(result):
+    row = {
+        'bootstrap_fit_method': getattr(result, 'method', ''),
+        'bootstrap_fit_log_likelihood': float(
+            getattr(result, 'log_likelihood', np.nan)),
+        'bootstrap_fit_success': bool(getattr(result, 'success', False)),
+        'bootstrap_fit_nfev': int(getattr(result, 'nfev', 0)),
+        'bootstrap_fit_message': str(getattr(result, 'message', '')),
+    }
+    if hasattr(result, 'copula_param'):
+        row['bootstrap_param_theta'] = float(result.copula_param)
+
+    params = getattr(result, 'params', None)
+    if params is not None:
+        values = np.asarray(params.values, dtype=np.float64)
+        row['bootstrap_params_json'] = {
+            name: float(value)
+            for name, value in zip(params.names, values)
+        }
+        for name, value in zip(params.names, values):
+            row[f'bootstrap_param_{name}'] = float(value)
+    return row
+
+
+def _bootstrap_gof_bivariate(copula, u, fit_result, observed_statistic,
+                             K=300, grid_range=5.0, n_bootstrap=199,
+                             bootstrap_refit=True,
+                             bootstrap_fit_kwargs=None, rng=None):
+    """Parametric bootstrap calibration for bivariate GoF."""
+    from pyscarcopula.strategy._base import get_strategy_for_result
+
+    if n_bootstrap <= 0:
+        raise ValueError("n_bootstrap must be positive")
+
+    rng = _as_rng(rng)
+    fit_kwargs = {} if bootstrap_fit_kwargs is None else dict(bootstrap_fit_kwargs)
+    strategy = None
+    if not (fit_result.method.upper() == 'MLE'
+            and not hasattr(fit_result, 'copula_param')):
+        strategy = get_strategy_for_result(
+            fit_result, K=K, grid_range=grid_range)
+
+    boot_stats = np.empty(int(n_bootstrap), dtype=np.float64)
+    diagnostics = []
+    for b in range(int(n_bootstrap)):
+        iter_start = time.perf_counter()
+        if strategy is None:
+            u_boot = copula.sample(len(u), rng=rng)
+        else:
+            u_boot = strategy.sample(copula, u, fit_result, len(u), rng=rng)
+
+        fit_start = time.perf_counter()
+        if bootstrap_refit:
+            if strategy is None:
+                boot_result = fit_result
+            else:
+                boot_strategy = get_strategy_for_result(
+                    fit_result, K=K, grid_range=grid_range)
+                boot_result = boot_strategy.fit(
+                    copula, u_boot,
+                    **_bootstrap_fit_kwargs(fit_result, fit_kwargs))
+        else:
+            boot_result = fit_result
+        fit_elapsed = time.perf_counter() - fit_start
+
+        stat_start = time.perf_counter()
+        e_boot = _bivariate_rosenblatt_from_result(
+            copula, u_boot, boot_result, K, grid_range)
+        boot_stats[b] = float(cvm_test(e_boot).statistic)
+        stat_elapsed = time.perf_counter() - stat_start
+
+        row = {
+            'bootstrap_iteration': int(b + 1),
+            'bootstrap_statistic': float(boot_stats[b]),
+            'bootstrap_exceeds_observed': bool(
+                boot_stats[b] >= float(observed_statistic)),
+            'bootstrap_fit_time_sec': float(fit_elapsed),
+            'bootstrap_stat_time_sec': float(stat_elapsed),
+            'bootstrap_total_time_sec': float(
+                time.perf_counter() - iter_start),
+        }
+        row.update(_fit_result_diagnostics(boot_result))
+        diagnostics.append(row)
+
+    pvalue = (
+        1.0 + np.sum(boot_stats >= float(observed_statistic))
+    ) / (len(boot_stats) + 1.0)
+    return BootstrapGoFResult(
+        statistic=float(observed_statistic),
+        pvalue=float(pvalue),
+        bootstrap_statistics=boot_stats,
+        n_bootstrap=len(boot_stats),
+        bootstrap_diagnostics=tuple(diagnostics),
+    )
 
 
 # ══════════════════════════════════════════════════════════════════

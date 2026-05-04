@@ -6,7 +6,7 @@ from pyscarcopula import (
     IndependentCopula, CVineCopula,
 )
 from pyscarcopula.copula.experimental.equicorr import EquicorrGaussianCopula
-from pyscarcopula.api import fit, predict, smoothed_params
+from pyscarcopula.api import fit, predict, predictive_mean, smoothed_params
 from pyscarcopula.stattests import gof_test
 from pyscarcopula._utils import pobs
 from pyscarcopula._types import MLEResult, LatentResult, GASResult, gas_params
@@ -73,21 +73,28 @@ class TestFitResultTypes:
         assert abs(vine.fit_result.log_likelihood - edge_sum) < 1e-8
 
 
-class TestSmoothedParams:
+class TestPredictiveMean:
     def test_mle_constant(self, random_u2):
         cop = GumbelCopula(rotate=180)
         result = fit(cop, random_u2, method='mle')
-        r_t = smoothed_params(cop, random_u2, result)
+        r_t = predictive_mean(cop, random_u2, result)
         assert r_t.shape == (200,)
         assert np.all(r_t == r_t[0])
 
     def test_scar_varying(self, random_u2):
         cop = GumbelCopula(rotate=180)
         result = fit(cop, random_u2, method='scar-tm-ou', K=50, tol=0.5)
-        r_t = smoothed_params(cop, random_u2, result)
+        r_t = predictive_mean(cop, random_u2, result)
         assert r_t.shape == (200,)
         # Should vary (not constant like MLE)
         assert np.std(r_t) > 0
+
+    def test_predictive_mean_alias(self, random_u2):
+        cop = GumbelCopula(rotate=180)
+        result = fit(cop, random_u2, method='mle')
+        np.testing.assert_allclose(
+            predictive_mean(cop, random_u2, result),
+            smoothed_params(cop, random_u2, result))
 
 
 class TestGoFWithFitResult:
@@ -110,6 +117,16 @@ class TestGoFWithFitResult:
         result = fit(cop, random_u2, method='gas')
         gof = gof_test(cop, random_u2, fit_result=result, to_pobs=False)
         assert 0 <= gof.pvalue <= 1
+
+    def test_mle_bootstrap_gof(self, random_u2):
+        cop = GumbelCopula(rotate=180)
+        result = fit(cop, random_u2, method='mle')
+        gof = gof_test(
+            cop, random_u2, fit_result=result, to_pobs=False,
+            bootstrap=True, n_bootstrap=3, rng=123)
+        assert 0 <= gof.pvalue <= 1
+        assert gof.n_bootstrap == 3
+        assert gof.bootstrap_statistics.shape == (3,)
 
     def test_unfitted_raises(self, random_u2):
         cop = GumbelCopula(rotate=180)

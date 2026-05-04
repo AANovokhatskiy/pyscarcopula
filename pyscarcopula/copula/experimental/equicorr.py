@@ -454,15 +454,21 @@ class EquicorrGaussianCopula(BivariateCopula):
             rho = self.transform(np.array([x_T]))[0]
             return self.sample(n, r=rho, rng=rng)
 
-    # ── Smoothed params ──────────────────────────────────────
+    # Predictive mean path
 
-    def smoothed_params(self, u):
-        """Return smoothed rho(t) from TM forward pass."""
+    def predictive_mean(self, u):
+        """Return predictive mean rho(t) from TM forward pass."""
         if self.fit_result is None:
             raise ValueError("Fit with SCAR first")
         theta, mu, nu = self.fit_result.params.values
-        from pyscarcopula.numerical.tm_functions import tm_forward_smoothed
-        return tm_forward_smoothed(theta, mu, nu, u, self)
+        from pyscarcopula.numerical.tm_functions import (
+            tm_forward_predictive_mean,
+        )
+        return tm_forward_predictive_mean(theta, mu, nu, u, self)
+
+    def smoothed_params(self, u):
+        """Backward-compatible alias for predictive_mean."""
+        return self.predictive_mean(u)
 
     def xT_distribution(self, u, K=300, grid_range=5.0):
         if self.fit_result is None:

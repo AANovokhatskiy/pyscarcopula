@@ -20,13 +20,13 @@ a deterministic transfer matrix method.
 - **Prediction controls**: `PredictConfig`, diagnostics, dynamic conditioning,
   reproducible `rng`
 - **Transform functions**: `xtanh` (default), `softplus` (asymmetric)
-- **Diagnostics**: GoF test, smoothed parameters
+- **Diagnostics**: GoF test, predictive mean parameter paths
 
 ## Quick Example
 
 ```python
 from pyscarcopula import GumbelCopula
-from pyscarcopula.api import fit, smoothed_params
+from pyscarcopula.api import fit, predictive_mean
 from pyscarcopula.stattests import gof_test
 from pyscarcopula._utils import pobs
 
@@ -39,7 +39,7 @@ print(f"logL = {result.log_likelihood:.2f}")
 gof = gof_test(copula, u, fit_result=result, to_pobs=False)
 print(f"GoF p-value = {gof.pvalue:.4f}")
 
-r_t = smoothed_params(copula, u, result)
+r_t = predictive_mean(copula, u, result)
 ```
 
 ## Comparison on BTC-ETH daily data (T=1460)

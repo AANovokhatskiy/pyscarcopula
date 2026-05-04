@@ -1004,7 +1004,8 @@ class StochasticStudentDCCCopula(BivariateCopula):
         Modes
         -----
         fitted   : constant df for MLE, stationary-mean df for SCAR
-        smoothed : in-sample smoothed df_t for SCAR; constant for MLE
+        predictive_mean : in-sample predictive mean df_t for SCAR; constant for MLE
+        smoothed : backward-compatible alias for predictive_mean
         posterior: draw x_T from posterior and keep df constant over the horizon
         """
         if rng is None:
@@ -1026,15 +1027,15 @@ class StochasticStudentDCCCopula(BivariateCopula):
             df_val = float(self.transform(np.array([self.fit_result.params.mu]))[0])
             return np.full(n, df_val, dtype=np.float64)
 
-        if mode == "smoothed":
+        if mode in {"predictive_mean", "smoothed"}:
             u_data = u if u is not None else self._last_u
             if u_data is None:
-                raise ValueError("No data cached for smoothed df path")
-            x_sm = np.asarray(self.smoothed_params(u=u_data), dtype=np.float64)
+                raise ValueError("No data cached for predictive mean df path")
+            x_sm = np.asarray(self.predictive_mean(u=u_data), dtype=np.float64)
             df_sm = self.transform(x_sm)
             if len(df_sm) != n:
                 raise ValueError(
-                    f"smoothed df path has length {len(df_sm)}, but n={n}; use mode='in_sample'"
+                    f"predictive mean df path has length {len(df_sm)}, but n={n}; use mode='in_sample'"
                 )
             return df_sm
 
@@ -1098,7 +1099,7 @@ class StochasticStudentDCCCopula(BivariateCopula):
         mode : str
             'last_R' | 'in_sample' | 'dcc_forecast_mean'
         df_mode : str
-            'fitted' | 'smoothed' | 'posterior'
+            'fitted' | 'predictive_mean' | 'smoothed' | 'posterior'
         R_path : optional externally supplied path (overrides mode)
         df_path : optional externally supplied df path
         """
@@ -1152,19 +1153,25 @@ class StochasticStudentDCCCopula(BivariateCopula):
         """
         return self.sample(n=n, mode=mode, df_mode=df_mode, rng=rng)
 
-    # ── Smoothed params / terminal distribution ──────────────
+    # Predictive mean path / terminal distribution
 
-    def smoothed_params(self, u=None):
-        """Return smoothed latent x_t values from TM forward pass."""
+    def predictive_mean(self, u=None):
+        """Return predictive mean latent x_t values from TM forward pass."""
         if self.fit_result is None:
             raise ValueError("Fit df dynamics first")
         u_data = u if u is not None else self._last_u
         if u_data is None:
             raise ValueError("No data available. Pass u= or call fit() first.")
         theta, mu, nu_ou = self.fit_result.params.values
-        from pyscarcopula.numerical.tm_functions import tm_forward_smoothed
+        from pyscarcopula.numerical.tm_functions import (
+            tm_forward_predictive_mean,
+        )
 
-        return tm_forward_smoothed(theta, mu, nu_ou, u_data, self)
+        return tm_forward_predictive_mean(theta, mu, nu_ou, u_data, self)
+
+    def smoothed_params(self, u=None):
+        """Backward-compatible alias for predictive_mean."""
+        return self.predictive_mean(u)
 
     def xT_distribution(self, u, K=300, grid_range=5.0):
         """Distribution of x_T on grid, using the fitted df-dynamics model."""

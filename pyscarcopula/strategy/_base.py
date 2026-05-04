@@ -8,9 +8,8 @@ string-based dispatch in the old BivariateCopula.fit().
 Adding a new method = adding a new file in strategy/.
 No existing code needs to change.
 
-The protocol is intentionally minimal. Strategies that don't support
-a particular operation (e.g. MLE has no smoothed_params in the
-time-varying sense) should raise NotImplementedError with a clear message.
+The protocol is intentionally minimal. Strategies that don't support a
+particular operation should raise NotImplementedError with a clear message.
 """
 
 from __future__ import annotations
@@ -40,8 +39,8 @@ class FitStrategy(Protocol):
     log_likelihood(copula, u, result) -> float
         Evaluate log-likelihood at fitted parameters.
 
-    smoothed_params(copula, u, result) -> ndarray (T,)
-        Time-varying copula parameter. For MLE this is constant.
+    predictive_mean(copula, u, result) -> ndarray (T,)
+        Predictive mean copula parameter. For MLE this is constant.
 
     rosenblatt_e2(copula, u, result) -> ndarray (T,)
         Second Rosenblatt residual for GoF test.
@@ -66,13 +65,21 @@ class FitStrategy(Protocol):
         """Evaluate log-likelihood at fitted parameters."""
         ...
 
+    def predictive_mean(self, copula, u: np.ndarray,
+                        result: FitResult) -> np.ndarray:
+        """Predictive mean of the time-varying copula parameter.
+
+        For MLE: constant array.
+        For SCAR-TM: E[Psi(x_k) | u_{1:k-1}].
+        For GAS: deterministic Psi(f_t) path.
+        """
+        ...
+
     def smoothed_params(self, copula, u: np.ndarray,
                         result: FitResult) -> np.ndarray:
         """E[Psi(x_k) | u_{1:k-1}] — time-varying copula parameter.
 
-        For MLE: constant array.
-        For SCAR-TM: forward pass on transfer matrix grid.
-        For GAS: deterministic Psi(f_t) path.
+        The SCAR-TM quantity is predictive, not two-sided smoothing.
         """
         ...
 

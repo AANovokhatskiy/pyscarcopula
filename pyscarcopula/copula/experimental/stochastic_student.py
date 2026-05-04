@@ -616,10 +616,10 @@ class StochasticStudentCopula(BivariateCopula):
             df_val = self.transform(np.array([x_T]))[0]
             return self.sample(n, r=df_val, rng=rng)
 
-    # ── Smoothed params ──────────────────────────────────────
+    # Predictive mean path
 
-    def smoothed_params(self, u=None):
-        """Return smoothed df(t) from TM forward pass."""
+    def predictive_mean(self, u=None):
+        """Return predictive mean df(t) from TM forward pass."""
         if self.fit_result is None:
             raise ValueError("Fit with SCAR first")
         u_data = u if u is not None else getattr(self, '_last_u', None)
@@ -627,8 +627,14 @@ class StochasticStudentCopula(BivariateCopula):
             raise ValueError("No data. Pass u= or call fit() first.")
 
         theta, mu, nu_ou = self.fit_result.params.values
-        from pyscarcopula.numerical.tm_functions import tm_forward_smoothed
-        return tm_forward_smoothed(theta, mu, nu_ou, u_data, self)
+        from pyscarcopula.numerical.tm_functions import (
+            tm_forward_predictive_mean,
+        )
+        return tm_forward_predictive_mean(theta, mu, nu_ou, u_data, self)
+
+    def smoothed_params(self, u=None):
+        """Backward-compatible alias for predictive_mean."""
+        return self.predictive_mean(u)
 
     def xT_distribution(self, u, K=300, grid_range=5.0):
         """Distribution of x_T on grid (for predict)."""

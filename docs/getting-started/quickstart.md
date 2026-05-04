@@ -19,7 +19,7 @@ u = pobs(returns)
 
 ```python
 from pyscarcopula import GumbelCopula
-from pyscarcopula.api import fit, smoothed_params
+from pyscarcopula.api import fit, predictive_mean
 
 copula = GumbelCopula(rotate=180)
 
@@ -42,10 +42,10 @@ gof = gof_test(copula, u, fit_result=result_tm, to_pobs=False)
 print(f"p-value = {gof.pvalue:.4f}")
 ```
 
-## Smoothed copula parameter
+## Predictive mean copula parameter
 
 ```python
-r_t = smoothed_params(copula, u, result_tm)
+r_t = predictive_mean(copula, u, result_tm)
 # r_t[k] = E[Psi(x_k) | u_{1:k-1}]
 ```
 

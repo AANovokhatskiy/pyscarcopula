@@ -33,14 +33,14 @@ def tm_state_distribution(theta, mu, nu, u, copula, K=300, grid_range=5.0,
         alpha *= fi_grid[t]
 
         if t < n - 1:
-            alpha = grid.rmatvec(alpha * grid.trap_w)
+            alpha = grid.predict_matvec(alpha * grid.trap_w)
 
         mx = np.max(np.abs(alpha))
         if mx > 0:
             alpha /= mx
 
     if horizon == 'next':
-        alpha = grid.rmatvec(alpha * grid.trap_w)
+        alpha = grid.predict_matvec(alpha * grid.trap_w)
         mx = np.max(np.abs(alpha))
         if mx > 0:
             alpha /= mx

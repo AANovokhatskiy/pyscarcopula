@@ -435,6 +435,29 @@ class JoeCopula(BivariateCopula):
         uniforms = rng.uniform(0.0, 1.0, size=n)
         return _joe_V_from_uniforms(n, _r, uniforms)
 
+    def sample(self, n, r, rng=None):
+        """Sample via conditional inversion.
+
+        The Marshall-Olkin sampler for Joe requires Sibuya frailty draws,
+        whose heavy tail can make bootstrap simulation unpredictably slow.
+        Conditional inversion has deterministic O(n) cost and uses the same
+        rotated h-function convention as the Rosenblatt transform.
+        """
+        if rng is None:
+            rng = np.random.default_rng()
+        _r_input = np.asarray(r, dtype=np.float64)
+        if _r_input.ndim == 0:
+            _r = np.full(n, _r_input.item())
+        else:
+            _r = np.asarray(_r_input, dtype=np.float64).ravel()
+            if _r.size == 1:
+                _r = np.full(n, _r[0])
+
+        u1 = rng.uniform(0.0, 1.0, size=n)
+        e2 = rng.uniform(0.0, 1.0, size=n)
+        u2 = self.h_inverse(e2, u1, _r)
+        return np.column_stack((u1, u2))
+
     def h_unrotated(self, u, v, r):
         return _joe_h(*_broadcast(u, v, r))
 

@@ -120,8 +120,23 @@ class TMGrid:
         return self._T_op @ v
 
     def rmatvec(self, v):
-        """T_trap.T @ v  (adjoint/transpose for forward pass)."""
+        """T_trap.T @ v  (transpose of the weighted backward operator)."""
         return self._T_op.T @ v
+
+    def predict_matvec(self, v):
+        """
+        Forward prediction integral.
+
+        ``_T_op[j, i] = p(z_i | z_j) * w_i`` is weighted for backward
+        integration over the next-state index.  Forward prediction integrates
+        over the previous-state index:
+
+            alpha_next[i] = sum_j p(z_i | z_j) * v[j].
+
+        Therefore we remove the next-state quadrature weights after applying
+        the transpose of the stored weighted operator.
+        """
+        return (self._T_op.T @ v) / self.trap_w
 
     # ── copula density on grid ───────────────────────────────────
 
@@ -175,8 +190,8 @@ class TMGrid:
         Forward message pass with per-step callback.
 
         Implements equations (22)-(23) from the paper:
-          alpha_k(z) <- f_k(z) * alpha_k(z)           (update)
-          alpha_{k+1}(z') = T_w^T (alpha_k * w)       (predict)
+          alpha_k(z) <- f_k(z) * alpha_k(z)             (update)
+          alpha_{k+1}(z') = integral p(z'|z) alpha_k(z) dz
 
         At each step k the callback receives:
             callback(k, alpha, trap_w, is_last)
@@ -198,7 +213,7 @@ class TMGrid:
 
             if not is_last:
                 source = fi_grid[k] * alpha * self.trap_w
-                alpha = self.rmatvec(source)
+                alpha = self.predict_matvec(source)
                 mx = np.max(np.abs(alpha))
                 if mx > 0:
                     alpha /= mx
@@ -237,7 +252,7 @@ class TMGrid:
 
             if not is_last:
                 source = fi_grid[k] * alpha * self.trap_w
-                alpha = self.rmatvec(source)
+                alpha = self.predict_matvec(source)
                 mx = np.max(np.abs(alpha))
                 if mx > 0:
                     alpha /= mx

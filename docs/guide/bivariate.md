@@ -84,15 +84,17 @@ u_current = predict(copula, u, result, n=20_000, horizon='current',
 
 ## Diagnostics
 
-### Smoothed parameter
+### Predictive mean parameter
 
 ```python
-from pyscarcopula.api import smoothed_params
+from pyscarcopula.api import predictive_mean
 
-r_t = smoothed_params(copula, u, result)
+r_t = predictive_mean(copula, u, result)
 ```
 
-Returns the filtered copula parameter at each time step.
+Returns the predictive mean copula parameter at each time step, before the
+current observation is absorbed. `smoothed_params` is still available as a
+backward-compatible alias.
 
 ### Goodness of fit
 

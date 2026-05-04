@@ -13,6 +13,7 @@ Modules:
 from pyscarcopula.numerical.tm_grid import TMGrid
 from pyscarcopula.numerical.tm_functions import (
     tm_loglik,
+    tm_forward_predictive_mean,
     tm_forward_smoothed,
     tm_forward_rosenblatt,
     tm_forward_mixture_h,
@@ -29,8 +30,9 @@ from pyscarcopula.numerical.gas_filter import (
 __all__ = [
     'TMGrid',
     'tm_loglik', 'tm_loglik_with_grad',
-    'tm_forward_smoothed', 'tm_forward_rosenblatt',
-    'tm_forward_mixture_h', 'tm_xT_distribution',
+    'tm_forward_predictive_mean', 'tm_forward_smoothed',
+    'tm_forward_rosenblatt', 'tm_forward_mixture_h',
+    'tm_xT_distribution',
     'calculate_dwt', 'sample_grid_distribution',
     'gas_filter', 'gas_predict_param', 'gas_negloglik', 'gas_rosenblatt',
     'gas_mixture_h',

@@ -26,6 +26,34 @@ F_CLIP = 50.0
 S_CLIP = 100.0
 
 
+def _gas_score(u1, u2, f_t, r_t, ll_t, copula, scaling, score_eps):
+    """Score d log c(u_t; Psi(f_t)) / d f_t."""
+    has_analytical = (
+        hasattr(copula, 'dlog_pdf_dr')
+        and hasattr(copula, 'dtransform')
+    )
+    if scaling != 'fisher' and has_analytical:
+        dlog_dr = float(copula.dlog_pdf_dr(u1, u2, np.array([r_t]))[0])
+        dpsi_df = float(copula.dtransform(np.array([f_t]))[0])
+        return dlog_dr * dpsi_df
+
+    f_plus = f_t + score_eps
+    f_minus = f_t - score_eps
+    r_plus = float(copula.transform(np.array([f_plus]))[0])
+    r_minus = float(copula.transform(np.array([f_minus]))[0])
+
+    ll_plus = float(copula.log_pdf(u1, u2, np.array([r_plus]))[0])
+    ll_minus = float(copula.log_pdf(u1, u2, np.array([r_minus]))[0])
+
+    nabla_t = (ll_plus - ll_minus) / (2.0 * score_eps)
+    if scaling != 'fisher':
+        return nabla_t
+
+    d2 = (ll_plus - 2.0 * ll_t + ll_minus) / (score_eps ** 2)
+    fisher = max(-d2, 1e-6)
+    return nabla_t / fisher
+
+
 # ══════════════════════════════════════════════════════════════════
 # Core GAS filter
 # ══════════════════════════════════════════════════════════════════
@@ -88,23 +116,10 @@ def gas_filter(omega, alpha, beta, u, copula, scaling='unit',
 
         # Score for next step
         if t < T - 1:
-            f_plus = f_t + score_eps
-            f_minus = f_t - score_eps
-            r_plus = float(copula.transform(np.array([f_plus]))[0])
-            r_minus = float(copula.transform(np.array([f_minus]))[0])
-
-            ll_plus = float(copula.log_pdf(u1, u2, np.array([r_plus]))[0])
-            ll_minus = float(copula.log_pdf(u1, u2, np.array([r_minus]))[0])
-
-            nabla_t = (ll_plus - ll_minus) / (2.0 * score_eps)
-
-            # Scaling
-            if scaling == 'fisher':
-                d2 = (ll_plus - 2.0 * ll_t + ll_minus) / (score_eps ** 2)
-                fisher = max(-d2, 1e-6)
-                s_t = nabla_t / fisher
-            else:
-                s_t = nabla_t
+            s_t = _gas_score(
+                u1, u2, f_t, r_t, ll_t, copula, scaling, score_eps)
+            if not np.isfinite(s_t):
+                return f_path, r_path, -1e10
 
             s_t = np.clip(s_t, -S_CLIP, S_CLIP)
             f_t = omega + beta * f_t + alpha * s_t
@@ -141,23 +156,9 @@ def gas_predict_param(omega, alpha, beta, u, copula, scaling='unit',
     u1 = u[-1:, 0]
     u2 = u[-1:, 1]
 
-    f_plus = f_t + score_eps
-    f_minus = f_t - score_eps
     r_t = float(copula.transform(np.array([f_t]))[0])
-    r_plus = float(copula.transform(np.array([f_plus]))[0])
-    r_minus = float(copula.transform(np.array([f_minus]))[0])
-
     ll_t = float(copula.log_pdf(u1, u2, np.array([r_t]))[0])
-    ll_plus = float(copula.log_pdf(u1, u2, np.array([r_plus]))[0])
-    ll_minus = float(copula.log_pdf(u1, u2, np.array([r_minus]))[0])
-
-    nabla_t = (ll_plus - ll_minus) / (2.0 * score_eps)
-    if scaling == 'fisher':
-        d2 = (ll_plus - 2.0 * ll_t + ll_minus) / (score_eps ** 2)
-        fisher = max(-d2, 1e-6)
-        s_t = nabla_t / fisher
-    else:
-        s_t = nabla_t
+    s_t = _gas_score(u1, u2, f_t, r_t, ll_t, copula, scaling, score_eps)
 
     s_t = np.clip(s_t, -S_CLIP, S_CLIP)
     f_next = omega + beta * f_t + alpha * s_t
