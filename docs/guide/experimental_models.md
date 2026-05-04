@@ -75,7 +75,7 @@ cop = StochasticStudentCopula(d=6)
 result = cop.fit(returns, method='scar-tm-ou', to_pobs=True)
 
 # Predictive df(t) path
-df_t = cop.smoothed_params()
+df_t = cop.predictive_mean()
 
 # Predict with time-varying df
 pred = cop.predict(10000)
@@ -136,6 +136,6 @@ samples = cop.sample(n=10000)
 # Prediction (conditional on data)
 pred = cop.predict(n=10000)
 
-# Smoothed parameter path
-params_t = cop.smoothed_params()
+# Predictive mean parameter path
+params_t = cop.predictive_mean()
 ```

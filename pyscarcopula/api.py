@@ -5,7 +5,7 @@ This module provides a functional interface that does NOT mutate
 copula objects. It replaces the old pattern of copula.fit() + copula.fit_result.
 
 Usage:
-    from pyscarcopula.api import fit, sample, predict, smoothed_params
+    from pyscarcopula.api import fit, sample, predict, predictive_mean
 
     copula = GumbelCopula(rotate=180)
     result = fit(copula, u, method='scar-tm-ou')
@@ -16,8 +16,8 @@ Usage:
     # Predict next observation (for risk metrics)
     u_pred = predict(copula, u, result, n=100000)
 
-    # Smoothed parameter path
-    r_t = smoothed_params(copula, u, result)
+    # Predictive mean parameter path
+    r_t = predictive_mean(copula, u, result)
 
 All functions accept a copula (stateless) + data + result (immutable),
 and return new immutable values. No side effects.
@@ -90,9 +90,9 @@ def log_likelihood(copula, data, result: FitResult,
     return strategy.log_likelihood(copula, u, result)
 
 
-def smoothed_params(copula, data, result: FitResult,
+def predictive_mean(copula, data, result: FitResult,
                     config: NumericalConfig | None = None, **kwargs) -> np.ndarray:
-    """Time-varying copula parameter.
+    """Predictive mean of the time-varying copula parameter.
 
     For MLE: constant array.
     For SCAR-TM: E[Psi(x_k) | u_{1:k-1}] via transfer matrix.
@@ -110,7 +110,17 @@ def smoothed_params(copula, data, result: FitResult,
     """
     u = np.asarray(data, dtype=np.float64)
     strategy = get_strategy(result.method, config=config, **kwargs)
-    return strategy.smoothed_params(copula, u, result)
+    return strategy.predictive_mean(copula, u, result)
+
+
+def smoothed_params(copula, data, result: FitResult,
+                    config: NumericalConfig | None = None, **kwargs) -> np.ndarray:
+    """Backward-compatible alias for :func:`predictive_mean`.
+
+    The returned SCAR-TM quantity is predictive, not a two-sided smoothing
+    estimate. New code should call ``predictive_mean``.
+    """
+    return predictive_mean(copula, data, result, config=config, **kwargs)
 
 
 def mixture_h(copula, data, result: FitResult,
@@ -118,7 +128,7 @@ def mixture_h(copula, data, result: FitResult,
     """h-function for vine pseudo-observation propagation.
 
     MLE:  h(u2, u1; theta_mle)
-    SCAR: E[h(u2, u1; Psi(x)) | data]  (mixture over predictive dist)
+    SCAR: E[h(u2, u1; Psi(x_k)) | u_{1:k-1}] using predictive weights
     GAS:  h(u2, u1; Psi(f_t))
 
     Parameters

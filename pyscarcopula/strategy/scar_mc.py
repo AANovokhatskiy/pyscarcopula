@@ -141,10 +141,14 @@ class SCARPStrategy(_SCARMCBase):
     def log_likelihood(self, copula, u, result):
         raise NotImplementedError("MC log-likelihood is stochastic; use fit()")
 
-    def smoothed_params(self, copula, u, result):
+    def predictive_mean(self, copula, u, result):
         raise NotImplementedError(
-            "P-sampler does not provide smoothed params. "
-            "Use SCAR-TM-OU for deterministic smoothing.")
+            "P-sampler does not provide predictive means. "
+            "Use SCAR-TM-OU for deterministic predictive means.")
+
+    def smoothed_params(self, copula, u, result):
+        """Backward-compatible alias for predictive_mean."""
+        return self.predictive_mean(copula, u, result)
 
     def rosenblatt_e2(self, copula, u, result):
         raise NotImplementedError("Use SCAR-TM-OU for GoF tests.")
@@ -230,10 +234,14 @@ class SCARMStrategy(_SCARMCBase):
     def log_likelihood(self, copula, u, result):
         raise NotImplementedError("MC log-likelihood is stochastic; use fit()")
 
-    def smoothed_params(self, copula, u, result):
+    def predictive_mean(self, copula, u, result):
         raise NotImplementedError(
-            "M-sampler does not provide smoothed params. "
-            "Use SCAR-TM-OU for deterministic smoothing.")
+            "M-sampler does not provide predictive means. "
+            "Use SCAR-TM-OU for deterministic predictive means.")
+
+    def smoothed_params(self, copula, u, result):
+        """Backward-compatible alias for predictive_mean."""
+        return self.predictive_mean(copula, u, result)
 
     def rosenblatt_e2(self, copula, u, result):
         raise NotImplementedError("Use SCAR-TM-OU for GoF tests.")

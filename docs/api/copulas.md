@@ -21,6 +21,8 @@ result, and return new values without mutation.
 
 ::: pyscarcopula.api.predict
 
+::: pyscarcopula.api.predictive_mean
+
 ::: pyscarcopula.api.smoothed_params
 
 ::: pyscarcopula.api.mixture_h
@@ -100,6 +102,7 @@ result, and return new values without mutation.
         - fit
         - sample
         - predict
+        - predictive_mean
         - smoothed_params
         - transform
         - inv_transform

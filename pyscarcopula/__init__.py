@@ -3,7 +3,7 @@ pyscarcopula — stochastic copula models with Ornstein-Uhlenbeck latent process
 
 Usage:
     from pyscarcopula import GumbelCopula
-    from pyscarcopula.api import fit, smoothed_params
+    from pyscarcopula.api import fit, predictive_mean
     from pyscarcopula.stattests import gof_test
 
     copula = GumbelCopula(rotate=180)

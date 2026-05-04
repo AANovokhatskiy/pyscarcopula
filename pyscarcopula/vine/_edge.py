@@ -30,7 +30,7 @@ class VineEdge:
         Get copula parameter r for given data.
         MLE: constant (uses fit_result.copula_param).
         GAS: deterministic score-driven path.
-        SCAR: smoothed_params via TM forward pass.
+        SCAR: predictive_mean via TM forward pass.
         """
         from pyscarcopula._types import IndependentResult
 
@@ -44,7 +44,7 @@ class VineEdge:
 
         from pyscarcopula.strategy._base import get_strategy_for_result
         strategy = get_strategy_for_result(self.fit_result)
-        return strategy.smoothed_params(self.copula, u_pair, self.fit_result)
+        return strategy.predictive_mean(self.copula, u_pair, self.fit_result)
 
     def get_r_predict(self, n):
         """

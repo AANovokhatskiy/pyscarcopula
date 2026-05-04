@@ -98,10 +98,15 @@ class MLEStrategy:
         r = np.full(len(u), result.copula_param)
         return float(np.sum(copula.log_pdf(u[:, 0], u[:, 1], r)))
 
-    def smoothed_params(self, copula, u: np.ndarray,
+    def predictive_mean(self, copula, u: np.ndarray,
                         result: MLEResult) -> np.ndarray:
         """Constant parameter for all time steps."""
         return np.full(len(u), result.copula_param)
+
+    def smoothed_params(self, copula, u: np.ndarray,
+                        result: MLEResult) -> np.ndarray:
+        """Backward-compatible alias for predictive_mean."""
+        return self.predictive_mean(copula, u, result)
 
     def rosenblatt_e2(self, copula, u: np.ndarray,
                       result: MLEResult) -> np.ndarray:

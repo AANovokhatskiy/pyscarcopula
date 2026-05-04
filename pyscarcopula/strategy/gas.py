@@ -16,7 +16,7 @@ from pyscarcopula._types import (
 from pyscarcopula.strategy._base import register_strategy
 from pyscarcopula.numerical.gas_filter import (
     gas_filter, gas_predict_param, gas_negloglik, gas_rosenblatt,
-    gas_mixture_h,
+    gas_mixture_h, _gas_score,
 )
 from pyscarcopula.strategy.predict_helpers import conditional_sample_bivariate
 
@@ -41,6 +41,10 @@ class GASStrategy:
     def fit(self, copula, u: np.ndarray,
             alpha0: np.ndarray | None = None,
             tol: float | None = None,
+            maxfun: int | None = None,
+            score_eps: float | None = None,
+            alpha_bound: float = 10.0,
+            beta_bound: float = 0.999,
             verbose: bool = False,
             **kwargs) -> GASResult:
         """Fit GAS model.
@@ -59,7 +63,15 @@ class GASStrategy:
         GASResult
         """
         tol = tol or self.config.default_tol_gas
-        score_eps = self.config.gas_score_eps
+        maxfun = int(maxfun or 200)
+        score_eps = float(score_eps if score_eps is not None
+                          else self.config.gas_score_eps)
+        alpha_bound = float(alpha_bound)
+        beta_bound = float(beta_bound)
+        if alpha_bound <= 0:
+            raise ValueError("alpha_bound must be positive")
+        if not (0 < beta_bound < 1):
+            raise ValueError("beta_bound must be in (0, 1)")
 
         # Default initial point
         if alpha0 is None:
@@ -71,31 +83,40 @@ class GASStrategy:
             )[0])
             alpha0 = np.array([
                 mu_mle * 0.05,    # omega ≈ f_bar * (1 - beta)
-                0.05,             # alpha: moderate sensitivity
+                1.0,              # alpha: moderate sensitivity
                 0.95,             # beta: high persistence
             ])
 
         if verbose:
-            print(f"GAS fit: alpha0={alpha0}, scaling={self.scaling}")
+            print(
+                f"GAS fit: alpha0={alpha0}, scaling={self.scaling}, "
+                f"score_eps={score_eps}, alpha_bound={alpha_bound}, "
+                f"beta_bound={beta_bound}"
+            )
 
         bounds = Bounds(
-            [-np.inf, -5.0, -0.999],
-            [np.inf, 5.0, 0.999],
+            [-np.inf, -alpha_bound, -beta_bound],
+            [np.inf, alpha_bound, beta_bound],
         )
 
+        objective = lambda x: gas_negloglik(
+            x[0], x[1], x[2], u, copula, self.scaling, score_eps)
+
         result = minimize(
-            lambda x: gas_negloglik(x[0], x[1], x[2], u, copula,
-                                    self.scaling, score_eps),
+            objective,
             alpha0,
             method='L-BFGS-B',
             bounds=bounds,
-            options={'gtol': tol, 'eps': 1e-5, 'maxfun': 200},
+            options={'gtol': tol, 'eps': 1e-5,
+                     'maxfun': maxfun, 'maxiter': maxfun},
         )
 
         params = gas_params(
             omega=result.x[0],
             alpha=result.x[1],
             beta=result.x[2],
+            alpha_bound=alpha_bound,
+            beta_bound=beta_bound,
         )
 
         # Compute one-step-ahead value for predict (uses the final score).
@@ -124,7 +145,7 @@ class GASStrategy:
             result.scaling, self.config.gas_score_eps)
         return ll
 
-    def smoothed_params(self, copula, u: np.ndarray,
+    def predictive_mean(self, copula, u: np.ndarray,
                         result: GASResult) -> np.ndarray:
         """Deterministic Psi(f_t) path."""
         p = result.params
@@ -133,10 +154,15 @@ class GASStrategy:
             result.scaling, self.config.gas_score_eps)
         return r_path
 
+    def smoothed_params(self, copula, u: np.ndarray,
+                        result: GASResult) -> np.ndarray:
+        """Backward-compatible alias for predictive_mean."""
+        return self.predictive_mean(copula, u, result)
+
     def rosenblatt_e2(self, copula, u: np.ndarray,
                       result: GASResult) -> np.ndarray:
         """e2 = h(u2, u1; Psi(f_t))."""
-        r_path = self.smoothed_params(copula, u, result)
+        r_path = self.predictive_mean(copula, u, result)
         return copula.h(u[:, 1], u[:, 0], r_path)
 
     def mixture_h(self, copula, u: np.ndarray,
@@ -193,23 +219,10 @@ class GASStrategy:
                 u1 = obs[0:1, 0]
                 u2 = obs[0:1, 1]
 
-                f_plus = f_t + score_eps
-                f_minus = f_t - score_eps
-                r_plus = float(copula.transform(np.array([f_plus]))[0])
-                r_minus = float(copula.transform(np.array([f_minus]))[0])
-
-                ll_plus = float(copula.log_pdf(u1, u2, np.array([r_plus]))[0])
-                ll_minus = float(copula.log_pdf(u1, u2, np.array([r_minus]))[0])
-
-                nabla_t = (ll_plus - ll_minus) / (2.0 * score_eps)
-
-                if self.scaling == 'fisher':
-                    ll_t = float(copula.log_pdf(u1, u2, np.array([r_t]))[0])
-                    d2 = (ll_plus - 2.0 * ll_t + ll_minus) / (score_eps ** 2)
-                    fisher = max(-d2, 1e-6)
-                    s_t = nabla_t / fisher
-                else:
-                    s_t = nabla_t
+                ll_t = float(copula.log_pdf(u1, u2, np.array([r_t]))[0])
+                s_t = _gas_score(
+                    u1, u2, f_t, r_t, ll_t, copula,
+                    self.scaling, score_eps)
 
                 s_t = np.clip(s_t, -S_CLIP, S_CLIP)
                 f_t = omega + beta * f_t + alpha_gas * s_t

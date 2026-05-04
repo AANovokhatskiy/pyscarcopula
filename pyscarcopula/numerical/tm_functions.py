@@ -7,7 +7,7 @@ All functions share the TMGrid infrastructure. They differ only in
 what they compute from the forward/backward messages:
 
   - tm_loglik: minus log-likelihood via backward pass
-  - tm_forward_smoothed: E[Psi(x_k) | u_{1:k-1}]  (smoothed copula param)
+  - tm_forward_predictive_mean: E[Psi(x_k) | u_{1:k-1}]
   - tm_forward_rosenblatt: mixture Rosenblatt transform for GoF
   - tm_forward_mixture_h: mixture h-function for vine pseudo-obs
   - tm_xT_distribution: distribution of x_T on grid (for VaR/CVaR)
@@ -78,12 +78,14 @@ def tm_loglik(theta, mu, nu, u, copula, K=300, grid_range=5.0,
     return -(np.log(result) + log_scale)
 
 
-def tm_forward_smoothed(theta, mu, nu, u, copula, K=300, grid_range=5.0,
-                        grid_method='auto', adaptive=True, pts_per_sigma=2):
+def tm_forward_predictive_mean(theta, mu, nu, u, copula, K=300,
+                               grid_range=5.0, grid_method='auto',
+                               adaptive=True, pts_per_sigma=2):
     """
-    Forward pass: E[Psi(x_k) | u_{1:k-1}] (predictive smoothed parameter).
+    Forward pass: E[Psi(x_k) | u_{1:k-1}].
 
-    Equation (24) in the paper: theta_bar_k = sum_j Psi(z_j + mu) * p_hat_k(z_j) * w_j
+    Equation (24) in the paper:
+    theta_bar_k = sum_j Psi(z_j + mu) * p_hat_k(z_j) * w_j
 
     Uses data BEFORE time k (not including u_k).
 
@@ -98,6 +100,14 @@ def tm_forward_smoothed(theta, mu, nu, u, copula, K=300, grid_range=5.0,
     weights = grid.forward_weights(fi_grid)
     J = np.sum(weights * g_grid[np.newaxis, :], axis=1)
     return J
+
+
+def tm_forward_smoothed(theta, mu, nu, u, copula, K=300, grid_range=5.0,
+                        grid_method='auto', adaptive=True, pts_per_sigma=2):
+    """Backward-compatible alias for :func:`tm_forward_predictive_mean`."""
+    return tm_forward_predictive_mean(
+        theta, mu, nu, u, copula, K, grid_range, grid_method, adaptive,
+        pts_per_sigma)
 
 
 def tm_forward_rosenblatt(theta, mu, nu, u, copula, K=300, grid_range=5.0,
@@ -167,7 +177,7 @@ def tm_forward_mixture_h(theta, mu, nu, u, copula, K=300, grid_range=5.0,
 
             alpha *= fi_grid[k]
             if k < n - 1:
-                alpha = grid.rmatvec(alpha * grid.trap_w)
+                alpha = grid.predict_matvec(alpha * grid.trap_w)
                 mx = np.max(np.abs(alpha))
                 if mx > 0:
                     alpha /= mx
@@ -183,7 +193,7 @@ def tm_forward_mixture_h(theta, mu, nu, u, copula, K=300, grid_range=5.0,
             state_cache[current_cache_key] = (z_grid, prob)
 
         if next_cache_key is not None:
-            alpha_next = grid.rmatvec(alpha * grid.trap_w)
+            alpha_next = grid.predict_matvec(alpha * grid.trap_w)
             mx = np.max(np.abs(alpha_next))
             if mx > 0:
                 alpha_next /= mx

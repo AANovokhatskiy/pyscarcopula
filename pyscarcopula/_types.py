@@ -225,20 +225,24 @@ def ou_params(theta: float, mu: float, nu: float) -> LatentProcessParams:
     )
 
 
-def gas_params(omega: float, alpha: float, beta: float) -> LatentProcessParams:
+def gas_params(omega: float, alpha: float, beta: float,
+               alpha_bound: float = 10.0,
+               beta_bound: float = 0.999) -> LatentProcessParams:
     """Convenience constructor for GAS process parameters.
 
-    Bounds match the original GASProcess.fit():
+    Bounds used by GASProcess.fit():
       omega: unbounded
-      alpha: [-5, 5] (score sensitivity — can be negative)
+      alpha: [-10, 10] (score sensitivity can be negative)
       beta:  (-0.999, 0.999) (persistence, |beta| < 1 for stationarity)
     """
+    alpha_bound = float(alpha_bound)
+    beta_bound = float(beta_bound)
     return LatentProcessParams(
         process_type='gas',
         names=('omega', 'alpha', 'beta'),
         values=np.array([omega, alpha, beta]),
-        bounds_lower=np.array([-np.inf, -5.0, -0.999]),
-        bounds_upper=np.array([np.inf, 5.0, 0.999]),
+        bounds_lower=np.array([-np.inf, -alpha_bound, -beta_bound]),
+        bounds_upper=np.array([np.inf, alpha_bound, beta_bound]),
     )
 
 

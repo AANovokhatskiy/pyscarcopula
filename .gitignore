@@ -9,4 +9,5 @@ site/
 tools/
 benchmarks/
 scripts/
+results/
 AGENTS.md

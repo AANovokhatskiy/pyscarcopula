@@ -10,9 +10,13 @@ Usage:
 
 import numpy as np
 from numba import njit
+from dataclasses import dataclass
+from scipy.optimize import minimize
 from scipy.stats import norm, johnsonsu, genlogistic, laplace_asymmetric, genhyperbolic, levy_stable
 from joblib import Parallel, delayed
 from typing import Literal
+
+from pyscarcopula._utils import pobs
 
 # ══════════════════════════════════════════════════════════════════
 # Base class
@@ -71,9 +75,11 @@ class MarginalModel:
         raise NotImplementedError
 
     @staticmethod
-    def create(name: Literal['normal', 'johnsonsu', 
+    def create(name: Literal['normal', 'johnsonsu',
                              'logistic', 'laplace',
-                             'hyperbolic', 'stable']):
+                             'hyperbolic', 'stable',
+                             'arma-garch', 'armagarch',
+                             'ar1-garch']):
         """Factory method."""
         registry = {
             'normal': NormalMarginal,
@@ -82,6 +88,9 @@ class MarginalModel:
             'laplace': LaplaceMarginal,
             'hyperbolic': HyperbolicMarginal,
             'stable': StableMarginal,
+            'arma-garch': ARMAGARCHMarginal,
+            'armagarch': ARMAGARCHMarginal,
+            'ar1-garch': ARMAGARCHMarginal,
         }
         name = name.lower()
         if name not in registry:
@@ -203,6 +212,254 @@ class NormalMarginal(MarginalModel):
 # ══════════════════════════════════════════════════════════════════
 # Hyperbolic — scipy + inverse CDF for ppf
 # ══════════════════════════════════════════════════════════════════
+
+# =============================================================================
+# AR(1)-GARCH(1,1) conditional marginal filter
+# =============================================================================
+
+@dataclass(frozen=True)
+class ARMAGARCHFit:
+    """Result for one univariate AR(1)-GARCH(1,1) marginal fit."""
+
+    params: np.ndarray
+    residuals: np.ndarray
+    sigma2: np.ndarray
+    standardized_residuals: np.ndarray
+    log_likelihood: float
+    success: bool
+    nfev: int
+    message: str
+
+    @property
+    def const(self) -> float:
+        return float(self.params[0])
+
+    @property
+    def ar1(self) -> float:
+        return float(self.params[1])
+
+    @property
+    def omega(self) -> float:
+        return float(self.params[2])
+
+    @property
+    def alpha(self) -> float:
+        return float(self.params[3])
+
+    @property
+    def beta(self) -> float:
+        return float(self.params[4])
+
+
+def _ar_residuals(x, const, ar1):
+    eps = np.empty_like(x, dtype=np.float64)
+    if x.size == 0:
+        return eps
+    eps[0] = x[0] - np.mean(x)
+    if x.size > 1:
+        eps[1:] = x[1:] - const - ar1 * x[:-1]
+    return eps
+
+
+def _fit_ar_mean(x, ar_order):
+    if ar_order == 0 or x.size < 3:
+        mean = float(np.mean(x))
+        return mean, 0.0, x - mean
+    if ar_order != 1:
+        raise NotImplementedError("ARMAGARCHMarginal currently supports ar_order 0 or 1")
+
+    y = x[1:]
+    lag = x[:-1]
+    design = np.column_stack([np.ones_like(lag), lag])
+    try:
+        const, ar1 = np.linalg.lstsq(design, y, rcond=None)[0]
+    except np.linalg.LinAlgError:
+        const, ar1 = float(np.mean(x)), 0.0
+    ar1 = float(np.clip(ar1, -0.99, 0.99))
+    const = float(const)
+    return const, ar1, _ar_residuals(x, const, ar1)
+
+
+def _garch11_filter(eps, omega, alpha, beta):
+    sigma2 = np.empty_like(eps, dtype=np.float64)
+    unconditional = omega / max(1.0 - alpha - beta, 1e-6)
+    sample_var = float(np.var(eps, ddof=1)) if eps.size > 1 else float(eps[0] ** 2)
+    sigma2[0] = max(unconditional, sample_var, 1e-12)
+    for t in range(1, eps.size):
+        sigma2[t] = omega + alpha * eps[t - 1] ** 2 + beta * sigma2[t - 1]
+    return np.maximum(sigma2, 1e-12)
+
+
+def _fit_garch11(eps, maxiter=300):
+    eps = np.asarray(eps, dtype=np.float64)
+    var_eps = float(np.var(eps, ddof=1)) if eps.size > 1 else 1e-8
+    var_eps = max(var_eps, 1e-12)
+    alpha0 = 0.05
+    beta0 = 0.90
+    omega0 = max(var_eps * (1.0 - alpha0 - beta0), 1e-12)
+
+    def neg_ll(params):
+        omega, alpha, beta = params
+        if omega <= 0 or alpha < 0 or beta < 0 or (alpha + beta) >= 0.999:
+            return 1e12
+        sigma2 = _garch11_filter(eps, omega, alpha, beta)
+        return 0.5 * np.sum(np.log(2.0 * np.pi) + np.log(sigma2) + eps ** 2 / sigma2)
+
+    x0 = np.array([omega0, alpha0, beta0], dtype=np.float64)
+    bounds = [(1e-12, 10.0 * var_eps), (1e-8, 0.5), (1e-8, 0.999)]
+    res = minimize(
+        neg_ll,
+        x0,
+        method="L-BFGS-B",
+        bounds=bounds,
+        options={"maxiter": int(maxiter), "gtol": 1e-5},
+    )
+    omega, alpha, beta = res.x
+    if alpha + beta >= 0.999:
+        scale = 0.998 / (alpha + beta)
+        alpha *= scale
+        beta *= scale
+    sigma2 = _garch11_filter(eps, omega, alpha, beta)
+    ll = -float(neg_ll(np.array([omega, alpha, beta], dtype=np.float64)))
+    return (float(omega), float(alpha), float(beta)), sigma2, ll, res
+
+
+def _fit_arma_garch_series(x, ar_order=1, ma_order=0, maxiter=300):
+    if ma_order != 0:
+        raise NotImplementedError(
+            "ARMAGARCHMarginal currently implements AR(0/1)-GARCH(1,1); "
+            "MA terms are not included."
+        )
+    x = np.asarray(x, dtype=np.float64).ravel()
+    if x.size < 10:
+        raise ValueError("ARMA-GARCH marginal fit requires at least 10 observations")
+    if not np.all(np.isfinite(x)):
+        raise ValueError("ARMA-GARCH marginal fit requires finite observations")
+
+    const, ar1, eps = _fit_ar_mean(x, ar_order)
+    (omega, alpha, beta), sigma2, ll, res = _fit_garch11(eps, maxiter=maxiter)
+    z = eps / np.sqrt(sigma2)
+    params = np.array([const, ar1, omega, alpha, beta], dtype=np.float64)
+    return ARMAGARCHFit(
+        params=params,
+        residuals=eps,
+        sigma2=sigma2,
+        standardized_residuals=z,
+        log_likelihood=ll,
+        success=bool(res.success),
+        nfev=int(getattr(res, "nfev", 0)),
+        message=str(getattr(res, "message", "")),
+    )
+
+
+class ARMAGARCHMarginal(MarginalModel):
+    """
+    AR(1)-GARCH(1,1) marginal filter for copula pseudo-observations.
+
+    This class is intended for robustness checks where raw returns are first
+    filtered for linear autocorrelation and conditional heteroskedasticity, and
+    the standardized residuals are then transformed to pseudo-observations.
+    The implementation is dependency-free and uses the same Gaussian
+    GARCH(1,1) likelihood as the experimental DCC module.
+    """
+
+    name = "arma-garch"
+    n_params = 5
+
+    def __init__(self, ar_order=1, ma_order=0, maxiter=300):
+        if ar_order not in (0, 1):
+            raise NotImplementedError("ARMAGARCHMarginal supports ar_order 0 or 1")
+        if ma_order != 0:
+            raise NotImplementedError("ARMAGARCHMarginal currently supports ma_order=0")
+        self.ar_order = int(ar_order)
+        self.ma_order = int(ma_order)
+        self.maxiter = int(maxiter)
+
+    def fit_series(self, x):
+        """Fit one series and return an ARMAGARCHFit object."""
+        return _fit_arma_garch_series(
+            x,
+            ar_order=self.ar_order,
+            ma_order=self.ma_order,
+            maxiter=self.maxiter,
+        )
+
+    def fit_single(self, data_slice):
+        dim = data_slice.shape[1]
+        result = np.zeros((dim, self.n_params), dtype=np.float64)
+        for k in range(dim):
+            result[k] = self.fit_series(data_slice[:, k]).params
+        return result
+
+    def standardize(self, data):
+        """Fit each column and return standardized residuals plus diagnostics."""
+        data = np.asarray(data, dtype=np.float64)
+        if data.ndim != 2:
+            raise ValueError("data must be a 2D array with shape (T, dim)")
+        z = np.empty_like(data, dtype=np.float64)
+        fits = []
+        for k in range(data.shape[1]):
+            fit = self.fit_series(data[:, k])
+            z[:, k] = fit.standardized_residuals
+            fits.append(fit)
+        return z, fits
+
+    def pseudo_observations(self, data, transform="rank"):
+        """
+        Convert returns to pseudo-observations after AR-GARCH filtering.
+
+        Parameters
+        ----------
+        transform : {'rank', 'normal'}
+            ``rank`` applies the empirical rank transform to standardized
+            residuals. ``normal`` applies the standard-normal CDF.
+        """
+        z, fits = self.standardize(data)
+        transform = transform.lower()
+        if transform == "rank":
+            return pobs(z), fits
+        if transform == "normal":
+            return np.clip(norm.cdf(z), 1e-10, 1.0 - 1e-10), fits
+        raise ValueError("transform must be 'rank' or 'normal'")
+
+    def ppf(self, u, params):
+        raise NotImplementedError(
+            "ARMAGARCHMarginal is a conditional filter; use standardize() "
+            "or pseudo_observations() for copula workflows."
+        )
+
+    def cdf(self, x, params):
+        raise NotImplementedError(
+            "ARMAGARCHMarginal is a conditional filter; use standardize() "
+            "or pseudo_observations() for copula workflows."
+        )
+
+    def rvs(self, params, N):
+        raise NotImplementedError(
+            "ARMAGARCHMarginal simulation requires a conditioning history and "
+            "is not implemented in the static MarginalModel interface."
+        )
+
+
+def arma_garch_standardize(data, ar_order=1, ma_order=0, maxiter=300):
+    """Return AR(0/1)-GARCH(1,1) standardized residuals and fits."""
+    model = ARMAGARCHMarginal(
+        ar_order=ar_order,
+        ma_order=ma_order,
+        maxiter=maxiter,
+    )
+    return model.standardize(data)
+
+
+def arma_garch_pobs(data, ar_order=1, ma_order=0, maxiter=300, transform="rank"):
+    """Return filtered pseudo-observations and per-margin fits."""
+    model = ARMAGARCHMarginal(
+        ar_order=ar_order,
+        ma_order=ma_order,
+        maxiter=maxiter,
+    )
+    return model.pseudo_observations(data, transform=transform)
+
 
 class HyperbolicMarginal(ScipyMarginal):
     name = 'hyperbolic'

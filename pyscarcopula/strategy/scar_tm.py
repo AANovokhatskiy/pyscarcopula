@@ -22,7 +22,7 @@ from pyscarcopula._types import (
 )
 from pyscarcopula.strategy._base import register_strategy
 from pyscarcopula.numerical.tm_functions import (
-    tm_loglik, tm_forward_smoothed,
+    tm_loglik, tm_forward_predictive_mean,
     tm_forward_rosenblatt, tm_forward_mixture_h,
 )
 from pyscarcopula.numerical.tm_gradient import tm_loglik_with_grad
@@ -228,14 +228,19 @@ class SCARTMStrategy:
             self.adaptive, self.pts_per_sigma)
         return -neg_ll
 
-    def smoothed_params(self, copula, u: np.ndarray,
+    def predictive_mean(self, copula, u: np.ndarray,
                         result: LatentResult) -> np.ndarray:
         """E[Psi(x_k) | u_{1:k-1}] via TM forward pass."""
         p = result.params
-        return tm_forward_smoothed(
+        return tm_forward_predictive_mean(
             p.theta, p.mu, p.nu, u, copula,
             self.K, self.grid_range, self.grid_method,
             self.adaptive, self.pts_per_sigma)
+
+    def smoothed_params(self, copula, u: np.ndarray,
+                        result: LatentResult) -> np.ndarray:
+        """Backward-compatible alias for predictive_mean."""
+        return self.predictive_mean(copula, u, result)
 
     def rosenblatt_e2(self, copula, u: np.ndarray,
                       result: LatentResult) -> np.ndarray:

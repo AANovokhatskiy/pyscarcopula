@@ -8,6 +8,7 @@
         - fit
         - sample
         - predict
+        - predictive_mean
         - smoothed_params
         - xT_distribution
         - log_likelihood
