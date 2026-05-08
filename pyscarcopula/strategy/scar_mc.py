@@ -77,7 +77,7 @@ class _SCARMCBase:
         if rng is None:
             rng = np.random.default_rng()
         p = result.params
-        sigma = p.nu / np.sqrt(2.0 * p.theta)
+        sigma = p.nu / np.sqrt(2.0 * p.kappa)
         x_t = rng.normal(p.mu, sigma, n)
         return copula.transform(x_t)
 
@@ -126,7 +126,7 @@ class SCARPStrategy(_SCARMCBase):
         )
 
         alpha = result.x
-        params = ou_params(theta=alpha[0], mu=alpha[1], nu=alpha[2])
+        params = ou_params(kappa=alpha[0], mu=alpha[1], nu=alpha[2])
 
         return LatentResult(
             log_likelihood=-result.fun,
@@ -218,7 +218,7 @@ class SCARMStrategy(_SCARMCBase):
         )
 
         alpha = result.x
-        params = ou_params(theta=alpha[0], mu=alpha[1], nu=alpha[2])
+        params = ou_params(kappa=alpha[0], mu=alpha[1], nu=alpha[2])
 
         return LatentResult(
             log_likelihood=-result.fun,
@@ -270,12 +270,12 @@ class SCARMStrategy(_SCARMCBase):
         if rng is None:
             rng = np.random.default_rng()
         p = result.params
-        theta, mu, nu = p.theta, p.mu, p.nu
+        kappa, mu, nu = p.kappa, p.mu, p.nu
         dt = 1.0 / (n - 1) if n > 1 else 1.0
-        rho_ou = np.exp(-theta * dt)
-        sigma_cond = np.sqrt(nu ** 2 / (2.0 * theta) * (1.0 - rho_ou ** 2))
+        rho_ou = np.exp(-kappa * dt)
+        sigma_cond = np.sqrt(nu ** 2 / (2.0 * kappa) * (1.0 - rho_ou ** 2))
         x = np.empty(n)
-        x[0] = rng.normal(mu, nu / np.sqrt(2.0 * theta))
+        x[0] = rng.normal(mu, nu / np.sqrt(2.0 * kappa))
         for t in range(1, n):
             x[t] = mu + rho_ou * (x[t - 1] - mu) + sigma_cond * rng.standard_normal()
         r = copula.transform(x)

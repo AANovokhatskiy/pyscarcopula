@@ -34,13 +34,13 @@ def generate_r_for_sample(edge, n, rng):
 
     if isinstance(edge.fit_result, LatentResult):
         alpha = _get_alpha(edge.fit_result)
-        theta, mu, nu = alpha
+        kappa, mu, nu = alpha
         dt = 1.0 / (n - 1) if n > 1 else 1.0
-        rho_ou = np.exp(-theta * dt)
+        rho_ou = np.exp(-kappa * dt)
         sigma_cond = np.sqrt(
-            nu ** 2 / (2.0 * theta) * (1.0 - rho_ou ** 2))
+            nu ** 2 / (2.0 * kappa) * (1.0 - rho_ou ** 2))
         x_path = np.empty(n)
-        x_path[0] = rng.normal(mu, nu / np.sqrt(2.0 * theta))
+        x_path[0] = rng.normal(mu, nu / np.sqrt(2.0 * kappa))
         for t in range(1, n):
             x_path[t] = (mu + rho_ou * (x_path[t - 1] - mu)
                          + sigma_cond * rng.standard_normal())
@@ -55,22 +55,24 @@ def generate_r_for_sample(edge, n, rng):
     return edge.get_r_predict(n)
 
 
-def generate_r_for_predict(edge, n, v_train_pair, K, grid_range, horizon='next',
+def generate_r_for_predict(edge, n, v_train_pair=None, K=None,
+                           grid_range=None, horizon='next',
                            state_cache=None, cache_key=None, rng=None,
                            **kwargs):
     """Generate r for predict (next-step conditional).
 
     MLE: constant r.
     SCAR-TM: mixture sampling from p(x_T | data) or p(x_{T+1} | data).
-    GAS: last filtered value f_T.
+    GAS: last filtered value g_T.
 
     Parameters
     ----------
     edge : VineEdge
     n : int — number of samples
     v_train_pair : (T, 2) array or None — pseudo-observations for this edge
-    K : int — grid size
-    grid_range : float
+    K, grid_range : optional
+        Backward-compatible SCAR-TM overrides. Prefer passing them at fit
+        time so they are stored in the fitted result.
     """
     from pyscarcopula.copula.independent import IndependentCopula
     from pyscarcopula._types import IndependentResult
@@ -83,8 +85,12 @@ def generate_r_for_predict(edge, n, v_train_pair, K, grid_range, horizon='next',
 
     if edge.fit_result is not None:
         from pyscarcopula.strategy._base import get_strategy_for_result
-        strategy = get_strategy_for_result(
-            edge.fit_result, K=K, grid_range=grid_range)
+        strategy_kwargs = {}
+        if K is not None:
+            strategy_kwargs['K'] = K
+        if grid_range is not None:
+            strategy_kwargs['grid_range'] = grid_range
+        strategy = get_strategy_for_result(edge.fit_result, **strategy_kwargs)
         return strategy.predictive_params(
             edge.copula,
             v_train_pair,

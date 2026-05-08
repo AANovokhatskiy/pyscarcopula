@@ -262,7 +262,7 @@ class BivariateGaussianCopula(BivariateCopula):
         'softplus': rho = 0.9999 * tanh(x) — faster saturation, sharper transitions
     """
 
-    def __init__(self, rotate: int = 0, transform_type: str = 'xtanh'):
+    def __init__(self, rotate: int = 0, transform_type: str = 'softplus'):
         if rotate != 0:
             raise ValueError("Rotation not supported for Gaussian copula")
         super().__init__(0)
@@ -280,20 +280,23 @@ class BivariateGaussianCopula(BivariateCopula):
         """x -> rho: maps R to (-0.9999, 0.9999)."""
         x = np.atleast_1d(np.asarray(x, dtype=np.float64))
         if self._transform_type == 'softplus':
-            return 0.9999 * np.tanh(x)
+            # return 0.9999 * np.tanh(x)
+            return 0.9999 * np.tanh(x / 4.0)
         return 0.9999 * np.tanh(x / 4.0)
 
     def inv_transform(self, rho):
         """rho -> x."""
         rho = np.atleast_1d(np.asarray(rho, dtype=np.float64))
         if self._transform_type == 'softplus':
-            return np.arctanh(np.clip(rho / 0.9999, -0.9999, 0.9999))
+            # return np.arctanh(np.clip(rho / 0.9999, -0.9999, 0.9999))
+            return 4.0 * np.arctanh(np.clip(rho / 0.9999, -0.9999, 0.9999))
         return 4.0 * np.arctanh(np.clip(rho / 0.9999, -0.9999, 0.9999))
 
     def dtransform(self, x):
         x = np.atleast_1d(np.asarray(x, dtype=np.float64))
         if self._transform_type == 'softplus':
-            return 0.9999 * (1.0 - np.tanh(x) ** 2)
+            # return 0.9999 * (1.0 - np.tanh(x) ** 2)
+            return 0.9999 / 4.0 * (1.0 - np.tanh(x / 4.0) ** 2)
         return 0.9999 / 4.0 * (1.0 - np.tanh(x / 4.0) ** 2)
 
     def pdf_unrotated(self, u1, u2, r):

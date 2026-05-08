@@ -3,7 +3,7 @@ pyscarcopula._types — typed results and configuration.
 
 Design decisions:
   - FitResult is a hierarchy of frozen dataclasses (not dynamically patched OptimizeResult).
-  - LatentProcessParams is a flexible container: OU has 3 params (theta, mu, nu),
+  - LatentProcessParams is a flexible container: OU has 3 params (kappa, mu, nu),
     but a future Lévy or fBm process may have 2, 4, or more.
   - NumericalConfig gathers all magic numbers in one place.
   - All results are immutable — no accidental overwrites.
@@ -44,6 +44,7 @@ class NumericalConfig:
     default_tol_scar: float = 1e-3
     default_tol_gas: float = 1e-3
     default_maxfun: int = 100
+    default_maxfun_gas: int = 1000
 
     # Bisection (h-function inversion)
     bisection_tol: float = 1e-10
@@ -51,6 +52,8 @@ class NumericalConfig:
 
     # GAS score computation
     gas_score_eps: float = 1e-4
+    gas_gamma_bound: float = 20.0
+    gas_beta_bound: float = 0.999
 
     # MC samplers
     default_n_tr: int = 500
@@ -147,11 +150,11 @@ class LatentProcessParams:
     This is intentionally generic: different processes have different
     parameter sets and different numbers of parameters.
 
-    For OU process: names=('theta', 'mu', 'nu'), values=(49.97, 2.42, 10.65)
+    For OU process: names=('kappa', 'mu', 'nu'), values=(49.97, 2.42, 10.65)
     For future Lévy: names=('alpha', 'beta', 'mu', 'sigma'), values=(1.5, 0.3, 0, 1)
     For future fBm:  names=('H', 'mu', 'sigma'), values=(0.7, 0, 1)
 
-    The named access (params.theta) goes through __getattr__,
+    The named access (params.kappa) goes through __getattr__,
     the positional access (params.values[0]) is always available.
     """
 
@@ -177,7 +180,7 @@ class LatentProcessParams:
                 f"must have the same length")
 
     def __getattr__(self, name: str):
-        """Named access: params.theta, params.mu, etc."""
+        """Named access: params.kappa, params.mu, etc."""
         if name in ('process_type', 'names', 'values',
                      'bounds_lower', 'bounds_upper'):
             raise AttributeError(name)  # let dataclass handle these
@@ -214,35 +217,35 @@ class LatentProcessParams:
         return f"LatentProcessParams({self.process_type}: {pairs})"
 
 
-def ou_params(theta: float, mu: float, nu: float) -> LatentProcessParams:
+def ou_params(kappa: float, mu: float, nu: float) -> LatentProcessParams:
     """Convenience constructor for OU process parameters."""
     return LatentProcessParams(
         process_type='ou',
-        names=('theta', 'mu', 'nu'),
-        values=np.array([theta, mu, nu]),
+        names=('kappa', 'mu', 'nu'),
+        values=np.array([kappa, mu, nu]),
         bounds_lower=np.array([0.001, -np.inf, 0.001]),
         bounds_upper=np.array([np.inf, np.inf, np.inf]),
     )
 
 
-def gas_params(omega: float, alpha: float, beta: float,
-               alpha_bound: float = 10.0,
+def gas_params(omega: float, gamma: float, beta: float,
+               gamma_bound: float = 10.0,
                beta_bound: float = 0.999) -> LatentProcessParams:
     """Convenience constructor for GAS process parameters.
 
     Bounds used by GASProcess.fit():
       omega: unbounded
-      alpha: [-10, 10] (score sensitivity can be negative)
-      beta:  (-0.999, 0.999) (persistence, |beta| < 1 for stationarity)
+      gamma: [-gamma_bound, gamma_bound] (score sensitivity can be negative)
+      beta:  (-beta_bound, beta_bound) (persistence, |beta| < 1)
     """
-    alpha_bound = float(alpha_bound)
+    gamma_bound = float(gamma_bound)
     beta_bound = float(beta_bound)
     return LatentProcessParams(
         process_type='gas',
-        names=('omega', 'alpha', 'beta'),
-        values=np.array([omega, alpha, beta]),
-        bounds_lower=np.array([-np.inf, -alpha_bound, -beta_bound]),
-        bounds_upper=np.array([np.inf, alpha_bound, beta_bound]),
+        names=('omega', 'gamma', 'beta'),
+        values=np.array([omega, gamma, beta]),
+        bounds_lower=np.array([-np.inf, -gamma_bound, -beta_bound]),
+        bounds_upper=np.array([np.inf, gamma_bound, beta_bound]),
     )
 
 
@@ -351,8 +354,8 @@ class GASResult(FitResultBase):
         return self.params.omega
 
     @property
-    def alpha_gas(self) -> float:
-        return self.params.alpha
+    def gamma(self) -> float:
+        return self.params.gamma
 
     @property
     def beta(self) -> float:

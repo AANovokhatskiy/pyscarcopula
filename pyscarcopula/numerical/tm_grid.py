@@ -33,7 +33,7 @@ class TMGrid:
 
     Parameters
     ----------
-    theta, mu, nu : float
+    kappa, mu, nu : float
         OU process parameters.
     n : int
         Number of observations (determines dt = 1/(n-1)).
@@ -60,11 +60,11 @@ class TMGrid:
         'mu', '_T_op', '_grid_method', '_band',
     )
 
-    def __init__(self, theta, mu, nu, n, K=300, grid_range=5.0,
-                 grid_method='auto', adaptive=True, pts_per_sigma=2):
+    def __init__(self, kappa, mu, nu, n, K=300, grid_range=5.0,
+                 grid_method='auto', adaptive=True, pts_per_sigma=4):
         dt = 1.0 / (n - 1)
-        rho = np.exp(-theta * dt)
-        sigma = np.sqrt(0.5 * nu ** 2 / theta)
+        rho = np.exp(-kappa * dt)
+        sigma = np.sqrt(0.5 * nu ** 2 / kappa)
         sigma_cond = sigma * np.sqrt(1.0 - rho ** 2)
 
         self.rho = rho
@@ -131,7 +131,7 @@ class TMGrid:
         integration over the next-state index.  Forward prediction integrates
         over the previous-state index:
 
-            alpha_next[i] = sum_j p(z_i | z_j) * v[j].
+            phi_next[i] = sum_j p(z_i | z_j) * v[j].
 
         Therefore we remove the next-state quadrature weights after applying
         the transpose of the stored weighted operator.
@@ -190,33 +190,33 @@ class TMGrid:
         Forward message pass with per-step callback.
 
         Implements equations (22)-(23) from the paper:
-          alpha_k(z) <- f_k(z) * alpha_k(z)             (update)
-          alpha_{k+1}(z') = integral p(z'|z) alpha_k(z) dz
+          phi_k(z) <- f_k(z) * phi_k(z)             (update)
+          phi_{k+1}(z') = integral p(z'|z) phi_k(z) dz
 
         At each step k the callback receives:
-            callback(k, alpha, trap_w, is_last)
-        where alpha is the predictive density BEFORE observing u_k.
+            callback(k, phi, trap_w, is_last)
+        where phi is the predictive density BEFORE observing u_k.
 
         Parameters
         ----------
         fi_grid : (n, K)
-        callback : callable(k, alpha, trap_w, is_last) -> bool
+        callback : callable(k, phi, trap_w, is_last) -> bool
         """
         n = fi_grid.shape[0]
-        alpha = self.p0.copy()
+        phi = self.p0.copy()
 
         for k in range(n):
             is_last = (k == n - 1)
-            cont = callback(k, alpha, self.trap_w, is_last)
+            cont = callback(k, phi, self.trap_w, is_last)
             if cont is False:
                 break
 
             if not is_last:
-                source = fi_grid[k] * alpha * self.trap_w
-                alpha = self.predict_matvec(source)
-                mx = np.max(np.abs(alpha))
+                source = fi_grid[k] * phi * self.trap_w
+                phi = self.predict_matvec(source)
+                mx = np.max(np.abs(phi))
                 if mx > 0:
-                    alpha /= mx
+                    phi /= mx
                 else:
                     for kk in range(k + 1, n):
                         callback(kk, None, self.trap_w, kk == n - 1)
@@ -239,11 +239,11 @@ class TMGrid:
         n = fi_grid.shape[0]
         K = self.K
         weights = np.zeros((n, K))
-        alpha = self.p0.copy()
+        phi = self.p0.copy()
 
         for k in range(n):
             is_last = (k == n - 1)
-            raw_w = alpha * self.trap_w
+            raw_w = phi * self.trap_w
             total = np.sum(raw_w)
             if total > 0:
                 weights[k] = raw_w / total
@@ -251,11 +251,11 @@ class TMGrid:
                 weights[k] = 1.0 / K
 
             if not is_last:
-                source = fi_grid[k] * alpha * self.trap_w
-                alpha = self.predict_matvec(source)
-                mx = np.max(np.abs(alpha))
+                source = fi_grid[k] * phi * self.trap_w
+                phi = self.predict_matvec(source)
+                mx = np.max(np.abs(phi))
                 if mx > 0:
-                    alpha /= mx
+                    phi /= mx
                 else:
                     weights[k + 1:] = 1.0 / K
                     break

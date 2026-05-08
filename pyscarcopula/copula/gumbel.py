@@ -327,7 +327,7 @@ def _gumbel_inv_transform(r):
 
 class GumbelCopula(BivariateCopula):
 
-    def __init__(self, rotate: int = 0, transform_type: str = 'xtanh'):
+    def __init__(self, rotate: int = 0, transform_type: str = 'softplus'):
         """
         Parameters
         ----------

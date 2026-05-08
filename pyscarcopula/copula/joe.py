@@ -384,7 +384,7 @@ def _joe_pdf_and_grad_batch(u_all, r_grid, dpsi, rotation):
 
 class JoeCopula(BivariateCopula):
 
-    def __init__(self, rotate: int = 0, transform_type: str = 'xtanh'):
+    def __init__(self, rotate: int = 0, transform_type: str = 'softplus'):
         super().__init__(rotate)
         self._name = "Joe copula"
         if transform_type not in ('xtanh', 'softplus'):

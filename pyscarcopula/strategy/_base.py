@@ -71,7 +71,7 @@ class FitStrategy(Protocol):
 
         For MLE: constant array.
         For SCAR-TM: E[Psi(x_k) | u_{1:k-1}].
-        For GAS: deterministic Psi(f_t) path.
+        For GAS: deterministic Psi(g_t) path.
         """
         ...
 
@@ -89,7 +89,7 @@ class FitStrategy(Protocol):
 
         MLE:  e2 = h(u2, u1, r_mle)
         SCAR: e2 = E[h(u2, u1, Psi(x_k)) | u_{1:k-1}] (mixture)
-        GAS:  e2 = h(u2, u1, Psi(f_t))
+        GAS:  e2 = h(u2, u1, Psi(g_t))
         """
         ...
 
@@ -99,7 +99,7 @@ class FitStrategy(Protocol):
 
         MLE:  h(u2, u1; theta_mle) — constant parameter
         SCAR: E[h(u2, u1; Psi(x)) | data] — mixture over predictive
-        GAS:  h(u2, u1; Psi(f_t)) — along GAS-filtered path
+        GAS:  h(u2, u1; Psi(g_t)) — along GAS-filtered path
 
         This is the key function that propagates pseudo-obs through
         the vine tree. Different methods produce different pseudo-obs,
@@ -133,7 +133,7 @@ class FitStrategy(Protocol):
         Simulates a path of length n with time-varying parameter:
           MLE:     r = const for all t
           SCAR-TM: r(t) = Psi(x(t)), x(t) simulated from OU process
-          GAS:     r(t) = Psi(f(t)), f(t) via score-driven recursion
+          GAS:     r(t) = Psi(g(t)), g(t) via score-driven recursion
                    on the generated observations
 
         fit(copula, sample(...)) should recover similar parameters.
@@ -159,7 +159,7 @@ class FitStrategy(Protocol):
         samples from the predictive copula distribution at T+1:
           MLE:     r = theta_mle (constant)
           SCAR-TM: mixture sampling from posterior p(x_T | data)
-          GAS:     r = Psi(f_T), last filtered value
+          GAS:     r = Psi(g_T), last filtered value
 
         Used for risk metrics (VaR/CVaR estimation).
 

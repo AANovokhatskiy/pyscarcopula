@@ -96,7 +96,7 @@ def predictive_mean(copula, data, result: FitResult,
 
     For MLE: constant array.
     For SCAR-TM: E[Psi(x_k) | u_{1:k-1}] via transfer matrix.
-    For GAS: Psi(f_t) along filtered path.
+    For GAS: Psi(g_t) along filtered path.
 
     Parameters
     ----------
@@ -129,7 +129,7 @@ def mixture_h(copula, data, result: FitResult,
 
     MLE:  h(u2, u1; theta_mle)
     SCAR: E[h(u2, u1; Psi(x_k)) | u_{1:k-1}] using predictive weights
-    GAS:  h(u2, u1; Psi(f_t))
+    GAS:  h(u2, u1; Psi(g_t))
 
     Parameters
     ----------
@@ -163,7 +163,7 @@ def sample(copula, data, result: FitResult, n: int,
     Simulates a path of length n with time-varying parameter:
       MLE:     r = const for all t
       SCAR-TM: r(t) = Psi(x(t)), x(t) simulated from OU process
-      GAS:     r(t) = Psi(f(t)), f(t) via score-driven recursion
+      GAS:     r(t) = Psi(g(t)), g(t) via score-driven recursion
 
     fit(copula, sample(...)) should recover similar parameters.
 
@@ -232,7 +232,7 @@ def predict(copula, data, result: FitResult, n: int,
     For edge models, the predictive parameter semantics are:
       MLE:     r = theta_mle (constant)
       SCAR-TM: mixture sampling from p(x_T | data) or p(x_{T+1} | data)
-      GAS:     point estimate Psi(f_T) or Psi(f_{T+1})
+      GAS:     point estimate Psi(g_T) or Psi(g_{T+1})
 
     ``given`` is a conditional sampling argument in pseudo-observation
     space. For bivariate copulas it may fix coordinate 0 or 1; for vines it

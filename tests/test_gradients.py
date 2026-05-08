@@ -100,8 +100,11 @@ def test_tm_loglik_gradient(cls, rot, alpha, crypto_data):
     """Full TM logL gradient matches numerical finite differences."""
     cop = cls(rotate=rot)
     u = crypto_data[:300]
+    # Keep the discretized objective smooth for finite differences.
+    # Adaptive K and sparse support windows change discretely with parameters.
+    tm_kwargs = dict(K=80, grid_method='dense', adaptive=False)
 
-    val, grad = tm_loglik_with_grad(*alpha, u, cop, K=80)
+    val, grad = tm_loglik_with_grad(*alpha, u, cop, **tm_kwargs)
 
     if val >= 1e10 or not np.all(np.isfinite(grad)):
         pytest.skip("loglik returned FAIL or NaN for this parameter set")
@@ -111,8 +114,8 @@ def test_tm_loglik_gradient(cls, rot, alpha, crypto_data):
     for k in range(3):
         a_p = alpha.copy(); a_p[k] += eps
         a_m = alpha.copy(); a_m[k] -= eps
-        vp = tm_loglik(*a_p, u, cls(rotate=rot), K=80)
-        vm = tm_loglik(*a_m, u, cls(rotate=rot), K=80)
+        vp = tm_loglik(*a_p, u, cls(rotate=rot), **tm_kwargs)
+        vm = tm_loglik(*a_m, u, cls(rotate=rot), **tm_kwargs)
         grad_num[k] = (vp - vm) / (2 * eps)
 
     if not np.all(np.isfinite(grad_num)):

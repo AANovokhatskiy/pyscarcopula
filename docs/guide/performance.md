@@ -20,7 +20,7 @@ result = fit(copula, u, method='scar-tm-ou', tol=5e-2)
 | `tol` | `1e-2` | L-BFGS-B gradient tolerance. `5e-2` is about 2x faster with negligible logL loss. |
 | `K` | `300` | Minimum grid size. May be auto-increased for adequate resolution. |
 | `pts_per_sigma` | `2` | Grid density. Increase to 4 for very peaked transition kernels. |
-| `transform_type` | `'xtanh'` | `'softplus'` often gives better logL on financial data. |
+| `transform_type` | `'softplus'` | Use `'xtanh'` for the symmetric legacy transform. |
 
 **Adaptive grid size.** When `adaptive=True` (the default), the grid is
 automatically enlarged so that the OU transition kernel is resolved with at
@@ -37,6 +37,30 @@ grid sizes:
 - Use `grid_method='sparse'` or leave `'auto'`, which prefers sparse for large grids
 - Set `adaptive=False` and specify an explicit `K`
 - Increase `theta` or decrease `n` (fewer observations -> larger `dt` -> wider conditional kernel -> smaller grid)
+
+**BLAS threads.** `pyscarcopula` sets `OMP_NUM_THREADS`,
+`MKL_NUM_THREADS`, and `OPENBLAS_NUM_THREADS` to `1` during package import to
+avoid oversubscription in transfer-matrix workloads. This only affects BLAS
+libraries that have not been initialized yet. If NumPy/SciPy/OpenBLAS was
+imported before `pyscarcopula`, changing these environment variables is too
+late for the already loaded BLAS runtime. In that case, set the variables
+before starting Python, for example:
+
+```bash
+OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 OMP_NUM_THREADS=1 python script.py
+```
+
+On Windows PowerShell:
+
+```powershell
+$env:OPENBLAS_NUM_THREADS = "1"
+$env:MKL_NUM_THREADS = "1"
+$env:OMP_NUM_THREADS = "1"
+python script.py
+```
+
+If an application imports NumPy first and still needs to change BLAS threads at
+runtime, use a runtime thread limiter such as `threadpoolctl`.
 
 ## Vine copula
 

@@ -98,15 +98,15 @@ def rosenblatt_transform_mle(copula, u, r):
 def rosenblatt_transform_scar(copula, u, alpha, K=300, grid_range=5.0):
     """Mixture Rosenblatt for SCAR (bivariate). Returns (T, 2)."""
     from pyscarcopula.numerical.tm_functions import tm_forward_rosenblatt as _tm_forward_rosenblatt
-    theta, mu, nu = alpha
-    return _tm_forward_rosenblatt(theta, mu, nu, u, copula, K, grid_range)
+    kappa, mu, nu = alpha
+    return _tm_forward_rosenblatt(kappa, mu, nu, u, copula, K, grid_range)
 
 
 def rosenblatt_transform_gas(copula, u, gas_params, scaling='unit'):
     """Rosenblatt for GAS (bivariate). Returns (T, 2)."""
     from pyscarcopula.numerical.gas_filter import gas_rosenblatt
-    omega, alpha_g, beta = gas_params
-    return gas_rosenblatt(omega, alpha_g, beta, u, copula, scaling)
+    omega, gamma, beta = gas_params
+    return gas_rosenblatt(omega, gamma, beta, u, copula, scaling)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -227,7 +227,7 @@ def _gof_bivariate(copula, data, to_pobs=True, K=300, grid_range=5.0,
 
     MLE: constant parameter Rosenblatt.
     SCAR: mixture Rosenblatt (integrates h over predictive distribution).
-    GAS: deterministic Rosenblatt (h evaluated at filtered theta_t).
+    GAS: deterministic Rosenblatt (h evaluated at filtered r_t).
 
     Parameters
     ----------
@@ -287,7 +287,7 @@ def _as_rng(rng):
 def _bootstrap_fit_kwargs(fit_result, fit_kwargs):
     """Warm-start bootstrap refits from the original fitted parameters."""
     out = dict(fit_kwargs)
-    if 'alpha0' in out:
+    if 'alpha0' in out or 'gamma0' in out:
         return out
 
     method = fit_result.method.upper()
@@ -296,7 +296,8 @@ def _bootstrap_fit_kwargs(fit_result, fit_kwargs):
     else:
         params = getattr(fit_result, 'params', None)
         if params is not None:
-            out['alpha0'] = np.asarray(params.values, dtype=np.float64)
+            key = 'gamma0' if method == 'GAS' else 'alpha0'
+            out[key] = np.asarray(params.values, dtype=np.float64)
     return out
 
 
@@ -833,8 +834,8 @@ def equicorr_rosenblatt_transform(copula, u, fit_result, K=300, grid_range=5.0):
     # SCAR: mixture Rosenblatt via TM forward pass
     from pyscarcopula.numerical.tm_grid import TMGrid as _TMGrid
 
-    theta, mu, nu = fit_result.params.values
-    grid = _TMGrid(theta, mu, nu, T, K, grid_range)
+    kappa, mu, nu = fit_result.params.values
+    grid = _TMGrid(kappa, mu, nu, T, K, grid_range)
     x_grid = grid.z + grid.mu
     rho_grid = copula.transform(x_grid)
     fi_grid = copula.copula_grid_batch(u, x_grid)
@@ -944,8 +945,8 @@ def stochastic_student_rosenblatt_transform(copula, u, fit_result,
     # SCAR: mixture Rosenblatt via TM forward pass
     from pyscarcopula.numerical.tm_grid import TMGrid as _TMGrid
 
-    theta, mu, nu_ou = fit_result.params.values
-    grid = _TMGrid(theta, mu, nu_ou, T, K, grid_range)
+    kappa, mu, nu_ou = fit_result.params.values
+    grid = _TMGrid(kappa, mu, nu_ou, T, K, grid_range)
     x_grid = grid.z + grid.mu
     df_grid = copula.transform(x_grid)  # (K_eff,)
     fi_grid = copula.copula_grid_batch(u, x_grid)
@@ -1102,8 +1103,8 @@ def stochastic_student_dcc_rosenblatt_transform(copula, u, fit_result,
     # SCAR: mixture Rosenblatt via TM forward pass
     from pyscarcopula.numerical.tm_grid import TMGrid as _TMGrid
 
-    theta, mu, nu_ou = fit_result.params.values
-    grid = _TMGrid(theta, mu, nu_ou, T, K, grid_range)
+    kappa, mu, nu_ou = fit_result.params.values
+    grid = _TMGrid(kappa, mu, nu_ou, T, K, grid_range)
     x_grid = grid.z + grid.mu
     df_grid = copula.transform(x_grid)
     fi_grid = copula.copula_grid_batch(u, x_grid)

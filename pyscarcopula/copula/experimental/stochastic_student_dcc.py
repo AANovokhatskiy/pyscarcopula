@@ -1162,12 +1162,12 @@ class StochasticStudentDCCCopula(BivariateCopula):
         u_data = u if u is not None else self._last_u
         if u_data is None:
             raise ValueError("No data available. Pass u= or call fit() first.")
-        theta, mu, nu_ou = self.fit_result.params.values
+        kappa, mu, nu_ou = self.fit_result.params.values
         from pyscarcopula.numerical.tm_functions import (
             tm_forward_predictive_mean,
         )
 
-        return tm_forward_predictive_mean(theta, mu, nu_ou, u_data, self)
+        return tm_forward_predictive_mean(kappa, mu, nu_ou, u_data, self)
 
     def smoothed_params(self, u=None):
         """Backward-compatible alias for predictive_mean."""
@@ -1177,10 +1177,10 @@ class StochasticStudentDCCCopula(BivariateCopula):
         """Distribution of x_T on grid, using the fitted df-dynamics model."""
         if self.fit_result is None:
             raise ValueError("Fit df dynamics first")
-        theta, mu, nu_ou = self.fit_result.params.values
+        kappa, mu, nu_ou = self.fit_result.params.values
         from pyscarcopula.numerical.tm_functions import tm_xT_distribution
 
-        return tm_xT_distribution(theta, mu, nu_ou, u, self, K, grid_range)
+        return tm_xT_distribution(kappa, mu, nu_ou, u, self, K, grid_range)
 
 
 __all__ = ["StochasticStudentDCCCopula", "DCCFitResult"]

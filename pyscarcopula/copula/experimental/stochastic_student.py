@@ -610,8 +610,8 @@ class StochasticStudentCopula(BivariateCopula):
             return self.sample(n, r=df_samples, rng=rng)
         else:
             # Fallback: stationary OU sample
-            theta, mu, nu_ou = self.fit_result.params.values
-            sigma2 = nu_ou ** 2 / (2.0 * theta)
+            kappa, mu, nu_ou = self.fit_result.params.values
+            sigma2 = nu_ou ** 2 / (2.0 * kappa)
             x_T = rng.normal(mu, np.sqrt(sigma2))
             df_val = self.transform(np.array([x_T]))[0]
             return self.sample(n, r=df_val, rng=rng)
@@ -626,11 +626,11 @@ class StochasticStudentCopula(BivariateCopula):
         if u_data is None:
             raise ValueError("No data. Pass u= or call fit() first.")
 
-        theta, mu, nu_ou = self.fit_result.params.values
+        kappa, mu, nu_ou = self.fit_result.params.values
         from pyscarcopula.numerical.tm_functions import (
             tm_forward_predictive_mean,
         )
-        return tm_forward_predictive_mean(theta, mu, nu_ou, u_data, self)
+        return tm_forward_predictive_mean(kappa, mu, nu_ou, u_data, self)
 
     def smoothed_params(self, u=None):
         """Backward-compatible alias for predictive_mean."""
@@ -640,6 +640,6 @@ class StochasticStudentCopula(BivariateCopula):
         """Distribution of x_T on grid (for predict)."""
         if self.fit_result is None:
             raise ValueError("Fit with SCAR first")
-        theta, mu, nu_ou = self.fit_result.params.values
+        kappa, mu, nu_ou = self.fit_result.params.values
         from pyscarcopula.numerical.tm_functions import tm_xT_distribution
-        return tm_xT_distribution(theta, mu, nu_ou, u, self, K, grid_range)
+        return tm_xT_distribution(kappa, mu, nu_ou, u, self, K, grid_range)

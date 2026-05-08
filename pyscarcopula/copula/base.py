@@ -55,8 +55,8 @@ class BivariateCopula:
 
     Estimation methods (via .fit()):
         'mle'        — constant parameter (1 param)
-        'scar-tm-ou' — transfer matrix (3 params: theta, mu, nu)
-        'gas'        — GAS score-driven (3 params: omega, alpha, beta)
+        'scar-tm-ou' — transfer matrix (3 params: kappa, mu, nu)
+        'gas'        — GAS score-driven (3 params: omega, gamma, beta)
         'scar-p-ou'  — MC p-sampler, 'scar-m-ou' — MC m-sampler with EIS
 
     Parameters

@@ -19,7 +19,7 @@ a deterministic transfer matrix method.
 - **Estimation**: MLE, GAS, SCAR-TM-OU (transfer matrix with analytical gradient)
 - **Prediction controls**: `PredictConfig`, diagnostics, dynamic conditioning,
   reproducible `rng`
-- **Transform functions**: `xtanh` (default), `softplus` (asymmetric)
+- **Transform functions**: `softplus` (default), `xtanh` (symmetric)
 - **Diagnostics**: GoF test, predictive mean parameter paths
 
 ## Quick Example

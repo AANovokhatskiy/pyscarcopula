@@ -637,12 +637,12 @@ class TestConditionalSamplingPlanLayer:
 
     def _scar_tm_end_to_end_train(self, seed):
         rng = np.random.default_rng(seed)
-        T, theta, mu, nu = 500, 1.5, 0.5, 0.4
+        T, kappa, mu, nu = 500, 1.5, 0.5, 0.4
         dt = 1.0 / (T - 1)
-        rho_ou = np.exp(-theta * dt)
-        sigma_cond = np.sqrt(nu ** 2 / (2.0 * theta) * (1.0 - rho_ou ** 2))
+        rho_ou = np.exp(-kappa * dt)
+        sigma_cond = np.sqrt(nu ** 2 / (2.0 * kappa) * (1.0 - rho_ou ** 2))
         x = np.empty(T)
-        x[0] = rng.normal(mu, nu / np.sqrt(2.0 * theta))
+        x[0] = rng.normal(mu, nu / np.sqrt(2.0 * kappa))
         for t in range(1, T):
             x[t] = (mu + rho_ou * (x[t - 1] - mu)
                     + sigma_cond * rng.standard_normal())
@@ -695,7 +695,7 @@ class TestConditionalSamplingPlanLayer:
             )
             p = result.params
             z_grid, prob = tm_state_distribution(
-                p.theta, p.mu, p.nu, u_train, copula,
+                p.kappa, p.mu, p.nu, u_train, copula,
                 K=predict_kwargs['K'], horizon='current',
             )
             r_grid = copula.transform(np.asarray(z_grid, dtype=np.float64))
@@ -1038,14 +1038,14 @@ class TestConditionalSamplingPlanLayer:
     def test_scar_tm_fit_recovers_full_ou_path(self):
         rng = np.random.default_rng(304)
         T = 350
-        theta_true, mu_true, nu_true = 1.0, 1.0, 1.8
+        kappa_true, mu_true, nu_true = 1.0, 1.0, 1.8
         dt = 1.0 / (T - 1)
-        rho_ou = np.exp(-theta_true * dt)
+        rho_ou = np.exp(-kappa_true * dt)
         sigma_cond = np.sqrt(
-            nu_true ** 2 / (2.0 * theta_true) * (1.0 - rho_ou ** 2))
+            nu_true ** 2 / (2.0 * kappa_true) * (1.0 - rho_ou ** 2))
 
         x = np.empty(T)
-        x[0] = rng.normal(mu_true, nu_true / np.sqrt(2.0 * theta_true))
+        x[0] = rng.normal(mu_true, nu_true / np.sqrt(2.0 * kappa_true))
         for t in range(1, T):
             x[t] = (mu_true
                     + rho_ou * (x[t - 1] - mu_true)
@@ -1143,7 +1143,7 @@ class TestConditionalSamplingPlanLayer:
             fit_copula, sampled, fit_result, 1, horizon='next')[0]
 
         assert fit_result.success
-        assert abs(fit_result.params.alpha) > 0.5
+        assert abs(fit_result.params.gamma) > 0.5
         assert abs(fit_result.params.beta) > 0.4
         assert np.std(smoothed) > 0.08
         assert not np.isclose(r_current, r_next)
@@ -1233,7 +1233,7 @@ class TestConditionalSamplingPlanLayer:
 
         assert gas_params_refit
         assert np.isfinite(refit.log_likelihood())
-        assert any(abs(p.alpha) > 0.2 for p in gas_params_refit)
+        assert any(abs(p.gamma) > 0.2 for p in gas_params_refit)
 
     def test_cvine_dynamic_prefix_conditional_matches_predictive_edge_state(self):
         copula = BivariateGaussianCopula()
