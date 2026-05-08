@@ -5,11 +5,11 @@ Two strategies, from cheapest to most expensive:
 
 1. Analytical heuristic (cost: ~0, just arithmetic from MLE):
    - mu from MLE: mu = inv_transform(theta_mle)
-   - theta from target autocorrelation: exp(-theta*dt) = rho_target
-   - nu from target volatility: sigma = fraction * |mu|, nu = sigma * sqrt(2*theta)
+   - kappa from target autocorrelation: exp(-kappa*dt) = rho_target
+   - nu from target volatility: sigma = fraction * |mu|, nu = sigma * sqrt(2*kappa)
 
 2. GAS grid search (cost: O(20*T), ~0.01s per 1000 observations):
-   - Run 20 GAS filters with different (alpha, beta) combos
+   - Run 20 GAS filters with different (gamma, beta) combos
    - Match moments of the best path to OU parameters
 
 For vine copulas with many edges, (1) alone is usually sufficient
@@ -31,10 +31,10 @@ def _mle_mu(copula, u):
 def _heuristic_initial_point(u, copula, rho_target=0.95,
                               sigma_frac=0.3):
     """
-    Analytical heuristic for (theta, mu, nu) — zero computational cost.
+    Analytical heuristic for (kappa, mu, nu) — zero computational cost.
 
     Uses the MLE constant parameter as the mean level mu, then sets
-    theta and nu from target autocorrelation and volatility assumptions.
+    kappa and nu from target autocorrelation and volatility assumptions.
 
     Parameters
     ----------
@@ -45,31 +45,31 @@ def _heuristic_initial_point(u, copula, rho_target=0.95,
 
     Returns
     -------
-    alpha0 : ndarray (3,) — (theta, mu, nu)
+    alpha0 : ndarray (3,) — (kappa, mu, nu)
     """
     T = len(u)
     dt = 1.0 / (T - 1)
 
     mu = _mle_mu(copula, u)
 
-    # theta from target autocorrelation: rho = exp(-theta*dt)
-    theta = -np.log(rho_target) / dt
+    # kappa from target autocorrelation: rho = exp(-kappa*dt)
+    kappa = -np.log(rho_target) / dt
 
     # sigma = fraction of |mu| (at least 1.0 to avoid degenerate nu)
     sigma = sigma_frac * max(abs(mu), 1.0)
 
-    # nu from sigma: sigma^2 = nu^2 / (2*theta) => nu = sigma * sqrt(2*theta)
-    nu = sigma * np.sqrt(2.0 * theta)
+    # nu from sigma: sigma^2 = nu^2 / (2*kappa) => nu = sigma * sqrt(2*kappa)
+    nu = sigma * np.sqrt(2.0 * kappa)
 
-    theta = np.clip(theta, 0.01, 100.0)
+    kappa = np.clip(kappa, 0.01, 100.0)
     nu = np.clip(nu, 0.01, 50.0)
 
-    return np.array([theta, mu, nu])
+    return np.array([kappa, mu, nu])
 
 
 def _gas_initial_point(u, copula, verbose=False):
     """
-    Estimate (theta, mu, nu) via grid-search GAS + moment matching.
+    Estimate (kappa, mu, nu) via grid-search GAS + moment matching.
 
     Cost: ~20 GAS filter passes = O(20·T).
 
@@ -81,7 +81,7 @@ def _gas_initial_point(u, copula, verbose=False):
 
     Returns
     -------
-    alpha0 : ndarray (3,) — (theta, mu, nu)
+    alpha0 : ndarray (3,) — (kappa, mu, nu)
     """
     from pyscarcopula.numerical.gas_filter import gas_filter
 
@@ -89,7 +89,7 @@ def _gas_initial_point(u, copula, verbose=False):
     dt = 1.0 / (T - 1)
 
     try:
-        f_mle = _mle_mu(copula, u)
+        g_mle = _mle_mu(copula, u)
     except Exception:
         return np.array([1.0, 0.0, 1.0])
 
@@ -97,19 +97,19 @@ def _gas_initial_point(u, copula, verbose=False):
     best_path = None
 
     for beta in [0.90, 0.95, 0.98, 0.99]:
-        omega = f_mle * (1.0 - beta)
-        for alpha_g in [0.01, 0.05, 0.1, 0.3, 0.5]:
+        omega = g_mle * (1.0 - beta)
+        for gamma_g in [0.01, 0.05, 0.1, 0.3, 0.5]:
             try:
-                f_path, _, ll = gas_filter(
-                    omega, alpha_g, beta, u, copula, 'unit')
+                g_path, _, ll = gas_filter(
+                    omega, gamma_g, beta, u, copula, 'unit')
                 if ll > best_ll:
                     best_ll = ll
-                    best_path = f_path.copy()
+                    best_path = g_path.copy()
             except Exception:
                 continue
 
     if best_path is None:
-        return np.array([1.0, f_mle, 1.0])
+        return np.array([1.0, g_mle, 1.0])
 
     mu_est = np.mean(best_path)
     var_est = np.var(best_path)
@@ -117,18 +117,18 @@ def _gas_initial_point(u, copula, verbose=False):
     if var_est < 1e-10:
         return np.array([1.0, mu_est, 1.0])
 
-    f_centered = best_path - mu_est
-    autocov = np.mean(f_centered[:-1] * f_centered[1:])
+    g_centered = best_path - mu_est
+    autocov = np.mean(g_centered[:-1] * g_centered[1:])
     autocorr = np.clip(autocov / var_est, 0.01, 0.999)
 
-    theta_est = np.clip(-np.log(autocorr) / dt, 0.01, 100.0)
-    nu_est = np.clip(np.sqrt(2.0 * theta_est * var_est), 0.01, 50.0)
+    kappa_est = np.clip(-np.log(autocorr) / dt, 0.01, 100.0)
+    nu_est = np.clip(np.sqrt(2.0 * kappa_est * var_est), 0.01, 50.0)
 
     if verbose:
         print(f"  GAS grid: best logL={best_ll:.2f}, "
-              f"alpha0=[{theta_est:.2f}, {mu_est:.4f}, {nu_est:.4f}]")
+              f"alpha0=[{kappa_est:.2f}, {mu_est:.4f}, {nu_est:.4f}]")
 
-    return np.array([theta_est, mu_est, nu_est])
+    return np.array([kappa_est, mu_est, nu_est])
 
 
 def smart_initial_point(u, copula, use_gas=False, verbose=False):
@@ -178,19 +178,19 @@ def smart_initial_point(u, copula, use_gas=False, verbose=False):
 
     # Optional GAS refinement
     try:
-        alpha_gas = _gas_initial_point(u, copula, verbose=verbose)
-        info['gas_alpha'] = alpha_gas.copy()
+        alpha_from_gas = _gas_initial_point(u, copula, verbose=verbose)
+        info['gas_initial'] = alpha_from_gas.copy()
     except Exception:
-        alpha_gas = None
+        alpha_from_gas = None
 
     # Pick the better one
-    if alpha_h is not None and alpha_gas is not None:
+    if alpha_h is not None and alpha_from_gas is not None:
         info['method'] = 'heuristic'
         return alpha_h, info
 
-    if alpha_gas is not None:
+    if alpha_from_gas is not None:
         info['method'] = 'gas'
-        return alpha_gas, info
+        return alpha_from_gas, info
     elif alpha_h is not None:
         info['method'] = 'heuristic'
         return alpha_h, info

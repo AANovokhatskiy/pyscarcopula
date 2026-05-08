@@ -404,7 +404,7 @@ def _frank_pdf_and_grad_batch(u_all, r_grid, dpsi):
 class FrankCopula(BivariateCopula):
     """Frank copula. No rotation support (symmetric)."""
 
-    def __init__(self, rotate: int = 0, transform_type: str = 'xtanh'):
+    def __init__(self, rotate: int = 0, transform_type: str = 'softplus'):
         if rotate != 0:
             raise ValueError("Rotation not supported for Frank copula")
         super().__init__(0)

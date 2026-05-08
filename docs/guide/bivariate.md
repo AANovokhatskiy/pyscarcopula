@@ -4,11 +4,11 @@
 
 In the SCAR (Stochastic Copula Autoregressive) model, the copula parameter follows a latent Ornstein-Uhlenbeck process:
 
-$$\theta_t = \Psi(x_t), \qquad dx_t = \theta_\text{OU}(\mu - x_t)\,dt + \nu\,dW_t$$
+$$r_t = \Psi(x_t), \qquad dx_t = \kappa(\mu - x_t)\,dt + \nu\,dW_t$$
 
 The three OU parameters control:
 
-- `theta_OU` - mean-reversion speed
+- `kappa` - mean-reversion speed
 - `mu` - long-run mean of the latent process
 - `nu` - volatility of the latent process
 
@@ -21,7 +21,7 @@ from pyscarcopula.api import fit
 copula = GumbelCopula(rotate=180)
 result = fit(copula, u, method='scar-tm-ou')
 
-print(result.params.theta, result.params.mu, result.params.nu)
+print(result.params.kappa, result.params.mu, result.params.nu)
 print(result.log_likelihood)
 ```
 
@@ -63,6 +63,20 @@ one-step-ahead predictive distribution `p(x_{T+1} | data)`.
 For the shared prediction terminology used by bivariate and vine models, see
 [Prediction Semantics](prediction-semantics.md).
 
+## The GAS model
+
+The GAS model is observation-driven. The copula parameter is
+
+$$r_t = \Psi(g_t),$$
+
+where the unbounded recursion state follows
+
+$$g_{t+1} = \omega + \beta g_t + \gamma s_t.$$
+
+Here `omega` is the intercept, `gamma` controls sensitivity to the scaled
+score, `beta` controls persistence, and `s_t` is the scaled score of the
+current copula log-density with respect to `g_t`.
+
 ```python
 u_pred = predict(copula, u, result, n=100_000,
                  rng=np.random.default_rng(2025))
@@ -80,7 +94,7 @@ u_current = predict(copula, u, result, n=20_000, horizon='current',
 |--------|----------|-----------|
 | MLE | constant r | constant r |
 | SCAR-TM | OU trajectory | current/posterior or one-step-ahead mixture |
-| GAS | recursive score-driven simulation | last filtered value `f_T` |
+| GAS | recursive score-driven simulation | last filtered value `g_T` |
 
 ## Diagnostics
 

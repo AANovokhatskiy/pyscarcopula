@@ -188,7 +188,7 @@ def _from_jsonable(payload: Any) -> Any:
     raise ValueError(f"Unsupported JSON persistence tag: {tag!r}")
 
 
-def save_model(model: object, path: str | Path, *, include_data: bool = True) -> None:
+def save_model(model: object, path: str | Path, *, include_data: bool = False) -> None:
     """Persist a fitted model to ``path`` as JSON.
 
     Parameters

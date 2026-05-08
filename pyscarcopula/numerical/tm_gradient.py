@@ -7,13 +7,13 @@ Key insight (from the paper, Section 3.4):
   Working in normalised coordinates xi = z / sigma (fixed grid),
   several parameter dependencies cancel:
 
-    T_w[i,j] depends on theta ONLY through rho = exp(-theta*dt).
+    T_w[i,j] depends on kappa ONLY through rho = exp(-kappa*dt).
               Does NOT depend on nu (or mu).
 
-    p0[j] * trap_w[j] is completely independent of (theta, mu, nu).
+    p0[j] * trap_w[j] is completely independent of (kappa, mu, nu).
 
     fi[t,j] = c(u_1t, u_2t; Psi(sigma*xi_j + mu))
-              depends on theta and nu through sigma, and on mu directly.
+              depends on kappa and nu through sigma, and on mu directly.
 
 This makes the gradient computation efficient: only 3 chain-rule terms.
 
@@ -126,20 +126,20 @@ def _make_fast_matvec(mat):
     return _matvec
 
 
-def tm_loglik_with_grad(theta, mu, nu, u, copula, K=300, grid_range=5.0,
-                        grid_method='auto', adaptive=True, pts_per_sigma=2):
+def tm_loglik_with_grad(kappa, mu, nu, u, copula, K=300, grid_range=5.0,
+                        grid_method='auto', adaptive=True, pts_per_sigma=4):
     """
     Transfer matrix log-likelihood with analytical gradient.
 
     Uses normalised coordinates xi = z / sigma so that:
-    - T_w depends on theta only through rho = exp(-theta*dt)
+    - T_w depends on kappa only through rho = exp(-kappa*dt)
     - p0 * w is parameter-independent
-    - fi depends on (theta, nu) through sigma and on mu directly
+    - fi depends on (kappa, nu) through sigma and on mu directly
 
     Parameters
     ----------
-    theta, mu, nu : float
-        OU process parameters (theta > 0, nu > 0).
+    kappa, mu, nu : float
+        OU process parameters (kappa > 0, nu > 0).
     u : ndarray (n, 2)
         Pseudo-observations.
     copula : CopulaProtocol
@@ -150,11 +150,11 @@ def tm_loglik_with_grad(theta, mu, nu, u, copula, K=300, grid_range=5.0,
     neg_logL : float
         Minus log-likelihood (1e10 on failure).
     neg_grad : ndarray (3,)
-        Minus gradient w.r.t. (theta, mu, nu). Zero on failure.
+        Minus gradient w.r.t. (kappa, mu, nu). Zero on failure.
     """
     FAIL = 1e10, np.zeros(3)
 
-    if theta <= 0 or nu <= 0:
+    if kappa <= 0 or nu <= 0:
         return FAIL
 
     n = len(u)
@@ -162,8 +162,8 @@ def tm_loglik_with_grad(theta, mu, nu, u, copula, K=300, grid_range=5.0,
         return FAIL
 
     dt = 1.0 / (n - 1)
-    rho = np.exp(-theta * dt)
-    sigma2 = 0.5 * nu ** 2 / theta
+    rho = np.exp(-kappa * dt)
+    sigma2 = 0.5 * nu ** 2 / kappa
     sigma = np.sqrt(sigma2)
     sigma_c = sigma * np.sqrt(1.0 - rho ** 2)
 
@@ -205,7 +205,7 @@ def tm_loglik_with_grad(theta, mu, nu, u, copula, K=300, grid_range=5.0,
     except Exception:
         return FAIL
 
-    drho_dtheta = -dt * rho
+    drho_dkappa = -dt * rho
 
     # ── copula density and its derivative on grid ─────────────────
     x_grid = sigma * xi + mu
@@ -214,11 +214,11 @@ def tm_loglik_with_grad(theta, mu, nu, u, copula, K=300, grid_range=5.0,
     fi, dfi_dx = copula.pdf_and_grad_on_grid_batch(u, x_grid)
 
     # dx/dalpha:  x = sigma*xi + mu
-    d_sigma_dtheta = -0.5 * nu ** 2 / theta ** 2 / (2.0 * sigma)
-    d_sigma_dnu = nu / (theta * 2.0 * sigma)
+    d_sigma_dkappa = -0.5 * nu ** 2 / kappa ** 2 / (2.0 * sigma)
+    d_sigma_dnu = nu / (kappa * 2.0 * sigma)
 
     dx_dalpha = np.zeros((3, K_eff))
-    dx_dalpha[0] = d_sigma_dtheta * xi   # dx/dtheta
+    dx_dalpha[0] = d_sigma_dkappa * xi   # dx/dkappa
     dx_dalpha[1] = 1.0                    # dx/dmu
     dx_dalpha[2] = d_sigma_dnu * xi       # dx/dnu
 
@@ -270,7 +270,7 @@ def tm_loglik_with_grad(theta, mu, nu, u, copula, K=300, grid_range=5.0,
 
             contrib = matvec(d_target_k)
             if k == 0:
-                contrib += dTw_matvec(target) * drho_dtheta
+                contrib += dTw_matvec(target) * drho_dkappa
 
             new_d_beta[k] = contrib * inv_c
 

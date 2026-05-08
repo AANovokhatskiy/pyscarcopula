@@ -86,7 +86,7 @@ def _rotation_compatible(tau, rotate):
 
 
 def select_best_copula(u1, u2, candidates, allow_rotations=True,
-                       criterion='aic', transform_type='xtanh'):
+                       criterion='aic', transform_type='softplus'):
     """
     Select best bivariate copula for (u1, u2) by AIC/BIC/logL.
 

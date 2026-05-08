@@ -3,8 +3,8 @@ import numpy as np
 from pyscarcopula.numerical.tm_grid import TMGrid
 
 
-def _direct_forward_density(grid, alpha):
-    """Direct quadrature for alpha_next[i] = sum_j p(i|j) alpha[j] w[j]."""
+def _direct_forward_density(grid, phi):
+    """Direct quadrature for phi_next[i] = sum_j p(i|j) phi[j] w[j]."""
     z = grid.z
     means = grid.rho * z
     diff = z[np.newaxis, :] - means[:, np.newaxis]
@@ -12,17 +12,17 @@ def _direct_forward_density(grid, alpha):
         np.exp(-0.5 * (diff / grid.sigma_cond) ** 2)
         / (grid.sigma_cond * np.sqrt(2.0 * np.pi))
     )
-    return p.T @ (alpha * grid.trap_w)
+    return p.T @ (phi * grid.trap_w)
 
 
-def _density_to_mass(grid, alpha):
-    mass = alpha * grid.trap_w
+def _density_to_mass(grid, phi):
+    mass = phi * grid.trap_w
     return mass / np.sum(mass)
 
 
 def test_predict_matvec_matches_direct_forward_quadrature():
     grid = TMGrid(
-        theta=3.0,
+        kappa=3.0,
         mu=0.4,
         nu=1.2,
         n=25,
@@ -31,17 +31,17 @@ def test_predict_matvec_matches_direct_forward_quadrature():
         grid_method="dense",
         adaptive=False,
     )
-    alpha = grid.p0 * (1.0 + 0.25 * grid.z / grid.sigma)
+    phi = grid.p0 * (1.0 + 0.25 * grid.z / grid.sigma)
 
-    direct = _direct_forward_density(grid, alpha)
-    via_grid = grid.predict_matvec(alpha * grid.trap_w)
+    direct = _direct_forward_density(grid, phi)
+    via_grid = grid.predict_matvec(phi * grid.trap_w)
 
     np.testing.assert_allclose(via_grid, direct, rtol=1e-12, atol=1e-12)
 
 
 def test_forward_weights_are_predictive_before_current_observation():
     grid = TMGrid(
-        theta=2.0,
+        kappa=2.0,
         mu=0.0,
         nu=1.0,
         n=5,

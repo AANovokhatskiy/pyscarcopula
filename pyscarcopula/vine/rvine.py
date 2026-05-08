@@ -128,7 +128,7 @@ def _summary_dynamic_params(pc):
     if isinstance(result, LatentResult):
         p = result.params
         return (
-            f"theta={_summary_named_float(p.theta)}, "
+            f"kappa={_summary_named_float(p.kappa)}, "
             f"mu={_summary_named_float(p.mu)}, "
             f"nu={_summary_named_float(p.nu)}"
         )
@@ -136,7 +136,7 @@ def _summary_dynamic_params(pc):
         p = result.params
         return (
             f"omega={_summary_named_float(p.omega)}, "
-            f"alpha={_summary_named_float(p.alpha)}, "
+            f"gamma={_summary_named_float(p.gamma)}, "
             f"beta={_summary_named_float(p.beta)}"
         )
     return ''
@@ -178,7 +178,7 @@ class RVineCopula:
     min_edge_logL : float or None
         If set, any fitted edge with log-likelihood strictly below this
         threshold is replaced by ``IndependentCopula``.
-    transform_type : str, default 'xtanh'
+    transform_type : str, default 'softplus'
         Parameter transform passed through to candidate copulas.
 
     Attributes (after ``fit``)
@@ -208,7 +208,7 @@ class RVineCopula:
         truncation_fill='independent',
         threshold=0.0,
         min_edge_logL=None,
-        transform_type='xtanh',
+        transform_type='softplus',
     ):
         if criterion not in ('aic', 'bic', 'loglik'):
             raise ValueError(
@@ -1640,8 +1640,8 @@ class RVineCopula:
         best-effort check for whether the fixed variables can be placed at the
         end of the R-vine variable order.
 
-        For GAS edges, ``horizon='current'`` uses Psi(f_T) and ``'next'`` uses
-        one score update to Psi(f_{T+1}). For SCAR-TM edges, the same argument
+        For GAS edges, ``horizon='current'`` uses Psi(g_T) and ``'next'`` uses
+        one score update to Psi(g_{T+1}). For SCAR-TM edges, the same argument
         selects p(x_T | data) or p(x_{T+1} | data) before sampling the
         posterior mixture path.
 

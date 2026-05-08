@@ -60,7 +60,6 @@ nav:
     - Vine Copulas: guide/vine.md
     - Prediction Semantics: guide/prediction-semantics.md
     - R-vine Conditioning: guide/rvine-conditioning.md
-    - Equicorrelation Model: guide/equicorr.md
     - Experimental Models: guide/experimental_models.md
     - Transform Functions: guide/transforms.md
     - Performance Tuning: guide/performance.md

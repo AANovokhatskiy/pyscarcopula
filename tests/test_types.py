@@ -27,11 +27,23 @@ class TestNumericalConfig:
         assert cfg.default_grid_range == 5.0
         assert cfg.default_pts_per_sigma == 4
         assert cfg.gas_score_eps == 1e-4
+        assert cfg.default_maxfun_gas == 1000
+        assert cfg.gas_gamma_bound == 20.0
+        assert cfg.gas_beta_bound == 0.999
 
     def test_override(self):
-        cfg = NumericalConfig(default_K=500, gas_score_eps=1e-6)
+        cfg = NumericalConfig(
+            default_K=500,
+            gas_score_eps=1e-6,
+            default_maxfun_gas=250,
+            gas_gamma_bound=12.0,
+            gas_beta_bound=0.95,
+        )
         assert cfg.default_K == 500
         assert cfg.gas_score_eps == 1e-6
+        assert cfg.default_maxfun_gas == 250
+        assert cfg.gas_gamma_bound == 12.0
+        assert cfg.gas_beta_bound == 0.95
         assert cfg.default_grid_range == 5.0  # unchanged
 
     def test_frozen(self):
@@ -116,19 +128,19 @@ class TestPredictiveState:
 
 class TestLatentProcessParams:
     def test_ou_params(self):
-        p = ou_params(theta=49.97, mu=2.42, nu=10.65)
+        p = ou_params(kappa=49.97, mu=2.42, nu=10.65)
         assert p.process_type == 'ou'
         assert p.n_params == 3
-        assert p.theta == pytest.approx(49.97)
+        assert p.kappa == pytest.approx(49.97)
         assert p.mu == pytest.approx(2.42)
         assert p.nu == pytest.approx(10.65)
 
     def test_gas_params(self):
-        p = gas_params(omega=0.07, alpha=0.33, beta=0.97)
+        p = gas_params(omega=0.07, gamma=0.33, beta=0.97)
         assert p.process_type == 'gas'
         assert p.n_params == 3
         assert p.omega == pytest.approx(0.07)
-        assert p.alpha == pytest.approx(0.33)
+        assert p.gamma == pytest.approx(0.33)
         assert p.beta == pytest.approx(0.97)
 
     def test_generic_4_params(self):
@@ -160,13 +172,13 @@ class TestLatentProcessParams:
     def test_to_dict(self):
         p = ou_params(1.0, 2.0, 3.0)
         d = p.to_dict()
-        assert d == {'theta': 1.0, 'mu': 2.0, 'nu': 3.0}
+        assert d == {'kappa': 1.0, 'mu': 2.0, 'nu': 3.0}
 
     def test_replace(self):
         p = ou_params(1.0, 2.0, 3.0)
         p2 = p.replace(mu=5.0)
         assert p2.mu == pytest.approx(5.0)
-        assert p2.theta == pytest.approx(1.0)
+        assert p2.kappa == pytest.approx(1.0)
         assert p.mu == pytest.approx(2.0)  # original unchanged (frozen)
 
     def test_values_array(self):
@@ -178,7 +190,7 @@ class TestLatentProcessParams:
     def test_bounds(self):
         p = ou_params(1.0, 2.0, 3.0)
         assert p.bounds_lower is not None
-        assert p.bounds_lower[0] == pytest.approx(0.001)  # theta > 0
+        assert p.bounds_lower[0] == pytest.approx(0.001)  # kappa > 0
         assert p.bounds_upper[1] == np.inf  # mu unbounded
 
     def test_mismatched_names_values(self):
@@ -198,7 +210,7 @@ class TestLatentProcessParams:
         p = ou_params(49.97, 2.42, 10.65)
         r = repr(p)
         assert 'ou' in r
-        assert 'theta=49.9700' in r
+        assert 'kappa=49.9700' in r
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -230,7 +242,7 @@ class TestFitResults:
             pts_per_sigma=4,
         )
         assert r.n_params == 3
-        assert r.params.theta == pytest.approx(49.97)
+        assert r.params.kappa == pytest.approx(49.97)
         assert r.K == 300
         assert r.pts_per_sigma == 4
         # Legacy access
@@ -266,7 +278,7 @@ class TestFitResults:
         )
         assert r.n_params == 3
         assert r.omega == pytest.approx(0.0696)
-        assert r.alpha_gas == pytest.approx(0.331)
+        assert r.gamma == pytest.approx(0.331)
         assert r.beta == pytest.approx(0.9677)
         assert r.scaling == 'unit'
 

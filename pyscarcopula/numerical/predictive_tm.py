@@ -7,15 +7,15 @@ import numpy as np
 from pyscarcopula.numerical.tm_grid import TMGrid
 
 
-def _normalize_prob(alpha, trap_w):
-    total = np.sum(alpha * trap_w)
+def _normalize_prob(phi, trap_w):
+    total = np.sum(phi * trap_w)
     if total > 0:
-        return (alpha * trap_w) / total
-    return np.full_like(alpha, 1.0 / len(alpha), dtype=np.float64)
+        return (phi * trap_w) / total
+    return np.full_like(phi, 1.0 / len(phi), dtype=np.float64)
 
 
-def tm_state_distribution(theta, mu, nu, u, copula, K=300, grid_range=5.0,
-                          grid_method='auto', adaptive=True, pts_per_sigma=2,
+def tm_state_distribution(kappa, mu, nu, u, copula, K=300, grid_range=5.0,
+                          grid_method='auto', adaptive=True, pts_per_sigma=4,
                           horizon='current'):
     """Distribution of x_T or x_{T+1} on the TM grid."""
     horizon = str(horizon).lower()
@@ -23,30 +23,30 @@ def tm_state_distribution(theta, mu, nu, u, copula, K=300, grid_range=5.0,
         raise ValueError("horizon must be 'current' or 'next'")
 
     n = len(u)
-    grid = TMGrid(theta, mu, nu, n, K, grid_range,
+    grid = TMGrid(kappa, mu, nu, n, K, grid_range,
                   grid_method, adaptive, pts_per_sigma)
     fi_grid = grid.copula_grid(u, copula)
 
-    alpha = grid.p0.copy()
+    phi = grid.p0.copy()
 
     for t in range(n):
-        alpha *= fi_grid[t]
+        phi *= fi_grid[t]
 
         if t < n - 1:
-            alpha = grid.predict_matvec(alpha * grid.trap_w)
+            phi = grid.predict_matvec(phi * grid.trap_w)
 
-        mx = np.max(np.abs(alpha))
+        mx = np.max(np.abs(phi))
         if mx > 0:
-            alpha /= mx
+            phi /= mx
 
     if horizon == 'next':
-        alpha = grid.predict_matvec(alpha * grid.trap_w)
-        mx = np.max(np.abs(alpha))
+        phi = grid.predict_matvec(phi * grid.trap_w)
+        mx = np.max(np.abs(phi))
         if mx > 0:
-            alpha /= mx
+            phi /= mx
 
     z_grid = grid.z + grid.mu
-    prob = _normalize_prob(alpha, grid.trap_w)
+    prob = _normalize_prob(phi, grid.trap_w)
     return z_grid, prob
 
 

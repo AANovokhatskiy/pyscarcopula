@@ -24,7 +24,7 @@ from pyscarcopula._utils import linear_least_squares
 # P-sampler (SCAR-P-OU) — no importance sampling
 # ══════════════════════════════════════════════════════════════════
 
-def p_sampler_loglik(theta, mu, nu, u, dwt, copula, stationary):
+def p_sampler_loglik(kappa, mu, nu, u, dwt, copula, stationary):
     """
     P-sampler log-likelihood (exact OU discretization).
 
@@ -33,12 +33,12 @@ def p_sampler_loglik(theta, mu, nu, u, dwt, copula, stationary):
     T, n_tr = dwt.shape
 
     if stationary:
-        x0 = ou_stationary_state(theta, mu, nu, n_tr)
+        x0 = ou_stationary_state(kappa, mu, nu, n_tr)
     else:
         x0 = ou_init_state(mu, n_tr)
 
     z = np.zeros(T)
-    xt = ou_sample_paths(theta, mu, nu, z, z, dwt, x0)
+    xt = ou_sample_paths(kappa, mu, nu, z, z, dwt, x0)
 
     if np.isnan(np.sum(xt)):
         return 1e10
@@ -57,7 +57,7 @@ def p_sampler_loglik(theta, mu, nu, u, dwt, copula, stationary):
 # M-sampler (SCAR-M-OU) — with EIS
 # ══════════════════════════════════════════════════════════════════
 
-def m_sampler_loglik(theta, mu, nu, u, dwt, a1t, a2t, copula, stationary):
+def m_sampler_loglik(kappa, mu, nu, u, dwt, a1t, a2t, copula, stationary):
     """
     M-sampler log-likelihood with EIS auxiliary params.
 
@@ -67,11 +67,11 @@ def m_sampler_loglik(theta, mu, nu, u, dwt, a1t, a2t, copula, stationary):
     dt = 1.0 / (T - 1)
 
     if stationary:
-        x0 = ou_stationary_state(theta, mu, nu, n_tr)
+        x0 = ou_stationary_state(kappa, mu, nu, n_tr)
     else:
         x0 = ou_init_state(mu, n_tr)
 
-    xt = ou_sample_paths(theta, mu, nu, a1t, a2t, dwt, x0)
+    xt = ou_sample_paths(kappa, mu, nu, a1t, a2t, dwt, x0)
 
     if np.isnan(np.sum(xt)):
         return 1e10
@@ -79,8 +79,8 @@ def m_sampler_loglik(theta, mu, nu, u, dwt, a1t, a2t, copula, stationary):
     # Normalizing factors
     norm_log = np.zeros((T, n_tr))
     for i in range(T - 1, 0, -1):
-        norm_log[i] = log_norm_ou(theta, mu, nu, a1t[i], a2t[i], dt, xt[i - 1])
-    norm_log[0] = log_norm_ou(theta, mu, nu, a1t[0], a2t[0], dt, x0)
+        norm_log[i] = log_norm_ou(kappa, mu, nu, a1t[i], a2t[i], dt, xt[i - 1])
+    norm_log[0] = log_norm_ou(kappa, mu, nu, a1t[0], a2t[0], dt, x0)
 
     if np.isnan(np.sum(norm_log)):
         return 1e10
@@ -112,7 +112,7 @@ def eis_find_auxiliary(alpha, u, M_iterations, dwt, copula, stationary):
 
     Parameters
     ----------
-    alpha : (3,) — [theta, mu, nu]
+    alpha : (3,) — [kappa, mu, nu]
     u : (T, 2) — pseudo-observations
     M_iterations : int — number of EIS iterations
     dwt : (T, n_tr) — Wiener increments
@@ -123,7 +123,7 @@ def eis_find_auxiliary(alpha, u, M_iterations, dwt, copula, stationary):
     -------
     a1t, a2t : (T,) arrays
     """
-    theta, mu, nu = alpha
+    kappa, mu, nu = alpha
     T = len(u)
     n_tr = dwt.shape[1]
     dt = 1.0 / (T - 1)
@@ -132,18 +132,18 @@ def eis_find_auxiliary(alpha, u, M_iterations, dwt, copula, stationary):
 
     # Initial variance Dx0 — must match ou_sample_paths
     if stationary:
-        Dx0 = D / theta
+        Dx0 = D / kappa
     else:
         Dx0 = 0.0
 
     # Precompute upper bounds on a2t for each time step.
     # In ou_sample_paths: p = 1 - 2*a2*sigma2 must be > 0.
-    # sigma2(t) = D/theta * (1-exp(-2*theta*t)) + Dx0*exp(-2*theta*t)
+    # sigma2(t) = D/kappa * (1-exp(-2*kappa*t)) + Dx0*exp(-2*kappa*t)
     a2_ub = np.zeros(T)
     for k in range(T):
         t = k * dt
-        sigma2 = D / theta * (1.0 - np.exp(-2.0 * theta * t)) \
-            + Dx0 * np.exp(-2.0 * theta * t)
+        sigma2 = D / kappa * (1.0 - np.exp(-2.0 * kappa * t)) \
+            + Dx0 * np.exp(-2.0 * kappa * t)
         if sigma2 > 1e-15:
             # Leave 10% safety margin so p >= 0.1
             a2_ub[k] = 0.9 / (2.0 * sigma2)
@@ -161,11 +161,11 @@ def eis_find_auxiliary(alpha, u, M_iterations, dwt, copula, stationary):
 
     for j in range(M_iterations):
         if stationary:
-            x0 = ou_stationary_state(theta, mu, nu, n_tr)
+            x0 = ou_stationary_state(kappa, mu, nu, n_tr)
         else:
             x0 = ou_init_state(mu, n_tr)
 
-        xt = ou_sample_paths(theta, mu, nu, a1t, a2t, dwt, x0)
+        xt = ou_sample_paths(kappa, mu, nu, a1t, a2t, dwt, x0)
 
         if np.isnan(np.sum(xt)):
             a1t = np.zeros(T)
@@ -182,7 +182,7 @@ def eis_find_auxiliary(alpha, u, M_iterations, dwt, copula, stationary):
             copula_log = copula.log_pdf(u1, u2, r_vals)
 
             norm_log_vals = log_norm_ou(
-                theta, mu, nu,
+                kappa, mu, nu,
                 a_data[i][1], a_data[i][2],
                 dt, xt[i - 1])
 
@@ -233,7 +233,7 @@ def eis_find_auxiliary(alpha, u, M_iterations, dwt, copula, stationary):
         # Track best EIS parameters by evaluating current loglik
         try:
             ll_val = -m_sampler_loglik(
-                theta, mu, nu, u, dwt, a1t, a2t, copula, stationary)
+                kappa, mu, nu, u, dwt, a1t, a2t, copula, stationary)
             if ll_val > best_loglik:
                 best_loglik = ll_val
                 best_a1t = a1t.copy()

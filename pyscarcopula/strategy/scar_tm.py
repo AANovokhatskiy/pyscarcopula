@@ -83,7 +83,7 @@ class SCARTMStrategy:
         ----------
         copula : CopulaProtocol
         u : (T, 2) pseudo-observations
-        alpha0 : (3,) initial [theta, mu, nu], or None for auto
+        alpha0 : (3,) initial [kappa, mu, nu], or None for auto
         tol : gradient tolerance for L-BFGS-B
         verbose : print progress
 
@@ -145,10 +145,10 @@ class SCARTMStrategy:
                 alpha = x_scaled * scale
                 if np.isnan(np.sum(alpha)):
                     return 1e10, np.zeros(3)
-                th, mu_v, nu_v = alpha
+                kappa_v, mu_v, nu_v = alpha
                 try:
                     val, grad = tm_loglik_with_grad(
-                        th, mu_v, nu_v, u, copula, K, grid_range,
+                        kappa_v, mu_v, nu_v, u, copula, K, grid_range,
                         grid_method, adaptive, pts_per_sigma)
                     return val, grad * scale  # chain rule
                 except Exception as e:
@@ -178,10 +178,10 @@ class SCARTMStrategy:
             def objective(alpha):
                 if np.isnan(np.sum(alpha)):
                     return 1e10
-                th, mu_v, nu_v = alpha
+                kappa_v, mu_v, nu_v = alpha
                 try:
                     return tm_loglik(
-                        th, mu_v, nu_v, u, copula, K, grid_range,
+                        kappa_v, mu_v, nu_v, u, copula, K, grid_range,
                         grid_method, adaptive, pts_per_sigma)
                 except Exception as e:
                     if verbose:
@@ -203,7 +203,7 @@ class SCARTMStrategy:
         if verbose:
             print(f"  => alpha={alpha}, logL={-result.fun:.4f}")
 
-        params = ou_params(theta=alpha[0], mu=alpha[1], nu=alpha[2])
+        params = ou_params(kappa=alpha[0], mu=alpha[1], nu=alpha[2])
 
         return LatentResult(
             log_likelihood=-result.fun,
@@ -223,7 +223,7 @@ class SCARTMStrategy:
         """Evaluate TM log-likelihood at fitted parameters."""
         p = result.params
         neg_ll = tm_loglik(
-            p.theta, p.mu, p.nu, u, copula,
+            p.kappa, p.mu, p.nu, u, copula,
             self.K, self.grid_range, self.grid_method,
             self.adaptive, self.pts_per_sigma)
         return -neg_ll
@@ -233,7 +233,7 @@ class SCARTMStrategy:
         """E[Psi(x_k) | u_{1:k-1}] via TM forward pass."""
         p = result.params
         return tm_forward_predictive_mean(
-            p.theta, p.mu, p.nu, u, copula,
+            p.kappa, p.mu, p.nu, u, copula,
             self.K, self.grid_range, self.grid_method,
             self.adaptive, self.pts_per_sigma)
 
@@ -247,23 +247,27 @@ class SCARTMStrategy:
         """Mixture Rosenblatt: e2 = E[h(u2, u1; Psi(x_k)) | u_{1:k-1}]."""
         p = result.params
         e = tm_forward_rosenblatt(
-            p.theta, p.mu, p.nu, u, copula,
+            p.kappa, p.mu, p.nu, u, copula,
             self.K, self.grid_range, self.grid_method,
             self.adaptive, self.pts_per_sigma)
         return e[:, 1]
 
     def mixture_h(self, copula, u: np.ndarray,
-                  result: LatentResult) -> np.ndarray:
+                  result: LatentResult, state_cache=None,
+                  current_cache_key=None, next_cache_key=None) -> np.ndarray:
         """Mixture h-function for vine pseudo-obs propagation."""
         p = result.params
         return tm_forward_mixture_h(
-            p.theta, p.mu, p.nu, u, copula,
+            p.kappa, p.mu, p.nu, u, copula,
             self.K, self.grid_range, self.grid_method,
-            self.adaptive, self.pts_per_sigma)
+            self.adaptive, self.pts_per_sigma,
+            state_cache=state_cache,
+            current_cache_key=current_cache_key,
+            next_cache_key=next_cache_key)
 
     def objective(self, copula, u: np.ndarray,
                   alpha: np.ndarray, **kwargs) -> float:
-        """Minus log-likelihood: TM integrated -logL(theta, mu, nu)."""
+        """Minus log-likelihood: TM integrated -logL(kappa, mu, nu)."""
         try:
             return tm_loglik(
                 alpha[0], alpha[1], alpha[2], u, copula,
@@ -285,16 +289,16 @@ class SCARTMStrategy:
             rng = np.random.default_rng()
 
         p = result.params
-        theta, mu, nu = p.theta, p.mu, p.nu
+        kappa, mu, nu = p.kappa, p.mu, p.nu
 
         # Same dt convention as ou_sample_paths_exact
         dt = 1.0 / (n - 1) if n > 1 else 1.0
-        rho_ou = np.exp(-theta * dt)
-        sigma_cond = np.sqrt(nu ** 2 / (2.0 * theta) * (1.0 - rho_ou ** 2))
+        rho_ou = np.exp(-kappa * dt)
+        sigma_cond = np.sqrt(nu ** 2 / (2.0 * kappa) * (1.0 - rho_ou ** 2))
 
         x = np.empty(n)
         # Start from stationary distribution
-        x[0] = rng.normal(mu, nu / np.sqrt(2.0 * theta))
+        x[0] = rng.normal(mu, nu / np.sqrt(2.0 * kappa))
         for t in range(1, n):
             x[t] = mu + rho_ou * (x[t - 1] - mu) + sigma_cond * rng.standard_normal()
 
@@ -333,7 +337,7 @@ class SCARTMStrategy:
                 kind='stationary_normal',
                 metadata={
                     'mu': p.mu,
-                    'sigma': np.sqrt(p.nu ** 2 / (2.0 * p.theta)),
+                    'sigma': np.sqrt(p.nu ** 2 / (2.0 * p.kappa)),
                 },
             )
 
@@ -346,7 +350,7 @@ class SCARTMStrategy:
         if cached is None:
             from pyscarcopula.numerical import predictive_tm
             cached = predictive_tm.tm_state_distribution(
-                p.theta, p.mu, p.nu, u, copula,
+                p.kappa, p.mu, p.nu, u, copula,
                 K=self.K,
                 grid_range=self.grid_range,
                 grid_method=self.grid_method,

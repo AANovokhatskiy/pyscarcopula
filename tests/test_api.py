@@ -48,7 +48,7 @@ class TestFitResultTypes:
         cop = cls(rotate=rot)
         result = fit(cop, random_u2, method='scar-tm-ou', K=50, tol=0.5)
         assert isinstance(result, LatentResult)
-        assert result.params.theta > 0
+        assert result.params.kappa > 0
         assert result.params.nu > 0
 
     def test_gas_returns_gas_result(self, random_u2):
@@ -292,10 +292,10 @@ class TestConditionalPredict:
         result = fit(cop, random_u2, method='scar-tm-ou', K=50, tol=0.5)
         p = result.params
         z_cur, prob_cur = tm_state_distribution(
-            p.theta, p.mu, p.nu, random_u2, cop, K=50, grid_range=5.0,
+            p.kappa, p.mu, p.nu, random_u2, cop, K=50, grid_range=5.0,
             horizon='current')
         z_next, prob_next = tm_state_distribution(
-            p.theta, p.mu, p.nu, random_u2, cop, K=50, grid_range=5.0,
+            p.kappa, p.mu, p.nu, random_u2, cop, K=50, grid_range=5.0,
             horizon='next')
         np.testing.assert_allclose(z_cur, z_next)
         assert prob_cur.shape == prob_next.shape
@@ -304,7 +304,7 @@ class TestConditionalPredict:
     def test_gas_predict_uses_final_observation_score(self, monkeypatch):
         cop = LinearScoreCopula()
         u = np.array([[0.2, 0.1], [0.3, 0.4]])
-        omega, alpha, beta = 0.1, 0.5, 0.2
+        omega, gamma, beta = 0.1, 0.5, 0.2
         result = GASResult(
             log_likelihood=0.0,
             method='GAS',
@@ -312,13 +312,13 @@ class TestConditionalPredict:
             success=True,
             nfev=1,
             message='ok',
-            params=gas_params(omega, alpha, beta),
+            params=gas_params(omega, gamma, beta),
             scaling='unit',
         )
 
-        f0 = omega / (1.0 - beta)
-        f1 = omega + beta * f0 + alpha * (u[0, 0] + 2.0 * u[0, 1])
-        expected_next = omega + beta * f1 + alpha * (u[1, 0] + 2.0 * u[1, 1])
+        g0 = omega / (1.0 - beta)
+        g1 = omega + beta * g0 + gamma * (u[0, 0] + 2.0 * u[0, 1])
+        expected_next = omega + beta * g1 + gamma * (u[1, 0] + 2.0 * u[1, 1])
 
         captured = {}
 
@@ -333,4 +333,4 @@ class TestConditionalPredict:
         GASStrategy().predict(cop, u, result, 4, horizon='next')
         np.testing.assert_allclose(captured['r'], expected_next)
         assert gas_predict_param(
-            omega, alpha, beta, u, cop, horizon='current') == pytest.approx(f1)
+            omega, gamma, beta, u, cop, horizon='current') == pytest.approx(g1)

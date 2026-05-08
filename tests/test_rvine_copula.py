@@ -272,14 +272,14 @@ def _mle_gaussian_pair(rho):
     )
 
 
-def _gas_gaussian_pair(r_last=0.0, alpha=1.0):
+def _gas_gaussian_pair(r_last=0.0, gamma=1.0):
     copula = BivariateGaussianCopula()
     result = GASResult(
         log_likelihood=0.0,
         method='GAS',
         copula_name=copula.name,
         success=True,
-        params=gas_params(0.0, alpha, 0.0),
+        params=gas_params(0.0, gamma, 0.0),
         scaling='unit',
         r_last=float(r_last),
     )
@@ -293,14 +293,14 @@ def _gas_gaussian_pair(r_last=0.0, alpha=1.0):
     )
 
 
-def _scar_tm_gaussian_pair(theta=1.0, mu=0.0, nu=4.0):
+def _scar_tm_gaussian_pair(kappa=1.0, mu=0.0, nu=4.0):
     copula = BivariateGaussianCopula()
     result = LatentResult(
         log_likelihood=0.0,
         method='SCAR-TM-OU',
         copula_name=copula.name,
         success=True,
-        params=ou_params(theta, mu, nu),
+        params=ou_params(kappa, mu, nu),
         K=41,
         grid_range=3.0,
         pts_per_sigma=2,
@@ -335,7 +335,7 @@ def _manual_suffix_dynamic_rvine():
     vine._edge_map = {(0, 0): 0, (0, 1): 1, (1, 0): 0}
     vine.pair_copulas = {
         (0, 0): _independent_pair(),
-        (0, 1): _gas_gaussian_pair(r_last=0.0, alpha=1.0),
+        (0, 1): _gas_gaussian_pair(r_last=0.0, gamma=1.0),
         (1, 0): _mle_gaussian_pair(0.85),
     }
     vine._last_u = None
@@ -382,8 +382,8 @@ def _manual_multi_edge_dynamic_rvine():
         key: _independent_pair()
         for key in edge_map
     }
-    vine.pair_copulas[(0, 2)] = _gas_gaussian_pair(r_last=0.0, alpha=0.7)
-    vine.pair_copulas[(0, 1)] = _gas_gaussian_pair(r_last=0.0, alpha=0.8)
+    vine.pair_copulas[(0, 2)] = _gas_gaussian_pair(r_last=0.0, gamma=0.7)
+    vine.pair_copulas[(0, 1)] = _gas_gaussian_pair(r_last=0.0, gamma=0.8)
     vine.pair_copulas[(1, 1)] = _scar_tm_gaussian_pair()
     vine.pair_copulas[(2, 0)] = _mle_gaussian_pair(0.75)
     rng = np.random.default_rng(401)
@@ -1261,7 +1261,7 @@ class TestSummary:
             if "param" in line and "logL" in line
         )
         assert "dyn_params" not in header
-        assert "theta" not in header
+        assert "kappa" not in header
         assert "mu" not in header
         assert "nu" not in header
 
@@ -1276,7 +1276,7 @@ class TestSummary:
                     success=True,
                     params=gas_params(0.1, 0.2, 0.3),
                 ),
-                ("omega=  0.100", "alpha=  0.200", "beta=  0.300"),
+                ("omega=  0.100", "gamma=  0.200", "beta=  0.300"),
             ),
             (
                 LatentResult(
@@ -1286,7 +1286,7 @@ class TestSummary:
                     success=True,
                     params=ou_params(1.1, 1.2, 1.3),
                 ),
-                ("theta=  1.100", "mu=  1.200", "nu=  1.300"),
+                ("kappa=  1.100", "mu=  1.200", "nu=  1.300"),
             ),
         ]:
             v = RVineCopula(candidates=[BivariateGaussianCopula]).fit(u)
@@ -1337,7 +1337,7 @@ class TestSummary:
         )
 
         s = v.summary(as_string=True)
-        assert "theta= 88.000, mu=  0.000, nu=  8.200" in s
+        assert "kappa= 88.000, mu=  0.000, nu=  8.200" in s
         assert "e-05" not in s
 
         lines = s.splitlines()
@@ -1700,7 +1700,7 @@ class TestPredict:
         result = edge.fit_result
         p = result.params
         z_grid, prior_prob = tm_state_distribution(
-            p.theta,
+            p.kappa,
             p.mu,
             p.nu,
             u_train_pair,
@@ -2045,9 +2045,9 @@ class TestPredict:
         )
         calls = []
 
-        def fake_tm_state_distribution(theta, mu, nu, u, copula_arg,
+        def fake_tm_state_distribution(kappa, mu, nu, u, copula_arg,
                                        horizon='next', **kwargs):
-            calls.append((theta, mu, nu, u.copy(), copula_arg, horizon, kwargs))
+            calls.append((kappa, mu, nu, u.copy(), copula_arg, horizon, kwargs))
             return np.array([-0.5, 0.5]), np.array([0.0, 1.0])
 
         monkeypatch.setattr(

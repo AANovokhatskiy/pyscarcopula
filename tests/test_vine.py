@@ -76,9 +76,9 @@ class TestVineEdge:
         u_pair = np.array([[0.2, 0.3], [0.4, 0.6]])
         calls = []
 
-        def fake_tm_forward_mixture_h(theta, mu, nu, u_arg, cop_arg,
+        def fake_tm_forward_mixture_h(kappa, mu, nu, u_arg, cop_arg,
                                       K, grid_range, **kwargs):
-            calls.append((theta, mu, nu, u_arg.copy(), cop_arg, K, grid_range))
+            calls.append((kappa, mu, nu, u_arg.copy(), cop_arg, K, grid_range))
             return np.array([0.11, 0.89])
 
         monkeypatch.setattr(

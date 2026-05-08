@@ -66,22 +66,23 @@ class VineEdge:
 
 
 def _get_alpha(fit_result):
-    """Extract (theta, mu, nu) from fit_result."""
+    """Extract (kappa, mu, nu) from fit_result."""
     return fit_result.params.values
 
 
 def _get_gas_params(fit_result):
-    """Extract (omega, alpha, beta) from fit_result."""
+    """Extract (omega, gamma, beta) from fit_result."""
     return fit_result.params.values
 
 
-def _edge_h(edge, u2, u1, u_pair, K=300, grid_range=5.0,
-            state_cache=None, current_cache_key=None, next_cache_key=None):
+def _edge_h(edge, u2, u1, u_pair, config=None,
+            state_cache=None, current_cache_key=None, next_cache_key=None,
+            **strategy_kwargs):
     """
     Compute h(u2 | u1; r) for a vine edge using the correct method.
 
     MLE:  h(u2, u1; theta_mle) — constant parameter.
-    GAS:  h(u2, u1; Psi(f_t)) — along deterministic GAS path.
+    GAS:  h(u2, u1; Psi(g_t)) — along deterministic GAS path.
     SCAR: E[h(u2, u1; Psi(x)) | data] — mixture over predictive
           distribution via transfer matrix forward pass.
     Independent: h(u2 | u1) = u2 — trivial pass-through.
@@ -98,31 +99,39 @@ def _edge_h(edge, u2, u1, u_pair, K=300, grid_range=5.0,
 
     elif method == 'GAS':
         from pyscarcopula.numerical.gas_filter import gas_mixture_h
-        alpha = _get_gas_params(edge.fit_result)
+        params = _get_gas_params(edge.fit_result)
         scaling = getattr(edge.fit_result, 'scaling', 'unit')
-        return gas_mixture_h(alpha[0], alpha[1], alpha[2],
-                              u_pair, edge.copula, scaling)
+        return gas_mixture_h(params[0], params[1], params[2],
+                             u_pair, edge.copula, scaling)
 
     else:
-        # SCAR-TM-OU: mixture h via transfer matrix
+        # Latent vine propagation uses the deterministic TM mixture.
+        # Prefer fitted metadata; allow legacy keyword overrides.
         from pyscarcopula.numerical.tm_functions import (
             tm_forward_mixture_h as _tm_forward_mixture_h,
         )
         alpha = _get_alpha(edge.fit_result)
-        theta, mu, nu = alpha
-        return _tm_forward_mixture_h(theta, mu, nu, u_pair,
-                                      edge.copula, K, grid_range,
-                                      state_cache=state_cache,
-                                      current_cache_key=current_cache_key,
-                                      next_cache_key=next_cache_key)
+        kappa, mu, nu = alpha
+        tm_kwargs = {}
+        for name in ('K', 'grid_range', 'pts_per_sigma'):
+            value = strategy_kwargs.get(
+                name, getattr(edge.fit_result, name, None))
+            if value is not None:
+                tm_kwargs[name] = value
+        return _tm_forward_mixture_h(
+            kappa, mu, nu, u_pair, edge.copula,
+            state_cache=state_cache,
+            current_cache_key=current_cache_key,
+            next_cache_key=next_cache_key,
+            **tm_kwargs)
 
 
-def _edge_log_likelihood(edge, u_pair, K=300, grid_range=5.0):
+def _edge_log_likelihood(edge, u_pair, config=None, **strategy_kwargs):
     """
     Compute log-likelihood for one edge using the correct method.
 
     MLE:  sum log c(u1, u2; theta_mle)
-    GAS:  sum log c(u1, u2; Psi(f_t))  (score-driven filter)
+    GAS:  sum log c(u1, u2; Psi(g_t))  (score-driven filter)
     SCAR: log integral (transfer matrix likelihood)
     """
     from pyscarcopula.copula.independent import IndependentCopula
@@ -140,13 +149,19 @@ def _edge_log_likelihood(edge, u_pair, K=300, grid_range=5.0):
 
     elif method == 'gas':
         from pyscarcopula.numerical.gas_filter import gas_negloglik
-        alpha = _get_gas_params(edge.fit_result)
+        params = _get_gas_params(edge.fit_result)
         scaling = getattr(edge.fit_result, 'scaling', 'unit')
-        return -gas_negloglik(alpha[0], alpha[1], alpha[2],
+        return -gas_negloglik(params[0], params[1], params[2],
                               u_pair, cop, scaling)
 
     else:
         from pyscarcopula.numerical.tm_functions import tm_loglik
         alpha = _get_alpha(edge.fit_result)
-        theta, mu, nu = alpha
-        return -tm_loglik(theta, mu, nu, u_pair, cop, K, grid_range)
+        kappa, mu, nu = alpha
+        tm_kwargs = {}
+        for name in ('K', 'grid_range', 'pts_per_sigma'):
+            value = strategy_kwargs.get(
+                name, getattr(edge.fit_result, name, None))
+            if value is not None:
+                tm_kwargs[name] = value
+        return -tm_loglik(kappa, mu, nu, u_pair, cop, **tm_kwargs)

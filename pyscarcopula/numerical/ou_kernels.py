@@ -25,23 +25,23 @@ def ou_init_state(mu, n_tr):
 
 
 @njit(cache=True)
-def ou_stationary_state(theta, mu, nu, n_tr):
-    """Sample initial state from stationary distribution N(mu, nu^2/(2*theta))."""
-    sigma2 = nu ** 2 / (2.0 * theta)
+def ou_stationary_state(kappa, mu, nu, n_tr):
+    """Sample initial state from stationary distribution N(mu, nu^2/(2*kappa))."""
+    sigma2 = nu ** 2 / (2.0 * kappa)
     return np.random.normal(mu, np.sqrt(sigma2), n_tr)
 
 
 @njit(cache=True)
-def ou_sample_paths_exact(theta, mu, nu, dwt, x0):
+def ou_sample_paths_exact(kappa, mu, nu, dwt, x0):
     """
     Exact OU discretization (for p-sampler, no EIS).
 
     x_{i+1} = mu + rho*(x_i - mu) + sigma_c * eps_i
-    where rho = exp(-theta*dt), sigma_c^2 = nu^2/(2*theta) * (1 - rho^2).
+    where rho = exp(-kappa*dt), sigma_c^2 = nu^2/(2*kappa) * (1 - rho^2).
 
     Parameters
     ----------
-    theta, mu, nu : float
+    kappa, mu, nu : float
         OU parameters.
     dwt : (T, n_tr)
         Wiener increments ~ N(0, dt).
@@ -54,8 +54,8 @@ def ou_sample_paths_exact(theta, mu, nu, dwt, x0):
     """
     T, n_tr = dwt.shape
     dt = 1.0 / (T - 1)
-    rho = np.exp(-theta * dt)
-    sigma2_cond = nu ** 2 / (2.0 * theta) * (1.0 - rho ** 2)
+    rho = np.exp(-kappa * dt)
+    sigma2_cond = nu ** 2 / (2.0 * kappa) * (1.0 - rho ** 2)
     sigma_cond = np.sqrt(sigma2_cond)
     scale = sigma_cond / np.sqrt(dt)
 
@@ -67,7 +67,7 @@ def ou_sample_paths_exact(theta, mu, nu, dwt, x0):
 
 
 @njit(cache=True)
-def ou_sample_paths(theta, mu, nu, a1t, a2t, dwt, x0):
+def ou_sample_paths(kappa, mu, nu, a1t, a2t, dwt, x0):
     """
     Generate OU trajectories modified by EIS auxiliary params a1t, a2t.
 
@@ -76,7 +76,7 @@ def ou_sample_paths(theta, mu, nu, a1t, a2t, dwt, x0):
 
     Parameters
     ----------
-    theta, mu, nu : float
+    kappa, mu, nu : float
         OU parameters.
     a1t, a2t : (T,)
         EIS auxiliary parameters (0 for p-sampler).
@@ -104,33 +104,33 @@ def ou_sample_paths(theta, mu, nu, a1t, a2t, dwt, x0):
         t = i * dt
         a1, a2 = a1t[i], a2t[i]
 
-        sigma2 = D / theta * (1.0 - np.exp(-2.0 * theta * t)) + Dx0 * np.exp(-2.0 * theta * t)
+        sigma2 = D / kappa * (1.0 - np.exp(-2.0 * kappa * t)) + Dx0 * np.exp(-2.0 * kappa * t)
         p = 1.0 - 2.0 * a2 * sigma2
 
         if i == 1:
             pm1 = 1.0
         else:
             tm1 = t - dt
-            sigma2m1 = D / theta * (1.0 - np.exp(-2.0 * theta * tm1)) + Dx0 * np.exp(-2.0 * theta * tm1)
+            sigma2m1 = D / kappa * (1.0 - np.exp(-2.0 * kappa * tm1)) + Dx0 * np.exp(-2.0 * kappa * tm1)
             pm1 = 1.0 - 2.0 * a2t[i - 1] * sigma2m1
 
-        xs = (Mx0 - mu) * np.exp(-theta * t) + mu
+        xs = (Mx0 - mu) * np.exp(-kappa * t) + mu
         xsw = (xs + a1 * sigma2) / p
-        st = np.exp(-theta * t) / np.sqrt(p)
+        st = np.exp(-kappa * t) / np.sqrt(p)
         det_part = xsw + st * x0 - st * (Mx0 + a1t[0] * Dx0) / np.sqrt(1.0 - 2.0 * a2t[0] * Dx0)
 
-        Ito_sum = (Ito_sum * np.sqrt(pm1 / p) + nu / np.sqrt(p) * dwt[i - 1]) * np.exp(-theta * dt)
+        Ito_sum = (Ito_sum * np.sqrt(pm1 / p) + nu / np.sqrt(p) * dwt[i - 1]) * np.exp(-kappa * dt)
         xt[i] = det_part + Ito_sum
 
     return xt
 
 
 @njit(cache=True)
-def log_norm_ou(theta, mu, nu, a1, a2, dt, x0):
+def log_norm_ou(kappa, mu, nu, a1, a2, dt, x0):
     """Log normalizing factor g2 for EIS auxiliary distribution."""
     D = nu ** 2 / 2.0
-    sigma2 = D / theta * (1.0 - np.exp(-2.0 * theta * dt))
-    xs = (x0 - mu) * np.exp(-theta * dt) + mu
+    sigma2 = D / kappa * (1.0 - np.exp(-2.0 * kappa * dt))
+    xs = (x0 - mu) * np.exp(-kappa * dt) + mu
     res = (a1 ** 2 * sigma2 + 2.0 * a1 * xs + 2.0 * a2 * xs ** 2) / \
           (2.0 - 4.0 * a2 * sigma2) - 0.5 * np.log(1.0 - 2.0 * a2 * sigma2)
     return res

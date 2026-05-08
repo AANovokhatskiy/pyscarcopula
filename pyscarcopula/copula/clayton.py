@@ -275,7 +275,7 @@ def _clayton_pdf_and_grad_batch(u_all, r_grid, dpsi, rotation):
 
 class ClaytonCopula(BivariateCopula):
 
-    def __init__(self, rotate: int = 0, transform_type: str = 'xtanh'):
+    def __init__(self, rotate: int = 0, transform_type: str = 'softplus'):
         super().__init__(rotate)
         self._name = "Clayton copula"
         if transform_type not in ('xtanh', 'softplus'):

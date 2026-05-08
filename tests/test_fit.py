@@ -49,7 +49,7 @@ class TestSCARConvergence:
         result = fit(cop, u, method='scar-tm-ou', K=150, tol=1e-2)
 
         assert isinstance(result, LatentResult)
-        assert result.params.theta > 0
+        assert result.params.kappa > 0
         assert result.params.nu > 0
         assert np.isfinite(result.params.mu)
         assert result.log_likelihood > 0

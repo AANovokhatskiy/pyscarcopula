@@ -6,12 +6,13 @@ The transform function `Psi(x)` maps the latent OU process `x(t)` to the
 copula parameter domain. For example, Gumbel requires `theta >= 1`, so
 `Psi: R -> [1, inf)`.
 
-pyscarcopula provides two transforms:
+pyscarcopula provides two transforms. The default for supported copulas is
+`softplus`.
 
 | Name | Formula | Properties |
 |------|---------|------------|
+| `softplus` | `log(1 + exp(x)) + offset` | Default; asymmetric, floor at `offset` |
 | `xtanh` | `x * tanh(x) + offset` | Symmetric, linear growth at large `|x|` |
-| `softplus` | `log(1 + exp(x)) + offset` | Asymmetric, floor at `offset` |
 
 ## Choosing a transform
 
@@ -19,10 +20,10 @@ pyscarcopula provides two transforms:
 from pyscarcopula import GumbelCopula
 from pyscarcopula.api import fit
 
-# Default
+# Default: softplus
 copula = GumbelCopula(rotate=180)
 
-# Softplus (often better on financial data)
+# Explicit softplus
 copula = GumbelCopula(rotate=180, transform_type='softplus')
 result = fit(copula, u, method='scar-tm-ou')
 ```
