@@ -43,6 +43,7 @@ class NumericalConfig:
     default_tol_mle: float = 1e-4
     default_tol_scar: float = 1e-3
     default_tol_gas: float = 1e-3
+    default_ftol_gas: float = 1e-12
     default_maxfun: int = 100
     default_maxfun_gas: int = 1000
 

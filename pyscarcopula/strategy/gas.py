@@ -41,6 +41,7 @@ class GASStrategy:
     def fit(self, copula, u: np.ndarray,
             gamma0: np.ndarray | None = None,
             tol: float | None = None,
+            ftol: float | None = None,
             maxfun: int | None = None,
             score_eps: float | None = None,
             gamma_bound: float | None = None,
@@ -63,6 +64,8 @@ class GASStrategy:
         GASResult
         """
         tol = tol or self.config.default_tol_gas
+        ftol = float(ftol if ftol is not None
+                     else self.config.default_ftol_gas)
         maxfun = int(maxfun if maxfun is not None
                      else self.config.default_maxfun_gas)
         score_eps = float(score_eps if score_eps is not None
@@ -73,6 +76,8 @@ class GASStrategy:
                            else self.config.gas_beta_bound)
         if maxfun <= 0:
             raise ValueError("maxfun must be positive")
+        if ftol <= 0:
+            raise ValueError("ftol must be positive")
         if gamma_bound <= 0:
             raise ValueError("gamma_bound must be positive")
         if not (0 < beta_bound < 1):
@@ -95,7 +100,8 @@ class GASStrategy:
         if verbose:
             print(
                 f"GAS fit: gamma0={gamma0}, scaling={self.scaling}, "
-                f"score_eps={score_eps}, gamma_bound={gamma_bound}, "
+                f"score_eps={score_eps}, ftol={ftol}, "
+                f"gamma_bound={gamma_bound}, "
                 f"beta_bound={beta_bound}"
             )
 
@@ -112,7 +118,7 @@ class GASStrategy:
             gamma0,
             method='L-BFGS-B',
             bounds=bounds,
-            options={'gtol': tol, 'eps': 1e-5,
+            options={'gtol': tol, 'ftol': ftol, 'eps': 1e-5,
                      'maxfun': maxfun, 'maxiter': maxfun},
         )
 

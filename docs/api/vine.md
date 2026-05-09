@@ -1,71 +1,43 @@
 # Vine API
 
-Both `CVineCopula.predict(...)` and `RVineCopula.predict(...)` support:
+This page is the API reference entry point for vine classes and helper types.
+Usage examples and conceptual details live in the user guide:
 
-- `given={var_index: u_value}` for conditional generation;
+- [Vine Copulas](../guide/vine.md)
+- [Prediction Semantics](../guide/prediction-semantics.md)
+- [R-vine Conditioning](../guide/rvine-conditioning.md)
+- [Performance Tuning](../guide/performance.md)
+
+## Public Options
+
+`CVineCopula.predict(...)` and `RVineCopula.predict(...)` both support:
+
+- `given={var_index: u_value}` for conditional generation in
+  pseudo-observation space;
 - `horizon='current'|'next'` for dynamic edge prediction;
-- `predict_config=PredictConfig(...)` as an explicit options object;
+- `predictive_r_mode='grid'|'histogram'|None` for SCAR-TM predictive
+  parameter sampling;
 - `rng=np.random.default_rng(seed)` for reproducible Monte Carlo output.
 
-`RVineCopula.predict(...)` also supports:
+`RVineCopula.predict(...)` additionally supports:
 
+- `predict_config=PredictConfig(...)`;
 - `dynamic_conditioning='ignore'|'given_only'`;
-- `mcmc_steps=<non-negative int>` and `mcmc_burnin=<non-negative int>` for
-  arbitrary `dag_mcmc` conditioning;
+- `mcmc_steps=<non-negative int>` and `mcmc_burnin=<non-negative int>` for the
+  arbitrary DAG + MCMC conditioning fallback;
 - `return_diagnostics=True`.
 
-`RVineCopula.fit(...)` supports:
+`RVineCopula.fit(...)` additionally supports fit-time conditional-structure
+targeting:
 
-- `given_vars=[...]` to target a known conditioning set at fit time;
-- `conditional_strict=True|False` to reject or keep fitted structures that are
-  not suffix-compatible for `given_vars`;
-- `conditional_mode='suffix'` for the exact fit-time support contract;
-- `structure_search='beam'|'multi-start'` to control fit-time structure search;
-- `beam_width=<positive int>` to control beam-search width for `given_vars`.
+- `given_vars=[...]`;
+- `conditional_strict=True|False`;
+- `conditional_mode='suffix'`;
+- `structure_search='beam'|'multi-start'`;
+- `beam_width=<positive int>`.
 
-## Prediction Semantics
-
-`predict` is a forecasting API. It samples from the fitted copula conditional
-on the training data. `given` additionally fixes selected components of the
-next pseudo-observation. `dynamic_conditioning` optionally lets those fixed
-components update supported dynamic edge states before the remaining
-components are sampled.
-
-See [Prediction Semantics](../guide/prediction-semantics.md) for the
-mathematical contract.
-
-## R-vine Conditional Paths
-
-`RVineCopula.predict(..., given=...)` uses the suffix exact path when the fixed
-variables can be placed at the end of the R-vine variable order. This order is
-read from the anti-diagonal of the natural-order matrix. The fixed variables
-must already be last in the fitted matrix, or the same fitted tree structure
-must be rebuildable into an equivalent natural-order matrix where they are
-last.
-
-If the `given` set is not suffix-compatible, `predict` uses the arbitrary
-runtime DAG + MCMC fallback. The DAG builds an h/inverse-h execution plan from
-available nodes; MCMC then targets the full fitted R-vine density with fixed
-`given` values.
-
-`mcmc_steps` and `mcmc_burnin` tune only this fallback. Diagnostics include
-acceptance-rate summaries and `low_acceptance_warning`.
-
-With `return_diagnostics=True`, `predict` returns `(samples, diagnostics)`.
-The `diagnostics["conditional_method"]` value is one of:
-
-- `unconditional`;
-- `suffix`;
-- `dag_mcmc`.
-
-When the model was fitted with `given_vars=...`, that set becomes the
-advertised exact-support target. With `conditional_strict=True`, fit rejects
-unsupported structures. With `conditional_strict=False`, fit may keep the
-structure and prediction can still use the DAG + MCMC fallback.
-
-Fit-time diagnostics are available through `vine.fit_diagnostics`. The
-selection block includes the chosen candidate, all scored candidates, and for
-beam search the selected per-tree `mode_path`.
+For exact semantics of these options, see the guide pages linked above. The
+API signatures below are generated from the source docstrings.
 
 ## CVineCopula
 

@@ -27,6 +27,7 @@ class TestNumericalConfig:
         assert cfg.default_grid_range == 5.0
         assert cfg.default_pts_per_sigma == 4
         assert cfg.gas_score_eps == 1e-4
+        assert cfg.default_ftol_gas == 1e-12
         assert cfg.default_maxfun_gas == 1000
         assert cfg.gas_gamma_bound == 20.0
         assert cfg.gas_beta_bound == 0.999
@@ -35,12 +36,14 @@ class TestNumericalConfig:
         cfg = NumericalConfig(
             default_K=500,
             gas_score_eps=1e-6,
+            default_ftol_gas=1e-10,
             default_maxfun_gas=250,
             gas_gamma_bound=12.0,
             gas_beta_bound=0.95,
         )
         assert cfg.default_K == 500
         assert cfg.gas_score_eps == 1e-6
+        assert cfg.default_ftol_gas == 1e-10
         assert cfg.default_maxfun_gas == 250
         assert cfg.gas_gamma_bound == 12.0
         assert cfg.gas_beta_bound == 0.95

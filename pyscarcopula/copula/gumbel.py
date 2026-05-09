@@ -1,7 +1,16 @@
 import numpy as np
 from numba import njit
 
-from pyscarcopula.copula.base import BivariateCopula, _broadcast
+from pyscarcopula.copula.base import (
+    BivariateCopula,
+    _broadcast,
+    _inv_xtanh_transform,
+    _softplus_dtransform,
+    _softplus_inv_transform,
+    _softplus_transform,
+    _xtanh_dtransform,
+    _xtanh_transform,
+)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -160,64 +169,6 @@ def _generate_levy_stable_from_uniforms(alpha, beta, loc, scale, V, u):
     return Y
 
 @njit(cache=True)
-def _gumbel_transform(x):
-    return x * np.tanh(x) + 1.0001
-
-
-@njit(cache=True)
-def _gumbel_dtransform(x):
-    n = len(x)
-    out = np.empty(n)
-    for i in range(n):
-        th = np.tanh(x[i])
-        out[i] = th + x[i] * (1.0 - th * th)
-    return out
-
-
-@njit(cache=True)
-def _gumbel_softplus_transform(x):
-    n = len(x)
-    out = np.empty(n)
-    for i in range(n):
-        if x[i] > 20.0:
-            out[i] = x[i] + 1.0001
-        elif x[i] < -20.0:
-            out[i] = 1.0001
-        else:
-            out[i] = np.log1p(np.exp(x[i])) + 1.0001
-    return out
-
-
-@njit(cache=True)
-def _gumbel_softplus_dtransform(x):
-    n = len(x)
-    out = np.empty(n)
-    for i in range(n):
-        if x[i] > 20.0:
-            out[i] = 1.0
-        elif x[i] < -20.0:
-            out[i] = np.exp(x[i])
-        else:
-            out[i] = 1.0 / (1.0 + np.exp(-x[i]))
-    return out
-
-
-@njit(cache=True)
-def _gumbel_softplus_inv_transform(r):
-    n = len(r)
-    out = np.empty(n)
-    for i in range(n):
-        y = r[i] - 1.0001
-        if y > 20.0:
-            out[i] = y
-        elif y < 1e-10:
-            out[i] = -20.0
-        else:
-            out[i] = np.log(np.exp(y) - 1.0)
-    return out
-
-
-@njit(cache=True)
 def _gumbel_dlogc_dr(u1, u2, r):
     """Analytical d(log c)/dr for Gumbel copula."""
     n = len(u1)
@@ -316,11 +267,6 @@ def _gumbel_pdf_and_grad_batch(u_all, r_grid, dpsi, rotation):
     return fi, dfi
 
 
-@njit(cache=True)
-def _gumbel_inv_transform(r):
-    return r - 1.0
-
-
 # ══════════════════════════════════════════════════════════════════
 # Class
 # ══════════════════════════════════════════════════════════════════
@@ -346,20 +292,26 @@ class GumbelCopula(BivariateCopula):
     def transform(self, x):
         x = np.atleast_1d(np.asarray(x, dtype=np.float64))
         if self._transform_type == 'softplus':
-            return _gumbel_softplus_transform(x)
-        return _gumbel_transform(x)
+            return _softplus_transform(x, 1.0001)
+        if self._transform_type == 'xtanh':
+            return _xtanh_transform(x, 1.0001)
+        raise ValueError(f"Unsupported transform_type: {self._transform_type}")
 
     def dtransform(self, x):
         x = np.atleast_1d(np.asarray(x, dtype=np.float64))
         if self._transform_type == 'softplus':
-            return _gumbel_softplus_dtransform(x)
-        return _gumbel_dtransform(x)
+            return _softplus_dtransform(x)
+        if self._transform_type == 'xtanh':
+            return _xtanh_dtransform(x)
+        raise ValueError(f"Unsupported transform_type: {self._transform_type}")
 
     def inv_transform(self, r):
         r = np.atleast_1d(np.asarray(r, dtype=np.float64))
         if self._transform_type == 'softplus':
-            return _gumbel_softplus_inv_transform(r)
-        return _gumbel_inv_transform(r)
+            return _softplus_inv_transform(r, 1.0001)
+        if self._transform_type == 'xtanh':
+            return _inv_xtanh_transform(r, 1.0001)
+        raise ValueError(f"Unsupported transform_type: {self._transform_type}")
 
     def pdf_unrotated(self, u1, u2, r):
         u1a, u2a, ra = _broadcast(u1, u2, r)

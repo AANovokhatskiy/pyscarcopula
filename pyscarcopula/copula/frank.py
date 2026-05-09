@@ -1,7 +1,16 @@
 import numpy as np
 from numba import njit
 
-from pyscarcopula.copula.base import BivariateCopula, _broadcast
+from pyscarcopula.copula.base import (
+    BivariateCopula,
+    _broadcast,
+    _inv_xtanh_transform,
+    _softplus_dtransform,
+    _softplus_inv_transform,
+    _softplus_transform,
+    _xtanh_dtransform,
+    _xtanh_transform,
+)
 
 
 @njit(cache=True)
@@ -257,65 +266,6 @@ def _frank_bivariate_sample_from_uniforms(n, r, u0_data, v_data):
 
 
 @njit(cache=True)
-def _frank_transform(x):
-    return x * np.tanh(x) + 0.0001
-
-
-@njit(cache=True)
-def _frank_dtransform(x):
-    n = len(x)
-    out = np.empty(n)
-    for i in range(n):
-        th = np.tanh(x[i])
-        out[i] = th + x[i] * (1.0 - th * th)
-    return out
-
-
-
-@njit(cache=True)
-def _frank_softplus_transform(x):
-    n = len(x)
-    out = np.empty(n)
-    for i in range(n):
-        if x[i] > 20.0:
-            out[i] = x[i] + 0.0001
-        elif x[i] < -20.0:
-            out[i] = 0.0001
-        else:
-            out[i] = np.log1p(np.exp(x[i])) + 0.0001
-    return out
-
-
-@njit(cache=True)
-def _frank_softplus_dtransform(x):
-    n = len(x)
-    out = np.empty(n)
-    for i in range(n):
-        if x[i] > 20.0:
-            out[i] = 1.0
-        elif x[i] < -20.0:
-            out[i] = np.exp(x[i])
-        else:
-            out[i] = 1.0 / (1.0 + np.exp(-x[i]))
-    return out
-
-
-@njit(cache=True)
-def _frank_softplus_inv_transform(r):
-    n = len(r)
-    out = np.empty(n)
-    for i in range(n):
-        y = r[i] - 0.0001
-        if y > 20.0:
-            out[i] = y
-        elif y < 1e-10:
-            out[i] = -20.0
-        else:
-            out[i] = np.log(np.exp(y) - 1.0)
-    return out
-
-
-@njit(cache=True)
 def _frank_dlogc_dr(u1, u2, r):
     """Analytical d(log c)/dr for Frank copula."""
     n = len(u1)
@@ -417,18 +367,26 @@ class FrankCopula(BivariateCopula):
     def transform(self, x):
         x = np.atleast_1d(np.asarray(x, dtype=np.float64))
         if self._transform_type == 'softplus':
-            return _frank_softplus_transform(x)
-        return _frank_transform(x)
+            return _softplus_transform(x, 0.0001)
+        if self._transform_type == 'xtanh':
+            return _xtanh_transform(x, 0.0001)
+        raise ValueError(f"Unsupported transform_type: {self._transform_type}")
 
     def dtransform(self, x):
         x = np.atleast_1d(np.asarray(x, dtype=np.float64))
         if self._transform_type == 'softplus':
-            return _frank_softplus_dtransform(x)
-        return _frank_dtransform(x)
+            return _softplus_dtransform(x)
+        if self._transform_type == 'xtanh':
+            return _xtanh_dtransform(x)
+        raise ValueError(f"Unsupported transform_type: {self._transform_type}")
 
-    @staticmethod
-    def inv_transform(r):
-        return r
+    def inv_transform(self, r):
+        r = np.atleast_1d(np.asarray(r, dtype=np.float64))
+        if self._transform_type == 'softplus':
+            return _softplus_inv_transform(r, 0.0001)
+        if self._transform_type == 'xtanh':
+            return _inv_xtanh_transform(r, 0.0001)
+        raise ValueError(f"Unsupported transform_type: {self._transform_type}")
 
     def pdf_unrotated(self, u1, u2, r):
         return _frank_pdf(*_broadcast(u1, u2, r))
