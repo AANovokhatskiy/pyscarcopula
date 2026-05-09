@@ -68,7 +68,6 @@ nav:
   - API Reference:
     - Copulas: api/copulas.md
     - Vine: api/vine.md
-    - Equicorrelation: api/equicorr.md
     - Experimental Models: api/experimental_models.md
     - Diagnostics: api/diagnostics.md
     - Contrib: api/contrib.md

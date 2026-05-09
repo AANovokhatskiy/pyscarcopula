@@ -14,6 +14,7 @@ Optional overrides:
 """
 
 import numpy as np
+from numba import njit
 
 from pyscarcopula._utils import pobs
 
@@ -32,6 +33,83 @@ def _broadcast(u1, u2, r):
     if len(ra) == 1 and n > 1:
         ra = np.full(n, ra[0])
     return u1a, u2a, ra
+
+
+@njit(cache=True)
+def _xtanh_transform(x, offset):
+    n = len(x)
+    out = np.empty(n)
+    for i in range(n):
+        out[i] = x[i] * np.tanh(x[i]) + offset
+    return out
+
+
+@njit(cache=True)
+def _xtanh_dtransform(x):
+    n = len(x)
+    out = np.empty(n)
+    for i in range(n):
+        th = np.tanh(x[i])
+        out[i] = th + x[i] * (1.0 - th * th)
+    return out
+
+
+@njit(cache=True)
+def _inv_xtanh_transform_numba(r, offset):
+    out = np.empty_like(r)
+    for i in range(len(r)):
+        out[i] = abs(r[i]) + offset
+    return out
+
+
+def _inv_xtanh_transform(r, offset):
+    ra = np.atleast_1d(np.asarray(r, dtype=np.float64)).ravel()
+    return _inv_xtanh_transform_numba(ra, offset).copy()
+
+
+@njit(cache=True)
+def _softplus_transform(x, offset):
+    n = len(x)
+    out = np.empty(n)
+    for i in range(n):
+        if x[i] > 20.0:
+            out[i] = x[i] + offset
+        elif x[i] < -20.0:
+            out[i] = np.exp(x[i]) + offset
+        else:
+            out[i] = np.log1p(np.exp(x[i])) + offset
+    return out
+
+
+@njit(cache=True)
+def _softplus_dtransform(x):
+    n = len(x)
+    out = np.empty(n)
+    for i in range(n):
+        if x[i] > 20.0:
+            out[i] = 1.0
+        elif x[i] < -20.0:
+            out[i] = np.exp(x[i])
+        else:
+            out[i] = 1.0 / (1.0 + np.exp(-x[i]))
+    return out
+
+
+@njit(cache=True)
+def _softplus_inv_transform(r, offset):
+    n = len(r)
+    out = np.empty(n)
+    for i in range(n):
+        y = r[i] - offset
+        if y > 20.0:
+            out[i] = y
+        elif y <= 0.0:
+            out[i] = np.log(1e-300)
+        elif y < 1e-8:
+            out[i] = np.log(y)
+        else:
+            out[i] = np.log(np.expm1(y))
+    return out
 
 
 class BivariateCopula:

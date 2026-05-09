@@ -9,7 +9,9 @@ from pyscarcopula.copula.experimental.equicorr import EquicorrGaussianCopula
 from pyscarcopula.api import fit, predict, predictive_mean, smoothed_params
 from pyscarcopula.stattests import gof_test
 from pyscarcopula._utils import pobs
-from pyscarcopula._types import MLEResult, LatentResult, GASResult, gas_params
+from pyscarcopula._types import (
+    MLEResult, LatentResult, GASResult, gas_params, NumericalConfig,
+)
 from pyscarcopula.numerical.gas_filter import gas_predict_param
 from pyscarcopula.numerical.predictive_tm import (
     sample_grid_distribution, tm_state_distribution,
@@ -191,6 +193,64 @@ class TestTransformType:
         r = cop.transform(np.linspace(-5, 5, 100))
         assert np.all(r >= 1.0)
 
+    @pytest.mark.parametrize("cls,rot", [
+        (GumbelCopula, 180), (ClaytonCopula, 0),
+        (FrankCopula, 0), (JoeCopula, 180),
+    ])
+    @pytest.mark.parametrize("transform_type", ['softplus', 'xtanh'])
+    def test_dtransform_matches_numerical_derivative(
+            self, cls, rot, transform_type):
+        cop = cls(rotate=rot, transform_type=transform_type)
+        x = np.array([-10.0, -3.0, -1.0, -0.5, 0.5, 1.0, 3.0, 10.0])
+        eps = 1e-6
+
+        ana = cop.dtransform(x)
+        num = (cop.transform(x + eps) - cop.transform(x - eps)) / (2.0 * eps)
+
+        np.testing.assert_allclose(ana, num, rtol=1e-6, atol=1e-8)
+
+    @pytest.mark.parametrize("cls,rot,lower", [
+        (GumbelCopula, 180, 1.0001),
+        (ClaytonCopula, 0, 0.0001),
+        (FrankCopula, 0, 0.0001),
+        (JoeCopula, 180, 1.0001),
+    ])
+    def test_softplus_inv_transform_roundtrip(self, cls, rot, lower):
+        cop = cls(rotate=rot, transform_type='softplus')
+        r = lower + np.array([0.01, 0.2, 1.0, 4.0, 25.0])
+        x = cop.inv_transform(r)
+
+        np.testing.assert_allclose(
+            cop.transform(x), r, rtol=1e-10, atol=1e-10)
+
+    @pytest.mark.parametrize("cls,rot,lower", [
+        (GumbelCopula, 180, 1.0001),
+        (ClaytonCopula, 0, 0.0001),
+        (FrankCopula, 0, 0.0001),
+        (JoeCopula, 180, 1.0001),
+    ])
+    def test_xtanh_inv_transform_uses_modulus_approximation(
+            self, cls, rot, lower):
+        cop = cls(rotate=rot, transform_type='xtanh')
+        r = lower + np.array([0.01, 0.2, 1.0, 4.0, 25.0])
+
+        np.testing.assert_allclose(cop.inv_transform(r), np.abs(r) + lower)
+
+    @pytest.mark.parametrize("cls,rot,lower", [
+        (GumbelCopula, 180, 1.0001),
+        (ClaytonCopula, 0, 0.0001),
+        (FrankCopula, 0, 0.0001),
+        (JoeCopula, 180, 1.0001),
+    ])
+    def test_softplus_inv_transform_near_lower_bound(self, cls, rot, lower):
+        cop = cls(rotate=rot, transform_type='softplus')
+        y = np.array([1e-12, 1e-10, 1e-8, 1e-4])
+        x = cop.inv_transform(lower + y)
+
+        assert x[0] < -20.0
+        np.testing.assert_allclose(
+            cop.transform(x) - lower, y, rtol=1e-6, atol=1e-15)
+
     def test_invalid_transform_type(self):
         with pytest.raises(ValueError):
             GumbelCopula(transform_type='invalid')
@@ -334,3 +394,32 @@ class TestConditionalPredict:
         np.testing.assert_allclose(captured['r'], expected_next)
         assert gas_predict_param(
             omega, gamma, beta, u, cop, horizon='current') == pytest.approx(g1)
+
+    def test_gas_fit_forwards_ftol_to_optimizer(self, monkeypatch):
+        captured = {}
+
+        class DummyResult:
+            x = np.array([0.0, 0.0, 0.0])
+            fun = 0.0
+            success = True
+            nfev = 1
+            message = 'ok'
+
+        def fake_minimize(fun, x0, method=None, bounds=None, options=None):
+            captured['options'] = options
+            return DummyResult()
+
+        monkeypatch.setattr('pyscarcopula.strategy.gas.minimize',
+                            fake_minimize)
+
+        cop = IndependentCopula()
+        u = np.array([[0.2, 0.4], [0.6, 0.8]])
+        cfg = NumericalConfig(default_ftol_gas=1e-11)
+
+        GASStrategy(config=cfg).fit(
+            cop, u, gamma0=np.array([0.0, 0.0, 0.0]))
+        assert captured['options']['ftol'] == pytest.approx(1e-11)
+
+        GASStrategy().fit(
+            cop, u, gamma0=np.array([0.0, 0.0, 0.0]), ftol=1e-9)
+        assert captured['options']['ftol'] == pytest.approx(1e-9)

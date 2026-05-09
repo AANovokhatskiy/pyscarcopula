@@ -23,14 +23,16 @@ Used by:
 import numpy as np
 from numba import njit
 
+from pyscarcopula.copula.base import (
+    _softplus_dtransform,
+    _softplus_transform,
+    _xtanh_dtransform,
+    _xtanh_transform,
+)
 from pyscarcopula.copula.clayton import (
     ClaytonCopula,
     _clayton_dlogc_dr,
-    _clayton_dtransform,
     _clayton_log_pdf,
-    _clayton_softplus_dtransform,
-    _clayton_softplus_transform,
-    _clayton_transform,
 )
 from pyscarcopula.copula.elliptical import (
     BivariateGaussianCopula,
@@ -40,29 +42,17 @@ from pyscarcopula.copula.elliptical import (
 from pyscarcopula.copula.frank import (
     FrankCopula,
     _frank_dlogc_dr,
-    _frank_dtransform,
     _frank_log_pdf,
-    _frank_softplus_dtransform,
-    _frank_softplus_transform,
-    _frank_transform,
 )
 from pyscarcopula.copula.gumbel import (
     GumbelCopula,
     _gumbel_dlogc_dr,
-    _gumbel_dtransform,
     _gumbel_log_pdf,
-    _gumbel_softplus_dtransform,
-    _gumbel_softplus_transform,
-    _gumbel_transform,
 )
 from pyscarcopula.copula.joe import (
     JoeCopula,
     _joe_dlogc_dr,
-    _joe_dtransform,
     _joe_log_pdf,
-    _joe_softplus_dtransform,
-    _joe_softplus_transform,
-    _joe_transform,
 )
 
 G_CLIP = 50.0
@@ -73,6 +63,9 @@ _GAS_FAMILY_CLAYTON = 2
 _GAS_FAMILY_FRANK = 3
 _GAS_FAMILY_GUMBEL = 4
 _GAS_FAMILY_JOE = 5
+
+_GAS_TRANSFORM_SOFTPLUS = 1
+_GAS_TRANSFORM_XTANH = 2
 
 
 @njit(cache=True)
@@ -87,51 +80,52 @@ def _gas_apply_rotation(u1, u2, rotation):
 
 
 @njit(cache=True)
-def _gas_transform(g_t, family, use_softplus, x_arr):
-    x_arr[0] = g_t
-    if family == _GAS_FAMILY_GAUSSIAN:
-        return 0.9999 * np.tanh(g_t / 4.0)
-    if family == _GAS_FAMILY_CLAYTON:
-        if use_softplus:
-            return _clayton_softplus_transform(x_arr)[0]
-        return _clayton_transform(x_arr)[0]
-    if family == _GAS_FAMILY_FRANK:
-        if use_softplus:
-            return _frank_softplus_transform(x_arr)[0]
-        return _frank_transform(x_arr)[0]
-    if family == _GAS_FAMILY_GUMBEL:
-        if use_softplus:
-            return _gumbel_softplus_transform(x_arr)[0]
-        return _gumbel_transform(x_arr)[0]
-    if family == _GAS_FAMILY_JOE:
-        if use_softplus:
-            return _joe_softplus_transform(x_arr)[0]
-        return _joe_transform(x_arr)[0]
+def _gas_archimedean_offset(family):
+    if family == _GAS_FAMILY_CLAYTON or family == _GAS_FAMILY_FRANK:
+        return 0.0001
+    if family == _GAS_FAMILY_GUMBEL or family == _GAS_FAMILY_JOE:
+        return 1.0001
     raise ValueError("Unsupported GAS copula family")
 
 
 @njit(cache=True)
-def _gas_dtransform(g_t, family, use_softplus, x_arr):
+def _gas_transform(g_t, family, transform_type, x_arr):
     x_arr[0] = g_t
     if family == _GAS_FAMILY_GAUSSIAN:
-        th = np.tanh(g_t / 4.0)
-        return 0.9999 / 4.0 * (1.0 - th * th)
-    if family == _GAS_FAMILY_CLAYTON:
-        if use_softplus:
-            return _clayton_softplus_dtransform(x_arr)[0]
-        return _clayton_dtransform(x_arr)[0]
-    if family == _GAS_FAMILY_FRANK:
-        if use_softplus:
-            return _frank_softplus_dtransform(x_arr)[0]
-        return _frank_dtransform(x_arr)[0]
-    if family == _GAS_FAMILY_GUMBEL:
-        if use_softplus:
-            return _gumbel_softplus_dtransform(x_arr)[0]
-        return _gumbel_dtransform(x_arr)[0]
-    if family == _GAS_FAMILY_JOE:
-        if use_softplus:
-            return _joe_softplus_dtransform(x_arr)[0]
-        return _joe_dtransform(x_arr)[0]
+        if transform_type == _GAS_TRANSFORM_SOFTPLUS:
+            return 0.9999 * np.tanh(g_t / 4.0)
+        if transform_type == _GAS_TRANSFORM_XTANH:
+            return 0.9999 * np.tanh(g_t / 4.0)
+        raise ValueError("Unsupported GAS transform_type")
+    if (family == _GAS_FAMILY_CLAYTON or family == _GAS_FAMILY_FRANK
+            or family == _GAS_FAMILY_GUMBEL or family == _GAS_FAMILY_JOE):
+        offset = _gas_archimedean_offset(family)
+        if transform_type == _GAS_TRANSFORM_SOFTPLUS:
+            return _softplus_transform(x_arr, offset)[0]
+        if transform_type == _GAS_TRANSFORM_XTANH:
+            return _xtanh_transform(x_arr, offset)[0]
+        raise ValueError("Unsupported GAS transform_type")
+    raise ValueError("Unsupported GAS copula family")
+
+
+@njit(cache=True)
+def _gas_dtransform(g_t, family, transform_type, x_arr):
+    x_arr[0] = g_t
+    if family == _GAS_FAMILY_GAUSSIAN:
+        if transform_type == _GAS_TRANSFORM_SOFTPLUS:
+            th = np.tanh(g_t / 4.0)
+            return 0.9999 / 4.0 * (1.0 - th * th)
+        if transform_type == _GAS_TRANSFORM_XTANH:
+            th = np.tanh(g_t / 4.0)
+            return 0.9999 / 4.0 * (1.0 - th * th)
+        raise ValueError("Unsupported GAS transform_type")
+    if (family == _GAS_FAMILY_CLAYTON or family == _GAS_FAMILY_FRANK
+            or family == _GAS_FAMILY_GUMBEL or family == _GAS_FAMILY_JOE):
+        if transform_type == _GAS_TRANSFORM_SOFTPLUS:
+            return _softplus_dtransform(x_arr)[0]
+        if transform_type == _GAS_TRANSFORM_XTANH:
+            return _xtanh_dtransform(x_arr)[0]
+        raise ValueError("Unsupported GAS transform_type")
     raise ValueError("Unsupported GAS copula family")
 
 
@@ -167,7 +161,7 @@ def _gas_unit_dlog_dr(family, u1_arr, u2_arr, r_arr):
 
 @njit(cache=True)
 def _gas_filter_unit_numba(omega, gamma, beta, u, family, rotation,
-                           use_softplus):
+                           transform_type):
     T = len(u)
     g_path = np.empty(T)
     r_path = np.empty(T)
@@ -185,7 +179,7 @@ def _gas_filter_unit_numba(omega, gamma, beta, u, family, rotation,
 
     for t in range(T):
         g_path[t] = g_t
-        r_t = _gas_transform(g_t, family, use_softplus, x_arr)
+        r_t = _gas_transform(g_t, family, transform_type, x_arr)
         r_path[t] = r_t
 
         u1, u2 = _gas_apply_rotation(u[t, 0], u[t, 1], rotation)
@@ -200,7 +194,7 @@ def _gas_filter_unit_numba(omega, gamma, beta, u, family, rotation,
 
         if t < T - 1:
             dlog_dr = _gas_unit_dlog_dr(family, u1_arr, u2_arr, r_arr)
-            dpsi_dg = _gas_dtransform(g_t, family, use_softplus, x_arr)
+            dpsi_dg = _gas_dtransform(g_t, family, transform_type, x_arr)
             s_t = dlog_dr * dpsi_dg
             if not np.isfinite(s_t):
                 return g_path, r_path, -1e10
@@ -223,32 +217,49 @@ def _gas_unit_kernel_args(copula, scaling):
     if scaling != 'unit':
         return None
     if isinstance(copula, BivariateGaussianCopula):
-        return _GAS_FAMILY_GAUSSIAN, 0, True
+        transform_type = _gas_transform_type_code(copula)
+        return _GAS_FAMILY_GAUSSIAN, 0, transform_type
     if isinstance(copula, ClaytonCopula):
+        transform_type = _gas_transform_type_code(copula)
         return (
             _GAS_FAMILY_CLAYTON,
             int(copula.rotate),
-            getattr(copula, '_transform_type', 'softplus') == 'softplus',
+            transform_type,
         )
     if isinstance(copula, FrankCopula):
+        transform_type = _gas_transform_type_code(copula)
         return (
             _GAS_FAMILY_FRANK,
             0,
-            getattr(copula, '_transform_type', 'softplus') == 'softplus',
+            transform_type,
         )
     if isinstance(copula, GumbelCopula):
+        transform_type = _gas_transform_type_code(copula)
         return (
             _GAS_FAMILY_GUMBEL,
             int(copula.rotate),
-            getattr(copula, '_transform_type', 'softplus') == 'softplus',
+            transform_type,
         )
     if isinstance(copula, JoeCopula):
+        transform_type = _gas_transform_type_code(copula)
         return (
             _GAS_FAMILY_JOE,
             int(copula.rotate),
-            getattr(copula, '_transform_type', 'softplus') == 'softplus',
+            transform_type,
         )
     return None
+
+
+def _gas_transform_type_code(copula):
+    transform_type = getattr(copula, '_transform_type', 'softplus')
+    if transform_type == 'softplus':
+        return _GAS_TRANSFORM_SOFTPLUS
+    if transform_type == 'xtanh':
+        return _GAS_TRANSFORM_XTANH
+    raise ValueError(
+        "transform_type must be 'xtanh' or 'softplus', "
+        f"got '{transform_type}'"
+    )
 
 
 def _gas_score(u1, u2, g_t, r_t, ll_t, copula, scaling, score_eps):
@@ -313,11 +324,11 @@ def gas_filter(omega, gamma, beta, u, copula, scaling='unit',
     """
     kernel_args = _gas_unit_kernel_args(copula, scaling)
     if kernel_args is not None:
-        family, rotation, use_softplus = kernel_args
+        family, rotation, transform_type = kernel_args
         return _gas_filter_unit_numba(
             float(omega), float(gamma), float(beta),
             np.asarray(u, dtype=np.float64),
-            family, rotation, use_softplus)
+            family, rotation, transform_type)
 
     T = len(u)
     g_path = np.empty(T)
