@@ -47,8 +47,11 @@ from pyscarcopula._utils import pobs
 from pyscarcopula.copula.base import BivariateCopula
 
 try:
-    from pyscarcopula._types import MLEResult
+    from pyscarcopula._types import DEFAULT_CONFIG, MLEResult, NumericalConfig
 except Exception:  # pragma: no cover - fallback only for standalone use
+    DEFAULT_CONFIG = None
+    NumericalConfig = None
+
     @dataclass
     class MLEResult:
         log_likelihood: float
@@ -58,6 +61,18 @@ except Exception:  # pragma: no cover - fallback only for standalone use
         nfev: int
         message: str
         copula_param: float
+
+
+_LBFGSB_FIT_KEYS = (
+    'gtol',
+    'ftol',
+    'maxfun',
+    'maxiter',
+    'maxls',
+    'eps',
+    'maxcor',
+    'finite_diff_rel_step',
+)
 
 
 @dataclass
@@ -374,7 +389,8 @@ def _garch11_filter(r, omega, alpha, beta):
     return np.maximum(sigma2, 1e-12)
 
 
-def _fit_garch11(r, omega0=None, alpha0=0.05, beta0=0.90):
+def _fit_garch11(r, omega0=None, alpha0=0.05, beta0=0.90,
+                 config=None):
     """
     Fit GARCH(1,1) to univariate return series via MLE.
 
@@ -383,7 +399,8 @@ def _fit_garch11(r, omega0=None, alpha0=0.05, beta0=0.90):
     (omega, alpha, beta), sigma2_path
     """
     r = np.asarray(r, dtype=np.float64)
-    T = len(r)
+    config = config or DEFAULT_CONFIG
+    optimizer_options = config.garch_optimizer.options()
     var_r = np.var(r, ddof=1)
     if omega0 is None:
         omega0 = var_r * (1.0 - alpha0 - beta0)
@@ -398,7 +415,7 @@ def _fit_garch11(r, omega0=None, alpha0=0.05, beta0=0.90):
     x0 = np.array([omega0, alpha0, beta0])
     bounds = [(1e-10, 10 * var_r), (1e-8, 0.5), (0.5, 0.9999)]
     res = minimize(neg_ll, x0, method="L-BFGS-B", bounds=bounds,
-                   options={"gtol": 1e-5, "maxiter": 300})
+                   options=optimizer_options)
     omega, alpha, beta = res.x
     sigma2 = _garch11_filter(r, omega, alpha, beta)
     return (omega, alpha, beta), sigma2
@@ -565,7 +582,7 @@ class StochasticStudentDCCCopula(BivariateCopula):
     # ── Standardized residuals ──────────────────────────────
 
     @staticmethod
-    def compute_standardized_residuals(returns):
+    def compute_standardized_residuals(returns, config=None):
         """
         Compute GARCH(1,1) standardized residuals from raw returns.
 
@@ -589,7 +606,7 @@ class StochasticStudentDCCCopula(BivariateCopula):
         z = np.empty_like(returns)
         garch_params = []
         for j in range(d):
-            params, sigma2 = _fit_garch11(returns[:, j])
+            params, sigma2 = _fit_garch11(returns[:, j], config=config)
             z[:, j] = returns[:, j] / np.sqrt(sigma2)
             garch_params.append(params)
         return z, garch_params
@@ -603,7 +620,15 @@ class StochasticStudentDCCCopula(BivariateCopula):
         a0=0.03,
         b0=0.95,
         fix_params: Optional[Tuple[float, float]] = None,
-        gtol=1e-6,
+        config: Optional["NumericalConfig"] = None,
+        gtol=None,
+        ftol=None,
+        maxfun=None,
+        maxiter=None,
+        maxls=None,
+        eps=None,
+        maxcor=None,
+        finite_diff_rel_step=None,
         qbar_method="kendall",
     ):
         """
@@ -620,19 +645,31 @@ class StochasticStudentDCCCopula(BivariateCopula):
             Initial values for DCC parameters.
         fix_params : (a, b) or None
             If provided, skip optimization and use these DCC parameters.
-        gtol : float
-            Optimizer tolerance.
+        gtol, ftol, maxfun, maxiter, maxls, eps, maxcor,
+        finite_diff_rel_step : L-BFGS-B options.
         qbar_method : str
             'kendall' — use Kendall-tau based correlation as Qbar target
             (more robust for heavy tails).
             'pearson' — use sample covariance of z as Qbar target
             (classical DCC).
         """
+        config = config or DEFAULT_CONFIG
+        optimizer_options = config.dcc_optimizer.options(
+            gtol=gtol,
+            ftol=ftol,
+            maxfun=maxfun,
+            maxiter=maxiter,
+            maxls=maxls,
+            eps=eps,
+            maxcor=maxcor,
+            finite_diff_rel_step=finite_diff_rel_step,
+        )
         if z is None and returns is None:
             raise ValueError("Provide either z (standardized residuals) or returns")
 
         if z is None:
-            z, garch_params = self.compute_standardized_residuals(returns)
+            z, garch_params = self.compute_standardized_residuals(
+                returns, config=config)
             self._garch_params = garch_params
 
         z = np.asarray(z, dtype=np.float64)
@@ -689,7 +726,7 @@ class StochasticStudentDCCCopula(BivariateCopula):
             x0,
             method="L-BFGS-B",
             bounds=bounds,
-            options={"gtol": gtol, "maxiter": 500},
+            options=optimizer_options,
         )
 
         a_hat, b_hat = float(res.x[0]), float(res.x[1])
@@ -916,8 +953,22 @@ class StochasticStudentDCCCopula(BivariateCopula):
 
     # ── MLE fit ──────────────────────────────────────────────
 
-    def _fit_mle(self, u):
+    def _fit_mle(self, u, config: Optional["NumericalConfig"] = None,
+                 gtol=None, ftol=None, maxfun=None, maxiter=None,
+                 maxls=None, eps=None, maxcor=None,
+                 finite_diff_rel_step=None):
         """Fit constant df under an already estimated time-varying R_t path."""
+        config = config or DEFAULT_CONFIG
+        optimizer_options = config.stochastic_student_dcc_optimizer.options(
+            gtol=gtol,
+            ftol=ftol,
+            maxfun=maxfun,
+            maxiter=maxiter,
+            maxls=maxls,
+            eps=eps,
+            maxcor=maxcor,
+            finite_diff_rel_step=finite_diff_rel_step,
+        )
         self._require_R_path()
         u = np.asarray(u, dtype=np.float64)
         T = len(u)
@@ -938,7 +989,7 @@ class StochasticStudentDCCCopula(BivariateCopula):
             x0,
             method="L-BFGS-B",
             bounds=[(-8.0, 15.0)],
-            options={"gtol": 1e-4, "maxiter": 300},
+            options=optimizer_options,
         )
 
         df_hat = float(self.transform(res.x)[0])
@@ -969,6 +1020,10 @@ class StochasticStudentDCCCopula(BivariateCopula):
         to_pobs : bool
             Convert data to pseudo-observations before fitting.
         """
+        config = kwargs.pop('config', None)
+        if 'tol' in kwargs:
+            raise TypeError("tol is not supported; use gtol")
+
         self._require_R_path()
         u = np.asarray(data, dtype=np.float64)
         if to_pobs:
@@ -982,11 +1037,16 @@ class StochasticStudentDCCCopula(BivariateCopula):
         self._last_u = u
 
         if method.upper() == "MLE":
-            return self._fit_mle(u)
+            optimizer_kwargs = {
+                key: kwargs.pop(key)
+                for key in _LBFGSB_FIT_KEYS
+                if key in kwargs
+            }
+            return self._fit_mle(u, config=config, **optimizer_kwargs)
 
         from pyscarcopula.api import fit as _api_fit
 
-        result = _api_fit(self, u, method=method, **kwargs)
+        result = _api_fit(self, u, method=method, config=config, **kwargs)
         self.fit_result = result
         return result
 
@@ -1031,8 +1091,7 @@ class StochasticStudentDCCCopula(BivariateCopula):
             u_data = u if u is not None else self._last_u
             if u_data is None:
                 raise ValueError("No data cached for predictive mean df path")
-            x_sm = np.asarray(self.predictive_mean(u=u_data), dtype=np.float64)
-            df_sm = self.transform(x_sm)
+            df_sm = np.asarray(self.predictive_mean(u=u_data), dtype=np.float64)
             if len(df_sm) != n:
                 raise ValueError(
                     f"predictive mean df path has length {len(df_sm)}, but n={n}; use mode='in_sample'"
@@ -1156,7 +1215,7 @@ class StochasticStudentDCCCopula(BivariateCopula):
     # Predictive mean path / terminal distribution
 
     def predictive_mean(self, u=None):
-        """Return predictive mean latent x_t values from TM forward pass."""
+        """Return predictive mean df_t values from the TM forward pass."""
         if self.fit_result is None:
             raise ValueError("Fit df dynamics first")
         u_data = u if u is not None else self._last_u

@@ -497,7 +497,6 @@ def _build_next_tree(tree_level, prev_edge_repr, pseudo_obs,
     n_prev = len(prev_edge_repr)
 
     if truncation_level is not None and tree_level >= truncation_level:
-        d_minus_1 = n_prev  # n_prev = d - 1 - (tree_level - 1)
         n_needed = n_prev - 1
         remaining = _complete_structure_above_truncation(
             prev_edge_repr, n_needed)

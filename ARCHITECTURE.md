@@ -1,106 +1,153 @@
 # Architecture
 
-## Module map
+## Module Map
 
-```
+```text
 pyscarcopula/
-├── __init__.py              # Re-exports
-├── api.py                   # Top-level: fit(), smoothed_params(), mixture_h()
-├── _types.py                # FitResult types, LatentProcessParams, NumericalConfig
-├── _utils.py                # pobs(), broadcast(), clip_unit()
+├── __init__.py              # Public re-exports and BLAS thread policy
+├── api.py                   # Stateless top-level API: fit(), predict(), sample()
+├── _types.py                # FitResult types, PredictConfig, NumericalConfig
+├── _utils.py                # pobs(), broadcast(), clip_unit(), linear algebra helpers
+├── io.py                    # Model persistence
+├── stattests.py             # Goodness-of-fit diagnostics
 │
-├── copula/                  # Pure math: PDF, h-functions, transforms
-│   ├── _protocol.py         # CopulaProtocol interface
-│   ├── base.py              # BivariateCopula base class
+├── copula/                  # Pair-copula math and multivariate copula models
+│   ├── _protocol.py         # Bivariate copula protocol
+│   ├── base.py              # BivariateCopula base and OO convenience wrapper
 │   ├── gumbel.py, frank.py, joe.py, clayton.py
 │   ├── independent.py       # Zero-parameter null model
-│   ├── elliptical.py        # Gaussian, Student-t
-│   ├── equicorr.py          # Equicorrelation Gaussian (d-dimensional)
-│   └── vine.py              # CVineCopula
+│   ├── elliptical.py        # Gaussian and Student-t copulas
+│   └── experimental/
+│       ├── equicorr.py
+│       ├── stochastic_student.py
+│       └── stochastic_student_dcc.py
 │
-├── strategy/                # Estimation methods (Strategy pattern)
+├── strategy/                # Estimation methods via registry
 │   ├── _base.py             # FitStrategy protocol, @register_strategy
-│   ├── mle.py               # Constant parameter
+│   ├── mle.py               # Constant-parameter MLE
 │   ├── scar_tm.py           # Transfer matrix + analytical gradient
-│   ├── scar_mc.py           # Monte Carlo (p-sampler, m-sampler with EIS)
-│   ├── gas.py               # Score-driven (unit / fisher scaling)
-│   └── initial_point.py     # Smart initial point for SCAR-TM-OU
+│   ├── scar_mc.py           # Monte Carlo SCAR variants
+│   ├── gas.py               # Score-driven GAS model
+│   ├── initial_point.py
+│   └── predict_helpers.py
 │
 ├── numerical/               # Computational kernels
-│   ├── ou_kernels.py        # Numba: OU path generation
-│   ├── tm_grid.py           # TMGrid: adaptive grid, dense/sparse operator
-│   ├── tm_functions.py      # loglik, smoothed, rosenblatt, mixture_h
-│   ├── tm_gradient.py       # Analytical gradient in xi-coordinates
-│   ├── mc_samplers.py       # p-sampler, m-sampler, EIS regression
-│   └── gas_filter.py        # GAS filter, Rosenblatt, h-functions
+│   ├── ou_kernels.py
+│   ├── tm_grid.py
+│   ├── tm_functions.py
+│   ├── tm_gradient.py
+│   ├── predictive_tm.py
+│   ├── mc_samplers.py
+│   └── gas_filter.py
 │
-├── stattests.py             # GoF tests (Rosenblatt + CvM)
+├── vine/                    # C-vine and R-vine models
+│   ├── cvine.py
+│   ├── rvine.py
+│   ├── _pair_copula.py
+│   ├── _edge_adapter.py
+│   ├── _dynamic_conditioning.py
+│   ├── _selection.py
+│   ├── _structure.py
+│   ├── _rvine_*.py
+│   └── _conditional_*.py
 │
-└── contrib/                 # Optional: risk metrics, marginals
-    ├── risk_metrics.py
-    ├── marginal.py
-    └── empirical.py
+└── contrib/                 # Optional analytics: risk metrics, marginals
 ```
 
-## Dependency flow
+## Dependency Flow
 
+The functional core is intentionally layered:
+
+```text
+api.py -> strategy/ -> numerical/
+                 \-> copula/
+vine/ -> strategy/ + copula/ + numerical helpers
+contrib/ -> public API + optional model helpers
 ```
-api.py  →  strategy/  →  numerical/  →  _types.py, _utils.py
-                ↓
-           copula/ (stateless math)
-```
 
-Dependencies go strictly downward — no circular imports.
+`strategy/_base.py` is the central method registry. New estimation methods
+register with `@register_strategy("METHOD")`; callers obtain them through
+`get_strategy()`.
 
-## Key types
+## State Model
 
-### LatentProcessParams
-
-Generic container for latent process parameters with named access:
+The functional API is stateless:
 
 ```python
-from pyscarcopula._types import ou_params
+from pyscarcopula.api import fit, predict
 
-p = ou_params(theta=49.97, mu=2.42, nu=10.65)
-p.theta     # 49.97
-p.n_params  # 3
-p.to_dict() # {'theta': 49.97, 'mu': 2.42, 'nu': 10.65}
+result = fit(copula, u, method="scar-tm-ou")
+samples = predict(copula, u, result, n=1000)
 ```
 
-### FitResult types
+`BivariateCopula.fit()`, `predict()`, and `sample_model()` are stateful
+convenience wrappers. They delegate to the functional API, store `fit_result`
+and the last fitting data, and exist for backward-compatible object-oriented
+usage.
 
+## BLAS Thread Policy
+
+Transfer-matrix likelihood evaluation performs many small matrix-vector
+operations. Multi-threaded BLAS usually adds overhead and competes with useful
+outer-level parallelism in `contrib.risk_metrics` and future vine edge work.
+
+Package import therefore forces common BLAS backends to one thread by default.
+Set `PYSCA_BLAS_THREADS` before importing `pyscarcopula` to override this
+policy intentionally.
+
+## Key Types
+
+`NumericalConfig` centralizes numerical constants such as grid size, optimizer
+tolerances, clipping thresholds, and GAS/MC defaults.
+
+`PredictConfig` carries prediction-time options shared by API, bivariate
+copulas, vines, and strategies.
+
+`FitResult` is a union of immutable dataclasses:
+
+```text
+FitResultBase
+├── MLEResult
+├── LatentResult
+├── GASResult
+└── IndependentResult
 ```
-FitResultBase (log_likelihood, method, copula_name, success)
-├── MLEResult (copula_param)
-├── LatentResult (params: LatentProcessParams, K, grid_range, ...)
-├── GASResult (params: LatentProcessParams, scaling)
-└── IndependentResult (copula_param=0.0)
-```
 
-### NumericalConfig
+`LatentProcessParams` stores named latent-process parameters, for example
+`ou_params(kappa, mu, nu)` or `gas_params(omega, gamma, beta)`.
 
-All numerical constants in one place:
+## Adding An Estimation Method
 
-```python
-from pyscarcopula._types import NumericalConfig
-
-cfg = NumericalConfig(default_K=500, default_tol_scar=5e-2)
-result = fit(copula, u, method='scar-tm-ou', config=cfg)
-```
-
-## Adding a new estimation method
-
-Create a file in `strategy/` with the `@register_strategy` decorator:
+Create a strategy module and register the class:
 
 ```python
 from pyscarcopula.strategy._base import register_strategy
 
-@register_strategy('MY-METHOD')
+@register_strategy("MY-METHOD")
 class MyStrategy:
     def __init__(self, config=None, **kwargs): ...
     def fit(self, copula, u, **kwargs): ...
-    def smoothed_params(self, copula, u, result): ...
+    def predictive_mean(self, copula, u, result): ...
     def mixture_h(self, copula, u, result): ...
 ```
 
-After this, `fit(copula, data, method='my-method')` works automatically.
+After import registration, `fit(copula, data, method="my-method")` works
+through the same dispatch path as the built-in methods.
+
+## Vine Refactor Backlog
+
+The current vine layer intentionally keeps the small compatibility fixes
+separate from larger structural work. Remaining large-scope items:
+
+- Keep CVine and RVine edge runtime behavior behind `_edge_adapter.py`,
+  `_rvine_edges.py`, and strategy-owned state methods. `PairCopula` is the
+  shared edge container, while `EdgeView` and edge accessor helpers provide a
+  common read-only contract for compatibility code.
+- Keep dynamic conditioning strategy-generic. New dynamic methods should expose
+  prediction, conditioning, and model-sampling state through the strategy
+  contract instead of adding method-specific branches in `rvine.py`.
+- Keep `vine.__all__` limited to public objects; internal helpers should stay
+  importable only from their private modules.
+- Cache repeated edge fits during conditional R-vine beam search.
+- Add optional per-tree parallel edge fitting once the single-edge contract is
+  stable.

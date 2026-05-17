@@ -1,15 +1,7 @@
-"""
-pyscarcopula.strategy._base — estimation strategy interface.
+"""Estimation strategy interface and registry.
 
-Each estimation method (MLE, SCAR-TM, GAS, future SCAR-Lévy, ...)
-is a separate class implementing this protocol. This replaces the
-string-based dispatch in the old BivariateCopula.fit().
-
-Adding a new method = adding a new file in strategy/.
-No existing code needs to change.
-
-The protocol is intentionally minimal. Strategies that don't support a
-particular operation should raise NotImplementedError with a clear message.
+Each estimation method is a separate class implementing this protocol.
+Adding a method means adding a strategy module and registering it.
 """
 
 from __future__ import annotations
@@ -77,7 +69,7 @@ class FitStrategy(Protocol):
 
     def smoothed_params(self, copula, u: np.ndarray,
                         result: FitResult) -> np.ndarray:
-        """E[Psi(x_k) | u_{1:k-1}] — time-varying copula parameter.
+        """E[Psi(x_k) | u_{1:k-1}] for the time-varying copula parameter.
 
         The SCAR-TM quantity is predictive, not two-sided smoothing.
         """
@@ -97,9 +89,9 @@ class FitStrategy(Protocol):
                   result: FitResult) -> np.ndarray:
         """h-function for vine pseudo-observations.
 
-        MLE:  h(u2, u1; theta_mle) — constant parameter
-        SCAR: E[h(u2, u1; Psi(x)) | data] — mixture over predictive
-        GAS:  h(u2, u1; Psi(g_t)) — along GAS-filtered path
+        MLE:  h(u2, u1; theta_mle), constant parameter
+        SCAR: E[h(u2, u1; Psi(x)) | data], mixture over predictive state
+        GAS:  h(u2, u1; Psi(g_t)), along the GAS-filtered path
 
         This is the key function that propagates pseudo-obs through
         the vine tree. Different methods produce different pseudo-obs,
@@ -141,9 +133,11 @@ class FitStrategy(Protocol):
         Parameters
         ----------
         copula : CopulaProtocol
-        u : (T, 2) — not used by all methods, but needed for GAS init
+        u : (T, 2)
+            Not used by all methods, but needed for GAS initialization.
         result : FitResult from fit()
-        n : int — number of observations to generate
+        n : int
+            Number of observations to generate.
 
         Returns
         -------
@@ -168,7 +162,8 @@ class FitStrategy(Protocol):
         copula : CopulaProtocol
         u : (T, 2) pseudo-observations (conditioning data)
         result : FitResult from fit()
-        n : int — number of samples
+        n : int
+            Number of samples.
 
         Returns
         -------
@@ -201,10 +196,18 @@ class FitStrategy(Protocol):
         """Sample copula parameters from a predictive state."""
         ...
 
+    def model_sample_params(self, copula, result: FitResult, n: int,
+                            rng=None, **kwargs) -> np.ndarray:
+        """Generate parameter path for unconditional model reproduction."""
+        ...
 
-# ══════════════════════════════════════════════════════════════════
-# Strategy registry — the one and only place with method dispatch
-# ══════════════════════════════════════════════════════════════════
+    def model_sample_state(self, copula, result: FitResult,
+                           **kwargs) -> PredictiveState | None:
+        """Return state for stepwise model reproduction, if required."""
+        ...
+
+
+# Strategy registry
 
 _REGISTRY: dict[str, type] = {}
 
@@ -280,25 +283,13 @@ def get_strategy_for_result(result: FitResult,
 
 def _import_all_strategies():
     """Import all strategy modules to trigger @register_strategy."""
-    # These imports cause the @register_strategy decorators to fire,
-    # populating _REGISTRY. This is the lazy-import replacement for
-    # the old if/elif chain — but structured as a one-time registration.
-    try:
-        from pyscarcopula.strategy import mle       # noqa: F401
-    except ImportError:
-        pass
-    try:
-        from pyscarcopula.strategy import scar_tm   # noqa: F401
-    except ImportError:
-        pass
-    try:
-        from pyscarcopula.strategy import scar_mc   # noqa: F401
-    except ImportError:
-        pass
-    try:
-        from pyscarcopula.strategy import gas       # noqa: F401
-    except ImportError:
-        pass
+    # These imports cause the @register_strategy decorators to fire.
+    # Import failures are intentionally not swallowed: a broken strategy
+    # module should fail loudly instead of becoming "Unknown method".
+    from pyscarcopula.strategy import mle       # noqa: F401
+    from pyscarcopula.strategy import scar_tm   # noqa: F401
+    from pyscarcopula.strategy import scar_mc   # noqa: F401
+    from pyscarcopula.strategy import gas       # noqa: F401
 
 
 def list_methods() -> list[str]:

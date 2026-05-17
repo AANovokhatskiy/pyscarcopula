@@ -3,13 +3,12 @@ import numpy as np
 import pytest
 
 from pyscarcopula import (
-    GumbelCopula, ClaytonCopula, FrankCopula, JoeCopula,
+    GumbelCopula,
     IndependentCopula, BivariateGaussianCopula,
 )
 from pyscarcopula._types import GASResult, gas_params
-from pyscarcopula._utils import pobs
+from pyscarcopula.vine._pair_copula import PairCopula
 from pyscarcopula.vine._rvine_dissmann import (
-    PairCopula,
     select_rvine,
 )
 from pyscarcopula.vine._rvine_matrix_builder import (

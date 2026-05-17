@@ -1,33 +1,81 @@
 """Test C-vine copula: structure, truncation, independence selection, GoF, sample/predict."""
+import importlib
 import numpy as np
 import pytest
+import pyscarcopula.vine as vine_pkg
 from pyscarcopula.vine.cvine import CVineCopula
-from pyscarcopula.vine._edge import VineEdge
+from pyscarcopula.vine._edge_adapter import (
+    edge_method,
+    edge_n_params,
+    edge_param,
+    edge_view,
+)
+from pyscarcopula.vine._pair_copula import PairCopula
+from pyscarcopula.vine._rvine_edges import (
+    _edge_h,
+    _edge_log_likelihood,
+    _edge_r_for_sample,
+)
 from pyscarcopula.vine._selection import (
     select_best_copula, _default_candidates, _kendall_tau,
 )
-from pyscarcopula.vine._helpers import _clip_unit, generate_r_for_sample
+from pyscarcopula.vine._helpers import _clip_unit
 from pyscarcopula.copula.elliptical import BivariateGaussianCopula
 from pyscarcopula.copula.independent import IndependentCopula
 from pyscarcopula.stattests import gof_test
 from pyscarcopula._utils import pobs
-from pyscarcopula._types import GASResult, IndependentResult, gas_params
+from pyscarcopula._types import (
+    GASResult, IndependentResult, MLEResult, gas_params,
+)
 
 # ══════════════════════════════════════════════════════════════
 # Edge module tests
 # ══════════════════════════════════════════════════════════════
 
-class TestVineEdge:
+class TestPairCopulaEdge:
+    def test_package_all_excludes_internal_edge_helpers(self):
+        assert '_edge_h' not in vine_pkg.__all__
+        assert '_edge_log_likelihood' not in vine_pkg.__all__
+        assert not hasattr(vine_pkg, '_edge_h')
+        assert not hasattr(vine_pkg, '_edge_log_likelihood')
+        assert 'VineEdge' not in vine_pkg.__all__
+        assert not hasattr(vine_pkg, 'VineEdge')
+
     def test_edge_creation(self):
-        edge = VineEdge(tree=0, idx=0)
+        edge = PairCopula(tree=0, idx=0)
         assert edge.tree == 0
         assert edge.idx == 0
         assert edge.copula is None
         assert edge.method is None
 
+    def test_edge_adapter_view_for_pair_copula(self):
+        cop = BivariateGaussianCopula()
+        edge = PairCopula(
+            tree=1,
+            idx=2,
+            copula=cop,
+            fit_result=MLEResult(
+                log_likelihood=1.5,
+                method='MLE',
+                copula_name=cop.name,
+                success=True,
+                copula_param=0.35,
+            ),
+        )
+
+        view = edge_view(edge)
+
+        assert view.copula is cop
+        assert view.fit_result is edge.fit_result
+        assert view.tree == 1
+        assert view.idx == 2
+        assert edge_method(edge) == 'MLE'
+        assert edge_param(edge) == pytest.approx(0.35)
+        assert edge_n_params(edge) == 1
+
     def test_get_r_predict_gas_uses_cached_r_last(self):
         cop = BivariateGaussianCopula()
-        edge = VineEdge(tree=0, idx=0)
+        edge = PairCopula(tree=0, idx=0)
         edge.copula = cop
         edge.fit_result = GASResult(
             log_likelihood=0.0,
@@ -43,7 +91,7 @@ class TestVineEdge:
 
     def test_get_r_gas_uses_score_driven_path(self):
         cop = BivariateGaussianCopula()
-        edge = VineEdge(tree=0, idx=0)
+        edge = PairCopula(tree=0, idx=0)
         edge.copula = cop
         edge.fit_result = GASResult(
             log_likelihood=0.0,
@@ -61,10 +109,9 @@ class TestVineEdge:
 
     def test_edge_h_scar_tm_uses_mixture_h(self, monkeypatch):
         from pyscarcopula._types import LatentResult, ou_params
-        from pyscarcopula.vine._edge import _edge_h
 
         cop = BivariateGaussianCopula()
-        edge = VineEdge(tree=0, idx=0)
+        edge = PairCopula(tree=0, idx=0)
         edge.copula = cop
         edge.fit_result = LatentResult(
             log_likelihood=0.0,
@@ -77,12 +124,12 @@ class TestVineEdge:
         calls = []
 
         def fake_tm_forward_mixture_h(kappa, mu, nu, u_arg, cop_arg,
-                                      K, grid_range, **kwargs):
-            calls.append((kappa, mu, nu, u_arg.copy(), cop_arg, K, grid_range))
+                                      *args, **kwargs):
+            calls.append((kappa, mu, nu, u_arg.copy(), cop_arg, args, kwargs))
             return np.array([0.11, 0.89])
 
         monkeypatch.setattr(
-            'pyscarcopula.numerical.tm_functions.tm_forward_mixture_h',
+            'pyscarcopula.strategy.scar_tm.tm_forward_mixture_h',
             fake_tm_forward_mixture_h,
         )
 
@@ -90,7 +137,7 @@ class TestVineEdge:
             edge,
             u_pair[:, 1],
             u_pair[:, 0],
-            u_pair,
+            u_pair=u_pair,
             K=7,
             grid_range=2.5,
         )
@@ -98,8 +145,44 @@ class TestVineEdge:
         np.testing.assert_allclose(out, np.array([0.11, 0.89]))
         assert calls
         np.testing.assert_allclose(calls[0][3], u_pair)
-        assert calls[0][5] == 7
-        assert calls[0][6] == 2.5
+        assert calls[0][5][0] == 7
+        assert calls[0][5][1] == 2.5
+
+    def test_edge_gas_helpers_use_result_score_eps(self, monkeypatch):
+        cop = BivariateGaussianCopula()
+        edge = PairCopula(tree=0, idx=0)
+        edge.copula = cop
+        edge.fit_result = GASResult(
+            log_likelihood=0.0,
+            method='GAS',
+            copula_name=cop.name,
+            success=True,
+            params=gas_params(0.1, 0.2, 0.3),
+            score_eps=3e-6,
+        )
+        u_pair = np.array([[0.2, 0.3], [0.4, 0.6]])
+        captured = []
+
+        def fake_mixture_h(omega, gamma, beta, u_arg, cop_arg, scaling,
+                           score_eps):
+            captured.append(('h', score_eps))
+            return np.array([0.1, 0.2])
+
+        def fake_gas_filter(omega, gamma, beta, u_arg, cop_arg, scaling,
+                            score_eps):
+            captured.append(('ll', score_eps))
+            return np.zeros(len(u_arg)), np.zeros(len(u_arg)), 7.0
+
+        gas_module = importlib.import_module('pyscarcopula.strategy.gas')
+        monkeypatch.setattr(
+            gas_module, 'gas_mixture_h', fake_mixture_h)
+        monkeypatch.setattr(
+            gas_module, 'gas_filter', fake_gas_filter)
+
+        _edge_h(edge, u_pair[:, 1], u_pair[:, 0], u_pair=u_pair)
+        assert _edge_log_likelihood(edge, u_pair) == pytest.approx(7.0)
+        assert captured == [('h', pytest.approx(3e-6)),
+                            ('ll', pytest.approx(3e-6))]
 
     def test_edge_method_after_fit(self):
         u = pobs(np.random.default_rng(42).standard_normal((200, 4)))
@@ -166,18 +249,18 @@ class TestHelpers:
         assert np.all(clipped > 0)
         assert np.all(clipped < 1)
 
-    def test_generate_r_for_sample_mle(self):
+    def test_edge_r_for_sample_mle(self):
         u = pobs(np.random.default_rng(42).standard_normal((200, 3)))
         vine = CVineCopula()
         vine.fit(u, method='mle')
         edge = vine.edges[0][0]
         rng = np.random.default_rng(0)
-        r = generate_r_for_sample(edge, 100, rng)
+        r = _edge_r_for_sample(edge, 100, rng)
         assert r.shape == (100,)
 
-    def test_generate_r_for_sample_rejects_gas(self):
+    def test_edge_r_for_sample_rejects_stepwise_state(self):
         cop = BivariateGaussianCopula()
-        edge = VineEdge(tree=0, idx=0)
+        edge = PairCopula(tree=0, idx=0)
         edge.copula = cop
         edge.fit_result = GASResult(
             log_likelihood=0.0,
@@ -188,7 +271,7 @@ class TestHelpers:
         )
 
         with pytest.raises(ValueError, match="stepwise score updates"):
-            generate_r_for_sample(edge, 10, np.random.default_rng(0))
+            _edge_r_for_sample(edge, 10, np.random.default_rng(0))
 
 
 # ══════════════════════════════════════════════════════════════
@@ -219,6 +302,49 @@ class TestVineStructure:
         for j, tree_edges in enumerate(vine.edges):
             assert len(tree_edges) == d - j - 1
 
+    def test_fit_rejects_one_dimensional_data(self):
+        with pytest.raises(ValueError, match="data must be 2D"):
+            CVineCopula().fit(np.array([0.1, 0.2, 0.3]))
+
+    def test_fit_rejects_d1(self):
+        with pytest.raises(ValueError, match="need d >= 2"):
+            CVineCopula().fit(np.full((5, 1), 0.5))
+
+    def test_dynamic_fit_failure_falls_back_to_mle(self, monkeypatch):
+        calls = []
+
+        def fake_fit(copula, u_pair, method='mle', **kwargs):
+            calls.append(str(method).lower())
+            if str(method).lower() == 'mle':
+                return MLEResult(
+                    log_likelihood=1.0,
+                    method='MLE',
+                    copula_name=copula.name,
+                    success=True,
+                    copula_param=0.25,
+                )
+            return GASResult(
+                log_likelihood=-1.0,
+                method='GAS',
+                copula_name=copula.name,
+                success=False,
+                params=gas_params(0.0, 0.0, 0.0),
+                message='failed',
+            )
+
+        monkeypatch.setattr('pyscarcopula.api.fit', fake_fit)
+
+        u = pobs(np.random.default_rng(11).standard_normal((30, 2)))
+        vine = CVineCopula()
+        vine.fit(
+            u,
+            method='gas',
+            copulas=[[(BivariateGaussianCopula, 0)]],
+        )
+
+        assert calls == ['mle', 'gas']
+        assert vine.edges[0][0].fit_result.method == 'MLE'
+
 
 # ══════════════════════════════════════════════════════════════
 # Truncation tests
@@ -228,7 +354,7 @@ class TestVineTruncation:
     def test_truncation_level(self, crypto_data_6d):
         vine = CVineCopula()
         vine.fit(crypto_data_6d, method='scar-tm-ou',
-                 K=50, tol=0.5, truncation_level=1)
+                 K=50, gtol=0.5, truncation_level=1)
         for j, tree_edges in enumerate(vine.edges):
             for edge in tree_edges:
                 if j >= 1:
@@ -237,7 +363,7 @@ class TestVineTruncation:
     def test_min_edge_logL(self, crypto_data_6d):
         vine = CVineCopula()
         vine.fit(crypto_data_6d, method='scar-tm-ou',
-                 K=50, tol=0.5, min_edge_logL=50)
+                 K=50, gtol=0.5, min_edge_logL=50)
         n_mle = sum(1 for tree in vine.edges for e in tree
                     if e.fit_result.method.upper() == 'MLE')
         assert n_mle > 0
@@ -276,6 +402,59 @@ class TestVineGoF:
 # ══════════════════════════════════════════════════════════════
 
 class TestVineSamplePredict:
+    def test_sample_rejects_nonpositive_n(self):
+        vine = CVineCopula()
+        vine.edges = [[]]
+        vine.d = 2
+        with pytest.raises(ValueError, match="n must be positive"):
+            vine.sample(0)
+
+    def test_predict_rejects_nonpositive_n(self):
+        vine = CVineCopula()
+        vine.edges = [[]]
+        vine.d = 2
+        with pytest.raises(ValueError, match="n must be positive"):
+            vine.predict(0)
+
+    def test_stepwise_gas_sample_uses_result_score_eps(self):
+        class LinearCopula:
+            name = 'linear'
+
+            def __init__(self):
+                self.r_seen = []
+
+            def transform(self, x):
+                return np.asarray(x, dtype=np.float64)
+
+            def h_inverse(self, v, u_given, r):
+                return np.asarray(v, dtype=np.float64)
+
+            def h(self, u2, u1, r):
+                return np.asarray(u2, dtype=np.float64)
+
+            def log_pdf(self, u1, u2, r):
+                r = np.asarray(r, dtype=np.float64)
+                self.r_seen.extend(float(x) for x in r.ravel())
+                return r * (np.asarray(u1) + np.asarray(u2))
+
+        cop = LinearCopula()
+        edge = PairCopula(tree=0, idx=0, copula=cop)
+        edge.fit_result = GASResult(
+            log_likelihood=0.0,
+            method='GAS',
+            copula_name=cop.name,
+            success=True,
+            params=gas_params(0.1, 0.2, 0.3),
+            score_eps=2e-5,
+        )
+        vine = CVineCopula()
+        vine.edges = [[edge]]
+        vine.d = 2
+
+        vine.sample(1, rng=np.random.default_rng(123))
+
+        assert cop.r_seen[1] - cop.r_seen[2] == pytest.approx(4e-5)
+
     def test_predict_shape(self):
         d = 4
         u = pobs(np.random.default_rng(0).standard_normal((200, d)))
@@ -361,13 +540,15 @@ class TestVineSamplePredict:
         with pytest.raises(ValueError):
             vine.predict(50, given={0: 1.0})
 
-    def test_predict_given_dynamic_edges_not_implemented(self):
+    def test_predict_given_dynamic_edges_uses_strategy_adapter(self):
         d = 3
         u = pobs(np.random.default_rng(11).standard_normal((200, d)))
         vine = CVineCopula()
-        vine.fit(u, method='scar-m-ou', tol=0.5)
-        with pytest.raises(NotImplementedError):
-            vine.predict(50, given={0: 0.5})
+        vine.fit(u, method='scar-m-ou', gtol=0.5)
+        samples = vine.predict(50, given={0: 0.5},
+                               rng=np.random.default_rng(111))
+        assert samples.shape == (50, d)
+        np.testing.assert_allclose(samples[:, 0], 0.5)
 
     def test_predict_given_non_prefix_independence_sanity(self):
         from pyscarcopula.copula.independent import IndependentCopula
@@ -392,7 +573,7 @@ class TestVineSamplePredict:
         vine.edges = [[] for _ in range(d - 1)]
         for tree in range(d - 1):
             for idx in range(d - tree - 1):
-                edge = VineEdge(tree=tree, idx=idx)
+                edge = PairCopula(tree=tree, idx=idx)
                 edge.copula = IndependentCopula()
                 edge.fit_result = IndependentResult(
                     log_likelihood=0.0,
@@ -442,14 +623,14 @@ class TestVineSamplePredict:
 
         calls = []
 
-        def fake_generate_r(edge, n, v_train_pair, K, grid_range,
-                            horizon='next', **kwargs):
-            calls.append((edge.fit_result.method, v_train_pair, horizon))
+        def fake_edge_r_for_predict(edge, n, u_train_pair=None,
+                                    horizon='next', **kwargs):
+            calls.append((edge.fit_result.method, u_train_pair, horizon))
             return np.full(n, 0.1)
 
         monkeypatch.setattr(
-            'pyscarcopula.vine.cvine.generate_r_for_predict',
-            fake_generate_r)
+            'pyscarcopula.vine.cvine._edge_r_for_predict',
+            fake_edge_r_for_predict)
 
         samples = vine.predict(8, u=u, given={0: 0.4}, horizon='current')
 
@@ -466,7 +647,7 @@ class TestVineSamplePredict:
         d = 3
         u = pobs(np.random.default_rng(15).standard_normal((180, d)))
         vine = CVineCopula()
-        vine.fit(u, method='scar-tm-ou', K=40, tol=0.5)
+        vine.fit(u, method='scar-tm-ou', K=40, gtol=0.5)
         samples = vine.predict(30, given={0: 0.35}, K=40, grid_range=5.0)
         assert samples.shape == (30, d)
         np.testing.assert_allclose(samples[:, 0], 0.35)
@@ -476,7 +657,7 @@ class TestVineSamplePredict:
         d = 3
         u = pobs(np.random.default_rng(16).standard_normal((180, d)))
         vine = CVineCopula()
-        vine.fit(u, method='scar-tm-ou', K=40, tol=0.5)
+        vine.fit(u, method='scar-tm-ou', K=40, gtol=0.5)
         samples = vine.predict(20, given={1: 0.55}, K=40, grid_range=5.0,
                                horizon='current')
         assert samples.shape == (20, d)

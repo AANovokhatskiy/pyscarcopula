@@ -22,14 +22,18 @@ import numpy as np
 from scipy.optimize import OptimizeResult
 
 from pyscarcopula._utils import pobs
-from pyscarcopula.vine._edge import (
-    VineEdge, _edge_h, _edge_log_likelihood, _get_alpha, _get_gas_params,
+from pyscarcopula.vine._pair_copula import PairCopula
+from pyscarcopula.vine._rvine_edges import (
+    _edge_h,
+    _edge_log_likelihood,
+    _edge_r_for_predict,
+    _edge_r_for_sample,
 )
 from pyscarcopula.vine._selection import (
     select_best_copula, _default_candidates,
 )
 from pyscarcopula.vine._helpers import (
-    _clip_unit, generate_r_for_sample, generate_r_for_predict,
+    _clip_unit,
 )
 from pyscarcopula.vine._conditional_cvine import (
     ensure_cvine_conditional_supported,
@@ -38,6 +42,24 @@ from pyscarcopula.vine._conditional_cvine import (
     sample_cvine_conditional_prefix_with_r,
     validate_cvine_given,
 )
+from pyscarcopula.vine._edge_adapter import (
+    edge_condition_sample_state,
+    edge_copula,
+    edge_has_dynamic_params,
+    edge_model_sample_state,
+    edge_param,
+    edge_result,
+    edge_state_param,
+    result_param_items,
+)
+
+
+def _edge_param_from_result(result):
+    """Return scalar fit parameter stored by point-parameter results."""
+    value = getattr(result, 'copula_param', None)
+    if value is None:
+        return None
+    return float(value)
 
 
 class CVineCopula:
@@ -55,9 +77,7 @@ class CVineCopula:
         Tree 1: conditional pairs (2,3|1), (2,4|1), ...
         etc.
 
-    Estimation supports mixed models: strong edges (Tree 0-1) use
-    SCAR-TM-OU for time-varying parameters, while weak edges (upper
-    trees) fall back to MLE for efficiency.
+    Estimation supports mixed fitted strategies on different edges.
 
     Parameters
     ----------
@@ -80,7 +100,7 @@ class CVineCopula:
             return self.candidates
         return _default_candidates()
 
-    # ── Fit ────────────────────────────────────────────────────────
+    # Fit
 
     def fit(self, data, method='mle', to_pobs=False,
             copulas=None,
@@ -93,7 +113,8 @@ class CVineCopula:
         Parameters
         ----------
         data : (T, d) array
-        method : str — 'mle', 'gas', or SCAR method name
+        method : str
+            Strategy name forwarded to bivariate copula fitting.
         to_pobs : bool
         copulas : None (auto-select) or list-of-lists of
                   (copula_class, rotation) tuples
@@ -106,10 +127,14 @@ class CVineCopula:
         self
         """
         u = np.asarray(data, dtype=np.float64)
+        if u.ndim != 2:
+            raise ValueError(f"CVineCopula.fit: data must be 2D, got shape {u.shape}")
         if to_pobs:
             u = pobs(u)
 
         T, d = u.shape
+        if d < 2:
+            raise ValueError(f"CVineCopula.fit: need d >= 2, got d={d}")
         self.d = d
         self.method = method.upper()
 
@@ -126,8 +151,6 @@ class CVineCopula:
                 u1 = _clip_unit(v[j][0])
                 u2 = _clip_unit(v[j][i + 1])
                 u_pair = np.column_stack((u1, u2))
-
-                edge = VineEdge(tree=j, idx=i)
 
                 # Step 1: select copula family (always via MLE)
                 if copulas is not None:
@@ -148,6 +171,7 @@ class CVineCopula:
                         u1, u2, self._get_candidates(),
                         self.allow_rotations, self.criterion,
                         transform_type=transform_type)
+                selection_result = result
 
                 # Step 2: decide whether to refit with dynamic method
                 from pyscarcopula.copula.independent import IndependentCopula
@@ -162,10 +186,23 @@ class CVineCopula:
 
                 if not skip_dynamic:
                     from pyscarcopula.api import fit as _api_fit
-                    result = _api_fit(cop, u_pair, method=method, **kwargs)
+                    dynamic_result = _api_fit(
+                        cop, u_pair, method=method, **kwargs)
+                    if bool(getattr(dynamic_result, 'success', True)):
+                        result = dynamic_result
+                    else:
+                        result = selection_result
 
-                edge.copula = cop
-                edge.fit_result = result
+                edge = PairCopula(
+                    copula=cop,
+                    param=_edge_param_from_result(result),
+                    log_likelihood=float(result.log_likelihood),
+                    nfev=int(getattr(result, 'nfev', 0)),
+                    tau=0.0,
+                    fit_result=result,
+                    tree=j,
+                    idx=i,
+                )
                 self.edges[j].append(edge)
 
             if j < d - 2:
@@ -175,7 +212,7 @@ class CVineCopula:
                     u_pair = np.column_stack((u1, u2))
                     edge = self.edges[j][i]
                     v[j + 1][i] = _clip_unit(
-                        _edge_h(edge, u2, u1, u_pair))
+                        _edge_h(edge, u2, u1, u_pair=u_pair))
 
         total_ll = sum(e.fit_result.log_likelihood
                        for tree in self.edges for e in tree)
@@ -193,7 +230,7 @@ class CVineCopula:
 
         return self
 
-    # ── Log-likelihood ────────────────────────────────────────────
+    # Log-likelihood
 
     def log_likelihood(self, data, to_pobs=False, **kwargs):
         """Compute total log-likelihood of the C-vine."""
@@ -228,34 +265,39 @@ class CVineCopula:
                     u_pair = np.column_stack((u1, u2))
                     edge = self.edges[j][i]
                     v[j + 1][i] = _clip_unit(
-                        _edge_h(edge, u2, u1, u_pair, **kwargs))
+                        _edge_h(edge, u2, u1, u_pair=u_pair, **kwargs))
 
         return total_ll
 
-    # ── Sampling ─────────────────────────────────────────────────
+    # Sampling
 
     def sample(self, n, u_train=None, rng=None, **kwargs):
-        """Sample from fitted C-vine using Rosenblatt inverse."""
+        """Sample from fitted C-vine using Rosenblatt inverse.
+
+        ``u_train`` and extra keyword arguments are accepted for legacy API
+        compatibility and are not used by the model-reproduction sampler.
+        """
         if self.edges is None:
             raise ValueError("Fit first")
+        if not isinstance(n, (int, np.integer)) or n <= 0:
+            raise ValueError(f"CVineCopula.sample: n must be positive int, got {n!r}")
 
         d = self.d
+        n = int(n)
         if rng is None:
             rng = np.random.default_rng()
 
-        from pyscarcopula._types import GASResult
-
-        has_gas = any(
-            isinstance(edge.fit_result, GASResult)
+        has_stateful = any(
+            edge_model_sample_state(edge.copula, edge.fit_result) is not None
             for tree in self.edges for edge in tree)
 
-        if has_gas:
+        if has_stateful:
             return self._sample_stepwise(n, d, rng)
         else:
             return self._sample_vectorized(n, d, rng)
 
     def _sample_vectorized(self, n, d, rng):
-        """Vectorized sample for MLE/SCAR (no GAS edges)."""
+        """Vectorized sample for edges without strategy-owned state."""
         w = rng.uniform(0, 1, (n, d))
         x = np.zeros((n, d))
         v_samp = [[None] * d for _ in range(d)]
@@ -267,7 +309,7 @@ class CVineCopula:
         for j in range(d - 1):
             for i in range(d - j - 1):
                 edge = self.edges[j][i]
-                r_sampling[j][i] = generate_r_for_sample(edge, n, rng)
+                r_sampling[j][i] = _edge_r_for_sample(edge, n, rng)
 
         for i in range(1, d):
             v_samp[i][0] = w[:, i]
@@ -291,38 +333,30 @@ class CVineCopula:
         return x
 
     def _sample_stepwise(self, n, d, rng):
-        """Step-by-step sample for GAS edges."""
-        from pyscarcopula._types import GASResult, LatentResult, MLEResult
+        """Step-by-step sample for edges with strategy-owned state."""
         from pyscarcopula.copula.independent import IndependentCopula
 
         x = np.zeros((n, d))
 
         n_trees = d - 1
         r_state = [[None] * (d - 1) for _ in range(n_trees)]
-        g_state = [[None] * (d - 1) for _ in range(n_trees)]
+        model_state = [[None] * (d - 1) for _ in range(n_trees)]
         r_ou_path = [[None] * (d - 1) for _ in range(n_trees)]
 
         for j in range(n_trees):
             for i in range(d - j - 1):
                 edge = self.edges[j][i]
-                if isinstance(edge.copula, IndependentCopula):
+                copula = edge_copula(edge)
+                result = edge_result(edge)
+                state = edge_model_sample_state(copula, result)
+                if isinstance(copula, IndependentCopula):
                     r_state[j][i] = 0.0
-                elif isinstance(edge.fit_result, MLEResult):
-                    r_state[j][i] = edge.fit_result.copula_param
-                elif isinstance(edge.fit_result, GASResult):
-                    p = edge.fit_result.params
-                    if abs(p.beta) < 1.0 - 1e-8:
-                        g_state[j][i] = p.omega / (1.0 - p.beta)
-                    else:
-                        g_state[j][i] = p.omega
-                    r_state[j][i] = float(
-                        edge.copula.transform(
-                            np.array([g_state[j][i]]))[0])
-                elif isinstance(edge.fit_result, LatentResult):
-                    r_ou_path[j][i] = generate_r_for_sample(edge, n, rng)
+                elif state is not None:
+                    model_state[j][i] = state
+                    r_state[j][i] = edge_state_param(state)
+                else:
+                    r_ou_path[j][i] = _edge_r_for_sample(edge, n, rng)
                     r_state[j][i] = float(r_ou_path[j][i][0])
-
-        score_eps = 1e-4
 
         for t in range(n):
             for j in range(n_trees):
@@ -362,7 +396,7 @@ class CVineCopula:
                                     np.array([v_samp[j_idx][j_idx]]),
                                     np.array([r_ji]))))[0])
 
-            # Update GAS state
+            # Update strategy-owned state.
             v_obs = [[None] * d for _ in range(d)]
             for i in range(d):
                 v_obs[0][i] = x[t, i]
@@ -375,47 +409,16 @@ class CVineCopula:
                     u2_t = float(_clip_unit(
                         np.atleast_1d(v_obs[j][i + 1]))[0])
 
-                    if isinstance(edge.fit_result, GASResult):
-                        p = edge.fit_result.params
-                        g_t = g_state[j][i]
-                        r_t = r_state[j][i]
-                        scaling = getattr(
-                            edge.fit_result, 'scaling', 'unit')
-
+                    if model_state[j][i] is not None:
                         u1a = np.array([u1_t])
                         u2a = np.array([u2_t])
-
-                        g_plus = g_t + score_eps
-                        g_minus = g_t - score_eps
-                        r_plus = float(edge.copula.transform(
-                            np.array([g_plus]))[0])
-                        r_minus = float(edge.copula.transform(
-                            np.array([g_minus]))[0])
-
-                        ll_plus = float(edge.copula.log_pdf(
-                            u1a, u2a, np.array([r_plus]))[0])
-                        ll_minus = float(edge.copula.log_pdf(
-                            u1a, u2a, np.array([r_minus]))[0])
-
-                        nabla = (ll_plus - ll_minus) / (2.0 * score_eps)
-
-                        if scaling == 'fisher':
-                            ll_t = float(edge.copula.log_pdf(
-                                u1a, u2a, np.array([r_t]))[0])
-                            d2 = (ll_plus - 2.0 * ll_t + ll_minus
-                                  ) / (score_eps ** 2)
-                            fisher = max(-d2, 1e-6)
-                            s_t = nabla / fisher
-                        else:
-                            s_t = nabla
-
-                        s_t = np.clip(s_t, -100.0, 100.0)
-                        g_new = p.omega + p.beta * g_t + p.gamma * s_t
-                        g_new = np.clip(g_new, -50.0, 50.0)
-                        g_state[j][i] = float(g_new)
-                        r_state[j][i] = float(
-                            edge.copula.transform(
-                                np.array([g_new]))[0])
+                        model_state[j][i] = edge_condition_sample_state(
+                            edge.copula,
+                            edge.fit_result,
+                            model_state[j][i],
+                            np.column_stack((u1a, u2a)),
+                        )
+                        r_state[j][i] = edge_state_param(model_state[j][i])
 
                     if j < n_trees - 1:
                         r_ji = r_state[j][i]
@@ -430,10 +433,13 @@ class CVineCopula:
         return x
 
     def sample_model(self, n, u=None, rng=None):
-        """Alias for sample."""
+        """Legacy alias for sample.
+
+        ``u`` is accepted for backward compatibility and ignored.
+        """
         return self.sample(n, rng=rng)
 
-    # ── Prediction ───────────────────────────────────────────────
+    # Prediction
 
     def save(self, path, *, include_data=True):
         """Save this fitted C-vine model to disk."""
@@ -454,11 +460,14 @@ class CVineCopula:
         """Conditional predict: sample from vine for next-step.
 
         `given` fixes selected variables in pseudo-observation space,
-        e.g. ``given={2: 0.6}``. For GAS and SCAR-TM-OU edges, `horizon`
-        selects the predictive state timing.
+        e.g. ``given={2: 0.6}``. For dynamic edges, `horizon` selects the
+        predictive state timing.
         """
         if self.edges is None:
             raise ValueError("Fit first")
+        if not isinstance(n, (int, np.integer)) or n <= 0:
+            raise ValueError(f"CVineCopula.predict: n must be positive int, got {n!r}")
+        n = int(n)
 
         u_data = u if u is not None else getattr(self, '_last_u', None)
         given = validate_cvine_given(given, self.d)
@@ -475,13 +484,17 @@ class CVineCopula:
 
         # Build v_train if needed for dynamic predictive edge states.
         v_train = None
-        from pyscarcopula._types import GASResult, LatentResult
         needs_v_train = any(
-            isinstance(self.edges[j][i].fit_result, (GASResult, LatentResult))
+            edge_has_dynamic_params(self.edges[j][i])
             for j in range(d - 1)
             for i in range(d - j - 1))
 
         if u_data is not None and needs_v_train:
+            u_data = np.asarray(u_data, dtype=np.float64)
+            if u_data.ndim != 2 or u_data.shape[1] != d:
+                raise ValueError(
+                    f"CVineCopula.predict: u must be (T, {d}), "
+                    f"got {u_data.shape}")
             v_train = [[None] * d for _ in range(d)]
             for ii in range(d):
                 v_train[0][ii] = u_data[:, ii].copy()
@@ -493,7 +506,7 @@ class CVineCopula:
                     edge = self.edges[j][ii]
                     if j < d - 2:
                         v_train[j + 1][ii] = _clip_unit(
-                            _edge_h(edge, u2, u1, u_pair, **kwargs))
+                            _edge_h(edge, u2, u1, u_pair=u_pair, **kwargs))
 
         # Precompute r for each edge
         r_pred = [[None] * (d - 1) for _ in range(d - 1)]
@@ -505,9 +518,14 @@ class CVineCopula:
                     u1 = _clip_unit(v_train[j][0])
                     u2 = _clip_unit(v_train[j][i + 1])
                     v_pair = np.column_stack((u1, u2))
-                r_pred[j][i] = generate_r_for_predict(
-                    edge, n, v_pair, None, None, horizon=horizon,
-                    rng=rng, predictive_r_mode=predictive_r_mode)
+                r_pred[j][i] = _edge_r_for_predict(
+                    edge,
+                    n,
+                    u_train_pair=v_pair,
+                    horizon=horizon,
+                    rng=rng,
+                    predictive_r_mode=predictive_r_mode,
+                )
 
         if given:
             ensure_cvine_conditional_supported(self)
@@ -545,7 +563,7 @@ class CVineCopula:
 
         return x
 
-    # ── Summary ──────────────────────────────────────────────────
+    # Summary
 
     def summary(self):
         """Print vine structure summary."""
@@ -562,17 +580,13 @@ class CVineCopula:
                 cop = edge.copula
                 name = cop.name
                 rot = cop._rotate
-                if edge.method.upper() == 'MLE':
-                    param = f"r={edge.fit_result.copula_param:.4f}"
-                elif edge.method.upper() == 'GAS':
-                    omega, gamma, beta = _get_gas_params(edge.fit_result)
-                    param = (
-                        f"omega={omega:.4f}, gamma={gamma:.4f}, "
-                        f"beta={beta:.4f}"
-                    )
+                items = result_param_items(edge_result(edge))
+                if items:
+                    param = ", ".join(
+                        f"{name}={float(value):.4f}"
+                        for name, value in items)
                 else:
-                    alpha = _get_alpha(edge.fit_result)
-                    param = f"alpha={alpha}"
+                    param = f"r={edge_param(edge, default=0.0):.4f}"
                 ll = edge.fit_result.log_likelihood
                 total_ll += ll
                 rot_str = f" rot={rot}" if rot != 0 else ""

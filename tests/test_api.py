@@ -1,22 +1,46 @@
 """Test API consistency across copula types."""
+import os
 import numpy as np
 import pytest
 from pyscarcopula import (
     GumbelCopula, ClaytonCopula, FrankCopula, JoeCopula,
-    IndependentCopula, CVineCopula,
+    IndependentCopula, CVineCopula, EquicorrGaussianCopula,
+    GaussianCopula, StudentCopula, StochasticStudentCopula,
+    StochasticStudentDCCCopula,
 )
-from pyscarcopula.copula.experimental.equicorr import EquicorrGaussianCopula
 from pyscarcopula.api import fit, predict, predictive_mean, smoothed_params
 from pyscarcopula.stattests import gof_test
 from pyscarcopula._utils import pobs
 from pyscarcopula._types import (
     MLEResult, LatentResult, GASResult, gas_params, NumericalConfig,
+    LBFGSBConfig,
 )
 from pyscarcopula.numerical.gas_filter import gas_predict_param
 from pyscarcopula.numerical.predictive_tm import (
     sample_grid_distribution, tm_state_distribution,
 )
 from pyscarcopula.strategy.gas import GASStrategy
+
+
+class TestPublicPackageSurface:
+    def test_experimental_models_exported_from_package_root(self):
+        assert EquicorrGaussianCopula.__name__ == 'EquicorrGaussianCopula'
+        assert StochasticStudentCopula.__name__ == 'StochasticStudentCopula'
+        assert StochasticStudentDCCCopula.__name__ == (
+            'StochasticStudentDCCCopula'
+        )
+
+    def test_blas_thread_policy_env_vars_are_forced(self):
+        expected = os.environ.get('PYSCA_BLAS_THREADS', '1')
+        for name in (
+            'OMP_NUM_THREADS',
+            'MKL_NUM_THREADS',
+            'OPENBLAS_NUM_THREADS',
+            'NUMEXPR_NUM_THREADS',
+            'VECLIB_MAXIMUM_THREADS',
+            'BLIS_NUM_THREADS',
+        ):
+            assert os.environ[name] == expected
 
 
 class LinearScoreCopula:
@@ -48,7 +72,7 @@ class TestFitResultTypes:
     ])
     def test_scar_returns_latent_result(self, cls, rot, random_u2):
         cop = cls(rotate=rot)
-        result = fit(cop, random_u2, method='scar-tm-ou', K=50, tol=0.5)
+        result = fit(cop, random_u2, method='scar-tm-ou', K=50, gtol=0.5)
         assert isinstance(result, LatentResult)
         assert result.params.kappa > 0
         assert result.params.nu > 0
@@ -85,7 +109,7 @@ class TestPredictiveMean:
 
     def test_scar_varying(self, random_u2):
         cop = GumbelCopula(rotate=180)
-        result = fit(cop, random_u2, method='scar-tm-ou', K=50, tol=0.5)
+        result = fit(cop, random_u2, method='scar-tm-ou', K=50, gtol=0.5)
         r_t = predictive_mean(cop, random_u2, result)
         assert r_t.shape == (200,)
         # Should vary (not constant like MLE)
@@ -110,7 +134,7 @@ class TestGoFWithFitResult:
 
     def test_scar_gof(self, random_u2):
         cop = GumbelCopula(rotate=180)
-        result = fit(cop, random_u2, method='scar-tm-ou', K=50, tol=0.5)
+        result = fit(cop, random_u2, method='scar-tm-ou', K=50, gtol=0.5)
         gof = gof_test(cop, random_u2, fit_result=result, to_pobs=False)
         assert 0 <= gof.pvalue <= 1
 
@@ -185,7 +209,7 @@ class TestTransformType:
     ])
     def test_softplus_scar(self, cls, rot, random_u2):
         cop = cls(rotate=rot, transform_type='softplus')
-        result = fit(cop, random_u2, method='scar-tm-ou', K=50, tol=0.5)
+        result = fit(cop, random_u2, method='scar-tm-ou', K=50, gtol=0.5)
         assert isinstance(result, LatentResult)
 
     def test_softplus_output_range(self):
@@ -263,6 +287,25 @@ class TestTransformType:
 
 
 class TestEquicorrGaussian:
+    def test_api_fit_predict_multivariate_mle(self):
+        u = pobs(np.random.default_rng(42).standard_normal((120, 4)))
+        cop = EquicorrGaussianCopula(d=4)
+
+        result = fit(cop, u, method='mle')
+        samples = predict(cop, u, result, 20, rng=np.random.default_rng(7))
+
+        assert result.success
+        assert samples.shape == (20, 4)
+        assert np.all((samples > 0.0) & (samples < 1.0))
+
+    def test_api_multivariate_given_raises(self):
+        u = pobs(np.random.default_rng(43).standard_normal((120, 4)))
+        cop = EquicorrGaussianCopula(d=4)
+        result = fit(cop, u, method='mle')
+
+        with pytest.raises(NotImplementedError, match="given="):
+            predict(cop, u, result, 20, given={0: 0.5})
+
     def test_mle(self):
         u = pobs(np.random.default_rng(42).standard_normal((200, 4)))
         cop = EquicorrGaussianCopula(d=4)
@@ -272,7 +315,7 @@ class TestEquicorrGaussian:
     def test_scar(self):
         u = pobs(np.random.default_rng(42).standard_normal((200, 4)))
         cop = EquicorrGaussianCopula(d=4)
-        cop.fit(u, method='scar-tm-ou', K=50, tol=0.5)
+        cop.fit(u, method='scar-tm-ou', K=50, gtol=0.5)
         assert hasattr(cop.fit_result, 'alpha')
 
     def test_sample_shape(self):
@@ -292,6 +335,135 @@ class TestEquicorrGaussian:
     def test_d1_raises(self):
         with pytest.raises(ValueError):
             EquicorrGaussianCopula(d=1)
+
+    def test_experimental_mle_uses_model_optimizer_config(self, monkeypatch):
+        captured = {}
+
+        class DummyResult:
+            x = np.array([0.0])
+            fun = 0.0
+            success = True
+            nfev = 1
+            message = 'ok'
+
+        def fake_minimize(fun, x0, method=None, bounds=None, options=None):
+            captured['options'] = options
+            return DummyResult()
+
+        monkeypatch.setattr(
+            'pyscarcopula.copula.experimental.equicorr.minimize',
+            fake_minimize)
+
+        u = pobs(np.random.default_rng(46).standard_normal((40, 4)))
+        cfg = NumericalConfig(
+            equicorr_optimizer=LBFGSBConfig(gtol=2e-4, maxls=31))
+
+        result = fit(EquicorrGaussianCopula(d=4), u, method='mle',
+                     config=cfg)
+
+        assert result.success
+        assert captured['options']['gtol'] == pytest.approx(2e-4)
+        assert captured['options']['maxls'] == 31
+
+    def test_stochastic_student_mle_uses_model_optimizer_config(
+            self, monkeypatch):
+        captured = {}
+
+        class DummyResult:
+            x = np.array([0.0])
+            fun = 0.0
+            success = True
+            nfev = 1
+            message = 'ok'
+
+        def fake_minimize(fun, x0, method=None, bounds=None, options=None):
+            captured['options'] = options
+            return DummyResult()
+
+        monkeypatch.setattr(
+            'pyscarcopula.copula.experimental.stochastic_student.minimize',
+            fake_minimize)
+
+        u = pobs(np.random.default_rng(47).standard_normal((40, 3)))
+        cfg = NumericalConfig(
+            stochastic_student_optimizer=LBFGSBConfig(
+                gtol=3e-4, maxiter=41))
+
+        result = fit(StochasticStudentCopula(d=3), u, method='mle',
+                     config=cfg)
+
+        assert result.success
+        assert captured['options']['gtol'] == pytest.approx(3e-4)
+        assert captured['options']['maxiter'] == 41
+
+    def test_dcc_fit_uses_dcc_optimizer_config(self, monkeypatch):
+        captured = {}
+
+        class DummyResult:
+            x = np.array([0.03, 0.85])
+            success = True
+            nfev = 1
+            message = 'ok'
+
+        def fake_minimize(fun, x0, method=None, bounds=None, options=None):
+            captured['options'] = options
+            return DummyResult()
+
+        monkeypatch.setattr(
+            'pyscarcopula.copula.experimental.stochastic_student_dcc.minimize',
+            fake_minimize)
+
+        z = np.random.default_rng(48).standard_normal((20, 3))
+        cfg = NumericalConfig(
+            dcc_optimizer=LBFGSBConfig(gtol=4e-6, maxiter=77))
+
+        result = StochasticStudentDCCCopula(d=3).fit_R_t(z=z, config=cfg)
+
+        assert result.success
+        assert captured['options']['gtol'] == pytest.approx(4e-6)
+        assert captured['options']['maxiter'] == 77
+
+
+class TestMultivariateCopulaAPI:
+    @pytest.mark.parametrize("cls", [GaussianCopula, StudentCopula])
+    def test_dense_multivariate_mle_predicts_through_api(self, cls):
+        u = pobs(np.random.default_rng(44).standard_normal((90, 3)))
+        cop = cls()
+
+        result = fit(cop, u, method='mle')
+        samples = predict(cop, u, result, 12, rng=np.random.default_rng(8))
+
+        assert result.success
+        assert samples.shape == (12, 3)
+        assert np.all((samples > 0.0) & (samples < 1.0))
+
+    def test_student_fit_optimizes_df_directly_above_two(self):
+        u = pobs(np.random.default_rng(45).standard_normal((100, 3)))
+        cop = StudentCopula()
+
+        cop.fit(u)
+
+        assert np.isfinite(cop.df)
+        assert 2.0 < cop.df < 1_000_000.0
+
+    def test_dcc_predictive_mean_df_path_is_not_transformed_twice(self):
+        cop = StochasticStudentDCCCopula(d=3)
+        R_path = np.repeat(np.eye(3)[None, :, :], 3, axis=0)
+        cop._set_R_path(R_path)
+        cop.fit_result = LatentResult(
+            log_likelihood=0.0,
+            method='SCAR-TM-OU',
+            copula_name=cop.name,
+            success=True,
+        )
+        expected = np.array([3.0, 4.0, 5.0])
+        cop.predictive_mean = lambda u=None: expected
+
+        got = cop._infer_df_path(
+            n=3, df_mode='predictive_mean',
+            u=np.full((3, 3), 0.5))
+
+        np.testing.assert_allclose(got, expected)
 
 
 class TestConditionalPredict:
@@ -349,7 +521,7 @@ class TestConditionalPredict:
 
     def test_scar_tm_current_and_next_state_distributions_differ(self, random_u2):
         cop = GumbelCopula(rotate=180)
-        result = fit(cop, random_u2, method='scar-tm-ou', K=50, tol=0.5)
+        result = fit(cop, random_u2, method='scar-tm-ou', K=50, gtol=0.5)
         p = result.params
         z_cur, prob_cur = tm_state_distribution(
             p.kappa, p.mu, p.nu, random_u2, cop, K=50, grid_range=5.0,
@@ -382,20 +554,20 @@ class TestConditionalPredict:
 
         captured = {}
 
-        def fake_conditional_sample(copula, n, r_values, given=None, rng=None):
+        def fake_sample_predictive(copula, n, r_values, given=None, rng=None, d=None):
             captured['r'] = r_values.copy()
             return np.zeros((n, 2))
 
         monkeypatch.setattr(
-            'pyscarcopula.strategy.gas.conditional_sample_bivariate',
-            fake_conditional_sample)
+            'pyscarcopula.strategy.gas.sample_predictive',
+            fake_sample_predictive)
 
         GASStrategy().predict(cop, u, result, 4, horizon='next')
         np.testing.assert_allclose(captured['r'], expected_next)
         assert gas_predict_param(
             omega, gamma, beta, u, cop, horizon='current') == pytest.approx(g1)
 
-    def test_gas_fit_forwards_ftol_to_optimizer(self, monkeypatch):
+    def test_gas_fit_forwards_optimizer_options(self, monkeypatch):
         captured = {}
 
         class DummyResult:
@@ -414,12 +586,65 @@ class TestConditionalPredict:
 
         cop = IndependentCopula()
         u = np.array([[0.2, 0.4], [0.6, 0.8]])
-        cfg = NumericalConfig(default_ftol_gas=1e-11)
+        cfg = NumericalConfig(
+            gas_optimizer=LBFGSBConfig(
+                gtol=2e-4, maxls=33, ftol=1e-11))
 
-        GASStrategy(config=cfg).fit(
+        result = GASStrategy(config=cfg).fit(
             cop, u, gamma0=np.array([0.0, 0.0, 0.0]))
+        assert captured['options']['gtol'] == pytest.approx(2e-4)
+        assert captured['options']['maxls'] == 33
         assert captured['options']['ftol'] == pytest.approx(1e-11)
+        assert captured['options']['maxfun'] == 1000
+        assert captured['options']['eps'] == pytest.approx(1e-5)
+        assert result.score_eps == pytest.approx(cfg.gas_score_eps)
 
-        GASStrategy().fit(
-            cop, u, gamma0=np.array([0.0, 0.0, 0.0]), ftol=1e-9)
+        result = GASStrategy().fit(
+            cop, u, gamma0=np.array([0.0, 0.0, 0.0]), gtol=3e-5,
+            ftol=1e-9, maxls=44,
+            score_eps=2e-5)
+        assert captured['options']['gtol'] == pytest.approx(3e-5)
+        assert captured['options']['maxls'] == 44
         assert captured['options']['ftol'] == pytest.approx(1e-9)
+        assert result.score_eps == pytest.approx(2e-5)
+
+    def test_gas_post_fit_uses_result_score_eps(self, monkeypatch):
+        captured = {}
+
+        def fake_gas_filter(omega, gamma, beta, u, copula, scaling, score_eps):
+            captured['filter_score_eps'] = score_eps
+            return np.zeros(len(u)), np.zeros(len(u)), 12.0
+
+        def fake_gas_predict_param(
+                omega, gamma, beta, u, copula, scaling, score_eps,
+                horizon='next'):
+            captured['predict_score_eps'] = score_eps
+            captured['horizon'] = horizon
+            return 0.25
+
+        monkeypatch.setattr(
+            'pyscarcopula.strategy.gas.gas_filter', fake_gas_filter)
+        monkeypatch.setattr(
+            'pyscarcopula.strategy.gas.gas_predict_param',
+            fake_gas_predict_param)
+
+        cop = IndependentCopula()
+        u = np.array([[0.2, 0.4], [0.6, 0.8]])
+        result = GASResult(
+            log_likelihood=0.0,
+            method='GAS',
+            copula_name=cop.name,
+            success=True,
+            params=gas_params(0.0, 0.0, 0.0),
+            scaling='unit',
+            score_eps=3e-6,
+        )
+        strategy = GASStrategy(config=NumericalConfig(gas_score_eps=9e-4))
+
+        assert strategy.log_likelihood(cop, u, result) == pytest.approx(12.0)
+        state = strategy.predictive_state(cop, u, result, horizon='current')
+
+        assert captured['filter_score_eps'] == pytest.approx(3e-6)
+        assert captured['predict_score_eps'] == pytest.approx(3e-6)
+        assert captured['horizon'] == 'current'
+        np.testing.assert_allclose(state.r, [0.25])

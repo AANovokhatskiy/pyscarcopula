@@ -4,7 +4,8 @@ import pytest
 
 from pyscarcopula import PredictConfig as PublicPredictConfig
 from pyscarcopula._types import (
-    NumericalConfig, DEFAULT_CONFIG,
+    NumericalConfig,
+    LBFGSBConfig,
     LatentProcessParams, ou_params, gas_params,
     MLEResult, LatentResult, GASResult, IndependentResult,
     PredictConfig, PredictiveState,
@@ -26,25 +27,65 @@ class TestNumericalConfig:
         assert cfg.default_K == 300
         assert cfg.default_grid_range == 5.0
         assert cfg.default_pts_per_sigma == 4
+        assert cfg.mle_optimizer.gtol == 1e-3
+        assert cfg.mle_optimizer.maxls == 20
+        assert cfg.gas_optimizer.gtol == 1e-3
+        assert cfg.gas_optimizer.ftol == 1e-12
+        assert cfg.gas_optimizer.maxfun == 1000
+        assert cfg.gas_optimizer.maxiter == 1000
+        assert cfg.gas_optimizer.maxls == 50
+        assert cfg.gas_optimizer.eps == 1e-5
+        assert cfg.scar_optimizer.gtol == 1e-3
+        assert cfg.scar_optimizer.maxfun == 100
+        assert cfg.scar_optimizer.maxiter == 100
+        assert cfg.scar_optimizer.maxls == 20
+        assert cfg.scar_optimizer.eps == 1e-4
+        assert cfg.equicorr_optimizer.gtol == 1e-4
+        assert cfg.stochastic_student_optimizer.gtol == 1e-4
+        assert cfg.stochastic_student_dcc_optimizer.gtol == 1e-4
+        assert cfg.stochastic_student_dcc_optimizer.maxiter == 300
+        assert cfg.dcc_optimizer.gtol == 1e-6
+        assert cfg.dcc_optimizer.maxiter == 500
+        assert cfg.garch_optimizer.gtol == 1e-5
+        assert cfg.garch_optimizer.maxiter == 300
         assert cfg.gas_score_eps == 1e-4
-        assert cfg.default_ftol_gas == 1e-12
-        assert cfg.default_maxfun_gas == 1000
         assert cfg.gas_gamma_bound == 20.0
         assert cfg.gas_beta_bound == 0.999
 
     def test_override(self):
         cfg = NumericalConfig(
             default_K=500,
+            mle_optimizer=LBFGSBConfig(gtol=1e-5),
+            gas_optimizer=LBFGSBConfig(ftol=1e-10, maxfun=250),
+            scar_optimizer=LBFGSBConfig(maxls=50),
+            equicorr_optimizer=LBFGSBConfig(maxls=35),
+            stochastic_student_optimizer=LBFGSBConfig(maxiter=40),
+            stochastic_student_dcc_optimizer=LBFGSBConfig(maxfun=45),
+            dcc_optimizer=LBFGSBConfig(gtol=2e-6),
+            garch_optimizer=LBFGSBConfig(maxiter=33),
             gas_score_eps=1e-6,
-            default_ftol_gas=1e-10,
-            default_maxfun_gas=250,
             gas_gamma_bound=12.0,
             gas_beta_bound=0.95,
         )
         assert cfg.default_K == 500
+        assert cfg.mle_optimizer.gtol == 1e-5
+        assert cfg.mle_optimizer.maxls == 20
+        assert cfg.gas_optimizer.ftol == 1e-10
+        assert cfg.gas_optimizer.maxfun == 250
+        assert cfg.gas_optimizer.maxls == 50
+        assert cfg.scar_optimizer.maxls == 50
+        assert cfg.scar_optimizer.maxfun == 100
+        assert cfg.equicorr_optimizer.gtol == 1e-4
+        assert cfg.equicorr_optimizer.maxls == 35
+        assert cfg.stochastic_student_optimizer.gtol == 1e-4
+        assert cfg.stochastic_student_optimizer.maxiter == 40
+        assert cfg.stochastic_student_dcc_optimizer.maxfun == 45
+        assert cfg.stochastic_student_dcc_optimizer.maxiter == 300
+        assert cfg.dcc_optimizer.gtol == 2e-6
+        assert cfg.dcc_optimizer.maxiter == 500
+        assert cfg.garch_optimizer.gtol == 1e-5
+        assert cfg.garch_optimizer.maxiter == 33
         assert cfg.gas_score_eps == 1e-6
-        assert cfg.default_ftol_gas == 1e-10
-        assert cfg.default_maxfun_gas == 250
         assert cfg.gas_gamma_bound == 12.0
         assert cfg.gas_beta_bound == 0.95
         assert cfg.default_grid_range == 5.0  # unchanged

@@ -1,12 +1,12 @@
 """
-pyscarcopula._types — typed results and configuration.
+pyscarcopula._types - typed results and configuration.
 
 Design decisions:
   - FitResult is a hierarchy of frozen dataclasses (not dynamically patched OptimizeResult).
-  - LatentProcessParams is a flexible container: OU has 3 params (kappa, mu, nu),
-    but a future Lévy or fBm process may have 2, 4, or more.
+  - LatentProcessParams is a flexible container for processes with different
+    parameter names and counts.
   - NumericalConfig gathers all magic numbers in one place.
-  - All results are immutable — no accidental overwrites.
+  - All results are immutable by convention.
 """
 
 from __future__ import annotations
@@ -15,9 +15,109 @@ from typing import Any
 import numpy as np
 
 
-# ══════════════════════════════════════════════════════════════════
-# Numerical configuration — all magic numbers live here
-# ══════════════════════════════════════════════════════════════════
+# Numerical configuration
+
+_LBFGSB_OPTION_NAMES = (
+    'gtol',
+    'ftol',
+    'maxfun',
+    'maxiter',
+    'maxls',
+    'eps',
+    'maxcor',
+    'finite_diff_rel_step',
+)
+
+
+@dataclass(frozen=True)
+class LBFGSBConfig:
+    """Default options for scipy.optimize.minimize(method='L-BFGS-B')."""
+
+    gtol: float | None = None
+    ftol: float | None = None
+    maxfun: int | None = None
+    maxiter: int | None = None
+    maxls: int | None = None
+    eps: float | None = None
+    maxcor: int | None = None
+    finite_diff_rel_step: float | None = None
+
+    def merged(self, override: "LBFGSBConfig") -> "LBFGSBConfig":
+        values = {
+            name: getattr(override, name)
+            for name in _LBFGSB_OPTION_NAMES
+            if getattr(override, name) is not None
+        }
+        return dataclass_replace(self, **values)
+
+    def options(self, **overrides) -> dict[str, float | int]:
+        values = {
+            name: getattr(self, name)
+            for name in _LBFGSB_OPTION_NAMES
+        }
+        unknown = set(overrides).difference(values)
+        if unknown:
+            bad = ', '.join(sorted(unknown))
+            raise TypeError(f"Unknown L-BFGS-B option(s): {bad}")
+        values.update({
+            name: value
+            for name, value in overrides.items()
+            if value is not None
+        })
+        return {
+            name: self._validated_option(name, value)
+            for name, value in values.items()
+            if value is not None
+        }
+
+    @staticmethod
+    def _validated_option(name: str, value):
+        if name in ('maxfun', 'maxiter', 'maxls', 'maxcor'):
+            value = int(value)
+        else:
+            value = float(value)
+        if value <= 0:
+            raise ValueError(f"{name} must be positive")
+        return value
+
+
+DEFAULT_MLE_OPTIMIZER = LBFGSBConfig(
+    gtol=1e-3,
+    maxls=20,
+)
+DEFAULT_GAS_OPTIMIZER = LBFGSBConfig(
+    gtol=1e-3,
+    ftol=1e-12,
+    maxfun=1000,
+    maxiter=1000,
+    maxls=50,
+    eps=1e-5,
+)
+DEFAULT_SCAR_OPTIMIZER = LBFGSBConfig(
+    gtol=1e-3,
+    maxfun=100,
+    maxiter=100,
+    maxls=20,
+    eps=1e-4,
+)
+DEFAULT_EQUICORR_OPTIMIZER = LBFGSBConfig(
+    gtol=1e-4,
+)
+DEFAULT_STOCHASTIC_STUDENT_OPTIMIZER = LBFGSBConfig(
+    gtol=1e-4,
+)
+DEFAULT_STOCHASTIC_STUDENT_DCC_OPTIMIZER = LBFGSBConfig(
+    gtol=1e-4,
+    maxiter=300,
+)
+DEFAULT_DCC_OPTIMIZER = LBFGSBConfig(
+    gtol=1e-6,
+    maxiter=500,
+)
+DEFAULT_GARCH_OPTIMIZER = LBFGSBConfig(
+    gtol=1e-5,
+    maxiter=300,
+)
 
 @dataclass(frozen=True)
 class NumericalConfig:
@@ -39,13 +139,25 @@ class NumericalConfig:
     default_grid_method: str = 'auto'
     default_adaptive: bool = True
 
-    # Optimizer defaults
-    default_tol_mle: float = 1e-4
-    default_tol_scar: float = 1e-3
-    default_tol_gas: float = 1e-3
-    default_ftol_gas: float = 1e-12
-    default_maxfun: int = 100
-    default_maxfun_gas: int = 1000
+    # Optimizer defaults. Public fit kwargs use scipy L-BFGS-B option names.
+    mle_optimizer: LBFGSBConfig = field(
+        default_factory=lambda: DEFAULT_MLE_OPTIMIZER)
+    gas_optimizer: LBFGSBConfig = field(
+        default_factory=lambda: DEFAULT_GAS_OPTIMIZER)
+    scar_optimizer: LBFGSBConfig = field(
+        default_factory=lambda: DEFAULT_SCAR_OPTIMIZER)
+
+    # Experimental copula optimizer defaults
+    equicorr_optimizer: LBFGSBConfig = field(
+        default_factory=lambda: DEFAULT_EQUICORR_OPTIMIZER)
+    stochastic_student_optimizer: LBFGSBConfig = field(
+        default_factory=lambda: DEFAULT_STOCHASTIC_STUDENT_OPTIMIZER)
+    stochastic_student_dcc_optimizer: LBFGSBConfig = field(
+        default_factory=lambda: DEFAULT_STOCHASTIC_STUDENT_DCC_OPTIMIZER)
+    dcc_optimizer: LBFGSBConfig = field(
+        default_factory=lambda: DEFAULT_DCC_OPTIMIZER)
+    garch_optimizer: LBFGSBConfig = field(
+        default_factory=lambda: DEFAULT_GARCH_OPTIMIZER)
 
     # Bisection (h-function inversion)
     bisection_tol: float = 1e-10
@@ -59,6 +171,34 @@ class NumericalConfig:
     # MC samplers
     default_n_tr: int = 500
     default_M_iterations: int = 3
+
+    def __post_init__(self):
+        object.__setattr__(
+            self, 'mle_optimizer',
+            DEFAULT_MLE_OPTIMIZER.merged(self.mle_optimizer))
+        object.__setattr__(
+            self, 'gas_optimizer',
+            DEFAULT_GAS_OPTIMIZER.merged(self.gas_optimizer))
+        object.__setattr__(
+            self, 'scar_optimizer',
+            DEFAULT_SCAR_OPTIMIZER.merged(self.scar_optimizer))
+        object.__setattr__(
+            self, 'equicorr_optimizer',
+            DEFAULT_EQUICORR_OPTIMIZER.merged(self.equicorr_optimizer))
+        object.__setattr__(
+            self, 'stochastic_student_optimizer',
+            DEFAULT_STOCHASTIC_STUDENT_OPTIMIZER.merged(
+                self.stochastic_student_optimizer))
+        object.__setattr__(
+            self, 'stochastic_student_dcc_optimizer',
+            DEFAULT_STOCHASTIC_STUDENT_DCC_OPTIMIZER.merged(
+                self.stochastic_student_dcc_optimizer))
+        object.__setattr__(
+            self, 'dcc_optimizer',
+            DEFAULT_DCC_OPTIMIZER.merged(self.dcc_optimizer))
+        object.__setattr__(
+            self, 'garch_optimizer',
+            DEFAULT_GARCH_OPTIMIZER.merged(self.garch_optimizer))
 
 
 DEFAULT_CONFIG = NumericalConfig()
@@ -140,9 +280,7 @@ class PredictiveState:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-# ══════════════════════════════════════════════════════════════════
-# Latent process parameters — flexible for any process type
-# ══════════════════════════════════════════════════════════════════
+# Latent process parameters
 
 @dataclass(frozen=True)
 class LatentProcessParams:
@@ -152,8 +290,7 @@ class LatentProcessParams:
     parameter sets and different numbers of parameters.
 
     For OU process: names=('kappa', 'mu', 'nu'), values=(49.97, 2.42, 10.65)
-    For future Lévy: names=('alpha', 'beta', 'mu', 'sigma'), values=(1.5, 0.3, 0, 1)
-    For future fBm:  names=('H', 'mu', 'sigma'), values=(0.7, 0, 1)
+    For fBm-style models: names=('H', 'mu', 'sigma'), values=(0.7, 0, 1)
 
     The named access (params.kappa) goes through __getattr__,
     the positional access (params.values[0]) is always available.
@@ -250,9 +387,7 @@ def gas_params(omega: float, gamma: float, beta: float,
     )
 
 
-# ══════════════════════════════════════════════════════════════════
-# Fit results — typed, immutable, no more hasattr()
-# ══════════════════════════════════════════════════════════════════
+# Fit results
 
 @dataclass(frozen=True)
 class FitResultBase:
@@ -300,11 +435,11 @@ class MLEResult(FitResultBase):
 
 @dataclass(frozen=True, repr=False)
 class LatentResult(FitResultBase):
-    """Result of any latent-process fit (SCAR-OU, SCAR-Lévy, ...).
+    """Result of any latent-process fit.
 
     The process parameters live in `params` (LatentProcessParams),
     which is generic over the number and names of parameters.
-    This way OU's 3 params and a future Lévy's 4 params use the same type.
+    This keeps the result type independent of the parameter count.
     """
 
     params: LatentProcessParams = field(
@@ -348,6 +483,7 @@ class GASResult(FitResultBase):
     params: LatentProcessParams = field(
         default_factory=lambda: gas_params(0.0, 0.0, 0.0))
     scaling: str = 'unit'                    # 'unit' or 'fisher'
+    score_eps: float = DEFAULT_CONFIG.gas_score_eps
     r_last: float = 0.0                      # one-step-ahead r value
 
     @property
@@ -371,6 +507,9 @@ class GASResult(FitResultBase):
         for name, val in zip(self.params.names, self.params.values):
             lines.append(f"         {name:>5s}: {val:.6f}")
         lines.append(f"        scaling: {self.scaling}")
+        lines.append(
+            f"      score_eps: "
+            f"{getattr(self, 'score_eps', DEFAULT_CONFIG.gas_score_eps)}")
         return lines
 
 
@@ -378,7 +517,7 @@ class GASResult(FitResultBase):
 class IndependentResult(FitResultBase):
     """Result for IndependentCopula: 0 params, logL=0.
 
-    copula_param is always 0.0 — present for interface uniformity
+    copula_param is always 0.0; present for interface uniformity.
     so that code like edge.fit_result.copula_param works without
     isinstance checks.
     """

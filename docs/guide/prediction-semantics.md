@@ -44,9 +44,10 @@ for supported dynamic edges. This is off by default.
 `sample(n)` generates synthetic observations from the fitted model. For
 stochastic models this simulates a new latent path.
 
-`predict(n, u_train=training_data)` generates forecast observations conditional on
-the fitted history. For MLE this is the same constant-parameter copula. For
-GAS and SCAR-TM it uses the fitted time-varying state.
+`predict(n, u_train=training_data)` generates forecast observations
+conditional on the fitted history. For MLE this is the same constant-parameter
+copula. Dynamic strategies such as GAS and SCAR-TM use their fitted
+time-varying state.
 
 Most sampling APIs accept `rng=np.random.default_rng(seed)`. Use a fresh
 generator with the same seed for exact reproducibility; reusing a generator
@@ -135,7 +136,7 @@ dynamic edge states before sampling.
   from `D_T` only, then conditional sampling treats `given` as fixed values in
   the copula recursion.
 - `dynamic_conditioning='given_only'` lets supported fixed observations update
-  GAS or SCAR-TM predictive states before downstream edge parameters are
+  strategy-owned predictive states before downstream edge parameters are
   sampled.
 
 This is intentionally separate from ordinary conditional sampling. Conditional
@@ -147,12 +148,12 @@ path where fixed pseudo-observations can be propagated in a deterministic
 order through the vine. Diagnostics report which edges were updated and which
 were skipped.
 
-For GAS edges, `given_only` is intentionally strict: updates are applied only
-with `horizon='current'`. With `horizon='next'`, the GAS predictive state has
-already been advanced one score step, so another prediction-time score update
-would advance the filter again rather than condition the same forecast state.
-Those edges are skipped with reason
-`gas_next_horizon_would_advance_filter`.
+For stateful observation-driven edges, `given_only` is intentionally strict:
+updates are applied only with `horizon='current'`. With `horizon='next'`, the
+predictive state has already been advanced one step, so another
+prediction-time update would advance the state again rather than condition the
+same forecast state. Those edges are skipped with reason
+`next_horizon_would_advance_filter`.
 
 ## `PredictConfig`
 

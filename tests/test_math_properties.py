@@ -24,7 +24,7 @@ class TestCopulaPDF:
         u2 = rng.uniform(0.01, 0.99, 200)
         r_arr = np.full(200, r)
         lp = cop.log_pdf(u1, u2, r_arr)
-        assert np.all(np.isfinite(lp)), f"Non-finite log_pdf values"
+        assert np.all(np.isfinite(lp)), "Non-finite log_pdf values"
 
     def test_pdf_log_pdf_consistent(self, archimedean):
         cop, r = archimedean

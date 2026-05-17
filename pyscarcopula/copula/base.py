@@ -16,25 +16,10 @@ Optional overrides:
 import numpy as np
 from numba import njit
 
-from pyscarcopula._utils import pobs
+from pyscarcopula._utils import pobs, broadcast as _broadcast  # noqa: F401
 
 
 # ── broadcast helper ──────────────────────────────────────────────
-def _broadcast(u1, u2, r):
-    """Ensure all inputs are 1D float64 arrays of the same length."""
-    u1a = np.atleast_1d(np.asarray(u1, dtype=np.float64)).ravel()
-    u2a = np.atleast_1d(np.asarray(u2, dtype=np.float64)).ravel()
-    ra = np.atleast_1d(np.asarray(r, dtype=np.float64)).ravel()
-    n = max(len(u1a), len(u2a), len(ra))
-    if len(u1a) == 1 and n > 1:
-        u1a = np.full(n, u1a[0])
-    if len(u2a) == 1 and n > 1:
-        u2a = np.full(n, u2a[0])
-    if len(ra) == 1 and n > 1:
-        ra = np.full(n, ra[0])
-    return u1a, u2a, ra
-
-
 @njit(cache=True)
 def _xtanh_transform(x, offset):
     n = len(x)
@@ -116,9 +101,10 @@ class BivariateCopula:
     """
     Base class for bivariate copulas (dim=2).
 
-    Provides a unified interface for fitting, evaluation, sampling, and
-    diagnostics. Subclasses must override the core density methods;
-    optional overrides enable analytical gradients and batch evaluation.
+    Provides copula evaluation, sampling, and backward-compatible object
+    methods for fitting and prediction. The object methods delegate to the
+    stateless functions in pyscarcopula.api and store fit_result for
+    convenience.
 
     Subclass contract — must override:
         pdf_unrotated, log_pdf_unrotated, transform, inv_transform, psi, V
@@ -285,9 +271,12 @@ class BivariateCopula:
         v = np.atleast_1d(np.asarray(v, dtype=np.float64))
         r = np.atleast_1d(np.asarray(r, dtype=np.float64))
         n = max(len(u), len(v), len(r))
-        if len(u) == 1 and n > 1: u = np.full(n, u[0])
-        if len(v) == 1 and n > 1: v = np.full(n, v[0])
-        if len(r) == 1 and n > 1: r = np.full(n, r[0])
+        if len(u) == 1 and n > 1:
+            u = np.full(n, u[0])
+        if len(v) == 1 and n > 1:
+            v = np.full(n, v[0])
+        if len(r) == 1 and n > 1:
+            r = np.full(n, r[0])
 
         eps = 1e-10
         lo = np.full(n, eps)

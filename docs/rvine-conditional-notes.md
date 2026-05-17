@@ -85,10 +85,10 @@ The exact sampler works in two phases:
 Relevant implementation:
 
 - `pyscarcopula/vine/rvine.py`
-- `RVineCopula._given_suffix_start_col`
-- `RVineCopula._suffix_sampling_state`
-- `RVineCopula._find_peel_order_for_given_suffix`
-- `RVineCopula._sample_suffix_given_with_r`
+- `pyscarcopula/vine/_rvine_suffix.py`
+- `given_suffix_start_col`
+- `suffix_sampling_state`
+- `sample_suffix_given_with_r`
 - `pyscarcopula/vine/_conditional_rvine.py`
 - `pyscarcopula/vine/_rvine_matrix_builder.py`
 
@@ -119,7 +119,8 @@ Relevant implementation:
 - `build_runtime_rvine_dag`
 - `plan_conditional_sample`
 - `execute_conditional_plan`
-- `RVineCopula._sample_arbitrary_given_mcmc`
+- `pyscarcopula/vine/_rvine_conditional_runtime.py`
+- `sample_arbitrary_given_mcmc`
 - `RVineCopula._log_pdf_rows_with_r`
 
 Diagnostics use `conditional_method='dag_mcmc'` and include `dag_steps`,
@@ -148,30 +149,93 @@ Fit diagnostics are stored in `RVineCopula.fit_diagnostics`.
 
 ## Dynamic Edge Semantics
 
-Dynamic edges first form a predictive state from the fitted history:
+Dynamic conditioning is a predict-time refinement of already fitted edge
+models. RVine orchestration must not inspect dynamic model formulas. It uses
+only the strategy-facing contract exposed by fitted edge results:
 
-- MLE: point state with constant parameter;
-- GAS: point state from the score recursion;
-- SCAR-TM: grid distribution over the latent state.
+- `predictive_params(copula, u_train_pair, result, n, ...)` builds the initial
+  predictive parameter samples for each edge;
+- `predictive_state(copula, u_train_pair, result, ...)` builds a reusable
+  state when a fixed suffix observation may further condition that edge;
+- `condition_state(copula, state, u_observed_pair, result)` applies the
+  fully observed edge pair;
+- `sample_params(copula, state, n, ...)` converts the conditioned state back
+  to a parameter vector;
+- `model_sample_state(copula, result)` marks observation-driven edges whose
+  model-reproduction sampling must be updated step by step.
 
 `horizon='current'` uses the fitted end-of-sample state. `horizon='next'`
-uses the one-step-ahead predictive state.
+uses the one-step-ahead predictive state. Static edges ignore this option.
 
 With `dynamic_conditioning='ignore'`, these states are not updated by
 prediction-time `given` values. With `dynamic_conditioning='given_only'`,
-supported fixed suffix observations update GAS and SCAR-TM states before
-downstream sampling. Updates are exposed through `updated_edges` and
+supported fixed suffix observations update strategy-owned dynamic states
+before downstream sampling. Updates are exposed through `updated_edges` and
 `skipped_edges` diagnostics.
 
-Dynamic conditioning is currently applied on the suffix exact path, where the
-fixed pseudo-observations have a deterministic update order.
+### Execution Modes
 
-GAS dynamic conditioning is deliberately strict. A GAS score update advances
-the deterministic filter. Therefore `given_only` updates GAS edges only when
-`horizon='current'`. With `horizon='next'`, the predictive state has already
-been advanced one score step; applying `condition_state` again would produce
-the next filter state, not a posterior update of the same forecast state. Such
-edges are skipped with reason `gas_next_horizon_would_advance_filter`.
+- **No `given`**: `predict` draws all edge parameter vectors through
+  `_predict_r_for_edges` and samples unconditionally. Dynamic conditioning does
+  not run.
+- **All variables fixed**: `predict` returns constant rows and, when requested,
+  empty `updated_edges` / `skipped_edges` diagnostics.
+- **Suffix exact path + `ignore`**: fixed suffix variables are used by the
+  exact sampler, but they do not update dynamic edge states.
+- **Suffix exact path + `given_only`**: fixed suffix variables are propagated in
+  matrix order. Whenever an edge pair is fully observed before free variables
+  are sampled, RVine calls the strategy state contract above and replaces that
+  edge's predictive parameter vector if conditioning changes the state.
+- **DAG + MCMC fallback + `ignore`**: arbitrary non-suffix `given` values use
+  the DAG initializer and MCMC without dynamic conditioning.
+- **DAG + MCMC fallback + `given_only`**: no partial dynamic updates are
+  applied. Eligible dynamic edges are reported as skipped with reason
+  `dag_mcmc_not_suffix_supported`.
+
+### Skip Reasons
+
+Current skip reasons are part of the diagnostics contract:
+
+- `next_horizon_would_advance_filter`: the edge has a strategy-owned
+  stepwise model state and `horizon='next'`; applying another observation would
+  advance the filter rather than condition the same predictive state.
+- `no_training_history`: the edge needs fitted-history pseudo-observations to
+  construct a predictive state, but no `u_train` / stored fit data is
+  available.
+- `unsupported_or_noop`: the edge is dynamic but the strategy state did not
+  change, or the edge has no supported dynamic conditioning action.
+- `dag_mcmc_not_suffix_supported`: `given_only` was requested for a non-suffix
+  conditioning set that uses the DAG + MCMC fallback.
+
+### Diagnostics Contract
+
+When `return_diagnostics=True`, dynamic conditioning diagnostics preserve this
+shape:
+
+- top-level fields: `given`, `dynamic_conditioning`, `suffix_start_col`,
+  `matrix_rebuilt`, `conditional_method`, `updated_edges`, `skipped_edges`;
+- update/skip records: `key`, `tree`, `col`, `conditioned`, `conditioning`,
+  `method`, `family`, `status`;
+- optional record fields: `reason`, `r_before_mean`, `r_after_mean`;
+- DAG + MCMC diagnostics additionally include `dag_steps`, `dag_edges_used`
+  and `mcmc`.
+
+### Regression Coverage
+
+The current behaviour is covered mainly by `tests/test_rvine_copula.py`:
+
+- `test_dynamic_conditioning_ignore_matches_default`
+- `test_api_predict_forwards_dynamic_conditioning_to_rvine`
+- `test_given_only_*_not_fully_observed`
+- `test_predictive_given_only_reweights_grid_by_observed_pair_likelihood`
+- `test_predictive_given_only_noop_detects_equal_prob_copy`
+- `test_predictive_state_cache_reused_for_given_only`
+- `test_dynamic_conditioning_return_diagnostics_lists_updated_edges`
+- `test_stateful_given_only_skips_next_horizon_to_avoid_double_advance`
+- `test_dynamic_conditioning_multi_edge_order_updates_conditional_predictive_state`
+- `test_dynamic_conditioning_mixed_vine_diagnostics`
+- `test_given_only_reports_skip_for_dag_mcmc_path`
+- `test_predict_config_return_diagnostics_via_api`
 
 ## Verification
 

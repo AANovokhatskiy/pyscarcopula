@@ -190,9 +190,9 @@ def _frank_h_inv(u, v, r):
         Q = (1.0 - _u) / _u * x2
 
         # arg = (Q + x3) / (Q + 1)
-        # For large r: x3 ≈ 0, so arg ≈ Q / (Q + 1)
-        # For Q very small: arg ≈ x3, t ≈ -log(x3)/r = 1
-        # For Q very large: arg ≈ 1, t ≈ 0
+        # For large r: x3 ~ 0, so arg ~ Q / (Q + 1)
+        # For Q very small: arg ~ x3, t ~ -log(x3)/r = 1
+        # For Q very large: arg ~ 1, t ~ 0
         # Both limits make sense: u->0 => t->0, u->1 => t->1
 
         numer = Q + x3
@@ -207,7 +207,7 @@ def _frank_h_inv(u, v, r):
         if arg <= 0:
             out[i] = eps
         elif arg >= 1.0 - eps:
-            # log(arg) ≈ 0 but we need precision
+            # log(arg) is close to 0 but we need precision.
             # Use log1p: log(arg) = log(1 - (1-arg)) = log(1 - (1-x3-Q)/(Q+1))
             # 1 - arg = (1 - x3) / (Q + 1)
             one_m_arg = (1.0 - x3) / denom
@@ -220,27 +220,6 @@ def _frank_h_inv(u, v, r):
             t = -np.log(arg) / ri
             out[i] = min(max(t, eps), 1.0 - eps)
 
-    return out
-
-
-@njit(cache=True)
-def _frank_bivariate_sample(n, r):
-    """Direct conditional inversion sampling for Frank (faster than Marshall-Olkin)."""
-    out = np.empty((n, 2))
-    for k in range(n):
-        ri = r[k] if r.shape[0] > 1 else r[0]
-        u0 = np.random.uniform(0, 1)
-        v = np.random.uniform(0, 1)
-        t = np.exp(-ri * u0)
-        p = np.exp(-ri)
-        f1 = v * (1.0 - p)
-        f2 = t + v * (1.0 - t)
-        if abs(f1 - f2) < 1e-9:
-            u1 = u0
-        else:
-            u1 = -np.log(1.0 - f1 / f2) / ri
-        out[k, 0] = u0
-        out[k, 1] = u1
     return out
 
 
@@ -303,7 +282,7 @@ def _frank_dlogc_dr(u1, u2, r):
 
 @njit(cache=True)
 def _frank_pdf_and_grad_batch(u_all, r_grid, dpsi):
-    """Fused batch for Frank (no rotation support — Frank is symmetric)."""
+    """Fused batch for Frank; rotations are unsupported because it is symmetric."""
     T = u_all.shape[0]
     K = len(r_grid)
     fi = np.empty((T, K))

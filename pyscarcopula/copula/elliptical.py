@@ -1,11 +1,11 @@
 """
 Elliptical copulas: Gaussian and Student-t.
 
-BivariateGaussianCopula — inherits BivariateCopula, works with vine.
+BivariateGaussianCopula - inherits BivariateCopula, works with vine.
     Parameter: rho in (-1, 1), no rotation.
 
-GaussianCopula — d-dimensional, correlation matrix parametrization.
-StudentCopula — d-dimensional, correlation + df.
+GaussianCopula - d-dimensional, correlation matrix parametrization.
+StudentCopula - d-dimensional, correlation + df.
 
 Usage:
     from pyscarcopula.copula.elliptical import (
@@ -27,7 +27,7 @@ from scipy.stats import norm, t as t_dist, multivariate_normal, multivariate_t, 
 from scipy.optimize import minimize
 from numba import njit
 
-from pyscarcopula.copula.base import BivariateCopula
+from pyscarcopula.copula.base import BivariateCopula, _broadcast
 from pyscarcopula._utils import pobs
 
 
@@ -174,22 +174,6 @@ def _gauss_negloglik_and_grad_from_x(x1, x2, rho_scalar):
     return -sum_ll, -sum_grad
 
 
-def _gauss_log_pdf_scipy(u1, u2, rho):
-    """Bivariate Gaussian copula log-density (scipy-based, vectorized)."""
-    eps = 1e-10
-    v1 = np.clip(u1, eps, 1.0 - eps)
-    v2 = np.clip(u2, eps, 1.0 - eps)
-    x1 = norm.ppf(v1)
-    x2 = norm.ppf(v2)
-    r2 = rho ** 2
-    return (-0.5 * np.log(1.0 - r2)
-            - 0.5 * (r2 * (x1 ** 2 + x2 ** 2) - 2.0 * rho * x1 * x2) / (1.0 - r2))
-
-
-def _gauss_pdf_scipy(u1, u2, rho):
-    return np.exp(_gauss_log_pdf_scipy(u1, u2, rho))
-
-
 def _gauss_h(u, v, rho):
     """h(u|v; rho) = Phi((Phi^{-1}(u) - rho*Phi^{-1}(v)) / sqrt(1-rho^2))"""
     eps = 1e-10
@@ -224,42 +208,17 @@ def _gauss_h_numba(u, v, rho):
     return out
 
 
-@njit(cache=True)
-def _gauss_h_inv_numba(u, v, rho):
-    n = len(u)
-    out = np.empty(n)
-    for i in range(n):
-        u_c = min(max(u[i], 1e-10), 1.0 - 1e-10)
-        v_c = min(max(v[i], 1e-10), 1.0 - 1e-10)
-        r = rho[i]
-        z = _ndtri(u_c) * np.sqrt(1.0 - r * r) + r * _ndtri(v_c)
-        out[i] = _norm_cdf_numba(z)
-    return out
-
-
-def _broadcast(u1, u2, r):
-    u1a = np.atleast_1d(np.asarray(u1, dtype=np.float64)).ravel()
-    u2a = np.atleast_1d(np.asarray(u2, dtype=np.float64)).ravel()
-    ra = np.atleast_1d(np.asarray(r, dtype=np.float64)).ravel()
-    n = max(len(u1a), len(u2a), len(ra))
-    if len(u1a) == 1 and n > 1: u1a = np.full(n, u1a[0])
-    if len(u2a) == 1 and n > 1: u2a = np.full(n, u2a[0])
-    if len(ra) == 1 and n > 1: ra = np.full(n, ra[0])
-    return u1a, u2a, ra
-
-
-# ══════════════════════════════════════════════════════════════════
-# BivariateGaussianCopula — fits into BivariateCopula hierarchy
-# ══════════════════════════════════════════════════════════════════
+# BivariateGaussianCopula
 
 class BivariateGaussianCopula(BivariateCopula):
     """
     Bivariate Gaussian copula.
     Parameter: rho in (-1, 1). No rotation.
 
-    Transform types:
-        'xtanh' (default): rho = 0.9999 * tanh(x/4) — slow saturation
-        'softplus': rho = 0.9999 * tanh(x) — faster saturation, sharper transitions
+    ``transform_type`` is accepted for API compatibility with vine and
+    candidate configuration. Both 'softplus' (default) and 'xtanh' currently
+    use rho = 0.9999 * tanh(x/4), a scaled tanh chosen to avoid fast
+    saturation near the parameter bounds.
     """
 
     def __init__(self, rotate: int = 0, transform_type: str = 'softplus'):
@@ -279,24 +238,15 @@ class BivariateGaussianCopula(BivariateCopula):
     def transform(self, x):
         """x -> rho: maps R to (-0.9999, 0.9999)."""
         x = np.atleast_1d(np.asarray(x, dtype=np.float64))
-        if self._transform_type == 'softplus':
-            # return 0.9999 * np.tanh(x)
-            return 0.9999 * np.tanh(x / 4.0)
         return 0.9999 * np.tanh(x / 4.0)
 
     def inv_transform(self, rho):
         """rho -> x."""
         rho = np.atleast_1d(np.asarray(rho, dtype=np.float64))
-        if self._transform_type == 'softplus':
-            # return np.arctanh(np.clip(rho / 0.9999, -0.9999, 0.9999))
-            return 4.0 * np.arctanh(np.clip(rho / 0.9999, -0.9999, 0.9999))
         return 4.0 * np.arctanh(np.clip(rho / 0.9999, -0.9999, 0.9999))
 
     def dtransform(self, x):
         x = np.atleast_1d(np.asarray(x, dtype=np.float64))
-        if self._transform_type == 'softplus':
-            # return 0.9999 * (1.0 - np.tanh(x) ** 2)
-            return 0.9999 / 4.0 * (1.0 - np.tanh(x / 4.0) ** 2)
         return 0.9999 / 4.0 * (1.0 - np.tanh(x / 4.0) ** 2)
 
     def pdf_unrotated(self, u1, u2, r):
@@ -366,7 +316,7 @@ class BivariateGaussianCopula(BivariateCopula):
             x2 = rho_val * z[:, 0] + np.sqrt(1.0 - rho_val ** 2) * z[:, 1]
             u = np.column_stack((norm.cdf(x1), norm.cdf(x2)))
         else:
-            # Vector rho — sample each with its own correlation
+            # Vector rho: sample each row with its own correlation.
             rho_arr = np.asarray(rho).ravel()
             z = rng.standard_normal((n, 2))
             x1 = z[:, 0]
@@ -384,9 +334,7 @@ class BivariateGaussianCopula(BivariateCopula):
         return u
 
 
-# ══════════════════════════════════════════════════════════════════
-# GaussianCopula — d-dimensional
-# ══════════════════════════════════════════════════════════════════
+# GaussianCopula
 
 class GaussianCopula:
     """
@@ -468,9 +416,7 @@ class GaussianCopula:
         return load_model(path, expected_type=cls)
 
 
-# ══════════════════════════════════════════════════════════════════
-# StudentCopula — d-dimensional
-# ══════════════════════════════════════════════════════════════════
+# StudentCopula
 
 def _kendall_tau_matrix(u):
     """Estimate correlation matrix via Kendall's tau: R_ij = sin(pi/2 * tau_ij)."""
@@ -529,20 +475,20 @@ class StudentCopula:
         if to_pobs:
             u = pobs(u)
 
-        def nll_profile(df):
-            # df = np.exp(log_df[0])
+        def nll_profile(df_arr):
+            df = float(np.atleast_1d(df_arr)[0])
             return self._nll_for_df(u, df)
 
         # Initial guess
         d = u.shape[1]
-        x0 = np.array([np.log(float(d))])
+        x0 = np.array([max(float(d), 5.0)])
 
         result = minimize(nll_profile, x0,
                           method='L-BFGS-B',
-                          bounds=[(0.0001, np.inf)],  # df in [~0.1, ~400]
+                          bounds=[(2.001, np.inf)],
                           options={'gtol': 1e-2, 'eps': 1e-4})
 
-        self.df = np.exp(result.x[0])
+        self.df = float(result.x[0])
         x = t_dist.ppf(np.clip(u, 1e-10, 1.0 - 1e-10), df=self.df)
         R = _kendall_tau_matrix(x)
         self.shape = _ensure_positive_definite(R)

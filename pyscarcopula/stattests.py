@@ -402,9 +402,16 @@ def _bootstrap_gof_bivariate(copula, u, fit_result, observed_statistic,
 # ══════════════════════════════════════════════════════════════════
 
 def _vine_edge_h(edge, u2, u1, u_pair, K=300, grid_range=5.0):
-    """Delegate to vine._edge._edge_h (single source of truth)."""
-    from pyscarcopula.vine._edge import _edge_h
-    return _edge_h(edge, u2, u1, u_pair, K, grid_range)
+    """Delegate to the shared pair-edge runtime."""
+    from pyscarcopula.vine._rvine_edges import _edge_h
+    return _edge_h(
+        edge,
+        u2,
+        u1,
+        u_pair=u_pair,
+        K=K,
+        grid_range=grid_range,
+    )
 
 
 def vine_rosenblatt_transform(vine, u, K=300, grid_range=5.0):

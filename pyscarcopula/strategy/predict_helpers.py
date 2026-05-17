@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import numpy as np
 
 
@@ -64,3 +65,29 @@ def conditional_sample_bivariate(copula, n, r, given=None, rng=None):
 
     samples[:, 0] = copula.h_inverse(z, samples[:, 1], r_arr)
     return samples
+
+
+def sample_predictive(copula, n, r, given=None, rng=None, d=None):
+    """Sample from a predictive parameter path.
+
+    Conditional ``given`` sampling is currently a pair-copula capability.
+    Multivariate scalar-latent copulas use unconditional predictive sampling
+    through their ``sample(n, r)`` implementation.
+    """
+    if given is None and d is not None and int(d) != 2 and hasattr(copula, "_R_path"):
+        return copula.sample(n=n, df_path=r, rng=rng)
+
+    if given is None:
+        params = inspect.signature(copula.sample).parameters
+        if "r" in params:
+            return copula.sample(n, r, rng=rng)
+        return copula.sample(n, rng=rng)
+
+    if d is None:
+        d = 2
+    if int(d) != 2:
+        raise NotImplementedError(
+            "given= conditional sampling is only implemented for bivariate "
+            "copulas and vine models"
+        )
+    return conditional_sample_bivariate(copula, n, r, given=given, rng=rng)

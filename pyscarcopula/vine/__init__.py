@@ -2,9 +2,10 @@
 pyscarcopula.vine — vine copula models.
 
 Submodules:
-    _edge       — VineEdge dataclass and edge-level operations
+    _pair_copula — shared PairCopula edge container
+    _rvine_edges — shared pair-edge runtime operations
     _selection  — copula family selection (itau + refinement)
-    _helpers    — shared utilities (r-generation, clipping)
+    _helpers    — shared utility functions
     _structure  — R-vine matrix representation, Dissmann tree selection
     cvine       — CVineCopula
     rvine       — RVineCopula
@@ -12,16 +13,14 @@ Submodules:
 
 from pyscarcopula.vine.cvine import CVineCopula
 from pyscarcopula.vine.rvine import RVineCopula
-from pyscarcopula.vine._edge import VineEdge, _edge_h, _edge_log_likelihood
+from pyscarcopula.vine._pair_copula import PairCopula
 from pyscarcopula.vine._selection import select_best_copula
 from pyscarcopula.vine._structure import RVineMatrix
 
 __all__ = [
     'CVineCopula',
     'RVineCopula',
-    'VineEdge',
+    'PairCopula',
     'RVineMatrix',
     'select_best_copula',
-    '_edge_h',
-    '_edge_log_likelihood',
 ]

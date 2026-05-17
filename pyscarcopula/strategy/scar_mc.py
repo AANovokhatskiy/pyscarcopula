@@ -22,6 +22,7 @@ from pyscarcopula._types import (
     ou_params,
 )
 from pyscarcopula.strategy._base import register_strategy
+from pyscarcopula.strategy.predict_helpers import sample_predictive
 from pyscarcopula.numerical.mc_samplers import (
     p_sampler_loglik, m_sampler_loglik, eis_find_auxiliary,
 )
@@ -33,13 +34,20 @@ class _SCARMCBase:
 
     def __init__(self, config: NumericalConfig | None = None,
                  n_tr: int | None = None,
-                 M_iterations: int = 3,
+                 M_iterations: int | None = None,
                  stationary: bool = True,
                  smart_init: bool = True,
                  **kwargs):
         self.config = config or DEFAULT_CONFIG
         self.n_tr = n_tr if n_tr is not None else self.config.default_n_tr
-        self.M_iterations = M_iterations
+        self.M_iterations = (
+            M_iterations if M_iterations is not None
+            else self.config.default_M_iterations
+        )
+        if self.n_tr <= 0:
+            raise ValueError("n_tr must be positive")
+        if self.M_iterations < 0:
+            raise ValueError("M_iterations must be non-negative")
         self.stationary = stationary
         self.smart_init = smart_init
 
@@ -51,6 +59,7 @@ class _SCARMCBase:
         return calculate_dwt(T, self.n_tr, _seed)
 
     def _get_alpha0(self, copula, u, verbose):
+        alpha0 = None
         if self.smart_init:
             try:
                 from pyscarcopula.strategy.initial_point import smart_initial_point
@@ -81,6 +90,44 @@ class _SCARMCBase:
         x_t = rng.normal(p.mu, sigma, n)
         return copula.transform(x_t)
 
+    def sample(self, copula, u, result, n, rng=None, **kwargs):
+        """Simulate n observations with an OU-driven copula parameter."""
+        if rng is None:
+            rng = np.random.default_rng()
+        r = self.model_sample_params(copula, result, n, rng=rng)
+        d = u.shape[1] if u is not None and np.ndim(u) == 2 else 2
+        return sample_predictive(copula, n, r, rng=rng, d=d)
+
+    def model_sample_params(self, copula, result, n, rng=None, **kwargs):
+        """OU trajectory parameters for unconditional model reproduction."""
+        if rng is None:
+            rng = np.random.default_rng()
+        p = result.params
+        kappa, mu, nu = p.kappa, p.mu, p.nu
+        dt = 1.0 / (n - 1) if n > 1 else 1.0
+        rho_ou = np.exp(-kappa * dt)
+        sigma_cond = np.sqrt(nu ** 2 / (2.0 * kappa) * (1.0 - rho_ou ** 2))
+        x = np.empty(n)
+        x[0] = rng.normal(mu, nu / np.sqrt(2.0 * kappa))
+        for t in range(1, n):
+            x[t] = (
+                mu + rho_ou * (x[t - 1] - mu)
+                + sigma_cond * rng.standard_normal()
+            )
+        return copula.transform(x)
+
+    def model_sample_state(self, copula, result, **kwargs):
+        return None
+
+    def predict(self, copula, u, result, n, rng=None, **kwargs):
+        """Predict by sampling from the stationary OU distribution."""
+        if rng is None:
+            rng = np.random.default_rng()
+        r = self.predictive_params(copula, u, result, n, rng=rng, **kwargs)
+        d = u.shape[1] if u is not None and np.ndim(u) == 2 else 2
+        return sample_predictive(
+            copula, n, r, given=kwargs.get('given'), rng=rng, d=d)
+
 
 @register_strategy('SCAR-P-OU')
 class SCARPStrategy(_SCARMCBase):
@@ -88,13 +135,31 @@ class SCARPStrategy(_SCARMCBase):
 
     def fit(self, copula, u: np.ndarray,
             alpha0: np.ndarray | None = None,
-            tol: float | None = None,
+            gtol: float | None = None,
+            ftol: float | None = None,
+            maxfun: int | None = None,
+            maxiter: int | None = None,
+            maxls: int | None = None,
+            eps: float | None = None,
+            maxcor: int | None = None,
+            finite_diff_rel_step: float | None = None,
             seed: int | None = None,
             dwt: np.ndarray | None = None,
             verbose: bool = False,
             **kwargs) -> LatentResult:
 
-        tol = tol or self.config.default_tol_scar
+        if 'tol' in kwargs:
+            raise TypeError("tol is not supported; use gtol")
+        optimizer_options = self.config.scar_optimizer.options(
+            gtol=gtol,
+            ftol=ftol,
+            maxfun=maxfun,
+            maxiter=maxiter,
+            maxls=maxls,
+            eps=eps,
+            maxcor=maxcor,
+            finite_diff_rel_step=finite_diff_rel_step,
+        )
         u = np.asarray(u, dtype=np.float64)
         T = len(u)
         dwt_data = self._get_dwt(T, seed, dwt)
@@ -121,8 +186,7 @@ class SCARPStrategy(_SCARMCBase):
             objective, alpha0,
             method='L-BFGS-B',
             bounds=bounds,
-            options={'gtol': tol, 'eps': 1e-4,
-                     'maxfun': self.config.default_maxfun},
+            options=optimizer_options,
         )
 
         alpha = result.x
@@ -176,13 +240,31 @@ class SCARMStrategy(_SCARMCBase):
 
     def fit(self, copula, u: np.ndarray,
             alpha0: np.ndarray | None = None,
-            tol: float | None = None,
+            gtol: float | None = None,
+            ftol: float | None = None,
+            maxfun: int | None = None,
+            maxiter: int | None = None,
+            maxls: int | None = None,
+            eps: float | None = None,
+            maxcor: int | None = None,
+            finite_diff_rel_step: float | None = None,
             seed: int | None = None,
             dwt: np.ndarray | None = None,
             verbose: bool = False,
             **kwargs) -> LatentResult:
 
-        tol = tol or self.config.default_tol_scar
+        if 'tol' in kwargs:
+            raise TypeError("tol is not supported; use gtol")
+        optimizer_options = self.config.scar_optimizer.options(
+            gtol=gtol,
+            ftol=ftol,
+            maxfun=maxfun,
+            maxiter=maxiter,
+            maxls=maxls,
+            eps=eps,
+            maxcor=maxcor,
+            finite_diff_rel_step=finite_diff_rel_step,
+        )
         u = np.asarray(u, dtype=np.float64)
         T = len(u)
         dwt_data = self._get_dwt(T, seed, dwt)
@@ -213,8 +295,7 @@ class SCARMStrategy(_SCARMCBase):
             objective, alpha0,
             method='L-BFGS-B',
             bounds=bounds,
-            options={'gtol': tol, 'eps': 1e-4,
-                     'maxfun': self.config.default_maxfun},
+            options=optimizer_options,
         )
 
         alpha = result.x
@@ -264,26 +345,3 @@ class SCARMStrategy(_SCARMCBase):
                 u, dwt_data, a1t, a2t, copula, self.stationary)
         except Exception:
             return 1e10
-        
-    def sample(self, copula, u, result, n, rng=None, **kwargs):
-        """Simulate n observations with OU-driven parameter (same as SCAR-TM)."""
-        if rng is None:
-            rng = np.random.default_rng()
-        p = result.params
-        kappa, mu, nu = p.kappa, p.mu, p.nu
-        dt = 1.0 / (n - 1) if n > 1 else 1.0
-        rho_ou = np.exp(-kappa * dt)
-        sigma_cond = np.sqrt(nu ** 2 / (2.0 * kappa) * (1.0 - rho_ou ** 2))
-        x = np.empty(n)
-        x[0] = rng.normal(mu, nu / np.sqrt(2.0 * kappa))
-        for t in range(1, n):
-            x[t] = mu + rho_ou * (x[t - 1] - mu) + sigma_cond * rng.standard_normal()
-        r = copula.transform(x)
-        return copula.sample(n, r, rng=rng)
- 
-    def predict(self, copula, u, result, n, rng=None, **kwargs):
-        """Predict: sample from stationary OU (no grid posterior available)."""
-        if rng is None:
-            rng = np.random.default_rng()
-        r = self.predictive_params(copula, u, result, n, rng=rng, **kwargs)
-        return copula.sample(n, r, rng=rng)
