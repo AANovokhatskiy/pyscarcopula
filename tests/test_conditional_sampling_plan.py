@@ -37,7 +37,7 @@ from pyscarcopula.contrib.risk_metrics import (
 )
 from pyscarcopula.stattests import rvine_rosenblatt_transform
 from pyscarcopula.strategy._base import get_strategy_for_result
-from pyscarcopula.vine._edge import VineEdge
+from pyscarcopula.vine._pair_copula import PairCopula
 
 
 pytestmark = pytest.mark.validation
@@ -148,10 +148,16 @@ class _IdentityMarginalModel:
 
 
 def _vine_edge(tree, idx, copula, fit_result):
-    edge = VineEdge(tree=tree, idx=idx)
-    edge.copula = copula
-    edge.fit_result = fit_result
-    return edge
+    return PairCopula(
+        tree=tree,
+        idx=idx,
+        copula=copula,
+        fit_result=fit_result,
+        param=getattr(fit_result, 'copula_param', None),
+        log_likelihood=float(getattr(fit_result, 'log_likelihood', 0.0)),
+        nfev=int(getattr(fit_result, 'nfev', 0)),
+        tau=0.0,
+    )
 
 
 def _mle_gaussian_edge(tree, idx, rho):
@@ -633,7 +639,7 @@ class TestConditionalSamplingPlanLayer:
         )
         u = get_strategy_for_result(base).sample(
             copula, None, base, 240, rng=np.random.default_rng(seed))
-        return u, {'method': 'gas', 'tol': 0.05}
+        return u, {'method': 'gas', 'gtol': 0.05}
 
     def _scar_tm_end_to_end_train(self, seed):
         rng = np.random.default_rng(seed)
@@ -648,7 +654,7 @@ class TestConditionalSamplingPlanLayer:
                     + sigma_cond * rng.standard_normal())
         copula = BivariateGaussianCopula()
         u = copula.sample(T, copula.transform(x), rng=rng)
-        return u, {'method': 'scar-tm-ou', 'K': 40, 'tol': 0.05}
+        return u, {'method': 'scar-tm-ou', 'K': 40, 'gtol': 0.05}
 
     @pytest.mark.parametrize(
         ('label', 'train_factory', 'predict_kwargs'),
@@ -1022,7 +1028,7 @@ class TestConditionalSamplingPlanLayer:
             method='scar-tm-ou',
             K=30,
             grid_range=4.0,
-            tol=0.05,
+            gtol=0.05,
         )
         smoothed = smoothed_params(BivariateGaussianCopula(), u_train, result)
 
@@ -1061,7 +1067,7 @@ class TestConditionalSamplingPlanLayer:
             method='scar-tm-ou',
             K=50,
             grid_range=4.5,
-            tol=0.05,
+            gtol=0.05,
         )
         smoothed = smoothed_params(BivariateGaussianCopula(), u_train, result)
         trim = 20
@@ -1132,7 +1138,7 @@ class TestConditionalSamplingPlanLayer:
             BivariateGaussianCopula(),
             sampled,
             method='gas',
-            tol=0.05,
+            gtol=0.05,
         )
         fit_copula = BivariateGaussianCopula()
         smoothed = smoothed_params(fit_copula, sampled, fit_result)
@@ -1308,15 +1314,15 @@ class TestConditionalSamplingPlanLayer:
                 return np.full(len(u2), 0.73)
             return np.asarray(u2, dtype=np.float64)
 
-        def fake_generate_r(edge, n, v_train_pair, K, grid_range,
-                            horizon='next', **kwargs):
-            r_calls.append((edge.fit_result.method, v_train_pair, K, grid_range))
+        def fake_edge_r_for_predict(edge, n, u_train_pair=None,
+                                    horizon='next', **kwargs):
+            r_calls.append((edge.fit_result.method, u_train_pair, horizon))
             return np.full(n, 0.0)
 
         monkeypatch.setattr('pyscarcopula.vine.cvine._edge_h', fake_edge_h)
         monkeypatch.setattr(
-            'pyscarcopula.vine.cvine.generate_r_for_predict',
-            fake_generate_r,
+            'pyscarcopula.vine.cvine._edge_r_for_predict',
+            fake_edge_r_for_predict,
         )
 
         samples = vine.predict(

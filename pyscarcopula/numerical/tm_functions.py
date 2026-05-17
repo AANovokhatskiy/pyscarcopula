@@ -1,8 +1,6 @@
 """
 pyscarcopula.numerical.tm_functions — Transfer matrix computations.
 
-Extracted from latent/ou_process.py (lines 556–734).
-
 All functions share the TMGrid infrastructure. They differ only in
 what they compute from the forward/backward messages:
 
@@ -11,6 +9,7 @@ what they compute from the forward/backward messages:
   - tm_forward_rosenblatt: mixture Rosenblatt transform for GoF
   - tm_forward_mixture_h: mixture h-function for vine pseudo-obs
   - tm_xT_distribution: distribution of x_T on grid (for VaR/CVaR)
+  - _forward_loglik: test-only forward likelihood oracle
 """
 
 import numpy as np
@@ -76,6 +75,38 @@ def tm_loglik(kappa, mu, nu, u, copula, K=300, grid_range=5.0,
         return 1e10
 
     return -(np.log(result) + log_scale)
+
+
+def _forward_loglik(kappa, mu, nu, u, copula, K=300, grid_range=5.0,
+                    grid_method='auto', adaptive=True, pts_per_sigma=4):
+    """
+    Test-only forward-pass log-likelihood reference implementation.
+
+    Production SCAR-TM fitting uses :func:`tm_loglik`, which evaluates the
+    same likelihood by the backward recursion.  This function intentionally
+    lives next to the production TM code so tests that compare forward and
+    backward likelihoods stay visible when the main implementation changes.
+    """
+    grid = TMGrid(kappa, mu, nu, len(u), K, grid_range,
+                  grid_method, adaptive, pts_per_sigma)
+    fi_grid = grid.copula_grid(u, copula)
+
+    phi = grid.p0.copy()
+    log_likelihood = 0.0
+
+    for k in range(len(u)):
+        post = fi_grid[k] * phi
+        scale = np.sum(post * grid.trap_w)
+        if scale <= 0.0:
+            return -np.inf
+
+        log_likelihood += np.log(scale)
+        post /= scale
+
+        if k < len(u) - 1:
+            phi = grid.predict_matvec(post * grid.trap_w)
+
+    return log_likelihood
 
 
 def tm_forward_predictive_mean(kappa, mu, nu, u, copula, K=300,

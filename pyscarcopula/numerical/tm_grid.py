@@ -1,8 +1,6 @@
 """
 pyscarcopula.numerical.tm_grid — Transfer matrix grid infrastructure.
 
-Extracted from latent/ou_process.py (lines 278–554).
-
 Contents:
   - TMGrid: precomputed grid, stationary density, transfer operator
   - _build_dense_T: dense K×K transfer matrix
@@ -187,7 +185,10 @@ class TMGrid:
 
     def forward_pass(self, fi_grid, callback):
         """
-        Forward message pass with per-step callback.
+        Helper for forward message passes with a per-step callback.
+
+        This method is retained for custom diagnostics and extension code.
+        Built-in predictive routines use ``forward_weights()`` directly.
 
         Implements equations (22)-(23) from the paper:
           phi_k(z) <- f_k(z) * phi_k(z)             (update)

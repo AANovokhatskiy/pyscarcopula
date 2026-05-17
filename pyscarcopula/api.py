@@ -1,8 +1,9 @@
 """
-pyscarcopula.api — stateless top-level API.
+pyscarcopula.api - stateless top-level API.
 
 This module provides a functional interface that does NOT mutate
-copula objects. It replaces the old pattern of copula.fit() + copula.fit_result.
+copula objects. Object methods such as BivariateCopula.fit() are
+stateful convenience wrappers around this API.
 
 Usage:
     from pyscarcopula.api import fit, sample, predict, predictive_mean
@@ -10,7 +11,7 @@ Usage:
     copula = GumbelCopula(rotate=180)
     result = fit(copula, u, method='scar-tm-ou')
 
-    # Simulate from fitted model (fit(copula, v) ≈ result)
+    # Simulate from fitted model (fit(copula, v) should recover similar params)
     v = sample(copula, u, result, n=2000)
 
     # Predict next observation (for risk metrics)
@@ -19,8 +20,8 @@ Usage:
     # Predictive mean parameter path
     r_t = predictive_mean(copula, u, result)
 
-All functions accept a copula (stateless) + data + result (immutable),
-and return new immutable values. No side effects.
+All functions accept a copula + data + immutable result and return new
+values. The functions in this module do not store fit state on the copula.
 
 Note: BivariateCopula also has convenience methods (copula.predict,
 copula.sample_model) that work after copula.fit(). These delegate
@@ -31,7 +32,6 @@ import numpy as np
 from pyscarcopula._types import (
     FitResult,
     NumericalConfig,
-    DEFAULT_CONFIG,
     PredictConfig,
 )
 from pyscarcopula._utils import pobs as _pobs
@@ -147,13 +147,24 @@ def mixture_h(copula, data, result: FitResult,
 
 
 def configure(blas_threads: int = 1):
-    """Optionally limit BLAS threads.
+    """Force the package BLAS thread policy.
 
-    Call BEFORE any computation. Replaces the old side-effect in __init__.py.
+    Call before importing NumPy/SciPy-heavy modules for reliable backend
+    behavior. Package import applies the same policy using
+    ``PYSCA_BLAS_THREADS`` or the default value ``1``.
     """
     import os
-    for var in ('OMP_NUM_THREADS', 'MKL_NUM_THREADS', 'OPENBLAS_NUM_THREADS'):
-        os.environ.setdefault(var, str(blas_threads))
+    value = str(int(blas_threads))
+    os.environ['PYSCA_BLAS_THREADS'] = value
+    for var in (
+        'OMP_NUM_THREADS',
+        'MKL_NUM_THREADS',
+        'OPENBLAS_NUM_THREADS',
+        'NUMEXPR_NUM_THREADS',
+        'VECLIB_MAXIMUM_THREADS',
+        'BLIS_NUM_THREADS',
+    ):
+        os.environ[var] = value
 
 
 def sample(copula, data, result: FitResult, n: int,
@@ -172,7 +183,8 @@ def sample(copula, data, result: FitResult, n: int,
     copula : CopulaProtocol
     data : (T, 2) pseudo-observations (used for GAS init, etc.)
     result : FitResult from fit()
-    n : int — number of observations to generate
+    n : int
+        Number of observations to generate.
 
     Returns
     -------
@@ -253,7 +265,8 @@ def predict(copula, data, result: FitResult, n: int,
         Fixed pseudo-observation coordinates.
     horizon : {'current', 'next'}
         Predictive state timing for GAS and SCAR-TM.
-    n : int — number of samples
+    n : int
+        Number of samples.
 
     Returns
     -------

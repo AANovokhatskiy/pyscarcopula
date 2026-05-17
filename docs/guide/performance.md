@@ -24,7 +24,7 @@ result = fit(
     method='gas',
     gamma_bound=30.0,
     beta_bound=0.995,
-    tol=1e-4,
+    gtol=1e-4,
     ftol=1e-12,
     maxfun=3000,
 )
@@ -33,7 +33,7 @@ result = fit(
 The object method is equivalent:
 
 ```python
-result = copula.fit(u, method='scar-tm-ou', K=500, tol=5e-3)
+result = copula.fit(u, method='scar-tm-ou', K=500, gtol=5e-3)
 ```
 
 ### MLE
@@ -43,12 +43,13 @@ MLE estimates one constant copula parameter.
 | Parameter | Where | Default | Effect |
 |-----------|-------|---------|--------|
 | `alpha0` | fit kwarg | auto | Initial point in transformed parameter space. |
-| `default_tol_mle` | `NumericalConfig` | `1e-4` | L-BFGS-B gradient tolerance for MLE. |
+| `gtol` | fit kwarg / `mle_optimizer.gtol` | `1e-3` | L-BFGS-B projected-gradient tolerance. |
+| `maxls` | fit kwarg / `mle_optimizer.maxls` | `20` | Maximum L-BFGS-B line-search steps per iteration. |
 
 ```python
-from pyscarcopula._types import NumericalConfig
+from pyscarcopula._types import LBFGSBConfig, NumericalConfig
 
-cfg = NumericalConfig(default_tol_mle=1e-6)
+cfg = NumericalConfig(mle_optimizer=LBFGSBConfig(gtol=1e-6))
 result = fit(copula, u, method='mle', config=cfg)
 ```
 
@@ -60,9 +61,12 @@ GAS estimates an observation-driven recursion
 | Parameter | Where | Default | Effect |
 |-----------|-------|---------|--------|
 | `gamma0` | fit kwarg | MLE-based | Initial `[omega, gamma, beta]`. |
-| `tol` | fit kwarg / `default_tol_gas` | `1e-3` | L-BFGS-B projected-gradient tolerance (`gtol`). |
-| `ftol` | fit kwarg / `default_ftol_gas` | `1e-12` | Relative objective decrease tolerance. Use a tight value to avoid premature FACTR convergence. |
-| `maxfun` | fit kwarg / `default_maxfun_gas` | `1000` | Maximum function evaluations and iterations. |
+| `gtol` | fit kwarg / `gas_optimizer.gtol` | `1e-3` | L-BFGS-B projected-gradient tolerance. |
+| `ftol` | fit kwarg / `gas_optimizer.ftol` | `1e-12` | Relative objective decrease tolerance. Use a tight value to avoid premature FACTR convergence. |
+| `maxfun` | fit kwarg / `gas_optimizer.maxfun` | `1000` | Maximum function evaluations. |
+| `maxiter` | fit kwarg / `gas_optimizer.maxiter` | `1000` | Maximum optimizer iterations. |
+| `maxls` | fit kwarg / `gas_optimizer.maxls` | `20` | Maximum L-BFGS-B line-search steps per iteration. |
+| `eps` | fit kwarg / `gas_optimizer.eps` | `1e-5` | L-BFGS-B finite-difference step. |
 | `score_eps` | fit kwarg / `gas_score_eps` | `1e-4` | Finite-difference step for score calculations where needed. |
 | `gamma_bound` | fit kwarg / `gas_gamma_bound` | `20.0` | Bounds score sensitivity to `[-gamma_bound, gamma_bound]`. |
 | `beta_bound` | fit kwarg / `gas_beta_bound` | `0.999` | Bounds persistence to `[-beta_bound, beta_bound]`; must be in `(0, 1)`. |
@@ -93,7 +97,11 @@ and predictive paths are needed.
 | Parameter | Where | Default | Effect |
 |-----------|-------|---------|--------|
 | `alpha0` | fit kwarg | smart/MLE-based | Initial `[kappa, mu, nu]`. |
-| `tol` | fit kwarg / `default_tol_scar` | `1e-3` | L-BFGS-B gradient tolerance. Larger values are faster but less precise. |
+| `gtol` | fit kwarg / `scar_optimizer.gtol` | `1e-3` | L-BFGS-B projected-gradient tolerance. Larger values are faster but less precise. |
+| `maxfun` | fit kwarg / `scar_optimizer.maxfun` | `100` | Maximum function evaluations. |
+| `maxiter` | fit kwarg / `scar_optimizer.maxiter` | `100` | Maximum optimizer iterations. |
+| `maxls` | fit kwarg / `scar_optimizer.maxls` | `20` | Maximum L-BFGS-B line-search steps per iteration. |
+| `eps` | fit kwarg / `scar_optimizer.eps` | `1e-4` | L-BFGS-B finite-difference step for numerical-gradient fits. |
 | `K` | strategy kwarg / `default_K` | `300` | Minimum latent grid size. May be increased by the adaptive rule. |
 | `grid_range` | strategy kwarg / `default_grid_range` | `5.0` | Grid spans `[-grid_range*sigma, +grid_range*sigma]`. |
 | `grid_method` | strategy kwarg / `default_grid_method` | `'auto'` | `'auto'`, `'dense'`, or `'sparse'`. Use sparse for large grids. |
@@ -101,7 +109,6 @@ and predictive paths are needed.
 | `pts_per_sigma` | strategy kwarg / `default_pts_per_sigma` | `4` | Minimum grid points per conditional standard deviation. |
 | `analytical_grad` | strategy kwarg | `True` | Uses analytical gradient and parameter rescaling. Usually much faster. |
 | `smart_init` | strategy kwarg | `True` | Uses a heuristic initial point before falling back to MLE-based init. |
-| `default_maxfun` | `NumericalConfig` | `100` | Maximum optimizer evaluations for SCAR strategies. |
 
 ```python
 result = fit(
@@ -110,7 +117,7 @@ result = fit(
     method='scar-tm-ou',
     K=500,
     grid_method='sparse',
-    tol=5e-3,
+    gtol=5e-3,
     analytical_grad=True,
 )
 ```
@@ -131,8 +138,11 @@ The Monte Carlo SCAR strategies are stochastic likelihood estimators.
 | `M_iterations` | strategy kwarg | `3` | EIS iterations for `scar-m-ou`. |
 | `stationary` | strategy kwarg | `True` | Initializes the OU process in stationarity. |
 | `seed` / `dwt` | fit kwarg | random | Controls Wiener increments for reproducibility. |
-| `tol` | fit kwarg / `default_tol_scar` | `1e-3` | L-BFGS-B gradient tolerance. |
-| `default_maxfun` | `NumericalConfig` | `100` | Maximum optimizer evaluations. |
+| `gtol` | fit kwarg / `scar_optimizer.gtol` | `1e-3` | L-BFGS-B projected-gradient tolerance. |
+| `maxfun` | fit kwarg / `scar_optimizer.maxfun` | `100` | Maximum function evaluations. |
+| `maxiter` | fit kwarg / `scar_optimizer.maxiter` | `100` | Maximum optimizer iterations. |
+| `maxls` | fit kwarg / `scar_optimizer.maxls` | `20` | Maximum L-BFGS-B line-search steps per iteration. |
+| `eps` | fit kwarg / `scar_optimizer.eps` | `1e-4` | L-BFGS-B finite-difference step. |
 
 ```python
 result = fit(
@@ -150,13 +160,20 @@ result = fit(
 Use `NumericalConfig` when a setting should apply to many fits:
 
 ```python
-from pyscarcopula._types import NumericalConfig
+from pyscarcopula._types import LBFGSBConfig, NumericalConfig
 
 cfg = NumericalConfig(
-    default_tol_gas=1e-4,
-    default_ftol_gas=1e-12,
-    default_maxfun_gas=3000,
-    default_tol_scar=5e-3,
+    gas_optimizer=LBFGSBConfig(
+        gtol=1e-4,
+        ftol=1e-12,
+        maxfun=3000,
+        maxiter=3000,
+        maxls=50,
+    ),
+    scar_optimizer=LBFGSBConfig(
+        gtol=1e-4,
+        maxls=50,
+    ),
     default_K=500,
 )
 
@@ -174,9 +191,10 @@ the dynamic refit.
 
 ```python
 from pyscarcopula import CVineCopula
-from pyscarcopula._types import NumericalConfig
+from pyscarcopula._types import LBFGSBConfig, NumericalConfig
 
-cfg = NumericalConfig(default_ftol_gas=1e-12, default_maxfun_gas=3000)
+cfg = NumericalConfig(
+    gas_optimizer=LBFGSBConfig(ftol=1e-12, maxfun=3000, maxiter=3000))
 
 vine = CVineCopula()
 vine.fit(
@@ -194,11 +212,11 @@ For `method='mle'`, the edge stays at the MLE selection result. For dynamic
 methods such as `'gas'` or `'scar-tm-ou'`, these controls are forwarded to each
 dynamic edge fit:
 
-- GAS: `gamma0`, `tol`, `ftol`, `maxfun`, `score_eps`, `gamma_bound`,
-  `beta_bound`, `scaling`, `verbose`
-- SCAR-TM-OU: `alpha0`, `tol`, `K`, `grid_range`, `grid_method`, `adaptive`,
+- GAS: `gamma0`, `gtol`, `ftol`, `maxfun`, `maxiter`, `maxls`, `eps`, `score_eps`,
+  `gamma_bound`, `beta_bound`, `scaling`, `verbose`
+- SCAR-TM-OU: `alpha0`, `gtol`, `ftol`, `maxfun`, `maxiter`, `maxls`, `eps`, `K`, `grid_range`, `grid_method`, `adaptive`,
   `pts_per_sigma`, `analytical_grad`, `smart_init`, `verbose`
-- SCAR-MC: `alpha0`, `tol`, `n_tr`, `M_iterations`, `stationary`, `seed`,
+- SCAR-MC: `alpha0`, `gtol`, `ftol`, `maxfun`, `maxiter`, `maxls`, `eps`, `n_tr`, `M_iterations`, `stationary`, `seed`,
   `dwt`, `smart_init`, `verbose`
 
 Vine-level pruning controls reduce the number of dynamic edge fits:
@@ -220,9 +238,10 @@ options to edge fits through the Dissmann selector.
 
 ```python
 from pyscarcopula import RVineCopula
-from pyscarcopula._types import NumericalConfig
+from pyscarcopula._types import LBFGSBConfig, NumericalConfig
 
-cfg = NumericalConfig(default_ftol_gas=1e-12, default_maxfun_gas=3000)
+cfg = NumericalConfig(
+    gas_optimizer=LBFGSBConfig(ftol=1e-12, maxfun=3000, maxiter=3000))
 
 vine = RVineCopula(
     truncation_level=2,
@@ -254,7 +273,7 @@ structure controls are:
 | `beam_width` | `4` | Number of partial candidate structures retained by beam search. |
 | `transform_type` | instance value / `'softplus'` | Parameter transform used for Archimedean candidate copulas. |
 
-As with C-vines, automatic family selection is MLE-based. `tol`, `ftol`,
+As with C-vines, automatic family selection is MLE-based. `gtol`, `ftol`,
 `gamma_bound`, `K`, and similar strategy controls affect the dynamic edge refit
 after a family has been selected. If `method='gas'`, a too-loose `ftol` can make
 some edges stop early with `success=True`; set `ftol=1e-12` and increase

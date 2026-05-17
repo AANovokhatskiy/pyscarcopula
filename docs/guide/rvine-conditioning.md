@@ -144,16 +144,16 @@ Current modes:
 - `dynamic_conditioning='ignore'`: default; predict edge parameters from the
   training data only;
 - `dynamic_conditioning='given_only'`: use fixed suffix observations to update
-  supported GAS and SCAR-TM edge states before downstream sampling.
+  supported strategy-owned dynamic edge states before downstream sampling.
 
 For R-vines, dynamic conditioning is applied on the suffix exact path where
 fixed pseudo-observations have a deterministic propagation order. Diagnostics
 record `updated_edges` and `skipped_edges`.
 
-For GAS edges, `given_only` updates only under `horizon='current'`. Under
-`horizon='next'`, updating would perform an extra score-recursion step rather
-than condition the same predictive state, so the edge is skipped with reason
-`gas_next_horizon_would_advance_filter`.
+Stateful observation-driven edges update only under `horizon='current'`.
+Under `horizon='next'`, updating would perform an extra state-recursion step
+rather than condition the same predictive state, so the edge is skipped with
+reason `next_horizon_would_advance_filter`.
 
 ## Diagnostics
 

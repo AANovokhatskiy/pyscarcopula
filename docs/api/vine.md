@@ -75,9 +75,9 @@ API signatures below are generated from the source docstrings.
         - n_trees
         - n_edges
 
-## VineEdge
+## PairCopula
 
-::: pyscarcopula.vine._edge.VineEdge
+::: pyscarcopula.vine._pair_copula.PairCopula
     options:
       members: false
 

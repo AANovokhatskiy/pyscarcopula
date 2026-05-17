@@ -112,8 +112,10 @@ def test_tm_loglik_gradient(cls, rot, alpha, crypto_data):
     eps = 1e-5
     grad_num = np.zeros(3)
     for k in range(3):
-        a_p = alpha.copy(); a_p[k] += eps
-        a_m = alpha.copy(); a_m[k] -= eps
+        a_p = alpha.copy()
+        a_p[k] += eps
+        a_m = alpha.copy()
+        a_m[k] -= eps
         vp = tm_loglik(*a_p, u, cls(rotate=rot), **tm_kwargs)
         vm = tm_loglik(*a_m, u, cls(rotate=rot), **tm_kwargs)
         grad_num[k] = (vp - vm) / (2 * eps)

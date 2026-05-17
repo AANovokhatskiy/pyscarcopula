@@ -4,8 +4,6 @@ If these fail after a code change, something broke.
 Tolerances are generous (1.0 logL) to allow for optimizer
 non-determinism across platforms.
 """
-import numpy as np
-import pytest
 from pyscarcopula import GumbelCopula, CVineCopula
 from pyscarcopula.api import fit
 from pyscarcopula.stattests import gof_test
@@ -55,6 +53,6 @@ class TestVineRegression:
         vine = CVineCopula()
         vine.fit(crypto_data_6d, method='scar-tm-ou',
                  truncation_level=2, min_edge_logL=10,
-                 tol=5e-2, K=150)
+                 gtol=5e-2, K=150)
         ll = vine.log_likelihood(crypto_data_6d, K=150)
         assert ll > 860

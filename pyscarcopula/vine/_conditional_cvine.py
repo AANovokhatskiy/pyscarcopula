@@ -6,6 +6,7 @@ import numpy as np
 from numpy.polynomial.legendre import leggauss
 
 from pyscarcopula.vine._helpers import _clip_unit
+from pyscarcopula.vine._edge_adapter import edge_is_independent
 
 
 def validate_cvine_given(given, d):
@@ -35,20 +36,16 @@ def validate_cvine_given(given, d):
 
 
 def ensure_cvine_conditional_supported(vine):
-    """Reject conditional predict for unsupported dynamic edge methods."""
-    from pyscarcopula._types import IndependentResult
-    from pyscarcopula.copula.independent import IndependentCopula
-
+    """Reject conditional predict for edges without h-function support."""
     for tree in vine.edges:
         for edge in tree:
-            if (isinstance(edge.copula, IndependentCopula)
-                    or isinstance(edge.fit_result, IndependentResult)):
+            if edge_is_independent(edge):
                 continue
-            method = edge.method.upper() if edge.method is not None else ''
-            if method not in ('MLE', 'GAS', 'SCAR-TM-OU'):
+            if not (hasattr(edge.copula, 'h')
+                    and hasattr(edge.copula, 'h_inverse')):
                 raise NotImplementedError(
                     "Exact conditional predict for CVine is currently "
-                    "implemented only for MLE, GAS and SCAR-TM-OU edges"
+                    "implemented only for edges with h and h_inverse support"
                 )
 
 

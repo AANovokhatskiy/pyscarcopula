@@ -25,13 +25,26 @@ Usage:
 """
 
 import numpy as np
-from scipy.stats import t as t_dist, norm, kendalltau
+from scipy.stats import t as t_dist, kendalltau
 from scipy.special import gammaln
 from scipy.optimize import minimize
 
 from pyscarcopula.copula.base import BivariateCopula
+from pyscarcopula._types import DEFAULT_CONFIG, NumericalConfig
 from pyscarcopula._utils import pobs
 from pyscarcopula.copula.experimental.stochastic_student_dcc import _PPFTable
+
+
+_LBFGSB_FIT_KEYS = (
+    'gtol',
+    'ftol',
+    'maxfun',
+    'maxiter',
+    'maxls',
+    'eps',
+    'maxcor',
+    'finite_diff_rel_step',
+)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -127,8 +140,6 @@ def _student_copula_logpdf(u, R, df, L_inv=None, log_det=None):
     """
     eps = 1e-10
     u_c = np.clip(u, eps, 1.0 - eps)
-    d = u_c.shape[1]
-
     x = t_dist.ppf(u_c, df=df)  # (T, d)
 
     log_joint = _multivariate_t_logpdf(x, R, df, L_inv, log_det)
@@ -433,9 +444,24 @@ class StochasticStudentCopula(BivariateCopula):
 
     # ── MLE fit ──────────────────────────────────────────────
 
-    def _fit_mle(self, u):
+    def _fit_mle(self, u, config: NumericalConfig | None = None,
+                 gtol=None, ftol=None, maxfun=None, maxiter=None,
+                 maxls=None, eps=None, maxcor=None,
+                 finite_diff_rel_step=None):
         """Fit constant df via profile MLE (R estimated via Kendall tau)."""
         from pyscarcopula._types import MLEResult
+
+        config = config or DEFAULT_CONFIG
+        optimizer_options = config.stochastic_student_optimizer.options(
+            gtol=gtol,
+            ftol=ftol,
+            maxfun=maxfun,
+            maxiter=maxiter,
+            maxls=maxls,
+            eps=eps,
+            maxcor=maxcor,
+            finite_diff_rel_step=finite_diff_rel_step,
+        )
 
         # Estimate R if not set
         if self._R is None:
@@ -451,7 +477,7 @@ class StochasticStudentCopula(BivariateCopula):
         # Initial guess: df=5 -> x = inv_transform(5)
         x0 = np.array([float(self.inv_transform(np.array([5.0]))[0])])
         res = minimize(neg_ll, x0, method='L-BFGS-B',
-                       bounds=[(-8.0, 15.0)], options={'gtol': 1e-4})
+                       bounds=[(-8.0, 15.0)], options=optimizer_options)
 
         df_hat = self.transform(res.x)[0]
 
@@ -487,6 +513,10 @@ class StochasticStudentCopula(BivariateCopula):
         -------
         FitResult
         """
+        config = kwargs.pop('config', None)
+        if 'tol' in kwargs:
+            raise TypeError("tol is not supported; use gtol")
+
         u = np.asarray(data, dtype=np.float64)
         if to_pobs:
             u = pobs(u)
@@ -499,11 +529,16 @@ class StochasticStudentCopula(BivariateCopula):
             self._set_R(R_hat)
 
         if method.upper() == 'MLE':
-            return self._fit_mle(u)
+            optimizer_kwargs = {
+                key: kwargs.pop(key)
+                for key in _LBFGSB_FIT_KEYS
+                if key in kwargs
+            }
+            return self._fit_mle(u, config=config, **optimizer_kwargs)
 
         # Step 2: SCAR / GAS — use strategy
         from pyscarcopula.api import fit as _api_fit
-        result = _api_fit(self, u, method=method, **kwargs)
+        result = _api_fit(self, u, method=method, config=config, **kwargs)
         self.fit_result = result
         return result
 

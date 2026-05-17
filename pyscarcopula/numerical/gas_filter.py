@@ -15,7 +15,7 @@ Scaling options:
 
 Used by:
     - strategy/gas.py (GASStrategy) for fitting and evaluation
-    - latent/initial_point.py for GAS-based initial point estimation
+    - strategy/initial_point.py for GAS-based initial point estimation
     - stattests.py for GAS Rosenblatt transform
     - vine/_edge.py for GAS h-functions in vine edges
 """

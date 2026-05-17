@@ -4,10 +4,11 @@ pyscarcopula.copula._protocol — copula interface.
 A copula is a pure mathematical object: it computes PDF, CDF, h-functions,
 samples, and transforms between R and the copula parameter domain.
 
-It does NOT:
-  - hold fit results (no self.fit_result)
-  - know about estimation methods (no fit(), no mlog_likelihood())
-  - have mutable state
+The mathematical protocol does NOT require fit state or knowledge of
+estimation methods. Concrete classes may additionally provide
+backward-compatible object-oriented convenience methods such as fit(),
+predict(), and sample_model(); these wrappers delegate to pyscarcopula.api
+and may store fit_result on the object.
 
 The estimation logic lives in `strategy/` modules, which accept a copula
 as an argument and return an immutable FitResult.

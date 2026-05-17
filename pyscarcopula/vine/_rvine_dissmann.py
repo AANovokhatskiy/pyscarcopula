@@ -1,5 +1,5 @@
 """
-vine._rvine_dissmann — MLE-only Dissmann sequential selection for R-vines.
+vine._rvine_dissmann — Dissmann sequential selection for R-vines.
 
 Given pseudo-observations ``u`` of shape ``(T, d)``, build an R-vine
 level by level:
@@ -19,11 +19,9 @@ Output is two parallel, level-indexed lists suitable for
     trees_repr[t][i] = (conditioned_fz, conditioning_fz)
     fitted[t][i]     = PairCopula
 
-This module is MLE-only by design (Block 1). SCAR / GAS variants live
-elsewhere.
+Structure selection is Dissmann-based; non-independent edges can be refit
+through the strategy registry after the MLE family-selection pass.
 """
-
-from dataclasses import dataclass
 
 import numpy as np
 
@@ -37,6 +35,7 @@ from pyscarcopula.vine._reachability import (
     build_rvine_dag,
 )
 from pyscarcopula.vine._selection import select_best_copula, _default_candidates
+from pyscarcopula.vine._pair_copula import PairCopula as _PairCopula
 from pyscarcopula.vine._structure import (
     _build_next_tree,
     _build_next_tree_conditional,
@@ -51,46 +50,6 @@ _EPS = 1e-10
 
 def _clip(u):
     return np.clip(u, _EPS, 1.0 - _EPS)
-
-
-@dataclass(frozen=True)
-class PairCopula:
-    """One fitted edge of an R-vine.
-
-    Attributes
-    ----------
-    copula : BivariateCopula instance
-        Family + rotation. Parameter is stored separately in ``param``.
-    param : float
-        MLE copula parameter (0.0 for IndependentCopula).
-    log_likelihood : float
-        Edge log-likelihood at the fitted parameter.
-    nfev : int
-        Optimizer function evaluations (0 for closed-form / Independent).
-    tau : float
-        Empirical Kendall's tau on the pseudo-observations used to fit
-        this edge (for diagnostics only).
-    fit_result : FitResult
-        Strategy result for this edge (MLEResult, GASResult,
-        LatentResult, or IndependentResult).
-    """
-    copula: object
-    param: float
-    log_likelihood: float
-    nfev: int
-    tau: float
-    fit_result: object = None
-
-    @property
-    def n_params(self) -> int:
-        if self.fit_result is not None:
-            return int(getattr(self.fit_result, 'n_params', 0))
-        return 0 if isinstance(self.copula, IndependentCopula) else 1
-
-    def h(self, u_conditioned, u_given):
-        """h(u_conditioned | u_given) using this edge's fit result."""
-        from pyscarcopula.vine._rvine_edges import _edge_h
-        return _edge_h(self, u_conditioned, u_given)
 
 
 def select_rvine(
@@ -113,7 +72,7 @@ def select_rvine(
     beam_width=4,
     **fit_kwargs,
 ):
-    """Run MLE-only Dissmann selection on pseudo-observations.
+    """Run Dissmann selection on pseudo-observations.
 
     Parameters
     ----------
@@ -734,15 +693,25 @@ def _fit_with_strategy(copula, u_pair, method, config, fit_kwargs):
     from pyscarcopula.strategy._base import get_strategy
     strategy_kwargs = {
         key: value for key, value in fit_kwargs.items()
-        if key not in ('alpha0', 'tol', 'verbose')
+        if key not in (
+            'alpha0', 'gamma0',
+            'gtol', 'ftol', 'maxfun', 'maxiter', 'maxls', 'eps',
+            'maxcor', 'finite_diff_rel_step',
+            'score_eps', 'gamma_bound', 'beta_bound',
+            'seed', 'dwt', 'verbose',
+        )
     }
     strategy = get_strategy(method, config=config, **strategy_kwargs)
     return strategy.fit(copula, u_pair, **fit_kwargs)
 
 
 def _pair_from_result(copula, result, tau_val):
-    param = float(getattr(result, 'copula_param', 0.0) or 0.0)
-    return PairCopula(
+    result_param = getattr(result, 'copula_param', None)
+    if result_param is None:
+        param = 0.0 if isinstance(copula, IndependentCopula) else None
+    else:
+        param = float(result_param)
+    return _PairCopula(
         copula=copula,
         param=param,
         log_likelihood=float(result.log_likelihood),

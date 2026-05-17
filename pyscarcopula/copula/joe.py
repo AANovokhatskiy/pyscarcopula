@@ -196,26 +196,6 @@ def _joe_h_inverse_newton(u, v, r):
 
 
 @njit(cache=True)
-def _joe_V(n, r):
-    """Sample V for Joe copula (Sibuya distribution)."""
-    out = np.empty(n)
-    
-    for k in range(n):
-        u = np.random.uniform(0, 1)
-        i = 1
-        p0 = 1.0 / r[k]
-        p = p0
-        F = p
-        while u > F:
-            mult = (-1.0) * (p0 - float(i + 1) + 1.0) / float(i + 1)
-            p = mult * p
-            F = F + p
-            i += 1
-        out[k] = float(i)
-    return out
-
-
-@njit(cache=True)
 def _joe_V_from_uniforms(n, r, uniforms):
     """Sample V for Joe copula from fixed uniforms."""
     out = np.empty(n)

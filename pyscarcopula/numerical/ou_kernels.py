@@ -1,12 +1,11 @@
 """
-pyscarcopula.numerical.ou_kernels — Numba kernels for the OU process.
+pyscarcopula.numerical.ou_kernels - Numba kernels for the OU process.
 
 Pure numerical functions with no copula dependency.
-Extracted from latent/ou_process.py (lines 28–122).
 
 Contents:
   - ou_init_state: deterministic initial x0 = mu
-  - ou_stationary_state: sample from stationary N(mu, sigma^2)
+  - ou_stationary_state_from_dwt: deterministic stationary x0 from dwt
   - ou_sample_paths_exact: exact OU discretization (for p-sampler)
   - ou_sample_paths: EIS-modified OU paths (for m-sampler)
   - log_norm_ou: EIS normalizing factor g2
@@ -25,10 +24,13 @@ def ou_init_state(mu, n_tr):
 
 
 @njit(cache=True)
-def ou_stationary_state(kappa, mu, nu, n_tr):
-    """Sample initial state from stationary distribution N(mu, nu^2/(2*kappa))."""
+def ou_stationary_state_from_dwt(kappa, mu, nu, dwt):
+    """Deterministic stationary x0 using the reserved final dwt row."""
+    T, n_tr = dwt.shape
+    dt = 1.0 / (T - 1)
     sigma2 = nu ** 2 / (2.0 * kappa)
-    return np.random.normal(mu, np.sqrt(sigma2), n_tr)
+    z0 = dwt[T - 1] / np.sqrt(dt)
+    return mu + np.sqrt(sigma2) * z0
 
 
 @njit(cache=True)
@@ -91,6 +93,15 @@ def ou_sample_paths(kappa, mu, nu, a1t, a2t, dwt, x0):
     """
     T, n_tr = dwt.shape
     dt = 1.0 / (T - 1)
+
+    zero_aux = True
+    for i in range(T):
+        if a1t[i] != 0.0 or a2t[i] != 0.0:
+            zero_aux = False
+            break
+    if zero_aux:
+        return ou_sample_paths_exact(kappa, mu, nu, dwt, x0)
+
     D = nu ** 2 / 2.0
     xt = np.empty((T, n_tr))
     xt[0] = x0
@@ -145,6 +156,9 @@ def log_mean_exp(log_vals):
 
 def calculate_dwt(T, n_tr, seed=None):
     """Generate Wiener increments (T, n_tr).
+
+    Rows ``0..T-2`` drive the OU path increments. Row ``T-1`` is reserved
+    as an independent common-random-number source for stationary x0.
 
     Parameters
     ----------

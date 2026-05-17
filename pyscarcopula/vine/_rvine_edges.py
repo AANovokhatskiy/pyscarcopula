@@ -3,35 +3,71 @@
 import numpy as np
 
 from pyscarcopula.copula.independent import IndependentCopula
-from pyscarcopula._types import (
-    DEFAULT_CONFIG,
-    GASResult,
-    IndependentResult,
-    LatentResult,
-    MLEResult,
+from pyscarcopula.vine._edge_adapter import (
+    edge_condition_sample_state,
+    edge_log_likelihood,
+    edge_mixture_h,
+    edge_copula,
+    edge_is_independent,
+    edge_model_sample_state,
+    edge_param,
+    edge_result,
+    edge_state_param,
+    predict_r_path,
+    sample_r_path,
+    strategy_for_result,
 )
 
 
-def _edge_h(edge, u_conditioned, u_given, config=None):
-    """Compute h(u_conditioned | u_given) for an RVine pair edge."""
-    if isinstance(edge.copula, IndependentCopula):
+def _edge_h(edge, u_conditioned, u_given, config=None, u_pair=None,
+            state_cache=None, current_cache_key=None, next_cache_key=None,
+            **strategy_kwargs):
+    """Compute h(u_conditioned | u_given) for a pair edge."""
+    copula = edge_copula(edge)
+    if isinstance(copula, IndependentCopula):
         return np.asarray(u_conditioned, dtype=np.float64).copy()
 
-    cfg = {} if config is None else dict(config)
+    cfg = config if isinstance(config, dict) else {}
     r = cfg.get('r')
     if r is not None:
-        return edge.copula.h(u_conditioned, u_given, r)
+        return copula.h(u_conditioned, u_given, r)
 
-    result = getattr(edge, 'fit_result', None)
+    result = edge_result(edge)
     if result is None:
-        r = np.full(len(np.atleast_1d(u_conditioned)), edge.param)
-        return edge.copula.h(u_conditioned, u_given, r)
-    if isinstance(result, IndependentResult):
+        r = np.full(len(np.atleast_1d(u_conditioned)), edge_param(edge))
+        return copula.h(u_conditioned, u_given, r)
+    if edge_is_independent(edge):
         return np.asarray(u_conditioned, dtype=np.float64).copy()
 
-    u_pair = np.column_stack((u_given, u_conditioned))
-    strategy = _strategy_for_result(result, config=config)
-    return strategy.mixture_h(edge.copula, u_pair, result)
+    if u_pair is None:
+        u_pair = np.column_stack((u_given, u_conditioned))
+    return edge_mixture_h(
+        copula,
+        result,
+        u_pair,
+        config=config,
+        state_cache=state_cache,
+        current_cache_key=current_cache_key,
+        next_cache_key=next_cache_key,
+        **strategy_kwargs)
+
+
+def _edge_log_likelihood(edge, u_pair, config=None, **strategy_kwargs):
+    """Compute log-likelihood for one pair edge using its fitted strategy."""
+    copula = edge_copula(edge)
+    if isinstance(copula, IndependentCopula):
+        return 0.0
+
+    result = edge_result(edge)
+    r = edge_param(edge)
+    if r is not None:
+        u1 = u_pair[:, 0]
+        u2 = u_pair[:, 1]
+        return float(np.sum(
+            copula.log_pdf(u1, u2, np.full(len(u1), float(r)))))
+
+    return edge_log_likelihood(
+        copula, result, u_pair, config=config, **strategy_kwargs)
 
 
 def _edge_h_inverse(edge, v, u_given, config=None):
@@ -40,17 +76,18 @@ def _edge_h_inverse(edge, v, u_given, config=None):
     ``config`` may contain a precomputed ``r`` array. If omitted, ``r`` is
     generated with the same model-reproduction rules used by CVine sampling.
     """
-    if isinstance(edge.copula, IndependentCopula):
+    copula = edge_copula(edge)
+    if isinstance(copula, IndependentCopula):
         return np.asarray(v, dtype=np.float64).copy()
 
-    cfg = {} if config is None else dict(config)
-    result = getattr(edge, 'fit_result', None)
+    cfg = config if isinstance(config, dict) else {}
+    result = edge_result(edge)
     if result is None:
         r = cfg.get('r')
         if r is None:
-            r = np.full(len(np.atleast_1d(v)), edge.param)
-        return edge.copula.h_inverse(v, u_given, r)
-    if isinstance(result, IndependentResult):
+            r = np.full(len(np.atleast_1d(v)), edge_param(edge))
+        return copula.h_inverse(v, u_given, r)
+    if edge_is_independent(edge):
         return np.asarray(v, dtype=np.float64).copy()
 
     r = cfg.get('r')
@@ -60,7 +97,7 @@ def _edge_h_inverse(edge, v, u_given, config=None):
             rng = np.random.default_rng()
         r = _edge_r_for_sample(edge, len(np.atleast_1d(v)), rng)
 
-    return edge.copula.h_inverse(v, u_given, r)
+    return copula.h_inverse(v, u_given, r)
 
 
 def _edge_r_for_sample(edge, n, rng=None):
@@ -68,43 +105,15 @@ def _edge_r_for_sample(edge, n, rng=None):
     if rng is None:
         rng = np.random.default_rng()
 
-    if isinstance(edge.copula, IndependentCopula):
-        return np.zeros(n, dtype=np.float64)
-
-    result = getattr(edge, 'fit_result', None)
-    if result is None:
-        return np.full(n, edge.param, dtype=np.float64)
-
-    if isinstance(result, IndependentResult):
-        return np.zeros(n, dtype=np.float64)
-
-    if isinstance(result, MLEResult):
-        return np.full(n, result.copula_param, dtype=np.float64)
-
-    if isinstance(result, LatentResult):
-        kappa, mu, nu = result.params.values
-        dt = 1.0 / (n - 1) if n > 1 else 1.0
-        rho_ou = np.exp(-kappa * dt)
-        sigma_cond = np.sqrt(
-            nu ** 2 / (2.0 * kappa) * (1.0 - rho_ou ** 2))
-
-        x_path = np.empty(n, dtype=np.float64)
-        x_path[0] = rng.normal(mu, nu / np.sqrt(2.0 * kappa))
-        for t in range(1, n):
-            x_path[t] = (
-                mu
-                + rho_ou * (x_path[t - 1] - mu)
-                + sigma_cond * rng.standard_normal()
-            )
-        return edge.copula.transform(x_path)
-
-    if isinstance(result, GASResult):
-        raise ValueError(
-            "GAS sample paths require stepwise score updates and cannot be "
-            "precomputed by _edge_r_for_sample"
-        )
-
-    raise TypeError(f"Unsupported fit_result type: {type(result).__name__}")
+    result = edge_result(edge)
+    return sample_r_path(
+        edge_copula(edge),
+        result,
+        n,
+        rng,
+        param=edge_param(edge),
+        error_name='_edge_r_for_sample',
+    )
 
 
 def _edge_r_for_predict(edge, n, u_train_pair=None, horizon='next',
@@ -113,103 +122,47 @@ def _edge_r_for_predict(edge, n, u_train_pair=None, horizon='next',
     """Generate an r vector for one-step predictive sampling."""
     if rng is None:
         rng = np.random.default_rng()
-    if horizon in (1, '1'):
-        horizon = 'next'
-    elif horizon in (0, '0'):
-        horizon = 'current'
-    else:
-        horizon = str(horizon).lower()
 
-    if isinstance(edge.copula, IndependentCopula):
-        return np.zeros(n, dtype=np.float64)
-
-    result = getattr(edge, 'fit_result', None)
-    if result is None:
-        return np.full(n, edge.param, dtype=np.float64)
-
-    if isinstance(result, IndependentResult):
-        return np.zeros(n, dtype=np.float64)
-
-    if isinstance(result, (MLEResult, GASResult, LatentResult)):
-        strategy = _strategy_for_result(result, config=config)
-        return strategy.predictive_params(
-            edge.copula,
-            u_train_pair,
-            result,
-            n,
-            rng=rng,
-            horizon=horizon,
-            predictive_r_mode=predictive_r_mode,
-            state_cache=state_cache,
-            cache_key=cache_key,
-        )
-
-    raise TypeError(f"Unsupported fit_result type: {type(result).__name__}")
+    result = edge_result(edge)
+    return predict_r_path(
+        edge_copula(edge),
+        result,
+        n,
+        u_train_pair=u_train_pair,
+        horizon=horizon,
+        rng=rng,
+        config=config,
+        predictive_r_mode=predictive_r_mode,
+        state_cache=state_cache,
+        cache_key=cache_key,
+        param=edge_param(edge),
+    )
 
 
-def _gas_update_from_last_observation(edge, g_t, u_pair, result, config):
-    score_eps = config.gas_score_eps
-    p = result.params
-
-    g_plus = g_t + score_eps
-    g_minus = g_t - score_eps
-    r_t = float(edge.copula.transform(np.array([g_t]))[0])
-    r_plus = float(edge.copula.transform(np.array([g_plus]))[0])
-    r_minus = float(edge.copula.transform(np.array([g_minus]))[0])
-
-    u1 = u_pair[:, 0]
-    u2 = u_pair[:, 1]
-    ll_t = float(edge.copula.log_pdf(u1, u2, np.array([r_t]))[0])
-    ll_plus = float(edge.copula.log_pdf(u1, u2, np.array([r_plus]))[0])
-    ll_minus = float(edge.copula.log_pdf(u1, u2, np.array([r_minus]))[0])
-
-    nabla = (ll_plus - ll_minus) / (2.0 * score_eps)
-    if result.scaling == 'fisher':
-        d2 = (ll_plus - 2.0 * ll_t + ll_minus) / (score_eps ** 2)
-        fisher = max(-d2, 1e-6)
-        score = nabla / fisher
-    else:
-        score = nabla
-
-    score = float(np.clip(score, -100.0, 100.0))
-    g_new = p.omega + p.beta * g_t + p.gamma * score
-    g_new = float(np.clip(g_new, -50.0, 50.0))
-    r_new = float(edge.copula.transform(np.array([g_new]))[0])
-    return g_new, r_new
+def _edge_initial_model_state(edge, config=None):
+    """Return strategy-owned state for stepwise model reproduction."""
+    result = edge_result(edge)
+    return edge_model_sample_state(edge_copula(edge), result, config=config)
 
 
-def _edge_initial_gas_state(edge):
-    """Return initial (g_t, r_t) for GAS model reproduction."""
-    result = getattr(edge, 'fit_result', None)
-    if not isinstance(result, GASResult):
-        return None
-
-    p = result.params
-    if abs(p.beta) < 1.0 - 1e-8:
-        g_t = p.omega / (1.0 - p.beta)
-    else:
-        g_t = p.omega
-    r_t = float(edge.copula.transform(np.array([g_t]))[0])
-    return float(g_t), r_t
+def _edge_update_model_state(edge, state, u_pair, config=None):
+    """Advance strategy-owned model state after one generated observation."""
+    result = edge_result(edge)
+    if state is None:
+        raise TypeError("_edge_update_model_state requires a state")
+    return edge_condition_sample_state(
+        edge_copula(edge), result, state, u_pair, config=config)
 
 
-def _edge_update_gas_state(edge, g_t, u_pair, config=None):
-    """Advance GAS state after one generated edge observation."""
-    result = getattr(edge, 'fit_result', None)
-    if not isinstance(result, GASResult):
-        raise TypeError("_edge_update_gas_state requires GASResult")
-
-    cfg = config or DEFAULT_CONFIG
-    g_new, r_new = _gas_update_from_last_observation(
-        edge, g_t, u_pair, result, cfg)
-    return g_new, r_new
+def _edge_state_r(edge, state):
+    """Return scalar r represented by a strategy-owned state."""
+    return edge_state_param(state)
 
 
-def _is_gas_edge(edge):
-    return isinstance(getattr(edge, 'fit_result', None), GASResult)
+def _edge_requires_stepwise_sample(edge):
+    """Return True when an edge strategy owns stepwise sampling state."""
+    return _edge_initial_model_state(edge) is not None
 
 
 def _strategy_for_result(result, config=None):
-    from pyscarcopula.strategy._base import get_strategy_for_result
-
-    return get_strategy_for_result(result, config=config)
+    return strategy_for_result(result, config=config)

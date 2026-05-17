@@ -1,8 +1,6 @@
 """
 pyscarcopula.numerical.tm_gradient — Analytical gradient of TM log-likelihood.
 
-Extracted from latent/ou_process.py (lines 735–979).
-
 Key insight (from the paper, Section 3.4):
   Working in normalised coordinates xi = z / sigma (fixed grid),
   several parameter dependencies cancel:

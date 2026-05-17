@@ -1,8 +1,6 @@
 """
 pyscarcopula.numerical.mc_samplers — Monte Carlo likelihood estimators.
 
-Extracted from latent/ou_process.py (lines 124–275).
-
 Contents:
   - p_sampler_loglik: MC p-sampler (no importance sampling)
   - m_sampler_loglik: MC m-sampler with EIS auxiliary params
@@ -13,7 +11,7 @@ import numpy as np
 from scipy.signal import savgol_filter
 
 from pyscarcopula.numerical.ou_kernels import (
-    ou_init_state, ou_stationary_state,
+    ou_init_state, ou_stationary_state_from_dwt,
     ou_sample_paths, ou_sample_paths_exact,
     log_norm_ou, log_mean_exp,
 )
@@ -33,12 +31,11 @@ def p_sampler_loglik(kappa, mu, nu, u, dwt, copula, stationary):
     T, n_tr = dwt.shape
 
     if stationary:
-        x0 = ou_stationary_state(kappa, mu, nu, n_tr)
+        x0 = ou_stationary_state_from_dwt(kappa, mu, nu, dwt)
     else:
         x0 = ou_init_state(mu, n_tr)
 
-    z = np.zeros(T)
-    xt = ou_sample_paths(kappa, mu, nu, z, z, dwt, x0)
+    xt = ou_sample_paths_exact(kappa, mu, nu, dwt, x0)
 
     if np.isnan(np.sum(xt)):
         return 1e10
@@ -67,7 +64,7 @@ def m_sampler_loglik(kappa, mu, nu, u, dwt, a1t, a2t, copula, stationary):
     dt = 1.0 / (T - 1)
 
     if stationary:
-        x0 = ou_stationary_state(kappa, mu, nu, n_tr)
+        x0 = ou_stationary_state_from_dwt(kappa, mu, nu, dwt)
     else:
         x0 = ou_init_state(mu, n_tr)
 
@@ -127,7 +124,6 @@ def eis_find_auxiliary(alpha, u, M_iterations, dwt, copula, stationary):
     T = len(u)
     n_tr = dwt.shape[1]
     dt = 1.0 / (T - 1)
-    t_data = np.linspace(0, 1, T)
     D = nu ** 2 / 2.0
 
     # Initial variance Dx0 — must match ou_sample_paths
@@ -161,7 +157,7 @@ def eis_find_auxiliary(alpha, u, M_iterations, dwt, copula, stationary):
 
     for j in range(M_iterations):
         if stationary:
-            x0 = ou_stationary_state(kappa, mu, nu, n_tr)
+            x0 = ou_stationary_state_from_dwt(kappa, mu, nu, dwt)
         else:
             x0 = ou_init_state(mu, n_tr)
 

@@ -15,7 +15,20 @@ import numpy as np
 from numba import njit
 from scipy.stats import norm
 from scipy.optimize import minimize
-from pyscarcopula.copula.base import BivariateCopula, _broadcast
+from pyscarcopula.copula.base import BivariateCopula
+from pyscarcopula._types import DEFAULT_CONFIG, NumericalConfig
+
+
+_LBFGSB_FIT_KEYS = (
+    'gtol',
+    'ftol',
+    'maxfun',
+    'maxiter',
+    'maxls',
+    'eps',
+    'maxcor',
+    'finite_diff_rel_step',
+)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -339,9 +352,24 @@ class EquicorrGaussianCopula(BivariateCopula):
 
     # ── MLE ──────────────────────────────────────────────────
 
-    def _fit_mle(self, u):
+    def _fit_mle(self, u, config: NumericalConfig | None = None,
+                 gtol=None, ftol=None, maxfun=None, maxiter=None,
+                 maxls=None, eps=None, maxcor=None,
+                 finite_diff_rel_step=None):
         """Fit constant rho via MLE."""
         from pyscarcopula._types import MLEResult
+
+        config = config or DEFAULT_CONFIG
+        optimizer_options = config.equicorr_optimizer.options(
+            gtol=gtol,
+            ftol=ftol,
+            maxfun=maxfun,
+            maxiter=maxiter,
+            maxls=maxls,
+            eps=eps,
+            maxcor=maxcor,
+            finite_diff_rel_step=finite_diff_rel_step,
+        )
 
         u = np.asarray(u, dtype=np.float64)
         z = norm.ppf(np.clip(u, 1e-10, 1 - 1e-10))
@@ -354,7 +382,7 @@ class EquicorrGaussianCopula(BivariateCopula):
 
         x0 = np.array([0.5])
         res = minimize(neg_ll, x0, method='L-BFGS-B',
-                       bounds=[(-8.0, 8.0)], options={'gtol': 1e-4})
+                       bounds=[(-8.0, 8.0)], options=optimizer_options)
 
         result = MLEResult(
             log_likelihood=-res.fun,
@@ -373,6 +401,10 @@ class EquicorrGaussianCopula(BivariateCopula):
     def fit(self, data, method='scar-tm-ou', to_pobs=False, **kwargs):
         from pyscarcopula._utils import pobs as _pobs
 
+        config = kwargs.pop('config', None)
+        if 'tol' in kwargs:
+            raise TypeError("tol is not supported; use gtol")
+
         u = np.asarray(data, dtype=np.float64)
         if to_pobs:
             u = _pobs(u)
@@ -380,11 +412,16 @@ class EquicorrGaussianCopula(BivariateCopula):
         self._last_u = u  # store for predict
 
         if method.upper() == 'MLE':
-            return self._fit_mle(u)
+            optimizer_kwargs = {
+                key: kwargs.pop(key)
+                for key in _LBFGSB_FIT_KEYS
+                if key in kwargs
+            }
+            return self._fit_mle(u, config=config, **optimizer_kwargs)
 
         # For SCAR/GAS: use strategy
         from pyscarcopula.api import fit as _api_fit
-        result = _api_fit(self, u, method=method, **kwargs)
+        result = _api_fit(self, u, method=method, config=config, **kwargs)
         self.fit_result = result
         return result
 
@@ -398,17 +435,25 @@ class EquicorrGaussianCopula(BivariateCopula):
             r = self.fit_result.copula_param if self.fit_result else 0.5
 
         d = self._d
+        r_arr = np.atleast_1d(np.asarray(r, dtype=np.float64)).ravel()
+        if r_arr.size == 1:
+            r_arr = np.full(n, float(r_arr[0]), dtype=np.float64)
+        elif r_arr.size != n:
+            raise ValueError(f"r must be scalar or array of length {n}, got {len(r_arr)}")
+
         # R = (1-rho)*I + rho*11' = LL' where L = sqrt(1-rho)*I + (sqrt(1+(d-1)*rho) - sqrt(1-rho))/d * 11'
         # Simpler: z = sqrt(1-rho)*eps + sqrt(rho)*eta*1 where eps~N(0,I), eta~N(0,1)
-        if r >= 0:
+        if np.all(r_arr >= 0):
             eps = rng.standard_normal((n, d))
             eta = rng.standard_normal((n, 1))
-            z = np.sqrt(1 - r) * eps + np.sqrt(r) * eta
+            z = np.sqrt(1 - r_arr)[:, None] * eps + np.sqrt(r_arr)[:, None] * eta
         else:
-            # For negative rho, use Cholesky
-            R = (1 - r) * np.eye(d) + r * np.ones((d, d))
-            L = np.linalg.cholesky(R)
-            z = rng.standard_normal((n, d)) @ L.T
+            z = np.empty((n, d), dtype=np.float64)
+            eps = rng.standard_normal((n, d))
+            for i, rho in enumerate(r_arr):
+                R = (1 - rho) * np.eye(d) + rho * np.ones((d, d))
+                L = np.linalg.cholesky(R)
+                z[i] = eps[i] @ L.T
 
         return norm.cdf(z)
 

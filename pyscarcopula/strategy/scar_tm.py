@@ -8,7 +8,8 @@ This strategy wraps the numerical modules (tm_grid, tm_gradient,
 tm_functions) into the FitStrategy interface, producing LatentResult.
 
 All grid parameters (K, grid_range, pts_per_sigma, adaptive, grid_method)
-and optimizer parameters (tol, analytical_grad, smart_init) are preserved
+and optimizer parameters (gtol, ftol, maxfun, maxiter, maxls, eps,
+analytical_grad, smart_init) are preserved
 from the original OULatentProcess.fit() method.
 """
 
@@ -17,7 +18,7 @@ from scipy.optimize import minimize, Bounds
 
 from pyscarcopula._types import (
     LatentResult, NumericalConfig, DEFAULT_CONFIG,
-    LatentProcessParams, ou_params,
+    ou_params,
     PredictiveState,
 )
 from pyscarcopula.strategy._base import register_strategy
@@ -26,7 +27,7 @@ from pyscarcopula.numerical.tm_functions import (
     tm_forward_rosenblatt, tm_forward_mixture_h,
 )
 from pyscarcopula.numerical.tm_gradient import tm_loglik_with_grad
-from pyscarcopula.strategy.predict_helpers import conditional_sample_bivariate
+from pyscarcopula.strategy.predict_helpers import sample_predictive
 
 
 @register_strategy('SCAR-TM-OU')
@@ -46,7 +47,7 @@ class SCARTMStrategy:
     adaptive : bool
         Adaptive grid refinement (default True).
     pts_per_sigma : int
-        Points per conditional sigma for adaptive rule (default 2).
+        Points per conditional sigma for adaptive rule (default from config).
     analytical_grad : bool
         Use analytical gradient (default True).
         Reduces nfev by ~3-4x. Parameters are auto-rescaled.
@@ -74,7 +75,14 @@ class SCARTMStrategy:
 
     def fit(self, copula, u: np.ndarray,
             alpha0: np.ndarray | None = None,
-            tol: float | None = None,
+            gtol: float | None = None,
+            ftol: float | None = None,
+            maxfun: int | None = None,
+            maxiter: int | None = None,
+            maxls: int | None = None,
+            eps: float | None = None,
+            maxcor: int | None = None,
+            finite_diff_rel_step: float | None = None,
             verbose: bool = False,
             **kwargs) -> LatentResult:
         """Fit SCAR-TM-OU model.
@@ -84,14 +92,26 @@ class SCARTMStrategy:
         copula : CopulaProtocol
         u : (T, 2) pseudo-observations
         alpha0 : (3,) initial [kappa, mu, nu], or None for auto
-        tol : gradient tolerance for L-BFGS-B
+        gtol, ftol, maxfun, maxiter, maxls, eps, maxcor,
+        finite_diff_rel_step : L-BFGS-B options
         verbose : print progress
 
         Returns
         -------
         LatentResult
         """
-        tol = tol or self.config.default_tol_scar
+        if 'tol' in kwargs:
+            raise TypeError("tol is not supported; use gtol")
+        optimizer_options = self.config.scar_optimizer.options(
+            gtol=gtol,
+            ftol=ftol,
+            maxfun=maxfun,
+            maxiter=maxiter,
+            maxls=maxls,
+            eps=eps,
+            maxcor=maxcor,
+            finite_diff_rel_step=finite_diff_rel_step,
+        )
         u = np.asarray(u, dtype=np.float64)
 
         # ── Initial point ─────────────────────────────────────────
@@ -164,8 +184,7 @@ class SCARTMStrategy:
                 method='L-BFGS-B',
                 jac=True,
                 bounds=bounds_scaled,
-                options={'gtol': tol, 'maxfun': self.config.default_maxfun,
-                         'maxiter': self.config.default_maxfun},
+                options=optimizer_options,
             )
 
             # Unscale
@@ -195,8 +214,7 @@ class SCARTMStrategy:
                 objective, alpha0,
                 method='L-BFGS-B',
                 bounds=bounds,
-                options={'gtol': tol, 'eps': 1e-4,
-                         'maxfun': self.config.default_maxfun},
+                options=optimizer_options,
             )
 
         alpha = result.x
@@ -288,22 +306,9 @@ class SCARTMStrategy:
         if rng is None:
             rng = np.random.default_rng()
 
-        p = result.params
-        kappa, mu, nu = p.kappa, p.mu, p.nu
-
-        # Same dt convention as ou_sample_paths_exact
-        dt = 1.0 / (n - 1) if n > 1 else 1.0
-        rho_ou = np.exp(-kappa * dt)
-        sigma_cond = np.sqrt(nu ** 2 / (2.0 * kappa) * (1.0 - rho_ou ** 2))
-
-        x = np.empty(n)
-        # Start from stationary distribution
-        x[0] = rng.normal(mu, nu / np.sqrt(2.0 * kappa))
-        for t in range(1, n):
-            x[t] = mu + rho_ou * (x[t - 1] - mu) + sigma_cond * rng.standard_normal()
-
-        r = copula.transform(x)
-        return copula.sample(n, r, rng=rng)
+        r = self.model_sample_params(copula, result, n, rng=rng)
+        d = u.shape[1] if u is not None and np.ndim(u) == 2 else 2
+        return sample_predictive(copula, n, r, rng=rng, d=d)
 
     def predict(self, copula, u, result, n, rng=None, **kwargs):
         """Mixture sampling from posterior p(x_T | data).
@@ -316,8 +321,9 @@ class SCARTMStrategy:
 
         r_samples = self.predictive_params(
             copula, u, result, n, rng=rng, **kwargs)
-        return conditional_sample_bivariate(
-            copula, n, r_samples, given=kwargs.get('given'), rng=rng)
+        d = u.shape[1] if u is not None and np.ndim(u) == 2 else 2
+        return sample_predictive(
+            copula, n, r_samples, given=kwargs.get('given'), rng=rng, d=d)
 
     def predictive_params(self, copula, u, result, n, rng=None, **kwargs):
         """Sample predictive copula parameters for SCAR-TM."""
@@ -425,3 +431,26 @@ class SCARTMStrategy:
             z_samples = sample_grid_distribution(
                 state.z_grid, state.prob, n, rng, mode=mode)
         return copula.transform(z_samples)
+
+    def model_sample_params(self, copula, result, n, rng=None, **kwargs):
+        """OU trajectory parameters for unconditional model reproduction."""
+        if rng is None:
+            rng = np.random.default_rng()
+
+        p = result.params
+        kappa, mu, nu = p.kappa, p.mu, p.nu
+        dt = 1.0 / (n - 1) if n > 1 else 1.0
+        rho_ou = np.exp(-kappa * dt)
+        sigma_cond = np.sqrt(nu ** 2 / (2.0 * kappa) * (1.0 - rho_ou ** 2))
+
+        x = np.empty(n, dtype=np.float64)
+        x[0] = rng.normal(mu, nu / np.sqrt(2.0 * kappa))
+        for t in range(1, n):
+            x[t] = (
+                mu + rho_ou * (x[t - 1] - mu)
+                + sigma_cond * rng.standard_normal()
+            )
+        return copula.transform(x)
+
+    def model_sample_state(self, copula, result, **kwargs):
+        return None

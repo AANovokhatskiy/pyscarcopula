@@ -1,5 +1,4 @@
-"""Unit tests for the MLE-only RVineCopula (Block 1 refactor)."""
-import re
+"""Unit tests for RVineCopula."""
 from collections import Counter
 
 import numpy as np
@@ -18,7 +17,6 @@ from pyscarcopula._types import (
     gas_params,
     ou_params,
 )
-from pyscarcopula._utils import pobs
 from pyscarcopula.api import predict as api_predict
 from pyscarcopula.api import sample as api_sample
 from pyscarcopula.stattests import gof_test, rvine_rosenblatt_transform
@@ -34,12 +32,20 @@ from pyscarcopula.vine._rvine_dag import (
     _inverse_chain_to_base,
     _node_key,
 )
-from pyscarcopula.vine._rvine_dissmann import PairCopula
+from pyscarcopula.vine._edge_adapter import (
+    edge_method,
+    edge_n_params,
+    edge_param,
+    edge_view,
+)
+from pyscarcopula.vine._pair_copula import PairCopula
 from pyscarcopula.vine._rvine_edges import (
     _edge_h,
     _edge_h_inverse,
+    _edge_initial_model_state,
     _edge_r_for_predict,
     _edge_r_for_sample,
+    _edge_update_model_state,
 )
 from pyscarcopula.vine._rvine_matrix_builder import (
     build_rvine_matrix_with_edge_map,
@@ -315,7 +321,7 @@ def _scar_tm_gaussian_pair(kappa=1.0, mu=0.0, nu=4.0):
     )
 
 
-def _manual_suffix_dynamic_rvine():
+def _manual_suffix_stateful_rvine():
     vine = RVineCopula(candidates=[BivariateGaussianCopula])
     vine.d = 3
     vine.matrix = np.array([
@@ -345,8 +351,8 @@ def _manual_suffix_dynamic_rvine():
     return vine
 
 
-def _manual_suffix_scar_rvine():
-    vine = _manual_suffix_dynamic_rvine()
+def _manual_suffix_predictive_state_rvine():
+    vine = _manual_suffix_stateful_rvine()
     vine.pair_copulas[(0, 1)] = _scar_tm_gaussian_pair()
     rng = np.random.default_rng(400)
     vine._last_u = np.clip(
@@ -1026,6 +1032,20 @@ class TestTruncationAndPrune:
 
 class TestRVineEdgePropagation:
 
+    def test_edge_adapter_view_for_pair_copula(self):
+        edge = _mle_gaussian_pair(0.35)
+
+        view = edge_view(edge)
+
+        assert view.copula is edge.copula
+        assert view.fit_result is edge.fit_result
+        assert view.param == pytest.approx(0.35)
+        assert view.log_likelihood == pytest.approx(0.0)
+        assert view.tau == pytest.approx(0.0)
+        assert edge_method(edge) == 'MLE'
+        assert edge_param(edge) == pytest.approx(0.35)
+        assert edge_n_params(edge) == 1
+
     def test_mle_edge_h_matches_copula_h(self):
         cop = BivariateGaussianCopula()
         result = MLEResult(
@@ -1097,6 +1117,42 @@ class TestRVineEdgePropagation:
         with pytest.raises(ValueError, match="stepwise score updates"):
             _edge_r_for_sample(edge, 5, np.random.default_rng(0))
 
+    def test_strategy_state_update_uses_result_score_eps(self):
+        class LinearCopula:
+            name = 'linear'
+
+            def __init__(self):
+                self.r_seen = []
+
+            def transform(self, x):
+                return np.asarray(x, dtype=np.float64)
+
+            def log_pdf(self, u1, u2, r):
+                r = np.asarray(r, dtype=np.float64)
+                self.r_seen.extend(float(x) for x in r.ravel())
+                return r * (np.asarray(u1) + np.asarray(u2))
+
+        cop = LinearCopula()
+        result = GASResult(
+            log_likelihood=0.0,
+            method='GAS',
+            copula_name=cop.name,
+            success=True,
+            params=gas_params(0.1, 0.2, 0.3),
+            score_eps=4e-6,
+        )
+        edge = PairCopula(cop, 0.0, 0.0, 0, 0.0, result)
+
+        state = _edge_initial_model_state(edge)
+        _edge_update_model_state(
+            edge,
+            state,
+            np.array([[0.2, 0.3]]),
+            config=None,
+        )
+
+        assert cop.r_seen[1] - cop.r_seen[2] == pytest.approx(8e-6)
+
     @pytest.mark.parametrize(
         "copula_class,param,rotations",
         [
@@ -1156,7 +1212,7 @@ class TestSampling:
             method='scar-tm-ou',
             K=12,
             grid_range=3.0,
-            tol=5e-2,
+            gtol=5e-2,
         )
         s = v.sample(20, rng=np.random.default_rng(10))
         assert s.shape == (20, 3)
@@ -1192,7 +1248,7 @@ class TestDynamicFitSampleRefit:
 
     def test_scar_tm_fit_sample_refit_smoke(self):
         u = _sample_dynamic_gaussian_chain(45, 3, seed=14)
-        fit_kwargs = dict(K=12, grid_range=3.0, tol=5e-2)
+        fit_kwargs = dict(K=12, grid_range=3.0, gtol=5e-2)
         v = RVineCopula(candidates=[BivariateGaussianCopula]).fit(
             u, method='scar-tm-ou', **fit_kwargs)
         assert any(
@@ -1206,7 +1262,7 @@ class TestDynamicFitSampleRefit:
             method='scar-tm-ou',
             K=10,
             grid_range=3.0,
-            tol=8e-2,
+            gtol=8e-2,
         )
 
         assert refit.d == 3
@@ -1555,7 +1611,7 @@ class TestPredict:
         assert not np.isclose(r_current[0], r_next[0])
 
     def test_dynamic_conditioning_ignore_matches_default(self):
-        vine = _manual_suffix_dynamic_rvine()
+        vine = _manual_suffix_stateful_rvine()
         given = {0: 0.99, 1: 0.99}
 
         default = vine.predict(
@@ -1573,7 +1629,7 @@ class TestPredict:
         np.testing.assert_allclose(default, explicit, rtol=0.0, atol=0.0)
 
     def test_api_predict_forwards_dynamic_conditioning_to_rvine(self):
-        vine = _manual_suffix_dynamic_rvine()
+        vine = _manual_suffix_stateful_rvine()
         u_train = np.full((3, 3), 0.5, dtype=np.float64)
         given = {0: 0.99, 1: 0.99}
 
@@ -1598,8 +1654,8 @@ class TestPredict:
 
         np.testing.assert_allclose(direct, via_api, rtol=0.0, atol=0.0)
 
-    def test_given_only_noops_when_gas_edge_not_fully_observed(self):
-        vine = _manual_suffix_dynamic_rvine()
+    def test_given_only_noops_when_stateful_edge_not_fully_observed(self):
+        vine = _manual_suffix_stateful_rvine()
         given = {0: 0.99}
 
         ignored = vine.predict(
@@ -1619,8 +1675,8 @@ class TestPredict:
 
         np.testing.assert_allclose(ignored, updated, rtol=0.0, atol=0.0)
 
-    def test_given_only_dynamic_conditioning_updates_gas_suffix_edge(self):
-        vine = _manual_suffix_dynamic_rvine()
+    def test_given_only_dynamic_conditioning_updates_stateful_suffix_edge(self):
+        vine = _manual_suffix_stateful_rvine()
         given = {0: 0.99, 1: 0.99}
 
         ignored = vine.predict(
@@ -1642,8 +1698,8 @@ class TestPredict:
         assert np.allclose(updated[:, 1], given[1])
         assert abs(np.mean(updated[:, 2]) - np.mean(ignored[:, 2])) > 0.03
 
-    def test_given_only_noops_when_scar_edge_not_fully_observed(self):
-        vine = _manual_suffix_scar_rvine()
+    def test_given_only_noops_when_predictive_state_edge_not_fully_observed(self):
+        vine = _manual_suffix_predictive_state_rvine()
         given = {0: 0.99}
 
         ignored = vine.predict(
@@ -1663,8 +1719,8 @@ class TestPredict:
 
         np.testing.assert_allclose(ignored, updated, rtol=0.0, atol=0.0)
 
-    def test_given_only_noops_for_scar_without_training_history(self):
-        vine = _manual_suffix_scar_rvine()
+    def test_given_only_noops_for_predictive_state_without_training_history(self):
+        vine = _manual_suffix_predictive_state_rvine()
         vine._last_u = None
         given = {0: 0.99, 1: 0.99}
 
@@ -1685,11 +1741,11 @@ class TestPredict:
 
         np.testing.assert_allclose(ignored, updated, rtol=0.0, atol=0.0)
 
-    def test_scar_given_only_reweights_grid_by_observed_pair_likelihood(
+    def test_predictive_given_only_reweights_grid_by_observed_pair_likelihood(
             self, monkeypatch):
         from pyscarcopula.numerical.predictive_tm import tm_state_distribution
 
-        vine = _manual_suffix_scar_rvine()
+        vine = _manual_suffix_predictive_state_rvine()
         key = (0, 1)
         edge = vine.pair_copulas[key]
         train_pseudo = vine._compute_pseudo_obs(vine._last_u)
@@ -1732,7 +1788,7 @@ class TestPredict:
             fake_sample_grid_distribution,
         )
 
-        r = vine._scar_tm_given_update_r(
+        r = vine._predictive_given_update_r(
             edge,
             u_train_pair,
             u_observed,
@@ -1748,11 +1804,11 @@ class TestPredict:
         )[0]
         np.testing.assert_allclose(r, np.full(7, expected_r))
 
-    def test_scar_given_only_noop_detects_equal_prob_copy(
+    def test_predictive_given_only_noop_detects_equal_prob_copy(
             self, monkeypatch):
         from pyscarcopula._types import PredictiveState
 
-        vine = _manual_suffix_scar_rvine()
+        vine = _manual_suffix_predictive_state_rvine()
         key = (0, 1)
         edge = vine.pair_copulas[key]
         train_pseudo = vine._compute_pseudo_obs(vine._last_u)
@@ -1763,7 +1819,7 @@ class TestPredict:
         class CopyNoopStrategy:
             def predictive_state(self, copula, u, result, **kwargs):
                 return PredictiveState(
-                    method='SCAR-TM-OU',
+                    method='TEST-GRID',
                     horizon='current',
                     kind='grid',
                     z_grid=np.array([-1.0, 0.0, 1.0], dtype=np.float64),
@@ -1789,7 +1845,7 @@ class TestPredict:
             lambda result: CopyNoopStrategy(),
         )
 
-        r = vine._scar_tm_given_update_r(
+        r = vine._predictive_given_update_r(
             edge,
             u_train_pair,
             u_observed,
@@ -1801,11 +1857,12 @@ class TestPredict:
 
         assert r is None
 
-    def test_scar_predictive_state_cache_reused_for_given_only(
-            self, monkeypatch):
+    @pytest.mark.parametrize('horizon', ['current', 'next'])
+    def test_predictive_state_cache_reused_for_given_only(
+            self, monkeypatch, horizon):
         from pyscarcopula.numerical import predictive_tm
 
-        vine = _manual_suffix_scar_rvine()
+        vine = _manual_suffix_predictive_state_rvine()
         calls = Counter()
         original = predictive_tm.tm_state_distribution
 
@@ -1822,7 +1879,7 @@ class TestPredict:
         samples, diagnostics = vine.predict(
             20,
             given={0: 0.99, 1: 0.99},
-            horizon='current',
+            horizon=horizon,
             dynamic_conditioning='given_only',
             return_diagnostics=True,
             rng=np.random.default_rng(12062),
@@ -1830,10 +1887,10 @@ class TestPredict:
 
         assert samples.shape == (20, 3)
         assert diagnostics['updated_edges']
-        assert calls['current'] == 1
+        assert calls[horizon] == 1
 
-    def test_given_only_dynamic_conditioning_updates_scar_suffix_edge(self):
-        vine = _manual_suffix_scar_rvine()
+    def test_given_only_dynamic_conditioning_updates_predictive_state_suffix_edge(self):
+        vine = _manual_suffix_predictive_state_rvine()
         given = {0: 0.99, 1: 0.99}
 
         ignored = vine.predict(
@@ -1855,8 +1912,8 @@ class TestPredict:
         assert np.allclose(updated[:, 1], given[1])
         assert abs(np.mean(updated[:, 2]) - np.mean(ignored[:, 2])) > 0.03
 
-    def test_scar_given_only_horizon_changes_conditioned_state(self):
-        vine = _manual_suffix_scar_rvine()
+    def test_given_only_horizon_changes_conditioned_predictive_state(self):
+        vine = _manual_suffix_predictive_state_rvine()
         given = {0: 0.99, 1: 0.99}
 
         _, current_diag = vine.predict(
@@ -1886,7 +1943,7 @@ class TestPredict:
         ) > 1e-4
 
     def test_dynamic_conditioning_return_diagnostics_lists_updated_edges(self):
-        vine = _manual_suffix_dynamic_rvine()
+        vine = _manual_suffix_stateful_rvine()
         given = {0: 0.99, 1: 0.99}
 
         samples, diagnostics = vine.predict(
@@ -1908,8 +1965,8 @@ class TestPredict:
         assert 'r_before_mean' in diagnostics['updated_edges'][0]
         assert 'r_after_mean' in diagnostics['updated_edges'][0]
 
-    def test_gas_given_only_skips_next_horizon_to_avoid_double_advance(self):
-        vine = _manual_suffix_dynamic_rvine()
+    def test_stateful_given_only_skips_next_horizon_to_avoid_double_advance(self):
+        vine = _manual_suffix_stateful_rvine()
         given = {0: 0.99, 1: 0.99}
 
         ignored = vine.predict(
@@ -1933,10 +1990,10 @@ class TestPredict:
         assert diagnostics['skipped_edges'][0]['key'] == (0, 1)
         assert diagnostics['skipped_edges'][0]['method'] == 'GAS'
         assert diagnostics['skipped_edges'][0]['reason'] == (
-            'gas_next_horizon_would_advance_filter'
+            'next_horizon_would_advance_filter'
         )
 
-    def test_dynamic_conditioning_multi_edge_order_updates_conditional_scar(self):
+    def test_dynamic_conditioning_multi_edge_order_updates_conditional_predictive_state(self):
         vine = _manual_multi_edge_dynamic_rvine()
         given = {1: 0.98, 2: 0.97, 3: 0.96}
 
@@ -1955,10 +2012,10 @@ class TestPredict:
         assert np.allclose(samples[:, 3], given[3])
         updated_keys = [item['key'] for item in diagnostics['updated_edges']]
         assert updated_keys == [(0, 2), (0, 1), (1, 1)]
-        scar_record = diagnostics['updated_edges'][2]
-        assert scar_record['method'] == 'SCAR-TM-OU'
-        assert scar_record['conditioning'] == (2,)
-        assert 'r_after_mean' in scar_record
+        predictive_record = diagnostics['updated_edges'][2]
+        assert predictive_record['method'] == 'SCAR-TM-OU'
+        assert predictive_record['conditioning'] == (2,)
+        assert 'r_after_mean' in predictive_record
 
     def test_dynamic_conditioning_mixed_vine_diagnostics(self):
         vine = _manual_multi_edge_dynamic_rvine()
@@ -1981,7 +2038,7 @@ class TestPredict:
         assert {item['method'] for item in skipped} == {'GAS'}
         assert {
             item['reason'] for item in skipped
-        } == {'gas_next_horizon_would_advance_filter'}
+        } == {'next_horizon_would_advance_filter'}
 
         diagnostic_methods = (
             [item['method'] for item in updated]
@@ -1990,10 +2047,50 @@ class TestPredict:
         assert 'MLE' not in diagnostic_methods
         assert 'INDEPENDENT' not in diagnostic_methods
 
+    def test_given_only_reports_skip_for_dag_mcmc_path(self):
+        vine = _manual_multi_edge_dynamic_rvine()
+        peel_order = [
+            int(vine.matrix[vine.d - 1 - col, col])
+            for col in range(vine.d)
+        ]
+        given = {peel_order[0]: 0.25, peel_order[2]: 0.75}
+        assert vine._suffix_sampling_state(given) is None
+
+        ignored = vine.predict(
+            24,
+            given=given,
+            dynamic_conditioning='ignore',
+            mcmc_steps=5,
+            mcmc_burnin=2,
+            rng=np.random.default_rng(1242),
+        )
+        updated, diagnostics = vine.predict(
+            24,
+            given=given,
+            dynamic_conditioning='given_only',
+            return_diagnostics=True,
+            mcmc_steps=5,
+            mcmc_burnin=2,
+            rng=np.random.default_rng(1242),
+        )
+
+        np.testing.assert_allclose(updated, ignored, rtol=0.0, atol=0.0)
+        assert diagnostics['conditional_method'] == 'dag_mcmc'
+        assert diagnostics['dynamic_conditioning_reason'] == (
+            'dag_mcmc_not_suffix_supported')
+        skipped = diagnostics['skipped_edges']
+        assert skipped
+        assert {item['reason'] for item in skipped} == {
+            'dag_mcmc_not_suffix_supported'
+        }
+        assert {item['method'] for item in skipped} == {'GAS', 'SCAR-TM-OU'}
+        assert 'MLE' not in {item['method'] for item in skipped}
+        assert 'INDEPENDENT' not in {item['method'] for item in skipped}
+
     def test_predict_config_return_diagnostics_via_api(self):
         from pyscarcopula._types import PredictConfig
 
-        vine = _manual_suffix_dynamic_rvine()
+        vine = _manual_suffix_stateful_rvine()
         u_train = np.full((3, 3), 0.5, dtype=np.float64)
         config = PredictConfig(
             given={0: 0.99, 1: 0.99},
@@ -2015,7 +2112,7 @@ class TestPredict:
         assert diagnostics['updated_edges'][0]['key'] == (0, 1)
 
     def test_predict_rejects_bad_dynamic_conditioning_mode(self):
-        vine = _manual_suffix_dynamic_rvine()
+        vine = _manual_suffix_stateful_rvine()
 
         with pytest.raises(ValueError, match="dynamic_conditioning"):
             vine.predict(

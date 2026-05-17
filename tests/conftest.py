@@ -1,18 +1,16 @@
 """Shared fixtures for pyscarcopula tests."""
+import os
+
 import pytest
 import numpy as np
 import pandas as pd
 from pyscarcopula._utils import pobs
 from pyscarcopula import (
     GumbelCopula, ClaytonCopula, FrankCopula, JoeCopula,
-    IndependentCopula, CVineCopula, GaussianCopula, StudentCopula,
-    BivariateGaussianCopula,
 )
 
 
-# ═══════════════════════════════════════════════════════════
 # Copula instances for parametrized tests
-# ═══════════════════════════════════════════════════════════
 
 ARCHIMEDEAN_COPULAS = [
     (GumbelCopula, 0, 2.0),
@@ -40,11 +38,7 @@ def archimedean(request):
     return cls(rotate=rot), r
 
 
-# ═══════════════════════════════════════════════════════════
 # Data fixtures
-# ═══════════════════════════════════════════════════════════
-
-import os
 
 _DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
 _HAS_DATA = os.path.isfile(os.path.join(_DATA_DIR, "crypto_prices.csv"))
