@@ -10,6 +10,7 @@ from pyscarcopula._types import LatentProcessParams, LatentResult
 from pyscarcopula._utils import pobs
 from pyscarcopula.copula.elliptical import BivariateGaussianCopula
 from pyscarcopula.strategy import _base as strategy_base
+from pyscarcopula.vine._edge_adapter import _strategy_kwargs
 from pyscarcopula.vine.cvine import CVineCopula
 from pyscarcopula.vine.rvine import RVineCopula
 
@@ -121,6 +122,29 @@ def test_api_uses_registered_generic_strategy(generic_strategy):
     assert generic_strategy['log_likelihood'] == 1
     assert generic_strategy['sample'] == 1
     assert generic_strategy['predict'] == 1
+
+
+def test_vine_strategy_kwargs_preserve_explicit_none_override():
+    result = LatentResult(
+        log_likelihood=0.0,
+        method='SCAR-TM-OU',
+        copula_name='BivariateGaussian',
+        success=True,
+    )
+
+    kwargs = _strategy_kwargs(
+        result,
+        transition_method='auto',
+        max_K=None,
+        r_gh=2.5,
+        unrelated=None,
+    )
+
+    assert kwargs == {
+        'transition_method': 'auto',
+        'max_K': None,
+        'r_gh': 2.5,
+    }
 
 
 def test_rvine_uses_registered_generic_strategy_for_edge_runtime(

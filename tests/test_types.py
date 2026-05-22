@@ -44,6 +44,10 @@ class TestNumericalConfig:
         assert cfg.stochastic_student_optimizer.gtol == 1e-4
         assert cfg.stochastic_student_dcc_optimizer.gtol == 1e-4
         assert cfg.stochastic_student_dcc_optimizer.maxiter == 300
+        assert cfg.stochastic_student_gas_optimizer.ftol == 1e-9
+        assert cfg.stochastic_student_gas_optimizer.maxls == 50
+        assert cfg.stochastic_student_dcc_gas_optimizer.ftol == 1e-12
+        assert cfg.stochastic_student_dcc_gas_optimizer.maxls == 50
         assert cfg.dcc_optimizer.gtol == 1e-6
         assert cfg.dcc_optimizer.maxiter == 500
         assert cfg.garch_optimizer.gtol == 1e-5
@@ -61,6 +65,8 @@ class TestNumericalConfig:
             equicorr_optimizer=LBFGSBConfig(maxls=35),
             stochastic_student_optimizer=LBFGSBConfig(maxiter=40),
             stochastic_student_dcc_optimizer=LBFGSBConfig(maxfun=45),
+            stochastic_student_gas_optimizer=LBFGSBConfig(ftol=1e-8),
+            stochastic_student_dcc_gas_optimizer=LBFGSBConfig(maxfun=46),
             dcc_optimizer=LBFGSBConfig(gtol=2e-6),
             garch_optimizer=LBFGSBConfig(maxiter=33),
             gas_score_eps=1e-6,
@@ -81,6 +87,10 @@ class TestNumericalConfig:
         assert cfg.stochastic_student_optimizer.maxiter == 40
         assert cfg.stochastic_student_dcc_optimizer.maxfun == 45
         assert cfg.stochastic_student_dcc_optimizer.maxiter == 300
+        assert cfg.stochastic_student_gas_optimizer.ftol == 1e-8
+        assert cfg.stochastic_student_gas_optimizer.maxfun == 1000
+        assert cfg.stochastic_student_dcc_gas_optimizer.ftol == 1e-12
+        assert cfg.stochastic_student_dcc_gas_optimizer.maxfun == 46
         assert cfg.dcc_optimizer.gtol == 2e-6
         assert cfg.dcc_optimizer.maxiter == 500
         assert cfg.garch_optimizer.gtol == 1e-5

@@ -95,11 +95,21 @@ def rosenblatt_transform_mle(copula, u, r):
     return _clip(e)
 
 
-def rosenblatt_transform_scar(copula, u, alpha, K=300, grid_range=5.0):
+def rosenblatt_transform_scar(copula, u, alpha, K=300, grid_range=5.0,
+                              grid_method='auto', adaptive=True,
+                              pts_per_sigma=4, transition_method='matrix',
+                              max_K=None, r_gh=3.0, gh_order=5):
     """Mixture Rosenblatt for SCAR (bivariate). Returns (T, 2)."""
     from pyscarcopula.numerical.tm_functions import tm_forward_rosenblatt as _tm_forward_rosenblatt
     kappa, mu, nu = alpha
-    return _tm_forward_rosenblatt(kappa, mu, nu, u, copula, K, grid_range)
+    return _tm_forward_rosenblatt(
+        kappa, mu, nu, u, copula, K, grid_range,
+        grid_method, adaptive, pts_per_sigma,
+        transition_method=transition_method,
+        max_K=max_K,
+        r_gh=r_gh,
+        gh_order=gh_order,
+    )
 
 
 def rosenblatt_transform_gas(copula, u, gas_params, scaling='unit'):
@@ -274,8 +284,19 @@ def _bivariate_rosenblatt_from_result(copula, u, fit_result,
         return rosenblatt_transform_gas(
             copula, u, fit_result.params.values, scaling)
 
+    kwargs = {
+        'K': K,
+        'grid_range': grid_range,
+    }
+    for name in (
+            'pts_per_sigma', 'transition_method', 'max_K',
+            'r_gh', 'gh_order'):
+        value = getattr(fit_result, name, None)
+        if value is not None:
+            kwargs[name] = value
+
     return rosenblatt_transform_scar(
-        copula, u, fit_result.params.values, K, grid_range)
+        copula, u, fit_result.params.values, **kwargs)
 
 
 def _as_rng(rng):
@@ -701,14 +722,15 @@ def student_rosenblatt_transform(R, df, u):
     Sequential conditioning using the property that for
     multivariate t with shape R and df degrees of freedom:
 
-        x_i | x_{1:i-1} ~ t_{df+i-1}(mu_i, sigma^2_i * scale)
+        x_i | x_0,...,x_{i-1} ~ t_{df+i}(mu_i, sigma^2_i * scale)
 
     where:
-        mu_i = R_{i,1:i-1} R_{1:i-1,1:i-1}^{-1} x_{1:i-1}
-        sigma^2_i = R_{ii} - R_{i,1:i-1} R_{1:i-1,1:i-1}^{-1} R_{1:i-1,i}
-        scale = (df + x_{1:i-1}^T R_{1:i-1,1:i-1}^{-1} x_{1:i-1}) / (df + i - 1)
+        mu_i = R_{i,0:i} R_{0:i,0:i}^{-1} x_{0:i}
+        sigma^2_i = R_{ii} - R_{i,0:i} R_{0:i,0:i}^{-1} R_{0:i,i}
+        scale = (df + x_{0:i}^T R_{0:i,0:i}^{-1} x_{0:i}) / (df + i)
 
-    e_i = t_{df+i-1}(x_i; mu_i, sigma^2_i * scale)
+    Here i is the zero-based coordinate index, so the conditioning set has
+    size i.
 
     Parameters
     ----------
@@ -795,6 +817,31 @@ def student_gof_test(copula, data, to_pobs=True):
 # Equicorrelation Gaussian copula GoF
 # ══════════════════════════════════════════════════════════════════
 
+def _gas_parameter_path(copula, u, fit_result):
+    """Return deterministic GAS parameter path r_t for a fitted model."""
+    from pyscarcopula.numerical.gas_filter import gas_filter
+
+    omega, gamma, beta = fit_result.params.values
+    scaling = getattr(fit_result, 'scaling', 'unit')
+    score_eps = getattr(fit_result, 'score_eps', 1e-4)
+    _, r_path, _ = gas_filter(
+        omega, gamma, beta, u, copula, scaling=scaling,
+        score_eps=score_eps)
+    return np.asarray(r_path, dtype=np.float64)
+
+
+def _tm_grid_kwargs_from_result(fit_result):
+    """SCAR-TM numerical options stored on a fitted result."""
+    out = {}
+    for name in (
+            'pts_per_sigma', 'transition_method', 'max_K',
+            'r_gh', 'gh_order'):
+        value = getattr(fit_result, name, None)
+        if value is not None:
+            out[name] = value
+    return out
+
+
 def equicorr_rosenblatt_transform(copula, u, fit_result, K=300, grid_range=5.0):
     """
     Rosenblatt transform for EquicorrGaussianCopula.
@@ -803,8 +850,8 @@ def equicorr_rosenblatt_transform(copula, u, fit_result, K=300, grid_range=5.0):
     SCAR: mixture over predictive rho(t) distribution from TM forward pass.
 
     For equicorrelation R = (1-rho)*I + rho*11':
-        E[x_i | x_{1:i-1}] = rho * sum(x_{1:i-1}) / (1 + (i-2)*rho)
-        Var(x_i | x_{1:i-1}) = 1 - i*rho^2 / (1 + (i-1)*rho)
+        E[x_i | x_0,...,x_{i-1}] = rho * sum(x_0,...,x_{i-1}) / (1 + (i-1)*rho)
+        Var(x_i | x_0,...,x_{i-1}) = 1 - i*rho^2 / (1 + (i-1)*rho)
 
     Parameters
     ----------
@@ -838,35 +885,58 @@ def equicorr_rosenblatt_transform(copula, u, fit_result, K=300, grid_range=5.0):
             e[:, i] = norm.cdf(z_i)
         return np.clip(e, eps, 1.0 - eps)
 
+    if method == 'GAS':
+        rho_path = _gas_parameter_path(copula, u, fit_result)
+        e = np.empty((T, d))
+        e[:, 0] = u[:, 0]
+        for i in range(1, d):
+            rho = rho_path
+            sx = np.sum(x_norm[:, :i], axis=1)
+            cond_mean = rho * sx / (1.0 + (i - 1) * rho)
+            cond_var = 1.0 - i * rho ** 2 / (1.0 + (i - 1) * rho)
+            cond_var = np.maximum(cond_var, 1e-10)
+            z_i = (x_norm[:, i] - cond_mean) / np.sqrt(cond_var)
+            e[:, i] = norm.cdf(z_i)
+        return np.clip(e, eps, 1.0 - eps)
+
     # SCAR: mixture Rosenblatt via TM forward pass
     from pyscarcopula.numerical.tm_grid import TMGrid as _TMGrid
+    from pyscarcopula.numerical.gof_blocks import iter_forward_weight_blocks
 
     kappa, mu, nu = fit_result.params.values
-    grid = _TMGrid(kappa, mu, nu, T, K, grid_range)
+    grid = _TMGrid(
+        kappa, mu, nu, T, K, grid_range,
+        **_tm_grid_kwargs_from_result(fit_result))
     x_grid = grid.z + grid.mu
     rho_grid = copula.transform(x_grid)
-    fi_grid = copula.copula_grid_batch(u, x_grid)
-    K_eff = grid.K
-
-    weights = grid.forward_weights(fi_grid)
 
     e = np.empty((T, d))
     e[:, 0] = u[:, 0]
 
-    # Vectorized over T: loop over grid points and dimensions only
-    for j in range(K_eff):
-        rho = rho_grid[j]
-        for i in range(1, d):
-            sx = np.sum(x_norm[:, :i], axis=1)              # (T,)
-            cond_mean = rho * sx / (1.0 + (i - 1) * rho)
-            cond_var = max(1.0 - i * rho ** 2 / (1.0 + (i - 1) * rho), 1e-10)
-            z_i = (x_norm[:, i] - cond_mean) / np.sqrt(cond_var)
-            cdf_val = norm.cdf(z_i)                          # (T,)
+    cdf_blocks = None
+    for k, local, weights, fi_block in iter_forward_weight_blocks(
+            grid, u, copula, x_grid=x_grid, element_width=max(1, d)):
+        if local == 0:
+            start = k
+            stop = start + fi_block.shape[0]
+            x_block = x_norm[start:stop]
+            cdf_blocks = []
+            for i in range(1, d):
+                sx = np.sum(x_block[:, :i], axis=1)[:, np.newaxis]
+                denom = 1.0 + (i - 1) * rho_grid[np.newaxis, :]
+                cond_mean = rho_grid[np.newaxis, :] * sx / denom
+                cond_var = (
+                    1.0
+                    - i * rho_grid[np.newaxis, :] ** 2 / denom
+                )
+                cond_var = np.maximum(cond_var, 1e-10)
+                z_i = (
+                    x_block[:, i, np.newaxis] - cond_mean
+                ) / np.sqrt(cond_var)
+                cdf_blocks.append(norm.cdf(z_i))
 
-            if j == 0:
-                e[:, i] = weights[:, j] * cdf_val
-            else:
-                e[:, i] += weights[:, j] * cdf_val
+        for i in range(1, d):
+            e[k, i] = np.sum(weights * cdf_blocks[i - 1][local])
 
     e = np.clip(e, eps, 1.0 - eps)
     return e
@@ -920,11 +990,11 @@ def stochastic_student_rosenblatt_transform(copula, u, fit_result,
 
     For Student-t copula with shape matrix R and df:
         x = t_df^{-1}(u)
-        x_i | x_{1:i-1} ~ t_{df+i-1}(mu_i, sigma^2_i * scale)
+        x_i | x_0,...,x_{i-1} ~ t_{df+i}(mu_i, sigma^2_i * scale)
     where:
-        mu_i = R_{i,1:i-1} R_{1:i-1,1:i-1}^{-1} x_{1:i-1}
-        sigma^2_i = R_{ii} - R_{i,1:i-1} R_{1:i-1,1:i-1}^{-1} R_{1:i-1,i}
-        scale = (df + x_{1:i-1}^T R_{1:i-1,1:i-1}^{-1} x_{1:i-1}) / (df + i - 1)
+        mu_i = R_{i,0:i} R_{0:i,0:i}^{-1} x_{0:i}
+        sigma^2_i = R_{ii} - R_{i,0:i} R_{0:i,0:i}^{-1} R_{0:i,i}
+        scale = (df + x_{0:i}^T R_{0:i,0:i}^{-1} x_{0:i}) / (df + i)
 
     Parameters
     ----------
@@ -949,17 +1019,24 @@ def stochastic_student_rosenblatt_transform(copula, u, fit_result,
         e = student_rosenblatt_transform(R, df, u)
         return np.clip(e, eps, 1.0 - eps)
 
+    if method == 'GAS':
+        df_path = _gas_parameter_path(copula, u, fit_result)
+        e = np.empty((T, d))
+        for t_idx, df_t in enumerate(df_path):
+            e[t_idx] = student_rosenblatt_transform(
+                R, float(df_t), u[t_idx:t_idx + 1])[0]
+        return np.clip(e, eps, 1.0 - eps)
+
     # SCAR: mixture Rosenblatt via TM forward pass
     from pyscarcopula.numerical.tm_grid import TMGrid as _TMGrid
+    from pyscarcopula.numerical.gof_blocks import iter_forward_weight_blocks
 
     kappa, mu, nu_ou = fit_result.params.values
-    grid = _TMGrid(kappa, mu, nu_ou, T, K, grid_range)
+    grid = _TMGrid(
+        kappa, mu, nu_ou, T, K, grid_range,
+        **_tm_grid_kwargs_from_result(fit_result))
     x_grid = grid.z + grid.mu
     df_grid = copula.transform(x_grid)  # (K_eff,)
-    fi_grid = copula.copula_grid_batch(u, x_grid)
-    K_eff = grid.K
-
-    weights = grid.forward_weights(fi_grid)  # (T, K_eff)
 
     # Precompute R sub-matrices
     R_inv_sub = []
@@ -980,26 +1057,45 @@ def stochastic_student_rosenblatt_transform(copula, u, fit_result,
     e = np.empty((T, d))
     e[:, 0] = u[:, 0]
 
-    # Vectorized over T: loop over grid points and dimensions only
-    for j in range(K_eff):
-        df_j = df_grid[j]
-        x_all = t_dist_fn.ppf(u_c, df=df_j)  # (T, d)
+    cdf_blocks = None
+    for k, local, weights, fi_block, u_block, _start, _stop in (
+            iter_forward_weight_blocks(
+                grid,
+                u_c,
+                copula,
+                x_grid=x_grid,
+                include_block_info=True,
+                element_width=max(2, 2 * d),
+            )):
+        if local == 0:
+            ppf = copula._get_ppf_table(u_block)
+            x_all = np.empty((fi_block.shape[0], grid.K, d), dtype=np.float64)
+            for j, df_j in enumerate(df_grid):
+                x_all[:, j, :] = ppf(df_j)
+
+            cdf_blocks = []
+            df_cond_grid = df_grid[np.newaxis, :]
+            for i in range(1, d):
+                x_prev = x_all[:, :, :i]                   # (B, K, i)
+                mu_cond = np.tensordot(
+                    x_prev, beta_sub[i - 1], axes=([2], [0]))
+                quad = np.einsum(
+                    'bki,ij,bkj->bk',
+                    x_prev,
+                    R_inv_sub[i - 1],
+                    x_prev,
+                    optimize=True,
+                )
+
+                df_cond = df_cond_grid + i
+                scale = (df_cond_grid + quad) / df_cond
+                z_i = (x_all[:, :, i] - mu_cond) / (
+                    sigma_cond_sub[i - 1]
+                    * np.sqrt(np.maximum(scale, 1e-12)))
+                cdf_blocks.append(t_dist_fn.cdf(z_i, df=df_cond))
 
         for i in range(1, d):
-            x_prev = x_all[:, :i]                          # (T, i)
-            mu_cond = x_prev @ beta_sub[i - 1]             # (T,)
-            quad = np.sum(x_prev @ R_inv_sub[i - 1] * x_prev, axis=1)
-
-            df_cond = df_j + i
-            scale = (df_j + quad) / df_cond
-            z_i = (x_all[:, i] - mu_cond) / (
-                sigma_cond_sub[i - 1] * np.sqrt(np.maximum(scale, 1e-12)))
-            cdf_val = t_dist_fn.cdf(z_i, df=df_cond)       # (T,)
-
-            if j == 0:
-                e[:, i] = weights[:, j] * cdf_val
-            else:
-                e[:, i] += weights[:, j] * cdf_val
+            e[k, i] = np.sum(weights * cdf_blocks[i - 1][local])
 
     e = np.clip(e, eps, 1.0 - eps)
     return e
@@ -1107,17 +1203,26 @@ def stochastic_student_dcc_rosenblatt_transform(copula, u, fit_result,
             e[t_idx] = _sequential_rosenblatt_one(x, R_path[t_idx], df)
         return np.clip(e, eps, 1.0 - eps)
 
+    if method == 'GAS':
+        df_path = _gas_parameter_path(copula, u, fit_result)
+        e = np.empty((T, d))
+        for t_idx, df_t in enumerate(df_path):
+            u_c = np.clip(u[t_idx], eps, 1.0 - eps)
+            x = t_dist_fn.ppf(u_c, df=float(df_t))
+            e[t_idx] = _sequential_rosenblatt_one(
+                x, R_path[t_idx], float(df_t))
+        return np.clip(e, eps, 1.0 - eps)
+
     # SCAR: mixture Rosenblatt via TM forward pass
     from pyscarcopula.numerical.tm_grid import TMGrid as _TMGrid
+    from pyscarcopula.numerical.gof_blocks import iter_forward_weight_blocks
 
     kappa, mu, nu_ou = fit_result.params.values
-    grid = _TMGrid(kappa, mu, nu_ou, T, K, grid_range)
+    grid = _TMGrid(
+        kappa, mu, nu_ou, T, K, grid_range,
+        **_tm_grid_kwargs_from_result(fit_result))
     x_grid = grid.z + grid.mu
     df_grid = copula.transform(x_grid)
-    fi_grid = copula.copula_grid_batch(u, x_grid)
-    K_eff = grid.K
-
-    weights = grid.forward_weights(fi_grid)
 
     # Precompute R sub-matrices for each time step
     beta_path = []    # beta_path[i-1] shape (T, i)
@@ -1146,28 +1251,53 @@ def stochastic_student_dcc_rosenblatt_transform(copula, u, fit_result,
     e = np.empty((T, d))
     e[:, 0] = u[:, 0]
 
-    # Vectorized over T: loop over grid points and dimensions only
-    for j in range(K_eff):
-        df_j = df_grid[j]
-        x_all = t_dist_fn.ppf(u_c, df=df_j)  # (T, d)
+    def emission_block(u_block, x_grid, start, stop):
+        return copula.copula_grid_batch(
+            u_block, x_grid, t_index=start)
+
+    cdf_blocks = None
+    for t_idx, local, weights, fi_block, u_block, start, stop in (
+            iter_forward_weight_blocks(
+                grid,
+                u_c,
+                copula,
+                x_grid=x_grid,
+                emission_block=emission_block,
+                include_block_info=True,
+                element_width=max(2, 2 * d),
+            )):
+        if local == 0:
+            ppf = copula._get_ppf_table(u_block)
+            x_all = np.empty((fi_block.shape[0], grid.K, d), dtype=np.float64)
+            for j, df_j in enumerate(df_grid):
+                x_all[:, j, :] = ppf(df_j)
+
+            cdf_blocks = []
+            df_cond_grid = df_grid[np.newaxis, :]
+            for i in range(1, d):
+                x_prev = x_all[:, :, :i]                         # (B, K, i)
+                beta_block = beta_path[i - 1][start:stop]        # (B, i)
+                R_inv_block = R_inv_path[i - 1][start:stop]      # (B, i, i)
+                sigma_block = sigma_path[i - 1][start:stop]      # (B,)
+                mu_c = np.einsum(
+                    'bki,bi->bk', x_prev, beta_block, optimize=True)
+                quad = np.einsum(
+                    'bki,bij,bkj->bk',
+                    x_prev,
+                    R_inv_block,
+                    x_prev,
+                    optimize=True,
+                )
+
+                df_cond = df_cond_grid + i
+                scale = (df_cond_grid + quad) / df_cond
+                z_i = (x_all[:, :, i] - mu_c) / (
+                    sigma_block[:, np.newaxis]
+                    * np.sqrt(np.maximum(scale, 1e-12)))
+                cdf_blocks.append(t_dist_fn.cdf(z_i, df=df_cond))
 
         for i in range(1, d):
-            x_prev = x_all[:, :i]                                    # (T, i)
-            mu_c = np.sum(beta_path[i - 1] * x_prev, axis=1)        # (T,)
-            quad = np.sum(
-                np.einsum('ti,tij->tj', x_prev, R_inv_path[i - 1]) * x_prev,
-                axis=1)                                               # (T,)
-
-            df_cond = df_j + i
-            scale = (df_j + quad) / df_cond
-            z_i = (x_all[:, i] - mu_c) / (
-                sigma_path[i - 1] * np.sqrt(np.maximum(scale, 1e-12)))
-            cdf_val = t_dist_fn.cdf(z_i, df=df_cond)                 # (T,)
-
-            if j == 0:
-                e[:, i] = weights[:, j] * cdf_val
-            else:
-                e[:, i] += weights[:, j] * cdf_val
+            e[t_idx, i] = np.sum(weights * cdf_blocks[i - 1][local])
 
     e = np.clip(e, eps, 1.0 - eps)
     return e

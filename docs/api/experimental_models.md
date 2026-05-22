@@ -26,6 +26,9 @@ cop.fit(u, method='mle')
 
 # SCAR (time-varying rho)
 cop.fit(u, method='scar-tm-ou')
+
+# GAS (observation-driven rho)
+cop.fit(u, method='gas')
 ```
 
 ### Goodness of fit
@@ -70,6 +73,22 @@ For heterogeneous dependence, use a C-vine or R-vine instead.
 
 ## StochasticStudentCopula
 
+A fixed-correlation multivariate Student copula with dynamic degrees of
+freedom. The correlation matrix is estimated once from Kendall's tau and held
+fixed. The dynamic scalar parameter is
+
+$$\nu_t = 2 + \mathrm{softplus}(g_t),$$
+
+and the row density is the standard Student copula density
+
+$$c(u_t;R,\nu_t)=
+\frac{t_d(T_{\nu_t}^{-1}(u_t);0,R,\nu_t)}
+     {\prod_j t_1(T_{\nu_t}^{-1}(u_{tj});\nu_t)}.$$
+
+`method='mle'` estimates a constant $\nu$, `method='gas'` estimates a
+score-driven recursion for $g_t$, and `method='scar-tm-ou'` treats $g_t$ as a
+latent OU process integrated by transfer matrix.
+
 ::: pyscarcopula.copula.experimental.stochastic_student.StochasticStudentCopula
     options:
       members:
@@ -86,9 +105,27 @@ For heterogeneous dependence, use a C-vine or R-vine instead.
 
 ## StochasticStudentDCCCopula
 
+A multivariate Student copula with two sources of time variation:
+
+- $R_t$ is a deterministic DCC(1,1) correlation path fitted from standardized
+  residuals.
+- $\nu_t = 2 + \mathrm{softplus}(g_t)$ controls tail thickness and is fitted by
+  MLE, GAS, or SCAR-TM-OU.
+
+Conditional on the cached DCC path, the emission density is
+
+$$c(u_t;R_t,\nu_t)=
+\frac{t_d(T_{\nu_t}^{-1}(u_t);0,R_t,\nu_t)}
+     {\prod_j t_1(T_{\nu_t}^{-1}(u_{tj});\nu_t)}.$$
+
+The DCC step is deliberately separate from the scalar latent-state fit:
+`fit_R_t()` builds and caches $R_t$, then `fit(..., method=...)` estimates the
+degrees-of-freedom dynamics against that path.
+
 ::: pyscarcopula.copula.experimental.stochastic_student_dcc.StochasticStudentDCCCopula
     options:
       members:
+        - fit_R_t
         - fit
         - sample
         - predict

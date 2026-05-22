@@ -70,9 +70,9 @@ def conditional_sample_bivariate(copula, n, r, given=None, rng=None):
 def sample_predictive(copula, n, r, given=None, rng=None, d=None):
     """Sample from a predictive parameter path.
 
-    Conditional ``given`` sampling is currently a pair-copula capability.
-    Multivariate scalar-latent copulas use unconditional predictive sampling
-    through their ``sample(n, r)`` implementation.
+    Conditional ``given`` sampling is delegated to multivariate copulas that
+    expose ``sample_conditional``; otherwise it falls back to bivariate
+    h-function sampling.
     """
     if given is None and d is not None and int(d) != 2 and hasattr(copula, "_R_path"):
         return copula.sample(n=n, df_path=r, rng=rng)
@@ -82,6 +82,9 @@ def sample_predictive(copula, n, r, given=None, rng=None, d=None):
         if "r" in params:
             return copula.sample(n, r, rng=rng)
         return copula.sample(n, rng=rng)
+
+    if hasattr(copula, "sample_conditional"):
+        return copula.sample_conditional(n, r=r, given=given, rng=rng)
 
     if d is None:
         d = 2

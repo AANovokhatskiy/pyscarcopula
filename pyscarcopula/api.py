@@ -35,7 +35,7 @@ from pyscarcopula._types import (
     PredictConfig,
 )
 from pyscarcopula._utils import pobs as _pobs
-from pyscarcopula.strategy._base import get_strategy
+from pyscarcopula.strategy._base import get_strategy, get_strategy_for_result
 
 
 def fit(copula, data, method='scar-tm-ou', to_pobs=False,
@@ -86,7 +86,7 @@ def log_likelihood(copula, data, result: FitResult,
     float
     """
     u = np.asarray(data, dtype=np.float64)
-    strategy = get_strategy(result.method, config=config, **kwargs)
+    strategy = get_strategy_for_result(result, config=config, **kwargs)
     return strategy.log_likelihood(copula, u, result)
 
 
@@ -109,7 +109,7 @@ def predictive_mean(copula, data, result: FitResult,
     (T,) array of copula parameters
     """
     u = np.asarray(data, dtype=np.float64)
-    strategy = get_strategy(result.method, config=config, **kwargs)
+    strategy = get_strategy_for_result(result, config=config, **kwargs)
     return strategy.predictive_mean(copula, u, result)
 
 
@@ -142,7 +142,7 @@ def mixture_h(copula, data, result: FitResult,
     (T,) array
     """
     u = np.asarray(data, dtype=np.float64)
-    strategy = get_strategy(result.method, config=config, **kwargs)
+    strategy = get_strategy_for_result(result, config=config, **kwargs)
     return strategy.mixture_h(copula, u, result)
 
 
@@ -194,7 +194,7 @@ def sample(copula, data, result: FitResult, n: int,
         return copula.sample(n, u_train=data, **kwargs)
 
     u = np.asarray(data, dtype=np.float64)
-    strategy = get_strategy(result.method, config=config, **kwargs)
+    strategy = get_strategy_for_result(result, config=config, **kwargs)
     return strategy.sample(copula, u, result, n, **kwargs)
 
 
@@ -288,7 +288,7 @@ def predict(copula, data, result: FitResult, n: int,
             n, u_train=data, predict_config=pcfg, **kwargs)
 
     u = np.asarray(data, dtype=np.float64)
-    strategy = get_strategy(result.method, config=config, **kwargs)
+    strategy = get_strategy_for_result(result, config=config, **kwargs)
     return strategy.predict(
         copula,
         u,

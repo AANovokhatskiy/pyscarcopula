@@ -68,7 +68,9 @@ class MLEStrategy:
             'finite_diff_rel_step': finite_diff_rel_step,
         }
 
-        if u.ndim == 2 and u.shape[1] != 2:
+        if (
+                u.ndim == 2
+                and (u.shape[1] != 2 or hasattr(copula, 'log_pdf_rows'))):
             fit_mle = getattr(copula, '_fit_mle', None)
             if fit_mle is not None:
                 return fit_mle(
@@ -143,7 +145,9 @@ class MLEStrategy:
     def log_likelihood(self, copula, u: np.ndarray,
                        result: MLEResult) -> float:
         """sum log c(u1, u2; r_mle)."""
-        if u.ndim == 2 and u.shape[1] != 2:
+        if (
+                u.ndim == 2
+                and (u.shape[1] != 2 or hasattr(copula, 'log_pdf_rows'))):
             try:
                 return float(copula.log_likelihood(u, result.copula_param))
             except TypeError:
