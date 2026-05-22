@@ -26,12 +26,16 @@ Usage:
 
 import numpy as np
 from scipy.stats import t as t_dist, kendalltau
-from scipy.special import gammaln
+from scipy.special import gammaln, stdtrit
 from scipy.optimize import minimize
 
 from pyscarcopula.copula.base import BivariateCopula
 from pyscarcopula._types import DEFAULT_CONFIG, NumericalConfig
 from pyscarcopula._utils import pobs
+from pyscarcopula.copula.experimental._conditional import (
+    sample_student_conditional,
+    validate_multivariate_given,
+)
 from pyscarcopula.copula.experimental.stochastic_student_dcc import _PPFTable
 
 
@@ -56,9 +60,21 @@ def _softplus(x):
     return np.where(x > 30, x, np.log1p(np.exp(np.clip(x, -500, 30))))
 
 
+def _softplus_scalar(x):
+    x = float(x)
+    if x > 30.0:
+        return x
+    return float(np.log1p(np.exp(min(max(x, -500.0), 30.0))))
+
+
 def _softplus_deriv(x):
     """d softplus / dx = sigmoid(x) = 1 / (1 + exp(-x))."""
     return 1.0 / (1.0 + np.exp(-np.clip(x, -500, 500)))
+
+
+def _softplus_deriv_scalar(x):
+    x = min(max(float(x), -500.0), 500.0)
+    return float(1.0 / (1.0 + np.exp(-x)))
 
 
 def _inv_softplus(y):
@@ -140,12 +156,13 @@ def _student_copula_logpdf(u, R, df, L_inv=None, log_det=None):
     """
     eps = 1e-10
     u_c = np.clip(u, eps, 1.0 - eps)
-    x = t_dist.ppf(u_c, df=df)  # (T, d)
+    x = stdtrit(df, u_c)  # (T, d)
 
-    log_joint = _multivariate_t_logpdf(x, R, df, L_inv, log_det)
-    log_marginals = np.sum(t_dist.logpdf(x, df=df), axis=1)  # (T,)
-
-    return log_joint - log_marginals
+    if L_inv is None or log_det is None:
+        L = np.linalg.cholesky(R)
+        L_inv = np.linalg.inv(L)
+        log_det = 2.0 * np.sum(np.log(np.diag(L)))
+    return _log_copula_inlined(x, df, u_c.shape[1], L_inv, log_det)
 
 
 def _student_copula_dlogpdf_ddf(u, R, df, L_inv=None, log_det=None, eps_fd=1e-5):
@@ -156,9 +173,41 @@ def _student_copula_dlogpdf_ddf(u, R, df, L_inv=None, log_det=None, eps_fd=1e-5)
 
     Returns: (T,)
     """
-    lp = _student_copula_logpdf(u, R, df + eps_fd, L_inv, log_det)
-    lm = _student_copula_logpdf(u, R, df - eps_fd, L_inv, log_det)
-    return (lp - lm) / (2.0 * eps_fd)
+    if L_inv is None or log_det is None:
+        L = np.linalg.cholesky(R)
+        L_inv = np.linalg.inv(L)
+        log_det = 2.0 * np.sum(np.log(np.diag(L)))
+
+    u_c = np.clip(np.asarray(u, dtype=np.float64), 1e-10, 1.0 - 1e-10)
+    d = u_c.shape[1]
+    df_p = df + eps_fd
+    df_m = max(df - eps_fd, 2.0 + 1e-8)
+    x_p = stdtrit(df_p, u_c)
+    x_m = stdtrit(df_m, u_c)
+    lp = _log_copula_inlined(x_p, df_p, d, L_inv, log_det)
+    lm = _log_copula_inlined(x_m, df_m, d, L_inv, log_det)
+    return (lp - lm) / (df_p - df_m)
+
+
+def _student_copula_logpdf_and_dlogpdf_ddf(
+        u, R, df, L_inv=None, log_det=None, eps_fd=1e-5):
+    """Return log-density and finite-difference derivative wrt df."""
+    if L_inv is None or log_det is None:
+        L = np.linalg.cholesky(R)
+        L_inv = np.linalg.inv(L)
+        log_det = 2.0 * np.sum(np.log(np.diag(L)))
+
+    u_c = np.clip(np.asarray(u, dtype=np.float64), 1e-10, 1.0 - 1e-10)
+    d = u_c.shape[1]
+    df_p = df + eps_fd
+    df_m = max(df - eps_fd, 2.0 + 1e-8)
+    x_c = stdtrit(df, u_c)
+    x_p = stdtrit(df_p, u_c)
+    x_m = stdtrit(df_m, u_c)
+    ll = _log_copula_inlined(x_c, df, d, L_inv, log_det)
+    lp = _log_copula_inlined(x_p, df_p, d, L_inv, log_det)
+    lm = _log_copula_inlined(x_m, df_m, d, L_inv, log_det)
+    return ll, (lp - lm) / (df_p - df_m)
 
 
 def _log_copula_inlined(x, df, d, L_inv, log_det):
@@ -216,6 +265,8 @@ class StochasticStudentCopula(BivariateCopula):
         Correlation matrix. If None, estimated during fit().
     """
 
+    _gas_optimizer_config = 'stochastic_student_gas_optimizer'
+
     def __init__(self, d, R=None, rotate=0):
         super().__init__(rotate=0)
         if d < 2:
@@ -225,17 +276,14 @@ class StochasticStudentCopula(BivariateCopula):
         self._bounds = [(-10.0, 10.0)]  # bounds in x-space (latent)
 
         # Correlation matrix — set during fit or at init
+        self._R = None
+        self._L_inv = None
+        self._log_det = None
         if R is not None:
             R = np.asarray(R, dtype=np.float64)
             if R.shape != (d, d):
                 raise ValueError(f"R must be ({d}, {d}), got {R.shape}")
-            self._R = _ensure_positive_definite(R)
-        else:
-            self._R = None
-
-        # Precomputed Cholesky decomposition (set when R is set)
-        self._L_inv = None
-        self._log_det = None
+            self._set_R(R)
 
         # PPF lookup table (built lazily in batch methods)
         self._ppf_table = None
@@ -265,6 +313,9 @@ class StochasticStudentCopula(BivariateCopula):
         x = np.atleast_1d(np.asarray(x, dtype=np.float64))
         return 2.0 + _softplus(x)
 
+    def transform_scalar(self, x):
+        return 2.0 + _softplus_scalar(x)
+
     def inv_transform(self, df):
         """df -> x: maps (2, inf) to R."""
         df = np.atleast_1d(np.asarray(df, dtype=np.float64))
@@ -274,6 +325,9 @@ class StochasticStudentCopula(BivariateCopula):
         """d(Psi)/dx = sigmoid(x)."""
         x = np.atleast_1d(np.asarray(x, dtype=np.float64))
         return _softplus_deriv(x)
+
+    def dtransform_scalar(self, x):
+        return _softplus_deriv_scalar(x)
 
     def _get_ppf_table(self, u):
         """Get or build PPF lookup table for given data."""
@@ -308,6 +362,84 @@ class StochasticStudentCopula(BivariateCopula):
 
         ll = _student_copula_logpdf(u, self._R, r, self._L_inv, self._log_det)
         return np.sum(ll)
+
+    def log_pdf_rows(self, u, r, t_index=None):
+        """Return one log-density per row for scalar/row-wise df values."""
+        if self._R is None:
+            raise ValueError("Correlation matrix R not set. Call fit() first.")
+
+        u = np.asarray(u, dtype=np.float64)
+        df_arr = np.atleast_1d(np.asarray(r, dtype=np.float64)).ravel()
+        if df_arr.size == 1:
+            return _student_copula_logpdf(
+                u, self._R, float(df_arr[0]), self._L_inv, self._log_det)
+        if df_arr.size != len(u):
+            raise ValueError(
+                f"r must be scalar or length {len(u)}, got {len(df_arr)}")
+
+        out = np.empty(len(u), dtype=np.float64)
+        for idx, df_val in enumerate(df_arr):
+            out[idx] = _student_copula_logpdf(
+                u[idx:idx + 1],
+                self._R,
+                float(df_val),
+                self._L_inv,
+                self._log_det,
+            )[0]
+        return out
+
+    def dlog_pdf_dr_rows(self, u, r, t_index=None):
+        """Return d log c(u_t; df_t) / d df_t for each row."""
+        if self._R is None:
+            raise ValueError("Correlation matrix R not set. Call fit() first.")
+
+        u = np.asarray(u, dtype=np.float64)
+        df_arr = np.atleast_1d(np.asarray(r, dtype=np.float64)).ravel()
+        if df_arr.size == 1:
+            return _student_copula_dlogpdf_ddf(
+                u, self._R, float(df_arr[0]), self._L_inv, self._log_det)
+        if df_arr.size != len(u):
+            raise ValueError(
+                f"r must be scalar or length {len(u)}, got {len(df_arr)}")
+
+        out = np.empty(len(u), dtype=np.float64)
+        for idx, df_val in enumerate(df_arr):
+            out[idx] = _student_copula_dlogpdf_ddf(
+                u[idx:idx + 1],
+                self._R,
+                float(df_val),
+                self._L_inv,
+                self._log_det,
+            )[0]
+        return out
+
+    def log_pdf_and_dlog_dr_rows(self, u, r, t_index=None):
+        """Return per-row log-density and d log c(u_t; df_t) / d df_t."""
+        if self._R is None:
+            raise ValueError("Correlation matrix R not set. Call fit() first.")
+
+        u = np.asarray(u, dtype=np.float64)
+        df_arr = np.atleast_1d(np.asarray(r, dtype=np.float64)).ravel()
+        if df_arr.size == 1:
+            return _student_copula_logpdf_and_dlogpdf_ddf(
+                u, self._R, float(df_arr[0]), self._L_inv, self._log_det)
+        if df_arr.size != len(u):
+            raise ValueError(
+                f"r must be scalar or length {len(u)}, got {len(df_arr)}")
+
+        ll = np.empty(len(u), dtype=np.float64)
+        dlog = np.empty(len(u), dtype=np.float64)
+        for idx, df_val in enumerate(df_arr):
+            ll_i, dlog_i = _student_copula_logpdf_and_dlogpdf_ddf(
+                u[idx:idx + 1],
+                self._R,
+                float(df_val),
+                self._L_inv,
+                self._log_det,
+            )
+            ll[idx] = ll_i[0]
+            dlog[idx] = dlog_i[0]
+        return ll, dlog
 
     def pdf_on_grid(self, u_row, z_grid):
         """Copula density on latent grid for one observation.
@@ -614,7 +746,27 @@ class StochasticStudentCopula(BivariateCopula):
 
     # ── Predict ──────────────────────────────────────────────
 
-    def predict(self, n, u=None, rng=None):
+    def sample_conditional(self, n, r=None, given=None, rng=None):
+        """Sample conditionally with ``given={var_index: u_value}``."""
+        if self._R is None:
+            raise ValueError("Correlation matrix R not set. Call fit() first.")
+        if rng is None:
+            rng = np.random.default_rng()
+        given = validate_multivariate_given(given, self._d)
+        if not given:
+            return self.sample(n, r=r, rng=rng)
+        if r is None:
+            from pyscarcopula._types import MLEResult
+            if isinstance(self.fit_result, MLEResult):
+                r = self.fit_result.copula_param
+            else:
+                r = self.transform(
+                    np.array([self.fit_result.params.mu]))[0]
+        return sample_student_conditional(
+            n, self._R, r, given=given, rng=rng)
+
+    def predict(self, n, u=None, rng=None, given=None, horizon='next',
+                predictive_r_mode=None):
         """
         Sample n observations for next-step prediction.
 
@@ -634,7 +786,8 @@ class StochasticStudentCopula(BivariateCopula):
 
         from pyscarcopula._types import MLEResult
         if isinstance(self.fit_result, MLEResult):
-            return self.sample(n, r=self.fit_result.copula_param, rng=rng)
+            return self.sample_conditional(
+                n, r=self.fit_result.copula_param, given=given, rng=rng)
 
         u_data = u if u is not None else getattr(self, '_last_u', None)
         if u_data is not None:
@@ -642,14 +795,15 @@ class StochasticStudentCopula(BivariateCopula):
             z_grid, prob = self.xT_distribution(u_data)
             idx = rng.choice(len(z_grid), size=n, p=prob)
             df_samples = self.transform(z_grid[idx])  # (n,)
-            return self.sample(n, r=df_samples, rng=rng)
+            return self.sample_conditional(
+                n, r=df_samples, given=given, rng=rng)
         else:
             # Fallback: stationary OU sample
             kappa, mu, nu_ou = self.fit_result.params.values
             sigma2 = nu_ou ** 2 / (2.0 * kappa)
             x_T = rng.normal(mu, np.sqrt(sigma2))
             df_val = self.transform(np.array([x_T]))[0]
-            return self.sample(n, r=df_val, rng=rng)
+            return self.sample_conditional(n, r=df_val, given=given, rng=rng)
 
     # Predictive mean path
 

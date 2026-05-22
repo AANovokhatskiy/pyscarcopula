@@ -121,10 +121,11 @@ def strategy_for_result(result, config=None, **kwargs):
 
 def _strategy_kwargs(result, **kwargs):
     out = {}
-    for name in ('K', 'grid_range', 'pts_per_sigma'):
-        value = kwargs.get(name)
-        if value is not None:
-            out[name] = value
+    for name in (
+            'K', 'grid_range', 'pts_per_sigma',
+            'transition_method', 'max_K', 'r_gh', 'gh_order'):
+        if name in kwargs:
+            out[name] = kwargs[name]
     return out
 
 

@@ -110,6 +110,22 @@ DEFAULT_STOCHASTIC_STUDENT_DCC_OPTIMIZER = LBFGSBConfig(
     gtol=1e-4,
     maxiter=300,
 )
+DEFAULT_STOCHASTIC_STUDENT_GAS_OPTIMIZER = LBFGSBConfig(
+    gtol=1e-3,
+    ftol=1e-9,
+    maxfun=1000,
+    maxiter=1000,
+    maxls=50,
+    eps=1e-5,
+)
+DEFAULT_STOCHASTIC_STUDENT_DCC_GAS_OPTIMIZER = LBFGSBConfig(
+    gtol=1e-3,
+    ftol=1e-12,
+    maxfun=1000,
+    maxiter=1000,
+    maxls=50,
+    eps=1e-5,
+)
 DEFAULT_DCC_OPTIMIZER = LBFGSBConfig(
     gtol=1e-6,
     maxiter=500,
@@ -154,6 +170,10 @@ class NumericalConfig:
         default_factory=lambda: DEFAULT_STOCHASTIC_STUDENT_OPTIMIZER)
     stochastic_student_dcc_optimizer: LBFGSBConfig = field(
         default_factory=lambda: DEFAULT_STOCHASTIC_STUDENT_DCC_OPTIMIZER)
+    stochastic_student_gas_optimizer: LBFGSBConfig = field(
+        default_factory=lambda: DEFAULT_STOCHASTIC_STUDENT_GAS_OPTIMIZER)
+    stochastic_student_dcc_gas_optimizer: LBFGSBConfig = field(
+        default_factory=lambda: DEFAULT_STOCHASTIC_STUDENT_DCC_GAS_OPTIMIZER)
     dcc_optimizer: LBFGSBConfig = field(
         default_factory=lambda: DEFAULT_DCC_OPTIMIZER)
     garch_optimizer: LBFGSBConfig = field(
@@ -193,6 +213,14 @@ class NumericalConfig:
             self, 'stochastic_student_dcc_optimizer',
             DEFAULT_STOCHASTIC_STUDENT_DCC_OPTIMIZER.merged(
                 self.stochastic_student_dcc_optimizer))
+        object.__setattr__(
+            self, 'stochastic_student_gas_optimizer',
+            DEFAULT_STOCHASTIC_STUDENT_GAS_OPTIMIZER.merged(
+                self.stochastic_student_gas_optimizer))
+        object.__setattr__(
+            self, 'stochastic_student_dcc_gas_optimizer',
+            DEFAULT_STOCHASTIC_STUDENT_DCC_GAS_OPTIMIZER.merged(
+                self.stochastic_student_dcc_gas_optimizer))
         object.__setattr__(
             self, 'dcc_optimizer',
             DEFAULT_DCC_OPTIMIZER.merged(self.dcc_optimizer))
@@ -449,6 +477,10 @@ class LatentResult(FitResultBase):
     K: int | None = None                     # grid size (TM)
     grid_range: float | None = None          # TM grid range
     pts_per_sigma: int | None = None         # TM adaptive resolution
+    transition_method: str | None = None     # TM transition selector
+    max_K: int | None = None                 # TM adaptive grid cap
+    r_gh: float | None = None                # TM GH threshold
+    gh_order: int | None = None              # TM GH quadrature order
     n_tr: int | None = None                  # MC trajectory count
     M_iterations: int | None = None          # EIS iterations
 
@@ -469,6 +501,12 @@ class LatentResult(FitResultBase):
             lines.append(f"              K: {self.K}")
         if self.grid_range is not None:
             lines.append(f"     grid_range: {self.grid_range}")
+        if self.transition_method is not None:
+            lines.append(f"transition_method: {self.transition_method}")
+        if self.max_K is not None:
+            lines.append(f"          max_K: {self.max_K}")
+        if self.gh_order is not None:
+            lines.append(f"       gh_order: {self.gh_order}")
         if self.n_tr is not None:
             lines.append(f"           n_tr: {self.n_tr}")
         if self.M_iterations is not None:

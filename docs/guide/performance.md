@@ -182,6 +182,16 @@ result = fit(copula, u, method='gas', config=cfg)
 
 Per-call keyword arguments override the config values for that fit.
 
+Experimental multivariate Student models use separate GAS optimizer defaults,
+so changing them does not affect bivariate GAS fits or vine edges:
+
+```python
+cfg = NumericalConfig(
+    stochastic_student_gas_optimizer=LBFGSBConfig(ftol=1e-9),
+    stochastic_student_dcc_gas_optimizer=LBFGSBConfig(ftol=1e-12),
+)
+```
+
 ## C-Vines
 
 `CVineCopula.fit` selects a family for each edge using an MLE screening/refine

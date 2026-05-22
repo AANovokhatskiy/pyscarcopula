@@ -17,6 +17,10 @@ from scipy.stats import norm
 from scipy.optimize import minimize
 from pyscarcopula.copula.base import BivariateCopula
 from pyscarcopula._types import DEFAULT_CONFIG, NumericalConfig
+from pyscarcopula.copula.experimental._conditional import (
+    sample_gaussian_conditional,
+    validate_multivariate_given,
+)
 
 
 _LBFGSB_FIT_KEYS = (
@@ -309,6 +313,30 @@ class EquicorrGaussianCopula(BivariateCopula):
         ll = _equicorr_log_pdf(z, rho_arr, self._d)
         return np.sum(ll)
 
+    def log_pdf_rows(self, u, r, t_index=None):
+        """Return one log-density per row for scalar/row-wise rho values."""
+        u = np.asarray(u, dtype=np.float64)
+        z = norm.ppf(np.clip(u, 1e-10, 1.0 - 1e-10))
+        rho_arr = np.atleast_1d(np.asarray(r, dtype=np.float64)).ravel()
+        if rho_arr.size == 1:
+            rho_arr = np.full(len(u), float(rho_arr[0]), dtype=np.float64)
+        elif rho_arr.size != len(u):
+            raise ValueError(
+                f"r must be scalar or length {len(u)}, got {len(rho_arr)}")
+        return _equicorr_log_pdf(z, rho_arr, self._d)
+
+    def dlog_pdf_dr_rows(self, u, r, t_index=None):
+        """Return d log c(u_t; rho_t) / d rho_t for each row."""
+        u = np.asarray(u, dtype=np.float64)
+        z = norm.ppf(np.clip(u, 1e-10, 1.0 - 1e-10))
+        rho_arr = np.atleast_1d(np.asarray(r, dtype=np.float64)).ravel()
+        if rho_arr.size == 1:
+            rho_arr = np.full(len(u), float(rho_arr[0]), dtype=np.float64)
+        elif rho_arr.size != len(u):
+            raise ValueError(
+                f"r must be scalar or length {len(u)}, got {len(rho_arr)}")
+        return _equicorr_dlog_pdf_drho(z, rho_arr, self._d)
+
     def pdf_on_grid(self, u_row, z_grid):
         """Copula density on latent grid for one observation."""
         u_row = np.asarray(u_row, dtype=np.float64)
@@ -457,7 +485,20 @@ class EquicorrGaussianCopula(BivariateCopula):
 
         return norm.cdf(z)
 
-    def predict(self, n, u=None, rng=None):
+    def sample_conditional(self, n, r=None, given=None, rng=None):
+        """Sample conditionally with ``given={var_index: u_value}``."""
+        if rng is None:
+            rng = np.random.default_rng()
+        given = validate_multivariate_given(given, self._d)
+        if not given:
+            return self.sample(n, r=r, rng=rng)
+        if r is None:
+            r = self.fit_result.copula_param if self.fit_result else 0.5
+        return sample_gaussian_conditional(
+            n, self._d, r, given=given, rng=rng)
+
+    def predict(self, n, u=None, rng=None, given=None, horizon='next',
+                predictive_r_mode=None):
         """Sample from copula using conditional distribution from last fit.
 
         For MLE: constant rho.
@@ -477,7 +518,8 @@ class EquicorrGaussianCopula(BivariateCopula):
 
         from pyscarcopula._types import MLEResult
         if isinstance(self.fit_result, MLEResult):
-            return self.sample(n, r=self.fit_result.copula_param, rng=rng)
+            return self.sample_conditional(
+                n, r=self.fit_result.copula_param, given=given, rng=rng)
 
         u_data = u if u is not None else getattr(self, '_last_u', None)
         if u_data is not None:
@@ -485,19 +527,15 @@ class EquicorrGaussianCopula(BivariateCopula):
             z_grid, prob = self.xT_distribution(u_data)
             idx = rng.choice(len(z_grid), size=n, p=prob)
             rho_samples = self.transform(z_grid[idx])
-            # Sample each observation with its own rho
-            # (sample handles scalar r, so we loop or vectorize)
-            result = np.empty((n, self._d))
-            for j in range(n):
-                result[j] = self.sample(1, r=float(rho_samples[j]), rng=rng)[0]
-            return result
+            return self.sample_conditional(
+                n, r=rho_samples, given=given, rng=rng)
         else:
             # Fallback: stationary OU sample
             kappa, mu, nu = self.fit_result.params.values
             sigma2 = nu ** 2 / (2.0 * kappa)
             x_T = rng.normal(mu, np.sqrt(sigma2))
             rho = self.transform(np.array([x_T]))[0]
-            return self.sample(n, r=rho, rng=rng)
+            return self.sample_conditional(n, r=rho, given=given, rng=rng)
 
     # Predictive mean path
 

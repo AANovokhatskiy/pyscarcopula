@@ -25,6 +25,12 @@ import numpy as np
 from numba import njit
 from scipy.sparse import csr_matrix
 
+from pyscarcopula.numerical.tm_grid import (
+    _local_rule,
+    _select_matrix_grid_method,
+    _select_transition_method,
+)
+
 
 def _build_Tw_and_grad_dense(xi, rho, base_w, K):
     """
@@ -117,6 +123,176 @@ def _build_Tw_and_grad_sparse(xi, rho, base_w, K, band):
     return T_sp, G_sp
 
 
+def _build_local_Tw_and_grad(xi, rho, K, transition_method, gh_order):
+    """
+    Local interpolation operator and dT/drho in normalised coordinates.
+
+    Rows are source grid points, columns are target grid points.  With fixed
+    grid and fixed interpolation cells, only the interpolation coordinate
+    lambda changes with rho.  Clamped boundary nodes have zero derivative in
+    this first local-gradient implementation.
+    """
+    gh_nodes, gh_weights = _local_rule(transition_method, gh_order)
+    s = np.sqrt(1.0 - rho ** 2)
+    offsets = np.sqrt(2.0) * s * gh_nodes
+    if s > 0.0:
+        doffsets_drho = -np.sqrt(2.0) * rho / s * gh_nodes
+    else:
+        doffsets_drho = np.zeros_like(gh_nodes)
+    q = len(offsets)
+
+    xi0 = xi[0]
+    xi_last = xi[-1]
+    d_xi = xi[1] - xi[0]
+
+    rows = np.empty(K * q * 2, dtype=np.int32)
+    cols = np.empty(K * q * 2, dtype=np.int32)
+    vals = np.empty(K * q * 2, dtype=np.float64)
+    grad_vals = np.empty(K * q * 2, dtype=np.float64)
+
+    ptr = 0
+    for i in range(K):
+        center = rho * xi[i]
+        dcenter_drho = xi[i]
+
+        for offset, doffset_drho, weight in zip(
+                offsets, doffsets_drho, gh_weights):
+            y = center + offset
+
+            if y <= xi0:
+                rows[ptr] = i
+                cols[ptr] = 0
+                vals[ptr] = weight
+                grad_vals[ptr] = 0.0
+                ptr += 1
+                continue
+            if y >= xi_last:
+                rows[ptr] = i
+                cols[ptr] = K - 1
+                vals[ptr] = weight
+                grad_vals[ptr] = 0.0
+                ptr += 1
+                continue
+
+            left = int(np.floor((y - xi0) / d_xi))
+            if left >= K - 1:
+                rows[ptr] = i
+                cols[ptr] = K - 1
+                vals[ptr] = weight
+                grad_vals[ptr] = 0.0
+                ptr += 1
+                continue
+
+            lam = (y - xi[left]) / d_xi
+            dlam_drho = (dcenter_drho + doffset_drho) / d_xi
+
+            rows[ptr] = i
+            cols[ptr] = left
+            vals[ptr] = weight * (1.0 - lam)
+            grad_vals[ptr] = -weight * dlam_drho
+            ptr += 1
+
+            rows[ptr] = i
+            cols[ptr] = left + 1
+            vals[ptr] = weight * lam
+            grad_vals[ptr] = weight * dlam_drho
+            ptr += 1
+
+    shape = (K, K)
+    T_sp = csr_matrix((vals[:ptr], (rows[:ptr], cols[:ptr])), shape=shape)
+    G_sp = csr_matrix(
+        (grad_vals[:ptr], (rows[:ptr], cols[:ptr])), shape=shape)
+    return T_sp, G_sp
+
+
+@njit(cache=True)
+def _build_local_stencil_core(xi, rho, gh_nodes, gh_weights):
+    """Build fixed-width local interpolation stencil and dT/drho values."""
+    K = len(xi)
+    q = len(gh_nodes)
+    width = q * 2
+    s = np.sqrt(1.0 - rho ** 2)
+
+    xi0 = xi[0]
+    xi_last = xi[K - 1]
+    d_xi = xi[1] - xi[0]
+
+    cols = np.empty((K, width), dtype=np.int32)
+    vals = np.zeros((K, width), dtype=np.float64)
+    grad_vals = np.zeros((K, width), dtype=np.float64)
+
+    for i in range(K):
+        center = rho * xi[i]
+        dcenter_drho = xi[i]
+
+        for ell in range(q):
+            node = gh_nodes[ell]
+            weight = gh_weights[ell]
+            offset = np.sqrt(2.0) * s * node
+            if s > 0.0:
+                doffset_drho = -np.sqrt(2.0) * rho / s * node
+            else:
+                doffset_drho = 0.0
+            y = center + offset
+            pos = 2 * ell
+
+            if y <= xi0:
+                cols[i, pos] = 0
+                cols[i, pos + 1] = 0
+                vals[i, pos] = weight
+                continue
+            if y >= xi_last:
+                cols[i, pos] = K - 1
+                cols[i, pos + 1] = K - 1
+                vals[i, pos] = weight
+                continue
+
+            left = int(np.floor((y - xi0) / d_xi))
+            if left >= K - 1:
+                cols[i, pos] = K - 1
+                cols[i, pos + 1] = K - 1
+                vals[i, pos] = weight
+                continue
+
+            lam = (y - xi[left]) / d_xi
+            dlam_drho = (dcenter_drho + doffset_drho) / d_xi
+
+            cols[i, pos] = left
+            cols[i, pos + 1] = left + 1
+            vals[i, pos] = weight * (1.0 - lam)
+            vals[i, pos + 1] = weight * lam
+            grad_vals[i, pos] = -weight * dlam_drho
+            grad_vals[i, pos + 1] = weight * dlam_drho
+
+    return cols, vals, grad_vals
+
+
+def _build_local_stencil_and_grad(xi, rho, transition_method, gh_order):
+    """Build compact local interpolation stencil and dT/drho values."""
+    gh_nodes, gh_weights = _local_rule(transition_method, gh_order)
+    return _build_local_stencil_core(xi, rho, gh_nodes, gh_weights)
+
+
+@njit(cache=True)
+def _local_stencil_matvec(cols, vals, v):
+    K = cols.shape[0]
+    width = cols.shape[1]
+    out = np.empty(K, dtype=np.float64)
+    for i in range(K):
+        acc = 0.0
+        for j in range(width):
+            acc += vals[i, j] * v[cols[i, j]]
+        out[i] = acc
+    return out
+
+
+def _make_local_stencil_matvec(cols, vals):
+    """Create a matvec closure for compact local interpolation stencils."""
+    def _matvec(v):
+        return _local_stencil_matvec(cols, vals, v)
+    return _matvec
+
+
 def _make_fast_matvec(mat):
     """Create a matvec closure that pre-binds the matrix."""
     def _matvec(v):
@@ -125,7 +301,9 @@ def _make_fast_matvec(mat):
 
 
 def tm_loglik_with_grad(kappa, mu, nu, u, copula, K=300, grid_range=5.0,
-                        grid_method='auto', adaptive=True, pts_per_sigma=4):
+                        grid_method='auto', adaptive=True, pts_per_sigma=4,
+                        transition_method='matrix', max_K=None,
+                        r_gh=3.0, gh_order=5):
     """
     Transfer matrix log-likelihood with analytical gradient.
 
@@ -141,7 +319,8 @@ def tm_loglik_with_grad(kappa, mu, nu, u, copula, K=300, grid_range=5.0,
     u : ndarray (n, 2)
         Pseudo-observations.
     copula : CopulaProtocol
-    K, grid_range, grid_method, adaptive, pts_per_sigma : grid params
+    K, grid_range, grid_method, adaptive, pts_per_sigma,
+    transition_method, max_K, r_gh, gh_order : grid params
 
     Returns
     -------
@@ -172,12 +351,26 @@ def tm_loglik_with_grad(kappa, mu, nu, u, copula, K=300, grid_range=5.0,
     if adaptive:
         dz_target = sigma_c / pts_per_sigma
         K_min = int(np.ceil(2.0 * grid_range * sigma / dz_target)) + 1
-        K_eff = max(K, K_min)
+        K_adaptive = max(K, K_min)
     else:
-        K_eff = K
+        K_adaptive = K
+
+    if max_K is not None:
+        K_eff = min(K_adaptive, max_K)
+        K_eff = max(K_eff, min(K, max_K))
+    else:
+        K_eff = K_adaptive
+    adaptive_was_capped = K_eff < K_adaptive
 
     xi = np.linspace(-grid_range, grid_range, K_eff)
     d_xi = xi[1] - xi[0]
+    r_kernel_grid = np.sqrt(1.0 - rho ** 2) / d_xi
+    transition_method = _select_transition_method(
+        transition_method,
+        r_kernel_grid,
+        r_gh,
+        adaptive_was_capped,
+    )
 
     base_w = np.full(K_eff, d_xi)
     base_w[0] *= 0.5
@@ -187,19 +380,27 @@ def tm_loglik_with_grad(kappa, mu, nu, u, copula, K=300, grid_range=5.0,
     pw_const = np.exp(-0.5 * xi ** 2) / np.sqrt(2.0 * np.pi) * base_w
 
     # ── build T_w and dT_w/drho ──────────────────────────────────
-    half_width_xi = 5.0 * np.sqrt(1.0 - rho ** 2)
-    band = int(np.ceil(half_width_xi / d_xi))
-
-    if grid_method == 'auto':
-        grid_method = 'dense' if band >= K_eff // 4 else 'sparse'
-
     try:
-        if grid_method == 'sparse':
-            T_w, dTw_drho = _build_Tw_and_grad_sparse(
-                xi, rho, base_w, K_eff, band)
+        if transition_method == 'gh':
+            cols, vals, grad_vals = _build_local_stencil_and_grad(
+                xi, rho, transition_method, gh_order)
+            matvec = _make_local_stencil_matvec(cols, vals)
+            dTw_matvec = _make_local_stencil_matvec(cols, grad_vals)
         else:
-            T_w, dTw_drho = _build_Tw_and_grad_dense(
-                xi, rho, base_w, K_eff)
+            half_width_xi = 5.0 * np.sqrt(1.0 - rho ** 2)
+            band = int(np.ceil(half_width_xi / d_xi))
+
+            if grid_method == 'auto':
+                grid_method = _select_matrix_grid_method(band, K_eff)
+
+            if grid_method == 'sparse':
+                T_w, dTw_drho = _build_Tw_and_grad_sparse(
+                    xi, rho, base_w, K_eff, band)
+            else:
+                T_w, dTw_drho = _build_Tw_and_grad_dense(
+                    xi, rho, base_w, K_eff)
+            matvec = _make_fast_matvec(T_w)
+            dTw_matvec = _make_fast_matvec(dTw_drho)
     except Exception:
         return FAIL
 
@@ -221,9 +422,6 @@ def tm_loglik_with_grad(kappa, mu, nu, u, copula, K=300, grid_range=5.0,
     dx_dalpha[2] = d_sigma_dnu * xi       # dx/dnu
 
     # ── fast matvec: bypass scipy dispatch for sparse matrices ────
-    matvec = _make_fast_matvec(T_w)
-    dTw_matvec = _make_fast_matvec(dTw_drho)
-
     # ══════════════════════════════════════════════════════════════
     # BACKWARD PASS — compute and store beta[t] and c_vals[t]
     # ══════════════════════════════════════════════════════════════

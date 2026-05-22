@@ -5,6 +5,7 @@ Contents:
   - TMGrid: precomputed grid, stationary density, transfer operator
   - _build_dense_T: dense K×K transfer matrix
   - _build_sparse_T_vectorized: sparse banded CSR transfer matrix
+  - _build_local_interpolation_T: Gauss-Hermite local transition
 
 The TMGrid encapsulates:
   - Adaptive grid refinement (K_eff from pts_per_sigma)
@@ -17,6 +18,84 @@ All TM-based functions share this infrastructure.
 
 import numpy as np
 from scipy.sparse import csr_matrix
+
+
+_GRID_METHODS = frozenset(('auto', 'dense', 'sparse'))
+_TRANSITION_METHODS = frozenset(('auto', 'matrix', 'gh'))
+
+
+def _validate_grid_method(value):
+    method = str(value).lower()
+    if method not in _GRID_METHODS:
+        raise ValueError(
+            "grid_method must be one of 'auto', 'dense', or 'sparse', "
+            f"got {value!r}"
+        )
+    return method
+
+
+def _validate_transition_method(value):
+    method = str(value).lower()
+    if method not in _TRANSITION_METHODS:
+        raise ValueError(
+            "transition_method must be one of 'auto', 'matrix', or 'gh', "
+            f"got {value!r}"
+        )
+    return method
+
+
+def _validate_optional_min_int(value, name, minimum):
+    if value is None:
+        return None
+    value = _validate_positive_int(value, name)
+    if value < minimum:
+        raise ValueError(f"{name} must be at least {minimum}")
+    return value
+
+
+def _validate_positive_int(value, name):
+    if isinstance(value, (bool, np.bool_)):
+        raise TypeError(f"{name} must be a positive integer")
+    if not isinstance(value, (int, np.integer)):
+        raise TypeError(f"{name} must be a positive integer")
+    value = int(value)
+    if value <= 0:
+        raise ValueError(f"{name} must be positive")
+    return value
+
+
+def _validate_positive_float(value, name):
+    value = float(value)
+    if value <= 0.0:
+        raise ValueError(f"{name} must be positive")
+    return value
+
+
+def _select_matrix_grid_method(band, K):
+    if band >= K // 4:
+        return 'dense'
+    return 'sparse'
+
+
+def _select_transition_method(requested, r_kernel_grid, r_gh,
+                              adaptive_was_capped):
+    if requested != 'auto':
+        return requested
+    if adaptive_was_capped:
+        return 'gh'
+    if r_kernel_grid <= r_gh:
+        return 'gh'
+    return 'matrix'
+
+
+def _normal_hermite_rule(order):
+    nodes, weights = np.polynomial.hermite.hermgauss(order)
+    return nodes, weights / np.sqrt(np.pi)
+
+
+def _local_rule(transition_method, gh_order):
+    nodes, weights = _normal_hermite_rule(gh_order)
+    return nodes, weights
 
 
 class TMGrid:
@@ -51,15 +130,40 @@ class TMGrid:
         Points per conditional standard deviation for adaptive rule (default 2).
         The paper uses n_pts=4 in formula (20), but the code default is 2
         which provides adequate resolution for most cases.
+    transition_method : str
+        Prototype transition operator selector. 'matrix' preserves the current
+        Gaussian matrix path. 'auto' chooses between that path, deterministic
+        interpolation, and Gauss-Hermite interpolation. The Gaussian matrix
+        path still uses grid_method to choose sparse or dense storage. 'gh'
+        forces the local Gauss-Hermite operator.
+    max_K : int or None
+        Optional cap for the adaptive effective grid size. If the adaptive
+        rule requests more than max_K points, K_eff is capped and the
+        `_adaptive_was_capped` diagnostic is set.
+    r_gh : float
+        Locality threshold based on sigma_cond / dz. Auto selection uses GH
+        for narrow local kernels.
+    gh_order : int
+        Reserved Gauss-Hermite order for the local transition operator.
     """
 
     __slots__ = (
         'z', 'K', 'dz', 'trap_w', 'p0', 'rho', 'sigma', 'sigma_cond',
-        'mu', '_T_op', '_grid_method', '_band',
+        'mu', '_T_op', '_grid_method', '_transition_method',
+        '_transition_method_requested', '_max_K', '_K_adaptive',
+        '_adaptive_was_capped', '_r_gh', '_gh_order',
+        '_r_kernel_grid', '_band',
     )
 
     def __init__(self, kappa, mu, nu, n, K=300, grid_range=5.0,
-                 grid_method='auto', adaptive=True, pts_per_sigma=4):
+                 grid_method='auto', adaptive=True, pts_per_sigma=4,
+                 transition_method='matrix', max_K=None, r_gh=3.0,
+                 gh_order=5):
+        grid_method = _validate_grid_method(grid_method)
+        transition_method = _validate_transition_method(transition_method)
+        max_K = _validate_optional_min_int(max_K, 'max_K', 2)
+        gh_order = _validate_positive_int(gh_order, 'gh_order')
+
         dt = 1.0 / (n - 1)
         rho = np.exp(-kappa * dt)
         sigma = np.sqrt(0.5 * nu ** 2 / kappa)
@@ -69,17 +173,37 @@ class TMGrid:
         self.sigma = sigma
         self.sigma_cond = sigma_cond
         self.mu = mu
+        self._transition_method_requested = transition_method
+        self._max_K = max_K
+        self._r_gh = _validate_positive_float(r_gh, 'r_gh')
+        self._gh_order = gh_order
 
         # ── adaptive grid: at least pts_per_sigma points per sigma_cond ──
         if adaptive:
             dz_target = sigma_cond / pts_per_sigma
             K_min = int(np.ceil(2.0 * grid_range * sigma / dz_target)) + 1
-            K_eff = max(K, K_min)
+            K_adaptive = max(K, K_min)
         else:
-            K_eff = K
+            K_adaptive = K
+
+        if max_K is not None:
+            K_eff = min(K_adaptive, max_K)
+            K_eff = max(K_eff, min(K, max_K))
+        else:
+            K_eff = K_adaptive
+        self._K_adaptive = K_adaptive
+        self._adaptive_was_capped = K_eff < K_adaptive
 
         z = np.linspace(-grid_range * sigma, grid_range * sigma, K_eff)
         dz = z[1] - z[0]
+        self._r_kernel_grid = sigma_cond / dz
+        transition_method = _select_transition_method(
+            transition_method,
+            self._r_kernel_grid,
+            self._r_gh,
+            self._adaptive_was_capped,
+        )
+        self._transition_method = transition_method
 
         trap_w = np.full(K_eff, dz)
         trap_w[0] *= 0.5
@@ -98,41 +222,64 @@ class TMGrid:
         half_width = 5.0 * sigma_cond
         self._band = int(np.ceil(half_width / dz))
 
-        if grid_method == 'auto':
-            if self._band >= K_eff // 4:
-                grid_method = 'dense'
-            else:
-                grid_method = 'sparse'
-        self._grid_method = grid_method
-
-        if grid_method == 'sparse':
-            self._T_op = _build_sparse_T_vectorized(
-                z, rho, sigma_cond, trap_w, K_eff, self._band)
+        if transition_method == 'gh':
+            self._grid_method = 'local'
+            self._T_op = _build_local_interpolation_T(
+                z, rho, sigma_cond, K_eff, transition_method, gh_order)
         else:
-            self._T_op = _build_dense_T(z, rho, sigma_cond, trap_w, K_eff)
+            if grid_method == 'auto':
+                grid_method = _select_matrix_grid_method(self._band, K_eff)
+            self._grid_method = grid_method
+
+            if grid_method == 'sparse':
+                self._T_op = _build_sparse_T_vectorized(
+                    z, rho, sigma_cond, trap_w, K_eff, self._band)
+            else:
+                self._T_op = _build_dense_T(z, rho, sigma_cond, trap_w, K_eff)
 
     # ── matrix-vector products ───────────────────────────────────
 
+    def diagnostics(self):
+        """Return numerical grid and transition-operator diagnostics."""
+        return {
+            'K': int(self.K),
+            'K_adaptive': int(self._K_adaptive),
+            'adaptive_was_capped': bool(self._adaptive_was_capped),
+            'max_K': None if self._max_K is None else int(self._max_K),
+            'grid_method': self._grid_method,
+            'transition_method': self._transition_method,
+            'transition_method_requested': self._transition_method_requested,
+            'r_kernel_grid': float(self._r_kernel_grid),
+            'r_gh': float(self._r_gh),
+            'gh_order': int(self._gh_order),
+            'band': int(self._band),
+            'rho': float(self.rho),
+            'sigma': float(self.sigma),
+            'sigma_cond': float(self.sigma_cond),
+            'dz': float(self.dz),
+        }
+
     def matvec(self, v):
-        """T_trap @ v  (transition kernel applied to vector)."""
+        """Transition operator applied to a value vector."""
         return self._T_op @ v
 
     def rmatvec(self, v):
-        """T_trap.T @ v  (transpose of the weighted backward operator)."""
+        """Transpose transition operator applied to a vector."""
         return self._T_op.T @ v
 
     def predict_matvec(self, v):
         """
         Forward prediction integral.
 
-        ``_T_op[j, i] = p(z_i | z_j) * w_i`` is weighted for backward
-        integration over the next-state index.  Forward prediction integrates
-        over the previous-state index:
+        For the Gaussian matrix path, ``_T_op[j, i] = p(z_i | z_j) * w_i``
+        is weighted for backward integration over the next-state index.  For
+        local interpolation paths, rows contain direct interpolation weights.
+        Both conventions support the same forward-density update:
 
             phi_next[i] = sum_j p(z_i | z_j) * v[j].
 
         Therefore we remove the next-state quadrature weights after applying
-        the transpose of the stored weighted operator.
+        the transpose of the stored operator.
         """
         return (self._T_op.T @ v) / self.trap_w
 
@@ -146,6 +293,11 @@ class TMGrid:
         """
         x_grid = self.z + self.mu
         return copula.copula_grid_batch(u, x_grid)
+
+    def copula_grid_row(self, u_row, copula):
+        """Evaluate copula density on the grid for one observation."""
+        x_grid = self.z + self.mu
+        return copula.pdf_on_grid(u_row, x_grid)
 
     # ── backward pass (used by _tm_loglik) ───────────────────────
 
@@ -222,6 +374,56 @@ class TMGrid:
                     for kk in range(k + 1, n):
                         callback(kk, None, self.trap_w, kk == n - 1)
                     break
+
+    def predictive_weights_from_phi(self, phi):
+        """Normalize a predictive density to grid probability weights."""
+        if phi is None:
+            return np.full(self.K, 1.0 / self.K, dtype=np.float64)
+        raw_w = phi * self.trap_w
+        total = np.sum(raw_w)
+        if total > 0:
+            return raw_w / total
+        return np.full(self.K, 1.0 / self.K, dtype=np.float64)
+
+    def advance_forward_phi(self, phi, fi_row):
+        """Advance one predictive forward density without storing history."""
+        if phi is None:
+            return None
+        source = fi_row * phi * self.trap_w
+        phi_next = self.predict_matvec(source)
+        mx = np.max(np.abs(phi_next))
+        if mx > 0:
+            return phi_next / mx
+        return None
+
+    def iter_forward_weights(self, u, copula, need_last_emission=False):
+        """
+        Stream predictive weights and one-row emissions.
+
+        Yields ``(k, weights, fi_row, phi, posterior_phi)``.  ``weights`` is
+        the normalized predictive mass before observing row ``k``.  ``fi_row``
+        is evaluated only when needed for the next update, or on the final row
+        when ``need_last_emission=True``.  No ``(T, K)`` arrays are allocated.
+        """
+        n = len(u)
+        phi = self.p0.copy()
+
+        for k in range(n):
+            is_last = (k == n - 1)
+            weights = self.predictive_weights_from_phi(phi)
+            fi_row = None
+            if (not is_last) or need_last_emission:
+                fi_row = self.copula_grid_row(u[k], copula)
+
+            if phi is None or fi_row is None:
+                posterior_phi = None
+            else:
+                posterior_phi = phi * fi_row
+
+            yield k, weights, fi_row, phi, posterior_phi
+
+            if not is_last:
+                phi = self.advance_forward_phi(phi, fi_row)
 
     def forward_weights(self, fi_grid):
         """
@@ -319,5 +521,70 @@ def _build_sparse_T_vectorized(z, rho, sigma_cond, trap_w, K, band):
         diff = z[i_range] - centers[j]
         vals[sl] = coeff * np.exp(-0.5 * (diff / sigma_cond) ** 2) * trap_w[i_range]
         ptr += w
+
+    return csr_matrix((vals[:ptr], (rows[:ptr], cols[:ptr])), shape=(K, K))
+
+
+def _build_local_interpolation_T(z, rho, sigma_cond, K, transition_method,
+                                 gh_order):
+    """
+    Local transition operator using Gauss-Hermite interpolation.
+
+    Rows are source grid points and columns are target grid points. Entries
+    are direct interpolation weights for applying
+
+        (P f)(z_i) ~= E[f(rho * z_i + sigma_cond * eps)]
+
+    on the centered OU grid. Rows sum to one up to floating-point error.
+    """
+    gh_nodes, gh_weights = _local_rule(transition_method, gh_order)
+    offsets = np.sqrt(2.0) * sigma_cond * gh_nodes
+    q = len(offsets)
+
+    z0 = z[0]
+    z_last = z[-1]
+    dz = z[1] - z[0]
+
+    rows = np.empty(K * q * 2, dtype=np.int32)
+    cols = np.empty(K * q * 2, dtype=np.int32)
+    vals = np.empty(K * q * 2, dtype=np.float64)
+
+    ptr = 0
+    for i in range(K):
+        center = rho * z[i]
+        for offset, weight in zip(offsets, gh_weights):
+            y = center + offset
+
+            if y <= z0:
+                rows[ptr] = i
+                cols[ptr] = 0
+                vals[ptr] = weight
+                ptr += 1
+                continue
+            if y >= z_last:
+                rows[ptr] = i
+                cols[ptr] = K - 1
+                vals[ptr] = weight
+                ptr += 1
+                continue
+
+            left = int(np.floor((y - z0) / dz))
+            if left >= K - 1:
+                rows[ptr] = i
+                cols[ptr] = K - 1
+                vals[ptr] = weight
+                ptr += 1
+                continue
+
+            lam = (y - z[left]) / dz
+            rows[ptr] = i
+            cols[ptr] = left
+            vals[ptr] = weight * (1.0 - lam)
+            ptr += 1
+
+            rows[ptr] = i
+            cols[ptr] = left + 1
+            vals[ptr] = weight * lam
+            ptr += 1
 
     return csr_matrix((vals[:ptr], (rows[:ptr], cols[:ptr])), shape=(K, K))

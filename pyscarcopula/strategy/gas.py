@@ -17,6 +17,8 @@ from pyscarcopula.strategy._base import register_strategy
 from pyscarcopula.numerical.gas_filter import (
     gas_filter, gas_predict_param, gas_negloglik,
     gas_mixture_h, _gas_score,
+    _gas_score_multivariate, _multivariate_log_pdf_row,
+    _supports_multivariate_log_pdf,
 )
 from pyscarcopula.strategy.predict_helpers import sample_predictive
 
@@ -42,6 +44,12 @@ class GASStrategy:
         if result is None:
             return float(self.config.gas_score_eps)
         return float(getattr(result, 'score_eps', self.config.gas_score_eps))
+
+    def _optimizer_config(self, copula):
+        config_name = getattr(copula, '_gas_optimizer_config', None)
+        if config_name is not None:
+            return getattr(self.config, config_name)
+        return self.config.gas_optimizer
 
     def fit(self, copula, u: np.ndarray,
             gamma0: np.ndarray | None = None,
@@ -76,7 +84,7 @@ class GASStrategy:
         """
         if 'tol' in kwargs:
             raise TypeError("tol is not supported; use gtol")
-        optimizer_options = self.config.gas_optimizer.options(
+        optimizer_options = self._optimizer_config(copula).options(
             gtol=gtol,
             ftol=ftol,
             maxfun=maxfun,
@@ -231,6 +239,34 @@ class GASStrategy:
             g_t = omega / (1.0 - beta)
         else:
             g_t = omega
+
+        d = u.shape[1] if u is not None and np.ndim(u) == 2 else 2
+        if _supports_multivariate_log_pdf(copula, np.empty((1, d))):
+            samples = np.empty((n, d))
+            fixed_t_index = None
+            r_path = getattr(copula, 'R_path', None)
+            if r_path is not None:
+                fixed_t_index = len(r_path) - 1
+
+            for t in range(n):
+                r_t = float(copula.transform(np.array([g_t]))[0])
+                obs = sample_predictive(
+                    copula, 1, np.array([r_t]), rng=rng, d=d)
+                samples[t] = obs[0]
+
+                if t < n - 1:
+                    t_index = fixed_t_index if fixed_t_index is not None else t
+                    ll_t = _multivariate_log_pdf_row(
+                        copula, obs, r_t, t_index)
+                    s_t = _gas_score_multivariate(
+                        obs, t_index, g_t, ll_t, copula,
+                        self.scaling, score_eps)
+
+                    s_t = np.clip(s_t, -S_CLIP, S_CLIP)
+                    g_t = omega + beta * g_t + gamma_gas * s_t
+                    g_t = np.clip(g_t, -G_CLIP, G_CLIP)
+
+            return samples
 
         samples = np.empty((n, 2))
 

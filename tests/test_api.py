@@ -298,13 +298,17 @@ class TestEquicorrGaussian:
         assert samples.shape == (20, 4)
         assert np.all((samples > 0.0) & (samples < 1.0))
 
-    def test_api_multivariate_given_raises(self):
+    def test_api_multivariate_given_is_honored(self):
         u = pobs(np.random.default_rng(43).standard_normal((120, 4)))
         cop = EquicorrGaussianCopula(d=4)
         result = fit(cop, u, method='mle')
 
-        with pytest.raises(NotImplementedError, match="given="):
-            predict(cop, u, result, 20, given={0: 0.5})
+        samples = predict(
+            cop, u, result, 20, given={0: 0.5}, rng=np.random.default_rng(8))
+
+        assert samples.shape == (20, 4)
+        assert np.allclose(samples[:, 0], 0.5)
+        assert np.all((samples > 0.0) & (samples < 1.0))
 
     def test_mle(self):
         u = pobs(np.random.default_rng(42).standard_normal((200, 4)))
@@ -330,6 +334,35 @@ class TestEquicorrGaussian:
         cop = EquicorrGaussianCopula(d=3)
         cop.fit(u, method='mle')
         gof = gof_test(cop, u, to_pobs=False)
+        assert 0 <= gof.pvalue <= 1
+
+    @pytest.mark.parametrize(
+        "cls",
+        [EquicorrGaussianCopula, StochasticStudentCopula],
+    )
+    def test_experimental_gas_fit_and_gof(self, cls):
+        u = pobs(np.random.default_rng(49).standard_normal((35, 3)))
+        cop = cls(d=3)
+
+        result = cop.fit(u, method='gas', maxiter=10, maxfun=10)
+        gof = gof_test(cop, u, to_pobs=False)
+
+        assert result.method == 'GAS'
+        assert np.isfinite(result.log_likelihood)
+        assert 0 <= gof.pvalue <= 1
+
+    def test_experimental_dcc_gas_fit_and_gof(self):
+        rng = np.random.default_rng(50)
+        u = pobs(rng.standard_normal((35, 3)))
+        returns = rng.standard_normal((35, 3)) * 0.01
+        cop = StochasticStudentDCCCopula(d=3)
+        cop.fit_R_t(returns=returns, fix_params=(0.03, 0.90))
+
+        result = cop.fit(u, method='gas', maxiter=10, maxfun=10)
+        gof = gof_test(cop, u, to_pobs=False)
+
+        assert result.method == 'GAS'
+        assert np.isfinite(result.log_likelihood)
         assert 0 <= gof.pvalue <= 1
 
     def test_d1_raises(self):
@@ -607,6 +640,58 @@ class TestConditionalPredict:
         assert captured['options']['maxls'] == 44
         assert captured['options']['ftol'] == pytest.approx(1e-9)
         assert result.score_eps == pytest.approx(2e-5)
+
+    def test_gas_fit_uses_multivariate_student_optimizer_configs(self, monkeypatch):
+        captured = []
+
+        class DummyResult:
+            x = np.array([0.0, 0.0, 0.0])
+            fun = 0.0
+            success = True
+            nfev = 1
+            message = 'ok'
+
+        def fake_minimize(fun, x0, method=None, bounds=None, options=None):
+            captured.append(options)
+            return DummyResult()
+
+        monkeypatch.setattr('pyscarcopula.strategy.gas.minimize',
+                            fake_minimize)
+        monkeypatch.setattr(
+            'pyscarcopula.strategy.gas.gas_predict_param',
+            lambda *args, **kwargs: 0.0)
+
+        cfg = NumericalConfig(
+            gas_optimizer=LBFGSBConfig(ftol=1e-12, maxfun=111),
+            stochastic_student_gas_optimizer=LBFGSBConfig(
+                ftol=1e-9, maxfun=222),
+            stochastic_student_dcc_gas_optimizer=LBFGSBConfig(
+                ftol=1e-8, maxfun=333),
+        )
+        u = np.full((3, 3), 0.5)
+
+        GASStrategy(config=cfg).fit(
+            StochasticStudentCopula(d=3),
+            u,
+            gamma0=np.array([0.0, 0.0, 0.0]),
+        )
+        GASStrategy(config=cfg).fit(
+            StochasticStudentDCCCopula(d=3),
+            u,
+            gamma0=np.array([0.0, 0.0, 0.0]),
+        )
+        GASStrategy(config=cfg).fit(
+            IndependentCopula(),
+            np.full((3, 2), 0.5),
+            gamma0=np.array([0.0, 0.0, 0.0]),
+        )
+
+        assert captured[0]['ftol'] == pytest.approx(1e-9)
+        assert captured[0]['maxfun'] == 222
+        assert captured[1]['ftol'] == pytest.approx(1e-8)
+        assert captured[1]['maxfun'] == 333
+        assert captured[2]['ftol'] == pytest.approx(1e-12)
+        assert captured[2]['maxfun'] == 111
 
     def test_gas_post_fit_uses_result_score_eps(self, monkeypatch):
         captured = {}

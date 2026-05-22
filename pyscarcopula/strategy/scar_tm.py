@@ -48,6 +48,19 @@ class SCARTMStrategy:
         Adaptive grid refinement (default True).
     pts_per_sigma : int
         Points per conditional sigma for adaptive rule (default from config).
+    transition_method : str
+        'auto' is the default fit-time safeguard: use the matrix path when the
+        adaptive grid remains moderate, and switch to local GH when the grid
+        cap is active or the transition kernel is local.  'matrix' preserves
+        the original Gaussian transition matrix path when requested
+        explicitly.  'gh' forces the local Gauss-Hermite path.
+    max_K : int or None
+        Optional cap for adaptive TM grid size.  Defaults to 1000 in the
+        strategy to prevent pathological fit-time grid blowups on long series.
+    r_gh : float
+        Locality threshold for auto transition selection.
+    gh_order : int
+        Gauss-Hermite order for local GH transition.
     analytical_grad : bool
         Use analytical gradient (default True).
         Reduces nfev by ~3-4x. Parameters are auto-rescaled.
@@ -61,6 +74,10 @@ class SCARTMStrategy:
                  grid_method: str | None = None,
                  adaptive: bool | None = None,
                  pts_per_sigma: int | None = None,
+                 transition_method: str = 'auto',
+                 max_K: int | None = 1000,
+                 r_gh: float = 3.0,
+                 gh_order: int = 5,
                  analytical_grad: bool = True,
                  smart_init: bool = True,
                  **kwargs):
@@ -70,8 +87,25 @@ class SCARTMStrategy:
         self.grid_method = grid_method if grid_method is not None else self.config.default_grid_method
         self.adaptive = adaptive if adaptive is not None else self.config.default_adaptive
         self.pts_per_sigma = pts_per_sigma if pts_per_sigma is not None else self.config.default_pts_per_sigma
+        self.transition_method = transition_method
+        self.max_K = max_K
+        self.r_gh = r_gh
+        self.gh_order = gh_order
         self.analytical_grad = analytical_grad
         self.smart_init = smart_init
+
+    def _uses_local_transition(self):
+        return self.transition_method != 'matrix' or self.max_K is not None
+
+    def _tm_kwargs(self):
+        if self.transition_method == 'matrix' and self.max_K is None:
+            return {}
+        return {
+            'transition_method': self.transition_method,
+            'max_K': self.max_K,
+            'r_gh': self.r_gh,
+            'gh_order': self.gh_order,
+        }
 
     def fit(self, copula, u: np.ndarray,
             alpha0: np.ndarray | None = None,
@@ -145,6 +179,7 @@ class SCARTMStrategy:
         grid_method = self.grid_method
         adaptive = self.adaptive
         pts_per_sigma = self.pts_per_sigma
+        tm_kwargs = self._tm_kwargs()
 
         # ── Fit with analytical gradient ──────────────────────────
         if self.analytical_grad:
@@ -169,7 +204,7 @@ class SCARTMStrategy:
                 try:
                     val, grad = tm_loglik_with_grad(
                         kappa_v, mu_v, nu_v, u, copula, K, grid_range,
-                        grid_method, adaptive, pts_per_sigma)
+                        grid_method, adaptive, pts_per_sigma, **tm_kwargs)
                     return val, grad * scale  # chain rule
                 except Exception as e:
                     if verbose:
@@ -201,7 +236,7 @@ class SCARTMStrategy:
                 try:
                     return tm_loglik(
                         kappa_v, mu_v, nu_v, u, copula, K, grid_range,
-                        grid_method, adaptive, pts_per_sigma)
+                        grid_method, adaptive, pts_per_sigma, **tm_kwargs)
                 except Exception as e:
                     if verbose:
                         print(f"  error at alpha={alpha}: {e}")
@@ -234,6 +269,10 @@ class SCARTMStrategy:
             K=K,
             grid_range=grid_range,
             pts_per_sigma=pts_per_sigma,
+            transition_method=self.transition_method,
+            max_K=self.max_K,
+            r_gh=self.r_gh,
+            gh_order=self.gh_order,
         )
 
     def log_likelihood(self, copula, u: np.ndarray,
@@ -243,7 +282,7 @@ class SCARTMStrategy:
         neg_ll = tm_loglik(
             p.kappa, p.mu, p.nu, u, copula,
             self.K, self.grid_range, self.grid_method,
-            self.adaptive, self.pts_per_sigma)
+            self.adaptive, self.pts_per_sigma, **self._tm_kwargs())
         return -neg_ll
 
     def predictive_mean(self, copula, u: np.ndarray,
@@ -253,7 +292,7 @@ class SCARTMStrategy:
         return tm_forward_predictive_mean(
             p.kappa, p.mu, p.nu, u, copula,
             self.K, self.grid_range, self.grid_method,
-            self.adaptive, self.pts_per_sigma)
+            self.adaptive, self.pts_per_sigma, **self._tm_kwargs())
 
     def smoothed_params(self, copula, u: np.ndarray,
                         result: LatentResult) -> np.ndarray:
@@ -267,7 +306,7 @@ class SCARTMStrategy:
         e = tm_forward_rosenblatt(
             p.kappa, p.mu, p.nu, u, copula,
             self.K, self.grid_range, self.grid_method,
-            self.adaptive, self.pts_per_sigma)
+            self.adaptive, self.pts_per_sigma, **self._tm_kwargs())
         return e[:, 1]
 
     def mixture_h(self, copula, u: np.ndarray,
@@ -279,6 +318,7 @@ class SCARTMStrategy:
             p.kappa, p.mu, p.nu, u, copula,
             self.K, self.grid_range, self.grid_method,
             self.adaptive, self.pts_per_sigma,
+            **self._tm_kwargs(),
             state_cache=state_cache,
             current_cache_key=current_cache_key,
             next_cache_key=next_cache_key)
@@ -290,7 +330,7 @@ class SCARTMStrategy:
             return tm_loglik(
                 alpha[0], alpha[1], alpha[2], u, copula,
                 self.K, self.grid_range, self.grid_method,
-                self.adaptive, self.pts_per_sigma)
+                self.adaptive, self.pts_per_sigma, **self._tm_kwargs())
         except Exception:
             return 1e10
 
@@ -362,6 +402,7 @@ class SCARTMStrategy:
                 grid_method=self.grid_method,
                 adaptive=self.adaptive,
                 pts_per_sigma=self.pts_per_sigma,
+                **self._tm_kwargs(),
                 horizon=kwargs.get('horizon', 'next'))
             if state_cache is not None and cache_key is not None:
                 state_cache[cache_key] = cached

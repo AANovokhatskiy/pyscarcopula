@@ -273,10 +273,27 @@ def get_strategy_for_result(result: FitResult,
                             **kwargs) -> FitStrategy:
     """Instantiate the strategy matching an existing FitResult."""
     result_kwargs = {}
+    method = result.method.upper()
+
     for name in ('K', 'grid_range', 'pts_per_sigma', 'scaling'):
         value = getattr(result, name, None)
         if value is not None:
             result_kwargs[name] = value
+
+    if method == 'SCAR-TM-OU':
+        transition_method = getattr(result, 'transition_method', None)
+        if transition_method is None:
+            result_kwargs['transition_method'] = 'matrix'
+            result_kwargs['max_K'] = None
+        else:
+            result_kwargs['transition_method'] = transition_method
+            result_kwargs['max_K'] = getattr(result, 'max_K', None)
+
+        for name in ('r_gh', 'gh_order'):
+            value = getattr(result, name, None)
+            if value is not None:
+                result_kwargs[name] = value
+
     result_kwargs.update(kwargs)
     return get_strategy(result.method, config=config, **result_kwargs)
 

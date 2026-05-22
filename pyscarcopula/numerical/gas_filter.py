@@ -294,6 +294,129 @@ def _gas_score(u1, u2, g_t, r_t, ll_t, copula, scaling, score_eps):
 # Core GAS filter
 # ══════════════════════════════════════════════════════════════════
 
+def _supports_multivariate_log_pdf(copula, u):
+    if np.ndim(u) != 2 or not hasattr(copula, 'log_pdf_rows'):
+        return False
+    expected_d = getattr(copula, 'd', None)
+    return expected_d is None or u.shape[1] == expected_d
+
+
+def _validate_multivariate_log_pdf_input(copula, u):
+    if np.ndim(u) != 2 or not hasattr(copula, 'log_pdf_rows'):
+        return False
+    expected_d = getattr(copula, 'd', None)
+    if expected_d is not None and u.shape[1] != expected_d:
+        raise ValueError(
+            f"u must have shape (T, {expected_d}) for {copula.name}, "
+            f"got {u.shape}")
+    return True
+
+
+def _multivariate_log_pdf_row(copula, u_row, r_t, t_index):
+    method = copula.log_pdf_rows
+    code = getattr(method, '__code__', None)
+    if code is None or 't_index' in code.co_varnames:
+        vals = copula.log_pdf_rows(
+            u_row, np.array([r_t], dtype=np.float64), t_index=t_index)
+    else:
+        vals = copula.log_pdf_rows(
+            u_row, np.array([r_t], dtype=np.float64))
+    return float(np.asarray(vals, dtype=np.float64)[0])
+
+
+def _transform_scalar(copula, g_t):
+    method = getattr(copula, 'transform_scalar', None)
+    if method is not None:
+        return float(method(g_t))
+    return float(copula.transform(np.array([g_t], dtype=np.float64))[0])
+
+
+def _dtransform_scalar(copula, g_t):
+    method = getattr(copula, 'dtransform_scalar', None)
+    if method is not None:
+        return float(method(g_t))
+    return float(copula.dtransform(np.array([g_t], dtype=np.float64))[0])
+
+
+def _gas_score_multivariate(u_row, t_index, g_t, ll_t, copula, scaling,
+                            score_eps):
+    """Score d log c(u_t; Psi(g_t)) / d g_t for d-dimensional copulas."""
+    if scaling != 'fisher' and hasattr(copula, 'dlog_pdf_dr_rows'):
+        r_t = _transform_scalar(copula, g_t)
+        dlog_dr = float(copula.dlog_pdf_dr_rows(
+            u_row, np.array([r_t], dtype=np.float64),
+            t_index=t_index)[0])
+        dpsi_dg = _dtransform_scalar(copula, g_t)
+        return dlog_dr * dpsi_dg
+
+    g_plus = g_t + score_eps
+    g_minus = g_t - score_eps
+    r_plus = _transform_scalar(copula, g_plus)
+    r_minus = _transform_scalar(copula, g_minus)
+
+    ll_plus = _multivariate_log_pdf_row(copula, u_row, r_plus, t_index)
+    ll_minus = _multivariate_log_pdf_row(copula, u_row, r_minus, t_index)
+
+    nabla_t = (ll_plus - ll_minus) / (2.0 * score_eps)
+    if scaling != 'fisher':
+        return nabla_t
+
+    d2 = (ll_plus - 2.0 * ll_t + ll_minus) / (score_eps ** 2)
+    fisher = max(-d2, 1e-6)
+    return nabla_t / fisher
+
+
+def _gas_filter_multivariate(omega, gamma, beta, u, copula, scaling='unit',
+                             score_eps=1e-4):
+    """Run GAS filter for scalar-latent multivariate copulas."""
+    T = len(u)
+    g_path = np.empty(T)
+    r_path = np.empty(T)
+    total_logL = 0.0
+
+    if abs(beta) < 1.0 - 1e-8:
+        g_t = omega / (1.0 - beta)
+    else:
+        g_t = omega
+
+    combined_rows = None
+    if scaling != 'fisher':
+        combined_rows = getattr(copula, 'log_pdf_and_dlog_dr_rows', None)
+
+    for t in range(T):
+        g_path[t] = g_t
+        r_t = _transform_scalar(copula, g_t)
+        r_path[t] = r_t
+
+        u_row = u[t:t + 1]
+        s_t = None
+        if combined_rows is not None and t < T - 1:
+            ll_vals, dlog_vals = combined_rows(
+                u_row, np.array([r_t], dtype=np.float64), t_index=t)
+            ll_t = float(np.asarray(ll_vals, dtype=np.float64)[0])
+            dlog_dr = float(np.asarray(dlog_vals, dtype=np.float64)[0])
+            s_t = dlog_dr * _dtransform_scalar(copula, g_t)
+        else:
+            ll_t = _multivariate_log_pdf_row(copula, u_row, r_t, t)
+        if not np.isfinite(ll_t):
+            return g_path, r_path, -1e10
+
+        total_logL += ll_t
+
+        if t < T - 1:
+            if s_t is None:
+                s_t = _gas_score_multivariate(
+                    u_row, t, g_t, ll_t, copula, scaling, score_eps)
+            if not np.isfinite(s_t):
+                return g_path, r_path, -1e10
+
+            s_t = np.clip(s_t, -S_CLIP, S_CLIP)
+            g_t = omega + beta * g_t + gamma * s_t
+            g_t = np.clip(g_t, -G_CLIP, G_CLIP)
+
+    return g_path, r_path, total_logL
+
+
 def gas_filter(omega, gamma, beta, u, copula, scaling='unit',
                score_eps=1e-4):
     """Run GAS filter, return full path and log-likelihood.
@@ -322,12 +445,18 @@ def gas_filter(omega, gamma, beta, u, copula, scaling='unit',
     r_path : (T,) — copula parameter path Psi(g_t)
     total_logL : float
     """
+    u = np.asarray(u, dtype=np.float64)
+    if _validate_multivariate_log_pdf_input(copula, u):
+        return _gas_filter_multivariate(
+            float(omega), float(gamma), float(beta),
+            u, copula, scaling, score_eps)
+
     kernel_args = _gas_unit_kernel_args(copula, scaling)
     if kernel_args is not None:
         family, rotation, transform_type = kernel_args
         return _gas_filter_unit_numba(
             float(omega), float(gamma), float(beta),
-            np.asarray(u, dtype=np.float64),
+            u,
             family, rotation, transform_type)
 
     T = len(u)
@@ -379,6 +508,7 @@ def gas_predict_param(omega, gamma, beta, u, copula, scaling='unit',
     ``current`` returns the last in-sample parameter Psi(g_{T-1}).
     ``next`` applies the final observation score and returns Psi(g_T).
     """
+    u = np.asarray(u, dtype=np.float64)
     g_path, r_path, _ = gas_filter(
         omega, gamma, beta, u, copula, scaling, score_eps)
     if len(g_path) == 0:
@@ -397,6 +527,17 @@ def gas_predict_param(omega, gamma, beta, u, copula, scaling='unit',
         raise ValueError("horizon must be 'current' or 'next'")
 
     g_t = float(g_path[-1])
+    if _supports_multivariate_log_pdf(copula, u):
+        u_row = u[-1:]
+        r_t = float(copula.transform(np.array([g_t]))[0])
+        ll_t = _multivariate_log_pdf_row(copula, u_row, r_t, len(u) - 1)
+        s_t = _gas_score_multivariate(
+            u_row, len(u) - 1, g_t, ll_t, copula, scaling, score_eps)
+        s_t = np.clip(s_t, -S_CLIP, S_CLIP)
+        g_next = omega + beta * g_t + gamma * s_t
+        g_next = np.clip(g_next, -G_CLIP, G_CLIP)
+        return float(copula.transform(np.array([g_next]))[0])
+
     u1 = u[-1:, 0]
     u2 = u[-1:, 1]
 

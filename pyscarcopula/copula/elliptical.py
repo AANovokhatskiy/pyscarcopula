@@ -208,6 +208,67 @@ def _gauss_h_numba(u, v, rho):
     return out
 
 
+@njit(cache=True)
+def _gauss_pdf_and_grad_batch(u_all, r_grid, dpsi):
+    """Fused TM-grid Gaussian copula density and d/dx evaluation."""
+    T = u_all.shape[0]
+    K = len(r_grid)
+    fi = np.empty((T, K))
+    dfi = np.empty((T, K))
+
+    for t in range(T):
+        v1 = min(max(u_all[t, 0], 1e-10), 1.0 - 1e-10)
+        v2 = min(max(u_all[t, 1], 1e-10), 1.0 - 1e-10)
+        x1 = _ndtri(v1)
+        x2 = _ndtri(v2)
+        s1 = x1 * x1 + x2 * x2
+        s12 = x1 * x2
+
+        for j in range(K):
+            r = r_grid[j]
+            r2 = r * r
+            omr2 = 1.0 - r2
+            quad = (r2 * s1 - 2.0 * r * s12) / omr2
+            log_c = -0.5 * np.log(omr2) - 0.5 * quad
+            c_val = np.exp(log_c)
+            fi[t, j] = c_val
+
+            dlog_det = r / omr2
+            num = ((2.0 * r * s1 - 2.0 * s12) * omr2
+                   + 2.0 * r * (r2 * s1 - 2.0 * r * s12))
+            dquad = num / (omr2 * omr2)
+            dlog = dlog_det - 0.5 * dquad
+            dfi[t, j] = c_val * dlog * dpsi[j]
+
+    return fi, dfi
+
+
+@njit(cache=True)
+def _gauss_pdf_batch(u_all, r_grid):
+    """Fused TM-grid Gaussian copula density evaluation."""
+    T = u_all.shape[0]
+    K = len(r_grid)
+    fi = np.empty((T, K))
+
+    for t in range(T):
+        v1 = min(max(u_all[t, 0], 1e-10), 1.0 - 1e-10)
+        v2 = min(max(u_all[t, 1], 1e-10), 1.0 - 1e-10)
+        x1 = _ndtri(v1)
+        x2 = _ndtri(v2)
+        s1 = x1 * x1 + x2 * x2
+        s12 = x1 * x2
+
+        for j in range(K):
+            r = r_grid[j]
+            r2 = r * r
+            omr2 = 1.0 - r2
+            quad = (r2 * s1 - 2.0 * r * s12) / omr2
+            log_c = -0.5 * np.log(omr2) - 0.5 * quad
+            fi[t, j] = np.exp(log_c)
+
+    return fi
+
+
 # BivariateGaussianCopula
 
 class BivariateGaussianCopula(BivariateCopula):
@@ -268,6 +329,18 @@ class BivariateGaussianCopula(BivariateCopula):
     def dlog_pdf_dr_unrotated(self, u1, u2, r):
         u1a, u2a, ra = _broadcast(u1, u2, r)
         return _gauss_dlog_pdf_drho(u1a, u2a, ra)
+
+    def pdf_and_grad_on_grid_batch(self, u, x_grid):
+        x = np.asarray(x_grid, dtype=np.float64)
+        r_grid = self.transform(x)
+        dpsi = self.dtransform(x)
+        return _gauss_pdf_and_grad_batch(
+            np.asarray(u, dtype=np.float64), r_grid, dpsi)
+
+    def copula_grid_batch(self, u, x_grid):
+        x = np.asarray(x_grid, dtype=np.float64)
+        r_grid = self.transform(x)
+        return _gauss_pdf_batch(np.asarray(u, dtype=np.float64), r_grid)
 
     def mle_objective_fused(self, u):
         """Return fused (neg_loglik, neg_grad) callable with precomputed Phi^{-1}.

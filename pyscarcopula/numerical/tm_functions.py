@@ -19,10 +19,47 @@ from pyscarcopula.copula.elliptical import (
 )
 from pyscarcopula.numerical.tm_grid import TMGrid
 from pyscarcopula.numerical.predictive_tm import tm_state_distribution
+from pyscarcopula.numerical.gof_blocks import _forward_block_size
+
+
+def _h_on_grid(copula, u2, u1, r_grid):
+    if isinstance(copula, BivariateGaussianCopula):
+        u2_grid = np.full(len(r_grid), u2, dtype=np.float64)
+        u1_grid = np.full(len(r_grid), u1, dtype=np.float64)
+        return _gauss_h_numba(u2_grid, u1_grid, r_grid)
+    u2_grid = np.full(len(r_grid), u2)
+    u1_grid = np.full(len(r_grid), u1)
+    return copula.h(u2_grid, u1_grid, r_grid)
+
+
+def _h_block_on_grid(copula, u_block, r_grid):
+    n_block = len(u_block)
+    K = len(r_grid)
+    if isinstance(copula, BivariateGaussianCopula):
+        u2_grid = np.repeat(u_block[:, 1], K).astype(np.float64)
+        u1_grid = np.repeat(u_block[:, 0], K).astype(np.float64)
+        r_eval = np.tile(r_grid, n_block).astype(np.float64)
+        return _gauss_h_numba(u2_grid, u1_grid, r_eval).reshape(n_block, K)
+    u2_grid = np.repeat(u_block[:, 1], K)
+    u1_grid = np.repeat(u_block[:, 0], K)
+    r_eval = np.tile(r_grid, n_block)
+    return copula.h(u2_grid, u1_grid, r_eval).reshape(n_block, K)
+
+
+def _grid_prob_from_phi(grid, phi):
+    if phi is None:
+        return np.full(grid.K, 1.0 / grid.K, dtype=np.float64)
+    prob = phi * grid.trap_w
+    total = np.sum(prob)
+    if total > 0:
+        return prob / total
+    return np.full(grid.K, 1.0 / grid.K, dtype=np.float64)
 
 
 def tm_loglik(kappa, mu, nu, u, copula, K=300, grid_range=5.0,
-              grid_method='auto', adaptive=True, pts_per_sigma=4):
+              grid_method='auto', adaptive=True, pts_per_sigma=4,
+              transition_method='matrix', max_K=None, r_gh=3.0,
+              gh_order=5):
     """
     Transfer matrix backward pass. Returns minus log-likelihood.
 
@@ -36,7 +73,8 @@ def tm_loglik(kappa, mu, nu, u, copula, K=300, grid_range=5.0,
     u : ndarray (n, 2)
         Pseudo-observations.
     copula : CopulaProtocol
-    K, grid_range, grid_method, adaptive, pts_per_sigma
+        K, grid_range, grid_method, adaptive, pts_per_sigma,
+        transition_method, max_K, r_gh, gh_order
         Grid parameters (all preserved from original).
 
     Returns
@@ -57,7 +95,9 @@ def tm_loglik(kappa, mu, nu, u, copula, K=300, grid_range=5.0,
 
     try:
         grid = TMGrid(kappa, mu, nu, n, K, grid_range,
-                      grid_method, adaptive, pts_per_sigma)
+                      grid_method, adaptive, pts_per_sigma,
+                      transition_method=transition_method,
+                      max_K=max_K, r_gh=r_gh, gh_order=gh_order)
     except Exception:
         return 1e10
 
@@ -78,7 +118,9 @@ def tm_loglik(kappa, mu, nu, u, copula, K=300, grid_range=5.0,
 
 
 def _forward_loglik(kappa, mu, nu, u, copula, K=300, grid_range=5.0,
-                    grid_method='auto', adaptive=True, pts_per_sigma=4):
+                    grid_method='auto', adaptive=True, pts_per_sigma=4,
+                    transition_method='matrix', max_K=None, r_gh=3.0,
+                    gh_order=5):
     """
     Test-only forward-pass log-likelihood reference implementation.
 
@@ -88,7 +130,9 @@ def _forward_loglik(kappa, mu, nu, u, copula, K=300, grid_range=5.0,
     backward likelihoods stay visible when the main implementation changes.
     """
     grid = TMGrid(kappa, mu, nu, len(u), K, grid_range,
-                  grid_method, adaptive, pts_per_sigma)
+                  grid_method, adaptive, pts_per_sigma,
+                  transition_method=transition_method, max_K=max_K,
+                  r_gh=r_gh, gh_order=gh_order)
     fi_grid = grid.copula_grid(u, copula)
 
     phi = grid.p0.copy()
@@ -111,7 +155,9 @@ def _forward_loglik(kappa, mu, nu, u, copula, K=300, grid_range=5.0,
 
 def tm_forward_predictive_mean(kappa, mu, nu, u, copula, K=300,
                                grid_range=5.0, grid_method='auto',
-                               adaptive=True, pts_per_sigma=4):
+                               adaptive=True, pts_per_sigma=4,
+                               transition_method='matrix', max_K=None,
+                               r_gh=3.0, gh_order=5):
     """
     Forward pass: E[Psi(x_k) | u_{1:k-1}].
 
@@ -124,25 +170,41 @@ def tm_forward_predictive_mean(kappa, mu, nu, u, copula, K=300,
     """
     n = len(u)
     grid = TMGrid(kappa, mu, nu, n, K, grid_range,
-                  grid_method, adaptive, pts_per_sigma)
-    fi_grid = grid.copula_grid(u, copula)
+                  grid_method, adaptive, pts_per_sigma,
+                  transition_method=transition_method, max_K=max_K,
+                  r_gh=r_gh, gh_order=gh_order)
     g_grid = copula.transform(grid.z + grid.mu)
 
-    weights = grid.forward_weights(fi_grid)
-    J = np.sum(weights * g_grid[np.newaxis, :], axis=1)
+    J = np.empty(n)
+    phi = grid.p0.copy()
+    block_size = _forward_block_size(grid.K)
+    for start in range(0, n, block_size):
+        stop = min(n, start + block_size)
+        fi_block = grid.copula_grid(u[start:stop], copula)
+        for local, k in enumerate(range(start, stop)):
+            weights = grid.predictive_weights_from_phi(phi)
+            J[k] = np.sum(weights * g_grid)
+            if k < n - 1:
+                phi = grid.advance_forward_phi(phi, fi_block[local])
+
     return J
 
 
 def tm_forward_smoothed(kappa, mu, nu, u, copula, K=300, grid_range=5.0,
-                        grid_method='auto', adaptive=True, pts_per_sigma=4):
+                        grid_method='auto', adaptive=True, pts_per_sigma=4,
+                        transition_method='matrix', max_K=None,
+                        r_gh=3.0, gh_order=5):
     """Backward-compatible alias for :func:`tm_forward_predictive_mean`."""
     return tm_forward_predictive_mean(
         kappa, mu, nu, u, copula, K, grid_range, grid_method, adaptive,
-        pts_per_sigma)
+        pts_per_sigma, transition_method=transition_method, max_K=max_K,
+        r_gh=r_gh, gh_order=gh_order)
 
 
 def tm_forward_rosenblatt(kappa, mu, nu, u, copula, K=300, grid_range=5.0,
-                          grid_method='auto', adaptive=True, pts_per_sigma=4):
+                          grid_method='auto', adaptive=True, pts_per_sigma=4,
+                          transition_method='matrix', max_K=None,
+                          r_gh=3.0, gh_order=5):
     """
     Forward pass: mixture Rosenblatt transform for GoF test.
 
@@ -154,20 +216,26 @@ def tm_forward_rosenblatt(kappa, mu, nu, u, copula, K=300, grid_range=5.0,
     """
     n = len(u)
     grid = TMGrid(kappa, mu, nu, n, K, grid_range,
-                  grid_method, adaptive, pts_per_sigma)
-    fi_grid = grid.copula_grid(u, copula)
+                  grid_method, adaptive, pts_per_sigma,
+                  transition_method=transition_method, max_K=max_K,
+                  r_gh=r_gh, gh_order=gh_order)
     r_grid = copula.transform(grid.z + grid.mu)
-
-    weights = grid.forward_weights(fi_grid)
 
     e = np.empty((n, 2))
     e[:, 0] = u[:, 0]
 
-    for k in range(n):
-        u2_vec = np.full(grid.K, u[k, 1])
-        u1_vec = np.full(grid.K, u[k, 0])
-        h_vals = copula.h(u2_vec, u1_vec, r_grid)
-        e[k, 1] = np.sum(h_vals * weights[k])
+    phi = grid.p0.copy()
+    block_size = _forward_block_size(grid.K)
+    for start in range(0, n, block_size):
+        stop = min(n, start + block_size)
+        u_block = u[start:stop]
+        fi_block = grid.copula_grid(u_block, copula)
+        h_block = _h_block_on_grid(copula, u_block, r_grid)
+        for local, k in enumerate(range(start, stop)):
+            weights = grid.predictive_weights_from_phi(phi)
+            e[k, 1] = np.sum(h_block[local] * weights)
+            if k < n - 1:
+                phi = grid.advance_forward_phi(phi, fi_block[local])
 
     eps = 1e-6
     return np.clip(e, eps, 1.0 - eps)
@@ -175,6 +243,8 @@ def tm_forward_rosenblatt(kappa, mu, nu, u, copula, K=300, grid_range=5.0,
 
 def tm_forward_mixture_h(kappa, mu, nu, u, copula, K=300, grid_range=5.0,
                          grid_method='auto', adaptive=True, pts_per_sigma=4,
+                         transition_method='matrix', max_K=None,
+                         r_gh=3.0, gh_order=5,
                          state_cache=None, current_cache_key=None,
                          next_cache_key=None):
     """
@@ -188,70 +258,56 @@ def tm_forward_mixture_h(kappa, mu, nu, u, copula, K=300, grid_range=5.0,
     """
     n = len(u)
     grid = TMGrid(kappa, mu, nu, n, K, grid_range,
-                  grid_method, adaptive, pts_per_sigma)
-    fi_grid = grid.copula_grid(u, copula)
+                  grid_method, adaptive, pts_per_sigma,
+                  transition_method=transition_method, max_K=max_K,
+                  r_gh=r_gh, gh_order=gh_order)
     r_grid = copula.transform(grid.z + grid.mu)
 
-    if state_cache is None or (
-            current_cache_key is None and next_cache_key is None):
-        weights = grid.forward_weights(fi_grid)
-    else:
-        weights = np.zeros((n, grid.K))
-        phi = grid.p0.copy()
-        for k in range(n):
-            raw_w = phi * grid.trap_w
-            total = np.sum(raw_w)
-            if total > 0:
-                weights[k] = raw_w / total
+    h_mix = np.empty(n)
+    posterior_phi = None
+    phi = grid.p0.copy()
+    block_size = _forward_block_size(grid.K)
+    for start in range(0, n, block_size):
+        stop = min(n, start + block_size)
+        u_block = u[start:stop]
+        fi_block = grid.copula_grid(u_block, copula)
+        h_block = _h_block_on_grid(copula, u_block, r_grid)
+        for local, k in enumerate(range(start, stop)):
+            weights = grid.predictive_weights_from_phi(phi)
+            h_mix[k] = np.sum(h_block[local] * weights)
+            if phi is None:
+                posterior_phi = None
             else:
-                weights[k] = 1.0 / grid.K
-
-            phi *= fi_grid[k]
+                posterior_phi = phi * fi_block[local]
             if k < n - 1:
-                phi = grid.predict_matvec(phi * grid.trap_w)
-                mx = np.max(np.abs(phi))
-                if mx > 0:
-                    phi /= mx
+                phi = grid.advance_forward_phi(phi, fi_block[local])
 
+    if state_cache is not None:
+        z_grid = grid.z + grid.mu
         if current_cache_key is not None:
-            z_grid = grid.z + grid.mu
-            prob = phi * grid.trap_w
-            total = np.sum(prob)
-            if total > 0:
-                prob = prob / total
-            else:
-                prob = np.full(grid.K, 1.0 / grid.K, dtype=np.float64)
-            state_cache[current_cache_key] = (z_grid, prob)
+            state_cache[current_cache_key] = (
+                z_grid, _grid_prob_from_phi(grid, posterior_phi))
 
         if next_cache_key is not None:
-            phi_next = grid.predict_matvec(phi * grid.trap_w)
-            mx = np.max(np.abs(phi_next))
-            if mx > 0:
-                phi_next /= mx
-            z_grid = grid.z + grid.mu
-            prob = phi_next * grid.trap_w
-            total = np.sum(prob)
-            if total > 0:
-                prob = prob / total
+            if posterior_phi is None:
+                next_prob = np.full(grid.K, 1.0 / grid.K, dtype=np.float64)
             else:
-                prob = np.full(grid.K, 1.0 / grid.K, dtype=np.float64)
-            state_cache[next_cache_key] = (z_grid, prob)
-
-    u2_grid = np.repeat(u[:, 1], grid.K)
-    u1_grid = np.repeat(u[:, 0], grid.K)
-    r_eval = np.tile(r_grid, n)
-    if isinstance(copula, BivariateGaussianCopula):
-        h_vals = _gauss_h_numba(u2_grid, u1_grid, r_eval)
-    else:
-        h_vals = copula.h(u2_grid, u1_grid, r_eval)
-    h_vals = h_vals.reshape(n, grid.K)
-    h_mix = np.sum(h_vals * weights, axis=1)
+                phi_next = grid.predict_matvec(posterior_phi * grid.trap_w)
+                mx = np.max(np.abs(phi_next))
+                if mx > 0:
+                    phi_next /= mx
+                    next_prob = _grid_prob_from_phi(grid, phi_next)
+                else:
+                    next_prob = np.full(grid.K, 1.0 / grid.K, dtype=np.float64)
+            state_cache[next_cache_key] = (z_grid, next_prob)
 
     return np.clip(h_mix, 1e-6, 1.0 - 1e-6)
 
 
 def tm_xT_distribution(kappa, mu, nu, u, copula, K=300, grid_range=5.0,
-                       grid_method='auto', adaptive=True, pts_per_sigma=4):
+                       grid_method='auto', adaptive=True, pts_per_sigma=4,
+                       transition_method='matrix', max_K=None,
+                       r_gh=3.0, gh_order=5):
     """
     Forward pass: distribution of x_T on grid.
 
@@ -263,4 +319,6 @@ def tm_xT_distribution(kappa, mu, nu, u, copula, K=300, grid_range=5.0,
     """
     return tm_state_distribution(
         kappa, mu, nu, u, copula, K, grid_range,
-        grid_method, adaptive, pts_per_sigma, horizon='current')
+        grid_method, adaptive, pts_per_sigma, transition_method=transition_method,
+        max_K=max_K, r_gh=r_gh, gh_order=gh_order,
+        horizon='current')

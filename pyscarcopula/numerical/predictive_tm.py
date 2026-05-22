@@ -16,6 +16,8 @@ def _normalize_prob(phi, trap_w):
 
 def tm_state_distribution(kappa, mu, nu, u, copula, K=300, grid_range=5.0,
                           grid_method='auto', adaptive=True, pts_per_sigma=4,
+                          transition_method='matrix', max_K=None,
+                          r_gh=3.0, gh_order=5,
                           horizon='current'):
     """Distribution of x_T or x_{T+1} on the TM grid."""
     horizon = str(horizon).lower()
@@ -24,7 +26,9 @@ def tm_state_distribution(kappa, mu, nu, u, copula, K=300, grid_range=5.0,
 
     n = len(u)
     grid = TMGrid(kappa, mu, nu, n, K, grid_range,
-                  grid_method, adaptive, pts_per_sigma)
+                  grid_method, adaptive, pts_per_sigma,
+                  transition_method=transition_method, max_K=max_K,
+                  r_gh=r_gh, gh_order=gh_order)
     fi_grid = grid.copula_grid(u, copula)
 
     phi = grid.p0.copy()

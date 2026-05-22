@@ -39,12 +39,17 @@ from typing import Optional, Tuple
 
 import numpy as np
 from scipy.optimize import minimize
-from scipy.special import gammaln
+from scipy.special import gammaln, stdtrit
 from scipy.stats import kendalltau
 from scipy.stats import t as t_dist
 
 from pyscarcopula._utils import pobs
 from pyscarcopula.copula.base import BivariateCopula
+from pyscarcopula.copula.experimental._conditional import (
+    as_path,
+    sample_student_conditional,
+    validate_multivariate_given,
+)
 
 try:
     from pyscarcopula._types import DEFAULT_CONFIG, MLEResult, NumericalConfig
@@ -96,9 +101,21 @@ def _softplus(x):
     return np.where(x > 30, x, np.log1p(np.exp(np.clip(x, -500, 30))))
 
 
+def _softplus_scalar(x):
+    x = float(x)
+    if x > 30.0:
+        return x
+    return float(np.log1p(np.exp(min(max(x, -500.0), 30.0))))
+
+
 def _softplus_deriv(x):
     """d softplus / dx = sigmoid(x)."""
     return 1.0 / (1.0 + np.exp(-np.clip(x, -500, 500)))
+
+
+def _softplus_deriv_scalar(x):
+    x = min(max(float(x), -500.0), 500.0)
+    return float(1.0 / (1.0 + np.exp(-x)))
 
 
 def _inv_softplus(y):
@@ -185,19 +202,51 @@ def _student_copula_logpdf(u, R, df, L_inv=None, log_det=None):
     """Log-density of d-dimensional Student-t copula."""
     eps = 1e-10
     u_c = np.clip(np.asarray(u, dtype=np.float64), eps, 1.0 - eps)
-    x = t_dist.ppf(u_c, df=df)
-    log_joint = _multivariate_t_logpdf(x, R, df, L_inv, log_det)
-    log_marginals = np.sum(t_dist.logpdf(x, df=df), axis=1)
-    return log_joint - log_marginals
+    x = stdtrit(df, u_c)
+    if L_inv is None or log_det is None:
+        L = _safe_cholesky(R)
+        L_inv = np.linalg.inv(L)
+        log_det = 2.0 * np.sum(np.log(np.diag(L)))
+    return _log_copula_inlined(x, df, u_c.shape[1], L_inv, log_det)
 
 
 def _student_copula_dlogpdf_ddf(u, R, df, L_inv=None, log_det=None, eps_fd=1e-5):
     """Finite-difference derivative of log copula density wrt df."""
+    if L_inv is None or log_det is None:
+        L = _safe_cholesky(R)
+        L_inv = np.linalg.inv(L)
+        log_det = 2.0 * np.sum(np.log(np.diag(L)))
+
+    u_c = np.clip(np.asarray(u, dtype=np.float64), 1e-10, 1.0 - 1e-10)
+    d = u_c.shape[1]
     df_p = df + eps_fd
-    df_m = max(df - eps_fd, 2.001)
-    lp = _student_copula_logpdf(u, R, df_p, L_inv, log_det)
-    lm = _student_copula_logpdf(u, R, df_m, L_inv, log_det)
+    df_m = max(df - eps_fd, 2.0 + 1e-8)
+    x_p = stdtrit(df_p, u_c)
+    x_m = stdtrit(df_m, u_c)
+    lp = _log_copula_inlined(x_p, df_p, d, L_inv, log_det)
+    lm = _log_copula_inlined(x_m, df_m, d, L_inv, log_det)
     return (lp - lm) / (df_p - df_m)
+
+
+def _student_copula_logpdf_and_dlogpdf_ddf(
+        u, R, df, L_inv=None, log_det=None, eps_fd=1e-5):
+    """Return log-density and finite-difference derivative wrt df."""
+    if L_inv is None or log_det is None:
+        L = _safe_cholesky(R)
+        L_inv = np.linalg.inv(L)
+        log_det = 2.0 * np.sum(np.log(np.diag(L)))
+
+    u_c = np.clip(np.asarray(u, dtype=np.float64), 1e-10, 1.0 - 1e-10)
+    d = u_c.shape[1]
+    df_p = df + eps_fd
+    df_m = max(df - eps_fd, 2.0 + 1e-8)
+    x_c = stdtrit(df, u_c)
+    x_p = stdtrit(df_p, u_c)
+    x_m = stdtrit(df_m, u_c)
+    ll = _log_copula_inlined(x_c, df, d, L_inv, log_det)
+    lp = _log_copula_inlined(x_p, df_p, d, L_inv, log_det)
+    lm = _log_copula_inlined(x_m, df_m, d, L_inv, log_det)
+    return ll, (lp - lm) / (df_p - df_m)
 
 
 def _log_copula_inlined(x, df, d, L_inv, log_det):
@@ -223,6 +272,51 @@ def _log_copula_inlined(x, df, d, L_inv, log_det):
     )
 
     return log_joint - log_marg
+
+
+def _log_copula_inlined_scalar(x, df, d, L_inv, log_det):
+    """Scalar-row version of _log_copula_inlined."""
+    y = L_inv @ x
+    quad = float(np.dot(y, y))
+
+    log_norm_joint = (
+        gammaln(0.5 * (df + d))
+        - gammaln(0.5 * df)
+        - 0.5 * d * np.log(df * np.pi)
+        - 0.5 * log_det
+    )
+    log_joint = log_norm_joint - 0.5 * (df + d) * np.log1p(quad / df)
+
+    log_norm_marg = (
+        gammaln(0.5 * (df + 1.0))
+        - gammaln(0.5 * df)
+        - 0.5 * np.log(df * np.pi)
+    )
+    log_marg = (
+        d * log_norm_marg
+        - 0.5 * (df + 1.0) * float(np.sum(np.log1p((x * x) / df)))
+    )
+    return float(log_joint - log_marg)
+
+
+def _student_copula_logpdf_and_dlogpdf_ddf_row(
+        u_row, df, L_inv, log_det, eps_fd=1e-5):
+    """Scalar-row log-density and finite-difference derivative wrt df."""
+    u_c = np.clip(
+        np.asarray(u_row, dtype=np.float64).ravel(),
+        1e-10,
+        1.0 - 1e-10,
+    )
+    d = u_c.shape[0]
+    df_p = df + eps_fd
+    df_m = max(df - eps_fd, 2.0 + 1e-8)
+    x_c = stdtrit(df, u_c)
+    x_p = stdtrit(df_p, u_c)
+    x_m = stdtrit(df_m, u_c)
+    ll = _log_copula_inlined_scalar(x_c, df, d, L_inv, log_det)
+    lp = _log_copula_inlined_scalar(x_p, df_p, d, L_inv, log_det)
+    lm = _log_copula_inlined_scalar(x_m, df_m, d, L_inv, log_det)
+    return ll, (lp - lm) / (df_p - df_m)
 
 
 def _log_copula_inlined_timevarying(x, df, d, L_inv_path, log_det_path):
@@ -282,7 +376,7 @@ class _PPFTable:
         self.nodes = np.unique(np.concatenate([nodes_lo, nodes_hi]))
         self.table = np.empty((len(self.nodes),) + u_c.shape, dtype=np.float64)
         for i, df_val in enumerate(self.nodes):
-            self.table[i] = t_dist.ppf(u_c, df=df_val)
+            self.table[i] = stdtrit(df_val, u_c)
 
     def __call__(self, df):
         """Interpolate ppf at given df.  Returns array of same shape as u."""
@@ -445,6 +539,8 @@ class StochasticStudentDCCCopula(BivariateCopula):
       still scalar; only the emission density changes from R to R_t.
     """
 
+    _gas_optimizer_config = 'stochastic_student_dcc_gas_optimizer'
+
     def __init__(self, d, rotate=0):
         super().__init__(rotate=0)
         if d < 2:
@@ -500,6 +596,9 @@ class StochasticStudentDCCCopula(BivariateCopula):
         x = np.atleast_1d(np.asarray(x, dtype=np.float64))
         return 2.0 + _softplus(x)
 
+    def transform_scalar(self, x):
+        return 2.0 + _softplus_scalar(x)
+
     def inv_transform(self, df):
         df = np.atleast_1d(np.asarray(df, dtype=np.float64))
         return _inv_softplus(np.maximum(df - 2.0, 1e-15))
@@ -507,6 +606,9 @@ class StochasticStudentDCCCopula(BivariateCopula):
     def dtransform(self, x):
         x = np.atleast_1d(np.asarray(x, dtype=np.float64))
         return _softplus_deriv(x)
+
+    def dtransform_scalar(self, x):
+        return _softplus_deriv_scalar(x)
 
     # ── DCC state handling ──────────────────────────────────
 
@@ -821,11 +923,158 @@ class StochasticStudentDCCCopula(BivariateCopula):
             else:
                 r = float(self.transform(np.array([self.fit_result.params.mu]))[0])
 
-        x = t_dist.ppf(np.clip(u, 1e-10, 1.0 - 1e-10), df=r)
+        x = stdtrit(r, np.clip(u, 1e-10, 1.0 - 1e-10))
         ll = _log_copula_inlined_timevarying(
             x, r, self._d, self._L_inv_path[:T], self._log_det_path[:T]
         )
         return float(np.sum(ll))
+
+    def log_pdf_rows(self, u, r, t_index=None):
+        """Return one log-density per row for scalar/row-wise df values."""
+        self._require_R_path()
+        u = np.asarray(u, dtype=np.float64)
+        T = len(u)
+
+        if t_index is None:
+            start = 0
+        else:
+            start = int(t_index)
+        end = start + T
+        if start < 0 or end > len(self._R_path):
+            raise ValueError(
+                f"R_path slice [{start}:{end}] is outside length "
+                f"{len(self._R_path)}")
+
+        df_arr = np.atleast_1d(np.asarray(r, dtype=np.float64)).ravel()
+        L_inv_path = self._L_inv_path[start:end]
+        log_det_path = self._log_det_path[start:end]
+        if df_arr.size == 1:
+            df_val = float(df_arr[0])
+            if T == 1:
+                ll, _ = _student_copula_logpdf_and_dlogpdf_ddf_row(
+                    u[0],
+                    df_val,
+                    self._L_inv_path[start],
+                    self._log_det_path[start],
+                )
+                return np.array([ll], dtype=np.float64)
+            x = stdtrit(df_val, np.clip(u, 1e-10, 1.0 - 1e-10))
+            return _log_copula_inlined_timevarying(
+                x, df_val, self._d, L_inv_path, log_det_path)
+        if df_arr.size != T:
+            raise ValueError(
+                f"r must be scalar or length {T}, got {len(df_arr)}")
+
+        out = np.empty(T, dtype=np.float64)
+        for idx, df_val in enumerate(df_arr):
+            path_idx = start + idx
+            ll, _ = _student_copula_logpdf_and_dlogpdf_ddf_row(
+                u[idx],
+                float(df_val),
+                self._L_inv_path[path_idx],
+                self._log_det_path[path_idx],
+            )
+            out[idx] = ll
+        return out
+
+    def dlog_pdf_dr_rows(self, u, r, t_index=None):
+        """Return d log c(u_t; df_t, R_t) / d df_t for each row."""
+        self._require_R_path()
+        u = np.asarray(u, dtype=np.float64)
+        T = len(u)
+
+        if t_index is None:
+            start = 0
+        else:
+            start = int(t_index)
+        end = start + T
+        if start < 0 or end > len(self._R_path):
+            raise ValueError(
+                f"R_path slice [{start}:{end}] is outside length "
+                f"{len(self._R_path)}")
+
+        df_arr = np.atleast_1d(np.asarray(r, dtype=np.float64)).ravel()
+        if df_arr.size == 1:
+            df_arr = np.full(T, float(df_arr[0]), dtype=np.float64)
+        elif df_arr.size != T:
+            raise ValueError(
+                f"r must be scalar or length {T}, got {len(df_arr)}")
+
+        out = np.empty(T, dtype=np.float64)
+        for idx, df_val in enumerate(df_arr):
+            path_idx = start + idx
+            _, dlog = _student_copula_logpdf_and_dlogpdf_ddf_row(
+                u[idx],
+                float(df_val),
+                self._L_inv_path[path_idx],
+                self._log_det_path[path_idx],
+            )
+            out[idx] = dlog
+        return out
+
+    def log_pdf_and_dlog_dr_rows(self, u, r, t_index=None):
+        """Return one log-density and df derivative per row."""
+        self._require_R_path()
+        u = np.asarray(u, dtype=np.float64)
+        T = len(u)
+
+        if t_index is None:
+            start = 0
+        else:
+            start = int(t_index)
+        end = start + T
+        if start < 0 or end > len(self._R_path):
+            raise ValueError(
+                f"R_path slice [{start}:{end}] is outside length "
+                f"{len(self._R_path)}")
+
+        df_arr = np.atleast_1d(np.asarray(r, dtype=np.float64)).ravel()
+        if df_arr.size == 1:
+            df_val = float(df_arr[0])
+            if T == 1:
+                ll, dlog = _student_copula_logpdf_and_dlogpdf_ddf_row(
+                    u[0],
+                    df_val,
+                    self._L_inv_path[start],
+                    self._log_det_path[start],
+                )
+                return (
+                    np.array([ll], dtype=np.float64),
+                    np.array([dlog], dtype=np.float64),
+                )
+
+            u_c = np.clip(u, 1e-10, 1.0 - 1e-10)
+            df_p = df_val + 1e-5
+            df_m = max(df_val - 1e-5, 2.0 + 1e-8)
+            x_c = stdtrit(df_val, u_c)
+            x_p = stdtrit(df_p, u_c)
+            x_m = stdtrit(df_m, u_c)
+            L_inv_path = self._L_inv_path[start:end]
+            log_det_path = self._log_det_path[start:end]
+            ll = _log_copula_inlined_timevarying(
+                x_c, df_val, self._d, L_inv_path, log_det_path)
+            lp = _log_copula_inlined_timevarying(
+                x_p, df_p, self._d, L_inv_path, log_det_path)
+            lm = _log_copula_inlined_timevarying(
+                x_m, df_m, self._d, L_inv_path, log_det_path)
+            return ll, (lp - lm) / (df_p - df_m)
+        if df_arr.size != T:
+            raise ValueError(
+                f"r must be scalar or length {T}, got {len(df_arr)}")
+
+        ll = np.empty(T, dtype=np.float64)
+        dlog = np.empty(T, dtype=np.float64)
+        for idx, df_val in enumerate(df_arr):
+            path_idx = start + idx
+            ll_i, dlog_i = _student_copula_logpdf_and_dlogpdf_ddf_row(
+                u[idx],
+                float(df_val),
+                self._L_inv_path[path_idx],
+                self._log_det_path[path_idx],
+            )
+            ll[idx] = ll_i
+            dlog[idx] = dlog_i
+        return ll, dlog
 
     def pdf_on_grid(self, u_row, z_grid, t_index=0):
         """Copula density on latent grid for one observation at time t_index."""
@@ -925,14 +1174,18 @@ class StochasticStudentDCCCopula(BivariateCopula):
 
         return fi, dfi
 
-    def copula_grid_batch(self, u, x_grid):
+    def copula_grid_batch(self, u, x_grid, t_index=0):
         """Batch version of pdf_on_grid for time-varying R_t."""
         self._require_R_path()
         u = np.asarray(u, dtype=np.float64)
         x_grid = np.asarray(x_grid, dtype=np.float64)
         T = len(u)
-        if T != len(self._R_path):
-            raise ValueError(f"u has length {T}, but R_path has length {len(self._R_path)}")
+        start = int(t_index)
+        end = start + T
+        if start < 0 or end > len(self._R_path):
+            raise ValueError(
+                f"R_path slice [{start}:{end}] is outside length "
+                f"{len(self._R_path)}")
 
         K = len(x_grid)
         d = self._d
@@ -941,8 +1194,8 @@ class StochasticStudentDCCCopula(BivariateCopula):
         ppf = self._get_ppf_table(u)
 
         fi = np.empty((T, K), dtype=np.float64)
-        L_inv_T = self._L_inv_path[:T]
-        log_det_T = self._log_det_path[:T]
+        L_inv_T = self._L_inv_path[start:end]
+        log_det_T = self._log_det_path[start:end]
 
         for k in range(K):
             x = ppf(df_grid[k])
@@ -977,7 +1230,7 @@ class StochasticStudentDCCCopula(BivariateCopula):
 
         def neg_ll(x):
             df = float(self.transform(np.array([x[0]]))[0])
-            x_t = t_dist.ppf(np.clip(u, 1e-10, 1.0 - 1e-10), df=df)
+            x_t = stdtrit(df, np.clip(u, 1e-10, 1.0 - 1e-10))
             ll = _log_copula_inlined_timevarying(
                 x_t, df, self._d, self._L_inv_path[:T], self._log_det_path[:T]
             )
@@ -1148,6 +1401,8 @@ class StochasticStudentDCCCopula(BivariateCopula):
         R_path=None,
         df_path=None,
         rng=None,
+        u=None,
+        given=None,
     ):
         """
         Sample from the time-varying Student-t copula.
@@ -1192,17 +1447,27 @@ class StochasticStudentDCCCopula(BivariateCopula):
                 raise ValueError(f"Unknown mode: {mode}")
 
         if df_path is not None:
-            df_use = np.asarray(df_path, dtype=np.float64)
-            if len(df_use) != n_eff:
-                raise ValueError(f"df_path length {len(df_use)} does not match n={n_eff}")
+            df_use = as_path(df_path, n_eff, "df_path")
         else:
-            df_use = self._infer_df_path(n=n_eff, df_mode=df_mode, rng=rng)
+            df_use = self._infer_df_path(
+                n=n_eff, df_mode=df_mode, u=u, rng=rng)
 
+        given = validate_multivariate_given(given, self._d)
+        if given:
+            return sample_student_conditional(
+                n_eff, R_use, df_use, given=given, rng=rng)
         return self._sample_t_copula_with_R_path(R_use, df_use, rng=rng)
 
     # ── Predict ──────────────────────────────────────────────
 
-    def predict(self, n, u=None, rng=None, mode="dcc_forecast_mean", df_mode="posterior"):
+    def sample_conditional(self, n, r=None, given=None, rng=None, **kwargs):
+        """Sample conditionally with ``given={var_index: u_value}``."""
+        if r is not None and "df_path" not in kwargs:
+            kwargs["df_path"] = r
+        return self.sample(n=n, given=given, rng=rng, **kwargs)
+
+    def predict(self, n, u=None, rng=None, mode="dcc_forecast_mean",
+                df_mode="posterior", given=None):
         """
         Out-of-sample prediction.
 
@@ -1210,7 +1475,8 @@ class StochasticStudentDCCCopula(BivariateCopula):
         - forecast R_t via DCC conditional-mean recursion
         - sample df from x_T posterior and keep it fixed over the horizon
         """
-        return self.sample(n=n, mode=mode, df_mode=df_mode, rng=rng)
+        return self.sample(
+            n=n, mode=mode, df_mode=df_mode, u=u, given=given, rng=rng)
 
     # Predictive mean path / terminal distribution
 
