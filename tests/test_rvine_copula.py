@@ -19,7 +19,12 @@ from pyscarcopula._types import (
 )
 from pyscarcopula.api import predict as api_predict
 from pyscarcopula.api import sample as api_sample
-from pyscarcopula.stattests import gof_test, rvine_rosenblatt_transform
+from pyscarcopula.stattests import (
+    gof_test,
+    rvine_rosenblatt_transform,
+    vine_rosenblatt_transform,
+)
+from pyscarcopula.vine.cvine import CVineCopula
 from pyscarcopula.vine import _rvine_dissmann as dissmann_module
 from pyscarcopula.vine import rvine as rvine_module
 from pyscarcopula.vine._conditional_rvine import (
@@ -2225,6 +2230,41 @@ class TestGoF:
         result = gof_test(v, u, to_pobs=False)
         assert np.isfinite(result.statistic)
         assert np.isfinite(result.pvalue)
+
+    def test_two_dimensional_rvine_gof_matches_cvine_order(self):
+        rng = np.random.default_rng(123)
+        u = GumbelCopula().sample(500, 2.0, rng=rng)
+
+        cvine = CVineCopula(
+            candidates=[GumbelCopula],
+            allow_rotations=False,
+        ).fit(u, method='mle')
+        rvine = RVineCopula(
+            candidates=[GumbelCopula],
+            allow_rotations=False,
+        ).fit(u, method='mle')
+
+        np.testing.assert_allclose(
+            rvine_rosenblatt_transform(rvine, u),
+            vine_rosenblatt_transform(cvine, u),
+            rtol=1e-12,
+            atol=1e-12,
+        )
+
+        cvine_gof = gof_test(cvine, u, to_pobs=False)
+        rvine_gof = gof_test(rvine, u, to_pobs=False)
+        np.testing.assert_allclose(
+            rvine_gof.statistic,
+            cvine_gof.statistic,
+            rtol=1e-12,
+            atol=1e-12,
+        )
+        np.testing.assert_allclose(
+            rvine_gof.pvalue,
+            cvine_gof.pvalue,
+            rtol=1e-12,
+            atol=1e-12,
+        )
 
     @pytest.mark.parametrize(
         "method,fit_kwargs",

@@ -56,11 +56,11 @@ result = fit(copula, u, method='mle', config=cfg)
 ### GAS
 
 GAS estimates an observation-driven recursion
-`g_t = omega + beta * g_{t-1} + gamma * score_{t-1}`.
+$g_t = \omega + \beta g_{t-1} + \gamma\,score_{t-1}$.
 
 | Parameter | Where | Default | Effect |
 |-----------|-------|---------|--------|
-| `gamma0` | fit kwarg | MLE-based | Initial `[omega, gamma, beta]`. |
+| `gamma0` | fit kwarg | MLE-based | Initial $[\omega, \gamma, \beta]$. |
 | `gtol` | fit kwarg / `gas_optimizer.gtol` | `1e-3` | L-BFGS-B projected-gradient tolerance. |
 | `ftol` | fit kwarg / `gas_optimizer.ftol` | `1e-12` | Relative objective decrease tolerance. Use a tight value to avoid premature FACTR convergence. |
 | `maxfun` | fit kwarg / `gas_optimizer.maxfun` | `1000` | Maximum function evaluations. |
@@ -68,8 +68,8 @@ GAS estimates an observation-driven recursion
 | `maxls` | fit kwarg / `gas_optimizer.maxls` | `20` | Maximum L-BFGS-B line-search steps per iteration. |
 | `eps` | fit kwarg / `gas_optimizer.eps` | `1e-5` | L-BFGS-B finite-difference step. |
 | `score_eps` | fit kwarg / `gas_score_eps` | `1e-4` | Finite-difference step for score calculations where needed. |
-| `gamma_bound` | fit kwarg / `gas_gamma_bound` | `20.0` | Bounds score sensitivity to `[-gamma_bound, gamma_bound]`. |
-| `beta_bound` | fit kwarg / `gas_beta_bound` | `0.999` | Bounds persistence to `[-beta_bound, beta_bound]`; must be in `(0, 1)`. |
+| `gamma_bound` | fit kwarg / `gas_gamma_bound` | `20.0` | Bounds score sensitivity to $[-\texttt{gamma\_bound}, \texttt{gamma\_bound}]$. |
+| `beta_bound` | fit kwarg / `gas_beta_bound` | `0.999` | Bounds persistence to $[-\texttt{beta\_bound}, \texttt{beta\_bound}]$; must be in $(0, 1)$. |
 | `scaling` | strategy kwarg | `'unit'` | Score scaling mode; `'fisher'` is available but less stable. |
 
 ```python
@@ -86,7 +86,7 @@ result = fit(
 `ftol` matters for GAS because L-BFGS-B can otherwise report `success=True`
 after a small relative objective decrease even when the gradient is still
 large. If a GAS result looks sensitive to `gamma_bound` even though the fitted
-`gamma` is far from the bound, rerun with tighter `ftol` and larger `maxfun`.
+$\gamma$ is far from the bound, rerun with tighter `ftol` and larger `maxfun`.
 
 ### SCAR-TM-OU
 
@@ -96,17 +96,22 @@ and predictive paths are needed.
 
 | Parameter | Where | Default | Effect |
 |-----------|-------|---------|--------|
-| `alpha0` | fit kwarg | smart/MLE-based | Initial `[kappa, mu, nu]`. |
+| `alpha0` | fit kwarg | smart/MLE-based | Initial $[\kappa, \mu, \nu]$. |
 | `gtol` | fit kwarg / `scar_optimizer.gtol` | `1e-3` | L-BFGS-B projected-gradient tolerance. Larger values are faster but less precise. |
 | `maxfun` | fit kwarg / `scar_optimizer.maxfun` | `100` | Maximum function evaluations. |
 | `maxiter` | fit kwarg / `scar_optimizer.maxiter` | `100` | Maximum optimizer iterations. |
 | `maxls` | fit kwarg / `scar_optimizer.maxls` | `20` | Maximum L-BFGS-B line-search steps per iteration. |
 | `eps` | fit kwarg / `scar_optimizer.eps` | `1e-4` | L-BFGS-B finite-difference step for numerical-gradient fits. |
 | `K` | strategy kwarg / `default_K` | `300` | Minimum latent grid size. May be increased by the adaptive rule. |
-| `grid_range` | strategy kwarg / `default_grid_range` | `5.0` | Grid spans `[-grid_range*sigma, +grid_range*sigma]`. |
+| `grid_range` | strategy kwarg / `default_grid_range` | `5.0` | Grid spans $[-\texttt{grid\_range}\,\sigma, +\texttt{grid\_range}\,\sigma]$. |
 | `grid_method` | strategy kwarg / `default_grid_method` | `'auto'` | `'auto'`, `'dense'`, or `'sparse'`. Use sparse for large grids. |
 | `adaptive` | strategy kwarg / `default_adaptive` | `True` | Enlarges `K` when the OU transition kernel needs more resolution. |
 | `pts_per_sigma` | strategy kwarg / `default_pts_per_sigma` | `4` | Minimum grid points per conditional standard deviation. |
+| `transition_method` | strategy kwarg | `'auto'` | `'auto'`, `'matrix'`, `'gh'`, or `'spectral'`. See below. |
+| `auto_small_kdt` | strategy kwarg | `1e-3` | In `transition_method='auto'`, use local GH when $\kappa\,dt$ is below this value. |
+| `auto_large_kdt` | strategy kwarg | `5e-2` | In `transition_method='auto'`, use spectral Hermite when $\kappa\,dt$ is at or above this value. |
+| `spectral_basis_order` | strategy kwarg | `32` | Number of Hermite basis functions in the spectral likelihood. |
+| `spectral_quad_order` | strategy kwarg | auto | Gauss-Hermite quadrature order for spectral multiplication. |
 | `analytical_grad` | strategy kwarg | `True` | Uses analytical gradient and parameter rescaling. Usually much faster. |
 | `smart_init` | strategy kwarg | `True` | Uses a heuristic initial point before falling back to MLE-based init. |
 
@@ -117,6 +122,7 @@ result = fit(
     method='scar-tm-ou',
     K=500,
     grid_method='sparse',
+    transition_method='auto',
     gtol=5e-3,
     analytical_grad=True,
 )
@@ -127,6 +133,176 @@ resolved with at least `pts_per_sigma` points per conditional standard
 deviation. For slow mean reversion this can produce large grids. If that is too
 expensive, use `grid_method='sparse'`, reduce `pts_per_sigma`, or set
 `adaptive=False` with an explicit `K`.
+
+#### Transfer methods
+
+SCAR-TM supports four likelihood transition modes:
+
+- `transition_method='auto'` (default): choose `gh`, `matrix`, or `spectral`
+  from the fitted value of $\kappa\,dt$, where $dt = 1 / (T - 1)$.
+- `transition_method='matrix'`: use the original transfer matrix on the latent
+  grid for the likelihood.
+- `transition_method='gh'`: use the local Gauss-Hermite transition on the
+  latent grid. This is useful when the OU transition kernel is very narrow.
+- `transition_method='spectral'`: force the Hermite spectral likelihood.
+
+The forward quantities used for prediction, mixture h-functions, and
+Rosenblatt GoF still need a grid posterior state. If `spectral` is selected for
+the likelihood, those forward passes use the grid `auto` fallback internally.
+
+#### Matrix transfer likelihood
+
+The matrix method is the most direct discretization of the latent-state
+integral. It builds a grid for the OU state,
+
+$$
+x_j = \mu + z_j,\qquad
+z_j \in [-R \sigma,\,
+          R \sigma],
+\qquad
+\sigma^2 = \frac{\nu^2}{2\kappa},
+$$
+where $R$ is `grid_range`.
+
+The OU transition over one observation step is Gaussian:
+
+$$
+X_k \mid X_{k-1}=x_i
+\sim
+N\left(
+  \mu + \rho(x_i-\mu),
+  \sigma^2(1-\rho^2)
+\right),
+\qquad
+\rho=\exp(-\kappa\,dt).
+$$
+
+On the grid this becomes a weighted transition matrix
+
+$$
+T_{ji} \approx
+p(x_j \mid x_i)\,w_j,
+$$
+
+where $w_j$ are trapezoidal quadrature weights. If
+
+$$
+f_k(x_j)=c(u_{1,k},u_{2,k};\Psi(x_j)),
+$$
+
+then the backward likelihood recursion has the form
+
+$$
+m_{k-1,i}
+=
+\sum_j T_{ji}\,f_k(x_j)\,m_{k,j}.
+$$
+
+The parameters `K`, `grid_range`, `adaptive`, and `pts_per_sigma` control the
+state grid. `grid_method='dense'` stores the full matrix, while
+`grid_method='sparse'` stores only a band around the Gaussian kernel. The
+`grid_method='auto'` setting chooses between those two matrix layouts.
+
+#### Local Gauss-Hermite transition
+
+When $\kappa\,dt$ is very small, the conditional OU variance
+$\sigma^2(1-\rho^2)$ is tiny. A fixed grid may then need many points to resolve
+the narrow Gaussian transition kernel. The local GH method avoids building the
+full transition matrix. For each previous grid point $x_i$, it approximates
+
+$$
+\int g(x)\,p(x\mid x_i)\,dx
+\approx
+\sum_{\ell=1}^{q}
+\omega_\ell\,
+g\left(
+  \mu+\rho(x_i-\mu)+
+  \sigma\sqrt{1-\rho^2}\,\sqrt{2}\,\xi_\ell
+\right),
+$$
+
+where $\xi_\ell$ and $\omega_\ell$ are Gauss-Hermite nodes and weights and $q$ is
+`gh_order`. The values at off-grid locations are interpolated from the latent
+grid. This makes the transition local: the cost scales with $K\,q$
+rather than with a dense $K \times K$ matrix.
+
+The parameters `max_K` and `r_gh` are safeguards for this regime. With
+`transition_method='auto'`, the grid path uses GH when the adaptive grid would
+hit `max_K` or when the transition kernel is narrow relative to the grid
+spacing. Increasing `gh_order` improves the local quadrature but does not fix a
+poor latent grid; `K`, `grid_range`, and `pts_per_sigma` still determine where
+the posterior can live.
+
+#### Spectral Hermite likelihood
+
+The spectral method uses stationarity of the OU process. Write
+
+$$
+X_t = \mu + \sigma Z_t,
+\qquad
+\sigma^2 = \frac{\nu^2}{2\kappa},
+\qquad
+Z_t \sim N(0, 1).
+$$
+
+For observations $u_k = (u_{1,k}, u_{2,k})$, define the emission factor
+
+$$
+f_k(z) =
+c\left(u_{1,k}, u_{2,k}; \Psi(\mu + \sigma z)\right),
+$$
+
+where $c$ is the copula density and $\Psi$ maps the latent state to the valid
+copula parameter range. The likelihood is the latent OU path integral
+
+$$
+L =
+\int f_0(z_0)
+    \prod_{k=1}^{T-1} p_\rho(z_k \mid z_{k-1}) f_k(z_k)
+    \prod_{k=0}^{T-1} \phi(z_k)\,dz_k,
+$$
+
+with OU correlation
+
+$$
+\rho = \exp(-\kappa\,dt).
+$$
+
+Here $p_\rho$ is the OU transition density with respect to the standard normal
+measure in $z$ coordinates. This is the measure in which the Hermite basis is
+orthonormal.
+
+In the orthonormal probabilists-Hermite basis
+$\{\psi_n\}_{n \ge 0}$ under the standard normal measure, the OU transition is
+diagonal:
+
+$$
+P_\rho \psi_n = \rho^n \psi_n.
+$$
+
+Each observation only requires projecting multiplication by $f_k$ back to the
+truncated basis:
+
+$$
+a_{k-1,n}
+=
+\rho^n
+\sum_m
+\left\langle \psi_n, f_k \psi_m \right\rangle_\phi
+a_{k,m}.
+$$
+
+The inner products are evaluated by Gauss-Hermite quadrature. Therefore the
+high-dimensional latent integral is approximated by repeated multiplication of
+small dense operators in Hermite coordinates, while the OU transition itself is
+just diagonal scaling by $\rho^n$.
+
+This is fastest when $\kappa\,dt$ is not too small: higher Hermite modes are
+damped by $\rho^n$, so a moderate basis order is enough. When $\kappa\,dt$ is
+very small, $\rho$ is close to one, high modes decay slowly, and the grid local
+GH path is usually safer. This is why the default `auto` mode sends the
+narrow-kernel regime to `gh`, the middle regime to `matrix`, and only the
+strongly mixing regime to `spectral`.
 
 ### SCAR-MC
 
@@ -225,7 +401,9 @@ dynamic edge fit:
 - GAS: `gamma0`, `gtol`, `ftol`, `maxfun`, `maxiter`, `maxls`, `eps`, `score_eps`,
   `gamma_bound`, `beta_bound`, `scaling`, `verbose`
 - SCAR-TM-OU: `alpha0`, `gtol`, `ftol`, `maxfun`, `maxiter`, `maxls`, `eps`, `K`, `grid_range`, `grid_method`, `adaptive`,
-  `pts_per_sigma`, `analytical_grad`, `smart_init`, `verbose`
+  `pts_per_sigma`, `transition_method`, `auto_small_kdt`, `auto_large_kdt`,
+  `spectral_basis_order`, `spectral_quad_order`, `analytical_grad`,
+  `smart_init`, `verbose`
 - SCAR-MC: `alpha0`, `gtol`, `ftol`, `maxfun`, `maxiter`, `maxls`, `eps`, `n_tr`, `M_iterations`, `stationary`, `seed`,
   `dwt`, `smart_init`, `verbose`
 
@@ -233,7 +411,7 @@ Vine-level pruning controls reduce the number of dynamic edge fits:
 
 | Parameter | Default | Effect |
 |-----------|---------|--------|
-| `truncation_level` | `None` | Tree levels `>= truncation_level` stay MLE. Useful for high-dimensional vines. |
+| `truncation_level` | `None` | Tree levels $\ge$ `truncation_level` stay MLE. Useful for high-dimensional vines. |
 | `min_edge_logL` | `None` | Edges with MLE log-likelihood below the threshold stay MLE. |
 | `transform_type` | `'softplus'` | Parameter transform used for Archimedean candidate copulas. |
 
@@ -275,9 +453,9 @@ structure controls are:
 
 | Parameter | Default | Effect |
 |-----------|---------|--------|
-| `truncation_level` | instance value / `None` | Tree levels `>= truncation_level` are truncated. |
+| `truncation_level` | instance value / `None` | Tree levels $\ge$ `truncation_level` are truncated. |
 | `truncation_fill` | `'independent'` | Truncated trees become independent edges or MLE-only edges (`'mle'`). |
-| `threshold` | `0.0` | Edges with `abs(Kendall tau) < threshold` are made independent before fitting. |
+| `threshold` | `0.0` | Edges with $|\text{Kendall tau}| < \texttt{threshold}$ are made independent before fitting. |
 | `min_edge_logL` | `None` | Fitted weak edges below the threshold are replaced by independence. |
 | `structure_search` | `'beam'` | Conditional-structure search mode when `given_vars` is used. |
 | `beam_width` | `4` | Number of partial candidate structures retained by beam search. |

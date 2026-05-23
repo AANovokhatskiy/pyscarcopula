@@ -15,7 +15,7 @@ The suffix path is exact for the fitted pair-copula construction. The DAG +
 MCMC path is general and targets the full fitted R-vine density with the fixed
 variables held constant, but it is approximate and more expensive.
 
-All `given` values are pseudo-observations in `(0, 1)`.
+All `given` values are pseudo-observations in $(0, 1)$.
 
 ## Public API
 

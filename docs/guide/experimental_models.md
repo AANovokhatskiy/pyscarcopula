@@ -6,7 +6,7 @@
 
 ## Overview
 
-The `experimental` module contains `d`-dimensional copula models that extend
+The `experimental` module contains $d$-dimensional copula models that extend
 the SCAR framework beyond bivariate Archimedean families. All models use a
 **single scalar latent OU process**, so the existing transfer matrix
 infrastructure works unchanged.
@@ -40,7 +40,7 @@ for GAS, row-wise score derivatives.
 
 ## Equicorrelation Gaussian Copula
 
-For `d` assets, the standard Gaussian copula has `d(d-1)/2` static
+For $d$ assets, the standard Gaussian copula has $d(d-1)/2$ static
 correlation parameters. The equicorrelation model uses a single dynamic
 correlation:
 
@@ -56,9 +56,9 @@ z_{tj}=\Phi^{-1}(u_{tj}).$$
 The valid range is
 $\rho_t\in(-1/(d-1),1)$, enforced by the parameter transform. In SCAR,
 $\rho_t=\Psi(x_t)$ and $x_t$ is the scalar OU state. This gives 3 dynamic
-parameters instead of `d(d-1)/2` static correlations.
+parameters instead of $d(d-1)/2$ static correlations.
 
-The density is analytical and `O(d)` per evaluation, with no matrix inversion required.
+The density is analytical and $O(d)$ per evaluation, with no matrix inversion required.
 
 ### Usage
 
@@ -82,14 +82,14 @@ cop.fit(u, method='scar-tm-ou')
 Equicorrelation SCAR is a good fit when:
 
 - All pairwise correlations move together, common in equity and crypto markets
-- You need fast estimation for large `d`, with `O(d)` density evaluation
+- You need fast estimation for large $d$, with $O(d)$ density evaluation
 - You want a compact, interpretable model with 3 parameters
 
 For heterogeneous dependence, use C-vine or R-vine instead.
 
 ## Stochastic Student-t Copula
 
-A `d`-dimensional t-copula where the correlation matrix $R$ is estimated once
+A $d$-dimensional t-copula where the correlation matrix $R$ is estimated once
 via Kendall's $\tau$ and fixed, while the degrees-of-freedom parameter
 $\nu(t)$ follows a latent OU process:
 
@@ -103,7 +103,7 @@ $$c(u_t;R,\nu_t)=
      {\prod_{j=1}^d t_1(q_{tj};\nu_t)}, \qquad
 q_{tj}=T_{\nu_t}^{-1}(u_{tj}).$$
 
-`R` is treated as a nuisance dependence estimate: it is obtained from
+$R$ is treated as a nuisance dependence estimate: it is obtained from
 Kendall's tau before the dynamic fit and then held fixed. The latent/dynamic
 part of the model controls only tail thickness. Smaller $\nu_t$ means heavier
 joint tails; larger $\nu_t$ moves the copula toward the Gaussian copula.

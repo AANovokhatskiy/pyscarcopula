@@ -13,6 +13,10 @@ from pyscarcopula.numerical.tm_functions import (
     tm_forward_rosenblatt,
     tm_loglik,
 )
+from pyscarcopula.numerical.hermite_tm import (
+    hermite_loglik,
+    hermite_loglik_with_grad,
+)
 from pyscarcopula.numerical.tm_gradient import tm_loglik_with_grad
 from pyscarcopula.numerical.tm_grid import TMGrid
 from pyscarcopula.numerical.gof_blocks import (
@@ -21,6 +25,10 @@ from pyscarcopula.numerical.gof_blocks import (
     iter_forward_weight_blocks,
 )
 from pyscarcopula.copula.elliptical import BivariateGaussianCopula
+from pyscarcopula.copula.experimental import (
+    StochasticStudentCopula,
+    StochasticStudentDCCCopula,
+)
 from pyscarcopula.strategy._base import get_strategy_for_result
 from pyscarcopula.strategy.scar_tm import SCARTMStrategy
 from pyscarcopula.strategy import scar_tm
@@ -280,15 +288,22 @@ def test_scar_tm_local_transition_keeps_analytical_gradient_enabled():
     assert SCARTMStrategy(max_K=100).analytical_grad is True
 
 
-def test_scar_tm_strategy_defaults_to_auto_capped_transition():
+def test_scar_tm_strategy_defaults_to_auto_likelihood_with_auto_grid():
     strategy = SCARTMStrategy()
     assert strategy.transition_method == "auto"
     assert strategy.max_K == 1000
     assert strategy._tm_kwargs()["transition_method"] == "auto"
     assert strategy._tm_kwargs()["max_K"] == 1000
+    assert strategy._grid_tm_kwargs()["transition_method"] == "auto"
+    assert strategy._grid_tm_kwargs()["max_K"] == 1000
 
     matrix_strategy = SCARTMStrategy(transition_method="matrix", max_K=None)
     assert matrix_strategy._tm_kwargs() == {}
+    assert matrix_strategy._grid_tm_kwargs() == {}
+
+    spectral_strategy = SCARTMStrategy(transition_method="spectral")
+    assert spectral_strategy.transition_method == "spectral"
+    assert spectral_strategy._grid_tm_kwargs()["transition_method"] == "auto"
 
 
 def test_scar_tm_strategy_recovered_from_legacy_result_uses_matrix_path():
@@ -371,6 +386,120 @@ def test_local_transition_analytical_gradient_matches_finite_difference():
         ) / (2.0 * step)
 
     np.testing.assert_allclose(grad, fd, rtol=2e-4, atol=2e-4)
+
+
+def test_spectral_analytical_gradient_matches_finite_difference_on_weak_data():
+    rng = np.random.default_rng(42)
+    u = rng.uniform(0.05, 0.95, size=(30, 2))
+    copula = BivariateGaussianCopula()
+    alpha = np.array([5.0, 0.0, 0.6])
+    kwargs = {"basis_order": 16}
+
+    value, grad = hermite_loglik_with_grad(*alpha, u, copula, **kwargs)
+    direct = -hermite_loglik(*alpha, u, copula, **kwargs)
+
+    np.testing.assert_allclose(value, direct, rtol=1e-11, atol=1e-11)
+
+    fd = np.empty(3)
+    steps = np.array([1e-5, 1e-5, 1e-5])
+    for idx, step in enumerate(steps):
+        plus = alpha.copy()
+        minus = alpha.copy()
+        plus[idx] += step
+        minus[idx] -= step
+        fd[idx] = (
+            -hermite_loglik(*plus, u, copula, **kwargs)
+            + hermite_loglik(*minus, u, copula, **kwargs)
+        ) / (2.0 * step)
+
+    np.testing.assert_allclose(grad, fd, rtol=2e-5, atol=2e-5)
+
+
+def test_spectral_batch_calls_preserve_time_index():
+    class IndexedCopula:
+        name = "IndexedCopula"
+
+        def __init__(self):
+            self.value_calls = []
+            self.grad_calls = []
+
+        def copula_grid_batch(self, u, x_grid, t_index=0):
+            self.value_calls.append((int(t_index), len(u)))
+            return np.ones((len(u), len(x_grid)))
+
+        def pdf_and_grad_on_grid_batch(self, u, x_grid, t_index=0):
+            self.grad_calls.append((int(t_index), len(u)))
+            fi = np.ones((len(u), len(x_grid)))
+            return fi, np.zeros_like(fi)
+
+    u = np.full((7, 2), 0.5)
+    copula = IndexedCopula()
+    kwargs = {"basis_order": 4, "quad_order": 24, "block_size": 2}
+
+    assert hermite_loglik(2.0, 0.0, 0.5, u, copula, **kwargs) == pytest.approx(0.0)
+    value, grad = hermite_loglik_with_grad(2.0, 0.0, 0.5, u, copula, **kwargs)
+
+    assert value == pytest.approx(-0.0)
+    np.testing.assert_allclose(grad, np.zeros(3), atol=1e-14)
+    assert copula.value_calls == [(5, 2), (3, 2), (1, 2), (0, 1)]
+    assert copula.grad_calls == [(5, 2), (3, 2), (1, 2), (0, 1)]
+
+
+def test_scar_tm_failed_dispatch_objective_is_not_success(monkeypatch):
+    def fail_objective(*args, **kwargs):
+        return 1e10, np.zeros(3)
+
+    monkeypatch.setattr(scar_tm, "auto_neg_loglik_with_grad", fail_objective)
+    u = np.random.default_rng(17).uniform(0.05, 0.95, size=(10, 2))
+    copula = BivariateGaussianCopula()
+
+    result = SCARTMStrategy(smart_init=False).fit(
+        copula,
+        u,
+        alpha0=np.array([1.0, 0.0, 1.0]),
+        maxiter=2,
+        maxfun=5,
+    )
+
+    assert not result.success
+    assert result.log_likelihood == pytest.approx(-1e10)
+    assert "invalid objective value" in result.message
+
+
+def test_experimental_ppf_cache_does_not_trust_reused_object_id():
+    for model in (StochasticStudentCopula(d=2), StochasticStudentDCCCopula(d=2)):
+        first = np.full((2, 2), 0.25)
+        second = np.full((2, 2), 0.75)
+        sentinel = object()
+
+        model._ppf_table = sentinel
+        model._ppf_table_u = first
+        model._ppf_table_u_id = id(second)
+
+        table = model._get_ppf_table(second)
+
+        assert table is not sentinel
+        assert model._ppf_table_u is second
+        assert model._ppf_table_u_id == id(second)
+
+
+def test_scar_tm_accepts_flat_boundary_line_search_convergence():
+    u = np.random.default_rng(16).uniform(0.001, 0.999, size=(60, 2))
+    copula = BivariateGaussianCopula()
+
+    result = fit(
+        copula,
+        u,
+        method="scar-tm-ou",
+        spectral_basis_order=16,
+        maxiter=80,
+        maxfun=160,
+        gtol=1e-5,
+    )
+
+    assert result.success
+    assert "accepted as boundary convergence" in result.message
+    assert result.params.nu == pytest.approx(0.001)
 
 
 def test_predict_matvec_matches_direct_forward_quadrature():
@@ -598,6 +727,8 @@ def test_fit_path_matches_with_forward_and_backward_objectives(
         "grid_method": "dense",
         "adaptive": False,
         "pts_per_sigma": 4,
+        "transition_method": "matrix",
+        "max_K": None,
         "maxiter": 5,
         "maxfun": 40,
         "gtol": 1e-3,

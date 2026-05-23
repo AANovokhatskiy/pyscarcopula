@@ -289,7 +289,10 @@ def get_strategy_for_result(result: FitResult,
             result_kwargs['transition_method'] = transition_method
             result_kwargs['max_K'] = getattr(result, 'max_K', None)
 
-        for name in ('r_gh', 'gh_order'):
+        for name in (
+                'r_gh', 'gh_order',
+                'auto_small_kdt', 'auto_large_kdt',
+                'spectral_basis_order', 'spectral_quad_order'):
             value = getattr(result, name, None)
             if value is not None:
                 result_kwargs[name] = value

@@ -10,11 +10,11 @@ The library separates three questions that are easy to mix up:
 - **Predictive sampling** asks what the next copula observation may look like
   after fitting on historical data.
 - **Conditional sampling** fixes some components of that next observation,
-  for example `U_2 = 0.7`, and samples the remaining components.
+  for example $U_2 = 0.7$, and samples the remaining components.
 - **Dynamic conditioning** optionally updates time-varying edge states using
   fixed prediction-time values before the remaining components are sampled.
 
-In notation, after training data `D_T = {u_1, ..., u_T}`, plain prediction
+In notation, after training data $D_T = \{u_1, \ldots, u_T\}$, plain prediction
 draws from
 
 $$
@@ -27,7 +27,7 @@ $$
 U_{*, -G} \sim C(U_{*, -G} \mid U_{*, G}=a, D_T),
 $$
 
-where `G` is the set of fixed variables.
+where $G$ is the set of fixed variables.
 
 Dynamic conditioning changes the state used to form the copula parameters:
 
@@ -58,12 +58,12 @@ object advances its stream.
 `horizon` selects which dynamic state is used before prediction:
 
 - `horizon='current'` uses the filtered or posterior state at the end of the
-  observed sample, conceptually time `T`.
+  observed sample, conceptually time $T$.
 - `horizon='next'` uses the one-step-ahead predictive state, conceptually
-  time `T+1`.
+  time $T+1$.
 
-For SCAR-TM, `current` means `p(x_T | D_T)` and `next` means
-`p(x_{T+1} | D_T)`. For GAS, `current` uses the last filtered score state and
+For SCAR-TM, `current` means $p(x_T \mid D_T)$ and `next` means
+$p(x_{T+1} \mid D_T)$. For GAS, `current` uses the last filtered score state and
 `next` applies the one-step score recursion. For MLE there is no dynamic
 state, so the two horizons are equivalent.
 
@@ -83,7 +83,7 @@ samples = model.predict(
 )
 ```
 
-Keys are zero-based variable indices. Values must be in `(0, 1)`. The returned
+Keys are zero-based variable indices. Values must be in $(0, 1)$. The returned
 sample keeps fixed columns equal to the supplied values and samples the
 remaining columns from the fitted conditional copula.
 
@@ -133,7 +133,7 @@ Use `given` when calling `predict`.
 dynamic edge states before sampling.
 
 - `dynamic_conditioning='ignore'` is the default. Edge parameters are predicted
-  from `D_T` only, then conditional sampling treats `given` as fixed values in
+  from $D_T$ only, then conditional sampling treats `given` as fixed values in
   the copula recursion.
 - `dynamic_conditioning='given_only'` lets supported fixed observations update
   strategy-owned predictive states before downstream edge parameters are
