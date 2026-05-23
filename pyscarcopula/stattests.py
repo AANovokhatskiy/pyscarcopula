@@ -82,6 +82,12 @@ def _clip(x):
     return np.clip(x, eps, 1.0 - eps)
 
 
+def _grid_transition_method(transition_method):
+    if str(transition_method).lower() == 'spectral':
+        return 'auto'
+    return transition_method
+
+
 # ══════════════════════════════════════════════════════════════════
 # Bivariate Rosenblatt
 # ══════════════════════════════════════════════════════════════════
@@ -102,6 +108,7 @@ def rosenblatt_transform_scar(copula, u, alpha, K=300, grid_range=5.0,
     """Mixture Rosenblatt for SCAR (bivariate). Returns (T, 2)."""
     from pyscarcopula.numerical.tm_functions import tm_forward_rosenblatt as _tm_forward_rosenblatt
     kappa, mu, nu = alpha
+    transition_method = _grid_transition_method(transition_method)
     return _tm_forward_rosenblatt(
         kappa, mu, nu, u, copula, K, grid_range,
         grid_method, adaptive, pts_per_sigma,
@@ -558,6 +565,21 @@ def rvine_rosenblatt_transform(vine, u, K=300, grid_range=5.0):
     eps = 1e-10
     M = vine.matrix
 
+    if d == 2:
+        edge = vine.pair_copulas[(0, 0)]
+        u1 = np.clip(u[:, 0], eps, 1.0 - eps)
+        u2 = np.clip(u[:, 1], eps, 1.0 - eps)
+        u_pair = np.column_stack((u1, u2))
+        e = np.empty((T, d), dtype=np.float64)
+        e[:, 0] = u1
+        e[:, 1] = np.clip(
+            _edge_h(edge, u2, u1, u_pair=u_pair, K=K,
+                    grid_range=grid_range),
+            eps,
+            1.0 - eps,
+        )
+        return _clip(e)
+
     pseudo = {
         (var, frozenset()): np.clip(u[:, var].copy(), eps, 1.0 - eps)
         for var in range(d)
@@ -600,13 +622,15 @@ def rvine_rosenblatt_transform(vine, u, K=300, grid_range=5.0):
                 )
 
             cur = np.clip(
-                _edge_h(edge, leaf_val, partner_val),
+                _edge_h(edge, leaf_val, partner_val, K=K,
+                        grid_range=grid_range),
                 eps,
                 1.0 - eps,
             )
             pseudo[(leaf, next_leaf_cond)] = cur
             pseudo[(partner, next_partner_cond)] = np.clip(
-                _edge_h(edge, partner_val, leaf_val),
+                _edge_h(edge, partner_val, leaf_val, K=K,
+                        grid_range=grid_range),
                 eps,
                 1.0 - eps,
             )
@@ -839,6 +863,9 @@ def _tm_grid_kwargs_from_result(fit_result):
         value = getattr(fit_result, name, None)
         if value is not None:
             out[name] = value
+    if 'transition_method' in out:
+        out['transition_method'] = _grid_transition_method(
+            out['transition_method'])
     return out
 
 

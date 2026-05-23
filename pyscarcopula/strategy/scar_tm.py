@@ -27,7 +27,35 @@ from pyscarcopula.numerical.tm_functions import (
     tm_forward_rosenblatt, tm_forward_mixture_h,
 )
 from pyscarcopula.numerical.tm_gradient import tm_loglik_with_grad
+from pyscarcopula.numerical.auto_tm import (
+    AutoTMConfig,
+    auto_loglik,
+    auto_neg_loglik,
+    auto_neg_loglik_with_grad,
+)
 from pyscarcopula.strategy.predict_helpers import sample_predictive
+
+
+_INVALID_OBJECTIVE_THRESHOLD = 1e9
+
+
+def _objective_is_invalid(value):
+    return (not np.isfinite(value)) or float(value) >= _INVALID_OBJECTIVE_THRESHOLD
+
+
+def _projected_gradient_norm(x, grad, lower, upper):
+    """Infinity norm of the L-BFGS-B projected gradient."""
+    x = np.asarray(x, dtype=np.float64)
+    grad = np.asarray(grad, dtype=np.float64)
+    lower = np.asarray(lower, dtype=np.float64)
+    upper = np.asarray(upper, dtype=np.float64)
+
+    projected = grad.copy()
+    at_lower = np.isclose(x, lower, rtol=0.0, atol=1e-10)
+    at_upper = np.isclose(x, upper, rtol=0.0, atol=1e-10)
+    projected[at_lower & (grad > 0.0)] = 0.0
+    projected[at_upper & (grad < 0.0)] = 0.0
+    return float(np.max(np.abs(projected)))
 
 
 @register_strategy('SCAR-TM-OU')
@@ -49,11 +77,10 @@ class SCARTMStrategy:
     pts_per_sigma : int
         Points per conditional sigma for adaptive rule (default from config).
     transition_method : str
-        'auto' is the default fit-time safeguard: use the matrix path when the
-        adaptive grid remains moderate, and switch to local GH when the grid
-        cap is active or the transition kernel is local.  'matrix' preserves
-        the original Gaussian transition matrix path when requested
-        explicitly.  'gh' forces the local Gauss-Hermite path.
+        'auto' is the default likelihood evaluator: spectral Hermite for
+        strongly mixing transitions, matrix TM for the middle regime, and
+        local GH for narrow kernels.  'matrix', 'gh', and 'spectral' force the
+        corresponding likelihood backend.
     max_K : int or None
         Optional cap for adaptive TM grid size.  Defaults to 1000 in the
         strategy to prevent pathological fit-time grid blowups on long series.
@@ -78,6 +105,10 @@ class SCARTMStrategy:
                  max_K: int | None = 1000,
                  r_gh: float = 3.0,
                  gh_order: int = 5,
+                 auto_small_kdt: float = 1e-3,
+                 auto_large_kdt: float = 5e-2,
+                 spectral_basis_order: int = 32,
+                 spectral_quad_order: int | None = None,
                  analytical_grad: bool = True,
                  smart_init: bool = True,
                  **kwargs):
@@ -87,15 +118,38 @@ class SCARTMStrategy:
         self.grid_method = grid_method if grid_method is not None else self.config.default_grid_method
         self.adaptive = adaptive if adaptive is not None else self.config.default_adaptive
         self.pts_per_sigma = pts_per_sigma if pts_per_sigma is not None else self.config.default_pts_per_sigma
-        self.transition_method = transition_method
+        self.transition_method = self._normalize_transition_method(
+            transition_method)
         self.max_K = max_K
         self.r_gh = r_gh
         self.gh_order = gh_order
+        self.auto_small_kdt = auto_small_kdt
+        self.auto_large_kdt = auto_large_kdt
+        self.spectral_basis_order = spectral_basis_order
+        self.spectral_quad_order = spectral_quad_order
         self.analytical_grad = analytical_grad
         self.smart_init = smart_init
 
+    @staticmethod
+    def _normalize_transition_method(transition_method):
+        method = str(transition_method).lower()
+        allowed = {'auto', 'matrix', 'gh', 'spectral'}
+        if method not in allowed:
+            raise ValueError(
+                "transition_method must be one of "
+                "'auto', 'matrix', 'gh', or 'spectral'")
+        return method
+
+    def _uses_dispatcher(self):
+        return self.transition_method in {'auto', 'spectral'}
+
+    def _grid_transition_method(self):
+        if self.transition_method == 'spectral':
+            return 'auto'
+        return self.transition_method
+
     def _uses_local_transition(self):
-        return self.transition_method != 'matrix' or self.max_K is not None
+        return self._grid_transition_method() != 'matrix' or self.max_K is not None
 
     def _tm_kwargs(self):
         if self.transition_method == 'matrix' and self.max_K is None:
@@ -106,6 +160,34 @@ class SCARTMStrategy:
             'r_gh': self.r_gh,
             'gh_order': self.gh_order,
         }
+
+    def _grid_tm_kwargs(self):
+        transition_method = self._grid_transition_method()
+        if transition_method == 'matrix' and self.max_K is None:
+            return {}
+        return {
+            'transition_method': transition_method,
+            'max_K': self.max_K,
+            'r_gh': self.r_gh,
+            'gh_order': self.gh_order,
+        }
+
+    def _auto_config(self):
+        return AutoTMConfig(
+            transition_method=self.transition_method,
+            small_kdt=self.auto_small_kdt,
+            large_kdt=self.auto_large_kdt,
+            basis_order=self.spectral_basis_order,
+            quad_order=self.spectral_quad_order,
+            K=self.K,
+            grid_range=self.grid_range,
+            grid_method=self.grid_method,
+            adaptive=self.adaptive,
+            pts_per_sigma=self.pts_per_sigma,
+            max_K=self.max_K,
+            gh_order=self.gh_order,
+            r_gh=self.r_gh,
+        )
 
     def fit(self, copula, u: np.ndarray,
             alpha0: np.ndarray | None = None,
@@ -180,6 +262,7 @@ class SCARTMStrategy:
         adaptive = self.adaptive
         pts_per_sigma = self.pts_per_sigma
         tm_kwargs = self._tm_kwargs()
+        auto_config = self._auto_config()
 
         # ── Fit with analytical gradient ──────────────────────────
         if self.analytical_grad:
@@ -202,9 +285,13 @@ class SCARTMStrategy:
                     return 1e10, np.zeros(3)
                 kappa_v, mu_v, nu_v = alpha
                 try:
-                    val, grad = tm_loglik_with_grad(
-                        kappa_v, mu_v, nu_v, u, copula, K, grid_range,
-                        grid_method, adaptive, pts_per_sigma, **tm_kwargs)
+                    if self._uses_dispatcher():
+                        val, grad = auto_neg_loglik_with_grad(
+                            kappa_v, mu_v, nu_v, u, copula, auto_config)
+                    else:
+                        val, grad = tm_loglik_with_grad(
+                            kappa_v, mu_v, nu_v, u, copula, K, grid_range,
+                            grid_method, adaptive, pts_per_sigma, **tm_kwargs)
                     return val, grad * scale  # chain rule
                 except Exception as e:
                     if verbose:
@@ -222,6 +309,29 @@ class SCARTMStrategy:
                 options=optimizer_options,
             )
 
+            if not result.success and str(result.message).startswith('ABNORMAL'):
+                final_val, final_grad = objective_and_grad(result.x)
+                pg_norm = _projected_gradient_norm(
+                    result.x,
+                    final_grad,
+                    bounds_scaled.lb,
+                    bounds_scaled.ub,
+                )
+                acceptable_boundary = (
+                    np.isfinite(final_val)
+                    and not _objective_is_invalid(final_val)
+                    and np.all(np.isfinite(result.x))
+                    and pg_norm <= max(float(optimizer_options.get('gtol', 1e-5)), 1e-2)
+                )
+                if acceptable_boundary:
+                    result.fun = final_val
+                    result.jac = final_grad
+                    result.success = True
+                    result.message = (
+                        f"{result.message} accepted as boundary convergence "
+                        f"(projected_grad={pg_norm:.3g})"
+                    )
+
             # Unscale
             result.x = result.x * scale
 
@@ -234,6 +344,9 @@ class SCARTMStrategy:
                     return 1e10
                 kappa_v, mu_v, nu_v = alpha
                 try:
+                    if self._uses_dispatcher():
+                        return auto_neg_loglik(
+                            kappa_v, mu_v, nu_v, u, copula, auto_config)
                     return tm_loglik(
                         kappa_v, mu_v, nu_v, u, copula, K, grid_range,
                         grid_method, adaptive, pts_per_sigma, **tm_kwargs)
@@ -250,6 +363,12 @@ class SCARTMStrategy:
                 method='L-BFGS-B',
                 bounds=bounds,
                 options=optimizer_options,
+            )
+
+        if _objective_is_invalid(result.fun):
+            result.success = False
+            result.message = (
+                f"{result.message}; invalid objective value {float(result.fun):.6g}"
             )
 
         alpha = result.x
@@ -273,12 +392,19 @@ class SCARTMStrategy:
             max_K=self.max_K,
             r_gh=self.r_gh,
             gh_order=self.gh_order,
+            auto_small_kdt=self.auto_small_kdt,
+            auto_large_kdt=self.auto_large_kdt,
+            spectral_basis_order=self.spectral_basis_order,
+            spectral_quad_order=self.spectral_quad_order,
         )
 
     def log_likelihood(self, copula, u: np.ndarray,
                        result: LatentResult) -> float:
         """Evaluate TM log-likelihood at fitted parameters."""
         p = result.params
+        if self._uses_dispatcher():
+            return auto_loglik(
+                p.kappa, p.mu, p.nu, u, copula, self._auto_config())
         neg_ll = tm_loglik(
             p.kappa, p.mu, p.nu, u, copula,
             self.K, self.grid_range, self.grid_method,
@@ -292,7 +418,7 @@ class SCARTMStrategy:
         return tm_forward_predictive_mean(
             p.kappa, p.mu, p.nu, u, copula,
             self.K, self.grid_range, self.grid_method,
-            self.adaptive, self.pts_per_sigma, **self._tm_kwargs())
+            self.adaptive, self.pts_per_sigma, **self._grid_tm_kwargs())
 
     def smoothed_params(self, copula, u: np.ndarray,
                         result: LatentResult) -> np.ndarray:
@@ -306,7 +432,7 @@ class SCARTMStrategy:
         e = tm_forward_rosenblatt(
             p.kappa, p.mu, p.nu, u, copula,
             self.K, self.grid_range, self.grid_method,
-            self.adaptive, self.pts_per_sigma, **self._tm_kwargs())
+            self.adaptive, self.pts_per_sigma, **self._grid_tm_kwargs())
         return e[:, 1]
 
     def mixture_h(self, copula, u: np.ndarray,
@@ -318,7 +444,7 @@ class SCARTMStrategy:
             p.kappa, p.mu, p.nu, u, copula,
             self.K, self.grid_range, self.grid_method,
             self.adaptive, self.pts_per_sigma,
-            **self._tm_kwargs(),
+            **self._grid_tm_kwargs(),
             state_cache=state_cache,
             current_cache_key=current_cache_key,
             next_cache_key=next_cache_key)
@@ -327,6 +453,10 @@ class SCARTMStrategy:
                   alpha: np.ndarray, **kwargs) -> float:
         """Minus log-likelihood: TM integrated -logL(kappa, mu, nu)."""
         try:
+            if self._uses_dispatcher():
+                return auto_neg_loglik(
+                    alpha[0], alpha[1], alpha[2], u, copula,
+                    self._auto_config())
             return tm_loglik(
                 alpha[0], alpha[1], alpha[2], u, copula,
                 self.K, self.grid_range, self.grid_method,
@@ -402,7 +532,7 @@ class SCARTMStrategy:
                 grid_method=self.grid_method,
                 adaptive=self.adaptive,
                 pts_per_sigma=self.pts_per_sigma,
-                **self._tm_kwargs(),
+                **self._grid_tm_kwargs(),
                 horizon=kwargs.get('horizon', 'next'))
             if state_cache is not None and cache_key is not None:
                 state_cache[cache_key] = cached

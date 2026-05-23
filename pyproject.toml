@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyscarcopula"
-version = "0.14.0"
+version = "0.14.1"
 description = "Python library for bivariate, multivariate, vine, and stochastic copula models"
 readme = "README.md"
 license = "MIT"

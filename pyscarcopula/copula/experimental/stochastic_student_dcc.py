@@ -574,6 +574,7 @@ class StochasticStudentDCCCopula(BivariateCopula):
 
         # PPF lookup table (built lazily in batch methods)
         self._ppf_table: Optional[_PPFTable] = None
+        self._ppf_table_u: Optional[np.ndarray] = None
         self._ppf_table_u_id: Optional[int] = None
 
     @property
@@ -679,6 +680,7 @@ class StochasticStudentDCCCopula(BivariateCopula):
 
         # Invalidate PPF cache
         self._ppf_table = None
+        self._ppf_table_u = None
         self._ppf_table_u_id = None
 
     # ── Standardized residuals ──────────────────────────────
@@ -891,11 +893,11 @@ class StochasticStudentDCCCopula(BivariateCopula):
 
     def _get_ppf_table(self, u):
         """Get or build PPF lookup table for given data."""
-        u_id = id(u)
-        if self._ppf_table is not None and self._ppf_table_u_id == u_id:
+        if self._ppf_table is not None and self._ppf_table_u is u:
             return self._ppf_table
         self._ppf_table = _PPFTable(u)
-        self._ppf_table_u_id = u_id
+        self._ppf_table_u = u
+        self._ppf_table_u_id = id(u)
         return self._ppf_table
 
     # ── Density ──────────────────────────────────────────────
@@ -1126,7 +1128,7 @@ class StochasticStudentDCCCopula(BivariateCopula):
         dfi_dz = fi * dlogc_ddf * dpsi
         return fi, dfi_dz
 
-    def pdf_and_grad_on_grid_batch(self, u, x_grid):
+    def pdf_and_grad_on_grid_batch(self, u, x_grid, t_index=0):
         """
         Batch evaluation for all observations with time-varying R_t.
 
@@ -1139,8 +1141,12 @@ class StochasticStudentDCCCopula(BivariateCopula):
         u = np.asarray(u, dtype=np.float64)
         x_grid = np.asarray(x_grid, dtype=np.float64)
         T = len(u)
-        if T != len(self._R_path):
-            raise ValueError(f"u has length {T}, but R_path has length {len(self._R_path)}")
+        start = int(t_index)
+        end = start + T
+        if start < 0 or end > len(self._R_path):
+            raise ValueError(
+                f"R_path slice [{start}:{end}] is outside length "
+                f"{len(self._R_path)}")
 
         K = len(x_grid)
         d = self._d
@@ -1153,8 +1159,8 @@ class StochasticStudentDCCCopula(BivariateCopula):
         fi = np.empty((T, K), dtype=np.float64)
         dfi = np.empty((T, K), dtype=np.float64)
 
-        L_inv_T = self._L_inv_path[:T]
-        log_det_T = self._log_det_path[:T]
+        L_inv_T = self._L_inv_path[start:end]
+        log_det_T = self._log_det_path[start:end]
 
         for k in range(K):
             df_c = df_grid[k]

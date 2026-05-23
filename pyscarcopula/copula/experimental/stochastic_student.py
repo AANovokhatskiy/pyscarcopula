@@ -287,6 +287,7 @@ class StochasticStudentCopula(BivariateCopula):
 
         # PPF lookup table (built lazily in batch methods)
         self._ppf_table = None
+        self._ppf_table_u = None
         self._ppf_table_u_id = None
 
     @property
@@ -331,11 +332,11 @@ class StochasticStudentCopula(BivariateCopula):
 
     def _get_ppf_table(self, u):
         """Get or build PPF lookup table for given data."""
-        u_id = id(u)
-        if self._ppf_table is not None and self._ppf_table_u_id == u_id:
+        if self._ppf_table is not None and self._ppf_table_u is u:
             return self._ppf_table
         self._ppf_table = _PPFTable(u)
-        self._ppf_table_u_id = u_id
+        self._ppf_table_u = u
+        self._ppf_table_u_id = id(u)
         return self._ppf_table
 
     # ── Density ──────────────────────────────────────────────

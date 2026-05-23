@@ -20,6 +20,19 @@ from pyscarcopula.numerical.tm_functions import (
     tm_xT_distribution,
 )
 from pyscarcopula.numerical.tm_gradient import tm_loglik_with_grad
+from pyscarcopula.numerical.hermite_tm import (
+    hermite_loglik,
+    hermite_loglik_with_grad,
+    hermite_neg_loglik,
+)
+from pyscarcopula.numerical.auto_tm import (
+    AutoTMConfig,
+    select_auto_backend,
+    auto_loglik,
+    auto_loglik_with_info,
+    auto_neg_loglik,
+    auto_neg_loglik_with_grad,
+)
 from pyscarcopula.numerical.ou_kernels import calculate_dwt
 from pyscarcopula.numerical.predictive_tm import sample_grid_distribution
 from pyscarcopula.numerical.gas_filter import (
@@ -30,6 +43,10 @@ from pyscarcopula.numerical.gas_filter import (
 __all__ = [
     'TMGrid',
     'tm_loglik', 'tm_loglik_with_grad',
+    'hermite_loglik', 'hermite_loglik_with_grad', 'hermite_neg_loglik',
+    'AutoTMConfig', 'select_auto_backend',
+    'auto_loglik', 'auto_loglik_with_info',
+    'auto_neg_loglik', 'auto_neg_loglik_with_grad',
     'tm_forward_predictive_mean', 'tm_forward_smoothed',
     'tm_forward_rosenblatt', 'tm_forward_mixture_h',
     'tm_xT_distribution',

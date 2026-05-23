@@ -21,7 +21,7 @@ from scipy.sparse import csr_matrix
 
 
 _GRID_METHODS = frozenset(('auto', 'dense', 'sparse'))
-_TRANSITION_METHODS = frozenset(('auto', 'matrix', 'gh'))
+_TRANSITION_METHODS = frozenset(('auto', 'matrix', 'gh', 'spectral'))
 
 
 def _validate_grid_method(value):
@@ -38,9 +38,14 @@ def _validate_transition_method(value):
     method = str(value).lower()
     if method not in _TRANSITION_METHODS:
         raise ValueError(
-            "transition_method must be one of 'auto', 'matrix', or 'gh', "
+            "transition_method must be one of "
+            "'auto', 'matrix', 'gh', or 'spectral', "
             f"got {value!r}"
         )
+    if method == 'spectral':
+        # Spectral likelihood has no finite grid state; grid-only routines use
+        # the automatic matrix/GH fallback for forward distributions.
+        return 'auto'
     return method
 
 

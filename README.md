@@ -114,6 +114,15 @@ the Markov structure of the OU process. The path integral is computed as a
 sequence of matrix-vector products on a discretized grid, avoiding Monte Carlo
 variance at the cost of numerical grid approximation.
 
+For SCAR-TM-OU, `transition_method='auto'` also uses a Hermite spectral
+likelihood in strongly mixing OU regimes. In standardized stationary
+coordinates, the OU transition is diagonal in the probabilists-Hermite basis
+with eigenvalues `rho**n`, `rho = exp(-kappa * dt)`. The observation densities
+are projected back to this truncated basis by Gauss-Hermite quadrature. This
+turns the latent path integral into repeated small matrix multiplications and
+diagonal scalings. See [`docs/guide/performance.md`](docs/guide/performance.md)
+for the details and the available `transition_method` values.
+
 Vine copulas decompose a `d`-dimensional dependence model into bivariate copulas
 arranged in a sequence of trees. R-vines choose the tree structure from data
 subject to the proximity condition; C-vines use a fixed star structure.

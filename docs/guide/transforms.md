@@ -2,17 +2,17 @@
 
 ## Overview
 
-The transform function `Psi(x)` maps the latent OU process `x(t)` to the
-copula parameter domain. For example, Gumbel requires `theta >= 1`, so
-`Psi: R -> [1, inf)`.
+The transform function $\Psi(x)$ maps the latent OU process $x(t)$ to the
+copula parameter domain. For example, Gumbel requires $\theta \ge 1$, so
+$\Psi: \mathbb{R} \to [1, \infty)$.
 
 pyscarcopula provides two transforms. The default for supported copulas is
 `softplus`.
 
 | Name | Formula | Properties |
 |------|---------|------------|
-| `softplus` | `log(1 + exp(x)) + offset` | Default; asymmetric, floor at `offset` |
-| `xtanh` | `x * tanh(x) + offset` | Symmetric, linear growth at large `|x|` |
+| `softplus` | $\log(1 + \exp(x)) + \texttt{offset}$ | Default; asymmetric, floor at `offset` |
+| `xtanh` | $x \tanh(x) + \texttt{offset}$ | Symmetric, linear growth at large $|x|$ |
 
 ## Choosing a transform
 
@@ -31,7 +31,7 @@ result = fit(copula, u, method='scar-tm-ou')
 ### softplus advantages
 
 The softplus transform has a natural floor: the copula parameter cannot go
-below a minimum value. For Gumbel, `theta = 1` corresponds to independence.
+below a minimum value. For Gumbel, $\theta = 1$ corresponds to independence.
 This is useful for financial data where correlations may have a lower bound
 but can spike sharply.
 

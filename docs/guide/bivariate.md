@@ -8,9 +8,9 @@ $$r_t = \Psi(x_t), \qquad dx_t = \kappa(\mu - x_t)\,dt + \nu\,dW_t$$
 
 The three OU parameters control:
 
-- `kappa` - mean-reversion speed
-- `mu` - long-run mean of the latent process
-- `nu` - volatility of the latent process
+- $\kappa$ - mean-reversion speed
+- $\mu$ - long-run mean of the latent process
+- $\nu$ - volatility of the latent process
 
 ## Fitting
 
@@ -24,6 +24,13 @@ result = fit(copula, u, method='scar-tm-ou')
 print(result.params.kappa, result.params.mu, result.params.nu)
 print(result.log_likelihood)
 ```
+
+By default, SCAR-TM uses `transition_method='auto'`. This selects between the
+grid matrix method, local Gauss-Hermite, and the Hermite spectral likelihood
+depending on the OU transition scale. Use `transition_method='spectral'` to
+force the spectral likelihood, or `transition_method='matrix'` / `'gh'` for
+grid-only comparisons. See [Performance](performance.md#spectral-hermite-likelihood)
+for the numerical details.
 
 ## Rotations
 
@@ -57,8 +64,8 @@ result_refit = fit(copula, pobs(v), method='scar-tm-ou')
 
 **`predict`** generates samples for next-step forecasting. It also supports
 conditional generation via `given={idx: u_value}`. For SCAR-TM,
-`horizon='current'` uses `p(x_T | data)`, while `horizon='next'` uses the
-one-step-ahead predictive distribution `p(x_{T+1} | data)`.
+`horizon='current'` uses $p(x_T \mid data)$, while `horizon='next'` uses the
+one-step-ahead predictive distribution $p(x_{T+1} \mid data)$.
 
 For the shared prediction terminology used by bivariate and vine models, see
 [Prediction Semantics](prediction-semantics.md).
@@ -73,9 +80,9 @@ where the unbounded recursion state follows
 
 $$g_{t+1} = \omega + \beta g_t + \gamma s_t.$$
 
-Here `omega` is the intercept, `gamma` controls sensitivity to the scaled
-score, `beta` controls persistence, and `s_t` is the scaled score of the
-current copula log-density with respect to `g_t`.
+Here $\omega$ is the intercept, $\gamma$ controls sensitivity to the scaled
+score, $\beta$ controls persistence, and $s_t$ is the scaled score of the
+current copula log-density with respect to $g_t$.
 
 ```python
 u_pred = predict(copula, u, result, n=100_000,
@@ -94,7 +101,7 @@ u_current = predict(copula, u, result, n=20_000, horizon='current',
 |--------|----------|-----------|
 | MLE | constant r | constant r |
 | SCAR-TM | OU trajectory | current/posterior or one-step-ahead mixture |
-| GAS | recursive score-driven simulation | last filtered value `g_T` |
+| GAS | recursive score-driven simulation | last filtered value $g_T$ |
 
 ## Diagnostics
 

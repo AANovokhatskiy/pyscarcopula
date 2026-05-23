@@ -2,7 +2,7 @@
 
 ## Overview
 
-Vine copulas decompose a `d`-dimensional copula into `d(d-1)/2` bivariate
+Vine copulas decompose a $d$-dimensional copula into $d(d-1)/2$ bivariate
 copulas arranged in a tree structure. Two vine types are supported:
 
 - **C-vine**: fixed star structure (one "root" variable per tree)
@@ -31,7 +31,7 @@ vine.summary()
 ## R-vine
 
 An R-vine selects the tree structure from data using Dissmann's algorithm: at
-each tree level, a maximum spanning tree is built on `abs(Kendall's tau)`,
+each tree level, a maximum spanning tree is built on $|\text{Kendall's tau}|$,
 subject to the proximity condition.
 
 ```python
@@ -189,8 +189,8 @@ For a focused description of prediction semantics, see
 [Prediction Semantics](prediction-semantics.md). For R-vine-specific details,
 see [R-vine Conditioning](rvine-conditioning.md).
 
-For SCAR-TM edges, `predict(..., horizon='current')` uses `p(x_T | data)` and
-`predict(..., horizon='next')` uses `p(x_{T+1} | data)`. `sample` still
+For SCAR-TM edges, `predict(..., horizon='current')` uses $p(x_T \mid data)$ and
+`predict(..., horizon='next')` uses $p(x_{T+1} \mid data)$. `sample` still
 simulates independent OU trajectories.
 
 ## Results on 6-crypto data (T=250)

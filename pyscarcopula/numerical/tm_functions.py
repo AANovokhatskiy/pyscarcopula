@@ -22,6 +22,22 @@ from pyscarcopula.numerical.predictive_tm import tm_state_distribution
 from pyscarcopula.numerical.gof_blocks import _forward_block_size
 
 
+def _normalize_transition_method(transition_method):
+    method = str(transition_method).lower()
+    if method not in {'auto', 'matrix', 'gh', 'spectral'}:
+        raise ValueError(
+            "transition_method must be one of "
+            "'auto', 'matrix', 'gh', or 'spectral'")
+    return method
+
+
+def _grid_transition_method(transition_method):
+    method = _normalize_transition_method(transition_method)
+    if method == 'spectral':
+        return 'auto'
+    return method
+
+
 def _h_on_grid(copula, u2, u1, r_grid):
     if isinstance(copula, BivariateGaussianCopula):
         u2_grid = np.full(len(r_grid), u2, dtype=np.float64)
@@ -84,6 +100,27 @@ def tm_loglik(kappa, mu, nu, u, copula, K=300, grid_range=5.0,
     if kappa <= 0 or nu <= 0:
         return 1e10
 
+    transition_method = _normalize_transition_method(transition_method)
+    if transition_method in {'auto', 'spectral'}:
+        from pyscarcopula.numerical.auto_tm import (
+            AutoTMConfig,
+            auto_neg_loglik,
+        )
+        return auto_neg_loglik(
+            kappa, mu, nu, u, copula,
+            AutoTMConfig(
+                transition_method=transition_method,
+                K=K,
+                grid_range=grid_range,
+                grid_method=grid_method,
+                adaptive=adaptive,
+                pts_per_sigma=pts_per_sigma,
+                max_K=max_K,
+                gh_order=gh_order,
+                r_gh=r_gh,
+            ),
+        )
+
     n = len(u)
     if n < 2:
         return 1e10
@@ -129,6 +166,7 @@ def _forward_loglik(kappa, mu, nu, u, copula, K=300, grid_range=5.0,
     lives next to the production TM code so tests that compare forward and
     backward likelihoods stay visible when the main implementation changes.
     """
+    transition_method = _grid_transition_method(transition_method)
     grid = TMGrid(kappa, mu, nu, len(u), K, grid_range,
                   grid_method, adaptive, pts_per_sigma,
                   transition_method=transition_method, max_K=max_K,
@@ -169,6 +207,7 @@ def tm_forward_predictive_mean(kappa, mu, nu, u, copula, K=300,
     Returns (n,) array.
     """
     n = len(u)
+    transition_method = _grid_transition_method(transition_method)
     grid = TMGrid(kappa, mu, nu, n, K, grid_range,
                   grid_method, adaptive, pts_per_sigma,
                   transition_method=transition_method, max_K=max_K,
@@ -215,6 +254,7 @@ def tm_forward_rosenblatt(kappa, mu, nu, u, copula, K=300, grid_range=5.0,
     Returns (n, 2) — Rosenblatt-transformed pseudo-observations.
     """
     n = len(u)
+    transition_method = _grid_transition_method(transition_method)
     grid = TMGrid(kappa, mu, nu, n, K, grid_range,
                   grid_method, adaptive, pts_per_sigma,
                   transition_method=transition_method, max_K=max_K,
@@ -257,6 +297,7 @@ def tm_forward_mixture_h(kappa, mu, nu, u, copula, K=300, grid_range=5.0,
         h_k = E[h(u_{k,2}, u_{k,1}, Psi(x_k)) | u_{1:k-1}]
     """
     n = len(u)
+    transition_method = _grid_transition_method(transition_method)
     grid = TMGrid(kappa, mu, nu, n, K, grid_range,
                   grid_method, adaptive, pts_per_sigma,
                   transition_method=transition_method, max_K=max_K,
@@ -317,6 +358,7 @@ def tm_xT_distribution(kappa, mu, nu, u, copula, K=300, grid_range=5.0,
     Returns (z_grid, prob) where z_grid includes the mu offset,
     so z_grid[j] = z_j + mu = actual x values.
     """
+    transition_method = _grid_transition_method(transition_method)
     return tm_state_distribution(
         kappa, mu, nu, u, copula, K, grid_range,
         grid_method, adaptive, pts_per_sigma, transition_method=transition_method,

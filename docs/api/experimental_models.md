@@ -5,14 +5,14 @@
 
 ## Equicorrelation Gaussian Copula
 
-For `d` assets, the standard Gaussian copula has `d(d-1)/2` static
+For $d$ assets, the standard Gaussian copula has $d(d-1)/2$ static
 correlation parameters. The equicorrelation model uses a single dynamic
 correlation:
 
 $$R(t) = (1-\rho(t)) \cdot I + \rho(t) \cdot \mathbf{1}\mathbf{1}^\top$$
 
-All pairwise correlations equal `rho(t)`, which follows an OU process via
-SCAR. This gives 3 parameters instead of `d(d-1)/2`.
+All pairwise correlations equal $\rho(t)$, which follows an OU process via
+SCAR. This gives 3 parameters instead of $d(d-1)/2$.
 
 ### Usage
 
@@ -50,7 +50,7 @@ samples = cop.sample(n=10000, r=0.5)
 Equicorrelation SCAR is a good fit when:
 
 - All pairwise correlations move together, common in equity and crypto markets
-- You need fast estimation for large `d`, with `O(d)` density evaluation
+- You need fast estimation for large $d$, with $O(d)$ density evaluation
 - You want a compact, interpretable model with 3 parameters
 
 For heterogeneous dependence, use a C-vine or R-vine instead.

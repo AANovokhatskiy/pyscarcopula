@@ -334,6 +334,29 @@ def tm_loglik_with_grad(kappa, mu, nu, u, copula, K=300, grid_range=5.0,
     if kappa <= 0 or nu <= 0:
         return FAIL
 
+    transition_method = str(transition_method).lower()
+    if transition_method in {'auto', 'spectral'}:
+        from pyscarcopula.numerical.auto_tm import (
+            AutoTMConfig,
+            auto_neg_loglik_with_grad,
+        )
+        return auto_neg_loglik_with_grad(
+            kappa, mu, nu, u, copula,
+            AutoTMConfig(
+                transition_method=transition_method,
+                K=K,
+                grid_range=grid_range,
+                grid_method=grid_method,
+                adaptive=adaptive,
+                pts_per_sigma=pts_per_sigma,
+                max_K=max_K,
+                gh_order=gh_order,
+                r_gh=r_gh,
+            ),
+        )
+    if transition_method not in {'matrix', 'gh'}:
+        return FAIL
+
     n = len(u)
     if n < 2:
         return FAIL
