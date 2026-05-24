@@ -310,6 +310,18 @@ class BivariateGaussianCopula(BivariateCopula):
         x = np.atleast_1d(np.asarray(x, dtype=np.float64))
         return 0.9999 / 4.0 * (1.0 - np.tanh(x / 4.0) ** 2)
 
+    def tau_to_param(self, tau):
+        tau = np.atleast_1d(np.asarray(tau, dtype=np.float64))
+        if np.any((tau <= -1.0) | (tau >= 1.0)):
+            raise ValueError("Gaussian Kendall tau must be in (-1, 1)")
+        return np.sin(0.5 * np.pi * tau)
+
+    def param_to_tau(self, r):
+        r = np.atleast_1d(np.asarray(r, dtype=np.float64))
+        if np.any((r <= -1.0) | (r >= 1.0)):
+            raise ValueError("Gaussian correlation parameter must be in (-1, 1)")
+        return (2.0 / np.pi) * np.arcsin(r)
+
     def pdf_unrotated(self, u1, u2, r):
         u1a, u2a, ra = _broadcast(u1, u2, r)
         return np.exp(_gauss_log_pdf_numba(u1a, u2a, ra))

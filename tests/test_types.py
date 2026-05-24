@@ -6,7 +6,7 @@ from pyscarcopula import PredictConfig as PublicPredictConfig
 from pyscarcopula._types import (
     NumericalConfig,
     LBFGSBConfig,
-    LatentProcessParams, ou_params, gas_params,
+    LatentProcessParams, ou_params, jacobi_params, gas_params,
     MLEResult, LatentResult, GASResult, IndependentResult,
     PredictConfig, PredictiveState,
 )
@@ -36,7 +36,7 @@ class TestNumericalConfig:
         assert cfg.gas_optimizer.maxls == 50
         assert cfg.gas_optimizer.eps == 1e-5
         assert cfg.scar_optimizer.gtol == 1e-3
-        assert cfg.scar_optimizer.maxfun == 100
+        assert cfg.scar_optimizer.maxfun == 300
         assert cfg.scar_optimizer.maxiter == 100
         assert cfg.scar_optimizer.maxls == 20
         assert cfg.scar_optimizer.eps == 1e-4
@@ -80,7 +80,7 @@ class TestNumericalConfig:
         assert cfg.gas_optimizer.maxfun == 250
         assert cfg.gas_optimizer.maxls == 50
         assert cfg.scar_optimizer.maxls == 50
-        assert cfg.scar_optimizer.maxfun == 100
+        assert cfg.scar_optimizer.maxfun == 300
         assert cfg.equicorr_optimizer.gtol == 1e-4
         assert cfg.equicorr_optimizer.maxls == 35
         assert cfg.stochastic_student_optimizer.gtol == 1e-4
@@ -196,6 +196,18 @@ class TestLatentProcessParams:
         assert p.omega == pytest.approx(0.07)
         assert p.gamma == pytest.approx(0.33)
         assert p.beta == pytest.approx(0.97)
+
+    def test_jacobi_params(self):
+        p = jacobi_params(kappa=2.5, m=0.35, xi=0.2)
+        assert p.process_type == 'jacobi'
+        assert p.n_params == 3
+        assert p.kappa == pytest.approx(2.5)
+        assert p.m == pytest.approx(0.35)
+        assert p.xi == pytest.approx(0.2)
+        np.testing.assert_array_equal(
+            p.bounds_lower, np.array([0.001, 1e-6, 0.001]))
+        np.testing.assert_array_equal(
+            p.bounds_upper, np.array([np.inf, 1.0 - 1e-6, np.inf]))
 
     def test_generic_4_params(self):
         """Future Lévy process with 4 parameters."""

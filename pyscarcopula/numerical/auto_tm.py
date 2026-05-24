@@ -1,10 +1,9 @@
 """Automatic likelihood evaluator for SCAR-OU models.
 
-This module dispatches between three numerical backends:
+This module dispatches between two automatic numerical backends:
 
-* Hermite spectral evaluator for strongly mixing transitions,
-* matrix transfer operator for the middle regime,
-* local Gauss-Hermite transition for very narrow kernels.
+* Hermite spectral evaluator for ordinary transitions,
+* local transition for very narrow kernels or spectral numerical fallback.
 """
 
 from __future__ import annotations
@@ -21,19 +20,20 @@ from pyscarcopula.numerical.hermite_tm import (
 from pyscarcopula.numerical.tm_gradient import tm_loglik_with_grad
 from pyscarcopula.numerical.tm_functions import tm_loglik
 from pyscarcopula.numerical.tm_grid import TMGrid
+from pyscarcopula.numerical._transition_methods import (
+    normalize_ou_transition_method,
+)
 
 
 @dataclass(frozen=True)
 class AutoTMConfig:
     """Configuration for the automatic evaluator.
 
-    ``transition_method`` is one of ``"auto"``, ``"matrix"``, ``"gh"``, or
+    ``transition_method`` is one of ``"auto"``, ``"matrix"``, ``"local"``, or
     ``"spectral"``.  In ``"auto"`` mode, ``small_kdt`` selects the narrow-kernel
-    GH path, ``large_kdt`` selects the Hermite spectral path, and values
-    between them use the existing matrix TM backend.  The defaults are
-    deliberately conservative after stress tests: the spectral path is only
-    selected when the one-step transition has enough mixing to damp high
-    Hermite modes.
+    local path; all other regimes try the Hermite spectral path and fall back
+    to the local path on numerical failure.  ``large_kdt`` is retained for
+    result compatibility with older fits and no longer gates the spectral path.
     """
 
     transition_method: str = "auto"
@@ -51,18 +51,6 @@ class AutoTMConfig:
     r_gh: float = 3.0
 
 
-_ALLOWED_TRANSITION_METHODS = {"auto", "matrix", "gh", "spectral"}
-
-
-def _normalize_transition_method(transition_method: str) -> str:
-    method = str(transition_method).lower()
-    if method not in _ALLOWED_TRANSITION_METHODS:
-        raise ValueError(
-            "transition_method must be one of "
-            "'auto', 'matrix', 'gh', or 'spectral'")
-    return method
-
-
 def _kappa_dt(kappa: float, n_obs: int) -> float:
     if n_obs <= 1:
         return float(kappa)
@@ -71,18 +59,16 @@ def _kappa_dt(kappa: float, n_obs: int) -> float:
 
 def select_auto_backend(kappa: float, n_obs: int,
                         config: AutoTMConfig | None = None) -> str:
-    """Return ``"spectral"``, ``"matrix"``, or ``"gh"`` for this regime."""
+    """Return ``"spectral"`` or ``"local"`` for this regime."""
     cfg = config or AutoTMConfig()
-    method = _normalize_transition_method(cfg.transition_method)
+    method = normalize_ou_transition_method(cfg.transition_method)
     if method != "auto":
         return method
 
     kdt = _kappa_dt(kappa, n_obs)
     if kdt < cfg.small_kdt:
-        return "gh"
-    if kdt >= cfg.large_kdt:
-        return "spectral"
-    return "matrix"
+        return "local"
+    return "spectral"
 
 
 def auto_loglik_with_info(kappa, mu, nu, u, copula,
@@ -104,7 +90,7 @@ def auto_loglik_with_info(kappa, mu, nu, u, copula,
     info = asdict(cfg)
     info.update({
         "backend": backend,
-        "transition_method": _normalize_transition_method(
+        "transition_method": normalize_ou_transition_method(
             cfg.transition_method),
         "kappa_dt": float(kdt),
         "n_obs": int(n_obs),
@@ -120,9 +106,13 @@ def auto_loglik_with_info(kappa, mu, nu, u, copula,
             quad_order=quad_order,
         )
         info["quad_order_used"] = int(quad_order)
-        return ll, info
+        if np.isfinite(ll) or info["transition_method"] != "auto":
+            return ll, info
+        info["fallback_from"] = "spectral"
+        backend = "local"
+        info["backend"] = backend
 
-    transition_method = "gh" if backend == "gh" else "matrix"
+    transition_method = "local" if backend == "local" else "matrix"
     neg_ll = tm_loglik(
         kappa, mu, nu, u, copula,
         K=cfg.K,
@@ -183,19 +173,25 @@ def auto_neg_loglik_with_grad(kappa, mu, nu, u, copula,
     cfg = config or AutoTMConfig()
     u = np.asarray(u, dtype=np.float64)
     n_obs = len(u)
+    method = normalize_ou_transition_method(cfg.transition_method)
     backend = select_auto_backend(kappa, n_obs, cfg)
 
     if backend == "spectral":
         quad_order = cfg.quad_order
         if quad_order is None:
             quad_order = default_quad_order(cfg.basis_order)
-        return hermite_loglik_with_grad(
+        out = hermite_loglik_with_grad(
             kappa, mu, nu, u, copula,
             basis_order=cfg.basis_order,
             quad_order=quad_order,
         )
+        if np.isfinite(out[0]) and float(out[0]) < 1e9:
+            return out
+        if method != "auto":
+            return out
+        backend = "local"
 
-    transition_method = "gh" if backend == "gh" else "matrix"
+    transition_method = "local" if backend == "local" else "matrix"
     return tm_loglik_with_grad(
         kappa, mu, nu, u, copula,
         K=cfg.K,

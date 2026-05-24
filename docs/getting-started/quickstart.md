@@ -135,19 +135,22 @@ For the precise meaning of `given`, `given_vars`, `horizon`, and
 
 ## Available copula families
 
-| Family | Class | Rotations | SCAR support |
-|--------|-------|-----------|--------------|
-| Gumbel | `GumbelCopula` | 0, 90, 180, 270 | Yes |
-| Clayton | `ClaytonCopula` | 0, 90, 180, 270 | Yes |
-| Frank | `FrankCopula` | 0 | Yes |
-| Joe | `JoeCopula` | 0, 90, 180, 270 | Yes |
-| Independence | `IndependentCopula` | - | - |
-| Gaussian | `BivariateGaussianCopula` | - | Yes |
-| Equicorrelation | `EquicorrGaussianCopula` | - | Yes |
-| Stochastic Student-t | `StochasticStudentCopula` | - | Yes |
-| Stochastic Student-t DCC | `StochasticStudentDCCCopula` | - | Yes |
-| Gaussian (d-dim) | `GaussianCopula` | - | MLE only |
-| Student-t (d-dim) | `StudentCopula` | - | MLE only |
+| Family | Class | Rotations | SCAR-OU | SCAR-Jacobi |
+|--------|-------|-----------|---------|--------------|
+| Gumbel | `GumbelCopula` | 0, 90, 180, 270 | Yes | Yes |
+| Clayton | `ClaytonCopula` | 0, 90, 180, 270 | Yes | Yes |
+| Frank | `FrankCopula` | 0 | Yes | Yes |
+| Joe | `JoeCopula` | 0, 90, 180, 270 | Yes | Yes |
+| Independence | `IndependentCopula` | - | - | - |
+| Gaussian | `BivariateGaussianCopula` | - | Yes | Yes |
+| Equicorrelation | `EquicorrGaussianCopula` | - | Yes | No |
+| Stochastic Student-t | `StochasticStudentCopula` | - | Yes | No |
+| Stochastic Student-t DCC | `StochasticStudentDCCCopula` | - | Yes | No |
+| Gaussian (d-dim) | `GaussianCopula` | - | MLE only | No |
+| Student-t (d-dim) | `StudentCopula` | - | MLE only | No |
+
+`scar-tm-jacobi` additionally requires a Kendall-tau parameter mapping; this is
+implemented for Gumbel, Clayton, Frank, Joe, and bivariate Gaussian copulas.
 
 ## Available estimation methods
 
@@ -155,4 +158,5 @@ For the precise meaning of `given`, `given_vars`, `horizon`, and
 |--------|-----|-------------|
 | MLE | `'mle'` | Constant copula parameter |
 | SCAR-TM-OU | `'scar-tm-ou'` | Transfer matrix with OU latent process |
+| SCAR-TM-JACOBI | `'scar-tm-jacobi'` | Transfer matrix with Jacobi Kendall-tau dynamics |
 | GAS | `'gas'` | Observation-driven score model |

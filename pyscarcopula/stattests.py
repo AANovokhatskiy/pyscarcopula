@@ -291,19 +291,18 @@ def _bivariate_rosenblatt_from_result(copula, u, fit_result,
         return rosenblatt_transform_gas(
             copula, u, fit_result.params.values, scaling)
 
-    kwargs = {
-        'K': K,
-        'grid_range': grid_range,
-    }
-    for name in (
-            'pts_per_sigma', 'transition_method', 'max_K',
-            'r_gh', 'gh_order'):
-        value = getattr(fit_result, name, None)
-        if value is not None:
-            kwargs[name] = value
+    if getattr(fit_result, 'params', None) is None:
+        raise ValueError(
+            f"Cannot compute bivariate Rosenblatt transform for {method}")
 
-    return rosenblatt_transform_scar(
-        copula, u, fit_result.params.values, **kwargs)
+    from pyscarcopula.strategy._base import get_strategy_for_result
+
+    strategy = get_strategy_for_result(
+        fit_result, K=K, grid_range=grid_range)
+    e = np.empty((len(u), 2), dtype=np.float64)
+    e[:, 0] = u[:, 0]
+    e[:, 1] = strategy.rosenblatt_e2(copula, u, fit_result)
+    return _clip(e)
 
 
 def _as_rng(rng):

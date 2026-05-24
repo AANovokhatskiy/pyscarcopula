@@ -16,9 +16,10 @@ from pyscarcopula._types import (
 from pyscarcopula.strategy._base import register_strategy
 from pyscarcopula.numerical.gas_filter import (
     gas_filter, gas_predict_param, gas_negloglik,
-    gas_mixture_h, _gas_score,
-    _gas_score_multivariate, _multivariate_log_pdf_row,
+    gas_mixture_h,
     _supports_multivariate_log_pdf,
+    _gas_initial_g,
+    _gas_next_g_from_observation,
 )
 from pyscarcopula.strategy.predict_helpers import sample_predictive
 
@@ -188,11 +189,6 @@ class GASStrategy:
             result.scaling, self._score_eps(result))
         return r_path
 
-    def smoothed_params(self, copula, u: np.ndarray,
-                        result: GASResult) -> np.ndarray:
-        """Backward-compatible alias for predictive_mean."""
-        return self.predictive_mean(copula, u, result)
-
     def rosenblatt_e2(self, copula, u: np.ndarray,
                       result: GASResult) -> np.ndarray:
         """e2 = h(u2, u1; Psi(g_t))."""
@@ -231,14 +227,7 @@ class GASStrategy:
         omega, gamma_gas, beta = p.omega, p.gamma, p.beta
         score_eps = self._score_eps(result)
 
-        G_CLIP = 50.0
-        S_CLIP = 100.0
-
-        # Initial g
-        if abs(beta) < 1.0 - 1e-8:
-            g_t = omega / (1.0 - beta)
-        else:
-            g_t = omega
+        g_t = _gas_initial_g(omega, beta)
 
         d = u.shape[1] if u is not None and np.ndim(u) == 2 else 2
         if _supports_multivariate_log_pdf(copula, np.empty((1, d))):
@@ -256,15 +245,9 @@ class GASStrategy:
 
                 if t < n - 1:
                     t_index = fixed_t_index if fixed_t_index is not None else t
-                    ll_t = _multivariate_log_pdf_row(
-                        copula, obs, r_t, t_index)
-                    s_t = _gas_score_multivariate(
-                        obs, t_index, g_t, ll_t, copula,
-                        self.scaling, score_eps)
-
-                    s_t = np.clip(s_t, -S_CLIP, S_CLIP)
-                    g_t = omega + beta * g_t + gamma_gas * s_t
-                    g_t = np.clip(g_t, -G_CLIP, G_CLIP)
+                    g_t, _, _, _ = _gas_next_g_from_observation(
+                        omega, gamma_gas, beta, g_t, obs, copula,
+                        self.scaling, score_eps, t_index=t_index, r_t=r_t)
 
             return samples
 
@@ -279,17 +262,9 @@ class GASStrategy:
 
             # Compute score for next step
             if t < n - 1:
-                u1 = obs[0:1, 0]
-                u2 = obs[0:1, 1]
-
-                ll_t = float(copula.log_pdf(u1, u2, np.array([r_t]))[0])
-                s_t = _gas_score(
-                    u1, u2, g_t, r_t, ll_t, copula,
-                    self.scaling, score_eps)
-
-                s_t = np.clip(s_t, -S_CLIP, S_CLIP)
-                g_t = omega + beta * g_t + gamma_gas * s_t
-                g_t = np.clip(g_t, -G_CLIP, G_CLIP)
+                g_t, _, _, _ = _gas_next_g_from_observation(
+                    omega, gamma_gas, beta, g_t, obs, copula,
+                    self.scaling, score_eps, r_t=r_t)
 
         return samples
 
@@ -347,32 +322,9 @@ class GASStrategy:
             g_t = float(state.metadata['g'])
         else:
             g_t = float(copula.inv_transform(np.array([float(state.r[0])]))[0])
-        score_eps = self._score_eps(result)
-        g_plus = g_t + score_eps
-        g_minus = g_t - score_eps
-        r_t = float(copula.transform(np.array([g_t]))[0])
-        r_plus = float(copula.transform(np.array([g_plus]))[0])
-        r_minus = float(copula.transform(np.array([g_minus]))[0])
-
-        u1 = u[:, 0]
-        u2 = u[:, 1]
-        ll_t = float(np.sum(copula.log_pdf(u1, u2, np.full(len(u), r_t))))
-        ll_plus = float(np.sum(
-            copula.log_pdf(u1, u2, np.full(len(u), r_plus))))
-        ll_minus = float(np.sum(
-            copula.log_pdf(u1, u2, np.full(len(u), r_minus))))
-
-        nabla = (ll_plus - ll_minus) / (2.0 * score_eps)
-        if result.scaling == 'fisher':
-            d2 = (ll_plus - 2.0 * ll_t + ll_minus) / (score_eps ** 2)
-            fisher = max(-d2, 1e-6)
-            score = nabla / fisher
-        else:
-            score = nabla
-
-        score = float(np.clip(score, -100.0, 100.0))
-        g_new = p.omega + p.beta * g_t + p.gamma * score
-        g_new = float(np.clip(g_new, -50.0, 50.0))
+        g_new, _, _, _ = _gas_next_g_from_observation(
+            p.omega, p.gamma, p.beta, g_t, u, copula, result.scaling,
+            self._score_eps(result), analytical=False)
         r_new = float(copula.transform(np.array([g_new]))[0])
         return PredictiveState(
             method=state.method,
@@ -394,10 +346,7 @@ class GASStrategy:
     def model_sample_state(self, copula, result, **kwargs):
         """Initial point-mass state for stepwise GAS model reproduction."""
         p = result.params
-        if abs(p.beta) < 1.0 - 1e-8:
-            g_t = p.omega / (1.0 - p.beta)
-        else:
-            g_t = p.omega
+        g_t = _gas_initial_g(p.omega, p.beta)
         r_t = float(copula.transform(np.array([g_t]))[0])
         return PredictiveState(
             method='GAS',

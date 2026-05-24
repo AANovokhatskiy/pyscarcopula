@@ -30,6 +30,9 @@ from pyscarcopula.numerical.tm_grid import (
     _select_matrix_grid_method,
     _select_transition_method,
 )
+from pyscarcopula.numerical._transition_methods import (
+    normalize_ou_transition_method,
+)
 
 
 def _build_Tw_and_grad_dense(xi, rho, base_w, K):
@@ -334,7 +337,10 @@ def tm_loglik_with_grad(kappa, mu, nu, u, copula, K=300, grid_range=5.0,
     if kappa <= 0 or nu <= 0:
         return FAIL
 
-    transition_method = str(transition_method).lower()
+    try:
+        transition_method = normalize_ou_transition_method(transition_method)
+    except ValueError:
+        return FAIL
     if transition_method in {'auto', 'spectral'}:
         from pyscarcopula.numerical.auto_tm import (
             AutoTMConfig,
@@ -354,7 +360,7 @@ def tm_loglik_with_grad(kappa, mu, nu, u, copula, K=300, grid_range=5.0,
                 r_gh=r_gh,
             ),
         )
-    if transition_method not in {'matrix', 'gh'}:
+    if transition_method not in {'matrix', 'local'}:
         return FAIL
 
     n = len(u)
@@ -404,7 +410,7 @@ def tm_loglik_with_grad(kappa, mu, nu, u, copula, K=300, grid_range=5.0,
 
     # ── build T_w and dT_w/drho ──────────────────────────────────
     try:
-        if transition_method == 'gh':
+        if transition_method == 'local':
             cols, vals, grad_vals = _build_local_stencil_and_grad(
                 xi, rho, transition_method, gh_order)
             matvec = _make_local_stencil_matvec(cols, vals)

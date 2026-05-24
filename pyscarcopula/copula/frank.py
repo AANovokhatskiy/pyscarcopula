@@ -1,5 +1,7 @@
 import numpy as np
 from numba import njit
+from scipy.optimize import brentq
+from scipy.special import spence
 
 from pyscarcopula.copula.base import (
     BivariateCopula,
@@ -11,6 +13,38 @@ from pyscarcopula.copula.base import (
     _xtanh_dtransform,
     _xtanh_transform,
 )
+
+
+def _frank_tau_scalar(theta):
+    theta = float(theta)
+    if theta <= 0.0:
+        raise ValueError("Frank parameter must be positive")
+    if theta < 1e-4:
+        theta2 = theta * theta
+        return theta / 9.0 - theta * theta2 / 900.0 + theta * theta2 * theta2 / 52920.0
+    debye_integral = float(spence(np.exp(-theta)))
+    return 1.0 - 4.0 / theta + 4.0 * debye_integral / (theta * theta)
+
+
+def _frank_param_from_tau_scalar(tau):
+    tau = float(tau)
+    if not (0.0 < tau < 1.0):
+        raise ValueError("Frank Kendall tau must be in (0, 1)")
+
+    lower = 1e-12
+    upper = max(1.0, 4.0 / (1.0 - tau))
+    while _frank_tau_scalar(upper) <= tau:
+        upper *= 2.0
+        if upper > 1e12:
+            raise ValueError("Could not bracket Frank parameter from tau")
+    return float(brentq(
+        lambda theta: _frank_tau_scalar(theta) - tau,
+        lower,
+        upper,
+        xtol=1e-12,
+        rtol=1e-12,
+        maxiter=100,
+    ))
 
 
 @njit(cache=True)
@@ -366,6 +400,22 @@ class FrankCopula(BivariateCopula):
         if self._transform_type == 'xtanh':
             return _inv_xtanh_transform(r, 0.0001)
         raise ValueError(f"Unsupported transform_type: {self._transform_type}")
+
+    def tau_to_param(self, tau):
+        tau = np.atleast_1d(np.asarray(tau, dtype=np.float64))
+        if np.any((tau <= 0.0) | (tau >= 1.0)):
+            raise ValueError("Frank Kendall tau must be in (0, 1)")
+        return np.array([
+            _frank_param_from_tau_scalar(value) for value in tau
+        ], dtype=np.float64)
+
+    def param_to_tau(self, r):
+        r = np.atleast_1d(np.asarray(r, dtype=np.float64))
+        if np.any(r <= 0.0):
+            raise ValueError("Frank parameter must be positive")
+        return np.array([
+            _frank_tau_scalar(value) for value in r
+        ], dtype=np.float64)
 
     def pdf_unrotated(self, u1, u2, r):
         return _frank_pdf(*_broadcast(u1, u2, r))

@@ -48,7 +48,7 @@ class TestSCARConvergence:
     def test_scar_fit_returns_valid_params(self, crypto_data):
         u = crypto_data[:500]
         cop = GumbelCopula(rotate=180)
-        result = fit(cop, u, method='scar-tm-ou', K=150, gtol=1e-2)
+        result = fit(cop, u, method='scar-tm-ou')
 
         assert isinstance(result, LatentResult)
         assert result.params.kappa > 0
@@ -72,7 +72,7 @@ class TestSmartInit:
     def test_smart_init_same_optimum(self, crypto_data, smart):
         u = crypto_data[:500]
         cop = GumbelCopula(rotate=180)
-        result = fit(cop, u, method='scar-tm-ou', K=150, gtol=1e-2,
+        result = fit(cop, u, method='scar-tm-ou',
                      smart_init=smart, analytical_grad=True)
         assert result.log_likelihood > 100
 

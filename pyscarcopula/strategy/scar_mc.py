@@ -210,10 +210,6 @@ class SCARPStrategy(_SCARMCBase):
             "P-sampler does not provide predictive means. "
             "Use SCAR-TM-OU for deterministic predictive means.")
 
-    def smoothed_params(self, copula, u, result):
-        """Backward-compatible alias for predictive_mean."""
-        return self.predictive_mean(copula, u, result)
-
     def rosenblatt_e2(self, copula, u, result):
         raise NotImplementedError("Use SCAR-TM-OU for GoF tests.")
 
@@ -319,10 +315,6 @@ class SCARMStrategy(_SCARMCBase):
         raise NotImplementedError(
             "M-sampler does not provide predictive means. "
             "Use SCAR-TM-OU for deterministic predictive means.")
-
-    def smoothed_params(self, copula, u, result):
-        """Backward-compatible alias for predictive_mean."""
-        return self.predictive_mean(copula, u, result)
 
     def rosenblatt_e2(self, copula, u, result):
         raise NotImplementedError("Use SCAR-TM-OU for GoF tests.")

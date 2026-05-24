@@ -5,7 +5,7 @@ Contents:
   - TMGrid: precomputed grid, stationary density, transfer operator
   - _build_dense_T: dense K×K transfer matrix
   - _build_sparse_T_vectorized: sparse banded CSR transfer matrix
-  - _build_local_interpolation_T: Gauss-Hermite local transition
+  - _build_local_interpolation_T: local interpolation transition
 
 The TMGrid encapsulates:
   - Adaptive grid refinement (K_eff from pts_per_sigma)
@@ -19,9 +19,11 @@ All TM-based functions share this infrastructure.
 import numpy as np
 from scipy.sparse import csr_matrix
 
+from pyscarcopula.numerical._transition_methods import (
+    normalize_ou_grid_transition_method,
+)
 
 _GRID_METHODS = frozenset(('auto', 'dense', 'sparse'))
-_TRANSITION_METHODS = frozenset(('auto', 'matrix', 'gh', 'spectral'))
 
 
 def _validate_grid_method(value):
@@ -35,18 +37,7 @@ def _validate_grid_method(value):
 
 
 def _validate_transition_method(value):
-    method = str(value).lower()
-    if method not in _TRANSITION_METHODS:
-        raise ValueError(
-            "transition_method must be one of "
-            "'auto', 'matrix', 'gh', or 'spectral', "
-            f"got {value!r}"
-        )
-    if method == 'spectral':
-        # Spectral likelihood has no finite grid state; grid-only routines use
-        # the automatic matrix/GH fallback for forward distributions.
-        return 'auto'
-    return method
+    return normalize_ou_grid_transition_method(value)
 
 
 def _validate_optional_min_int(value, name, minimum):
@@ -87,9 +78,9 @@ def _select_transition_method(requested, r_kernel_grid, r_gh,
     if requested != 'auto':
         return requested
     if adaptive_was_capped:
-        return 'gh'
+        return 'local'
     if r_kernel_grid <= r_gh:
-        return 'gh'
+        return 'local'
     return 'matrix'
 
 
@@ -138,18 +129,18 @@ class TMGrid:
     transition_method : str
         Prototype transition operator selector. 'matrix' preserves the current
         Gaussian matrix path. 'auto' chooses between that path, deterministic
-        interpolation, and Gauss-Hermite interpolation. The Gaussian matrix
-        path still uses grid_method to choose sparse or dense storage. 'gh'
-        forces the local Gauss-Hermite operator.
+        interpolation, and local interpolation. The Gaussian matrix path still
+        uses grid_method to choose sparse or dense storage. 'local' forces the
+        local operator.
     max_K : int or None
         Optional cap for the adaptive effective grid size. If the adaptive
         rule requests more than max_K points, K_eff is capped and the
         `_adaptive_was_capped` diagnostic is set.
     r_gh : float
-        Locality threshold based on sigma_cond / dz. Auto selection uses GH
-        for narrow local kernels.
+        Locality threshold based on sigma_cond / dz. Auto selection uses the
+        local operator for narrow kernels.
     gh_order : int
-        Reserved Gauss-Hermite order for the local transition operator.
+        Quadrature order for the local transition operator.
     """
 
     __slots__ = (
@@ -227,7 +218,7 @@ class TMGrid:
         half_width = 5.0 * sigma_cond
         self._band = int(np.ceil(half_width / dz))
 
-        if transition_method == 'gh':
+        if transition_method == 'local':
             self._grid_method = 'local'
             self._T_op = _build_local_interpolation_T(
                 z, rho, sigma_cond, K_eff, transition_method, gh_order)

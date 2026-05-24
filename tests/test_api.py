@@ -8,7 +8,7 @@ from pyscarcopula import (
     GaussianCopula, StudentCopula, StochasticStudentCopula,
     StochasticStudentDCCCopula,
 )
-from pyscarcopula.api import fit, predict, predictive_mean, smoothed_params
+from pyscarcopula.api import fit, predict, predictive_mean
 from pyscarcopula.stattests import gof_test
 from pyscarcopula._utils import pobs
 from pyscarcopula._types import (
@@ -72,7 +72,7 @@ class TestFitResultTypes:
     ])
     def test_scar_returns_latent_result(self, cls, rot, random_u2):
         cop = cls(rotate=rot)
-        result = fit(cop, random_u2, method='scar-tm-ou', K=50, gtol=0.5)
+        result = fit(cop, random_u2, method='scar-tm-ou')
         assert isinstance(result, LatentResult)
         assert result.params.kappa > 0
         assert result.params.nu > 0
@@ -109,19 +109,11 @@ class TestPredictiveMean:
 
     def test_scar_varying(self, random_u2):
         cop = GumbelCopula(rotate=180)
-        result = fit(cop, random_u2, method='scar-tm-ou', K=50, gtol=0.5)
+        result = fit(cop, random_u2, method='scar-tm-ou')
         r_t = predictive_mean(cop, random_u2, result)
         assert r_t.shape == (200,)
         # Should vary (not constant like MLE)
         assert np.std(r_t) > 0
-
-    def test_predictive_mean_alias(self, random_u2):
-        cop = GumbelCopula(rotate=180)
-        result = fit(cop, random_u2, method='mle')
-        np.testing.assert_allclose(
-            predictive_mean(cop, random_u2, result),
-            smoothed_params(cop, random_u2, result))
-
 
 class TestGoFWithFitResult:
     """gof_test with explicit fit_result= parameter."""
@@ -134,7 +126,7 @@ class TestGoFWithFitResult:
 
     def test_scar_gof(self, random_u2):
         cop = GumbelCopula(rotate=180)
-        result = fit(cop, random_u2, method='scar-tm-ou', K=50, gtol=0.5)
+        result = fit(cop, random_u2, method='scar-tm-ou')
         gof = gof_test(cop, random_u2, fit_result=result, to_pobs=False)
         assert 0 <= gof.pvalue <= 1
 
@@ -209,7 +201,7 @@ class TestTransformType:
     ])
     def test_softplus_scar(self, cls, rot, random_u2):
         cop = cls(rotate=rot, transform_type='softplus')
-        result = fit(cop, random_u2, method='scar-tm-ou', K=50, gtol=0.5)
+        result = fit(cop, random_u2, method='scar-tm-ou')
         assert isinstance(result, LatentResult)
 
     def test_softplus_output_range(self):
@@ -319,7 +311,7 @@ class TestEquicorrGaussian:
     def test_scar(self):
         u = pobs(np.random.default_rng(42).standard_normal((200, 4)))
         cop = EquicorrGaussianCopula(d=4)
-        cop.fit(u, method='scar-tm-ou', K=50, gtol=0.5)
+        cop.fit(u, method='scar-tm-ou')
         assert hasattr(cop.fit_result, 'alpha')
 
     def test_sample_shape(self):
@@ -554,13 +546,15 @@ class TestConditionalPredict:
 
     def test_scar_tm_current_and_next_state_distributions_differ(self, random_u2):
         cop = GumbelCopula(rotate=180)
-        result = fit(cop, random_u2, method='scar-tm-ou', K=50, gtol=0.5)
+        result = fit(cop, random_u2, method='scar-tm-ou')
         p = result.params
         z_cur, prob_cur = tm_state_distribution(
-            p.kappa, p.mu, p.nu, random_u2, cop, K=50, grid_range=5.0,
+            p.kappa, p.mu, p.nu, random_u2, cop,
+            K=result.K, grid_range=result.grid_range,
             horizon='current')
         z_next, prob_next = tm_state_distribution(
-            p.kappa, p.mu, p.nu, random_u2, cop, K=50, grid_range=5.0,
+            p.kappa, p.mu, p.nu, random_u2, cop,
+            K=result.K, grid_range=result.grid_range,
             horizon='next')
         np.testing.assert_allclose(z_cur, z_next)
         assert prob_cur.shape == prob_next.shape

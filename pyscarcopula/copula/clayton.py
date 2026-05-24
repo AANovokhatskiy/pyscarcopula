@@ -49,6 +49,8 @@ def _clayton_h(u0, u1, r):
     n = len(u0)
     out = np.empty(n)
     eps = 1e-6
+    log_eps = np.log(eps)
+    log_one_minus_eps = np.log(1.0 - eps)
     for i in range(n):
         v0 = min(max(u0[i], eps), 1.0 - eps)
         v1 = min(max(u1[i], eps), 1.0 - eps)
@@ -57,12 +59,27 @@ def _clayton_h(u0, u1, r):
         if ri < 1e-8:
             out[i] = v0  # independence limit
         else:
-            S = v0 ** (-ri) + v1 ** (-ri) - 1.0
-            if S < 1e-300:
+            log_v0 = np.log(v0)
+            log_v1 = np.log(v1)
+            a = -ri * log_v0
+            b = -ri * log_v1
+            log_max = max(a, b)
+            log_min = min(a, b)
+            correction = np.exp(log_min - log_max) - np.exp(-log_max)
+            if correction <= -1.0:
                 out[i] = v0
             else:
-                val = v1 ** (-ri - 1.0) * S ** (-1.0 - 1.0 / ri)
-                out[i] = min(max(val, eps), 1.0 - eps)
+                log_S = log_max + np.log1p(correction)
+                log_h = (
+                    (-ri - 1.0) * log_v1
+                    + (-1.0 - 1.0 / ri) * log_S
+                )
+                if log_h <= log_eps:
+                    out[i] = eps
+                elif log_h >= log_one_minus_eps:
+                    out[i] = 1.0 - eps
+                else:
+                    out[i] = np.exp(log_h)
     return out
 
 
@@ -72,6 +89,8 @@ def _clayton_h_pair(u0, u1, r):
     out01 = np.empty(n)
     out10 = np.empty(n)
     eps = 1e-6
+    log_eps = np.log(eps)
+    log_one_minus_eps = np.log(1.0 - eps)
     for i in range(n):
         v0 = min(max(u0[i], eps), 1.0 - eps)
         v1 = min(max(u1[i], eps), 1.0 - eps)
@@ -81,18 +100,35 @@ def _clayton_h_pair(u0, u1, r):
             out01[i] = v0
             out10[i] = v1
         else:
-            v0_pow = v0 ** (-ri)
-            v1_pow = v1 ** (-ri)
-            S = v0_pow + v1_pow - 1.0
-            if S < 1e-300:
+            log_v0 = np.log(v0)
+            log_v1 = np.log(v1)
+            a = -ri * log_v0
+            b = -ri * log_v1
+            log_max = max(a, b)
+            log_min = min(a, b)
+            correction = np.exp(log_min - log_max) - np.exp(-log_max)
+            if correction <= -1.0:
                 out01[i] = v0
                 out10[i] = v1
             else:
-                common = S ** (-1.0 - 1.0 / ri)
-                val01 = v1 ** (-ri - 1.0) * common
-                val10 = v0 ** (-ri - 1.0) * common
-                out01[i] = min(max(val01, eps), 1.0 - eps)
-                out10[i] = min(max(val10, eps), 1.0 - eps)
+                log_S = log_max + np.log1p(correction)
+                log_common = (-1.0 - 1.0 / ri) * log_S
+
+                log_h01 = (-ri - 1.0) * log_v1 + log_common
+                if log_h01 <= log_eps:
+                    out01[i] = eps
+                elif log_h01 >= log_one_minus_eps:
+                    out01[i] = 1.0 - eps
+                else:
+                    out01[i] = np.exp(log_h01)
+
+                log_h10 = (-ri - 1.0) * log_v0 + log_common
+                if log_h10 <= log_eps:
+                    out10[i] = eps
+                elif log_h10 >= log_one_minus_eps:
+                    out10[i] = 1.0 - eps
+                else:
+                    out10[i] = np.exp(log_h10)
     return out01, out10
 
 
@@ -255,6 +291,18 @@ class ClaytonCopula(BivariateCopula):
         if self._transform_type == 'xtanh':
             return _inv_xtanh_transform(r, 0.0001)
         raise ValueError(f"Unsupported transform_type: {self._transform_type}")
+
+    def tau_to_param(self, tau):
+        tau = np.atleast_1d(np.asarray(tau, dtype=np.float64))
+        if np.any((tau <= 0.0) | (tau >= 1.0)):
+            raise ValueError("Clayton Kendall tau must be in (0, 1)")
+        return 2.0 * tau / (1.0 - tau)
+
+    def param_to_tau(self, r):
+        r = np.atleast_1d(np.asarray(r, dtype=np.float64))
+        if np.any(r <= 0.0):
+            raise ValueError("Clayton parameter must be positive")
+        return r / (r + 2.0)
 
     def pdf_unrotated(self, u1, u2, r):
         u1a, u2a, ra = _broadcast(u1, u2, r)

@@ -5,8 +5,9 @@
 pyscarcopula models dependence between variables in Python for financial time
 series, risk analytics, and experiments with dynamic dependence. Alongside
 classical constant-parameter copulas, it supports SCAR models where the copula
-parameter follows a latent Ornstein-Uhlenbeck stochastic process estimated via
-a deterministic transfer matrix method.
+parameter follows an Ornstein-Uhlenbeck latent process or where Kendall's tau
+follows a bounded Jacobi diffusion estimated via a deterministic transfer
+matrix method.
 
 ## Key Features
 
@@ -16,7 +17,7 @@ a deterministic transfer matrix method.
 - **C-vine copulas**: automatic family selection, truncation, mixed SCAR/MLE
 - **R-vine conditional sampling**: exact suffix/rebuild path plus arbitrary
   runtime-DAG + MCMC fallback
-- **Estimation**: MLE, GAS, SCAR-TM-OU (transfer matrix with analytical gradient)
+- **Estimation**: MLE, GAS, SCAR-TM-OU, SCAR-TM-JACOBI
 - **Prediction controls**: `PredictConfig`, diagnostics, dynamic conditioning,
   reproducible `rng`
 - **Transform functions**: `softplus` (default), `xtanh` (symmetric)
@@ -48,4 +49,4 @@ r_t = predictive_mean(copula, u, result)
 |-------|------|-------------|
 | MLE (constant) | 955.63 | 0.0105 |
 | GAS (score-driven) | 1031.42 | 0.5187 |
-| **SCAR-TM** | **1042.47** | **0.6544** |
+| **SCAR-TM-OU** | **1042.47** | **0.6544** |

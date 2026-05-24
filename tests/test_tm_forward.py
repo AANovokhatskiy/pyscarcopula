@@ -17,10 +17,11 @@ from pyscarcopula.numerical.hermite_tm import (
     hermite_loglik,
     hermite_loglik_with_grad,
 )
+from pyscarcopula.numerical.auto_tm import AutoTMConfig, select_auto_backend
+from pyscarcopula.numerical import auto_tm
 from pyscarcopula.numerical.tm_gradient import tm_loglik_with_grad
 from pyscarcopula.numerical.tm_grid import TMGrid
 from pyscarcopula.numerical.gof_blocks import (
-    _forward_block_size,
     forward_block_size,
     iter_forward_weight_blocks,
 )
@@ -95,14 +96,13 @@ def _materialized_forward_mixture_h(kappa, mu, nu, u, copula, **kwargs):
     return np.clip(h_mix, 1e-6, 1.0 - 1e-6)
 
 
-def test_forward_block_size_bounds_memory_and_keeps_compat_alias():
+def test_forward_block_size_bounds_memory():
     assert forward_block_size(300) == 512
     assert forward_block_size(10_000) == 200
     assert forward_block_size(10_000_000) == 1
     assert forward_block_size(300, max_elements=1_000, max_rows=10) == 3
     assert forward_block_size(
         100, max_elements=1_000, max_rows=10, element_width=5) == 2
-    assert _forward_block_size(10_000) == forward_block_size(10_000)
 
 
 def test_iter_forward_weight_blocks_matches_materialized_weights():
@@ -138,7 +138,7 @@ def test_iter_forward_weight_blocks_matches_materialized_weights():
     assert n_blocks == 3
 
 
-def test_local_gh_transition_rows_sum_to_one():
+def test_local_transition_rows_sum_to_one():
     grid = TMGrid(
         kappa=0.5,
         mu=0.0,
@@ -146,7 +146,7 @@ def test_local_gh_transition_rows_sum_to_one():
         n=100,
         K=80,
         adaptive=False,
-        transition_method="gh",
+        transition_method="local",
         gh_order=5,
     )
 
@@ -154,7 +154,21 @@ def test_local_gh_transition_rows_sum_to_one():
 
     np.testing.assert_allclose(row_sums, 1.0, rtol=1e-12, atol=1e-12)
     assert grid.diagnostics()["grid_method"] == "local"
-    assert grid.diagnostics()["transition_method"] == "gh"
+    assert grid.diagnostics()["transition_method"] == "local"
+
+
+def test_gh_transition_method_is_rejected():
+    with pytest.raises(ValueError, match="transition_method"):
+        TMGrid(
+            kappa=0.5,
+            mu=0.0,
+            nu=1.0,
+            n=100,
+            K=80,
+            adaptive=False,
+            transition_method="gh",
+            gh_order=5,
+        )
 
 
 def test_local_transition_predict_matvec_preserves_mass():
@@ -165,7 +179,7 @@ def test_local_transition_predict_matvec_preserves_mass():
         n=100,
         K=80,
         adaptive=False,
-        transition_method="gh",
+        transition_method="local",
         gh_order=5,
     )
     phi = np.ones(grid.K)
@@ -197,10 +211,10 @@ def test_max_k_caps_adaptive_grid_and_auto_selects_local_transition():
     assert diag["K_adaptive"] > diag["K"]
     assert diag["adaptive_was_capped"] is True
     assert diag["grid_method"] == "local"
-    assert diag["transition_method"] == "gh"
+    assert diag["transition_method"] == "local"
 
 
-def test_auto_transition_uses_gh_for_very_narrow_kernel():
+def test_auto_transition_uses_local_for_very_narrow_kernel():
     grid = TMGrid(
         kappa=0.001,
         mu=0.0,
@@ -214,7 +228,7 @@ def test_auto_transition_uses_gh_for_very_narrow_kernel():
     diag = grid.diagnostics()
 
     assert diag["r_kernel_grid"] < diag["r_gh"]
-    assert diag["transition_method"] == "gh"
+    assert diag["transition_method"] == "local"
 
 
 def test_matrix_transition_keeps_sparse_dense_backend_selection():
@@ -256,7 +270,7 @@ def test_local_transition_loglik_is_finite():
         copula,
         K=40,
         adaptive=False,
-        transition_method="gh",
+        transition_method="local",
     )
 
     assert np.isfinite(value)
@@ -286,6 +300,46 @@ def test_scar_tm_local_transition_keeps_analytical_gradient_enabled():
     assert SCARTMStrategy().analytical_grad is True
     assert SCARTMStrategy(transition_method="auto").analytical_grad is True
     assert SCARTMStrategy(max_K=100).analytical_grad is True
+
+
+def test_scar_tm_auto_selects_spectral_except_narrow_local_fallback():
+    cfg = AutoTMConfig(transition_method="auto", small_kdt=1e-3)
+
+    assert select_auto_backend(0.05, 101, cfg) == "local"
+    assert select_auto_backend(0.2, 101, cfg) == "spectral"
+    assert select_auto_backend(6.0, 101, cfg) == "spectral"
+
+    assert select_auto_backend(
+        0.2, 101, AutoTMConfig(transition_method="matrix")) == "matrix"
+    with pytest.raises(ValueError, match="transition_method"):
+        select_auto_backend(
+            0.2, 101, AutoTMConfig(transition_method="gh"))
+
+
+def test_scar_tm_auto_gradient_falls_back_from_failed_spectral_to_local(
+        monkeypatch):
+    calls = []
+
+    def failed_spectral(*args, **kwargs):
+        calls.append("spectral")
+        return 1e10, np.zeros(3)
+
+    def local_grad(*args, **kwargs):
+        calls.append(kwargs["transition_method"])
+        return 12.0, np.array([1.0, 2.0, 3.0])
+
+    monkeypatch.setattr(auto_tm, "hermite_loglik_with_grad", failed_spectral)
+    monkeypatch.setattr(auto_tm, "tm_loglik_with_grad", local_grad)
+
+    u = np.random.default_rng(18).uniform(0.05, 0.95, size=(8, 2))
+    value, grad = auto_tm.auto_neg_loglik_with_grad(
+        1.0, 0.0, 1.0, u, BivariateGaussianCopula(),
+        AutoTMConfig(transition_method="auto", small_kdt=1e-6),
+    )
+
+    assert calls == ["spectral", "local"]
+    assert value == pytest.approx(12.0)
+    np.testing.assert_allclose(grad, [1.0, 2.0, 3.0])
 
 
 def test_scar_tm_strategy_defaults_to_auto_likelihood_with_auto_grid():
@@ -364,7 +418,7 @@ def test_local_transition_analytical_gradient_matches_finite_difference():
         "K": 45,
         "grid_range": 4.0,
         "adaptive": False,
-        "transition_method": "gh",
+        "transition_method": "local",
         "gh_order": 5,
     }
 
@@ -483,7 +537,7 @@ def test_experimental_ppf_cache_does_not_trust_reused_object_id():
         assert model._ppf_table_u_id == id(second)
 
 
-def test_scar_tm_accepts_flat_boundary_line_search_convergence():
+def test_scar_tm_accepts_flat_boundary_convergence():
     u = np.random.default_rng(16).uniform(0.001, 0.999, size=(60, 2))
     copula = BivariateGaussianCopula()
 
@@ -498,7 +552,6 @@ def test_scar_tm_accepts_flat_boundary_line_search_convergence():
     )
 
     assert result.success
-    assert "accepted as boundary convergence" in result.message
     assert result.params.nu == pytest.approx(0.001)
 
 
@@ -542,7 +595,7 @@ def test_forward_weights_are_predictive_before_current_observation():
     np.testing.assert_allclose(weights[1], expected_1, rtol=1e-12, atol=1e-12)
 
 
-@pytest.mark.parametrize("transition_method", ["matrix", "gh"])
+@pytest.mark.parametrize("transition_method", ["matrix", "local"])
 def test_streaming_forward_gof_matches_materialized_path(transition_method):
     rng = np.random.default_rng(4)
     u = rng.uniform(0.05, 0.95, size=(12, 2))
@@ -625,7 +678,7 @@ def test_bivariate_gof_passes_stored_transition_options(monkeypatch):
         return np.column_stack((u_arg[:, 0], u_arg[:, 1]))
 
     monkeypatch.setattr(
-        "pyscarcopula.numerical.tm_functions.tm_forward_rosenblatt",
+        "pyscarcopula.strategy.scar_tm.tm_forward_rosenblatt",
         fake_rosenblatt,
     )
 

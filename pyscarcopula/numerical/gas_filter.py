@@ -68,6 +68,18 @@ _GAS_TRANSFORM_SOFTPLUS = 1
 _GAS_TRANSFORM_XTANH = 2
 
 
+def _gas_initial_g(omega, beta):
+    if abs(beta) < 1.0 - 1e-8:
+        return omega / (1.0 - beta)
+    return omega
+
+
+def _gas_update_from_score(omega, gamma, beta, g_t, s_t):
+    s_t = np.clip(s_t, -S_CLIP, S_CLIP)
+    g_next = omega + beta * g_t + gamma * s_t
+    return float(np.clip(g_next, -G_CLIP, G_CLIP))
+
+
 @njit(cache=True)
 def _gas_apply_rotation(u1, u2, rotation):
     if rotation == 90:
@@ -290,6 +302,27 @@ def _gas_score(u1, u2, g_t, r_t, ll_t, copula, scaling, score_eps):
     return nabla_t / fisher
 
 
+def _gas_score_finite_difference(u1, u2, g_t, ll_t, copula, scaling,
+                                 score_eps):
+    g_plus = g_t + score_eps
+    g_minus = g_t - score_eps
+    r_plus = float(copula.transform(np.array([g_plus]))[0])
+    r_minus = float(copula.transform(np.array([g_minus]))[0])
+
+    ll_plus = float(np.sum(
+        copula.log_pdf(u1, u2, np.full(len(u1), r_plus))))
+    ll_minus = float(np.sum(
+        copula.log_pdf(u1, u2, np.full(len(u1), r_minus))))
+
+    nabla = (ll_plus - ll_minus) / (2.0 * score_eps)
+    if scaling != 'fisher':
+        return nabla
+
+    d2 = (ll_plus - 2.0 * ll_t + ll_minus) / (score_eps ** 2)
+    fisher = max(-d2, 1e-6)
+    return nabla / fisher
+
+
 # ══════════════════════════════════════════════════════════════════
 # Core GAS filter
 # ══════════════════════════════════════════════════════════════════
@@ -366,6 +399,43 @@ def _gas_score_multivariate(u_row, t_index, g_t, ll_t, copula, scaling,
     return nabla_t / fisher
 
 
+def _gas_next_g_from_observation(
+        omega, gamma, beta, g_t, u_row, copula, scaling='unit',
+        score_eps=1e-4, t_index=None, r_t=None, ll_t=None,
+        analytical=True):
+    """Apply one GAS score update from a single observed row."""
+    u_row = np.asarray(u_row, dtype=np.float64)
+    if u_row.ndim != 2 or len(u_row) == 0:
+        raise ValueError("u_row must contain at least one observation")
+
+    if _supports_multivariate_log_pdf(copula, u_row):
+        t_index = 0 if t_index is None else int(t_index)
+        if r_t is None:
+            r_t = _transform_scalar(copula, g_t)
+        if ll_t is None:
+            ll_t = _multivariate_log_pdf_row(copula, u_row, r_t, t_index)
+        s_t = _gas_score_multivariate(
+            u_row, t_index, g_t, ll_t, copula, scaling, score_eps)
+    else:
+        if r_t is None:
+            r_t = float(copula.transform(np.array([g_t]))[0])
+        u1 = u_row[:, 0]
+        u2 = u_row[:, 1]
+        if ll_t is None:
+            ll_t = float(copula.log_pdf(u1, u2, np.array([r_t]))[0])
+        if analytical:
+            s_t = _gas_score(
+                u1, u2, g_t, r_t, ll_t, copula, scaling, score_eps)
+        else:
+            s_t = _gas_score_finite_difference(
+                u1, u2, g_t, ll_t, copula, scaling, score_eps)
+
+    if not np.isfinite(ll_t) or not np.isfinite(s_t):
+        raise FloatingPointError("invalid GAS log-likelihood or score")
+    g_next = _gas_update_from_score(omega, gamma, beta, g_t, s_t)
+    return g_next, float(r_t), float(ll_t), float(np.clip(s_t, -S_CLIP, S_CLIP))
+
+
 def _gas_filter_multivariate(omega, gamma, beta, u, copula, scaling='unit',
                              score_eps=1e-4):
     """Run GAS filter for scalar-latent multivariate copulas."""
@@ -374,10 +444,7 @@ def _gas_filter_multivariate(omega, gamma, beta, u, copula, scaling='unit',
     r_path = np.empty(T)
     total_logL = 0.0
 
-    if abs(beta) < 1.0 - 1e-8:
-        g_t = omega / (1.0 - beta)
-    else:
-        g_t = omega
+    g_t = _gas_initial_g(omega, beta)
 
     combined_rows = None
     if scaling != 'fisher':
@@ -405,14 +472,16 @@ def _gas_filter_multivariate(omega, gamma, beta, u, copula, scaling='unit',
 
         if t < T - 1:
             if s_t is None:
-                s_t = _gas_score_multivariate(
-                    u_row, t, g_t, ll_t, copula, scaling, score_eps)
-            if not np.isfinite(s_t):
-                return g_path, r_path, -1e10
-
-            s_t = np.clip(s_t, -S_CLIP, S_CLIP)
-            g_t = omega + beta * g_t + gamma * s_t
-            g_t = np.clip(g_t, -G_CLIP, G_CLIP)
+                try:
+                    g_t, _, _, _ = _gas_next_g_from_observation(
+                        omega, gamma, beta, g_t, u_row, copula,
+                        scaling, score_eps, t_index=t, r_t=r_t, ll_t=ll_t)
+                except FloatingPointError:
+                    return g_path, r_path, -1e10
+            else:
+                if not np.isfinite(s_t):
+                    return g_path, r_path, -1e10
+                g_t = _gas_update_from_score(omega, gamma, beta, g_t, s_t)
 
     return g_path, r_path, total_logL
 
@@ -465,12 +534,7 @@ def gas_filter(omega, gamma, beta, u, copula, scaling='unit',
     total_logL = 0.0
 
     # Initial value: unconditional mean g_bar = omega / (1 - beta)
-    if abs(beta) < 1.0 - 1e-8:
-        g_bar = omega / (1.0 - beta)
-    else:
-        g_bar = omega
-
-    g_t = g_bar
+    g_t = _gas_initial_g(omega, beta)
 
     for t in range(T):
         g_path[t] = g_t
@@ -489,14 +553,12 @@ def gas_filter(omega, gamma, beta, u, copula, scaling='unit',
 
         # Score for next step
         if t < T - 1:
-            s_t = _gas_score(
-                u1, u2, g_t, r_t, ll_t, copula, scaling, score_eps)
-            if not np.isfinite(s_t):
+            try:
+                g_t, _, _, _ = _gas_next_g_from_observation(
+                    omega, gamma, beta, g_t, u[t:t + 1], copula,
+                    scaling, score_eps, r_t=r_t, ll_t=ll_t)
+            except FloatingPointError:
                 return g_path, r_path, -1e10
-
-            s_t = np.clip(s_t, -S_CLIP, S_CLIP)
-            g_t = omega + beta * g_t + gamma * s_t
-            g_t = np.clip(g_t, -G_CLIP, G_CLIP)
 
     return g_path, r_path, total_logL
 
@@ -527,27 +589,9 @@ def gas_predict_param(omega, gamma, beta, u, copula, scaling='unit',
         raise ValueError("horizon must be 'current' or 'next'")
 
     g_t = float(g_path[-1])
-    if _supports_multivariate_log_pdf(copula, u):
-        u_row = u[-1:]
-        r_t = float(copula.transform(np.array([g_t]))[0])
-        ll_t = _multivariate_log_pdf_row(copula, u_row, r_t, len(u) - 1)
-        s_t = _gas_score_multivariate(
-            u_row, len(u) - 1, g_t, ll_t, copula, scaling, score_eps)
-        s_t = np.clip(s_t, -S_CLIP, S_CLIP)
-        g_next = omega + beta * g_t + gamma * s_t
-        g_next = np.clip(g_next, -G_CLIP, G_CLIP)
-        return float(copula.transform(np.array([g_next]))[0])
-
-    u1 = u[-1:, 0]
-    u2 = u[-1:, 1]
-
-    r_t = float(copula.transform(np.array([g_t]))[0])
-    ll_t = float(copula.log_pdf(u1, u2, np.array([r_t]))[0])
-    s_t = _gas_score(u1, u2, g_t, r_t, ll_t, copula, scaling, score_eps)
-
-    s_t = np.clip(s_t, -S_CLIP, S_CLIP)
-    g_next = omega + beta * g_t + gamma * s_t
-    g_next = np.clip(g_next, -G_CLIP, G_CLIP)
+    g_next, _, _, _ = _gas_next_g_from_observation(
+        omega, gamma, beta, g_t, u[-1:], copula, scaling, score_eps,
+        t_index=len(u) - 1)
     return float(copula.transform(np.array([g_next]))[0])
 
 
@@ -573,6 +617,15 @@ def gas_negloglik(omega, gamma, beta, u, copula, scaling='unit',
 # GAS Rosenblatt transform (for GoF tests)
 # ══════════════════════════════════════════════════════════════════
 
+def _gas_h_path(omega, gamma, beta, u, copula, scaling='unit',
+                score_eps=1e-4):
+    _, r_path, _ = gas_filter(omega, gamma, beta, u, copula,
+                              scaling, score_eps)
+    return np.clip(
+        copula.h(u[:, 1], u[:, 0], r_path),
+        1e-6, 1.0 - 1e-6)
+
+
 def gas_rosenblatt(omega, gamma, beta, u, copula, scaling='unit',
                    score_eps=1e-4):
     """Rosenblatt transform for the bivariate GAS copula model.
@@ -585,12 +638,10 @@ def gas_rosenblatt(omega, gamma, beta, u, copula, scaling='unit',
     -------
     e : ndarray (T, 2)
     """
-    _, r_path, _ = gas_filter(omega, gamma, beta, u, copula,
-                              scaling, score_eps)
     T = len(u)
     e = np.empty((T, 2))
     e[:, 0] = u[:, 0]
-    e[:, 1] = copula.h(u[:, 1], u[:, 0], r_path)
+    e[:, 1] = _gas_h_path(omega, gamma, beta, u, copula, scaling, score_eps)
     return np.clip(e, 1e-6, 1.0 - 1e-6)
 
 
@@ -610,8 +661,4 @@ def gas_mixture_h(omega, gamma, beta, u, copula, scaling='unit',
     -------
     h_vals : ndarray (T,)
     """
-    _, r_path, _ = gas_filter(omega, gamma, beta, u, copula,
-                              scaling, score_eps)
-    return np.clip(
-        copula.h(u[:, 1], u[:, 0], r_path),
-        1e-6, 1.0 - 1e-6)
+    return _gas_h_path(omega, gamma, beta, u, copula, scaling, score_eps)

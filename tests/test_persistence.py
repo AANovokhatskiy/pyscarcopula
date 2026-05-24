@@ -59,7 +59,7 @@ def test_include_data_false_drops_cached_training_data(tmp_path, random_u2):
 
 def test_latent_result_json_roundtrip_uses_strict_json(tmp_path, random_u2):
     cop = GumbelCopula(rotate=180)
-    cop.fit(random_u2, method="scar-tm-ou", K=20, gtol=0.5)
+    cop.fit(random_u2, method="scar-tm-ou")
 
     path = tmp_path / "gumbel-scar.json"
     cop.save(path)

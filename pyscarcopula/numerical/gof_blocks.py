@@ -19,11 +19,6 @@ def forward_block_size(
     return max(1, min(max_rows, max_elements // (K * element_width)))
 
 
-def _forward_block_size(K, max_elements=2_000_000):
-    """Backward-compatible alias used by older TM forward helpers."""
-    return forward_block_size(K, max_elements=max_elements)
-
-
 def iter_forward_weight_blocks(
         grid, u, copula, x_grid=None, block_size=None,
         max_elements=2_000_000, emission_block=None,

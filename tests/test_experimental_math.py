@@ -14,7 +14,6 @@ from pyscarcopula.api import (
     predict,
     predictive_mean,
     sample,
-    smoothed_params,
 )
 from pyscarcopula.copula.experimental.equicorr import (
     EquicorrGaussianCopula,
@@ -739,7 +738,6 @@ def test_experimental_models_support_top_level_api_except_pair_h():
 
             assert np.isfinite(log_likelihood(copula, u, result, **api_kwargs))
             assert predictive_mean(copula, u, result, **api_kwargs).shape == (len(u),)
-            assert smoothed_params(copula, u, result, **api_kwargs).shape == (len(u),)
             assert sample(copula, u, result, 5, **api_kwargs).shape == (5, 4)
             assert predict(copula, u, result, 5, **api_kwargs).shape == (5, 4)
 

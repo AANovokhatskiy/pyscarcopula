@@ -1,5 +1,7 @@
 import numpy as np
 from numba import njit
+from scipy.optimize import brentq
+from scipy.special import digamma
 
 from pyscarcopula.copula.base import (
     BivariateCopula,
@@ -12,6 +14,48 @@ from pyscarcopula.copula.base import (
     _xtanh_transform,
 )
 
+_EULER_GAMMA = -float(digamma(1.0))
+
+
+def _joe_tau_scalar(theta):
+    theta = float(theta)
+    if theta < 1.0:
+        raise ValueError("Joe parameter must be >= 1")
+    if theta == 1.0:
+        return 0.0
+
+    a = 2.0 / theta
+    if abs(a - 1.0) < 1e-10:
+        f_value = np.pi * np.pi / 6.0 - 1.0
+    else:
+        f_value = (
+            (float(digamma(a)) + _EULER_GAMMA) / (a - 1.0)
+            - (float(digamma(a + 1.0)) + _EULER_GAMMA) / a
+        )
+    tau = 1.0 - 4.0 * f_value / (theta * theta)
+    return float(np.clip(tau, 0.0, 1.0 - 1e-15))
+
+
+def _joe_param_from_tau_scalar(tau):
+    tau = float(tau)
+    if not (0.0 < tau < 1.0):
+        raise ValueError("Joe Kendall tau must be in (0, 1)")
+
+    lower = 1.0
+    upper = max(2.0, 2.0 / (1.0 - tau))
+    while _joe_tau_scalar(upper) <= tau:
+        upper *= 2.0
+        if upper > 1e12:
+            raise ValueError("Could not bracket Joe parameter from tau")
+    return float(brentq(
+        lambda theta: _joe_tau_scalar(theta) - tau,
+        lower,
+        upper,
+        xtol=1e-12,
+        rtol=1e-12,
+        maxiter=100,
+    ))
+
 
 @njit(cache=True)
 def _log1mexp(x):
@@ -21,6 +65,23 @@ def _log1mexp(x):
         return np.log(-np.expm1(-x))
     else:
         return -np.inf
+
+
+@njit(cache=True)
+def _logaddexp_pair(a, b):
+    m = max(a, b)
+    if not np.isfinite(m):
+        return m
+    return m + np.log1p(np.exp(min(a, b) - m))
+
+
+@njit(cache=True)
+def _joe_log_B(log_q0, log_q1):
+    q0 = 0.0
+    if log_q0 > -745.0:
+        q0 = np.exp(log_q0)
+    log_one_minus_q0 = np.log1p(-min(max(q0, 0.0), 1.0))
+    return _logaddexp_pair(log_q0, log_one_minus_q0 + log_q1)
 
 
 @njit(cache=True)
@@ -70,6 +131,8 @@ def _joe_h(u0, u1, r):
     n = len(u0)
     out = np.empty(n)
     eps = 1e-6
+    log_eps = np.log(eps)
+    log_one_minus_eps = np.log(1.0 - eps)
     for i in range(n):
         v0 = min(max(u0[i], eps), 1.0 - eps)
         v1 = min(max(u1[i], eps), 1.0 - eps)
@@ -78,19 +141,29 @@ def _joe_h(u0, u1, r):
         if ri < 1.0 + 1e-8:
             out[i] = v0  # independence limit
         else:
-            q0 = (1.0 - v0) ** ri
-            q1 = (1.0 - v1) ** ri
-            B = q0 + q1 - q0 * q1
-            if B < 1e-300:
+            log_1mv0 = np.log(1.0 - v0)
+            log_1mv1 = np.log(1.0 - v1)
+            log_q0 = ri * log_1mv0
+            log_q1 = ri * log_1mv1
+            log_B = _joe_log_B(log_q0, log_q1)
+            if not np.isfinite(log_B):
                 out[i] = v0
             else:
-                x3 = q0 - 1.0
-                inner = q0 - x3 * q1
-                if inner < 1e-300:
+                log_1mq0 = _log1mexp(-log_q0)
+                log_h = (
+                    log_1mq0
+                    + (1.0 / ri - 1.0) * log_B
+                    + log_q1
+                    - log_1mv1
+                )
+                if log_h <= log_eps:
+                    out[i] = eps
+                elif log_h >= log_one_minus_eps:
+                    out[i] = 1.0 - eps
+                elif not np.isfinite(log_h):
                     out[i] = v0
                 else:
-                    val = -(x3 * inner ** (1.0 / ri - 1.0) * q1 / (1.0 - v1))
-                    out[i] = min(max(val, eps), 1.0 - eps)
+                    out[i] = np.exp(log_h)
     return out
 
 
@@ -100,6 +173,8 @@ def _joe_h_pair(u0, u1, r):
     out01 = np.empty(n)
     out10 = np.empty(n)
     eps = 1e-6
+    log_eps = np.log(eps)
+    log_one_minus_eps = np.log(1.0 - eps)
     for i in range(n):
         v0 = min(max(u0[i], eps), 1.0 - eps)
         v1 = min(max(u1[i], eps), 1.0 - eps)
@@ -109,18 +184,46 @@ def _joe_h_pair(u0, u1, r):
             out01[i] = v0
             out10[i] = v1
         else:
-            q0 = (1.0 - v0) ** ri
-            q1 = (1.0 - v1) ** ri
-            B = q0 + q1 - q0 * q1
-            if B < 1e-300:
+            log_1mv0 = np.log(1.0 - v0)
+            log_1mv1 = np.log(1.0 - v1)
+            log_q0 = ri * log_1mv0
+            log_q1 = ri * log_1mv1
+            log_B = _joe_log_B(log_q0, log_q1)
+            if not np.isfinite(log_B):
                 out01[i] = v0
                 out10[i] = v1
             else:
-                common = B ** (1.0 / ri - 1.0)
-                val01 = (1.0 - q0) * common * q1 / (1.0 - v1)
-                val10 = (1.0 - q1) * common * q0 / (1.0 - v0)
-                out01[i] = min(max(val01, eps), 1.0 - eps)
-                out10[i] = min(max(val10, eps), 1.0 - eps)
+                log_common = (1.0 / ri - 1.0) * log_B
+
+                log_h01 = (
+                    _log1mexp(-log_q0)
+                    + log_common
+                    + log_q1
+                    - log_1mv1
+                )
+                if log_h01 <= log_eps:
+                    out01[i] = eps
+                elif log_h01 >= log_one_minus_eps:
+                    out01[i] = 1.0 - eps
+                elif not np.isfinite(log_h01):
+                    out01[i] = v0
+                else:
+                    out01[i] = np.exp(log_h01)
+
+                log_h10 = (
+                    _log1mexp(-log_q1)
+                    + log_common
+                    + log_q0
+                    - log_1mv0
+                )
+                if log_h10 <= log_eps:
+                    out10[i] = eps
+                elif log_h10 >= log_one_minus_eps:
+                    out10[i] = 1.0 - eps
+                elif not np.isfinite(log_h10):
+                    out10[i] = v1
+                else:
+                    out10[i] = np.exp(log_h10)
     return out01, out10
 
 
@@ -345,6 +448,22 @@ class JoeCopula(BivariateCopula):
         if self._transform_type == 'xtanh':
             return _inv_xtanh_transform(r, 1.0001)
         raise ValueError(f"Unsupported transform_type: {self._transform_type}")
+
+    def tau_to_param(self, tau):
+        tau = np.atleast_1d(np.asarray(tau, dtype=np.float64))
+        if np.any((tau <= 0.0) | (tau >= 1.0)):
+            raise ValueError("Joe Kendall tau must be in (0, 1)")
+        return np.array([
+            _joe_param_from_tau_scalar(value) for value in tau
+        ], dtype=np.float64)
+
+    def param_to_tau(self, r):
+        r = np.atleast_1d(np.asarray(r, dtype=np.float64))
+        if np.any(r < 1.0):
+            raise ValueError("Joe parameter must be >= 1")
+        return np.array([
+            _joe_tau_scalar(value) for value in r
+        ], dtype=np.float64)
 
     def pdf_unrotated(self, u1, u2, r):
         return _joe_pdf(*_broadcast(u1, u2, r))

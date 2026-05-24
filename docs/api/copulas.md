@@ -23,14 +23,17 @@ result, and return new values without mutation.
 
 ::: pyscarcopula.api.predictive_mean
 
-::: pyscarcopula.api.smoothed_params
-
 ::: pyscarcopula.api.mixture_h
 
 ## BivariateCopula (base class)
 
 `BivariateCopula.predict(...)` mirrors the top-level API and accepts
 `given`, `horizon`, and `predict_config`.
+
+Kendall-tau dynamic fitting with `method='scar-tm-jacobi'` requires
+`tau_to_param` and `param_to_tau`. These mappings are implemented for
+`GumbelCopula`, `ClaytonCopula`, `FrankCopula`, `JoeCopula`, and
+`BivariateGaussianCopula`.
 
 ::: pyscarcopula.copula.base.BivariateCopula
     options:
@@ -42,6 +45,8 @@ result, and return new values without mutation.
         - sample
         - predict
         - sample_model
+        - tau_to_param
+        - param_to_tau
         - transform
         - inv_transform
 
@@ -80,6 +85,13 @@ result, and return new values without mutation.
       show_bases: false
       members: false
 
+## BivariateGaussianCopula
+
+::: pyscarcopula.copula.elliptical.BivariateGaussianCopula
+    options:
+      show_bases: false
+      members: false
+
 ## GaussianCopula
 
 ::: pyscarcopula.copula.elliptical.GaussianCopula
@@ -103,6 +115,5 @@ result, and return new values without mutation.
         - sample
         - predict
         - predictive_mean
-        - smoothed_params
         - transform
         - inv_transform
