@@ -59,6 +59,8 @@ def _gumbel_h(u0, u1, r):
     n = len(u0)
     out = np.empty(n)
     eps = 1e-6
+    log_eps = np.log(eps)
+    log_one_minus_eps = np.log(1.0 - eps)
     for i in range(n):
         v0 = min(max(u0[i], eps), 1.0 - eps)
         v1 = min(max(u1[i], eps), 1.0 - eps)
@@ -67,16 +69,33 @@ def _gumbel_h(u0, u1, r):
         if ri < 1.0 + 1e-8:
             out[i] = v0  # independence limit
         else:
+            log_v0 = np.log(v0)
             log_v1 = np.log(v1)
-            t1 = (-log_v1) ** ri
-            t2 = (-np.log(v0)) ** ri
-            S = t1 + t2
-            if S < 1e-300:
+            y0 = -log_v0
+            y1 = -log_v1
+            if y0 <= 0.0 or y1 <= 0.0:
                 out[i] = v0
             else:
-                A = S ** (1.0 / ri)
-                val = t1 / S * A * np.exp(-A) / (-log_v1 * v1)
-                out[i] = min(max(val, eps), 1.0 - eps)
+                log_y0 = np.log(y0)
+                log_y1 = np.log(y1)
+                a = ri * log_y0
+                b = ri * log_y1
+                log_max = max(a, b)
+                log_min = min(a, b)
+                log_S = log_max + np.log1p(np.exp(log_min - log_max))
+                A = np.exp(log_S / ri)
+                log_h = (
+                    (ri - 1.0) * log_y1
+                    + (1.0 / ri - 1.0) * log_S
+                    - A
+                    - log_v1
+                )
+                if log_h <= log_eps:
+                    out[i] = eps
+                elif log_h >= log_one_minus_eps:
+                    out[i] = 1.0 - eps
+                else:
+                    out[i] = np.exp(log_h)
     return out
 
 
@@ -87,6 +106,8 @@ def _gumbel_h_pair(u0, u1, r):
     out01 = np.empty(n)
     out10 = np.empty(n)
     eps = 1e-6
+    log_eps = np.log(eps)
+    log_one_minus_eps = np.log(1.0 - eps)
     for i in range(n):
         v0 = min(max(u0[i], eps), 1.0 - eps)
         v1 = min(max(u1[i], eps), 1.0 - eps)
@@ -98,19 +119,44 @@ def _gumbel_h_pair(u0, u1, r):
         else:
             y0 = -np.log(v0)
             y1 = -np.log(v1)
-            t0 = y0 ** ri
-            t1 = y1 ** ri
-            S = t0 + t1
-            if S < 1e-300:
+            if y0 <= 0.0 or y1 <= 0.0:
                 out01[i] = v0
                 out10[i] = v1
             else:
-                A = S ** (1.0 / ri)
-                common = A * np.exp(-A) / S
-                val01 = t1 * common / (y1 * v1)
-                val10 = t0 * common / (y0 * v0)
-                out01[i] = min(max(val01, eps), 1.0 - eps)
-                out10[i] = min(max(val10, eps), 1.0 - eps)
+                log_y0 = np.log(y0)
+                log_y1 = np.log(y1)
+                a = ri * log_y0
+                b = ri * log_y1
+                log_max = max(a, b)
+                log_min = min(a, b)
+                log_S = log_max + np.log1p(np.exp(log_min - log_max))
+                A = np.exp(log_S / ri)
+
+                log_h01 = (
+                    (ri - 1.0) * log_y1
+                    + (1.0 / ri - 1.0) * log_S
+                    - A
+                    - np.log(v1)
+                )
+                if log_h01 <= log_eps:
+                    out01[i] = eps
+                elif log_h01 >= log_one_minus_eps:
+                    out01[i] = 1.0 - eps
+                else:
+                    out01[i] = np.exp(log_h01)
+
+                log_h10 = (
+                    (ri - 1.0) * log_y0
+                    + (1.0 / ri - 1.0) * log_S
+                    - A
+                    - np.log(v0)
+                )
+                if log_h10 <= log_eps:
+                    out10[i] = eps
+                elif log_h10 >= log_one_minus_eps:
+                    out10[i] = 1.0 - eps
+                else:
+                    out10[i] = np.exp(log_h10)
     return out01, out10
 
 
@@ -280,6 +326,18 @@ class GumbelCopula(BivariateCopula):
         if self._transform_type == 'xtanh':
             return _inv_xtanh_transform(r, 1.0001)
         raise ValueError(f"Unsupported transform_type: {self._transform_type}")
+
+    def tau_to_param(self, tau):
+        tau = np.atleast_1d(np.asarray(tau, dtype=np.float64))
+        if np.any((tau <= 0.0) | (tau >= 1.0)):
+            raise ValueError("Gumbel Kendall tau must be in (0, 1)")
+        return 1.0 / (1.0 - tau)
+
+    def param_to_tau(self, r):
+        r = np.atleast_1d(np.asarray(r, dtype=np.float64))
+        if np.any(r < 1.0):
+            raise ValueError("Gumbel parameter must be >= 1")
+        return 1.0 - 1.0 / r
 
     def pdf_unrotated(self, u1, u2, r):
         u1a, u2a, ra = _broadcast(u1, u2, r)

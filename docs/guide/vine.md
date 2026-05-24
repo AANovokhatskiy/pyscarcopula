@@ -189,9 +189,10 @@ For a focused description of prediction semantics, see
 [Prediction Semantics](prediction-semantics.md). For R-vine-specific details,
 see [R-vine Conditioning](rvine-conditioning.md).
 
-For SCAR-TM edges, `predict(..., horizon='current')` uses $p(x_T \mid data)$ and
-`predict(..., horizon='next')` uses $p(x_{T+1} \mid data)$. `sample` still
-simulates independent OU trajectories.
+For SCAR-TM edges, `predict(..., horizon='current')` uses the posterior latent
+state after the fitted history and `predict(..., horizon='next')` uses the
+one-step-ahead latent state. For SCAR-TM-OU edges, `sample` simulates
+independent OU trajectories.
 
 ## Results on 6-crypto data (T=250)
 

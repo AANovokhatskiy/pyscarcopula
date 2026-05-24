@@ -28,9 +28,9 @@ from pyscarcopula._types import (
     ou_params,
 )
 from pyscarcopula.api import fit as api_fit
+from pyscarcopula.api import predictive_mean as api_predictive_mean
 from pyscarcopula.api import predict as api_predict
 from pyscarcopula.api import sample as api_sample
-from pyscarcopula.api import smoothed_params
 from pyscarcopula.contrib.risk_metrics import (
     _calculate_cvar_fixed,
     _process_chunk_fixed,
@@ -654,13 +654,13 @@ class TestConditionalSamplingPlanLayer:
                     + sigma_cond * rng.standard_normal())
         copula = BivariateGaussianCopula()
         u = copula.sample(T, copula.transform(x), rng=rng)
-        return u, {'method': 'scar-tm-ou', 'K': 40, 'gtol': 0.05}
+        return u, {'method': 'scar-tm-ou'}
 
     @pytest.mark.parametrize(
         ('label', 'train_factory', 'predict_kwargs'),
         [
             ('gas',     '_gas_end_to_end_train',     {}),
-            ('scar-tm', '_scar_tm_end_to_end_train', {'K': 40}),
+            ('scar-tm', '_scar_tm_end_to_end_train', {}),
         ],
     )
     @pytest.mark.parametrize('given_u', [0.30, 0.85])
@@ -702,13 +702,14 @@ class TestConditionalSamplingPlanLayer:
             p = result.params
             z_grid, prob = tm_state_distribution(
                 p.kappa, p.mu, p.nu, u_train, copula,
-                K=predict_kwargs['K'], horizon='current',
+                K=result.K, grid_range=result.grid_range,
+                horizon='current',
             )
             r_grid = copula.transform(np.asarray(z_grid, dtype=np.float64))
             expected = float(np.sum(
                 prob * _gaussian_conditional_u_mean(r_grid, given_u)))
             oracle_descr = (
-                f"integral oracle over posterior grid (K={predict_kwargs['K']})"
+                f"integral oracle over posterior grid (K={result.K})"
             )
 
         sample_mean = float(np.mean(samples[:, 1]))
@@ -978,7 +979,7 @@ class TestConditionalSamplingPlanLayer:
                 assert abs(tau) < 0.05
                 assert pvalue > 0.01
 
-    def test_scar_tm_smoothed_params_track_controlled_dynamic_blocks(self):
+    def test_scar_tm_predictive_mean_tracks_controlled_dynamic_blocks(self):
         copula = BivariateGaussianCopula()
         rho_true = np.r_[
             np.full(80, -0.45),
@@ -999,16 +1000,16 @@ class TestConditionalSamplingPlanLayer:
             K=60,
             grid_range=4.0,
         )
-        smoothed = get_strategy_for_result(result).smoothed_params(
+        predicted = get_strategy_for_result(result).predictive_mean(
             copula, u_train, result)
 
-        low_first = np.mean(smoothed[20:70])
-        high_middle = np.mean(smoothed[100:150])
-        low_last = np.mean(smoothed[180:230])
+        low_first = np.mean(predicted[20:70])
+        high_middle = np.mean(predicted[100:150])
+        low_last = np.mean(predicted[180:230])
 
         assert high_middle > low_first + 0.35
         assert high_middle > low_last + 0.20
-        assert np.std(smoothed) > 0.15
+        assert np.std(predicted) > 0.15
 
     def test_scar_tm_fit_recovers_controlled_dynamic_blocks(self):
         copula = BivariateGaussianCopula()
@@ -1026,20 +1027,18 @@ class TestConditionalSamplingPlanLayer:
             BivariateGaussianCopula(),
             u_train,
             method='scar-tm-ou',
-            K=30,
-            grid_range=4.0,
-            gtol=0.05,
         )
-        smoothed = smoothed_params(BivariateGaussianCopula(), u_train, result)
+        predicted = api_predictive_mean(
+            BivariateGaussianCopula(), u_train, result)
 
-        low_first = np.mean(smoothed[20:70])
-        high_middle = np.mean(smoothed[100:150])
-        low_last = np.mean(smoothed[180:230])
+        low_first = np.mean(predicted[20:70])
+        high_middle = np.mean(predicted[100:150])
+        low_last = np.mean(predicted[180:230])
 
         assert result.success
         assert high_middle > low_first + 0.45
         assert high_middle > low_last + 0.45
-        assert np.std(smoothed) > 0.20
+        assert np.std(predicted) > 0.20
 
     def test_scar_tm_fit_recovers_full_ou_path(self):
         rng = np.random.default_rng(304)
@@ -1065,14 +1064,12 @@ class TestConditionalSamplingPlanLayer:
             BivariateGaussianCopula(),
             u_train,
             method='scar-tm-ou',
-            K=50,
-            grid_range=4.5,
-            gtol=0.05,
         )
-        smoothed = smoothed_params(BivariateGaussianCopula(), u_train, result)
+        predicted = api_predictive_mean(
+            BivariateGaussianCopula(), u_train, result)
         trim = 20
-        corr = spearmanr(smoothed[trim:], rho_true[trim:]).statistic
-        rmse = np.sqrt(np.mean((smoothed[trim:] - rho_true[trim:]) ** 2))
+        corr = spearmanr(predicted[trim:], rho_true[trim:]).statistic
+        rmse = np.sqrt(np.mean((predicted[trim:] - rho_true[trim:]) ** 2))
         std_true = np.std(rho_true[trim:])
 
         assert result.success
@@ -1141,7 +1138,7 @@ class TestConditionalSamplingPlanLayer:
             gtol=0.05,
         )
         fit_copula = BivariateGaussianCopula()
-        smoothed = smoothed_params(fit_copula, sampled, fit_result)
+        predicted = api_predictive_mean(fit_copula, sampled, fit_result)
         strategy = get_strategy_for_result(fit_result)
         r_current = strategy.predictive_params(
             fit_copula, sampled, fit_result, 1, horizon='current')[0]
@@ -1151,7 +1148,7 @@ class TestConditionalSamplingPlanLayer:
         assert fit_result.success
         assert abs(fit_result.params.gamma) > 0.5
         assert abs(fit_result.params.beta) > 0.4
-        assert np.std(smoothed) > 0.08
+        assert np.std(predicted) > 0.08
         assert not np.isclose(r_current, r_next)
 
     def test_scar_tm_predictive_conditional_uses_predictive_state_distribution(

@@ -118,6 +118,7 @@ class BivariateCopula:
         copula_grid_batch(u, x_grid)
 
     Estimation methods (via .fit()):
+        'scar-tm-jacobi' - TM for Jacobi Kendall-tau dynamics
         'mle'        — constant parameter (1 param)
         'scar-tm-ou' — transfer matrix (3 params: kappa, mu, nu)
         'gas'        — GAS score-driven (3 params: omega, gamma, beta)
@@ -169,6 +170,18 @@ class BivariateCopula:
     def dtransform(x):
         """d Psi(x) / dx.  Override per copula."""
         return np.ones_like(np.asarray(x, dtype=np.float64))
+
+    def tau_to_param(self, tau):
+        """Map Kendall's tau to the copula parameter."""
+        raise NotImplementedError(
+            f"tau_to_param is not implemented for {type(self).__name__}"
+        )
+
+    def param_to_tau(self, r):
+        """Map the copula parameter to Kendall's tau."""
+        raise NotImplementedError(
+            f"param_to_tau is not implemented for {type(self).__name__}"
+        )
 
     # ── PDF / log-PDF ─────────────────────────────────────────────
     def pdf_unrotated(self, u1, u2, r):
@@ -402,6 +415,7 @@ class BivariateCopula:
             Parameters: scalar for MLE, (3,) for SCAR/GAS.
         u : (T, 2) pseudo-observations
         method : str
+            Also supports 'scar-tm-jacobi' for Jacobi Kendall-tau dynamics.
             'mle', 'scar-tm-ou', 'gas', 'scar-p-ou', 'scar-m-ou'
         **kwargs
             Forwarded to the strategy (K, grid_range, scaling, etc.)

@@ -67,14 +67,6 @@ class FitStrategy(Protocol):
         """
         ...
 
-    def smoothed_params(self, copula, u: np.ndarray,
-                        result: FitResult) -> np.ndarray:
-        """E[Psi(x_k) | u_{1:k-1}] for the time-varying copula parameter.
-
-        The SCAR-TM quantity is predictive, not two-sided smoothing.
-        """
-        ...
-
     def rosenblatt_e2(self, copula, u: np.ndarray,
                       result: FitResult) -> np.ndarray:
         """Second Rosenblatt residual for GoF.
@@ -236,7 +228,8 @@ def get_strategy(method: str, config: NumericalConfig | None = None,
     Parameters
     ----------
     method : str
-        'mle', 'scar-tm-ou', 'scar-p-ou', 'scar-m-ou', 'gas'
+        'mle', 'scar-tm-ou', 'scar-tm-jacobi', 'scar-p-ou',
+        'scar-m-ou', 'gas'
     config : NumericalConfig or None
     **kwargs : forwarded to strategy constructor
 
@@ -297,6 +290,20 @@ def get_strategy_for_result(result: FitResult,
             if value is not None:
                 result_kwargs[name] = value
 
+    if method == 'SCAR-TM-JACOBI':
+        transition_method = getattr(result, 'transition_method', None)
+        if transition_method is not None:
+            result_kwargs['transition_method'] = transition_method
+        gh_order = getattr(result, 'gh_order', None)
+        if gh_order is not None:
+            result_kwargs['gh_order'] = gh_order
+        basis_order = getattr(result, 'spectral_basis_order', None)
+        if basis_order is not None:
+            result_kwargs['basis_order'] = basis_order
+        quad_order = getattr(result, 'spectral_quad_order', None)
+        if quad_order is not None:
+            result_kwargs['quad_order'] = quad_order
+
     result_kwargs.update(kwargs)
     return get_strategy(result.method, config=config, **result_kwargs)
 
@@ -308,6 +315,7 @@ def _import_all_strategies():
     # module should fail loudly instead of becoming "Unknown method".
     from pyscarcopula.strategy import mle       # noqa: F401
     from pyscarcopula.strategy import scar_tm   # noqa: F401
+    from pyscarcopula.strategy import scar_jacobi  # noqa: F401
     from pyscarcopula.strategy import scar_mc   # noqa: F401
     from pyscarcopula.strategy import gas       # noqa: F401
 

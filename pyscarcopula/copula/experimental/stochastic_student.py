@@ -822,10 +822,6 @@ class StochasticStudentCopula(BivariateCopula):
         )
         return tm_forward_predictive_mean(kappa, mu, nu_ou, u_data, self)
 
-    def smoothed_params(self, u=None):
-        """Backward-compatible alias for predictive_mean."""
-        return self.predictive_mean(u)
-
     def xT_distribution(self, u, K=300, grid_range=5.0):
         """Distribution of x_T on grid (for predict)."""
         if self.fit_result is None:

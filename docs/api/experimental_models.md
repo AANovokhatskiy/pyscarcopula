@@ -64,7 +64,6 @@ For heterogeneous dependence, use a C-vine or R-vine instead.
         - sample
         - predict
         - predictive_mean
-        - smoothed_params
         - xT_distribution
         - log_likelihood
         - transform
@@ -96,7 +95,6 @@ latent OU process integrated by transfer matrix.
         - sample
         - predict
         - predictive_mean
-        - smoothed_params
         - xT_distribution
         - log_likelihood
         - transform
@@ -130,7 +128,6 @@ degrees-of-freedom dynamics against that path.
         - sample
         - predict
         - predictive_mean
-        - smoothed_params
         - log_likelihood
         - transform
         - inv_transform

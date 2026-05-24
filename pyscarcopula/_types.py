@@ -95,7 +95,7 @@ DEFAULT_GAS_OPTIMIZER = LBFGSBConfig(
 )
 DEFAULT_SCAR_OPTIMIZER = LBFGSBConfig(
     gtol=1e-3,
-    maxfun=100,
+    maxfun=300,
     maxiter=100,
     maxls=20,
     eps=1e-4,
@@ -394,6 +394,21 @@ def ou_params(kappa: float, mu: float, nu: float) -> LatentProcessParams:
     )
 
 
+def jacobi_params(kappa: float, m: float, xi: float) -> LatentProcessParams:
+    """Convenience constructor for Jacobi diffusion parameters.
+
+    The process evolves Kendall's tau directly:
+    d tau_t = kappa * (m - tau_t) dt + xi * sqrt(tau_t * (1 - tau_t)) dW_t.
+    """
+    return LatentProcessParams(
+        process_type='jacobi',
+        names=('kappa', 'm', 'xi'),
+        values=np.array([kappa, m, xi]),
+        bounds_lower=np.array([0.001, 1e-6, 0.001]),
+        bounds_upper=np.array([np.inf, 1.0 - 1e-6, np.inf]),
+    )
+
+
 def gas_params(omega: float, gamma: float, beta: float,
                gamma_bound: float = 10.0,
                beta_bound: float = 0.999) -> LatentProcessParams:
@@ -479,10 +494,10 @@ class LatentResult(FitResultBase):
     pts_per_sigma: int | None = None         # TM adaptive resolution
     transition_method: str | None = None     # TM transition selector
     max_K: int | None = None                 # TM adaptive grid cap
-    r_gh: float | None = None                # TM GH threshold
-    gh_order: int | None = None              # TM GH quadrature order
+    r_gh: float | None = None                # TM local-transition threshold
+    gh_order: int | None = None              # TM local quadrature order
     auto_small_kdt: float | None = None      # auto GH threshold
-    auto_large_kdt: float | None = None      # auto spectral threshold
+    auto_large_kdt: float | None = None      # retained for fit metadata
     spectral_basis_order: int | None = None  # Hermite basis size
     spectral_quad_order: int | None = None   # Hermite quadrature size
     n_tr: int | None = None                  # MC trajectory count

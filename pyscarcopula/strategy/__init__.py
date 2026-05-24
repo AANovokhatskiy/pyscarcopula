@@ -6,6 +6,7 @@ Each method is a separate module with a class decorated by
 an instance by method name.
 
 Available methods:
+    'SCAR-TM-JACOBI' - transfer matrix with Jacobi Kendall-tau latent
     'MLE'        — constant parameter (strategy/mle.py)
     'SCAR-TM-OU' — transfer matrix with OU latent (strategy/scar_tm.py)
     'SCAR-P-OU'  — MC p-sampler with OU latent (strategy/scar_mc.py)

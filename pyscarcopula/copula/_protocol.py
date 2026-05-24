@@ -70,6 +70,14 @@ class CopulaProtocol(Protocol):
         """d Psi(x) / dx. For analytical TM gradient."""
         ...
 
+    def tau_to_param(self, tau: np.ndarray) -> np.ndarray:
+        """Map Kendall's tau to the copula parameter."""
+        ...
+
+    def param_to_tau(self, r: np.ndarray) -> np.ndarray:
+        """Map the copula parameter to Kendall's tau."""
+        ...
+
     # ── PDF / log-PDF ────────────────────────────────────────────
 
     def pdf_unrotated(self, u1: np.ndarray, u2: np.ndarray,

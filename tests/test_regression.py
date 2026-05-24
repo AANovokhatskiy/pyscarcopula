@@ -53,6 +53,6 @@ class TestVineRegression:
         vine = CVineCopula()
         vine.fit(crypto_data_6d, method='scar-tm-ou',
                  truncation_level=2, min_edge_logL=10,
-                 gtol=5e-2, K=150)
-        ll = vine.log_likelihood(crypto_data_6d, K=150)
+                 gtol=5e-2)
+        ll = vine.log_likelihood(crypto_data_6d)
         assert ll > 860

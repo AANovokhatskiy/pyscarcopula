@@ -49,7 +49,8 @@ def fit(copula, data, method='scar-tm-ou', to_pobs=False,
     data : (T, 2) array
         Log-returns or pseudo-observations.
     method : str
-        'mle', 'scar-tm-ou', 'scar-p-ou', 'scar-m-ou', 'gas'
+        'mle', 'scar-tm-ou', 'scar-tm-jacobi', 'scar-p-ou',
+        'scar-m-ou', 'gas'
     to_pobs : bool
         Transform data to pseudo-observations first.
     config : NumericalConfig or None
@@ -95,7 +96,8 @@ def predictive_mean(copula, data, result: FitResult,
     """Predictive mean of the time-varying copula parameter.
 
     For MLE: constant array.
-    For SCAR-TM: E[Psi(x_k) | u_{1:k-1}] via transfer matrix.
+    For SCAR-TM-OU: E[Psi(x_k) | u_{1:k-1}] via transfer matrix.
+    For SCAR-TM-JACOBI: E[theta(tau_k) | u_{1:k-1}].
     For GAS: Psi(g_t) along filtered path.
 
     Parameters
@@ -111,16 +113,6 @@ def predictive_mean(copula, data, result: FitResult,
     u = np.asarray(data, dtype=np.float64)
     strategy = get_strategy_for_result(result, config=config, **kwargs)
     return strategy.predictive_mean(copula, u, result)
-
-
-def smoothed_params(copula, data, result: FitResult,
-                    config: NumericalConfig | None = None, **kwargs) -> np.ndarray:
-    """Backward-compatible alias for :func:`predictive_mean`.
-
-    The returned SCAR-TM quantity is predictive, not a two-sided smoothing
-    estimate. New code should call ``predictive_mean``.
-    """
-    return predictive_mean(copula, data, result, config=config, **kwargs)
 
 
 def mixture_h(copula, data, result: FitResult,

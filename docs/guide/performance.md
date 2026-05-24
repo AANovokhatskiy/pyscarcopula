@@ -4,6 +4,10 @@ This page summarizes the knobs that affect fitting speed and optimizer
 stability. The same strategy options are used by standalone bivariate copulas
 and by pair-copula edges inside C-vines and R-vines.
 
+For the statistical meaning of each method, see
+[Estimation Methods](estimation-methods.md). This page focuses on runtime,
+optimizer, and numerical-stability controls.
+
 ## Bivariate Models
 
 All bivariate fits go through the strategy registry:
@@ -98,7 +102,7 @@ and predictive paths are needed.
 |-----------|-------|---------|--------|
 | `alpha0` | fit kwarg | smart/MLE-based | Initial $[\kappa, \mu, \nu]$. |
 | `gtol` | fit kwarg / `scar_optimizer.gtol` | `1e-3` | L-BFGS-B projected-gradient tolerance. Larger values are faster but less precise. |
-| `maxfun` | fit kwarg / `scar_optimizer.maxfun` | `100` | Maximum function evaluations. |
+| `maxfun` | fit kwarg / `scar_optimizer.maxfun` | `300` | Maximum function evaluations. |
 | `maxiter` | fit kwarg / `scar_optimizer.maxiter` | `100` | Maximum optimizer iterations. |
 | `maxls` | fit kwarg / `scar_optimizer.maxls` | `20` | Maximum L-BFGS-B line-search steps per iteration. |
 | `eps` | fit kwarg / `scar_optimizer.eps` | `1e-4` | L-BFGS-B finite-difference step for numerical-gradient fits. |
@@ -107,9 +111,9 @@ and predictive paths are needed.
 | `grid_method` | strategy kwarg / `default_grid_method` | `'auto'` | `'auto'`, `'dense'`, or `'sparse'`. Use sparse for large grids. |
 | `adaptive` | strategy kwarg / `default_adaptive` | `True` | Enlarges `K` when the OU transition kernel needs more resolution. |
 | `pts_per_sigma` | strategy kwarg / `default_pts_per_sigma` | `4` | Minimum grid points per conditional standard deviation. |
-| `transition_method` | strategy kwarg | `'auto'` | `'auto'`, `'matrix'`, `'gh'`, or `'spectral'`. See below. |
-| `auto_small_kdt` | strategy kwarg | `1e-3` | In `transition_method='auto'`, use local GH when $\kappa\,dt$ is below this value. |
-| `auto_large_kdt` | strategy kwarg | `5e-2` | In `transition_method='auto'`, use spectral Hermite when $\kappa\,dt$ is at or above this value. |
+| `transition_method` | strategy kwarg | `'auto'` | `'auto'`, `'matrix'`, `'local'`, or `'spectral'`. See below. |
+| `auto_small_kdt` | strategy kwarg | `1e-3` | In `transition_method='auto'`, use the local transition when $\kappa\,dt$ is below this value. |
+| `auto_large_kdt` | strategy kwarg | `5e-2` | Backward-compatible result metadata; `auto` no longer uses it to route through the matrix backend. |
 | `spectral_basis_order` | strategy kwarg | `32` | Number of Hermite basis functions in the spectral likelihood. |
 | `spectral_quad_order` | strategy kwarg | auto | Gauss-Hermite quadrature order for spectral multiplication. |
 | `analytical_grad` | strategy kwarg | `True` | Uses analytical gradient and parameter rescaling. Usually much faster. |
@@ -138,11 +142,12 @@ expensive, use `grid_method='sparse'`, reduce `pts_per_sigma`, or set
 
 SCAR-TM supports four likelihood transition modes:
 
-- `transition_method='auto'` (default): choose `gh`, `matrix`, or `spectral`
-  from the fitted value of $\kappa\,dt$, where $dt = 1 / (T - 1)$.
+- `transition_method='auto'` (default): use `spectral` except in the
+  narrow-kernel regime, where it uses `local`; if the spectral likelihood
+  fails numerically, it falls back to `local`.
 - `transition_method='matrix'`: use the original transfer matrix on the latent
   grid for the likelihood.
-- `transition_method='gh'`: use the local Gauss-Hermite transition on the
+- `transition_method='local'`: use the local Gauss-Hermite transition on the
   latent grid. This is useful when the OU transition kernel is very narrow.
 - `transition_method='spectral'`: force the Hermite spectral likelihood.
 
@@ -207,8 +212,9 @@ state grid. `grid_method='dense'` stores the full matrix, while
 
 When $\kappa\,dt$ is very small, the conditional OU variance
 $\sigma^2(1-\rho^2)$ is tiny. A fixed grid may then need many points to resolve
-the narrow Gaussian transition kernel. The local GH method avoids building the
-full transition matrix. For each previous grid point $x_i$, it approximates
+the narrow Gaussian transition kernel. The local Gauss-Hermite method avoids
+building the full transition matrix. For each previous grid point $x_i$, it
+approximates
 
 $$
 \int g(x)\,p(x\mid x_i)\,dx
@@ -227,11 +233,11 @@ grid. This makes the transition local: the cost scales with $K\,q$
 rather than with a dense $K \times K$ matrix.
 
 The parameters `max_K` and `r_gh` are safeguards for this regime. With
-`transition_method='auto'`, the grid path uses GH when the adaptive grid would
-hit `max_K` or when the transition kernel is narrow relative to the grid
-spacing. Increasing `gh_order` improves the local quadrature but does not fix a
-poor latent grid; `K`, `grid_range`, and `pts_per_sigma` still determine where
-the posterior can live.
+`transition_method='auto'`, the grid path uses the local transition when the
+adaptive grid would hit `max_K` or when the transition kernel is narrow
+relative to the grid spacing. Increasing `gh_order` improves the local
+quadrature but does not fix a poor latent grid; `K`, `grid_range`, and
+`pts_per_sigma` still determine where the posterior can live.
 
 #### Spectral Hermite likelihood
 
@@ -300,9 +306,89 @@ just diagonal scaling by $\rho^n$.
 This is fastest when $\kappa\,dt$ is not too small: higher Hermite modes are
 damped by $\rho^n$, so a moderate basis order is enough. When $\kappa\,dt$ is
 very small, $\rho$ is close to one, high modes decay slowly, and the grid local
-GH path is usually safer. This is why the default `auto` mode sends the
-narrow-kernel regime to `gh`, the middle regime to `matrix`, and only the
-strongly mixing regime to `spectral`.
+path is usually safer. This is why the default `auto` mode sends the
+narrow-kernel regime to `local`; all other regimes try `spectral`, with
+`local` as the numerical fallback.
+
+### SCAR-TM-JACOBI
+
+SCAR-TM-JACOBI uses a Jacobi diffusion for Kendall's tau on `(0, 1)`. It is
+available only for copulas with a Kendall-tau parameter mapping. The main
+numerical difference from SCAR-TM-OU is that the transition is built on a
+Jacobi quadrature grid in tau space instead of an OU grid in an unbounded
+latent coordinate.
+
+| Parameter | Where | Default | Effect |
+|-----------|-------|---------|--------|
+| `alpha0` | fit kwarg | smart/MLE-based | Initial $[\kappa, m, \xi]$. |
+| `gtol` | fit kwarg / `scar_optimizer.gtol` | `1e-3` | L-BFGS-B projected-gradient tolerance. |
+| `maxfun` | fit kwarg / `scar_optimizer.maxfun` | `300` | Maximum function evaluations. |
+| `maxiter` | fit kwarg / `scar_optimizer.maxiter` | `100` | Maximum optimizer iterations. |
+| `maxls` | fit kwarg / `scar_optimizer.maxls` | `20` | Maximum L-BFGS-B line-search steps per iteration. |
+| `eps` | fit kwarg / `scar_optimizer.eps` | `1e-4` | L-BFGS-B finite-difference step. |
+| `transition_method` | strategy kwarg | `'auto'` | `'auto'`, `'spectral_matrix'`, `'local'`, `'local_fixed'`, or `'spectral_coeff'`. Legacy aliases: `'matrix'` -> `'spectral_matrix'`, `'spectral'` -> `'spectral_coeff'`. |
+| `spectral_basis_order` / `basis_order` | strategy kwarg | `32` | Number of Jacobi basis functions. |
+| `spectral_quad_order` / `quad_order` | strategy kwarg | auto | Jacobi quadrature order; default is `max(2 * basis_order + 16, 48)`. |
+| `analytical_grad` | strategy kwarg | `False` | Uses the Jacobi matrix-filter gradient. Not available with `transition_method='spectral_coeff'`. |
+| `negative_mass_tol` | strategy kwarg | `1e-5` | Maximum accepted negative mass from the truncated spectral transition in `auto`. |
+| `gh_order` | strategy kwarg | `5` | Gauss-Hermite order for the local Lamperti transition. |
+| `theta_cap` | strategy kwarg | `None` | Optional cap on the copula parameter after mapping from tau. Useful for very high positive dependence. |
+| `clip_negative` | strategy kwarg | `False` | Clips negative entries in the truncated spectral matrix before row normalization. Use mainly for diagnostics. |
+| `kappa_bounds` | strategy kwarg | `(1e-3, 100.0)` | Bounds for mean-reversion speed. |
+| `xi_bounds` | strategy kwarg | `(1e-3, 5.0)` | Bounds for Jacobi volatility. |
+| `stationary_shape_max` | strategy kwarg | `500.0` | Rejects extremely concentrated stationary beta shapes. |
+| `tau_eps` | strategy kwarg | `1e-6` | Keeps tau away from the endpoints. |
+| `smart_init` | strategy kwarg | `True` | Uses an MLE-based tau initial point when possible. |
+
+```python
+result = fit(
+    copula,
+    u,
+    method='scar-tm-jacobi',
+    transition_method='auto',
+    basis_order=32,
+)
+```
+
+#### Jacobi transfer methods
+
+`transition_method='auto'` first tries `spectral_matrix`. If the truncated
+spectral matrix has negative mass above `negative_mass_tol`, or if spectral
+matrix construction raises a floating-point error, `auto` uses `local`.
+Forcing `transition_method='spectral_matrix'` keeps those numerical failures
+visible and does not fall back.
+
+`transition_method='local_fixed'` uses a parameter-independent tau grid and is
+the most direct backend for `analytical_grad=True`.
+`transition_method='spectral_coeff'` uses coefficient-space filtering instead
+of a transition matrix; it is kept for comparisons and does not support the
+analytical-gradient option.
+
+The local method applies a Gaussian step in the Lamperti coordinate
+
+$$
+y = \frac{2}{\xi}\arcsin\sqrt{\tau},
+$$
+
+then maps the Gauss-Hermite nodes back to tau and interpolates on the Jacobi
+quadrature grid. It produces a nonnegative row-normalized transition matrix
+and is usually the stable choice when one-step transitions are very narrow.
+
+The spectral matrix method uses the Jacobi eigenbasis of the diffusion. It can
+be useful as a diagnostic, but for high-frequency data the code uses
+
+$$
+dt = \frac{1}{T-1}.
+$$
+
+Large `T` therefore makes the one-step transition close to a delta kernel.
+Representing such a narrow kernel with a truncated global Jacobi series can
+produce oscillations, negative entries, or invalid row sums. Increasing
+`basis_order` may reduce the truncation error in some parameter regions, but it
+also raises cost sharply and can worsen conditioning. In that regime, matching
+the high-order spectral likelihood and the local likelihood at a fitted point
+is a good diagnostic; routine fitting should normally leave
+`transition_method='auto'`.
 
 ### SCAR-MC
 
@@ -315,7 +401,7 @@ The Monte Carlo SCAR strategies are stochastic likelihood estimators.
 | `stationary` | strategy kwarg | `True` | Initializes the OU process in stationarity. |
 | `seed` / `dwt` | fit kwarg | random | Controls Wiener increments for reproducibility. |
 | `gtol` | fit kwarg / `scar_optimizer.gtol` | `1e-3` | L-BFGS-B projected-gradient tolerance. |
-| `maxfun` | fit kwarg / `scar_optimizer.maxfun` | `100` | Maximum function evaluations. |
+| `maxfun` | fit kwarg / `scar_optimizer.maxfun` | `300` | Maximum function evaluations. |
 | `maxiter` | fit kwarg / `scar_optimizer.maxiter` | `100` | Maximum optimizer iterations. |
 | `maxls` | fit kwarg / `scar_optimizer.maxls` | `20` | Maximum L-BFGS-B line-search steps per iteration. |
 | `eps` | fit kwarg / `scar_optimizer.eps` | `1e-4` | L-BFGS-B finite-difference step. |
@@ -404,6 +490,12 @@ dynamic edge fit:
   `pts_per_sigma`, `transition_method`, `auto_small_kdt`, `auto_large_kdt`,
   `spectral_basis_order`, `spectral_quad_order`, `analytical_grad`,
   `smart_init`, `verbose`
+- SCAR-TM-JACOBI: `alpha0`, `gtol`, `ftol`, `maxfun`, `maxiter`, `maxls`,
+  `eps`, `transition_method`, `basis_order`, `quad_order`,
+  `spectral_basis_order`, `spectral_quad_order`, `negative_mass_tol`,
+  `gh_order`, `theta_cap`, `clip_negative`, `kappa_bounds`, `xi_bounds`,
+  `stationary_shape_max`, `tau_eps`, `analytical_grad`, `smart_init`,
+  `verbose`
 - SCAR-MC: `alpha0`, `gtol`, `ftol`, `maxfun`, `maxiter`, `maxls`, `eps`, `n_tr`, `M_iterations`, `stationary`, `seed`,
   `dwt`, `smart_init`, `verbose`
 

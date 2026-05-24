@@ -33,6 +33,9 @@ from pyscarcopula.numerical.auto_tm import (
     auto_neg_loglik,
     auto_neg_loglik_with_grad,
 )
+from pyscarcopula.numerical._transition_methods import (
+    normalize_ou_transition_method,
+)
 from pyscarcopula.strategy.predict_helpers import sample_predictive
 
 
@@ -78,9 +81,9 @@ class SCARTMStrategy:
         Points per conditional sigma for adaptive rule (default from config).
     transition_method : str
         'auto' is the default likelihood evaluator: spectral Hermite for
-        strongly mixing transitions, matrix TM for the middle regime, and
-        local GH for narrow kernels.  'matrix', 'gh', and 'spectral' force the
-        corresponding likelihood backend.
+        ordinary transitions and local Gauss-Hermite for narrow kernels or
+        spectral numerical fallback.  'matrix', 'local', and 'spectral' force
+        the corresponding likelihood backend.
     max_K : int or None
         Optional cap for adaptive TM grid size.  Defaults to 1000 in the
         strategy to prevent pathological fit-time grid blowups on long series.
@@ -118,7 +121,7 @@ class SCARTMStrategy:
         self.grid_method = grid_method if grid_method is not None else self.config.default_grid_method
         self.adaptive = adaptive if adaptive is not None else self.config.default_adaptive
         self.pts_per_sigma = pts_per_sigma if pts_per_sigma is not None else self.config.default_pts_per_sigma
-        self.transition_method = self._normalize_transition_method(
+        self.transition_method = normalize_ou_transition_method(
             transition_method)
         self.max_K = max_K
         self.r_gh = r_gh
@@ -129,16 +132,6 @@ class SCARTMStrategy:
         self.spectral_quad_order = spectral_quad_order
         self.analytical_grad = analytical_grad
         self.smart_init = smart_init
-
-    @staticmethod
-    def _normalize_transition_method(transition_method):
-        method = str(transition_method).lower()
-        allowed = {'auto', 'matrix', 'gh', 'spectral'}
-        if method not in allowed:
-            raise ValueError(
-                "transition_method must be one of "
-                "'auto', 'matrix', 'gh', or 'spectral'")
-        return method
 
     def _uses_dispatcher(self):
         return self.transition_method in {'auto', 'spectral'}
@@ -419,11 +412,6 @@ class SCARTMStrategy:
             p.kappa, p.mu, p.nu, u, copula,
             self.K, self.grid_range, self.grid_method,
             self.adaptive, self.pts_per_sigma, **self._grid_tm_kwargs())
-
-    def smoothed_params(self, copula, u: np.ndarray,
-                        result: LatentResult) -> np.ndarray:
-        """Backward-compatible alias for predictive_mean."""
-        return self.predictive_mean(copula, u, result)
 
     def rosenblatt_e2(self, copula, u: np.ndarray,
                       result: LatentResult) -> np.ndarray:

@@ -549,10 +549,6 @@ class EquicorrGaussianCopula(BivariateCopula):
         )
         return tm_forward_predictive_mean(kappa, mu, nu, u, self)
 
-    def smoothed_params(self, u):
-        """Backward-compatible alias for predictive_mean."""
-        return self.predictive_mean(u)
-
     def xT_distribution(self, u, K=300, grid_range=5.0):
         if self.fit_result is None:
             raise ValueError("Fit with SCAR first")

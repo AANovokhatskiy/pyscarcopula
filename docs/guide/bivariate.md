@@ -25,12 +25,30 @@ print(result.params.kappa, result.params.mu, result.params.nu)
 print(result.log_likelihood)
 ```
 
-By default, SCAR-TM uses `transition_method='auto'`. This selects between the
-grid matrix method, local Gauss-Hermite, and the Hermite spectral likelihood
-depending on the OU transition scale. Use `transition_method='spectral'` to
-force the spectral likelihood, or `transition_method='matrix'` / `'gh'` for
-grid-only comparisons. See [Performance](performance.md#spectral-hermite-likelihood)
-for the numerical details.
+For Kendall-tau dynamics, use `method='scar-tm-jacobi'`:
+
+```python
+result_jacobi = fit(copula, u, method='scar-tm-jacobi')
+print(result_jacobi.params.kappa, result_jacobi.params.m, result_jacobi.params.xi)
+```
+
+SCAR-TM-JACOBI is available for copulas with a Kendall-tau parameter mapping
+such as Gumbel, Clayton, Frank, Joe, and bivariate Gaussian. It models tau
+directly with a bounded Jacobi diffusion and maps tau back to the copula
+parameter.
+
+For SCAR-TM-OU, `transition_method='auto'` uses the Hermite spectral
+likelihood except in the narrow-kernel regime, where it uses local
+Gauss-Hermite; the local path is also the numerical fallback if spectral
+evaluation fails. Use `transition_method='spectral'` to force the spectral
+likelihood, or `transition_method='matrix'` / `'local'` for grid-only
+comparisons.
+
+For SCAR-TM-JACOBI, `transition_method='auto'` tries the Jacobi spectral
+transition matrix and falls back to the local Lamperti/Gauss-Hermite transition
+when the spectral matrix has material negative mass or invalid row sums. See
+[Estimation Methods](estimation-methods.md) for model semantics and
+[Performance](performance.md) for numerical details.
 
 ## Rotations
 
@@ -100,7 +118,8 @@ u_current = predict(copula, u, result, n=20_000, horizon='current',
 | Method | `sample` | `predict` |
 |--------|----------|-----------|
 | MLE | constant r | constant r |
-| SCAR-TM | OU trajectory | current/posterior or one-step-ahead mixture |
+| SCAR-TM-OU | OU trajectory | current/posterior or one-step-ahead mixture |
+| SCAR-TM-JACOBI | not implemented | current/posterior or one-step-ahead mixture |
 | GAS | recursive score-driven simulation | last filtered value $g_T$ |
 
 ## Diagnostics
@@ -114,8 +133,7 @@ r_t = predictive_mean(copula, u, result)
 ```
 
 Returns the predictive mean copula parameter at each time step, before the
-current observation is absorbed. `smoothed_params` is still available as a
-backward-compatible alias.
+current observation is absorbed.
 
 ### Goodness of fit
 

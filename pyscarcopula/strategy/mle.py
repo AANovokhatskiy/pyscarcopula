@@ -160,11 +160,6 @@ class MLEStrategy:
         """Constant parameter for all time steps."""
         return np.full(len(u), result.copula_param)
 
-    def smoothed_params(self, copula, u: np.ndarray,
-                        result: MLEResult) -> np.ndarray:
-        """Backward-compatible alias for predictive_mean."""
-        return self.predictive_mean(copula, u, result)
-
     def rosenblatt_e2(self, copula, u: np.ndarray,
                       result: MLEResult) -> np.ndarray:
         """e2 = h(u2, u1; r_mle)."""

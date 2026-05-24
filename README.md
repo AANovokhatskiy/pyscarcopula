@@ -15,7 +15,8 @@ stochastic copula models for financial time series and risk analytics.
 **pyscarcopula** fits bivariate and multivariate dependence models using
 copulas in Python. Alongside classical constant-parameter copulas, it supports
 stochastic copula autoregressive (SCAR) models where the copula parameter is
-driven by a latent Ornstein-Uhlenbeck process.
+driven by a latent Ornstein-Uhlenbeck process or Kendall's tau follows a
+bounded Jacobi diffusion.
 
 The package is aimed at financial time series, risk modelling, and experiments
 with dynamic dependence. It provides bivariate copulas, C-vines, R-vines,
@@ -27,6 +28,7 @@ Supported estimation methods:
 | --- | --- | --- |
 | Maximum likelihood | `mle` | Constant copula parameter |
 | SCAR transfer matrix | `scar-tm-ou` | Deterministic OU latent-state likelihood |
+| SCAR Jacobi transfer matrix | `scar-tm-jacobi` | Deterministic Kendall-tau diffusion likelihood |
 | SCAR Monte Carlo | `scar-p-ou`, `scar-m-ou` | Monte Carlo alternatives |
 | GAS | `gas` | Observation-driven score model |
 
@@ -77,7 +79,7 @@ Core dependencies: `numpy`, `numba`, `scipy`, `joblib`, `tqdm`.
 
 * Rosenblatt-transform based goodness-of-fit tests
 * Mixture Rosenblatt transform for stochastic models
-* Smoothed and predictive time-varying copula parameter paths
+* Predictive time-varying copula parameter paths
 * VaR and CVaR utilities in `pyscarcopula.contrib`
 
 ## Mathematical background
@@ -107,21 +109,24 @@ dx_t = \kappa(\mu - x_t)dt + \nu dW_t,
 ```
 
 where `x_t` is a latent Ornstein-Uhlenbeck process and `Psi` maps the latent
-state to the valid parameter domain.
+state to the valid parameter domain. `scar-tm-jacobi` instead evolves
+Kendall's tau directly with a bounded Jacobi diffusion and maps tau back to the
+copula parameter for families that implement `tau_to_param`.
 
 The transfer matrix method evaluates the latent-state likelihood by exploiting
-the Markov structure of the OU process. The path integral is computed as a
-sequence of matrix-vector products on a discretized grid, avoiding Monte Carlo
-variance at the cost of numerical grid approximation.
+the Markov structure of the latent process. The path integral is computed as a
+sequence of matrix-vector products on a discretized grid or spectral basis,
+avoiding Monte Carlo variance at the cost of numerical approximation.
 
-For SCAR-TM-OU, `transition_method='auto'` also uses a Hermite spectral
-likelihood in strongly mixing OU regimes. In standardized stationary
-coordinates, the OU transition is diagonal in the probabilists-Hermite basis
-with eigenvalues `rho**n`, `rho = exp(-kappa * dt)`. The observation densities
-are projected back to this truncated basis by Gauss-Hermite quadrature. This
-turns the latent path integral into repeated small matrix multiplications and
-diagonal scalings. See [`docs/guide/performance.md`](docs/guide/performance.md)
-for the details and the available `transition_method` values.
+For SCAR-TM-OU, `transition_method='auto'` uses a Hermite spectral likelihood
+except in narrow-kernel OU regimes, where it uses local Gauss-Hermite. In
+standardized stationary coordinates, the OU transition is diagonal in the
+probabilists-Hermite basis with eigenvalues `rho**n`,
+`rho = exp(-kappa * dt)`. The observation densities are projected back to this
+truncated basis by Gauss-Hermite quadrature. This turns the latent path
+integral into repeated small matrix multiplications and diagonal scalings. See
+[`docs/guide/performance.md`](docs/guide/performance.md) for the details and
+the available `transition_method` values.
 
 Vine copulas decompose a `d`-dimensional dependence model into bivariate copulas
 arranged in a sequence of trees. R-vines choose the tree structure from data
@@ -137,8 +142,10 @@ Worked notebooks are available in [`examples/`](examples/):
 * [`04_risk_metrics.ipynb`](examples/04_risk_metrics.ipynb)
 * [`05_pyvinecopulib_comparison.ipynb`](examples/05_pyvinecopulib_comparison.ipynb)
 
-Additional documentation is in [`docs/`](docs/). Performance-related details are
-kept in [`docs/guide/performance.md`](docs/guide/performance.md).
+Additional documentation is in [`docs/`](docs/). Method semantics are described
+in [`docs/guide/estimation-methods.md`](docs/guide/estimation-methods.md), and
+performance-related details are kept in
+[`docs/guide/performance.md`](docs/guide/performance.md).
 
 ## License
 

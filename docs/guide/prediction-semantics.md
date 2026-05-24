@@ -62,9 +62,12 @@ object advances its stream.
 - `horizon='next'` uses the one-step-ahead predictive state, conceptually
   time $T+1$.
 
-For SCAR-TM, `current` means $p(x_T \mid D_T)$ and `next` means
-$p(x_{T+1} \mid D_T)$. For GAS, `current` uses the last filtered score state and
-`next` applies the one-step score recursion. For MLE there is no dynamic
+For SCAR-TM, `current` means the posterior latent state after the observed
+sample, for example $p(x_T \mid D_T)$ in the OU model or
+$p(\tau_T \mid D_T)$ in the Jacobi model. `next` means the corresponding
+one-step-ahead state, such as $p(x_{T+1} \mid D_T)$ or
+$p(\tau_{T+1} \mid D_T)$. For GAS, `current` uses the last filtered score state
+and `next` applies the one-step score recursion. For MLE there is no dynamic
 state, so the two horizons are equivalent.
 
 The default is `horizon='next'`, because `predict` is primarily a forecasting
