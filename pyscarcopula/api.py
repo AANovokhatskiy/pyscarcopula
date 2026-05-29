@@ -38,6 +38,12 @@ from pyscarcopula._utils import pobs as _pobs
 from pyscarcopula.strategy._base import get_strategy, get_strategy_for_result
 
 
+def _as_float64_array_no_copy(value):
+    if type(value) is np.ndarray and value.dtype == np.float64:
+        return value
+    return np.asarray(value, dtype=np.float64)
+
+
 def fit(copula, data, method='scar-tm-ou', to_pobs=False,
         config: NumericalConfig | None = None, **kwargs) -> FitResult:
     """Fit a copula to data. Does not mutate the copula.
@@ -62,7 +68,7 @@ def fit(copula, data, method='scar-tm-ou', to_pobs=False,
     -------
     FitResult (immutable dataclass)
     """
-    u = np.asarray(data, dtype=np.float64)
+    u = _as_float64_array_no_copy(data)
     if to_pobs:
         u = _pobs(u)
 

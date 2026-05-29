@@ -439,7 +439,15 @@ def tm_loglik_with_grad(kappa, mu, nu, u, copula, K=300, grid_range=5.0,
     x_grid = sigma * xi + mu
 
     # Use batch method (fused numba kernel if available, else loop fallback)
-    fi, dfi_dx = copula.pdf_and_grad_on_grid_batch(u, x_grid)
+    emission_cache = None
+    prepare_cache = getattr(copula, "prepare_emission_cache", None)
+    if prepare_cache is not None:
+        emission_cache = prepare_cache(u)
+    if emission_cache is None:
+        fi, dfi_dx = copula.pdf_and_grad_on_grid_batch(u, x_grid)
+    else:
+        fi, dfi_dx = copula.pdf_and_grad_on_grid_batch(
+            u, x_grid, t_index=0, cache=emission_cache)
 
     # dx/dalpha:  x = sigma*xi + mu
     d_sigma_dkappa = -0.5 * nu ** 2 / kappa ** 2 / (2.0 * sigma)

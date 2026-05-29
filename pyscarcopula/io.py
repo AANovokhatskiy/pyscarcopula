@@ -62,6 +62,19 @@ def _without_training_data(model: object) -> object:
     return model_copy
 
 
+def _object_state(obj: object) -> dict[str, Any]:
+    if hasattr(obj, "__getstate__"):
+        state = obj.__getstate__()
+        if state is None:
+            state = obj.__dict__
+    else:
+        state = obj.__dict__
+    if not isinstance(state, dict):
+        raise TypeError(
+            f"__getstate__ for {type(obj).__name__} must return a dict")
+    return state
+
+
 def _to_jsonable(obj: Any) -> Any:
     if obj is None or isinstance(obj, (bool, str)):
         return obj
@@ -122,12 +135,13 @@ def _to_jsonable(obj: Any) -> Any:
             ],
         }
     if hasattr(obj, "__dict__"):
+        state = _object_state(obj)
         return {
             _TYPE: "object",
             "class": _qualified_name(obj),
             "state": {
                 key: _to_jsonable(value)
-                for key, value in obj.__dict__.items()
+                for key, value in state.items()
             },
         }
     raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
@@ -180,10 +194,14 @@ def _from_jsonable(payload: Any) -> Any:
     if tag == "object":
         cls = _resolve_class(payload["class"])
         obj = cls.__new__(cls)
-        obj.__dict__.update({
+        state = {
             key: _from_jsonable(value)
             for key, value in payload["state"].items()
-        })
+        }
+        if hasattr(obj, "__setstate__"):
+            obj.__setstate__(state)
+        else:
+            obj.__dict__.update(state)
         return obj
     raise ValueError(f"Unsupported JSON persistence tag: {tag!r}")
 

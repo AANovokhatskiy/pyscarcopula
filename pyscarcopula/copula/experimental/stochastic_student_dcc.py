@@ -36,12 +36,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Optional, Tuple
+import weakref
 
 import numpy as np
 from scipy.optimize import minimize
 from scipy.special import gammaln, stdtrit
 from scipy.stats import kendalltau
 from scipy.stats import t as t_dist
+
+try:
+    from numba import njit
+except Exception:  # pragma: no cover - numba is expected in normal installs
+    njit = None
 
 from pyscarcopula._utils import pobs
 from pyscarcopula.copula.base import BivariateCopula
@@ -94,6 +100,51 @@ class DCCFitResult:
 # ══════════════════════════════════════════════════════════════
 # Helper functions
 # ══════════════════════════════════════════════════════════════
+
+
+def _as_float64_array_no_copy(value):
+    if type(value) is np.ndarray and value.dtype == np.float64:
+        return value
+    return np.asarray(value, dtype=np.float64)
+
+
+@dataclass(frozen=True)
+class StochasticStudentDCCEmissionCache:
+    """Reusable emission data for DCC Student-t copula evaluations."""
+
+    u_shape: tuple
+    ppf_nodes: np.ndarray
+    ppf_table: np.ndarray
+    L_inv_path: np.ndarray
+    log_det_path: np.ndarray
+    d: int
+    source_ref: object
+    _ppf: object
+
+    def ppf(self, df):
+        return self._ppf(df)
+
+    def ppf_rows(self, df, start=0, stop=None):
+        """Interpolate t-quantiles for a contiguous row block."""
+        if stop is None:
+            stop = self.u_shape[0]
+        start = int(start)
+        stop = int(stop)
+        if start < 0 or stop < start or stop > self.u_shape[0]:
+            raise IndexError(
+                f"row block [{start}:{stop}] is outside cache length "
+                f"{self.u_shape[0]}")
+
+        idx = np.searchsorted(self.ppf_nodes, df) - 1
+        idx = max(0, min(idx, len(self.ppf_nodes) - 2))
+        alpha = (
+            (df - self.ppf_nodes[idx])
+            / (self.ppf_nodes[idx + 1] - self.ppf_nodes[idx])
+        )
+        return (
+            (1.0 - alpha) * self.ppf_table[idx, start:stop]
+            + alpha * self.ppf_table[idx + 1, start:stop]
+        )
 
 
 def _softplus(x):
@@ -462,6 +513,158 @@ def _dcc_loglik_gaussian(z, R_path):
     return float(-0.5 * np.sum(log_det + quad - z_sq))
 
 
+if njit is not None:
+    @njit(cache=True)
+    def _dcc_normalized_cholesky_from_q_numba(Q):
+        d = Q.shape[0]
+        R = np.empty((d, d), dtype=np.float64)
+        diag = np.empty(d, dtype=np.float64)
+        for i in range(d):
+            qii = Q[i, i]
+            if qii < 1e-12:
+                qii = 1e-12
+            diag[i] = np.sqrt(qii)
+        for i in range(d):
+            R[i, i] = 1.0
+            for j in range(i + 1, d):
+                value = 0.5 * (Q[i, j] + Q[j, i]) / (diag[i] * diag[j])
+                R[i, j] = value
+                R[j, i] = value
+        return np.linalg.cholesky(R), R
+
+
+    @njit(cache=True)
+    def _dcc_loglik_from_params_numba(z, a, b, Qbar):
+        T, d = z.shape
+        c = 1.0 - a - b
+        Q_prev = Qbar.copy()
+        Q_t = np.empty((d, d), dtype=np.float64)
+        y = np.empty(d, dtype=np.float64)
+        total = 0.0
+
+        for t in range(T):
+            if t == 0:
+                for i in range(d):
+                    for j in range(d):
+                        Q_t[i, j] = Qbar[i, j]
+            else:
+                for i in range(d):
+                    zi = z[t - 1, i]
+                    for j in range(d):
+                        Q_t[i, j] = (
+                            c * Qbar[i, j]
+                            + a * zi * z[t - 1, j]
+                            + b * Q_prev[i, j]
+                        )
+                for i in range(d):
+                    for j in range(i + 1, d):
+                        sym = 0.5 * (Q_t[i, j] + Q_t[j, i])
+                        Q_t[i, j] = sym
+                        Q_t[j, i] = sym
+
+            L, _ = _dcc_normalized_cholesky_from_q_numba(Q_t)
+            log_det = 0.0
+            quad = 0.0
+            z_sq = 0.0
+            for i in range(d):
+                log_det += 2.0 * np.log(L[i, i])
+                z_sq += z[t, i] * z[t, i]
+                y_i = z[t, i]
+                for j in range(i):
+                    y_i -= L[i, j] * y[j]
+                y_i /= L[i, i]
+                y[i] = y_i
+                quad += y_i * y_i
+
+            total += -0.5 * (log_det + quad - z_sq)
+
+            for i in range(d):
+                for j in range(d):
+                    Q_prev[i, j] = Q_t[i, j]
+
+        return total
+
+
+    @njit(cache=True)
+    def _dcc_recursion_path_loglik_numba(z, a, b, Qbar):
+        T, d = z.shape
+        c = 1.0 - a - b
+        Q_path = np.empty((T, d, d), dtype=np.float64)
+        R_path = np.empty((T, d, d), dtype=np.float64)
+        Q_prev = Qbar.copy()
+        Q_t = np.empty((d, d), dtype=np.float64)
+        y = np.empty(d, dtype=np.float64)
+        total = 0.0
+
+        for t in range(T):
+            if t == 0:
+                for i in range(d):
+                    for j in range(d):
+                        Q_t[i, j] = Qbar[i, j]
+            else:
+                for i in range(d):
+                    zi = z[t - 1, i]
+                    for j in range(d):
+                        Q_t[i, j] = (
+                            c * Qbar[i, j]
+                            + a * zi * z[t - 1, j]
+                            + b * Q_prev[i, j]
+                        )
+                for i in range(d):
+                    for j in range(i + 1, d):
+                        sym = 0.5 * (Q_t[i, j] + Q_t[j, i])
+                        Q_t[i, j] = sym
+                        Q_t[j, i] = sym
+
+            L, R_t = _dcc_normalized_cholesky_from_q_numba(Q_t)
+            log_det = 0.0
+            quad = 0.0
+            z_sq = 0.0
+            for i in range(d):
+                log_det += 2.0 * np.log(L[i, i])
+                z_sq += z[t, i] * z[t, i]
+                y_i = z[t, i]
+                for j in range(i):
+                    y_i -= L[i, j] * y[j]
+                y_i /= L[i, i]
+                y[i] = y_i
+                quad += y_i * y_i
+
+            total += -0.5 * (log_det + quad - z_sq)
+
+            for i in range(d):
+                for j in range(d):
+                    Q_path[t, i, j] = Q_t[i, j]
+                    R_path[t, i, j] = R_t[i, j]
+                    Q_prev[i, j] = Q_t[i, j]
+
+        return Q_path, R_path, total
+else:
+    _dcc_loglik_from_params_numba = None
+    _dcc_recursion_path_loglik_numba = None
+
+
+def _dcc_fast_loglik(z, a, b, Qbar):
+    if _dcc_loglik_from_params_numba is not None:
+        try:
+            return float(_dcc_loglik_from_params_numba(z, a, b, Qbar))
+        except Exception:
+            pass
+    _, R_path = _dcc_recursion(z, a, b, Qbar)
+    return _dcc_loglik_gaussian(z, R_path)
+
+
+def _dcc_fast_recursion_path_loglik(z, a, b, Qbar):
+    if _dcc_recursion_path_loglik_numba is not None:
+        try:
+            Q_path, R_path, ll = _dcc_recursion_path_loglik_numba(z, a, b, Qbar)
+            return Q_path, R_path, float(ll)
+        except Exception:
+            pass
+    Q_path, R_path = _dcc_recursion(z, a, b, Qbar)
+    return Q_path, R_path, _dcc_loglik_gaussian(z, R_path)
+
+
 # ── GARCH(1,1) standardization ──────────────────────────────
 
 
@@ -576,6 +779,7 @@ class StochasticStudentDCCCopula(BivariateCopula):
         self._ppf_table: Optional[_PPFTable] = None
         self._ppf_table_u: Optional[np.ndarray] = None
         self._ppf_table_u_id: Optional[int] = None
+        self._emission_cache: Optional[StochasticStudentDCCEmissionCache] = None
 
     @property
     def d(self):
@@ -590,6 +794,23 @@ class StochasticStudentDCCCopula(BivariateCopula):
         if self._dcc_a is None or self._dcc_b is None:
             return None
         return {"a": self._dcc_a, "b": self._dcc_b}
+
+    # ── Serialization ───────────────────────────────────────
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state["_ppf_table"] = None
+        state["_ppf_table_u"] = None
+        state["_ppf_table_u_id"] = None
+        state["_emission_cache"] = None
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self._ppf_table = None
+        self._ppf_table_u = None
+        self._ppf_table_u_id = None
+        self._emission_cache = None
 
     # ── Transform: x -> df ──────────────────────────────────
 
@@ -682,6 +903,7 @@ class StochasticStudentDCCCopula(BivariateCopula):
         self._ppf_table = None
         self._ppf_table_u = None
         self._ppf_table_u_id = None
+        self._emission_cache = None
 
     # ── Standardized residuals ──────────────────────────────
 
@@ -802,8 +1024,8 @@ class StochasticStudentDCCCopula(BivariateCopula):
             a_hat, b_hat = float(fix_params[0]), float(fix_params[1])
             if a_hat < 0 or b_hat < 0 or (a_hat + b_hat) >= 0.999:
                 raise ValueError("Need a >= 0, b >= 0, a + b < 1")
-            Q_path, R_path = _dcc_recursion(z_std, a_hat, b_hat, Qbar)
-            ll = _dcc_loglik_gaussian(z_std, R_path)
+            Q_path, R_path, ll = _dcc_fast_recursion_path_loglik(
+                z_std, a_hat, b_hat, Qbar)
             result = DCCFitResult(
                 a=a_hat,
                 b=b_hat,
@@ -820,8 +1042,7 @@ class StochasticStudentDCCCopula(BivariateCopula):
             a, b = float(raw[0]), float(raw[1])
             if a < 0.0 or b < 0.0 or (a + b) >= 0.999:
                 return 1e12 + 1e8 * max(a + b - 0.999, 0.0)
-            _, R_path = _dcc_recursion(z_std, a, b, Qbar)
-            return -_dcc_loglik_gaussian(z_std, R_path)
+            return -_dcc_fast_loglik(z_std, a, b, Qbar)
 
         x0 = np.array([a0, b0], dtype=np.float64)
         bounds = [(1e-8, 0.999), (1e-8, 0.999)]
@@ -840,8 +1061,8 @@ class StochasticStudentDCCCopula(BivariateCopula):
             a_hat *= 0.999 / s
             b_hat *= 0.999 / s
 
-        Q_path, R_path = _dcc_recursion(z_std, a_hat, b_hat, Qbar)
-        ll = _dcc_loglik_gaussian(z_std, R_path)
+        Q_path, R_path, ll = _dcc_fast_recursion_path_loglik(
+            z_std, a_hat, b_hat, Qbar)
 
         result = DCCFitResult(
             a=a_hat,
@@ -890,6 +1111,80 @@ class StochasticStudentDCCCopula(BivariateCopula):
         return Q_path, R_path
 
     # ── PPF table management ────────────────────────────────
+
+    def prepare_emission_cache(self, u):
+        """Build reusable emission data for a fixed pseudo-observation array."""
+        self._require_R_path()
+
+        source = u
+        u = _as_float64_array_no_copy(u)
+        if u.ndim != 2 or u.shape[1] != self._d:
+            raise ValueError(
+                f"u must have shape (T, {self._d}), got {u.shape}")
+        if u.shape[0] > len(self._R_path):
+            raise ValueError(
+                f"u has length {u.shape[0]}, but R_path has length "
+                f"{len(self._R_path)}")
+
+        cached = self._emission_cache
+        if (
+            cached is not None
+            and cached.source_ref() is source
+            and cached.u_shape == tuple(u.shape)
+            and cached.L_inv_path is self._L_inv_path
+            and cached.log_det_path is self._log_det_path
+        ):
+            return cached
+
+        ppf = _PPFTable(u)
+        try:
+            source_ref = weakref.ref(source)
+        except TypeError:
+            source_ref = lambda: None
+        cache = StochasticStudentDCCEmissionCache(
+            u_shape=tuple(u.shape),
+            ppf_nodes=ppf.nodes,
+            ppf_table=ppf.table,
+            L_inv_path=self._L_inv_path,
+            log_det_path=self._log_det_path,
+            d=self._d,
+            source_ref=source_ref,
+            _ppf=ppf,
+        )
+        self._emission_cache = cache
+        return cache
+
+    def _emission_cache_block(self, cache, n_rows, t_index):
+        if cache is None:
+            return None
+        if cache.d != self._d or len(cache.u_shape) != 2:
+            raise ValueError("emission cache does not match this copula")
+        if cache.u_shape[1] != self._d:
+            raise ValueError(
+                f"emission cache has dimension {cache.u_shape[1]}, "
+                f"expected {self._d}")
+        if cache.L_inv_path is not self._L_inv_path:
+            raise ValueError("emission cache was built for another R_path")
+        if cache.log_det_path is not self._log_det_path:
+            raise ValueError("emission cache was built for another R_path")
+        start = 0 if t_index is None else int(t_index)
+        stop = start + int(n_rows)
+        if start < 0 or stop > cache.u_shape[0]:
+            raise ValueError(
+                f"emission cache block [{start}:{stop}] is outside length "
+                f"{cache.u_shape[0]}")
+        if stop > len(self._R_path):
+            raise ValueError(
+                f"R_path slice [{start}:{stop}] is outside length "
+                f"{len(self._R_path)}")
+        return start, stop
+
+    def _ppf_rows_for_batch(self, ppf, cache, df, n_rows, t_index):
+        block = self._emission_cache_block(cache, n_rows, t_index)
+        if block is not None:
+            start, stop = block
+            return cache.ppf_rows(df, start, stop)
+        return ppf(df)
 
     def _get_ppf_table(self, u):
         """Get or build PPF lookup table for given data."""
@@ -1128,7 +1423,7 @@ class StochasticStudentDCCCopula(BivariateCopula):
         dfi_dz = fi * dlogc_ddf * dpsi
         return fi, dfi_dz
 
-    def pdf_and_grad_on_grid_batch(self, u, x_grid, t_index=0):
+    def pdf_and_grad_on_grid_batch(self, u, x_grid, t_index=0, cache=None):
         """
         Batch evaluation for all observations with time-varying R_t.
 
@@ -1138,7 +1433,7 @@ class StochasticStudentDCCCopula(BivariateCopula):
         Returns: (fi, dfi), each of shape (T, K)
         """
         self._require_R_path()
-        u = np.asarray(u, dtype=np.float64)
+        u = _as_float64_array_no_copy(u)
         x_grid = np.asarray(x_grid, dtype=np.float64)
         T = len(u)
         start = int(t_index)
@@ -1154,7 +1449,11 @@ class StochasticStudentDCCCopula(BivariateCopula):
         dpsi = self.dtransform(x_grid)
         eps = 1e-5
 
-        ppf = self._get_ppf_table(u)
+        block = self._emission_cache_block(cache, T, t_index)
+        if block is None:
+            ppf = self._get_ppf_table(u)
+        else:
+            ppf = None
 
         fi = np.empty((T, K), dtype=np.float64)
         dfi = np.empty((T, K), dtype=np.float64)
@@ -1167,9 +1466,9 @@ class StochasticStudentDCCCopula(BivariateCopula):
             df_p = df_c + eps
             df_m = max(df_c - eps, 2.001)
 
-            x_c = ppf(df_c)
-            x_p = ppf(df_p)
-            x_m = ppf(df_m)
+            x_c = self._ppf_rows_for_batch(ppf, cache, df_c, T, t_index)
+            x_p = self._ppf_rows_for_batch(ppf, cache, df_p, T, t_index)
+            x_m = self._ppf_rows_for_batch(ppf, cache, df_m, T, t_index)
 
             lc_c = _log_copula_inlined_timevarying(x_c, df_c, d, L_inv_T, log_det_T)
             lc_p = _log_copula_inlined_timevarying(x_p, df_p, d, L_inv_T, log_det_T)
@@ -1180,10 +1479,10 @@ class StochasticStudentDCCCopula(BivariateCopula):
 
         return fi, dfi
 
-    def copula_grid_batch(self, u, x_grid, t_index=0):
+    def copula_grid_batch(self, u, x_grid, t_index=0, cache=None):
         """Batch version of pdf_on_grid for time-varying R_t."""
         self._require_R_path()
-        u = np.asarray(u, dtype=np.float64)
+        u = _as_float64_array_no_copy(u)
         x_grid = np.asarray(x_grid, dtype=np.float64)
         T = len(u)
         start = int(t_index)
@@ -1197,14 +1496,19 @@ class StochasticStudentDCCCopula(BivariateCopula):
         d = self._d
         df_grid = self.transform(x_grid)
 
-        ppf = self._get_ppf_table(u)
+        block = self._emission_cache_block(cache, T, t_index)
+        if block is None:
+            ppf = self._get_ppf_table(u)
+        else:
+            ppf = None
 
         fi = np.empty((T, K), dtype=np.float64)
         L_inv_T = self._L_inv_path[start:end]
         log_det_T = self._log_det_path[start:end]
 
         for k in range(K):
-            x = ppf(df_grid[k])
+            x = self._ppf_rows_for_batch(
+                ppf, cache, df_grid[k], T, t_index)
             fi[:, k] = np.exp(
                 _log_copula_inlined_timevarying(x, df_grid[k], d, L_inv_T, log_det_T)
             )

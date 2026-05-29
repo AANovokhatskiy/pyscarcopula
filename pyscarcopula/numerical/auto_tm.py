@@ -12,6 +12,7 @@ from dataclasses import dataclass, asdict
 
 import numpy as np
 
+from pyscarcopula.numerical._arrays import as_float64_array
 from pyscarcopula.numerical.hermite_tm import (
     default_quad_order,
     hermite_loglik,
@@ -82,7 +83,7 @@ def auto_loglik_with_info(kappa, mu, nu, u, copula,
         numerical failure, matching the Hermite prototype convention.
     """
     cfg = config or AutoTMConfig()
-    u = np.asarray(u, dtype=np.float64)
+    u = as_float64_array(u)
     n_obs = len(u)
     kdt = _kappa_dt(kappa, n_obs)
     backend = select_auto_backend(kappa, n_obs, cfg)
@@ -171,7 +172,7 @@ def auto_neg_loglik_with_grad(kappa, mu, nu, u, copula,
     differentiate through adaptive grid-size or method-switch decisions.
     """
     cfg = config or AutoTMConfig()
-    u = np.asarray(u, dtype=np.float64)
+    u = as_float64_array(u)
     n_obs = len(u)
     method = normalize_ou_transition_method(cfg.transition_method)
     backend = select_auto_backend(kappa, n_obs, cfg)

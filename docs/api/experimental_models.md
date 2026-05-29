@@ -88,6 +88,12 @@ $$c(u_t;R,\nu_t)=
 score-driven recursion for $g_t$, and `method='scar-tm-ou'` treats $g_t$ as a
 latent OU process integrated by transfer matrix.
 
+The fixed-correlation implementation caches the full-sample Student quantile
+table for repeated emission evaluations. The cache is transient and is rebuilt
+after loading a persisted model or after replacing the correlation matrix.
+GAS with `scaling='unit'` also uses a Numba fast path; unsupported scaling
+modes fall back to the generic filter.
+
 ::: pyscarcopula.copula.experimental.stochastic_student.StochasticStudentCopula
     options:
       members:
