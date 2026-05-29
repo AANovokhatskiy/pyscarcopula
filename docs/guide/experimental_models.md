@@ -115,8 +115,14 @@ Implementation notes:
   $\nu_t=2+\mathrm{softplus}(g_t)$.
 - SCAR-TM-OU evaluates the Student copula density on a latent grid and filters
   the OU state by transfer matrix.
-- The Student quantile and log-density formulas are evaluated in vectorized
-  numerical kernels, but the mathematical model is the standard t-copula above.
+- The Student quantile table is built once per pseudo-observation array and
+  reused by GAS, TM, and Hermite-TM block evaluations. Block calls pass a row
+  offset into this full-sample cache instead of rebuilding quantiles for
+  temporary slices.
+- Fixed-correlation GAS with unit scaling has a Numba fast path. Other GAS
+  scaling modes and DCC Student models keep the generic Python/NumPy path.
+- The Student log-density formulas are evaluated in vectorized numerical
+  kernels, but the mathematical model is the standard t-copula above.
 
 ### Usage
 

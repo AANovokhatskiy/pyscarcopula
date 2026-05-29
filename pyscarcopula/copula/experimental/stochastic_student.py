@@ -24,6 +24,9 @@ Usage:
     gof_test(cop, returns, to_pobs=True)
 """
 
+from dataclasses import dataclass
+import weakref
+
 import numpy as np
 from scipy.stats import t as t_dist, kendalltau
 from scipy.special import gammaln, stdtrit
@@ -49,6 +52,56 @@ _LBFGSB_FIT_KEYS = (
     'maxcor',
     'finite_diff_rel_step',
 )
+
+
+def _as_float64_array_no_copy(value):
+    if type(value) is np.ndarray and value.dtype == np.float64:
+        return value
+    return np.asarray(value, dtype=np.float64)
+
+
+@dataclass(frozen=True)
+class StochasticStudentEmissionCache:
+    """Reusable data for StochasticStudent emission evaluations.
+
+    The PPF table is built for the full pseudo-observation array once and can
+    later be indexed by block offset.  This avoids tying cache reuse to the
+    identity of temporary numpy slices.
+    """
+
+    u_shape: tuple
+    ppf_nodes: np.ndarray
+    ppf_table: np.ndarray
+    L_inv: np.ndarray
+    log_det: float
+    d: int
+    source_ref: object
+    _ppf: object
+
+    def ppf(self, df):
+        return self._ppf(df)
+
+    def ppf_rows(self, df, start=0, stop=None):
+        """Interpolate t-quantiles for a contiguous row block."""
+        if stop is None:
+            stop = self.u_shape[0]
+        start = int(start)
+        stop = int(stop)
+        if start < 0 or stop < start or stop > self.u_shape[0]:
+            raise IndexError(
+                f"row block [{start}:{stop}] is outside cache length "
+                f"{self.u_shape[0]}")
+
+        idx = np.searchsorted(self.ppf_nodes, df) - 1
+        idx = max(0, min(idx, len(self.ppf_nodes) - 2))
+        alpha = (
+            (df - self.ppf_nodes[idx])
+            / (self.ppf_nodes[idx + 1] - self.ppf_nodes[idx])
+        )
+        return (
+            (1.0 - alpha) * self.ppf_table[idx, start:stop]
+            + alpha * self.ppf_table[idx + 1, start:stop]
+        )
 
 
 # ══════════════════════════════════════════════════════════════
@@ -289,6 +342,7 @@ class StochasticStudentCopula(BivariateCopula):
         self._ppf_table = None
         self._ppf_table_u = None
         self._ppf_table_u_id = None
+        self._emission_cache = None
 
     @property
     def d(self):
@@ -298,12 +352,28 @@ class StochasticStudentCopula(BivariateCopula):
     def R(self):
         return self._R
 
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state["_ppf_table"] = None
+        state["_ppf_table_u"] = None
+        state["_ppf_table_u_id"] = None
+        state["_emission_cache"] = None
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self._ppf_table = None
+        self._ppf_table_u = None
+        self._ppf_table_u_id = None
+        self._emission_cache = None
+
     def _set_R(self, R):
         """Set correlation matrix and precompute Cholesky."""
         self._R = _ensure_positive_definite(R)
         L = np.linalg.cholesky(self._R)
         self._L_inv = np.linalg.inv(L)
         self._log_det = 2.0 * np.sum(np.log(np.diag(L)))
+        self._emission_cache = None
 
     # ── Transform: x -> df ──────────────────────────────────
     # Psi(x) = 2 + softplus(x) = 2 + log(1 + exp(x))
@@ -329,6 +399,67 @@ class StochasticStudentCopula(BivariateCopula):
 
     def dtransform_scalar(self, x):
         return _softplus_deriv_scalar(x)
+
+    def prepare_emission_cache(self, u):
+        """Build reusable emission data for a fixed pseudo-observation array."""
+        if self._R is None:
+            raise ValueError("R not set")
+
+        source = u
+        u = np.asarray(u, dtype=np.float64)
+        if u.ndim != 2 or u.shape[1] != self._d:
+            raise ValueError(
+                f"u must have shape (T, {self._d}), got {u.shape}")
+
+        cached = self._emission_cache
+        if (
+            cached is not None
+            and cached.source_ref() is source
+            and cached.u_shape == tuple(u.shape)
+        ):
+            return cached
+
+        ppf = _PPFTable(u)
+        try:
+            source_ref = weakref.ref(source)
+        except TypeError:
+            source_ref = lambda: None
+        cache = StochasticStudentEmissionCache(
+            u_shape=tuple(u.shape),
+            ppf_nodes=ppf.nodes,
+            ppf_table=ppf.table,
+            L_inv=self._L_inv,
+            log_det=float(self._log_det),
+            d=self._d,
+            source_ref=source_ref,
+            _ppf=ppf,
+        )
+        self._emission_cache = cache
+        return cache
+
+    def _emission_cache_block(self, cache, n_rows, t_index):
+        if cache is None:
+            return None
+        if cache.d != self._d or len(cache.u_shape) != 2:
+            raise ValueError("emission cache does not match this copula")
+        if cache.u_shape[1] != self._d:
+            raise ValueError(
+                f"emission cache has dimension {cache.u_shape[1]}, "
+                f"expected {self._d}")
+        start = 0 if t_index is None else int(t_index)
+        stop = start + int(n_rows)
+        if start < 0 or stop > cache.u_shape[0]:
+            raise ValueError(
+                f"emission cache block [{start}:{stop}] is outside length "
+                f"{cache.u_shape[0]}")
+        return start, stop
+
+    def _ppf_rows_for_batch(self, ppf, cache, df, n_rows, t_index):
+        block = self._emission_cache_block(cache, n_rows, t_index)
+        if block is not None:
+            start, stop = block
+            return cache.ppf_rows(df, start, stop)
+        return ppf(df)
 
     def _get_ppf_table(self, u):
         """Get or build PPF lookup table for given data."""
@@ -364,12 +495,13 @@ class StochasticStudentCopula(BivariateCopula):
         ll = _student_copula_logpdf(u, self._R, r, self._L_inv, self._log_det)
         return np.sum(ll)
 
-    def log_pdf_rows(self, u, r, t_index=None):
+    def log_pdf_rows(self, u, r, t_index=None, cache=None):
         """Return one log-density per row for scalar/row-wise df values."""
         if self._R is None:
             raise ValueError("Correlation matrix R not set. Call fit() first.")
 
         u = np.asarray(u, dtype=np.float64)
+        self._emission_cache_block(cache, len(u), t_index)
         df_arr = np.atleast_1d(np.asarray(r, dtype=np.float64)).ravel()
         if df_arr.size == 1:
             return _student_copula_logpdf(
@@ -389,12 +521,13 @@ class StochasticStudentCopula(BivariateCopula):
             )[0]
         return out
 
-    def dlog_pdf_dr_rows(self, u, r, t_index=None):
+    def dlog_pdf_dr_rows(self, u, r, t_index=None, cache=None):
         """Return d log c(u_t; df_t) / d df_t for each row."""
         if self._R is None:
             raise ValueError("Correlation matrix R not set. Call fit() first.")
 
         u = np.asarray(u, dtype=np.float64)
+        self._emission_cache_block(cache, len(u), t_index)
         df_arr = np.atleast_1d(np.asarray(r, dtype=np.float64)).ravel()
         if df_arr.size == 1:
             return _student_copula_dlogpdf_ddf(
@@ -414,12 +547,13 @@ class StochasticStudentCopula(BivariateCopula):
             )[0]
         return out
 
-    def log_pdf_and_dlog_dr_rows(self, u, r, t_index=None):
+    def log_pdf_and_dlog_dr_rows(self, u, r, t_index=None, cache=None):
         """Return per-row log-density and d log c(u_t; df_t) / d df_t."""
         if self._R is None:
             raise ValueError("Correlation matrix R not set. Call fit() first.")
 
         u = np.asarray(u, dtype=np.float64)
+        self._emission_cache_block(cache, len(u), t_index)
         df_arr = np.atleast_1d(np.asarray(r, dtype=np.float64)).ravel()
         if df_arr.size == 1:
             return _student_copula_logpdf_and_dlogpdf_ddf(
@@ -503,7 +637,7 @@ class StochasticStudentCopula(BivariateCopula):
         dfi_dz = fi * dlogc_ddf * dpsi
         return fi, dfi_dz
 
-    def pdf_and_grad_on_grid_batch(self, u, x_grid):
+    def pdf_and_grad_on_grid_batch(self, u, x_grid, t_index=0, cache=None):
         """
         Batch evaluation for all T observations.
 
@@ -529,7 +663,11 @@ class StochasticStudentCopula(BivariateCopula):
         log_det = self._log_det
         eps = 1e-5
 
-        ppf = self._get_ppf_table(u)
+        block = self._emission_cache_block(cache, T, t_index)
+        if block is None:
+            ppf = self._get_ppf_table(u)
+        else:
+            ppf = None
 
         fi = np.empty((T, K))
         dfi = np.empty((T, K))
@@ -539,9 +677,9 @@ class StochasticStudentCopula(BivariateCopula):
             df_p = df_c + eps
             df_m = max(df_c - eps, 2.001)
 
-            x_c = ppf(df_c)
-            x_p = ppf(df_p)
-            x_m = ppf(df_m)
+            x_c = self._ppf_rows_for_batch(ppf, cache, df_c, T, t_index)
+            x_p = self._ppf_rows_for_batch(ppf, cache, df_p, T, t_index)
+            x_m = self._ppf_rows_for_batch(ppf, cache, df_m, T, t_index)
 
             lc_c = _log_copula_inlined(x_c, df_c, d, L_inv, log_det)
             lc_p = _log_copula_inlined(x_p, df_p, d, L_inv, log_det)
@@ -552,7 +690,7 @@ class StochasticStudentCopula(BivariateCopula):
 
         return fi, dfi
 
-    def copula_grid_batch(self, u, x_grid):
+    def copula_grid_batch(self, u, x_grid, t_index=0, cache=None):
         """Batch version of pdf_on_grid (value only)."""
         if self._R is None:
             raise ValueError("R not set")
@@ -565,11 +703,16 @@ class StochasticStudentCopula(BivariateCopula):
         L_inv = self._L_inv
         log_det = self._log_det
 
-        ppf = self._get_ppf_table(u)
+        block = self._emission_cache_block(cache, len(u), t_index)
+        if block is None:
+            ppf = self._get_ppf_table(u)
+        else:
+            ppf = None
 
         fi = np.empty((len(u), K))
         for k in range(K):
-            x = ppf(df_grid[k])
+            x = self._ppf_rows_for_batch(
+                ppf, cache, df_grid[k], len(u), t_index)
             fi[:, k] = np.exp(
                 _log_copula_inlined(x, df_grid[k], d, L_inv, log_det))
 
@@ -650,7 +793,7 @@ class StochasticStudentCopula(BivariateCopula):
         if 'tol' in kwargs:
             raise TypeError("tol is not supported; use gtol")
 
-        u = np.asarray(data, dtype=np.float64)
+        u = _as_float64_array_no_copy(data)
         if to_pobs:
             u = pobs(u)
 

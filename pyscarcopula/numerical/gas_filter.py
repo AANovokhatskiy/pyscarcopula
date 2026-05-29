@@ -23,6 +23,7 @@ Used by:
 import numpy as np
 from numba import njit
 
+from pyscarcopula.numerical._arrays import as_float64_array
 from pyscarcopula.copula.base import (
     _softplus_dtransform,
     _softplus_transform,
@@ -486,6 +487,23 @@ def _gas_filter_multivariate(omega, gamma, beta, u, copula, scaling='unit',
     return g_path, r_path, total_logL
 
 
+def _student_gas_fast_args(copula, u, scaling):
+    if scaling != 'unit':
+        return None
+    try:
+        from pyscarcopula.copula.experimental.stochastic_student import (
+            StochasticStudentCopula,
+        )
+    except Exception:
+        return None
+    if not isinstance(copula, StochasticStudentCopula):
+        return None
+    if getattr(copula, '_R', None) is None:
+        return None
+    cache = copula.prepare_emission_cache(u)
+    return cache
+
+
 def gas_filter(omega, gamma, beta, u, copula, scaling='unit',
                score_eps=1e-4):
     """Run GAS filter, return full path and log-likelihood.
@@ -514,8 +532,25 @@ def gas_filter(omega, gamma, beta, u, copula, scaling='unit',
     r_path : (T,) — copula parameter path Psi(g_t)
     total_logL : float
     """
-    u = np.asarray(u, dtype=np.float64)
+    u = as_float64_array(u)
     if _validate_multivariate_log_pdf_input(copula, u):
+        cache = _student_gas_fast_args(copula, u, scaling)
+        if cache is not None:
+            from pyscarcopula.numerical.student_emission import (
+                student_gas_filter_numba,
+            )
+            return student_gas_filter_numba(
+                float(omega),
+                float(gamma),
+                float(beta),
+                cache.ppf_nodes,
+                cache.ppf_table,
+                cache.L_inv,
+                cache.log_det,
+                1e-5,
+                G_CLIP,
+                S_CLIP,
+            )
         return _gas_filter_multivariate(
             float(omega), float(gamma), float(beta),
             u, copula, scaling, score_eps)
@@ -570,7 +605,7 @@ def gas_predict_param(omega, gamma, beta, u, copula, scaling='unit',
     ``current`` returns the last in-sample parameter Psi(g_{T-1}).
     ``next`` applies the final observation score and returns Psi(g_T).
     """
-    u = np.asarray(u, dtype=np.float64)
+    u = as_float64_array(u)
     g_path, r_path, _ = gas_filter(
         omega, gamma, beta, u, copula, scaling, score_eps)
     if len(g_path) == 0:

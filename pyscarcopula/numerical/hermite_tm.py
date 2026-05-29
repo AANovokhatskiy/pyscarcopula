@@ -7,6 +7,8 @@ from inspect import signature
 
 import numpy as np
 
+from pyscarcopula.numerical._arrays import as_float64_array
+
 
 def _validate_positive_int(value, name):
     if isinstance(value, (bool, np.bool_)):
@@ -28,6 +30,17 @@ def _call_batch_method(method, u, x_grid, t_index):
     if _batch_method_accepts_t_index(method):
         return method(u, x_grid, t_index=t_index)
     return method(u, x_grid)
+
+
+def _call_batch_method_with_cache(method, u, x_grid, t_index, cache):
+    if cache is None:
+        return _call_batch_method(method, u, x_grid, t_index)
+    try:
+        if _batch_method_accepts_t_index(method):
+            return method(u, x_grid, t_index=t_index, cache=cache)
+        return method(u, x_grid, cache=cache)
+    except TypeError:
+        return _call_batch_method(method, u, x_grid, t_index)
 
 
 @lru_cache(maxsize=32)
@@ -116,7 +129,7 @@ def hermite_loglik(
     if kappa <= 0.0 or nu <= 0.0:
         return -np.inf
 
-    u = np.asarray(u, dtype=np.float64)
+    u = as_float64_array(u)
     n_obs = len(u)
     if n_obs < 1:
         return -np.inf
@@ -143,6 +156,10 @@ def hermite_loglik(
     z, weights, basis = standard_normal_hermite_rule(
         quad_order, basis_order)
     x_grid = mu + sigma * z
+    emission_cache = None
+    prepare_cache = getattr(copula, "prepare_emission_cache", None)
+    if prepare_cache is not None:
+        emission_cache = prepare_cache(u)
 
     coeff = np.zeros(basis_order, dtype=np.float64)
     coeff[0] = 1.0
@@ -152,8 +169,13 @@ def hermite_loglik(
     #   m_{k-1} = P(g_k * m_k), and P is diagonal in this basis.
     for stop in range(n_obs, 1, -block_size):
         start = max(1, stop - block_size)
-        fi_block = _call_batch_method(
-            copula.copula_grid_batch, u[start:stop], x_grid, start)
+        fi_block = _call_batch_method_with_cache(
+            copula.copula_grid_batch,
+            u[start:stop],
+            x_grid,
+            start,
+            emission_cache,
+        )
         for local in range(stop - start - 1, -1, -1):
             next_coeff = _project_multiply(
                 coeff, fi_block[local], basis, weights)
@@ -164,7 +186,8 @@ def hermite_loglik(
             coeff /= scale
             log_scale += np.log(scale)
 
-    fi0 = _call_batch_method(copula.copula_grid_batch, u[:1], x_grid, 0)[0]
+    fi0 = _call_batch_method_with_cache(
+        copula.copula_grid_batch, u[:1], x_grid, 0, emission_cache)[0]
     final_coeff = _project_multiply(coeff, fi0, basis, weights)
     likelihood_scaled = final_coeff[0]
     if not np.isfinite(likelihood_scaled) or likelihood_scaled <= 0.0:
@@ -197,7 +220,7 @@ def hermite_loglik_with_grad(
     if kappa <= 0.0 or nu <= 0.0:
         return fail
 
-    u = np.asarray(u, dtype=np.float64)
+    u = as_float64_array(u)
     n_obs = len(u)
     if n_obs < 1:
         return fail
@@ -223,6 +246,10 @@ def hermite_loglik_with_grad(
     z, weights, basis = standard_normal_hermite_rule(
         quad_order, basis_order)
     x_grid = mu + sigma * z
+    emission_cache = None
+    prepare_cache = getattr(copula, "prepare_emission_cache", None)
+    if prepare_cache is not None:
+        emission_cache = prepare_cache(u)
 
     dx_dalpha = np.empty((3, quad_order), dtype=np.float64)
     dx_dalpha[0] = -0.5 * sigma / kappa * z
@@ -238,11 +265,12 @@ def hermite_loglik_with_grad(
     try:
         for stop in range(n_obs, 1, -block_size):
             start = max(1, stop - block_size)
-            fi_block, dfi_block = _call_batch_method(
+            fi_block, dfi_block = _call_batch_method_with_cache(
                 copula.pdf_and_grad_on_grid_batch,
                 u[start:stop],
                 x_grid,
                 start,
+                emission_cache,
             )
             for local in range(stop - start - 1, -1, -1):
                 projected, dprojected = _project_multiply_with_grad(
@@ -266,8 +294,13 @@ def hermite_loglik_with_grad(
                 log_scale += np.log(scale)
                 dlog_scale += dscale / scale
 
-        fi0, dfi0 = _call_batch_method(
-            copula.pdf_and_grad_on_grid_batch, u[:1], x_grid, 0)
+        fi0, dfi0 = _call_batch_method_with_cache(
+            copula.pdf_and_grad_on_grid_batch,
+            u[:1],
+            x_grid,
+            0,
+            emission_cache,
+        )
         final_coeff, dfinal_coeff = _project_multiply_with_grad(
             coeff, dcoeff, fi0[0], dfi0[0], dx_dalpha, basis, weights)
     except Exception:

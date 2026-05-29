@@ -15,7 +15,7 @@ as an argument and return an immutable FitResult.
 """
 
 from __future__ import annotations
-from typing import Protocol, runtime_checkable
+from typing import Optional, Protocol, runtime_checkable
 import numpy as np
 
 
@@ -37,8 +37,12 @@ class CopulaProtocol(Protocol):
             dtransform(x) — d Psi / dx
             dlog_pdf_dr_unrotated(u1, u2, r) — d(log c) / dr
 
-        OPTIONAL (fused numba kernels for TM speed):
-            copula_grid_batch(u, x_grid) — evaluate PDF on full grid
+        OPTIONAL (backend acceleration):
+            prepare_emission_cache(u) — precompute reusable emission data
+            copula_grid_batch(u, x_grid, t_index=0, cache=None) — evaluate
+                PDF on a latent grid, optionally using a full-sample cache
+            pdf_and_grad_on_grid_batch(u, x_grid, t_index=0, cache=None) —
+                evaluate PDF and latent-grid derivative together
     """
 
     @property
@@ -145,10 +149,32 @@ class CopulaProtocol(Protocol):
         """
         ...
 
+    def prepare_emission_cache(self, u: np.ndarray) -> object:
+        """Optional reusable full-sample cache for block emission calls.
+
+        Strategies may pass the returned object back into batch methods along
+        with the block offset ``t_index``. Implementations should treat this
+        as transient data and exclude it from model persistence.
+        """
+        ...
+
     def copula_grid_batch(self, u: np.ndarray,
-                          x_grid: np.ndarray) -> np.ndarray:
+                          x_grid: np.ndarray,
+                          t_index: int = 0,
+                          cache: Optional[object] = None) -> np.ndarray:
         """Batch version: fi[t, k] = c(u1t, u2t; Psi(x_grid[k])).
-        u: (T, 2), x_grid: (K,). Returns (T, K).
+        u: (T, 2), x_grid: (K,). Returns (T, K). ``t_index`` is the row
+        offset when ``u`` is a block view into a cache built for the full
+        sample.
         Default: loop over pdf_on_grid. Override with numba for speed.
         """
+        ...
+
+    def pdf_and_grad_on_grid_batch(
+            self,
+            u: np.ndarray,
+            x_grid: np.ndarray,
+            t_index: int = 0,
+            cache: Optional[object] = None) -> tuple[np.ndarray, np.ndarray]:
+        """Batch grid density and derivative with respect to latent x."""
         ...

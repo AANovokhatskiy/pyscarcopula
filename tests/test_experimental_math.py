@@ -2,9 +2,11 @@
 
 import numpy as np
 import pytest
+from pathlib import Path
 from scipy.stats import multivariate_normal, multivariate_t, norm
 from scipy.stats import t as t_dist
 
+from pyscarcopula.io import load_model, save_model
 from pyscarcopula._utils import pobs
 from pyscarcopula._types import LatentResult, ou_params
 from pyscarcopula.api import (
@@ -22,16 +24,36 @@ from pyscarcopula.copula.experimental.equicorr import (
 )
 from pyscarcopula.copula.experimental.stochastic_student import (
     StochasticStudentCopula,
+    _log_copula_inlined,
     _student_copula_logpdf as student_logpdf,
 )
 from pyscarcopula.copula.experimental.stochastic_student_dcc import (
     StochasticStudentDCCCopula,
+    _dcc_fast_loglik,
+    _dcc_fast_recursion_path_loglik,
+    _dcc_loglik_gaussian,
+    _dcc_recursion,
+    _garch11_filter,
     _student_copula_logpdf as dcc_student_logpdf,
 )
 from pyscarcopula.numerical.tm_grid import TMGrid
+from pyscarcopula.numerical.tm_gradient import tm_loglik_with_grad
 from pyscarcopula.numerical.gas_filter import (
+    _gas_filter_multivariate,
     _gas_score_multivariate,
     gas_filter,
+)
+from pyscarcopula.numerical.hermite_tm import hermite_loglik_with_grad
+from pyscarcopula.numerical.tm_functions import (
+    tm_forward_predictive_mean,
+    tm_loglik,
+)
+from pyscarcopula.numerical.student_emission import (
+    student_interp_ppf_rows,
+    student_logpdf_and_dlog_rows_fd_numba,
+    student_logpdf_from_x_rows,
+    student_pdf_and_grad_grid_fd_numba,
+    student_pdf_grid_numba,
 )
 from pyscarcopula.stattests import (
     equicorr_rosenblatt_transform,
@@ -250,6 +272,426 @@ def test_student_log_pdf_matches_scipy_t_copula_formula():
         np.testing.assert_allclose(got, ref, atol=6e-12, rtol=1e-12)
 
 
+def test_stochastic_student_emission_cache_materializes_full_dataset_ppf():
+    u = _u()
+    R = _R()
+    copula = StochasticStudentCopula(d=4, R=R)
+
+    cache = copula.prepare_emission_cache(u)
+
+    assert copula.prepare_emission_cache(u) is cache
+    assert cache.u_shape == u.shape
+    assert cache.d == 4
+    assert cache.ppf_table.shape[1:] == u.shape
+    assert cache.ppf_nodes.ndim == 1
+    np.testing.assert_allclose(cache.L_inv, copula._L_inv)
+    assert cache.log_det == pytest.approx(copula._log_det)
+
+    start, stop = 3, 9
+    slice_cache = copula.prepare_emission_cache(u[start:stop])
+    np.testing.assert_allclose(
+        cache.ppf(5.0)[start:stop],
+        slice_cache.ppf(5.0),
+        atol=0.0,
+        rtol=0.0,
+    )
+
+
+def test_stochastic_student_emission_cache_lifecycle_and_persistence():
+    u = _u()
+    R = _R()
+    copula = StochasticStudentCopula(d=4, R=R)
+
+    cache = copula.prepare_emission_cache(u)
+    assert copula.prepare_emission_cache(u) is cache
+
+    u2 = np.ascontiguousarray(u.copy())
+    cache2 = copula.prepare_emission_cache(u2)
+    assert cache2 is not cache
+
+    copula._set_R(0.5 * (R + np.eye(4)))
+    assert copula._emission_cache is None
+    cache3 = copula.prepare_emission_cache(u2)
+    assert cache3 is not cache2
+
+    path = Path("tmp-stochastic-student-cache-persistence.json")
+    try:
+        save_model(copula, path, include_data=True)
+        text = path.read_text(encoding="utf-8")
+        assert "StochasticStudentEmissionCache" not in text
+        assert "_emission_cache" in text
+        assert "\"_emission_cache\":null" in text
+        assert "\"_ppf_table\":null" in text
+
+        loaded = load_model(path, expected_type=StochasticStudentCopula)
+        assert loaded._emission_cache is None
+        assert loaded._ppf_table is None
+        rebuilt = loaded.prepare_emission_cache(u2)
+        assert rebuilt.u_shape == u2.shape
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def test_stochastic_student_batch_emissions_accept_cache_and_t_index():
+    u = _u()
+    R = _R()
+    copula = StochasticStudentCopula(d=4, R=R)
+    cache = copula.prepare_emission_cache(u)
+    x_grid = np.linspace(-2.0, 2.0, 7)
+    start, stop = 5, 17
+    u_block = u[start:stop]
+
+    grid_ref = copula.copula_grid_batch(u_block, x_grid)
+    grid_cached = copula.copula_grid_batch(
+        u_block, x_grid, t_index=start, cache=cache)
+    np.testing.assert_allclose(grid_cached, grid_ref, atol=2e-14, rtol=2e-14)
+
+    fi_ref, dfi_ref = copula.pdf_and_grad_on_grid_batch(u_block, x_grid)
+    fi_cached, dfi_cached = copula.pdf_and_grad_on_grid_batch(
+        u_block, x_grid, t_index=start, cache=cache)
+    np.testing.assert_allclose(fi_cached, fi_ref, atol=2e-14, rtol=2e-14)
+    np.testing.assert_allclose(dfi_cached, dfi_ref, atol=1e-9, rtol=1e-9)
+
+
+def test_stochastic_student_dcc_emission_cache_materializes_full_dataset_ppf():
+    u = _u()
+    R = _R()
+    R_path = np.stack([R, 0.5 * (R + np.eye(4))] * 23)[: len(u)]
+    copula = StochasticStudentDCCCopula(d=4)
+    copula._set_R_path(R_path)
+
+    cache = copula.prepare_emission_cache(u)
+
+    assert copula.prepare_emission_cache(u) is cache
+    assert cache.u_shape == u.shape
+    assert cache.d == 4
+    assert cache.ppf_table.shape[1:] == u.shape
+    assert cache.ppf_nodes.ndim == 1
+    assert cache.L_inv_path is copula._L_inv_path
+    assert cache.log_det_path is copula._log_det_path
+
+    start, stop = 4, 13
+    slice_cache = copula.prepare_emission_cache(u[start:stop])
+    np.testing.assert_allclose(
+        cache.ppf(5.0)[start:stop],
+        slice_cache.ppf(5.0),
+        atol=0.0,
+        rtol=0.0,
+    )
+
+    copula._emission_cache = cache
+    copula._set_R_path(R_path.copy())
+    assert copula._emission_cache is None
+    with pytest.raises(ValueError, match="another R_path"):
+        copula.copula_grid_batch(
+            u[start:stop], np.linspace(-1.0, 1.0, 3),
+            t_index=start, cache=cache)
+
+    path = Path("tmp-stochastic-student-dcc-cache-persistence.json")
+    try:
+        save_model(copula, path, include_data=True)
+        text = path.read_text(encoding="utf-8")
+        assert "StochasticStudentDCCEmissionCache" not in text
+        assert "_emission_cache" in text
+        assert "\"_emission_cache\":null" in text
+        assert "\"_ppf_table\":null" in text
+
+        loaded = load_model(path, expected_type=StochasticStudentDCCCopula)
+        assert loaded._emission_cache is None
+        assert loaded._ppf_table is None
+        rebuilt = loaded.prepare_emission_cache(u)
+        assert rebuilt.u_shape == u.shape
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def test_stochastic_student_dcc_batch_emissions_accept_cache_and_t_index():
+    u = _u()
+    R = _R()
+    R_path = np.stack([R, 0.5 * (R + np.eye(4))] * 23)[: len(u)]
+    copula = StochasticStudentDCCCopula(d=4)
+    copula._set_R_path(R_path)
+    cache = copula.prepare_emission_cache(u)
+    x_grid = np.linspace(-2.0, 2.0, 7)
+    start, stop = 5, 17
+    u_block = u[start:stop]
+
+    grid_ref = copula.copula_grid_batch(
+        u_block, x_grid, t_index=start)
+    grid_cached = copula.copula_grid_batch(
+        u_block, x_grid, t_index=start, cache=cache)
+    np.testing.assert_allclose(grid_cached, grid_ref, atol=2e-14, rtol=2e-14)
+
+    fi_ref, dfi_ref = copula.pdf_and_grad_on_grid_batch(
+        u_block, x_grid, t_index=start)
+    fi_cached, dfi_cached = copula.pdf_and_grad_on_grid_batch(
+        u_block, x_grid, t_index=start, cache=cache)
+    np.testing.assert_allclose(fi_cached, fi_ref, atol=2e-14, rtol=2e-14)
+    np.testing.assert_allclose(dfi_cached, dfi_ref, atol=1e-9, rtol=1e-9)
+
+
+def test_student_emission_numba_kernels_match_cache_python_path():
+    u = _u()
+    R = _R()
+    copula = StochasticStudentCopula(d=4, R=R)
+    cache = copula.prepare_emission_cache(u)
+    x_grid = np.linspace(-2.0, 2.0, 6)
+    df_grid = copula.transform(x_grid)
+    dpsi = copula.dtransform(x_grid)
+    start, stop = 4, 15
+    n_rows = stop - start
+    eps = 1e-5
+
+    x_rows = student_interp_ppf_rows(
+        cache.ppf_nodes, cache.ppf_table, 5.0, start, stop)
+    np.testing.assert_allclose(
+        x_rows,
+        cache.ppf_rows(5.0, start, stop),
+        atol=0.0,
+        rtol=0.0,
+    )
+
+    ll_numba = student_logpdf_from_x_rows(
+        x_rows, 5.0, cache.L_inv, cache.log_det)
+    ll_ref = _log_copula_inlined(
+        x_rows, 5.0, cache.d, cache.L_inv, cache.log_det)
+    np.testing.assert_allclose(ll_numba, ll_ref, atol=2e-14, rtol=2e-14)
+
+    fi_numba = student_pdf_grid_numba(
+        cache.ppf_nodes, cache.ppf_table, start, n_rows,
+        df_grid, cache.L_inv, cache.log_det)
+    fi_ref = copula.copula_grid_batch(
+        u[start:stop], x_grid, t_index=start, cache=cache)
+    np.testing.assert_allclose(fi_numba, fi_ref, atol=2e-14, rtol=2e-14)
+
+    fi_grad_numba, dfi_numba = student_pdf_and_grad_grid_fd_numba(
+        cache.ppf_nodes, cache.ppf_table, start, n_rows,
+        df_grid, dpsi, cache.L_inv, cache.log_det, eps)
+    fi_grad_ref, dfi_ref = copula.pdf_and_grad_on_grid_batch(
+        u[start:stop], x_grid, t_index=start, cache=cache)
+    np.testing.assert_allclose(fi_grad_numba, fi_grad_ref, atol=2e-14, rtol=2e-14)
+    np.testing.assert_allclose(dfi_numba, dfi_ref, atol=2e-10, rtol=2e-10)
+
+    ll_rows, dlog_rows = student_logpdf_and_dlog_rows_fd_numba(
+        cache.ppf_nodes,
+        cache.ppf_table,
+        start,
+        n_rows,
+        np.array([5.0], dtype=np.float64),
+        cache.L_inv,
+        cache.log_det,
+        eps,
+    )
+    ll_rows_ref = _log_copula_inlined(
+        cache.ppf_rows(5.0, start, stop),
+        5.0,
+        cache.d,
+        cache.L_inv,
+        cache.log_det,
+    )
+    lp_ref = _log_copula_inlined(
+        cache.ppf_rows(5.0 + eps, start, stop),
+        5.0 + eps,
+        cache.d,
+        cache.L_inv,
+        cache.log_det,
+    )
+    lm_ref = _log_copula_inlined(
+        cache.ppf_rows(5.0 - eps, start, stop),
+        5.0 - eps,
+        cache.d,
+        cache.L_inv,
+        cache.log_det,
+    )
+    np.testing.assert_allclose(ll_rows, ll_rows_ref, atol=2e-14, rtol=2e-14)
+    np.testing.assert_allclose(
+        dlog_rows, (lp_ref - lm_ref) / (2.0 * eps),
+        atol=2e-10,
+        rtol=2e-10,
+    )
+
+
+def test_stochastic_student_hermite_uses_full_dataset_emission_cache():
+    class CountingStudent(StochasticStudentCopula):
+        def __init__(self, d, R):
+            super().__init__(d=d, R=R)
+            self.prepare_calls = 0
+            self.batch_calls = []
+
+        def prepare_emission_cache(self, u):
+            self.prepare_calls += 1
+            return super().prepare_emission_cache(u)
+
+        def pdf_and_grad_on_grid_batch(
+                self, u, x_grid, t_index=0, cache=None):
+            self.batch_calls.append((len(u), int(t_index), cache is not None))
+            return super().pdf_and_grad_on_grid_batch(
+                u, x_grid, t_index=t_index, cache=cache)
+
+    u = _u()
+    copula = CountingStudent(d=4, R=_R())
+
+    value, grad = hermite_loglik_with_grad(
+        1.0,
+        1.0,
+        0.8,
+        u,
+        copula,
+        basis_order=8,
+        quad_order=20,
+        block_size=7,
+    )
+
+    assert np.isfinite(value)
+    assert np.all(np.isfinite(grad))
+    assert copula.prepare_calls == 1
+    assert copula.batch_calls
+    assert all(has_cache for _, _, has_cache in copula.batch_calls)
+    assert 0 in {t_index for _, t_index, _ in copula.batch_calls}
+    assert any(t_index > 0 for _, t_index, _ in copula.batch_calls)
+
+
+def test_stochastic_student_dcc_hermite_uses_full_dataset_emission_cache():
+    class CountingDCC(StochasticStudentDCCCopula):
+        def __init__(self, d):
+            super().__init__(d)
+            self.prepare_calls = 0
+            self.batch_calls = []
+
+        def prepare_emission_cache(self, u):
+            self.prepare_calls += 1
+            return super().prepare_emission_cache(u)
+
+        def pdf_and_grad_on_grid_batch(
+                self, u, x_grid, t_index=0, cache=None):
+            self.batch_calls.append((len(u), int(t_index), cache is not None))
+            return super().pdf_and_grad_on_grid_batch(
+                u, x_grid, t_index=t_index, cache=cache)
+
+    u = _u()
+    R = _R()
+    copula = CountingDCC(d=4)
+    copula._set_R_path(np.stack([R, 0.5 * (R + np.eye(4))] * 23)[: len(u)])
+
+    value, grad = hermite_loglik_with_grad(
+        1.0,
+        1.0,
+        0.8,
+        u,
+        copula,
+        basis_order=8,
+        quad_order=20,
+        block_size=7,
+    )
+
+    assert np.isfinite(value)
+    assert np.all(np.isfinite(grad))
+    assert copula.prepare_calls == 1
+    assert copula.batch_calls
+    assert all(has_cache for _, _, has_cache in copula.batch_calls)
+    assert 0 in {t_index for _, t_index, _ in copula.batch_calls}
+    assert any(t_index > 0 for _, t_index, _ in copula.batch_calls)
+
+
+def test_stochastic_student_tm_gradient_uses_full_dataset_emission_cache():
+    class CountingStudent(StochasticStudentCopula):
+        def __init__(self, d, R):
+            super().__init__(d=d, R=R)
+            self.prepare_calls = 0
+            self.batch_calls = []
+
+        def prepare_emission_cache(self, u):
+            self.prepare_calls += 1
+            return super().prepare_emission_cache(u)
+
+        def pdf_and_grad_on_grid_batch(
+                self, u, x_grid, t_index=0, cache=None):
+            self.batch_calls.append((len(u), int(t_index), cache is not None))
+            return super().pdf_and_grad_on_grid_batch(
+                u, x_grid, t_index=t_index, cache=cache)
+
+    u = _u()
+    copula = CountingStudent(d=4, R=_R())
+
+    value, grad = tm_loglik_with_grad(
+        1.0,
+        1.0,
+        0.8,
+        u,
+        copula,
+        K=25,
+        grid_range=3.0,
+        adaptive=False,
+        transition_method="local",
+    )
+
+    assert np.isfinite(value)
+    assert np.all(np.isfinite(grad))
+    assert copula.prepare_calls == 1
+    assert copula.batch_calls == [(len(u), 0, True)]
+
+
+def test_stochastic_student_tm_value_and_forward_use_emission_cache_blocks(
+        monkeypatch):
+    from pyscarcopula.numerical import tm_functions
+
+    class CountingStudent(StochasticStudentCopula):
+        def __init__(self, d, R):
+            super().__init__(d=d, R=R)
+            self.prepare_calls = 0
+            self.grid_calls = []
+
+        def prepare_emission_cache(self, u):
+            self.prepare_calls += 1
+            return super().prepare_emission_cache(u)
+
+        def copula_grid_batch(self, u, x_grid, t_index=0, cache=None):
+            self.grid_calls.append((len(u), int(t_index), cache is not None))
+            return super().copula_grid_batch(
+                u, x_grid, t_index=t_index, cache=cache)
+
+    u = _u()
+    copula = CountingStudent(d=4, R=_R())
+
+    value = tm_loglik(
+        1.0,
+        1.0,
+        0.8,
+        u,
+        copula,
+        K=25,
+        grid_range=3.0,
+        adaptive=False,
+        transition_method="local",
+    )
+    assert np.isfinite(value)
+    assert copula.prepare_calls == 1
+    assert copula.grid_calls == [(len(u), 0, True)]
+
+    copula.prepare_calls = 0
+    copula.grid_calls = []
+    monkeypatch.setattr(tm_functions, "forward_block_size", lambda K: 11)
+    out = tm_forward_predictive_mean(
+        1.0,
+        1.0,
+        0.8,
+        u,
+        copula,
+        K=25,
+        grid_range=3.0,
+        adaptive=False,
+        transition_method="local",
+    )
+
+    assert out.shape == (len(u),)
+    assert np.all(np.isfinite(out))
+    assert copula.prepare_calls == 1
+    assert copula.grid_calls
+    assert all(has_cache for _, _, has_cache in copula.grid_calls)
+    assert 0 in {t_index for _, t_index, _ in copula.grid_calls}
+    assert any(t_index > 0 for _, t_index, _ in copula.grid_calls)
+
+
 def test_stochastic_student_gas_score_fast_path_matches_g_space_fd():
     u = _u()[:1]
     R = _R()
@@ -306,6 +748,21 @@ def test_stochastic_student_combined_log_pdf_score_matches_separate_paths():
         dlog, copula.dlog_pdf_dr_rows(u, df_path), atol=1e-12, rtol=1e-12)
 
 
+def test_stochastic_student_gas_filter_fast_path_matches_generic_path():
+    u = _u()
+    R = _R()
+    copula = StochasticStudentCopula(d=4, R=R)
+    params = (0.08, 0.04, 0.92)
+
+    g_fast, r_fast, ll_fast = gas_filter(*params, u, copula, scaling="unit")
+    g_ref, r_ref, ll_ref = _gas_filter_multivariate(
+        *params, u, copula, scaling="unit")
+
+    np.testing.assert_allclose(g_fast, g_ref, atol=5e-4, rtol=5e-4)
+    np.testing.assert_allclose(r_fast, r_ref, atol=5e-4, rtol=5e-4)
+    np.testing.assert_allclose(ll_fast, ll_ref, atol=1e-3, rtol=5e-4)
+
+
 def test_dcc_log_pdf_rows_matches_static_t_copula_per_row():
     u = _u()
     R = _R()
@@ -323,6 +780,40 @@ def test_dcc_log_pdf_rows_matches_static_t_copula_per_row():
     )
 
     np.testing.assert_allclose(got, ref, atol=6e-12, rtol=1e-12)
+
+
+def test_dcc_fast_recursion_matches_reference_path_and_loglik():
+    rng = np.random.default_rng(20260526)
+    z = rng.standard_normal((20, 4))
+    qbar = _R()
+    a, b = 0.04, 0.91
+
+    q_ref, r_ref = _dcc_recursion(z, a, b, qbar)
+    ll_ref = _dcc_loglik_gaussian(z, r_ref)
+
+    q_fast, r_fast, ll_fast = _dcc_fast_recursion_path_loglik(z, a, b, qbar)
+    ll_direct = _dcc_fast_loglik(z, a, b, qbar)
+
+    np.testing.assert_allclose(q_fast, q_ref, atol=2e-12, rtol=2e-12)
+    np.testing.assert_allclose(r_fast, r_ref, atol=2e-12, rtol=2e-12)
+    assert ll_fast == pytest.approx(ll_ref, abs=2e-12, rel=2e-12)
+    assert ll_direct == pytest.approx(ll_ref, abs=2e-12, rel=2e-12)
+
+
+def test_dcc_garch_filter_matches_reference_recursion():
+    rng = np.random.default_rng(20260526)
+    r = rng.standard_normal(30)
+    omega, alpha, beta = 0.02, 0.07, 0.88
+
+    got = _garch11_filter(r, omega, alpha, beta)
+
+    expected = np.empty_like(r, dtype=np.float64)
+    expected[0] = omega / max(1.0 - alpha - beta, 1e-6)
+    for t in range(1, len(r)):
+        expected[t] = omega + alpha * r[t - 1] ** 2 + beta * expected[t - 1]
+    expected = np.maximum(expected, 1e-12)
+
+    np.testing.assert_allclose(got, expected, atol=2e-16, rtol=2e-16)
 
 
 def test_dcc_combined_log_pdf_score_matches_separate_paths():
@@ -679,6 +1170,36 @@ def test_stochastic_student_dcc_scar_gof_uses_block_batch_emissions(monkeypatch)
     assert e.shape == u.shape
     assert np.all(np.isfinite(e))
     assert np.all((e > 0.0) & (e < 1.0))
+
+
+def test_forward_weight_block_arrays_match_row_iterator():
+    from pyscarcopula.numerical.gof_blocks import (
+        iter_forward_weight_block_arrays,
+        iter_forward_weight_blocks,
+    )
+
+    u = pobs(np.random.default_rng(20260525).standard_normal((17, 3)))
+    copula = EquicorrGaussianCopula(d=3)
+    grid = TMGrid(0.8, 0.0, 1.0, len(u), 9, 3.0)
+    x_grid = grid.z + grid.mu
+
+    row_weights = []
+    row_fi = []
+    for _k, _local, weights, fi_block in iter_forward_weight_blocks(
+            grid, u, copula, x_grid=x_grid, block_size=4):
+        row_weights.append(weights.copy())
+        row_fi.append(fi_block[_local].copy())
+
+    block_weights = []
+    block_fi = []
+    for _start, _stop, weights_block, fi_block, _u_block in (
+            iter_forward_weight_block_arrays(
+                grid, u, copula, x_grid=x_grid, block_size=4)):
+        block_weights.extend(weights_block)
+        block_fi.extend(fi_block)
+
+    np.testing.assert_allclose(block_weights, row_weights, atol=0.0, rtol=0.0)
+    np.testing.assert_allclose(block_fi, row_fi, atol=0.0, rtol=0.0)
 
 
 def test_experimental_scar_gof_block_size_accounts_for_dimension(monkeypatch):

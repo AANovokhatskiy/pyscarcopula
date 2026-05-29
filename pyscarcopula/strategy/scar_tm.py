@@ -33,6 +33,7 @@ from pyscarcopula.numerical.auto_tm import (
     auto_neg_loglik,
     auto_neg_loglik_with_grad,
 )
+from pyscarcopula.numerical._arrays import as_float64_array
 from pyscarcopula.numerical._transition_methods import (
     normalize_ou_transition_method,
 )
@@ -221,7 +222,7 @@ class SCARTMStrategy:
             maxcor=maxcor,
             finite_diff_rel_step=finite_diff_rel_step,
         )
-        u = np.asarray(u, dtype=np.float64)
+        u = as_float64_array(u)
 
         # ── Initial point ─────────────────────────────────────────
         if alpha0 is None:

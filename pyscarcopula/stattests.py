@@ -24,6 +24,7 @@ Usage:
 import numpy as np
 import time
 from dataclasses import dataclass
+from scipy.special import stdtr
 from scipy.stats import chi2, norm, cramervonmises
 
 
@@ -80,6 +81,20 @@ def cvm_test(e):
 def _clip(x):
     eps = 1e-6
     return np.clip(x, eps, 1.0 - eps)
+
+
+def _as_float64_array_no_copy(value):
+    if type(value) is np.ndarray and value.dtype == np.float64:
+        return value
+    return np.asarray(value, dtype=np.float64)
+
+
+def _clip_unit_interval_no_copy(u, eps=1e-10):
+    """Clip pseudo-observations only when a boundary value is present."""
+    u = _as_float64_array_no_copy(u)
+    if np.all((u > eps) & (u < 1.0 - eps)):
+        return u
+    return np.clip(u, eps, 1.0 - eps)
 
 
 def _grid_transition_method(transition_method):
@@ -258,7 +273,7 @@ def _gof_bivariate(copula, data, to_pobs=True, K=300, grid_range=5.0,
     """
     from pyscarcopula._utils import pobs as compute_pobs
 
-    u = np.asarray(data, dtype=np.float64)
+    u = _as_float64_array_no_copy(data)
     if to_pobs:
         u = compute_pobs(u)
 
@@ -693,7 +708,7 @@ def gaussian_rosenblatt_transform(R, u):
     e : (T, d)
     """
     eps = 1e-10
-    u_c = np.clip(u, eps, 1.0 - eps)
+    u_c = _clip_unit_interval_no_copy(u, eps)
     x = norm.ppf(u_c)
 
     L = np.linalg.cholesky(R)
@@ -1033,8 +1048,6 @@ def stochastic_student_rosenblatt_transform(copula, u, fit_result,
     -------
     e : (T, d) — should be iid U[0,1]^d under correct model
     """
-    from scipy.stats import t as t_dist_fn
-
     eps = 1e-10
     T, d = u.shape
     R = copula.R
@@ -1055,7 +1068,11 @@ def stochastic_student_rosenblatt_transform(copula, u, fit_result,
 
     # SCAR: mixture Rosenblatt via TM forward pass
     from pyscarcopula.numerical.tm_grid import TMGrid as _TMGrid
-    from pyscarcopula.numerical.gof_blocks import iter_forward_weight_blocks
+    from pyscarcopula.numerical.gof_blocks import iter_forward_weight_block_arrays
+    from pyscarcopula.numerical.student_gof import (
+        student_conditional_z_block,
+        student_weighted_cdf_block,
+    )
 
     kappa, mu, nu_ou = fit_result.params.values
     grid = _TMGrid(
@@ -1064,64 +1081,55 @@ def stochastic_student_rosenblatt_transform(copula, u, fit_result,
     x_grid = grid.z + grid.mu
     df_grid = copula.transform(x_grid)  # (K_eff,)
 
-    # Precompute R sub-matrices
-    R_inv_sub = []
-    beta_sub = []
-    sigma_cond_sub = []
+    # Precompute padded fixed-R conditional terms for the Numba block kernel.
+    beta_padded = np.zeros((d - 1, d), dtype=np.float64)
+    sigma_cond = np.empty(d - 1, dtype=np.float64)
+    r_inv_padded = np.zeros((d - 1, d, d), dtype=np.float64)
     for i in range(1, d):
         R_11 = R[:i, :i]
         R_21 = R[i, :i]
         R_22 = R[i, i]
         R_11_inv = np.linalg.inv(R_11)
-        beta_sub.append(R_21 @ R_11_inv)
+        beta_padded[i - 1, :i] = R_21 @ R_11_inv
         sigma2 = R_22 - R_21 @ R_11_inv @ R_21
-        sigma_cond_sub.append(np.sqrt(max(sigma2, 1e-12)))
-        R_inv_sub.append(R_11_inv)
+        sigma_cond[i - 1] = np.sqrt(max(sigma2, 1e-12))
+        r_inv_padded[i - 1, :i, :i] = R_11_inv
 
-    u_c = np.clip(u, eps, 1.0 - eps)
+    u_c = _clip_unit_interval_no_copy(u, eps)
+    emission_cache = copula.prepare_emission_cache(u_c)
 
     e = np.empty((T, d))
     e[:, 0] = u[:, 0]
 
-    cdf_blocks = None
-    for k, local, weights, fi_block, u_block, _start, _stop in (
-            iter_forward_weight_blocks(
+    def emission_block(u_block, x_grid, start, stop):
+        return copula.copula_grid_batch(
+            u_block, x_grid, t_index=start, cache=emission_cache)
+
+    for start, stop, weights_block, _fi_block, _u_block in (
+            iter_forward_weight_block_arrays(
                 grid,
                 u_c,
                 copula,
                 x_grid=x_grid,
-                include_block_info=True,
+                emission_block=emission_block,
                 element_width=max(2, 2 * d),
             )):
-        if local == 0:
-            ppf = copula._get_ppf_table(u_block)
-            x_all = np.empty((fi_block.shape[0], grid.K, d), dtype=np.float64)
-            for j, df_j in enumerate(df_grid):
-                x_all[:, j, :] = ppf(df_j)
+        n_block = stop - start
+        x_all = np.empty((n_block, grid.K, d), dtype=np.float64)
+        for j, df_j in enumerate(df_grid):
+            x_all[:, j, :] = emission_cache.ppf_rows(df_j, start, stop)
 
-            cdf_blocks = []
-            df_cond_grid = df_grid[np.newaxis, :]
-            for i in range(1, d):
-                x_prev = x_all[:, :, :i]                   # (B, K, i)
-                mu_cond = np.tensordot(
-                    x_prev, beta_sub[i - 1], axes=([2], [0]))
-                quad = np.einsum(
-                    'bki,ij,bkj->bk',
-                    x_prev,
-                    R_inv_sub[i - 1],
-                    x_prev,
-                    optimize=True,
-                )
-
-                df_cond = df_cond_grid + i
-                scale = (df_cond_grid + quad) / df_cond
-                z_i = (x_all[:, :, i] - mu_cond) / (
-                    sigma_cond_sub[i - 1]
-                    * np.sqrt(np.maximum(scale, 1e-12)))
-                cdf_blocks.append(t_dist_fn.cdf(z_i, df=df_cond))
-
-        for i in range(1, d):
-            e[k, i] = np.sum(weights * cdf_blocks[i - 1][local])
+        z_blocks = student_conditional_z_block(
+            x_all, df_grid, beta_padded, r_inv_padded, sigma_cond)
+        cdf_blocks = np.empty_like(z_blocks)
+        for cond_idx in range(d - 1):
+            dim = cond_idx + 1
+            cdf_blocks[cond_idx] = stdtr(
+                df_grid[np.newaxis, :] + dim,
+                z_blocks[cond_idx],
+            )
+        e[start:stop, 1:] = student_weighted_cdf_block(
+            cdf_blocks, weights_block)
 
     e = np.clip(e, eps, 1.0 - eps)
     return e
@@ -1147,7 +1155,7 @@ def stochastic_student_gof_test(copula, data, to_pobs=True,
     """
     from pyscarcopula._utils import pobs as compute_pobs
 
-    u = np.asarray(data, dtype=np.float64)
+    u = _as_float64_array_no_copy(data)
     if to_pobs:
         u = compute_pobs(u)
 

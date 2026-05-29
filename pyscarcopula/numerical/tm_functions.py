@@ -40,6 +40,23 @@ def _h_block_on_grid(copula, u_block, r_grid):
     return copula.h(u2_grid, u1_grid, r_eval).reshape(n_block, K)
 
 
+def _prepare_emission_cache(copula, u):
+    prepare_cache = getattr(copula, "prepare_emission_cache", None)
+    if prepare_cache is None:
+        return None
+    return prepare_cache(u)
+
+
+def _copula_grid_batch(copula, u, x_grid, t_index=0, cache=None):
+    if cache is None:
+        return copula.copula_grid_batch(u, x_grid)
+    try:
+        return copula.copula_grid_batch(
+            u, x_grid, t_index=t_index, cache=cache)
+    except TypeError:
+        return copula.copula_grid_batch(u, x_grid)
+
+
 def _make_forward_grid(kappa, mu, nu, u, K, grid_range, grid_method,
                        adaptive, pts_per_sigma, transition_method, max_K,
                        r_gh, gh_order):
@@ -54,10 +71,12 @@ def _for_each_forward_row(grid, u, copula, on_block, on_row):
     phi = grid.p0.copy()
     posterior_phi = None
     block_size = forward_block_size(grid.K)
+    emission_cache = _prepare_emission_cache(copula, u)
     for start in range(0, len(u), block_size):
         stop = min(len(u), start + block_size)
         u_block = u[start:stop]
-        fi_block = grid.copula_grid(u_block, copula)
+        fi_block = _copula_grid_batch(
+            copula, u_block, grid.z + grid.mu, start, emission_cache)
         block_data = on_block(u_block)
         for local, k in enumerate(range(start, stop)):
             weights = grid.predictive_weights_from_phi(phi)
@@ -147,7 +166,8 @@ def tm_loglik(kappa, mu, nu, u, copula, K=300, grid_range=5.0,
     except Exception:
         return 1e10
 
-    fi_grid = grid.copula_grid(u, copula)
+    emission_cache = _prepare_emission_cache(copula, u)
+    fi_grid = _copula_grid_batch(copula, u, grid.z + grid.mu, 0, emission_cache)
 
     log_scale, msg = grid.backward_pass(fi_grid)
 
