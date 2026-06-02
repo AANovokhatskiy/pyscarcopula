@@ -31,16 +31,30 @@ jobs:
           CIBW_ARCHS_WINDOWS: "AMD64"
           CIBW_ARCHS_MACOS: "universal2"
           CIBW_TEST_COMMAND: >-
-            python -c "import numpy as np; from pyscarcopula import ClaytonCopula;
-            from pyscarcopula.numerical import _cpp_scar_ou;
-            from pyscarcopula.numerical.auto_tm import AutoTMConfig;
-            assert _cpp_scar_ou.available();
+            python -c "import numpy as np; import pyscarcopula._scar_cpp as m;
+            spec = m.CopulaSpec();
+            spec.family = m.CopulaFamily.Clayton;
+            spec.rotation = m.Rotation.R0;
+            spec.transform = m.Transform.Softplus;
+            spec.offset = 0.0001;
+            params = m.OuParams();
+            params.kappa = 1.0;
+            params.mu = 0.0;
+            params.nu = 1.0;
+            cfg = m.OuNumericalConfig();
+            cfg.K = 12;
+            cfg.grid_range = 3.0;
+            cfg.adaptive = False;
+            cfg.pts_per_sigma = 4;
+            cfg.max_K = 0;
+            cfg.r_gh = 3.0;
+            cfg.gh_order = 5;
+            cfg.auto_small_kdt = 1e-2;
+            cfg.spectral_basis_order = 32;
+            cfg.spectral_quad_order = 0;
             u = np.random.default_rng(1).uniform(0.1, 0.9, size=(8, 2));
-            value, info = _cpp_scar_ou.loglik(1.0, 0.0, 1.0, u,
-            ClaytonCopula(transform_type='softplus'),
-            AutoTMConfig(transition_method='matrix', K=12, adaptive=False,
-            max_K=None));
-            assert info['engine'] == 'cpp'"
+            out = m.ScarOuEvaluator().loglik_matrix(params, spec, u, cfg);
+            assert int(out['status']) == 0, out"
 
       - uses: actions/upload-artifact@v4
         with:
