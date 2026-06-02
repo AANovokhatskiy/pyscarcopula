@@ -5,8 +5,6 @@ Observation-driven model of Creal, Koopman and Lucas (2013).
 All numerical computation delegated to numerical/gas_filter.py.
 """
 
-from __future__ import annotations
-
 import numpy as np
 from scipy.optimize import minimize, Bounds
 

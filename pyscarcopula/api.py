@@ -28,8 +28,6 @@ copula.sample_model) that work after copula.fit(). These delegate
 to this API internally but require copula.fit() to have been called.
 """
 
-from __future__ import annotations
-
 import numpy as np
 from pyscarcopula._types import (
     FitResult,
