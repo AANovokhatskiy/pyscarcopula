@@ -11,6 +11,8 @@ Constraint: rho in (-1/(d-1), 1) for positive definiteness.
 Transform: Psi(x) maps R -> (-1/(d-1), 1).
 """
 
+from __future__ import annotations
+
 import numpy as np
 from numba import njit
 from scipy.stats import norm
