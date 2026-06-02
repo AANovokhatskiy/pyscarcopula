@@ -24,8 +24,6 @@ Usage:
     gof_test(cop, returns, to_pobs=True)
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 import weakref
 
