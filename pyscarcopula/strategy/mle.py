@@ -5,6 +5,8 @@ Constant copula parameter (1 param). No latent process.
 This is the simplest strategy and serves as a reference implementation.
 """
 
+from __future__ import annotations
+
 import numpy as np
 from scipy.optimize import minimize
 

@@ -14,6 +14,8 @@ Parameters preserved from original:
   - seed / dwt (Wiener process control)
 """
 
+from __future__ import annotations
+
 import numpy as np
 from scipy.optimize import minimize, Bounds
 
