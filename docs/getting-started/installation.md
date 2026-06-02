@@ -52,4 +52,4 @@ pytest tests/test_cpp.py
 
 ## Python version
 
-Python 3.9 or newer is required. Tested on 3.9-3.13.
+Python 3.10 or newer is required. Tested on 3.10-3.13.
