@@ -112,9 +112,9 @@ and predictive paths are needed.
 | `adaptive` | strategy kwarg / `default_adaptive` | `True` | Enlarges `K` when the OU transition kernel needs more resolution. |
 | `pts_per_sigma` | strategy kwarg / `default_pts_per_sigma` | `4` | Minimum grid points per conditional standard deviation. |
 | `transition_method` | strategy kwarg | `'auto'` | `'auto'`, `'matrix'`, `'local'`, or `'spectral'`. See below. |
-| `auto_small_kdt` | strategy kwarg | `1e-3` | In `transition_method='auto'`, use the local transition when $\kappa\,dt$ is below this value. |
-| `auto_large_kdt` | strategy kwarg | `5e-2` | Backward-compatible result metadata; `auto` no longer uses it to route through the matrix backend. |
-| `spectral_basis_order` | strategy kwarg | `32` | Number of Hermite basis functions in the spectral likelihood. |
+| `backend` | strategy kwarg | `'auto'` | Uses C++ for supported SCAR-TM-OU copula/transform combinations and falls back to Python otherwise. Use `'python'` to force the fallback path. |
+| `auto_small_kdt` | strategy kwarg | `1e-2` | In `transition_method='auto'`, use the local transition when $\kappa\,dt$ is below this value. |
+| `spectral_basis_order` | strategy kwarg | `'auto'` | Hermite basis size for the spectral likelihood. The auto policy uses 128, 96, 64, or 32 from the current $\kappa\,dt$; pass an integer to fix the basis size. |
 | `spectral_quad_order` | strategy kwarg | auto | Gauss-Hermite quadrature order for spectral multiplication. |
 | `analytical_grad` | strategy kwarg | `True` | Uses analytical gradient and parameter rescaling. Usually much faster. |
 | `smart_init` | strategy kwarg | `True` | Uses a heuristic initial point before falling back to MLE-based init. |
@@ -138,13 +138,47 @@ deviation. For slow mean reversion this can produce large grids. If that is too
 expensive, use `grid_method='sparse'`, reduce `pts_per_sigma`, or set
 `adaptive=False` with an explicit `K`.
 
+#### C++ backend
+
+The optional pybind11 extension implements the SCAR-TM-OU likelihood,
+analytical gradient, grid forward quantities, and pointwise copula
+`h`/`h_inverse` kernels. It is selected by `backend='auto'` when both the
+extension and the copula family are supported. No explicit backend argument is
+needed for this path. Use `backend='python'` to bypass C++ and run the
+Python/Numba implementation.
+
+SCAR-TM-OU likelihood and gradient support:
+
+| Family | Rotations | Transform |
+|--------|-----------|-----------|
+| Clayton | 0, 90, 180, 270 | `softplus` |
+| Gumbel | 0, 90, 180, 270 | `softplus` |
+| Joe | 0, 90, 180, 270 | `softplus` |
+| Frank | 0 | `softplus` |
+| Bivariate Gaussian | 0 | Gaussian tanh transform |
+
+Pointwise C++ `h`/`h_inverse` kernels are broader: they also support the
+independence copula, xtanh transforms for Clayton/Gumbel/Joe/Frank where the
+Python copula exposes them, Frank only with rotate=0, and Gaussian only with
+rotate=0.
+
+The C++ likelihood accepts `transition_method='auto'`, `'spectral'`,
+`'matrix'`, and `'local'`. The C++ forward/state calls are grid-based and
+accept only `'auto'`, `'matrix'`, and `'local'`; direct `'spectral'` forward or
+state distribution calls raise `CppUnsupported`. Strategy-level prediction
+uses grid settings for these forward quantities even when a spectral
+likelihood was used for fitting.
+
+Unsupported C++ combinations fall back to Python in `backend='auto'`.
+
 #### Transfer methods
 
 SCAR-TM supports four likelihood transition modes:
 
 - `transition_method='auto'` (default): use `spectral` except in the
   narrow-kernel regime, where it uses `local`; if the spectral likelihood
-  fails numerically, it falls back to `local`.
+  fails numerically, it falls back to `matrix` first and then to `local` if the
+  matrix result is not accepted.
 - `transition_method='matrix'`: use the original transfer matrix on the latent
   grid for the likelihood.
 - `transition_method='local'`: use the local Gauss-Hermite transition on the
@@ -308,7 +342,7 @@ damped by $\rho^n$, so a moderate basis order is enough. When $\kappa\,dt$ is
 very small, $\rho$ is close to one, high modes decay slowly, and the grid local
 path is usually safer. This is why the default `auto` mode sends the
 narrow-kernel regime to `local`; all other regimes try `spectral`, with
-`local` as the numerical fallback.
+`matrix` and then `local` as numerical fallbacks.
 
 ### SCAR-TM-JACOBI
 
@@ -487,8 +521,9 @@ dynamic edge fit:
 - GAS: `gamma0`, `gtol`, `ftol`, `maxfun`, `maxiter`, `maxls`, `eps`, `score_eps`,
   `gamma_bound`, `beta_bound`, `scaling`, `verbose`
 - SCAR-TM-OU: `alpha0`, `gtol`, `ftol`, `maxfun`, `maxiter`, `maxls`, `eps`, `K`, `grid_range`, `grid_method`, `adaptive`,
-  `pts_per_sigma`, `transition_method`, `auto_small_kdt`, `auto_large_kdt`,
-  `spectral_basis_order`, `spectral_quad_order`, `analytical_grad`,
+  `pts_per_sigma`, `transition_method`, `max_K`, `r_gh`, `gh_order`,
+  `auto_small_kdt`,
+  `spectral_basis_order`, `spectral_quad_order`, `backend`, `analytical_grad`,
   `smart_init`, `verbose`
 - SCAR-TM-JACOBI: `alpha0`, `gtol`, `ftol`, `maxfun`, `maxiter`, `maxls`,
   `eps`, `transition_method`, `basis_order`, `quad_order`,

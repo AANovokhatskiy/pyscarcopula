@@ -65,8 +65,16 @@ $$
 The transfer-matrix likelihood integrates the latent Markov path
 deterministically. By default, `transition_method='auto'` uses a Hermite
 spectral likelihood except in narrow-kernel regimes, where it uses local
-Gauss-Hermite. If spectral evaluation fails numerically, `auto` falls back to
-the local method.
+Gauss-Hermite. If spectral evaluation fails numerically, `auto` tries the
+matrix grid likelihood first and then the local method when the matrix path is
+not accepted.
+
+The numerical engine also defaults to `backend='auto'`. In this mode
+SCAR-TM-OU uses the package C++ extension for supported bivariate families and
+transforms, and falls back to Python/Numba when the extension is unavailable or
+the copula is unsupported by the C++ density kernels. Use `backend='python'`
+when you need an explicit pure-Python run for debugging or numerical
+comparisons.
 
 ```python
 result = fit(
@@ -74,11 +82,27 @@ result = fit(
     u,
     method='scar-tm-ou',
     transition_method='auto',
+    backend='auto',
     analytical_grad=True,
 )
 ```
 
 The fitted parameters are `kappa`, `mu`, and `nu`.
+
+`LatentResult.diagnostics` records aggregate backend usage during fitting:
+objective evaluations, Python/C++ evaluation counts, spectral/matrix/local
+attempts, and fallback counters such as `fallback_spectral_to_matrix`,
+`fallback_matrix_to_local`, `matrix_failures`, and `matrix_capped`. Python and
+C++ fits both report matrix-to-local fallback reasons when the active backend
+provides them. `matrix_fallback_unknown` is reserved for legacy or incomplete
+backend result metadata.
+
+By default, `spectral_basis_order='auto'` selects the Hermite basis size inside
+each objective evaluation from the current `kappa / (T - 1)`: 128 below
+`0.015`, 96 below `0.025`, 64 below `0.06`, and 32 otherwise. The
+`'adaptive'` value is accepted as an alias for backwards compatibility. Use a
+fixed integer `spectral_basis_order` when exact basis-size reproducibility is
+needed for numerical comparisons.
 
 ## SCAR-TM-JACOBI
 

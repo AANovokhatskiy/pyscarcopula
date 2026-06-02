@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=68.0", "wheel"]
+requires = ["setuptools>=68.0", "wheel", "pybind11>=2.11"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyscarcopula"
-version = "0.15.1"
+version = "0.16.0"
 description = "Python library for bivariate, multivariate, vine, and stochastic copula models"
 readme = "README.md"
 license = "MIT"
@@ -23,14 +23,8 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "Intended Audience :: Financial and Insurance Industry",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Mathematics",
     "Topic :: Office/Business :: Financial",
-    "Operating System :: OS Independent",
 ]
 dependencies = [
     "numpy>=1.22",

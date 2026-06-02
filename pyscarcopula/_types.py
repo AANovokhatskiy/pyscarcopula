@@ -497,9 +497,10 @@ class LatentResult(FitResultBase):
     r_gh: float | None = None                # TM local-transition threshold
     gh_order: int | None = None              # TM local quadrature order
     auto_small_kdt: float | None = None      # auto GH threshold
-    auto_large_kdt: float | None = None      # retained for fit metadata
-    spectral_basis_order: int | None = None  # Hermite basis size
+    spectral_basis_order: int | str | None = None  # Hermite basis size/mode
     spectral_quad_order: int | None = None   # Hermite quadrature size
+    backend: str | None = None               # optional SCAR-OU engine mode
+    diagnostics: dict[str, Any] = field(default_factory=dict)
     n_tr: int | None = None                  # MC trajectory count
     M_iterations: int | None = None          # EIS iterations
 
@@ -528,12 +529,12 @@ class LatentResult(FitResultBase):
             lines.append(f"       gh_order: {self.gh_order}")
         if self.auto_small_kdt is not None:
             lines.append(f" auto_small_kdt: {self.auto_small_kdt}")
-        if self.auto_large_kdt is not None:
-            lines.append(f" auto_large_kdt: {self.auto_large_kdt}")
         if self.spectral_basis_order is not None:
             lines.append(f"spectral_basis_order: {self.spectral_basis_order}")
         if self.spectral_quad_order is not None:
             lines.append(f"spectral_quad_order: {self.spectral_quad_order}")
+        if self.backend is not None:
+            lines.append(f"        backend: {self.backend}")
         if self.n_tr is not None:
             lines.append(f"           n_tr: {self.n_tr}")
         if self.M_iterations is not None:

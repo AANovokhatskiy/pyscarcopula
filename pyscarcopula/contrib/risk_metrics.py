@@ -480,7 +480,7 @@ def risk_metrics(copula, data, window_len,
     # Fit marginals
     marginal_model = MarginalModel.create(marginals_method)
     print(f"Fitting marginals ({marginals_method})...")
-    marg_params = marginal_model.fit_rolling(data, window_len)
+    marg_params = marginal_model.fit_rolling(data, window_len, n_jobs=n_jobs)
 
     # Normalize gamma / N_mc to lists
     gammas = [gamma] if not hasattr(gamma, '__iter__') else list(gamma)

@@ -7,6 +7,9 @@ from pyscarcopula._utils import pobs
 from pyscarcopula._types import (
     MLEResult, LatentResult, GASResult, NumericalConfig, LBFGSBConfig,
 )
+from pyscarcopula.numerical import _cpp_scar_ou
+from pyscarcopula.strategy import scar_tm
+from pyscarcopula.strategy.scar_tm import SCARTMStrategy
 
 
 class TestMLERecovery:
@@ -55,6 +58,184 @@ class TestSCARConvergence:
         assert result.params.nu > 0
         assert np.isfinite(result.params.mu)
         assert result.log_likelihood > 0
+
+
+class TestSCARBackendAuto:
+    def test_auto_backend_falls_back_to_python_for_unsupported_copula(self):
+        u = pobs(np.random.default_rng(3).standard_normal((18, 2)))
+        cop = GumbelCopula(rotate=180, transform_type='xtanh')
+        alpha = np.array([0.8, 0.2, 1.0], dtype=np.float64)
+
+        auto_strategy = SCARTMStrategy(
+            backend='auto',
+            transition_method='matrix',
+            K=24,
+            adaptive=False,
+            max_K=None,
+            analytical_grad=False,
+        )
+        python_strategy = SCARTMStrategy(
+            backend='python',
+            transition_method='matrix',
+            K=24,
+            adaptive=False,
+            max_K=None,
+            analytical_grad=False,
+        )
+
+        assert not auto_strategy._uses_cpp(cop)
+        assert auto_strategy.objective(cop, u, alpha) == pytest.approx(
+            python_strategy.objective(cop, u, alpha))
+
+    def test_explicit_cpp_backend_rejects_unsupported_copula(self):
+        u = pobs(np.random.default_rng(4).standard_normal((8, 2)))
+        cop = GumbelCopula(rotate=0, transform_type='xtanh')
+        result = LatentResult(
+            log_likelihood=0.0,
+            method='SCAR-TM-OU',
+            copula_name=cop.name,
+            success=True,
+        )
+        strategy = SCARTMStrategy(backend='cpp', transition_method='matrix')
+
+        with pytest.raises(_cpp_scar_ou.CppUnsupported, match='Gumbel'):
+            strategy.log_likelihood(cop, u, result)
+
+    def test_python_backend_fit_records_fallback_diagnostics(self, monkeypatch):
+        u = pobs(np.random.default_rng(5).standard_normal((10, 2)))
+        cop = GumbelCopula(rotate=180)
+        calls = []
+
+        def fake_objective(kappa, mu, nu, u_arg, copula_arg, config):
+            calls.append(float(kappa))
+            value = (
+                (float(kappa) - 0.8) ** 2
+                + float(mu) ** 2
+                + (float(nu) - 1.0) ** 2
+                + 1.0
+            )
+            grad = np.array(
+                [2.0 * (float(kappa) - 0.8), 2.0 * float(mu),
+                 2.0 * (float(nu) - 1.0)],
+                dtype=np.float64,
+            )
+            info = {
+                "backend": "matrix",
+                "transition_method": "auto",
+                "fallback_chain": ["spectral"],
+                "fallback_from": "spectral",
+                "kappa_dt": float(kappa) / (len(u_arg) - 1),
+                "n_obs": len(u_arg),
+            }
+            return value, grad, info
+
+        monkeypatch.setattr(
+            scar_tm, "auto_neg_loglik_with_grad_info", fake_objective)
+
+        result = SCARTMStrategy(
+            backend='python',
+            smart_init=False,
+            analytical_grad=True,
+            K=20,
+            adaptive=False,
+            max_K=None,
+        ).fit(
+            cop,
+            u,
+            alpha0=np.array([1.0, 0.1, 1.2]),
+            maxiter=2,
+            maxfun=12,
+        )
+
+        assert calls
+        diag = result.diagnostics
+        assert diag["selected_engine"] == "python"
+        assert diag["objective_evaluations"] == len(calls)
+        assert diag["python_evaluations"] == len(calls)
+        assert diag["spectral_failures"] == len(calls)
+        assert diag["fallback_spectral_to_matrix"] == len(calls)
+        assert diag["matrix_evaluations"] == len(calls)
+        assert diag["last_backend"] == "matrix"
+
+    def test_cpp_backend_fit_records_fallback_diagnostics(self, monkeypatch):
+        u = pobs(np.random.default_rng(6).standard_normal((10, 2)))
+        cop = ClaytonCopula(rotate=0)
+        calls = []
+
+        def fake_objective(kappa, mu, nu, u_arg, copula_arg, config):
+            calls.append(float(kappa))
+            value = (
+                (float(kappa) - 0.8) ** 2
+                + float(mu) ** 2
+                + (float(nu) - 1.0) ** 2
+                + 1.0
+            )
+            grad = np.array(
+                [2.0 * (float(kappa) - 0.8), 2.0 * float(mu),
+                 2.0 * (float(nu) - 1.0)],
+                dtype=np.float64,
+            )
+            info = {
+                "backend": "local",
+                "transition_method": "auto",
+                "fallback_chain": ["spectral", "matrix"],
+                "fallback_from": "matrix",
+                "matrix_fallback_reason": "unknown",
+                "engine": "cpp",
+                "kappa_dt": float(kappa) / (len(u_arg) - 1),
+                "n_obs": len(u_arg),
+            }
+            return value, grad, info
+
+        monkeypatch.setattr(
+            _cpp_scar_ou, "neg_loglik_with_grad_info", fake_objective)
+        monkeypatch.setattr(_cpp_scar_ou, "supported", lambda copula: True)
+
+        result = SCARTMStrategy(
+            backend='cpp',
+            smart_init=False,
+            analytical_grad=True,
+            K=20,
+            adaptive=False,
+            max_K=None,
+        ).fit(
+            cop,
+            u,
+            alpha0=np.array([1.0, 0.1, 1.2]),
+            maxiter=2,
+            maxfun=12,
+        )
+
+        assert calls
+        diag = result.diagnostics
+        assert diag["selected_engine"] == "cpp"
+        assert diag["objective_evaluations"] == len(calls)
+        assert diag["cpp_evaluations"] == len(calls)
+        assert diag["fallback_spectral_to_matrix"] == len(calls)
+        assert diag["fallback_matrix_to_local"] == len(calls)
+        assert diag["matrix_fallback_unknown"] == len(calls)
+        assert diag["local_evaluations"] == len(calls)
+        assert diag["last_backend"] == "local"
+
+    def test_cpp_result_info_uses_exact_fallback_reason(self):
+        info = _cpp_scar_ou._result_info(
+            {
+                "backend": 1,
+                "status": 0,
+                "fallback_from": 2,
+                "fallback_chain": [0, 2],
+                "matrix_fallback_reason": 2,
+            },
+            "auto",
+            1.0,
+            11,
+            _cpp_scar_ou.AutoTMConfig(transition_method="auto"),
+        )
+
+        assert info["backend"] == "local"
+        assert info["fallback_from"] == "matrix"
+        assert info["fallback_chain"] == ["spectral", "matrix"]
+        assert info["matrix_fallback_reason"] == "capped"
 
 
 class TestGASConvergence:
