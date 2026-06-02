@@ -471,6 +471,39 @@ class TestMultivariateCopulaAPI:
         assert np.isfinite(cop.df)
         assert 2.0 < cop.df < 1_000_000.0
 
+    def test_student_fit_gof_sample_refit_gof_roundtrip(self):
+        R = np.array(
+            [
+                [1.0, 0.45, -0.25],
+                [0.45, 1.0, 0.30],
+                [-0.25, 0.30, 1.0],
+            ],
+            dtype=np.float64,
+        )
+        df = 6.5
+        source = StudentCopula()
+        source.shape = R
+        source.df = df
+
+        u = source.sample(2000, rng=np.random.default_rng(20260602))
+        fitted = StudentCopula()
+        fitted.fit(u)
+        gof = gof_test(fitted, u, to_pobs=False)
+
+        samples = fitted.sample(1800, rng=np.random.default_rng(20260603))
+        refit = StudentCopula()
+        refit.fit(samples)
+        refit_gof = gof_test(refit, samples, to_pobs=False)
+
+        assert np.isfinite(fitted.df)
+        assert np.isfinite(refit.df)
+        assert 3.0 < fitted.df < 20.0
+        assert 3.0 < refit.df < 20.0
+        np.testing.assert_allclose(fitted.shape, R, atol=0.08)
+        np.testing.assert_allclose(refit.shape, fitted.shape, atol=0.08)
+        assert 0.01 < gof.pvalue <= 1.0
+        assert 0.01 < refit_gof.pvalue <= 1.0
+
     def test_dcc_predictive_mean_df_path_is_not_transformed_twice(self):
         cop = StochasticStudentDCCCopula(d=3)
         R_path = np.repeat(np.eye(3)[None, :, :], 3, axis=0)

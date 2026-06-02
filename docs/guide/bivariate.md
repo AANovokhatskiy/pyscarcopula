@@ -39,10 +39,10 @@ parameter.
 
 For SCAR-TM-OU, `transition_method='auto'` uses the Hermite spectral
 likelihood except in the narrow-kernel regime, where it uses local
-Gauss-Hermite; the local path is also the numerical fallback if spectral
-evaluation fails. Use `transition_method='spectral'` to force the spectral
-likelihood, or `transition_method='matrix'` / `'local'` for grid-only
-comparisons.
+Gauss-Hermite. If spectral evaluation fails numerically, `auto` first tries
+the matrix grid path and then the local path when the matrix path is invalid or
+capped. Use `transition_method='spectral'` to force the spectral likelihood,
+or `transition_method='matrix'` / `'local'` for grid-only comparisons.
 
 For SCAR-TM-JACOBI, `transition_method='auto'` tries the Jacobi spectral
 transition matrix and falls back to the local Lamperti/Gauss-Hermite transition

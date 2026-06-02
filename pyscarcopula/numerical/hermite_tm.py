@@ -6,6 +6,7 @@ from functools import lru_cache
 from inspect import signature
 
 import numpy as np
+from scipy.special import roots_hermitenorm
 
 from pyscarcopula.numerical._arrays import as_float64_array
 
@@ -47,17 +48,21 @@ def _call_batch_method_with_cache(method, u, x_grid, t_index, cache):
 def standard_normal_hermite_rule(quad_order: int, basis_order: int):
     """Return nodes, normal weights and orthonormal probabilists basis.
 
-    ``numpy.polynomial.hermite_e.hermegauss`` integrates against
-    ``exp(-z**2/2)``.  Dividing weights by ``sqrt(2*pi)`` gives expectation
-    under the standard normal law.
+    ``scipy.special.roots_hermitenorm`` integrates against ``exp(-z**2/2)``.
+    Dividing weights by ``sqrt(2*pi)`` gives expectation under the standard
+    normal law.  SciPy's implementation is stable for larger quadrature orders
+    where ``numpy.polynomial.hermite_e.hermegauss`` can overflow in the weight
+    calculation.
     """
     quad_order = _validate_positive_int(quad_order, "quad_order")
     basis_order = _validate_positive_int(basis_order, "basis_order")
     if quad_order < basis_order:
         raise ValueError("quad_order must be >= basis_order")
 
-    z, raw_w = np.polynomial.hermite_e.hermegauss(quad_order)
+    z, raw_w = roots_hermitenorm(quad_order)
     w = raw_w / np.sqrt(2.0 * np.pi)
+    if not (np.all(np.isfinite(z)) and np.all(np.isfinite(w))):
+        raise ValueError("Hermite quadrature produced non-finite nodes/weights")
 
     basis = np.empty((quad_order, basis_order), dtype=np.float64)
     basis[:, 0] = 1.0

@@ -31,20 +31,128 @@ from pyscarcopula.numerical.auto_tm import (
     AutoTMConfig,
     auto_loglik,
     auto_neg_loglik,
-    auto_neg_loglik_with_grad,
+    auto_neg_loglik_info,
+    auto_neg_loglik_with_grad_info,
 )
 from pyscarcopula.numerical._arrays import as_float64_array
 from pyscarcopula.numerical._transition_methods import (
     normalize_ou_transition_method,
 )
 from pyscarcopula.strategy.predict_helpers import sample_predictive
+from pyscarcopula.numerical import _cpp_scar_ou
 
 
 _INVALID_OBJECTIVE_THRESHOLD = 1e9
 
+_DIAGNOSTIC_COUNTERS = (
+    "objective_evaluations",
+    "python_evaluations",
+    "cpp_evaluations",
+    "spectral_evaluations",
+    "spectral_failures",
+    "matrix_evaluations",
+    "matrix_failures",
+    "matrix_capped",
+    "matrix_fallback_unknown",
+    "local_evaluations",
+    "fallback_spectral_to_matrix",
+    "fallback_matrix_to_local",
+)
+
+_ADAPTIVE_SPECTRAL_BASIS_ORDER = (
+    (0.015, 128),
+    (0.025, 96),
+    (0.06, 64),
+    (np.inf, 32),
+)
+
+
+def _normalize_backend(value):
+    backend = str(value).lower()
+    if backend not in {"python", "cpp", "auto"}:
+        raise ValueError("backend must be 'python', 'cpp', or 'auto'")
+    return backend
+
+
+def _normalize_spectral_basis_order(value):
+    if isinstance(value, str):
+        order = value.lower()
+        if order in {"adaptive", "auto"}:
+            return "auto"
+        try:
+            value = int(order)
+        except ValueError as exc:
+            raise ValueError(
+                "spectral_basis_order must be a positive integer or 'auto'"
+            ) from exc
+    order = int(value)
+    if order <= 0:
+        raise ValueError("spectral_basis_order must be positive")
+    return order
+
 
 def _objective_is_invalid(value):
     return (not np.isfinite(value)) or float(value) >= _INVALID_OBJECTIVE_THRESHOLD
+
+
+def _new_backend_diagnostics(requested_backend: str, selected_engine: str) -> dict:
+    diagnostics = {name: 0 for name in _DIAGNOSTIC_COUNTERS}
+    diagnostics["requested_backend"] = requested_backend
+    diagnostics["selected_engine"] = selected_engine
+    return diagnostics
+
+
+def _record_backend_diagnostics(diagnostics: dict, info: dict,
+                                engine: str) -> None:
+    diagnostics["objective_evaluations"] += 1
+    diagnostics[f"{engine}_evaluations"] += 1
+
+    backend = info.get("backend")
+    chain = list(info.get("fallback_chain") or [])
+    attempts = []
+    attempts.extend(item for item in chain if item in {"spectral", "matrix"})
+    if backend in {"spectral", "matrix", "local"}:
+        attempts.append(backend)
+    if not attempts and info.get("transition_method") in {"matrix", "local"}:
+        attempts.append(info["transition_method"])
+
+    for item in attempts:
+        key = f"{item}_evaluations"
+        if key in diagnostics:
+            diagnostics[key] += 1
+
+    if "spectral" in chain:
+        diagnostics["spectral_failures"] += 1
+        diagnostics["fallback_spectral_to_matrix"] += 1
+    if "matrix" in chain:
+        diagnostics["fallback_matrix_to_local"] += 1
+        reason = info.get("matrix_fallback_reason")
+        if reason == "capped":
+            diagnostics["matrix_capped"] += 1
+        elif reason == "failed":
+            diagnostics["matrix_failures"] += 1
+        else:
+            diagnostics["matrix_fallback_unknown"] += 1
+
+    diagnostics["last_engine"] = engine
+    diagnostics["last_backend"] = backend
+    diagnostics["last_transition_method"] = info.get("transition_method")
+    diagnostics["last_kappa_dt"] = info.get("kappa_dt")
+    diagnostics["last_n_obs"] = info.get("n_obs")
+    basis_order = info.get("basis_order")
+    if basis_order is not None:
+        try:
+            basis_order_int = int(basis_order)
+        except (TypeError, ValueError):
+            basis_order_int = None
+        if basis_order_int is not None:
+            diagnostics[f"basis_order_{basis_order_int}_evaluations"] = (
+                diagnostics.get(f"basis_order_{basis_order_int}_evaluations", 0)
+                + 1
+            )
+            diagnostics["last_spectral_basis_order"] = basis_order_int
+    if chain:
+        diagnostics["last_fallback_chain"] = tuple(chain)
 
 
 def _projected_gradient_norm(x, grad, lower, upper):
@@ -83,8 +191,8 @@ class SCARTMStrategy:
     transition_method : str
         'auto' is the default likelihood evaluator: spectral Hermite for
         ordinary transitions and local Gauss-Hermite for narrow kernels or
-        spectral numerical fallback.  'matrix', 'local', and 'spectral' force
-        the corresponding likelihood backend.
+        spectral numerical fallback through matrix/local grid paths.  'matrix',
+        'local', and 'spectral' force the corresponding likelihood backend.
     max_K : int or None
         Optional cap for adaptive TM grid size.  Defaults to 1000 in the
         strategy to prevent pathological fit-time grid blowups on long series.
@@ -92,6 +200,19 @@ class SCARTMStrategy:
         Locality threshold for auto transition selection.
     gh_order : int
         Gauss-Hermite order for local GH transition.
+    auto_small_kdt : float
+        Threshold for selecting the local transition in auto mode.
+    spectral_basis_order : int or {'auto', 'adaptive'}
+        Number of Hermite basis functions in the spectral likelihood.  The
+        default ``'auto'`` policy selects 128, 96, 64, or 32 from the current
+        optimizer evaluation's ``kappa / (T - 1)``. ``'adaptive'`` is accepted
+        as a backwards-compatible alias.
+    spectral_quad_order : int or None
+        Gauss-Hermite quadrature order for spectral multiplication.
+    backend : {'auto', 'python', 'cpp'}
+        Numerical implementation.  'auto' uses C++ for supported SCAR-TM-OU
+        copula/transform combinations and otherwise uses Python.  'cpp'
+        requires the compiled extension and raises for unsupported models.
     analytical_grad : bool
         Use analytical gradient (default True).
         Reduces nfev by ~3-4x. Parameters are auto-rescaled.
@@ -109,10 +230,10 @@ class SCARTMStrategy:
                  max_K: int | None = 1000,
                  r_gh: float = 3.0,
                  gh_order: int = 5,
-                 auto_small_kdt: float = 1e-3,
-                 auto_large_kdt: float = 5e-2,
-                 spectral_basis_order: int = 32,
+                 auto_small_kdt: float = 1e-2,
+                 spectral_basis_order: int | str = "auto",
                  spectral_quad_order: int | None = None,
+                 backend: str = 'auto',
                  analytical_grad: bool = True,
                  smart_init: bool = True,
                  **kwargs):
@@ -128,9 +249,10 @@ class SCARTMStrategy:
         self.r_gh = r_gh
         self.gh_order = gh_order
         self.auto_small_kdt = auto_small_kdt
-        self.auto_large_kdt = auto_large_kdt
-        self.spectral_basis_order = spectral_basis_order
+        self.spectral_basis_order = _normalize_spectral_basis_order(
+            spectral_basis_order)
         self.spectral_quad_order = spectral_quad_order
+        self.backend = _normalize_backend(backend)
         self.analytical_grad = analytical_grad
         self.smart_init = smart_init
 
@@ -166,12 +288,34 @@ class SCARTMStrategy:
             'gh_order': self.gh_order,
         }
 
-    def _auto_config(self):
+    def _kappa_dt(self, kappa: float, n_obs: int) -> float:
+        if n_obs <= 1:
+            return float(kappa)
+        return float(kappa) / float(n_obs - 1)
+
+    def _adaptive_spectral_basis_order(self, kappa: float, n_obs: int) -> int:
+        kdt = self._kappa_dt(kappa, n_obs)
+        for threshold, basis_order in _ADAPTIVE_SPECTRAL_BASIS_ORDER:
+            if kdt < threshold:
+                return basis_order
+        return 32
+
+    def _spectral_basis_order_for(self, kappa: float | None = None,
+                                  n_obs: int | None = None) -> int:
+        if self.spectral_basis_order != "auto":
+            return int(self.spectral_basis_order)
+        if kappa is None or n_obs is None:
+            raise ValueError(
+                "auto spectral_basis_order requires kappa and n_obs")
+        return self._adaptive_spectral_basis_order(kappa, n_obs)
+
+    def _auto_config(self, transition_method: str | None = None,
+                     *, kappa: float | None = None,
+                     n_obs: int | None = None):
         return AutoTMConfig(
-            transition_method=self.transition_method,
+            transition_method=transition_method or self.transition_method,
             small_kdt=self.auto_small_kdt,
-            large_kdt=self.auto_large_kdt,
-            basis_order=self.spectral_basis_order,
+            basis_order=self._spectral_basis_order_for(kappa, n_obs),
             quad_order=self.spectral_quad_order,
             K=self.K,
             grid_range=self.grid_range,
@@ -182,6 +326,18 @@ class SCARTMStrategy:
             gh_order=self.gh_order,
             r_gh=self.r_gh,
         )
+
+    def _uses_cpp(self, copula, require=False):
+        if self.backend == 'python':
+            return False
+        if _cpp_scar_ou.supported(copula):
+            return True
+        if require or self.backend == 'cpp':
+            _cpp_scar_ou.ensure_supported(copula)
+            if not _cpp_scar_ou.available():
+                raise _cpp_scar_ou.CppUnavailable(
+                    "pyscarcopula C++ extension is not available")
+        return False
 
     def fit(self, copula, u: np.ndarray,
             alpha0: np.ndarray | None = None,
@@ -256,7 +412,27 @@ class SCARTMStrategy:
         adaptive = self.adaptive
         pts_per_sigma = self.pts_per_sigma
         tm_kwargs = self._tm_kwargs()
-        auto_config = self._auto_config()
+        use_cpp = self._uses_cpp(copula, require=self.backend == 'cpp')
+        selected_engine = "cpp" if use_cpp else "python"
+        diagnostics = _new_backend_diagnostics(self.backend, selected_engine)
+        diagnostics["adaptive_spectral_basis_order"] = (
+            self.spectral_basis_order == "auto")
+        diagnostics["auto_spectral_basis_order"] = (
+            self.spectral_basis_order == "auto")
+
+        def _auto_config_for(kappa_v):
+            return self._auto_config(kappa=kappa_v, n_obs=len(u))
+
+        def _manual_info(kappa_v):
+            n_obs = len(u)
+            kdt = float(kappa_v) if n_obs <= 1 else float(kappa_v) / (n_obs - 1)
+            return {
+                "backend": self._grid_transition_method(),
+                "transition_method": self.transition_method,
+                "kappa_dt": kdt,
+                "n_obs": int(n_obs),
+                "basis_order": self._spectral_basis_order_for(kappa_v, n_obs),
+            }
 
         # ── Fit with analytical gradient ──────────────────────────
         if self.analytical_grad:
@@ -279,13 +455,21 @@ class SCARTMStrategy:
                     return 1e10, np.zeros(3)
                 kappa_v, mu_v, nu_v = alpha
                 try:
-                    if self._uses_dispatcher():
-                        val, grad = auto_neg_loglik_with_grad(
+                    auto_config = _auto_config_for(kappa_v)
+                    if use_cpp:
+                        val, grad, info = _cpp_scar_ou.neg_loglik_with_grad_info(
                             kappa_v, mu_v, nu_v, u, copula, auto_config)
+                        _record_backend_diagnostics(diagnostics, info, "cpp")
+                    elif self._uses_dispatcher():
+                        val, grad, info = auto_neg_loglik_with_grad_info(
+                            kappa_v, mu_v, nu_v, u, copula, auto_config)
+                        _record_backend_diagnostics(diagnostics, info, "python")
                     else:
                         val, grad = tm_loglik_with_grad(
                             kappa_v, mu_v, nu_v, u, copula, K, grid_range,
                             grid_method, adaptive, pts_per_sigma, **tm_kwargs)
+                        _record_backend_diagnostics(
+                            diagnostics, _manual_info(kappa_v), "python")
                     return val, grad * scale  # chain rule
                 except Exception as e:
                     if verbose:
@@ -331,33 +515,62 @@ class SCARTMStrategy:
 
         # ── Fit with numerical gradient ───────────────────────────
         else:
-            bounds = Bounds([0.001, -np.inf, 0.001], [np.inf, np.inf, np.inf])
+            scale = np.array([
+                max(abs(alpha0[0]), 1.0),
+                max(abs(alpha0[1]), 1.0),
+                max(abs(alpha0[2]), 1.0),
+            ])
+            x0_scaled = alpha0 / scale
+            bounds_scaled = Bounds(
+                [0.001 / scale[0], -np.inf, 0.001 / scale[2]],
+                [np.inf, np.inf, np.inf]
+            )
 
-            def objective(alpha):
+            def objective_scaled(x_scaled):
+                alpha = x_scaled * scale
                 if np.isnan(np.sum(alpha)):
                     return 1e10
                 kappa_v, mu_v, nu_v = alpha
                 try:
-                    if self._uses_dispatcher():
-                        return auto_neg_loglik(
+                    auto_config = _auto_config_for(kappa_v)
+                    if use_cpp:
+                        val, info = _cpp_scar_ou.neg_loglik_info(
                             kappa_v, mu_v, nu_v, u, copula, auto_config)
-                    return tm_loglik(
+                        _record_backend_diagnostics(diagnostics, info, "cpp")
+                        return val
+                    if self._uses_dispatcher():
+                        val, info = auto_neg_loglik_info(
+                            kappa_v, mu_v, nu_v, u, copula, auto_config)
+                        _record_backend_diagnostics(diagnostics, info, "python")
+                        return val
+                    val = tm_loglik(
                         kappa_v, mu_v, nu_v, u, copula, K, grid_range,
                         grid_method, adaptive, pts_per_sigma, **tm_kwargs)
+                    _record_backend_diagnostics(
+                        diagnostics, _manual_info(kappa_v), "python")
+                    return val
                 except Exception as e:
                     if verbose:
                         print(f"  error at alpha={alpha}: {e}")
                     return 1e10
 
             if verbose:
-                print(f"Fitting SCAR-TM-OU (numerical gradient), alpha0={alpha0}")
+                engine = "C++" if use_cpp else "Python"
+                print(
+                    f"Fitting SCAR-TM-OU ({engine}, numerical gradient), "
+                    f"alpha0={alpha0}")
+
+            scaled_options = dict(optimizer_options)
+            if 'eps' in scaled_options:
+                scaled_options['eps'] = float(scaled_options['eps']) / scale
 
             result = minimize(
-                objective, alpha0,
+                objective_scaled, x0_scaled,
                 method='L-BFGS-B',
-                bounds=bounds,
-                options=optimizer_options,
+                bounds=bounds_scaled,
+                options=scaled_options,
             )
+            result.x = result.x * scale
 
         if _objective_is_invalid(result.fun):
             result.success = False
@@ -387,18 +600,24 @@ class SCARTMStrategy:
             r_gh=self.r_gh,
             gh_order=self.gh_order,
             auto_small_kdt=self.auto_small_kdt,
-            auto_large_kdt=self.auto_large_kdt,
             spectral_basis_order=self.spectral_basis_order,
             spectral_quad_order=self.spectral_quad_order,
+            backend=self.backend,
+            diagnostics=diagnostics,
         )
 
     def log_likelihood(self, copula, u: np.ndarray,
                        result: LatentResult) -> float:
         """Evaluate TM log-likelihood at fitted parameters."""
         p = result.params
+        cfg = self._auto_config(kappa=p.kappa, n_obs=len(u))
+        if self._uses_cpp(copula, require=self.backend == 'cpp'):
+            value, _ = _cpp_scar_ou.loglik(
+                p.kappa, p.mu, p.nu, u, copula, cfg)
+            return value
         if self._uses_dispatcher():
             return auto_loglik(
-                p.kappa, p.mu, p.nu, u, copula, self._auto_config())
+                p.kappa, p.mu, p.nu, u, copula, cfg)
         neg_ll = tm_loglik(
             p.kappa, p.mu, p.nu, u, copula,
             self.K, self.grid_range, self.grid_method,
@@ -409,6 +628,14 @@ class SCARTMStrategy:
                         result: LatentResult) -> np.ndarray:
         """E[Psi(x_k) | u_{1:k-1}] via TM forward pass."""
         p = result.params
+        if self._uses_cpp(copula, require=self.backend == 'cpp'):
+            return _cpp_scar_ou.predictive_mean(
+                p.kappa, p.mu, p.nu, u, copula,
+                self._auto_config(
+                    self._grid_transition_method(),
+                    kappa=p.kappa,
+                    n_obs=len(u),
+                ))
         return tm_forward_predictive_mean(
             p.kappa, p.mu, p.nu, u, copula,
             self.K, self.grid_range, self.grid_method,
@@ -418,6 +645,14 @@ class SCARTMStrategy:
                       result: LatentResult) -> np.ndarray:
         """Mixture Rosenblatt: e2 = E[h(u2, u1; Psi(x_k)) | u_{1:k-1}]."""
         p = result.params
+        if self._uses_cpp(copula, require=self.backend == 'cpp'):
+            return _cpp_scar_ou.mixture_h(
+                p.kappa, p.mu, p.nu, u, copula,
+                self._auto_config(
+                    self._grid_transition_method(),
+                    kappa=p.kappa,
+                    n_obs=len(u),
+                ))
         e = tm_forward_rosenblatt(
             p.kappa, p.mu, p.nu, u, copula,
             self.K, self.grid_range, self.grid_method,
@@ -429,6 +664,23 @@ class SCARTMStrategy:
                   current_cache_key=None, next_cache_key=None) -> np.ndarray:
         """Mixture h-function for vine pseudo-obs propagation."""
         p = result.params
+        if self._uses_cpp(copula, require=self.backend == 'cpp'):
+            cfg = self._auto_config(
+                self._grid_transition_method(),
+                kappa=p.kappa,
+                n_obs=len(u),
+            )
+            h_mix = _cpp_scar_ou.mixture_h(
+                p.kappa, p.mu, p.nu, u, copula,
+                cfg)
+            if state_cache is not None:
+                if current_cache_key is not None:
+                    state_cache[current_cache_key] = _cpp_scar_ou.state_distribution(
+                        p.kappa, p.mu, p.nu, u, copula, cfg, horizon='current')
+                if next_cache_key is not None:
+                    state_cache[next_cache_key] = _cpp_scar_ou.state_distribution(
+                        p.kappa, p.mu, p.nu, u, copula, cfg, horizon='next')
+            return h_mix
         return tm_forward_mixture_h(
             p.kappa, p.mu, p.nu, u, copula,
             self.K, self.grid_range, self.grid_method,
@@ -442,10 +694,15 @@ class SCARTMStrategy:
                   alpha: np.ndarray, **kwargs) -> float:
         """Minus log-likelihood: TM integrated -logL(kappa, mu, nu)."""
         try:
+            cfg = self._auto_config(kappa=alpha[0], n_obs=len(u))
+            if self._uses_cpp(copula, require=self.backend == 'cpp'):
+                return _cpp_scar_ou.neg_loglik(
+                    alpha[0], alpha[1], alpha[2], u, copula,
+                    cfg)
             if self._uses_dispatcher():
                 return auto_neg_loglik(
                     alpha[0], alpha[1], alpha[2], u, copula,
-                    self._auto_config())
+                    cfg)
             return tm_loglik(
                 alpha[0], alpha[1], alpha[2], u, copula,
                 self.K, self.grid_range, self.grid_method,
@@ -513,16 +770,27 @@ class SCARTMStrategy:
             cached = state_cache.get(cache_key)
 
         if cached is None:
-            from pyscarcopula.numerical import predictive_tm
-            cached = predictive_tm.tm_state_distribution(
-                p.kappa, p.mu, p.nu, u, copula,
-                K=self.K,
-                grid_range=self.grid_range,
-                grid_method=self.grid_method,
-                adaptive=self.adaptive,
-                pts_per_sigma=self.pts_per_sigma,
-                **self._grid_tm_kwargs(),
-                horizon=kwargs.get('horizon', 'next'))
+            horizon = kwargs.get('horizon', 'next')
+            if self._uses_cpp(copula, require=self.backend == 'cpp'):
+                cached = _cpp_scar_ou.state_distribution(
+                    p.kappa, p.mu, p.nu, u, copula,
+                    self._auto_config(
+                        self._grid_transition_method(),
+                        kappa=p.kappa,
+                        n_obs=len(u),
+                    ),
+                    horizon=horizon)
+            else:
+                from pyscarcopula.numerical import predictive_tm
+                cached = predictive_tm.tm_state_distribution(
+                    p.kappa, p.mu, p.nu, u, copula,
+                    K=self.K,
+                    grid_range=self.grid_range,
+                    grid_method=self.grid_method,
+                    adaptive=self.adaptive,
+                    pts_per_sigma=self.pts_per_sigma,
+                    **self._grid_tm_kwargs(),
+                    horizon=horizon)
             if state_cache is not None and cache_key is not None:
                 state_cache[cache_key] = cached
 

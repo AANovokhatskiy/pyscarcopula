@@ -141,7 +141,12 @@ def mixture_h(copula, data, result: FitResult,
     """
     u = np.asarray(data, dtype=np.float64)
     strategy = get_strategy_for_result(result, config=config, **kwargs)
-    return strategy.mixture_h(copula, u, result)
+    runtime_kwargs = {
+        name: kwargs[name]
+        for name in ('state_cache', 'current_cache_key', 'next_cache_key')
+        if name in kwargs
+    }
+    return strategy.mixture_h(copula, u, result, **runtime_kwargs)
 
 
 def configure(blas_threads: int = 1):

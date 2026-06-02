@@ -3,6 +3,7 @@ include LICENSE.txt
 include README.md
 include pyproject.toml
 recursive-include tests *.py
+recursive-include pyscarcopula/_cpp *.cpp *.hpp
 prune data
 
 # Exclude generated/cache files

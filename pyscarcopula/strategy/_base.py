@@ -284,11 +284,16 @@ def get_strategy_for_result(result: FitResult,
 
         for name in (
                 'r_gh', 'gh_order',
-                'auto_small_kdt', 'auto_large_kdt',
-                'spectral_basis_order', 'spectral_quad_order'):
+                'auto_small_kdt',
+                'spectral_basis_order', 'spectral_quad_order',
+                ):
             value = getattr(result, name, None)
             if value is not None:
                 result_kwargs[name] = value
+
+        backend = getattr(result, 'backend', None)
+        if backend is not None:
+            result_kwargs['backend'] = backend
 
     if method == 'SCAR-TM-JACOBI':
         transition_method = getattr(result, 'transition_method', None)

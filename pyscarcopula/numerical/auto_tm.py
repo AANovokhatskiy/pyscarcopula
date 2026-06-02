@@ -1,9 +1,11 @@
 """Automatic likelihood evaluator for SCAR-OU models.
 
-This module dispatches between two automatic numerical backends:
+This module dispatches between automatic numerical backends:
 
 * Hermite spectral evaluator for ordinary transitions,
-* local transition for very narrow kernels or spectral numerical fallback.
+* local transition for very narrow kernels;
+* matrix transition as the first spectral numerical fallback;
+* local transition if the matrix fallback fails or its adaptive grid is capped.
 """
 
 from __future__ import annotations
@@ -32,14 +34,13 @@ class AutoTMConfig:
 
     ``transition_method`` is one of ``"auto"``, ``"matrix"``, ``"local"``, or
     ``"spectral"``.  In ``"auto"`` mode, ``small_kdt`` selects the narrow-kernel
-    local path; all other regimes try the Hermite spectral path and fall back
-    to the local path on numerical failure.  ``large_kdt`` is retained for
-    result compatibility with older fits and no longer gates the spectral path.
+    local path; all other regimes try the Hermite spectral path.  Spectral
+    numerical failure falls back to matrix; matrix numerical failure or an
+    adaptive-grid cap falls back to local.
     """
 
     transition_method: str = "auto"
-    small_kdt: float = 1e-3
-    large_kdt: float = 5e-2
+    small_kdt: float = 1e-2
     basis_order: int = 32
     quad_order: int | None = None
     K: int = 300
@@ -56,6 +57,69 @@ def _kappa_dt(kappa: float, n_obs: int) -> float:
     if n_obs <= 1:
         return float(kappa)
     return float(kappa) / float(n_obs - 1)
+
+
+def _spectral_loglik_failed(value: float) -> bool:
+    return (not np.isfinite(value)) or float(value) <= -1e9
+
+
+def _spectral_neg_loglik_failed(value: float) -> bool:
+    return (not np.isfinite(value)) or float(value) >= 1e9
+
+
+def _grid_neg_loglik_failed(value: float) -> bool:
+    return (not np.isfinite(value)) or float(value) >= 1e9
+
+
+def _matrix_diagnostics(kappa, mu, nu, n_obs, cfg: AutoTMConfig) -> dict:
+    grid = TMGrid(
+        kappa, mu, nu, n_obs,
+        K=cfg.K,
+        grid_range=cfg.grid_range,
+        grid_method=cfg.grid_method,
+        adaptive=cfg.adaptive,
+        pts_per_sigma=cfg.pts_per_sigma,
+        transition_method="matrix",
+        max_K=cfg.max_K,
+        r_gh=cfg.r_gh,
+        gh_order=cfg.gh_order,
+    )
+    return grid.diagnostics()
+
+
+def _grid_loglik(kappa, mu, nu, u, copula, cfg: AutoTMConfig,
+                 transition_method: str) -> float:
+    neg_ll = tm_loglik(
+        kappa, mu, nu, u, copula,
+        K=cfg.K,
+        grid_range=cfg.grid_range,
+        grid_method=cfg.grid_method,
+        adaptive=cfg.adaptive,
+        pts_per_sigma=cfg.pts_per_sigma,
+        transition_method=transition_method,
+        max_K=cfg.max_K,
+        r_gh=cfg.r_gh,
+        gh_order=cfg.gh_order,
+    )
+    return -float(neg_ll)
+
+
+def _grid_loglik_info(kappa, mu, nu, u, copula, cfg: AutoTMConfig,
+                      transition_method: str) -> tuple[float, dict]:
+    ll = _grid_loglik(kappa, mu, nu, u, copula, cfg, transition_method)
+    grid = TMGrid(
+        kappa, mu, nu, len(u),
+        K=cfg.K,
+        grid_range=cfg.grid_range,
+        grid_method=cfg.grid_method,
+        adaptive=cfg.adaptive,
+        pts_per_sigma=cfg.pts_per_sigma,
+        transition_method=transition_method,
+        max_K=cfg.max_K,
+        r_gh=cfg.r_gh,
+        gh_order=cfg.gh_order,
+    )
+    return ll, grid.diagnostics()
 
 
 def select_auto_backend(kappa: float, n_obs: int,
@@ -87,12 +151,12 @@ def auto_loglik_with_info(kappa, mu, nu, u, copula,
     n_obs = len(u)
     kdt = _kappa_dt(kappa, n_obs)
     backend = select_auto_backend(kappa, n_obs, cfg)
+    requested_method = normalize_ou_transition_method(cfg.transition_method)
 
     info = asdict(cfg)
     info.update({
         "backend": backend,
-        "transition_method": normalize_ou_transition_method(
-            cfg.transition_method),
+        "transition_method": requested_method,
         "kappa_dt": float(kdt),
         "n_obs": int(n_obs),
     })
@@ -107,43 +171,39 @@ def auto_loglik_with_info(kappa, mu, nu, u, copula,
             quad_order=quad_order,
         )
         info["quad_order_used"] = int(quad_order)
-        if np.isfinite(ll) or info["transition_method"] != "auto":
+        if (not _spectral_loglik_failed(ll)) or info["transition_method"] != "auto":
             return ll, info
         info["fallback_from"] = "spectral"
-        backend = "local"
+        info["fallback_chain"] = ["spectral"]
+        backend = "matrix"
         info["backend"] = backend
 
     transition_method = "local" if backend == "local" else "matrix"
-    neg_ll = tm_loglik(
-        kappa, mu, nu, u, copula,
-        K=cfg.K,
-        grid_range=cfg.grid_range,
-        grid_method=cfg.grid_method,
-        adaptive=cfg.adaptive,
-        pts_per_sigma=cfg.pts_per_sigma,
-        transition_method=transition_method,
-        max_K=cfg.max_K,
-        r_gh=cfg.r_gh,
-        gh_order=cfg.gh_order,
-    )
-    ll = -float(neg_ll)
-
     try:
-        grid = TMGrid(
-            kappa, mu, nu, n_obs,
-            K=cfg.K,
-            grid_range=cfg.grid_range,
-            grid_method=cfg.grid_method,
-            adaptive=cfg.adaptive,
-            pts_per_sigma=cfg.pts_per_sigma,
-            transition_method=transition_method,
-            max_K=cfg.max_K,
-            r_gh=cfg.r_gh,
-            gh_order=cfg.gh_order,
-        )
-        info.update(grid.diagnostics())
+        ll, diag = _grid_loglik_info(
+            kappa, mu, nu, u, copula, cfg, transition_method)
+        info.update(diag)
     except Exception:
-        pass
+        ll = -1e10
+
+    if (requested_method == "auto"
+            and backend == "matrix"
+            and (
+                _grid_neg_loglik_failed(-ll)
+                or bool(info.get("adaptive_was_capped", False))
+            )):
+        reason = "capped" if info.get("adaptive_was_capped", False) else "failed"
+        info["matrix_fallback_reason"] = reason
+        info.setdefault("fallback_chain", []).append("matrix")
+        info["fallback_from"] = "matrix"
+        backend = "local"
+        info["backend"] = backend
+        try:
+            ll, diag = _grid_loglik_info(
+                kappa, mu, nu, u, copula, cfg, "local")
+            info.update(diag)
+        except Exception:
+            ll = -1e10
 
     return ll, info
 
@@ -157,10 +217,17 @@ def auto_loglik(kappa, mu, nu, u, copula,
 
 def auto_neg_loglik(*args, **kwargs):
     """Minus log-likelihood wrapper for optimizers."""
-    value = auto_loglik(*args, **kwargs)
+    value, _ = auto_neg_loglik_info(*args, **kwargs)
+    return value
+
+
+def auto_neg_loglik_info(kappa, mu, nu, u, copula,
+                         config: AutoTMConfig | None = None):
+    """Minus log-likelihood wrapper plus backend diagnostics."""
+    value, info = auto_loglik_with_info(kappa, mu, nu, u, copula, config)
     if not np.isfinite(value):
-        return 1e10
-    return -value
+        return 1e10, info
+    return -value, info
 
 
 def auto_neg_loglik_with_grad(kappa, mu, nu, u, copula,
@@ -171,11 +238,27 @@ def auto_neg_loglik_with_grad(kappa, mu, nu, u, copula,
     This matches the existing TM analytical-gradient convention: it does not
     differentiate through adaptive grid-size or method-switch decisions.
     """
+    value, grad, _ = auto_neg_loglik_with_grad_info(
+        kappa, mu, nu, u, copula, config)
+    return value, grad
+
+
+def auto_neg_loglik_with_grad_info(kappa, mu, nu, u, copula,
+                                   config: AutoTMConfig | None = None):
+    """Automatic-dispatch objective, gradient, and backend diagnostics."""
     cfg = config or AutoTMConfig()
     u = as_float64_array(u)
     n_obs = len(u)
+    kdt = _kappa_dt(kappa, n_obs)
     method = normalize_ou_transition_method(cfg.transition_method)
     backend = select_auto_backend(kappa, n_obs, cfg)
+    info = asdict(cfg)
+    info.update({
+        "backend": backend,
+        "transition_method": method,
+        "kappa_dt": float(kdt),
+        "n_obs": int(n_obs),
+    })
 
     if backend == "spectral":
         quad_order = cfg.quad_order
@@ -186,14 +269,18 @@ def auto_neg_loglik_with_grad(kappa, mu, nu, u, copula,
             basis_order=cfg.basis_order,
             quad_order=quad_order,
         )
-        if np.isfinite(out[0]) and float(out[0]) < 1e9:
-            return out
+        info["quad_order_used"] = int(quad_order)
+        if not _spectral_neg_loglik_failed(out[0]):
+            return out[0], out[1], info
         if method != "auto":
-            return out
-        backend = "local"
+            return out[0], out[1], info
+        info["fallback_from"] = "spectral"
+        info["fallback_chain"] = ["spectral"]
+        backend = "matrix"
+        info["backend"] = backend
 
     transition_method = "local" if backend == "local" else "matrix"
-    return tm_loglik_with_grad(
+    out = tm_loglik_with_grad(
         kappa, mu, nu, u, copula,
         K=cfg.K,
         grid_range=cfg.grid_range,
@@ -205,3 +292,35 @@ def auto_neg_loglik_with_grad(kappa, mu, nu, u, copula,
         r_gh=cfg.r_gh,
         gh_order=cfg.gh_order,
     )
+    if method != "auto" or backend != "matrix":
+        return out[0], out[1], info
+
+    matrix_capped = False
+    try:
+        diag = _matrix_diagnostics(kappa, mu, nu, n_obs, cfg)
+        info.update(diag)
+        matrix_capped = bool(diag.get("adaptive_was_capped", False))
+    except Exception:
+        matrix_capped = True
+    if not matrix_capped and not _grid_neg_loglik_failed(out[0]):
+        return out[0], out[1], info
+
+    reason = "capped" if matrix_capped else "failed"
+    info["matrix_fallback_reason"] = reason
+    info.setdefault("fallback_chain", []).append("matrix")
+    info["fallback_from"] = "matrix"
+    info["backend"] = "local"
+
+    out = tm_loglik_with_grad(
+        kappa, mu, nu, u, copula,
+        K=cfg.K,
+        grid_range=cfg.grid_range,
+        grid_method=cfg.grid_method,
+        adaptive=cfg.adaptive,
+        pts_per_sigma=cfg.pts_per_sigma,
+        transition_method="local",
+        max_K=cfg.max_K,
+        r_gh=cfg.r_gh,
+        gh_order=cfg.gh_order,
+    )
+    return out[0], out[1], info

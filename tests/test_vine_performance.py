@@ -32,30 +32,31 @@ def _skip_unless_enabled():
 
 @pytest.mark.data
 @pytest.mark.benchmark
-def test_rvine_mle_conditional_grid_predict_speed_smoke():
+def test_rvine_mle_conditional_suffix_predict_speed_smoke():
     _skip_unless_enabled()
     u = _example_u()
     vine = RVineCopula()
     vine.fit(u, method="mle")
 
     t0 = time.perf_counter()
-    out = vine.predict(
+    out, diagnostics = vine.predict(
         1000,
         u=u,
-        given={0: 0.2, 3: 0.8},
+        given={0: 0.2, 1: 0.8},
         horizon="next",
-        quad_order=4,
-        conditional_method="grid",
+        rng=np.random.default_rng(20260602),
+        return_diagnostics=True,
     )
     elapsed = time.perf_counter() - t0
 
     assert out.shape == (1000, 6)
+    assert diagnostics["conditional_method"] == "suffix"
     assert elapsed < 2.0
 
 
 @pytest.mark.data
 @pytest.mark.benchmark
-def test_rvine_scar_conditional_grid_cached_predict_speed_smoke():
+def test_rvine_scar_conditional_suffix_cached_predict_speed_smoke():
     _skip_unless_enabled()
     u = _example_u()
     vine = RVineCopula()
@@ -63,22 +64,22 @@ def test_rvine_scar_conditional_grid_cached_predict_speed_smoke():
     vine.predict(
         10,
         u=u,
-        given={0: 0.2, 3: 0.8},
+        given={0: 0.2, 1: 0.8},
         horizon="next",
-        quad_order=4,
-        conditional_method="grid",
+        rng=np.random.default_rng(20260602),
     )
 
     t0 = time.perf_counter()
-    out = vine.predict(
+    out, diagnostics = vine.predict(
         1000,
         u=u,
-        given={0: 0.2, 3: 0.8},
+        given={0: 0.2, 1: 0.8},
         horizon="next",
-        quad_order=4,
-        conditional_method="grid",
+        rng=np.random.default_rng(20260603),
+        return_diagnostics=True,
     )
     elapsed = time.perf_counter() - t0
 
     assert out.shape == (1000, 6)
+    assert diagnostics["conditional_method"] == "suffix"
     assert elapsed < 2.0

@@ -18,6 +18,8 @@ matrix method.
 - **R-vine conditional sampling**: exact suffix/rebuild path plus arbitrary
   runtime-DAG + MCMC fallback
 - **Estimation**: MLE, GAS, SCAR-TM-OU, SCAR-TM-JACOBI
+- **SCAR-TM-OU backend**: automatic C++ acceleration where supported, with
+  Python fallback
 - **Prediction controls**: `PredictConfig`, diagnostics, dynamic conditioning,
   reproducible `rng`
 - **Transform functions**: `softplus` (default), `xtanh` (symmetric)

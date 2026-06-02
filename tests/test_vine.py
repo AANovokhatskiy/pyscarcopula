@@ -119,6 +119,7 @@ class TestPairCopulaEdge:
             copula_name=cop.name,
             success=True,
             params=ou_params(1.0, 0.0, 0.5),
+            backend='python',
         )
         u_pair = np.array([[0.2, 0.3], [0.4, 0.6]])
         calls = []
@@ -663,4 +664,3 @@ class TestVineSamplePredict:
         assert samples.shape == (20, d)
         np.testing.assert_allclose(samples[:, 1], 0.55)
         assert np.all((samples[:, [0, 2]] > 0) & (samples[:, [0, 2]] < 1))
-

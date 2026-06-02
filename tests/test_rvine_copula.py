@@ -315,6 +315,7 @@ def _scar_tm_gaussian_pair(kappa=1.0, mu=0.0, nu=4.0):
         K=41,
         grid_range=3.0,
         pts_per_sigma=2,
+        backend='python',
     )
     return PairCopula(
         copula=copula,
@@ -2136,6 +2137,7 @@ class TestPredict:
             params=ou_params(1.0, 0.0, 0.5),
             K=5,
             grid_range=2.0,
+            backend='python',
         )
         edge = PairCopula(
             copula=cop,

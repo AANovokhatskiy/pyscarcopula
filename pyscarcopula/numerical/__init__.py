@@ -48,7 +48,9 @@ from pyscarcopula.numerical.auto_tm import (
     auto_loglik,
     auto_loglik_with_info,
     auto_neg_loglik,
+    auto_neg_loglik_info,
     auto_neg_loglik_with_grad,
+    auto_neg_loglik_with_grad_info,
 )
 from pyscarcopula.numerical.ou_kernels import calculate_dwt
 from pyscarcopula.numerical.predictive_tm import sample_grid_distribution
@@ -75,7 +77,8 @@ __all__ = [
     'jacobi_state_distribution',
     'AutoTMConfig', 'select_auto_backend',
     'auto_loglik', 'auto_loglik_with_info',
-    'auto_neg_loglik', 'auto_neg_loglik_with_grad',
+    'auto_neg_loglik', 'auto_neg_loglik_info',
+    'auto_neg_loglik_with_grad', 'auto_neg_loglik_with_grad_info',
     'tm_forward_predictive_mean',
     'tm_forward_rosenblatt', 'tm_forward_mixture_h',
     'tm_xT_distribution',

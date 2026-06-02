@@ -38,13 +38,36 @@ Supported estimation methods:
 pip install pyscarcopula
 ```
 
+The package includes a pybind11 C++ backend for SCAR-TM-OU. Wheels do not need
+a local compiler. Source and editable installs require a C++17 compiler:
+
+* Windows: Microsoft C++ Build Tools / Visual Studio Build Tools
+* Linux: GCC or Clang with the usual Python development headers
+* macOS: Xcode Command Line Tools
+
 For local development:
 
 ```bash
 git clone https://github.com/AANovokhatskiy/pyscarcopula
 cd pyscarcopula
 pip install -e ".[test]"
-pytest
+```
+
+To run the full test suite from the source tree, build the C++ extension in
+place first:
+
+```bash
+python setup.py build_ext --inplace
+pytest --run-validation
+```
+
+`pytest --run-validation` enables optional validation tests. C++ backend tests
+are skipped when the compiled extension is unavailable.
+
+Optional benchmark checks are disabled by default. Enable them explicitly:
+
+```bash
+PYSCA_RUN_BENCHMARKS=1 pytest -m benchmark
 ```
 
 Core dependencies: `numpy`, `numba`, `scipy`, `joblib`, `tqdm`.
@@ -126,7 +149,26 @@ probabilists-Hermite basis with eigenvalues `rho**n`,
 truncated basis by Gauss-Hermite quadrature. This turns the latent path
 integral into repeated small matrix multiplications and diagonal scalings. See
 [`docs/guide/performance.md`](docs/guide/performance.md) for the details and
-the available `transition_method` values.
+the available `transition_method` values, including the matrix/local numerical
+fallbacks used when a spectral evaluation is not accepted.
+
+The default SCAR-TM-OU backend is `auto`. No extra argument is needed:
+supported copula/transform combinations use the C++ extension when it is
+installed, while unsupported combinations fall back to Python/Numba.
+
+```python
+result = fit(copula, u, method="scar-tm-ou")
+```
+
+Use `backend="python"` only when you want to force the Python/Numba path, for
+example for debugging or numerical comparisons:
+
+```python
+result = fit(copula, u, method="scar-tm-ou", backend="python")
+```
+
+See [`docs/guide/performance.md`](docs/guide/performance.md) for supported C++
+families and numerical options.
 
 Vine copulas decompose a `d`-dimensional dependence model into bivariate copulas
 arranged in a sequence of trees. R-vines choose the tree structure from data
