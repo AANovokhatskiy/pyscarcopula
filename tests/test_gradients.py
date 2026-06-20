@@ -7,8 +7,33 @@ from pyscarcopula import (
     GumbelCopula, ClaytonCopula, FrankCopula, JoeCopula,
 )
 from pyscarcopula._utils import broadcast
-from pyscarcopula.numerical.tm_gradient import tm_loglik_with_grad
+from pyscarcopula.numerical import _cpp_scar_ou
+from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
 from pyscarcopula.numerical.tm_functions import tm_loglik
+
+
+def tm_loglik_with_grad(
+        kappa, mu, nu, u, copula, **config_kwargs):
+    config_values = {
+        "transition_method": "matrix",
+        "K": 300,
+        "grid_range": 5.0,
+        "grid_method": "auto",
+        "adaptive": True,
+        "pts_per_sigma": 4,
+        "max_K": None,
+        "r_gh": 3.0,
+        "gh_order": 5,
+    }
+    config_values.update(config_kwargs)
+    return _cpp_scar_ou.neg_loglik_with_grad(
+        kappa,
+        mu,
+        nu,
+        u,
+        copula,
+        AutoTMConfig(**config_values),
+    )
 
 
 # ═══════════════════════════════════════════════════════════

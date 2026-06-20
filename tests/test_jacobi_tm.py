@@ -253,7 +253,12 @@ def test_jacobi_fixed_grid_gradient_matches_finite_difference():
     np.testing.assert_allclose(grad, grad_num, rtol=2e-4, atol=2e-5)
 
 
-def test_jacobi_spectral_matrix_gradient_matches_finite_difference():
+@pytest.mark.parametrize(
+    "transition_method",
+    ["local", "spectral_matrix"],
+)
+def test_jacobi_moving_grid_gradient_matches_finite_difference(
+        transition_method):
     u = np.array([
         [0.18, 0.31],
         [0.34, 0.42],
@@ -265,7 +270,7 @@ def test_jacobi_spectral_matrix_gradient_matches_finite_difference():
     kwargs = {
         "basis_order": 3,
         "quad_order": 24,
-        "transition_method": "spectral_matrix",
+        "transition_method": transition_method,
     }
 
     value, grad = jacobi_matrix_neg_loglik_with_grad(

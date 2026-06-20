@@ -10,6 +10,12 @@ Single source of truth for:
 import numpy as np
 from numba import njit
 
+from pyscarcopula._constants import (
+    H_FUNCTION_EPS,
+    PSEUDO_OBS_EPS,
+    ROSENBLATT_OUTPUT_EPS,
+)
+
 
 # ══════════════════════════════════════════════════════════════════
 # Broadcasting helper (was duplicated across copula/base.py and
@@ -83,9 +89,38 @@ def pobs(data):
 # Clipping
 # ══════════════════════════════════════════════════════════════════
 
-def clip_unit(x, eps=1e-10):
+def clip_unit(x, eps=PSEUDO_OBS_EPS):
     """Clip array to (eps, 1-eps). Used for pseudo-obs safety."""
     return np.clip(x, eps, 1.0 - eps)
+
+
+def clip_pseudo_observations(x):
+    """Clip pseudo-observations before an inverse Gaussian/Student CDF."""
+    return np.clip(x, PSEUDO_OBS_EPS, 1.0 - PSEUDO_OBS_EPS)
+
+
+def clip_pseudo_observations_no_copy(x):
+    """Return a float64 pseudo-observation array, copying only if clipped."""
+    if type(x) is np.ndarray and x.dtype == np.float64:
+        values = x
+    else:
+        values = np.asarray(x, dtype=np.float64)
+    if np.all(
+            (values > PSEUDO_OBS_EPS)
+            & (values < 1.0 - PSEUDO_OBS_EPS)):
+        return values
+    return clip_pseudo_observations(values)
+
+
+def clip_h_function_values(x):
+    """Clip h/inverse-h values to the native numerical safety interval."""
+    return np.clip(x, H_FUNCTION_EPS, 1.0 - H_FUNCTION_EPS)
+
+
+def clip_rosenblatt_output(x):
+    """Clip final Rosenblatt values before GoF normal quantiles."""
+    return np.clip(
+        x, ROSENBLATT_OUTPUT_EPS, 1.0 - ROSENBLATT_OUTPUT_EPS)
 
 
 # ══════════════════════════════════════════════════════════════════

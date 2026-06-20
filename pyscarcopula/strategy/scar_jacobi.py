@@ -26,12 +26,19 @@ from pyscarcopula.numerical.jacobi_tm import (
     jacobi_matrix_state_distribution,
     jacobi_neg_loglik,
     jacobi_state_distribution,
+    jacobi_transition_matrix,
 )
 from pyscarcopula.numerical._transition_methods import (
     normalize_jacobi_strategy_transition_method,
 )
-from pyscarcopula.strategy._base import register_strategy
+from pyscarcopula.numerical import copula_native
+from pyscarcopula.strategy._base import copula_dimension, register_strategy
 from pyscarcopula.strategy.predict_helpers import sample_predictive
+from pyscarcopula.strategy.initial_point import (
+    _explicit_initialization_diagnostics,
+    _initialization_attempt,
+    _initialization_diagnostics,
+)
 
 
 _INVALID_OBJECTIVE_THRESHOLD = 1e9
@@ -82,7 +89,18 @@ def _objective_is_invalid(value):
 
 @register_strategy('SCAR-TM-JACOBI')
 class SCARJacobiStrategy:
-    """TM estimation for a Jacobi-diffusion Kendall tau model."""
+    """TM estimation for a Jacobi-diffusion Kendall tau model.
+
+    Parameters
+    ----------
+    analytical_grad : bool, default False
+        Pass a model-provided Jacobian to the optimizer.  ``local_fixed``
+        supplies fully analytical setup and filtering derivatives.  ``local``
+        and ``spectral_matrix`` (including either backend selected by
+        ``auto``) use finite differences for setup arrays followed by
+        analytical filtering derivatives.  ``spectral_coeff`` does not
+        support this option.
+    """
 
     def __init__(self, config: NumericalConfig | None = None,
                  basis_order: int = 32,
@@ -201,6 +219,63 @@ class SCARJacobiStrategy:
         return jacobi_matrix_neg_loglik_with_grad(
             kappa, m, xi, u, copula, **self._matrix_backend_kwargs())
 
+    def _selected_transition_backend(self, kappa, m, xi, n_obs):
+        if not self._uses_matrix_backend():
+            return "spectral_coeff"
+        try:
+            _, _, _, diagnostics = jacobi_transition_matrix(
+                kappa,
+                m,
+                xi,
+                n_obs=n_obs,
+                basis_order=self.basis_order,
+                quad_order=self.quad_order,
+                transition_method=self.transition_method,
+                clip_negative=self.clip_negative,
+                negative_mass_tol=self.negative_mass_tol,
+                gh_order=self.gh_order,
+                return_diagnostics=True,
+            )
+        except Exception:
+            return self.transition_method
+        return str(diagnostics.get(
+            "transition_method", self.transition_method))
+
+    def _gradient_diagnostics(self, selected_backend):
+        requested = self.analytical_grad
+        if not requested:
+            return {
+                "gradient_requested": False,
+                "gradient_used": False,
+                "analytical_grad_requested": False,
+                "analytical_grad_used": False,
+                "model_score": "not_applicable",
+                "optimizer_gradient": "numerical",
+                "gradient_kind": "numerical",
+                "setup_derivative": "not_provided",
+                "filter_derivative": "not_provided_to_optimizer",
+                "transition_backend_requested": self.transition_method,
+                "transition_backend": selected_backend,
+            }
+
+        fully_analytical = selected_backend == "local_fixed"
+        return {
+            "gradient_requested": True,
+            "gradient_used": True,
+            "analytical_grad_requested": True,
+            "analytical_grad_used": True,
+            "model_score": "not_applicable",
+            "optimizer_gradient": "model_provided",
+            "gradient_kind": (
+                "analytical" if fully_analytical else "semi_analytical"),
+            "setup_derivative": (
+                "analytical" if fully_analytical
+                else "numerical_finite_difference"),
+            "filter_derivative": "analytical",
+            "transition_backend_requested": self.transition_method,
+            "transition_backend": selected_backend,
+        }
+
     def _loglik(self, kappa, m, xi, u, copula):
         if not self._shape_is_supported(kappa, m, xi):
             return -np.inf
@@ -246,7 +321,11 @@ class SCARJacobiStrategy:
     @staticmethod
     def _check_kendall_mapping(copula):
         try:
-            copula.tau_to_param(np.array([0.5], dtype=np.float64))
+            if copula_native.supported(copula):
+                copula_native.tau_to_param(
+                    copula, np.array([0.5], dtype=np.float64))
+            else:
+                copula.tau_to_param(np.array([0.5], dtype=np.float64))
             return
         except NotImplementedError:
             raise
@@ -258,19 +337,48 @@ class SCARJacobiStrategy:
 
     def _initial_point(self, copula, u):
         if not self.smart_init:
-            return np.array([1.0, 0.5, 0.2], dtype=np.float64)
+            alpha0 = np.array([1.0, 0.5, 0.2], dtype=np.float64)
+            diagnostics = _initialization_diagnostics(
+                'constant_default',
+                'constant_default',
+                alpha0,
+                [_initialization_attempt(
+                    'constant_default', success=True)],
+            )
+            return alpha0, diagnostics
 
         try:
             from pyscarcopula.strategy.mle import MLEStrategy
             mle = MLEStrategy(config=self.config)
             mle_result = mle.fit(copula, u)
-            tau_hat = float(np.asarray(
-                copula.param_to_tau(np.array([mle_result.copula_param]))
-            )[0])
+            parameter = np.array([mle_result.copula_param])
+            if copula_native.supported(copula):
+                tau_hat = float(
+                    copula_native.param_to_tau(copula, parameter)[0])
+            else:
+                tau_hat = float(np.asarray(
+                    copula.param_to_tau(parameter))[0])
             m0 = float(np.clip(tau_hat, self.tau_eps, 1.0 - self.tau_eps))
-        except Exception:
+            mle_attempt = _initialization_attempt(
+                'static_mle_tau', success=True)
+            selected_method = 'static_mle_tau'
+        except Exception as exc:
             m0 = 0.5
-        return np.array([1.0, m0, 0.2], dtype=np.float64)
+            mle_attempt = _initialization_attempt(
+                'static_mle_tau', success=False, error=exc)
+            selected_method = 'm0_default'
+        alpha0 = np.array([1.0, m0, 0.2], dtype=np.float64)
+        attempts = [mle_attempt]
+        if selected_method == 'm0_default':
+            attempts.append(_initialization_attempt(
+                'm0_default', success=True))
+        diagnostics = _initialization_diagnostics(
+            'static_mle_tau',
+            selected_method,
+            alpha0,
+            attempts,
+        )
+        return alpha0, diagnostics
 
     def fit(self, copula, u: np.ndarray,
             alpha0: np.ndarray | None = None,
@@ -295,7 +403,9 @@ class SCARJacobiStrategy:
         self._check_kendall_mapping(copula)
         u = np.asarray(u, dtype=np.float64)
         if alpha0 is None:
-            alpha0 = self._initial_point(copula, u)
+            alpha0, initialization = self._initial_point(copula, u)
+        else:
+            initialization = _explicit_initialization_diagnostics(alpha0)
         alpha0 = np.asarray(alpha0, dtype=np.float64)
         raw0 = _physical_to_raw(alpha0, self.tau_eps)
         bounds = self._raw_bounds()
@@ -370,6 +480,11 @@ class SCARJacobiStrategy:
         if verbose:
             print(f"SCAR-TM-JACOBI alpha={alpha}, logL={-final_fun:.4f}")
 
+        selected_backend = self._selected_transition_backend(
+            alpha[0], alpha[1], alpha[2], len(u))
+        diagnostics = self._gradient_diagnostics(selected_backend)
+        diagnostics["initialization"] = initialization
+
         return LatentResult(
             log_likelihood=-float(final_fun),
             method='SCAR-TM-JACOBI',
@@ -382,6 +497,7 @@ class SCARJacobiStrategy:
             gh_order=self.gh_order if self._uses_matrix_backend() else None,
             spectral_basis_order=self.basis_order,
             spectral_quad_order=self.quad_order,
+            diagnostics=diagnostics,
         )
 
     def log_likelihood(self, copula, u: np.ndarray,
@@ -429,7 +545,7 @@ class SCARJacobiStrategy:
             rng = np.random.default_rng()
         r_samples = self.predictive_params(
             copula, u, result, n, rng=rng, **kwargs)
-        d = u.shape[1] if u is not None and np.ndim(u) == 2 else 2
+        d = copula_dimension(copula, u)
         return sample_predictive(
             copula, n, r_samples, given=kwargs.get('given'), rng=rng, d=d)
 
@@ -484,12 +600,20 @@ class SCARJacobiStrategy:
 
         tau_grid = np.asarray(state.z_grid, dtype=np.float64)
         prob = np.asarray(state.prob, dtype=np.float64)
-        theta = copula.tau_to_param(tau_grid)
+        native = copula_native.supported(copula)
+        if native:
+            theta = copula_native.tau_to_param(copula, tau_grid)
+        else:
+            theta = copula.tau_to_param(tau_grid)
         if self.theta_cap is not None:
             theta = np.minimum(theta, float(self.theta_cap))
         u1 = np.full(len(theta), float(u[0, 0]), dtype=np.float64)
         u2 = np.full(len(theta), float(u[0, 1]), dtype=np.float64)
-        log_w = np.asarray(copula.log_pdf(u1, u2, theta), dtype=np.float64)
+        if native:
+            log_w = copula_native.log_pdf(copula, u1, u2, theta)
+        else:
+            log_w = np.asarray(
+                copula.log_pdf(u1, u2, theta), dtype=np.float64)
         finite = np.isfinite(log_w)
         if not np.any(finite):
             return state
@@ -515,7 +639,10 @@ class SCARJacobiStrategy:
             rng = np.random.default_rng()
         if state.kind == 'stationary_jacobi':
             tau = rng.beta(state.metadata['alpha'], state.metadata['beta'], n)
-            theta = copula.tau_to_param(tau)
+            if copula_native.supported(copula):
+                theta = copula_native.tau_to_param(copula, tau)
+            else:
+                theta = copula.tau_to_param(tau)
             if self.theta_cap is not None:
                 theta = np.minimum(theta, float(self.theta_cap))
             return theta
@@ -523,7 +650,10 @@ class SCARJacobiStrategy:
         from pyscarcopula.numerical.predictive_tm import sample_grid_distribution
         mode = kwargs.get('predictive_r_mode')
         tau = sample_grid_distribution(state.z_grid, state.prob, n, rng, mode=mode)
-        theta = copula.tau_to_param(tau)
+        if copula_native.supported(copula):
+            theta = copula_native.tau_to_param(copula, tau)
+        else:
+            theta = copula.tau_to_param(tau)
         if self.theta_cap is not None:
             theta = np.minimum(theta, float(self.theta_cap))
         return theta

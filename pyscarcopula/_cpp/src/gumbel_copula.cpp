@@ -137,16 +137,8 @@ double gumbel_h_unrotated(double u, double v, double r) {
 }
 
 double gumbel_h_rotated(double u, double v, double r, int rotation) {
-    if (rotation == 0) {
-        return gumbel_h_unrotated(u, v, r);
-    }
-    if (rotation == 90) {
-        return 1.0 - gumbel_h_unrotated(1.0 - u, v, r);
-    }
-    if (rotation == 180) {
-        return 1.0 - gumbel_h_unrotated(1.0 - u, 1.0 - v, r);
-    }
-    return gumbel_h_unrotated(u, 1.0 - v, r);
+    return evaluate_rotated_conditional(
+        u, v, r, rotation, gumbel_h_unrotated);
 }
 
 double gumbel_h_inverse_unrotated(double q, double given, double r) {
@@ -205,16 +197,8 @@ double gumbel_h_inverse_unrotated(double q, double given, double r) {
 }
 
 double gumbel_h_inverse_rotated(double q, double given, double r, int rotation) {
-    if (rotation == 0) {
-        return gumbel_h_inverse_unrotated(q, given, r);
-    }
-    if (rotation == 90) {
-        return 1.0 - gumbel_h_inverse_unrotated(1.0 - q, given, r);
-    }
-    if (rotation == 180) {
-        return 1.0 - gumbel_h_inverse_unrotated(1.0 - q, 1.0 - given, r);
-    }
-    return gumbel_h_inverse_unrotated(q, 1.0 - given, r);
+    return evaluate_rotated_conditional(
+        q, given, r, rotation, gumbel_h_inverse_unrotated);
 }
 
 }  // namespace scar_internal

@@ -1,16 +1,7 @@
-"""
-pyscarcopula.strategy.scar_tm — SCAR-TM-OU estimation strategy.
+"""Native SCAR-TM-OU estimation strategy.
 
-Transfer matrix method for deterministic likelihood evaluation of
-the stochastic copula model with OU latent process.
-
-This strategy wraps the numerical modules (tm_grid, tm_gradient,
-tm_functions) into the FitStrategy interface, producing LatentResult.
-
-All grid parameters (K, grid_range, pts_per_sigma, adaptive, grid_method)
-and optimizer parameters (gtol, ftol, maxfun, maxiter, maxls, eps,
-analytical_grad, smart_init) are preserved
-from the original OULatentProcess.fit() method.
+Python owns optimizer orchestration and result construction. The compiled
+evaluator owns likelihood, gradients, forward filtering, and state outputs.
 """
 
 import numpy as np
@@ -21,32 +12,37 @@ from pyscarcopula._types import (
     ou_params,
     PredictiveState,
 )
-from pyscarcopula.strategy._base import register_strategy
-from pyscarcopula.numerical.tm_functions import (
-    tm_loglik, tm_forward_predictive_mean,
-    tm_forward_rosenblatt, tm_forward_mixture_h,
+from pyscarcopula.strategy._base import (
+    copula_dimension,
+    get_copula_capabilities,
+    register_strategy,
 )
-from pyscarcopula.numerical.tm_gradient import tm_loglik_with_grad
-from pyscarcopula.numerical.auto_tm import (
+from pyscarcopula.numerical._scar_ou_config import (
     AutoTMConfig,
-    auto_loglik,
-    auto_neg_loglik,
-    auto_neg_loglik_info,
-    auto_neg_loglik_with_grad_info,
+    validate_cpp_config,
 )
 from pyscarcopula.numerical._arrays import as_float64_array
 from pyscarcopula.numerical._transition_methods import (
     normalize_ou_transition_method,
 )
 from pyscarcopula.strategy.predict_helpers import sample_predictive
-from pyscarcopula.numerical import _cpp_scar_ou
+from pyscarcopula.strategy.initial_point import (
+    _explicit_initialization_diagnostics,
+    _fallback_initialization_diagnostics,
+    _initialization_attempt,
+    _initialization_diagnostics,
+    smart_initial_point,
+)
+from pyscarcopula.numerical import _cpp_scar_ou, copula_native
+from pyscarcopula.copula.multivariate.corr_param import (
+    _corr_gradient_to_raw_params,
+)
 
 
 _INVALID_OBJECTIVE_THRESHOLD = 1e9
 
 _DIAGNOSTIC_COUNTERS = (
     "objective_evaluations",
-    "python_evaluations",
     "cpp_evaluations",
     "spectral_evaluations",
     "spectral_failures",
@@ -67,17 +63,10 @@ _ADAPTIVE_SPECTRAL_BASIS_ORDER = (
 )
 
 
-def _normalize_backend(value):
-    backend = str(value).lower()
-    if backend not in {"python", "cpp", "auto"}:
-        raise ValueError("backend must be 'python', 'cpp', or 'auto'")
-    return backend
-
-
 def _normalize_spectral_basis_order(value):
     if isinstance(value, str):
         order = value.lower()
-        if order in {"adaptive", "auto"}:
+        if order == "auto":
             return "auto"
         try:
             value = int(order)
@@ -95,10 +84,71 @@ def _objective_is_invalid(value):
     return (not np.isfinite(value)) or float(value) >= _INVALID_OBJECTIVE_THRESHOLD
 
 
-def _new_backend_diagnostics(requested_backend: str, selected_engine: str) -> dict:
+def _resolve_initial_point(
+        copula, u, config, smart_init, verbose, alpha0):
+    """Return an OU initial point and common initialization diagnostics."""
+    if alpha0 is not None:
+        alpha = np.asarray(alpha0, dtype=np.float64)
+        return alpha, _explicit_initialization_diagnostics(alpha)
+
+    smart_diagnostics = None
+    if smart_init:
+        try:
+            alpha, info = smart_initial_point(
+                u, copula, verbose=verbose)
+            if verbose:
+                print(f"Smart init: {info.get('chosen_method')}, "
+                      f"alpha0={alpha}")
+            return alpha, info['initialization']
+        except Exception as exc:
+            smart_diagnostics = _initialization_diagnostics(
+                'automatic',
+                'failed',
+                np.array([1.0, 0.0, 1.0]),
+                [_initialization_attempt(
+                    'smart_initial_point', success=False, error=exc)],
+            )
+            smart_diagnostics['success'] = False
+            if verbose:
+                print(
+                    "Smart init failed "
+                    f"({type(exc).__name__}: {exc}); trying mle_default")
+
+    from pyscarcopula.strategy.mle import MLEStrategy
+    mle = MLEStrategy(config=config)
+    try:
+        mle_result = mle.fit(copula, u)
+        mu0 = float(np.atleast_1d(
+            copula.inv_transform(
+                np.atleast_1d(mle_result.copula_param))
+        )[0])
+        alpha = np.array([1.0, mu0, 1.0])
+    except Exception as exc:
+        if smart_diagnostics is not None:
+            _fallback_initialization_diagnostics(
+                smart_diagnostics,
+                'mle_default',
+                np.array([1.0, 0.0, 1.0]),
+                error=exc,
+            )
+        raise
+
+    if smart_diagnostics is None:
+        diagnostics = _initialization_diagnostics(
+            'mle_default',
+            'mle_default',
+            alpha,
+            [_initialization_attempt('mle_default', success=True)],
+        )
+    else:
+        diagnostics = _fallback_initialization_diagnostics(
+            smart_diagnostics, 'mle_default', alpha)
+    return alpha, diagnostics
+
+
+def _new_backend_diagnostics() -> dict:
     diagnostics = {name: 0 for name in _DIAGNOSTIC_COUNTERS}
-    diagnostics["requested_backend"] = requested_backend
-    diagnostics["selected_engine"] = selected_engine
+    diagnostics["selected_engine"] = "cpp"
     return diagnostics
 
 
@@ -170,6 +220,12 @@ def _projected_gradient_norm(x, grad, lower, upper):
     return float(np.max(np.abs(projected)))
 
 
+def _append_failure_message(message, reasons):
+    if not reasons:
+        return str(message)
+    return f"{message}; final validation failed: {'; '.join(reasons)}"
+
+
 @register_strategy('SCAR-TM-OU')
 class SCARTMStrategy:
     """Transfer matrix estimation for SCAR-OU model.
@@ -202,22 +258,29 @@ class SCARTMStrategy:
         Gauss-Hermite order for local GH transition.
     auto_small_kdt : float
         Threshold for selecting the local transition in auto mode.
-    spectral_basis_order : int or {'auto', 'adaptive'}
+    spectral_basis_order : int or {'auto'}
         Number of Hermite basis functions in the spectral likelihood.  The
         default ``'auto'`` policy selects 128, 96, 64, or 32 from the current
-        optimizer evaluation's ``kappa / (T - 1)``. ``'adaptive'`` is accepted
-        as a backwards-compatible alias.
+        optimizer evaluation's ``kappa / (T - 1)``.
     spectral_quad_order : int or None
         Gauss-Hermite quadrature order for spectral multiplication.
-    backend : {'auto', 'python', 'cpp'}
-        Numerical implementation.  'auto' uses C++ for supported SCAR-TM-OU
-        copula/transform combinations and otherwise uses Python.  'cpp'
-        requires the compiled extension and raises for unsupported models.
     analytical_grad : bool
         Use analytical gradient (default True).
         Reduces nfev by ~3-4x. Parameters are auto-rescaled.
     smart_init : bool
         Compute initial point via analytical heuristic (default True).
+    final_validation_abs_per_obs : float
+        Absolute cross-backend objective tolerance per observation.
+    final_validation_rel_tol : float
+        Relative cross-backend objective tolerance.
+    final_gradient_tolerance : float or None
+        Maximum projected-gradient norm for a successful final fit. When
+        omitted, the tolerance is derived from the optimizer ``gtol``.
+    final_growth_limit : float
+        Maximum allowed OU parameter growth relative to initialization.
+    final_rho_tolerance : float
+        Distance from zero or one below which the one-step OU correlation is
+        treated as numerically degenerate.
     """
 
     def __init__(self, config: NumericalConfig | None = None,
@@ -233,10 +296,18 @@ class SCARTMStrategy:
                  auto_small_kdt: float = 1e-2,
                  spectral_basis_order: int | str = "auto",
                  spectral_quad_order: int | None = None,
-                 backend: str = 'auto',
                  analytical_grad: bool = True,
                  smart_init: bool = True,
+                 final_validation_abs_per_obs: float = 5e-5,
+                 final_validation_rel_tol: float = 1e-5,
+                 final_gradient_tolerance: float | None = None,
+                 final_growth_limit: float = 1e8,
+                 final_rho_tolerance: float = 1e-15,
                  **kwargs):
+        if "backend" in kwargs:
+            raise TypeError(
+                "SCAR-TM-OU backend selection was removed; native execution "
+                "is always used")
         self.config = config or DEFAULT_CONFIG
         self.K = K if K is not None else self.config.default_K
         self.grid_range = grid_range if grid_range is not None else self.config.default_grid_range
@@ -252,12 +323,48 @@ class SCARTMStrategy:
         self.spectral_basis_order = _normalize_spectral_basis_order(
             spectral_basis_order)
         self.spectral_quad_order = spectral_quad_order
-        self.backend = _normalize_backend(backend)
         self.analytical_grad = analytical_grad
         self.smart_init = smart_init
-
-    def _uses_dispatcher(self):
-        return self.transition_method in {'auto', 'spectral'}
+        self.final_validation_abs_per_obs = float(
+            final_validation_abs_per_obs)
+        self.final_validation_rel_tol = float(final_validation_rel_tol)
+        self.final_gradient_tolerance = (
+            None if final_gradient_tolerance is None
+            else float(final_gradient_tolerance))
+        self.final_growth_limit = float(final_growth_limit)
+        self.final_rho_tolerance = float(final_rho_tolerance)
+        validation_options = {
+            "final_validation_abs_per_obs":
+                self.final_validation_abs_per_obs,
+            "final_validation_rel_tol": self.final_validation_rel_tol,
+            "final_growth_limit": self.final_growth_limit,
+            "final_rho_tolerance": self.final_rho_tolerance,
+        }
+        if self.final_gradient_tolerance is not None:
+            validation_options[
+                "final_gradient_tolerance"] = self.final_gradient_tolerance
+        for name, value in validation_options.items():
+            if not np.isfinite(value) or value <= 0.0:
+                raise ValueError(f"{name} must be a positive finite number")
+        validate_cpp_config(
+            AutoTMConfig(
+                    transition_method=self.transition_method,
+                    small_kdt=self.auto_small_kdt,
+                    basis_order=(
+                        32 if self.spectral_basis_order == "auto"
+                        else self.spectral_basis_order
+                    ),
+                    quad_order=self.spectral_quad_order,
+                    K=self.K,
+                    grid_range=self.grid_range,
+                    grid_method=self.grid_method,
+                    adaptive=self.adaptive,
+                    pts_per_sigma=self.pts_per_sigma,
+                    max_K=self.max_K,
+                    gh_order=self.gh_order,
+                    r_gh=self.r_gh,
+            )
+        )
 
     def _grid_transition_method(self):
         if self.transition_method == 'spectral':
@@ -327,17 +434,525 @@ class SCARTMStrategy:
             r_gh=self.r_gh,
         )
 
-    def _uses_cpp(self, copula, require=False):
-        if self.backend == 'python':
-            return False
-        if _cpp_scar_ou.supported(copula):
-            return True
-        if require or self.backend == 'cpp':
-            _cpp_scar_ou.ensure_supported(copula)
-            if not _cpp_scar_ou.available():
-                raise _cpp_scar_ou.CppUnavailable(
-                    "pyscarcopula C++ extension is not available")
-        return False
+    def _uses_cpp(self, copula):
+        _cpp_scar_ou.ensure_supported(copula)
+        _cpp_scar_ou.require_available()
+        return True
+
+    def _validate_final_fit(
+            self, result, final_params, initial_params, lower, upper,
+            selected_evaluator, validation_evaluator, selected_engine,
+            validation_engine, n_obs, optimizer_options,
+            correlation_validator=None):
+        """Re-evaluate and validate a candidate optimizer solution."""
+        final_params = np.asarray(final_params, dtype=np.float64).reshape(-1)
+        initial_params = np.asarray(initial_params, dtype=np.float64).reshape(-1)
+        lower = np.asarray(lower, dtype=np.float64).reshape(-1)
+        upper = np.asarray(upper, dtype=np.float64).reshape(-1)
+        reasons = []
+        diagnostics = {
+            "final_validation_passed": False,
+            "final_validation_reasons": (),
+            "final_selected_engine": selected_engine,
+            "final_validation_engine": validation_engine,
+        }
+
+        if final_params.size < 3 or not np.all(np.isfinite(final_params)):
+            reasons.append("final parameters are not finite")
+        elif final_params[0] <= 0.0 or final_params[2] <= 0.0:
+            reasons.append("final kappa and nu must be positive")
+
+        selected_value = np.nan
+        selected_grad = np.full(final_params.shape, np.nan)
+        if not reasons:
+            try:
+                selected_value, selected_grad = selected_evaluator(final_params)
+                selected_value = float(selected_value)
+                selected_grad = np.asarray(
+                    selected_grad, dtype=np.float64).reshape(-1)
+            except Exception as exc:
+                reasons.append(
+                    f"{selected_engine} final evaluation failed: {exc}")
+
+        diagnostics["final_selected_backend_value"] = selected_value
+        diagnostics["final_optimizer_value"] = float(result.fun)
+        if _objective_is_invalid(result.fun):
+            reasons.append("optimizer returned an invalid objective value")
+        if _objective_is_invalid(selected_value):
+            reasons.append("invalid objective value from selected backend")
+        if (
+                selected_grad.shape != final_params.shape
+                or not np.all(np.isfinite(selected_grad))):
+            reasons.append("final gradient is not finite")
+
+        objective_abs_tol = max(1e-7, max(int(n_obs), 1) * 1e-8)
+        objective_rel_tol = 1e-8
+        diagnostics["final_optimizer_abs_tolerance"] = objective_abs_tol
+        diagnostics["final_optimizer_rel_tolerance"] = objective_rel_tol
+        if (
+                np.isfinite(selected_value)
+                and not _objective_is_invalid(result.fun)
+                and not np.isclose(
+                    selected_value,
+                    float(result.fun),
+                    rtol=objective_rel_tol,
+                    atol=objective_abs_tol)):
+            reasons.append("optimizer and selected-backend objectives disagree")
+
+        projected_norm = np.inf
+        gradient_tolerance = (
+            self.final_gradient_tolerance
+            if self.final_gradient_tolerance is not None
+            else max(
+                1e-2, 10.0 * float(optimizer_options.get("gtol", 1e-3)))
+        )
+        if (
+                selected_grad.shape == final_params.shape
+                and np.all(np.isfinite(selected_grad))
+                and lower.shape == final_params.shape
+                and upper.shape == final_params.shape):
+            projected_norm = _projected_gradient_norm(
+                final_params, selected_grad, lower, upper)
+            if projected_norm > gradient_tolerance:
+                reasons.append(
+                    "projected gradient exceeds validation tolerance")
+        diagnostics["final_projected_gradient_norm"] = projected_norm
+        diagnostics["final_projected_gradient_tolerance"] = gradient_tolerance
+
+        boundary_atol = 1e-10
+        at_lower = np.isfinite(lower) & np.isclose(
+            final_params, lower, rtol=0.0, atol=boundary_atol)
+        at_upper = np.isfinite(upper) & np.isclose(
+            final_params, upper, rtol=0.0, atol=boundary_atol)
+        diagnostics["final_boundary_flags"] = tuple(
+            bool(value) for value in (at_lower | at_upper))
+
+        if final_params.size >= 3 and np.all(np.isfinite(final_params[:3])):
+            kappa, _, nu = final_params[:3]
+            dt = 1.0 / max(int(n_obs) - 1, 1)
+            kappa_dt = kappa * dt
+            rho = np.exp(-kappa_dt) if kappa_dt < 746.0 else 0.0
+            stationary_std = (
+                nu / np.sqrt(2.0 * kappa)
+                if kappa > 0.0 and nu > 0.0 else np.nan)
+            conditional_variance = (
+                -np.expm1(-2.0 * kappa_dt)
+                if kappa_dt >= 0.0 else np.nan)
+            conditional_std = (
+                stationary_std * np.sqrt(conditional_variance)
+                if np.isfinite(stationary_std)
+                and np.isfinite(conditional_variance)
+                and conditional_variance >= 0.0 else np.nan)
+            diagnostics.update({
+                "final_kappa_dt": float(kappa_dt),
+                "final_rho": float(rho),
+                "final_stationary_std": float(stationary_std),
+                "final_conditional_std": float(conditional_std),
+            })
+            if (
+                    not np.isfinite(stationary_std)
+                    or stationary_std <= 0.0
+                    or not np.isfinite(conditional_std)
+                    or conditional_std <= 0.0):
+                reasons.append("final OU variance is degenerate")
+            if (
+                    rho <= self.final_rho_tolerance
+                    or 1.0 - rho <= self.final_rho_tolerance):
+                reasons.append("final one-step autocorrelation is degenerate")
+
+            if initial_params.size >= 3 and np.all(
+                    np.isfinite(initial_params[:3])):
+                baseline = np.maximum(np.abs(initial_params[:3]), 1.0)
+                growth = np.abs(final_params[:3]) / baseline
+                diagnostics["final_parameter_growth"] = tuple(
+                    float(value) for value in growth)
+                diagnostics["final_parameter_growth_limit"] = (
+                    self.final_growth_limit)
+                if np.any(growth > self.final_growth_limit):
+                    reasons.append(
+                        "final OU parameters exceed initialization scale "
+                        f"by more than {self.final_growth_limit:g}")
+
+        validation_value = np.nan
+        difference = np.nan
+        tolerance = np.nan
+        if validation_evaluator is not None and not reasons:
+            try:
+                validation_value = float(validation_evaluator(final_params))
+                if _objective_is_invalid(validation_value):
+                    reasons.append(
+                        f"{validation_engine} validation returned an "
+                        "invalid objective")
+                else:
+                    difference = abs(validation_value - selected_value)
+                    tolerance = max(
+                        1e-5,
+                        max(int(n_obs), 1)
+                        * self.final_validation_abs_per_obs,
+                        self.final_validation_rel_tol * max(
+                            abs(validation_value), abs(selected_value), 1.0),
+                    )
+                    if difference > tolerance:
+                        reasons.append(
+                            "selected and validation backends disagree")
+            except Exception as exc:
+                reasons.append(
+                    f"{validation_engine} validation failed: {exc}")
+        diagnostics.update({
+            "final_validation_backend_value": validation_value,
+            "final_backend_value_difference": difference,
+            "final_backend_value_tolerance": tolerance,
+            "final_validation_abs_per_obs":
+                self.final_validation_abs_per_obs,
+            "final_validation_rel_tolerance":
+                self.final_validation_rel_tol,
+            "final_rho_tolerance": self.final_rho_tolerance,
+        })
+
+        if correlation_validator is not None:
+            try:
+                correlation_reasons = list(correlation_validator())
+            except Exception as exc:
+                correlation_reasons = [
+                    f"final correlation validation failed: {exc}"]
+            reasons.extend(correlation_reasons)
+
+        diagnostics["final_validation_reasons"] = tuple(reasons)
+        diagnostics["final_validation_passed"] = not reasons
+        result.fun = selected_value
+        result.jac = selected_grad
+        if reasons:
+            result.success = False
+            result.message = _append_failure_message(result.message, reasons)
+        return diagnostics
+
+    def _fit_joint_static(self, copula, u, alpha0, optimizer_options,
+                          verbose):
+        """Fit OU and Python-parameterized static correlation parameters."""
+
+        n_corr = int(copula._corr_num_params())
+        copula._ensure_corr_initialized(u)
+        corr0 = np.asarray(
+            copula._initial_corr_params(u), dtype=np.float64).reshape(-1)
+
+        alpha0, initialization = _resolve_initial_point(
+            copula,
+            u,
+            self.config,
+            self.smart_init,
+            verbose,
+            alpha0,
+        )
+        if initialization["selected_method"] != "user_provided":
+            fitted_corr = np.asarray(
+                copula._pack_corr_params(), dtype=np.float64).reshape(-1)
+            if fitted_corr.size == n_corr:
+                corr0 = fitted_corr
+
+        self._uses_cpp(copula)
+        selected_engine = "cpp"
+
+        alpha0 = np.asarray(alpha0, dtype=np.float64).reshape(-1)
+        if alpha0.size == 3:
+            joint0 = np.concatenate([alpha0, corr0])
+        elif alpha0.size == 3 + n_corr:
+            joint0 = alpha0.copy()
+        else:
+            raise ValueError(
+                f"alpha0 must contain 3 OU parameters or {3 + n_corr} "
+                f"joint parameters, got {alpha0.size}")
+        if not np.all(np.isfinite(joint0)):
+            raise ValueError("alpha0 must contain only finite values")
+        initialization = dict(initialization)
+        initialization["alpha0"] = [
+            float(value) for value in joint0]
+
+        scale = np.maximum(np.abs(joint0), 1.0)
+        x0_scaled = joint0 / scale
+        lower = np.full(3 + n_corr, -np.inf, dtype=np.float64)
+        upper = np.full(3 + n_corr, np.inf, dtype=np.float64)
+        lower[0] = 0.001 / scale[0]
+        lower[2] = 0.001 / scale[2]
+        bounds_scaled = Bounds(lower, upper)
+
+        diagnostics = _new_backend_diagnostics()
+        diagnostics.update({
+            "initialization": initialization,
+            "joint_static": True,
+            "joint_optimizer": "python-lbfgsb",
+            "correlation_parameterization_engine": "python",
+            "correlation_gradient": "numerical",
+            "cpp_correlation_derivatives": False,
+            "analytical_grad_requested": bool(self.analytical_grad),
+            "analytical_grad_used": bool(self.analytical_grad),
+            "joint_gradient": (
+                "hybrid" if self.analytical_grad else "numerical"),
+            "ou_gradient": (
+                "analytical" if self.analytical_grad else "numerical"),
+            "correlation_fd_scheme": (
+                "forward" if self.analytical_grad else "optimizer"),
+            "hybrid_gradient_evaluations": 0,
+            "correlation_fd_evaluations": 0,
+            "native_correlation_gradient_evaluations": 0,
+            "adaptive_spectral_basis_order": (
+                self.spectral_basis_order == "auto"),
+            "auto_spectral_basis_order": (
+                self.spectral_basis_order == "auto"),
+            "model_score": "not_applicable",
+            "optimizer_gradient": (
+                "analytical" if self.analytical_grad else "numerical"),
+            "gradient_kind": (
+                "analytical" if self.analytical_grad else "numerical"),
+            "setup_derivative": (
+                "analytical" if self.analytical_grad else "not_used"),
+            "filter_derivative": (
+                "analytical" if self.analytical_grad else "not_used"),
+        })
+        fail_value = float(getattr(self.config, "fail_value", 1e10))
+        def evaluate_value(joint):
+            kappa_v, mu_v, nu_v = joint[:3]
+            copula._set_corr_from_params(joint[3:])
+            auto_config = self._auto_config(
+                kappa=kappa_v, n_obs=len(u))
+            value, info = _cpp_scar_ou.neg_loglik_info(
+                kappa_v, mu_v, nu_v, u, copula, auto_config)
+            _record_backend_diagnostics(diagnostics, info, "cpp")
+            return value if np.isfinite(value) else fail_value
+
+        def evaluate_value_and_ou_grad(joint):
+            kappa_v, mu_v, nu_v = joint[:3]
+            copula._set_corr_from_params(joint[3:])
+            auto_config = self._auto_config(
+                kappa=kappa_v, n_obs=len(u))
+            try:
+                value, grad, corr_grad, info = (
+                    _cpp_scar_ou.neg_loglik_with_grad_and_corr_info(
+                        kappa_v, mu_v, nu_v, u, copula, auto_config))
+            except _cpp_scar_ou.CppUnsupported:
+                value, grad, info = (
+                    _cpp_scar_ou.neg_loglik_with_grad_info(
+                        kappa_v, mu_v, nu_v, u, copula, auto_config))
+                corr_grad = None
+            _record_backend_diagnostics(diagnostics, info, "cpp")
+            return (
+                float(value),
+                np.asarray(grad, dtype=np.float64),
+                None if corr_grad is None else np.asarray(
+                    corr_grad, dtype=np.float64),
+            )
+
+        def objective_scaled(x_scaled):
+            joint = x_scaled * scale
+            if not np.all(np.isfinite(joint)):
+                return fail_value
+            try:
+                return evaluate_value(joint)
+            except Exception as exc:
+                if verbose:
+                    print(f"  error at joint alpha={joint}: {exc}")
+                return fail_value
+
+        def correlation_fd_steps(joint):
+            if "eps" in optimizer_options:
+                return np.full(
+                    n_corr, abs(float(optimizer_options["eps"])),
+                    dtype=np.float64)
+            rel_step = optimizer_options.get("finite_diff_rel_step")
+            if rel_step is None:
+                rel_step = np.sqrt(np.finfo(np.float64).eps)
+            return (
+                abs(float(rel_step))
+                * np.maximum(1.0, np.abs(joint[3:]))
+            )
+
+        def objective_and_grad_scaled(x_scaled):
+            joint = x_scaled * scale
+            if not np.all(np.isfinite(joint)):
+                return fail_value, np.zeros_like(x_scaled)
+            diagnostics["hybrid_gradient_evaluations"] += 1
+            try:
+                value, ou_grad, corr_grad = evaluate_value_and_ou_grad(joint)
+                if (
+                        _objective_is_invalid(value)
+                        or ou_grad.shape != (3,)
+                        or not np.all(np.isfinite(ou_grad))):
+                    return fail_value, np.zeros_like(x_scaled)
+
+                grad = np.empty_like(joint)
+                grad[:3] = ou_grad
+                if corr_grad is not None:
+                    grad[3:] = _corr_gradient_to_raw_params(
+                        copula._corr_mode,
+                        joint[3:],
+                        copula.R,
+                        corr_grad,
+                        copula._corr_base,
+                    )
+                    diagnostics["correlation_gradient"] = "analytical"
+                    diagnostics["cpp_correlation_derivatives"] = True
+                    diagnostics["joint_gradient"] = "analytical"
+                    diagnostics["correlation_fd_scheme"] = "none"
+                    diagnostics[
+                        "native_correlation_gradient_evaluations"] += 1
+                    return value, grad * scale
+
+                steps = correlation_fd_steps(joint)
+                try:
+                    for index, step in enumerate(steps):
+                        trial = joint.copy()
+                        trial[3 + index] += step
+                        diagnostics["correlation_fd_evaluations"] += 1
+                        trial_value = evaluate_value(trial)
+                        if _objective_is_invalid(trial_value):
+                            return fail_value, np.zeros_like(x_scaled)
+                        grad[3 + index] = (trial_value - value) / step
+                finally:
+                    copula._set_corr_from_params(joint[3:])
+                return value, grad * scale
+            except Exception as exc:
+                try:
+                    copula._set_corr_from_params(joint[3:])
+                except Exception:
+                    pass
+                if verbose:
+                    print(f"  error at joint alpha={joint}: {exc}")
+                return fail_value, np.zeros_like(x_scaled)
+
+        if verbose:
+            gradient = "hybrid gradient" if self.analytical_grad else (
+                "numerical gradient")
+            print(
+                f"Fitting SCAR-TM-OU (C++, joint static correlation, "
+                f"{gradient}), alpha0={joint0}")
+
+        if self.analytical_grad:
+            scaled_options = dict(optimizer_options)
+            scaled_options.pop("eps", None)
+            scaled_options.pop("finite_diff_rel_step", None)
+            result = minimize(
+                objective_and_grad_scaled,
+                x0_scaled,
+                method='L-BFGS-B',
+                jac=True,
+                bounds=bounds_scaled,
+                options=scaled_options,
+            )
+        else:
+            scaled_options = dict(optimizer_options)
+            if 'eps' in scaled_options:
+                scaled_options['eps'] = (
+                    float(scaled_options['eps']) / scale)
+            result = minimize(
+                objective_scaled,
+                x0_scaled,
+                method='L-BFGS-B',
+                bounds=bounds_scaled,
+                options=scaled_options,
+            )
+        result.x = result.x * scale
+
+        joint = result.x
+        try:
+            copula._set_corr_from_params(joint[3:])
+        except Exception as exc:
+            result.success = False
+            result.message = (
+                f"{result.message}; failed to set final correlation: {exc}")
+            copula._set_corr_from_params(corr0)
+
+        def selected_final_evaluator(values):
+            value, gradient_scaled = objective_and_grad_scaled(values / scale)
+            copula._set_corr_from_params(values[3:])
+            return value, np.asarray(gradient_scaled) / scale
+
+        def validate_correlation():
+            reasons = []
+            raw = np.asarray(joint[3:], dtype=np.float64)
+            if raw.size != n_corr or not np.all(np.isfinite(raw)):
+                reasons.append("final correlation parameters are not finite")
+                return reasons
+            matrix = np.asarray(copula.R, dtype=np.float64)
+            if (
+                    matrix.shape != (copula.d, copula.d)
+                    or not np.all(np.isfinite(matrix))):
+                reasons.append("final correlation matrix is invalid")
+                return reasons
+            if not np.allclose(matrix, matrix.T, rtol=0.0, atol=1e-10):
+                reasons.append("final correlation matrix is not symmetric")
+            if not np.allclose(
+                    np.diag(matrix), 1.0, rtol=0.0, atol=1e-10):
+                reasons.append("final correlation diagonal is not one")
+            try:
+                if np.min(np.linalg.eigvalsh(matrix)) <= 0.0:
+                    reasons.append(
+                        "final correlation matrix is not positive definite")
+            except np.linalg.LinAlgError:
+                reasons.append(
+                    "final correlation eigenvalue check failed")
+            if (
+                    not np.all(np.isfinite(copula._L_inv))
+                    or not np.isfinite(copula._log_det)):
+                reasons.append(
+                    "final correlation factorization is not finite")
+            return reasons
+
+        validation_diagnostics = self._validate_final_fit(
+            result=result,
+            final_params=joint,
+            initial_params=joint0,
+            lower=np.concatenate((
+                np.array([0.001, -np.inf, 0.001]),
+                np.full(n_corr, -np.inf),
+            )),
+            upper=np.full(3 + n_corr, np.inf),
+            selected_evaluator=selected_final_evaluator,
+            validation_evaluator=None,
+            selected_engine=selected_engine,
+            validation_engine=None,
+            n_obs=len(u),
+            optimizer_options=optimizer_options,
+            correlation_validator=validate_correlation,
+        )
+        diagnostics.update(validation_diagnostics)
+        try:
+            copula._set_corr_from_params(joint[3:])
+        except Exception:
+            pass
+
+        diagnostics.update({
+            "corr_mode": copula._corr_mode,
+            "corr_n_params": n_corr,
+            "corr_params_raw": copula.corr_params(),
+            "corr_alpha": copula.corr_alpha(),
+            "corr_matrix": copula.R.copy(),
+        })
+
+        if verbose:
+            print(f"  => joint alpha={joint}, logL={-result.fun:.4f}")
+
+        params = ou_params(
+            kappa=joint[0], mu=joint[1], nu=joint[2])
+        return LatentResult(
+            log_likelihood=-result.fun,
+            method='SCAR-TM-OU',
+            copula_name=copula.name,
+            success=result.success,
+            nfev=result.nfev,
+            message=str(result.message),
+            params=params,
+            parameter_count=3 + n_corr,
+            K=self.K,
+            grid_range=self.grid_range,
+            pts_per_sigma=self.pts_per_sigma,
+            transition_method=self.transition_method,
+            max_K=self.max_K,
+            r_gh=self.r_gh,
+            gh_order=self.gh_order,
+            auto_small_kdt=self.auto_small_kdt,
+            spectral_basis_order=self.spectral_basis_order,
+            spectral_quad_order=self.spectral_quad_order,
+            diagnostics=diagnostics,
+        )
 
     def fit(self, copula, u: np.ndarray,
             alpha0: np.ndarray | None = None,
@@ -357,7 +972,9 @@ class SCARTMStrategy:
         ----------
         copula : CopulaProtocol
         u : (T, 2) pseudo-observations
-        alpha0 : (3,) initial [kappa, mu, nu], or None for auto
+        alpha0 : (3,) or (3 + n_corr,)
+            Initial ``[kappa, mu, nu]`` with model correlation defaults, a
+            full joint vector, or None for automatic initialization.
         gtol, ftol, maxfun, maxiter, maxls, eps, maxcor,
         finite_diff_rel_step : L-BFGS-B options
         verbose : print progress
@@ -379,60 +996,46 @@ class SCARTMStrategy:
             finite_diff_rel_step=finite_diff_rel_step,
         )
         u = as_float64_array(u)
-
+        corr_num_params = getattr(copula, "_corr_num_params", None)
+        n_corr = int(corr_num_params()) if callable(corr_num_params) else 0
+        if n_corr:
+            return self._fit_joint_static(
+                copula, u, alpha0, optimizer_options, verbose)
         # ── Initial point ─────────────────────────────────────────
-        if alpha0 is None:
-            if self.smart_init:
-                try:
-                    from pyscarcopula.strategy.initial_point import smart_initial_point
-                    alpha0, init_info = smart_initial_point(
-                        u, copula, verbose=verbose)
-                    if verbose:
-                        print(f"Smart init: {init_info.get('chosen_method')}, "
-                              f"alpha0={alpha0}")
-                except Exception:
-                    alpha0 = None
-
-            if alpha0 is None:
-                # Fallback: MLE-based heuristic
-                from pyscarcopula.strategy.mle import MLEStrategy
-                mle = MLEStrategy(config=self.config)
-                mle_result = mle.fit(copula, u)
-                mu0 = float(np.atleast_1d(
-                    copula.inv_transform(np.atleast_1d(mle_result.copula_param))
-                )[0])
-                alpha0 = np.array([1.0, mu0, 1.0])
-
+        alpha0, initialization = _resolve_initial_point(
+            copula,
+            u,
+            self.config,
+            self.smart_init,
+            verbose,
+            alpha0,
+        )
         alpha0 = np.asarray(alpha0, dtype=np.float64)
 
-        # ── Grid params for closures ──────────────────────────────
-        K = self.K
-        grid_range = self.grid_range
-        grid_method = self.grid_method
-        adaptive = self.adaptive
-        pts_per_sigma = self.pts_per_sigma
-        tm_kwargs = self._tm_kwargs()
-        use_cpp = self._uses_cpp(copula, require=self.backend == 'cpp')
-        selected_engine = "cpp" if use_cpp else "python"
-        diagnostics = _new_backend_diagnostics(self.backend, selected_engine)
+        self._uses_cpp(copula)
+        selected_engine = "cpp"
+        diagnostics = _new_backend_diagnostics()
         diagnostics["adaptive_spectral_basis_order"] = (
             self.spectral_basis_order == "auto")
         diagnostics["auto_spectral_basis_order"] = (
             self.spectral_basis_order == "auto")
+        diagnostics.update({
+            "initialization": initialization,
+            "model_score": "not_applicable",
+            "optimizer_gradient": (
+                "analytical" if self.analytical_grad else "numerical"),
+            "gradient_kind": (
+                "analytical" if self.analytical_grad else "numerical"),
+            "setup_derivative": (
+                "analytical" if self.analytical_grad else "not_used"),
+            "filter_derivative": (
+                "analytical" if self.analytical_grad else "not_used"),
+            "analytical_grad_requested": bool(self.analytical_grad),
+            "analytical_grad_used": bool(self.analytical_grad),
+        })
 
         def _auto_config_for(kappa_v):
             return self._auto_config(kappa=kappa_v, n_obs=len(u))
-
-        def _manual_info(kappa_v):
-            n_obs = len(u)
-            kdt = float(kappa_v) if n_obs <= 1 else float(kappa_v) / (n_obs - 1)
-            return {
-                "backend": self._grid_transition_method(),
-                "transition_method": self.transition_method,
-                "kappa_dt": kdt,
-                "n_obs": int(n_obs),
-                "basis_order": self._spectral_basis_order_for(kappa_v, n_obs),
-            }
 
         # ── Fit with analytical gradient ──────────────────────────
         if self.analytical_grad:
@@ -456,20 +1059,9 @@ class SCARTMStrategy:
                 kappa_v, mu_v, nu_v = alpha
                 try:
                     auto_config = _auto_config_for(kappa_v)
-                    if use_cpp:
-                        val, grad, info = _cpp_scar_ou.neg_loglik_with_grad_info(
-                            kappa_v, mu_v, nu_v, u, copula, auto_config)
-                        _record_backend_diagnostics(diagnostics, info, "cpp")
-                    elif self._uses_dispatcher():
-                        val, grad, info = auto_neg_loglik_with_grad_info(
-                            kappa_v, mu_v, nu_v, u, copula, auto_config)
-                        _record_backend_diagnostics(diagnostics, info, "python")
-                    else:
-                        val, grad = tm_loglik_with_grad(
-                            kappa_v, mu_v, nu_v, u, copula, K, grid_range,
-                            grid_method, adaptive, pts_per_sigma, **tm_kwargs)
-                        _record_backend_diagnostics(
-                            diagnostics, _manual_info(kappa_v), "python")
+                    val, grad, info = _cpp_scar_ou.neg_loglik_with_grad_info(
+                        kappa_v, mu_v, nu_v, u, copula, auto_config)
+                    _record_backend_diagnostics(diagnostics, info, "cpp")
                     return val, grad * scale  # chain rule
                 except Exception as e:
                     if verbose:
@@ -533,21 +1125,9 @@ class SCARTMStrategy:
                 kappa_v, mu_v, nu_v = alpha
                 try:
                     auto_config = _auto_config_for(kappa_v)
-                    if use_cpp:
-                        val, info = _cpp_scar_ou.neg_loglik_info(
-                            kappa_v, mu_v, nu_v, u, copula, auto_config)
-                        _record_backend_diagnostics(diagnostics, info, "cpp")
-                        return val
-                    if self._uses_dispatcher():
-                        val, info = auto_neg_loglik_info(
-                            kappa_v, mu_v, nu_v, u, copula, auto_config)
-                        _record_backend_diagnostics(diagnostics, info, "python")
-                        return val
-                    val = tm_loglik(
-                        kappa_v, mu_v, nu_v, u, copula, K, grid_range,
-                        grid_method, adaptive, pts_per_sigma, **tm_kwargs)
-                    _record_backend_diagnostics(
-                        diagnostics, _manual_info(kappa_v), "python")
+                    val, info = _cpp_scar_ou.neg_loglik_info(
+                        kappa_v, mu_v, nu_v, u, copula, auto_config)
+                    _record_backend_diagnostics(diagnostics, info, "cpp")
                     return val
                 except Exception as e:
                     if verbose:
@@ -555,9 +1135,8 @@ class SCARTMStrategy:
                     return 1e10
 
             if verbose:
-                engine = "C++" if use_cpp else "Python"
                 print(
-                    f"Fitting SCAR-TM-OU ({engine}, numerical gradient), "
+                    f"Fitting SCAR-TM-OU (C++, numerical gradient), "
                     f"alpha0={alpha0}")
 
             scaled_options = dict(optimizer_options)
@@ -572,13 +1151,40 @@ class SCARTMStrategy:
             )
             result.x = result.x * scale
 
-        if _objective_is_invalid(result.fun):
-            result.success = False
-            result.message = (
-                f"{result.message}; invalid objective value {float(result.fun):.6g}"
-            )
-
         alpha = result.x
+        def evaluate_final(values, with_grad, record=False):
+            kappa_v, mu_v, nu_v = values[:3]
+            auto_config = _auto_config_for(kappa_v)
+            if with_grad:
+                value, grad, info = (
+                    _cpp_scar_ou.neg_loglik_with_grad_info(
+                        kappa_v, mu_v, nu_v, u, copula, auto_config)
+                )
+                if record:
+                    _record_backend_diagnostics(diagnostics, info, "cpp")
+                return value, grad
+            value, info = _cpp_scar_ou.neg_loglik_info(
+                kappa_v, mu_v, nu_v, u, copula, auto_config)
+            if record:
+                _record_backend_diagnostics(diagnostics, info, "cpp")
+            return value
+
+        validation_diagnostics = self._validate_final_fit(
+            result=result,
+            final_params=alpha,
+            initial_params=alpha0,
+            lower=np.array([0.001, -np.inf, 0.001]),
+            upper=np.array([np.inf, np.inf, np.inf]),
+            selected_evaluator=lambda values: evaluate_final(
+                values, True, record=True),
+            validation_evaluator=None,
+            selected_engine=selected_engine,
+            validation_engine=None,
+            n_obs=len(u),
+            optimizer_options=optimizer_options,
+        )
+        diagnostics.update(validation_diagnostics)
+
         if verbose:
             print(f"  => alpha={alpha}, logL={-result.fun:.4f}")
 
@@ -592,9 +1198,9 @@ class SCARTMStrategy:
             nfev=result.nfev,
             message=str(result.message),
             params=params,
-            K=K,
-            grid_range=grid_range,
-            pts_per_sigma=pts_per_sigma,
+            K=self.K,
+            grid_range=self.grid_range,
+            pts_per_sigma=self.pts_per_sigma,
             transition_method=self.transition_method,
             max_K=self.max_K,
             r_gh=self.r_gh,
@@ -602,7 +1208,6 @@ class SCARTMStrategy:
             auto_small_kdt=self.auto_small_kdt,
             spectral_basis_order=self.spectral_basis_order,
             spectral_quad_order=self.spectral_quad_order,
-            backend=self.backend,
             diagnostics=diagnostics,
         )
 
@@ -611,102 +1216,74 @@ class SCARTMStrategy:
         """Evaluate TM log-likelihood at fitted parameters."""
         p = result.params
         cfg = self._auto_config(kappa=p.kappa, n_obs=len(u))
-        if self._uses_cpp(copula, require=self.backend == 'cpp'):
-            value, _ = _cpp_scar_ou.loglik(
-                p.kappa, p.mu, p.nu, u, copula, cfg)
-            return value
-        if self._uses_dispatcher():
-            return auto_loglik(
-                p.kappa, p.mu, p.nu, u, copula, cfg)
-        neg_ll = tm_loglik(
-            p.kappa, p.mu, p.nu, u, copula,
-            self.K, self.grid_range, self.grid_method,
-            self.adaptive, self.pts_per_sigma, **self._tm_kwargs())
-        return -neg_ll
+        self._uses_cpp(copula)
+        value, _ = _cpp_scar_ou.loglik(
+            p.kappa, p.mu, p.nu, u, copula, cfg)
+        return value
 
     def predictive_mean(self, copula, u: np.ndarray,
                         result: LatentResult) -> np.ndarray:
         """E[Psi(x_k) | u_{1:k-1}] via TM forward pass."""
         p = result.params
-        if self._uses_cpp(copula, require=self.backend == 'cpp'):
-            return _cpp_scar_ou.predictive_mean(
-                p.kappa, p.mu, p.nu, u, copula,
-                self._auto_config(
-                    self._grid_transition_method(),
-                    kappa=p.kappa,
-                    n_obs=len(u),
-                ))
-        return tm_forward_predictive_mean(
+        self._uses_cpp(copula)
+        return _cpp_scar_ou.predictive_mean(
             p.kappa, p.mu, p.nu, u, copula,
-            self.K, self.grid_range, self.grid_method,
-            self.adaptive, self.pts_per_sigma, **self._grid_tm_kwargs())
+            self._auto_config(
+                self._grid_transition_method(),
+                kappa=p.kappa,
+                n_obs=len(u),
+            ))
 
     def rosenblatt_e2(self, copula, u: np.ndarray,
                       result: LatentResult) -> np.ndarray:
         """Mixture Rosenblatt: e2 = E[h(u2, u1; Psi(x_k)) | u_{1:k-1}]."""
         p = result.params
-        if self._uses_cpp(copula, require=self.backend == 'cpp'):
-            return _cpp_scar_ou.mixture_h(
-                p.kappa, p.mu, p.nu, u, copula,
-                self._auto_config(
-                    self._grid_transition_method(),
-                    kappa=p.kappa,
-                    n_obs=len(u),
-                ))
-        e = tm_forward_rosenblatt(
+        self._uses_cpp(copula)
+        return _cpp_scar_ou.mixture_h(
             p.kappa, p.mu, p.nu, u, copula,
-            self.K, self.grid_range, self.grid_method,
-            self.adaptive, self.pts_per_sigma, **self._grid_tm_kwargs())
-        return e[:, 1]
+            self._auto_config(
+                self._grid_transition_method(),
+                kappa=p.kappa,
+                n_obs=len(u),
+            ))
 
     def mixture_h(self, copula, u: np.ndarray,
                   result: LatentResult, state_cache=None,
                   current_cache_key=None, next_cache_key=None) -> np.ndarray:
         """Mixture h-function for vine pseudo-obs propagation."""
+        capabilities = get_copula_capabilities(copula)
+        if capabilities is not None and not capabilities.supports_pair_ops:
+            raise NotImplementedError(
+                "mixture_h is not defined for multivariate "
+                "StochasticStudent-compatible copulas")
         p = result.params
-        if self._uses_cpp(copula, require=self.backend == 'cpp'):
-            cfg = self._auto_config(
-                self._grid_transition_method(),
-                kappa=p.kappa,
-                n_obs=len(u),
-            )
-            h_mix = _cpp_scar_ou.mixture_h(
-                p.kappa, p.mu, p.nu, u, copula,
-                cfg)
-            if state_cache is not None:
-                if current_cache_key is not None:
-                    state_cache[current_cache_key] = _cpp_scar_ou.state_distribution(
-                        p.kappa, p.mu, p.nu, u, copula, cfg, horizon='current')
-                if next_cache_key is not None:
-                    state_cache[next_cache_key] = _cpp_scar_ou.state_distribution(
-                        p.kappa, p.mu, p.nu, u, copula, cfg, horizon='next')
-            return h_mix
-        return tm_forward_mixture_h(
+        self._uses_cpp(copula)
+        cfg = self._auto_config(
+            self._grid_transition_method(),
+            kappa=p.kappa,
+            n_obs=len(u),
+        )
+        h_mix = _cpp_scar_ou.mixture_h(
             p.kappa, p.mu, p.nu, u, copula,
-            self.K, self.grid_range, self.grid_method,
-            self.adaptive, self.pts_per_sigma,
-            **self._grid_tm_kwargs(),
-            state_cache=state_cache,
-            current_cache_key=current_cache_key,
-            next_cache_key=next_cache_key)
+            cfg)
+        if state_cache is not None:
+            if current_cache_key is not None:
+                state_cache[current_cache_key] = _cpp_scar_ou.state_distribution(
+                    p.kappa, p.mu, p.nu, u, copula, cfg, horizon='current')
+            if next_cache_key is not None:
+                state_cache[next_cache_key] = _cpp_scar_ou.state_distribution(
+                    p.kappa, p.mu, p.nu, u, copula, cfg, horizon='next')
+        return h_mix
 
     def objective(self, copula, u: np.ndarray,
                   alpha: np.ndarray, **kwargs) -> float:
         """Minus log-likelihood: TM integrated -logL(kappa, mu, nu)."""
         try:
             cfg = self._auto_config(kappa=alpha[0], n_obs=len(u))
-            if self._uses_cpp(copula, require=self.backend == 'cpp'):
-                return _cpp_scar_ou.neg_loglik(
-                    alpha[0], alpha[1], alpha[2], u, copula,
-                    cfg)
-            if self._uses_dispatcher():
-                return auto_neg_loglik(
-                    alpha[0], alpha[1], alpha[2], u, copula,
-                    cfg)
-            return tm_loglik(
+            self._uses_cpp(copula)
+            return _cpp_scar_ou.neg_loglik(
                 alpha[0], alpha[1], alpha[2], u, copula,
-                self.K, self.grid_range, self.grid_method,
-                self.adaptive, self.pts_per_sigma, **self._tm_kwargs())
+                cfg)
         except Exception:
             return 1e10
 
@@ -723,7 +1300,7 @@ class SCARTMStrategy:
             rng = np.random.default_rng()
 
         r = self.model_sample_params(copula, result, n, rng=rng)
-        d = u.shape[1] if u is not None and np.ndim(u) == 2 else 2
+        d = copula_dimension(copula, u)
         return sample_predictive(copula, n, r, rng=rng, d=d)
 
     def predict(self, copula, u, result, n, rng=None, **kwargs):
@@ -737,7 +1314,7 @@ class SCARTMStrategy:
 
         r_samples = self.predictive_params(
             copula, u, result, n, rng=rng, **kwargs)
-        d = u.shape[1] if u is not None and np.ndim(u) == 2 else 2
+        d = copula_dimension(copula, u)
         return sample_predictive(
             copula, n, r_samples, given=kwargs.get('given'), rng=rng, d=d)
 
@@ -771,26 +1348,15 @@ class SCARTMStrategy:
 
         if cached is None:
             horizon = kwargs.get('horizon', 'next')
-            if self._uses_cpp(copula, require=self.backend == 'cpp'):
-                cached = _cpp_scar_ou.state_distribution(
-                    p.kappa, p.mu, p.nu, u, copula,
-                    self._auto_config(
-                        self._grid_transition_method(),
-                        kappa=p.kappa,
-                        n_obs=len(u),
-                    ),
-                    horizon=horizon)
-            else:
-                from pyscarcopula.numerical import predictive_tm
-                cached = predictive_tm.tm_state_distribution(
-                    p.kappa, p.mu, p.nu, u, copula,
-                    K=self.K,
-                    grid_range=self.grid_range,
-                    grid_method=self.grid_method,
-                    adaptive=self.adaptive,
-                    pts_per_sigma=self.pts_per_sigma,
-                    **self._grid_tm_kwargs(),
-                    horizon=horizon)
+            self._uses_cpp(copula)
+            cached = _cpp_scar_ou.state_distribution(
+                p.kappa, p.mu, p.nu, u, copula,
+                self._auto_config(
+                    self._grid_transition_method(),
+                    kappa=p.kappa,
+                    n_obs=len(u),
+                ),
+                horizon=horizon)
             if state_cache is not None and cache_key is not None:
                 state_cache[cache_key] = cached
 
@@ -808,16 +1374,15 @@ class SCARTMStrategy:
         if observation is None or state.kind != 'grid':
             return state
         u = np.asarray(observation, dtype=np.float64)
-        if u.ndim != 2 or u.shape[1] != 2 or len(u) == 0:
+        if u.ndim != 2 or len(u) == 0:
             return state
         u = u[:1]
 
         z_grid = np.asarray(state.z_grid, dtype=np.float64)
         prob = np.asarray(state.prob, dtype=np.float64)
         r_grid = copula.transform(z_grid)
-        u1 = np.full(len(r_grid), float(u[0, 0]), dtype=np.float64)
-        u2 = np.full(len(r_grid), float(u[0, 1]), dtype=np.float64)
-        log_w = np.asarray(copula.log_pdf(u1, u2, r_grid), dtype=np.float64)
+        density = copula_native.pdf_parameter_grid(copula, u, r_grid)[0]
+        log_w = np.log(np.maximum(density, np.finfo(np.float64).tiny))
         finite = np.isfinite(log_w)
         if not np.any(finite):
             return state

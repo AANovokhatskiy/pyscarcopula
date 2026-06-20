@@ -12,19 +12,29 @@ int select_grid_transition_backend(const OuGrid& grid, double r_gh) {
     return 0;
 }
 
-void build_dense_transition_matrix(const OuGrid& grid, std::vector<double>& matrix) {
-    matrix.assign(static_cast<std::size_t>(grid.K * grid.K), 0.0);
+bool build_dense_transition_matrix(const OuGrid& grid, std::vector<double>& matrix) {
+    std::size_t K = 0;
+    std::size_t matrix_size = 0;
+    if (!checked_positive_int_size(grid.K, kMaxDenseGridSize, K)
+        || !checked_size_mul(K, K, matrix_size)) {
+        matrix.clear();
+        return false;
+    }
+    matrix.assign(matrix_size, 0.0);
     const double coeff = 1.0 / (grid.sigma_cond * std::sqrt(2.0 * kPi));
     for (int row = 0; row < grid.K; ++row) {
         const double mean = grid.rho * grid.z[static_cast<std::size_t>(row)];
+        const std::size_t row_offset = static_cast<std::size_t>(row) * K;
         for (int col = 0; col < grid.K; ++col) {
-            const std::size_t idx = static_cast<std::size_t>(row * grid.K + col);
+            const std::size_t idx =
+                row_offset + static_cast<std::size_t>(col);
             const double diff = grid.z[static_cast<std::size_t>(col)] - mean;
             matrix[idx] = coeff
                 * std::exp(-0.5 * (diff / grid.sigma_cond) * (diff / grid.sigma_cond))
                 * grid.trap_w[static_cast<std::size_t>(col)];
         }
     }
+    return true;
 }
 
 void dense_matvec(
@@ -36,7 +46,8 @@ void dense_matvec(
     std::fill(out.begin(), out.end(), 0.0);
     for (int row = 0; row < K; ++row) {
         double acc = 0.0;
-        const std::size_t row_offset = static_cast<std::size_t>(row * K);
+        const std::size_t row_offset =
+            static_cast<std::size_t>(row) * static_cast<std::size_t>(K);
         for (int col = 0; col < K; ++col) {
             acc += matrix[row_offset + static_cast<std::size_t>(col)]
                 * v[static_cast<std::size_t>(col)];
@@ -53,7 +64,9 @@ void dense_predict_matvec(
 
     std::fill(out_density.begin(), out_density.end(), 0.0);
     for (int row = 0; row < grid.K; ++row) {
-        const std::size_t row_offset = static_cast<std::size_t>(row * grid.K);
+        const std::size_t row_offset =
+            static_cast<std::size_t>(row)
+            * static_cast<std::size_t>(grid.K);
         const double source_value = source[static_cast<std::size_t>(row)];
         for (int col = 0; col < grid.K; ++col) {
             out_density[static_cast<std::size_t>(col)] +=
@@ -84,10 +97,10 @@ bool matrix_backward_loglik(
 
     double log_scale = 0.0;
     for (std::int64_t t = n_obs - 1; t >= 1; --t) {
-        copula_pdf_row_precomputed(
+        copula_pdf_row_precomputed_flat(
             copula,
-            u[2 * t],
-            u[2 * t + 1],
+            u,
+            t,
             r_grid,
             fi_row.data());
         for (int j = 0; j < grid.K; ++j) {
@@ -111,10 +124,10 @@ bool matrix_backward_loglik(
         log_scale += std::log(scale);
     }
 
-    copula_pdf_row_precomputed(
+    copula_pdf_row_precomputed_flat(
         copula,
-        u[0],
-        u[1],
+        u,
+        0,
         r_grid,
         fi_row.data());
     double result = 0.0;
@@ -188,6 +201,10 @@ bool matrix_forward_mixture_h(
     const double* u,
     std::int64_t n_obs,
     double* out) {
+
+    if (copula.family == scar::CopulaFamily::Student) {
+        return false;
+    }
 
     std::vector<double> r_grid(static_cast<std::size_t>(grid.K), 0.0);
     for (int j = 0; j < grid.K; ++j) {
@@ -303,6 +320,10 @@ bool local_forward_mixture_h(
     std::int64_t n_obs,
     double* out) {
 
+    if (copula.family == scar::CopulaFamily::Student) {
+        return false;
+    }
+
     std::vector<double> r_grid(static_cast<std::size_t>(grid.K), 0.0);
     for (int j = 0; j < grid.K; ++j) {
         r_grid[static_cast<std::size_t>(j)] =
@@ -357,4 +378,3 @@ bool local_forward_mixture_h(
 }
 
 }  // namespace scar_internal
-

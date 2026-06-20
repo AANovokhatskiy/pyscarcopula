@@ -1,4 +1,4 @@
-"""Loader and shared errors for the optional pyscarcopula C++ extension."""
+"""Loader and shared errors for the bundled pyscarcopula C++ extension."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import importlib
 
 
 class CppError(RuntimeError):
-    """Base error for optional C++ kernel failures."""
+    """Base error for bundled C++ kernel failures."""
 
 
 class CppUnavailable(CppError):
@@ -32,7 +32,13 @@ def load():
         _MODULE = importlib.import_module("pyscarcopula._scar_cpp")
     except ImportError as exc:
         _MODULE_ERROR = exc
-        raise CppUnavailable(str(exc)) from exc
+        raise CppUnavailable(
+            "pyscarcopula native extension 'pyscarcopula._scar_cpp' is "
+            "unavailable. Official wheels include it; source installs require "
+            "a C++17 compiler. Reinstall pyscarcopula or rebuild with "
+            "'python setup.py build_ext --inplace'. "
+            f"Original import error: {exc}"
+        ) from exc
     return _MODULE
 
 

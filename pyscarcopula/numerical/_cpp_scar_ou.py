@@ -1,28 +1,32 @@
-"""SCAR-OU adapters for the optional C++ extension.
+"""SCAR-OU adapters for the bundled C++ extension.
 
-The public package uses this module only when ``backend='cpp'`` or
-``backend='auto'`` selects a supported C++ path.  The extension implements the
-SCAR-TM-OU likelihood, analytical gradient, selected grid forward passes, and
-pointwise copula h/h_inverse kernels.
-
-Supported SCAR-TM-OU likelihood families are Clayton, Gumbel, Frank, and Joe
-with the softplus transform, plus the bivariate Gaussian copula.  Frank is
-available only without rotation for SCAR-TM-OU.  Grid forward calls use
-``transition_method='auto'``, ``'matrix'``, or ``'local'``; direct
-``'spectral'`` forward/state calls are intentionally not implemented because
-they require a grid posterior state.
+The extension is the production numerical engine for SCAR-TM-OU likelihood,
+gradient, grid-forward/state operations, and pointwise copula operations.
+When a likelihood uses the spectral transition, posterior quantities are
+reconstructed explicitly on a native grid.
 """
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 
-from pyscarcopula.numerical.auto_tm import AutoTMConfig, select_auto_backend
+from pyscarcopula._utils import clip_h_function_values
+from pyscarcopula.numerical._scar_ou_config import (
+    AutoTMConfig,
+    select_auto_backend,
+    validate_cpp_config,
+)
 from pyscarcopula.numerical._arrays import as_float64_array
 from pyscarcopula.numerical._transition_methods import (
     normalize_ou_transition_method,
 )
-from pyscarcopula.numerical import _cpp_copula, _cpp_extension
+from pyscarcopula.numerical import (
+    _cpp_copula,
+    _cpp_extension,
+    copula_native,
+)
 from pyscarcopula.numerical._cpp_extension import (
     CppError,
     CppUnavailable,
@@ -33,6 +37,11 @@ from pyscarcopula.numerical._cpp_extension import (
 def available() -> bool:
     """Return whether the compiled extension can be imported."""
     return _cpp_extension.available()
+
+
+def require_available() -> None:
+    """Raise ``CppUnavailable`` unless the compiled extension can load."""
+    _cpp_extension.load()
 
 
 def ensure_supported(copula) -> None:
@@ -50,39 +59,13 @@ def supported_copula_ops(copula) -> bool:
     return _cpp_copula.supported_for_copula_ops(copula)
 
 
-def _pair_and_r(first, second, r):
-    first = np.atleast_1d(np.asarray(first, dtype=np.float64)).reshape(-1)
-    second = np.atleast_1d(np.asarray(second, dtype=np.float64)).reshape(-1)
-    r = np.atleast_1d(np.asarray(r, dtype=np.float64)).reshape(-1)
-    sizes = [arr.size for arr in (first, second, r)]
-    n = max(sizes)
-    values = []
-    for arr, name in ((first, "first"), (second, "second"), (r, "r")):
-        if arr.size == n:
-            values.append(arr)
-        elif arr.size == 1:
-            values.append(np.full(n, float(arr[0]), dtype=np.float64))
-        else:
-            raise ValueError(
-                f"{name} must have size 1 or match the broadcast size {n}"
-            )
-    pair = np.column_stack((values[0], values[1])).astype(np.float64, copy=False)
-    return np.ascontiguousarray(pair), np.ascontiguousarray(values[2])
-
-
 def copula_h(copula, u_conditioned, u_given, r) -> np.ndarray:
     """Evaluate ``h(u_conditioned | u_given)`` with C++ copula kernels.
 
     Inputs are broadcast as one-dimensional arrays.  The pybind boundary
     rejects non-finite values before entering the C++ numerical kernels.
     """
-    module = _cpp_extension.load()
-    pair, r_arr = _pair_and_r(u_conditioned, u_given, r)
-    spec = _cpp_copula.make_copula_ops_spec(module, copula)
-    values = np.asarray(module.copula_h(spec, pair, r_arr), dtype=np.float64)
-    if np.any(~np.isfinite(values)):
-        raise CppError("C++ copula_h returned non-finite values")
-    return values
+    return copula_native.h(copula, u_conditioned, u_given, r)
 
 
 def copula_h_inverse(copula, q, u_given, r) -> np.ndarray:
@@ -91,14 +74,7 @@ def copula_h_inverse(copula, q, u_given, r) -> np.ndarray:
     Inputs are broadcast as one-dimensional arrays.  Non-finite inputs and
     non-finite C++ results are converted to Python exceptions.
     """
-    module = _cpp_extension.load()
-    pair, r_arr = _pair_and_r(q, u_given, r)
-    spec = _cpp_copula.make_copula_ops_spec(module, copula)
-    values = np.asarray(
-        module.copula_h_inverse(spec, pair, r_arr), dtype=np.float64)
-    if np.any(~np.isfinite(values)):
-        raise CppError("C++ copula_h_inverse returned non-finite values")
-    return values
+    return copula_native.h_inverse(copula, q, u_given, r)
 
 
 def _params(module, kappa, mu, nu):
@@ -128,13 +104,28 @@ def _inputs(kappa, mu, nu, u, copula, config):
     module = _cpp_extension.load()
     cfg = config or AutoTMConfig()
     obs = as_float64_array(u)
+    method = normalize_ou_transition_method(cfg.transition_method)
+    validate_cpp_config(cfg, transition_method=method)
+    if obs.ndim != 2:
+        raise ValueError("u must have 2D shape (n_obs, dimension)")
+
+    student_dim = getattr(copula, "d", None)
+    if student_dim is not None:
+        if isinstance(student_dim, (bool, np.bool_)) or not isinstance(
+                student_dim, (int, np.integer)):
+            raise ValueError("Student dimension d must be an integer")
+        student_dim = int(student_dim)
+        if student_dim < 2:
+            raise ValueError(
+                f"Student dimension d must be at least 2, got {student_dim}")
+
     return (
         module,
         _params(module, kappa, mu, nu),
-        _cpp_copula.make_spec(module, copula),
+        _cpp_copula.make_spec(module, copula, obs),
         obs,
         _config(module, cfg),
-        normalize_ou_transition_method(cfg.transition_method),
+        method,
     )
 
 
@@ -204,9 +195,9 @@ def loglik(kappa, mu, nu, u, copula,
     """Evaluate SCAR-TM-OU log-likelihood using the C++ backend.
 
     ``config.transition_method`` may be ``'auto'``, ``'spectral'``,
-    ``'matrix'``, or ``'local'``.  In ``'auto'`` mode the C++ path mirrors the
-    Python fallback order: spectral, then matrix, then local GH when needed.
-    Non-zero C++ status codes are raised as :class:`CppError`.
+    ``'matrix'``, or ``'local'``. In ``'auto'`` mode the native evaluator
+    tries spectral, matrix, and local GH paths as required by numerical
+    diagnostics. Non-zero C++ status codes are raised as :class:`CppError`.
     """
     cfg_py = config or AutoTMConfig()
     module, params, spec, obs, cfg, method = _inputs(
@@ -251,7 +242,7 @@ def neg_loglik_with_grad(kappa, mu, nu, u, copula,
 
 
 def neg_loglik_with_grad_info(kappa, mu, nu, u, copula,
-                              config: AutoTMConfig | None = None):
+                               config: AutoTMConfig | None = None):
     """Evaluate negative log-likelihood, gradient, and C++ diagnostics."""
     cfg_py = config or AutoTMConfig()
     module, params, spec, obs, cfg, method = _inputs(
@@ -283,6 +274,58 @@ def neg_loglik_with_grad_info(kappa, mu, nu, u, copula,
     )
 
 
+def neg_loglik_with_grad_and_corr(kappa, mu, nu, u, copula,
+                                  config: AutoTMConfig | None = None):
+    """Return negative likelihood and gradients over OU and current ``R``."""
+    value, ou_grad, corr_grad, _ = neg_loglik_with_grad_and_corr_info(
+        kappa, mu, nu, u, copula, config)
+    return value, ou_grad, corr_grad
+
+
+def neg_loglik_with_grad_and_corr_info(
+        kappa, mu, nu, u, copula,
+        config: AutoTMConfig | None = None):
+    """Evaluate analytical OU and static-correlation gradients in C++.
+
+    The correlation gradient follows row-major lower-triangle order and is
+    taken with respect to symmetric off-diagonal entries of the current
+    correlation matrix.
+    """
+    cfg_py = config or AutoTMConfig()
+    module, params, spec, obs, cfg, method = _inputs(
+        kappa, mu, nu, u, copula, config)
+    evaluator = module.ScarOuEvaluator()
+    if method == "auto":
+        result = evaluator.neg_loglik_with_grad_and_corr_auto(
+            params, spec, obs, cfg)
+    elif method == "spectral":
+        result = evaluator.neg_loglik_with_grad_and_corr_spectral(
+            params, spec, obs, cfg)
+    elif method == "local":
+        result = evaluator.neg_loglik_with_grad_and_corr_local_gh(
+            params, spec, obs, cfg)
+    elif method == "matrix":
+        result = evaluator.neg_loglik_with_grad_and_corr_matrix(
+            params, spec, obs, cfg)
+    else:
+        raise ValueError(f"Unsupported transition_method: {method}")
+
+    info = _result_info(result, method, kappa, len(obs), cfg_py)
+    status = info["status"]
+    if status != 0:
+        raise CppError(
+            "C++ SCAR-OU correlation gradient failed: "
+            f"status={status} ({_status_name(status)}), "
+            f"backend={info['backend']}"
+        )
+    return (
+        float(result["neg_log_likelihood"]),
+        np.asarray(result["neg_gradient"], dtype=np.float64),
+        np.asarray(result["neg_corr_gradient"], dtype=np.float64),
+        info,
+    )
+
+
 def _call_vector(evaluator, prefix, method, params, spec, u, config):
     if method == "auto":
         return getattr(evaluator, f"{prefix}_auto")(params, spec, u, config)
@@ -295,6 +338,14 @@ def _call_vector(evaluator, prefix, method, params, spec, u, config):
             f"C++ {prefix} does not support transition_method='spectral'"
         )
     raise ValueError(f"Unsupported transition_method: {method}")
+
+
+def _grid_config(config: AutoTMConfig | None) -> AutoTMConfig:
+    """Return a native grid reconstruction config for posterior quantities."""
+    cfg = config or AutoTMConfig()
+    if normalize_ou_transition_method(cfg.transition_method) == "spectral":
+        return replace(cfg, transition_method="auto")
+    return cfg
 
 
 def _vector_result(result):
@@ -311,12 +362,11 @@ def predictive_mean(kappa, mu, nu, u, copula,
                     config: AutoTMConfig | None = None) -> np.ndarray:
     """Return the grid-filtered predictive mean of the copula parameter.
 
-    Supported transition methods are ``'auto'``, ``'matrix'``, and ``'local'``.
-    Use a grid method for forward quantities even if the fitted likelihood used
-    the Hermite spectral backend.
+    All public transition methods are accepted. ``'spectral'`` requests use
+    native auto-grid reconstruction for this posterior quantity.
     """
     module, params, spec, obs, cfg, method = _inputs(
-        kappa, mu, nu, u, copula, config)
+        kappa, mu, nu, u, copula, _grid_config(config))
     result = _call_vector(
         module.ScarOuEvaluator(), "predictive_mean",
         method, params, spec, obs, cfg)
@@ -327,16 +377,16 @@ def mixture_h(kappa, mu, nu, u, copula,
               config: AutoTMConfig | None = None) -> np.ndarray:
     """Return the SCAR-TM mixture h-function from C++ grid filtering.
 
-    Supported transition methods are ``'auto'``, ``'matrix'``, and ``'local'``.
-    The output is clipped to the same open-unit interval guard as the Python
-    path.
+    All public transition methods are accepted. ``'spectral'`` requests use
+    native auto-grid reconstruction. The output is clipped to the open-unit
+    interval guard.
     """
     module, params, spec, obs, cfg, method = _inputs(
-        kappa, mu, nu, u, copula, config)
+        kappa, mu, nu, u, copula, _grid_config(config))
     result = _call_vector(
         module.ScarOuEvaluator(), "mixture_h",
         method, params, spec, obs, cfg)
-    return np.clip(_vector_result(result), 1e-6, 1.0 - 1e-6)
+    return clip_h_function_values(_vector_result(result))
 
 
 def state_distribution(kappa, mu, nu, u, copula,
@@ -345,15 +395,15 @@ def state_distribution(kappa, mu, nu, u, copula,
     """Return the C++ grid posterior or one-step-ahead state distribution.
 
     ``horizon='current'`` returns the posterior state after the observations;
-    ``horizon='next'`` advances it one transition step.  The C++ state path is
-    grid-based and therefore does not implement direct ``'spectral'`` mode.
+    ``horizon='next'`` advances it one transition step. ``'spectral'`` requests
+    use native auto-grid reconstruction.
     """
     horizon = str(horizon).lower()
     if horizon not in ("current", "next"):
         raise ValueError("horizon must be 'current' or 'next'")
 
     module, params, spec, obs, cfg, method = _inputs(
-        kappa, mu, nu, u, copula, config)
+        kappa, mu, nu, u, copula, _grid_config(config))
     if method == "auto":
         result = module.ScarOuEvaluator().state_distribution_auto(
             params, spec, obs, cfg, horizon == "next")

@@ -29,11 +29,6 @@ def normalize_ou_grid_transition_method(value):
 
 def normalize_jacobi_matrix_transition_method(value):
     method = str(value).lower().replace("-", "_")
-    aliases = {
-        "matrix": "spectral_matrix",
-        "spectral": "spectral_matrix",
-    }
-    method = aliases.get(method, method)
     if method not in JACOBI_MATRIX_TRANSITION_METHODS:
         raise ValueError(
             "transition_method must be one of "
@@ -43,11 +38,6 @@ def normalize_jacobi_matrix_transition_method(value):
 
 def normalize_jacobi_strategy_transition_method(value):
     method = str(value).lower().replace("-", "_")
-    aliases = {
-        "matrix": "spectral_matrix",
-        "spectral": "spectral_coeff",
-    }
-    method = aliases.get(method, method)
     if method not in JACOBI_STRATEGY_TRANSITION_METHODS:
         raise ValueError(
             "transition_method must be one of 'auto', "

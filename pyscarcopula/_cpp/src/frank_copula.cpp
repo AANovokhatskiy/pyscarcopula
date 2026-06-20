@@ -74,8 +74,10 @@ void frank_pdf_and_grad_x_unrotated(
 }
 
 double frank_h_unrotated(double u, double v, double r) {
-    const double u_clipped = std::min(std::max(u, 1e-10), 1.0 - 1e-10);
-    const double v_clipped = std::min(std::max(v, 1e-10), 1.0 - 1e-10);
+    const double u_clipped =
+        std::min(std::max(u, kPseudoObsEps), 1.0 - kPseudoObsEps);
+    const double v_clipped =
+        std::min(std::max(v, kPseudoObsEps), 1.0 - kPseudoObsEps);
     if (std::abs(r) < 1e-8) {
         return u_clipped;
     }
@@ -88,10 +90,10 @@ double frank_h_unrotated(double u, double v, double r) {
     const double log_h = log_numer - logsumexp(log_A, log_B);
 
     if (log_h < -700.0) {
-        return 1e-10;
+        return kPseudoObsEps;
     }
-    if (log_h > -1e-10) {
-        return 1.0 - 1e-10;
+    if (log_h > -kPseudoObsEps) {
+        return 1.0 - kPseudoObsEps;
     }
     return std::exp(log_h);
 }
@@ -104,8 +106,10 @@ double frank_h_rotated(double u, double v, double r, int rotation) {
 }
 
 double frank_h_inverse_unrotated(double q, double given, double r) {
-    const double q_clipped = std::min(std::max(q, 1e-10), 1.0 - 1e-10);
-    const double given_clipped = std::min(std::max(given, 1e-10), 1.0 - 1e-10);
+    const double q_clipped =
+        std::min(std::max(q, kPseudoObsEps), 1.0 - kPseudoObsEps);
+    const double given_clipped =
+        std::min(std::max(given, kPseudoObsEps), 1.0 - kPseudoObsEps);
     if (std::abs(r) < 1e-8) {
         return q_clipped;
     }
@@ -119,7 +123,7 @@ double frank_h_inverse_unrotated(double q, double given, double r) {
         const double one_minus_arg =
             (1.0 - x3) / (std::exp(log_Q) + 1.0);
         if (one_minus_arg <= 0.0) {
-            t = 1e-10;
+            t = kPseudoObsEps;
         } else {
             t = -std::log1p(-one_minus_arg) / r;
         }
@@ -134,10 +138,10 @@ double frank_h_inverse_unrotated(double q, double given, double r) {
         const double arg = (Q + x3) / denom;
         if (arg <= 0.0) {
             t = 1.0;
-        } else if (arg >= 1.0 - 1e-10) {
+        } else if (arg >= 1.0 - kPseudoObsEps) {
             const double one_minus_arg = (1.0 - x3) / denom;
             if (one_minus_arg <= 0.0) {
-                t = 1e-10;
+                t = kPseudoObsEps;
             } else {
                 t = -std::log1p(-one_minus_arg) / r;
             }
@@ -145,7 +149,8 @@ double frank_h_inverse_unrotated(double q, double given, double r) {
             t = -std::log(arg) / r;
         }
     }
-    return std::min(std::max(t, 1e-10), 1.0 - 1e-10);
+    return std::min(
+        std::max(t, kPseudoObsEps), 1.0 - kPseudoObsEps);
 }
 
 double frank_h_inverse_rotated(double q, double given, double r, int rotation) {

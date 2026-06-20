@@ -38,7 +38,7 @@ variable_order = [
 
 samples = vine.predict(
     n=5000,
-    u_train=u,
+    u=u,
     given={variable_order[-1]: 0.6},
     rng=np.random.default_rng(2026),
 )
@@ -71,7 +71,7 @@ cfg = PredictConfig(
 
 samples, diagnostics = vine.predict(
     n=5000,
-    u_train=u,
+    u=u,
     predict_config=cfg,
     rng=np.random.default_rng(2027),
 )
@@ -131,7 +131,7 @@ supported time-varying edge states using fixed prediction-time observations.
 ```python
 samples, diagnostics = vine.predict(
     n=5000,
-    u_train=u,
+    u=u,
     given={variable_order[-1]: 0.6},
     dynamic_conditioning="given_only",
     return_diagnostics=True,
@@ -167,7 +167,7 @@ At prediction time:
 ```python
 samples, diagnostics = vine.predict(
     n=5000,
-    u_train=u,
+    u=u,
     given={0: 0.4, 3: 0.8},
     return_diagnostics=True,
     rng=np.random.default_rng(2029),

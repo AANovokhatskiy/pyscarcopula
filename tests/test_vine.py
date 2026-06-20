@@ -25,7 +25,8 @@ from pyscarcopula.copula.independent import IndependentCopula
 from pyscarcopula.stattests import gof_test
 from pyscarcopula._utils import pobs
 from pyscarcopula._types import (
-    GASResult, IndependentResult, MLEResult, gas_params,
+    GASResult, IndependentResult, LatentResult, MLEResult, gas_params,
+    ou_params,
 )
 
 # ══════════════════════════════════════════════════════════════
@@ -73,6 +74,25 @@ class TestPairCopulaEdge:
         assert edge_param(edge) == pytest.approx(0.35)
         assert edge_n_params(edge) == 1
 
+    def test_edge_adapter_counts_joint_static_latent_parameters(self):
+        edge = PairCopula(
+            tree=1,
+            idx=2,
+            copula=BivariateGaussianCopula(),
+            fit_result=LatentResult(
+                log_likelihood=5.0,
+                method='SCAR-TM-OU',
+                copula_name='joint static test',
+                success=True,
+                params=ou_params(1.0, 0.2, 0.8),
+                parameter_count=6,
+            ),
+        )
+
+        assert edge.fit_result.params.n_params == 3
+        assert edge_n_params(edge) == 6
+        assert edge.n_params == 6
+
     def test_get_r_predict_gas_uses_cached_r_last(self):
         cop = BivariateGaussianCopula()
         edge = PairCopula(tree=0, idx=0)
@@ -119,18 +139,18 @@ class TestPairCopulaEdge:
             copula_name=cop.name,
             success=True,
             params=ou_params(1.0, 0.0, 0.5),
-            backend='python',
         )
         u_pair = np.array([[0.2, 0.3], [0.4, 0.6]])
         calls = []
 
-        def fake_tm_forward_mixture_h(kappa, mu, nu, u_arg, cop_arg,
-                                      *args, **kwargs):
-            calls.append((kappa, mu, nu, u_arg.copy(), cop_arg, args, kwargs))
+        def fake_tm_forward_mixture_h(
+                kappa, mu, nu, u_arg, cop_arg, config):
+            calls.append((
+                kappa, mu, nu, u_arg.copy(), cop_arg, config))
             return np.array([0.11, 0.89])
 
         monkeypatch.setattr(
-            'pyscarcopula.strategy.scar_tm.tm_forward_mixture_h',
+            'pyscarcopula.numerical._cpp_scar_ou.mixture_h',
             fake_tm_forward_mixture_h,
         )
 
@@ -146,8 +166,8 @@ class TestPairCopulaEdge:
         np.testing.assert_allclose(out, np.array([0.11, 0.89]))
         assert calls
         np.testing.assert_allclose(calls[0][3], u_pair)
-        assert calls[0][5][0] == 7
-        assert calls[0][5][1] == 2.5
+        assert calls[0][5].K == 7
+        assert calls[0][5].grid_range == 2.5
 
     def test_edge_gas_helpers_use_result_score_eps(self, monkeypatch):
         cop = BivariateGaussianCopula()
@@ -169,16 +189,16 @@ class TestPairCopulaEdge:
             captured.append(('h', score_eps))
             return np.array([0.1, 0.2])
 
-        def fake_gas_filter(omega, gamma, beta, u_arg, cop_arg, scaling,
+        def fake_gas_loglik(omega, gamma, beta, u_arg, cop_arg, scaling,
                             score_eps):
             captured.append(('ll', score_eps))
-            return np.zeros(len(u_arg)), np.zeros(len(u_arg)), 7.0
+            return 7.0
 
         gas_module = importlib.import_module('pyscarcopula.strategy.gas')
         monkeypatch.setattr(
             gas_module, 'gas_mixture_h', fake_mixture_h)
         monkeypatch.setattr(
-            gas_module, 'gas_filter', fake_gas_filter)
+            gas_module, 'gas_loglik', fake_gas_loglik)
 
         _edge_h(edge, u_pair[:, 1], u_pair[:, 0], u_pair=u_pair)
         assert _edge_log_likelihood(edge, u_pair) == pytest.approx(7.0)
@@ -417,28 +437,8 @@ class TestVineSamplePredict:
         with pytest.raises(ValueError, match="n must be positive"):
             vine.predict(0)
 
-    def test_stepwise_gas_sample_uses_result_score_eps(self):
-        class LinearCopula:
-            name = 'linear'
-
-            def __init__(self):
-                self.r_seen = []
-
-            def transform(self, x):
-                return np.asarray(x, dtype=np.float64)
-
-            def h_inverse(self, v, u_given, r):
-                return np.asarray(v, dtype=np.float64)
-
-            def h(self, u2, u1, r):
-                return np.asarray(u2, dtype=np.float64)
-
-            def log_pdf(self, u1, u2, r):
-                r = np.asarray(r, dtype=np.float64)
-                self.r_seen.extend(float(x) for x in r.ravel())
-                return r * (np.asarray(u1) + np.asarray(u2))
-
-        cop = LinearCopula()
+    def test_stepwise_gas_sample_uses_result_score_eps(self, monkeypatch):
+        cop = BivariateGaussianCopula()
         edge = PairCopula(tree=0, idx=0, copula=cop)
         edge.fit_result = GASResult(
             log_likelihood=0.0,
@@ -452,9 +452,29 @@ class TestVineSamplePredict:
         vine.edges = [[edge]]
         vine.d = 2
 
+        gas_module = importlib.import_module('pyscarcopula.strategy.gas')
+        captured = []
+
+        def fake_initial(*args, **kwargs):
+            captured.append(('initial', args[-1]))
+            return gas_module._cpp_gas.GasStateOutput(g=0.1, parameter=0.02)
+
+        def fake_update(*args, **kwargs):
+            captured.append(('update', args[-1]))
+            return gas_module._cpp_gas.GasUpdateOutput(
+                g_next=0.11,
+                r=0.02,
+                r_next=0.03,
+                log_likelihood=0.0,
+                score=0.0,
+            )
+
+        monkeypatch.setattr(gas_module._cpp_gas, 'initial_state', fake_initial)
+        monkeypatch.setattr(gas_module._cpp_gas, 'update_one', fake_update)
         vine.sample(1, rng=np.random.default_rng(123))
 
-        assert cop.r_seen[1] - cop.r_seen[2] == pytest.approx(4e-5)
+        assert captured
+        assert all(item[1] == pytest.approx(2e-5) for item in captured)
 
     def test_predict_shape(self):
         d = 4
@@ -468,7 +488,7 @@ class TestVineSamplePredict:
         u = pobs(np.random.default_rng(0).standard_normal((200, d)))
         vine = CVineCopula()
         vine.fit(u, method='mle')
-        assert vine.sample(100, u_train=u).shape == (100, d)
+        assert vine.sample(100).shape == (100, d)
 
     def test_samples_in_unit_cube(self):
         d = 4

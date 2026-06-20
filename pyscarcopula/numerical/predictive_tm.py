@@ -1,57 +1,31 @@
-"""Predictive state distributions for SCAR-TM."""
+"""Predictive sampling helpers and native SCAR-TM state adapter."""
 
 from __future__ import annotations
 
 import numpy as np
-
-from pyscarcopula.numerical.tm_grid import TMGrid
-
-
-def _normalize_prob(phi, trap_w):
-    total = np.sum(phi * trap_w)
-    if total > 0:
-        return (phi * trap_w) / total
-    return np.full_like(phi, 1.0 / len(phi), dtype=np.float64)
-
 
 def tm_state_distribution(kappa, mu, nu, u, copula, K=300, grid_range=5.0,
                           grid_method='auto', adaptive=True, pts_per_sigma=4,
                           transition_method='matrix', max_K=None,
                           r_gh=3.0, gh_order=5,
                           horizon='current'):
-    """Distribution of x_T or x_{T+1} on the TM grid."""
-    horizon = str(horizon).lower()
-    if horizon not in ('current', 'next'):
-        raise ValueError("horizon must be 'current' or 'next'")
+    """Return the native posterior distribution of ``x_T`` or ``x_{T+1}``."""
+    from pyscarcopula.numerical import _cpp_scar_ou
+    from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
 
-    n = len(u)
-    grid = TMGrid(kappa, mu, nu, n, K, grid_range,
-                  grid_method, adaptive, pts_per_sigma,
-                  transition_method=transition_method, max_K=max_K,
-                  r_gh=r_gh, gh_order=gh_order)
-    fi_grid = grid.copula_grid(u, copula)
-
-    phi = grid.p0.copy()
-
-    for t in range(n):
-        phi *= fi_grid[t]
-
-        if t < n - 1:
-            phi = grid.predict_matvec(phi * grid.trap_w)
-
-        mx = np.max(np.abs(phi))
-        if mx > 0:
-            phi /= mx
-
-    if horizon == 'next':
-        phi = grid.predict_matvec(phi * grid.trap_w)
-        mx = np.max(np.abs(phi))
-        if mx > 0:
-            phi /= mx
-
-    z_grid = grid.z + grid.mu
-    prob = _normalize_prob(phi, grid.trap_w)
-    return z_grid, prob
+    config = AutoTMConfig(
+        transition_method=transition_method,
+        K=K,
+        grid_range=grid_range,
+        grid_method=grid_method,
+        adaptive=adaptive,
+        pts_per_sigma=pts_per_sigma,
+        max_K=max_K,
+        r_gh=r_gh,
+        gh_order=gh_order,
+    )
+    return _cpp_scar_ou.state_distribution(
+        kappa, mu, nu, u, copula, config, horizon=horizon)
 
 
 def sample_grid_distribution(z_grid, prob, n, rng, mode='histogram'):

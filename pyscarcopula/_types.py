@@ -106,10 +106,6 @@ DEFAULT_EQUICORR_OPTIMIZER = LBFGSBConfig(
 DEFAULT_STOCHASTIC_STUDENT_OPTIMIZER = LBFGSBConfig(
     gtol=1e-4,
 )
-DEFAULT_STOCHASTIC_STUDENT_DCC_OPTIMIZER = LBFGSBConfig(
-    gtol=1e-4,
-    maxiter=300,
-)
 DEFAULT_STOCHASTIC_STUDENT_GAS_OPTIMIZER = LBFGSBConfig(
     gtol=1e-3,
     ftol=1e-9,
@@ -118,34 +114,15 @@ DEFAULT_STOCHASTIC_STUDENT_GAS_OPTIMIZER = LBFGSBConfig(
     maxls=50,
     eps=1e-5,
 )
-DEFAULT_STOCHASTIC_STUDENT_DCC_GAS_OPTIMIZER = LBFGSBConfig(
-    gtol=1e-3,
-    ftol=1e-12,
-    maxfun=1000,
-    maxiter=1000,
-    maxls=50,
-    eps=1e-5,
-)
-DEFAULT_DCC_OPTIMIZER = LBFGSBConfig(
-    gtol=1e-6,
-    maxiter=500,
-)
-DEFAULT_GARCH_OPTIMIZER = LBFGSBConfig(
-    gtol=1e-5,
-    maxiter=300,
-)
-
 @dataclass(frozen=True)
 class NumericalConfig:
-    """Central registry of numerical constants.
+    """Shared optimizer and algorithm configuration.
 
     Users can override defaults at construction time:
         config = NumericalConfig(default_K=500, bisection_tol=1e-12)
     """
 
-    # Clipping / numerical safety
-    eps_clip: float = 1e-10
-    eps_log: float = 1e-300
+    # Numerical failure policy
     fail_value: float = 1e10
 
     # Transfer matrix defaults
@@ -163,21 +140,13 @@ class NumericalConfig:
     scar_optimizer: LBFGSBConfig = field(
         default_factory=lambda: DEFAULT_SCAR_OPTIMIZER)
 
-    # Experimental copula optimizer defaults
+    # Multivariate copula optimizer defaults
     equicorr_optimizer: LBFGSBConfig = field(
         default_factory=lambda: DEFAULT_EQUICORR_OPTIMIZER)
     stochastic_student_optimizer: LBFGSBConfig = field(
         default_factory=lambda: DEFAULT_STOCHASTIC_STUDENT_OPTIMIZER)
-    stochastic_student_dcc_optimizer: LBFGSBConfig = field(
-        default_factory=lambda: DEFAULT_STOCHASTIC_STUDENT_DCC_OPTIMIZER)
     stochastic_student_gas_optimizer: LBFGSBConfig = field(
         default_factory=lambda: DEFAULT_STOCHASTIC_STUDENT_GAS_OPTIMIZER)
-    stochastic_student_dcc_gas_optimizer: LBFGSBConfig = field(
-        default_factory=lambda: DEFAULT_STOCHASTIC_STUDENT_DCC_GAS_OPTIMIZER)
-    dcc_optimizer: LBFGSBConfig = field(
-        default_factory=lambda: DEFAULT_DCC_OPTIMIZER)
-    garch_optimizer: LBFGSBConfig = field(
-        default_factory=lambda: DEFAULT_GARCH_OPTIMIZER)
 
     # Bisection (h-function inversion)
     bisection_tol: float = 1e-10
@@ -210,23 +179,9 @@ class NumericalConfig:
             DEFAULT_STOCHASTIC_STUDENT_OPTIMIZER.merged(
                 self.stochastic_student_optimizer))
         object.__setattr__(
-            self, 'stochastic_student_dcc_optimizer',
-            DEFAULT_STOCHASTIC_STUDENT_DCC_OPTIMIZER.merged(
-                self.stochastic_student_dcc_optimizer))
-        object.__setattr__(
             self, 'stochastic_student_gas_optimizer',
             DEFAULT_STOCHASTIC_STUDENT_GAS_OPTIMIZER.merged(
                 self.stochastic_student_gas_optimizer))
-        object.__setattr__(
-            self, 'stochastic_student_dcc_gas_optimizer',
-            DEFAULT_STOCHASTIC_STUDENT_DCC_GAS_OPTIMIZER.merged(
-                self.stochastic_student_dcc_gas_optimizer))
-        object.__setattr__(
-            self, 'dcc_optimizer',
-            DEFAULT_DCC_OPTIMIZER.merged(self.dcc_optimizer))
-        object.__setattr__(
-            self, 'garch_optimizer',
-            DEFAULT_GARCH_OPTIMIZER.merged(self.garch_optimizer))
 
 
 DEFAULT_CONFIG = NumericalConfig()
@@ -464,16 +419,86 @@ class FitResultBase:
 
 @dataclass(frozen=True, repr=False)
 class MLEResult(FitResultBase):
-    """Result of MLE fit: single constant copula parameter."""
+    """Result of an MLE fit with optional additional static parameters."""
 
     copula_param: float = 0.0
+    parameter_count: int = 1
+    diagnostics: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self):
+        if isinstance(self.parameter_count, (bool, np.bool_)) or not isinstance(
+                self.parameter_count, (int, np.integer)):
+            raise TypeError("parameter_count must be a positive integer")
+        if int(self.parameter_count) <= 0:
+            raise ValueError("parameter_count must be positive")
+        object.__setattr__(self, 'parameter_count', int(self.parameter_count))
 
     @property
     def n_params(self) -> int:
-        return 1
+        return self.parameter_count
 
     def _repr_lines(self) -> list[str]:
-        return [f"   copula_param: {self.copula_param:.6f}"]
+        lines = [f"   copula_param: {self.copula_param:.6f}"]
+        if self.parameter_count != 1:
+            lines.append(f"       n_params: {self.parameter_count}")
+        return lines
+
+
+@dataclass(frozen=True, repr=False)
+class MultivariateMLEResult(MLEResult):
+    """MLE result with explicit multivariate parameters and correlation."""
+
+    copula_param: float | None = None
+    n_observations: int = 1
+    model_parameters: dict[str, Any] = field(default_factory=dict)
+    correlation_matrix: np.ndarray | None = None
+
+    def __post_init__(self):
+        super().__post_init__()
+        if (
+                isinstance(self.n_observations, (bool, np.bool_))
+                or not isinstance(self.n_observations, (int, np.integer))):
+            raise TypeError("n_observations must be a positive integer")
+        if int(self.n_observations) <= 0:
+            raise ValueError("n_observations must be positive")
+        object.__setattr__(
+            self, "n_observations", int(self.n_observations))
+
+        if self.correlation_matrix is not None:
+            correlation = np.asarray(
+                self.correlation_matrix, dtype=np.float64)
+            if (
+                    correlation.ndim != 2
+                    or correlation.shape[0] != correlation.shape[1]):
+                raise ValueError(
+                    "correlation_matrix must be a square matrix")
+            object.__setattr__(
+                self, "correlation_matrix", correlation)
+
+    @property
+    def aic(self) -> float:
+        """Akaike information criterion."""
+        return 2.0 * self.parameter_count - 2.0 * self.log_likelihood
+
+    @property
+    def bic(self) -> float:
+        """Bayesian information criterion."""
+        return (
+            np.log(self.n_observations) * self.parameter_count
+            - 2.0 * self.log_likelihood
+        )
+
+    def _repr_lines(self) -> list[str]:
+        lines = []
+        for name, value in self.model_parameters.items():
+            if isinstance(value, (int, float, np.integer, np.floating)):
+                lines.append(f" {name:>14s}: {float(value):.6f}")
+        lines.append(f"       n_params: {self.parameter_count}")
+        lines.extend([
+            f"            aic: {self.aic:.6f}",
+            f"            bic: {self.bic:.6f}",
+        ])
+        return lines
 
 
 @dataclass(frozen=True, repr=False)
@@ -499,24 +524,35 @@ class LatentResult(FitResultBase):
     auto_small_kdt: float | None = None      # auto GH threshold
     spectral_basis_order: int | str | None = None  # Hermite basis size/mode
     spectral_quad_order: int | None = None   # Hermite quadrature size
-    backend: str | None = None               # optional SCAR-OU engine mode
     diagnostics: dict[str, Any] = field(default_factory=dict)
     n_tr: int | None = None                  # MC trajectory count
     M_iterations: int | None = None          # EIS iterations
+    parameter_count: int | None = None        # latent plus fitted static params
 
-    @property
-    def alpha(self) -> np.ndarray:
-        """Legacy access: result.alpha -> array of all param values."""
-        return self.params.values.copy()
+    def __post_init__(self):
+        parameter_count = self.parameter_count
+        if parameter_count is None:
+            parameter_count = self.params.n_params
+        if isinstance(parameter_count, (bool, np.bool_)) or not isinstance(
+                parameter_count, (int, np.integer)):
+            raise TypeError("parameter_count must be an integer or None")
+        parameter_count = int(parameter_count)
+        if parameter_count < self.params.n_params:
+            raise ValueError(
+                "parameter_count cannot be smaller than the latent "
+                "parameter count")
+        object.__setattr__(self, 'parameter_count', parameter_count)
 
     @property
     def n_params(self) -> int:
-        return self.params.n_params
+        return self.parameter_count
 
     def _repr_lines(self) -> list[str]:
         lines = []
         for name, val in zip(self.params.names, self.params.values):
             lines.append(f"         {name:>5s}: {val:.6f}")
+        if self.parameter_count != self.params.n_params:
+            lines.append(f"       n_params: {self.parameter_count}")
         if self.K is not None:
             lines.append(f"              K: {self.K}")
         if self.grid_range is not None:
@@ -533,8 +569,6 @@ class LatentResult(FitResultBase):
             lines.append(f"spectral_basis_order: {self.spectral_basis_order}")
         if self.spectral_quad_order is not None:
             lines.append(f"spectral_quad_order: {self.spectral_quad_order}")
-        if self.backend is not None:
-            lines.append(f"        backend: {self.backend}")
         if self.n_tr is not None:
             lines.append(f"           n_tr: {self.n_tr}")
         if self.M_iterations is not None:
@@ -551,6 +585,7 @@ class GASResult(FitResultBase):
     scaling: str = 'unit'                    # 'unit' or 'fisher'
     score_eps: float = DEFAULT_CONFIG.gas_score_eps
     r_last: float = 0.0                      # one-step-ahead r value
+    diagnostics: dict[str, Any] = field(default_factory=dict)
 
     @property
     def omega(self) -> float:
@@ -596,4 +631,10 @@ class IndependentResult(FitResultBase):
 
 
 # Union type for consumers
-FitResult = MLEResult | LatentResult | GASResult | IndependentResult
+FitResult = (
+    MLEResult
+    | MultivariateMLEResult
+    | LatentResult
+    | GASResult
+    | IndependentResult
+)

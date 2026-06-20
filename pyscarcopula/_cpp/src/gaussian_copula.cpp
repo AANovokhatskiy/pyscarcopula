@@ -11,8 +11,8 @@ double norm_cdf(double x) {
 }  // namespace
 
 double gaussian_log_pdf_unrotated(double u1, double u2, double rho) {
-    const double v1 = std::min(std::max(u1, 1e-10), 1.0 - 1e-10);
-    const double v2 = std::min(std::max(u2, 1e-10), 1.0 - 1e-10);
+    const double v1 = clip_pseudo_observation(u1);
+    const double v2 = clip_pseudo_observation(u2);
     const double x1 = normal_quantile(v1);
     const double x2 = normal_quantile(v2);
     const double r2 = rho * rho;
@@ -22,8 +22,8 @@ double gaussian_log_pdf_unrotated(double u1, double u2, double rho) {
 }
 
 double gaussian_dlog_pdf_dr_unrotated(double u1, double u2, double rho) {
-    const double v1 = std::min(std::max(u1, 1e-10), 1.0 - 1e-10);
-    const double v2 = std::min(std::max(u2, 1e-10), 1.0 - 1e-10);
+    const double v1 = clip_pseudo_observation(u1);
+    const double v2 = clip_pseudo_observation(u2);
     const double x1 = normal_quantile(v1);
     const double x2 = normal_quantile(v2);
     const double r2 = rho * rho;
@@ -45,8 +45,8 @@ void gaussian_pdf_and_grad_x_unrotated(
     double& pdf,
     double& d_pdf_dx) {
 
-    const double v1 = std::min(std::max(u1, 1e-10), 1.0 - 1e-10);
-    const double v2 = std::min(std::max(u2, 1e-10), 1.0 - 1e-10);
+    const double v1 = clip_pseudo_observation(u1);
+    const double v2 = clip_pseudo_observation(u2);
     const double th = std::tanh(x / 4.0);
     const double rho = 0.9999 * th;
     const double x1 = normal_quantile(v1);
@@ -72,8 +72,8 @@ void gaussian_pdf_and_grad_x_unrotated(
 }
 
 double gaussian_h_unrotated(double u, double v, double rho) {
-    const double u_clipped = std::min(std::max(u, 1e-10), 1.0 - 1e-10);
-    const double v_clipped = std::min(std::max(v, 1e-10), 1.0 - 1e-10);
+    const double u_clipped = clip_pseudo_observation(u);
+    const double v_clipped = clip_pseudo_observation(v);
     const double z = (normal_quantile(u_clipped) - rho * normal_quantile(v_clipped))
         / std::sqrt(1.0 - rho * rho);
     return norm_cdf(z);
@@ -87,8 +87,8 @@ double gaussian_h_rotated(double u, double v, double rho, int rotation) {
 }
 
 double gaussian_h_inverse_unrotated(double q, double given, double rho) {
-    const double q_clipped = std::min(std::max(q, 1e-10), 1.0 - 1e-10);
-    const double given_clipped = std::min(std::max(given, 1e-10), 1.0 - 1e-10);
+    const double q_clipped = clip_pseudo_observation(q);
+    const double given_clipped = clip_pseudo_observation(given);
     const double rho_clipped = std::min(std::max(rho, -0.999999), 0.999999);
     const double z =
         normal_quantile(q_clipped) * std::sqrt(1.0 - rho_clipped * rho_clipped)

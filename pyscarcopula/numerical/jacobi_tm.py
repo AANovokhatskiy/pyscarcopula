@@ -5,6 +5,8 @@ from __future__ import annotations
 import numpy as np
 from scipy.special import betaln, digamma, eval_jacobi, roots_jacobi
 
+from pyscarcopula._utils import clip_h_function_values
+from pyscarcopula.numerical import copula_native
 from pyscarcopula.numerical._transition_methods import (
     normalize_jacobi_matrix_transition_method,
 )
@@ -585,7 +587,10 @@ def jacobi_transition_matrix(
 
 
 def _theta_grid(copula, tau, theta_cap=None):
-    theta = np.asarray(copula.tau_to_param(tau), dtype=np.float64)
+    if copula_native.supported(copula):
+        theta = copula_native.tau_to_param(copula, tau)
+    else:
+        theta = np.asarray(copula.tau_to_param(tau), dtype=np.float64)
     if theta_cap is not None:
         theta = np.minimum(theta, float(theta_cap))
     if np.any(~np.isfinite(theta)):
@@ -596,6 +601,9 @@ def _theta_grid(copula, tau, theta_cap=None):
 def _emission_grid(u, copula, tau, theta_cap=None):
     u = np.asarray(u, dtype=np.float64)
     theta = _theta_grid(copula, tau, theta_cap=theta_cap)
+    if copula_native.supported(copula):
+        return copula_native.pdf_parameter_grid(copula, u, theta), theta
+
     n_obs = len(u)
     n_grid = len(tau)
     out = np.empty((n_obs, n_grid), dtype=np.float64)
@@ -612,14 +620,14 @@ def _finite_unit_grid_values(values):
     values = np.asarray(values, dtype=np.float64)
     finite = np.isfinite(values)
     if np.all(finite):
-        return np.clip(values, 1e-6, 1.0 - 1e-6)
+        return clip_h_function_values(values)
     if not np.any(finite):
         return np.full(values.shape, 0.5, dtype=np.float64)
 
     idx = np.arange(values.size, dtype=np.float64)
     filled = values.copy()
     filled[~finite] = np.interp(idx[~finite], idx[finite], values[finite])
-    return np.clip(filled, 1e-6, 1.0 - 1e-6)
+    return clip_h_function_values(filled)
 
 
 def _h_values_on_theta(copula, u_row, theta, u1_grid=None, u2_grid=None):
@@ -631,6 +639,22 @@ def _h_values_on_theta(copula, u_row, theta, u1_grid=None, u2_grid=None):
     u2_grid.fill(u_row[1])
     u1_grid.fill(u_row[0])
     return _finite_unit_grid_values(copula.h(u2_grid, u1_grid, theta))
+
+
+def _h_grid_on_theta(copula, u, theta):
+    if copula_native.supported(copula):
+        values = copula_native.h_parameter_grid(copula, u, theta)
+        return np.vstack([
+            _finite_unit_grid_values(row) for row in values
+        ])
+
+    n_grid = len(theta)
+    u1_grid = np.empty(n_grid, dtype=np.float64)
+    u2_grid = np.empty(n_grid, dtype=np.float64)
+    return np.vstack([
+        _h_values_on_theta(copula, row, theta, u1_grid, u2_grid)
+        for row in u
+    ])
 
 
 def _matrix_setup(
@@ -1019,15 +1043,12 @@ def jacobi_matrix_forward_mixture_h(
     u, _, weights, transition, fi_grid, theta = setup
 
     n_obs = len(u)
-    n_grid = len(theta)
     out = np.empty(n_obs, dtype=np.float64)
-    u2_grid = np.empty(n_grid, dtype=np.float64)
-    u1_grid = np.empty(n_grid, dtype=np.float64)
+    h_grid = _h_grid_on_theta(copula, u, theta)
     for t, predicted, _, _ in _iter_matrix_filter(
             weights, transition, fi_grid):
-        h_vals = _h_values_on_theta(copula, u[t], theta, u1_grid, u2_grid)
-        out[t] = np.sum(predicted * h_vals)
-    return np.clip(out, 1e-6, 1.0 - 1e-6)
+        out[t] = np.sum(predicted * h_grid[t])
+    return clip_h_function_values(out)
 
 
 def jacobi_matrix_state_distribution(
@@ -1194,16 +1215,13 @@ def jacobi_forward_mixture_h(
     u, _, weights, basis, powers, fi_grid, theta = setup
 
     n_obs = len(u)
-    n_grid = len(theta)
     out = np.empty(n_obs, dtype=np.float64)
-    u2_grid = np.empty(n_grid, dtype=np.float64)
-    u1_grid = np.empty(n_grid, dtype=np.float64)
+    h_grid = _h_grid_on_theta(copula, u, theta)
     for t, predicted_coeff, _, _ in _iter_coeff_filter(
             powers, fi_grid, weights, basis):
-        h_vals = _h_values_on_theta(copula, u[t], theta, u1_grid, u2_grid)
         density_ratio = basis @ predicted_coeff
-        out[t] = np.sum(weights * h_vals * density_ratio)
-    return np.clip(out, 1e-6, 1.0 - 1e-6)
+        out[t] = np.sum(weights * h_grid[t] * density_ratio)
+    return clip_h_function_values(out)
 
 
 def _coeff_to_prob(coeff, weights, basis):

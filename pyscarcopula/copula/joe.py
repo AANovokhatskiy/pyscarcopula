@@ -1,478 +1,52 @@
 import numpy as np
-from numba import njit
-from scipy.optimize import brentq
-from scipy.special import digamma
 
-from pyscarcopula.copula.base import (
-    BivariateCopula,
-    _broadcast,
-    _inv_xtanh_transform,
-    _softplus_dtransform,
-    _softplus_inv_transform,
-    _softplus_transform,
-    _xtanh_dtransform,
-    _xtanh_transform,
-)
-
-_EULER_GAMMA = -float(digamma(1.0))
+from pyscarcopula.copula.base import BivariateCopula
 
 
-def _joe_tau_scalar(theta):
-    theta = float(theta)
-    if theta < 1.0:
-        raise ValueError("Joe parameter must be >= 1")
-    if theta == 1.0:
-        return 0.0
-
-    a = 2.0 / theta
-    if abs(a - 1.0) < 1e-10:
-        f_value = np.pi * np.pi / 6.0 - 1.0
-    else:
-        f_value = (
-            (float(digamma(a)) + _EULER_GAMMA) / (a - 1.0)
-            - (float(digamma(a + 1.0)) + _EULER_GAMMA) / a
-        )
-    tau = 1.0 - 4.0 * f_value / (theta * theta)
-    return float(np.clip(tau, 0.0, 1.0 - 1e-15))
-
-
-def _joe_param_from_tau_scalar(tau):
-    tau = float(tau)
-    if not (0.0 < tau < 1.0):
-        raise ValueError("Joe Kendall tau must be in (0, 1)")
-
-    lower = 1.0
-    upper = max(2.0, 2.0 / (1.0 - tau))
-    while _joe_tau_scalar(upper) <= tau:
-        upper *= 2.0
-        if upper > 1e12:
-            raise ValueError("Could not bracket Joe parameter from tau")
-    return float(brentq(
-        lambda theta: _joe_tau_scalar(theta) - tau,
-        lower,
-        upper,
-        xtol=1e-12,
-        rtol=1e-12,
-        maxiter=100,
-    ))
-
-
-@njit(cache=True)
-def _log1mexp(x):
-    if x > 0.693:
-        return np.log1p(-np.exp(-x))
-    elif x > 0:
-        return np.log(-np.expm1(-x))
-    else:
-        return -np.inf
-
-
-@njit(cache=True)
-def _logaddexp_pair(a, b):
-    m = max(a, b)
-    if not np.isfinite(m):
-        return m
-    return m + np.log1p(np.exp(min(a, b) - m))
-
-
-@njit(cache=True)
-def _joe_log_B(log_q0, log_q1):
-    q0 = 0.0
-    if log_q0 > -745.0:
-        q0 = np.exp(log_q0)
-    log_one_minus_q0 = np.log1p(-min(max(q0, 0.0), 1.0))
-    return _logaddexp_pair(log_q0, log_one_minus_q0 + log_q1)
-
-
-@njit(cache=True)
-def _joe_log_pdf(u1, u2, r):
-    n = len(u1)
+def _joe_v_from_uniforms(n, r, uniforms):
+    """Sample the Sibuya frailty variable used by Joe sampling."""
     out = np.empty(n)
-    for i in range(n):
-        eps = 1e-300
-        v1 = min(max(u1[i], eps), 1.0 - eps)
-        v2 = min(max(u2[i], eps), 1.0 - eps)
-        ri = r[i] if r.shape[0] > 1 else r[0]
-
-        q1 = 1.0 - v1
-        q2 = 1.0 - v2
-        q1 = min(max(q1, eps), 1.0 - eps)
-        q2 = min(max(q2, eps), 1.0 - eps)
-
-        log_q1 = np.log(q1)
-        log_q2 = np.log(q2)
-
-        log_t1 = ri * log_q1 + _log1mexp(-ri * log_q2)
-        log_t2 = ri * log_q2
-
-        log_max = max(log_t1, log_t2)
-        log_min = min(log_t1, log_t2)
-        log_B = log_max + np.log1p(np.exp(log_min - log_max))
-
-        B = np.exp(log_B)
-        if B > ri - 1.0:
-            log_rp = log_B + np.log1p((ri - 1.0) / B)
-        else:
-            log_rp = np.log(ri - 1.0) + np.log1p(B / (ri - 1.0))
-
-        out[i] = ((ri - 1.0) * (log_q1 + log_q2)
-                  + log_rp
-                  - (2.0 - 1.0 / ri) * log_B)
+    for index in range(n):
+        target = uniforms[index]
+        value = 1
+        initial_probability = 1.0 / r[index]
+        probability = initial_probability
+        cumulative = probability
+        while target > cumulative:
+            probability *= (
+                -(initial_probability - float(value + 1) + 1.0)
+                / float(value + 1)
+            )
+            cumulative += probability
+            value += 1
+        out[index] = float(value)
     return out
-
-
-@njit(cache=True)
-def _joe_pdf(u1, u2, r):
-    return np.exp(_joe_log_pdf(u1, u2, r))
-
-
-@njit(cache=True)
-def _joe_h(u0, u1, r):
-    n = len(u0)
-    out = np.empty(n)
-    eps = 1e-6
-    log_eps = np.log(eps)
-    log_one_minus_eps = np.log(1.0 - eps)
-    for i in range(n):
-        v0 = min(max(u0[i], eps), 1.0 - eps)
-        v1 = min(max(u1[i], eps), 1.0 - eps)
-        ri = r[i] if r.shape[0] > 1 else r[0]
-
-        if ri < 1.0 + 1e-8:
-            out[i] = v0  # independence limit
-        else:
-            log_1mv0 = np.log(1.0 - v0)
-            log_1mv1 = np.log(1.0 - v1)
-            log_q0 = ri * log_1mv0
-            log_q1 = ri * log_1mv1
-            log_B = _joe_log_B(log_q0, log_q1)
-            if not np.isfinite(log_B):
-                out[i] = v0
-            else:
-                log_1mq0 = _log1mexp(-log_q0)
-                log_h = (
-                    log_1mq0
-                    + (1.0 / ri - 1.0) * log_B
-                    + log_q1
-                    - log_1mv1
-                )
-                if log_h <= log_eps:
-                    out[i] = eps
-                elif log_h >= log_one_minus_eps:
-                    out[i] = 1.0 - eps
-                elif not np.isfinite(log_h):
-                    out[i] = v0
-                else:
-                    out[i] = np.exp(log_h)
-    return out
-
-
-@njit(cache=True)
-def _joe_h_pair(u0, u1, r):
-    n = len(u0)
-    out01 = np.empty(n)
-    out10 = np.empty(n)
-    eps = 1e-6
-    log_eps = np.log(eps)
-    log_one_minus_eps = np.log(1.0 - eps)
-    for i in range(n):
-        v0 = min(max(u0[i], eps), 1.0 - eps)
-        v1 = min(max(u1[i], eps), 1.0 - eps)
-        ri = r[i] if r.shape[0] > 1 else r[0]
-
-        if ri < 1.0 + 1e-8:
-            out01[i] = v0
-            out10[i] = v1
-        else:
-            log_1mv0 = np.log(1.0 - v0)
-            log_1mv1 = np.log(1.0 - v1)
-            log_q0 = ri * log_1mv0
-            log_q1 = ri * log_1mv1
-            log_B = _joe_log_B(log_q0, log_q1)
-            if not np.isfinite(log_B):
-                out01[i] = v0
-                out10[i] = v1
-            else:
-                log_common = (1.0 / ri - 1.0) * log_B
-
-                log_h01 = (
-                    _log1mexp(-log_q0)
-                    + log_common
-                    + log_q1
-                    - log_1mv1
-                )
-                if log_h01 <= log_eps:
-                    out01[i] = eps
-                elif log_h01 >= log_one_minus_eps:
-                    out01[i] = 1.0 - eps
-                elif not np.isfinite(log_h01):
-                    out01[i] = v0
-                else:
-                    out01[i] = np.exp(log_h01)
-
-                log_h10 = (
-                    _log1mexp(-log_q1)
-                    + log_common
-                    + log_q0
-                    - log_1mv0
-                )
-                if log_h10 <= log_eps:
-                    out10[i] = eps
-                elif log_h10 >= log_one_minus_eps:
-                    out10[i] = 1.0 - eps
-                elif not np.isfinite(log_h10):
-                    out10[i] = v1
-                else:
-                    out10[i] = np.exp(log_h10)
-    return out01, out10
-
-
-@njit(cache=True)
-def _joe_h_inverse_newton(u, v, r):
-    """Bracketed Newton-Raphson inversion of Joe h-function.
-
-    Finds t such that h(t, v, r) = u using Newton's method
-    with numerical derivative and bisection fallback.
-    """
-    n = len(u)
-    out = np.empty(n)
-    eps = 1e-10
-
-    for i in range(n):
-        ui = min(max(u[i], eps), 1.0 - eps)
-        vi = min(max(v[i], eps), 1.0 - eps)
-        ri = r[i] if r.shape[0] > 1 else r[0]
-
-        if ri < 1.0 + 1e-8:
-            out[i] = ui
-            continue
-
-        q1 = (1.0 - vi) ** ri
-        lo = eps
-        hi = 1.0 - eps
-        t = ui
-
-        for _ in range(40):
-            t = min(max(t, lo), hi)
-            q0 = (1.0 - t) ** ri
-            x3 = q0 - 1.0
-            inner = q0 - x3 * q1
-            if inner < 1e-300:
-                t = 0.5 * (lo + hi)
-                continue
-
-            h_val = -(x3 * inner ** (1.0 / ri - 1.0) * q1 / (1.0 - vi))
-
-            err = h_val - ui
-            if abs(err) < 1e-10:
-                break
-
-            # Update bracket
-            if err > 0:
-                hi = t
-            else:
-                lo = t
-
-            # Numerical derivative via forward FD
-            dt_fd = max(t * 1e-7, 1e-12)
-            t_p = min(t + dt_fd, 1.0 - eps)
-            q0_p = (1.0 - t_p) ** ri
-            x3_p = q0_p - 1.0
-            inner_p = q0_p - x3_p * q1
-            if inner_p < 1e-300:
-                t = 0.5 * (lo + hi)
-                continue
-            h_p = -(x3_p * inner_p ** (1.0 / ri - 1.0) * q1 / (1.0 - vi))
-            dh_dt = (h_p - h_val) / (t_p - t)
-
-            if abs(dh_dt) < 1e-300:
-                t = 0.5 * (lo + hi)
-            else:
-                t_new = t - err / dh_dt
-                if t_new > lo and t_new < hi:
-                    t = t_new
-                else:
-                    t = 0.5 * (lo + hi)
-
-        out[i] = min(max(t, eps), 1.0 - eps)
-    return out
-
-
-@njit(cache=True)
-def _joe_V_from_uniforms(n, r, uniforms):
-    """Sample V for Joe copula from fixed uniforms."""
-    out = np.empty(n)
-
-    for k in range(n):
-        u = uniforms[k]
-        i = 1
-        p0 = 1.0 / r[k]
-        p = p0
-        F = p
-        while u > F:
-            mult = (-1.0) * (p0 - float(i + 1) + 1.0) / float(i + 1)
-            p = mult * p
-            F = F + p
-            i += 1
-        out[k] = float(i)
-    return out
-
-
-@njit(cache=True)
-def _joe_dlogc_dr(u1, u2, r):
-    """Analytical d(log c)/dr for Joe copula."""
-    n = len(u1)
-    out = np.empty(n)
-    for i in range(n):
-        eps = 1e-300
-        v1 = min(max(u1[i], eps), 1.0 - eps)
-        v2 = min(max(u2[i], eps), 1.0 - eps)
-        ri = r[i] if r.shape[0] > 1 else r[0]
-
-        q1 = max(1.0 - v1, eps)
-        q2 = max(1.0 - v2, eps)
-        log_q1 = np.log(q1)
-        log_q2 = np.log(q2)
-
-        q1r = q1 ** ri
-        q2r = q2 ** ri
-        B = q1r + q2r - q1r * q2r
-        if B < eps:
-            B = eps
-
-        dB = q1r * log_q1 * (1.0 - q2r) + q2r * log_q2 * (1.0 - q1r)
-
-        term1 = log_q1 + log_q2
-        term2 = (1.0 + dB) / (ri - 1.0 + B)
-        term3 = -np.log(B) / (ri * ri) - (2.0 - 1.0 / ri) * dB / B
-
-        out[i] = term1 + term2 + term3
-    return out
-
-
-@njit(cache=True)
-def _joe_pdf_and_grad_batch(u_all, r_grid, dpsi, rotation):
-    """Fused batch: fi and dfi_dx for all T observations at once."""
-    T = u_all.shape[0]
-    K = len(r_grid)
-    fi = np.empty((T, K))
-    dfi = np.empty((T, K))
-    eps = 1e-300
-
-    for t in range(T):
-        u1_raw = u_all[t, 0]
-        u2_raw = u_all[t, 1]
-        if rotation == 90:
-            u1_raw = 1.0 - u1_raw
-        elif rotation == 180:
-            u1_raw = 1.0 - u1_raw
-            u2_raw = 1.0 - u2_raw
-        elif rotation == 270:
-            u2_raw = 1.0 - u2_raw
-
-        v1 = min(max(u1_raw, eps), 1.0 - eps)
-        v2 = min(max(u2_raw, eps), 1.0 - eps)
-        q1 = max(1.0 - v1, eps)
-        q2 = max(1.0 - v2, eps)
-        log_q1 = np.log(q1)
-        log_q2 = np.log(q2)
-
-        for j in range(K):
-            ri = r_grid[j]
-
-            q1r = q1 ** ri
-            q2r = q2 ** ri
-
-            log_t1 = ri * log_q1 + _log1mexp(-ri * log_q2)
-            log_t2 = ri * log_q2
-            log_max = max(log_t1, log_t2)
-            log_min = min(log_t1, log_t2)
-            log_B = log_max + np.log1p(np.exp(log_min - log_max))
-
-            B = np.exp(log_B)
-            if B > ri - 1.0:
-                log_rp = log_B + np.log1p((ri - 1.0) / B)
-            else:
-                log_rp = np.log(ri - 1.0) + np.log1p(B / (ri - 1.0))
-
-            log_c = ((ri - 1.0) * (log_q1 + log_q2)
-                     + log_rp
-                     - (2.0 - 1.0 / ri) * log_B)
-            c_val = np.exp(log_c)
-            fi[t, j] = c_val
-
-            # d(log c)/dr
-            B2 = q1r + q2r - q1r * q2r
-            if B2 < eps:
-                B2 = eps
-            dB = q1r * log_q1 * (1.0 - q2r) + q2r * log_q2 * (1.0 - q1r)
-
-            dlogc = (log_q1 + log_q2
-                     + (1.0 + dB) / (ri - 1.0 + B2)
-                     - np.log(B2) / (ri * ri) - (2.0 - 1.0 / ri) * dB / B2)
-            dfi[t, j] = c_val * dlogc * dpsi[j]
-
-    return fi, dfi
 
 
 class JoeCopula(BivariateCopula):
 
-    def __init__(self, rotate: int = 0, transform_type: str = 'softplus'):
+    def __init__(self, rotate: int = 0, transform_type: str = "softplus"):
         super().__init__(rotate)
         self._name = "Joe copula"
-        if transform_type not in ('xtanh', 'softplus'):
-            raise ValueError(f"transform_type must be 'xtanh' or 'softplus', got '{transform_type}'")
+        if transform_type not in ("xtanh", "softplus"):
+            raise ValueError(
+                "transform_type must be 'xtanh' or 'softplus', "
+                f"got '{transform_type}'"
+            )
         self._transform_type = transform_type
         self._bounds = [(1.0001, np.inf)]
-
-    def transform(self, x):
-        x = np.atleast_1d(np.asarray(x, dtype=np.float64))
-        if self._transform_type == 'softplus':
-            return _softplus_transform(x, 1.0001)
-        if self._transform_type == 'xtanh':
-            return _xtanh_transform(x, 1.0001)
-        raise ValueError(f"Unsupported transform_type: {self._transform_type}")
-
-    def dtransform(self, x):
-        x = np.atleast_1d(np.asarray(x, dtype=np.float64))
-        if self._transform_type == 'softplus':
-            return _softplus_dtransform(x)
-        if self._transform_type == 'xtanh':
-            return _xtanh_dtransform(x)
-        raise ValueError(f"Unsupported transform_type: {self._transform_type}")
-
-    def inv_transform(self, r):
-        r = np.atleast_1d(np.asarray(r, dtype=np.float64))
-        if self._transform_type == 'softplus':
-            return _softplus_inv_transform(r, 1.0001)
-        if self._transform_type == 'xtanh':
-            return _inv_xtanh_transform(r, 1.0001)
-        raise ValueError(f"Unsupported transform_type: {self._transform_type}")
 
     def tau_to_param(self, tau):
         tau = np.atleast_1d(np.asarray(tau, dtype=np.float64))
         if np.any((tau <= 0.0) | (tau >= 1.0)):
             raise ValueError("Joe Kendall tau must be in (0, 1)")
-        return np.array([
-            _joe_param_from_tau_scalar(value) for value in tau
-        ], dtype=np.float64)
+        return self._native_adapter().tau_to_param(self, tau)
 
     def param_to_tau(self, r):
         r = np.atleast_1d(np.asarray(r, dtype=np.float64))
         if np.any(r < 1.0):
             raise ValueError("Joe parameter must be >= 1")
-        return np.array([
-            _joe_tau_scalar(value) for value in r
-        ], dtype=np.float64)
-
-    def pdf_unrotated(self, u1, u2, r):
-        return _joe_pdf(*_broadcast(u1, u2, r))
-
-    def log_pdf_unrotated(self, u1, u2, r):
-        return _joe_log_pdf(*_broadcast(u1, u2, r))
-
-    def dlog_pdf_dr_unrotated(self, u1, u2, r):
-        return _joe_dlogc_dr(*_broadcast(u1, u2, r))
+        return self._native_adapter().param_to_tau(self, r)
 
     @staticmethod
     def psi(t, r):
@@ -481,63 +55,20 @@ class JoeCopula(BivariateCopula):
     def V(self, n, r, rng=None):
         if rng is None:
             rng = np.random.default_rng()
-        _r_input = np.asarray(r, dtype=np.float64)
-
-        if _r_input.ndim == 0:
-            _r = np.full(n, _r_input.item())
-        else:
-            _r = _r_input
-            if _r.size == 1:
-                _r = np.full(n, _r[0])
+        parameter = np.atleast_1d(np.asarray(r, dtype=np.float64))
+        if parameter.size == 1:
+            parameter = np.full(n, parameter[0])
         uniforms = rng.uniform(0.0, 1.0, size=n)
-        return _joe_V_from_uniforms(n, _r, uniforms)
+        return _joe_v_from_uniforms(n, parameter, uniforms)
 
-    def sample(self, n, r, rng=None):
-        """Sample via conditional inversion.
-
-        The Marshall-Olkin sampler for Joe requires Sibuya frailty draws,
-        whose heavy tail can make bootstrap simulation unpredictably slow.
-        Conditional inversion has deterministic O(n) cost and uses the same
-        rotated h-function convention as the Rosenblatt transform.
-        """
+    def sample_at_parameter(self, n, r, rng=None):
+        """Sample through native conditional inversion."""
         if rng is None:
             rng = np.random.default_rng()
-        _r_input = np.asarray(r, dtype=np.float64)
-        if _r_input.ndim == 0:
-            _r = np.full(n, _r_input.item())
-        else:
-            _r = np.asarray(_r_input, dtype=np.float64).ravel()
-            if _r.size == 1:
-                _r = np.full(n, _r[0])
-
+        parameter = np.atleast_1d(np.asarray(r, dtype=np.float64))
+        if parameter.size == 1:
+            parameter = np.full(n, parameter[0])
         u1 = rng.uniform(0.0, 1.0, size=n)
         e2 = rng.uniform(0.0, 1.0, size=n)
-        u2 = self.h_inverse(e2, u1, _r)
+        u2 = self.h_inverse(e2, u1, parameter)
         return np.column_stack((u1, u2))
-
-    def h_unrotated(self, u, v, r):
-        return _joe_h(*_broadcast(u, v, r))
-
-    def h_pair(self, u, v, r):
-        ua, va, ra = _broadcast(u, v, r)
-        if self._rotate == 0:
-            return _joe_h_pair(ua, va, ra)
-        return self.h(ua, va, ra), self.h(va, ua, ra)
-
-    def h_inverse_unrotated(self, u, v, r):
-        return _joe_h_inverse_newton(*_broadcast(u, v, r))
-
-    def pdf_and_grad_on_grid_batch(self, u, x_grid):
-        x = np.asarray(x_grid, dtype=np.float64)
-        r_grid = self.transform(x)
-        dpsi = self.dtransform(x)
-        return _joe_pdf_and_grad_batch(
-            np.asarray(u, dtype=np.float64), r_grid, dpsi, self._rotate)
-
-    def copula_grid_batch(self, u, x_grid):
-        x = np.asarray(x_grid, dtype=np.float64)
-        r_grid = self.transform(x)
-        dpsi = self.dtransform(x)
-        fi, _ = _joe_pdf_and_grad_batch(
-            np.asarray(u, dtype=np.float64), r_grid, dpsi, self._rotate)
-        return fi

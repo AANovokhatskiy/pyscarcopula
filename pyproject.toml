@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyscarcopula"
-version = "0.16.0"
+version = "0.16.1"
 description = "Python library for bivariate, multivariate, vine, and stochastic copula models"
 readme = "README.md"
 license = "MIT"
@@ -22,6 +22,7 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
     "Intended Audience :: Financial and Insurance Industry",
+    "Programming Language :: C++",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -46,6 +47,9 @@ test = ["pytest>=7.0"]
 Homepage = "https://github.com/AANovokhatskiy/pyscarcopula"
 Repository = "https://github.com/AANovokhatskiy/pyscarcopula"
 Issues = "https://github.com/AANovokhatskiy/pyscarcopula/issues"
+
+[tool.setuptools]
+include-package-data = false
 
 [tool.setuptools.packages.find]
 include = ["pyscarcopula*"]

@@ -10,12 +10,31 @@ Contents:
 import numpy as np
 from scipy.signal import savgol_filter
 
+from pyscarcopula.numerical import mc_native
 from pyscarcopula.numerical.ou_kernels import (
     ou_init_state, ou_stationary_state_from_dwt,
     ou_sample_paths, ou_sample_paths_exact,
     log_norm_ou, log_mean_exp,
 )
 from pyscarcopula._utils import linear_least_squares
+
+
+def _copula_log_pdf_trajectory_grid(u, xt, copula):
+    if mc_native.supported(copula):
+        return mc_native.log_pdf_trajectory_grid(copula, u, xt)
+
+    u = np.asarray(u, dtype=np.float64)
+    xt = np.asarray(xt, dtype=np.float64)
+    n_tr = xt.shape[1]
+    out = np.empty_like(xt)
+    u1 = np.empty(n_tr, dtype=np.float64)
+    u2 = np.empty(n_tr, dtype=np.float64)
+    for t in range(len(u)):
+        r_vals = copula.transform(xt[t])
+        u1.fill(u[t, 0])
+        u2.fill(u[t, 1])
+        out[t] = copula.log_pdf(u1, u2, r_vals)
+    return out
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -40,12 +59,10 @@ def p_sampler_loglik(kappa, mu, nu, u, dwt, copula, stationary):
     if np.isnan(np.sum(xt)):
         return 1e10
 
+    copula_grid = _copula_log_pdf_trajectory_grid(u, xt, copula)
     copula_log = np.zeros(n_tr)
     for t in range(T):
-        r_vals = copula.transform(xt[t])
-        u1 = np.full(n_tr, u[t, 0])
-        u2 = np.full(n_tr, u[t, 1])
-        copula_log += copula.log_pdf(u1, u2, r_vals)
+        copula_log += copula_grid[t]
 
     return -log_mean_exp(copula_log)
 
@@ -83,16 +100,13 @@ def m_sampler_loglik(kappa, mu, nu, u, dwt, a1t, a2t, copula, stationary):
         return 1e10
 
     # Copula log-likelihood with IS correction
+    copula_grid = _copula_log_pdf_trajectory_grid(u, xt, copula)
     log_lik = np.zeros(n_tr)
     for t in range(T):
-        r_vals = copula.transform(xt[t])
-        u1 = np.full(n_tr, u[t, 0])
-        u2 = np.full(n_tr, u[t, 1])
-        c_vals = copula.log_pdf(u1, u2, r_vals)
         # Clip xt to avoid overflow in x^2
         xt_clipped = np.clip(xt[t], -500, 500)
         g_vals = a1t[t] * xt_clipped + a2t[t] * xt_clipped ** 2
-        log_lik += c_vals + norm_log[t] - g_vals
+        log_lik += copula_grid[t] + norm_log[t] - g_vals
 
     if np.isnan(np.sum(log_lik)):
         return 1e10
@@ -170,20 +184,16 @@ def eis_find_auxiliary(alpha, u, M_iterations, dwt, copula, stationary):
 
         a_data = np.zeros((T, 3))
         a_data[-1] = np.array([0.0, np.mean(a1t), min(np.mean(a2t), 0.0)])
+        copula_grid = _copula_log_pdf_trajectory_grid(u, xt, copula)
 
         for i in range(T - 1, 0, -1):
-            r_vals = copula.transform(xt[i])
-            u1 = np.full(n_tr, u[i, 0])
-            u2 = np.full(n_tr, u[i, 1])
-            copula_log = copula.log_pdf(u1, u2, r_vals)
-
             norm_log_vals = log_norm_ou(
                 kappa, mu, nu,
                 a_data[i][1], a_data[i][2],
                 dt, xt[i - 1])
 
             A = np.column_stack((np.ones(n_tr), xt[i], xt[i] ** 2))
-            b = copula_log + norm_log_vals
+            b = copula_grid[i] + norm_log_vals
 
             try:
                 # Normal equations with small ridge regularization

@@ -1,5 +1,7 @@
 #include "scar_internal.hpp"
 
+#include <list>
+#include <memory>
 #include <mutex>
 #include <unordered_map>
 
@@ -18,9 +20,12 @@ bool hermite_rule_invariants_hold(
     int basis_order,
     double orthogonality_tol = 1e-8) {
 
-    if (static_cast<int>(z.size()) != quad_order
-        || static_cast<int>(weights.size()) != quad_order
-        || static_cast<int>(basis.size()) != quad_order * basis_order) {
+    std::size_t basis_elements = 0;
+    if (!valid_spectral_dimensions(
+            quad_order, basis_order, basis_elements)
+        || z.size() != static_cast<std::size_t>(quad_order)
+        || weights.size() != static_cast<std::size_t>(quad_order)
+        || basis.size() != basis_elements) {
         return false;
     }
 
@@ -53,7 +58,9 @@ bool hermite_rule_invariants_hold(
         for (int b = 0; b <= a; ++b) {
             double inner = 0.0;
             for (int q = 0; q < quad_order; ++q) {
-                const std::size_t base = static_cast<std::size_t>(q * basis_order);
+                const std::size_t base =
+                    static_cast<std::size_t>(q)
+                    * static_cast<std::size_t>(basis_order);
                 inner += weights[static_cast<std::size_t>(q)]
                     * basis[base + static_cast<std::size_t>(a)]
                     * basis[base + static_cast<std::size_t>(b)];
@@ -130,8 +137,13 @@ bool tridiagonal_ql(
                 g = c * r - b;
 
                 for (int k = 0; k < n; ++k) {
-                    const std::size_t ki1 = static_cast<std::size_t>(k * n + i + 1);
-                    const std::size_t ki = static_cast<std::size_t>(k * n + i);
+                    const std::size_t row =
+                        static_cast<std::size_t>(k)
+                        * static_cast<std::size_t>(n);
+                    const std::size_t ki1 =
+                        row + static_cast<std::size_t>(i + 1);
+                    const std::size_t ki =
+                        row + static_cast<std::size_t>(i);
                     const double fz = z[ki1];
                     z[ki1] = s * z[ki] + c * fz;
                     z[ki] = c * z[ki] - s * fz;
@@ -155,16 +167,29 @@ bool standard_normal_hermite_rule_golub_welsch(
     std::vector<double>& weights,
     std::vector<double>& basis) {
 
+    std::size_t basis_elements = 0;
+    std::size_t eigenvector_elements = 0;
+    if (!valid_spectral_dimensions(
+            quad_order, basis_order, basis_elements)
+        || !checked_size_mul(
+            static_cast<std::size_t>(quad_order),
+            static_cast<std::size_t>(quad_order),
+            eigenvector_elements)) {
+        return false;
+    }
+
     std::vector<double> d(static_cast<std::size_t>(quad_order), 0.0);
     std::vector<double> e(static_cast<std::size_t>(quad_order), 0.0);
-    std::vector<double> eigenvectors(
-        static_cast<std::size_t>(quad_order * quad_order), 0.0);
+    std::vector<double> eigenvectors(eigenvector_elements, 0.0);
 
     for (int i = 0; i < quad_order - 1; ++i) {
         e[static_cast<std::size_t>(i)] = std::sqrt(static_cast<double>(i + 1));
     }
     for (int i = 0; i < quad_order; ++i) {
-        eigenvectors[static_cast<std::size_t>(i * quad_order + i)] = 1.0;
+        eigenvectors[
+            static_cast<std::size_t>(i)
+                * static_cast<std::size_t>(quad_order)
+            + static_cast<std::size_t>(i)] = 1.0;
     }
 
     if (!tridiagonal_ql(d, e, eigenvectors, quad_order)) {
@@ -192,19 +217,22 @@ bool standard_normal_hermite_rule_golub_welsch(
         }
     }
 
-    basis.assign(static_cast<std::size_t>(quad_order * basis_order), 0.0);
+    basis.assign(basis_elements, 0.0);
     for (int q = 0; q < quad_order; ++q) {
-        basis[static_cast<std::size_t>(q * basis_order)] = 1.0;
+        const std::size_t base =
+            static_cast<std::size_t>(q)
+            * static_cast<std::size_t>(basis_order);
+        basis[base] = 1.0;
         if (basis_order > 1) {
-            basis[static_cast<std::size_t>(q * basis_order + 1)] =
+            basis[base + 1] =
                 z[static_cast<std::size_t>(q)];
         }
         for (int n = 1; n < basis_order - 1; ++n) {
-            basis[static_cast<std::size_t>(q * basis_order + n + 1)] =
+            basis[base + static_cast<std::size_t>(n + 1)] =
                 (z[static_cast<std::size_t>(q)]
-                    * basis[static_cast<std::size_t>(q * basis_order + n)]
+                    * basis[base + static_cast<std::size_t>(n)]
                  - std::sqrt(static_cast<double>(n))
-                    * basis[static_cast<std::size_t>(q * basis_order + n - 1)])
+                    * basis[base + static_cast<std::size_t>(n - 1)])
                 / std::sqrt(static_cast<double>(n + 1));
         }
     }
@@ -219,19 +247,115 @@ struct CachedHermiteRule {
     std::vector<double> weighted_basis;
 };
 
+struct HermiteRuleCacheEntry {
+    std::shared_ptr<const CachedHermiteRule> rule;
+    std::size_t bytes = 0;
+    std::list<std::uint64_t>::iterator lru_position;
+};
+
+struct HermiteRuleCache {
+    std::unordered_map<std::uint64_t, HermiteRuleCacheEntry> entries;
+    std::list<std::uint64_t> lru;
+    std::size_t bytes = 0;
+    std::size_t max_entries = kHermiteRuleCacheMaxEntries;
+    std::size_t max_bytes = kHermiteRuleCacheMaxBytes;
+    std::uint64_t hits = 0;
+    std::uint64_t misses = 0;
+    std::uint64_t insertions = 0;
+    std::uint64_t evictions = 0;
+    std::uint64_t oversized_skips = 0;
+    std::uint64_t duplicate_builds = 0;
+};
+
 std::uint64_t hermite_rule_cache_key(int quad_order, int basis_order) {
     return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(quad_order)) << 32)
         | static_cast<std::uint32_t>(basis_order);
 }
 
-std::unordered_map<std::uint64_t, CachedHermiteRule>& hermite_rule_cache() {
-    static std::unordered_map<std::uint64_t, CachedHermiteRule> cache;
+HermiteRuleCache& hermite_rule_cache() {
+    static HermiteRuleCache cache;
     return cache;
 }
 
 std::mutex& hermite_rule_cache_mutex() {
     static std::mutex mutex;
     return mutex;
+}
+
+std::size_t vector_storage_bytes(const std::vector<double>& values) {
+    std::size_t bytes = 0;
+    if (!checked_size_mul(values.capacity(), sizeof(double), bytes)) {
+        return std::numeric_limits<std::size_t>::max();
+    }
+    return bytes;
+}
+
+std::size_t cached_rule_bytes(const CachedHermiteRule& rule) {
+    std::size_t total = 0;
+    for (const std::vector<double>* values : {
+             &rule.z, &rule.weights, &rule.basis, &rule.weighted_basis}) {
+        const std::size_t bytes = vector_storage_bytes(*values);
+        if (!checked_size_add(total, bytes, total)) {
+            return std::numeric_limits<std::size_t>::max();
+        }
+    }
+    return total;
+}
+
+void touch_cache_entry(
+    HermiteRuleCache& cache,
+    HermiteRuleCacheEntry& entry) {
+
+    cache.lru.splice(
+        cache.lru.begin(), cache.lru, entry.lru_position);
+    entry.lru_position = cache.lru.begin();
+}
+
+void evict_lru_entry(HermiteRuleCache& cache) {
+    if (cache.lru.empty()) {
+        return;
+    }
+    const std::uint64_t key = cache.lru.back();
+    const auto it = cache.entries.find(key);
+    if (it != cache.entries.end()) {
+        cache.bytes -= it->second.bytes;
+        cache.entries.erase(it);
+        ++cache.evictions;
+    }
+    cache.lru.pop_back();
+}
+
+void reset_cache_statistics(HermiteRuleCache& cache) {
+    cache.hits = 0;
+    cache.misses = 0;
+    cache.insertions = 0;
+    cache.evictions = 0;
+    cache.oversized_skips = 0;
+    cache.duplicate_builds = 0;
+}
+
+void clear_cache_contents(HermiteRuleCache& cache) {
+    cache.entries.clear();
+    cache.lru.clear();
+    cache.bytes = 0;
+    reset_cache_statistics(cache);
+}
+
+std::shared_ptr<const CachedHermiteRule> find_cached_hermite_rule(
+    int quad_order,
+    int basis_order) {
+
+    const auto key = hermite_rule_cache_key(quad_order, basis_order);
+    std::lock_guard<std::mutex> lock(hermite_rule_cache_mutex());
+    auto& cache = hermite_rule_cache();
+    const auto it = cache.entries.find(key);
+    if (it == cache.entries.end()) {
+        ++cache.misses;
+        return {};
+    }
+    ++cache.hits;
+    touch_cache_entry(cache, it->second);
+    return it->second.rule;
 }
 
 bool load_cached_hermite_rule(
@@ -241,16 +365,13 @@ bool load_cached_hermite_rule(
     std::vector<double>& weights,
     std::vector<double>& basis) {
 
-    const auto key = hermite_rule_cache_key(quad_order, basis_order);
-    std::lock_guard<std::mutex> lock(hermite_rule_cache_mutex());
-    auto& cache = hermite_rule_cache();
-    const auto it = cache.find(key);
-    if (it == cache.end()) {
+    const auto rule = find_cached_hermite_rule(quad_order, basis_order);
+    if (!rule) {
         return false;
     }
-    z = it->second.z;
-    weights = it->second.weights;
-    basis = it->second.basis;
+    z = rule->z;
+    weights = rule->weights;
+    basis = rule->basis;
     return true;
 }
 
@@ -262,17 +383,14 @@ bool load_cached_hermite_rule(
     std::vector<double>& basis,
     std::vector<double>& weighted_basis) {
 
-    const auto key = hermite_rule_cache_key(quad_order, basis_order);
-    std::lock_guard<std::mutex> lock(hermite_rule_cache_mutex());
-    auto& cache = hermite_rule_cache();
-    const auto it = cache.find(key);
-    if (it == cache.end()) {
+    const auto rule = find_cached_hermite_rule(quad_order, basis_order);
+    if (!rule) {
         return false;
     }
-    z = it->second.z;
-    weights = it->second.weights;
-    basis = it->second.basis;
-    weighted_basis = it->second.weighted_basis;
+    z = rule->z;
+    weights = rule->weights;
+    basis = rule->basis;
+    weighted_basis = rule->weighted_basis;
     return true;
 }
 
@@ -281,21 +399,60 @@ void store_cached_hermite_rule(
     int basis_order,
     const std::vector<double>& z,
     const std::vector<double>& weights,
-    const std::vector<double>& basis) {
+    const std::vector<double>& basis,
+    const std::vector<double>* precomputed_weighted_basis = nullptr) {
 
     const auto key = hermite_rule_cache_key(quad_order, basis_order);
-    std::vector<double> weighted_basis(basis.size(), 0.0);
-    for (int q = 0; q < quad_order; ++q) {
-        const double weight = weights[static_cast<std::size_t>(q)];
-        const std::size_t base = static_cast<std::size_t>(q * basis_order);
-        for (int n = 0; n < basis_order; ++n) {
-            const std::size_t idx = base + static_cast<std::size_t>(n);
-            weighted_basis[idx] = weight * basis[idx];
+    std::vector<double> weighted_basis;
+    if (precomputed_weighted_basis != nullptr) {
+        weighted_basis = *precomputed_weighted_basis;
+    } else {
+        weighted_basis.assign(basis.size(), 0.0);
+        for (int q = 0; q < quad_order; ++q) {
+            const double weight = weights[static_cast<std::size_t>(q)];
+            const std::size_t base =
+                static_cast<std::size_t>(q)
+                * static_cast<std::size_t>(basis_order);
+            for (int n = 0; n < basis_order; ++n) {
+                const std::size_t idx = base + static_cast<std::size_t>(n);
+                weighted_basis[idx] = weight * basis[idx];
+            }
         }
     }
-    CachedHermiteRule entry{z, weights, basis, std::move(weighted_basis)};
+    auto rule = std::make_shared<CachedHermiteRule>(
+        CachedHermiteRule{z, weights, basis, std::move(weighted_basis)});
+    const std::size_t entry_bytes = cached_rule_bytes(*rule);
+
     std::lock_guard<std::mutex> lock(hermite_rule_cache_mutex());
-    hermite_rule_cache()[key] = std::move(entry);
+    auto& cache = hermite_rule_cache();
+    const auto existing = cache.entries.find(key);
+    if (existing != cache.entries.end()) {
+        ++cache.duplicate_builds;
+        touch_cache_entry(cache, existing->second);
+        return;
+    }
+    if (cache.max_entries == 0 || entry_bytes > cache.max_bytes) {
+        ++cache.oversized_skips;
+        return;
+    }
+    while (!cache.entries.empty()
+           && (cache.entries.size() >= cache.max_entries
+               || cache.bytes > cache.max_bytes - entry_bytes)) {
+        evict_lru_entry(cache);
+    }
+
+    cache.lru.push_front(key);
+    try {
+        cache.entries.emplace(
+            key,
+            HermiteRuleCacheEntry{
+                std::move(rule), entry_bytes, cache.lru.begin()});
+    } catch (...) {
+        cache.lru.pop_front();
+        throw;
+    }
+    cache.bytes += entry_bytes;
+    ++cache.insertions;
 }
 
 bool standard_normal_hermite_rule_uncached(
@@ -305,13 +462,15 @@ bool standard_normal_hermite_rule_uncached(
     std::vector<double>& weights,
     std::vector<double>& basis) {
 
-    if (quad_order <= 0 || basis_order <= 0 || quad_order < basis_order) {
+    std::size_t basis_elements = 0;
+    if (!valid_spectral_dimensions(
+            quad_order, basis_order, basis_elements)) {
         return false;
     }
 
     z.assign(static_cast<std::size_t>(quad_order), 0.0);
     weights.assign(static_cast<std::size_t>(quad_order), 0.0);
-    basis.assign(static_cast<std::size_t>(quad_order * basis_order), 0.0);
+    basis.assign(basis_elements, 0.0);
 
     if (quad_order >= 200) {
         return standard_normal_hermite_rule_golub_welsch(
@@ -379,14 +538,19 @@ bool standard_normal_hermite_rule_uncached(
     }
 
     for (int q = 0; q < quad_order; ++q) {
-        basis[static_cast<std::size_t>(q * basis_order)] = 1.0;
+        const std::size_t base =
+            static_cast<std::size_t>(q)
+            * static_cast<std::size_t>(basis_order);
+        basis[base] = 1.0;
         if (basis_order > 1) {
-            basis[static_cast<std::size_t>(q * basis_order + 1)] = z[static_cast<std::size_t>(q)];
+            basis[base + 1] = z[static_cast<std::size_t>(q)];
         }
         for (int n = 1; n < basis_order - 1; ++n) {
-            basis[static_cast<std::size_t>(q * basis_order + n + 1)] =
-                (z[static_cast<std::size_t>(q)] * basis[static_cast<std::size_t>(q * basis_order + n)]
-                 - std::sqrt(static_cast<double>(n)) * basis[static_cast<std::size_t>(q * basis_order + n - 1)])
+            basis[base + static_cast<std::size_t>(n + 1)] =
+                (z[static_cast<std::size_t>(q)]
+                    * basis[base + static_cast<std::size_t>(n)]
+                 - std::sqrt(static_cast<double>(n))
+                    * basis[base + static_cast<std::size_t>(n - 1)])
                 / std::sqrt(static_cast<double>(n + 1));
         }
     }
@@ -397,6 +561,47 @@ bool standard_normal_hermite_rule_uncached(
 
 }  // namespace
 
+HermiteRuleCacheInfo hermite_rule_cache_info() {
+    std::lock_guard<std::mutex> lock(hermite_rule_cache_mutex());
+    const auto& cache = hermite_rule_cache();
+    return {
+        cache.entries.size(),
+        cache.bytes,
+        cache.max_entries,
+        cache.max_bytes,
+        cache.hits,
+        cache.misses,
+        cache.insertions,
+        cache.evictions,
+        cache.oversized_skips,
+        cache.duplicate_builds,
+    };
+}
+
+void clear_hermite_rule_cache() {
+    std::lock_guard<std::mutex> lock(hermite_rule_cache_mutex());
+    clear_cache_contents(hermite_rule_cache());
+}
+
+void set_hermite_rule_cache_limits_for_testing(
+    std::size_t max_entries,
+    std::size_t max_bytes) {
+
+    std::lock_guard<std::mutex> lock(hermite_rule_cache_mutex());
+    auto& cache = hermite_rule_cache();
+    clear_cache_contents(cache);
+    cache.max_entries = max_entries;
+    cache.max_bytes = max_bytes;
+}
+
+void reset_hermite_rule_cache_limits_for_testing() {
+    std::lock_guard<std::mutex> lock(hermite_rule_cache_mutex());
+    auto& cache = hermite_rule_cache();
+    clear_cache_contents(cache);
+    cache.max_entries = kHermiteRuleCacheMaxEntries;
+    cache.max_bytes = kHermiteRuleCacheMaxBytes;
+}
+
 bool standard_normal_hermite_rule(
     int quad_order,
     int basis_order,
@@ -404,7 +609,9 @@ bool standard_normal_hermite_rule(
     std::vector<double>& weights,
     std::vector<double>& basis) {
 
-    if (quad_order <= 0 || basis_order <= 0 || quad_order < basis_order) {
+    std::size_t basis_elements = 0;
+    if (!valid_spectral_dimensions(
+            quad_order, basis_order, basis_elements)) {
         return false;
     }
     if (load_cached_hermite_rule(quad_order, basis_order, z, weights, basis)) {
@@ -426,26 +633,32 @@ bool standard_normal_hermite_rule_with_weighted_basis(
     std::vector<double>& basis,
     std::vector<double>& weighted_basis) {
 
-    if (quad_order <= 0 || basis_order <= 0 || quad_order < basis_order) {
+    std::size_t basis_elements = 0;
+    if (!valid_spectral_dimensions(
+            quad_order, basis_order, basis_elements)) {
         return false;
     }
     if (load_cached_hermite_rule(
             quad_order, basis_order, z, weights, basis, weighted_basis)) {
         return true;
     }
-    if (!standard_normal_hermite_rule(
+    if (!standard_normal_hermite_rule_uncached(
             quad_order, basis_order, z, weights, basis)) {
         return false;
     }
     weighted_basis.assign(basis.size(), 0.0);
     for (int q = 0; q < quad_order; ++q) {
         const double weight = weights[static_cast<std::size_t>(q)];
-        const std::size_t base = static_cast<std::size_t>(q * basis_order);
+        const std::size_t base =
+            static_cast<std::size_t>(q)
+            * static_cast<std::size_t>(basis_order);
         for (int n = 0; n < basis_order; ++n) {
             const std::size_t idx = base + static_cast<std::size_t>(n);
             weighted_basis[idx] = weight * basis[idx];
         }
     }
+    store_cached_hermite_rule(
+        quad_order, basis_order, z, weights, basis, &weighted_basis);
     return true;
 }
 
@@ -479,7 +692,9 @@ void project_multiply(
     double* out_ptr = out.data();
     for (int q = 0; q < quad_order; ++q) {
         double value = 0.0;
-        const std::size_t base = static_cast<std::size_t>(q * basis_order);
+        const std::size_t base =
+            static_cast<std::size_t>(q)
+            * static_cast<std::size_t>(basis_order);
         const double* basis_row = basis.data() + base;
         const double* weighted_row = weighted_basis.data() + base;
         for (int n = 0; n < basis_order; ++n) {
@@ -509,18 +724,25 @@ void project_multiply_with_grad(
     std::fill(dout.begin(), dout.end(), 0.0);
     const double* coeff_ptr = coeff.data();
     const double* dcoeff0 = dcoeff.data();
-    const double* dcoeff1 = dcoeff.data() + basis_order;
-    const double* dcoeff2 = dcoeff.data() + 2 * basis_order;
+    const double* dcoeff1 =
+        dcoeff.data() + static_cast<std::size_t>(basis_order);
+    const double* dcoeff2 =
+        dcoeff.data() + 2 * static_cast<std::size_t>(basis_order);
     double* out_ptr = out.data();
     double* dout0 = dout.data();
-    double* dout1 = dout.data() + basis_order;
-    double* dout2 = dout.data() + 2 * basis_order;
+    double* dout1 = dout.data() + static_cast<std::size_t>(basis_order);
+    double* dout2 =
+        dout.data() + 2 * static_cast<std::size_t>(basis_order);
     const double* dx0_ptr = dx_dalpha.data();
-    const double* dx1_ptr = dx_dalpha.data() + quad_order;
-    const double* dx2_ptr = dx_dalpha.data() + 2 * quad_order;
+    const double* dx1_ptr =
+        dx_dalpha.data() + static_cast<std::size_t>(quad_order);
+    const double* dx2_ptr =
+        dx_dalpha.data() + 2 * static_cast<std::size_t>(quad_order);
 
     for (int q = 0; q < quad_order; ++q) {
-        const std::size_t basis_base = static_cast<std::size_t>(q * basis_order);
+        const std::size_t basis_base =
+            static_cast<std::size_t>(q)
+            * static_cast<std::size_t>(basis_order);
         const double* basis_row = basis.data() + basis_base;
         const double* weighted_row = weighted_basis.data() + basis_base;
         double value = 0.0;
@@ -549,6 +771,61 @@ void project_multiply_with_grad(
             dout0[n] += weighted_basis_value * dout0_factor;
             dout1[n] += weighted_basis_value * dout1_factor;
             dout2[n] += weighted_basis_value * dout2_factor;
+        }
+    }
+}
+
+void project_multiply_with_score_grad(
+    const std::vector<double>& coeff,
+    const std::vector<double>& dcoeff,
+    const std::vector<double>& fi_row,
+    const std::vector<double>& scores,
+    const std::vector<double>& basis,
+    const std::vector<double>& weighted_basis,
+    int quad_order,
+    int basis_order,
+    int n_params,
+    std::vector<double>& out,
+    std::vector<double>& dout) {
+
+    std::fill(out.begin(), out.end(), 0.0);
+    std::fill(dout.begin(), dout.end(), 0.0);
+    for (int q = 0; q < quad_order; ++q) {
+        const std::size_t basis_base =
+            static_cast<std::size_t>(q)
+            * static_cast<std::size_t>(basis_order);
+        const double* basis_row = basis.data() + basis_base;
+        const double* weighted_row = weighted_basis.data() + basis_base;
+        double value = 0.0;
+        for (int n = 0; n < basis_order; ++n) {
+            value += basis_row[n] * coeff[static_cast<std::size_t>(n)];
+        }
+
+        const double fi = fi_row[static_cast<std::size_t>(q)];
+        for (int n = 0; n < basis_order; ++n) {
+            out[static_cast<std::size_t>(n)] +=
+                weighted_row[n] * fi * value;
+        }
+        for (int p = 0; p < n_params; ++p) {
+            const std::size_t param_base =
+                static_cast<std::size_t>(p)
+                * static_cast<std::size_t>(basis_order);
+            double dvalue = 0.0;
+            for (int n = 0; n < basis_order; ++n) {
+                dvalue += basis_row[n] * dcoeff[
+                    param_base + static_cast<std::size_t>(n)];
+            }
+            const double factor = fi * (
+                scores[
+                    static_cast<std::size_t>(q)
+                        * static_cast<std::size_t>(n_params)
+                    + static_cast<std::size_t>(p)]
+                * value
+                + dvalue);
+            for (int n = 0; n < basis_order; ++n) {
+                dout[param_base + static_cast<std::size_t>(n)] +=
+                    weighted_row[n] * factor;
+            }
         }
     }
 }
@@ -642,4 +919,3 @@ void local_gh_predict_matvec(
 }
 
 }  // namespace scar_internal
-

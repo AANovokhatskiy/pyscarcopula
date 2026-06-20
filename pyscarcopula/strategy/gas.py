@@ -1,90 +1,107 @@
-"""
-pyscarcopula.strategy.gas — GAS estimation strategy.
-
-Observation-driven model of Creal, Koopman and Lucas (2013).
-All numerical computation delegated to numerical/gas_filter.py.
-"""
+"""GAS estimation strategy backed by the native numerical evaluator."""
 
 import numpy as np
-from scipy.optimize import minimize, Bounds
+from scipy.optimize import Bounds, minimize
 
 from pyscarcopula._types import (
-    GASResult, NumericalConfig, DEFAULT_CONFIG,
-    gas_params,
+    DEFAULT_CONFIG,
+    GASResult,
+    NumericalConfig,
     PredictiveState,
+    gas_params,
 )
-from pyscarcopula.strategy._base import register_strategy
+from pyscarcopula.numerical import _cpp_gas
 from pyscarcopula.numerical.gas_filter import (
-    gas_filter, gas_predict_param, gas_negloglik,
+    gas_filter,
+    gas_loglik,
     gas_mixture_h,
-    _supports_multivariate_log_pdf,
-    _gas_initial_g,
-    _gas_next_g_from_observation,
+    gas_negloglik,
+    gas_predict_param,
+)
+from pyscarcopula.strategy._base import (
+    copula_dimension,
+    is_multivariate_copula,
+    register_strategy,
 )
 from pyscarcopula.strategy.predict_helpers import sample_predictive
 
 
-@register_strategy('GAS')
+@register_strategy("GAS")
 class GASStrategy:
     """GAS estimation strategy.
 
     Parameters
     ----------
     config : NumericalConfig
-    scaling : 'unit' or 'fisher'
-        Score scaling type. 'unit' is default (simple, robust).
-        'fisher' uses inverse Fisher information (optimal but less stable).
+    scaling : {'unit', 'fisher'}
+        Score scaling type. ``unit`` is recommended for production.
+
+    Notes
+    -----
+    GAS numerical operations require the compiled extension. There is no
+    Python numerical backend or silent fallback. The copula score driving the
+    recursion is computed natively. L-BFGS-B receives only objective values,
+    so its gradient with respect to ``(omega, gamma, beta)`` is numerical.
     """
 
-    def __init__(self, config: NumericalConfig | None = None,
-                 scaling: str = 'unit', **kwargs):
+    def __init__(
+        self,
+        config: NumericalConfig | None = None,
+        scaling: str = "unit",
+        **kwargs,
+    ):
+        if "backend" in kwargs:
+            raise TypeError(
+                "GAS backend selection was removed; native execution is "
+                "always used")
         self.config = config or DEFAULT_CONFIG
         self.scaling = scaling
 
     def _score_eps(self, result: GASResult | None = None) -> float:
         if result is None:
             return float(self.config.gas_score_eps)
-        return float(getattr(result, 'score_eps', self.config.gas_score_eps))
+        return float(getattr(result, "score_eps", self.config.gas_score_eps))
 
     def _optimizer_config(self, copula):
-        config_name = getattr(copula, '_gas_optimizer_config', None)
+        config_name = getattr(copula, "_gas_optimizer_config", None)
         if config_name is not None:
             return getattr(self.config, config_name)
         return self.config.gas_optimizer
 
-    def fit(self, copula, u: np.ndarray,
-            gamma0: np.ndarray | None = None,
-            gtol: float | None = None,
-            ftol: float | None = None,
-            maxfun: int | None = None,
-            maxiter: int | None = None,
-            maxls: int | None = None,
-            eps: float | None = None,
-            maxcor: int | None = None,
-            finite_diff_rel_step: float | None = None,
-            score_eps: float | None = None,
-            gamma_bound: float | None = None,
-            beta_bound: float | None = None,
-            verbose: bool = False,
-            **kwargs) -> GASResult:
-        """Fit GAS model.
-
-        Parameters
-        ----------
-        copula : CopulaProtocol
-        u : (T, 2) pseudo-observations
-        gamma0 : (3,) initial guess [omega, gamma, beta], or None
-        gtol, ftol, maxfun, maxiter, maxls, eps, maxcor,
-        finite_diff_rel_step : L-BFGS-B options
-        verbose : print progress
-        **kwargs : ignored
-
-        Returns
-        -------
-        GASResult
-        """
-        if 'tol' in kwargs:
+    def fit(
+        self,
+        copula,
+        u: np.ndarray,
+        gamma0: np.ndarray | None = None,
+        gtol: float | None = None,
+        ftol: float | None = None,
+        maxfun: int | None = None,
+        maxiter: int | None = None,
+        maxls: int | None = None,
+        eps: float | None = None,
+        maxcor: int | None = None,
+        finite_diff_rel_step: float | None = None,
+        score_eps: float | None = None,
+        gamma_bound: float | None = None,
+        beta_bound: float | None = None,
+        verbose: bool = False,
+        **kwargs,
+    ) -> GASResult:
+        """Fit the native GAS model."""
+        if "tol" in kwargs:
             raise TypeError("tol is not supported; use gtol")
+        if "backend" in kwargs:
+            raise TypeError(
+                "GAS backend selection was removed; native execution is "
+                "always used")
+        corr_num_params = getattr(copula, "_corr_num_params", lambda: 0)()
+        if corr_num_params:
+            raise NotImplementedError(
+                "joint static correlation estimation is implemented for "
+                "MLE and SCAR-TM-OU, not GAS")
+        _cpp_gas.ensure_supported(copula)
+        _cpp_gas.require_available()
+
         optimizer_options = self._optimizer_config(copula).options(
             gtol=gtol,
             ftol=ftol,
@@ -95,37 +112,44 @@ class GASStrategy:
             maxcor=maxcor,
             finite_diff_rel_step=finite_diff_rel_step,
         )
-        score_eps = float(score_eps if score_eps is not None
-                          else self.config.gas_score_eps)
-        gamma_bound = float(gamma_bound if gamma_bound is not None
-                            else self.config.gas_gamma_bound)
-        beta_bound = float(beta_bound if beta_bound is not None
-                           else self.config.gas_beta_bound)
+        score_eps = float(
+            score_eps
+            if score_eps is not None
+            else self.config.gas_score_eps
+        )
+        gamma_bound = float(
+            gamma_bound
+            if gamma_bound is not None
+            else self.config.gas_gamma_bound
+        )
+        beta_bound = float(
+            beta_bound
+            if beta_bound is not None
+            else self.config.gas_beta_bound
+        )
         if gamma_bound <= 0:
             raise ValueError("gamma_bound must be positive")
-        if not (0 < beta_bound < 1):
+        if not 0 < beta_bound < 1:
             raise ValueError("beta_bound must be in (0, 1)")
 
-        # Default initial point
         if gamma0 is None:
             from pyscarcopula.strategy.mle import MLEStrategy
-            mle = MLEStrategy(config=self.config)
-            mle_result = mle.fit(copula, u)
-            mu_mle = float(np.atleast_1d(
-                copula.inv_transform(np.atleast_1d(mle_result.copula_param))
-            )[0])
-            gamma0 = np.array([
-                mu_mle * 0.05,     # omega ≈ f_bar * (1 - beta)
-                0.05,              # gamma: moderate score sensitivity
-                0.95,              # beta: high persistence
-            ])
+
+            mle_result = MLEStrategy(config=self.config).fit(copula, u)
+            mu_mle = float(
+                np.atleast_1d(
+                    copula.inv_transform(
+                        np.atleast_1d(mle_result.copula_param)
+                    )
+                )[0]
+            )
+            gamma0 = np.array([mu_mle * 0.05, 0.05, 0.95])
 
         if verbose:
             print(
                 f"GAS fit: gamma0={gamma0}, scaling={self.scaling}, "
                 f"score_eps={score_eps}, options={optimizer_options}, "
-                f"gamma_bound={gamma_bound}, "
-                f"beta_bound={beta_bound}"
+                f"gamma_bound={gamma_bound}, beta_bound={beta_bound}"
             )
 
         bounds = Bounds(
@@ -135,16 +159,22 @@ class GASStrategy:
 
         def objective(x):
             return gas_negloglik(
-                x[0], x[1], x[2], u, copula, self.scaling, score_eps)
+                x[0],
+                x[1],
+                x[2],
+                u,
+                copula,
+                self.scaling,
+                score_eps,
+            )
 
         result = minimize(
             objective,
             gamma0,
-            method='L-BFGS-B',
+            method="L-BFGS-B",
             bounds=bounds,
             options=optimizer_options,
         )
-
         params = gas_params(
             omega=result.x[0],
             gamma=result.x[1],
@@ -153,185 +183,265 @@ class GASStrategy:
             beta_bound=beta_bound,
         )
 
-        # Compute one-step-ahead value for predict (uses the final score).
-        r_last = gas_predict_param(
-            result.x[0], result.x[1], result.x[2], u, copula,
-            self.scaling, score_eps)
+        success = bool(result.success)
+        message = str(result.message)
+        try:
+            final_log_likelihood = gas_loglik(
+                result.x[0],
+                result.x[1],
+                result.x[2],
+                u,
+                copula,
+                self.scaling,
+                score_eps,
+            )
+            if not np.isfinite(final_log_likelihood):
+                raise FloatingPointError(
+                    "final GAS log-likelihood is not finite")
+            r_last = gas_predict_param(
+                result.x[0],
+                result.x[1],
+                result.x[2],
+                u,
+                copula,
+                self.scaling,
+                score_eps,
+            )
+        except Exception as exc:
+            success = False
+            final_log_likelihood = -1e10
+            r_last = 0.0
+            message = f"{message}; final native GAS validation failed: {exc}"
 
         return GASResult(
-            log_likelihood=-result.fun,
-            method='GAS',
+            log_likelihood=final_log_likelihood,
+            method="GAS",
             copula_name=copula.name,
-            success=result.success,
+            success=success,
             nfev=result.nfev,
-            message=str(result.message),
+            message=message,
             params=params,
             scaling=self.scaling,
             score_eps=score_eps,
             r_last=r_last,
+            diagnostics={
+                "model_score": "native",
+                "optimizer_gradient": "numerical",
+                "gradient_kind": "numerical_optimizer",
+                "setup_derivative": "not_provided",
+                "filter_derivative": "not_provided_to_optimizer",
+                "analytical_grad_requested": False,
+                "analytical_grad_used": False,
+            },
         )
 
-    def log_likelihood(self, copula, u: np.ndarray,
-                       result: GASResult) -> float:
-        """Evaluate GAS log-likelihood."""
+    def log_likelihood(self, copula, u: np.ndarray, result: GASResult) -> float:
         p = result.params
-        _, _, ll = gas_filter(
-            p.omega, p.gamma, p.beta, u, copula,
-            result.scaling, self._score_eps(result))
-        return ll
+        return gas_loglik(
+            p.omega,
+            p.gamma,
+            p.beta,
+            u,
+            copula,
+            result.scaling,
+            self._score_eps(result),
+        )
 
-    def predictive_mean(self, copula, u: np.ndarray,
-                        result: GASResult) -> np.ndarray:
-        """Deterministic Psi(g_t) path."""
+    def predictive_mean(
+        self,
+        copula,
+        u: np.ndarray,
+        result: GASResult,
+    ) -> np.ndarray:
         p = result.params
         _, r_path, _ = gas_filter(
-            p.omega, p.gamma, p.beta, u, copula,
-            result.scaling, self._score_eps(result))
+            p.omega,
+            p.gamma,
+            p.beta,
+            u,
+            copula,
+            result.scaling,
+            self._score_eps(result),
+        )
         return r_path
 
-    def rosenblatt_e2(self, copula, u: np.ndarray,
-                      result: GASResult) -> np.ndarray:
-        """e2 = h(u2, u1; Psi(g_t))."""
-        r_path = self.predictive_mean(copula, u, result)
-        return copula.h(u[:, 1], u[:, 0], r_path)
+    def rosenblatt_e2(
+        self,
+        copula,
+        u: np.ndarray,
+        result: GASResult,
+    ) -> np.ndarray:
+        return self.mixture_h(copula, u, result)
 
-    def mixture_h(self, copula, u: np.ndarray,
-                  result: GASResult) -> np.ndarray:
-        """h along GAS-filtered path (point estimate, not mixture)."""
+    def mixture_h(
+        self,
+        copula,
+        u: np.ndarray,
+        result: GASResult,
+    ) -> np.ndarray:
+        if is_multivariate_copula(copula):
+            raise NotImplementedError(
+                "pair h-functions are not defined for multivariate GAS")
         p = result.params
         return gas_mixture_h(
-            p.omega, p.gamma, p.beta, u, copula,
-            result.scaling, self._score_eps(result))
+            p.omega,
+            p.gamma,
+            p.beta,
+            u,
+            copula,
+            result.scaling,
+            self._score_eps(result),
+        )
 
-    def objective(self, copula, u: np.ndarray,
-                  gamma: np.ndarray, **kwargs) -> float:
-        """Minus log-likelihood: -logL(omega, gamma, beta)."""
-        score_eps = float(kwargs.get('score_eps', self._score_eps()))
+    def objective(
+        self,
+        copula,
+        u: np.ndarray,
+        gamma: np.ndarray,
+        **kwargs,
+    ) -> float:
+        if "backend" in kwargs:
+            raise TypeError(
+                "GAS backend selection was removed; native execution is "
+                "always used")
+        score_eps = float(kwargs.get("score_eps", self._score_eps()))
         return gas_negloglik(
-            gamma[0], gamma[1], gamma[2], u, copula,
-            self.scaling, score_eps)
+            gamma[0],
+            gamma[1],
+            gamma[2],
+            u,
+            copula,
+            self.scaling,
+            score_eps,
+        )
 
     def sample(self, copula, u, result, n, rng=None, **kwargs):
-        """Recursive GAS simulation.
-
-        At each step t:
-          1. r_t = Psi(g_t)
-          2. Sample (u1_t, u2_t) from copula with r_t
-          3. Compute score s_t from the sampled observation
-          4. g_{t+1} = omega + beta*g_t + gamma*s_t
-        """
+        """Recursively sample using native GAS state updates."""
         if rng is None:
             rng = np.random.default_rng()
-
         p = result.params
-        omega, gamma_gas, beta = p.omega, p.gamma, p.beta
         score_eps = self._score_eps(result)
+        d = copula_dimension(copula, u)
+        if d is None:
+            raise ValueError("copula dimension is unknown")
 
-        g_t = _gas_initial_g(omega, beta)
-
-        d = u.shape[1] if u is not None and np.ndim(u) == 2 else 2
-        if _supports_multivariate_log_pdf(copula, np.empty((1, d))):
-            samples = np.empty((n, d))
-            fixed_t_index = None
-            r_path = getattr(copula, 'R_path', None)
-            if r_path is not None:
-                fixed_t_index = len(r_path) - 1
-
-            for t in range(n):
-                r_t = float(copula.transform(np.array([g_t]))[0])
-                obs = sample_predictive(
-                    copula, 1, np.array([r_t]), rng=rng, d=d)
-                samples[t] = obs[0]
-
-                if t < n - 1:
-                    t_index = fixed_t_index if fixed_t_index is not None else t
-                    g_t, _, _, _ = _gas_next_g_from_observation(
-                        omega, gamma_gas, beta, g_t, obs, copula,
-                        self.scaling, score_eps, t_index=t_index, r_t=r_t)
-
-            return samples
-
-        samples = np.empty((n, 2))
+        state = _cpp_gas.initial_state(
+            p.omega,
+            p.gamma,
+            p.beta,
+            copula,
+            result.scaling,
+            score_eps,
+        )
+        g_t = state.g
+        r_t = state.parameter
+        samples = np.empty((n, d), dtype=np.float64)
+        multivariate = is_multivariate_copula(copula)
 
         for t in range(n):
-            r_t = float(copula.transform(np.array([g_t]))[0])
-
-            # Sample one observation from copula with r_t
-            obs = copula.sample(1, np.array([r_t]), rng=rng)
+            if multivariate:
+                obs = sample_predictive(
+                    copula,
+                    1,
+                    np.array([r_t]),
+                    rng=rng,
+                    d=d,
+                )
+            else:
+                obs = copula.sample_at_parameter(
+                    1, np.array([r_t]), rng=rng)
             samples[t] = obs[0]
-
-            # Compute score for next step
             if t < n - 1:
-                g_t, _, _, _ = _gas_next_g_from_observation(
-                    omega, gamma_gas, beta, g_t, obs, copula,
-                    self.scaling, score_eps, r_t=r_t)
-
+                update = _cpp_gas.update_one(
+                    p.omega,
+                    p.gamma,
+                    p.beta,
+                    g_t,
+                    obs,
+                    copula,
+                    result.scaling,
+                    score_eps,
+                )
+                g_t = update.g_next
+                r_t = update.r_next
         return samples
 
     def predict(self, copula, u, result, n, rng=None, **kwargs):
-        """Predict using last GAS-filtered value g_T.
-
-        GAS path is deterministic given data, so the predictive
-        distribution is a point mass at r = Psi(g_T).
-        """
         if rng is None:
             rng = np.random.default_rng()
-
         r = self.predictive_params(copula, u, result, n, rng=rng, **kwargs)
-        d = u.shape[1] if u is not None and np.ndim(u) == 2 else 2
+        d = copula_dimension(copula, u)
         return sample_predictive(
-            copula, n, r, given=kwargs.get('given'), rng=rng, d=d)
+            copula,
+            n,
+            r,
+            given=kwargs.get("given"),
+            rng=rng,
+            d=d,
+        )
 
     def predictive_params(self, copula, u, result, n, rng=None, **kwargs):
-        """Deterministic GAS predictive parameter path."""
         state = self.predictive_state(copula, u, result, **kwargs)
         return self.sample_params(copula, state, n, rng=rng, **kwargs)
 
     def predictive_state(self, copula, u, result, **kwargs):
-        """Point-mass GAS predictive state."""
         if u is None or len(u) == 0:
-            r_T = float(result.r_last)
+            r_t = float(result.r_last)
         else:
-            horizon = kwargs.get('horizon', 'next')
             p = result.params
-            r_T = gas_predict_param(
-                p.omega, p.gamma, p.beta, u, copula,
-                result.scaling, self._score_eps(result), horizon=horizon)
+            r_t = gas_predict_param(
+                p.omega,
+                p.gamma,
+                p.beta,
+                u,
+                copula,
+                result.scaling,
+                self._score_eps(result),
+                horizon=kwargs.get("horizon", "next"),
+            )
         return PredictiveState(
-            method='GAS',
-            horizon=str(kwargs.get('horizon', 'next')).lower(),
-            kind='point',
-            r=np.array([r_T], dtype=np.float64),
-            metadata={'g': float(copula.inv_transform(np.array([r_T]))[0])}
-            if hasattr(copula, 'inv_transform') else {},
+            method="GAS",
+            horizon=str(kwargs.get("horizon", "next")).lower(),
+            kind="point",
+            r=np.array([r_t], dtype=np.float64),
+            metadata={
+                "g": float(copula.inv_transform(np.array([r_t]))[0])
+            }
+            if hasattr(copula, "inv_transform")
+            else {},
         )
 
     def condition_state(self, copula, state, observation, result, **kwargs):
-        """Apply one GAS score update using a fully observed pair."""
         if observation is None:
             return state
         u = np.asarray(observation, dtype=np.float64)
-        if u.ndim != 2 or u.shape[1] != 2 or len(u) == 0:
+        d = copula_dimension(copula, u)
+        if u.ndim != 2 or d is None or u.shape[1] != d or len(u) == 0:
             return state
-        # Prediction-time conditioning contributes one partial observation.
-        # RVine samplers pass n identical rows, one per Monte Carlo draw.
         u = u[:1]
 
         p = result.params
-        if 'g' in state.metadata:
-            g_t = float(state.metadata['g'])
+        if "g" in state.metadata:
+            g_t = float(state.metadata["g"])
         else:
-            g_t = float(copula.inv_transform(np.array([float(state.r[0])]))[0])
-        g_new, _, _, _ = _gas_next_g_from_observation(
-            p.omega, p.gamma, p.beta, g_t, u, copula, result.scaling,
-            self._score_eps(result), analytical=False)
-        r_new = float(copula.transform(np.array([g_new]))[0])
+            g_t = float(
+                copula.inv_transform(np.array([float(state.r[0])]))[0])
+        update = _cpp_gas.update_one(
+            p.omega,
+            p.gamma,
+            p.beta,
+            g_t,
+            u,
+            copula,
+            result.scaling,
+            self._score_eps(result),
+        )
         return PredictiveState(
             method=state.method,
             horizon=state.horizon,
             kind=state.kind,
-            r=np.array([r_new], dtype=np.float64),
-            metadata={**dict(state.metadata), 'g': g_new},
+            r=np.array([update.r_next], dtype=np.float64),
+            metadata={**dict(state.metadata), "g": update.g_next},
         )
 
     def sample_params(self, copula, state, n, rng=None, **kwargs):
@@ -344,14 +454,19 @@ class GASStrategy:
         )
 
     def model_sample_state(self, copula, result, **kwargs):
-        """Initial point-mass state for stepwise GAS model reproduction."""
         p = result.params
-        g_t = _gas_initial_g(p.omega, p.beta)
-        r_t = float(copula.transform(np.array([g_t]))[0])
+        initial = _cpp_gas.initial_state(
+            p.omega,
+            p.gamma,
+            p.beta,
+            copula,
+            result.scaling,
+            self._score_eps(result),
+        )
         return PredictiveState(
-            method='GAS',
-            horizon='model',
-            kind='point',
-            r=np.array([r_t], dtype=np.float64),
-            metadata={'g': g_t},
+            method="GAS",
+            horizon="model",
+            kind="point",
+            r=np.array([initial.parameter], dtype=np.float64),
+            metadata={"g": initial.g},
         )

@@ -13,9 +13,7 @@ from collections import defaultdict
 import numpy as np
 
 from pyscarcopula.vine._rvine_edges import _edge_h, _edge_h_inverse
-
-
-_EPS = 1e-10
+from pyscarcopula.vine._helpers import _clip_unit, _open_unit_uniform
 
 
 class ConditionalSamplePlan(list):
@@ -258,10 +256,6 @@ def plan_conditional_sample(dag, given, d):
     return ConditionalSamplePlan(steps, d)
 
 
-def _clip_unit(values):
-    return np.clip(np.asarray(values, dtype=np.float64), _EPS, 1.0 - _EPS)
-
-
 def _edge_payload(step, r_all):
     edge_key = tuple(step['edge'])
     payload = r_all[edge_key]
@@ -287,7 +281,7 @@ def execute_conditional_plan(plan, r_all, given, n, rng):
         action = step['action']
 
         if action == 'sample_uniform':
-            pseudo_obs[step['node']] = rng.uniform(_EPS, 1.0 - _EPS, size=n)
+            pseudo_obs[step['node']] = _open_unit_uniform(rng, size=n)
             continue
 
         edge, r = _edge_payload(step, r_all)

@@ -653,7 +653,7 @@ class TestConditionalSamplingPlanLayer:
             x[t] = (mu + rho_ou * (x[t - 1] - mu)
                     + sigma_cond * rng.standard_normal())
         copula = BivariateGaussianCopula()
-        u = copula.sample(T, copula.transform(x), rng=rng)
+        u = copula.sample_at_parameter(T, copula.transform(x), rng=rng)
         return u, {'method': 'scar-tm-ou'}
 
     @pytest.mark.parametrize(
@@ -986,7 +986,7 @@ class TestConditionalSamplingPlanLayer:
             np.full(80, 0.75),
             np.full(80, -0.35),
         ]
-        u_train = copula.sample(
+        u_train = copula.sample_at_parameter(
             len(rho_true),
             rho_true,
             rng=np.random.default_rng(113),
@@ -1018,7 +1018,7 @@ class TestConditionalSamplingPlanLayer:
             np.full(80, 0.75),
             np.full(80, -0.35),
         ]
-        u_train = copula.sample(
+        u_train = copula.sample_at_parameter(
             len(rho_true),
             rho_true,
             rng=np.random.default_rng(124),
@@ -1058,7 +1058,7 @@ class TestConditionalSamplingPlanLayer:
 
         copula = BivariateGaussianCopula()
         rho_true = copula.transform(x)
-        u_train = copula.sample(T, rho_true, rng=rng)
+        u_train = copula.sample_at_parameter(T, rho_true, rng=rng)
 
         result = api_fit(
             BivariateGaussianCopula(),
@@ -1167,12 +1167,13 @@ class TestConditionalSamplingPlanLayer:
             grid_range=3.0,
         )
 
-        def fake_tm_state_distribution(*args, horizon='next', **kwargs):
+        def fake_tm_state_distribution(
+                kappa, mu, nu, u, copula_arg, config, horizon='next'):
             assert horizon == 'next'
             return np.array([target_x]), np.array([1.0])
 
         monkeypatch.setattr(
-            'pyscarcopula.numerical.predictive_tm.tm_state_distribution',
+            'pyscarcopula.numerical._cpp_scar_ou.state_distribution',
             fake_tm_state_distribution,
         )
 
@@ -1194,7 +1195,7 @@ class TestConditionalSamplingPlanLayer:
     def test_bivariate_mle_sample_refit_roundtrip_recovers_parameter(self):
         copula = BivariateGaussianCopula()
         rho_true = 0.55
-        u_train = copula.sample(
+        u_train = copula.sample_at_parameter(
             1500,
             np.full(1500, rho_true),
             rng=np.random.default_rng(117),
@@ -1383,7 +1384,7 @@ class TestConditionalSamplingPlanLayer:
     def test_near_singular_gaussian_conditional_is_concentrated(self):
         copula = BivariateGaussianCopula()
         rho = 0.99
-        u_train = copula.sample(
+        u_train = copula.sample_at_parameter(
             2000,
             np.full(2000, rho),
             rng=np.random.default_rng(132),
@@ -1409,7 +1410,7 @@ class TestConditionalSamplingPlanLayer:
     def test_near_singular_rvine_conditional_is_concentrated(self):
         copula = BivariateGaussianCopula()
         rho = 0.99
-        u_train = copula.sample(
+        u_train = copula.sample_at_parameter(
             2500,
             np.full(2500, rho),
             rng=np.random.default_rng(134),
@@ -1453,8 +1454,10 @@ class TestConditionalSamplingPlanLayer:
         copula = GumbelCopula()
         r = np.full(300, 2.0)
 
-        s1 = copula.sample(300, r, rng=np.random.default_rng(150))
-        s2 = copula.sample(300, r, rng=np.random.default_rng(150))
+        s1 = copula.sample_at_parameter(
+            300, r, rng=np.random.default_rng(150))
+        s2 = copula.sample_at_parameter(
+            300, r, rng=np.random.default_rng(150))
 
         np.testing.assert_allclose(s1, s2, rtol=0.0, atol=0.0)
 
@@ -1537,14 +1540,15 @@ class TestConditionalSamplingPlanLayer:
         )
         calls = []
 
-        def fake_tm_state_distribution(*args, horizon='next', **kwargs):
+        def fake_tm_state_distribution(
+                kappa, mu, nu, u, copula_arg, config, horizon='next'):
             calls.append(horizon)
             if horizon == 'current':
                 return np.array([0.75]), np.array([1.0])
             return np.array([0.25]), np.array([1.0])
 
         monkeypatch.setattr(
-            'pyscarcopula.numerical.predictive_tm.tm_state_distribution',
+            'pyscarcopula.numerical._cpp_scar_ou.state_distribution',
             fake_tm_state_distribution,
         )
         strategy = get_strategy_for_result(result)
@@ -1572,7 +1576,7 @@ class TestConditionalSamplingPlanLayer:
         assert not np.allclose(r_current, r_next)
 
     def test_gas_sample_uses_score_driven_recursion(self):
-        copula = _LinearScoreCopula()
+        copula = BivariateGaussianCopula()
         result = GASResult(
             log_likelihood=0.0,
             method='GAS',

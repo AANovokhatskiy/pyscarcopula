@@ -12,6 +12,12 @@ Each edge copula is selected automatically from the configured candidate
 families via AIC, and can use constant (MLE) or time-varying (SCAR, GAS)
 parameters.
 
+The shared `transform_type` option is passed to candidate constructors.
+Archimedean edge families use it to select `softplus` or `xtanh`.
+`BivariateGaussianCopula` accepts the same argument for constructor
+uniformity, but Gaussian edges always use their bounded `GaussianTanh`
+correlation mapping.
+
 ## C-vine
 
 A C-vine uses a star structure where the first variable is the root of tree 0,
@@ -107,7 +113,7 @@ import numpy as np
 # Predict: next-step conditional sampling (for VaR/CVaR)
 predictions = vine.predict(
     n=10000,
-    u_train=u,
+    u=u,
     horizon='next',
     rng=np.random.default_rng(2025),
 )
@@ -128,14 +134,14 @@ variable_order = [
 # Fast exact path: fix the last variables in the R-vine order.
 pred_cond = vine.predict(
     n=5000,
-    u_train=u,
+    u=u,
     given={variable_order[-1]: 0.6},
     horizon='current',
     rng=np.random.default_rng(2026),
 )
 pred_cond2 = vine.predict(
     n=5000,
-    u_train=u,
+    u=u,
     given={variable_order[-2]: 0.35, variable_order[-1]: 0.75},
     rng=np.random.default_rng(2027),
 )
@@ -159,7 +165,7 @@ print(variable_order)
 
 samples, diagnostics = vine.predict(
     n=5000,
-    u_train=u,
+    u=u,
     given={variable_order[0]: 0.45},
     mcmc_steps=300,
     mcmc_burnin=100,

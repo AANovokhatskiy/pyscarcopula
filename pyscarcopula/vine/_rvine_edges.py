@@ -3,7 +3,6 @@
 import numpy as np
 
 from pyscarcopula.copula.independent import IndependentCopula
-from pyscarcopula.numerical import _cpp_scar_ou
 from pyscarcopula.vine._edge_adapter import (
     edge_condition_sample_state,
     edge_log_likelihood,
@@ -20,48 +19,6 @@ from pyscarcopula.vine._edge_adapter import (
 )
 
 
-def _backend_name(value):
-    return str(value).lower() if value is not None else None
-
-
-def _edge_cpp_requested(edge, cfg):
-    backend = _backend_name(cfg.get('backend'))
-    if backend == 'python':
-        return False
-    result_backend = _backend_name(getattr(edge_result(edge), 'backend', None))
-    return backend in ('cpp', 'auto') or result_backend in ('cpp', 'auto')
-
-
-def _edge_cpp_required(edge, cfg):
-    backend = _backend_name(cfg.get('backend'))
-    result_backend = _backend_name(getattr(edge_result(edge), 'backend', None))
-    return backend == 'cpp' or result_backend == 'cpp'
-
-
-def _try_cpp_h(edge, u_conditioned, u_given, r, cfg):
-    if not _edge_cpp_requested(edge, cfg):
-        return None
-    try:
-        return _cpp_scar_ou.copula_h(
-            edge_copula(edge), u_conditioned, u_given, r)
-    except _cpp_scar_ou.CppError:
-        if _edge_cpp_required(edge, cfg):
-            raise
-    return None
-
-
-def _try_cpp_h_inverse(edge, v, u_given, r, cfg):
-    if not _edge_cpp_requested(edge, cfg):
-        return None
-    try:
-        return _cpp_scar_ou.copula_h_inverse(
-            edge_copula(edge), v, u_given, r)
-    except _cpp_scar_ou.CppError:
-        if _edge_cpp_required(edge, cfg):
-            raise
-    return None
-
-
 def _edge_h(edge, u_conditioned, u_given, config=None, u_pair=None,
             state_cache=None, current_cache_key=None, next_cache_key=None,
             **strategy_kwargs):
@@ -73,17 +30,11 @@ def _edge_h(edge, u_conditioned, u_given, config=None, u_pair=None,
     cfg = config if isinstance(config, dict) else {}
     r = cfg.get('r')
     if r is not None:
-        cpp = _try_cpp_h(edge, u_conditioned, u_given, r, cfg)
-        if cpp is not None:
-            return cpp
         return copula.h(u_conditioned, u_given, r)
 
     result = edge_result(edge)
     if result is None:
         r = np.full(len(np.atleast_1d(u_conditioned)), edge_param(edge))
-        cpp = _try_cpp_h(edge, u_conditioned, u_given, r, cfg)
-        if cpp is not None:
-            return cpp
         return copula.h(u_conditioned, u_given, r)
     if edge_is_independent(edge):
         return np.asarray(u_conditioned, dtype=np.float64).copy()
@@ -101,6 +52,11 @@ def _edge_h(edge, u_conditioned, u_given, config=None, u_pair=None,
         **strategy_kwargs)
 
 
+def _edge_h_pair_with_r(edge, u, v, r):
+    """Compute both conditional directions for an explicit parameter path."""
+    return edge_copula(edge).h_pair(u, v, r)
+
+
 def _edge_log_likelihood(edge, u_pair, config=None, **strategy_kwargs):
     """Compute log-likelihood for one pair edge using its fitted strategy."""
     copula = edge_copula(edge)
@@ -110,10 +66,9 @@ def _edge_log_likelihood(edge, u_pair, config=None, **strategy_kwargs):
     result = edge_result(edge)
     r = edge_param(edge)
     if r is not None:
-        u1 = u_pair[:, 0]
-        u2 = u_pair[:, 1]
-        return float(np.sum(
-            copula.log_pdf(u1, u2, np.full(len(u1), float(r)))))
+        from pyscarcopula.numerical import static_likelihood
+        return static_likelihood.prepare(
+            copula, u_pair).log_likelihood(float(r))
 
     return edge_log_likelihood(
         copula, result, u_pair, config=config, **strategy_kwargs)
@@ -135,9 +90,6 @@ def _edge_h_inverse(edge, v, u_given, config=None):
         r = cfg.get('r')
         if r is None:
             r = np.full(len(np.atleast_1d(v)), edge_param(edge))
-        cpp = _try_cpp_h_inverse(edge, v, u_given, r, cfg)
-        if cpp is not None:
-            return cpp
         return copula.h_inverse(v, u_given, r)
     if edge_is_independent(edge):
         return np.asarray(v, dtype=np.float64).copy()
@@ -149,9 +101,6 @@ def _edge_h_inverse(edge, v, u_given, config=None):
             rng = np.random.default_rng()
         r = _edge_r_for_sample(edge, len(np.atleast_1d(v)), rng)
 
-    cpp = _try_cpp_h_inverse(edge, v, u_given, r, cfg)
-    if cpp is not None:
-        return cpp
     return copula.h_inverse(v, u_given, r)
 
 

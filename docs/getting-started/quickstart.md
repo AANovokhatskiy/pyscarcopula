@@ -4,6 +4,9 @@
 
 pyscarcopula works with pseudo-observations - uniform marginals obtained from ranked data.
 
+The installed package requires its bundled native extension. GAS and
+SCAR-TM-OU do not accept a backend selector.
+
 ```python
 import pandas as pd
 import numpy as np
@@ -85,11 +88,11 @@ vine.summary()
 
 # Vine sampling and prediction
 v6 = vine.sample(2000, rng=np.random.default_rng(2027))
-u_pred_6d = vine.predict(100_000, u_train=u_6d,
+u_pred_6d = vine.predict(100_000, u=u_6d,
                          rng=np.random.default_rng(2028))
 
 # Conditional vine forecast: fix one variable
-u_pred_6d_cond = vine.predict(20_000, u_train=u_6d, given={2: 0.6},
+u_pred_6d_cond = vine.predict(20_000, u=u_6d, given={2: 0.6},
                               rng=np.random.default_rng(2029))
 ```
 
@@ -114,7 +117,7 @@ cfg = PredictConfig(
 )
 u_pred_6d_cond, diagnostics = rvine.predict(
     20_000,
-    u_train=u_6d,
+    u=u_6d,
     predict_config=cfg,
     rng=np.random.default_rng(2030),
 )
@@ -145,12 +148,15 @@ For the precise meaning of `given`, `given_vars`, `horizon`, and
 | Gaussian | `BivariateGaussianCopula` | - | Yes | Yes |
 | Equicorrelation | `EquicorrGaussianCopula` | - | Yes | No |
 | Stochastic Student-t | `StochasticStudentCopula` | - | Yes | No |
-| Stochastic Student-t DCC | `StochasticStudentDCCCopula` | - | Yes | No |
 | Gaussian (d-dim) | `GaussianCopula` | - | MLE only | No |
 | Student-t (d-dim) | `StudentCopula` | - | MLE only | No |
 
 `scar-tm-jacobi` additionally requires a Kendall-tau parameter mapping; this is
 implemented for Gumbel, Clayton, Frank, Joe, and bivariate Gaussian copulas.
+
+Multivariate models are available from
+`pyscarcopula.copula.multivariate` and retain their top-level imports from
+`pyscarcopula`.
 
 ## Available estimation methods
 

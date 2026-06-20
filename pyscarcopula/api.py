@@ -24,7 +24,7 @@ All functions accept a copula + data + immutable result and return new
 values. The functions in this module do not store fit state on the copula.
 
 Note: BivariateCopula also has convenience methods (copula.predict,
-copula.sample_model) that work after copula.fit(). These delegate
+copula.sample) that work after copula.fit(). These delegate
 to this API internally but require copula.fit() to have been called.
 """
 
@@ -35,7 +35,13 @@ from pyscarcopula._types import (
     PredictConfig,
 )
 from pyscarcopula._utils import pobs as _pobs
-from pyscarcopula.strategy._base import get_strategy, get_strategy_for_result
+from pyscarcopula.strategy._base import (
+    ensure_strategy_supported,
+    get_copula_capabilities,
+    get_strategy,
+    get_strategy_for_result,
+    validate_copula_data,
+)
 
 
 def _as_float64_array_no_copy(value):
@@ -72,6 +78,8 @@ def fit(copula, data, method='scar-tm-ou', to_pobs=False,
     if to_pobs:
         u = _pobs(u)
 
+    validate_copula_data(copula, u)
+    ensure_strategy_supported(copula, method)
     strategy = get_strategy(method, config=config, **kwargs)
     return strategy.fit(copula, u, **kwargs)
 
@@ -93,6 +101,7 @@ def log_likelihood(copula, data, result: FitResult,
     float
     """
     u = np.asarray(data, dtype=np.float64)
+    validate_copula_data(copula, u)
     strategy = get_strategy_for_result(result, config=config, **kwargs)
     return strategy.log_likelihood(copula, u, result)
 
@@ -117,6 +126,7 @@ def predictive_mean(copula, data, result: FitResult,
     (T,) array of copula parameters
     """
     u = np.asarray(data, dtype=np.float64)
+    validate_copula_data(copula, u)
     strategy = get_strategy_for_result(result, config=config, **kwargs)
     return strategy.predictive_mean(copula, u, result)
 
@@ -140,6 +150,11 @@ def mixture_h(copula, data, result: FitResult,
     (T,) array
     """
     u = np.asarray(data, dtype=np.float64)
+    validate_copula_data(copula, u)
+    capabilities = get_copula_capabilities(copula)
+    if capabilities is not None and not capabilities.supports_pair_ops:
+        raise NotImplementedError(
+            f"{type(copula).__name__} does not expose pair h-functions")
     strategy = get_strategy_for_result(result, config=config, **kwargs)
     runtime_kwargs = {
         name: kwargs[name]
@@ -184,7 +199,10 @@ def sample(copula, data, result: FitResult, n: int,
     Parameters
     ----------
     copula : CopulaProtocol
-    data : (T, 2) pseudo-observations (used for GAS init, etc.)
+    data : (T, d) pseudo-observations
+        Used by non-vine strategies where model reproduction requires fitted
+        data. Vine objects retain their fitted edge state and ignore this
+        stateless-dispatch argument.
     result : FitResult from fit()
     n : int
         Number of observations to generate.
@@ -193,10 +211,14 @@ def sample(copula, data, result: FitResult, n: int,
     -------
     (n, d) pseudo-observations
     """
-    if _is_vine_copula(copula):
-        return copula.sample(n, u_train=data, **kwargs)
+    vine_kind = _vine_kind(copula)
+    if vine_kind == 'cvine':
+        return copula.sample(n, **kwargs)
+    if vine_kind == 'rvine':
+        return copula.sample(n, **kwargs)
 
     u = np.asarray(data, dtype=np.float64)
+    validate_copula_data(copula, u)
     strategy = get_strategy_for_result(result, config=config, **kwargs)
     return strategy.sample(copula, u, result, n, **kwargs)
 
@@ -261,7 +283,8 @@ def predict(copula, data, result: FitResult, n: int,
     Parameters
     ----------
     copula : CopulaProtocol
-    data : pseudo-observations used as conditioning data
+    data : pseudo-observations used as prediction history
+        Passed to both C-vines and R-vines as their canonical ``u`` history.
     result : FitResult from fit()
         Ignored for vine copulas, which hold fitted edge state internally.
     given : dict[int, float] or None
@@ -288,9 +311,10 @@ def predict(copula, data, result: FitResult, n: int,
         )
     if vine_kind == 'rvine':
         return copula.predict(
-            n, u_train=data, predict_config=pcfg, **kwargs)
+            n, u=data, predict_config=pcfg, **kwargs)
 
     u = np.asarray(data, dtype=np.float64)
+    validate_copula_data(copula, u)
     strategy = get_strategy_for_result(result, config=config, **kwargs)
     return strategy.predict(
         copula,

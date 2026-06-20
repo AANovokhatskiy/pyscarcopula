@@ -2,10 +2,10 @@
 
 import numpy as np
 
+from pyscarcopula._constants import PSEUDO_OBS_EPS
+from pyscarcopula._utils import clip_pseudo_observations
+from pyscarcopula.vine._helpers import _open_unit_uniform
 from pyscarcopula.vine._rvine_dag import execute_conditional_plan
-
-
-_EPS = 1e-10
 
 
 def sample_dag_given_with_r(n, r_all, rng, given, plan, pair_copulas):
@@ -38,7 +38,7 @@ def sample_arbitrary_given_mcmc(
         return out, _empty_mcmc_diagnostics()
 
     if initial is None:
-        current = rng.uniform(_EPS, 1.0 - _EPS, size=(n, d))
+        current = _open_unit_uniform(rng, size=(n, d))
         for var, value in given.items():
             current[:, var] = value
     else:
@@ -62,10 +62,11 @@ def sample_arbitrary_given_mcmc(
     for step_idx in range(total_steps):
         var = free_vars[step_idx % len(free_vars)]
         proposal = current.copy()
-        proposal[:, var] = rng.uniform(_EPS, 1.0 - _EPS, size=n)
+        proposal[:, var] = _open_unit_uniform(rng, size=n)
         proposal_logp = log_pdf_rows(proposal, r_all)
         log_alpha = proposal_logp - current_logp
-        accept = np.log(rng.uniform(_EPS, 1.0, size=n)) < log_alpha
+        accept = np.log(
+            rng.uniform(PSEUDO_OBS_EPS, 1.0, size=n)) < log_alpha
         if np.any(accept):
             current[accept, var] = proposal[accept, var]
             current_logp[accept] = proposal_logp[accept]
@@ -86,7 +87,7 @@ def sample_arbitrary_given_mcmc(
         and acceptance_min is not None
         and acceptance_min < 0.02
     )
-    return np.clip(current, _EPS, 1.0 - _EPS), {
+    return clip_pseudo_observations(current), {
         'accepted': accepted,
         'proposed': proposed,
         'acceptance_rate': rates,

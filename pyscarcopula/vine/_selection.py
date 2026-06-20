@@ -9,6 +9,22 @@ Two-phase approach (mirroring pyvinecopulib):
 
 import numpy as np
 
+from pyscarcopula.copula.base import CopulaCapabilities
+
+
+def validate_pair_candidates(candidates):
+    """Reject explicitly multivariate classes from vine family pools."""
+    if candidates is None:
+        return
+    for candidate in candidates:
+        capabilities = getattr(candidate, "_capabilities", None)
+        if (
+                isinstance(capabilities, CopulaCapabilities)
+                and not capabilities.supports_pair_ops):
+            name = getattr(candidate, "__name__", type(candidate).__name__)
+            raise TypeError(
+                f"{name} is multivariate and cannot be used as a vine pair "
+                "copula")
 
 def _default_candidates():
     """Default set of bivariate copula classes to try."""
@@ -108,6 +124,8 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
     best_copula : fitted BivariateCopula instance
     best_result : fit result
     """
+    validate_pair_candidates(candidates)
+
     from pyscarcopula.copula.independent import IndependentCopula
     from pyscarcopula.copula.elliptical import BivariateGaussianCopula
     from pyscarcopula._types import IndependentResult
@@ -150,8 +168,7 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
                 except TypeError:
                     cop = cop_class(rotate=angle)
 
-                r0_arr = np.atleast_1d(np.asarray(r0, dtype=np.float64))
-                logL = float(np.sum(cop.log_pdf(u1, u2, r0_arr)))
+                logL = float(cop.log_likelihood(u_pair, float(r0)))
 
                 if not np.isfinite(logL):
                     continue

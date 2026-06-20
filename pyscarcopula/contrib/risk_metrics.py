@@ -121,7 +121,7 @@ def _is_elliptical_multivariate(copula):
       - sample(n) without r parameter
       - no _rotate attribute
     """
-    from pyscarcopula.copula.elliptical import GaussianCopula, StudentCopula
+    from pyscarcopula.copula.multivariate import GaussianCopula, StudentCopula
     return isinstance(copula, (GaussianCopula, StudentCopula))
 
 
@@ -175,9 +175,12 @@ def _get_copula_constructor(copula):
     """Extract copula class and kwargs for reconstruction in workers."""
     from pyscarcopula.vine.cvine import CVineCopula
     from pyscarcopula.vine.rvine import RVineCopula
-    from pyscarcopula.copula.elliptical import GaussianCopula, StudentCopula
-    from pyscarcopula.copula.experimental.stochastic_student import StochasticStudentCopula
-    from pyscarcopula.copula.experimental.equicorr import EquicorrGaussianCopula
+    from pyscarcopula.copula.multivariate import (
+        EquicorrGaussianCopula,
+        GaussianCopula,
+        StochasticStudentCopula,
+        StudentCopula,
+    )
 
     if isinstance(copula, CVineCopula):
         return (CVineCopula,

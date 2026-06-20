@@ -102,6 +102,19 @@ Here $\omega$ is the intercept, $\gamma$ controls sensitivity to the scaled
 score, $\beta$ controls persistence, and $s_t$ is the scaled score of the
 current copula log-density with respect to $g_t$.
 
+GAS uses the compiled numerical evaluator:
+
+```python
+from pyscarcopula.api import fit
+
+result = fit(copula, u, method='gas', scaling='unit')
+```
+
+There is no backend selector or silent fallback. The production recommendation
+is `scaling='unit'`. Fisher scaling remains experimental because its
+finite-difference curvature, floor, and clipping make optimization sensitive
+to numerical step sizes.
+
 ```python
 u_pred = predict(copula, u, result, n=100_000,
                  rng=np.random.default_rng(2025))

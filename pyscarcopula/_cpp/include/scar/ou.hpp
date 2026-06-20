@@ -2,6 +2,7 @@
 
 #include "scar/copula.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -62,6 +63,7 @@ struct GradLogLikResult {
     int fallback_from = -1;
     std::vector<OuBackend> fallback_chain;
     int matrix_fallback_reason = SCAR_FALLBACK_NONE;
+    std::vector<double> neg_corr_gradient;
 };
 
 struct StateDistribution {
@@ -71,74 +73,128 @@ struct StateDistribution {
     int status = 0;
 };
 
+struct ObservationView {
+    const double* values = nullptr;
+    std::size_t n_obs = 0;
+    int dim = 0;
+
+    std::size_t size() const noexcept {
+        return n_obs;
+    }
+
+    bool empty() const noexcept {
+        return n_obs == 0;
+    }
+
+    const double* data() const noexcept {
+        return values;
+    }
+};
+
+struct TrajectoryLogPdfResult {
+    GridValues log_pdf;
+    int status = SCAR_OK;
+    std::int64_t failure_index = -1;
+};
+
+TrajectoryLogPdfResult copula_log_pdf_trajectory_grid(
+    const CopulaSpec& copula,
+    ObservationView u,
+    const double* latent_paths,
+    std::size_t n_trajectories);
+
 class ScarOuEvaluator {
 public:
     LogLikResult loglik_spectral(
         const OuParams& params,
         const CopulaSpec& copula,
-        const Observations& u,
+        ObservationView u,
         const OuNumericalConfig& config) const;
 
     LogLikResult loglik_local_gh(
         const OuParams& params,
         const CopulaSpec& copula,
-        const Observations& u,
+        ObservationView u,
         const OuNumericalConfig& config) const;
 
     LogLikResult loglik_matrix(
         const OuParams& params,
         const CopulaSpec& copula,
-        const Observations& u,
+        ObservationView u,
         const OuNumericalConfig& config) const;
 
     LogLikResult loglik_auto(
         const OuParams& params,
         const CopulaSpec& copula,
-        const Observations& u,
+        ObservationView u,
         const OuNumericalConfig& config) const;
 
     GradLogLikResult neg_loglik_with_grad_spectral(
         const OuParams& params,
         const CopulaSpec& copula,
-        const Observations& u,
+        ObservationView u,
+        const OuNumericalConfig& config) const;
+
+    GradLogLikResult neg_loglik_with_grad_and_corr_spectral(
+        const OuParams& params,
+        const CopulaSpec& copula,
+        ObservationView u,
         const OuNumericalConfig& config) const;
 
     GradLogLikResult neg_loglik_with_grad_local_gh(
         const OuParams& params,
         const CopulaSpec& copula,
-        const Observations& u,
+        ObservationView u,
         const OuNumericalConfig& config) const;
 
     GradLogLikResult neg_loglik_with_grad_matrix(
         const OuParams& params,
         const CopulaSpec& copula,
-        const Observations& u,
+        ObservationView u,
+        const OuNumericalConfig& config) const;
+
+    GradLogLikResult neg_loglik_with_grad_and_corr_local_gh(
+        const OuParams& params,
+        const CopulaSpec& copula,
+        ObservationView u,
+        const OuNumericalConfig& config) const;
+
+    GradLogLikResult neg_loglik_with_grad_and_corr_matrix(
+        const OuParams& params,
+        const CopulaSpec& copula,
+        ObservationView u,
+        const OuNumericalConfig& config) const;
+
+    GradLogLikResult neg_loglik_with_grad_and_corr_auto(
+        const OuParams& params,
+        const CopulaSpec& copula,
+        ObservationView u,
         const OuNumericalConfig& config) const;
 
     GradLogLikResult neg_loglik_with_grad_auto(
         const OuParams& params,
         const CopulaSpec& copula,
-        const Observations& u,
+        ObservationView u,
         const OuNumericalConfig& config) const;
 
     std::vector<double> predictive_mean_local_gh(
         const OuParams& params,
         const CopulaSpec& copula,
-        const Observations& u,
+        ObservationView u,
         const OuNumericalConfig& config,
         int& status) const;
 
     std::vector<double> predictive_mean_matrix(
         const OuParams& params,
         const CopulaSpec& copula,
-        const Observations& u,
+        ObservationView u,
         const OuNumericalConfig& config,
         int& status) const;
 
     std::vector<double> predictive_mean_auto(
         const OuParams& params,
         const CopulaSpec& copula,
-        const Observations& u,
+        ObservationView u,
         const OuNumericalConfig& config,
         OuBackend& backend,
         int& status) const;
@@ -146,21 +202,21 @@ public:
     std::vector<double> mixture_h_local_gh(
         const OuParams& params,
         const CopulaSpec& copula,
-        const Observations& u,
+        ObservationView u,
         const OuNumericalConfig& config,
         int& status) const;
 
     std::vector<double> mixture_h_matrix(
         const OuParams& params,
         const CopulaSpec& copula,
-        const Observations& u,
+        ObservationView u,
         const OuNumericalConfig& config,
         int& status) const;
 
     std::vector<double> mixture_h_auto(
         const OuParams& params,
         const CopulaSpec& copula,
-        const Observations& u,
+        ObservationView u,
         const OuNumericalConfig& config,
         OuBackend& backend,
         int& status) const;
@@ -168,21 +224,21 @@ public:
     StateDistribution state_distribution_local_gh(
         const OuParams& params,
         const CopulaSpec& copula,
-        const Observations& u,
+        ObservationView u,
         const OuNumericalConfig& config,
         bool horizon_next) const;
 
     StateDistribution state_distribution_matrix(
         const OuParams& params,
         const CopulaSpec& copula,
-        const Observations& u,
+        ObservationView u,
         const OuNumericalConfig& config,
         bool horizon_next) const;
 
     StateDistribution state_distribution_auto(
         const OuParams& params,
         const CopulaSpec& copula,
-        const Observations& u,
+        ObservationView u,
         const OuNumericalConfig& config,
         bool horizon_next) const;
 };

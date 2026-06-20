@@ -14,16 +14,22 @@ from pyscarcopula._types import (
     DEFAULT_CONFIG,
     PredictiveState,
 )
-from pyscarcopula.strategy._base import register_strategy
+from pyscarcopula.strategy._base import (
+    copula_dimension,
+    is_multivariate_copula,
+    register_strategy,
+)
 from pyscarcopula.strategy.predict_helpers import sample_predictive
+from pyscarcopula.numerical import static_likelihood
 
 
 @register_strategy('MLE')
 class MLEStrategy:
     """Estimate a constant copula parameter via MLE.
 
-    Solves: max_r  sum_t log c(u_{1t}, u_{2t}; r)
-    using L-BFGS-B with bounds from the copula.
+    Solves ``max_r sum_t log c(u_{1t}, u_{2t}; r)`` directly in the
+    copula's natural parameter ``r``. Latent-state transforms are not part of
+    the MLE objective.
     """
 
     def __init__(self, config: NumericalConfig | None = None, **kwargs):
@@ -46,7 +52,11 @@ class MLEStrategy:
         ----------
         copula : CopulaProtocol
         u : (T, 2) pseudo-observations
-        alpha0 : (1,) initial point in x-space, or None
+        alpha0 : (1,) array_like or None
+            Initial point in the copula's natural parameter space. When
+            omitted, ``copula.transform([1.5])`` is used only to construct a
+            common valid natural starting value across copula families; the
+            optimizer still evaluates the likelihood directly at that value.
         gtol, ftol, maxfun, maxiter, maxls, eps, maxcor,
         finite_diff_rel_step : L-BFGS-B options
         **kwargs : ignored (for interface compatibility)
@@ -68,9 +78,7 @@ class MLEStrategy:
             'finite_diff_rel_step': finite_diff_rel_step,
         }
 
-        if (
-                u.ndim == 2
-                and (u.shape[1] != 2 or hasattr(copula, 'log_pdf_rows'))):
+        if is_multivariate_copula(copula):
             fit_mle = getattr(copula, '_fit_mle', None)
             if fit_mle is not None:
                 return fit_mle(
@@ -100,37 +108,19 @@ class MLEStrategy:
             x0_val = copula.transform(np.array([1.5]))[0]
             x0 = np.array([x0_val])
 
-        # Pre-extract columns to avoid repeated slicing
-        u1 = u[:, 0]
-        u2 = u[:, 1]
+        evaluator = static_likelihood.prepare(copula, u)
 
-        # Use fused kernel if copula provides one (avoids redundant
-        # Phi^{-1} recomputation for Gaussian copula).
-        # With jac=True, minimize calls fun once and gets both f and g.
-        fused = getattr(copula, 'mle_objective_fused', None)
-        if fused is not None:
-            obj_and_grad = fused(u)
-            result = minimize(
-                obj_and_grad, x0,
-                jac=True,
-                method='L-BFGS-B',
-                bounds=copula.bounds,
-                options=optimizer_options,
-            )
-        else:
-            def neg_loglik(x):
-                return -np.sum(copula.log_pdf(u1, u2, x))
+        def objective_and_gradient(x):
+            return evaluator.objective_and_gradient(
+                float(x[0]), fail_value=self.config.fail_value)
 
-            def neg_loglik_grad(x):
-                return -np.sum(copula.dlog_pdf_dr(u1, u2, x))
-
-            result = minimize(
-                neg_loglik, x0,
-                jac=neg_loglik_grad,
-                method='L-BFGS-B',
-                bounds=copula.bounds,
-                options=optimizer_options,
-            )
+        result = minimize(
+            objective_and_gradient, x0,
+            jac=True,
+            method='L-BFGS-B',
+            bounds=copula.bounds,
+            options=optimizer_options,
+        )
 
         return MLEResult(
             log_likelihood=-result.fun,
@@ -140,20 +130,26 @@ class MLEStrategy:
             nfev=result.nfev,
             message=str(result.message),
             copula_param=result.x[0],
+            diagnostics={
+                'model_score': 'not_applicable',
+                'optimizer_gradient': 'analytical',
+                'gradient_kind': 'analytical',
+                'setup_derivative': 'not_applicable',
+                'filter_derivative': 'not_applicable',
+                'parameter_gradient': 'analytical',
+            },
         )
 
     def log_likelihood(self, copula, u: np.ndarray,
                        result: MLEResult) -> float:
         """sum log c(u1, u2; r_mle)."""
-        if (
-                u.ndim == 2
-                and (u.shape[1] != 2 or hasattr(copula, 'log_pdf_rows'))):
+        if is_multivariate_copula(copula):
             try:
                 return float(copula.log_likelihood(u, result.copula_param))
             except TypeError:
                 return float(copula.log_likelihood(u))
-        r = np.full(len(u), result.copula_param)
-        return float(np.sum(copula.log_pdf(u[:, 0], u[:, 1], r)))
+        evaluator = static_likelihood.prepare(copula, u)
+        return evaluator.log_likelihood(result.copula_param)
 
     def predictive_mean(self, copula, u: np.ndarray,
                         result: MLEResult) -> np.ndarray:
@@ -175,25 +171,28 @@ class MLEStrategy:
                   alpha: np.ndarray, **kwargs) -> float:
         """Minus log-likelihood: -sum log c(u1, u2; alpha[0])."""
         try:
-            if u.ndim == 2 and u.shape[1] != 2:
+            if is_multivariate_copula(copula):
                 try:
                     return -float(copula.log_likelihood(u, float(alpha[0])))
                 except TypeError:
                     return -float(copula.log_likelihood(u))
-            return -float(np.sum(copula.log_pdf(u[:, 0], u[:, 1], alpha)))
+            evaluator = static_likelihood.prepare(copula, u)
+            value, _ = evaluator.objective_and_gradient(
+                float(alpha[0]), fail_value=self.config.fail_value)
+            return value
         except Exception:
-            return 1e10
+            return float(self.config.fail_value)
 
     def sample(self, copula, u, result, n, rng=None, **kwargs):
         """Sample n observations with constant r = theta_mle."""
         r = np.full(n, result.copula_param)
-        d = u.shape[1] if u is not None and np.ndim(u) == 2 else 2
+        d = copula_dimension(copula, u)
         return sample_predictive(copula, n, r, rng=rng, d=d)
 
     def predict(self, copula, u, result, n, rng=None, **kwargs):
         """Predict = sample for MLE (constant parameter)."""
         r = self.predictive_params(copula, u, result, n, rng=rng, **kwargs)
-        d = u.shape[1] if u is not None and np.ndim(u) == 2 else 2
+        d = copula_dimension(copula, u)
         return sample_predictive(
             copula, n, r, given=kwargs.get('given'), rng=rng, d=d)
 

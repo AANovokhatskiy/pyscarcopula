@@ -21,8 +21,15 @@ from pyscarcopula._types import (
     LatentResult, NumericalConfig, DEFAULT_CONFIG,
     ou_params,
 )
-from pyscarcopula.strategy._base import register_strategy
+from pyscarcopula.strategy._base import copula_dimension, register_strategy
 from pyscarcopula.strategy.predict_helpers import sample_predictive
+from pyscarcopula.strategy.initial_point import (
+    _explicit_initialization_diagnostics,
+    _fallback_initialization_diagnostics,
+    _initialization_attempt,
+    _initialization_diagnostics,
+    smart_initial_point,
+)
 from pyscarcopula.numerical.mc_samplers import (
     p_sampler_loglik, m_sampler_loglik, eis_find_auxiliary,
 )
@@ -60,15 +67,31 @@ class _SCARMCBase:
 
     def _get_alpha0(self, copula, u, verbose):
         alpha0 = None
+        initialization = None
         if self.smart_init:
             try:
-                from pyscarcopula.strategy.initial_point import smart_initial_point
                 alpha0, init_info = smart_initial_point(
                     u, copula, verbose=verbose)
+                initialization = init_info['initialization']
                 if verbose:
                     print(f"Smart init: {init_info.get('chosen_method')}, "
                             f"alpha0={alpha0}")
-            except Exception:
+            except Exception as exc:
+                initialization = _initialization_diagnostics(
+                    'automatic',
+                    'failed',
+                    np.array([1.0, 0.0, 1.0]),
+                    [_initialization_attempt(
+                        'smart_initial_point',
+                        success=False,
+                        error=exc)],
+                )
+                initialization['success'] = False
+                if verbose:
+                    print(
+                        "Smart init failed "
+                        f"({type(exc).__name__}: {exc}); "
+                        "trying mle_default")
                 alpha0 = None
         if alpha0 is None:
             """Default initial point from MLE."""
@@ -79,7 +102,18 @@ class _SCARMCBase:
                 copula.inv_transform(np.atleast_1d(mle_result.copula_param))
             )[0])
             alpha0 = np.array([1.0, mu0, 1.0])
-        return alpha0
+            if initialization is None:
+                initialization = _initialization_diagnostics(
+                    'mle_default',
+                    'mle_default',
+                    alpha0,
+                    [_initialization_attempt(
+                        'mle_default', success=True)],
+                )
+            else:
+                initialization = _fallback_initialization_diagnostics(
+                    initialization, 'mle_default', alpha0)
+        return alpha0, initialization
 
     def predictive_params(self, copula, u, result, n, rng=None, **kwargs):
         """Stationary OU predictive parameters for MC SCAR variants."""
@@ -95,7 +129,7 @@ class _SCARMCBase:
         if rng is None:
             rng = np.random.default_rng()
         r = self.model_sample_params(copula, result, n, rng=rng)
-        d = u.shape[1] if u is not None and np.ndim(u) == 2 else 2
+        d = copula_dimension(copula, u)
         return sample_predictive(copula, n, r, rng=rng, d=d)
 
     def model_sample_params(self, copula, result, n, rng=None, **kwargs):
@@ -124,7 +158,7 @@ class _SCARMCBase:
         if rng is None:
             rng = np.random.default_rng()
         r = self.predictive_params(copula, u, result, n, rng=rng, **kwargs)
-        d = u.shape[1] if u is not None and np.ndim(u) == 2 else 2
+        d = copula_dimension(copula, u)
         return sample_predictive(
             copula, n, r, given=kwargs.get('given'), rng=rng, d=d)
 
@@ -165,7 +199,10 @@ class SCARPStrategy(_SCARMCBase):
         dwt_data = self._get_dwt(T, seed, dwt)
 
         if alpha0 is None:
-            alpha0 = self._get_alpha0(copula, u, verbose)
+            alpha0, initialization = self._get_alpha0(
+                copula, u, verbose)
+        else:
+            initialization = _explicit_initialization_diagnostics(alpha0)
 
         bounds = Bounds([0.001, -np.inf, 0.001], [np.inf, np.inf, np.inf])
 
@@ -200,6 +237,7 @@ class SCARPStrategy(_SCARMCBase):
             nfev=result.nfev,
             params=params,
             n_tr=self.n_tr,
+            diagnostics={"initialization": initialization},
         )
 
     def log_likelihood(self, copula, u, result):
@@ -266,7 +304,10 @@ class SCARMStrategy(_SCARMCBase):
         dwt_data = self._get_dwt(T, seed, dwt)
 
         if alpha0 is None:
-            alpha0 = self._get_alpha0(copula, u, verbose)
+            alpha0, initialization = self._get_alpha0(
+                copula, u, verbose)
+        else:
+            initialization = _explicit_initialization_diagnostics(alpha0)
 
         bounds = Bounds([0.001, -np.inf, 0.001], [np.inf, np.inf, np.inf])
 
@@ -306,6 +347,7 @@ class SCARMStrategy(_SCARMCBase):
             params=params,
             n_tr=self.n_tr,
             M_iterations=self.M_iterations,
+            diagnostics={"initialization": initialization},
         )
 
     def log_likelihood(self, copula, u, result):

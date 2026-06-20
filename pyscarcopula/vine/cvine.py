@@ -30,7 +30,7 @@ from pyscarcopula.vine._rvine_edges import (
     _edge_r_for_sample,
 )
 from pyscarcopula.vine._selection import (
-    select_best_copula, _default_candidates,
+    select_best_copula, _default_candidates, validate_pair_candidates,
 )
 from pyscarcopula.vine._helpers import (
     _clip_unit,
@@ -88,6 +88,7 @@ class CVineCopula:
 
     def __init__(self, candidates=None, allow_rotations=True,
                  criterion='aic'):
+        validate_pair_candidates(candidates)
         self.candidates = candidates
         self.allow_rotations = allow_rotations
         self.criterion = criterion
@@ -271,12 +272,8 @@ class CVineCopula:
 
     # Sampling
 
-    def sample(self, n, u_train=None, rng=None, **kwargs):
-        """Sample from fitted C-vine using Rosenblatt inverse.
-
-        ``u_train`` and extra keyword arguments are accepted for legacy API
-        compatibility and are not used by the model-reproduction sampler.
-        """
+    def sample(self, n, u=None, rng=None):
+        """Sample from fitted C-vine using Rosenblatt inverse."""
         if self.edges is None:
             raise ValueError("Fit first")
         if not isinstance(n, (int, np.integer)) or n <= 0:
@@ -432,13 +429,6 @@ class CVineCopula:
 
         return x
 
-    def sample_model(self, n, u=None, rng=None):
-        """Legacy alias for sample.
-
-        ``u`` is accepted for backward compatibility and ignored.
-        """
-        return self.sample(n, rng=rng)
-
     # Prediction
 
     def save(self, path, *, include_data=True):
@@ -454,15 +444,24 @@ class CVineCopula:
 
         return load_model(path, expected_type=cls)
 
-    def predict(self, n, u=None,
-                given=None, horizon='next', rng=None,
-                predictive_r_mode=None, **kwargs):
+    def predict(self, n, u=None, rng=None, given=None, horizon='next',
+                predictive_r_mode=None, predict_config=None, **kwargs):
         """Conditional predict: sample from vine for next-step.
 
         `given` fixes selected variables in pseudo-observation space,
         e.g. ``given={2: 0.6}``. For dynamic edges, `horizon` selects the
         predictive state timing.
         """
+        if predict_config is not None:
+            from pyscarcopula.api import _resolve_predict_config
+            config = _resolve_predict_config(
+                predict_config, given, horizon, {
+                    "predictive_r_mode": predictive_r_mode,
+                    **kwargs,
+                })
+            given = config.given
+            horizon = config.horizon
+            predictive_r_mode = config.predictive_r_mode
         if self.edges is None:
             raise ValueError("Fit first")
         if not isinstance(n, (int, np.integer)) or n <= 0:

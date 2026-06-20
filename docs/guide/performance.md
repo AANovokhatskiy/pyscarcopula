@@ -46,7 +46,7 @@ MLE estimates one constant copula parameter.
 
 | Parameter | Where | Default | Effect |
 |-----------|-------|---------|--------|
-| `alpha0` | fit kwarg | auto | Initial point in transformed parameter space. |
+| `alpha0` | fit kwarg | auto | Initial point in the copula's natural parameter space. |
 | `gtol` | fit kwarg / `mle_optimizer.gtol` | `1e-3` | L-BFGS-B projected-gradient tolerance. |
 | `maxls` | fit kwarg / `mle_optimizer.maxls` | `20` | Maximum L-BFGS-B line-search steps per iteration. |
 
@@ -56,6 +56,16 @@ from pyscarcopula._types import LBFGSBConfig, NumericalConfig
 cfg = NumericalConfig(mle_optimizer=LBFGSBConfig(gtol=1e-6))
 result = fit(copula, u, method='mle', config=cfg)
 ```
+
+MLE evaluates the likelihood directly in the natural copula parameter. For
+example, `alpha0=[2.0]` means a Gumbel parameter of `2.0`, while a Student
+initial value of `5.0` means five degrees of freedom. Parameter transforms are
+used by dynamic latent-state methods, not by the MLE objective.
+
+When `alpha0` is omitted for a bivariate copula, the implementation calls
+`copula.transform([1.5])` only to obtain a family-valid natural starting
+value. The returned value is passed directly to the MLE optimizer; it is not
+treated as a latent coordinate.
 
 ### GAS
 
@@ -74,7 +84,7 @@ $g_t = \omega + \beta g_{t-1} + \gamma\,score_{t-1}$.
 | `score_eps` | fit kwarg / `gas_score_eps` | `1e-4` | Finite-difference step for score calculations where needed. |
 | `gamma_bound` | fit kwarg / `gas_gamma_bound` | `20.0` | Bounds score sensitivity to $[-\texttt{gamma\_bound}, \texttt{gamma\_bound}]$. |
 | `beta_bound` | fit kwarg / `gas_beta_bound` | `0.999` | Bounds persistence to $[-\texttt{beta\_bound}, \texttt{beta\_bound}]$; must be in $(0, 1)$. |
-| `scaling` | strategy kwarg | `'unit'` | Score scaling mode; `'fisher'` is available but less stable. |
+| `scaling` | strategy kwarg | `'unit'` | Recommended score scaling mode. `'fisher'` is experimental and numerically sensitive. |
 
 ```python
 result = fit(
@@ -91,6 +101,25 @@ result = fit(
 after a small relative objective decrease even when the gradient is still
 large. If a GAS result looks sensitive to `gamma_bound` even though the fitted
 $\gamma$ is far from the bound, rerun with tighter `ftol` and larger `maxfun`.
+
+GAS evaluates deterministic numerical work in C++: likelihood, score
+recursion, filtering, state updates, prediction, and Rosenblatt operations.
+Python retains SciPy optimizer orchestration, RNG, and sampling. Official
+wheels must contain `pyscarcopula._scar_cpp`; source builds require a C++17
+compiler. Unsupported copulas fail immediately because GAS has no Python
+numerical fallback.
+
+The native score is the model score driving the GAS recursion. It is not an
+analytical gradient of the complete likelihood with respect to
+`omega`, `gamma`, and `beta`. SciPy L-BFGS-B currently obtains that optimizer
+gradient by finite differences. `GASResult.diagnostics` records these as
+`model_score='native'` and `optimizer_gradient='numerical'`.
+
+Fisher scaling computes curvature by a second finite difference inside the GAS
+recursion, while L-BFGS-B also differentiates the outer objective numerically.
+Together with the Fisher floor and score clipping, this can produce a
+piecewise, step-sensitive objective. Prefer `scaling='unit'` unless Fisher
+behavior is specifically under study.
 
 ### SCAR-TM-OU
 
@@ -112,7 +141,6 @@ and predictive paths are needed.
 | `adaptive` | strategy kwarg / `default_adaptive` | `True` | Enlarges `K` when the OU transition kernel needs more resolution. |
 | `pts_per_sigma` | strategy kwarg / `default_pts_per_sigma` | `4` | Minimum grid points per conditional standard deviation. |
 | `transition_method` | strategy kwarg | `'auto'` | `'auto'`, `'matrix'`, `'local'`, or `'spectral'`. See below. |
-| `backend` | strategy kwarg | `'auto'` | Uses C++ for supported SCAR-TM-OU copula/transform combinations and falls back to Python otherwise. Use `'python'` to force the fallback path. |
 | `auto_small_kdt` | strategy kwarg | `1e-2` | In `transition_method='auto'`, use the local transition when $\kappa\,dt$ is below this value. |
 | `spectral_basis_order` | strategy kwarg | `'auto'` | Hermite basis size for the spectral likelihood. The auto policy uses 128, 96, 64, or 32 from the current $\kappa\,dt$; pass an integer to fix the basis size. |
 | `spectral_quad_order` | strategy kwarg | auto | Gauss-Hermite quadrature order for spectral multiplication. |
@@ -138,38 +166,99 @@ deviation. For slow mean reversion this can produce large grids. If that is too
 expensive, use `grid_method='sparse'`, reduce `pts_per_sigma`, or set
 `adaptive=False` with an explicit `K`.
 
-#### C++ backend
+#### Native engine
 
-The optional pybind11 extension implements the SCAR-TM-OU likelihood,
+The bundled pybind11 extension implements the SCAR-TM-OU likelihood,
 analytical gradient, grid forward quantities, and pointwise copula
-`h`/`h_inverse` kernels. It is selected by `backend='auto'` when both the
-extension and the copula family are supported. No explicit backend argument is
-needed for this path. Use `backend='python'` to bypass C++ and run the
-Python/Numba implementation.
+`h`/`h_inverse` kernels. It is the only SCAR-TM-OU production engine; no
+backend argument is accepted.
 
 SCAR-TM-OU likelihood and gradient support:
 
 | Family | Rotations | Transform |
 |--------|-----------|-----------|
-| Clayton | 0, 90, 180, 270 | `softplus` |
-| Gumbel | 0, 90, 180, 270 | `softplus` |
-| Joe | 0, 90, 180, 270 | `softplus` |
-| Frank | 0 | `softplus` |
+| Clayton | 0, 90, 180, 270 | `softplus`, `xtanh` |
+| Gumbel | 0, 90, 180, 270 | `softplus`, `xtanh` |
+| Joe | 0, 90, 180, 270 | `softplus`, `xtanh` |
+| Frank | 0 | `softplus`, `xtanh` |
+| Independent | 0 | identity |
 | Bivariate Gaussian | 0 | Gaussian tanh transform |
+| Equicorr Gaussian | 0 | dimension-aware Gaussian tanh |
+| Stochastic Student | 0 | shifted softplus df transform |
 
 Pointwise C++ `h`/`h_inverse` kernels are broader: they also support the
 independence copula, xtanh transforms for Clayton/Gumbel/Joe/Frank where the
 Python copula exposes them, Frank only with rotate=0, and Gaussian only with
 rotate=0.
 
-The C++ likelihood accepts `transition_method='auto'`, `'spectral'`,
-`'matrix'`, and `'local'`. The C++ forward/state calls are grid-based and
-accept only `'auto'`, `'matrix'`, and `'local'`; direct `'spectral'` forward or
-state distribution calls raise `CppUnsupported`. Strategy-level prediction
-uses grid settings for these forward quantities even when a spectral
-likelihood was used for fitting.
+The native likelihood accepts `transition_method='auto'`, `'spectral'`,
+`'matrix'`, and `'local'`. Forward/state calls are grid-based. When
+`'spectral'` is requested, posterior quantities use an explicit native grid
+reconstruction.
 
-Unsupported C++ combinations fall back to Python in `backend='auto'`.
+The C++ kernels impose only direct numerical-configuration limits:
+
+- `K <= 100000` for local and sparse-grid paths;
+- `K <= 10000` for the dense matrix path;
+- `basis_order`, `quad_order`, and `gh_order` must not exceed `1024`.
+
+Observation count, Student dimension, and derived allocation sizes do not have
+administrative caps. Their memory and runtime cost are the caller's
+responsibility. Size products are still checked for integer overflow before
+allocation, and invalid shapes or non-finite inputs are still rejected.
+
+The C++ Hermite-rule cache is a process-wide, mutex-protected LRU cache.
+Compile-time defaults limit it to 16 rules and 8 MiB of retained node, weight,
+basis, and weighted-basis vector storage. Rules larger than the byte budget
+are computed for the current call but are not cached.
+
+The native kernels use these status codes:
+
+| Status | Name | Meaning |
+|--------|------|---------|
+| `0` | `ok` | The requested calculation completed successfully. |
+| `1` | `null_pointer` | A required pointer was null. This is primarily relevant to direct native entry points. |
+| `2` | `invalid_size` | A shape, order, grid size, or checked size product is invalid or cannot be represented safely. |
+| `3` | `invalid_family` | The requested operation is not valid for the selected copula family. |
+| `4` | `invalid_rotation` | The rotation value is invalid. |
+| `5` | `invalid_transform` | The parameter transform is invalid or unsupported for the selected family. |
+| `6` | `invalid_parameter` | An OU, copula, or numerical parameter is non-finite or outside its valid domain. |
+| `7` | `numerical_failure` | A finite, normalizable numerical result could not be produced. |
+
+The Python wrapper validates common shape and configuration errors before
+entering C++ and raises `ValueError` for those failures. Unsupported backend
+combinations raise `CppUnsupported`; non-zero native statuses raise
+`CppError` with the numeric status and symbolic name. A native
+`std::bad_alloc` is translated to Python `MemoryError`.
+
+With `transition_method='auto'`, a `numerical_failure` from the spectral path
+may be recovered by trying matrix and then local transition methods. Forced
+transition methods expose the failure as `CppError`. Invalid configurations
+and unsupported combinations are not treated as recoverable numerical
+fallbacks.
+
+Because observation count, Student dimension, and derived allocation sizes
+are intentionally uncapped, a sufficiently large user-provided input may
+exhaust memory or be terminated by the operating system before Python can
+raise `MemoryError`. The direct `K` and quadrature-order limits above, integer
+overflow checks, and input validation still apply.
+
+For native safety testing, Linux builds can opt into strict compiler warnings
+and AddressSanitizer/UndefinedBehaviorSanitizer:
+
+```bash
+PYSCA_CPP_STRICT=1 PYSCA_CPP_SANITIZE=1 \
+  python -m pip install -e ".[test]"
+LD_PRELOAD="$(gcc -print-file-name=libasan.so)" \
+  ASAN_OPTIONS=detect_leaks=0:halt_on_error=1 \
+  UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+  python -m pytest tests/test_cpp.py -m "not benchmark"
+```
+
+`PYSCA_CPP_SANITIZE` requires a GCC- or Clang-compatible platform. The
+repository's `Native safety` GitHub Actions workflow also runs direct pybind,
+limit-adjacent, forward/filter, fitting, and multivariate Student regression
+tests under both sanitizers.
 
 #### Transfer methods
 
@@ -360,10 +449,10 @@ latent coordinate.
 | `maxiter` | fit kwarg / `scar_optimizer.maxiter` | `100` | Maximum optimizer iterations. |
 | `maxls` | fit kwarg / `scar_optimizer.maxls` | `20` | Maximum L-BFGS-B line-search steps per iteration. |
 | `eps` | fit kwarg / `scar_optimizer.eps` | `1e-4` | L-BFGS-B finite-difference step. |
-| `transition_method` | strategy kwarg | `'auto'` | `'auto'`, `'spectral_matrix'`, `'local'`, `'local_fixed'`, or `'spectral_coeff'`. Legacy aliases: `'matrix'` -> `'spectral_matrix'`, `'spectral'` -> `'spectral_coeff'`. |
+| `transition_method` | strategy kwarg | `'auto'` | `'auto'`, `'spectral_matrix'`, `'local'`, `'local_fixed'`, or `'spectral_coeff'`. |
 | `spectral_basis_order` / `basis_order` | strategy kwarg | `32` | Number of Jacobi basis functions. |
 | `spectral_quad_order` / `quad_order` | strategy kwarg | auto | Jacobi quadrature order; default is `max(2 * basis_order + 16, 48)`. |
-| `analytical_grad` | strategy kwarg | `False` | Uses the Jacobi matrix-filter gradient. Not available with `transition_method='spectral_coeff'`. |
+| `analytical_grad` | strategy kwarg | `False` | Passes the Jacobi matrix-filter Jacobian to the optimizer. Fully analytical for `local_fixed`; semi-analytical for `local`, `spectral_matrix`, and `auto`. Not available with `spectral_coeff`. |
 | `negative_mass_tol` | strategy kwarg | `1e-5` | Maximum accepted negative mass from the truncated spectral transition in `auto`. |
 | `gh_order` | strategy kwarg | `5` | Gauss-Hermite order for the local Lamperti transition. |
 | `theta_cap` | strategy kwarg | `None` | Optional cap on the copula parameter after mapping from tau. Useful for very high positive dependence. |
@@ -393,7 +482,11 @@ Forcing `transition_method='spectral_matrix'` keeps those numerical failures
 visible and does not fall back.
 
 `transition_method='local_fixed'` uses a parameter-independent tau grid and is
-the most direct backend for `analytical_grad=True`.
+the fully analytical backend for `analytical_grad=True`. The `local` and
+`spectral_matrix` backends use finite differences for setup-level arrays and
+analytical differentiation for the filtering recursion, so their reported
+`gradient_kind` is `semi_analytical`. For `auto`, diagnostics record the
+backend selected at the fitted parameters.
 `transition_method='spectral_coeff'` uses coefficient-space filtering instead
 of a transition matrix; it is kept for comparisons and does not support the
 analytical-gradient option.
@@ -478,13 +571,12 @@ result = fit(copula, u, method='gas', config=cfg)
 
 Per-call keyword arguments override the config values for that fit.
 
-Experimental multivariate Student models use separate GAS optimizer defaults,
+Multivariate Student models use separate GAS optimizer defaults,
 so changing them does not affect bivariate GAS fits or vine edges:
 
 ```python
 cfg = NumericalConfig(
     stochastic_student_gas_optimizer=LBFGSBConfig(ftol=1e-9),
-    stochastic_student_dcc_gas_optimizer=LBFGSBConfig(ftol=1e-12),
 )
 ```
 
@@ -523,7 +615,7 @@ dynamic edge fit:
 - SCAR-TM-OU: `alpha0`, `gtol`, `ftol`, `maxfun`, `maxiter`, `maxls`, `eps`, `K`, `grid_range`, `grid_method`, `adaptive`,
   `pts_per_sigma`, `transition_method`, `max_K`, `r_gh`, `gh_order`,
   `auto_small_kdt`,
-  `spectral_basis_order`, `spectral_quad_order`, `backend`, `analytical_grad`,
+  `spectral_basis_order`, `spectral_quad_order`, `analytical_grad`,
   `smart_init`, `verbose`
 - SCAR-TM-JACOBI: `alpha0`, `gtol`, `ftol`, `maxfun`, `maxiter`, `maxls`,
   `eps`, `transition_method`, `basis_order`, `quad_order`,

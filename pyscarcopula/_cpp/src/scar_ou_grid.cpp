@@ -1,5 +1,7 @@
 #include "scar_internal.hpp"
 
+#include <climits>
+
 namespace scar_internal {
 
 bool build_ou_grid(
@@ -14,10 +16,12 @@ bool build_ou_grid(
     int max_K,
     OuGrid& grid) {
 
-    if (n_obs < 2 || K < 2 || grid_range <= 0.0 || pts_per_sigma <= 0) {
+    if (n_obs < 2 || K < 2 || grid_range <= 0.0 || pts_per_sigma <= 0
+        || static_cast<std::size_t>(K) > kMaxGridSize) {
         return false;
     }
-    if (max_K > 0 && max_K < 2) {
+    if (max_K > 0
+        && (max_K < 2 || static_cast<std::size_t>(max_K) > kMaxGridSize)) {
         return false;
     }
     if (!std::isfinite(kappa) || !std::isfinite(mu) || !std::isfinite(nu)
@@ -28,7 +32,8 @@ bool build_ou_grid(
     const double dt = 1.0 / static_cast<double>(n_obs - 1);
     const double rho = std::exp(-kappa * dt);
     const double sigma = std::sqrt(0.5 * nu * nu / kappa);
-    const double sigma_cond = sigma * std::sqrt(1.0 - rho * rho);
+    const double conditional_variance = -std::expm1(-2.0 * kappa * dt);
+    const double sigma_cond = sigma * std::sqrt(conditional_variance);
     if (!std::isfinite(sigma) || !std::isfinite(sigma_cond)
         || sigma <= 0.0 || sigma_cond <= 0.0) {
         return false;
@@ -37,9 +42,21 @@ bool build_ou_grid(
     int K_adaptive = K;
     if (adaptive) {
         const double dz_target = sigma_cond / static_cast<double>(pts_per_sigma);
-        const int K_min = static_cast<int>(
-            std::ceil(2.0 * grid_range * sigma / dz_target)) + 1;
-        K_adaptive = std::max(K, K_min);
+        const double K_min_value =
+            std::ceil(2.0 * grid_range * sigma / dz_target) + 1.0;
+        if (!std::isfinite(K_min_value) || K_min_value < 2.0) {
+            return false;
+        }
+        if (K_min_value > static_cast<double>(kMaxGridSize)
+            || K_min_value > static_cast<double>(INT_MAX)) {
+            if (max_K <= 0) {
+                return false;
+            }
+            K_adaptive = max_K == INT_MAX ? INT_MAX : max_K + 1;
+        } else {
+            const int K_min = static_cast<int>(K_min_value);
+            K_adaptive = std::max(K, K_min);
+        }
     }
 
     int K_eff = K_adaptive;
@@ -83,26 +100,49 @@ bool build_ou_grid(
     return true;
 }
 
-void predictive_weights_from_phi(
+bool predictive_weights_from_phi(
     const OuGrid& grid,
     const std::vector<double>& phi,
     std::vector<double>& weights) {
 
-    weights.assign(static_cast<std::size_t>(grid.K), 1.0 / static_cast<double>(grid.K));
+    if (grid.K <= 0
+        || phi.size() != static_cast<std::size_t>(grid.K)
+        || grid.trap_w.size() != static_cast<std::size_t>(grid.K)) {
+        weights.clear();
+        return false;
+    }
+    weights.assign(static_cast<std::size_t>(grid.K), 0.0);
+    double scale = 0.0;
+    for (double value : phi) {
+        if (!std::isfinite(value)) {
+            return false;
+        }
+        scale = std::max(scale, value);
+    }
+    if (scale <= 0.0) {
+        return false;
+    }
+    const double negative_tolerance = 1e-12 * scale;
     double total = 0.0;
     for (int j = 0; j < grid.K; ++j) {
         const std::size_t idx = static_cast<std::size_t>(j);
-        weights[idx] = phi[idx] * grid.trap_w[idx];
+        if (!std::isfinite(grid.trap_w[idx]) || grid.trap_w[idx] <= 0.0
+            || phi[idx] < -negative_tolerance) {
+            return false;
+        }
+        weights[idx] = std::max(phi[idx], 0.0) * grid.trap_w[idx];
         total += weights[idx];
     }
-    if (total > 0.0 && std::isfinite(total)) {
-        for (double& value : weights) {
-            value /= total;
-        }
-    } else {
-        std::fill(weights.begin(), weights.end(), 1.0 / static_cast<double>(grid.K));
+    if (!std::isfinite(total) || total <= 0.0) {
+        return false;
     }
+    for (double& value : weights) {
+        value /= total;
+        if (!std::isfinite(value)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 }  // namespace scar_internal
-
