@@ -41,7 +41,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=7.0"]
+test = ["pytest>=7.0", "pandas>=1.5"]
 
 [project.urls]
 Homepage = "https://github.com/AANovokhatskiy/pyscarcopula"
