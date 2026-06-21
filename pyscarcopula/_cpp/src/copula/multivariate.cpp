@@ -1,7 +1,7 @@
 #include "scar/copula.hpp"
 
-#include "scar/ou.hpp"
 #include "scar/detail/copula.hpp"
+#include "scar/status.hpp"
 
 #include <algorithm>
 #include <cmath>

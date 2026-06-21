@@ -1,7 +1,8 @@
 #pragma once
 
 #include "scar/copula.hpp"
-#include "scar/ou.hpp"
+#include "scar/observation.hpp"
+#include "scar/status.hpp"
 
 #include <cstdint>
 #include <vector>
