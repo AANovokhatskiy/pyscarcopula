@@ -1575,7 +1575,7 @@ class TestConditionalSamplingPlanLayer:
         np.testing.assert_allclose(r_next, copula.transform(np.full(3, 0.25)))
         assert not np.allclose(r_current, r_next)
 
-    def test_gas_sample_uses_score_driven_recursion(self):
+    def test_gas_sample_uses_score_driven_recursion(self, monkeypatch):
         copula = BivariateGaussianCopula()
         result = GASResult(
             log_likelihood=0.0,
@@ -1593,7 +1593,7 @@ class TestConditionalSamplingPlanLayer:
             seen_r.extend(np.asarray(r, dtype=np.float64).tolist())
             return np.tile(np.array([[0.25, 0.75]], dtype=np.float64), (n, 1))
 
-        copula.sample = sample_and_record
+        monkeypatch.setattr(copula, 'sample_at_parameter', sample_and_record)
 
         samples = strategy.sample(
             copula, None, result, 4, rng=np.random.default_rng(180))
