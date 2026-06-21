@@ -1,6 +1,11 @@
-#include "scar/detail/internal.hpp"
+#include "scar/detail/copula.hpp"
+#include "scar/detail/safety.hpp"
+#include "scar/detail/scar_ou/grid.hpp"
 
+#include <algorithm>
 #include <climits>
+#include <cmath>
+#include <limits>
 
 namespace scar_internal {
 

@@ -1,5 +1,9 @@
-#include "scar/detail/internal.hpp"
+#include "scar/detail/safety.hpp"
+#include "scar/detail/scar_ou/quadrature.hpp"
 
+#include <algorithm>
+#include <cmath>
+#include <limits>
 #include <list>
 #include <memory>
 #include <mutex>

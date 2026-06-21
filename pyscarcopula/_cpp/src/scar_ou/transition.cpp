@@ -1,4 +1,10 @@
-#include "scar/detail/internal.hpp"
+#include "scar/detail/safety.hpp"
+#include "scar/detail/scar_ou/quadrature.hpp"
+#include "scar/detail/scar_ou/transition.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <limits>
 
 namespace scar_internal {
 

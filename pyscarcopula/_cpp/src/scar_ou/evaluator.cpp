@@ -1,6 +1,10 @@
 #include "scar/ou.hpp"
 
-#include "scar/detail/internal.hpp"
+#include "scar/detail/copula.hpp"
+#include "scar/detail/safety.hpp"
+#include "scar/detail/scar_ou/grid.hpp"
+#include "scar/detail/scar_ou/quadrature.hpp"
+#include "scar/detail/scar_ou/transition.hpp"
 
 #include <algorithm>
 #include <climits>

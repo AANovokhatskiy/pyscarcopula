@@ -1,6 +1,6 @@
 #include "scar/copula.hpp"
 
-#include "scar/detail/internal.hpp"
+#include "scar/detail/copula.hpp"
 
 #include <algorithm>
 #include <cmath>

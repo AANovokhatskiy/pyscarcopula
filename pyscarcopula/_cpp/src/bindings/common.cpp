@@ -3,8 +3,6 @@
 #include "scar/copula.hpp"
 #include "scar/gas.hpp"
 #include "scar/ou.hpp"
-#include "scar/detail/internal.hpp"
-
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>

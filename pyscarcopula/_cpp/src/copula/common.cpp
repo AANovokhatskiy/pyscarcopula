@@ -1,4 +1,6 @@
-#include "scar/detail/internal.hpp"
+#include "scar/detail/copula.hpp"
+
+#include <cmath>
 
 namespace scar_internal {
 
