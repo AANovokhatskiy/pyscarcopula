@@ -42,7 +42,7 @@ jobs:
           CIBW_TEST_COMMAND: >-
             python -m pyscarcopula._native_smoke
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wheels-${{ matrix.os }}
           path: wheelhouse/*.whl
@@ -70,7 +70,7 @@ jobs:
           cd "$RUNNER_TEMP"
           python -m pyscarcopula._native_smoke
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: sdist
           path: dist/*.tar.gz
