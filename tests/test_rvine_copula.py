@@ -315,7 +315,6 @@ def _scar_tm_gaussian_pair(kappa=1.0, mu=0.0, nu=4.0):
         K=41,
         grid_range=3.0,
         pts_per_sigma=2,
-        backend='python',
     )
     return PairCopula(
         copula=copula,
@@ -1123,22 +1122,8 @@ class TestRVineEdgePropagation:
         with pytest.raises(ValueError, match="stepwise score updates"):
             _edge_r_for_sample(edge, 5, np.random.default_rng(0))
 
-    def test_strategy_state_update_uses_result_score_eps(self):
-        class LinearCopula:
-            name = 'linear'
-
-            def __init__(self):
-                self.r_seen = []
-
-            def transform(self, x):
-                return np.asarray(x, dtype=np.float64)
-
-            def log_pdf(self, u1, u2, r):
-                r = np.asarray(r, dtype=np.float64)
-                self.r_seen.extend(float(x) for x in r.ravel())
-                return r * (np.asarray(u1) + np.asarray(u2))
-
-        cop = LinearCopula()
+    def test_strategy_state_update_uses_result_score_eps(self, monkeypatch):
+        cop = BivariateGaussianCopula()
         result = GASResult(
             log_likelihood=0.0,
             method='GAS',
@@ -1149,6 +1134,25 @@ class TestRVineEdgePropagation:
         )
         edge = PairCopula(cop, 0.0, 0.0, 0, 0.0, result)
 
+        from pyscarcopula.strategy import gas as gas_module
+        captured = []
+
+        def fake_initial(*args, **kwargs):
+            captured.append(('initial', args[-1]))
+            return gas_module._cpp_gas.GasStateOutput(g=0.1, parameter=0.02)
+
+        def fake_update(*args, **kwargs):
+            captured.append(('update', args[-1]))
+            return gas_module._cpp_gas.GasUpdateOutput(
+                g_next=0.11,
+                r=0.02,
+                r_next=0.03,
+                log_likelihood=0.0,
+                score=0.0,
+            )
+
+        monkeypatch.setattr(gas_module._cpp_gas, 'initial_state', fake_initial)
+        monkeypatch.setattr(gas_module._cpp_gas, 'update_one', fake_update)
         state = _edge_initial_model_state(edge)
         _edge_update_model_state(
             edge,
@@ -1157,7 +1161,10 @@ class TestRVineEdgePropagation:
             config=None,
         )
 
-        assert cop.r_seen[1] - cop.r_seen[2] == pytest.approx(8e-6)
+        assert captured == [
+            ('initial', pytest.approx(4e-6)),
+            ('update', pytest.approx(4e-6)),
+        ]
 
     @pytest.mark.parametrize(
         "copula_class,param,rotations",
@@ -1202,7 +1209,7 @@ class TestSampling:
     def test_gas_sample_shape_and_unit_interval(self):
         rng = np.random.default_rng(3)
         cop = BivariateGaussianCopula()
-        u12 = cop.sample(80, np.full(80, 0.65), rng=rng)
+        u12 = cop.sample_at_parameter(80, np.full(80, 0.65), rng=rng)
         u = np.column_stack([u12, rng.uniform(0.01, 0.99, 80)])
         v = RVineCopula(candidates=[BivariateGaussianCopula]).fit(
             u, method='gas')
@@ -1307,7 +1314,7 @@ class TestSummary:
     def test_summary_uses_short_gaussian_name(self):
         rng = np.random.default_rng(0)
         cop = BivariateGaussianCopula()
-        u12 = cop.sample(120, np.full(120, 0.45), rng=rng)
+        u12 = cop.sample_at_parameter(120, np.full(120, 0.45), rng=rng)
         u = np.column_stack([u12, rng.uniform(0.01, 0.99, 120)])
         v = RVineCopula(candidates=[BivariateGaussianCopula]).fit(u)
         s = v.summary(as_string=True)
@@ -1641,7 +1648,7 @@ class TestPredict:
 
         direct = vine.predict(
             200,
-            u_train=u_train,
+            u=u_train,
             given=given,
             horizon='current',
             dynamic_conditioning='given_only',
@@ -1866,19 +1873,19 @@ class TestPredict:
     @pytest.mark.parametrize('horizon', ['current', 'next'])
     def test_predictive_state_cache_reused_for_given_only(
             self, monkeypatch, horizon):
-        from pyscarcopula.numerical import predictive_tm
+        from pyscarcopula.numerical import _cpp_scar_ou
 
         vine = _manual_suffix_predictive_state_rvine()
         calls = Counter()
-        original = predictive_tm.tm_state_distribution
+        original = _cpp_scar_ou.state_distribution
 
         def counted_tm_state_distribution(*args, **kwargs):
             calls[kwargs.get('horizon')] += 1
             return original(*args, **kwargs)
 
         monkeypatch.setattr(
-            predictive_tm,
-            'tm_state_distribution',
+            _cpp_scar_ou,
+            'state_distribution',
             counted_tm_state_distribution,
         )
 
@@ -2137,7 +2144,6 @@ class TestPredict:
             params=ou_params(1.0, 0.0, 0.5),
             K=5,
             grid_range=2.0,
-            backend='python',
         )
         edge = PairCopula(
             copula=cop,
@@ -2149,13 +2155,14 @@ class TestPredict:
         )
         calls = []
 
-        def fake_tm_state_distribution(kappa, mu, nu, u, copula_arg,
-                                       horizon='next', **kwargs):
-            calls.append((kappa, mu, nu, u.copy(), copula_arg, horizon, kwargs))
+        def fake_tm_state_distribution(kappa, mu, nu, u, copula_arg, config,
+                                       horizon='next'):
+            calls.append((
+                kappa, mu, nu, u.copy(), copula_arg, horizon, config))
             return np.array([-0.5, 0.5]), np.array([0.0, 1.0])
 
         monkeypatch.setattr(
-            "pyscarcopula.numerical.predictive_tm.tm_state_distribution",
+            "pyscarcopula.numerical._cpp_scar_ou.state_distribution",
             fake_tm_state_distribution,
         )
 
@@ -2226,7 +2233,7 @@ class TestGoF:
         assert np.all(e > 0.0)
         assert np.all(e < 1.0)
 
-    def test_gof_test_dispatches_to_new_rvine_matrix_path(self):
+    def test_gof_test_executes_for_matrix_based_rvine(self):
         u = _sample_dvine_gumbel(250, 4, 2.0, seed=0)
         v = RVineCopula().fit(u)
         result = gof_test(v, u, to_pobs=False)
@@ -2235,7 +2242,7 @@ class TestGoF:
 
     def test_two_dimensional_rvine_gof_matches_cvine_order(self):
         rng = np.random.default_rng(123)
-        u = GumbelCopula().sample(500, 2.0, rng=rng)
+        u = GumbelCopula().sample_at_parameter(500, 2.0, rng=rng)
 
         cvine = CVineCopula(
             candidates=[GumbelCopula],
@@ -2280,7 +2287,7 @@ class TestGoF:
             self, method, fit_kwargs):
         rng = np.random.default_rng(11)
         cop = BivariateGaussianCopula()
-        u12 = cop.sample(45, np.full(45, 0.55), rng=rng)
+        u12 = cop.sample_at_parameter(45, np.full(45, 0.55), rng=rng)
         u = np.column_stack([u12, rng.uniform(0.01, 0.99, 45)])
         v = RVineCopula(candidates=[BivariateGaussianCopula]).fit(
             u,
@@ -2324,7 +2331,7 @@ class TestApiDispatch:
         assert np.all(p > 0.0)
         assert np.all(p < 1.0)
 
-    def test_predict_accepts_u_alias_for_cvine_style_callers(self):
+    def test_predict_accepts_canonical_u_history(self):
         u = _sample_dvine_gumbel(250, 3, 2.0, seed=0)
         v = RVineCopula().fit(u)
         p = v.predict(30, u=u, rng=np.random.default_rng(9))
@@ -2332,11 +2339,17 @@ class TestApiDispatch:
         assert np.all(p > 0.0)
         assert np.all(p < 1.0)
 
-    def test_predict_rejects_both_u_aliases(self):
+    def test_predict_rejects_removed_u_train_keyword(self):
         u = _sample_dvine_gumbel(250, 3, 2.0, seed=0)
         v = RVineCopula().fit(u)
-        with pytest.raises(ValueError, match="u_train or u"):
-            v.predict(10, u_train=u, u=u)
+        with pytest.raises(TypeError, match="u_train"):
+            v.predict(10, u_train=u)
+
+    def test_sample_rejects_removed_u_train_keyword(self):
+        u = _sample_dvine_gumbel(250, 3, 2.0, seed=0)
+        v = RVineCopula().fit(u)
+        with pytest.raises(TypeError, match="u_train"):
+            v.sample(10, u_train=u)
 
     def test_predict_rejects_bad_horizon(self):
         u = _sample_dvine_gumbel(200, 3, 2.0, seed=0)
@@ -2347,7 +2360,7 @@ class TestApiDispatch:
     def test_gas_predict_shape_and_unit_interval(self):
         rng = np.random.default_rng(5)
         cop = BivariateGaussianCopula()
-        u12 = cop.sample(80, np.full(80, 0.65), rng=rng)
+        u12 = cop.sample_at_parameter(80, np.full(80, 0.65), rng=rng)
         u = np.column_stack([u12, rng.uniform(0.01, 0.99, 80)])
         v = RVineCopula(candidates=[BivariateGaussianCopula]).fit(
             u, method='gas')
@@ -2509,7 +2522,8 @@ class TestConditionalPredict:
         rng = np.random.default_rng(31)
         rho = 0.65
         cop = BivariateGaussianCopula()
-        u = cop.sample(2500, np.full(2500, rho), rng=rng)
+        u = cop.sample_at_parameter(
+            2500, np.full(2500, rho), rng=rng)
         v = RVineCopula(candidates=[BivariateGaussianCopula]).fit(u)
         edge = next(iter(v.pair_copulas.values()))
         rho_hat = float(edge.param)

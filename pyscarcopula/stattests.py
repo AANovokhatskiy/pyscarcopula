@@ -27,6 +27,12 @@ from dataclasses import dataclass
 from scipy.special import stdtr
 from scipy.stats import chi2, norm, cramervonmises
 
+from pyscarcopula._utils import (
+    clip_pseudo_observations,
+    clip_pseudo_observations_no_copy,
+    clip_rosenblatt_output,
+)
+
 
 @dataclass(frozen=True)
 class BootstrapGoFResult:
@@ -68,8 +74,7 @@ def cvm_test(e):
         raise ValueError("e must contain at least one observation")
 
     # Avoid inf in norm.ppf at exactly 0 or 1
-    eps = 1e-10
-    e = np.clip(e, eps, 1.0 - eps)
+    e = clip_pseudo_observations(e)
 
     z = norm.ppf(e)                       # (T, d)
     q = np.sum(z * z, axis=1)             # (T,)
@@ -78,23 +83,11 @@ def cvm_test(e):
     return cramervonmises(y, "uniform")
 
 
-def _clip(x):
-    eps = 1e-6
-    return np.clip(x, eps, 1.0 - eps)
-
-
 def _as_float64_array_no_copy(value):
+    """Return a float64 array while preserving an already compatible input."""
     if type(value) is np.ndarray and value.dtype == np.float64:
         return value
     return np.asarray(value, dtype=np.float64)
-
-
-def _clip_unit_interval_no_copy(u, eps=1e-10):
-    """Clip pseudo-observations only when a boundary value is present."""
-    u = _as_float64_array_no_copy(u)
-    if np.all((u > eps) & (u < 1.0 - eps)):
-        return u
-    return np.clip(u, eps, 1.0 - eps)
 
 
 def _grid_transition_method(transition_method):
@@ -113,7 +106,7 @@ def rosenblatt_transform_mle(copula, u, r):
     e = np.empty((T, 2))
     e[:, 0] = u[:, 0]
     e[:, 1] = copula.h(u[:, 1], u[:, 0], np.full(T, float(r)))
-    return _clip(e)
+    return clip_rosenblatt_output(e)
 
 
 def rosenblatt_transform_scar(copula, u, alpha, K=300, grid_range=5.0,
@@ -121,17 +114,26 @@ def rosenblatt_transform_scar(copula, u, alpha, K=300, grid_range=5.0,
                               pts_per_sigma=4, transition_method='matrix',
                               max_K=None, r_gh=3.0, gh_order=5):
     """Mixture Rosenblatt for SCAR (bivariate). Returns (T, 2)."""
-    from pyscarcopula.numerical.tm_functions import tm_forward_rosenblatt as _tm_forward_rosenblatt
+    from pyscarcopula.numerical import _cpp_scar_ou
+    from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
+
     kappa, mu, nu = alpha
-    transition_method = _grid_transition_method(transition_method)
-    return _tm_forward_rosenblatt(
-        kappa, mu, nu, u, copula, K, grid_range,
-        grid_method, adaptive, pts_per_sigma,
+    config = AutoTMConfig(
         transition_method=transition_method,
+        K=K,
+        grid_range=grid_range,
+        grid_method=grid_method,
+        adaptive=adaptive,
+        pts_per_sigma=pts_per_sigma,
         max_K=max_K,
         r_gh=r_gh,
         gh_order=gh_order,
     )
+    e = np.empty((len(u), 2), dtype=np.float64)
+    e[:, 0] = u[:, 0]
+    e[:, 1] = _cpp_scar_ou.mixture_h(
+        kappa, mu, nu, u, copula, config)
+    return e
 
 
 def rosenblatt_transform_gas(copula, u, gas_params, scaling='unit'):
@@ -184,21 +186,15 @@ def gof_test(model, data, to_pobs=True, K=300, grid_range=5.0,
     CramérVonMisesResult with .statistic and .pvalue
     """
     from pyscarcopula.copula.base import BivariateCopula
-    from pyscarcopula.copula.elliptical import GaussianCopula, StudentCopula
+    from pyscarcopula.copula.multivariate import GaussianCopula, StudentCopula
     from pyscarcopula.vine.cvine import CVineCopula
     from pyscarcopula.vine.rvine import RVineCopula
-    from pyscarcopula.copula.experimental.equicorr import EquicorrGaussianCopula
-    from pyscarcopula.copula.experimental.stochastic_student import StochasticStudentCopula
-    from pyscarcopula.copula.experimental.stochastic_student_dcc import StochasticStudentDCCCopula
+    from pyscarcopula.copula.multivariate import (
+        EquicorrGaussianCopula,
+        StochasticStudentCopula,
+    )
 
-    if isinstance(model, StochasticStudentDCCCopula):
-        if bootstrap:
-            raise NotImplementedError(
-                "Bootstrap GoF is currently implemented for bivariate "
-                "copulas only.")
-        return stochastic_student_dcc_gof_test(model, data, to_pobs, K,
-                                                grid_range, fit_result=fit_result)
-    elif isinstance(model, StochasticStudentCopula):
+    if isinstance(model, StochasticStudentCopula):
         if bootstrap:
             raise NotImplementedError(
                 "Bootstrap GoF is currently implemented for bivariate "
@@ -317,7 +313,7 @@ def _bivariate_rosenblatt_from_result(copula, u, fit_result,
     e = np.empty((len(u), 2), dtype=np.float64)
     e[:, 0] = u[:, 0]
     e[:, 1] = strategy.rosenblatt_e2(copula, u, fit_result)
-    return _clip(e)
+    return clip_rosenblatt_output(e)
 
 
 def _as_rng(rng):
@@ -484,11 +480,9 @@ def vine_rosenblatt_transform(vine, u, K=300, grid_range=5.0):
     e : (T, d) — should be iid U[0,1]^d under correct model
     """
     T, d = u.shape
-    eps = 1e-10
-
     v = [[None] * d for _ in range(d)]
     for i in range(d):
-        v[0][i] = np.clip(u[:, i].copy(), eps, 1.0 - eps)
+        v[0][i] = clip_pseudo_observations(u[:, i].copy())
 
     e = np.empty((T, d))
     e[:, 0] = v[0][0]
@@ -497,26 +491,24 @@ def vine_rosenblatt_transform(vine, u, K=300, grid_range=5.0):
         n_edges = d - j - 1
 
         # e_{j+1}: first edge of tree j
-        u1 = np.clip(v[j][0], eps, 1.0 - eps)
-        u2 = np.clip(v[j][1], eps, 1.0 - eps)
+        u1 = clip_pseudo_observations(v[j][0])
+        u2 = clip_pseudo_observations(v[j][1])
         u_pair = np.column_stack((u1, u2))
         edge = vine.edges[j][0]
-        e[:, j + 1] = np.clip(
-            _vine_edge_h(edge, u2, u1, u_pair, K, grid_range),
-            eps, 1.0 - eps)
+        e[:, j + 1] = clip_pseudo_observations(
+            _vine_edge_h(edge, u2, u1, u_pair, K, grid_range))
 
         # Propagate v to next level (all edges, same approach)
         if j < d - 2:
             for i in range(n_edges):
-                u1 = np.clip(v[j][0], eps, 1.0 - eps)
-                u2 = np.clip(v[j][i + 1], eps, 1.0 - eps)
+                u1 = clip_pseudo_observations(v[j][0])
+                u2 = clip_pseudo_observations(v[j][i + 1])
                 u_pair = np.column_stack((u1, u2))
                 edge_i = vine.edges[j][i]
-                v[j + 1][i] = np.clip(
-                    _vine_edge_h(edge_i, u2, u1, u_pair, K, grid_range),
-                    eps, 1.0 - eps)
+                v[j + 1][i] = clip_pseudo_observations(
+                    _vine_edge_h(edge_i, u2, u1, u_pair, K, grid_range))
 
-    return _clip(e)
+    return clip_rosenblatt_output(e)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -576,26 +568,22 @@ def rvine_rosenblatt_transform(vine, u, K=300, grid_range=5.0):
     if d != vine.d:
         raise ValueError(f"u has d={d}, but fitted vine has d={vine.d}")
 
-    eps = 1e-10
     M = vine.matrix
 
     if d == 2:
         edge = vine.pair_copulas[(0, 0)]
-        u1 = np.clip(u[:, 0], eps, 1.0 - eps)
-        u2 = np.clip(u[:, 1], eps, 1.0 - eps)
+        u1 = clip_pseudo_observations(u[:, 0])
+        u2 = clip_pseudo_observations(u[:, 1])
         u_pair = np.column_stack((u1, u2))
         e = np.empty((T, d), dtype=np.float64)
         e[:, 0] = u1
-        e[:, 1] = np.clip(
+        e[:, 1] = clip_pseudo_observations(
             _edge_h(edge, u2, u1, u_pair=u_pair, K=K,
-                    grid_range=grid_range),
-            eps,
-            1.0 - eps,
-        )
-        return _clip(e)
+                    grid_range=grid_range))
+        return clip_rosenblatt_output(e)
 
     pseudo = {
-        (var, frozenset()): np.clip(u[:, var].copy(), eps, 1.0 - eps)
+        (var, frozenset()): clip_pseudo_observations(u[:, var].copy())
         for var in range(d)
     }
 
@@ -635,23 +623,17 @@ def rvine_rosenblatt_transform(vine, u, K=300, grid_range=5.0):
                     f"column={col}, tree={t}"
                 )
 
-            cur = np.clip(
+            cur = clip_pseudo_observations(
                 _edge_h(edge, leaf_val, partner_val, K=K,
-                        grid_range=grid_range),
-                eps,
-                1.0 - eps,
-            )
+                        grid_range=grid_range))
             pseudo[(leaf, next_leaf_cond)] = cur
-            pseudo[(partner, next_partner_cond)] = np.clip(
+            pseudo[(partner, next_partner_cond)] = clip_pseudo_observations(
                 _edge_h(edge, partner_val, leaf_val, K=K,
-                        grid_range=grid_range),
-                eps,
-                1.0 - eps,
-            )
+                        grid_range=grid_range))
 
         e[:, col] = cur
 
-    return _clip(e)
+    return clip_rosenblatt_output(e)
 
 def rvine_gof_test(vine, data, to_pobs=True,
                     K=500, grid_range=7.0):
@@ -707,8 +689,7 @@ def gaussian_rosenblatt_transform(R, u):
     -------
     e : (T, d)
     """
-    eps = 1e-10
-    u_c = _clip_unit_interval_no_copy(u, eps)
+    u_c = clip_pseudo_observations_no_copy(u)
     x = norm.ppf(u_c)
 
     L = np.linalg.cholesky(R)
@@ -717,7 +698,7 @@ def gaussian_rosenblatt_transform(R, u):
     z = np.linalg.solve(L, x.T).T  # (T, d)
     e = norm.cdf(z)
 
-    return np.clip(e, eps, 1.0 - eps)
+    return clip_pseudo_observations(e)
 
 
 def gaussian_gof_test(copula, data, to_pobs=True):
@@ -782,8 +763,7 @@ def student_rosenblatt_transform(R, df, u):
     """
     from scipy.stats import t as t_dist
 
-    eps = 1e-10
-    u_c = np.clip(u, eps, 1.0 - eps)
+    u_c = clip_pseudo_observations(u)
     x = t_dist.ppf(u_c, df=df)
 
     T, d = x.shape
@@ -821,7 +801,7 @@ def student_rosenblatt_transform(R, df, u):
 
         e[:, i] = t_dist.cdf(z, df=df_cond)
 
-    return np.clip(e, eps, 1.0 - eps)
+    return clip_pseudo_observations(e)
 
 
 def student_gof_test(copula, data, to_pobs=True):
@@ -906,8 +886,7 @@ def equicorr_rosenblatt_transform(copula, u, fit_result, K=300, grid_range=5.0):
     -------
     e : (T, d) — should be iid U[0,1]^d under correct model
     """
-    eps = 1e-10
-    u_c = np.clip(u, eps, 1.0 - eps)
+    u_c = clip_pseudo_observations(u)
     x_norm = norm.ppf(u_c)
     T, d = u.shape
 
@@ -924,7 +903,7 @@ def equicorr_rosenblatt_transform(copula, u, fit_result, K=300, grid_range=5.0):
             cond_var = max(cond_var, 1e-10)
             z_i = (x_norm[:, i] - cond_mean) / np.sqrt(cond_var)
             e[:, i] = norm.cdf(z_i)
-        return np.clip(e, eps, 1.0 - eps)
+        return clip_pseudo_observations(e)
 
     if method == 'GAS':
         rho_path = _gas_parameter_path(copula, u, fit_result)
@@ -938,7 +917,7 @@ def equicorr_rosenblatt_transform(copula, u, fit_result, K=300, grid_range=5.0):
             cond_var = np.maximum(cond_var, 1e-10)
             z_i = (x_norm[:, i] - cond_mean) / np.sqrt(cond_var)
             e[:, i] = norm.cdf(z_i)
-        return np.clip(e, eps, 1.0 - eps)
+        return clip_pseudo_observations(e)
 
     # SCAR: mixture Rosenblatt via TM forward pass
     from pyscarcopula.numerical.tm_grid import TMGrid as _TMGrid
@@ -979,7 +958,7 @@ def equicorr_rosenblatt_transform(copula, u, fit_result, K=300, grid_range=5.0):
         for i in range(1, d):
             e[k, i] = np.sum(weights * cdf_blocks[i - 1][local])
 
-    e = np.clip(e, eps, 1.0 - eps)
+    e = clip_pseudo_observations(e)
     return e
 
 
@@ -1048,7 +1027,6 @@ def stochastic_student_rosenblatt_transform(copula, u, fit_result,
     -------
     e : (T, d) — should be iid U[0,1]^d under correct model
     """
-    eps = 1e-10
     T, d = u.shape
     R = copula.R
     method = fit_result.method.upper()
@@ -1056,7 +1034,7 @@ def stochastic_student_rosenblatt_transform(copula, u, fit_result,
     if method == 'MLE':
         df = fit_result.copula_param
         e = student_rosenblatt_transform(R, df, u)
-        return np.clip(e, eps, 1.0 - eps)
+        return clip_pseudo_observations(e)
 
     if method == 'GAS':
         df_path = _gas_parameter_path(copula, u, fit_result)
@@ -1064,7 +1042,7 @@ def stochastic_student_rosenblatt_transform(copula, u, fit_result,
         for t_idx, df_t in enumerate(df_path):
             e[t_idx] = student_rosenblatt_transform(
                 R, float(df_t), u[t_idx:t_idx + 1])[0]
-        return np.clip(e, eps, 1.0 - eps)
+        return clip_pseudo_observations(e)
 
     # SCAR: mixture Rosenblatt via TM forward pass
     from pyscarcopula.numerical.tm_grid import TMGrid as _TMGrid
@@ -1095,7 +1073,7 @@ def stochastic_student_rosenblatt_transform(copula, u, fit_result,
         sigma_cond[i - 1] = np.sqrt(max(sigma2, 1e-12))
         r_inv_padded[i - 1, :i, :i] = R_11_inv
 
-    u_c = _clip_unit_interval_no_copy(u, eps)
+    u_c = clip_pseudo_observations_no_copy(u)
     emission_cache = copula.prepare_emission_cache(u_c)
 
     e = np.empty((T, d))
@@ -1131,7 +1109,7 @@ def stochastic_student_rosenblatt_transform(copula, u, fit_result,
         e[start:stop, 1:] = student_weighted_cdf_block(
             cdf_blocks, weights_block)
 
-    e = np.clip(e, eps, 1.0 - eps)
+    e = clip_pseudo_observations(e)
     return e
 
 
@@ -1169,202 +1147,3 @@ def stochastic_student_gof_test(copula, data, to_pobs=True,
 
 
 # ══════════════════════════════════════════════════════════════════
-# Stochastic Student-t DCC copula GoF
-# ══════════════════════════════════════════════════════════════════
-
-def stochastic_student_dcc_rosenblatt_transform(copula, u, fit_result,
-                                                 K=300, grid_range=5.0):
-    """
-    Rosenblatt transform for StochasticStudentDCCCopula.
-
-    Like the fixed-R stochastic Student-t, but uses time-varying R_t
-    from the DCC(1,1) path at each observation.
-
-    MLE: constant df, time-varying R_t.
-    SCAR: mixture over predictive df(t) from TM forward pass, time-varying R_t.
-
-    Parameters
-    ----------
-    copula : StochasticStudentDCCCopula
-    u : (T, d) pseudo-observations
-    fit_result : FitResult
-    K, grid_range : TM grid params (SCAR only)
-
-    Returns
-    -------
-    e : (T, d) — should be iid U[0,1]^d under correct model
-    """
-    from scipy.stats import t as t_dist_fn
-
-    eps = 1e-10
-    T, d = u.shape
-    R_path = copula.R_path
-    if R_path is None:
-        raise ValueError("DCC R_t path not available. Call fit_R_t() first.")
-    if len(R_path) != T:
-        raise ValueError(f"u has length {T}, but R_path has length {len(R_path)}")
-
-    method = fit_result.method.upper()
-
-    # Precompute R sub-matrices for each time step
-    def _sequential_rosenblatt_one(x_row, R, df):
-        """Rosenblatt for one observation with given R and df."""
-        e_row = np.empty(d)
-        e_row[0] = t_dist_fn.cdf(x_row[0], df=df)
-        for i in range(1, d):
-            R_11 = R[:i, :i]
-            R_21 = R[i, :i]
-            R_22 = R[i, i]
-            R_11_inv = np.linalg.inv(R_11)
-            beta = R_21 @ R_11_inv
-            sigma2 = R_22 - R_21 @ R_11_inv @ R_21
-            sigma_c = np.sqrt(max(sigma2, 1e-12))
-
-            mu_c = beta @ x_row[:i]
-            quad = x_row[:i] @ R_11_inv @ x_row[:i]
-            df_cond = df + i
-            scale = (df + quad) / df_cond
-            z_i = (x_row[i] - mu_c) / (sigma_c * np.sqrt(max(scale, 1e-12)))
-            e_row[i] = t_dist_fn.cdf(z_i, df=df_cond)
-        return e_row
-
-    if method == 'MLE':
-        df = fit_result.copula_param
-        e = np.empty((T, d))
-        for t_idx in range(T):
-            u_c = np.clip(u[t_idx], eps, 1.0 - eps)
-            x = t_dist_fn.ppf(u_c, df=df)
-            e[t_idx] = _sequential_rosenblatt_one(x, R_path[t_idx], df)
-        return np.clip(e, eps, 1.0 - eps)
-
-    if method == 'GAS':
-        df_path = _gas_parameter_path(copula, u, fit_result)
-        e = np.empty((T, d))
-        for t_idx, df_t in enumerate(df_path):
-            u_c = np.clip(u[t_idx], eps, 1.0 - eps)
-            x = t_dist_fn.ppf(u_c, df=float(df_t))
-            e[t_idx] = _sequential_rosenblatt_one(
-                x, R_path[t_idx], float(df_t))
-        return np.clip(e, eps, 1.0 - eps)
-
-    # SCAR: mixture Rosenblatt via TM forward pass
-    from pyscarcopula.numerical.tm_grid import TMGrid as _TMGrid
-    from pyscarcopula.numerical.gof_blocks import iter_forward_weight_blocks
-
-    kappa, mu, nu_ou = fit_result.params.values
-    grid = _TMGrid(
-        kappa, mu, nu_ou, T, K, grid_range,
-        **_tm_grid_kwargs_from_result(fit_result))
-    x_grid = grid.z + grid.mu
-    df_grid = copula.transform(x_grid)
-
-    # Precompute R sub-matrices for each time step
-    beta_path = []    # beta_path[i-1] shape (T, i)
-    sigma_path = []   # sigma_path[i-1] shape (T,)
-    R_inv_path = []   # R_inv_path[i-1] shape (T, i, i)
-    for i in range(1, d):
-        betas = np.empty((T, i))
-        sigmas = np.empty(T)
-        R_invs = np.empty((T, i, i))
-        for t_idx in range(T):
-            R_t = R_path[t_idx]
-            R_11 = R_t[:i, :i]
-            R_21 = R_t[i, :i]
-            R_22 = R_t[i, i]
-            R_11_inv = np.linalg.inv(R_11)
-            betas[t_idx] = R_21 @ R_11_inv
-            sigma2 = R_22 - R_21 @ R_11_inv @ R_21
-            sigmas[t_idx] = np.sqrt(max(sigma2, 1e-12))
-            R_invs[t_idx] = R_11_inv
-        beta_path.append(betas)
-        sigma_path.append(sigmas)
-        R_inv_path.append(R_invs)
-
-    u_c = np.clip(u, eps, 1.0 - eps)
-
-    e = np.empty((T, d))
-    e[:, 0] = u[:, 0]
-
-    def emission_block(u_block, x_grid, start, stop):
-        return copula.copula_grid_batch(
-            u_block, x_grid, t_index=start)
-
-    cdf_blocks = None
-    for t_idx, local, weights, fi_block, u_block, start, stop in (
-            iter_forward_weight_blocks(
-                grid,
-                u_c,
-                copula,
-                x_grid=x_grid,
-                emission_block=emission_block,
-                include_block_info=True,
-                element_width=max(2, 2 * d),
-            )):
-        if local == 0:
-            ppf = copula._get_ppf_table(u_block)
-            x_all = np.empty((fi_block.shape[0], grid.K, d), dtype=np.float64)
-            for j, df_j in enumerate(df_grid):
-                x_all[:, j, :] = ppf(df_j)
-
-            cdf_blocks = []
-            df_cond_grid = df_grid[np.newaxis, :]
-            for i in range(1, d):
-                x_prev = x_all[:, :, :i]                         # (B, K, i)
-                beta_block = beta_path[i - 1][start:stop]        # (B, i)
-                R_inv_block = R_inv_path[i - 1][start:stop]      # (B, i, i)
-                sigma_block = sigma_path[i - 1][start:stop]      # (B,)
-                mu_c = np.einsum(
-                    'bki,bi->bk', x_prev, beta_block, optimize=True)
-                quad = np.einsum(
-                    'bki,bij,bkj->bk',
-                    x_prev,
-                    R_inv_block,
-                    x_prev,
-                    optimize=True,
-                )
-
-                df_cond = df_cond_grid + i
-                scale = (df_cond_grid + quad) / df_cond
-                z_i = (x_all[:, :, i] - mu_c) / (
-                    sigma_block[:, np.newaxis]
-                    * np.sqrt(np.maximum(scale, 1e-12)))
-                cdf_blocks.append(t_dist_fn.cdf(z_i, df=df_cond))
-
-        for i in range(1, d):
-            e[t_idx, i] = np.sum(weights * cdf_blocks[i - 1][local])
-
-    e = np.clip(e, eps, 1.0 - eps)
-    return e
-
-
-def stochastic_student_dcc_gof_test(copula, data, to_pobs=True,
-                                     K=300, grid_range=5.0, fit_result=None):
-    """
-    Goodness-of-fit test for StochasticStudentDCCCopula.
-
-    Parameters
-    ----------
-    copula : StochasticStudentDCCCopula
-    data : (T, d)
-    to_pobs : bool
-    K : int
-    grid_range : float
-    fit_result : FitResult or None
-
-    Returns
-    -------
-    CramérVonMisesResult
-    """
-    from pyscarcopula._utils import pobs as compute_pobs
-
-    u = np.asarray(data, dtype=np.float64)
-    if to_pobs:
-        u = compute_pobs(u)
-
-    fr = fit_result if fit_result is not None else getattr(copula, 'fit_result', None)
-    if fr is None:
-        raise ValueError("No fit_result provided and copula has no fit_result. "
-                         "Call copula.fit() first or pass fit_result=.")
-
-    e = stochastic_student_dcc_rosenblatt_transform(copula, u, fr, K, grid_range)
-    return cvm_test(e)

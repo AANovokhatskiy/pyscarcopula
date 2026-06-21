@@ -38,13 +38,20 @@ from pyscarcopula.copula.independent import IndependentCopula
 from pyscarcopula.vine.cvine import CVineCopula
 from pyscarcopula.vine.rvine import RVineCopula
 
-from pyscarcopula.copula.elliptical import (
-    BivariateGaussianCopula, GaussianCopula, StudentCopula
+from pyscarcopula.copula.elliptical import BivariateGaussianCopula
+from pyscarcopula.copula.multivariate import (
+    EquicorrGaussianCopula,
+    GaussianCopula,
+    StochasticStudentCopula,
+    StudentCopula,
 )
-from pyscarcopula.copula.experimental.equicorr import EquicorrGaussianCopula
-from pyscarcopula.copula.experimental.stochastic_student import StochasticStudentCopula
-from pyscarcopula.copula.experimental.stochastic_student_dcc import StochasticStudentDCCCopula
-from pyscarcopula._types import PredictConfig
+from pyscarcopula.copula.base import (
+    BivariateCopula,
+    CopulaBase,
+    CopulaCapabilities,
+)
+from pyscarcopula.copula.multivariate import MultivariateCopula
+from pyscarcopula._types import MultivariateMLEResult, PredictConfig
 from pyscarcopula.io import load_model, save_model
 
 
@@ -55,15 +62,18 @@ __all__ = (
     'IndependentCopula',
     # Elliptical
     'GaussianCopula', 'StudentCopula', 'BivariateGaussianCopula',
-    # Experimental / stochastic multivariate
+    # Dynamic multivariate
     'EquicorrGaussianCopula',
     'StochasticStudentCopula',
-    'StochasticStudentDCCCopula',
+    # Base hierarchy and capability contract
+    'CopulaBase', 'BivariateCopula', 'MultivariateCopula',
+    'CopulaCapabilities',
     # Vine
     'CVineCopula',
     'RVineCopula',
     # Prediction options
     'PredictConfig',
+    'MultivariateMLEResult',
     # Persistence
     'save_model', 'load_model',
 )

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import inspect
 import numpy as np
+
+from pyscarcopula.strategy._base import get_copula_capabilities
 
 
 def validate_given(given):
@@ -45,7 +46,7 @@ def conditional_sample_bivariate(copula, n, r, given=None, rng=None):
         raise ValueError(f"r must be scalar or length {n}, got shape {r_arr.shape}")
 
     if not given:
-        return copula.sample(n, r_arr, rng=rng)
+        return copula.sample_at_parameter(n, r_arr, rng=rng)
 
     samples = np.empty((n, 2), dtype=np.float64)
 
@@ -74,16 +75,23 @@ def sample_predictive(copula, n, r, given=None, rng=None, d=None):
     expose ``sample_conditional``; otherwise it falls back to bivariate
     h-function sampling.
     """
+    capabilities = get_copula_capabilities(copula)
+
     if given is None and d is not None and int(d) != 2 and hasattr(copula, "_R_path"):
         return copula.sample(n=n, df_path=r, rng=rng)
 
     if given is None:
-        params = inspect.signature(copula.sample).parameters
-        if "r" in params:
-            return copula.sample(n, r, rng=rng)
-        return copula.sample(n, rng=rng)
+        if (
+                capabilities is not None
+                and not capabilities.has_dynamic_scalar_parameter):
+            return copula.sample(n, rng=rng)
+        return copula.sample_at_parameter(n, r, rng=rng)
 
-    if hasattr(copula, "sample_conditional"):
+    if capabilities is not None and capabilities.supports_pair_ops:
+        return conditional_sample_bivariate(
+            copula, n, r, given=given, rng=rng)
+
+    if capabilities is not None and capabilities.supports_conditional_sampling:
         return copula.sample_conditional(n, r=r, given=given, rng=rng)
 
     if d is None:

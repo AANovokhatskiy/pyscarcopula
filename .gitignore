@@ -4,9 +4,13 @@
 __pycache__/
 .pytest_cache/
 pytest-cache-files-*/
+pytest-tmp*/
 *.egg-info/
+*.pyd
+build/
 site/
-tools/
+tools/*
+!tools/check_cpp_architecture.py
 benchmarks/
 scripts/
 results/

@@ -4,6 +4,10 @@ This page describes the bivariate fitting methods exposed by
 `pyscarcopula.api.fit`. Performance controls for these methods are covered in
 [Performance Tuning](performance.md).
 
+Strategy compatibility is determined by explicit model capabilities. See
+[Model Architecture](architecture.md) for the distinction between class
+hierarchy, protocols, and native strategy support.
+
 ## Method Summary
 
 | Method | Key | State | Main use |
@@ -20,18 +24,63 @@ All dynamic methods return a `LatentResult` with `params`,
 strategy implements a path simulator; SCAR-TM-JACOBI currently supports
 prediction but not `sample`.
 
+## Gradient capability matrix
+
+The model score used inside a recursion and the optimizer gradient are
+different quantities. The following table describes what is passed to the
+outer optimizer and the corresponding diagnostics.
+
+| Method | Configuration | Optimizer gradient | `model_score` | `gradient_kind` |
+|--------|---------------|--------------------|---------------|-----------------|
+| MLE | Built-in supported model | Analytical | `not_applicable` | `analytical` |
+| GAS | Any supported scaling | Numerical finite differences | `native` | `numerical_optimizer` |
+| SCAR-TM-OU | `analytical_grad=True` | Analytical native Jacobian | `not_applicable` | `analytical` |
+| SCAR-TM-OU | `analytical_grad=False` | Numerical finite differences | `not_applicable` | `numerical` |
+| SCAR-TM-JACOBI | `analytical_grad=False` | Numerical finite differences | `not_applicable` | `numerical` |
+| SCAR-TM-JACOBI | `local_fixed`, analytical gradient | Model-provided | `not_applicable` | `analytical` |
+| SCAR-TM-JACOBI | `local`, `spectral_matrix`, or `auto`, analytical gradient | Model-provided | `not_applicable` | `semi_analytical` |
+| SCAR-MC-OU | P- or M-sampler | Numerical finite differences | Not reported | Not reported |
+
+For joint Stochastic Student SCAR-TM-OU fits, C++ supplies OU and
+static-correlation derivatives. Python applies the correlation
+parameterization chain rule. If a native correlation derivative is
+unavailable for a future model, the implementation records a numerical
+correlation fallback in `correlation_gradient` and `joint_gradient`.
+
+For SCAR-TM-OU, SCAR-MC-OU, and SCAR-TM-JACOBI,
+`result.diagnostics["initialization"]` records how the optimizer initial point
+was obtained. It contains `requested_method`, `selected_method`, the final
+`alpha0`, and an ordered `attempts` list. Failed attempts retain only a
+serializable `error_type` and `error_message`; traceback and exception objects
+are not stored. A user-provided `alpha0` is reported as `user_provided`.
+
 ## MLE
 
 MLE estimates one constant copula parameter. It is the default baseline for
 family screening and for initializing dynamic methods.
+
+The optimizer works directly in the natural copula parameter. An explicit
+`alpha0` therefore uses natural units:
 
 ```python
 from pyscarcopula import GumbelCopula
 from pyscarcopula.api import fit
 
 copula = GumbelCopula(rotate=180)
-result = fit(copula, u, method='mle')
+result = fit(copula, u, method='mle', alpha0=[2.0])
 ```
+
+For static and stochastic Student copulas fitted with `method='mle'`, the
+optimized scalar is `df` itself and is constrained above the model's
+finite-variance threshold. No latent softplus transform is applied inside the
+MLE objective. The softplus transform remains part of dynamic SCAR/GAS models,
+where a latent state drives time-varying degrees of freedom.
+
+For `StochasticStudentCopula(corr_mode='fixed')`, native `dL/ddf` is passed to
+L-BFGS-B. Joint `df` and estimated-correlation MLE combines native `dL/ddf`
+and the native Student correlation score, then maps the latter into the
+configured shrinkage or Cholesky raw parameters. It reports
+`gradient_mode='analytical_joint'` in result diagnostics.
 
 ## GAS
 
@@ -50,8 +99,32 @@ $$
 It is usually faster than SCAR because there is no latent-state integral.
 
 ```python
-result = fit(copula, u, method='gas', ftol=1e-12, maxfun=3000)
+result = fit(
+    copula,
+    u,
+    method='gas',
+    scaling='unit',
+    ftol=1e-12,
+    maxfun=3000,
+)
 ```
+
+The compiled evaluator is the single GAS numerical implementation. It owns
+the likelihood, score recursion, state updates, prediction, and bivariate
+Rosenblatt path for supported built-in copulas. The Python layer owns
+optimization orchestration, RNG, and sampling. Unsupported copulas and a
+missing extension fail immediately; there is no backend selector or fallback.
+
+`scaling='unit'` is the recommended production mode. `scaling='fisher'` uses
+nested finite differences and clipping/floor thresholds; it is experimental
+and its fitted optimum can be sensitive to optimizer finite-difference steps.
+
+The GAS copula score and filtering recursion are native model calculations.
+They are not the optimizer Jacobian with respect to
+`(omega, gamma, beta)`. GAS currently passes only objective values to
+L-BFGS-B, which therefore computes that outer gradient numerically. Result
+diagnostics distinguish these concepts with `model_score='native'` and
+`optimizer_gradient='numerical'`.
 
 ## SCAR-TM-OU
 
@@ -69,12 +142,8 @@ Gauss-Hermite. If spectral evaluation fails numerically, `auto` tries the
 matrix grid likelihood first and then the local method when the matrix path is
 not accepted.
 
-The numerical engine also defaults to `backend='auto'`. In this mode
-SCAR-TM-OU uses the package C++ extension for supported bivariate families and
-transforms, and falls back to Python/Numba when the extension is unavailable or
-the copula is unsupported by the C++ density kernels. Use `backend='python'`
-when you need an explicit pure-Python run for debugging or numerical
-comparisons.
+SCAR-TM-OU uses the package C++ extension as its only production numerical
+engine.
 
 ```python
 result = fit(
@@ -82,27 +151,23 @@ result = fit(
     u,
     method='scar-tm-ou',
     transition_method='auto',
-    backend='auto',
     analytical_grad=True,
 )
 ```
 
 The fitted parameters are `kappa`, `mu`, and `nu`.
 
-`LatentResult.diagnostics` records aggregate backend usage during fitting:
-objective evaluations, Python/C++ evaluation counts, spectral/matrix/local
-attempts, and fallback counters such as `fallback_spectral_to_matrix`,
-`fallback_matrix_to_local`, `matrix_failures`, and `matrix_capped`. Python and
-C++ fits both report matrix-to-local fallback reasons when the active backend
-provides them. `matrix_fallback_unknown` is reserved for legacy or incomplete
-backend result metadata.
+`LatentResult.diagnostics` records objective evaluations,
+spectral/matrix/local attempts, and transition fallback counters such as
+`fallback_spectral_to_matrix`,
+`fallback_matrix_to_local`, `matrix_failures`, and `matrix_capped`.
 
 By default, `spectral_basis_order='auto'` selects the Hermite basis size inside
 each objective evaluation from the current `kappa / (T - 1)`: 128 below
 `0.015`, 96 below `0.025`, 64 below `0.06`, and 32 otherwise. The
-`'adaptive'` value is accepted as an alias for backwards compatibility. Use a
-fixed integer `spectral_basis_order` when exact basis-size reproducibility is
-needed for numerical comparisons.
+only accepted automatic value is `'auto'`; the former `'adaptive'` alias is
+rejected. Use a fixed positive integer when exact basis-size reproducibility
+is needed for numerical comparisons.
 
 ## SCAR-TM-JACOBI
 
@@ -143,9 +208,17 @@ local Lamperti/Gauss-Hermite transition. The default tolerance for accepting
 small spectral truncation errors is `negative_mass_tol=1e-5`.
 
 The explicit Jacobi transition backends are `spectral_matrix`, `local`,
-`local_fixed`, and `spectral_coeff`. `local_fixed` is intended for
-`analytical_grad=True`; `spectral_coeff` is a coefficient-space comparison
-backend and does not support analytical gradients.
+`local_fixed`, and `spectral_coeff`. With `analytical_grad=True`, the optimizer
+receives a model-provided Jacobian. For `local_fixed`, both setup and filtering
+derivatives are analytical. For `local`, `spectral_matrix`, and either backend
+selected by `auto`, setup arrays are differentiated by finite differences and
+the filtering recursion is differentiated analytically; these modes are
+therefore semi-analytical. `spectral_coeff` is a coefficient-space comparison
+backend and explicitly rejects `analytical_grad=True`.
+
+`LatentResult.diagnostics` reports `gradient_requested`, `gradient_used`,
+`gradient_kind`, `setup_derivative`, `filter_derivative`, and the transition
+backend actually selected at the fitted parameters.
 
 For high-frequency data, the code uses `dt = 1 / (T - 1)`. Large `T` therefore
 produces very narrow one-step Jacobi transitions. In this regime the local

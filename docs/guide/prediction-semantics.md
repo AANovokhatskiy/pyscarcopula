@@ -41,13 +41,24 @@ for supported dynamic edges. This is off by default.
 
 ## `predict` vs `sample`
 
-`sample(n)` generates synthetic observations from the fitted model. For
-stochastic models this simulates a new latent path.
+The sampling names now have the same meaning across model types:
 
-`predict(n, u_train=training_data)` generates forecast observations
-conditional on the fitted history. For MLE this is the same constant-parameter
-copula. Dynamic strategies such as GAS and SCAR-TM use their fitted
-time-varying state.
+- `pyscarcopula.api.sample(copula, data, result, n)` reproduces a fitted
+  bivariate or multivariate model;
+- fitted bivariate, multivariate, C-vine, and R-vine objects expose the same
+  operation as `model.sample(n, u=None, rng=None)`;
+- models with a scalar dependence parameter expose low-level generation as
+  `model.sample_at_parameter(n, r, rng=None)`.
+
+For stochastic fitted models, reproduction simulates a new latent or
+score-driven path.
+
+`predict(n, u=training_data)` on a fitted object generates forecast
+observations conditional on the supplied history. Omitting `u` uses the
+history retained by the last `fit`. The stateless equivalent is
+`pyscarcopula.api.predict(copula, data, result, n)`. For MLE this uses the same
+constant-parameter copula. Dynamic strategies such as GAS and SCAR-TM use
+their fitted time-varying state.
 
 Most sampling APIs accept `rng=np.random.default_rng(seed)`. Use a fresh
 generator with the same seed for exact reproducibility; reusing a generator
@@ -80,7 +91,7 @@ API.
 ```python
 samples = model.predict(
     n=10_000,
-    u_train=u_train,
+    u=u_train,
     given={2: 0.7},
     rng=np.random.default_rng(2026),
 )
@@ -177,7 +188,7 @@ cfg = PredictConfig(
 
 samples, diagnostics = vine.predict(
     10_000,
-    u_train=u_train,
+    u=u_train,
     predict_config=cfg,
     rng=np.random.default_rng(2027),
 )

@@ -55,13 +55,15 @@ nav:
   - Getting Started:
     - Installation: getting-started/installation.md
     - Quick Start: getting-started/quickstart.md
+    - Native Core Migration: release-notes/native-core-migration.md
   - User Guide:
+    - Model Architecture: guide/architecture.md
     - Bivariate Copulas: guide/bivariate.md
     - Estimation Methods: guide/estimation-methods.md
     - Vine Copulas: guide/vine.md
     - Prediction Semantics: guide/prediction-semantics.md
     - R-vine Conditioning: guide/rvine-conditioning.md
-    - Experimental Models: guide/experimental_models.md
+    - Multivariate Models: guide/multivariate_models.md
     - Transform Functions: guide/transforms.md
     - Performance Tuning: guide/performance.md
   - Development Notes:
@@ -69,6 +71,6 @@ nav:
   - API Reference:
     - Copulas: api/copulas.md
     - Vine: api/vine.md
-    - Experimental Models: api/experimental_models.md
+    - Multivariate Models: api/multivariate_models.md
     - Diagnostics: api/diagnostics.md
     - Contrib: api/contrib.md

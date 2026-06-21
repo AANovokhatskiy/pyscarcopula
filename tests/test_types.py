@@ -7,7 +7,8 @@ from pyscarcopula._types import (
     NumericalConfig,
     LBFGSBConfig,
     LatentProcessParams, ou_params, jacobi_params, gas_params,
-    MLEResult, LatentResult, GASResult, IndependentResult,
+    MLEResult, MultivariateMLEResult, LatentResult, GASResult,
+    IndependentResult,
     PredictConfig, PredictiveState,
 )
 from pyscarcopula._utils import broadcast, pobs, clip_unit
@@ -42,19 +43,13 @@ class TestNumericalConfig:
         assert cfg.scar_optimizer.eps == 1e-4
         assert cfg.equicorr_optimizer.gtol == 1e-4
         assert cfg.stochastic_student_optimizer.gtol == 1e-4
-        assert cfg.stochastic_student_dcc_optimizer.gtol == 1e-4
-        assert cfg.stochastic_student_dcc_optimizer.maxiter == 300
         assert cfg.stochastic_student_gas_optimizer.ftol == 1e-9
         assert cfg.stochastic_student_gas_optimizer.maxls == 50
-        assert cfg.stochastic_student_dcc_gas_optimizer.ftol == 1e-12
-        assert cfg.stochastic_student_dcc_gas_optimizer.maxls == 50
-        assert cfg.dcc_optimizer.gtol == 1e-6
-        assert cfg.dcc_optimizer.maxiter == 500
-        assert cfg.garch_optimizer.gtol == 1e-5
-        assert cfg.garch_optimizer.maxiter == 300
         assert cfg.gas_score_eps == 1e-4
         assert cfg.gas_gamma_bound == 20.0
         assert cfg.gas_beta_bound == 0.999
+        assert not hasattr(cfg, "eps_clip")
+        assert not hasattr(cfg, "eps_log")
 
     def test_override(self):
         cfg = NumericalConfig(
@@ -64,11 +59,7 @@ class TestNumericalConfig:
             scar_optimizer=LBFGSBConfig(maxls=50),
             equicorr_optimizer=LBFGSBConfig(maxls=35),
             stochastic_student_optimizer=LBFGSBConfig(maxiter=40),
-            stochastic_student_dcc_optimizer=LBFGSBConfig(maxfun=45),
             stochastic_student_gas_optimizer=LBFGSBConfig(ftol=1e-8),
-            stochastic_student_dcc_gas_optimizer=LBFGSBConfig(maxfun=46),
-            dcc_optimizer=LBFGSBConfig(gtol=2e-6),
-            garch_optimizer=LBFGSBConfig(maxiter=33),
             gas_score_eps=1e-6,
             gas_gamma_bound=12.0,
             gas_beta_bound=0.95,
@@ -85,16 +76,8 @@ class TestNumericalConfig:
         assert cfg.equicorr_optimizer.maxls == 35
         assert cfg.stochastic_student_optimizer.gtol == 1e-4
         assert cfg.stochastic_student_optimizer.maxiter == 40
-        assert cfg.stochastic_student_dcc_optimizer.maxfun == 45
-        assert cfg.stochastic_student_dcc_optimizer.maxiter == 300
         assert cfg.stochastic_student_gas_optimizer.ftol == 1e-8
         assert cfg.stochastic_student_gas_optimizer.maxfun == 1000
-        assert cfg.stochastic_student_dcc_gas_optimizer.ftol == 1e-12
-        assert cfg.stochastic_student_dcc_gas_optimizer.maxfun == 46
-        assert cfg.dcc_optimizer.gtol == 2e-6
-        assert cfg.dcc_optimizer.maxiter == 500
-        assert cfg.garch_optimizer.gtol == 1e-5
-        assert cfg.garch_optimizer.maxiter == 33
         assert cfg.gas_score_eps == 1e-6
         assert cfg.gas_gamma_bound == 12.0
         assert cfg.gas_beta_bound == 0.95
@@ -296,6 +279,67 @@ class TestFitResults:
         assert r.copula_param == pytest.approx(2.83)
         assert r.log_likelihood == pytest.approx(100.0)
 
+    def test_mle_result_supports_additional_static_parameters(self):
+        r = MLEResult(
+            log_likelihood=100.0,
+            method='MLE',
+            copula_name='Stochastic Student',
+            success=True,
+            copula_param=5.0,
+            parameter_count=np.int64(4),
+            diagnostics={'corr_mode': 'cholesky'},
+        )
+
+        assert r.n_params == 4
+        assert r.parameter_count == 4
+        assert r.diagnostics['corr_mode'] == 'cholesky'
+        assert 'n_params: 4' in repr(r)
+
+        with pytest.raises(TypeError):
+            MLEResult(
+                log_likelihood=0.0,
+                method='MLE',
+                copula_name='invalid',
+                success=False,
+                parameter_count=1.5,
+            )
+        with pytest.raises(ValueError):
+            MLEResult(
+                log_likelihood=0.0,
+                method='MLE',
+                copula_name='invalid',
+                success=False,
+                parameter_count=0,
+            )
+
+    def test_multivariate_mle_result_exposes_information_criteria(self):
+        correlation = np.eye(3)
+        result = MultivariateMLEResult(
+            log_likelihood=12.5,
+            method="MLE",
+            copula_name="Gaussian copula",
+            success=True,
+            parameter_count=3,
+            n_observations=100,
+            model_parameters={"correlation_matrix": correlation},
+            correlation_matrix=correlation,
+        )
+
+        assert isinstance(result, MLEResult)
+        assert result.n_params == 3
+        assert result.aic == pytest.approx(2 * 3 - 2 * 12.5)
+        assert result.bic == pytest.approx(np.log(100) * 3 - 2 * 12.5)
+        assert result.correlation_matrix is correlation
+
+        with pytest.raises(ValueError):
+            MultivariateMLEResult(
+                log_likelihood=0.0,
+                method="MLE",
+                copula_name="invalid",
+                success=False,
+                n_observations=0,
+            )
+
     def test_latent_result_ou(self):
         r = LatentResult(
             log_likelihood=1042.47,
@@ -311,8 +355,40 @@ class TestFitResults:
         assert r.params.kappa == pytest.approx(49.97)
         assert r.K == 300
         assert r.pts_per_sigma == 4
-        # Legacy access
-        np.testing.assert_allclose(r.alpha, [49.97, 2.42, 10.65])
+        np.testing.assert_allclose(
+            r.params.values, [49.97, 2.42, 10.65])
+
+    def test_latent_result_supports_additional_static_parameters(self):
+        r = LatentResult(
+            log_likelihood=1042.47,
+            method='SCAR-TM-OU',
+            copula_name='Stochastic Student',
+            success=True,
+            params=ou_params(49.97, 2.42, 10.65),
+            parameter_count=np.int64(6),
+        )
+
+        assert r.n_params == 6
+        assert r.parameter_count == 6
+        assert r.params.n_params == 3
+        assert 'n_params: 6' in repr(r)
+
+        with pytest.raises(TypeError):
+            LatentResult(
+                log_likelihood=0.0,
+                method='SCAR-TM-OU',
+                copula_name='invalid',
+                success=False,
+                parameter_count=3.5,
+            )
+        with pytest.raises(ValueError):
+            LatentResult(
+                log_likelihood=0.0,
+                method='SCAR-TM-OU',
+                copula_name='invalid',
+                success=False,
+                parameter_count=2,
+            )
 
     def test_latent_result_future_levy(self):
         """A future Lévy process with 4 params uses the same LatentResult."""
@@ -331,7 +407,7 @@ class TestFitResults:
         )
         assert r.n_params == 4
         assert r.params.alpha == pytest.approx(1.5)
-        assert len(r.alpha) == 4
+        assert len(r.params.values) == 4
 
     def test_gas_result(self):
         r = GASResult(
@@ -347,6 +423,7 @@ class TestFitResults:
         assert r.gamma == pytest.approx(0.331)
         assert r.beta == pytest.approx(0.9677)
         assert r.scaling == 'unit'
+        assert r.diagnostics == {}
 
     def test_gas_result_fisher_scaling(self):
         r = GASResult(

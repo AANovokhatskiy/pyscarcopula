@@ -1,4 +1,5 @@
 from dataclasses import replace
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -7,7 +8,6 @@ from pyscarcopula import GumbelCopula
 from pyscarcopula._types import LatentResult, ou_params
 from pyscarcopula.api import fit
 from pyscarcopula.numerical.tm_functions import (
-    _forward_loglik,
     tm_forward_mixture_h,
     tm_forward_predictive_mean,
     tm_forward_rosenblatt,
@@ -17,23 +17,45 @@ from pyscarcopula.numerical.hermite_tm import (
     hermite_loglik,
     hermite_loglik_with_grad,
 )
-from pyscarcopula.numerical.auto_tm import AutoTMConfig, select_auto_backend
-from pyscarcopula.numerical import auto_tm
-from pyscarcopula.numerical.tm_gradient import tm_loglik_with_grad
+from pyscarcopula.numerical._scar_ou_config import (
+    AutoTMConfig,
+    select_auto_backend,
+)
 from pyscarcopula.numerical.tm_grid import TMGrid
 from pyscarcopula.numerical.gof_blocks import (
     forward_block_size,
     iter_forward_weight_blocks,
 )
 from pyscarcopula.copula.elliptical import BivariateGaussianCopula
-from pyscarcopula.copula.experimental import (
-    StochasticStudentCopula,
-    StochasticStudentDCCCopula,
-)
+from pyscarcopula.copula.multivariate import StochasticStudentCopula
 from pyscarcopula.strategy._base import get_strategy_for_result
 from pyscarcopula.strategy.scar_tm import SCARTMStrategy
-from pyscarcopula.strategy import scar_tm
+from pyscarcopula.numerical import _cpp_scar_ou
 from pyscarcopula import stattests
+
+
+def tm_loglik_with_grad(
+        kappa, mu, nu, u, copula, **config_kwargs):
+    config_values = {
+        "transition_method": "matrix",
+        "K": 300,
+        "grid_range": 5.0,
+        "grid_method": "auto",
+        "adaptive": True,
+        "pts_per_sigma": 4,
+        "max_K": None,
+        "r_gh": 3.0,
+        "gh_order": 5,
+    }
+    config_values.update(config_kwargs)
+    return _cpp_scar_ou.neg_loglik_with_grad(
+        kappa,
+        mu,
+        nu,
+        u,
+        copula,
+        AutoTMConfig(**config_values),
+    )
 
 
 def _direct_forward_density(grid, phi):
@@ -316,126 +338,6 @@ def test_scar_tm_auto_selects_spectral_except_narrow_local_fallback():
             0.2, 101, AutoTMConfig(transition_method="gh"))
 
 
-def test_scar_tm_auto_gradient_falls_back_from_failed_spectral_to_matrix(
-        monkeypatch):
-    calls = []
-
-    def failed_spectral(*args, **kwargs):
-        calls.append("spectral")
-        return 1e10, np.zeros(3)
-
-    def grid_grad(*args, **kwargs):
-        calls.append(kwargs["transition_method"])
-        return 12.0, np.array([1.0, 2.0, 3.0])
-
-    monkeypatch.setattr(auto_tm, "hermite_loglik_with_grad", failed_spectral)
-    monkeypatch.setattr(auto_tm, "tm_loglik_with_grad", grid_grad)
-
-    u = np.random.default_rng(18).uniform(0.05, 0.95, size=(8, 2))
-    value, grad = auto_tm.auto_neg_loglik_with_grad(
-        1.0, 0.0, 1.0, u, BivariateGaussianCopula(),
-        AutoTMConfig(transition_method="auto", small_kdt=1e-6),
-    )
-
-    assert calls == ["spectral", "matrix"]
-    assert value == pytest.approx(12.0)
-    np.testing.assert_allclose(grad, [1.0, 2.0, 3.0])
-
-
-def test_scar_tm_auto_gradient_info_reports_spectral_fallback(monkeypatch):
-    def failed_spectral(*args, **kwargs):
-        return 1e10, np.zeros(3)
-
-    def grid_grad(*args, **kwargs):
-        return 12.0, np.array([1.0, 2.0, 3.0])
-
-    monkeypatch.setattr(auto_tm, "hermite_loglik_with_grad", failed_spectral)
-    monkeypatch.setattr(auto_tm, "tm_loglik_with_grad", grid_grad)
-
-    u = np.random.default_rng(1801).uniform(0.05, 0.95, size=(8, 2))
-    value, grad, info = auto_tm.auto_neg_loglik_with_grad_info(
-        1.0, 0.0, 1.0, u, BivariateGaussianCopula(),
-        AutoTMConfig(transition_method="auto", small_kdt=1e-6),
-    )
-
-    assert value == pytest.approx(12.0)
-    np.testing.assert_allclose(grad, [1.0, 2.0, 3.0])
-    assert info["backend"] == "matrix"
-    assert info["fallback_chain"] == ["spectral"]
-    assert info["fallback_from"] == "spectral"
-
-
-def test_scar_tm_auto_gradient_falls_back_from_capped_matrix_to_local(
-        monkeypatch):
-    calls = []
-
-    class CappedGrid:
-        def __init__(self, *args, **kwargs):
-            self.transition_method = kwargs["transition_method"]
-
-        def diagnostics(self):
-            return {
-                "adaptive_was_capped": self.transition_method == "matrix",
-            }
-
-    def failed_spectral(*args, **kwargs):
-        calls.append("spectral")
-        return 1e10, np.zeros(3)
-
-    def grid_grad(*args, **kwargs):
-        calls.append(kwargs["transition_method"])
-        if kwargs["transition_method"] == "matrix":
-            return 12.0, np.array([1.0, 2.0, 3.0])
-        return 9.0, np.array([4.0, 5.0, 6.0])
-
-    monkeypatch.setattr(auto_tm, "hermite_loglik_with_grad", failed_spectral)
-    monkeypatch.setattr(auto_tm, "tm_loglik_with_grad", grid_grad)
-    monkeypatch.setattr(auto_tm, "TMGrid", CappedGrid)
-
-    u = np.random.default_rng(181).uniform(0.05, 0.95, size=(8, 2))
-    value, grad = auto_tm.auto_neg_loglik_with_grad(
-        1.0, 0.0, 1.0, u, BivariateGaussianCopula(),
-        AutoTMConfig(transition_method="auto", small_kdt=1e-6),
-    )
-
-    assert calls == ["spectral", "matrix", "local"]
-    assert value == pytest.approx(9.0)
-    np.testing.assert_allclose(grad, [4.0, 5.0, 6.0])
-
-
-def test_scar_tm_forced_spectral_does_not_fallback(monkeypatch):
-    calls = []
-
-    def failed_spectral(*args, **kwargs):
-        calls.append("spectral")
-        return -np.inf
-
-    def grid_loglik(*args, **kwargs):
-        calls.append(kwargs["transition_method"])
-        return 12.0
-
-    monkeypatch.setattr(auto_tm, "hermite_loglik", failed_spectral)
-    monkeypatch.setattr(auto_tm, "tm_loglik", grid_loglik)
-
-    u = np.random.default_rng(19).uniform(0.05, 0.95, size=(8, 2))
-
-    auto_value, auto_info = auto_tm.auto_loglik_with_info(
-        1.0, 0.0, 1.0, u, BivariateGaussianCopula(),
-        AutoTMConfig(transition_method="auto", small_kdt=1e-6),
-    )
-    spectral_value, spectral_info = auto_tm.auto_loglik_with_info(
-        1.0, 0.0, 1.0, u, BivariateGaussianCopula(),
-        AutoTMConfig(transition_method="spectral", small_kdt=1e-6),
-    )
-
-    assert auto_value == pytest.approx(-12.0)
-    assert auto_info["backend"] == "matrix"
-    assert auto_info["fallback_from"] == "spectral"
-    assert spectral_value == -np.inf
-    assert spectral_info["backend"] == "spectral"
-    assert calls == ["spectral", "matrix", "spectral"]
-
-
 def test_scar_tm_spectral_accepts_large_quad_order_on_hf_scale():
     rng = np.random.default_rng(20260612)
     u = rng.uniform(0.05, 0.95, size=(160, 2))
@@ -451,52 +353,10 @@ def test_scar_tm_spectral_accepts_large_quad_order_on_hf_scale():
     assert np.isfinite(value)
 
 
-def test_scar_tm_auto_loglik_falls_back_from_capped_matrix_to_local(
-        monkeypatch):
-    calls = []
-
-    class CappedGrid:
-        def __init__(self, *args, **kwargs):
-            self.transition_method = kwargs["transition_method"]
-
-        def diagnostics(self):
-            return {
-                "adaptive_was_capped": self.transition_method == "matrix",
-                "transition_method": self.transition_method,
-            }
-
-    def failed_spectral(*args, **kwargs):
-        calls.append("spectral")
-        return -np.inf
-
-    def grid_loglik(*args, **kwargs):
-        calls.append(kwargs["transition_method"])
-        if kwargs["transition_method"] == "matrix":
-            return 12.0
-        return 7.0
-
-    monkeypatch.setattr(auto_tm, "hermite_loglik", failed_spectral)
-    monkeypatch.setattr(auto_tm, "tm_loglik", grid_loglik)
-    monkeypatch.setattr(auto_tm, "TMGrid", CappedGrid)
-
-    u = np.random.default_rng(191).uniform(0.05, 0.95, size=(8, 2))
-    value, info = auto_tm.auto_loglik_with_info(
-        1.0, 0.0, 1.0, u, BivariateGaussianCopula(),
-        AutoTMConfig(transition_method="auto", small_kdt=1e-6),
-    )
-
-    assert value == pytest.approx(-7.0)
-    assert info["backend"] == "local"
-    assert info["fallback_chain"] == ["spectral", "matrix"]
-    assert info["fallback_from"] == "matrix"
-    assert info["matrix_fallback_reason"] == "capped"
-    assert calls == ["spectral", "matrix", "local"]
-
-
 def test_scar_tm_strategy_defaults_to_auto_likelihood_with_auto_grid():
     strategy = SCARTMStrategy()
     assert strategy.transition_method == "auto"
-    assert strategy.backend == "auto"
+    assert not hasattr(strategy, "backend")
     assert strategy.max_K == 1000
     assert strategy.auto_small_kdt == pytest.approx(1e-2)
     assert strategy.spectral_quad_order is None
@@ -516,9 +376,8 @@ def test_scar_tm_strategy_defaults_to_auto_likelihood_with_auto_grid():
     assert spectral_strategy._grid_tm_kwargs()["transition_method"] == "auto"
 
 
-def test_scar_tm_adaptive_spectral_basis_order_policy():
-    strategy = SCARTMStrategy(spectral_basis_order="adaptive")
-
+def test_scar_tm_auto_spectral_basis_order_policy():
+    strategy = SCARTMStrategy(spectral_basis_order="auto")
     assert SCARTMStrategy().spectral_basis_order == "auto"
     assert strategy.spectral_basis_order == "auto"
     assert strategy._spectral_basis_order_for(1.0, 101) == 128
@@ -540,12 +399,11 @@ def test_scar_tm_adaptive_spectral_basis_order_reaches_objective(monkeypatch):
         captured["quad_order"] = config.quad_order
         return 12.0
 
-    monkeypatch.setattr(scar_tm, "auto_neg_loglik", fake_objective)
+    monkeypatch.setattr(_cpp_scar_ou, "neg_loglik", fake_objective)
 
     u = np.random.default_rng(20260701).uniform(0.05, 0.95, size=(101, 2))
     strategy = SCARTMStrategy(
-        backend="python",
-        spectral_basis_order="adaptive",
+        spectral_basis_order="auto",
         spectral_quad_order=None,
     )
 
@@ -585,13 +443,12 @@ def test_scar_tm_adaptive_spectral_basis_order_records_diagnostics(monkeypatch):
         return value, grad, info
 
     monkeypatch.setattr(
-        scar_tm, "auto_neg_loglik_with_grad_info", fake_objective)
+        _cpp_scar_ou, "neg_loglik_with_grad_info", fake_objective)
 
     u = np.random.default_rng(20260702).uniform(0.05, 0.95, size=(101, 2))
     result = SCARTMStrategy(
-        backend="python",
         smart_init=False,
-        spectral_basis_order="adaptive",
+        spectral_basis_order="auto",
     ).fit(
         BivariateGaussianCopula(),
         u,
@@ -717,36 +574,6 @@ def test_spectral_analytical_gradient_matches_finite_difference_on_weak_data():
     np.testing.assert_allclose(grad, fd, rtol=2e-5, atol=2e-5)
 
 
-def test_spectral_batch_calls_preserve_time_index():
-    class IndexedCopula:
-        name = "IndexedCopula"
-
-        def __init__(self):
-            self.value_calls = []
-            self.grad_calls = []
-
-        def copula_grid_batch(self, u, x_grid, t_index=0):
-            self.value_calls.append((int(t_index), len(u)))
-            return np.ones((len(u), len(x_grid)))
-
-        def pdf_and_grad_on_grid_batch(self, u, x_grid, t_index=0):
-            self.grad_calls.append((int(t_index), len(u)))
-            fi = np.ones((len(u), len(x_grid)))
-            return fi, np.zeros_like(fi)
-
-    u = np.full((7, 2), 0.5)
-    copula = IndexedCopula()
-    kwargs = {"basis_order": 4, "quad_order": 24, "block_size": 2}
-
-    assert hermite_loglik(2.0, 0.0, 0.5, u, copula, **kwargs) == pytest.approx(0.0)
-    value, grad = hermite_loglik_with_grad(2.0, 0.0, 0.5, u, copula, **kwargs)
-
-    assert value == pytest.approx(-0.0)
-    np.testing.assert_allclose(grad, np.zeros(3), atol=1e-14)
-    assert copula.value_calls == [(5, 2), (3, 2), (1, 2), (0, 1)]
-    assert copula.grad_calls == [(5, 2), (3, 2), (1, 2), (0, 1)]
-
-
 def test_scar_tm_failed_dispatch_objective_is_not_success(monkeypatch):
     def fail_objective(*args, **kwargs):
         return 1e10, np.zeros(3), {
@@ -757,11 +584,11 @@ def test_scar_tm_failed_dispatch_objective_is_not_success(monkeypatch):
         }
 
     monkeypatch.setattr(
-        scar_tm, "auto_neg_loglik_with_grad_info", fail_objective)
+        _cpp_scar_ou, "neg_loglik_with_grad_info", fail_objective)
     u = np.random.default_rng(17).uniform(0.05, 0.95, size=(10, 2))
     copula = BivariateGaussianCopula()
 
-    result = SCARTMStrategy(backend="python", smart_init=False).fit(
+    result = SCARTMStrategy(smart_init=False).fit(
         copula,
         u,
         alpha0=np.array([1.0, 0.0, 1.0]),
@@ -772,23 +599,138 @@ def test_scar_tm_failed_dispatch_objective_is_not_success(monkeypatch):
     assert not result.success
     assert result.log_likelihood == pytest.approx(-1e10)
     assert "invalid objective value" in result.message
+    assert result.diagnostics["initialization"] == {
+        "requested_method": "user_provided",
+        "selected_method": "user_provided",
+        "alpha0": [1.0, 0.0, 1.0],
+        "attempts": [{
+            "method": "user_provided",
+            "success": True,
+        }],
+        "success": True,
+    }
 
 
-def test_experimental_ppf_cache_does_not_trust_reused_object_id():
-    for model in (StochasticStudentCopula(d=2), StochasticStudentDCCCopula(d=2)):
-        first = np.full((2, 2), 0.25)
-        second = np.full((2, 2), 0.75)
-        sentinel = object()
+def _validate_candidate(
+        final_params,
+        selected_value=12.0,
+        selected_grad=None,
+        validation_value=12.0,
+        initial_params=None,
+        optimizer_value=None):
+    strategy = SCARTMStrategy(smart_init=False)
+    final_params = np.asarray(final_params, dtype=np.float64)
+    if initial_params is None:
+        initial_params = np.array([1.0, 0.0, 1.0])
+    if selected_grad is None:
+        selected_grad = np.zeros_like(final_params)
+    result = SimpleNamespace(
+        fun=selected_value if optimizer_value is None else optimizer_value,
+        jac=np.asarray(selected_grad),
+        success=True,
+        message="optimizer success",
+    )
+    diagnostics = strategy._validate_final_fit(
+        result=result,
+        final_params=final_params,
+        initial_params=np.asarray(initial_params, dtype=np.float64),
+        lower=np.array([0.001, -np.inf, 0.001]),
+        upper=np.array([np.inf, np.inf, np.inf]),
+        selected_evaluator=lambda values: (
+            selected_value, np.asarray(selected_grad)),
+        validation_evaluator=(
+            None if validation_value is None
+            else lambda values: validation_value),
+        selected_engine="cpp",
+        validation_engine=(
+            None if validation_value is None else "validation"),
+        n_obs=20,
+        optimizer_options={"gtol": 1e-3},
+    )
+    return result, diagnostics
 
-        model._ppf_table = sentinel
-        model._ppf_table_u = first
-        model._ppf_table_u_id = id(second)
 
-        table = model._get_ppf_table(second)
+def test_scar_tm_final_validation_rejects_nonfinite_parameters():
+    result, diagnostics = _validate_candidate([np.nan, 0.0, 1.0])
 
-        assert table is not sentinel
-        assert model._ppf_table_u is second
-        assert model._ppf_table_u_id == id(second)
+    assert not result.success
+    assert not diagnostics["final_validation_passed"]
+    assert "parameters are not finite" in result.message
+
+
+def test_scar_tm_final_validation_rejects_nonfinite_gradient():
+    result, diagnostics = _validate_candidate(
+        [1.0, 0.0, 1.0],
+        selected_grad=[0.0, np.nan, 0.0],
+    )
+
+    assert not result.success
+    assert not diagnostics["final_validation_passed"]
+    assert "gradient is not finite" in result.message
+
+
+def test_scar_tm_final_validation_rejects_optimizer_sentinel():
+    result, diagnostics = _validate_candidate(
+        [1.0, 0.0, 1.0],
+        selected_value=12.0,
+        optimizer_value=1e10,
+    )
+
+    assert not result.success
+    assert not diagnostics["final_validation_passed"]
+    assert "optimizer returned an invalid objective value" in result.message
+
+
+def test_scar_tm_final_validation_rejects_backend_disagreement():
+    result, diagnostics = _validate_candidate(
+        [1.0, 0.0, 1.0],
+        selected_value=12.0,
+        validation_value=13.0,
+    )
+
+    assert not result.success
+    assert diagnostics["final_backend_value_difference"] == pytest.approx(1.0)
+    assert "backends disagree" in result.message
+
+
+def test_scar_tm_final_validation_rejects_extreme_ou_solution():
+    result, diagnostics = _validate_candidate(
+        [1e10, 0.0, 1.0],
+        initial_params=[1.0, 0.0, 1.0],
+        validation_value=None,
+    )
+
+    assert not result.success
+    assert diagnostics["final_rho"] == pytest.approx(0.0)
+    assert "autocorrelation is degenerate" in result.message
+    assert "initialization scale" in result.message
+
+
+def test_scar_tm_final_validation_accepts_projected_boundary_solution():
+    result, diagnostics = _validate_candidate(
+        [0.001, 0.0, 0.001],
+        selected_grad=[1.0, 0.0, 1.0],
+        validation_value=None,
+        initial_params=[1.0, 0.0, 1.0],
+    )
+
+    assert result.success
+    assert diagnostics["final_validation_passed"]
+    assert diagnostics["final_projected_gradient_norm"] == pytest.approx(0.0)
+    assert diagnostics["final_boundary_flags"] == (True, False, True)
+
+
+def test_multivariate_ppf_cache_uses_source_identity():
+    first = np.full((2, 2), 0.25)
+    second = np.full((2, 2), 0.75)
+    model = StochasticStudentCopula(d=2, R=np.eye(2))
+
+    first_cache = model.prepare_emission_cache(first)
+    second_cache = model.prepare_emission_cache(second)
+
+    assert second_cache is not first_cache
+    assert second_cache.source_ref() is second
+    assert model.prepare_emission_cache(second) is second_cache
 
 
 def test_scar_tm_accepts_flat_boundary_convergence():
@@ -807,6 +749,11 @@ def test_scar_tm_accepts_flat_boundary_convergence():
 
     assert result.success
     assert result.params.nu == pytest.approx(0.001)
+    assert result.diagnostics["final_validation_passed"]
+    assert np.isfinite(
+        result.diagnostics["final_selected_backend_value"])
+    assert np.isfinite(
+        result.diagnostics["final_projected_gradient_norm"])
 
 
 def test_predict_matvec_matches_direct_forward_quadrature():
@@ -921,19 +868,15 @@ def test_bivariate_gof_passes_stored_transition_options(monkeypatch):
         r_gh=2.5,
         gh_order=7,
         pts_per_sigma=6,
-        backend="python",
     )
     captured = {}
 
-    def fake_rosenblatt(kappa, mu, nu, u_arg, copula_arg, K=300,
-                        grid_range=5.0, grid_method="auto", adaptive=True,
-                        pts_per_sigma=4, **kwargs):
-        captured.update(kwargs)
-        captured["pts_per_sigma"] = pts_per_sigma
-        return np.column_stack((u_arg[:, 0], u_arg[:, 1]))
+    def fake_rosenblatt(kappa, mu, nu, u_arg, copula_arg, config):
+        captured.update(vars(config))
+        return u_arg[:, 1]
 
     monkeypatch.setattr(
-        "pyscarcopula.strategy.scar_tm.tm_forward_rosenblatt",
+        "pyscarcopula.numerical._cpp_scar_ou.mixture_h",
         fake_rosenblatt,
     )
 
@@ -963,21 +906,15 @@ def test_top_level_api_uses_stored_scar_tm_options(monkeypatch):
         max_K=None,
         r_gh=2.25,
         gh_order=7,
-        backend="python",
     )
     captured = {}
 
-    def fake_predictive_mean(kappa, mu, nu, u_arg, copula_arg, K=300,
-                             grid_range=5.0, grid_method="auto",
-                             adaptive=True, pts_per_sigma=4, **kwargs):
-        captured["K"] = K
-        captured["grid_range"] = grid_range
-        captured["pts_per_sigma"] = pts_per_sigma
-        captured.update(kwargs)
+    def fake_predictive_mean(kappa, mu, nu, u_arg, copula_arg, config):
+        captured.update(vars(config))
         return np.zeros(len(u_arg), dtype=np.float64)
 
     monkeypatch.setattr(
-        "pyscarcopula.strategy.scar_tm.tm_forward_predictive_mean",
+        "pyscarcopula.numerical._cpp_scar_ou.predictive_mean",
         fake_predictive_mean,
     )
 
@@ -995,7 +932,8 @@ def test_top_level_api_uses_stored_scar_tm_options(monkeypatch):
     assert captured["gh_order"] == 7
 
 
-def test_forward_loglik_matches_backward_pass_on_notebook_dataset(crypto_data):
+def test_native_loglik_matches_negative_objective_on_notebook_dataset(
+        crypto_data):
     """Use the BTC/ETH dataset from examples/02_bivariate.ipynb."""
     copula = GumbelCopula(rotate=180)
 
@@ -1011,98 +949,26 @@ def test_forward_loglik_matches_backward_pass_on_notebook_dataset(crypto_data):
     }
 
     backward_loglik = -tm_loglik(**params, u=crypto_data, copula=copula)
-    forward_loglik = _forward_loglik(**params, u=crypto_data, copula=copula)
+    config = AutoTMConfig(
+        transition_method="matrix",
+        K=params["K"],
+        grid_range=params["grid_range"],
+        grid_method=params["grid_method"],
+        adaptive=params["adaptive"],
+        pts_per_sigma=params["pts_per_sigma"],
+    )
+    native_loglik, _ = _cpp_scar_ou.loglik(
+        params["kappa"],
+        params["mu"],
+        params["nu"],
+        crypto_data,
+        copula,
+        config,
+    )
 
     np.testing.assert_allclose(
-        forward_loglik,
+        native_loglik,
         backward_loglik,
         rtol=1e-10,
         atol=1e-8,
-    )
-
-
-def test_fit_path_matches_with_forward_and_backward_objectives(
-        crypto_data, monkeypatch):
-    """Run two independent SCAR-TM fits on examples/02_bivariate.ipynb data."""
-    copula = GumbelCopula(rotate=180)
-    original_tm_loglik = scar_tm.tm_loglik
-
-    fit_kwargs = {
-        "alpha0": np.array([59.02, 2.0, 15.0]),
-        "smart_init": False,
-        "analytical_grad": False,
-        "K": 60,
-        "grid_range": 5.0,
-        "grid_method": "dense",
-        "adaptive": False,
-        "pts_per_sigma": 4,
-        "transition_method": "matrix",
-        "max_K": None,
-        "maxiter": 10,
-        "maxfun": 40,
-        "gtol": 1e-3,
-        "eps": 1e-4,
-    }
-
-    backward_calls = []
-    forward_calls = []
-
-    def backward_objective(kappa, mu, nu, u, cop, K=300, grid_range=5.0,
-                           grid_method="auto", adaptive=True,
-                           pts_per_sigma=4):
-        alpha = np.array([kappa, mu, nu], dtype=np.float64)
-        value = original_tm_loglik(
-            kappa, mu, nu, u, cop, K, grid_range,
-            grid_method, adaptive, pts_per_sigma)
-        backward_calls.append((alpha, value))
-        return value
-
-    def forward_objective(kappa, mu, nu, u, cop, K=300, grid_range=5.0,
-                          grid_method="auto", adaptive=True,
-                          pts_per_sigma=4):
-        alpha = np.array([kappa, mu, nu], dtype=np.float64)
-        value = -_forward_loglik(
-            kappa, mu, nu, u, cop, K, grid_range,
-            grid_method, adaptive, pts_per_sigma)
-        forward_calls.append((alpha, value))
-        return value
-
-    monkeypatch.setattr(scar_tm, "tm_loglik", backward_objective)
-    backward_fit = fit(copula, crypto_data, method="scar-tm-ou", **fit_kwargs)
-
-    monkeypatch.setattr(scar_tm, "tm_loglik", forward_objective)
-    forward_fit = fit(copula, crypto_data, method="scar-tm-ou", **fit_kwargs)
-
-    assert backward_fit.success
-    assert forward_fit.success
-    assert len(backward_calls) == len(forward_calls)
-
-    backward_path = np.array([alpha for alpha, _ in backward_calls])
-    forward_path = np.array([alpha for alpha, _ in forward_calls])
-    backward_values = np.array([value for _, value in backward_calls])
-    forward_values = np.array([value for _, value in forward_calls])
-
-    np.testing.assert_allclose(
-        forward_path,
-        backward_path,
-        rtol=2e-6,
-        atol=1e-4,
-    )
-    np.testing.assert_allclose(
-        forward_values,
-        backward_values,
-        rtol=1e-9,
-        atol=1e-6,
-    )
-    np.testing.assert_allclose(
-        forward_fit.params.values,
-        backward_fit.params.values,
-        rtol=1e-7,
-        atol=1e-5,
-    )
-    np.testing.assert_allclose(
-        forward_fit.log_likelihood,
-        backward_fit.log_likelihood,
-        rtol=1e-9,
-        atol=1e-6,
     )

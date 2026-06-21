@@ -18,6 +18,21 @@ from scipy.optimize import OptimizeResult
 MODEL_FORMAT = "pyscarcopula-model"
 MODEL_FORMAT_VERSION = 2
 _TYPE = "__pyscarcopula_type__"
+_CLASS_PATH_MIGRATIONS = {
+    "pyscarcopula.copula.elliptical.GaussianCopula":
+        "pyscarcopula.copula.multivariate.gaussian.GaussianCopula",
+    "pyscarcopula.copula.elliptical.StudentCopula":
+        "pyscarcopula.copula.multivariate.student.StudentCopula",
+    "pyscarcopula.copula.experimental.equicorr.EquicorrGaussianCopula":
+        "pyscarcopula.copula.multivariate.equicorr.EquicorrGaussianCopula",
+    (
+        "pyscarcopula.copula.experimental.stochastic_student."
+        "StochasticStudentCopula"
+    ): (
+        "pyscarcopula.copula.multivariate.stochastic_student."
+        "StochasticStudentCopula"
+    ),
+}
 
 
 def _package_version() -> str | None:
@@ -36,6 +51,7 @@ def _qualified_name(obj: object) -> str:
 
 
 def _resolve_class(path: str) -> type:
+    path = _CLASS_PATH_MIGRATIONS.get(path, path)
     module_name, _, qualname = path.rpartition(".")
     if not module_name or not qualname:
         raise ValueError(f"Invalid class path: {path!r}")
@@ -179,6 +195,11 @@ def _from_jsonable(payload: Any) -> Any:
             key: _from_jsonable(value)
             for key, value in payload["fields"].items()
         }
+        if (
+            cls.__module__ == "pyscarcopula._types"
+            and cls.__name__ in {"GASResult", "LatentResult"}
+        ):
+            values.pop("backend", None)
         return cls(**values)
     if tag == "tuple":
         return tuple(_from_jsonable(item) for item in payload["items"])

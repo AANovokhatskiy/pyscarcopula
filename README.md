@@ -38,8 +38,10 @@ Supported estimation methods:
 pip install pyscarcopula
 ```
 
-The package includes a pybind11 C++ backend for SCAR-TM-OU. Wheels do not need
-a local compiler. Source and editable installs require a C++17 compiler:
+The package includes a required pybind11 C++ extension. It provides built-in
+copula kernels, static likelihoods, GAS, and SCAR-TM-OU numerical evaluation.
+Official wheels bundle the extension and do not need a local compiler. Source
+and editable installs require a C++17 compiler:
 
 * Windows: Microsoft C++ Build Tools / Visual Studio Build Tools
 * Linux: GCC or Clang with the usual Python development headers
@@ -61,8 +63,9 @@ python setup.py build_ext --inplace
 pytest --run-validation
 ```
 
-`pytest --run-validation` enables optional validation tests. C++ backend tests
-are skipped when the compiled extension is unavailable.
+`pytest --run-validation` enables optional validation tests. A source checkout
+without a successfully built extension is incomplete for the default
+bivariate GAS workflow.
 
 Optional benchmark checks are disabled by default. Enable them explicitly:
 
@@ -72,6 +75,12 @@ PYSCA_RUN_BENCHMARKS=1 pytest -m benchmark
 
 Core dependencies: `numpy`, `numba`, `scipy`, `joblib`, `tqdm`.
 
+Verify a native installation with:
+
+```bash
+python -m pyscarcopula._native_smoke
+```
+
 ## Features
 
 **Copula families**
@@ -79,7 +88,9 @@ Core dependencies: `numpy`, `numba`, `scipy`, `joblib`, `tqdm`.
 * Archimedean: Gumbel, Frank, Clayton, Joe, including rotations where supported
 * Elliptical: Gaussian and Student-t
 * Independence copula for null models and vine pruning
-* Experimental models in `pyscarcopula.copula.experimental`
+* Multivariate Gaussian, Student-t, equicorrelation, and stochastic Student models
+* Explicit `CopulaBase` / `BivariateCopula` / `MultivariateCopula` hierarchy
+  with capability-based strategy validation
 
 **Vine copulas**
 
@@ -152,23 +163,30 @@ integral into repeated small matrix multiplications and diagonal scalings. See
 the available `transition_method` values, including the matrix/local numerical
 fallbacks used when a spectral evaluation is not accepted.
 
-The default SCAR-TM-OU backend is `auto`. No extra argument is needed:
-supported copula/transform combinations use the C++ extension when it is
-installed, while unsupported combinations fall back to Python/Numba.
+SCAR-TM-OU uses the bundled C++ extension as its only production numerical
+engine. No backend argument is needed.
 
 ```python
 result = fit(copula, u, method="scar-tm-ou")
 ```
 
-Use `backend="python"` only when you want to force the Python/Numba path, for
-example for debugging or numerical comparisons:
+GAS uses the compiled numerical evaluator for likelihood, score recursion,
+state updates, prediction, and Rosenblatt paths. There is no backend selector
+or silent Python fallback:
 
 ```python
-result = fit(copula, u, method="scar-tm-ou", backend="python")
+result = fit(copula, u, method="gas")
 ```
+
+Use the default `scaling="unit"` for production. `scaling="fisher"` remains an
+experimental, numerically sensitive mode.
 
 See [`docs/guide/performance.md`](docs/guide/performance.md) for supported C++
 families and numerical options.
+
+Custom Python copulas remain useful with custom Python strategies, sampling,
+and diagnostics. Built-in native production strategies do not execute
+arbitrary Python copula kernels: unsupported classes fail before optimization.
 
 Vine copulas decompose a `d`-dimensional dependence model into bivariate copulas
 arranged in a sequence of trees. R-vines choose the tree structure from data
@@ -180,14 +198,17 @@ Worked notebooks are available in [`examples/`](examples/):
 
 * [`01_basic_api.ipynb`](examples/01_basic_api.ipynb)
 * [`02_bivariate.ipynb`](examples/02_bivariate.ipynb)
-* [`03_vine.ipynb`](examples/03_vine.ipynb)
-* [`04_risk_metrics.ipynb`](examples/04_risk_metrics.ipynb)
-* [`05_pyvinecopulib_comparison.ipynb`](examples/05_pyvinecopulib_comparison.ipynb)
+* [`03_multivariate.ipynb`](examples/03_multivariate.ipynb)
+* [`04_vine.ipynb`](examples/04_vine.ipynb)
+* [`05_risk_metrics.ipynb`](examples/05_risk_metrics.ipynb)
+* [`06_pyvinecopulib_comparison.ipynb`](examples/06_pyvinecopulib_comparison.ipynb)
 
 Additional documentation is in [`docs/`](docs/). Method semantics are described
 in [`docs/guide/estimation-methods.md`](docs/guide/estimation-methods.md), and
 performance-related details are kept in
 [`docs/guide/performance.md`](docs/guide/performance.md).
+Migration notes for the native-core and multivariate namespace changes are in
+[`docs/release-notes/native-core-migration.md`](docs/release-notes/native-core-migration.md).
 
 ## License
 

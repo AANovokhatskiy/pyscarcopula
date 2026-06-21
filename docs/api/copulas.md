@@ -30,6 +30,11 @@ result, and return new values without mutation.
 `BivariateCopula.predict(...)` mirrors the top-level API and accepts
 `given`, `horizon`, and `predict_config`.
 
+`BivariateCopula.sample(n, u=None, ...)` reproduces the fitted model, matching
+the multivariate and vine APIs. Use
+`BivariateCopula.sample_at_parameter(n, r, ...)` for generation at an
+explicit copula parameter.
+
 Kendall-tau dynamic fitting with `method='scar-tm-jacobi'` requires
 `tau_to_param` and `param_to_tau`. These mappings are implemented for
 `GumbelCopula`, `ClaytonCopula`, `FrankCopula`, `JoeCopula`, and
@@ -43,8 +48,8 @@ Kendall-tau dynamic fitting with `method='scar-tm-jacobi'` requires
         - h
         - h_inverse
         - sample
+        - sample_at_parameter
         - predict
-        - sample_model
         - tau_to_param
         - param_to_tau
         - transform
@@ -94,21 +99,21 @@ Kendall-tau dynamic fitting with `method='scar-tm-jacobi'` requires
 
 ## GaussianCopula
 
-::: pyscarcopula.copula.elliptical.GaussianCopula
+::: pyscarcopula.copula.multivariate.gaussian.GaussianCopula
     options:
       show_bases: false
       members: false
 
 ## StudentCopula
 
-::: pyscarcopula.copula.elliptical.StudentCopula
+::: pyscarcopula.copula.multivariate.student.StudentCopula
     options:
       show_bases: false
       members: false
 
 ## StochasticStudentCopula
 
-::: pyscarcopula.copula.experimental.stochastic_student.StochasticStudentCopula
+::: pyscarcopula.copula.multivariate.stochastic_student.StochasticStudentCopula
     options:
       members:
         - fit

@@ -1,461 +1,57 @@
 import numpy as np
-from numba import njit
-from scipy.optimize import brentq
-from scipy.special import spence
 
-from pyscarcopula.copula.base import (
-    BivariateCopula,
-    _broadcast,
-    _inv_xtanh_transform,
-    _softplus_dtransform,
-    _softplus_inv_transform,
-    _softplus_transform,
-    _xtanh_dtransform,
-    _xtanh_transform,
-)
+from pyscarcopula.copula.base import BivariateCopula
 
 
-def _frank_tau_scalar(theta):
-    theta = float(theta)
-    if theta <= 0.0:
-        raise ValueError("Frank parameter must be positive")
-    if theta < 1e-4:
-        theta2 = theta * theta
-        return theta / 9.0 - theta * theta2 / 900.0 + theta * theta2 * theta2 / 52920.0
-    debye_integral = float(spence(np.exp(-theta)))
-    return 1.0 - 4.0 / theta + 4.0 * debye_integral / (theta * theta)
-
-
-def _frank_param_from_tau_scalar(tau):
-    tau = float(tau)
-    if not (0.0 < tau < 1.0):
-        raise ValueError("Frank Kendall tau must be in (0, 1)")
-
-    lower = 1e-12
-    upper = max(1.0, 4.0 / (1.0 - tau))
-    while _frank_tau_scalar(upper) <= tau:
-        upper *= 2.0
-        if upper > 1e12:
-            raise ValueError("Could not bracket Frank parameter from tau")
-    return float(brentq(
-        lambda theta: _frank_tau_scalar(theta) - tau,
-        lower,
-        upper,
-        xtol=1e-12,
-        rtol=1e-12,
-        maxiter=100,
-    ))
-
-
-@njit(cache=True)
-def _log1mexp(x):
-    """log(1 - exp(-x)) for x > 0, stable."""
-    if x > 0.693:
-        return np.log1p(-np.exp(-x))
-    elif x > 0:
-        return np.log(-np.expm1(-x))
-    else:
-        return -np.inf
-
-
-@njit(cache=True)
-def _frank_log_pdf(u1, u2, r):
-    n = len(u1)
-    out = np.empty(n)
-    for i in range(n):
-        v1 = u1[i]
-        v2 = u2[i]
-        ri = r[i] if r.shape[0] > 1 else r[0]
-
-        a = ri * v1
-        b = ri * v2
-        s = ri
-
-        log_num = np.log(ri) + _log1mexp(s) - a - b
-        log_t1 = -a + _log1mexp(b)
-        log_t2 = -b + _log1mexp(s - b)
-
-        log_max = max(log_t1, log_t2)
-        log_min = min(log_t1, log_t2)
-        log_absD = log_max + np.log1p(np.exp(log_min - log_max))
-
-        out[i] = log_num - 2.0 * log_absD
-    return out
-
-
-@njit(cache=True)
-def _frank_pdf(u1, u2, r):
-    return np.exp(_frank_log_pdf(u1, u2, r))
-
-
-@njit(cache=True)
-def _frank_h(u, v, r):
-    """
-    h-function for Frank copula:  h(u, v; r) = C(u | v; r) = dC(v, u; r)/dv.
-
-    Numerically stable formulation in log-space.
-
-    The direct formula is:
-        h = exp(-rv) * (1 - exp(-ru)) / D
-    where D = exp(-ru)*(1 - exp(-rv)) + exp(-rv)*(1 - exp(-r(1-v))).
-
-    We compute log(h) = -rv + log(1-exp(-ru)) - log(D) using log1mexp
-    and logsumexp to avoid catastrophic cancellation for large r.
-    """
-    n = len(u)
-    out = np.empty(n)
-    eps = 1e-10
-    for i in range(n):
-        _u = min(max(u[i], eps), 1.0 - eps)
-        _v = min(max(v[i], eps), 1.0 - eps)
-        ri = r[i] if r.shape[0] > 1 else r[0]
-
-        if abs(ri) < 1e-8:
-            out[i] = _u
-            continue
-
-        ru = ri * _u
-        rv = ri * _v
-        r_1mv = ri * (1.0 - _v)
-
-        # log(numerator) = -rv + log(1 - exp(-ru))
-        log_numer = -rv + _log1mexp(ru)
-
-        # Denominator D = A + B where:
-        #   A = exp(-ru) * (1 - exp(-rv))     -> log_A = -ru + log(1 - exp(-rv))
-        #   B = exp(-rv) * (1 - exp(-r(1-v))) -> log_B = -rv + log(1 - exp(-r(1-v)))
-        log_A = -ru + _log1mexp(rv)
-        log_B = -rv + _log1mexp(r_1mv)
-
-        # log(D) = logsumexp(log_A, log_B)
-        log_max_d = max(log_A, log_B)
-        log_D = log_max_d + np.log1p(np.exp(min(log_A, log_B) - log_max_d))
-
-        log_h = log_numer - log_D
-
-        if log_h < -700.0:
-            out[i] = eps
-        elif log_h > -eps:
-            out[i] = 1.0 - eps
-        else:
-            out[i] = np.exp(log_h)
-
-    return out
-
-
-@njit(cache=True)
-def _frank_h_pair(u, v, r):
-    n = len(u)
-    out01 = np.empty(n)
-    out10 = np.empty(n)
-    eps = 1e-10
-    for i in range(n):
-        _u = min(max(u[i], eps), 1.0 - eps)
-        _v = min(max(v[i], eps), 1.0 - eps)
-        ri = r[i] if r.shape[0] > 1 else r[0]
-
-        if abs(ri) < 1e-8:
-            out01[i] = _u
-            out10[i] = _v
-            continue
-
-        ru = ri * _u
-        rv = ri * _v
-        r_1mu = ri * (1.0 - _u)
-        r_1mv = ri * (1.0 - _v)
-
-        log_A = -ru + _log1mexp(rv)
-        log_B = -rv + _log1mexp(r_1mv)
-        log_max_d = max(log_A, log_B)
-        log_D = log_max_d + np.log1p(np.exp(min(log_A, log_B) - log_max_d))
-
-        log_h01 = -rv + _log1mexp(ru) - log_D
-        if log_h01 < -700.0:
-            out01[i] = eps
-        elif log_h01 > -eps:
-            out01[i] = 1.0 - eps
-        else:
-            out01[i] = np.exp(log_h01)
-
-        log_A_sw = -rv + _log1mexp(ru)
-        log_B_sw = -ru + _log1mexp(r_1mu)
-        log_max_sw = max(log_A_sw, log_B_sw)
-        log_D_sw = (
-            log_max_sw
-            + np.log1p(np.exp(min(log_A_sw, log_B_sw) - log_max_sw))
-        )
-
-        log_h10 = -ru + _log1mexp(rv) - log_D_sw
-        if log_h10 < -700.0:
-            out10[i] = eps
-        elif log_h10 > -eps:
-            out10[i] = 1.0 - eps
-        else:
-            out10[i] = np.exp(log_h10)
-
-    return out01, out10
-
-
-@njit(cache=True)
-def _frank_h_inv(u, v, r):
-    """
-    Inverse h-function for Frank copula: find t such that h(t, v; r) = u.
-
-    Stable formulation: from h = u, solving for t gives
-        arg = (Q + exp(-r)) / (Q + 1)
-        t   = -log(arg) / r
-    where Q = (1-u)/u * exp(-r*v).
-    """
-    n = len(u)
-    out = np.empty(n)
-    eps = 1e-10
-    for i in range(n):
-        _u = min(max(u[i], eps), 1.0 - eps)
-        _v = min(max(v[i], eps), 1.0 - eps)
-        ri = r[i] if r.shape[0] > 1 else r[0]
-
-        if abs(ri) < 1e-8:
-            out[i] = _u
-            continue
-
-        x2 = np.exp(-ri * _v)
-        x3 = np.exp(-ri)
-
-        Q = (1.0 - _u) / _u * x2
-
-        # arg = (Q + x3) / (Q + 1)
-        # For large r: x3 ~ 0, so arg ~ Q / (Q + 1)
-        # For Q very small: arg ~ x3, t ~ -log(x3)/r = 1
-        # For Q very large: arg ~ 1, t ~ 0
-        # Both limits make sense: u->0 => t->0, u->1 => t->1
-
-        numer = Q + x3
-        denom = Q + 1.0
-
-        if denom < eps:
-            out[i] = eps
-            continue
-
-        arg = numer / denom
-
-        if arg <= 0:
-            out[i] = eps
-        elif arg >= 1.0 - eps:
-            # log(arg) is close to 0 but we need precision.
-            # Use log1p: log(arg) = log(1 - (1-arg)) = log(1 - (1-x3-Q)/(Q+1))
-            # 1 - arg = (1 - x3) / (Q + 1)
-            one_m_arg = (1.0 - x3) / denom
-            if one_m_arg < eps:
-                out[i] = 1.0 - eps
-            else:
-                t = -np.log1p(-one_m_arg) / ri
-                out[i] = min(max(t, eps), 1.0 - eps)
-        else:
-            t = -np.log(arg) / ri
-            out[i] = min(max(t, eps), 1.0 - eps)
-
-    return out
-
-
-@njit(cache=True)
 def _frank_bivariate_sample_from_uniforms(n, r, u0_data, v_data):
-    """Direct conditional inversion sampling for Frank from fixed uniforms."""
-    out = np.empty((n, 2))
-    for k in range(n):
-        ri = r[k] if r.shape[0] > 1 else r[0]
-        u0 = u0_data[k]
-        v = v_data[k]
-        t = np.exp(-ri * u0)
-        p = np.exp(-ri)
-        f1 = v * (1.0 - p)
-        f2 = t + v * (1.0 - t)
-        if abs(f1 - f2) < 1e-9:
-            u1 = u0
-        else:
-            u1 = -np.log(1.0 - f1 / f2) / ri
-        out[k, 0] = u0
-        out[k, 1] = u1
-    return out
-
-
-@njit(cache=True)
-def _frank_dlogc_dr(u1, u2, r):
-    """Analytical d(log c)/dr for Frank copula."""
-    n = len(u1)
-    out = np.empty(n)
-    for i in range(n):
-        eps = 1e-300
-        v1 = min(max(u1[i], eps), 1.0 - eps)
-        v2 = min(max(u2[i], eps), 1.0 - eps)
-        ri = r[i] if r.shape[0] > 1 else r[0]
-
-        if abs(ri) < 1e-10:
-            out[i] = 0.0
-            continue
-
-        emr = np.exp(-ri)
-        emrv1 = np.exp(-ri * v1)
-        emrv2 = np.exp(-ri * v2)
-        emr1v2 = np.exp(-ri * (1.0 - v2))
-
-        A = emrv1 * (1.0 - emrv2)
-        B = emrv2 * (1.0 - emr1v2)
-        D = A + B
-        if D < eps:
-            D = eps
-
-        dA = emrv1 * (-v1 * (1.0 - emrv2) + v2 * emrv2)
-        dB = emrv2 * (-v2 * (1.0 - emr1v2) + (1.0 - v2) * emr1v2)
-
-        out[i] = (1.0 / ri
-                  + emr / (1.0 - emr)
-                  - (v1 + v2)
-                  - 2.0 * (dA + dB) / D)
-    return out
-
-
-@njit(cache=True)
-def _frank_pdf_and_grad_batch(u_all, r_grid, dpsi):
-    """Fused batch for Frank; rotations are unsupported because it is symmetric."""
-    T = u_all.shape[0]
-    K = len(r_grid)
-    fi = np.empty((T, K))
-    dfi = np.empty((T, K))
-    eps = 1e-300
-
-    for t in range(T):
-        v1 = u_all[t, 0]
-        v2 = u_all[t, 1]
-
-        for j in range(K):
-            ri = r_grid[j]
-            a = ri * v1
-            b = ri * v2
-            s = ri
-
-            log_num = np.log(ri) + _log1mexp(s) - a - b
-            log_t1 = -a + _log1mexp(b)
-            log_t2 = -b + _log1mexp(s - b)
-            log_max = max(log_t1, log_t2)
-            log_min = min(log_t1, log_t2)
-            log_absD = log_max + np.log1p(np.exp(log_min - log_max))
-
-            log_c = log_num - 2.0 * log_absD
-            c_val = np.exp(log_c)
-            fi[t, j] = c_val
-
-            # d(log c)/dr
-            emr = np.exp(-ri)
-            emrv1 = np.exp(-ri * v1)
-            emrv2 = np.exp(-ri * v2)
-            emr1v2 = np.exp(-ri * (1.0 - v2))
-            A_d = emrv1 * (1.0 - emrv2)
-            B_d = emrv2 * (1.0 - emr1v2)
-            D = A_d + B_d
-            if D < eps:
-                D = eps
-            dA_d = emrv1 * (-v1 * (1.0 - emrv2) + v2 * emrv2)
-            dB_d = emrv2 * (-v2 * (1.0 - emr1v2) + (1.0 - v2) * emr1v2)
-
-            dlogc = (1.0 / ri + emr / (1.0 - emr)
-                     - (v1 + v2) - 2.0 * (dA_d + dB_d) / D)
-            dfi[t, j] = c_val * dlogc * dpsi[j]
-
-    return fi, dfi
+    """Direct conditional-inversion sampling from fixed uniforms."""
+    parameter = np.asarray(r, dtype=np.float64)
+    if parameter.size == 1:
+        parameter = np.full(n, parameter[0])
+    t = np.exp(-parameter * u0_data)
+    p = np.exp(-parameter)
+    f1 = v_data * (1.0 - p)
+    f2 = t + v_data * (1.0 - t)
+    sampled = -np.log1p(-f1 / f2) / parameter
+    sampled = np.where(np.abs(f1 - f2) < 1e-9, u0_data, sampled)
+    return np.column_stack((u0_data, sampled))
 
 
 class FrankCopula(BivariateCopula):
-    """Frank copula. No rotation support (symmetric)."""
+    """Frank copula. Rotation is unsupported because it is symmetric."""
 
-    def __init__(self, rotate: int = 0, transform_type: str = 'softplus'):
+    def __init__(self, rotate: int = 0, transform_type: str = "softplus"):
         if rotate != 0:
             raise ValueError("Rotation not supported for Frank copula")
         super().__init__(0)
         self._name = "Frank copula"
         self._bounds = [(0.0001, np.inf)]
-        if transform_type not in ('xtanh', 'softplus'):
-            raise ValueError(f"transform_type must be 'xtanh' or 'softplus', got '{transform_type}'")
+        if transform_type not in ("xtanh", "softplus"):
+            raise ValueError(
+                "transform_type must be 'xtanh' or 'softplus', "
+                f"got '{transform_type}'"
+            )
         self._transform_type = transform_type
-
-    def transform(self, x):
-        x = np.atleast_1d(np.asarray(x, dtype=np.float64))
-        if self._transform_type == 'softplus':
-            return _softplus_transform(x, 0.0001)
-        if self._transform_type == 'xtanh':
-            return _xtanh_transform(x, 0.0001)
-        raise ValueError(f"Unsupported transform_type: {self._transform_type}")
-
-    def dtransform(self, x):
-        x = np.atleast_1d(np.asarray(x, dtype=np.float64))
-        if self._transform_type == 'softplus':
-            return _softplus_dtransform(x)
-        if self._transform_type == 'xtanh':
-            return _xtanh_dtransform(x)
-        raise ValueError(f"Unsupported transform_type: {self._transform_type}")
-
-    def inv_transform(self, r):
-        r = np.atleast_1d(np.asarray(r, dtype=np.float64))
-        if self._transform_type == 'softplus':
-            return _softplus_inv_transform(r, 0.0001)
-        if self._transform_type == 'xtanh':
-            return _inv_xtanh_transform(r, 0.0001)
-        raise ValueError(f"Unsupported transform_type: {self._transform_type}")
 
     def tau_to_param(self, tau):
         tau = np.atleast_1d(np.asarray(tau, dtype=np.float64))
         if np.any((tau <= 0.0) | (tau >= 1.0)):
             raise ValueError("Frank Kendall tau must be in (0, 1)")
-        return np.array([
-            _frank_param_from_tau_scalar(value) for value in tau
-        ], dtype=np.float64)
+        return self._native_adapter().tau_to_param(self, tau)
 
     def param_to_tau(self, r):
         r = np.atleast_1d(np.asarray(r, dtype=np.float64))
         if np.any(r <= 0.0):
             raise ValueError("Frank parameter must be positive")
-        return np.array([
-            _frank_tau_scalar(value) for value in r
-        ], dtype=np.float64)
+        return self._native_adapter().param_to_tau(self, r)
 
-    def pdf_unrotated(self, u1, u2, r):
-        return _frank_pdf(*_broadcast(u1, u2, r))
-
-    def log_pdf_unrotated(self, u1, u2, r):
-        return _frank_log_pdf(*_broadcast(u1, u2, r))
-
-    def dlog_pdf_dr_unrotated(self, u1, u2, r):
-        return _frank_dlogc_dr(*_broadcast(u1, u2, r))
-
-    def sample(self, n, r, rng=None):
+    def sample_at_parameter(self, n, r, rng=None):
         if rng is None:
             rng = np.random.default_rng()
-        _r = np.atleast_1d(np.asarray(r, dtype=np.float64))
-        if _r.size == 1:
-            _r = np.full(n, _r[0])
+        parameter = np.atleast_1d(np.asarray(r, dtype=np.float64))
+        if parameter.size == 1:
+            parameter = np.full(n, parameter[0])
         u0 = rng.uniform(0.0, 1.0, size=n)
         v = rng.uniform(0.0, 1.0, size=n)
-        return _frank_bivariate_sample_from_uniforms(n, _r, u0, v)
-
-    def h_unrotated(self, u, v, r):
-        return _frank_h(*_broadcast(u, v, r))
-
-    def h_pair(self, u, v, r):
-        return _frank_h_pair(*_broadcast(u, v, r))
-
-    def h_inverse_unrotated(self, u, v, r):
-        return _frank_h_inv(*_broadcast(u, v, r))
-
-    def pdf_and_grad_on_grid_batch(self, u, x_grid):
-        x = np.asarray(x_grid, dtype=np.float64)
-        r_grid = self.transform(x)
-        dpsi = self.dtransform(x)
-        return _frank_pdf_and_grad_batch(
-            np.asarray(u, dtype=np.float64), r_grid, dpsi)
-
-    def copula_grid_batch(self, u, x_grid):
-        x = np.asarray(x_grid, dtype=np.float64)
-        r_grid = self.transform(x)
-        dpsi = self.dtransform(x)
-        fi, _ = _frank_pdf_and_grad_batch(
-            np.asarray(u, dtype=np.float64), r_grid, dpsi)
-        return fi
+        return _frank_bivariate_sample_from_uniforms(
+            n, parameter, u0, v)

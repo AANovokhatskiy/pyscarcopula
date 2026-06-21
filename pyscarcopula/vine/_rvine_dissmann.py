@@ -43,13 +43,7 @@ from pyscarcopula.vine._structure import (
     _build_tree_0_conditional,
     _kendall_tau_value,
 )
-
-
-_EPS = 1e-10
-
-
-def _clip(u):
-    return np.clip(u, _EPS, 1.0 - _EPS)
+from pyscarcopula.vine._helpers import _clip_unit
 
 
 def select_rvine(
@@ -151,7 +145,9 @@ def select_rvine(
         raise ValueError(f"beam_width must be positive int, got {beam_width!r}")
     beam_width = int(beam_width)
 
+    from pyscarcopula.vine._selection import validate_pair_candidates
     candidates = candidates if candidates is not None else _default_candidates()
+    validate_pair_candidates(candidates)
     pseudo_obs = {(i, frozenset()): u[:, i].copy() for i in range(d)}
     given_vars = tuple(given_vars or ())
 
@@ -621,8 +617,8 @@ def _fit_tree_level(
     for edge_idx, (conditioned, conditioning) in enumerate(tree_repr):
         v1, v2 = sorted(conditioned)
 
-        u1 = _clip(pseudo_obs[(v1, conditioning)])
-        u2 = _clip(pseudo_obs[(v2, conditioning)])
+        u1 = _clip_unit(pseudo_obs[(v1, conditioning)])
+        u2 = _clip_unit(pseudo_obs[(v2, conditioning)])
         u_pair = np.column_stack((u1, u2))
 
         force_independent = is_truncated and truncation_fill == 'independent'
@@ -675,8 +671,8 @@ def _fit_tree_level(
 
         # Propagate pseudo-observations for higher trees.
         if t < d - 2:
-            pseudo_obs[(v2, conditioning | {v1})] = _clip(pc.h(u2, u1))
-            pseudo_obs[(v1, conditioning | {v2})] = _clip(pc.h(u1, u2))
+            pseudo_obs[(v2, conditioning | {v1})] = _clip_unit(pc.h(u2, u1))
+            pseudo_obs[(v1, conditioning | {v2})] = _clip_unit(pc.h(u1, u2))
 
     return fitted_level
 

@@ -162,7 +162,7 @@ def test_rvine_uses_registered_generic_strategy_for_edge_runtime(
     assert all(edge.param is None for edge in vine.pair_copulas.values())
 
     samples = vine.sample(7, rng=np.random.default_rng(1))
-    predicted = vine.predict(8, u_train=u, rng=np.random.default_rng(2))
+    predicted = vine.predict(8, u=u, rng=np.random.default_rng(2))
     ll = vine.log_likelihood(u)
 
     assert samples.shape == (7, 3)

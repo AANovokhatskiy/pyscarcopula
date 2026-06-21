@@ -27,7 +27,7 @@ vine = RVineCopula().fit(u, method="mle")
 
 samples = vine.predict(
     n=5000,
-    u_train=u,
+    u=u,
     given={0: 0.4, 3: 0.8},
     rng=np.random.default_rng(2026),
 )
@@ -43,7 +43,7 @@ cfg = PredictConfig(
 
 samples, diagnostics = vine.predict(
     5000,
-    u_train=u,
+    u=u,
     predict_config=cfg,
     rng=np.random.default_rng(2027),
 )

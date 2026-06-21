@@ -1,9 +1,14 @@
 """Shared utility functions for vine copulas."""
 
-import numpy as np
+from pyscarcopula._constants import PSEUDO_OBS_EPS
+from pyscarcopula._utils import clip_pseudo_observations
 
 
 def _clip_unit(x):
-    """Clip to (eps, 1-eps) to avoid NaN in h-functions."""
-    eps = 1e-10
-    return np.clip(x, eps, 1.0 - eps)
+    """Clip vine pseudo-observations before h-function evaluation."""
+    return clip_pseudo_observations(x)
+
+
+def _open_unit_uniform(rng, size):
+    """Draw vine pseudo-observations inside the shared safe unit interval."""
+    return rng.uniform(PSEUDO_OBS_EPS, 1.0 - PSEUDO_OBS_EPS, size=size)

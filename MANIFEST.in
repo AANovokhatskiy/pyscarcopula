@@ -2,6 +2,7 @@
 include LICENSE.txt
 include README.md
 include pyproject.toml
+include tools/check_cpp_architecture.py
 recursive-include tests *.py
 recursive-include pyscarcopula/_cpp *.cpp *.hpp
 prune data

@@ -13,13 +13,14 @@ matrix method.
 
 - **Archimedean copulas**: Gumbel, Frank, Clayton, Joe (with rotations)
 - **Elliptical copulas**: Gaussian, Student-t
-- **Experimental models**: equicorrelation Gaussian, stochastic Student-t, stochastic Student-t DCC
+- **Multivariate models**: Gaussian, Student-t, equicorrelation Gaussian,
+  and stochastic Student-t
 - **C-vine copulas**: automatic family selection, truncation, mixed SCAR/MLE
 - **R-vine conditional sampling**: exact suffix/rebuild path plus arbitrary
   runtime-DAG + MCMC fallback
 - **Estimation**: MLE, GAS, SCAR-TM-OU, SCAR-TM-JACOBI
-- **SCAR-TM-OU backend**: automatic C++ acceleration where supported, with
-  Python fallback
+- **Native numerical core**: mandatory C++ evaluation for built-in point
+  operations, GAS, and SCAR-TM-OU
 - **Prediction controls**: `PredictConfig`, diagnostics, dynamic conditioning,
   reproducible `rng`
 - **Transform functions**: `softplus` (default), `xtanh` (symmetric)

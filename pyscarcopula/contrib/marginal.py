@@ -419,7 +419,8 @@ class ARMAGARCHMarginal(MarginalModel):
         if transform == "rank":
             return pobs(z), fits
         if transform == "normal":
-            return np.clip(norm.cdf(z), 1e-10, 1.0 - 1e-10), fits
+            from pyscarcopula._utils import clip_pseudo_observations
+            return clip_pseudo_observations(norm.cdf(z)), fits
         raise ValueError("transform must be 'rank' or 'normal'")
 
     def ppf(self, u, params):

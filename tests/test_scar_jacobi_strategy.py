@@ -61,15 +61,7 @@ def test_scar_jacobi_accepts_spectral_order_aliases():
 
 
 def test_scar_jacobi_transition_method_legacy_aliases_are_rejected():
-    assert get_strategy(
-        'scar-tm-jacobi',
-        transition_method='matrix',
-    ).transition_method == 'spectral_matrix'
-    assert get_strategy(
-        'scar-tm-jacobi',
-        transition_method='spectral',
-    ).transition_method == 'spectral_coeff'
-    for legacy in ('gh', 'local_gh', 'fixed', 'fixed_grid',
+    for legacy in ('matrix', 'spectral', 'gh', 'local_gh', 'fixed', 'fixed_grid',
                    'local_fixed_grid', 'coeff', 'coefficient'):
         with pytest.raises(ValueError, match='transition_method'):
             get_strategy('scar-tm-jacobi', transition_method=legacy)
@@ -107,6 +99,12 @@ def test_scar_jacobi_fit_returns_latent_result():
     assert result.params.xi > 0.0
     assert result.transition_method == 'auto'
     assert np.isfinite(result.log_likelihood)
+    assert result.diagnostics["gradient_requested"] is False
+    assert result.diagnostics["gradient_used"] is False
+    assert result.diagnostics["optimizer_gradient"] == "numerical"
+    assert result.diagnostics["gradient_kind"] == "numerical"
+    assert result.diagnostics["transition_backend"] in {
+        "local", "spectral_matrix"}
 
 
 def test_scar_jacobi_fit_accepts_analytical_gradient():
@@ -128,6 +126,49 @@ def test_scar_jacobi_fit_accepts_analytical_gradient():
     assert result.transition_method == 'auto'
     assert np.isfinite(result.log_likelihood)
     assert result.params.process_type == 'jacobi'
+    assert result.diagnostics["gradient_requested"] is True
+    assert result.diagnostics["gradient_used"] is True
+    assert result.diagnostics["gradient_kind"] == "semi_analytical"
+    assert (
+        result.diagnostics["setup_derivative"]
+        == "numerical_finite_difference"
+    )
+    assert result.diagnostics["filter_derivative"] == "analytical"
+    assert result.diagnostics["transition_backend"] in {
+        "local", "spectral_matrix"}
+
+
+def test_scar_jacobi_initialization_records_mle_failure(monkeypatch):
+    from pyscarcopula.strategy.mle import MLEStrategy
+
+    def fail_mle(*args, **kwargs):
+        raise ArithmeticError("static MLE failed")
+
+    monkeypatch.setattr(MLEStrategy, "fit", fail_mle)
+    result = fit(
+        GumbelCopula(),
+        _u_sample(),
+        method='scar-tm-jacobi',
+        basis_order=3,
+        quad_order=18,
+        maxiter=1,
+        maxfun=8,
+    )
+    initialization = result.diagnostics["initialization"]
+
+    assert initialization["requested_method"] == "static_mle_tau"
+    assert initialization["selected_method"] == "m0_default"
+    assert initialization["alpha0"] == [1.0, 0.5, 0.2]
+    assert initialization["attempts"][0] == {
+        "method": "static_mle_tau",
+        "success": False,
+        "error_type": "ArithmeticError",
+        "error_message": "static MLE failed",
+    }
+    assert initialization["attempts"][1] == {
+        "method": "m0_default",
+        "success": True,
+    }
 
 
 def test_scar_jacobi_fit_accepts_spectral_matrix_analytical_gradient():
@@ -149,6 +190,66 @@ def test_scar_jacobi_fit_accepts_spectral_matrix_analytical_gradient():
 
     assert result.transition_method == 'spectral_matrix'
     assert np.isfinite(result.log_likelihood)
+    assert result.diagnostics["gradient_kind"] == "semi_analytical"
+    assert result.diagnostics["transition_backend"] == "spectral_matrix"
+
+
+def test_scar_jacobi_local_fixed_reports_fully_analytical_gradient():
+    result = fit(
+        GumbelCopula(),
+        _u_sample(),
+        method='scar-tm-jacobi',
+        analytical_grad=True,
+        transition_method='local_fixed',
+        basis_order=3,
+        quad_order=18,
+        alpha0=np.array([1.0, 0.35, 0.5]),
+        maxiter=2,
+        maxfun=12,
+    )
+
+    assert result.diagnostics["optimizer_gradient"] == "model_provided"
+    assert result.diagnostics["gradient_kind"] == "analytical"
+    assert result.diagnostics["setup_derivative"] == "analytical"
+    assert result.diagnostics["filter_derivative"] == "analytical"
+    assert result.diagnostics["transition_backend"] == "local_fixed"
+
+
+def test_scar_jacobi_local_reports_semi_analytical_gradient():
+    result = fit(
+        GumbelCopula(),
+        _u_sample(),
+        method='scar-tm-jacobi',
+        analytical_grad=True,
+        transition_method='local',
+        basis_order=3,
+        quad_order=18,
+        alpha0=np.array([1.0, 0.35, 0.5]),
+        maxiter=2,
+        maxfun=12,
+    )
+
+    assert result.diagnostics["gradient_kind"] == "semi_analytical"
+    assert (
+        result.diagnostics["setup_derivative"]
+        == "numerical_finite_difference"
+    )
+    assert result.diagnostics["filter_derivative"] == "analytical"
+    assert result.diagnostics["transition_backend"] == "local"
+
+
+def test_scar_jacobi_spectral_coeff_rejects_requested_gradient():
+    with pytest.raises(
+            NotImplementedError,
+            match="spectral_coeff Jacobi backend"):
+        fit(
+            GumbelCopula(),
+            _u_sample(),
+            method='scar-tm-jacobi',
+            analytical_grad=True,
+            transition_method='spectral_coeff',
+            smart_init=False,
+        )
 
 
 def test_scar_jacobi_fit_clips_initial_point_to_bounds():
@@ -231,6 +332,11 @@ def test_scar_jacobi_fit_supports_legacy_spectral_coeff_backend():
     assert result.transition_method == 'spectral_coeff'
     assert result.gh_order is None
     assert np.isfinite(result.log_likelihood)
+    assert result.diagnostics["gradient_requested"] is False
+    assert result.diagnostics["gradient_used"] is False
+    assert result.diagnostics["optimizer_gradient"] == "numerical"
+    assert result.diagnostics["gradient_kind"] == "numerical"
+    assert result.diagnostics["transition_backend"] == "spectral_coeff"
 
 
 def test_scar_jacobi_fit_accepts_spectral_order_aliases():
@@ -513,7 +619,7 @@ def test_scar_jacobi_object_methods_dispatch():
     assert np.all((samples > 0.0) & (samples < 1.0))
 
 
-def test_scar_jacobi_sample_model_is_explicitly_unimplemented():
+def test_scar_jacobi_fitted_sampling_is_explicitly_unimplemented():
     copula = GumbelCopula()
     u = _u_sample()
     result = LatentResult(

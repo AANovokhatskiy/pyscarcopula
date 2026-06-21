@@ -15,6 +15,8 @@ from pyscarcopula import (
     load_model,
 )
 from pyscarcopula._utils import pobs
+from pyscarcopula._types import GASResult, LatentResult, gas_params, ou_params
+from pyscarcopula.io import _from_jsonable, _to_jsonable
 
 
 def test_bivariate_save_load_roundtrip(tmp_path, random_u2):
@@ -38,6 +40,76 @@ def test_bivariate_save_load_roundtrip(tmp_path, random_u2):
     samples = loaded.predict(8, rng=np.random.default_rng(0))
     assert samples.shape == (8, 2)
     assert np.all((samples > 0.0) & (samples < 1.0))
+
+
+def test_legacy_gas_backend_field_is_ignored_on_load():
+    result = GASResult(
+        log_likelihood=1.5,
+        method="GAS",
+        copula_name="Gaussian",
+        success=True,
+        params=gas_params(0.1, 0.2, 0.7),
+    )
+    payload = _to_jsonable(result)
+    assert "backend" not in payload["fields"]
+    payload["fields"]["backend"] = "python"
+
+    loaded = _from_jsonable(payload)
+
+    assert loaded.log_likelihood == result.log_likelihood
+    assert loaded.method == result.method
+    assert loaded.copula_name == result.copula_name
+    np.testing.assert_allclose(loaded.params.values, result.params.values)
+    assert not hasattr(loaded, "backend")
+
+
+def test_legacy_scar_backend_field_is_ignored_on_load():
+    result = LatentResult(
+        log_likelihood=2.5,
+        method="SCAR-TM-OU",
+        copula_name="Gumbel",
+        success=True,
+        params=ou_params(1.0, 0.2, 0.8),
+    )
+    payload = _to_jsonable(result)
+    assert "backend" not in payload["fields"]
+    payload["fields"]["backend"] = "python"
+
+    loaded = _from_jsonable(payload)
+
+    assert loaded.log_likelihood == result.log_likelihood
+    np.testing.assert_allclose(loaded.params.values, result.params.values)
+    assert not hasattr(loaded, "backend")
+
+
+def test_initialization_diagnostics_json_roundtrip():
+    diagnostics = {
+        "requested_method": "strength_aware",
+        "selected_method": "heuristic",
+        "alpha0": [1.0, 0.2, 0.8],
+        "attempts": [
+            {
+                "method": "strength_aware",
+                "success": False,
+                "error_type": "ValueError",
+                "error_message": "failed",
+            },
+            {"method": "heuristic", "success": True},
+        ],
+        "success": True,
+    }
+    result = LatentResult(
+        log_likelihood=2.5,
+        method="SCAR-TM-OU",
+        copula_name="Gumbel",
+        success=True,
+        params=ou_params(1.0, 0.2, 0.8),
+        diagnostics={"initialization": diagnostics},
+    )
+
+    loaded = _from_jsonable(_to_jsonable(result))
+
+    assert loaded.diagnostics["initialization"] == diagnostics
 
 
 def test_include_data_false_drops_cached_training_data(tmp_path, random_u2):

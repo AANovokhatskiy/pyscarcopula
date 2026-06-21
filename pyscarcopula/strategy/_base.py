@@ -14,6 +14,65 @@ from pyscarcopula._types import (
     DEFAULT_CONFIG,
     PredictiveState,
 )
+from pyscarcopula.copula.base import CopulaCapabilities
+
+
+def get_copula_capabilities(copula) -> CopulaCapabilities | None:
+    """Return an explicit capability descriptor, or None for legacy objects."""
+    descriptor = getattr(copula, "capabilities", None)
+    if isinstance(descriptor, CopulaCapabilities):
+        return descriptor
+    descriptor = getattr(copula, "_capabilities", None)
+    if isinstance(descriptor, CopulaCapabilities):
+        return descriptor
+    return None
+
+
+def copula_dimension(copula, u=None) -> int | None:
+    """Resolve declared dimension, using data only when it is still unknown."""
+    capabilities = get_copula_capabilities(copula)
+    if capabilities is not None and capabilities.dimension is not None:
+        return capabilities.dimension
+    if u is not None:
+        array = np.asarray(u)
+        if array.ndim == 2:
+            return int(array.shape[1])
+    return None
+
+
+def validate_copula_data(copula, u):
+    """Validate 2D data against an explicit, known copula dimension."""
+    array = np.asarray(u)
+    if array.ndim != 2:
+        raise ValueError(f"copula data must be 2D, got shape {array.shape}")
+    capabilities = get_copula_capabilities(copula)
+    dimension = None if capabilities is None else capabilities.dimension
+    if dimension is not None and array.shape[1] != dimension:
+        raise ValueError(
+            f"{type(copula).__name__} expects {dimension} columns, "
+            f"got shape {array.shape}")
+    return array
+
+
+def is_multivariate_copula(copula) -> bool:
+    """Whether an explicitly declared copula lacks the pair-copula contract."""
+    capabilities = get_copula_capabilities(copula)
+    return capabilities is not None and not capabilities.supports_pair_ops
+
+
+def ensure_strategy_supported(copula, method):
+    """Reject incompatible built-in strategy selections deterministically."""
+    capabilities = get_copula_capabilities(copula)
+    if capabilities is None:
+        return
+    normalized = str(method).upper()
+    if normalized == "GAS" and not capabilities.supports_gas:
+        raise TypeError(f"{type(copula).__name__} does not support GAS")
+    if normalized == "SCAR-TM-OU" and not capabilities.supports_scar_ou:
+        raise TypeError(f"{type(copula).__name__} does not support SCAR-TM-OU")
+    if normalized == "SCAR-TM-JACOBI" and not capabilities.supports_pair_ops:
+        raise TypeError(
+            f"{type(copula).__name__} does not support pair Jacobi dynamics")
 
 
 @runtime_checkable
@@ -290,10 +349,6 @@ def get_strategy_for_result(result: FitResult,
             value = getattr(result, name, None)
             if value is not None:
                 result_kwargs[name] = value
-
-        backend = getattr(result, 'backend', None)
-        if backend is not None:
-            result_kwargs['backend'] = backend
 
     if method == 'SCAR-TM-JACOBI':
         transition_method = getattr(result, 'transition_method', None)

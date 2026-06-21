@@ -11,7 +11,7 @@ is set to independent, saving all fit/TM/GAS computation.
 """
 
 import numpy as np
-from pyscarcopula.copula.base import BivariateCopula
+from pyscarcopula.copula.base import BivariateCopula, CopulaCapabilities
 
 
 class IndependentCopula(BivariateCopula):
@@ -33,45 +33,39 @@ class IndependentCopula(BivariateCopula):
 
     # ── transform (trivial) ──────────────────────────────────────
 
-    @staticmethod
-    def transform(x):
-        return np.zeros_like(np.asarray(x, dtype=np.float64))
+    def transform(self, x):
+        return super().transform(x)
 
-    @staticmethod
-    def inv_transform(r):
-        return np.zeros_like(np.asarray(r, dtype=np.float64))
+    def inv_transform(self, r):
+        return super().inv_transform(r)
 
-    @staticmethod
-    def dtransform(x):
-        return np.zeros_like(np.asarray(x, dtype=np.float64))
+    def dtransform(self, x):
+        return super().dtransform(x)
 
     # ── PDF / log-PDF ────────────────────────────────────────────
 
     def pdf_unrotated(self, u1, u2, r):
-        u1a = np.atleast_1d(np.asarray(u1, dtype=np.float64))
-        return np.ones(len(u1a))
+        return super().pdf_unrotated(u1, u2, r)
 
     def log_pdf_unrotated(self, u1, u2, r):
-        u1a = np.atleast_1d(np.asarray(u1, dtype=np.float64))
-        return np.zeros(len(u1a))
+        return super().log_pdf_unrotated(u1, u2, r)
 
     def dlog_pdf_dr_unrotated(self, u1, u2, r):
-        u1a = np.atleast_1d(np.asarray(u1, dtype=np.float64))
-        return np.zeros(len(u1a))
+        return super().dlog_pdf_dr_unrotated(u1, u2, r)
 
     # ── h-functions (trivial) ────────────────────────────────────
 
     def h_unrotated(self, u, v, r):
         """h(u | v) = u for independence."""
-        return np.atleast_1d(np.asarray(u, dtype=np.float64)).copy()
+        return super().h_unrotated(u, v, r)
 
     def h_inverse_unrotated(self, u, v, r):
         """h_inverse(u | v) = u for independence."""
-        return np.atleast_1d(np.asarray(u, dtype=np.float64)).copy()
+        return super().h_inverse_unrotated(u, v, r)
 
     # ── sampling ─────────────────────────────────────────────────
 
-    def sample(self, n, r=None, rng=None):
+    def sample_at_parameter(self, n, r=None, rng=None):
         if rng is None:
             rng = np.random.default_rng()
         return rng.uniform(0, 1, size=(n, 2))
@@ -84,19 +78,16 @@ class IndependentCopula(BivariateCopula):
     # ── grid evaluations (all trivial) ───────────────────────────
 
     def pdf_on_grid(self, u_row, z_grid):
-        return np.ones(len(z_grid))
+        return super().pdf_on_grid(u_row, z_grid)
 
     def pdf_and_grad_on_grid(self, u_row, z_grid):
-        K = len(z_grid)
-        return np.ones(K), np.zeros(K)
+        return super().pdf_and_grad_on_grid(u_row, z_grid)
 
     def pdf_and_grad_on_grid_batch(self, u, x_grid):
-        n = len(u)
-        K = len(x_grid)
-        return np.ones((n, K)), np.zeros((n, K))
+        return super().pdf_and_grad_on_grid_batch(u, x_grid)
 
     def copula_grid_batch(self, u, x_grid):
-        return np.ones((len(u), len(x_grid)))
+        return super().copula_grid_batch(u, x_grid)
 
     # ── fit (instant) ────────────────────────────────────────────
 
@@ -115,4 +106,11 @@ class IndependentCopula(BivariateCopula):
             success=True,
         )
         self.fit_result = result
+        self._last_u = np.asarray(data, dtype=np.float64)
         return result
+    _capabilities = CopulaCapabilities(
+        dimension=2,
+        supports_pair_ops=True,
+        supports_native_point_ops=True,
+        supports_conditional_sampling=True,
+    )

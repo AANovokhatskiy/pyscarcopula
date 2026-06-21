@@ -118,7 +118,7 @@ class TestGumbelSampling:
     def test_sample_unit_interval(self):
         """Gumbel samples should be in (0,1)^2."""
         cop = GumbelCopula()
-        samples = cop.sample(5000, 3.0)
+        samples = cop.sample_at_parameter(5000, 3.0)
         assert np.all(samples > 0) and np.all(samples < 1)
 
 
