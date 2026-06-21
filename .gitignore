@@ -9,7 +9,8 @@ pytest-tmp*/
 *.pyd
 build/
 site/
-tools/
+tools/*
+!tools/check_cpp_architecture.py
 benchmarks/
 scripts/
 results/
