@@ -66,6 +66,7 @@ jobs:
       - name: Install and smoke-test sdist
         run: |
           python -m pip install --force-reinstall dist/*.tar.gz
+          cd "$RUNNER_TEMP"
           python -m pyscarcopula._native_smoke
 
       - uses: actions/upload-artifact@v4
