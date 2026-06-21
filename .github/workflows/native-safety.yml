@@ -96,4 +96,4 @@ jobs:
             tests/test_tm_forward.py \
             tests/test_fit.py \
             tests/test_multivariate_stochastic_student_corr.py \
-            -m "not benchmark"
+            -m "not benchmark and not sanitizer_numerical"

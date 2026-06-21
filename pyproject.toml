@@ -60,5 +60,6 @@ testpaths = ["tests"]
 markers = [
     "data: tests requiring data/ directory (csv files)",
     "benchmark: optional performance regression checks",
+    "sanitizer_numerical: exact floating-point golden checks excluded from sanitizer builds",
     "validation: optional distributional validation checks",
 ]

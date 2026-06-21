@@ -21,6 +21,10 @@ from pyscarcopula.numerical.gas_filter import (
 
 PARAMS = (0.07, 0.35, 0.62)
 SCORE_EPS = 1e-4
+GOLDEN_SCALINGS = [
+    "unit",
+    pytest.param("fisher", marks=pytest.mark.sanitizer_numerical),
+]
 OBSERVATIONS = np.array(
     [
         [0.12, 0.83],
@@ -283,7 +287,7 @@ def _score_path(copula, scaling, g_path, r_path):
 
 
 @pytest.mark.parametrize("name", COPULA_FACTORIES)
-@pytest.mark.parametrize("scaling", ["unit", "fisher"])
+@pytest.mark.parametrize("scaling", GOLDEN_SCALINGS)
 def test_bivariate_gas_families_match_regression_summaries(name, scaling):
     copula = COPULA_FACTORIES[name]()
     g_path, r_path, log_likelihood = gas_filter(
@@ -315,7 +319,7 @@ def test_bivariate_gas_families_match_regression_summaries(name, scaling):
     )
 
 
-@pytest.mark.parametrize("scaling", ["unit", "fisher"])
+@pytest.mark.parametrize("scaling", GOLDEN_SCALINGS)
 def test_gaussian_gas_full_paths_match_regression_values(scaling):
     copula = BivariateGaussianCopula()
     g_path, r_path, _ = gas_filter(
@@ -385,7 +389,7 @@ def test_gamma_zero_keeps_stationary_state_constant(scaling):
     np.testing.assert_allclose(r_path, r_path[0], rtol=0.0, atol=1e-15)
 
 
-@pytest.mark.parametrize("scaling", ["unit", "fisher"])
+@pytest.mark.parametrize("scaling", GOLDEN_SCALINGS)
 def test_gaussian_loglik_h_and_rosenblatt_match_regression_values(scaling):
     copula = BivariateGaussianCopula()
     expected_h = {
