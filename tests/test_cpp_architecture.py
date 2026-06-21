@@ -109,6 +109,28 @@ def test_module_entrypoint_rejects_binding_implementation(tmp_path):
     assert "minimal-module-entrypoint" in _rules(root)
 
 
+def test_module_entrypoint_allows_compiler_diagnostic_guard(tmp_path):
+    root = _minimal_repository(tmp_path)
+    module = root / "pyscarcopula/_cpp/src/bindings/module.cpp"
+    text = module.read_text(encoding="utf-8")
+    text = text.replace(
+        "PYBIND11_MODULE",
+        "#if defined(__GNUC__) || defined(__clang__)\n"
+        "#pragma GCC diagnostic push\n"
+        '#pragma GCC diagnostic ignored "-Wpedantic"\n'
+        "#endif\n\n"
+        "PYBIND11_MODULE",
+        1,
+    )
+    text += (
+        "\n#if defined(__GNUC__) || defined(__clang__)\n"
+        "#pragma GCC diagnostic pop\n"
+        "#endif\n"
+    )
+    module.write_text(text, encoding="utf-8")
+    assert "minimal-module-entrypoint" not in _rules(root)
+
+
 def test_public_header_cycle_is_rejected(tmp_path):
     root = _minimal_repository(tmp_path)
     _write(
