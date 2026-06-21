@@ -198,9 +198,10 @@ Worked notebooks are available in [`examples/`](examples/):
 
 * [`01_basic_api.ipynb`](examples/01_basic_api.ipynb)
 * [`02_bivariate.ipynb`](examples/02_bivariate.ipynb)
-* [`03_vine.ipynb`](examples/03_vine.ipynb)
-* [`04_risk_metrics.ipynb`](examples/04_risk_metrics.ipynb)
-* [`05_pyvinecopulib_comparison.ipynb`](examples/05_pyvinecopulib_comparison.ipynb)
+* [`03_multivariate.ipynb`](examples/03_multivariate.ipynb)
+* [`04_vine.ipynb`](examples/04_vine.ipynb)
+* [`05_risk_metrics.ipynb`](examples/05_risk_metrics.ipynb)
+* [`06_pyvinecopulib_comparison.ipynb`](examples/06_pyvinecopulib_comparison.ipynb)
 
 Additional documentation is in [`docs/`](docs/). Method semantics are described
 in [`docs/guide/estimation-methods.md`](docs/guide/estimation-methods.md), and
