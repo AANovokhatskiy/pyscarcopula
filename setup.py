@@ -29,6 +29,12 @@ SCAR_CORE_SOURCES = [
     "scar_ou/grid.cpp",
     "scar_ou/quadrature.cpp",
     "scar_ou/transition.cpp",
+    "bindings/common.cpp",
+    "bindings/copula.cpp",
+    "bindings/multivariate.cpp",
+    "bindings/scar_ou_types.cpp",
+    "bindings/gas.cpp",
+    "bindings/scar_ou.cpp",
     "bindings/module.cpp",
 ]
 
