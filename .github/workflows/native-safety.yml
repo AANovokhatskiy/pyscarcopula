@@ -83,7 +83,9 @@ jobs:
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
           PYTHONFAULTHANDLER: "1"
         run: |
-          export LD_PRELOAD="$(gcc -print-file-name=libasan.so)"
+          asan_path="$(gcc -print-file-name=libasan.so)"
+          libstdcpp_path="$(g++ -print-file-name=libstdc++.so.6)"
+          export LD_PRELOAD="${asan_path}:${libstdcpp_path}"
           python -m pytest -vv -s --tb=long \
             tests/test_cpp_architecture.py \
             tests/test_cpp.py \
