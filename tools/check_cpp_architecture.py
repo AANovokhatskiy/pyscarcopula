@@ -130,26 +130,17 @@ def check_module_entrypoint(root: Path) -> list[Violation]:
             f"expected exactly one PYBIND11_MODULE, found {module_count}",
         ))
     for line_number, line in significant:
-        diagnostic_guard = line in {
-            "#if defined(__GNUC__) || defined(__clang__)",
-            '#pragma GCC diagnostic push',
-            '#pragma GCC diagnostic ignored "-Wpedantic"',
-            '#pragma GCC diagnostic pop',
-            "#endif",
-        }
         allowed = (
             line == '#include "common.hpp"'
             or line.startswith("PYBIND11_MODULE(")
             or line == "}"
             or _MODULE_LINE.fullmatch(line) is not None
-            or diagnostic_guard
         )
         if not allowed:
             violations.append(Violation(
                 "minimal-module-entrypoint",
                 path,
-                "only common.hpp, compiler diagnostic guards, "
-                "PYBIND11_MODULE, and bind_* calls are allowed",
+                "only common.hpp, PYBIND11_MODULE, and bind_* calls are allowed",
                 line_number,
             ))
     return violations
