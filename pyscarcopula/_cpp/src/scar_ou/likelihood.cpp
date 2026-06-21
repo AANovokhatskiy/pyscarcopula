@@ -139,7 +139,14 @@ LogLikResult ScarOuEvaluator::loglik_spectral(
     if (!std::isfinite(likelihood_scaled) || likelihood_scaled <= 0.0) {
         return invalid_loglik(SCAR_NUMERICAL_FAILURE, OuBackend::Spectral);
     }
-    return {std::log(likelihood_scaled) + log_scale, OuBackend::Spectral, SCAR_OK};
+    return {
+        std::log(likelihood_scaled) + log_scale,
+        OuBackend::Spectral,
+        SCAR_OK,
+        -1,
+        {},
+        SCAR_FALLBACK_NONE,
+    };
 }
 
 LogLikResult ScarOuEvaluator::loglik_local_gh(
@@ -251,7 +258,14 @@ LogLikResult ScarOuEvaluator::loglik_local_gh(
     if (!std::isfinite(result) || result <= 0.0) {
         return invalid_loglik(SCAR_NUMERICAL_FAILURE, OuBackend::LocalGh);
     }
-    return {std::log(result) + log_scale, OuBackend::LocalGh, SCAR_OK};
+    return {
+        std::log(result) + log_scale,
+        OuBackend::LocalGh,
+        SCAR_OK,
+        -1,
+        {},
+        SCAR_FALLBACK_NONE,
+    };
 }
 
 LogLikResult ScarOuEvaluator::loglik_matrix(
@@ -308,7 +322,14 @@ LogLikResult ScarOuEvaluator::loglik_matrix(
             value)) {
         return invalid_loglik(SCAR_NUMERICAL_FAILURE, OuBackend::Matrix);
     }
-    return {value, OuBackend::Matrix, SCAR_OK};
+    return {
+        value,
+        OuBackend::Matrix,
+        SCAR_OK,
+        -1,
+        {},
+        SCAR_FALLBACK_NONE,
+    };
 }
 
 }  // namespace scar

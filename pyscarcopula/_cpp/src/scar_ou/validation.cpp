@@ -126,6 +126,9 @@ LogLikResult invalid_loglik(int status, OuBackend backend) {
         -std::numeric_limits<double>::infinity(),
         backend,
         status,
+        -1,
+        {},
+        SCAR_FALLBACK_NONE,
     };
 }
 
@@ -135,6 +138,10 @@ GradLogLikResult invalid_grad(int status, OuBackend backend) {
         std::vector<double>{0.0, 0.0, 0.0},
         backend,
         status,
+        -1,
+        {},
+        SCAR_FALLBACK_NONE,
+        {},
     };
 }
 
