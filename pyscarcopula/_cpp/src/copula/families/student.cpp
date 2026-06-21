@@ -1,4 +1,4 @@
-#include "scar_internal.hpp"
+#include "scar/detail/internal.hpp"
 
 #include <algorithm>
 #include <array>
