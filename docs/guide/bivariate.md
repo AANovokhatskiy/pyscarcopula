@@ -12,6 +12,10 @@ The three OU parameters control:
 - $\mu$ - long-run mean of the latent process
 - $\nu$ - volatility of the latent process
 
+For the likelihood recursion, gradient identity, transition backends, and
+predictive Rosenblatt transform used by SCAR and GAS, see
+[Mathematical Contracts](mathematical-contracts.md).
+
 ## Fitting
 
 ```python
@@ -157,5 +161,7 @@ gof = gof_test(copula, u, fit_result=result, to_pobs=False)
 ```
 
 The GoF test uses the Rosenblatt transform with the Cramer-von Mises
-statistic. For SCAR models, it integrates the h-function over the predictive
-distribution (mixture Rosenblatt).
+statistic. GAS evaluates the transform at the filtered point state. SCAR
+models integrate the h-function over the predictive latent-state distribution
+before the current observation is absorbed, which is the mixture Rosenblatt
+contract described in [Mathematical Contracts](mathematical-contracts.md).

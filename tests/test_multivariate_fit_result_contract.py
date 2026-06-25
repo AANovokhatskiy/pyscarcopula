@@ -30,7 +30,7 @@ def _u(n=50, d=3):
         (
             lambda: StochasticStudentCopula(d=3),
             {"method": "mle", "maxiter": 5},
-            1,
+            4,
         ),
     ],
 )

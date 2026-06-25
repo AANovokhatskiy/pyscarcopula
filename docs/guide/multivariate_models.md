@@ -33,6 +33,10 @@ This is the main implementation contract: the strategy layer does not need to
 know the full multivariate model, only how to evaluate row-wise densities and,
 for GAS, row-wise score derivatives.
 
+The shared formulas for scalar dynamic states, parameter links, SCAR filters,
+and dynamic Rosenblatt GoF are summarized in
+[Mathematical Contracts](mathematical-contracts.md).
+
 ## Equicorrelation Gaussian Copula
 
 For $d$ assets, the standard Gaussian copula has $d(d-1)/2$ static
@@ -53,7 +57,9 @@ $\rho_t\in(-1/(d-1),1)$, enforced by the parameter transform. In SCAR,
 $\rho_t=\Psi(x_t)$ and $x_t$ is the scalar OU state. This gives 3 dynamic
 parameters instead of $d(d-1)/2$ static correlations.
 
-The density is analytical and $O(d)$ per evaluation, with no matrix inversion required.
+The density and its scalar score are analytical and can be evaluated without a
+generic dense matrix inversion because the equicorrelation determinant and
+inverse have closed forms.
 
 ### Usage
 

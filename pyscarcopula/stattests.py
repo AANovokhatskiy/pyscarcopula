@@ -933,7 +933,23 @@ def equicorr_rosenblatt_transform(copula, u, fit_result, K=300, grid_range=5.0):
     e = np.empty((T, d))
     e[:, 0] = u[:, 0]
 
+    def leading_equicorr_density(x_prefix, prefix_dim):
+        if prefix_dim <= 1:
+            return np.ones((len(x_prefix), grid.K), dtype=np.float64)
+        rho = rho_grid[np.newaxis, :]
+        a = 1.0 - rho
+        b = 1.0 + (prefix_dim - 1) * rho
+        s2 = np.sum(x_prefix * x_prefix, axis=1)[:, np.newaxis]
+        s1 = np.sum(x_prefix, axis=1)[:, np.newaxis] ** 2
+        log_det = (prefix_dim - 1) * np.log(a) + np.log(b)
+        log_density = (
+            -0.5 * log_det
+            -0.5 * ((rho / a) * s2 - (rho / (a * b)) * s1)
+        )
+        return np.exp(log_density)
+
     cdf_blocks = None
+    prefix_density_blocks = None
     for k, local, weights, fi_block in iter_forward_weight_blocks(
             grid, u, copula, x_grid=x_grid, element_width=max(1, d)):
         if local == 0:
@@ -941,6 +957,7 @@ def equicorr_rosenblatt_transform(copula, u, fit_result, K=300, grid_range=5.0):
             stop = start + fi_block.shape[0]
             x_block = x_norm[start:stop]
             cdf_blocks = []
+            prefix_density_blocks = []
             for i in range(1, d):
                 sx = np.sum(x_block[:, :i], axis=1)[:, np.newaxis]
                 denom = 1.0 + (i - 1) * rho_grid[np.newaxis, :]
@@ -954,9 +971,18 @@ def equicorr_rosenblatt_transform(copula, u, fit_result, K=300, grid_range=5.0):
                     x_block[:, i, np.newaxis] - cond_mean
                 ) / np.sqrt(cond_var)
                 cdf_blocks.append(norm.cdf(z_i))
+                prefix_density_blocks.append(
+                    leading_equicorr_density(x_block[:, :i], i))
 
         for i in range(1, d):
-            e[k, i] = np.sum(weights * cdf_blocks[i - 1][local])
+            prefix_density = prefix_density_blocks[i - 1][local]
+            reweighted = weights * prefix_density
+            total = np.sum(reweighted)
+            if total > 0.0 and np.isfinite(total):
+                reweighted = reweighted / total
+            else:
+                reweighted = weights
+            e[k, i] = np.sum(reweighted * cdf_blocks[i - 1][local])
 
     e = clip_pseudo_observations(e)
     return e
@@ -1063,6 +1089,7 @@ def stochastic_student_rosenblatt_transform(copula, u, fit_result,
     beta_padded = np.zeros((d - 1, d), dtype=np.float64)
     sigma_cond = np.empty(d - 1, dtype=np.float64)
     r_inv_padded = np.zeros((d - 1, d, d), dtype=np.float64)
+    log_det_prefix = np.zeros(d - 1, dtype=np.float64)
     for i in range(1, d):
         R_11 = R[:i, :i]
         R_21 = R[i, :i]
@@ -1072,6 +1099,11 @@ def stochastic_student_rosenblatt_transform(copula, u, fit_result,
         sigma2 = R_22 - R_21 @ R_11_inv @ R_21
         sigma_cond[i - 1] = np.sqrt(max(sigma2, 1e-12))
         r_inv_padded[i - 1, :i, :i] = R_11_inv
+        if i > 1:
+            sign, log_det = np.linalg.slogdet(R_11)
+            if sign <= 0:
+                raise ValueError("leading Student correlation block is not SPD")
+            log_det_prefix[i - 1] = log_det
 
     u_c = clip_pseudo_observations_no_copy(u)
     emission_cache = copula.prepare_emission_cache(u_c)
@@ -1107,7 +1139,8 @@ def stochastic_student_rosenblatt_transform(copula, u, fit_result,
                 z_blocks[cond_idx],
             )
         e[start:stop, 1:] = student_weighted_cdf_block(
-            cdf_blocks, weights_block)
+            cdf_blocks, weights_block, x_all, df_grid, r_inv_padded,
+            log_det_prefix)
 
     e = clip_pseudo_observations(e)
     return e

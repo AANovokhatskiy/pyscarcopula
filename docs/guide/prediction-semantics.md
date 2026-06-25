@@ -39,6 +39,10 @@ $$
 
 for supported dynamic edges. This is off by default.
 
+The mathematical difference between filtered point states, posterior latent
+states, and one-step predictive latent states is summarized in
+[Mathematical Contracts](mathematical-contracts.md).
+
 ## `predict` vs `sample`
 
 The sampling names now have the same meaning across model types:

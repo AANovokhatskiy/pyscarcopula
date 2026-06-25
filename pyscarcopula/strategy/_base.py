@@ -60,6 +60,20 @@ def is_multivariate_copula(copula) -> bool:
     return capabilities is not None and not capabilities.supports_pair_ops
 
 
+def _uses_data_estimated_correlation(copula) -> bool:
+    corr_num_params = getattr(copula, "_corr_num_params", None)
+    if callable(corr_num_params) and int(corr_num_params()) > 0:
+        return True
+
+    if getattr(copula, "_corr_mode", None) != "fixed":
+        return False
+
+    preprocessing = getattr(copula, "_corr_preprocessing", None)
+    if getattr(preprocessing, "source", None) == "kendall":
+        return True
+    return getattr(copula, "_R", None) is None
+
+
 def ensure_strategy_supported(copula, method):
     """Reject incompatible built-in strategy selections deterministically."""
     capabilities = get_copula_capabilities(copula)
@@ -73,6 +87,12 @@ def ensure_strategy_supported(copula, method):
     if normalized == "SCAR-TM-JACOBI" and not capabilities.supports_pair_ops:
         raise TypeError(
             f"{type(copula).__name__} does not support pair Jacobi dynamics")
+    if (
+            normalized not in {"MLE", "SCAR-TM-OU"}
+            and _uses_data_estimated_correlation(copula)):
+        raise NotImplementedError(
+            "data-estimated static correlation is implemented for "
+            "MLE and SCAR-TM-OU only")
 
 
 @runtime_checkable
