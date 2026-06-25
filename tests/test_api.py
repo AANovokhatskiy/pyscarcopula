@@ -375,12 +375,15 @@ class TestEquicorrGaussian:
         assert 0 <= gof.pvalue <= 1
 
     @pytest.mark.parametrize(
-        "cls",
-        [EquicorrGaussianCopula, StochasticStudentCopula],
+        "factory",
+        [
+            lambda: EquicorrGaussianCopula(d=3),
+            lambda: StochasticStudentCopula(d=3, R=np.eye(3)),
+        ],
     )
-    def test_multivariate_gas_fit_and_gof(self, cls):
+    def test_multivariate_gas_fit_and_gof(self, factory):
         u = pobs(np.random.default_rng(49).standard_normal((35, 3)))
-        cop = cls(d=3)
+        cop = factory()
 
         result = cop.fit(u, method='gas', maxiter=10, maxfun=10)
         gof = gof_test(cop, u, to_pobs=False)

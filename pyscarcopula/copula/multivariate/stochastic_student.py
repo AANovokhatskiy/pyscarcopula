@@ -24,6 +24,8 @@ Usage:
     gof_test(cop, returns, to_pobs=True)
 """
 
+from dataclasses import replace
+
 import numpy as np
 from scipy.stats import t as t_dist
 from scipy.optimize import minimize
@@ -304,6 +306,28 @@ class StochasticStudentCopula(MultivariateCopula):
             return 1
         return cholesky_corr_n_params(self._d)
 
+    def _corr_plugin_num_params(self):
+        preprocessing = self._corr_preprocessing
+        if (
+                self._corr_mode == 'fixed'
+                and preprocessing is not None
+                and preprocessing.source == 'kendall'):
+            return cholesky_corr_n_params(self._d)
+        return 0
+
+    def _corr_effective_num_params(self):
+        return self._corr_num_params() + self._corr_plugin_num_params()
+
+    def _corr_count_diagnostics(self):
+        n_corr = self._corr_num_params()
+        plugin_n = self._corr_plugin_num_params()
+        return {
+            'corr_mode': self._corr_mode,
+            'corr_n_params': n_corr,
+            'corr_plugin_n_params': plugin_n,
+            'corr_effective_n_params': n_corr + plugin_n,
+        }
+
     def _default_corr_params(self):
         if self._corr_mode == 'fixed':
             return np.empty(0, dtype=np.float64)
@@ -555,6 +579,7 @@ class StochasticStudentCopula(MultivariateCopula):
         self._ensure_corr_initialized(u)
         corr0 = self._initial_corr_params(u)
         n_corr = self._corr_num_params()
+        counted_corr = self._corr_effective_num_params()
         fail_value = float(getattr(config, 'fail_value', 1e10))
 
         fixed_evaluator = (
@@ -617,8 +642,7 @@ class StochasticStudentCopula(MultivariateCopula):
             'df_gradient': 'analytical',
             'correlation_gradient': (
                 'not_applicable' if n_corr == 0 else 'analytical'),
-            'corr_mode': self._corr_mode,
-            'corr_n_params': n_corr,
+            **self._corr_count_diagnostics(),
             'corr_params_raw': self.corr_params(),
             'corr_alpha': self.corr_alpha(),
             'corr_matrix': self._R.copy(),
@@ -635,7 +659,7 @@ class StochasticStudentCopula(MultivariateCopula):
             nfev=res.nfev,
             message=str(getattr(res, 'message', '')),
             copula_param=df_hat,
-            parameter_count=1 + n_corr,
+            parameter_count=1 + counted_corr,
             n_observations=len(u),
             model_parameters={
                 'df': df_hat,
@@ -685,11 +709,6 @@ class StochasticStudentCopula(MultivariateCopula):
 
         self._last_u = u
 
-        if method.upper() == 'GAS' and self._corr_num_params() > 0:
-            raise NotImplementedError(
-                "joint static correlation estimation is implemented for "
-                "MLE and SCAR-TM-OU, not GAS")
-
         self._ensure_corr_initialized(u)
 
         if method.upper() == 'MLE':
@@ -703,8 +722,18 @@ class StochasticStudentCopula(MultivariateCopula):
         # Step 2: SCAR / GAS — use strategy
         from pyscarcopula.api import fit as _api_fit
         result = _api_fit(self, u, method=method, config=config, **kwargs)
-        result.diagnostics.update(
-            self.correlation_preprocessing_diagnostics())
+        diagnostics = dict(result.diagnostics)
+        diagnostics.update(self._corr_count_diagnostics())
+        diagnostics.update(self.correlation_preprocessing_diagnostics())
+        counted_corr = self._corr_effective_num_params()
+        if hasattr(result, 'parameter_count'):
+            result = replace(
+                result,
+                parameter_count=result.params.n_params + counted_corr,
+                diagnostics=diagnostics,
+            )
+        else:
+            result.diagnostics.update(diagnostics)
         self.fit_result = result
         return result
 

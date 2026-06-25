@@ -107,6 +107,42 @@ def test_fixed_mode_keeps_canonical_behavior():
     assert scar_result.diagnostics["selected_engine"] == "cpp"
 
 
+def test_fixed_mode_kendall_plugin_counts_correlation_parameters():
+    u = _u(T=25)
+    model = StochasticStudentCopula(d=3, corr_mode="fixed")
+
+    mle_result = model.fit(u, method="mle", maxiter=2)
+
+    assert mle_result.n_params == 4
+    assert mle_result.diagnostics["corr_mode"] == "fixed"
+    assert mle_result.diagnostics["corr_n_params"] == 0
+    assert mle_result.diagnostics["corr_plugin_n_params"] == 3
+    assert mle_result.diagnostics["corr_effective_n_params"] == 3
+    assert (
+        mle_result.diagnostics["corr_initialization_source"] == "kendall")
+
+    scar = StochasticStudentCopula(d=3, corr_mode="fixed")
+    scar_result = scar.fit(
+        u,
+        method="scar-tm-ou",
+        K=8,
+        max_K=8,
+        adaptive=False,
+        maxiter=1,
+        maxfun=20,
+        smart_init=False,
+        alpha0=np.array([1.0, 1.0, 0.8]),
+    )
+
+    assert scar_result.n_params == 6
+    assert scar_result.diagnostics["corr_mode"] == "fixed"
+    assert scar_result.diagnostics["corr_n_params"] == 0
+    assert scar_result.diagnostics["corr_plugin_n_params"] == 3
+    assert scar_result.diagnostics["corr_effective_n_params"] == 3
+    assert (
+        scar_result.diagnostics["corr_initialization_source"] == "kendall")
+
+
 def test_fixed_scar_default_auto_backend_selects_cpp():
     u = _u(T=25)
     model = StochasticStudentCopula(
@@ -883,6 +919,35 @@ def test_joint_cpp_scar_reuses_ppf_cache_across_correlation_trials(monkeypatch):
 def test_unsupported_gas_joint_corr_path_is_explicit():
     u = _u(T=30)
 
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(NotImplementedError, match="MLE and SCAR-TM-OU only"):
         StochasticStudentCopula(d=3, corr_mode="shrinkage").fit(
             u, method="gas")
+
+
+@pytest.mark.parametrize(
+    "factory",
+    [
+        lambda: StochasticStudentCopula(d=3),
+        lambda: StochasticStudentCopula(d=3, corr_mode="shrinkage"),
+        lambda: StochasticStudentCopula(d=3, corr_mode="cholesky"),
+    ],
+)
+@pytest.mark.parametrize("method", ["gas", "scar-p-ou", "scar-m-ou"])
+def test_data_estimated_corr_is_limited_to_mle_and_scar_tm_ou(
+        factory, method):
+    u = _u(T=20)
+    kwargs = {
+        "maxiter": 1,
+        "maxfun": 5,
+        "smart_init": False,
+        "alpha0": np.array([1.0, 0.5, 0.8]),
+        "gamma0": np.array([0.1, 0.05, 0.5]),
+        "n_tr": 4,
+        "seed": 7,
+    }
+
+    with pytest.raises(NotImplementedError, match="MLE and SCAR-TM-OU only"):
+        factory().fit(u, method=method, **kwargs)
+
+    with pytest.raises(NotImplementedError, match="MLE and SCAR-TM-OU only"):
+        fit(factory(), u, method=method, **kwargs)

@@ -1,5 +1,6 @@
 """Mathematical contracts for multivariate copulas."""
 
+import math
 import numpy as np
 import pytest
 from pathlib import Path
@@ -117,8 +118,35 @@ def _materialized_equicorr_scar_rosenblatt(copula, u, fit_result, K, grid_range)
             cond_mean = rho_grid * sx / denom
             cond_var = np.maximum(1.0 - i * rho_grid ** 2 / denom, 1e-10)
             z_i = (x_norm[k, i] - cond_mean) / np.sqrt(cond_var)
-            e[k, i] = np.sum(weights[k] * norm.cdf(z_i))
+            prefix_density = _equicorr_leading_density(
+                x_norm[k, :i], rho_grid)
+            state_weights = _prefix_reweighted(weights[k], prefix_density)
+            e[k, i] = np.sum(state_weights * norm.cdf(z_i))
     return np.clip(e, eps, 1.0 - eps)
+
+
+def _prefix_reweighted(weights, prefix_density):
+    raw = weights * prefix_density
+    total = np.sum(raw)
+    if total > 0.0 and np.isfinite(total):
+        return raw / total
+    return weights
+
+
+def _equicorr_leading_density(x_prefix, rho_grid):
+    m = len(x_prefix)
+    if m <= 1:
+        return np.ones_like(rho_grid)
+    rho = rho_grid
+    a = 1.0 - rho
+    b = 1.0 + (m - 1) * rho
+    s2 = np.sum(x_prefix * x_prefix)
+    s1 = np.sum(x_prefix) ** 2
+    log_density = (
+        -0.5 * ((m - 1) * np.log(a) + np.log(b))
+        -0.5 * ((rho / a) * s2 - (rho / (a * b)) * s1)
+    )
+    return np.exp(log_density)
 
 
 def _student_scar_static_terms(R, d):
@@ -137,7 +165,101 @@ def _student_scar_static_terms(R, d):
     return beta_sub, sigma_cond_sub, R_inv_sub
 
 
+def _student_leading_density(x_prefix_grid, df_grid, R_inv, log_det):
+    x_prefix_grid = np.asarray(x_prefix_grid, dtype=np.float64)
+    if x_prefix_grid.ndim == 1:
+        x_prefix_grid = np.repeat(
+            x_prefix_grid[np.newaxis, :], len(df_grid), axis=0)
+    m = x_prefix_grid.shape[1]
+    if m <= 1:
+        return np.ones_like(df_grid)
+    out = np.empty_like(df_grid)
+    for idx, df in enumerate(df_grid):
+        x_prefix = x_prefix_grid[idx]
+        q = float(x_prefix @ R_inv @ x_prefix)
+        joint = (
+            math.lgamma(0.5 * (df + m))
+            - math.lgamma(0.5 * df)
+            - 0.5 * m * math.log(df * math.pi)
+            - 0.5 * log_det
+            - 0.5 * (df + m) * math.log1p(q / df)
+        )
+        marginal = 0.0
+        for x in x_prefix:
+            marginal += (
+                math.lgamma(0.5 * (df + 1.0))
+                - math.lgamma(0.5 * df)
+                - 0.5 * math.log(df * math.pi)
+                - 0.5 * (df + 1.0) * math.log1p((x * x) / df)
+            )
+        out[idx] = math.exp(joint - marginal)
+    return out
+
+
 def _materialized_student_scar_rosenblatt(copula, u, fit_result, K, grid_range):
+    eps = 1e-10
+    T, d = u.shape
+    kappa, mu, nu = fit_result.params.values
+    grid = TMGrid(kappa, mu, nu, T, K, grid_range)
+    x_grid = grid.z + grid.mu
+    df_grid = copula.transform(x_grid)
+    fi_grid = grid.copula_grid(u, copula)
+    weights = grid.forward_weights(fi_grid)
+    beta_sub, sigma_cond_sub, R_inv_sub = _student_scar_static_terms(copula.R, d)
+    log_det_sub = [0.0]
+    for i in range(2, d):
+        sign, log_det = np.linalg.slogdet(copula.R[:i, :i])
+        assert sign > 0
+        log_det_sub.append(float(log_det))
+    u_c = np.clip(u, eps, 1.0 - eps)
+
+    e = np.empty((T, d))
+    e[:, 0] = u[:, 0]
+    for k in range(T):
+        x_all = np.empty((grid.K, d), dtype=np.float64)
+        for dim in range(d):
+            x_all[:, dim] = t_dist.ppf(u_c[k, dim], df=df_grid)
+        for i in range(1, d):
+            x_prev = x_all[:, :i]
+            mu_cond = x_prev @ beta_sub[i - 1]
+            quad = np.sum(x_prev @ R_inv_sub[i - 1] * x_prev, axis=1)
+            df_cond = df_grid + i
+            scale = (df_grid + quad) / df_cond
+            z_i = (x_all[:, i] - mu_cond) / (
+                sigma_cond_sub[i - 1] * np.sqrt(np.maximum(scale, 1e-12)))
+            prefix_density = _student_leading_density(
+                x_all[:, :i], df_grid, R_inv_sub[i - 1], log_det_sub[i - 1])
+            state_weights = _prefix_reweighted(weights[k], prefix_density)
+            e[k, i] = np.sum(state_weights * t_dist.cdf(z_i, df=df_cond))
+    return np.clip(e, eps, 1.0 - eps)
+
+
+def _equicorr_scar_rosenblatt_predictive_only(copula, u, fit_result, K, grid_range):
+    eps = 1e-10
+    u_c = np.clip(u, eps, 1.0 - eps)
+    x_norm = norm.ppf(u_c)
+    T, d = u.shape
+    kappa, mu, nu = fit_result.params.values
+    grid = TMGrid(kappa, mu, nu, T, K, grid_range)
+    x_grid = grid.z + grid.mu
+    rho_grid = copula.transform(x_grid)
+    fi_grid = grid.copula_grid(u, copula)
+    weights = grid.forward_weights(fi_grid)
+
+    e = np.empty((T, d))
+    e[:, 0] = u[:, 0]
+    for k in range(T):
+        for i in range(1, d):
+            sx = np.sum(x_norm[k, :i])
+            denom = 1.0 + (i - 1) * rho_grid
+            cond_mean = rho_grid * sx / denom
+            cond_var = np.maximum(1.0 - i * rho_grid ** 2 / denom, 1e-10)
+            z_i = (x_norm[k, i] - cond_mean) / np.sqrt(cond_var)
+            e[k, i] = np.sum(weights[k] * norm.cdf(z_i))
+    return np.clip(e, eps, 1.0 - eps)
+
+
+def _student_scar_rosenblatt_predictive_only(copula, u, fit_result, K, grid_range):
     eps = 1e-10
     T, d = u.shape
     kappa, mu, nu = fit_result.params.values
@@ -853,6 +975,43 @@ def test_multivariate_scar_gof_matches_materialized_reference():
     dcc_got = stochastic_student_dcc_rosenblatt_transform(
         dcc, u, result, K=13, grid_range=3.0)
     np.testing.assert_allclose(dcc_got, dcc_ref, atol=8e-4, rtol=8e-4)
+
+
+def test_multivariate_scar_gof_reweights_state_by_observed_prefix():
+    u = pobs(np.random.default_rng(20260625).standard_normal((12, 3)))
+    R = np.array(
+        [
+            [1.0, 0.42, -0.18],
+            [0.42, 1.0, 0.27],
+            [-0.18, 0.27, 1.0],
+        ],
+        dtype=np.float64,
+    )
+    result = _scar_result(K=15, grid_range=3.25)
+
+    equicorr = EquicorrGaussianCopula(d=3)
+    eq_expected = _materialized_equicorr_scar_rosenblatt(
+        equicorr, u, result, K=15, grid_range=3.25)
+    eq_predictive_only = _equicorr_scar_rosenblatt_predictive_only(
+        equicorr, u, result, K=15, grid_range=3.25)
+    eq_got = equicorr_rosenblatt_transform(
+        equicorr, u, result, K=15, grid_range=3.25)
+
+    np.testing.assert_allclose(eq_got, eq_expected, atol=1e-12, rtol=1e-12)
+    assert not np.allclose(
+        eq_expected[:, 2], eq_predictive_only[:, 2], atol=1e-5, rtol=1e-5)
+
+    student = StochasticStudentCopula(d=3, R=R)
+    st_expected = _materialized_student_scar_rosenblatt(
+        student, u, result, K=15, grid_range=3.25)
+    st_predictive_only = _student_scar_rosenblatt_predictive_only(
+        student, u, result, K=15, grid_range=3.25)
+    st_got = stochastic_student_rosenblatt_transform(
+        student, u, result, K=15, grid_range=3.25)
+
+    np.testing.assert_allclose(st_got, st_expected, atol=8e-4, rtol=8e-4)
+    assert not np.allclose(
+        st_expected[:, 2], st_predictive_only[:, 2], atol=1e-5, rtol=1e-5)
 
 
 def test_equicorr_scar_gof_uses_block_batch_emissions(monkeypatch):

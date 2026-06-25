@@ -4,6 +4,10 @@ This page describes the bivariate fitting methods exposed by
 `pyscarcopula.api.fit`. Performance controls for these methods are covered in
 [Performance Tuning](performance.md).
 
+For the compact formulas behind each dynamic model, including the transfer
+filters, predictive Rosenblatt transform, and numerical convergence criteria,
+see [Mathematical Contracts](mathematical-contracts.md).
+
 Strategy compatibility is determined by explicit model capabilities. See
 [Model Architecture](architecture.md) for the distinction between class
 hierarchy, protocols, and native strategy support.
@@ -96,7 +100,10 @@ $$
 g_{t+1} = \omega + \beta g_t + \gamma s_t.
 $$
 
-It is usually faster than SCAR because there is no latent-state integral.
+The score $s_t$ is the scaled derivative of the current copula log-density
+with respect to the recursion state. Conditional on past data, GAS has a point
+state rather than a latent-state distribution. It is usually faster than SCAR
+because there is no latent-state integral.
 
 ```python
 result = fit(
@@ -157,6 +164,12 @@ result = fit(
 
 The fitted parameters are `kappa`, `mu`, and `nu`.
 
+The exact OU one-step transition is Gaussian, so all SCAR-TM-OU likelihood
+backends evaluate the same latent Markov model. They differ only in how the
+one-dimensional transition integral is approximated: Hermite spectral
+projection, a finite-grid transition matrix, or local Gauss-Hermite
+quadrature.
+
 `LatentResult.diagnostics` records objective evaluations,
 spectral/matrix/local attempts, and transition fallback counters such as
 `fallback_spectral_to_matrix`,
@@ -200,6 +213,11 @@ The fitted parameters are:
 - `kappa`: mean-reversion speed
 - `m`: long-run Kendall's tau level
 - `xi`: Jacobi volatility
+
+The Jacobi stationary law is beta, and the transition operators are built in
+tau space rather than in an unconstrained OU coordinate. The local backend uses
+the Lamperti coordinate to apply Gauss-Hermite steps while keeping tau inside
+its bounded state space.
 
 `transition_method='auto'` first tries a Jacobi spectral transition matrix on
 the tau quadrature grid. If the truncated spectral matrix has material

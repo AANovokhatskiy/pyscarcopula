@@ -55,11 +55,11 @@ nav:
   - Getting Started:
     - Installation: getting-started/installation.md
     - Quick Start: getting-started/quickstart.md
-    - Native Core Migration: release-notes/native-core-migration.md
   - User Guide:
     - Model Architecture: guide/architecture.md
     - Bivariate Copulas: guide/bivariate.md
     - Estimation Methods: guide/estimation-methods.md
+    - Mathematical Contracts: guide/mathematical-contracts.md
     - Vine Copulas: guide/vine.md
     - Prediction Semantics: guide/prediction-semantics.md
     - R-vine Conditioning: guide/rvine-conditioning.md
