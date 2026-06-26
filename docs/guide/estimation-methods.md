@@ -20,13 +20,16 @@ hierarchy, protocols, and native strategy support.
 | GAS | `'gas'` | Observation-driven score recursion | Fast dynamic dependence without latent integration |
 | SCAR-TM-OU | `'scar-tm-ou'` | OU latent state mapped to the copula parameter | Deterministic stochastic-latent likelihood |
 | SCAR-TM-JACOBI | `'scar-tm-jacobi'` | Jacobi diffusion for Kendall's tau | Bounded tau dynamics with deterministic filtering |
-| SCAR-MC-OU | `'scar-p-ou'`, `'scar-m-ou'` | OU latent state | Monte Carlo alternatives for SCAR experiments |
 
 All dynamic methods return a `LatentResult` with `params`,
 `log_likelihood`, optimizer status, and enough metadata for `predict`,
 `predictive_mean`, and GoF utilities. Model sampling is available where the
-strategy implements a path simulator; SCAR-TM-JACOBI currently supports
-prediction but not `sample`.
+strategy implements a path simulator; SCAR-TM-JACOBI supports prediction but
+not `sample`.
+
+The historical Monte Carlo SCAR strategies, `'scar-p-ou'` and `'scar-m-ou'`,
+remain available for reproducing earlier experiments. For routine dynamic
+fits, prefer deterministic TM or GAS methods.
 
 ## Gradient capability matrix
 
@@ -43,15 +46,13 @@ outer optimizer and the corresponding diagnostics.
 | SCAR-TM-JACOBI | `analytical_grad=False` | Numerical finite differences | `not_applicable` | `numerical` |
 | SCAR-TM-JACOBI | `local_fixed`, analytical gradient | Model-provided | `not_applicable` | `analytical` |
 | SCAR-TM-JACOBI | `local`, `spectral_matrix`, or `auto`, analytical gradient | Model-provided | `not_applicable` | `semi_analytical` |
-| SCAR-MC-OU | P- or M-sampler | Numerical finite differences | Not reported | Not reported |
 
 For joint Stochastic Student SCAR-TM-OU fits, C++ supplies OU and
 static-correlation derivatives. Python applies the correlation
-parameterization chain rule. If a native correlation derivative is
-unavailable for a future model, the implementation records a numerical
-correlation fallback in `correlation_gradient` and `joint_gradient`.
+parameterization chain rule. Result diagnostics report the correlation and
+joint-gradient routes in `correlation_gradient` and `joint_gradient`.
 
-For SCAR-TM-OU, SCAR-MC-OU, and SCAR-TM-JACOBI,
+For SCAR-TM-OU and SCAR-TM-JACOBI,
 `result.diagnostics["initialization"]` records how the optimizer initial point
 was obtained. It contains `requested_method`, `selected_method`, the final
 `alpha0`, and an ordered `attempts` list. Failed attempts retain only a
@@ -123,13 +124,13 @@ optimization orchestration, RNG, and sampling. Unsupported copulas and a
 missing extension fail immediately; there is no backend selector or fallback.
 
 `scaling='unit'` is the recommended production mode. `scaling='fisher'` uses
-nested finite differences and clipping/floor thresholds; it is experimental
-and its fitted optimum can be sensitive to optimizer finite-difference steps.
+nested finite differences and clipping/floor thresholds; its fitted optimum
+can be sensitive to optimizer finite-difference steps.
 
 The GAS copula score and filtering recursion are native model calculations.
 They are not the optimizer Jacobian with respect to
-`(omega, gamma, beta)`. GAS currently passes only objective values to
-L-BFGS-B, which therefore computes that outer gradient numerically. Result
+`(omega, gamma, beta)`. GAS passes objective values to L-BFGS-B, which
+therefore computes that outer gradient numerically. Result
 diagnostics distinguish these concepts with `model_score='native'` and
 `optimizer_gradient='numerical'`.
 
@@ -177,10 +178,9 @@ spectral/matrix/local attempts, and transition fallback counters such as
 
 By default, `spectral_basis_order='auto'` selects the Hermite basis size inside
 each objective evaluation from the current `kappa / (T - 1)`: 128 below
-`0.015`, 96 below `0.025`, 64 below `0.06`, and 32 otherwise. The
-only accepted automatic value is `'auto'`; the former `'adaptive'` alias is
-rejected. Use a fixed positive integer when exact basis-size reproducibility
-is needed for numerical comparisons.
+`0.015`, 96 below `0.025`, 64 below `0.06`, and 32 otherwise. Use a fixed
+positive integer when exact basis-size reproducibility is needed for numerical
+comparisons.
 
 ## SCAR-TM-JACOBI
 
@@ -194,8 +194,8 @@ $$
 
 The copula parameter is recovered from tau through the copula's
 `tau_to_param` mapping. This method is therefore available for copulas that
-implement both `tau_to_param` and `param_to_tau`; currently this includes
-Gumbel, Clayton, Frank, Joe, and bivariate Gaussian copulas.
+implement both `tau_to_param` and `param_to_tau`: Gumbel, Clayton, Frank,
+Joe, and bivariate Gaussian copulas.
 
 ```python
 result = fit(

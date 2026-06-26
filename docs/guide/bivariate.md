@@ -81,7 +81,7 @@ import numpy as np
 from pyscarcopula.api import sample, predict
 
 v = sample(copula, u, result, n=2000, rng=np.random.default_rng(2024))
-result_refit = fit(copula, pobs(v), method='scar-tm-ou')
+result_refit = fit(copula, v, method='scar-tm-ou', to_pobs=True)
 ```
 
 **`predict`** generates samples for next-step forecasting. It also supports
@@ -114,8 +114,8 @@ from pyscarcopula.api import fit
 result = fit(copula, u, method='gas', scaling='unit')
 ```
 
-There is no backend selector or silent fallback. The production recommendation
-is `scaling='unit'`. Fisher scaling remains experimental because its
+There is no backend selector or silent fallback. Use `scaling='unit'` for
+routine fits. Fisher scaling is numerically sensitive because its
 finite-difference curvature, floor, and clipping make optimization sensitive
 to numerical step sizes.
 
@@ -136,7 +136,7 @@ u_current = predict(copula, u, result, n=20_000, horizon='current',
 |--------|----------|-----------|
 | MLE | constant r | constant r |
 | SCAR-TM-OU | OU trajectory | current/posterior or one-step-ahead mixture |
-| SCAR-TM-JACOBI | not implemented | current/posterior or one-step-ahead mixture |
+| SCAR-TM-JACOBI | not available | current/posterior or one-step-ahead mixture |
 | GAS | recursive score-driven simulation | last filtered value $g_T$ |
 
 ## Diagnostics

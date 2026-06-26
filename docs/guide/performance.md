@@ -51,7 +51,7 @@ MLE estimates one constant copula parameter.
 | `maxls` | fit kwarg / `mle_optimizer.maxls` | `20` | Maximum L-BFGS-B line-search steps per iteration. |
 
 ```python
-from pyscarcopula._types import LBFGSBConfig, NumericalConfig
+from pyscarcopula import LBFGSBConfig, NumericalConfig
 
 cfg = NumericalConfig(mle_optimizer=LBFGSBConfig(gtol=1e-6))
 result = fit(copula, u, method='mle', config=cfg)
@@ -84,7 +84,7 @@ $g_t = \omega + \beta g_{t-1} + \gamma\,score_{t-1}$.
 | `score_eps` | fit kwarg / `gas_score_eps` | `1e-4` | Finite-difference step for score calculations where needed. |
 | `gamma_bound` | fit kwarg / `gas_gamma_bound` | `20.0` | Bounds score sensitivity to $[-\texttt{gamma\_bound}, \texttt{gamma\_bound}]$. |
 | `beta_bound` | fit kwarg / `gas_beta_bound` | `0.999` | Bounds persistence to $[-\texttt{beta\_bound}, \texttt{beta\_bound}]$; must be in $(0, 1)$. |
-| `scaling` | strategy kwarg | `'unit'` | Recommended score scaling mode. `'fisher'` is experimental and numerically sensitive. |
+| `scaling` | strategy kwarg | `'unit'` | Recommended score scaling mode. `'fisher'` is numerically sensitive. |
 
 ```python
 result = fit(
@@ -111,8 +111,8 @@ numerical fallback.
 
 The native score is the model score driving the GAS recursion. It is not an
 analytical gradient of the complete likelihood with respect to
-`omega`, `gamma`, and `beta`. SciPy L-BFGS-B currently obtains that optimizer
-gradient by finite differences. `GASResult.diagnostics` records these as
+`omega`, `gamma`, and `beta`. SciPy L-BFGS-B obtains that optimizer gradient
+by finite differences. `GASResult.diagnostics` records these as
 `model_score='native'` and `optimizer_gradient='numerical'`.
 
 Fisher scaling computes curvature by a second finite difference inside the GAS
@@ -208,7 +208,7 @@ responsibility. Size products are still checked for integer overflow before
 allocation, and invalid shapes or non-finite inputs are still rejected.
 
 The C++ Hermite-rule cache is a process-wide, mutex-protected LRU cache.
-Compile-time defaults limit it to 16 rules and 8 MiB of retained node, weight,
+Compile-time defaults limit it to 16 rules and 8 MiB of cached node, weight,
 basis, and weighted-basis vector storage. Rules larger than the byte budget
 are computed for the current call but are not cached.
 
@@ -488,8 +488,8 @@ analytical differentiation for the filtering recursion, so their reported
 `gradient_kind` is `semi_analytical`. For `auto`, diagnostics record the
 backend selected at the fitted parameters.
 `transition_method='spectral_coeff'` uses coefficient-space filtering instead
-of a transition matrix; it is kept for comparisons and does not support the
-analytical-gradient option.
+of a transition matrix. It is available for diagnostic comparisons and does
+not support the analytical-gradient option.
 
 The local method applies a Gaussian step in the Lamperti coordinate
 
@@ -517,9 +517,11 @@ the high-order spectral likelihood and the local likelihood at a fitted point
 is a good diagnostic; routine fitting should normally leave
 `transition_method='auto'`.
 
-### SCAR-MC
+### Historical SCAR-MC Strategies
 
-The Monte Carlo SCAR strategies are stochastic likelihood estimators.
+The Monte Carlo SCAR strategies, `scar-p-ou` and `scar-m-ou`, are stochastic
+likelihood estimators available for reproducing earlier experiments. Prefer
+`scar-tm-ou`, `scar-tm-jacobi`, or `gas` for routine model comparisons.
 
 | Parameter | Where | Default | Effect |
 |-----------|-------|---------|--------|
@@ -549,7 +551,7 @@ result = fit(
 Use `NumericalConfig` when a setting should apply to many fits:
 
 ```python
-from pyscarcopula._types import LBFGSBConfig, NumericalConfig
+from pyscarcopula import LBFGSBConfig, NumericalConfig
 
 cfg = NumericalConfig(
     gas_optimizer=LBFGSBConfig(
@@ -589,7 +591,7 @@ the dynamic refit.
 
 ```python
 from pyscarcopula import CVineCopula
-from pyscarcopula._types import LBFGSBConfig, NumericalConfig
+from pyscarcopula import LBFGSBConfig, NumericalConfig
 
 cfg = NumericalConfig(
     gas_optimizer=LBFGSBConfig(ftol=1e-12, maxfun=3000, maxiter=3000))
@@ -623,8 +625,6 @@ dynamic edge fit:
   `gh_order`, `theta_cap`, `clip_negative`, `kappa_bounds`, `xi_bounds`,
   `stationary_shape_max`, `tau_eps`, `analytical_grad`, `smart_init`,
   `verbose`
-- SCAR-MC: `alpha0`, `gtol`, `ftol`, `maxfun`, `maxiter`, `maxls`, `eps`, `n_tr`, `M_iterations`, `stationary`, `seed`,
-  `dwt`, `smart_init`, `verbose`
 
 Vine-level pruning controls reduce the number of dynamic edge fits:
 
@@ -645,7 +645,7 @@ options to edge fits through the Dissmann selector.
 
 ```python
 from pyscarcopula import RVineCopula
-from pyscarcopula._types import LBFGSBConfig, NumericalConfig
+from pyscarcopula import LBFGSBConfig, NumericalConfig
 
 cfg = NumericalConfig(
     gas_optimizer=LBFGSBConfig(ftol=1e-12, maxfun=3000, maxiter=3000))

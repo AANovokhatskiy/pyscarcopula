@@ -1,6 +1,6 @@
 # pyscarcopula
 
-A Python library for copula modelling: bivariate, multivariate, vine, and
+A Python library for dynamic copula modelling: bivariate, multivariate, vine, and
 stochastic copula models for financial time series and risk analytics.
 
 * [About](#about)
@@ -152,27 +152,24 @@ the Markov structure of the latent process. The path integral is computed as a
 sequence of matrix-vector products on a discretized grid or spectral basis,
 avoiding Monte Carlo variance at the cost of numerical approximation.
 
-For SCAR-TM-OU, `transition_method='auto'` uses a Hermite spectral likelihood
-except in narrow-kernel OU regimes, where it uses local Gauss-Hermite. In
-standardized stationary coordinates, the OU transition is diagonal in the
-probabilists-Hermite basis with eigenvalues `rho**n`,
-`rho = exp(-kappa * dt)`. The observation densities are projected back to this
-truncated basis by Gauss-Hermite quadrature. This turns the latent path
-integral into repeated small matrix multiplications and diagonal scalings. See
+For SCAR-TM-OU, `transition_method='auto'` uses a hybrid deterministic strategy:
+Hermite spectral evaluation where it is reliable, matrix-based transition
+evaluation for regimes better handled on a grid, and local Gauss-Hermite in
+narrow-kernel OU cases. In broad terms, this keeps the latent path integral as
+repeated deterministic linear-algebra updates while choosing the most suitable
+transition representation automatically. See
 [`docs/guide/performance.md`](docs/guide/performance.md) for the details and
-the available `transition_method` values, including the matrix/local numerical
-fallbacks used when a spectral evaluation is not accepted.
+the available `transition_method` values.
 
 SCAR-TM-OU uses the bundled C++ extension as its only production numerical
-engine. No backend argument is needed.
+engine.
 
 ```python
 result = fit(copula, u, method="scar-tm-ou")
 ```
 
 GAS uses the compiled numerical evaluator for likelihood, score recursion,
-state updates, prediction, and Rosenblatt paths. There is no backend selector
-or silent Python fallback:
+state updates, prediction, and Rosenblatt paths:
 
 ```python
 result = fit(copula, u, method="gas")

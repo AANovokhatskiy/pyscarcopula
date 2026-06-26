@@ -68,8 +68,8 @@ pair-copula values live in `scar/numerical_constants.hpp`.
 - `CONDITIONAL_SAMPLE_EPS` applies only to newly sampled free coordinates.
 - `PDF_FLOOR` protects density and logarithm arguments.
 
-The h-function and Rosenblatt boundaries currently have the same numeric
-value, but remain separate contracts. Vine runtime code uses the shared
+The h-function and Rosenblatt boundaries use the same numeric value, but they
+remain separate contracts. Vine runtime code uses the shared
 pseudo-observation helper; it does not define local `_EPS` constants.
 
 ## Custom Python Copulas

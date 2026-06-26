@@ -66,8 +66,6 @@ nav:
     - Multivariate Models: guide/multivariate_models.md
     - Transform Functions: guide/transforms.md
     - Performance Tuning: guide/performance.md
-  - Development Notes:
-    - R-vine Conditional Sampling: rvine-conditional-notes.md
   - API Reference:
     - Copulas: api/copulas.md
     - Vine: api/vine.md

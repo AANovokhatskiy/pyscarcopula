@@ -115,8 +115,7 @@ production choice.
 The native GAS evaluator owns the likelihood, score recursion, filtering,
 state updates, prediction state, and bivariate Rosenblatt path for supported
 models. The score used in the recursion is not the optimizer Jacobian with
-respect to $(\omega,\gamma,\beta)$; the outer L-BFGS-B gradient is currently
-numerical.
+respect to $(\omega,\gamma,\beta)$; the outer L-BFGS-B gradient is numerical.
 
 ## SCAR-TM-OU
 
