@@ -17,7 +17,7 @@ matrix method.
   and stochastic Student-t
 - **C-vine copulas**: automatic family selection, truncation, mixed SCAR/MLE
 - **R-vine conditional sampling**: exact suffix/rebuild path plus arbitrary
-  runtime-DAG + MCMC fallback
+  runtime-DAG + MCMC conditioning
 - **Estimation**: MLE, GAS, SCAR-TM-OU, SCAR-TM-JACOBI
 - **Native numerical core**: mandatory C++ evaluation for built-in point
   operations, GAS, and SCAR-TM-OU
@@ -32,9 +32,8 @@ matrix method.
 from pyscarcopula import GumbelCopula
 from pyscarcopula.api import fit, predictive_mean
 from pyscarcopula.stattests import gof_test
-from pyscarcopula._utils import pobs
 
-u = pobs(returns)
+u = returns.rank(method="average").div(len(returns) + 1).to_numpy()
 copula = GumbelCopula(rotate=180)
 
 result = fit(copula, u, method='scar-tm-ou')

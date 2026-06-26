@@ -74,7 +74,7 @@ vine.fit(
 `given_vars` is a fit-time structure-selection target. With the default
 `conditional_strict=True`, `fit` raises `ValueError` if no suffix-compatible
 exact structure is constructed. With `conditional_strict=False`, prediction can
-still fall back to the arbitrary DAG + MCMC path.
+use the arbitrary DAG + MCMC path when the exact suffix path is not available.
 
 ## Truncation
 
@@ -152,10 +152,9 @@ variables to be at the end of the R-vine variable order. This order is read
 from the anti-diagonal of the natural-order matrix. The fixed variables must
 already be last in the fitted matrix, or the fitted tree structure must be
 rebuildable into an equivalent natural-order matrix where they are last.
-Internally this is the suffix rebuild path.
 
 If that is not possible, `predict` uses the arbitrary runtime DAG + MCMC
-fallback. This path is general, but approximate and more expensive than suffix
+path. This path is general, but approximate and more expensive than suffix
 sampling.
 
 You can inspect the fitted variable order before choosing `given`:
@@ -181,9 +180,9 @@ Use a fresh `np.random.default_rng(seed)` for each call when exact
 reproducibility is required. Reusing the same generator object advances its
 random stream.
 
-Current limitations:
+Supported behavior and limits:
 
-- R-vine `fit(..., conditional_mode=...)` currently supports only
+- R-vine `fit(..., conditional_mode=...)` accepts
   `conditional_mode='suffix'`.
 - R-vine `predict` does not accept `conditional_method` or `quad_order`.
 - Arbitrary R-vine conditioning uses DAG + MCMC, not an exact closed-form

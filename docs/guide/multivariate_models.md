@@ -114,7 +114,7 @@ Gaussian copula.
 Static correlation can be handled in three modes:
 
 ```python
-# fixed correlation, current default
+# fixed correlation
 cop = StochasticStudentCopula(d=5, R=R, corr_mode="fixed")
 
 # one-parameter shrinkage toward identity
@@ -140,8 +140,7 @@ respect to its unique off-diagonal entries. Python applies the parameterization
 chain rule and remains the owner of L-BFGS-B. The spectral transition path
 also exposes native correlation derivatives. Diagnostics report
 `correlation_gradient='analytical'` and `joint_gradient='analytical'` when
-that route is used; a numerical correlation fallback is retained only for a
-future evaluator that does not expose those derivatives.
+that route is used.
 
 Static and stochastic Student models share the same Kendall preprocessing.
 Each pair uses
@@ -239,8 +238,7 @@ print(result.log_likelihood, result.n_params, result.aic, result.bic)
 
 The result stores natural model parameters, observation count, an explicit
 correlation matrix, optimizer status, diagnostics, and the common parameter
-count used by AIC/BIC. Static `fit()` methods no longer return a raw matrix or
-`(correlation, df)` tuple.
+count used by AIC/BIC.
 
 All multivariate models support the following core operations where applicable:
 

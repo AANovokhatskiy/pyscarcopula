@@ -21,10 +21,8 @@ from pyscarcopula.numerical.gas_filter import (
 
 PARAMS = (0.07, 0.35, 0.62)
 SCORE_EPS = 1e-4
-GOLDEN_SCALINGS = [
-    "unit",
-    pytest.param("fisher", marks=pytest.mark.sanitizer_numerical),
-]
+GOLDEN_SCALINGS = ["unit"]
+FISHER_SCALING = pytest.param("fisher", marks=pytest.mark.sanitizer_numerical)
 OBSERVATIONS = np.array(
     [
         [0.12, 0.83],
@@ -338,6 +336,46 @@ def test_gaussian_gas_full_paths_match_regression_values(scaling):
         r_path, expected["r"], rtol=2e-8, atol=2e-9)
     np.testing.assert_allclose(
         score_path, expected["score"], rtol=2e-8, atol=2e-9)
+
+
+@pytest.mark.parametrize("name", COPULA_FACTORIES)
+@pytest.mark.parametrize("scaling", [FISHER_SCALING])
+def test_bivariate_gas_fisher_satisfies_numerical_invariants(name, scaling):
+    copula = COPULA_FACTORIES[name]()
+
+    first = _cpp_gas.filter_result(
+        *PARAMS,
+        OBSERVATIONS,
+        copula,
+        scaling=scaling,
+        score_eps=SCORE_EPS,
+    )
+    second = _cpp_gas.filter_result(
+        *PARAMS,
+        OBSERVATIONS,
+        copula,
+        scaling=scaling,
+        score_eps=SCORE_EPS,
+    )
+
+    assert np.all(np.isfinite(first.g_path))
+    assert np.all(np.isfinite(first.r_path))
+    assert np.all(np.isfinite(first.score_path))
+    assert np.isfinite(first.log_likelihood)
+    assert np.all(np.abs(first.score_path) <= 100.0)
+
+    np.testing.assert_array_equal(first.g_path, second.g_path)
+    np.testing.assert_array_equal(first.r_path, second.r_path)
+    np.testing.assert_array_equal(first.score_path, second.score_path)
+    assert first.log_likelihood == second.log_likelihood
+
+    current = gas_predict_param(
+        *PARAMS, OBSERVATIONS, copula, scaling, SCORE_EPS, "current")
+    next_param = gas_predict_param(
+        *PARAMS, OBSERVATIONS, copula, scaling, SCORE_EPS, "next")
+    assert np.isfinite(current)
+    assert np.isfinite(next_param)
+    assert current == pytest.approx(first.r_path[-1])
 
 
 @pytest.mark.parametrize("scaling", ["unit", "fisher"])

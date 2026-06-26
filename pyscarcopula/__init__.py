@@ -51,7 +51,12 @@ from pyscarcopula.copula.base import (
     CopulaCapabilities,
 )
 from pyscarcopula.copula.multivariate import MultivariateCopula
-from pyscarcopula._types import MultivariateMLEResult, PredictConfig
+from pyscarcopula._types import (
+    LBFGSBConfig,
+    MultivariateMLEResult,
+    NumericalConfig,
+    PredictConfig,
+)
 from pyscarcopula.io import load_model, save_model
 
 
@@ -74,6 +79,8 @@ __all__ = (
     # Prediction options
     'PredictConfig',
     'MultivariateMLEResult',
+    'LBFGSBConfig',
+    'NumericalConfig',
     # Persistence
     'save_model', 'load_model',
 )

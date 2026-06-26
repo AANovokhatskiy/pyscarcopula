@@ -1,7 +1,8 @@
 """
 Risk metrics: VaR, CVaR, portfolio optimization.
 
-Pipeline (all methods: MLE, SCAR-P-OU, SCAR-M-OU, SCAR-TM-OU, GAS):
+Pipeline (all methods: MLE, SCAR-P-OU, SCAR-M-OU, SCAR-TM-OU,
+SCAR-TM-JACOBI, GAS):
   copula.fit() -> copula.predict(N_mc) / copula.sample(N_mc)
   -> marginal ppf -> loss -> minimize F_gamma -> VaR, CVaR
 
@@ -125,6 +126,11 @@ def _is_elliptical_multivariate(copula):
     return isinstance(copula, (GaussianCopula, StudentCopula))
 
 
+def _is_independent_copula(copula):
+    from pyscarcopula.copula.independent import IndependentCopula
+    return isinstance(copula, IndependentCopula)
+
+
 def _fit_copula(copula, uk, method, **kwargs):
     """Fit copula, handling interface differences."""
     if _is_elliptical_multivariate(copula):
@@ -149,7 +155,9 @@ def _risk_predict_kwargs(copula, kwargs):
 
 def _predict_copula(copula, uk, N_mc, rng=None, **kwargs):
     """Sample from fitted copula for next-step prediction."""
-    if _is_elliptical_multivariate(copula):
+    if _is_independent_copula(copula):
+        return copula.sample_at_parameter(N_mc, rng=rng)
+    elif _is_elliptical_multivariate(copula):
         # GaussianCopula/StudentCopula: simple predict (no method param)
         return copula.predict(N_mc, rng=rng)
     else:
@@ -191,15 +199,35 @@ def _get_copula_constructor(copula):
         return (RVineCopula,
                 dict(candidates=copula.candidates,
                      allow_rotations=copula.allow_rotations,
-                     criterion=copula.criterion))
+                     criterion=copula.criterion,
+                     truncation_level=copula.truncation_level,
+                     truncation_fill=copula.truncation_fill,
+                     threshold=copula.threshold,
+                     min_edge_logL=copula.min_edge_logL,
+                     transform_type=copula.transform_type))
     elif isinstance(copula, StochasticStudentCopula):
-        return (StochasticStudentCopula, dict(d=copula.d))
+        kwargs = dict(
+            d=copula.d,
+            R=(None if copula.R is None else np.array(copula.R, copy=True)),
+            corr_mode=copula.corr_mode,
+            corr_base=(
+                None if getattr(copula, "_corr_base", None) is None
+                else np.array(copula._corr_base, copy=True)),
+            corr_shrinkage_init=copula._corr_shrinkage_init,
+            cholesky_d_max=copula._cholesky_d_max,
+            allow_large_cholesky=copula._allow_large_cholesky,
+        )
+        return (StochasticStudentCopula, kwargs)
     elif isinstance(copula, EquicorrGaussianCopula):
         return (EquicorrGaussianCopula, dict(d=copula.d))
     elif isinstance(copula, (GaussianCopula, StudentCopula)):
         return (type(copula), {})
     else:
-        return (type(copula), dict(rotate=copula._rotate))
+        kwargs = dict(rotate=copula._rotate)
+        transform_type = getattr(copula, "_transform_type", None)
+        if transform_type is not None:
+            kwargs["transform_type"] = transform_type
+        return (type(copula), kwargs)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -433,7 +461,8 @@ def risk_metrics(copula, data, window_len,
                  gamma=0.95, N_mc=100000,
                  marginals_method='johnsonsu',
                  method: Literal['mle', 'scar-p-ou', 'scar-m-ou',
-                                        'scar-tm-ou', 'gas'] = 'mle',
+                                        'scar-tm-ou', 'scar-tm-jacobi',
+                                        'gas'] = 'mle',
                  optimize_portfolio=True,
                  portfolio_weight=None,
                  n_jobs=1,
@@ -450,7 +479,8 @@ def risk_metrics(copula, data, window_len,
     gamma : float or list — confidence level(s)
     N_mc : int or list — MC sample sizes
     marginals_method : str — 'normal', 'johnsonsu', etc.
-    method : str — 'mle', 'scar-p-ou', 'scar-m-ou', 'scar-tm-ou', 'gas'
+    method : str — 'mle', 'scar-p-ou', 'scar-m-ou', 'scar-tm-ou',
+        'scar-tm-jacobi', 'gas'
         Ignored for multivariate elliptical copulas (GaussianCopula,
         StudentCopula), which always use their own MLE fit.
     optimize_portfolio : bool

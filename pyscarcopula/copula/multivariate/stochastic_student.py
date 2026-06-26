@@ -734,6 +734,7 @@ class StochasticStudentCopula(MultivariateCopula):
             )
         else:
             result.diagnostics.update(diagnostics)
+        self._last_latent_result = result
         self.fit_result = result
         return result
 
@@ -930,7 +931,16 @@ class StochasticStudentCopula(MultivariateCopula):
         if params is None:
             if self.fit_result is None:
                 raise ValueError("Fit first or pass params")
-            params = self.fit_result.params.values
+            fit_result = self.fit_result
+            if getattr(fit_result, "params", None) is None:
+                fit_result = getattr(self, "_last_latent_result", None)
+            if getattr(fit_result, "params", None) is None:
+                raise ValueError(
+                    "posterior_state_weights requires latent SCAR/GAS "
+                    "parameters; call fit(..., method='scar-tm-ou') or "
+                    "pass params= explicitly"
+                )
+            params = fit_result.params.values
         params = np.asarray(params, dtype=np.float64).reshape(-1)
         if not np.all(np.isfinite(params)):
             raise ValueError("params must contain only finite values")

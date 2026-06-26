@@ -20,7 +20,7 @@ result.aic
 result.bic
 ```
 
-::: pyscarcopula._types.MultivariateMLEResult
+::: pyscarcopula.MultivariateMLEResult
 
 ## Equicorrelation Gaussian Copula
 
@@ -127,11 +127,11 @@ with an analytical joint Jacobian. C++ differentiates with respect to the
 current static correlation matrix for matrix, local, and spectral transitions;
 Python applies the chain rule to the `shrinkage` or `cholesky` raw parameters.
 Setting `analytical_grad=False` retains the fully numerical optimizer gradient.
-Likelihood evaluations always use the native engine. GAS remains
-fixed-correlation only.
+Likelihood evaluations always use the native engine. GAS uses fixed
+correlation.
 
 The C++ backend does not parameterize or optimize the static correlation
-matrix. Parameterization and L-BFGS-B ownership remain in Python.
+matrix. Parameterization and L-BFGS-B ownership stay in Python.
 
 The implementation caches the full-sample Student quantile table for repeated
 emission evaluations. The transient PPF cache is independent of correlation

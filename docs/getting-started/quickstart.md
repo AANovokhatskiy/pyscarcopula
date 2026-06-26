@@ -2,7 +2,8 @@
 
 ## Prepare data
 
-pyscarcopula works with pseudo-observations - uniform marginals obtained from ranked data.
+pyscarcopula works with pseudo-observations: uniform marginals obtained from
+ranked data.
 
 The installed package requires its bundled native extension. GAS and
 SCAR-TM-OU do not accept a backend selector.
@@ -10,12 +11,11 @@ SCAR-TM-OU do not accept a backend selector.
 ```python
 import pandas as pd
 import numpy as np
-from pyscarcopula._utils import pobs
 
 prices = pd.read_csv("data/crypto_prices.csv", index_col=0, sep=';')
 returns = np.log(prices[['BTC-USD', 'ETH-USD']] /
-                 prices[['BTC-USD', 'ETH-USD']].shift(1))[1:].values
-u = pobs(returns)
+                 prices[['BTC-USD', 'ETH-USD']].shift(1)).dropna()
+u = returns.rank(method="average").div(len(returns) + 1).to_numpy()
 ```
 
 ## Fit a bivariate copula
@@ -59,8 +59,8 @@ from pyscarcopula.api import sample, predict
 
 # sample: reproduce the fitted model (for validation)
 v = sample(copula, u, result_tm, n=2000, rng=np.random.default_rng(2024))
-result_refit = fit(copula, pobs(v), method='scar-tm-ou')
-gof_v = gof_test(copula, pobs(v), fit_result=result_refit, to_pobs=False)
+result_refit = fit(copula, v, method='scar-tm-ou', to_pobs=True)
+gof_v = gof_test(copula, v, fit_result=result_refit, to_pobs=True)
 print(f"GoF on sample: p={gof_v.pvalue:.4f}")  # expected to pass
 
 # predict: next-step forecast (for risk metrics)
@@ -78,8 +78,8 @@ u_cond = predict(copula, u, result_tm, n=20_000, given={0: 0.35},
 from pyscarcopula import CVineCopula
 
 tickers_6d = ['BTC-USD', 'ETH-USD', 'BNB-USD', 'ADA-USD', 'XRP-USD', 'DOGE-USD']
-returns_6d = np.log(prices[tickers_6d] / prices[tickers_6d].shift(1))[1:251].values
-u_6d = pobs(returns_6d)
+returns_6d = np.log(prices[tickers_6d] / prices[tickers_6d].shift(1)).dropna().iloc[:250]
+u_6d = returns_6d.rank(method="average").div(len(returns_6d) + 1).to_numpy()
 
 vine = CVineCopula()
 vine.fit(u_6d, method='scar-tm-ou',
@@ -127,7 +127,7 @@ print(diagnostics["conditional_method"])  # "suffix" or "dag_mcmc"
 This targets the fast exact R-vine conditional sampler. With the default
 `conditional_strict=True`, `fit` raises `ValueError` if it cannot construct a
 suffix-compatible structure. If a later `given` set is not suffix-compatible,
-`RVineCopula.predict` can still use the arbitrary DAG + MCMC fallback.
+`RVineCopula.predict` uses the arbitrary DAG + MCMC path.
 
 Use a fresh `np.random.default_rng(seed)` when you need exactly reproducible
 Monte Carlo output.
@@ -154,9 +154,8 @@ For the precise meaning of `given`, `given_vars`, `horizon`, and
 `scar-tm-jacobi` additionally requires a Kendall-tau parameter mapping; this is
 implemented for Gumbel, Clayton, Frank, Joe, and bivariate Gaussian copulas.
 
-Multivariate models are available from
-`pyscarcopula.copula.multivariate` and retain their top-level imports from
-`pyscarcopula`.
+Multivariate models can be imported from `pyscarcopula` or from
+`pyscarcopula.copula.multivariate`.
 
 ## Available estimation methods
 

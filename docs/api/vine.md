@@ -63,7 +63,7 @@ API signatures below are generated from the source docstrings.
 
 ## PredictConfig
 
-::: pyscarcopula._types.PredictConfig
+::: pyscarcopula.PredictConfig
 
 ## RVineMatrix
 

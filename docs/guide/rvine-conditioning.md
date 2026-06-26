@@ -48,6 +48,9 @@ Some sets that are not trailing in the fitted matrix still use the exact path
 because the fitted tree structure can be rebuilt into an equivalent
 natural-order matrix with those variables last.
 
+If all variables are fixed, `predict` returns constant rows with the supplied
+values.
+
 ## Arbitrary `given`: DAG + MCMC
 
 If a `given` set cannot be handled by the suffix exact path, `predict` builds a
@@ -120,7 +123,8 @@ The public fit-time controls are:
 The default fit-time search is `structure_search='beam'`.
 
 With `conditional_strict=False`, fit may keep a structure that is not exact for
-the target. Prediction can still use the arbitrary DAG + MCMC fallback.
+the target. Prediction uses the arbitrary DAG + MCMC path when the exact suffix
+path is not available.
 
 ## Dynamic Conditioning
 
@@ -139,7 +143,7 @@ samples, diagnostics = vine.predict(
 )
 ```
 
-Current modes:
+Modes:
 
 - `dynamic_conditioning='ignore'`: default; predict edge parameters from the
   training data only;
@@ -181,6 +185,16 @@ Common fields:
 - `dynamic_conditioning`: active dynamic-conditioning mode;
 - `updated_edges` and `skipped_edges`: dynamic-conditioning records;
 - `matrix_rebuilt`: whether the suffix exact path used a rebuilt matrix.
+
+Common skip reasons:
+
+- `next_horizon_would_advance_filter`: updating a stateful edge under
+  `horizon='next'` would advance the filter one extra step;
+- `no_training_history`: fitted history is unavailable for a dynamic edge;
+- `unsupported_or_noop`: the edge has no supported update or the update leaves
+  the state unchanged;
+- `dag_mcmc_not_suffix_supported`: `given_only` was requested for an arbitrary
+  DAG + MCMC conditioning path.
 
 ## Practical Guidance
 

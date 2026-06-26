@@ -45,7 +45,7 @@ states, and one-step predictive latent states is summarized in
 
 ## `predict` vs `sample`
 
-The sampling names now have the same meaning across model types:
+Sampling names have the same meaning across model types:
 
 - `pyscarcopula.api.sample(copula, data, result, n)` reproduces a fitted
   bivariate or multivariate model;
@@ -59,7 +59,7 @@ score-driven path.
 
 `predict(n, u=training_data)` on a fitted object generates forecast
 observations conditional on the supplied history. Omitting `u` uses the
-history retained by the last `fit`. The stateless equivalent is
+history stored by the last `fit`. The stateless equivalent is
 `pyscarcopula.api.predict(copula, data, result, n)`. For MLE this uses the same
 constant-parameter copula. Dynamic strategies such as GAS and SCAR-TM use
 their fitted time-varying state.
@@ -107,7 +107,8 @@ remaining columns from the fitted conditional copula.
 
 For bivariate copulas, `given` can fix variable `0`, variable `1`, or both.
 
-For C-vines, the implementation has its own prefix/general conditional paths.
+For C-vines, prediction uses C-vine-specific prefix and general conditional
+paths.
 
 For R-vines, `predict` uses two paths:
 
@@ -121,6 +122,9 @@ For R-vines, `predict` uses two paths:
 
 The suffix path is exact and fast. The arbitrary path is general but
 approximate and more expensive.
+
+If `given` fixes every variable, prediction returns constant rows equal to the
+supplied values.
 
 ## `given_vars`
 
@@ -140,7 +144,8 @@ prefer structures that make this set easy to condition on exactly."
 With `conditional_strict=True`, fit rejects a structure that cannot support
 the target set through the exact suffix sampler. With
 `conditional_strict=False`, fit keeps the best available structure and
-prediction may still use the arbitrary DAG + MCMC fallback.
+prediction uses the arbitrary DAG + MCMC path when the exact suffix path is
+not available.
 
 Use `given_vars` when the production conditioning set is known before fitting.
 Use `given` when calling `predict`.
@@ -161,10 +166,9 @@ This is intentionally separate from ordinary conditional sampling. Conditional
 sampling changes which variables are drawn. Dynamic conditioning changes the
 parameter state used by dynamic edges.
 
-For R-vines, dynamic conditioning is currently applied on the suffix exact
-path where fixed pseudo-observations can be propagated in a deterministic
-order through the vine. Diagnostics report which edges were updated and which
-were skipped.
+For R-vines, dynamic conditioning is applied on the suffix exact path, where
+fixed pseudo-observations can be propagated in a deterministic order through
+the vine. Diagnostics report which edges were updated and which were skipped.
 
 For stateful observation-driven edges, `given_only` is intentionally strict:
 updates are applied only with `horizon='current'`. With `horizon='next'`, the
@@ -198,9 +202,8 @@ samples, diagnostics = vine.predict(
 )
 ```
 
-Explicit kwargs override the corresponding fields in `PredictConfig`. This
-keeps old calls backward-compatible while making prediction semantics visible
-in one object.
+Explicit kwargs override the corresponding fields in `PredictConfig`, so
+call-site options and reusable configuration objects can be mixed deliberately.
 
 `mcmc_steps` and `mcmc_burnin` apply only to arbitrary R-vine conditioning
 when `conditional_method='dag_mcmc'`. They control the number of componentwise
@@ -225,3 +228,14 @@ The `mcmc` block includes per-variable acceptance rates, summary acceptance
 statistics, burn-in count, total update count, and a `low_acceptance_warning`
 flag. Low acceptance means the fallback may need more steps or a stronger
 proposal strategy.
+
+Common dynamic-conditioning skip reasons include:
+
+- `next_horizon_would_advance_filter`: `given_only` was requested with
+  `horizon='next'` for a stateful edge;
+- `no_training_history`: the edge needs fitted history to build a predictive
+  state;
+- `unsupported_or_noop`: the edge has no supported update or the update leaves
+  the state unchanged;
+- `dag_mcmc_not_suffix_supported`: `given_only` was requested for an arbitrary
+  DAG + MCMC conditioning path.

@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from pyscarcopula.api import fit
-from pyscarcopula._types import LatentResult, ou_params
+from pyscarcopula._types import LatentResult, MultivariateMLEResult, ou_params
 from pyscarcopula._utils import pobs
 from pyscarcopula.copula.multivariate.corr_param import (
     _corr_from_cholesky_params,
@@ -598,6 +598,33 @@ def test_posterior_state_weights_uses_fit_result_params_by_default():
     u = _u(T=16)
     model = StochasticStudentCopula(d=3, R=_R())
     model.fit_result = SimpleNamespace(params=ou_params(1.2, 0.5, 0.8))
+
+    implicit = model.posterior_state_weights(u, K=8, adaptive=False)
+    explicit = model.posterior_state_weights(
+        u, params=np.array([1.2, 0.5, 0.8]), K=8, adaptive=False)
+
+    np.testing.assert_allclose(implicit, explicit, rtol=0.0, atol=0.0)
+
+
+def test_posterior_state_weights_falls_back_to_last_latent_result():
+    u = _u(T=16)
+    model = StochasticStudentCopula(d=3, R=_R())
+    model._last_latent_result = LatentResult(
+        log_likelihood=1.0,
+        method="SCAR-TM-OU",
+        copula_name=model.name,
+        success=True,
+        params=ou_params(1.2, 0.5, 0.8),
+    )
+    model.fit_result = MultivariateMLEResult(
+        log_likelihood=1.0,
+        method="MLE",
+        copula_name=model.name,
+        success=True,
+        copula_param=5.0,
+        parameter_count=1,
+        n_observations=len(u),
+    )
 
     implicit = model.posterior_state_weights(u, K=8, adaptive=False)
     explicit = model.posterior_state_weights(
