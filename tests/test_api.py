@@ -8,7 +8,7 @@ from pyscarcopula import (
     IndependentCopula, CVineCopula, EquicorrGaussianCopula,
     GaussianCopula, StudentCopula, StochasticStudentCopula,
 )
-from pyscarcopula.api import fit, predict, predictive_mean
+from pyscarcopula.api import fit, mixture_h, predict, predictive_mean
 from pyscarcopula.stattests import gof_test
 from pyscarcopula._utils import pobs
 from pyscarcopula._types import (
@@ -112,6 +112,15 @@ class TestPredictiveMean:
         assert r_t.shape == (200,)
         # Should vary (not constant like MLE)
         assert np.std(r_t) > 0
+
+    def test_top_level_api_rejects_public_posterior_cache(self, random_u2):
+        cop = GumbelCopula(rotate=180)
+        result = fit(cop, random_u2, method='mle')
+
+        with pytest.raises(TypeError, match="posterior_cache"):
+            predictive_mean(cop, random_u2, result, posterior_cache={})
+        with pytest.raises(TypeError, match="posterior_cache"):
+            mixture_h(cop, random_u2, result, posterior_cache={})
 
 class TestGoFWithFitResult:
     """gof_test with explicit fit_result= parameter."""
@@ -493,6 +502,20 @@ class TestMultivariateCopulaAPI:
             cop.fit_result.diagnostics["optimizer_gradient"]
             == "analytical"
         )
+
+    @pytest.mark.parametrize(
+        "bad_data",
+        [
+            np.array([0.1, 0.2, 0.3]),
+            np.empty((0, 3)),
+            np.ones((5, 1)),
+            np.array([[0.2, np.nan], [0.4, 0.6]]),
+            np.array([[0.2, np.inf], [0.4, 0.6]]),
+        ],
+    )
+    def test_student_fit_rejects_invalid_input_early(self, bad_data):
+        with pytest.raises(ValueError):
+            StudentCopula().fit(bad_data)
 
     def test_student_fit_gof_sample_refit_gof_roundtrip(self):
         R = np.array(

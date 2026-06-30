@@ -35,6 +35,7 @@ from pyscarcopula.contrib.risk_metrics import (
     _calculate_cvar_fixed,
     _process_chunk_fixed,
 )
+from pyscarcopula.numerical import _cpp_scar_ou
 from pyscarcopula.stattests import rvine_rosenblatt_transform
 from pyscarcopula.strategy._base import get_strategy_for_result
 from pyscarcopula.vine._pair_copula import PairCopula
@@ -112,6 +113,10 @@ def _gaussian_conditional_u_mean(rho, given_u):
     mean_x = rho * x_given
     var_x = 1.0 - rho ** 2
     return norm.cdf(mean_x / np.sqrt(1.0 + var_x))
+
+
+def _raise_cpp_unsupported(*args, **kwargs):
+    raise _cpp_scar_ou.CppUnsupported("test fallback")
 
 
 class _LinearScoreCopula:
@@ -1176,6 +1181,10 @@ class TestConditionalSamplingPlanLayer:
             'pyscarcopula.numerical._cpp_scar_ou.state_distribution',
             fake_tm_state_distribution,
         )
+        monkeypatch.setattr(
+            'pyscarcopula.numerical._cpp_scar_ou.prepare_objective',
+            _raise_cpp_unsupported,
+        )
 
         samples = api_predict(
             copula,
@@ -1550,6 +1559,10 @@ class TestConditionalSamplingPlanLayer:
         monkeypatch.setattr(
             'pyscarcopula.numerical._cpp_scar_ou.state_distribution',
             fake_tm_state_distribution,
+        )
+        monkeypatch.setattr(
+            'pyscarcopula.numerical._cpp_scar_ou.prepare_objective',
+            _raise_cpp_unsupported,
         )
         strategy = get_strategy_for_result(result)
 

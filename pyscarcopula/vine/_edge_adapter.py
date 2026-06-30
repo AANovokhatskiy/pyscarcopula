@@ -167,7 +167,8 @@ def sample_r_path(copula, result, n, rng=None, param=None,
 
 def predict_r_path(copula, result, n, u_train_pair=None, horizon='next',
                    rng=None, config=None, predictive_r_mode=None,
-                   state_cache=None, cache_key=None, param=None, **kwargs):
+                   state_cache=None, cache_key=None, posterior_cache=None,
+                   param=None, **kwargs):
     """Generate an edge parameter vector for predictive vine sampling."""
     if rng is None:
         rng = np.random.default_rng()
@@ -192,6 +193,7 @@ def predict_r_path(copula, result, n, u_train_pair=None, horizon='next',
         predictive_r_mode=predictive_r_mode,
         state_cache=state_cache,
         cache_key=cache_key,
+        posterior_cache=posterior_cache,
     )
 
 
@@ -200,7 +202,9 @@ def edge_mixture_h(copula, result, u_pair, config=None, **kwargs):
     strategy = strategy_for_result(
         result, config=config, **_strategy_kwargs(result, **kwargs))
     call_kwargs = {}
-    for name in ('state_cache', 'current_cache_key', 'next_cache_key'):
+    for name in (
+            'state_cache', 'current_cache_key', 'next_cache_key',
+            'posterior_cache'):
         value = kwargs.get(name)
         if value is not None:
             call_kwargs[name] = value

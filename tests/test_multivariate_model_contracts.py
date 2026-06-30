@@ -27,7 +27,11 @@ def test_gaussian_fit_return_and_state_contract():
 
     assert isinstance(returned, MultivariateMLEResult)
     assert returned is copula.fit_result
-    assert returned.correlation_matrix is copula.corr
+    assert returned.correlation_matrix is not copula.corr
+    np.testing.assert_allclose(returned.correlation_matrix, copula.corr)
+    snapshot = returned.correlation_matrix.copy()
+    copula.corr[0, 1] = 0.75
+    np.testing.assert_allclose(returned.correlation_matrix, snapshot)
     assert returned.correlation_matrix.shape == (3, 3)
     assert returned.copula_param is None
     assert returned.method == "MLE"
@@ -45,7 +49,11 @@ def test_student_fit_return_and_state_contract():
 
     assert isinstance(returned, MultivariateMLEResult)
     assert returned is copula.fit_result
-    assert returned.correlation_matrix is copula.shape
+    assert returned.correlation_matrix is not copula.shape
+    np.testing.assert_allclose(returned.correlation_matrix, copula.shape)
+    snapshot = returned.correlation_matrix.copy()
+    copula.shape[0, 1] = 0.75
+    np.testing.assert_allclose(returned.correlation_matrix, snapshot)
     assert returned.copula_param == copula.df
     assert copula.shape.shape == (3, 3)
     assert returned.model_parameters["df"] == copula.df

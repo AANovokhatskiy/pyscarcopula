@@ -50,6 +50,7 @@ def predictive_state_equal(left, right):
 def predictive_given_update_r(edge, u_train_pair, u_observed_pair,
                               n, horizon, rng, predictive_r_mode,
                               state_cache=None, cache_key=None,
+                              posterior_cache=None,
                               strategy_for_result=None):
     """Condition one edge predictive state on a fully observed pair."""
     result = edge_result(edge)
@@ -71,6 +72,7 @@ def predictive_given_update_r(edge, u_train_pair, u_observed_pair,
         predictive_r_mode=predictive_r_mode,
         state_cache=state_cache,
         cache_key=cache_key,
+        posterior_cache=posterior_cache,
     )
     conditioned = strategy.condition_state(
         copula,
@@ -92,6 +94,7 @@ def predictive_given_update_r(edge, u_train_pair, u_observed_pair,
 def dynamic_edge_update_from_observation(
         edge, r_current, u_observed_pair, u_train_pair,
         horizon, rng, predictive_r_mode, state_cache=None, cache_key=None,
+        posterior_cache=None,
         strategy_for_result=None):
     """Return updated r vector after conditioning one eligible dynamic edge."""
     result = edge_result(edge)
@@ -134,6 +137,7 @@ def dynamic_edge_update_from_observation(
             predictive_r_mode,
             state_cache=state_cache,
             cache_key=cache_key,
+            posterior_cache=posterior_cache,
             strategy_for_result=strategy_for_result,
         )
 

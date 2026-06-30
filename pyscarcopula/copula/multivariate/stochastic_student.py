@@ -220,7 +220,9 @@ class StochasticStudentCopula(MultivariateCopula):
 
     @property
     def R(self):
-        return self._R
+        if self._R is None:
+            return None
+        return self._R.copy()
 
     @property
     def corr_mode(self):
@@ -667,7 +669,7 @@ class StochasticStudentCopula(MultivariateCopula):
                 'corr_alpha': self.corr_alpha(),
                 'correlation_matrix': self._R.copy(),
             },
-            correlation_matrix=self._R,
+            correlation_matrix=self._R.copy(),
             diagnostics=diagnostics,
         )
         self.fit_result = result

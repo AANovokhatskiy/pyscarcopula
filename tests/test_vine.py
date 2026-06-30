@@ -28,6 +28,7 @@ from pyscarcopula._types import (
     GASResult, IndependentResult, LatentResult, MLEResult, gas_params,
     ou_params,
 )
+from pyscarcopula.numerical import _cpp_scar_ou
 
 # ══════════════════════════════════════════════════════════════
 # Edge module tests
@@ -152,6 +153,12 @@ class TestPairCopulaEdge:
         monkeypatch.setattr(
             'pyscarcopula.numerical._cpp_scar_ou.mixture_h',
             fake_tm_forward_mixture_h,
+        )
+        monkeypatch.setattr(
+            'pyscarcopula.numerical._cpp_scar_ou.prepare_objective',
+            lambda *args, **kwargs: (
+                (_ for _ in ()).throw(
+                    _cpp_scar_ou.CppUnsupported("test fallback"))),
         )
 
         out = _edge_h(

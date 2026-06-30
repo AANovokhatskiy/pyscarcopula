@@ -32,8 +32,8 @@ from pyscarcopula.numerical._transition_methods import (
     normalize_jacobi_strategy_transition_method,
 )
 from pyscarcopula.numerical import copula_native
-from pyscarcopula.strategy._base import copula_dimension, register_strategy
-from pyscarcopula.strategy.predict_helpers import sample_predictive
+from pyscarcopula.strategy._base import register_strategy
+from pyscarcopula.strategy.predict_helpers import predict_from_strategy
 from pyscarcopula.strategy.initial_point import (
     _explicit_initialization_diagnostics,
     _initialization_attempt,
@@ -541,13 +541,8 @@ class SCARJacobiStrategy:
             return 1e10
 
     def predict(self, copula, u, result, n, rng=None, **kwargs):
-        if rng is None:
-            rng = np.random.default_rng()
-        r_samples = self.predictive_params(
-            copula, u, result, n, rng=rng, **kwargs)
-        d = copula_dimension(copula, u)
-        return sample_predictive(
-            copula, n, r_samples, given=kwargs.get('given'), rng=rng, d=d)
+        return predict_from_strategy(
+            self, copula, u, result, n, rng=rng, **kwargs)
 
     def predictive_params(self, copula, u, result, n, rng=None, **kwargs):
         if rng is None:

@@ -37,6 +37,7 @@ Usage
 """
 
 from copy import deepcopy
+import time
 
 import numpy as np
 
@@ -562,6 +563,22 @@ class RVineCopula:
                 max_level = max(max_level, int(t))
         return max_level
 
+    def _sample_active_edge_keys(self, max_active_tree=None):
+        """Edge keys visited by the unconditional sampling recursion."""
+        self._require_fit()
+        if max_active_tree is None:
+            max_active_tree = self._max_non_independent_tree_level()
+        if max_active_tree < 0:
+            return ()
+
+        keys = []
+        d = self.d
+        for col in range(d - 2, -1, -1):
+            top_tree = d - 2 - col
+            active_top = min(top_tree, max_active_tree)
+            keys.extend((t, col) for t in range(active_top + 1))
+        return tuple(keys)
+
     # Introspection
 
     @property
@@ -686,21 +703,28 @@ class RVineCopula:
             rng = np.random.default_rng()
 
         n = int(n)
-        if any(_edge_requires_stepwise_sample(edge)
-               for edge in self.pair_copulas.values()):
-            return self._sample_stepwise_stateful(n, rng)
+        max_active_tree = self._max_non_independent_tree_level()
+        active_keys = self._sample_active_edge_keys(max_active_tree)
+        if any(_edge_requires_stepwise_sample(self.pair_copulas[key])
+               for key in active_keys):
+            return self._sample_stepwise_stateful(
+                n, rng, active_keys=active_keys,
+                max_active_tree=max_active_tree)
 
         r_all = {
-            key: _edge_r_for_sample(edge, n, rng)
-            for key, edge in self.pair_copulas.items()
+            key: _edge_r_for_sample(self.pair_copulas[key], n, rng)
+            for key in active_keys
         }
-        return self._sample_with_r(n, r_all, rng)
+        return self._sample_with_r(
+            n, r_all, rng, max_active_tree=max_active_tree)
 
-    def _sample_with_r(self, n, r_all, rng, return_pseudo=False):
+    def _sample_with_r(self, n, r_all, rng, return_pseudo=False,
+                       max_active_tree=None):
         d = self.d
         M = self.matrix
         w = _open_unit_uniform(rng, size=(n, d))
-        max_active_tree = self._max_non_independent_tree_level()
+        if max_active_tree is None:
+            max_active_tree = self._max_non_independent_tree_level()
         if max_active_tree < 0:
             if return_pseudo:
                 pseudo_obs = {
@@ -818,7 +842,8 @@ class RVineCopula:
     # no dynamic-model formulas or result-type checks belong here.
     def _predictive_given_update_r(self, edge, u_train_pair, u_observed_pair,
                                    n, horizon, rng, predictive_r_mode,
-                                   state_cache=None, cache_key=None):
+                                   state_cache=None, cache_key=None,
+                                   posterior_cache=None):
         return predictive_given_update_r(
             edge,
             u_train_pair,
@@ -829,12 +854,14 @@ class RVineCopula:
             predictive_r_mode=predictive_r_mode,
             state_cache=state_cache,
             cache_key=cache_key,
+            posterior_cache=posterior_cache,
             strategy_for_result=_strategy_for_result,
         )
 
     def _dynamic_edge_update_from_observation(
             self, key, edge, r_current, u_pair, edge_map, train_pseudo,
-            horizon, rng, predictive_r_mode, state_cache=None):
+            horizon, rng, predictive_r_mode, state_cache=None,
+            posterior_cache=None):
         u_train_pair = None
         if train_pseudo is not None:
             u_train_pair = self._edge_pair_from_pseudo_map(
@@ -849,6 +876,7 @@ class RVineCopula:
             predictive_r_mode,
             state_cache=state_cache,
             cache_key=_predictive_state_cache_key(key, horizon),
+            posterior_cache=posterior_cache,
             strategy_for_result=_strategy_for_result,
         )
 
@@ -875,7 +903,8 @@ class RVineCopula:
 
     def _apply_given_only_dynamic_updates_ordered(
             self, n, r_all, given, start_col, matrix, pair_copulas, edge_map,
-            train_pseudo, horizon, rng, predictive_r_mode, state_cache=None):
+            train_pseudo, horizon, rng, predictive_r_mode, state_cache=None,
+            posterior_cache=None):
         d = self.d
         M = matrix
         updated = {
@@ -929,6 +958,7 @@ class RVineCopula:
                     rng,
                     predictive_r_mode,
                     state_cache=state_cache,
+                    posterior_cache=posterior_cache,
                 )
                 if r_new is not None:
                     updated[key] = np.asarray(r_new, dtype=np.float64)
@@ -954,23 +984,30 @@ class RVineCopula:
 
         return updated, diagnostics
 
-    def _sample_stepwise_stateful(self, n, rng):
+    def _sample_stepwise_stateful(self, n, rng, active_keys=None,
+                                  max_active_tree=None):
+        if max_active_tree is None:
+            max_active_tree = self._max_non_independent_tree_level()
+        if active_keys is None:
+            active_keys = self._sample_active_edge_keys(max_active_tree)
+
         edge_state = {}
-        for key, edge in self.pair_copulas.items():
+        for key in active_keys:
+            edge = self.pair_copulas[key]
             state = _edge_initial_model_state(edge)
             if state is not None:
                 edge_state[key] = state
 
         vectorized_r = {
-            key: _edge_r_for_sample(edge, n, rng)
-            for key, edge in self.pair_copulas.items()
+            key: _edge_r_for_sample(self.pair_copulas[key], n, rng)
+            for key in active_keys
             if key not in edge_state
         }
 
         out = np.empty((n, self.d), dtype=np.float64)
         for i in range(n):
             r_i = {}
-            for key in self.pair_copulas:
+            for key in active_keys:
                 if key in edge_state:
                     r_i[key] = np.array(
                         [_edge_state_r(
@@ -980,7 +1017,8 @@ class RVineCopula:
                     r_i[key] = vectorized_r[key][i:i + 1]
 
             row, pseudo_obs = self._sample_with_r(
-                1, r_i, rng, return_pseudo=True)
+                1, r_i, rng, return_pseudo=True,
+                max_active_tree=max_active_tree)
             out[i, :] = row[0]
 
             for key, state in edge_state.items():
@@ -1018,13 +1056,17 @@ class RVineCopula:
 
     def _predict_r_for_edges(self, edge_keys, pair_copulas, edge_map, n,
                              train_pseudo, horizon, rng,
-                             predictive_r_mode=None, state_cache=None):
+                             predictive_r_mode=None, state_cache=None,
+                             posterior_cache=None):
         edge_horizon = _normalize_predict_horizon(horizon)
         r_all = {}
         for key in edge_keys:
             edge = pair_copulas[key]
             u_pair = None
-            if train_pseudo is not None:
+            if (
+                    train_pseudo is not None
+                    and edge_result(edge) is not None
+                    and edge_has_dynamic_params(edge)):
                 u_pair = self._edge_pair_from_pseudo_map(
                     key, train_pseudo, edge_map)
             r_all[key] = _edge_r_for_predict(
@@ -1036,6 +1078,7 @@ class RVineCopula:
                 predictive_r_mode=predictive_r_mode,
                 state_cache=state_cache,
                 cache_key=_predictive_state_cache_key(key, edge_horizon),
+                posterior_cache=posterior_cache,
             )
         return r_all
 
@@ -1209,11 +1252,41 @@ class RVineCopula:
         horizon = pcfg.horizon
         dynamic_conditioning = pcfg.dynamic_conditioning
         predictive_r_mode = pcfg.predictive_r_mode
+        if pcfg.return_diagnostics:
+            predict_start = time.perf_counter()
+            timings = {}
+
+            def timed(name, call):
+                start = time.perf_counter()
+                try:
+                    return call()
+                finally:
+                    timings[name] = (
+                        timings.get(name, 0.0)
+                        + time.perf_counter() - start)
+
+            def attach_timings(diagnostics):
+                timings["total"] = time.perf_counter() - predict_start
+                diagnostics["timings_ms"] = {
+                    name: 1e3 * value
+                    for name, value in sorted(timings.items())
+                }
+                return diagnostics
+        else:
+            def timed(_name, call):
+                return call()
+
+            def attach_timings(diagnostics):
+                return diagnostics
+
         if rng is None:
             rng = np.random.default_rng()
 
         n = int(n)
-        given = validate_rvine_given(pcfg.given, self.d)
+        given = timed(
+            "validate_given",
+            lambda: validate_rvine_given(pcfg.given, self.d),
+        )
         target_given = (
             bool(given)
             and self._target_given_vars
@@ -1227,11 +1300,14 @@ class RVineCopula:
                 "sampling for that target set"
             )
         if len(given) == self.d:
-            out = np.empty((n, self.d), dtype=np.float64)
-            for i in range(self.d):
-                out[:, i] = given[i]
+            def fill_given():
+                out_given = np.empty((n, self.d), dtype=np.float64)
+                for i in range(self.d):
+                    out_given[:, i] = given[i]
+                return out_given
+            out = timed("fill_all_given", fill_given)
             if pcfg.return_diagnostics:
-                return out, {
+                diagnostics = {
                     'given': dict(given),
                     'dynamic_conditioning': dynamic_conditioning,
                     'suffix_start_col': 0,
@@ -1239,8 +1315,12 @@ class RVineCopula:
                     'skipped_edges': [],
                     'all_variables_given': True,
                 }
+                return out, attach_timings(diagnostics)
             return out
-        suffix_state = self._suffix_sampling_state(given) if given else None
+        suffix_state = timed(
+            "suffix_state",
+            lambda: self._suffix_sampling_state(given) if given else None,
+        )
 
         u_ref = self._last_u if u is None else np.asarray(
             u, dtype=np.float64)
@@ -1250,7 +1330,13 @@ class RVineCopula:
                 f"got {u_ref.shape}"
             )
 
-        train_pseudo = self._compute_pseudo_obs(u_ref) if u_ref is not None else None
+        train_pseudo = timed(
+            "compute_pseudo_obs",
+            lambda: (
+                self._compute_pseudo_obs(u_ref)
+                if u_ref is not None else None
+            ),
+        )
         if suffix_state is None:
             suffix_start_col = None
             matrix = self.matrix
@@ -1272,38 +1358,56 @@ class RVineCopula:
             'skipped_edges': [],
         }
         state_cache = {}
+        posterior_cache = {}
 
         if given:
             if suffix_start_col is None:
-                dag = build_runtime_rvine_dag(self.matrix, self._edge_map)
-                plan = plan_conditional_sample(dag, given, self.d)
-                r_all = self._predict_r_for_edges(
-                    self.pair_copulas.keys(),
-                    self.pair_copulas,
-                    self._edge_map,
-                    n,
-                    train_pseudo,
-                    horizon,
-                    rng,
-                    predictive_r_mode=predictive_r_mode,
-                    state_cache=state_cache,
+                dag = timed(
+                    "dag_build",
+                    lambda: build_runtime_rvine_dag(
+                        self.matrix, self._edge_map),
                 )
-                initial = self._sample_dag_given_with_r(
-                    n,
-                    r_all,
-                    rng,
-                    given,
-                    plan,
-                    self.pair_copulas,
+                plan = timed(
+                    "dag_plan",
+                    lambda: plan_conditional_sample(dag, given, self.d),
                 )
-                samples, mcmc_diag = self._sample_arbitrary_given_mcmc(
-                    n,
-                    r_all,
-                    rng,
-                    given,
-                    initial=initial,
-                    n_steps=pcfg.mcmc_steps,
-                    burnin_steps=pcfg.mcmc_burnin,
+                r_all = timed(
+                    "predict_r_for_edges",
+                    lambda: self._predict_r_for_edges(
+                        self.pair_copulas.keys(),
+                        self.pair_copulas,
+                        self._edge_map,
+                        n,
+                        train_pseudo,
+                        horizon,
+                        rng,
+                        predictive_r_mode=predictive_r_mode,
+                        state_cache=state_cache,
+                        posterior_cache=posterior_cache,
+                    ),
+                )
+                initial = timed(
+                    "dag_initial_sample",
+                    lambda: self._sample_dag_given_with_r(
+                        n,
+                        r_all,
+                        rng,
+                        given,
+                        plan,
+                        self.pair_copulas,
+                    ),
+                )
+                samples, mcmc_diag = timed(
+                    "dag_mcmc_sample",
+                    lambda: self._sample_arbitrary_given_mcmc(
+                        n,
+                        r_all,
+                        rng,
+                        given,
+                        initial=initial,
+                        n_steps=pcfg.mcmc_steps,
+                        burnin_steps=pcfg.mcmc_burnin,
+                    ),
                 )
                 if pcfg.return_diagnostics:
                     diagnostics['conditional_method'] = 'dag_mcmc'
@@ -1319,9 +1423,62 @@ class RVineCopula:
                             r_all,
                             'dag_mcmc_not_suffix_supported',
                         )
-                    return samples, diagnostics
+                    return samples, attach_timings(diagnostics)
                 return samples
-            r_all = self._predict_r_for_edges(
+            r_all = timed(
+                "predict_r_for_edges",
+                lambda: self._predict_r_for_edges(
+                    pair_copulas.keys(),
+                    pair_copulas,
+                    edge_map,
+                    n,
+                    train_pseudo,
+                    horizon,
+                    rng,
+                    predictive_r_mode=predictive_r_mode,
+                    state_cache=state_cache,
+                    posterior_cache=posterior_cache,
+                ),
+            )
+            if dynamic_conditioning == 'given_only':
+                r_all, dynamic_diag = timed(
+                    "dynamic_update",
+                    lambda: self._apply_given_only_dynamic_updates_ordered(
+                        n,
+                        r_all,
+                        given,
+                        suffix_start_col,
+                        matrix=matrix,
+                        pair_copulas=pair_copulas,
+                        edge_map=edge_map,
+                        train_pseudo=train_pseudo,
+                        horizon=horizon,
+                        rng=rng,
+                        predictive_r_mode=predictive_r_mode,
+                        state_cache=state_cache,
+                        posterior_cache=posterior_cache,
+                    ),
+                )
+                diagnostics['updated_edges'] = dynamic_diag['updated_edges']
+                diagnostics['skipped_edges'] = dynamic_diag['skipped_edges']
+            samples = timed(
+                "suffix_sample",
+                lambda: self._sample_suffix_given_with_r(
+                    n,
+                    r_all,
+                    rng,
+                    given,
+                    suffix_start_col,
+                    matrix=matrix,
+                    pair_copulas=pair_copulas,
+                ),
+            )
+            if pcfg.return_diagnostics:
+                return samples, attach_timings(diagnostics)
+            return samples
+        r_all = timed(
+            "predict_r_for_edges",
+            lambda: self._predict_r_for_edges(
                 pair_copulas.keys(),
                 pair_copulas,
                 edge_map,
@@ -1331,48 +1488,13 @@ class RVineCopula:
                 rng,
                 predictive_r_mode=predictive_r_mode,
                 state_cache=state_cache,
-            )
-            if dynamic_conditioning == 'given_only':
-                r_all, dynamic_diag = self._apply_given_only_dynamic_updates_ordered(
-                    n,
-                    r_all,
-                    given,
-                    suffix_start_col,
-                    matrix=matrix,
-                    pair_copulas=pair_copulas,
-                    edge_map=edge_map,
-                    train_pseudo=train_pseudo,
-                    horizon=horizon,
-                    rng=rng,
-                    predictive_r_mode=predictive_r_mode,
-                    state_cache=state_cache,
-                )
-                diagnostics['updated_edges'] = dynamic_diag['updated_edges']
-                diagnostics['skipped_edges'] = dynamic_diag['skipped_edges']
-            samples = self._sample_suffix_given_with_r(
-                n,
-                r_all,
-                rng,
-                given,
-                suffix_start_col,
-                matrix=matrix,
-                pair_copulas=pair_copulas,
-            )
-            if pcfg.return_diagnostics:
-                return samples, diagnostics
-            return samples
-        r_all = self._predict_r_for_edges(
-            pair_copulas.keys(),
-            pair_copulas,
-            edge_map,
-            n,
-            train_pseudo,
-            horizon,
-            rng,
-            predictive_r_mode=predictive_r_mode,
-            state_cache=state_cache,
+                posterior_cache=posterior_cache,
+            ),
         )
-        samples = self._sample_with_r(n, r_all, rng)
+        samples = timed(
+            "unconditional_sample",
+            lambda: self._sample_with_r(n, r_all, rng),
+        )
         if pcfg.return_diagnostics:
-            return samples, diagnostics
+            return samples, attach_timings(diagnostics)
         return samples

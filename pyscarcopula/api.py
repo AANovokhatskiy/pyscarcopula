@@ -50,6 +50,13 @@ def _as_float64_array_no_copy(value):
     return np.asarray(value, dtype=np.float64)
 
 
+def _reject_public_posterior_cache(kwargs):
+    if "posterior_cache" in kwargs:
+        raise TypeError(
+            "posterior_cache is an internal runtime cache and is not "
+            "accepted by the top-level API")
+
+
 def fit(copula, data, method='scar-tm-ou', to_pobs=False,
         config: NumericalConfig | None = None, **kwargs) -> FitResult:
     """Fit a copula to data. Does not mutate the copula.
@@ -127,6 +134,7 @@ def predictive_mean(copula, data, result: FitResult,
     """
     u = np.asarray(data, dtype=np.float64)
     validate_copula_data(copula, u)
+    _reject_public_posterior_cache(kwargs)
     strategy = get_strategy_for_result(result, config=config, **kwargs)
     return strategy.predictive_mean(copula, u, result)
 
@@ -155,10 +163,17 @@ def mixture_h(copula, data, result: FitResult,
     if capabilities is not None and not capabilities.supports_pair_ops:
         raise NotImplementedError(
             f"{type(copula).__name__} does not expose pair h-functions")
-    strategy = get_strategy_for_result(result, config=config, **kwargs)
+    _reject_public_posterior_cache(kwargs)
+    runtime_names = ('state_cache', 'current_cache_key', 'next_cache_key')
+    strategy_kwargs = {
+        name: value
+        for name, value in kwargs.items()
+        if name not in runtime_names
+    }
+    strategy = get_strategy_for_result(result, config=config, **strategy_kwargs)
     runtime_kwargs = {
         name: kwargs[name]
-        for name in ('state_cache', 'current_cache_key', 'next_cache_key')
+        for name in runtime_names
         if name in kwargs
     }
     return strategy.mixture_h(copula, u, result, **runtime_kwargs)

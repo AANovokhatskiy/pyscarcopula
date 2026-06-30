@@ -17,8 +17,24 @@ class CppUnsupported(CppError):
     """Raised when a model combination is not implemented in C++."""
 
 
+_CPP_STATUS_NAMES = {
+    0: "ok",
+    1: "null_pointer",
+    2: "invalid_size",
+    3: "invalid_family",
+    4: "invalid_rotation",
+    5: "invalid_transform",
+    6: "invalid_parameter",
+    7: "numerical_failure",
+}
+
 _MODULE = None
 _MODULE_ERROR = None
+
+
+def cpp_status_name(status: int) -> str:
+    """Return the shared name for native kernel status codes."""
+    return _CPP_STATUS_NAMES.get(int(status), "unknown")
 
 
 def load():

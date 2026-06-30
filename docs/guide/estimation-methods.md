@@ -51,6 +51,9 @@ For joint Stochastic Student SCAR-TM-OU fits, C++ supplies OU and
 static-correlation derivatives. Python applies the correlation
 parameterization chain rule. Result diagnostics report the correlation and
 joint-gradient routes in `correlation_gradient` and `joint_gradient`.
+When the prepared native objective is used, diagnostics also include
+`prepared_native_evaluator`, `prepared_native_evaluator_count`, and
+`prepared_native_fallback`.
 
 For SCAR-TM-OU and SCAR-TM-JACOBI,
 `result.diagnostics["initialization"]` records how the optimizer initial point

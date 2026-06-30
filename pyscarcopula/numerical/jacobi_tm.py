@@ -6,19 +6,14 @@ import numpy as np
 from scipy.special import betaln, digamma, eval_jacobi, roots_jacobi
 
 from pyscarcopula._utils import clip_h_function_values
+from pyscarcopula.numerical._arrays import validate_positive_int
 from pyscarcopula.numerical import copula_native
 from pyscarcopula.numerical._transition_methods import (
     normalize_jacobi_matrix_transition_method,
 )
 
 
-def _validate_positive_int(value, name):
-    if isinstance(value, (bool, np.bool_)):
-        raise TypeError(f"{name} must be a positive integer")
-    value = int(value)
-    if value <= 0:
-        raise ValueError(f"{name} must be positive")
-    return value
+_validate_positive_int = validate_positive_int
 
 
 def _jacobi_stationary_shape(kappa, m, xi):

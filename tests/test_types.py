@@ -329,7 +329,10 @@ class TestFitResults:
         assert result.n_params == 3
         assert result.aic == pytest.approx(2 * 3 - 2 * 12.5)
         assert result.bic == pytest.approx(np.log(100) * 3 - 2 * 12.5)
-        assert result.correlation_matrix is correlation
+        assert result.correlation_matrix is not correlation
+        np.testing.assert_allclose(result.correlation_matrix, correlation)
+        correlation[0, 1] = 0.5
+        assert result.correlation_matrix[0, 1] == 0.0
 
         with pytest.raises(ValueError):
             MultivariateMLEResult(

@@ -31,6 +31,7 @@ SCAR_CORE_SOURCES = [
     "scar_ou/prediction.cpp",
     "scar_ou/state_distribution.cpp",
     "scar_ou/evaluator.cpp",
+    "scar_ou/prepared.cpp",
     "scar_ou/grid.cpp",
     "scar_ou/quadrature.cpp",
     "scar_ou/transition.cpp",

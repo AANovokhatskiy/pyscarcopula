@@ -113,6 +113,14 @@ bool student_corr_score_row(
     const std::vector<double>& df_grid,
     const std::vector<double>& precision,
     double* scores);
+bool student_corr_directional_score_row(
+    const scar::CopulaSpec& spec,
+    const double* row,
+    std::int64_t row_index,
+    const std::vector<double>& df_grid,
+    const std::vector<double>& precision,
+    const std::vector<double>& direction,
+    double* scores);
 void student_fill_row(
     const scar::CopulaSpec& spec,
     const double* row,

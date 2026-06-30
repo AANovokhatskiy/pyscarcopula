@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import numpy as np
 
-from pyscarcopula.strategy._base import get_copula_capabilities
+from pyscarcopula.strategy._base import (
+    copula_dimension,
+    get_copula_capabilities,
+)
 
 
 def validate_given(given):
@@ -102,3 +105,13 @@ def sample_predictive(copula, n, r, given=None, rng=None, d=None):
             "copulas and vine models"
         )
     return conditional_sample_bivariate(copula, n, r, given=given, rng=rng)
+
+
+def predict_from_strategy(strategy, copula, u, result, n, rng=None, **kwargs):
+    """Shared strategy predict implementation for predictive parameter paths."""
+    if rng is None:
+        rng = np.random.default_rng()
+    r = strategy.predictive_params(copula, u, result, n, rng=rng, **kwargs)
+    d = copula_dimension(copula, u)
+    return sample_predictive(
+        copula, n, r, given=kwargs.get("given"), rng=rng, d=d)

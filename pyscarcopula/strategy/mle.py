@@ -19,7 +19,10 @@ from pyscarcopula.strategy._base import (
     is_multivariate_copula,
     register_strategy,
 )
-from pyscarcopula.strategy.predict_helpers import sample_predictive
+from pyscarcopula.strategy.predict_helpers import (
+    predict_from_strategy,
+    sample_predictive,
+)
 from pyscarcopula.numerical import static_likelihood
 
 
@@ -191,10 +194,8 @@ class MLEStrategy:
 
     def predict(self, copula, u, result, n, rng=None, **kwargs):
         """Predict = sample for MLE (constant parameter)."""
-        r = self.predictive_params(copula, u, result, n, rng=rng, **kwargs)
-        d = copula_dimension(copula, u)
-        return sample_predictive(
-            copula, n, r, given=kwargs.get('given'), rng=rng, d=d)
+        return predict_from_strategy(
+            self, copula, u, result, n, rng=rng, **kwargs)
 
     def predictive_params(self, copula, u, result, n, rng=None, **kwargs):
         """Constant predictive parameter for MLE."""

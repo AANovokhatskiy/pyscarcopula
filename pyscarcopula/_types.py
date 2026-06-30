@@ -465,8 +465,8 @@ class MultivariateMLEResult(MLEResult):
             self, "n_observations", int(self.n_observations))
 
         if self.correlation_matrix is not None:
-            correlation = np.asarray(
-                self.correlation_matrix, dtype=np.float64)
+            correlation = np.array(
+                self.correlation_matrix, dtype=np.float64, copy=True)
             if (
                     correlation.ndim != 2
                     or correlation.shape[0] != correlation.shape[1]):

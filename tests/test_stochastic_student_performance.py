@@ -11,6 +11,9 @@ from pyscarcopula._utils import pobs
 from pyscarcopula.copula.multivariate.stochastic_student import (
     StochasticStudentCopula,
 )
+from pyscarcopula.copula.multivariate.corr_param import (
+    _shrinkage_raw_corr_direction,
+)
 from pyscarcopula.numerical import _cpp_scar_ou
 from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
 from pyscarcopula.numerical.gas_filter import gas_filter
@@ -246,6 +249,75 @@ def test_stochastic_student_warm_gradient_benchmark(
         wrapper_ms=f"{1e3 * wrapper_elapsed:.3f}",
         cpp_ms=f"{1e3 * cpp_elapsed:.3f}",
         wrapper_overhead=f"{wrapper_elapsed / cpp_elapsed:.2f}",
+    )
+
+
+@pytest.mark.benchmark
+def test_stochastic_student_prepared_spectral_directional_benchmark():
+    _skip_unless_enabled()
+    _skip_unless_cpp_available()
+    d = 10
+    T = 120
+    n_calls = 20
+    _, u = _example_student(d=d, T=T)
+    corr_base = np.full((d, d), 0.25, dtype=np.float64)
+    np.fill_diagonal(corr_base, 1.0)
+    copula = StochasticStudentCopula(
+        d=d,
+        R=corr_base,
+        corr_mode="shrinkage",
+        corr_base=corr_base,
+        allow_large_cholesky=True,
+    )
+    raw = np.array([0.2], dtype=np.float64)
+    copula._set_corr_from_params(raw)
+    direction = _shrinkage_raw_corr_direction(raw, copula._corr_base)
+    config = AutoTMConfig(
+        transition_method="spectral",
+        basis_order=16,
+        quad_order=48,
+    )
+    params = (1.1, 0.7, 0.9)
+    prepared = _cpp_scar_ou.prepare_objective(u, copula, config)
+
+    def functional_calls():
+        result = None
+        for _ in range(n_calls):
+            result = _cpp_scar_ou.neg_loglik_with_grad_and_corr_directional_info(
+                *params, u, copula, direction, config)
+        return result
+
+    def prepared_calls():
+        result = None
+        for _ in range(n_calls):
+            result = prepared.neg_loglik_with_grad_and_corr_directional_info(
+                *params, direction)
+        return result
+
+    functional_result = functional_calls()
+    prepared_result = prepared_calls()
+    functional_elapsed, measured_functional = _median_elapsed(
+        functional_calls, repeats=3)
+    prepared_elapsed, measured_prepared = _median_elapsed(
+        prepared_calls, repeats=3)
+
+    np.testing.assert_allclose(
+        prepared_result[0], functional_result[0], rtol=0.0, atol=0.0)
+    np.testing.assert_allclose(
+        prepared_result[1], functional_result[1], rtol=0.0, atol=0.0)
+    np.testing.assert_allclose(
+        prepared_result[2], functional_result[2], rtol=0.0, atol=0.0)
+    assert prepared_result[2].shape == (1,)
+    assert measured_functional[3]["backend"] == "spectral"
+    assert measured_prepared[3]["backend"] == "spectral"
+    _print_benchmark(
+        "scar_prepared_spectral_directional",
+        T=T,
+        d=d,
+        calls=n_calls,
+        functional_ms=f"{1e3 * functional_elapsed:.3f}",
+        prepared_ms=f"{1e3 * prepared_elapsed:.3f}",
+        speedup=f"{functional_elapsed / prepared_elapsed:.2f}",
     )
 
 

@@ -21,7 +21,7 @@ from pyscarcopula.vine._edge_adapter import (
 
 def _edge_h(edge, u_conditioned, u_given, config=None, u_pair=None,
             state_cache=None, current_cache_key=None, next_cache_key=None,
-            **strategy_kwargs):
+            posterior_cache=None, **strategy_kwargs):
     """Compute h(u_conditioned | u_given) for a pair edge."""
     copula = edge_copula(edge)
     if isinstance(copula, IndependentCopula):
@@ -49,6 +49,7 @@ def _edge_h(edge, u_conditioned, u_given, config=None, u_pair=None,
         state_cache=state_cache,
         current_cache_key=current_cache_key,
         next_cache_key=next_cache_key,
+        posterior_cache=posterior_cache,
         **strategy_kwargs)
 
 
@@ -122,7 +123,8 @@ def _edge_r_for_sample(edge, n, rng=None):
 
 def _edge_r_for_predict(edge, n, u_train_pair=None, horizon='next',
                         rng=None, config=None, predictive_r_mode=None,
-                        state_cache=None, cache_key=None):
+                        state_cache=None, cache_key=None,
+                        posterior_cache=None):
     """Generate an r vector for one-step predictive sampling."""
     if rng is None:
         rng = np.random.default_rng()
@@ -139,6 +141,7 @@ def _edge_r_for_predict(edge, n, u_train_pair=None, horizon='next',
         predictive_r_mode=predictive_r_mode,
         state_cache=state_cache,
         cache_key=cache_key,
+        posterior_cache=posterior_cache,
         param=edge_param(edge),
     )
 

@@ -42,7 +42,7 @@ class GaussianCopula(MultivariateCopula):
             model_parameters={
                 "correlation_matrix": self.corr.copy(),
             },
-            correlation_matrix=self.corr,
+            correlation_matrix=self.corr.copy(),
             diagnostics={
                 "estimator": "gaussian_score_correlation",
                 "corr_matrix": self.corr.copy(),

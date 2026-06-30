@@ -320,3 +320,28 @@ def _corr_gradient_to_raw_params(
             raw_gradient[pos] = A_gradient[i, j]
             pos += 1
     return raw_gradient
+
+
+def _shrinkage_raw_corr_direction(
+        params: np.ndarray,
+        corr_base: np.ndarray) -> np.ndarray:
+    """Return lower-triangle ``dR/draw`` for shrinkage correlation."""
+    params = np.asarray(params, dtype=np.float64).reshape(-1)
+    if params.size != 1:
+        raise ValueError("shrinkage direction requires one raw parameter")
+    corr_base = np.asarray(corr_base, dtype=np.float64)
+    if corr_base.ndim != 2 or corr_base.shape[0] != corr_base.shape[1]:
+        raise ValueError("corr_base must be a square matrix")
+    if not np.all(np.isfinite(corr_base)):
+        raise ValueError("corr_base must contain only finite values")
+
+    d = corr_base.shape[0]
+    direction = np.empty(cholesky_corr_n_params(d), dtype=np.float64)
+    alpha = float(sigmoid(params[0]))
+    factor = alpha * (1.0 - alpha)
+    pos = 0
+    for i in range(1, d):
+        for j in range(i):
+            direction[pos] = factor * corr_base[i, j]
+            pos += 1
+    return direction

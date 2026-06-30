@@ -25,7 +25,10 @@ from pyscarcopula.numerical._arrays import as_float64_array
 from pyscarcopula.numerical._transition_methods import (
     normalize_ou_transition_method,
 )
-from pyscarcopula.strategy.predict_helpers import sample_predictive
+from pyscarcopula.strategy.predict_helpers import (
+    predict_from_strategy,
+    sample_predictive,
+)
 from pyscarcopula.strategy.initial_point import (
     _explicit_initialization_diagnostics,
     _fallback_initialization_diagnostics,
@@ -36,6 +39,7 @@ from pyscarcopula.strategy.initial_point import (
 from pyscarcopula.numerical import _cpp_scar_ou, copula_native
 from pyscarcopula.copula.multivariate.corr_param import (
     _corr_gradient_to_raw_params,
+    _shrinkage_raw_corr_direction,
 )
 
 
@@ -203,6 +207,188 @@ def _record_backend_diagnostics(diagnostics: dict, info: dict,
             diagnostics["last_spectral_basis_order"] = basis_order_int
     if chain:
         diagnostics["last_fallback_chain"] = tuple(chain)
+
+
+class _PreparedScarOuFitCache:
+    """Prepared native SCAR-OU objectives scoped to one optimizer loop."""
+
+    def __init__(self, u, copula, diagnostics):
+        self.u = u
+        self.copula = copula
+        self.diagnostics = diagnostics
+        self.cache = {}
+        self.disabled = False
+        diagnostics.setdefault("prepared_native_evaluator", False)
+        diagnostics.setdefault("prepared_native_evaluator_count", 0)
+        diagnostics.setdefault("prepared_native_fallback", None)
+
+    def disable(self, reason):
+        self.disabled = True
+        self.cache.clear()
+        self.diagnostics["prepared_native_evaluator"] = False
+        self.diagnostics["prepared_native_fallback"] = reason
+
+    def prepared_for(self, auto_config):
+        if self.disabled:
+            return None
+        try:
+            prepared = self.cache.get(auto_config)
+            if prepared is None:
+                prepared = _cpp_scar_ou.prepare_objective(
+                    self.u, self.copula, auto_config)
+                self.cache[auto_config] = prepared
+                self.diagnostics["prepared_native_evaluator"] = True
+                self.diagnostics["prepared_native_evaluator_count"] = (
+                    len(self.cache))
+            return prepared
+        except AttributeError:
+            self.disable("missing_api")
+            return None
+        except _cpp_scar_ou.CppUnsupported:
+            self.disable("unsupported")
+            return None
+
+    def _call(self, auto_config, prepared_call, fallback_call):
+        prepared = self.prepared_for(auto_config)
+        if prepared is not None:
+            try:
+                prepared.update_copula(self.copula)
+                return prepared_call(prepared)
+            except AttributeError:
+                self.disable("missing_method")
+            except _cpp_scar_ou.CppUnsupported:
+                self.disable("unsupported_method")
+        return fallback_call()
+
+    def neg_loglik_info(self, kappa, mu, nu, auto_config):
+        return self._call(
+            auto_config,
+            lambda prepared: prepared.neg_loglik_info(kappa, mu, nu),
+            lambda: _cpp_scar_ou.neg_loglik_info(
+                kappa, mu, nu, self.u, self.copula, auto_config),
+        )
+
+    def neg_loglik_with_grad_info(self, kappa, mu, nu, auto_config):
+        return self._call(
+            auto_config,
+            lambda prepared: prepared.neg_loglik_with_grad_info(
+                kappa, mu, nu),
+            lambda: _cpp_scar_ou.neg_loglik_with_grad_info(
+                kappa, mu, nu, self.u, self.copula, auto_config),
+        )
+
+    def neg_loglik_with_grad_and_corr_info(
+            self, kappa, mu, nu, auto_config):
+        return self._call(
+            auto_config,
+            lambda prepared: prepared.neg_loglik_with_grad_and_corr_info(
+                kappa, mu, nu),
+            lambda: _cpp_scar_ou.neg_loglik_with_grad_and_corr_info(
+                kappa, mu, nu, self.u, self.copula, auto_config),
+        )
+
+    def neg_loglik_with_grad_and_corr_directional_info(
+            self, kappa, mu, nu, direction, auto_config):
+        return self._call(
+            auto_config,
+            lambda prepared: (
+                prepared.neg_loglik_with_grad_and_corr_directional_info(
+                    kappa, mu, nu, direction)),
+            lambda: (
+                _cpp_scar_ou.neg_loglik_with_grad_and_corr_directional_info(
+                    kappa, mu, nu, self.u, self.copula, direction,
+                    auto_config)),
+        )
+
+
+_POSTERIOR_WORKSPACE_KEY = object()
+_POSTERIOR_WORKSPACE_MISSING = object()
+_POSTERIOR_WORKSPACE_UNSUPPORTED = object()
+
+
+class _PreparedScarOuPosteriorCache:
+    """Prepared native posterior evaluators scoped to one caller workflow."""
+
+    def __init__(self):
+        self.cache = {}
+        self.disabled = False
+
+    def disable(self):
+        self.disabled = True
+        self.cache.clear()
+
+    def prepared_for(self, u, copula, auto_config):
+        if self.disabled:
+            return None
+        key = (id(u), id(copula), auto_config)
+        prepared = self.cache.get(key, _POSTERIOR_WORKSPACE_MISSING)
+        if prepared is _POSTERIOR_WORKSPACE_UNSUPPORTED:
+            return None
+        if prepared is _POSTERIOR_WORKSPACE_MISSING:
+            try:
+                prepared = _cpp_scar_ou.prepare_objective(
+                    u, copula, auto_config)
+            except AttributeError:
+                self.disable()
+                return None
+            except _cpp_scar_ou.CppUnsupported:
+                self.cache[key] = _POSTERIOR_WORKSPACE_UNSUPPORTED
+                return None
+            self.cache[key] = prepared
+        try:
+            prepared.update_copula(copula)
+            return prepared
+        except AttributeError:
+            self.disable()
+            return None
+        except _cpp_scar_ou.CppUnsupported:
+            self.cache[key] = _POSTERIOR_WORKSPACE_UNSUPPORTED
+            return None
+
+    def _call(self, u, copula, auto_config, prepared_call, fallback_call):
+        prepared = self.prepared_for(u, copula, auto_config)
+        if prepared is not None:
+            try:
+                return prepared_call(prepared)
+            except AttributeError:
+                self.disable()
+            except _cpp_scar_ou.CppUnsupported:
+                self.cache[(id(u), id(copula), auto_config)] = (
+                    _POSTERIOR_WORKSPACE_UNSUPPORTED)
+        return fallback_call()
+
+    def predictive_mean(self, kappa, mu, nu, u, copula, auto_config):
+        return self._call(
+            u,
+            copula,
+            auto_config,
+            lambda prepared: prepared.predictive_mean(kappa, mu, nu),
+            lambda: _cpp_scar_ou.predictive_mean(
+                kappa, mu, nu, u, copula, auto_config),
+        )
+
+    def mixture_h(self, kappa, mu, nu, u, copula, auto_config):
+        return self._call(
+            u,
+            copula,
+            auto_config,
+            lambda prepared: prepared.mixture_h(kappa, mu, nu),
+            lambda: _cpp_scar_ou.mixture_h(
+                kappa, mu, nu, u, copula, auto_config),
+        )
+
+    def state_distribution(
+            self, kappa, mu, nu, u, copula, auto_config,
+            horizon: str = "current"):
+        return self._call(
+            u,
+            copula,
+            auto_config,
+            lambda prepared: prepared.state_distribution(
+                kappa, mu, nu, horizon=horizon),
+            lambda: _cpp_scar_ou.state_distribution(
+                kappa, mu, nu, u, copula, auto_config, horizon=horizon),
+        )
 
 
 def _projected_gradient_norm(x, grad, lower, upper):
@@ -438,6 +624,34 @@ class SCARTMStrategy:
         _cpp_scar_ou.ensure_supported(copula)
         _cpp_scar_ou.require_available()
         return True
+
+    def _posterior_workspace_or_none(self, posterior_cache):
+        if posterior_cache is None:
+            return None
+        if isinstance(posterior_cache, _PreparedScarOuPosteriorCache):
+            return posterior_cache
+        workspace = posterior_cache.get(_POSTERIOR_WORKSPACE_KEY)
+        if workspace is None:
+            workspace = _PreparedScarOuPosteriorCache()
+            posterior_cache[_POSTERIOR_WORKSPACE_KEY] = workspace
+        return workspace
+
+    def _prepared_or_stateless_posterior(
+            self, copula, u: np.ndarray, cfg,
+            prepared_call, stateless_call, posterior_cache=None):
+        workspace = self._posterior_workspace_or_none(posterior_cache)
+        if workspace is not None:
+            return workspace._call(
+                u, copula, cfg, prepared_call, stateless_call)
+        try:
+            prepared = _cpp_scar_ou.prepare_objective(u, copula, cfg)
+            prepared.update_copula(copula)
+            return prepared_call(prepared)
+        except AttributeError:
+            pass
+        except _cpp_scar_ou.CppUnsupported:
+            pass
+        return stateless_call()
 
     def _validate_final_fit(
             self, result, final_params, initial_params, lower, upper,
@@ -694,6 +908,10 @@ class SCARTMStrategy:
             "hybrid_gradient_evaluations": 0,
             "correlation_fd_evaluations": 0,
             "native_correlation_gradient_evaluations": 0,
+            "shrinkage_directional_gradient": False,
+            "prepared_native_evaluator": False,
+            "prepared_native_evaluator_count": 0,
+            "prepared_native_fallback": None,
             "adaptive_spectral_basis_order": (
                 self.spectral_basis_order == "auto"),
             "auto_spectral_basis_order": (
@@ -709,13 +927,15 @@ class SCARTMStrategy:
                 "analytical" if self.analytical_grad else "not_used"),
         })
         fail_value = float(getattr(self.config, "fail_value", 1e10))
+        prepared_cache = _PreparedScarOuFitCache(u, copula, diagnostics)
+
         def evaluate_value(joint):
             kappa_v, mu_v, nu_v = joint[:3]
             copula._set_corr_from_params(joint[3:])
             auto_config = self._auto_config(
                 kappa=kappa_v, n_obs=len(u))
-            value, info = _cpp_scar_ou.neg_loglik_info(
-                kappa_v, mu_v, nu_v, u, copula, auto_config)
+            value, info = prepared_cache.neg_loglik_info(
+                kappa_v, mu_v, nu_v, auto_config)
             _record_backend_diagnostics(diagnostics, info, "cpp")
             return value if np.isfinite(value) else fail_value
 
@@ -725,20 +945,36 @@ class SCARTMStrategy:
             auto_config = self._auto_config(
                 kappa=kappa_v, n_obs=len(u))
             try:
+                if getattr(copula, "_corr_mode", None) == "shrinkage":
+                    direction = _shrinkage_raw_corr_direction(
+                        joint[3:], copula._corr_base)
+                    value, grad, corr_grad, info = (
+                        prepared_cache
+                        .neg_loglik_with_grad_and_corr_directional_info(
+                            kappa_v, mu_v, nu_v, direction, auto_config))
+                    corr_kind = "directional"
+                else:
+                    value, grad, corr_grad, info = (
+                        prepared_cache.neg_loglik_with_grad_and_corr_info(
+                            kappa_v, mu_v, nu_v, auto_config))
+                    corr_kind = "full"
+            except _cpp_scar_ou.CppUnsupported:
+                value, grad, info = prepared_cache.neg_loglik_with_grad_info(
+                    kappa_v, mu_v, nu_v, auto_config)
+                corr_grad = None
+                corr_kind = None
+            except AttributeError:
                 value, grad, corr_grad, info = (
                     _cpp_scar_ou.neg_loglik_with_grad_and_corr_info(
                         kappa_v, mu_v, nu_v, u, copula, auto_config))
-            except _cpp_scar_ou.CppUnsupported:
-                value, grad, info = (
-                    _cpp_scar_ou.neg_loglik_with_grad_info(
-                        kappa_v, mu_v, nu_v, u, copula, auto_config))
-                corr_grad = None
+                corr_kind = "full"
             _record_backend_diagnostics(diagnostics, info, "cpp")
             return (
                 float(value),
                 np.asarray(grad, dtype=np.float64),
                 None if corr_grad is None else np.asarray(
                     corr_grad, dtype=np.float64),
+                corr_kind,
             )
 
         def objective_scaled(x_scaled):
@@ -771,7 +1007,8 @@ class SCARTMStrategy:
                 return fail_value, np.zeros_like(x_scaled)
             diagnostics["hybrid_gradient_evaluations"] += 1
             try:
-                value, ou_grad, corr_grad = evaluate_value_and_ou_grad(joint)
+                value, ou_grad, corr_grad, corr_kind = (
+                    evaluate_value_and_ou_grad(joint))
                 if (
                         _objective_is_invalid(value)
                         or ou_grad.shape != (3,)
@@ -781,14 +1018,23 @@ class SCARTMStrategy:
                 grad = np.empty_like(joint)
                 grad[:3] = ou_grad
                 if corr_grad is not None:
-                    grad[3:] = _corr_gradient_to_raw_params(
-                        copula._corr_mode,
-                        joint[3:],
-                        copula.R,
-                        corr_grad,
-                        copula._corr_base,
-                    )
-                    diagnostics["correlation_gradient"] = "analytical"
+                    if corr_kind == "directional":
+                        if corr_grad.shape != (n_corr,):
+                            return fail_value, np.zeros_like(x_scaled)
+                        grad[3:] = corr_grad
+                        diagnostics[
+                            "correlation_gradient"] = "analytical_directional"
+                        diagnostics[
+                            "shrinkage_directional_gradient"] = True
+                    else:
+                        grad[3:] = _corr_gradient_to_raw_params(
+                            copula._corr_mode,
+                            joint[3:],
+                            copula.R,
+                            corr_grad,
+                            copula._corr_base,
+                        )
+                        diagnostics["correlation_gradient"] = "analytical"
                     diagnostics["cpp_correlation_derivatives"] = True
                     diagnostics["joint_gradient"] = "analytical"
                     diagnostics["correlation_fd_scheme"] = "none"
@@ -1033,6 +1279,8 @@ class SCARTMStrategy:
             "analytical_grad_requested": bool(self.analytical_grad),
             "analytical_grad_used": bool(self.analytical_grad),
         })
+        fail_value = float(getattr(self.config, "fail_value", 1e10))
+        prepared_cache = _PreparedScarOuFitCache(u, copula, diagnostics)
 
         def _auto_config_for(kappa_v):
             return self._auto_config(kappa=kappa_v, n_obs=len(u))
@@ -1055,18 +1303,19 @@ class SCARTMStrategy:
             def objective_and_grad(x_scaled):
                 alpha = x_scaled * scale
                 if np.isnan(np.sum(alpha)):
-                    return 1e10, np.zeros(3)
+                    return fail_value, np.zeros(3)
                 kappa_v, mu_v, nu_v = alpha
                 try:
                     auto_config = _auto_config_for(kappa_v)
-                    val, grad, info = _cpp_scar_ou.neg_loglik_with_grad_info(
-                        kappa_v, mu_v, nu_v, u, copula, auto_config)
+                    val, grad, info = (
+                        prepared_cache.neg_loglik_with_grad_info(
+                            kappa_v, mu_v, nu_v, auto_config))
                     _record_backend_diagnostics(diagnostics, info, "cpp")
                     return val, grad * scale  # chain rule
                 except Exception as e:
                     if verbose:
                         print(f"  error at alpha={alpha}: {e}")
-                    return 1e10, np.zeros(3)
+                    return fail_value, np.zeros(3)
 
             if verbose:
                 print(f"Fitting SCAR-TM-OU (analytical gradient), alpha0={alpha0}")
@@ -1121,18 +1370,18 @@ class SCARTMStrategy:
             def objective_scaled(x_scaled):
                 alpha = x_scaled * scale
                 if np.isnan(np.sum(alpha)):
-                    return 1e10
+                    return fail_value
                 kappa_v, mu_v, nu_v = alpha
                 try:
                     auto_config = _auto_config_for(kappa_v)
-                    val, info = _cpp_scar_ou.neg_loglik_info(
-                        kappa_v, mu_v, nu_v, u, copula, auto_config)
+                    val, info = prepared_cache.neg_loglik_info(
+                        kappa_v, mu_v, nu_v, auto_config)
                     _record_backend_diagnostics(diagnostics, info, "cpp")
                     return val
                 except Exception as e:
                     if verbose:
                         print(f"  error at alpha={alpha}: {e}")
-                    return 1e10
+                    return fail_value
 
             if verbose:
                 print(
@@ -1156,15 +1405,13 @@ class SCARTMStrategy:
             kappa_v, mu_v, nu_v = values[:3]
             auto_config = _auto_config_for(kappa_v)
             if with_grad:
-                value, grad, info = (
-                    _cpp_scar_ou.neg_loglik_with_grad_info(
-                        kappa_v, mu_v, nu_v, u, copula, auto_config)
-                )
+                value, grad, info = prepared_cache.neg_loglik_with_grad_info(
+                    kappa_v, mu_v, nu_v, auto_config)
                 if record:
                     _record_backend_diagnostics(diagnostics, info, "cpp")
                 return value, grad
-            value, info = _cpp_scar_ou.neg_loglik_info(
-                kappa_v, mu_v, nu_v, u, copula, auto_config)
+            value, info = prepared_cache.neg_loglik_info(
+                kappa_v, mu_v, nu_v, auto_config)
             if record:
                 _record_backend_diagnostics(diagnostics, info, "cpp")
             return value
@@ -1222,34 +1469,52 @@ class SCARTMStrategy:
         return value
 
     def predictive_mean(self, copula, u: np.ndarray,
-                        result: LatentResult) -> np.ndarray:
+                        result: LatentResult,
+                        posterior_cache=None) -> np.ndarray:
         """E[Psi(x_k) | u_{1:k-1}] via TM forward pass."""
         p = result.params
         self._uses_cpp(copula)
-        return _cpp_scar_ou.predictive_mean(
-            p.kappa, p.mu, p.nu, u, copula,
-            self._auto_config(
-                self._grid_transition_method(),
-                kappa=p.kappa,
-                n_obs=len(u),
-            ))
+        cfg = self._auto_config(
+            self._grid_transition_method(),
+            kappa=p.kappa,
+            n_obs=len(u),
+        )
+        return self._prepared_or_stateless_posterior(
+            copula,
+            u,
+            cfg,
+            lambda prepared: prepared.predictive_mean(
+                p.kappa, p.mu, p.nu),
+            lambda: _cpp_scar_ou.predictive_mean(
+                p.kappa, p.mu, p.nu, u, copula, cfg),
+            posterior_cache=posterior_cache,
+        )
 
     def rosenblatt_e2(self, copula, u: np.ndarray,
-                      result: LatentResult) -> np.ndarray:
+                      result: LatentResult,
+                      posterior_cache=None) -> np.ndarray:
         """Mixture Rosenblatt: e2 = E[h(u2, u1; Psi(x_k)) | u_{1:k-1}]."""
         p = result.params
         self._uses_cpp(copula)
-        return _cpp_scar_ou.mixture_h(
-            p.kappa, p.mu, p.nu, u, copula,
-            self._auto_config(
-                self._grid_transition_method(),
-                kappa=p.kappa,
-                n_obs=len(u),
-            ))
+        cfg = self._auto_config(
+            self._grid_transition_method(),
+            kappa=p.kappa,
+            n_obs=len(u),
+        )
+        return self._prepared_or_stateless_posterior(
+            copula,
+            u,
+            cfg,
+            lambda prepared: prepared.mixture_h(p.kappa, p.mu, p.nu),
+            lambda: _cpp_scar_ou.mixture_h(
+                p.kappa, p.mu, p.nu, u, copula, cfg),
+            posterior_cache=posterior_cache,
+        )
 
     def mixture_h(self, copula, u: np.ndarray,
                   result: LatentResult, state_cache=None,
-                  current_cache_key=None, next_cache_key=None) -> np.ndarray:
+                  current_cache_key=None, next_cache_key=None,
+                  posterior_cache=None) -> np.ndarray:
         """Mixture h-function for vine pseudo-obs propagation."""
         capabilities = get_copula_capabilities(copula)
         if capabilities is not None and not capabilities.supports_pair_ops:
@@ -1263,16 +1528,54 @@ class SCARTMStrategy:
             kappa=p.kappa,
             n_obs=len(u),
         )
-        h_mix = _cpp_scar_ou.mixture_h(
-            p.kappa, p.mu, p.nu, u, copula,
-            cfg)
+        current_state = None
+        next_state = None
+        workspace = self._posterior_workspace_or_none(posterior_cache)
+        if workspace is not None:
+            h_mix = workspace.mixture_h(
+                p.kappa, p.mu, p.nu, u, copula, cfg)
+            if state_cache is not None:
+                if current_cache_key is not None:
+                    current_state = workspace.state_distribution(
+                        p.kappa, p.mu, p.nu, u, copula, cfg,
+                        horizon='current')
+                if next_cache_key is not None:
+                    next_state = workspace.state_distribution(
+                        p.kappa, p.mu, p.nu, u, copula, cfg, horizon='next')
+        else:
+            prepared = None
+            try:
+                prepared = _cpp_scar_ou.prepare_objective(u, copula, cfg)
+                prepared.update_copula(copula)
+                h_mix = prepared.mixture_h(p.kappa, p.mu, p.nu)
+                if state_cache is not None:
+                    if current_cache_key is not None:
+                        current_state = prepared.state_distribution(
+                            p.kappa, p.mu, p.nu, horizon='current')
+                    if next_cache_key is not None:
+                        next_state = prepared.state_distribution(
+                            p.kappa, p.mu, p.nu, horizon='next')
+            except AttributeError:
+                prepared = None
+            except _cpp_scar_ou.CppUnsupported:
+                prepared = None
+            if prepared is None:
+                h_mix = _cpp_scar_ou.mixture_h(
+                    p.kappa, p.mu, p.nu, u, copula, cfg)
+                if state_cache is not None:
+                    if current_cache_key is not None:
+                        current_state = _cpp_scar_ou.state_distribution(
+                            p.kappa, p.mu, p.nu, u, copula, cfg,
+                            horizon='current')
+                    if next_cache_key is not None:
+                        next_state = _cpp_scar_ou.state_distribution(
+                            p.kappa, p.mu, p.nu, u, copula, cfg,
+                            horizon='next')
         if state_cache is not None:
             if current_cache_key is not None:
-                state_cache[current_cache_key] = _cpp_scar_ou.state_distribution(
-                    p.kappa, p.mu, p.nu, u, copula, cfg, horizon='current')
+                state_cache[current_cache_key] = current_state
             if next_cache_key is not None:
-                state_cache[next_cache_key] = _cpp_scar_ou.state_distribution(
-                    p.kappa, p.mu, p.nu, u, copula, cfg, horizon='next')
+                state_cache[next_cache_key] = next_state
         return h_mix
 
     def objective(self, copula, u: np.ndarray,
@@ -1309,14 +1612,8 @@ class SCARTMStrategy:
         Uses transfer matrix forward pass to compute the posterior
         distribution of x_T, then samples r from it.
         """
-        if rng is None:
-            rng = np.random.default_rng()
-
-        r_samples = self.predictive_params(
-            copula, u, result, n, rng=rng, **kwargs)
-        d = copula_dimension(copula, u)
-        return sample_predictive(
-            copula, n, r_samples, given=kwargs.get('given'), rng=rng, d=d)
+        return predict_from_strategy(
+            self, copula, u, result, n, rng=rng, **kwargs)
 
     def predictive_params(self, copula, u, result, n, rng=None, **kwargs):
         """Sample predictive copula parameters for SCAR-TM."""
@@ -1349,14 +1646,22 @@ class SCARTMStrategy:
         if cached is None:
             horizon = kwargs.get('horizon', 'next')
             self._uses_cpp(copula)
-            cached = _cpp_scar_ou.state_distribution(
-                p.kappa, p.mu, p.nu, u, copula,
-                self._auto_config(
-                    self._grid_transition_method(),
-                    kappa=p.kappa,
-                    n_obs=len(u),
-                ),
-                horizon=horizon)
+            cfg = self._auto_config(
+                self._grid_transition_method(),
+                kappa=p.kappa,
+                n_obs=len(u),
+            )
+            cached = self._prepared_or_stateless_posterior(
+                copula,
+                u,
+                cfg,
+                lambda prepared: prepared.state_distribution(
+                    p.kappa, p.mu, p.nu, horizon=horizon),
+                lambda: _cpp_scar_ou.state_distribution(
+                    p.kappa, p.mu, p.nu, u, copula, cfg,
+                    horizon=horizon),
+                posterior_cache=kwargs.get('posterior_cache'),
+            )
             if state_cache is not None and cache_key is not None:
                 state_cache[cache_key] = cached
 

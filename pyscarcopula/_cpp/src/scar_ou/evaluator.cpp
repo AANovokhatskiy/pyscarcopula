@@ -61,6 +61,60 @@ GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_and_corr_auto(
     return result;
 }
 
+GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_and_corr_directional_auto(
+    const OuParams& params,
+    const CopulaSpec& copula,
+    ObservationView u,
+    const OuNumericalConfig& config,
+    const std::vector<double>& corr_direction) const {
+
+    if (!valid_ou_params(params) || !finite_config_doubles(config)) {
+        return invalid_grad(SCAR_INVALID_PARAMETER, OuBackend::Spectral);
+    }
+    if (u.empty() || config.auto_small_kdt <= 0.0) {
+        return invalid_grad(SCAR_INVALID_SIZE, OuBackend::Spectral);
+    }
+    const double kdt = u.size() <= 1
+        ? params.kappa
+        : params.kappa / static_cast<double>(u.size() - 1);
+    if (kdt < config.auto_small_kdt) {
+        return neg_loglik_with_grad_and_corr_directional_local_gh(
+            params, copula, u, config, corr_direction);
+    }
+    GradLogLikResult result =
+        neg_loglik_with_grad_and_corr_directional_spectral(
+            params, copula, u, config, corr_direction);
+    if (auto_grad_accepted(result)) {
+        return result;
+    }
+    if (result.status != SCAR_OK
+        && !recoverable_numerical_status(result.status)) {
+        set_auto_fallback(result, {OuBackend::Spectral});
+        return result;
+    }
+    result = neg_loglik_with_grad_and_corr_directional_matrix(
+        params, copula, u, config, corr_direction);
+    const int matrix_reason = auto_grad_accepted(result)
+        ? matrix_grid_fallback_reason(params, u, config)
+        : SCAR_FALLBACK_FAILED;
+    if (auto_grad_accepted(result)
+        && matrix_reason == SCAR_FALLBACK_NONE) {
+        set_auto_fallback(result, {OuBackend::Spectral});
+        return result;
+    }
+    if (result.status != SCAR_OK
+        && !recoverable_numerical_status(result.status)) {
+        set_auto_fallback(result, {OuBackend::Spectral, OuBackend::Matrix},
+                          matrix_reason);
+        return result;
+    }
+    result = neg_loglik_with_grad_and_corr_directional_local_gh(
+        params, copula, u, config, corr_direction);
+    set_auto_fallback(result, {OuBackend::Spectral, OuBackend::Matrix},
+                      matrix_reason);
+    return result;
+}
+
 GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_auto(
     const OuParams& params,
     const CopulaSpec& copula,
