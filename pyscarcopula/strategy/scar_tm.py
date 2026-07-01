@@ -1604,7 +1604,8 @@ class SCARTMStrategy:
 
         r = self.model_sample_params(copula, result, n, rng=rng)
         d = copula_dimension(copula, u)
-        return sample_predictive(copula, n, r, rng=rng, d=d)
+        return sample_predictive(
+            copula, n, r, given=kwargs.get('given'), rng=rng, d=d)
 
     def predict(self, copula, u, result, n, rng=None, **kwargs):
         """Mixture sampling from posterior p(x_T | data).

@@ -322,6 +322,7 @@ class GASStrategy:
         """Recursively sample using native GAS state updates."""
         if rng is None:
             rng = np.random.default_rng()
+        given = kwargs.get("given")
         p = result.params
         score_eps = self._score_eps(result)
         d = copula_dimension(copula, u)
@@ -339,20 +340,16 @@ class GASStrategy:
         g_t = state.g
         r_t = state.parameter
         samples = np.empty((n, d), dtype=np.float64)
-        multivariate = is_multivariate_copula(copula)
 
         for t in range(n):
-            if multivariate:
-                obs = sample_predictive(
-                    copula,
-                    1,
-                    np.array([r_t]),
-                    rng=rng,
-                    d=d,
-                )
-            else:
-                obs = copula.sample_at_parameter(
-                    1, np.array([r_t]), rng=rng)
+            obs = sample_predictive(
+                copula,
+                1,
+                np.array([r_t]),
+                given=given,
+                rng=rng,
+                d=d,
+            )
             samples[t] = obs[0]
             if t < n - 1:
                 update = _cpp_gas.update_one(

@@ -389,6 +389,7 @@ def test_stochastic_student_large_cholesky_native_gradient_benchmark(
     original_value = _cpp_scar_ou.neg_loglik_info
     original_gradient = _cpp_scar_ou.neg_loglik_with_grad_info
     original_native = _cpp_scar_ou.neg_loglik_with_grad_and_corr_info
+    original_prepare = _cpp_scar_ou.prepare_objective
 
     def timed_value(*args, **kwargs):
         start = time.perf_counter()
@@ -409,6 +410,9 @@ def test_stochastic_student_large_cholesky_native_gradient_benchmark(
 
     def unsupported_native(*args, **kwargs):
         raise _cpp_scar_ou.CppUnsupported("benchmark finite-difference path")
+
+    def unsupported_prepare(*args, **kwargs):
+        raise _cpp_scar_ou.CppUnsupported("benchmark module-level path")
 
     def timed_native(*args, **kwargs):
         start = time.perf_counter()
@@ -446,6 +450,8 @@ def test_stochastic_student_large_cholesky_native_gradient_benchmark(
         "neg_loglik_with_grad_and_corr_info",
         unsupported_native,
     )
+    monkeypatch.setattr(
+        _cpp_scar_ou, "prepare_objective", unsupported_prepare)
     start = time.perf_counter()
     fallback_result = fit_model()
     fallback_seconds = time.perf_counter() - start
@@ -455,9 +461,13 @@ def test_stochastic_student_large_cholesky_native_gradient_benchmark(
         _cpp_scar_ou, "neg_loglik_with_grad_info", original_gradient)
     monkeypatch.setattr(
         _cpp_scar_ou, "neg_loglik_with_grad_and_corr_info", timed_native)
+    monkeypatch.setattr(
+        _cpp_scar_ou, "prepare_objective", unsupported_prepare)
     start = time.perf_counter()
     native_result = fit_model()
     native_seconds = time.perf_counter() - start
+    monkeypatch.setattr(
+        _cpp_scar_ou, "prepare_objective", original_prepare)
 
     fallback = fallback_result.diagnostics
     native = native_result.diagnostics

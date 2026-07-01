@@ -41,6 +41,26 @@ def test_gaussian_fit_return_and_state_contract():
     assert np.isfinite(returned.bic)
 
 
+@pytest.mark.parametrize(
+    "bad_data",
+    [
+        np.empty((0, 3)),
+        np.ones((5, 3)),
+        np.array([0.1, 0.2, 0.3]),
+        np.array([[0.2, np.nan], [0.4, 0.6]]),
+    ],
+)
+def test_gaussian_failed_fit_does_not_mutate_state(bad_data):
+    copula = GaussianCopula()
+
+    with pytest.raises(ValueError):
+        copula.fit(bad_data)
+
+    assert copula.corr is None
+    assert copula.fit_result is None
+    assert getattr(copula, "_last_u", None) is None
+
+
 def test_student_fit_return_and_state_contract():
     u = pobs(np.random.default_rng(20260621).standard_normal((50, 3)))
     copula = StudentCopula()
@@ -62,6 +82,26 @@ def test_student_fit_return_and_state_contract():
     assert np.isfinite(returned.log_likelihood)
     assert np.isfinite(returned.aic)
     assert np.isfinite(returned.bic)
+
+
+@pytest.mark.parametrize(
+    "bad_data",
+    [
+        np.empty((0, 3)),
+        np.ones((5, 1)),
+        np.array([0.1, 0.2, 0.3]),
+        np.array([[0.2, np.nan, 0.4], [0.4, 0.6, 0.8]]),
+    ],
+)
+def test_stochastic_student_failed_fit_does_not_mutate_state(bad_data):
+    copula = StochasticStudentCopula(d=3)
+
+    with pytest.raises(ValueError):
+        copula.fit(bad_data, method="mle")
+
+    assert copula.R is None
+    assert copula.fit_result is None
+    assert getattr(copula, "_last_u", None) is None
 
 
 @pytest.mark.parametrize(

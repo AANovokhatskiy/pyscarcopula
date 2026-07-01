@@ -8,7 +8,7 @@ from pyscarcopula import (
     IndependentCopula, CVineCopula, EquicorrGaussianCopula,
     GaussianCopula, StudentCopula, StochasticStudentCopula,
 )
-from pyscarcopula.api import fit, mixture_h, predict, predictive_mean
+from pyscarcopula.api import fit, mixture_h, predict, predictive_mean, sample
 from pyscarcopula.stattests import gof_test
 from pyscarcopula._utils import pobs
 from pyscarcopula._types import (
@@ -587,6 +587,26 @@ class TestConditionalPredict:
         result = fit(cop, random_u2, method='mle')
         samples = predict(cop, random_u2, result, 256, given={0: 0.37})
         assert samples.shape == (256, 2)
+        assert np.all((samples > 0) & (samples < 1))
+        assert np.allclose(samples[:, 0], 0.37)
+
+    def test_bivariate_mle_sample_honors_given(self, random_u2):
+        cop = GumbelCopula(rotate=180)
+        result = fit(cop, random_u2, method='mle')
+        samples = sample(
+            cop, random_u2, result, 256, given={0: 0.37},
+            rng=np.random.default_rng(19))
+        assert samples.shape == (256, 2)
+        assert np.all((samples > 0) & (samples < 1))
+        assert np.allclose(samples[:, 0], 0.37)
+
+    def test_gas_model_sample_honors_given(self, random_u2):
+        cop = GumbelCopula(rotate=180)
+        result = fit(cop, random_u2, method='gas')
+        samples = sample(
+            cop, random_u2, result, 32, given={0: 0.37},
+            rng=np.random.default_rng(20))
+        assert samples.shape == (32, 2)
         assert np.all((samples > 0) & (samples < 1))
         assert np.allclose(samples[:, 0], 0.37)
 

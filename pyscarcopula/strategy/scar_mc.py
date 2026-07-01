@@ -133,7 +133,8 @@ class _SCARMCBase:
             rng = np.random.default_rng()
         r = self.model_sample_params(copula, result, n, rng=rng)
         d = copula_dimension(copula, u)
-        return sample_predictive(copula, n, r, rng=rng, d=d)
+        return sample_predictive(
+            copula, n, r, given=kwargs.get('given'), rng=rng, d=d)
 
     def model_sample_params(self, copula, result, n, rng=None, **kwargs):
         """OU trajectory parameters for unconditional model reproduction."""

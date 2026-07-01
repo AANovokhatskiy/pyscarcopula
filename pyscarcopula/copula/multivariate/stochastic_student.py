@@ -76,6 +76,15 @@ def _as_float64_array_no_copy(value):
     return np.asarray(value, dtype=np.float64)
 
 
+def _validate_fit_data(u, d):
+    if u.ndim != 2 or u.shape[1] != int(d):
+        raise ValueError(f"data must have shape (n_observations, {int(d)})")
+    if u.shape[0] == 0:
+        raise ValueError("data must contain at least one observation")
+    if not np.all(np.isfinite(u)):
+        raise ValueError("data must contain only finite values")
+
+
 # ══════════════════════════════════════════════════════════════
 # Helper functions
 # ══════════════════════════════════════════════════════════════
@@ -706,8 +715,10 @@ class StochasticStudentCopula(MultivariateCopula):
             raise TypeError("tol is not supported; use gtol")
 
         u = _as_float64_array_no_copy(data)
+        _validate_fit_data(u, self._d)
         if to_pobs:
             u = pobs(u)
+            _validate_fit_data(u, self._d)
 
         self._last_u = u
 

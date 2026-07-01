@@ -190,7 +190,8 @@ class MLEStrategy:
         """Sample n observations with constant r = theta_mle."""
         r = np.full(n, result.copula_param)
         d = copula_dimension(copula, u)
-        return sample_predictive(copula, n, r, rng=rng, d=d)
+        return sample_predictive(
+            copula, n, r, given=kwargs.get('given'), rng=rng, d=d)
 
     def predict(self, copula, u, result, n, rng=None, **kwargs):
         """Predict = sample for MLE (constant parameter)."""
