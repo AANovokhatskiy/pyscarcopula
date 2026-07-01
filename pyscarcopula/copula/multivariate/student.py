@@ -16,6 +16,17 @@ from pyscarcopula.copula.multivariate.corr_param import (
 )
 
 
+def _validate_student_fit_data(u):
+    if u.ndim != 2:
+        raise ValueError("data must have shape (n_observations, dimension)")
+    if u.shape[0] == 0:
+        raise ValueError("data must contain at least one observation")
+    if u.shape[1] < 2:
+        raise ValueError("data must contain at least two variables")
+    if not np.all(np.isfinite(u)):
+        raise ValueError("data must contain only finite values")
+
+
 class StudentCopula(MultivariateCopula):
     """d-dimensional Student-t copula with fitted shape and degrees of freedom.
 
@@ -33,8 +44,10 @@ class StudentCopula(MultivariateCopula):
 
     def fit(self, data, to_pobs=False, **kwargs):
         u = np.asarray(data, dtype=np.float64)
+        _validate_student_fit_data(u)
         if to_pobs:
             u = pobs(u)
+            _validate_student_fit_data(u)
 
         d = u.shape[1]
         self._set_dimension(d, allow_change=True)
@@ -72,7 +85,7 @@ class StudentCopula(MultivariateCopula):
                 "df": self.df,
                 "correlation_matrix": self.shape.copy(),
             },
-            correlation_matrix=self.shape,
+            correlation_matrix=self.shape.copy(),
             diagnostics={
                 "model_score": "not_applicable",
                 "optimizer_gradient": "analytical",

@@ -19,16 +19,15 @@ using namespace evaluator_detail;
 
 namespace {
 
-struct GridGradientOperators {
-    int K = 0;
-    int width = 0;
-    bool local = false;
-    std::vector<double> dense;
-    std::vector<double> dense_grad;
-    std::vector<int> cols;
-    std::vector<double> vals;
-    std::vector<double> grad_vals;
+enum class CorrGradientMode {
+    None,
+    Full,
+    Directional,
 };
+
+using GridGradientOperators = ScarOuGridGradientOperators;
+using GridGradientWorkspace = ScarOuGridGradientWorkspace;
+using SpectralGradientWorkspace = ScarOuSpectralGradientWorkspace;
 
 void dense_grid_matvec(
     const std::vector<double>& matrix,
@@ -262,7 +261,9 @@ GradLogLikResult grid_neg_loglik_with_grad(
     ObservationView u,
     const OuNumericalConfig& config,
     OuBackend backend,
-    bool correlation_gradient = false) {
+    CorrGradientMode corr_gradient_mode = CorrGradientMode::None,
+    const std::vector<double>* corr_direction = nullptr,
+    GridGradientWorkspace* workspace = nullptr) {
 
     const std::int64_t n_obs = static_cast<std::int64_t>(u.size());
     if (!supported_ou_copula(copula)) {
@@ -287,6 +288,8 @@ GradLogLikResult grid_neg_loglik_with_grad(
             > scar_internal::kMaxSpectralOrder) {
         return invalid_grad(SCAR_INVALID_SIZE, backend);
     }
+    const bool correlation_gradient =
+        corr_gradient_mode != CorrGradientMode::None;
     if (correlation_gradient && copula.family != CopulaFamily::Student) {
         return invalid_grad(SCAR_INVALID_FAMILY, backend);
     }
@@ -346,10 +349,18 @@ GradLogLikResult grid_neg_loglik_with_grad(
         // Explicit matrix mode is still valid; keep it explicit like Python.
     }
 
-    std::vector<double> xi(static_cast<std::size_t>(K_eff), 0.0);
-    std::vector<double> base_w(static_cast<std::size_t>(K_eff), dxi);
-    std::vector<double> pw_const(static_cast<std::size_t>(K_eff), 0.0);
-    std::vector<double> x_grid(static_cast<std::size_t>(K_eff), 0.0);
+    GridGradientWorkspace local_workspace;
+    GridGradientWorkspace& ws =
+        workspace == nullptr ? local_workspace : *workspace;
+
+    std::vector<double>& xi = ws.xi;
+    std::vector<double>& base_w = ws.base_w;
+    std::vector<double>& pw_const = ws.pw_const;
+    std::vector<double>& x_grid = ws.x_grid;
+    xi.assign(static_cast<std::size_t>(K_eff), 0.0);
+    base_w.assign(static_cast<std::size_t>(K_eff), dxi);
+    pw_const.assign(static_cast<std::size_t>(K_eff), 0.0);
+    x_grid.assign(static_cast<std::size_t>(K_eff), 0.0);
     for (int j = 0; j < K_eff; ++j) {
         const std::size_t idx = static_cast<std::size_t>(j);
         xi[idx] = -config.grid_range + dxi * static_cast<double>(j);
@@ -364,7 +375,7 @@ GradLogLikResult grid_neg_loglik_with_grad(
             * base_w[idx];
     }
 
-    GridGradientOperators op;
+    GridGradientOperators& op = ws.op;
     const bool built = backend == OuBackend::LocalGh
         ? build_local_grid_gradient_operator(xi, rho, config.gh_order, op)
         : build_dense_grid_gradient_operator(xi, base_w, rho, op);
@@ -378,10 +389,14 @@ GradLogLikResult grid_neg_loglik_with_grad(
     if (!scar_internal::checked_size_mul(u.size(), K_size, nK)) {
         return invalid_grad(SCAR_INVALID_SIZE, backend);
     }
-    std::vector<double> fi(nK, 0.0);
-    std::vector<double> dfi_dx(nK, 0.0);
-    std::vector<double> r_grid;
-    std::vector<double> dpsi_grid;
+    std::vector<double>& fi = ws.fi;
+    std::vector<double>& dfi_dx = ws.dfi_dx;
+    std::vector<double>& r_grid = ws.r_grid;
+    std::vector<double>& dpsi_grid = ws.dpsi_grid;
+    fi.assign(nK, 0.0);
+    dfi_dx.assign(nK, 0.0);
+    r_grid.clear();
+    dpsi_grid.clear();
     scar_internal::copula_prepare_grid_transform(
         copula, x_grid, r_grid, dpsi_grid);
     scar_internal::copula_pdf_and_grad_grid_precomputed(
@@ -393,13 +408,17 @@ GradLogLikResult grid_neg_loglik_with_grad(
         fi,
         dfi_dx);
 
-    std::vector<double> beta(nK, 0.0);
-    std::vector<double> c_vals(static_cast<std::size_t>(n_obs - 1), 0.0);
+    std::vector<double>& beta = ws.beta;
+    std::vector<double>& c_vals = ws.c_vals;
+    beta.assign(nK, 0.0);
+    c_vals.assign(static_cast<std::size_t>(n_obs - 1), 0.0);
     for (int j = 0; j < K_eff; ++j) {
         beta[(u.size() - 1) * K_size + static_cast<std::size_t>(j)] = 1.0;
     }
-    std::vector<double> target(static_cast<std::size_t>(K_eff), 0.0);
-    std::vector<double> next(static_cast<std::size_t>(K_eff), 0.0);
+    std::vector<double>& target = ws.target;
+    std::vector<double>& next = ws.next;
+    target.assign(static_cast<std::size_t>(K_eff), 0.0);
+    next.assign(static_cast<std::size_t>(K_eff), 0.0);
     double cumul_logc = 0.0;
     for (std::int64_t t = n_obs - 2; t >= 0; --t) {
         const std::size_t next_row =
@@ -441,7 +460,8 @@ GradLogLikResult grid_neg_loglik_with_grad(
     if (!scar_internal::checked_size_mul(3, K_size, triple_K)) {
         return invalid_grad(SCAR_INVALID_SIZE, backend);
     }
-    std::vector<double> dx_dalpha(triple_K, 0.0);
+    std::vector<double>& dx_dalpha = ws.dx_dalpha;
+    dx_dalpha.assign(triple_K, 0.0);
     for (int j = 0; j < K_eff; ++j) {
         const std::size_t idx = static_cast<std::size_t>(j);
         dx_dalpha[idx] = dsigma_dkappa * xi[idx];
@@ -450,11 +470,16 @@ GradLogLikResult grid_neg_loglik_with_grad(
             dsigma_dnu * xi[idx];
     }
 
-    std::vector<double> d_beta(triple_K, 0.0);
-    std::vector<double> new_d_beta(triple_K, 0.0);
-    std::vector<double> d_target(static_cast<std::size_t>(K_eff), 0.0);
-    std::vector<double> contrib(static_cast<std::size_t>(K_eff), 0.0);
-    std::vector<double> transition_grad(static_cast<std::size_t>(K_eff), 0.0);
+    std::vector<double>& d_beta = ws.d_beta;
+    std::vector<double>& new_d_beta = ws.new_d_beta;
+    std::vector<double>& d_target = ws.d_target;
+    std::vector<double>& contrib = ws.contrib;
+    std::vector<double>& transition_grad = ws.transition_grad;
+    d_beta.assign(triple_K, 0.0);
+    new_d_beta.assign(triple_K, 0.0);
+    d_target.assign(static_cast<std::size_t>(K_eff), 0.0);
+    contrib.assign(static_cast<std::size_t>(K_eff), 0.0);
+    transition_grad.assign(static_cast<std::size_t>(K_eff), 0.0);
     for (std::int64_t t = n_obs - 2; t >= 0; --t) {
         const std::size_t next_row =
             static_cast<std::size_t>(t + 1) * K_size;
@@ -507,7 +532,8 @@ GradLogLikResult grid_neg_loglik_with_grad(
 
     std::vector<double> corr_grad;
     if (correlation_gradient) {
-        std::vector<double> precision;
+        std::vector<double>& precision = ws.precision;
+        precision.clear();
         if (!scar_internal::student_precision_matrix(copula, precision)) {
             return invalid_grad(SCAR_INVALID_SIZE, backend);
         }
@@ -523,18 +549,28 @@ GradLogLikResult grid_neg_loglik_with_grad(
                 copula.dim, n_corr)) {
             return invalid_grad(SCAR_INVALID_SIZE, backend);
         }
-        std::size_t score_elements = 0;
-        if (!scar_internal::checked_size_mul(
-                K_size, n_corr, score_elements)) {
+        const bool directional =
+            corr_gradient_mode == CorrGradientMode::Directional;
+        if (directional
+            && (corr_direction == nullptr
+                || corr_direction->size() != n_corr)) {
             return invalid_grad(SCAR_INVALID_SIZE, backend);
         }
-        corr_grad.assign(n_corr, 0.0);
-        std::vector<double> scores(score_elements, 0.0);
-        std::vector<double> alpha = pw_const;
-        std::vector<double> alpha_source(
-            static_cast<std::size_t>(K_eff), 0.0);
-        std::vector<double> alpha_next(
-            static_cast<std::size_t>(K_eff), 0.0);
+        const std::size_t score_width = directional ? 1 : n_corr;
+        std::size_t score_elements = 0;
+        if (!scar_internal::checked_size_mul(
+                K_size, score_width, score_elements)) {
+            return invalid_grad(SCAR_INVALID_SIZE, backend);
+        }
+        corr_grad.assign(directional ? 1 : n_corr, 0.0);
+        std::vector<double>& scores = ws.scores;
+        std::vector<double>& alpha = ws.alpha;
+        std::vector<double>& alpha_source = ws.alpha_source;
+        std::vector<double>& alpha_next = ws.alpha_next;
+        scores.assign(score_elements, 0.0);
+        alpha = pw_const;
+        alpha_source.assign(static_cast<std::size_t>(K_eff), 0.0);
+        alpha_next.assign(static_cast<std::size_t>(K_eff), 0.0);
 
         for (std::int64_t t = 0; t < n_obs; ++t) {
             const std::size_t row_offset =
@@ -542,14 +578,27 @@ GradLogLikResult grid_neg_loglik_with_grad(
             const double* row =
                 observation_values
                 + static_cast<std::size_t>(t) * dim_size;
-            if (!scar_internal::student_corr_score_row(
-                    copula,
-                    row,
-                    t,
-                    r_grid,
-                    precision,
-                    scores.data())) {
-                return invalid_grad(SCAR_NUMERICAL_FAILURE, backend);
+            if (directional) {
+                if (!scar_internal::student_corr_directional_score_row(
+                        copula,
+                        row,
+                        t,
+                        r_grid,
+                        precision,
+                        *corr_direction,
+                        scores.data())) {
+                    return invalid_grad(SCAR_NUMERICAL_FAILURE, backend);
+                }
+            } else {
+                if (!scar_internal::student_corr_score_row(
+                        copula,
+                        row,
+                        t,
+                        r_grid,
+                        precision,
+                        scores.data())) {
+                    return invalid_grad(SCAR_NUMERICAL_FAILURE, backend);
+                }
             }
 
             double posterior_total = 0.0;
@@ -567,8 +616,8 @@ GradLogLikResult grid_neg_loglik_with_grad(
                 const double posterior =
                     alpha[idx] * fi[row_offset + idx]
                     * beta[row_offset + idx] / posterior_total;
-                const std::size_t score_offset = idx * n_corr;
-                for (std::size_t p = 0; p < n_corr; ++p) {
+                const std::size_t score_offset = idx * score_width;
+                for (std::size_t p = 0; p < corr_grad.size(); ++p) {
                     corr_grad[p] += posterior * scores[score_offset + p];
                 }
             }
@@ -616,10 +665,14 @@ GradLogLikResult spectral_neg_loglik_with_grad(
     const CopulaSpec& copula,
     ObservationView u,
     const OuNumericalConfig& raw_config,
-    bool correlation_gradient) {
+    CorrGradientMode corr_gradient_mode,
+    const std::vector<double>* corr_direction = nullptr,
+    SpectralGradientWorkspace* workspace = nullptr) {
 
     const OuNumericalConfig config = with_default_quad_order(raw_config);
     const std::int64_t n_obs = static_cast<std::int64_t>(u.size());
+    const bool correlation_gradient =
+        corr_gradient_mode != CorrGradientMode::None;
     if (!supported_ou_copula(copula)) {
         return invalid_grad(SCAR_INVALID_TRANSFORM, OuBackend::Spectral);
     }
@@ -643,35 +696,46 @@ GradLogLikResult spectral_neg_loglik_with_grad(
         return invalid_grad(SCAR_NUMERICAL_FAILURE, OuBackend::Spectral);
     }
 
-    std::vector<double> z;
-    std::vector<double> weights;
-    std::vector<double> basis;
-    std::vector<double> weighted_basis;
-    if (!scar_internal::standard_normal_hermite_rule_with_weighted_basis(
-            config.spectral_quad_order,
-            config.spectral_basis_order,
-            z,
-            weights,
-            basis,
-            weighted_basis)) {
-        return invalid_grad(SCAR_NUMERICAL_FAILURE, OuBackend::Spectral);
-    }
-
     const int quad_order = config.spectral_quad_order;
     const int basis_order = config.spectral_basis_order;
+    SpectralGradientWorkspace local_workspace;
+    SpectralGradientWorkspace& ws =
+        workspace == nullptr ? local_workspace : *workspace;
+    std::vector<double>& z = ws.z;
+    std::vector<double>& weights = ws.weights;
+    std::vector<double>& basis = ws.basis;
+    std::vector<double>& weighted_basis = ws.weighted_basis;
+    if (ws.cached_quad_order != quad_order
+        || ws.cached_basis_order != basis_order
+        || basis.size() != spectral_elements
+        || weighted_basis.size() != spectral_elements) {
+        if (!scar_internal::standard_normal_hermite_rule_with_weighted_basis(
+                quad_order,
+                basis_order,
+                z,
+                weights,
+                basis,
+                weighted_basis)) {
+            return invalid_grad(SCAR_NUMERICAL_FAILURE, OuBackend::Spectral);
+        }
+        ws.cached_quad_order = quad_order;
+        ws.cached_basis_order = basis_order;
+    }
+
     const double* observation_values = observation_data(copula, u);
     const double dt = n_obs > 1 ? 1.0 / static_cast<double>(n_obs - 1) : 1.0;
     const double rho = std::exp(-params.kappa * dt);
 
-    std::vector<double> powers(static_cast<std::size_t>(basis_order), 1.0);
-    std::vector<double> dpowers_dkappa(static_cast<std::size_t>(basis_order), 0.0);
+    std::vector<double>& powers = ws.powers;
+    std::vector<double>& dpowers_dkappa = ws.dpowers_dkappa;
+    powers.assign(static_cast<std::size_t>(basis_order), 1.0);
+    dpowers_dkappa.assign(static_cast<std::size_t>(basis_order), 0.0);
     for (int n = 1; n < basis_order; ++n) {
         const std::size_t idx = static_cast<std::size_t>(n);
         powers[idx] = powers[idx - 1] * rho;
         dpowers_dkappa[idx] = -dt * static_cast<double>(n) * powers[idx];
     }
 
-    std::vector<double> x_grid(static_cast<std::size_t>(quad_order), 0.0);
     std::size_t triple_quad = 0;
     std::size_t triple_basis = 0;
     if (!scar_internal::checked_size_mul(
@@ -680,7 +744,10 @@ GradLogLikResult spectral_neg_loglik_with_grad(
             3, static_cast<std::size_t>(basis_order), triple_basis)) {
         return invalid_grad(SCAR_INVALID_SIZE, OuBackend::Spectral);
     }
-    std::vector<double> dx_dalpha(triple_quad, 0.0);
+    std::vector<double>& x_grid = ws.x_grid;
+    std::vector<double>& dx_dalpha = ws.dx_dalpha;
+    x_grid.assign(static_cast<std::size_t>(quad_order), 0.0);
+    dx_dalpha.assign(triple_quad, 0.0);
     for (int q = 0; q < quad_order; ++q) {
         const std::size_t idx = static_cast<std::size_t>(q);
         x_grid[idx] = params.mu + sigma * z[idx];
@@ -690,13 +757,16 @@ GradLogLikResult spectral_neg_loglik_with_grad(
             2 * static_cast<std::size_t>(quad_order) + idx] =
             sigma / params.nu * z[idx];
     }
-    std::vector<double> r_grid;
-    std::vector<double> dpsi_grid;
+    std::vector<double>& r_grid = ws.r_grid;
+    std::vector<double>& dpsi_grid = ws.dpsi_grid;
+    r_grid.clear();
+    dpsi_grid.clear();
     scar_internal::copula_prepare_grid_transform(
         copula, x_grid, r_grid, dpsi_grid);
 
     std::size_t n_corr = 0;
-    std::vector<double> precision;
+    std::vector<double>& precision = ws.precision;
+    precision.clear();
     if (correlation_gradient
         && (!scar_internal::valid_student_correlation_count(
                 copula.dim, n_corr)
@@ -704,35 +774,57 @@ GradLogLikResult spectral_neg_loglik_with_grad(
                 copula, precision))) {
         return invalid_grad(SCAR_INVALID_SIZE, OuBackend::Spectral);
     }
+    const bool directional =
+        corr_gradient_mode == CorrGradientMode::Directional;
+    if (directional
+        && (corr_direction == nullptr || corr_direction->size() != n_corr)) {
+        return invalid_grad(SCAR_INVALID_SIZE, OuBackend::Spectral);
+    }
+    const std::size_t corr_param_count =
+        directional ? 1 : n_corr;
     std::size_t corr_basis_elements = 0;
     std::size_t score_elements = 0;
     if (correlation_gradient
         && (!scar_internal::checked_size_mul(
-                n_corr,
+                corr_param_count,
                 static_cast<std::size_t>(basis_order),
                 corr_basis_elements)
             || !scar_internal::checked_size_mul(
                 static_cast<std::size_t>(quad_order),
-                n_corr,
+                corr_param_count,
                 score_elements))) {
         return invalid_grad(SCAR_INVALID_SIZE, OuBackend::Spectral);
     }
 
-    std::vector<double> coeff(static_cast<std::size_t>(basis_order), 0.0);
-    std::vector<double> dcoeff(triple_basis, 0.0);
-    std::vector<double> projected(static_cast<std::size_t>(basis_order), 0.0);
-    std::vector<double> dprojected(triple_basis, 0.0);
-    std::vector<double> raw(static_cast<std::size_t>(basis_order), 0.0);
-    std::vector<double> draw(triple_basis, 0.0);
-    std::vector<double> fi_row(static_cast<std::size_t>(quad_order), 0.0);
-    std::vector<double> dfi_dx_row(static_cast<std::size_t>(quad_order), 0.0);
-    std::vector<double> corr_coeff(corr_basis_elements, 0.0);
-    std::vector<double> corr_projected(corr_basis_elements, 0.0);
-    std::vector<double> corr_raw(corr_basis_elements, 0.0);
-    std::vector<double> corr_value_projected(
+    std::vector<double>& coeff = ws.coeff;
+    std::vector<double>& dcoeff = ws.dcoeff;
+    std::vector<double>& projected = ws.projected;
+    std::vector<double>& dprojected = ws.dprojected;
+    std::vector<double>& raw = ws.raw;
+    std::vector<double>& draw = ws.draw;
+    std::vector<double>& fi_row = ws.fi_row;
+    std::vector<double>& dfi_dx_row = ws.dfi_dx_row;
+    std::vector<double>& corr_coeff = ws.corr_coeff;
+    std::vector<double>& corr_projected = ws.corr_projected;
+    std::vector<double>& corr_raw = ws.corr_raw;
+    std::vector<double>& corr_value_projected = ws.corr_value_projected;
+    std::vector<double>& scores = ws.scores;
+    std::vector<double>& corr_dlog_scale = ws.corr_dlog_scale;
+    coeff.assign(static_cast<std::size_t>(basis_order), 0.0);
+    dcoeff.assign(triple_basis, 0.0);
+    projected.assign(static_cast<std::size_t>(basis_order), 0.0);
+    dprojected.assign(triple_basis, 0.0);
+    raw.assign(static_cast<std::size_t>(basis_order), 0.0);
+    draw.assign(triple_basis, 0.0);
+    fi_row.assign(static_cast<std::size_t>(quad_order), 0.0);
+    dfi_dx_row.assign(static_cast<std::size_t>(quad_order), 0.0);
+    corr_coeff.assign(corr_basis_elements, 0.0);
+    corr_projected.assign(corr_basis_elements, 0.0);
+    corr_raw.assign(corr_basis_elements, 0.0);
+    corr_value_projected.assign(
         static_cast<std::size_t>(basis_order), 0.0);
-    std::vector<double> scores(score_elements, 0.0);
-    std::vector<double> corr_dlog_scale(n_corr, 0.0);
+    scores.assign(score_elements, 0.0);
+    corr_dlog_scale.assign(corr_param_count, 0.0);
 
     coeff[0] = 1.0;
     double log_scale = 0.0;
@@ -765,15 +857,29 @@ GradLogLikResult spectral_neg_loglik_with_grad(
                 observation_values
                 + static_cast<std::size_t>(t)
                     * static_cast<std::size_t>(copula.dim);
-            if (!scar_internal::student_corr_score_row(
-                    copula,
-                    row,
-                    t,
-                    r_grid,
-                    precision,
-                    scores.data())) {
-                return invalid_grad(
-                    SCAR_NUMERICAL_FAILURE, OuBackend::Spectral);
+            if (directional) {
+                if (!scar_internal::student_corr_directional_score_row(
+                        copula,
+                        row,
+                        t,
+                        r_grid,
+                        precision,
+                        *corr_direction,
+                        scores.data())) {
+                    return invalid_grad(
+                        SCAR_NUMERICAL_FAILURE, OuBackend::Spectral);
+                }
+            } else {
+                if (!scar_internal::student_corr_score_row(
+                        copula,
+                        row,
+                        t,
+                        r_grid,
+                        precision,
+                        scores.data())) {
+                    return invalid_grad(
+                        SCAR_NUMERICAL_FAILURE, OuBackend::Spectral);
+                }
             }
             scar_internal::project_multiply_with_score_grad(
                 coeff,
@@ -784,7 +890,7 @@ GradLogLikResult spectral_neg_loglik_with_grad(
                 weighted_basis,
                 quad_order,
                 basis_order,
-                static_cast<int>(n_corr),
+                static_cast<int>(corr_param_count),
                 corr_value_projected,
                 corr_projected);
         }
@@ -812,7 +918,7 @@ GradLogLikResult spectral_neg_loglik_with_grad(
             }
         }
         if (correlation_gradient) {
-            for (std::size_t p = 0; p < n_corr; ++p) {
+            for (std::size_t p = 0; p < corr_param_count; ++p) {
                 const std::size_t param_base =
                     p * static_cast<std::size_t>(basis_order);
                 for (int n = 0; n < basis_order; ++n) {
@@ -855,7 +961,7 @@ GradLogLikResult spectral_neg_loglik_with_grad(
             dlog_scale[p] += dscale[p] / scale;
         }
         if (correlation_gradient) {
-            for (std::size_t p = 0; p < n_corr; ++p) {
+            for (std::size_t p = 0; p < corr_param_count; ++p) {
                 const std::size_t param_base =
                     p * static_cast<std::size_t>(basis_order);
                 const double corr_scale_derivative =
@@ -895,15 +1001,29 @@ GradLogLikResult spectral_neg_loglik_with_grad(
         projected,
         dprojected);
     if (correlation_gradient) {
-        if (!scar_internal::student_corr_score_row(
-                copula,
-                observation_values,
-                0,
-                r_grid,
-                precision,
-                scores.data())) {
-            return invalid_grad(
-                SCAR_NUMERICAL_FAILURE, OuBackend::Spectral);
+        if (directional) {
+            if (!scar_internal::student_corr_directional_score_row(
+                    copula,
+                    observation_values,
+                    0,
+                    r_grid,
+                    precision,
+                    *corr_direction,
+                    scores.data())) {
+                return invalid_grad(
+                    SCAR_NUMERICAL_FAILURE, OuBackend::Spectral);
+            }
+        } else {
+            if (!scar_internal::student_corr_score_row(
+                    copula,
+                    observation_values,
+                    0,
+                    r_grid,
+                    precision,
+                    scores.data())) {
+                return invalid_grad(
+                    SCAR_NUMERICAL_FAILURE, OuBackend::Spectral);
+            }
         }
         scar_internal::project_multiply_with_score_grad(
             coeff,
@@ -914,7 +1034,7 @@ GradLogLikResult spectral_neg_loglik_with_grad(
             weighted_basis,
             quad_order,
             basis_order,
-            static_cast<int>(n_corr),
+            static_cast<int>(corr_param_count),
             corr_value_projected,
             corr_projected);
     }
@@ -936,8 +1056,8 @@ GradLogLikResult spectral_neg_loglik_with_grad(
             + dlog_scale[p];
         out.neg_gradient[static_cast<std::size_t>(p)] = -grad;
     }
-    out.neg_corr_gradient.assign(n_corr, 0.0);
-    for (std::size_t p = 0; p < n_corr; ++p) {
+    out.neg_corr_gradient.assign(corr_param_count, 0.0);
+    for (std::size_t p = 0; p < corr_param_count; ++p) {
         const double grad =
             corr_projected[
                 p * static_cast<std::size_t>(basis_order)]
@@ -959,7 +1079,8 @@ GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_spectral(
     const OuNumericalConfig& config) const {
 
     return spectral_neg_loglik_with_grad(
-        params, copula, u, config, false);
+        params, copula, u, config, CorrGradientMode::None, nullptr,
+        &spectral_gradient_workspace_);
 }
 
 GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_and_corr_spectral(
@@ -969,7 +1090,20 @@ GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_and_corr_spectral(
     const OuNumericalConfig& config) const {
 
     return spectral_neg_loglik_with_grad(
-        params, copula, u, config, true);
+        params, copula, u, config, CorrGradientMode::Full, nullptr,
+        &spectral_gradient_workspace_);
+}
+
+GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_and_corr_directional_spectral(
+    const OuParams& params,
+    const CopulaSpec& copula,
+    ObservationView u,
+    const OuNumericalConfig& config,
+    const std::vector<double>& corr_direction) const {
+
+    return spectral_neg_loglik_with_grad(
+        params, copula, u, config, CorrGradientMode::Directional,
+        &corr_direction, &spectral_gradient_workspace_);
 }
 
 GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_local_gh(
@@ -979,7 +1113,8 @@ GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_local_gh(
     const OuNumericalConfig& config) const {
 
     return grid_neg_loglik_with_grad(
-        params, copula, u, config, OuBackend::LocalGh);
+        params, copula, u, config, OuBackend::LocalGh,
+        CorrGradientMode::None, nullptr, &grid_gradient_workspace_);
 }
 
 GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_matrix(
@@ -989,7 +1124,8 @@ GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_matrix(
     const OuNumericalConfig& config) const {
 
     return grid_neg_loglik_with_grad(
-        params, copula, u, config, OuBackend::Matrix);
+        params, copula, u, config, OuBackend::Matrix,
+        CorrGradientMode::None, nullptr, &grid_gradient_workspace_);
 }
 
 GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_and_corr_local_gh(
@@ -999,7 +1135,8 @@ GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_and_corr_local_gh(
     const OuNumericalConfig& config) const {
 
     return grid_neg_loglik_with_grad(
-        params, copula, u, config, OuBackend::LocalGh, true);
+        params, copula, u, config, OuBackend::LocalGh,
+        CorrGradientMode::Full, nullptr, &grid_gradient_workspace_);
 }
 
 GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_and_corr_matrix(
@@ -1009,7 +1146,34 @@ GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_and_corr_matrix(
     const OuNumericalConfig& config) const {
 
     return grid_neg_loglik_with_grad(
-        params, copula, u, config, OuBackend::Matrix, true);
+        params, copula, u, config, OuBackend::Matrix,
+        CorrGradientMode::Full, nullptr, &grid_gradient_workspace_);
+}
+
+GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_and_corr_directional_local_gh(
+    const OuParams& params,
+    const CopulaSpec& copula,
+    ObservationView u,
+    const OuNumericalConfig& config,
+    const std::vector<double>& corr_direction) const {
+
+    return grid_neg_loglik_with_grad(
+        params, copula, u, config, OuBackend::LocalGh,
+        CorrGradientMode::Directional, &corr_direction,
+        &grid_gradient_workspace_);
+}
+
+GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_and_corr_directional_matrix(
+    const OuParams& params,
+    const CopulaSpec& copula,
+    ObservationView u,
+    const OuNumericalConfig& config,
+    const std::vector<double>& corr_direction) const {
+
+    return grid_neg_loglik_with_grad(
+        params, copula, u, config, OuBackend::Matrix,
+        CorrGradientMode::Directional, &corr_direction,
+        &grid_gradient_workspace_);
 }
 
 }  // namespace scar

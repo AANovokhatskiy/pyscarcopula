@@ -9,6 +9,7 @@ from pyscarcopula._utils import pobs
 from pyscarcopula.copula.multivariate.corr_param import (
     _corr_from_cholesky_params,
     _corr_gradient_to_raw_params,
+    _shrinkage_raw_corr_direction,
     make_shrinkage_corr,
     pack_cholesky_corr,
     unpack_cholesky_corr,
@@ -85,6 +86,26 @@ def test_corr_gradient_chain_rule_matches_finite_difference(corr_mode):
         analytical, finite_difference, rtol=0.0, atol=2e-9)
 
 
+def test_shrinkage_direction_matches_full_gradient_contraction():
+    d = 4
+    params = np.array([0.35], dtype=np.float64)
+    corr_base = _R(d=d, rho=0.25)
+    corr_gradient = np.array(
+        [0.7, -0.4, 0.2, 0.9, -0.3, 0.5], dtype=np.float64)
+    R = make_shrinkage_corr(params[0], corr_base)
+
+    full = _corr_gradient_to_raw_params(
+        "shrinkage", params, R, corr_gradient, corr_base)
+    direction = _shrinkage_raw_corr_direction(params, corr_base)
+
+    np.testing.assert_allclose(
+        np.array([np.dot(corr_gradient, direction)]),
+        full,
+        rtol=0.0,
+        atol=1e-14,
+    )
+
+
 def test_fixed_mode_keeps_canonical_behavior():
     u = _u()
     R = _R()
@@ -105,6 +126,16 @@ def test_fixed_mode_keeps_canonical_behavior():
         u, method="scar-tm-ou", K=8, max_K=8, maxiter=1)
     assert scar_result.n_params == 3
     assert scar_result.diagnostics["selected_engine"] == "cpp"
+
+
+def test_correlation_property_returns_copy():
+    model = StochasticStudentCopula(d=3, R=_R(), corr_mode="fixed")
+
+    exposed = model.R
+    exposed[0, 1] = 0.95
+
+    assert model._R[0, 1] != pytest.approx(0.95)
+    assert model.R[0, 1] != pytest.approx(0.95)
 
 
 def test_fixed_mode_kendall_plugin_counts_correlation_parameters():
@@ -665,6 +696,171 @@ def test_scar_fixed_cpp_gradient_is_finite():
     assert np.all(np.isfinite(grad))
 
 
+@pytest.mark.parametrize(
+    "transition_method",
+    ["matrix", "local", "spectral", "auto"],
+)
+def test_shrinkage_directional_native_gradient_matches_full_contraction(
+        transition_method):
+    u = _u(T=24, d=3, seed=20260720)
+    corr_base = _R(d=3, rho=0.3)
+    model = StochasticStudentCopula(
+        d=3,
+        R=corr_base,
+        corr_mode="shrinkage",
+        corr_base=corr_base,
+    )
+    raw = np.array([0.2], dtype=np.float64)
+    model._set_corr_from_params(raw)
+    config = AutoTMConfig(
+        transition_method=transition_method,
+        K=10,
+        max_K=10,
+        adaptive=False,
+        basis_order=16,
+        quad_order=40,
+    )
+
+    value, ou_grad, corr_grad, info = (
+        _cpp_scar_ou.neg_loglik_with_grad_and_corr_info(
+            1.2, 0.4, 0.9, u, model, config))
+    direction = _shrinkage_raw_corr_direction(raw, model._corr_base)
+    (
+        directional_value,
+        directional_ou_grad,
+        directional_corr_grad,
+        directional_info,
+    ) = _cpp_scar_ou.neg_loglik_with_grad_and_corr_directional_info(
+        1.2, 0.4, 0.9, u, model, direction, config)
+
+    assert info["backend"] == directional_info["backend"]
+    np.testing.assert_allclose(
+        directional_value, value, rtol=1e-10, atol=1e-10)
+    np.testing.assert_allclose(
+        directional_ou_grad, ou_grad, rtol=1e-8, atol=1e-8)
+    np.testing.assert_allclose(
+        directional_corr_grad,
+        np.array([np.dot(corr_grad, direction)]),
+        rtol=1e-8,
+        atol=1e-8,
+    )
+
+
+@pytest.mark.parametrize(
+    "transition_method",
+    ["matrix", "local", "spectral", "auto"],
+)
+def test_prepared_scar_ou_objective_matches_functional_api(
+        transition_method):
+    u = _u(T=20, d=3, seed=20260721)
+    corr_base = _R(d=3, rho=0.28)
+    model = StochasticStudentCopula(
+        d=3,
+        R=corr_base,
+        corr_mode="shrinkage",
+        corr_base=corr_base,
+    )
+    raw = np.array([0.15], dtype=np.float64)
+    model._set_corr_from_params(raw)
+    config = AutoTMConfig(
+        transition_method=transition_method,
+        K=10,
+        max_K=10,
+        adaptive=False,
+        basis_order=16,
+        quad_order=40,
+    )
+    prepared = _cpp_scar_ou.prepare_objective(u, model, config)
+
+    expected_value, expected_grad, expected_info = (
+        _cpp_scar_ou.neg_loglik_with_grad_info(
+            1.2, 0.4, 0.9, u, model, config))
+    value, grad, info = prepared.neg_loglik_with_grad_info(1.2, 0.4, 0.9)
+    assert info["backend"] == expected_info["backend"]
+    np.testing.assert_allclose(value, expected_value, rtol=0.0, atol=0.0)
+    np.testing.assert_allclose(grad, expected_grad, rtol=0.0, atol=0.0)
+
+    expected_value, expected_grad, expected_corr_grad, expected_info = (
+        _cpp_scar_ou.neg_loglik_with_grad_and_corr_info(
+            1.2, 0.4, 0.9, u, model, config))
+    value, grad, corr_grad, info = (
+        prepared.neg_loglik_with_grad_and_corr_info(1.2, 0.4, 0.9))
+    assert info["backend"] == expected_info["backend"]
+    np.testing.assert_allclose(value, expected_value, rtol=0.0, atol=0.0)
+    np.testing.assert_allclose(grad, expected_grad, rtol=0.0, atol=0.0)
+    np.testing.assert_allclose(
+        corr_grad, expected_corr_grad, rtol=0.0, atol=0.0)
+
+    direction = _shrinkage_raw_corr_direction(raw, model._corr_base)
+    (
+        expected_value,
+        expected_grad,
+        expected_corr_grad,
+        expected_info,
+    ) = _cpp_scar_ou.neg_loglik_with_grad_and_corr_directional_info(
+        1.2, 0.4, 0.9, u, model, direction, config)
+    value, grad, corr_grad, info = (
+        prepared.neg_loglik_with_grad_and_corr_directional_info(
+            1.2, 0.4, 0.9, direction))
+    assert info["backend"] == expected_info["backend"]
+    assert corr_grad.shape == (1,)
+    np.testing.assert_allclose(value, expected_value, rtol=0.0, atol=0.0)
+    np.testing.assert_allclose(grad, expected_grad, rtol=0.0, atol=0.0)
+    np.testing.assert_allclose(
+        corr_grad, expected_corr_grad, rtol=0.0, atol=0.0)
+
+
+def test_prepared_scar_ou_updates_student_factor():
+    u = _u(T=18, d=3, seed=20260722)
+    model = StochasticStudentCopula(d=3, R=_R(d=3, rho=0.2))
+    config = AutoTMConfig(
+        transition_method="matrix",
+        K=10,
+        max_K=10,
+        adaptive=False,
+    )
+    prepared = _cpp_scar_ou.prepare_objective(u, model, config)
+    before_value, _, _ = prepared.neg_loglik_with_grad_info(1.1, 0.3, 0.8)
+
+    updated_R = np.array(
+        [
+            [1.0, 0.35, 0.12],
+            [0.35, 1.0, 0.18],
+            [0.12, 0.18, 1.0],
+        ],
+        dtype=np.float64,
+    )
+    model._set_R(updated_R, source="test")
+    prepared.update_copula(model)
+
+    value, grad, info = prepared.neg_loglik_with_grad_info(1.1, 0.3, 0.8)
+    expected_value, expected_grad, expected_info = (
+        _cpp_scar_ou.neg_loglik_with_grad_info(
+            1.1, 0.3, 0.8, u, model, config))
+
+    assert info["backend"] == expected_info["backend"]
+    assert abs(value - before_value) > 1e-10
+    np.testing.assert_allclose(value, expected_value, rtol=0.0, atol=0.0)
+    np.testing.assert_allclose(grad, expected_grad, rtol=0.0, atol=0.0)
+
+
+def test_prepared_scar_ou_rejects_invalid_shapes():
+    model = StochasticStudentCopula(d=3, R=_R(d=3))
+    config = AutoTMConfig(
+        transition_method="matrix",
+        K=8,
+        max_K=8,
+        adaptive=False,
+    )
+    with pytest.raises(ValueError, match="2D"):
+        _cpp_scar_ou.prepare_objective(np.ones(3), model, config)
+
+    prepared = _cpp_scar_ou.prepare_objective(
+        _u(T=10, d=3, seed=20260723), model, config)
+    with pytest.raises(ValueError, match="l_inv"):
+        prepared._native.update_student_factor(np.ones(2), 0.0)
+
+
 def test_scar_fixed_cpp_rejects_dimension_mismatch():
     u = _u(T=12, d=2)
     model = StochasticStudentCopula(d=3, R=_R(d=3), corr_mode="fixed")
@@ -704,6 +900,8 @@ def test_scar_estimated_corr_modes_use_python_optimizer_with_native_likelihood(
     assert result.diagnostics["selected_engine"] == "cpp"
     assert result.diagnostics["joint_static"] is True
     assert result.diagnostics["joint_optimizer"] == "python-lbfgsb"
+    assert result.diagnostics["prepared_native_evaluator"] is True
+    assert result.diagnostics["prepared_native_evaluator_count"] >= 1
     assert (
         result.diagnostics["correlation_parameterization_engine"] == "python")
     assert result.diagnostics["analytical_grad_requested"] is True
@@ -714,7 +912,14 @@ def test_scar_estimated_corr_modes_use_python_optimizer_with_native_likelihood(
     assert result.diagnostics["filter_derivative"] == "analytical"
     assert result.diagnostics["ou_gradient"] == "analytical"
     assert result.diagnostics["hybrid_gradient_evaluations"] > 0
-    assert result.diagnostics["correlation_gradient"] == "analytical"
+    if corr_mode == "shrinkage":
+        assert (
+            result.diagnostics["correlation_gradient"]
+            == "analytical_directional")
+        assert result.diagnostics["shrinkage_directional_gradient"] is True
+    else:
+        assert result.diagnostics["correlation_gradient"] == "analytical"
+        assert result.diagnostics["shrinkage_directional_gradient"] is False
     assert result.diagnostics["cpp_correlation_derivatives"] is True
     assert result.diagnostics["joint_gradient"] == "analytical"
     assert result.diagnostics["correlation_fd_scheme"] == "none"
@@ -821,6 +1026,18 @@ def test_joint_hybrid_jacobian_uses_one_plus_n_corr_evaluations(
         "neg_loglik_with_grad_and_corr_info",
         lambda *args, **kwargs: (_ for _ in ()).throw(
             _cpp_scar_ou.CppUnsupported("test fallback")),
+    )
+    monkeypatch.setattr(
+        _cpp_scar_ou,
+        "neg_loglik_with_grad_and_corr_directional_info",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            _cpp_scar_ou.CppUnsupported("test fallback")),
+    )
+    monkeypatch.setattr(
+        _cpp_scar_ou,
+        "prepare_objective",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            _cpp_scar_ou.CppUnsupported("test prepared fallback")),
     )
     monkeypatch.setattr(
         _cpp_scar_ou, "neg_loglik_with_grad_info", fake_gradient)

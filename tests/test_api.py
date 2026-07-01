@@ -8,7 +8,7 @@ from pyscarcopula import (
     IndependentCopula, CVineCopula, EquicorrGaussianCopula,
     GaussianCopula, StudentCopula, StochasticStudentCopula,
 )
-from pyscarcopula.api import fit, predict, predictive_mean
+from pyscarcopula.api import fit, mixture_h, predict, predictive_mean, sample
 from pyscarcopula.stattests import gof_test
 from pyscarcopula._utils import pobs
 from pyscarcopula._types import (
@@ -112,6 +112,15 @@ class TestPredictiveMean:
         assert r_t.shape == (200,)
         # Should vary (not constant like MLE)
         assert np.std(r_t) > 0
+
+    def test_top_level_api_rejects_public_posterior_cache(self, random_u2):
+        cop = GumbelCopula(rotate=180)
+        result = fit(cop, random_u2, method='mle')
+
+        with pytest.raises(TypeError, match="posterior_cache"):
+            predictive_mean(cop, random_u2, result, posterior_cache={})
+        with pytest.raises(TypeError, match="posterior_cache"):
+            mixture_h(cop, random_u2, result, posterior_cache={})
 
 class TestGoFWithFitResult:
     """gof_test with explicit fit_result= parameter."""
@@ -494,6 +503,20 @@ class TestMultivariateCopulaAPI:
             == "analytical"
         )
 
+    @pytest.mark.parametrize(
+        "bad_data",
+        [
+            np.array([0.1, 0.2, 0.3]),
+            np.empty((0, 3)),
+            np.ones((5, 1)),
+            np.array([[0.2, np.nan], [0.4, 0.6]]),
+            np.array([[0.2, np.inf], [0.4, 0.6]]),
+        ],
+    )
+    def test_student_fit_rejects_invalid_input_early(self, bad_data):
+        with pytest.raises(ValueError):
+            StudentCopula().fit(bad_data)
+
     def test_student_fit_gof_sample_refit_gof_roundtrip(self):
         R = np.array(
             [
@@ -564,6 +587,26 @@ class TestConditionalPredict:
         result = fit(cop, random_u2, method='mle')
         samples = predict(cop, random_u2, result, 256, given={0: 0.37})
         assert samples.shape == (256, 2)
+        assert np.all((samples > 0) & (samples < 1))
+        assert np.allclose(samples[:, 0], 0.37)
+
+    def test_bivariate_mle_sample_honors_given(self, random_u2):
+        cop = GumbelCopula(rotate=180)
+        result = fit(cop, random_u2, method='mle')
+        samples = sample(
+            cop, random_u2, result, 256, given={0: 0.37},
+            rng=np.random.default_rng(19))
+        assert samples.shape == (256, 2)
+        assert np.all((samples > 0) & (samples < 1))
+        assert np.allclose(samples[:, 0], 0.37)
+
+    def test_gas_model_sample_honors_given(self, random_u2):
+        cop = GumbelCopula(rotate=180)
+        result = fit(cop, random_u2, method='gas')
+        samples = sample(
+            cop, random_u2, result, 32, given={0: 0.37},
+            rng=np.random.default_rng(20))
+        assert samples.shape == (32, 2)
         assert np.all((samples > 0) & (samples < 1))
         assert np.allclose(samples[:, 0], 0.37)
 

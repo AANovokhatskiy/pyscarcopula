@@ -102,6 +102,13 @@ Python remains responsible for:
 There is no GAS or SCAR-TM-OU backend selector and no Python likelihood
 fallback.
 
+SCAR-TM-OU joint Stochastic Student fits can hold a prepared native evaluator
+for one optimizer loop. That object owns the copied observations, native
+copula specification, Student PPF cache, and reusable gradient workspaces.
+Python still owns the raw correlation parameterization and updates only the
+native Student factor between objective calls. The direct functional adapters
+remain stateless entry points for one-off evaluations.
+
 ## Custom Python Extensions
 
 User-defined Python copulas may implement the public protocols for their own

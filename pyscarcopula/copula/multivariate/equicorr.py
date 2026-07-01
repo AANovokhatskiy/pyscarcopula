@@ -166,7 +166,7 @@ class EquicorrGaussianCopula(MultivariateCopula):
             parameter_count=1,
             n_observations=len(u),
             model_parameters={"rho": rho_hat},
-            correlation_matrix=correlation,
+            correlation_matrix=correlation.copy(),
             diagnostics={
                 "model_score": "not_applicable",
                 "optimizer_gradient": "analytical",

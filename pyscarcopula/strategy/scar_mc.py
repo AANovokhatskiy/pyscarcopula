@@ -22,7 +22,10 @@ from pyscarcopula._types import (
     ou_params,
 )
 from pyscarcopula.strategy._base import copula_dimension, register_strategy
-from pyscarcopula.strategy.predict_helpers import sample_predictive
+from pyscarcopula.strategy.predict_helpers import (
+    predict_from_strategy,
+    sample_predictive,
+)
 from pyscarcopula.strategy.initial_point import (
     _explicit_initialization_diagnostics,
     _fallback_initialization_diagnostics,
@@ -130,7 +133,8 @@ class _SCARMCBase:
             rng = np.random.default_rng()
         r = self.model_sample_params(copula, result, n, rng=rng)
         d = copula_dimension(copula, u)
-        return sample_predictive(copula, n, r, rng=rng, d=d)
+        return sample_predictive(
+            copula, n, r, given=kwargs.get('given'), rng=rng, d=d)
 
     def model_sample_params(self, copula, result, n, rng=None, **kwargs):
         """OU trajectory parameters for unconditional model reproduction."""
@@ -155,12 +159,8 @@ class _SCARMCBase:
 
     def predict(self, copula, u, result, n, rng=None, **kwargs):
         """Predict by sampling from the stationary OU distribution."""
-        if rng is None:
-            rng = np.random.default_rng()
-        r = self.predictive_params(copula, u, result, n, rng=rng, **kwargs)
-        d = copula_dimension(copula, u)
-        return sample_predictive(
-            copula, n, r, given=kwargs.get('given'), rng=rng, d=d)
+        return predict_from_strategy(
+            self, copula, u, result, n, rng=rng, **kwargs)
 
 
 @register_strategy('SCAR-P-OU')

@@ -212,6 +212,16 @@ Compile-time defaults limit it to 16 rules and 8 MiB of cached node, weight,
 basis, and weighted-basis vector storage. Rules larger than the byte budget
 are computed for the current call but are not cached.
 
+During Stochastic Student SCAR-TM-OU joint fits, the optimizer uses a prepared
+native objective when available. The prepared path copies observations and
+builds the native copula specification once per fit/configuration, then updates
+only the Student correlation factor on each objective call. Grid and spectral
+gradient workspaces are reused by the native evaluator, including the
+directional shrinkage correlation gradient where the native correlation result
+has one element rather than all lower-triangle correlation entries. The
+stateless functional wrapper functions remain available for direct calls and
+tests; they are not a persistent cache.
+
 The native kernels use these status codes:
 
 | Status | Name | Meaning |

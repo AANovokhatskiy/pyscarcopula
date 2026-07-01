@@ -13,6 +13,7 @@ from pyscarcopula.copula.joe import JoeCopula
 from pyscarcopula.copula.multivariate.equicorr import (
     EquicorrGaussianCopula,
 )
+from pyscarcopula.copula.multivariate import StochasticStudentCopula
 from pyscarcopula.numerical import _cpp_scar_ou
 from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
 from pyscarcopula import stattests
@@ -87,6 +88,80 @@ def test_spectral_forward_and_state_use_native_grid_reconstruction():
     assert predictive.shape == (len(u),)
     assert z_grid.shape == probability.shape == (20,)
     assert np.sum(probability) == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize(
+    "transition_method",
+    ["matrix", "local", "auto", "spectral"],
+)
+def test_prepared_forward_helpers_match_stateless_wrappers(transition_method):
+    copula = ClaytonCopula(transform_type="xtanh")
+    u = np.random.default_rng(20260730).uniform(0.05, 0.95, size=(12, 2))
+    config = AutoTMConfig(
+        transition_method=transition_method,
+        K=20,
+        adaptive=False,
+        max_K=20,
+        basis_order=16,
+        gh_order=5,
+    )
+    params = (1.1, 0.2, 0.8)
+    prepared = _cpp_scar_ou.prepare_objective(u, copula, config)
+
+    np.testing.assert_allclose(
+        prepared.predictive_mean(*params),
+        _cpp_scar_ou.predictive_mean(*params, u, copula, config),
+        rtol=0.0,
+        atol=0.0,
+    )
+    np.testing.assert_allclose(
+        prepared.mixture_h(*params),
+        _cpp_scar_ou.mixture_h(*params, u, copula, config),
+        rtol=0.0,
+        atol=0.0,
+    )
+    for horizon in ("current", "next"):
+        z_prepared, p_prepared = prepared.state_distribution(
+            *params, horizon=horizon)
+        z_expected, p_expected = _cpp_scar_ou.state_distribution(
+            *params, u, copula, config, horizon=horizon)
+        np.testing.assert_allclose(
+            z_prepared, z_expected, rtol=0.0, atol=0.0)
+        np.testing.assert_allclose(
+            p_prepared, p_expected, rtol=0.0, atol=0.0)
+
+
+def test_prepared_forward_helpers_use_updated_student_factor():
+    rng = np.random.default_rng(20260731)
+    u = rng.uniform(0.05, 0.95, size=(12, 3))
+    base_R = np.full((3, 3), 0.2, dtype=np.float64)
+    np.fill_diagonal(base_R, 1.0)
+    copula = StochasticStudentCopula(d=3, R=base_R)
+    config = AutoTMConfig(
+        transition_method="matrix",
+        K=18,
+        adaptive=False,
+        max_K=18,
+    )
+    params = (1.0, 0.1, 0.9)
+    prepared = _cpp_scar_ou.prepare_objective(u, copula, config)
+    before = prepared.predictive_mean(*params)
+
+    updated_R = np.array(
+        [
+            [1.0, 0.35, 0.12],
+            [0.35, 1.0, 0.18],
+            [0.12, 0.18, 1.0],
+        ],
+        dtype=np.float64,
+    )
+    copula._set_R(updated_R, source="test")
+    prepared.update_copula(copula)
+
+    after = prepared.predictive_mean(*params)
+    expected = _cpp_scar_ou.predictive_mean(*params, u, copula, config)
+    assert not np.allclose(before, after, rtol=0.0, atol=1e-12)
+    np.testing.assert_allclose(after, expected, rtol=0.0, atol=0.0)
 
 
 @pytest.mark.parametrize("backend", ["python", "auto", "cpp"])

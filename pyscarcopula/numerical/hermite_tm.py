@@ -7,16 +7,11 @@ from functools import lru_cache
 import numpy as np
 from scipy.special import roots_hermitenorm
 
+from pyscarcopula.numerical._arrays import validate_positive_int
 from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
 
 
-def _validate_positive_int(value, name):
-    if isinstance(value, (bool, np.bool_)):
-        raise TypeError(f"{name} must be a positive integer")
-    value = int(value)
-    if value <= 0:
-        raise ValueError(f"{name} must be positive")
-    return value
+_validate_positive_int = validate_positive_int
 
 
 @lru_cache(maxsize=32)

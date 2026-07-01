@@ -16,6 +16,7 @@ from pyscarcopula.numerical._cpp_extension import (
     CppError,
     CppUnavailable,
     CppUnsupported,
+    cpp_status_name as _status_name,
 )
 
 
@@ -163,19 +164,6 @@ def _inputs(omega, gamma, beta, u, copula, scaling, score_eps):
         obs,
         _config(module, scaling, score_eps),
     )
-
-
-def _status_name(status: int) -> str:
-    return {
-        0: "ok",
-        1: "null_pointer",
-        2: "invalid_size",
-        3: "invalid_family",
-        4: "invalid_rotation",
-        5: "invalid_transform",
-        6: "invalid_parameter",
-        7: "numerical_failure",
-    }.get(int(status), "unknown")
 
 
 def _raise_status(result, operation: str) -> None:

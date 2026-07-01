@@ -31,6 +31,7 @@ from pyscarcopula.numerical._cpp_extension import (
     CppError,
     CppUnavailable,
     CppUnsupported,
+    cpp_status_name as _status_name,
 )
 
 
@@ -127,6 +128,173 @@ def _inputs(kappa, mu, nu, u, copula, config):
         _config(module, cfg),
         method,
     )
+
+
+def _prepared_inputs(u, copula, config):
+    module = _cpp_extension.load()
+    cfg = config or AutoTMConfig()
+    obs = as_float64_array(u)
+    method = normalize_ou_transition_method(cfg.transition_method)
+    validate_cpp_config(cfg, transition_method=method)
+    if obs.ndim != 2:
+        raise ValueError("u must have 2D shape (n_obs, dimension)")
+
+    student_dim = getattr(copula, "d", None)
+    if student_dim is not None:
+        if isinstance(student_dim, (bool, np.bool_)) or not isinstance(
+                student_dim, (int, np.integer)):
+            raise ValueError("Student dimension d must be an integer")
+        student_dim = int(student_dim)
+        if student_dim < 2:
+            raise ValueError(
+                f"Student dimension d must be at least 2, got {student_dim}")
+
+    return (
+        module,
+        _cpp_copula.make_spec(module, copula, obs),
+        obs,
+        _config(module, cfg),
+        method,
+        cfg,
+    )
+
+
+class PreparedScarOuObjective:
+    """Prepared C++ SCAR-TM-OU objective for repeated fit evaluations.
+
+    The functional wrappers below intentionally stay stateless. Optimizer
+    loops that evaluate the same observations many times should use this
+    object so the native evaluator can reuse its copied observations, Student
+    PPF cache, and grid/spectral gradient workspaces.
+    """
+
+    def __init__(self, u, copula, config: AutoTMConfig | None = None):
+        (
+            self.module,
+            self.spec,
+            self.obs,
+            self.config,
+            self.method,
+            self.cfg_py,
+        ) = _prepared_inputs(u, copula, config)
+        self._native = self.module.PreparedScarOuEvaluator(
+            self.spec, self.obs, self.config, self.method)
+        self._student_corr_version = getattr(
+            copula, "_corr_cache_version", None)
+
+    def update_copula(self, copula, *, force: bool = False) -> None:
+        if getattr(copula, "d", None) is None:
+            return
+        if not hasattr(copula, "_L_inv") or not hasattr(copula, "_log_det"):
+            return
+        corr_version = getattr(copula, "_corr_cache_version", None)
+        if not force and corr_version == self._student_corr_version:
+            return
+        self._native.update_student_factor(
+            np.asarray(copula._L_inv, dtype=np.float64).reshape(-1),
+            float(copula._log_det),
+        )
+        self._student_corr_version = corr_version
+
+    def neg_loglik_info(self, kappa, mu, nu):
+        params = _params(self.module, kappa, mu, nu)
+        result = self._native.loglik(params)
+        info = _result_info(result, self.method, kappa, len(self.obs), self.cfg_py)
+        status = info["status"]
+        if status != 0:
+            raise CppError(
+                "C++ prepared SCAR-OU loglik failed: "
+                f"status={status} ({_status_name(status)}), "
+                f"backend={info['backend']}"
+            )
+        value = -float(result["log_likelihood"])
+        if not np.isfinite(value):
+            return 1e10, info
+        return value, info
+
+    def neg_loglik_with_grad_info(self, kappa, mu, nu):
+        params = _params(self.module, kappa, mu, nu)
+        result = self._native.neg_loglik_with_grad(params)
+        info = _result_info(result, self.method, kappa, len(self.obs), self.cfg_py)
+        self._raise_if_failed(info, "C++ prepared SCAR-OU gradient failed")
+        return (
+            float(result["neg_log_likelihood"]),
+            np.asarray(result["neg_gradient"], dtype=np.float64),
+            info,
+        )
+
+    def neg_loglik_with_grad_and_corr_info(self, kappa, mu, nu):
+        params = _params(self.module, kappa, mu, nu)
+        result = self._native.neg_loglik_with_grad_and_corr(params)
+        info = _result_info(result, self.method, kappa, len(self.obs), self.cfg_py)
+        self._raise_if_failed(
+            info, "C++ prepared SCAR-OU correlation gradient failed")
+        return (
+            float(result["neg_log_likelihood"]),
+            np.asarray(result["neg_gradient"], dtype=np.float64),
+            np.asarray(result["neg_corr_gradient"], dtype=np.float64),
+            info,
+        )
+
+    def neg_loglik_with_grad_and_corr_directional_info(
+            self, kappa, mu, nu, corr_direction):
+        params = _params(self.module, kappa, mu, nu)
+        direction = np.ascontiguousarray(
+            np.asarray(corr_direction, dtype=np.float64).reshape(-1))
+        result = self._native.neg_loglik_with_grad_and_corr_directional(
+            params, direction)
+        info = _result_info(result, self.method, kappa, len(self.obs), self.cfg_py)
+        self._raise_if_failed(
+            info, "C++ prepared SCAR-OU directional correlation gradient failed")
+        return (
+            float(result["neg_log_likelihood"]),
+            np.asarray(result["neg_gradient"], dtype=np.float64),
+            np.asarray(result["neg_corr_gradient"], dtype=np.float64),
+            info,
+        )
+
+    def predictive_mean(self, kappa, mu, nu) -> np.ndarray:
+        params = _params(self.module, kappa, mu, nu)
+        result = self._native.predictive_mean(params)
+        return _vector_result(result)
+
+    def mixture_h(self, kappa, mu, nu) -> np.ndarray:
+        params = _params(self.module, kappa, mu, nu)
+        result = self._native.mixture_h(params)
+        return clip_h_function_values(_vector_result(result))
+
+    def state_distribution(
+            self, kappa, mu, nu,
+            horizon: str = "current") -> tuple[np.ndarray, np.ndarray]:
+        horizon = str(horizon).lower()
+        if horizon not in ("current", "next"):
+            raise ValueError("horizon must be 'current' or 'next'")
+        params = _params(self.module, kappa, mu, nu)
+        result = self._native.state_distribution(params, horizon == "next")
+        status = int(result["status"])
+        if status != 0:
+            raise CppError(
+                "C++ prepared SCAR-OU state_distribution failed: "
+                f"status={status} ({_status_name(status)})")
+        return (
+            np.asarray(result["z_grid"], dtype=np.float64),
+            np.asarray(result["prob"], dtype=np.float64),
+        )
+
+    @staticmethod
+    def _raise_if_failed(info: dict, message: str) -> None:
+        status = info["status"]
+        if status != 0:
+            raise CppError(
+                f"{message}: "
+                f"status={status} ({_status_name(status)}), "
+                f"backend={info['backend']}"
+            )
+
+
+def prepare_objective(u, copula, config: AutoTMConfig | None = None):
+    """Prepare a native SCAR-TM-OU objective for repeated evaluations."""
+    return PreparedScarOuObjective(u, copula, config)
 
 
 def _call_loglik(evaluator, method, params, spec, u, config):
@@ -326,6 +494,47 @@ def neg_loglik_with_grad_and_corr_info(
     )
 
 
+def neg_loglik_with_grad_and_corr_directional_info(
+        kappa, mu, nu, u, copula, corr_direction,
+        config: AutoTMConfig | None = None):
+    """Evaluate OU gradient and one directional static-correlation gradient."""
+    cfg_py = config or AutoTMConfig()
+    module, params, spec, obs, cfg, method = _inputs(
+        kappa, mu, nu, u, copula, config)
+    direction = np.ascontiguousarray(
+        np.asarray(corr_direction, dtype=np.float64).reshape(-1))
+    evaluator = module.ScarOuEvaluator()
+    if method == "auto":
+        result = evaluator.neg_loglik_with_grad_and_corr_directional_auto(
+            params, spec, obs, cfg, direction)
+    elif method == "spectral":
+        result = evaluator.neg_loglik_with_grad_and_corr_directional_spectral(
+            params, spec, obs, cfg, direction)
+    elif method == "local":
+        result = evaluator.neg_loglik_with_grad_and_corr_directional_local_gh(
+            params, spec, obs, cfg, direction)
+    elif method == "matrix":
+        result = evaluator.neg_loglik_with_grad_and_corr_directional_matrix(
+            params, spec, obs, cfg, direction)
+    else:
+        raise ValueError(f"Unsupported transition_method: {method}")
+
+    info = _result_info(result, method, kappa, len(obs), cfg_py)
+    status = info["status"]
+    if status != 0:
+        raise CppError(
+            "C++ SCAR-OU directional correlation gradient failed: "
+            f"status={status} ({_status_name(status)}), "
+            f"backend={info['backend']}"
+        )
+    return (
+        float(result["neg_log_likelihood"]),
+        np.asarray(result["neg_gradient"], dtype=np.float64),
+        np.asarray(result["neg_corr_gradient"], dtype=np.float64),
+        info,
+    )
+
+
 def _call_vector(evaluator, prefix, method, params, spec, u, config):
     if method == "auto":
         return getattr(evaluator, f"{prefix}_auto")(params, spec, u, config)
@@ -436,19 +645,6 @@ def _backend_name(value: int) -> str:
         0: "spectral",
         1: "local",
         2: "matrix",
-    }.get(int(value), "unknown")
-
-
-def _status_name(value: int) -> str:
-    return {
-        0: "ok",
-        1: "null_pointer",
-        2: "invalid_size",
-        3: "invalid_family",
-        4: "invalid_rotation",
-        5: "invalid_transform",
-        6: "invalid_parameter",
-        7: "numerical_failure",
     }.get(int(value), "unknown")
 
 

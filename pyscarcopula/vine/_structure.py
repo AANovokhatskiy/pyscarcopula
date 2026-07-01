@@ -233,6 +233,32 @@ def validate_rvine_matrix(M):
     return True
 
 
+class _DisjointSet:
+    """Union-find helper for Kruskal-style vine tree selection."""
+
+    def __init__(self, nodes):
+        self.parent = {node: node for node in nodes}
+        self.rank = {node: 0 for node in nodes}
+
+    def find(self, node):
+        parent = self.parent
+        while parent[node] != node:
+            parent[node] = parent[parent[node]]
+            node = parent[node]
+        return node
+
+    def union(self, left, right):
+        root_left, root_right = self.find(left), self.find(right)
+        if root_left == root_right:
+            return False
+        if self.rank[root_left] < self.rank[root_right]:
+            root_left, root_right = root_right, root_left
+        self.parent[root_right] = root_left
+        if self.rank[root_left] == self.rank[root_right]:
+            self.rank[root_left] += 1
+        return True
+
+
 # ══════════════════════════════════════════════════════════════
 # Maximum spanning tree
 # ══════════════════════════════════════════════════════════════
@@ -254,31 +280,12 @@ def _maximum_spanning_tree(nodes, edges, weights):
     # Sort by weight descending
     order = np.argsort(-np.array(weights))
 
-    # Union-Find
-    parent = {n: n for n in nodes}
-    rank = {n: 0 for n in nodes}
-
-    def find(x):
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
-    def union(x, y):
-        rx, ry = find(x), find(y)
-        if rx == ry:
-            return False
-        if rank[rx] < rank[ry]:
-            rx, ry = ry, rx
-        parent[ry] = rx
-        if rank[rx] == rank[ry]:
-            rank[rx] += 1
-        return True
+    components = _DisjointSet(nodes)
 
     mst_edges = []
     for idx in order:
         a, b = edges[idx]
-        if union(a, b):
+        if components.union(a, b):
             mst_edges.append((a, b))
             if len(mst_edges) == len(nodes) - 1:
                 break
@@ -308,32 +315,14 @@ def _priority_spanning_tree(nodes, edges, weights, priority_flags,
         key=lambda idx: (-weights[idx], idx),
     )
 
-    parent = {n: n for n in nodes}
-    rank = {n: 0 for n in nodes}
-
-    def find(x):
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
-    def union(x, y):
-        rx, ry = find(x), find(y)
-        if rx == ry:
-            return False
-        if rank[rx] < rank[ry]:
-            rx, ry = ry, rx
-        parent[ry] = rx
-        if rank[rx] == rank[ry]:
-            rank[rx] += 1
-        return True
+    components = _DisjointSet(nodes)
 
     mst_edges = []
     n_priority = 0
 
     def add_edge(idx):
         a, b = edges[idx]
-        if union(a, b):
+        if components.union(a, b):
             mst_edges.append((a, b))
             return True
         return False

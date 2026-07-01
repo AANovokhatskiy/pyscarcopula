@@ -492,6 +492,122 @@ double student_log_pdf_impl(
         spec, row, df, row_index, workspace, nullptr);
 }
 
+bool student_corr_score_row_impl(
+    const scar::CopulaSpec& spec,
+    const double* row,
+    std::int64_t row_index,
+    const std::vector<double>& df_grid,
+    const std::vector<double>& precision,
+    const std::vector<double>* direction,
+    double* scores) {
+
+    const int d = spec.dim;
+    std::size_t matrix_elements = 0;
+    if (!valid_student_dimension(d, matrix_elements)) {
+        return false;
+    }
+    const std::size_t dim_size = static_cast<std::size_t>(d);
+    std::size_t n_corr = 0;
+    if (!valid_student_correlation_count(d, n_corr)) {
+        return false;
+    }
+    std::size_t score_elements = 0;
+    if (row == nullptr
+        || scores == nullptr
+        || d < 2
+        || spec.l_inv.size() != matrix_elements
+        || precision.size() != matrix_elements
+        || (direction == nullptr
+            && !checked_size_mul(
+                df_grid.size(), n_corr, score_elements))
+        || (direction != nullptr && direction->size() != n_corr)) {
+        return false;
+    }
+    if (direction != nullptr) {
+        for (double value : *direction) {
+            if (!std::isfinite(value)) {
+                return false;
+            }
+        }
+    }
+
+    std::vector<double> x(static_cast<std::size_t>(d), 0.0);
+    std::vector<double> whitened(static_cast<std::size_t>(d), 0.0);
+    std::vector<double> precision_x(static_cast<std::size_t>(d), 0.0);
+    for (std::size_t grid_index = 0;
+         grid_index < df_grid.size();
+         ++grid_index) {
+        const double df = df_grid[grid_index];
+        if (!std::isfinite(df) || df <= 2.0) {
+            return false;
+        }
+        const bool use_cache =
+            student_ppf_cache_available(spec, row_index)
+            && df >= spec.ppf_nodes.front()
+            && df <= spec.ppf_nodes.back();
+        PpfInterpolation interpolation;
+        if (use_cache) {
+            interpolation = make_ppf_interpolation(spec.ppf_nodes, df);
+        }
+        for (int i = 0; i < d; ++i) {
+            x[static_cast<std::size_t>(i)] = use_cache
+                ? interpolate_ppf_value(
+                    spec, interpolation, row_index, i, nullptr)
+                : student_quantile(row[i], df);
+        }
+
+        double quad = 0.0;
+        for (int i = 0; i < d; ++i) {
+            double value = 0.0;
+            for (int j = 0; j <= i; ++j) {
+                value += spec.l_inv[
+                    static_cast<std::size_t>(i) * dim_size
+                    + static_cast<std::size_t>(j)]
+                    * x[static_cast<std::size_t>(j)];
+            }
+            whitened[static_cast<std::size_t>(i)] = value;
+            quad += value * value;
+        }
+        for (int i = 0; i < d; ++i) {
+            double value = 0.0;
+            for (int j = i; j < d; ++j) {
+                value += spec.l_inv[
+                    static_cast<std::size_t>(j) * dim_size
+                    + static_cast<std::size_t>(i)]
+                    * whitened[static_cast<std::size_t>(j)];
+            }
+            precision_x[static_cast<std::size_t>(i)] = value;
+        }
+
+        const double shape_weight =
+            (df + static_cast<double>(d)) / (df + quad);
+        double directional_score = 0.0;
+        std::size_t corr_index = 0;
+        for (int i = 1; i < d; ++i) {
+            for (int j = 0; j < i; ++j) {
+                const double entry_score =
+                    -precision[
+                        static_cast<std::size_t>(i) * dim_size
+                        + static_cast<std::size_t>(j)]
+                    + shape_weight
+                        * precision_x[static_cast<std::size_t>(i)]
+                        * precision_x[static_cast<std::size_t>(j)];
+                if (direction == nullptr) {
+                    scores[grid_index * n_corr + corr_index] = entry_score;
+                } else {
+                    directional_score += (*direction)[corr_index]
+                        * entry_score;
+                }
+                ++corr_index;
+            }
+        }
+        if (direction != nullptr) {
+            scores[grid_index] = directional_score;
+        }
+    }
+    return true;
+}
+
 }  // namespace
 
 double student_log_pdf(
@@ -579,92 +695,33 @@ bool student_corr_score_row(
     const std::vector<double>& precision,
     double* scores) {
 
-    const int d = spec.dim;
-    std::size_t matrix_elements = 0;
-    if (!valid_student_dimension(d, matrix_elements)) {
-        return false;
-    }
-    const std::size_t dim_size = static_cast<std::size_t>(d);
-    std::size_t n_corr = 0;
-    if (!valid_student_correlation_count(d, n_corr)) {
-        return false;
-    }
-    std::size_t score_elements = 0;
-    if (row == nullptr
-        || scores == nullptr
-        || d < 2
-        || spec.l_inv.size() != matrix_elements
-        || precision.size() != matrix_elements
-        || !checked_size_mul(
-            df_grid.size(), n_corr, score_elements)) {
-        return false;
-    }
+    return student_corr_score_row_impl(
+        spec,
+        row,
+        row_index,
+        df_grid,
+        precision,
+        nullptr,
+        scores);
+}
 
-    std::vector<double> x(static_cast<std::size_t>(d), 0.0);
-    std::vector<double> whitened(static_cast<std::size_t>(d), 0.0);
-    std::vector<double> precision_x(static_cast<std::size_t>(d), 0.0);
-    for (std::size_t grid_index = 0;
-         grid_index < df_grid.size();
-         ++grid_index) {
-        const double df = df_grid[grid_index];
-        if (!std::isfinite(df) || df <= 2.0) {
-            return false;
-        }
-        const bool use_cache =
-            student_ppf_cache_available(spec, row_index)
-            && df >= spec.ppf_nodes.front()
-            && df <= spec.ppf_nodes.back();
-        PpfInterpolation interpolation;
-        if (use_cache) {
-            interpolation = make_ppf_interpolation(spec.ppf_nodes, df);
-        }
-        for (int i = 0; i < d; ++i) {
-            x[static_cast<std::size_t>(i)] = use_cache
-                ? interpolate_ppf_value(
-                    spec, interpolation, row_index, i, nullptr)
-                : student_quantile(row[i], df);
-        }
+bool student_corr_directional_score_row(
+    const scar::CopulaSpec& spec,
+    const double* row,
+    std::int64_t row_index,
+    const std::vector<double>& df_grid,
+    const std::vector<double>& precision,
+    const std::vector<double>& direction,
+    double* scores) {
 
-        double quad = 0.0;
-        for (int i = 0; i < d; ++i) {
-            double value = 0.0;
-            for (int j = 0; j <= i; ++j) {
-                value += spec.l_inv[
-                    static_cast<std::size_t>(i) * dim_size
-                    + static_cast<std::size_t>(j)]
-                    * x[static_cast<std::size_t>(j)];
-            }
-            whitened[static_cast<std::size_t>(i)] = value;
-            quad += value * value;
-        }
-        for (int i = 0; i < d; ++i) {
-            double value = 0.0;
-            for (int j = i; j < d; ++j) {
-                value += spec.l_inv[
-                    static_cast<std::size_t>(j) * dim_size
-                    + static_cast<std::size_t>(i)]
-                    * whitened[static_cast<std::size_t>(j)];
-            }
-            precision_x[static_cast<std::size_t>(i)] = value;
-        }
-
-        const double shape_weight =
-            (df + static_cast<double>(d)) / (df + quad);
-        std::size_t corr_index = 0;
-        for (int i = 1; i < d; ++i) {
-            for (int j = 0; j < i; ++j) {
-                scores[grid_index * n_corr + corr_index] =
-                    -precision[
-                        static_cast<std::size_t>(i) * dim_size
-                        + static_cast<std::size_t>(j)]
-                    + shape_weight
-                        * precision_x[static_cast<std::size_t>(i)]
-                        * precision_x[static_cast<std::size_t>(j)];
-                ++corr_index;
-            }
-        }
-    }
-    return true;
+    return student_corr_score_row_impl(
+        spec,
+        row,
+        row_index,
+        df_grid,
+        precision,
+        &direction,
+        scores);
 }
 
 void student_fill_row(

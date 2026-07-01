@@ -7,6 +7,36 @@ from pyscarcopula._utils import clip_pseudo_observations, pobs
 from pyscarcopula._types import MultivariateMLEResult
 from pyscarcopula.copula.base import CopulaCapabilities
 from pyscarcopula.copula.multivariate.base import MultivariateCopula
+from pyscarcopula.copula.multivariate.corr_param import validate_corr_matrix
+
+
+def _validate_gaussian_fit_data(u):
+    if u.ndim != 2:
+        raise ValueError("data must have shape (n_observations, dimension)")
+    if u.shape[0] == 0:
+        raise ValueError("data must contain at least one observation")
+    if u.shape[1] < 2:
+        raise ValueError("data must contain at least two variables")
+    if not np.all(np.isfinite(u)):
+        raise ValueError("data must contain only finite values")
+
+
+def _gaussian_score_correlation(u):
+    u_c = clip_pseudo_observations(u)
+    x = norm.ppf(u_c)
+    if np.any(np.std(x, axis=0) <= 0.0):
+        raise ValueError("data columns must not be constant")
+    corr = np.corrcoef(x.T)
+    corr = np.asarray(corr, dtype=np.float64)
+    if corr.shape != (u.shape[1], u.shape[1]):
+        raise ValueError("fitted correlation matrix has invalid shape")
+    if not np.all(np.isfinite(corr)):
+        raise ValueError(
+            "fitted correlation matrix must contain only finite values")
+    corr = 0.5 * (corr + corr.T)
+    np.fill_diagonal(corr, 1.0)
+    validate_corr_matrix(corr)
+    return corr
 
 
 class GaussianCopula(MultivariateCopula):
@@ -21,14 +51,19 @@ class GaussianCopula(MultivariateCopula):
     def fit(self, data, to_pobs=False, **kwargs):
         """Fit the correlation matrix in Gaussian score space."""
         u = np.asarray(data, dtype=np.float64)
+        _validate_gaussian_fit_data(u)
         if to_pobs:
             u = pobs(u)
+            _validate_gaussian_fit_data(u)
 
-        u_c = clip_pseudo_observations(u)
-        x = norm.ppf(u_c)
+        corr = _gaussian_score_correlation(u)
+        candidate = GaussianCopula()
+        candidate._set_dimension(u.shape[1], allow_change=True)
+        candidate.corr = corr
+        log_likelihood = -candidate._nll(u)
+
         self._set_dimension(u.shape[1], allow_change=True)
-        self.corr = np.corrcoef(x.T)
-        log_likelihood = -self._nll(u)
+        self.corr = corr.copy()
         parameter_count = self.dimension * (self.dimension - 1) // 2
         result = MultivariateMLEResult(
             log_likelihood=log_likelihood,
@@ -42,7 +77,7 @@ class GaussianCopula(MultivariateCopula):
             model_parameters={
                 "correlation_matrix": self.corr.copy(),
             },
-            correlation_matrix=self.corr,
+            correlation_matrix=self.corr.copy(),
             diagnostics={
                 "estimator": "gaussian_score_correlation",
                 "corr_matrix": self.corr.copy(),

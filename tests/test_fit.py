@@ -117,6 +117,13 @@ class TestSCARNativeExecution:
 
         monkeypatch.setattr(
             _cpp_scar_ou, "neg_loglik_with_grad_info", fake_objective)
+        monkeypatch.setattr(
+            _cpp_scar_ou,
+            "prepare_objective",
+            lambda *args, **kwargs: (
+                (_ for _ in ()).throw(
+                    _cpp_scar_ou.CppUnsupported("test fallback"))),
+        )
         monkeypatch.setattr(_cpp_scar_ou, "supported", lambda copula: True)
 
         result = SCARTMStrategy(
@@ -143,6 +150,118 @@ class TestSCARNativeExecution:
         assert diag["matrix_fallback_unknown"] == len(calls)
         assert diag["local_evaluations"] == len(calls)
         assert diag["last_backend"] == "local"
+        assert diag["prepared_native_evaluator"] is False
+        assert diag["prepared_native_fallback"] == "unsupported"
+
+    def test_bivariate_fit_uses_prepared_native_evaluator(self):
+        u = pobs(np.random.default_rng(26).standard_normal((24, 2)))
+        cop = ClaytonCopula(rotate=0)
+
+        result = SCARTMStrategy(
+            smart_init=False,
+            analytical_grad=True,
+            transition_method="matrix",
+            K=16,
+            max_K=16,
+            adaptive=False,
+        ).fit(
+            cop,
+            u,
+            alpha0=np.array([1.0, 0.2, 0.9]),
+            maxiter=1,
+            maxfun=12,
+        )
+
+        diag = result.diagnostics
+        assert diag["selected_engine"] == "cpp"
+        assert diag["prepared_native_evaluator"] is True
+        assert diag["prepared_native_evaluator_count"] >= 1
+        assert diag["prepared_native_fallback"] is None
+
+    def test_bivariate_numerical_fit_uses_prepared_value_evaluator(self):
+        u = pobs(np.random.default_rng(28).standard_normal((18, 2)))
+        cop = ClaytonCopula(rotate=0)
+
+        result = SCARTMStrategy(
+            smart_init=False,
+            analytical_grad=False,
+            transition_method="matrix",
+            K=14,
+            max_K=14,
+            adaptive=False,
+        ).fit(
+            cop,
+            u,
+            alpha0=np.array([1.0, 0.1, 0.9]),
+            maxiter=1,
+            maxfun=16,
+        )
+
+        diag = result.diagnostics
+        assert diag["selected_engine"] == "cpp"
+        assert diag["prepared_native_evaluator"] is True
+        assert diag["prepared_native_evaluator_count"] >= 1
+        assert diag["prepared_native_fallback"] is None
+
+    def test_bivariate_prepared_fallback_uses_stateless_objective(
+            self, monkeypatch):
+        u = pobs(np.random.default_rng(27).standard_normal((10, 2)))
+        cop = ClaytonCopula(rotate=0)
+        calls = []
+
+        def fake_objective(kappa, mu, nu, u_arg, copula_arg, config):
+            calls.append(float(kappa))
+            value = (
+                (float(kappa) - 0.9) ** 2
+                + float(mu) ** 2
+                + (float(nu) - 1.1) ** 2
+                + 1.0
+            )
+            grad = np.array(
+                [2.0 * (float(kappa) - 0.9), 2.0 * float(mu),
+                 2.0 * (float(nu) - 1.1)],
+                dtype=np.float64,
+            )
+            info = {
+                "backend": "matrix",
+                "transition_method": "matrix",
+                "engine": "cpp",
+                "kappa_dt": float(kappa) / (len(u_arg) - 1),
+                "n_obs": len(u_arg),
+            }
+            return value, grad, info
+
+        monkeypatch.setattr(
+            _cpp_scar_ou,
+            "prepare_objective",
+            lambda *args, **kwargs: (
+                (_ for _ in ()).throw(
+                    _cpp_scar_ou.CppUnsupported("test fallback"))),
+        )
+        monkeypatch.setattr(
+            _cpp_scar_ou, "neg_loglik_with_grad_info", fake_objective)
+        monkeypatch.setattr(_cpp_scar_ou, "supported", lambda copula: True)
+
+        result = SCARTMStrategy(
+            smart_init=False,
+            analytical_grad=True,
+            transition_method="matrix",
+            K=16,
+            max_K=16,
+            adaptive=False,
+        ).fit(
+            cop,
+            u,
+            alpha0=np.array([1.0, 0.1, 1.2]),
+            maxiter=1,
+            maxfun=12,
+        )
+
+        assert calls
+        diag = result.diagnostics
+        assert diag["prepared_native_evaluator"] is False
+        assert diag["prepared_native_fallback"] == "unsupported"
+        assert diag["objective_evaluations"] == len(calls)
 
     def test_cpp_result_info_uses_exact_fallback_reason(self):
         info = _cpp_scar_ou._result_info(

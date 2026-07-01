@@ -444,6 +444,13 @@ def test_scar_tm_adaptive_spectral_basis_order_records_diagnostics(monkeypatch):
 
     monkeypatch.setattr(
         _cpp_scar_ou, "neg_loglik_with_grad_info", fake_objective)
+    monkeypatch.setattr(
+        _cpp_scar_ou,
+        "prepare_objective",
+        lambda *args, **kwargs: (
+            (_ for _ in ()).throw(
+                _cpp_scar_ou.CppUnsupported("test fallback"))),
+    )
 
     u = np.random.default_rng(20260702).uniform(0.05, 0.95, size=(101, 2))
     result = SCARTMStrategy(
@@ -585,6 +592,13 @@ def test_scar_tm_failed_dispatch_objective_is_not_success(monkeypatch):
 
     monkeypatch.setattr(
         _cpp_scar_ou, "neg_loglik_with_grad_info", fail_objective)
+    monkeypatch.setattr(
+        _cpp_scar_ou,
+        "prepare_objective",
+        lambda *args, **kwargs: (
+            (_ for _ in ()).throw(
+                _cpp_scar_ou.CppUnsupported("test fallback"))),
+    )
     u = np.random.default_rng(17).uniform(0.05, 0.95, size=(10, 2))
     copula = BivariateGaussianCopula()
 
@@ -879,6 +893,12 @@ def test_bivariate_gof_passes_stored_transition_options(monkeypatch):
         "pyscarcopula.numerical._cpp_scar_ou.mixture_h",
         fake_rosenblatt,
     )
+    monkeypatch.setattr(
+        "pyscarcopula.numerical._cpp_scar_ou.prepare_objective",
+        lambda *args, **kwargs: (
+            (_ for _ in ()).throw(
+                _cpp_scar_ou.CppUnsupported("test fallback"))),
+    )
 
     stattests._bivariate_rosenblatt_from_result(copula, u, result)
 
@@ -917,6 +937,12 @@ def test_top_level_api_uses_stored_scar_tm_options(monkeypatch):
         "pyscarcopula.numerical._cpp_scar_ou.predictive_mean",
         fake_predictive_mean,
     )
+    monkeypatch.setattr(
+        "pyscarcopula.numerical._cpp_scar_ou.prepare_objective",
+        lambda *args, **kwargs: (
+            (_ for _ in ()).throw(
+                _cpp_scar_ou.CppUnsupported("test fallback"))),
+    )
 
     from pyscarcopula import api
 
@@ -930,6 +956,162 @@ def test_top_level_api_uses_stored_scar_tm_options(monkeypatch):
     assert captured["max_K"] is None
     assert captured["r_gh"] == 2.25
     assert captured["gh_order"] == 7
+
+
+def test_scar_tm_posterior_methods_use_prepared_object(monkeypatch):
+    rng = np.random.default_rng(8)
+    u = rng.uniform(0.05, 0.95, size=(5, 2))
+    copula = BivariateGaussianCopula()
+    result = LatentResult(
+        log_likelihood=0.0,
+        method="SCAR-TM-OU",
+        copula_name=copula.name,
+        success=True,
+        params=ou_params(0.8, 0.1, 1.0),
+    )
+    calls = []
+
+    class FakePrepared:
+        def update_copula(self, copula_arg):
+            calls.append(("update_copula", copula_arg is copula))
+
+        def predictive_mean(self, kappa, mu, nu):
+            calls.append(("predictive_mean", kappa, mu, nu))
+            return np.full(len(u), 0.25)
+
+        def mixture_h(self, kappa, mu, nu):
+            calls.append(("mixture_h", kappa, mu, nu))
+            return np.full(len(u), 0.5)
+
+        def state_distribution(self, kappa, mu, nu, horizon="current"):
+            calls.append(("state_distribution", horizon, kappa, mu, nu))
+            return np.array([-1.0, 1.0]), np.array([0.4, 0.6])
+
+    def fake_prepare(u_arg, copula_arg, config):
+        calls.append((
+            "prepare",
+            u_arg is u,
+            copula_arg is copula,
+            config.transition_method,
+            config.K,
+        ))
+        return FakePrepared()
+
+    monkeypatch.setattr(_cpp_scar_ou, "prepare_objective", fake_prepare)
+
+    strategy = SCARTMStrategy(
+        transition_method="matrix",
+        K=17,
+        max_K=17,
+        adaptive=False,
+    )
+    state_cache = {}
+
+    predictive = strategy.predictive_mean(copula, u, result)
+    rosenblatt = strategy.rosenblatt_e2(copula, u, result)
+    mixed = strategy.mixture_h(
+        copula,
+        u,
+        result,
+        state_cache=state_cache,
+        current_cache_key="current",
+        next_cache_key="next",
+    )
+    state = strategy.predictive_state(
+        copula, u, result, horizon="current")
+
+    np.testing.assert_allclose(predictive, 0.25)
+    np.testing.assert_allclose(rosenblatt, 0.5)
+    np.testing.assert_allclose(mixed, 0.5)
+    np.testing.assert_allclose(state.z_grid, [-1.0, 1.0])
+    np.testing.assert_allclose(state.prob, [0.4, 0.6])
+    np.testing.assert_allclose(state_cache["current"][1], [0.4, 0.6])
+    np.testing.assert_allclose(state_cache["next"][1], [0.4, 0.6])
+    assert calls.count(("prepare", True, True, "matrix", 17)) == 4
+    assert calls.count(("update_copula", True)) == 4
+    assert ("predictive_mean", 0.8, 0.1, 1.0) in calls
+    assert calls.count(("mixture_h", 0.8, 0.1, 1.0)) == 2
+    assert ("state_distribution", "current", 0.8, 0.1, 1.0) in calls
+    assert ("state_distribution", "next", 0.8, 0.1, 1.0) in calls
+
+
+def test_scar_tm_posterior_cache_reuses_prepared_object(monkeypatch):
+    rng = np.random.default_rng(9)
+    u = rng.uniform(0.05, 0.95, size=(5, 2))
+    copula = BivariateGaussianCopula()
+    result = LatentResult(
+        log_likelihood=0.0,
+        method="SCAR-TM-OU",
+        copula_name=copula.name,
+        success=True,
+        params=ou_params(0.8, 0.1, 1.0),
+    )
+    calls = []
+
+    class FakePrepared:
+        def update_copula(self, copula_arg):
+            calls.append(("update_copula", copula_arg is copula))
+
+        def predictive_mean(self, kappa, mu, nu):
+            calls.append(("predictive_mean", kappa, mu, nu))
+            return np.full(len(u), 0.25)
+
+        def mixture_h(self, kappa, mu, nu):
+            calls.append(("mixture_h", kappa, mu, nu))
+            return np.full(len(u), 0.5)
+
+        def state_distribution(self, kappa, mu, nu, horizon="current"):
+            calls.append(("state_distribution", horizon, kappa, mu, nu))
+            return np.array([-1.0, 1.0]), np.array([0.4, 0.6])
+
+    def fake_prepare(u_arg, copula_arg, config):
+        calls.append((
+            "prepare",
+            u_arg is u,
+            copula_arg is copula,
+            config.transition_method,
+            config.K,
+        ))
+        return FakePrepared()
+
+    monkeypatch.setattr(_cpp_scar_ou, "prepare_objective", fake_prepare)
+
+    strategy = SCARTMStrategy(
+        transition_method="matrix",
+        K=17,
+        max_K=17,
+        adaptive=False,
+    )
+    posterior_cache = {}
+    state_cache = {}
+
+    strategy.predictive_mean(
+        copula, u, result, posterior_cache=posterior_cache)
+    strategy.rosenblatt_e2(
+        copula, u, result, posterior_cache=posterior_cache)
+    strategy.mixture_h(
+        copula,
+        u,
+        result,
+        state_cache=state_cache,
+        current_cache_key="current",
+        next_cache_key="next",
+        posterior_cache=posterior_cache,
+    )
+    strategy.predictive_state(
+        copula,
+        u,
+        result,
+        horizon="current",
+        posterior_cache=posterior_cache,
+    )
+
+    assert calls.count(("prepare", True, True, "matrix", 17)) == 1
+    assert calls.count(("update_copula", True)) == 6
+    assert set(state_cache) == {"current", "next"}
+    np.testing.assert_allclose(state_cache["current"][1], [0.4, 0.6])
+    np.testing.assert_allclose(state_cache["next"][1], [0.4, 0.6])
+    assert len(posterior_cache) == 1
 
 
 def test_native_loglik_matches_negative_objective_on_notebook_dataset(

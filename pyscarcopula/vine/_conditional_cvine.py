@@ -240,6 +240,12 @@ def sample_cvine_conditional_general_with_r(vine, n, r_pred, given, rng,
                                             quad_order=12):
     """Sample from a fitted C-vine conditional on an arbitrary given set."""
     d = vine.d
+    if all(edge_is_independent(edge) for tree in vine.edges for edge in tree):
+        x = rng.uniform(0.0, 1.0, size=(n, d))
+        for i, value in given.items():
+            x[:, i] = value
+        return x
+
     nodes, weights = leggauss(quad_order)
     x = np.zeros((n, d), dtype=np.float64)
 

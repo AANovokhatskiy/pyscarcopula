@@ -1852,6 +1852,13 @@ def test_cpp_fit_path_uses_cpp_objective_with_default_gradient_flag(monkeypatch)
     monkeypatch.setattr(
         _cpp_scar_ou, "neg_loglik_with_grad_info",
         fake_neg_loglik_with_grad_info)
+    monkeypatch.setattr(
+        _cpp_scar_ou,
+        "prepare_objective",
+        lambda *args, **kwargs: (
+            (_ for _ in ()).throw(
+                _cpp_scar_ou.CppUnsupported("test fallback"))),
+    )
 
     result = SCARTMStrategy(
         smart_init=False,
@@ -1902,6 +1909,13 @@ def test_default_auto_fit_path_uses_cpp_for_supported_copula(monkeypatch):
     monkeypatch.setattr(
         _cpp_scar_ou, "neg_loglik_with_grad_info",
         fake_neg_loglik_with_grad_info)
+    monkeypatch.setattr(
+        _cpp_scar_ou,
+        "prepare_objective",
+        lambda *args, **kwargs: (
+            (_ for _ in ()).throw(
+                _cpp_scar_ou.CppUnsupported("test fallback"))),
+    )
 
     result = SCARTMStrategy(
         smart_init=False,

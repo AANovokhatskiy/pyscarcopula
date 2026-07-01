@@ -23,7 +23,10 @@ from pyscarcopula.strategy._base import (
     is_multivariate_copula,
     register_strategy,
 )
-from pyscarcopula.strategy.predict_helpers import sample_predictive
+from pyscarcopula.strategy.predict_helpers import (
+    predict_from_strategy,
+    sample_predictive,
+)
 
 
 @register_strategy("GAS")
@@ -319,6 +322,7 @@ class GASStrategy:
         """Recursively sample using native GAS state updates."""
         if rng is None:
             rng = np.random.default_rng()
+        given = kwargs.get("given")
         p = result.params
         score_eps = self._score_eps(result)
         d = copula_dimension(copula, u)
@@ -336,20 +340,16 @@ class GASStrategy:
         g_t = state.g
         r_t = state.parameter
         samples = np.empty((n, d), dtype=np.float64)
-        multivariate = is_multivariate_copula(copula)
 
         for t in range(n):
-            if multivariate:
-                obs = sample_predictive(
-                    copula,
-                    1,
-                    np.array([r_t]),
-                    rng=rng,
-                    d=d,
-                )
-            else:
-                obs = copula.sample_at_parameter(
-                    1, np.array([r_t]), rng=rng)
+            obs = sample_predictive(
+                copula,
+                1,
+                np.array([r_t]),
+                given=given,
+                rng=rng,
+                d=d,
+            )
             samples[t] = obs[0]
             if t < n - 1:
                 update = _cpp_gas.update_one(
@@ -367,18 +367,8 @@ class GASStrategy:
         return samples
 
     def predict(self, copula, u, result, n, rng=None, **kwargs):
-        if rng is None:
-            rng = np.random.default_rng()
-        r = self.predictive_params(copula, u, result, n, rng=rng, **kwargs)
-        d = copula_dimension(copula, u)
-        return sample_predictive(
-            copula,
-            n,
-            r,
-            given=kwargs.get("given"),
-            rng=rng,
-            d=d,
-        )
+        return predict_from_strategy(
+            self, copula, u, result, n, rng=rng, **kwargs)
 
     def predictive_params(self, copula, u, result, n, rng=None, **kwargs):
         state = self.predictive_state(copula, u, result, **kwargs)

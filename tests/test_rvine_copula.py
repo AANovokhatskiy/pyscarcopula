@@ -1200,6 +1200,33 @@ class TestSampling:
         assert np.all(s > 0.0)
         assert np.all(s < 1.0)
 
+    def test_truncated_sample_only_builds_active_r_paths(self, monkeypatch):
+        u = _sample_dvine_gumbel(500, 6, 3.0, seed=0)
+        v = RVineCopula(
+            candidates=[GumbelCopula],
+            truncation_level=2,
+        ).fit(u)
+        edge_to_key = {id(edge): key for key, edge in v.pair_copulas.items()}
+        calls = []
+        original = rvine_module._edge_r_for_sample
+
+        def record_r_path(edge, n, rng=None):
+            calls.append(edge_to_key[id(edge)])
+            return original(edge, n, rng)
+
+        monkeypatch.setattr(
+            rvine_module, "_edge_r_for_sample", record_r_path)
+
+        s = v.sample(20, rng=np.random.default_rng(11))
+
+        max_active_tree = v._max_non_independent_tree_level()
+        expected = set(v._sample_active_edge_keys(max_active_tree))
+        assert s.shape == (20, 6)
+        assert set(calls) == expected
+        assert len(calls) == len(expected)
+        assert len(calls) < len(v.pair_copulas)
+        assert all(key[0] <= max_active_tree for key in calls)
+
     def test_sample_rejects_bad_n(self):
         u = _sample_dvine_gumbel(200, 3, 2.0, seed=0)
         v = RVineCopula().fit(u)
@@ -1888,6 +1915,13 @@ class TestPredict:
             'state_distribution',
             counted_tm_state_distribution,
         )
+        monkeypatch.setattr(
+            _cpp_scar_ou,
+            'prepare_objective',
+            lambda *args, **kwargs: (
+                (_ for _ in ()).throw(
+                    _cpp_scar_ou.CppUnsupported("test fallback"))),
+        )
 
         samples, diagnostics = vine.predict(
             20,
@@ -1977,6 +2011,55 @@ class TestPredict:
         assert diagnostics['updated_edges'][0]['method'] == 'GAS'
         assert 'r_before_mean' in diagnostics['updated_edges'][0]
         assert 'r_after_mean' in diagnostics['updated_edges'][0]
+
+    def test_predict_return_diagnostics_includes_timing_breakdown(self):
+        vine = _manual_suffix_stateful_rvine()
+        given = {0: 0.99, 1: 0.99}
+
+        samples, diagnostics = vine.predict(
+            20,
+            given=given,
+            horizon='current',
+            dynamic_conditioning='given_only',
+            return_diagnostics=True,
+            rng=np.random.default_rng(20260731),
+        )
+
+        assert samples.shape == (20, 3)
+        timings = diagnostics['timings_ms']
+        for key in (
+                'total',
+                'validate_given',
+                'suffix_state',
+                'compute_pseudo_obs',
+                'predict_r_for_edges',
+                'dynamic_update',
+                'suffix_sample',
+                ):
+            assert key in timings
+            assert timings[key] >= 0.0
+        assert timings['total'] >= timings['predict_r_for_edges']
+
+    def test_predict_without_diagnostics_does_not_read_timers(self, monkeypatch):
+        vine = _manual_suffix_stateful_rvine()
+        given = {0: 0.99, 1: 0.99}
+
+        class TimerBomb:
+            @staticmethod
+            def perf_counter():
+                raise AssertionError(
+                    "predict should not time ordinary prediction calls")
+
+        monkeypatch.setattr(rvine_module, 'time', TimerBomb)
+        samples = vine.predict(
+            20,
+            given=given,
+            horizon='current',
+            dynamic_conditioning='given_only',
+            rng=np.random.default_rng(20260801),
+        )
+
+        assert samples.shape == (20, 3)
 
     def test_stateful_given_only_skips_next_horizon_to_avoid_double_advance(self):
         vine = _manual_suffix_stateful_rvine()
@@ -2135,6 +2218,8 @@ class TestPredict:
             )
 
     def test_scar_predict_r_samples_from_tm_posterior(self, monkeypatch):
+        from pyscarcopula.numerical import _cpp_scar_ou
+
         cop = BivariateGaussianCopula()
         result = LatentResult(
             log_likelihood=0.0,
@@ -2164,6 +2249,12 @@ class TestPredict:
         monkeypatch.setattr(
             "pyscarcopula.numerical._cpp_scar_ou.state_distribution",
             fake_tm_state_distribution,
+        )
+        monkeypatch.setattr(
+            "pyscarcopula.numerical._cpp_scar_ou.prepare_objective",
+            lambda *args, **kwargs: (
+                (_ for _ in ()).throw(
+                    _cpp_scar_ou.CppUnsupported("test fallback"))),
         )
 
         u_train_pair = np.array([[0.2, 0.3], [0.7, 0.8]])
