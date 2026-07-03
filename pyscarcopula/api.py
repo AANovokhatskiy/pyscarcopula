@@ -179,27 +179,6 @@ def mixture_h(copula, data, result: FitResult,
     return strategy.mixture_h(copula, u, result, **runtime_kwargs)
 
 
-def configure(blas_threads: int = 1):
-    """Force the package BLAS thread policy.
-
-    Call before importing NumPy/SciPy-heavy modules for reliable backend
-    behavior. Package import applies the same policy using
-    ``PYSCA_BLAS_THREADS`` or the default value ``1``.
-    """
-    import os
-    value = str(int(blas_threads))
-    os.environ['PYSCA_BLAS_THREADS'] = value
-    for var in (
-        'OMP_NUM_THREADS',
-        'MKL_NUM_THREADS',
-        'OPENBLAS_NUM_THREADS',
-        'NUMEXPR_NUM_THREADS',
-        'VECLIB_MAXIMUM_THREADS',
-        'BLIS_NUM_THREADS',
-    ):
-        os.environ[var] = value
-
-
 def sample(copula, data, result: FitResult, n: int,
            config: NumericalConfig | None = None, **kwargs) -> np.ndarray:
     """Generate n observations reproducing the fitted model.

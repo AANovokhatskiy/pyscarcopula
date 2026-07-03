@@ -12,23 +12,10 @@ Usage:
 
 # ruff: noqa: E402
 
-# Force single-threaded BLAS before any numpy import.
-# SCAR-TM likelihood uses many small mat-vecs inside a Python loop;
-# multi-threaded BLAS adds overhead and competes with useful outer-level
-# parallelism in risk_metrics / rolling windows. Users who intentionally
-# want a different policy can set PYSCA_BLAS_THREADS before importing.
-import os as _os
-_blas_threads = _os.environ.get('PYSCA_BLAS_THREADS', '1')
-for _var in (
-    'OMP_NUM_THREADS',
-    'MKL_NUM_THREADS',
-    'OPENBLAS_NUM_THREADS',
-    'NUMEXPR_NUM_THREADS',
-    'VECLIB_MAXIMUM_THREADS',
-    'BLIS_NUM_THREADS',
-):
-    _os.environ[_var] = _blas_threads
-del _os, _var, _blas_threads
+from importlib import metadata as _metadata
+
+__version__ = _metadata.version("pyscarcopula")
+del _metadata
 
 from pyscarcopula.copula.gumbel import GumbelCopula
 from pyscarcopula.copula.frank import FrankCopula
@@ -83,4 +70,6 @@ __all__ = (
     'NumericalConfig',
     # Persistence
     'save_model', 'load_model',
+    # Metadata
+    '__version__',
 )
