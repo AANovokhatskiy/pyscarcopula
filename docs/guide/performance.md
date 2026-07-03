@@ -695,27 +695,3 @@ As with C-vines, automatic family selection is MLE-based. `gtol`, `ftol`,
 after a family has been selected. If `method='gas'`, a too-loose `ftol` can make
 some edges stop early with `success=True`; set `ftol=1e-12` and increase
 `maxfun` for difficult edges.
-
-## BLAS Threads
-
-`pyscarcopula` sets `OMP_NUM_THREADS`, `MKL_NUM_THREADS`, and
-`OPENBLAS_NUM_THREADS` to `1` during package import to avoid oversubscription
-in transfer-matrix workloads. This only affects BLAS libraries that have not
-been initialized yet. If NumPy/SciPy/OpenBLAS was imported before
-`pyscarcopula`, set the variables before starting Python:
-
-```bash
-OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 OMP_NUM_THREADS=1 python script.py
-```
-
-On Windows PowerShell:
-
-```powershell
-$env:OPENBLAS_NUM_THREADS = "1"
-$env:MKL_NUM_THREADS = "1"
-$env:OMP_NUM_THREADS = "1"
-python script.py
-```
-
-If an application imports NumPy first and still needs to change BLAS threads at
-runtime, use a runtime thread limiter such as `threadpoolctl`.

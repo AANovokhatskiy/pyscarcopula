@@ -1,7 +1,9 @@
 """Test API consistency across copula types."""
-import os
+from importlib import metadata
+
 import numpy as np
 import pytest
+import pyscarcopula
 from pyscarcopula import (
     BivariateGaussianCopula,
     GumbelCopula, ClaytonCopula, FrankCopula, JoeCopula,
@@ -24,21 +26,13 @@ from pyscarcopula.strategy.gas import GASStrategy
 
 
 class TestPublicPackageSurface:
+    def test_version_exported_from_distribution_metadata(self):
+        assert pyscarcopula.__version__ == metadata.version("pyscarcopula")
+        assert "__version__" in pyscarcopula.__all__
+
     def test_multivariate_models_exported_from_package_root(self):
         assert EquicorrGaussianCopula.__name__ == 'EquicorrGaussianCopula'
         assert StochasticStudentCopula.__name__ == 'StochasticStudentCopula'
-
-    def test_blas_thread_policy_env_vars_are_forced(self):
-        expected = os.environ.get('PYSCA_BLAS_THREADS', '1')
-        for name in (
-            'OMP_NUM_THREADS',
-            'MKL_NUM_THREADS',
-            'OPENBLAS_NUM_THREADS',
-            'NUMEXPR_NUM_THREADS',
-            'VECLIB_MAXIMUM_THREADS',
-            'BLIS_NUM_THREADS',
-        ):
-            assert os.environ[name] == expected
 
 
 class LinearScoreCopula:

@@ -153,6 +153,7 @@ fields.
 
 ## BLAS Thread Policy
 
-Package import sets common BLAS thread variables to one by default. This
-avoids oversubscription during outer-level parallel work. Set
-`PYSCA_BLAS_THREADS` before importing `pyscarcopula` to override the policy.
+Package import does not mutate BLAS thread environment variables. Applications
+that need a specific BLAS thread policy should configure their execution
+environment before importing NumPy/SciPy, or use a runtime thread limiter such
+as `threadpoolctl`.

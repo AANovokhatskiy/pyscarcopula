@@ -70,8 +70,20 @@ bivariate GAS workflow.
 Optional benchmark and large validation checks are disabled by default. Enable
 them explicitly:
 
+```bash
+PYSCA_RUN_BENCHMARKS=1 \
+PYSCA_RUN_LARGE_BENCHMARKS=1 \
+PYSCA_RUN_VINE_BENCHMARKS=1 \
+pytest tests --run-validation
+```
+
+On Windows PowerShell:
+
 ```powershell
-$env:PYSCA_RUN_BENCHMARKS="1"; $env:PYSCA_RUN_LARGE_BENCHMARKS="1"; $env:PYSCA_RUN_VINE_BENCHMARKS="1"; pytest tests --run-validation
+$env:PYSCA_RUN_BENCHMARKS = "1"
+$env:PYSCA_RUN_LARGE_BENCHMARKS = "1"
+$env:PYSCA_RUN_VINE_BENCHMARKS = "1"
+pytest tests --run-validation
 ```
 
 Core dependencies: `numpy`, `numba`, `scipy`, `joblib`, `tqdm`.
