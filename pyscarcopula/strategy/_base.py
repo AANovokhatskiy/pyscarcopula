@@ -17,6 +17,40 @@ from pyscarcopula._types import (
 from pyscarcopula.copula.base import CopulaCapabilities
 
 
+def reject_legacy_tol(kwargs):
+    """Reject the removed SciPy-style ``tol`` alias consistently."""
+    if 'tol' in kwargs:
+        raise TypeError("tol is not supported; use gtol")
+
+
+def lbfgsb_overrides(
+        *,
+        gtol=None,
+        ftol=None,
+        maxfun=None,
+        maxiter=None,
+        maxls=None,
+        eps=None,
+        maxcor=None,
+        finite_diff_rel_step=None):
+    """Collect common L-BFGS-B option overrides for config objects."""
+    return {
+        'gtol': gtol,
+        'ftol': ftol,
+        'maxfun': maxfun,
+        'maxiter': maxiter,
+        'maxls': maxls,
+        'eps': eps,
+        'maxcor': maxcor,
+        'finite_diff_rel_step': finite_diff_rel_step,
+    }
+
+
+def lbfgsb_options(optimizer_config, **overrides):
+    """Return optimizer options from a config using common override keys."""
+    return optimizer_config.options(**overrides)
+
+
 def get_copula_capabilities(copula) -> CopulaCapabilities | None:
     """Return an explicit capability descriptor, or None for legacy objects."""
     descriptor = getattr(copula, "capabilities", None)
@@ -74,21 +108,59 @@ def _uses_data_estimated_correlation(copula) -> bool:
     return getattr(copula, "_R", None) is None
 
 
+def _allows_gas_static_correlation(copula, method) -> bool:
+    if str(method).upper() != "GAS":
+        return False
+    corr_mode = getattr(copula, "_corr_mode", None)
+    if corr_mode not in {"fixed", "shrinkage"}:
+        return False
+    corr_num_params = getattr(copula, "_corr_num_params", None)
+    if not callable(corr_num_params):
+        return corr_mode == "fixed"
+    n_corr = int(corr_num_params())
+    if corr_mode == "fixed":
+        return n_corr == 0
+    return n_corr > 0
+
+
 def ensure_strategy_supported(copula, method):
     """Reject incompatible built-in strategy selections deterministically."""
     capabilities = get_copula_capabilities(copula)
     if capabilities is None:
         return
     normalized = str(method).upper()
+    dynamic_methods = {
+        "GAS",
+        "SCAR-TM-OU",
+        "SCAR-TM-JACOBI",
+        "SCAR-P-OU",
+        "SCAR-M-OU",
+    }
+    if (
+            normalized in dynamic_methods
+            and not capabilities.has_dynamic_scalar_parameter):
+        raise TypeError(f"{type(copula).__name__} does not support {normalized}")
     if normalized == "GAS" and not capabilities.supports_gas:
         raise TypeError(f"{type(copula).__name__} does not support GAS")
+    if (
+            normalized == "GAS"
+            and getattr(copula, "_corr_mode", None) == "cholesky"
+            and _uses_data_estimated_correlation(copula)):
+        raise NotImplementedError(
+            "GAS joint static correlation currently supports only "
+            "corr_mode='shrinkage'")
     if normalized == "SCAR-TM-OU" and not capabilities.supports_scar_ou:
         raise TypeError(f"{type(copula).__name__} does not support SCAR-TM-OU")
+    if (
+            normalized in {"SCAR-P-OU", "SCAR-M-OU"}
+            and not capabilities.supports_scar_mc):
+        raise TypeError(f"{type(copula).__name__} does not support {normalized}")
     if normalized == "SCAR-TM-JACOBI" and not capabilities.supports_pair_ops:
         raise TypeError(
             f"{type(copula).__name__} does not support pair Jacobi dynamics")
     if (
             normalized not in {"MLE", "SCAR-TM-OU"}
+            and not _allows_gas_static_correlation(copula, normalized)
             and _uses_data_estimated_correlation(copula)):
         raise NotImplementedError(
             "data-estimated static correlation is implemented for "

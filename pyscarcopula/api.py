@@ -1,9 +1,5 @@
 """
-pyscarcopula.api - stateless top-level API.
-
-This module provides a functional interface that does NOT mutate
-copula objects. Object methods such as BivariateCopula.fit() are
-stateful convenience wrappers around this API.
+pyscarcopula.api - top-level API helpers.
 
 Usage:
     from pyscarcopula.api import fit, sample, predict, predictive_mean
@@ -20,8 +16,8 @@ Usage:
     # Predictive mean parameter path
     r_t = predictive_mean(copula, u, result)
 
-All functions accept a copula + data + immutable result and return new
-values. The functions in this module do not store fit state on the copula.
+The functions in this module accept a copula object, data, and fitted result
+objects where needed.
 
 Note: BivariateCopula also has convenience methods (copula.predict,
 copula.sample) that work after copula.fit(). These delegate
@@ -59,7 +55,7 @@ def _reject_public_posterior_cache(kwargs):
 
 def fit(copula, data, method='scar-tm-ou', to_pobs=False,
         config: NumericalConfig | None = None, **kwargs) -> FitResult:
-    """Fit a copula to data. Does not mutate the copula.
+    """Fit a copula to data.
 
     Parameters
     ----------
@@ -79,8 +75,18 @@ def fit(copula, data, method='scar-tm-ou', to_pobs=False,
 
     Returns
     -------
-    FitResult (immutable dataclass)
+    FitResult
     """
+    if _is_vine_copula(copula):
+        fitted = copula.fit(
+            data,
+            method=method,
+            to_pobs=to_pobs,
+            config=config,
+            **kwargs,
+        )
+        return fitted.fit_result
+
     u = _as_float64_array_no_copy(data)
     if to_pobs:
         u = _pobs(u)
@@ -107,6 +113,9 @@ def log_likelihood(copula, data, result: FitResult,
     -------
     float
     """
+    if _is_vine_copula(copula):
+        return float(copula.log_likelihood(data, **kwargs))
+
     u = np.asarray(data, dtype=np.float64)
     validate_copula_data(copula, u)
     strategy = get_strategy_for_result(result, config=config, **kwargs)

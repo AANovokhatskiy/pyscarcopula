@@ -1,8 +1,11 @@
 """Numerical kernel regression tests."""
 import numpy as np
+import pytest
 
 from pyscarcopula._utils import pobs
 from pyscarcopula.copula.gumbel import GumbelCopula
+from pyscarcopula.numerical.hermite_tm import standard_normal_hermite_rule
+from pyscarcopula.numerical.jacobi_tm import jacobi_rule
 from pyscarcopula.numerical.mc_samplers import p_sampler_loglik
 from pyscarcopula.numerical.ou_kernels import (
     calculate_dwt,
@@ -11,6 +14,14 @@ from pyscarcopula.numerical.ou_kernels import (
     ou_sample_paths_exact,
     ou_stationary_state_from_dwt,
 )
+
+
+@pytest.mark.parametrize("value", [3.9, "4", True])
+def test_spectral_integer_options_reject_non_integer_types(value):
+    with pytest.raises(TypeError, match="quad_order"):
+        standard_normal_hermite_rule(value, 2)
+    with pytest.raises(TypeError, match="quad_order"):
+        jacobi_rule(2.0, 3.0, value, 2)
 
 
 def test_ou_sample_paths_zero_aux_matches_exact_kernel():

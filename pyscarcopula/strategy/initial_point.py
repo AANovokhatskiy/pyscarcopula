@@ -79,6 +79,74 @@ def _mle_mu(copula, u):
     return _mle_info(copula, u)[1]
 
 
+def resolve_ou_initial_point(
+        copula, u, config, smart_init, verbose, alpha0,
+        smart_initial_point_func=None):
+    """Return an OU initial point and common initialization diagnostics."""
+    if alpha0 is not None:
+        alpha = np.asarray(alpha0, dtype=np.float64)
+        return alpha, _explicit_initialization_diagnostics(alpha)
+
+    smart_initial = (
+        smart_initial_point
+        if smart_initial_point_func is None
+        else smart_initial_point_func
+    )
+    smart_diagnostics = None
+    if smart_init:
+        try:
+            alpha, info = smart_initial(
+                u, copula, verbose=verbose)
+            if verbose:
+                print(f"Smart init: {info.get('chosen_method')}, "
+                      f"alpha0={alpha}")
+            return alpha, info['initialization']
+        except Exception as exc:
+            smart_diagnostics = _initialization_diagnostics(
+                'automatic',
+                'failed',
+                np.array([1.0, 0.0, 1.0]),
+                [_initialization_attempt(
+                    'smart_initial_point', success=False, error=exc)],
+            )
+            smart_diagnostics['success'] = False
+            if verbose:
+                print(
+                    "Smart init failed "
+                    f"({type(exc).__name__}: {exc}); trying mle_default")
+
+    from pyscarcopula.strategy.mle import MLEStrategy
+    mle = MLEStrategy(config=config)
+    try:
+        mle_result = mle.fit(copula, u)
+        mu0 = float(np.atleast_1d(
+            copula.inv_transform(
+                np.atleast_1d(mle_result.copula_param))
+        )[0])
+        alpha = np.array([1.0, mu0, 1.0])
+    except Exception as exc:
+        if smart_diagnostics is not None:
+            _fallback_initialization_diagnostics(
+                smart_diagnostics,
+                'mle_default',
+                np.array([1.0, 0.0, 1.0]),
+                error=exc,
+            )
+        raise
+
+    if smart_diagnostics is None:
+        diagnostics = _initialization_diagnostics(
+            'mle_default',
+            'mle_default',
+            alpha,
+            [_initialization_attempt('mle_default', success=True)],
+        )
+    else:
+        diagnostics = _fallback_initialization_diagnostics(
+            smart_diagnostics, 'mle_default', alpha)
+    return alpha, diagnostics
+
+
 def _heuristic_initial_point(u, copula, rho_target=0.95,
                              sigma_frac=0.3):
     """

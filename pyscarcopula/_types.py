@@ -586,6 +586,21 @@ class GASResult(FitResultBase):
     score_eps: float = DEFAULT_CONFIG.gas_score_eps
     r_last: float = 0.0                      # one-step-ahead r value
     diagnostics: dict[str, Any] = field(default_factory=dict)
+    parameter_count: int | None = None        # GAS plus fitted static params
+
+    def __post_init__(self):
+        parameter_count = self.parameter_count
+        if parameter_count is None:
+            parameter_count = self.params.n_params
+        if isinstance(parameter_count, (bool, np.bool_)) or not isinstance(
+                parameter_count, (int, np.integer)):
+            raise TypeError("parameter_count must be an integer or None")
+        parameter_count = int(parameter_count)
+        if parameter_count < self.params.n_params:
+            raise ValueError(
+                "parameter_count cannot be smaller than the GAS "
+                "parameter count")
+        object.__setattr__(self, 'parameter_count', parameter_count)
 
     @property
     def omega(self) -> float:
@@ -601,12 +616,14 @@ class GASResult(FitResultBase):
 
     @property
     def n_params(self) -> int:
-        return self.params.n_params
+        return self.parameter_count
 
     def _repr_lines(self) -> list[str]:
         lines = []
         for name, val in zip(self.params.names, self.params.values):
             lines.append(f"         {name:>5s}: {val:.6f}")
+        if self.parameter_count != self.params.n_params:
+            lines.append(f"       n_params: {self.parameter_count}")
         lines.append(f"        scaling: {self.scaling}")
         lines.append(
             f"      score_eps: "

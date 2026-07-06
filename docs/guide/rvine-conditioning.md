@@ -10,10 +10,10 @@ There are two R-vine conditional paths:
 
 - **suffix exact path**: used when the fixed variables can be placed at the end
   of the R-vine variable order;
-- **runtime DAG + MCMC path**: used for arbitrary non-suffix `given` sets.
+- **approximate fallback path**: used for arbitrary non-suffix `given` sets.
 
 The suffix path is fast and exact for the fitted pair-copula construction. The
-DAG + MCMC path is general, but approximate and more expensive.
+fallback path is general, but approximate and more expensive.
 
 For the mathematical meaning of `given`, `given_vars`, `horizon`, predictive
 sampling, and dynamic conditioning, see
@@ -22,8 +22,7 @@ sampling, and dynamic conditioning, see
 ## Suffix Exact Path
 
 The simplest exact case is to condition on the last variables in the fitted
-R-vine order. The order is read from the anti-diagonal of the natural-order
-matrix:
+R-vine order:
 
 ```python
 import numpy as np
@@ -45,21 +44,15 @@ samples = vine.predict(
 ```
 
 Some sets that are not trailing in the fitted matrix still use the exact path
-because the fitted tree structure can be rebuilt into an equivalent
-natural-order matrix with those variables last.
+because the fitted tree structure can be rebuilt with those variables last.
 
 If all variables are fixed, `predict` returns constant rows with the supplied
 values.
 
-## Arbitrary `given`: DAG + MCMC
+## Arbitrary `given`: Approximate Fallback
 
-If a `given` set cannot be handled by the suffix exact path, `predict` builds a
-runtime DAG from the fitted R-vine edges. The DAG determines which
-h-functions and inverse h-functions are available from the fixed nodes and
-uses them to construct an initial conditional sample.
-
-That initial sample is then refined by MCMC targeting the full fitted R-vine
-density with the fixed variables held constant:
+If a `given` set cannot be handled by the suffix exact path, `predict` uses an
+approximate fallback that supports arbitrary conditioning sets:
 
 ```python
 from pyscarcopula import PredictConfig
@@ -82,10 +75,10 @@ samples, diagnostics = vine.predict(
 assert diagnostics["conditional_method"] in {"suffix", "dag_mcmc"}
 ```
 
-When `conditional_method == "dag_mcmc"`, diagnostics include:
+When `conditional_method == "dag_mcmc"`, diagnostics include advanced details:
 
-- `dag_steps`: runtime DAG action records;
-- `dag_edges_used`: fitted R-vine edges used by the DAG initializer;
+- `dag_steps`: initialization action records;
+- `dag_edges_used`: fitted R-vine edges used by the initializer;
 - `mcmc`: proposed moves, accepted moves, acceptance rate, and step count.
 
 This fallback supports arbitrary conditioning, but it is more expensive than
@@ -115,7 +108,7 @@ The public fit-time controls are:
 - `given_vars=[...]`: target conditioning set;
 - `conditional_strict=True`: reject fitted structures that cannot support the
   target through the exact suffix path;
-- `conditional_mode='suffix'`: exact fit-time support contract;
+- `conditional_mode='suffix'`: require exact fit-time support;
 - `structure_search='beam'`: search over per-tree builder-mode paths;
 - `beam_width=4`: number of partial candidates kept per tree level;
 - `structure_search='multi-start'`: smaller whole-structure candidate search.
@@ -123,8 +116,8 @@ The public fit-time controls are:
 The default fit-time search is `structure_search='beam'`.
 
 With `conditional_strict=False`, fit may keep a structure that is not exact for
-the target. Prediction uses the arbitrary DAG + MCMC path when the exact suffix
-path is not available.
+the target. Prediction uses the approximate fallback when the exact suffix path
+is not available.
 
 ## Dynamic Conditioning
 
@@ -193,8 +186,8 @@ Common skip reasons:
 - `no_training_history`: fitted history is unavailable for a dynamic edge;
 - `unsupported_or_noop`: the edge has no supported update or the update leaves
   the state unchanged;
-- `dag_mcmc_not_suffix_supported`: `given_only` was requested for an arbitrary
-  DAG + MCMC conditioning path.
+- `dag_mcmc_not_suffix_supported`: `given_only` was requested for the
+  approximate fallback path.
 
 ## Practical Guidance
 
@@ -202,8 +195,8 @@ Use `given_vars` during fit when the production conditioning set is known and
 must be fast. Use direct `given` at prediction time for ad hoc conditioning.
 
 Use `return_diagnostics=True` when validating a new conditional workflow. It
-shows whether prediction used the exact suffix path or the arbitrary DAG +
-MCMC fallback.
+shows whether prediction used the exact suffix path or the approximate
+fallback.
 
 Use a fresh `np.random.default_rng(seed)` for reproducible conditional samples.
 Reusing the same generator object advances the stream and intentionally

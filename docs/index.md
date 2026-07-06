@@ -16,11 +16,10 @@ matrix method.
 - **Multivariate models**: Gaussian, Student-t, equicorrelation Gaussian,
   and stochastic Student-t
 - **C-vine copulas**: automatic family selection, truncation, mixed SCAR/MLE
-- **R-vine conditional sampling**: exact suffix/rebuild path plus arbitrary
-  runtime-DAG + MCMC conditioning
+- **R-vine conditional sampling**: exact and approximate conditional
+  prediction modes
 - **Estimation**: MLE, GAS, SCAR-TM-OU, SCAR-TM-JACOBI
-- **Native numerical core**: mandatory C++ evaluation for built-in point
-  operations, GAS, and SCAR-TM-OU
+- **Compiled numerical engine** included in official wheels
 - **Prediction controls**: `PredictConfig`, diagnostics, dynamic conditioning,
   reproducible `rng`
 - **Transform functions**: `softplus` (default), `xtanh` (symmetric)

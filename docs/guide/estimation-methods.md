@@ -8,9 +8,8 @@ For the compact formulas behind each dynamic model, including the transfer
 filters, predictive Rosenblatt transform, and numerical convergence criteria,
 see [Mathematical Contracts](mathematical-contracts.md).
 
-Strategy compatibility is determined by explicit model capabilities. See
-[Model Architecture](architecture.md) for the distinction between class
-hierarchy, protocols, and native strategy support.
+Each estimation method supports a defined set of model families. Unsupported
+combinations fail before optimization starts.
 
 ## Method Summary
 
@@ -47,11 +46,10 @@ outer optimizer and the corresponding diagnostics.
 | SCAR-TM-JACOBI | `local_fixed`, analytical gradient | Model-provided | `not_applicable` | `analytical` |
 | SCAR-TM-JACOBI | `local`, `spectral_matrix`, or `auto`, analytical gradient | Model-provided | `not_applicable` | `semi_analytical` |
 
-For joint Stochastic Student SCAR-TM-OU fits, C++ supplies OU and
-static-correlation derivatives. Python applies the correlation
-parameterization chain rule. Result diagnostics report the correlation and
-joint-gradient routes in `correlation_gradient` and `joint_gradient`.
-When the prepared native objective is used, diagnostics also include
+For joint Stochastic Student SCAR-TM-OU fits, the analytical-gradient path
+includes OU and static-correlation derivatives. Result diagnostics report the
+correlation and joint-gradient routes in `correlation_gradient` and
+`joint_gradient`. Some fits also include
 `prepared_native_evaluator`, `prepared_native_evaluator_count`, and
 `prepared_native_fallback`.
 
@@ -84,9 +82,10 @@ finite-variance threshold. No latent softplus transform is applied inside the
 MLE objective. The softplus transform remains part of dynamic SCAR/GAS models,
 where a latent state drives time-varying degrees of freedom.
 
-For `StochasticStudentCopula(corr_mode='fixed')`, native `dL/ddf` is passed to
-L-BFGS-B. Joint `df` and estimated-correlation MLE combines native `dL/ddf`
-and the native Student correlation score, then maps the latter into the
+For `StochasticStudentCopula(corr_mode='fixed')`, the analytical `df`
+derivative is passed to L-BFGS-B. Joint `df` and estimated-correlation MLE
+combines that derivative with the Student correlation score, then maps it into
+the
 configured shrinkage or Cholesky raw parameters. It reports
 `gradient_mode='analytical_joint'` in result diagnostics.
 
@@ -120,17 +119,15 @@ result = fit(
 )
 ```
 
-The compiled evaluator is the single GAS numerical implementation. It owns
-the likelihood, score recursion, state updates, prediction, and bivariate
-Rosenblatt path for supported built-in copulas. The Python layer owns
-optimization orchestration, RNG, and sampling. Unsupported copulas and a
-missing extension fail immediately; there is no backend selector or fallback.
+GAS uses the compiled evaluator for likelihood, score recursion, state
+updates, prediction, and the bivariate Rosenblatt path for supported built-in
+copulas. Unsupported copulas and missing compiled support fail immediately.
 
 `scaling='unit'` is the recommended production mode. `scaling='fisher'` uses
 nested finite differences and clipping/floor thresholds; its fitted optimum
 can be sensitive to optimizer finite-difference steps.
 
-The GAS copula score and filtering recursion are native model calculations.
+The GAS copula score and filtering recursion are model calculations.
 They are not the optimizer Jacobian with respect to
 `(omega, gamma, beta)`. GAS passes objective values to L-BFGS-B, which
 therefore computes that outer gradient numerically. Result

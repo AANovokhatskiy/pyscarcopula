@@ -5,9 +5,6 @@
 pyscarcopula works with pseudo-observations: uniform marginals obtained from
 ranked data.
 
-The installed package requires its bundled native extension. GAS and
-SCAR-TM-OU do not accept a backend selector.
-
 ```python
 import pandas as pd
 import numpy as np
@@ -100,7 +97,7 @@ If you know the target conditioning set before fitting an `RVineCopula`, pass
 it to `fit`:
 
 ```python
-from pyscarcopula import PredictConfig, RVineCopula
+from pyscarcopula import RVineCopula
 
 rvine = RVineCopula().fit(
     u_6d,
@@ -108,33 +105,24 @@ rvine = RVineCopula().fit(
     given_vars=[2],
 )
 
-cfg = PredictConfig(
-    given={2: 0.6},
-    horizon='next',
-    return_diagnostics=True,
-    mcmc_steps=200,
-    mcmc_burnin=80,
-)
-u_pred_6d_cond, diagnostics = rvine.predict(
+u_pred_6d_cond = rvine.predict(
     20_000,
     u=u_6d,
-    predict_config=cfg,
+    given={2: 0.6},
+    horizon='next',
     rng=np.random.default_rng(2030),
 )
-print(diagnostics["conditional_method"])  # "suffix" or "dag_mcmc"
 ```
 
-This targets the fast exact R-vine conditional sampler. With the default
-`conditional_strict=True`, `fit` raises `ValueError` if it cannot construct a
-suffix-compatible structure. If a later `given` set is not suffix-compatible,
-`RVineCopula.predict` uses the arbitrary DAG + MCMC path.
+This lets the R-vine fit choose a structure suited to the variables you expect
+to condition on later.
 
 Use a fresh `np.random.default_rng(seed)` when you need exactly reproducible
 Monte Carlo output.
 
-For the precise meaning of `given`, `given_vars`, `horizon`, and
-`dynamic_conditioning`, see
-[Prediction Semantics](../guide/prediction-semantics.md).
+For more conditional prediction controls, see
+[Prediction Semantics](../guide/prediction-semantics.md) and
+[R-vine Conditioning](../guide/rvine-conditioning.md).
 
 ## Available copula families
 

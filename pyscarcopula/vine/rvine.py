@@ -40,6 +40,7 @@ from copy import deepcopy
 import time
 
 import numpy as np
+from scipy.optimize import OptimizeResult
 
 from pyscarcopula._utils import pobs
 from pyscarcopula._types import (
@@ -200,6 +201,7 @@ class RVineCopula:
         self._orig_edge_key = None  # (t, orig_idx) -> (t, col)
         self._T = None
         self._log_likelihood = None
+        self.fit_result = None
         self.method = None
         self._target_given_vars = ()
         self._conditional_fit_supported = None
@@ -233,7 +235,10 @@ class RVineCopula:
         copulas : list-of-lists or None
             Optional fixed edge families as ``(copula_class, rotation)`` in
             the Dissmann edge order for each tree. If ``None``, the best
-            family is selected for each edge from the candidate pool.
+            family is selected for each edge from the candidate pool. Use
+            ``candidates=`` on the constructor for automatic family pools;
+            ``copulas=`` is for pre-specified edge family/rotation specs, not
+            copula instances.
         config : NumericalConfig or None
             Optional numerical configuration passed to pair-copula strategies.
         given_vars : iterable[int] or None
@@ -273,6 +278,8 @@ class RVineCopula:
         T, d = u.shape
         if d < 2:
             raise ValueError(f"RVineCopula.fit: need d >= 2, got d={d}")
+        from pyscarcopula.vine._selection import validate_fixed_copula_specs
+        validate_fixed_copula_specs(copulas, d)
         given_vars = validate_rvine_given_vars(given_vars, d)
         conditional_mode = str(conditional_mode).lower()
         if conditional_mode != 'suffix':
@@ -411,6 +418,23 @@ class RVineCopula:
             pc.log_likelihood for pc in pair_copulas.values()
         ))
         self.method = method.upper()
+        total_nfev = sum(
+            int(getattr(edge_result(pc), 'nfev', 0) or 0)
+            for pc in pair_copulas.values()
+        )
+        n_edges_total = len(pair_copulas)
+        n_params = sum(pc.n_params for pc in pair_copulas.values())
+        self.fit_result = OptimizeResult()
+        self.fit_result.log_likelihood = self._log_likelihood
+        self.fit_result.method = method
+        self.fit_result.name = f"R-vine ({d}d, {n_edges_total} edges)"
+        self.fit_result.nfev = total_nfev
+        self.fit_result.n_params = n_params
+        self.fit_result.parameter_count = n_params
+        self.fit_result.success = all(
+            bool(getattr(edge_result(pc), 'success', True))
+            for pc in pair_copulas.values()
+        )
         self._last_u = u
         self._target_given_vars = given_vars
         self._conditional_fit_supported = conditional_supported
@@ -449,6 +473,19 @@ class RVineCopula:
         if self._fit_diagnostics is None:
             return None
         return deepcopy(self._fit_diagnostics)
+
+    @property
+    def natural_order_matrix(self):
+        """Copy of the fitted natural-order R-vine matrix."""
+        self._require_fit()
+        return self.matrix.copy()
+
+    def to_rvine_matrix(self):
+        """Return this fitted structure as lower-triangular ``RVineMatrix``."""
+        self._require_fit()
+        from pyscarcopula.vine._structure import RVineMatrix
+
+        return RVineMatrix.from_model(self)
 
     # Log-likelihood
 

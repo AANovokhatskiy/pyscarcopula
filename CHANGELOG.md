@@ -1,8 +1,23 @@
 # Changelog
 
+## 0.17.5 - 2026-07-06
+
+Version: `0.17.4` -> `0.17.5`
+
+- Adds GAS fitting support for `StochasticStudentCopula`, including fixed-correlation parameter accounting and joint static shrinkage-correlation estimation.
+- Fails unsupported stochastic Student GAS correlation modes explicitly before mutating fitted model state.
+- Adds `GASResult.parameter_count` and richer correlation diagnostics for stochastic Student GAS results.
+- Improves top-level API dispatch for vine models and exposes aggregate `RVineCopula.fit_result` metadata.
+- Adds vine contract helpers: `SelectedCopula`, fixed `copulas=` validation, clearer pair-copula candidate errors, and fitted R-vine matrix conversion APIs.
+- Refactors shared strategy plumbing for L-BFGS-B option overrides, removed `tol` handling, OU initial-point diagnostics, and SCAR-MC fit flow.
+- Updates documentation, source-distribution packaging entries, and regression coverage for stochastic Student GAS, vine APIs, strategy validation, and numerical option checks.
+
 ## 0.17.4 - 2026-07-03
 
 Version: `0.17.3` -> `0.17.4`
+
+Commit: `6d0d4b8`  
+Merge PR: #39 (`593bb0a`, 2026-07-03)
 
 - Stops `pyscarcopula` package import from changing BLAS thread environment variables.
 - Removes the obsolete `pyscarcopula.api.configure` BLAS thread helper.

@@ -17,6 +17,7 @@ from pyscarcopula import (
     StochasticStudentCopula,
     StudentCopula,
 )
+from pyscarcopula.api import fit
 from pyscarcopula.numerical import _cpp_copula
 from pyscarcopula.numerical._cpp_extension import CppUnsupported
 from pyscarcopula.strategy._base import list_methods
@@ -248,3 +249,24 @@ def test_capability_and_runtime_readiness_are_separate():
     assert uninitialized.native_scar_ou == ready.native_scar_ou
     assert not uninitialized.runtime_ready
     assert ready.runtime_ready
+
+
+@pytest.mark.parametrize(
+    ("factory", "method"),
+    [
+        (IndependentCopula, "scar-tm-jacobi"),
+        (IndependentCopula, "scar-p-ou"),
+        (IndependentCopula, "scar-m-ou"),
+        (GaussianCopula, "scar-p-ou"),
+        (StudentCopula, "scar-m-ou"),
+        (lambda: EquicorrGaussianCopula(d=3), "scar-p-ou"),
+        (lambda: EquicorrGaussianCopula(d=3), "scar-m-ou"),
+    ],
+)
+def test_top_level_api_rejects_unsupported_strategy_combinations(
+        factory, method):
+    d = 2 if factory is IndependentCopula else 3
+    u = np.random.default_rng(20260704).uniform(0.1, 0.9, size=(20, d))
+
+    with pytest.raises(TypeError, match="does not support"):
+        fit(factory(), u, method=method, n_tr=5, M_iterations=1, maxiter=1)

@@ -25,6 +25,7 @@ from pyscarcopula.stattests import (
     vine_rosenblatt_transform,
 )
 from pyscarcopula.vine.cvine import CVineCopula
+from pyscarcopula.vine._structure import RVineMatrix
 from pyscarcopula.vine import _rvine_dissmann as dissmann_module
 from pyscarcopula.vine import rvine as rvine_module
 from pyscarcopula.vine._conditional_rvine import (
@@ -452,11 +453,45 @@ class TestFitContract:
                     (MLEResult, IndependentResult),
                 )
 
+    def test_fitted_model_converts_to_legacy_rvine_matrix(self):
+        u = _sample_dvine_gumbel(300, 5, 2.0, seed=0)
+        v = RVineCopula().fit(u)
+
+        matrix_from_model = RVineMatrix.from_model(v)
+        matrix_from_method = v.to_rvine_matrix()
+        matrix_from_natural = RVineMatrix.from_natural_order(v.matrix)
+
+        np.testing.assert_array_equal(
+            matrix_from_model.matrix, matrix_from_method.matrix)
+        np.testing.assert_array_equal(
+            matrix_from_model.matrix, matrix_from_natural.matrix)
+        assert np.array_equal(v.natural_order_matrix, v.matrix)
+
+        for tree_index, level in enumerate(v.trees):
+            expected = {
+                (conditioned, conditioning)
+                for conditioned, conditioning in level
+            }
+            actual = {
+                (frozenset((var1, var2)), frozenset(conditioning))
+                for var1, var2, conditioning
+                in matrix_from_model.edges_at_tree(tree_index)
+            }
+            assert actual == expected
+
     def test_fit_chainable(self):
         u = _sample_dvine_gumbel(200, 3, 2.0, seed=0)
         s = RVineCopula().fit(u).summary(as_string=True)
         assert "RVineCopula" in s
         assert "log_likelihood" in s
+
+    def test_fixed_copulas_rejects_instances_with_helpful_message(self):
+        u = _sample_dvine_gumbel(80, 3, 2.0, seed=0)
+        with pytest.raises(TypeError, match="Use candidates="):
+            RVineCopula(candidates=[BivariateGaussianCopula]).fit(
+                u,
+                copulas=[BivariateGaussianCopula()],
+            )
 
     def test_unfitted_raises(self):
         v = RVineCopula()
@@ -1338,14 +1373,14 @@ class TestSummary:
         v = RVineCopula().fit(u)
         assert str(v) == v.summary(as_string=True)
 
-    def test_summary_uses_short_gaussian_name(self):
+    def test_summary_uses_pair_gaussian_name(self):
         rng = np.random.default_rng(0)
         cop = BivariateGaussianCopula()
         u12 = cop.sample_at_parameter(120, np.full(120, 0.45), rng=rng)
         u = np.column_stack([u12, rng.uniform(0.01, 0.99, 120)])
         v = RVineCopula(candidates=[BivariateGaussianCopula]).fit(u)
         s = v.summary(as_string=True)
-        assert "GaussianCopula" in s
+        assert "GaussianPairCopula" in s
         assert "BivariateGaussianCopula" not in s
 
     def test_summary_mle_omits_dynamic_param_columns(self):
@@ -1406,7 +1441,7 @@ class TestSummary:
 
             line = next(
                 line for line in s.splitlines()
-                if "GaussianCopula" in line
+                if "GaussianPairCopula" in line
             )
             dyn_end = header.index("dyn_params") + 48
             param_end = header.index("param") + len("param")

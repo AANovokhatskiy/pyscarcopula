@@ -11,10 +11,11 @@ def as_float64_array(value):
 
 
 def validate_positive_int(value, name):
-    """Coerce and validate a positive integer-valued option."""
-    if isinstance(value, (bool, np.bool_)):
+    """Validate and return a positive integer option."""
+    if isinstance(value, (bool, np.bool_)) or not isinstance(
+            value, (int, np.integer)):
         raise TypeError(f"{name} must be a positive integer")
-    value = int(value)
-    if value <= 0:
+    result = int(value)
+    if result <= 0:
         raise ValueError(f"{name} must be positive")
-    return value
+    return result

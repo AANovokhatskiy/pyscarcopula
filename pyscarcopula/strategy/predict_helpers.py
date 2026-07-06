@@ -84,6 +84,8 @@ def sample_predictive(copula, n, r, given=None, rng=None, d=None):
         return copula.sample(n=n, df_path=r, rng=rng)
 
     if given is None:
+        if capabilities is not None and capabilities.supports_pair_ops:
+            return copula.sample_at_parameter(n, r, rng=rng)
         if (
                 capabilities is not None
                 and not capabilities.has_dynamic_scalar_parameter):

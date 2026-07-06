@@ -159,6 +159,7 @@ class StochasticStudentCopula(MultivariateCopula):
     _capabilities = CopulaCapabilities(
         supports_gas=True,
         supports_scar_ou=True,
+        supports_scar_mc=True,
         supports_latent_grid=True,
         supports_conditional_sampling=True,
         has_dynamic_scalar_parameter=True,
@@ -719,6 +720,9 @@ class StochasticStudentCopula(MultivariateCopula):
         if to_pobs:
             u = pobs(u)
             _validate_fit_data(u, self._d)
+
+        from pyscarcopula.strategy._base import ensure_strategy_supported
+        ensure_strategy_supported(self, method)
 
         self._last_u = u
 

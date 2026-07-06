@@ -10,12 +10,14 @@ from pyscarcopula import (
     IndependentCopula, CVineCopula, EquicorrGaussianCopula,
     GaussianCopula, StudentCopula, StochasticStudentCopula,
 )
-from pyscarcopula.api import fit, mixture_h, predict, predictive_mean, sample
+from pyscarcopula.api import (
+    fit, log_likelihood, mixture_h, predict, predictive_mean, sample,
+)
 from pyscarcopula.stattests import gof_test
 from pyscarcopula._utils import pobs
 from pyscarcopula._types import (
     MLEResult, LatentResult, GASResult, gas_params, NumericalConfig,
-    LBFGSBConfig,
+    LBFGSBConfig, IndependentResult, MultivariateMLEResult,
 )
 from pyscarcopula.numerical.gas_filter import gas_predict_param
 from pyscarcopula.numerical._cpp_extension import CppUnsupported
@@ -89,6 +91,14 @@ class TestFitResultTypes:
         edge_sum = sum(e.fit_result.log_likelihood
                        for tree in vine.edges for e in tree)
         assert abs(vine.fit_result.log_likelihood - edge_sum) < 1e-8
+
+    def test_top_level_vine_log_likelihood_dispatches_to_vine(self):
+        u4 = pobs(np.random.default_rng(30).standard_normal((80, 4)))
+        vine = CVineCopula()
+        result = fit(vine, u4, method='mle')
+
+        assert log_likelihood(vine, u4, result) == pytest.approx(
+            vine.log_likelihood(u4))
 
 
 class TestPredictiveMean:
@@ -175,6 +185,29 @@ class TestIndependentCopula:
         cop = IndependentCopula()
         result = cop.fit(np.random.rand(100, 2))
         assert result.log_likelihood == 0.0
+
+    def test_top_level_fit_zero_logL(self):
+        cop = IndependentCopula()
+        u = np.random.rand(100, 2)
+
+        result = fit(cop, u, method='mle')
+
+        assert isinstance(result, IndependentResult)
+        assert result.log_likelihood == 0.0
+        assert log_likelihood(cop, u, result) == 0.0
+
+    def test_top_level_sample_and_predict_do_not_recurse(self):
+        cop = IndependentCopula()
+        u = np.random.rand(100, 2)
+        result = fit(cop, u, method='mle')
+
+        simulated = sample(cop, u, result, 5, rng=np.random.default_rng(3))
+        predicted = predict(cop, u, result, 5, rng=np.random.default_rng(4))
+
+        assert simulated.shape == (5, 2)
+        assert predicted.shape == (5, 2)
+        assert np.all((simulated > 0.0) & (simulated < 1.0))
+        assert np.all((predicted > 0.0) & (predicted < 1.0))
 
     def test_batch_grid(self):
         cop = IndependentCopula()
@@ -480,9 +513,22 @@ class TestMultivariateCopulaAPI:
         result = fit(cop, u, method='mle')
         samples = predict(cop, u, result, 12, rng=np.random.default_rng(8))
 
+        assert isinstance(result, MultivariateMLEResult)
         assert result.success
         assert samples.shape == (12, 3)
         assert np.all((samples > 0.0) & (samples < 1.0))
+
+    @pytest.mark.parametrize("cls", [GaussianCopula, StudentCopula])
+    def test_dense_multivariate_top_level_fit_preserves_typed_result(self, cls):
+        u = pobs(np.random.default_rng(144).standard_normal((90, 3)))
+        cop = cls()
+
+        result = fit(cop, u, method='mle')
+
+        assert isinstance(result, MultivariateMLEResult)
+        assert result is cop.fit_result
+        assert result.correlation_matrix.shape == (3, 3)
+        assert np.isfinite(log_likelihood(cop, u, result))
 
     def test_student_fit_optimizes_df_directly_above_two(self):
         u = pobs(np.random.default_rng(45).standard_normal((100, 3)))

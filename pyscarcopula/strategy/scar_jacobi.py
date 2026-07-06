@@ -32,7 +32,12 @@ from pyscarcopula.numerical._transition_methods import (
     normalize_jacobi_strategy_transition_method,
 )
 from pyscarcopula.numerical import copula_native
-from pyscarcopula.strategy._base import register_strategy
+from pyscarcopula.strategy._base import (
+    lbfgsb_options,
+    lbfgsb_overrides,
+    register_strategy,
+    reject_legacy_tol,
+)
 from pyscarcopula.strategy.predict_helpers import predict_from_strategy
 from pyscarcopula.strategy.initial_point import (
     _explicit_initialization_diagnostics,
@@ -392,8 +397,7 @@ class SCARJacobiStrategy:
             finite_diff_rel_step: float | None = None,
             verbose: bool = False,
             **kwargs) -> LatentResult:
-        if 'tol' in kwargs:
-            raise TypeError("tol is not supported; use gtol")
+        reject_legacy_tol(kwargs)
         if self.analytical_grad:
             if not self._uses_matrix_backend():
                 raise NotImplementedError(
@@ -411,15 +415,18 @@ class SCARJacobiStrategy:
         bounds = self._raw_bounds()
         raw0 = np.clip(raw0, bounds.lb, bounds.ub)
 
-        optimizer_options = self.config.scar_optimizer.options(
-            gtol=gtol,
-            ftol=ftol,
-            maxfun=maxfun,
-            maxiter=maxiter,
-            maxls=maxls,
-            eps=eps,
-            maxcor=maxcor,
-            finite_diff_rel_step=finite_diff_rel_step,
+        optimizer_options = lbfgsb_options(
+            self.config.scar_optimizer,
+            **lbfgsb_overrides(
+                gtol=gtol,
+                ftol=ftol,
+                maxfun=maxfun,
+                maxiter=maxiter,
+                maxls=maxls,
+                eps=eps,
+                maxcor=maxcor,
+                finite_diff_rel_step=finite_diff_rel_step,
+            ),
         )
 
         def objective_raw(raw):

@@ -112,10 +112,11 @@ for experimentation, but it combines finite-difference curvature, clipping,
 and floors inside the recursion, so `scaling='unit'` is the recommended
 production choice.
 
-The native GAS evaluator owns the likelihood, score recursion, filtering,
-state updates, prediction state, and bivariate Rosenblatt path for supported
-models. The score used in the recursion is not the optimizer Jacobian with
-respect to $(\omega,\gamma,\beta)$; the outer L-BFGS-B gradient is numerical.
+The compiled GAS evaluator handles likelihood, score recursion, filtering,
+state updates, prediction state, and the bivariate Rosenblatt path for
+supported models. The score used in the recursion is not the optimizer
+Jacobian with respect to $(\omega,\gamma,\beta)$; the outer L-BFGS-B gradient
+is numerical.
 
 ## SCAR-TM-OU
 
@@ -196,11 +197,11 @@ fallbacks if spectral evaluation fails.
 
 ### OU Gradients
 
-With `analytical_grad=True`, SCAR-TM-OU passes a native analytical Jacobian to
-the optimizer. The derivative differentiates both the emission terms and the
-normalized filtering recursion. For joint Stochastic Student fits, the native
-engine supplies OU and static-correlation derivatives, and Python applies the
-configured correlation-parameter chain rule.
+With `analytical_grad=True`, SCAR-TM-OU passes an analytical Jacobian to the
+optimizer. The derivative differentiates both the emission terms and the
+normalized filtering recursion. For joint Stochastic Student fits, the
+compiled engine supplies OU and static-correlation derivatives, and Python
+applies the configured correlation-parameter chain rule.
 
 ## SCAR-TM-JACOBI
 

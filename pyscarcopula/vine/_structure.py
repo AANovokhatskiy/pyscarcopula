@@ -115,6 +115,56 @@ class RVineMatrix:
         self._d = d
         self._validate()
 
+    @classmethod
+    def from_trees(cls, d, trees):
+        """Build a Bedford/Joe ``RVineMatrix`` from tree edge sets.
+
+        ``RVineCopula`` stores fitted structures as tree levels whose entries
+        are ``(conditioned_frozenset, conditioning_frozenset)``.  This helper
+        converts that representation into the lower-triangular matrix
+        convention used by :class:`RVineMatrix`.
+        """
+        normalized = []
+        for tree_index, level in enumerate(trees):
+            tree = []
+            for edge_index, (conditioned, conditioning) in enumerate(level):
+                pair = tuple(sorted(int(value) for value in conditioned))
+                if len(pair) != 2:
+                    raise ValueError(
+                        "RVineMatrix.from_trees: edge "
+                        f"({tree_index}, {edge_index}) must have exactly "
+                        f"two conditioned variables, got {pair}")
+                cond = tuple(sorted(int(value) for value in conditioning))
+                tree.append((pair[0], pair[1], cond))
+            normalized.append(tree)
+        return cls(_trees_to_matrix(int(d), normalized))
+
+    @classmethod
+    def from_model(cls, model):
+        """Build a lower-triangular ``RVineMatrix`` from an ``RVineCopula``."""
+        d = getattr(model, "d", None)
+        trees = getattr(model, "trees", None)
+        if d is None or trees is None:
+            raise ValueError(
+                "RVineMatrix.from_model requires a fitted RVineCopula-like "
+                "object with 'd' and 'trees' attributes")
+        return cls.from_trees(d, trees)
+
+    @classmethod
+    def from_natural_order(cls, matrix):
+        """Convert a natural-order R-vine matrix to ``RVineMatrix``."""
+        from pyscarcopula.vine._rvine_matrix_builder import (
+            decode_matrix_to_trees,
+            validate_natural_order_matrix,
+        )
+
+        matrix = np.asarray(matrix, dtype=int)
+        if not validate_natural_order_matrix(matrix):
+            raise ValueError(
+                "RVineMatrix.from_natural_order: matrix is not a valid "
+                "natural-order R-vine matrix")
+        return cls.from_trees(matrix.shape[0], decode_matrix_to_trees(matrix))
+
     @property
     def d(self):
         return self._d

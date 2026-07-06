@@ -114,10 +114,9 @@ from pyscarcopula.api import fit
 result = fit(copula, u, method='gas', scaling='unit')
 ```
 
-There is no backend selector or silent fallback. Use `scaling='unit'` for
-routine fits. Fisher scaling is numerically sensitive because its
-finite-difference curvature, floor, and clipping make optimization sensitive
-to numerical step sizes.
+Use `scaling='unit'` for routine fits. Fisher scaling is numerically sensitive
+because its finite-difference curvature, floor, and clipping make optimization
+sensitive to numerical step sizes.
 
 ```python
 u_pred = predict(copula, u, result, n=100_000,

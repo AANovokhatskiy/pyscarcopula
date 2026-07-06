@@ -1,4 +1,4 @@
-# Model And Strategy Architecture
+# Developer Architecture
 
 ## Class Hierarchy
 
@@ -18,16 +18,12 @@ CopulaBase
 
 `BivariateCopula` exposes pair operations required by vines, including `h`
 and inverse-`h`. `MultivariateCopula` exposes row-density and sampling
-contracts without presenting a pair-copula API.
-
-The corresponding runtime protocols are
-`CommonCopulaProtocol`, `BivariateCopulaProtocol`, and
-`MultivariateCopulaProtocol`.
+behavior without presenting a pair-copula API.
 
 ## Capabilities
 
 Inheritance describes model shape. `CopulaCapabilities` describes which
-strategies and native operations a built-in model supports.
+strategies and compiled operations a built-in model supports.
 
 ```python
 from pyscarcopula import EquicorrGaussianCopula
@@ -43,22 +39,22 @@ similarly named methods.
 
 ## Strategy Ownership
 
-Strategies own optimization, filtering orchestration, and result
+Strategies own optimization, filtering coordination, and result
 construction. Copulas own model metadata, transforms, and sampling behavior.
 Native adapters own calls into the mandatory C++ extension.
 
 | Layer | Main responsibility |
 |-------|---------------------|
 | Copula class | Model identity, parameter domain, sampling |
-| Capability descriptor | Explicit strategy support |
-| Strategy | Optimization and immutable fit results |
+| Capability metadata | Explicit strategy support |
+| Strategy | Optimization and fit-result construction |
 | Native evaluator | Density, likelihood, gradient, filtering |
-| Python orchestration | RNG, Jacobi, MC/EIS, GoF, persistence |
+| Python coordination | RNG, Jacobi, MC/EIS, GoF, persistence |
 
 ## Numerical Safety Boundaries
 
 Numerical boundaries are named by purpose rather than represented by a
-generic `eps`. Python values live in `pyscarcopula._constants`; native
+generic `eps`. Python values live in `pyscarcopula._constants`; compiled
 pair-copula values live in `scar/numerical_constants.hpp`.
 
 - `PSEUDO_OBS_EPS` protects pseudo-observations passed to quantiles and
@@ -69,14 +65,15 @@ pair-copula values live in `scar/numerical_constants.hpp`.
 - `PDF_FLOOR` protects density and logarithm arguments.
 
 The h-function and Rosenblatt boundaries use the same numeric value, but they
-remain separate contracts. Vine runtime code uses the shared
-pseudo-observation helper; it does not define local `_EPS` constants.
+are named separately because they protect different calculations. Vine code
+uses the shared pseudo-observation helper; it does not define local `_EPS`
+constants.
 
 ## Custom Python Copulas
 
-Custom Python copulas can implement public protocols for custom strategies,
-sampling, diagnostics, and other Python workflows. Protocol conformance alone
-does not add a family to the native support matrix.
+Custom Python copulas can be paired with custom strategies, sampling,
+diagnostics, and other Python workflows. This does not add a family to the
+compiled support matrix.
 
 Built-in GAS and SCAR-TM-OU reject unknown classes before optimization. They do
 not silently call arbitrary Python density methods as a fallback.

@@ -13,7 +13,7 @@ def cvar_emp_window(arr, gamma, window_len):
     res = np.zeros_like(arr)
     T = len(arr)
     iters = T - window_len + 1
-    for k in range(0, iters - 1):
+    for k in range(0, iters):
         idx = k + window_len - 1
         data = arr[k:window_len + k]
         q = np.quantile(data, gamma)

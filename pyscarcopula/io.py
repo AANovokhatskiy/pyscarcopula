@@ -236,10 +236,11 @@ def save_model(model: object, path: str | Path, *, include_data: bool = False) -
         Model instance to serialize.
     path : str or pathlib.Path
         Destination file path.
-    include_data : bool, default True
+    include_data : bool, default False
         If False, drop cached training pseudo-observations stored as
         ``_last_u`` before writing. This reduces file size and avoids
-        persisting the training sample, but loaded dynamic models may require
+        persisting the training sample. Fitted state, diagnostics, and cached
+        likelihood values are still saved. Loaded dynamic models may require
         explicit data passed to prediction methods.
     """
     payload_model = model if include_data else _without_training_data(model)

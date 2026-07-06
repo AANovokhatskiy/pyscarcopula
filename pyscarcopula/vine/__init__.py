@@ -14,7 +14,7 @@ Submodules:
 from pyscarcopula.vine.cvine import CVineCopula
 from pyscarcopula.vine.rvine import RVineCopula
 from pyscarcopula.vine._pair_copula import PairCopula
-from pyscarcopula.vine._selection import select_best_copula
+from pyscarcopula.vine._selection import SelectedCopula, select_best_copula
 from pyscarcopula.vine._structure import RVineMatrix
 
 __all__ = [
@@ -22,5 +22,6 @@ __all__ = [
     'RVineCopula',
     'PairCopula',
     'RVineMatrix',
+    'SelectedCopula',
     'select_best_copula',
 ]

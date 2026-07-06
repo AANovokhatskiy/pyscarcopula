@@ -56,7 +56,6 @@ nav:
     - Installation: getting-started/installation.md
     - Quick Start: getting-started/quickstart.md
   - User Guide:
-    - Model Architecture: guide/architecture.md
     - Bivariate Copulas: guide/bivariate.md
     - Estimation Methods: guide/estimation-methods.md
     - Mathematical Contracts: guide/mathematical-contracts.md

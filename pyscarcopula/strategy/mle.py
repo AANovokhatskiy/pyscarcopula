@@ -16,8 +16,12 @@ from pyscarcopula._types import (
 )
 from pyscarcopula.strategy._base import (
     copula_dimension,
+    get_copula_capabilities,
     is_multivariate_copula,
+    lbfgsb_options,
+    lbfgsb_overrides,
     register_strategy,
+    reject_legacy_tol,
 )
 from pyscarcopula.strategy.predict_helpers import (
     predict_from_strategy,
@@ -68,18 +72,27 @@ class MLEStrategy:
         -------
         MLEResult
         """
-        if 'tol' in kwargs:
-            raise TypeError("tol is not supported; use gtol")
-        optimizer_overrides = {
-            'gtol': gtol,
-            'ftol': ftol,
-            'maxfun': maxfun,
-            'maxiter': maxiter,
-            'maxls': maxls,
-            'eps': eps,
-            'maxcor': maxcor,
-            'finite_diff_rel_step': finite_diff_rel_step,
-        }
+        reject_legacy_tol(kwargs)
+        optimizer_overrides = lbfgsb_overrides(
+            gtol=gtol,
+            ftol=ftol,
+            maxfun=maxfun,
+            maxiter=maxiter,
+            maxls=maxls,
+            eps=eps,
+            maxcor=maxcor,
+            finite_diff_rel_step=finite_diff_rel_step,
+        )
+
+        capabilities = get_copula_capabilities(copula)
+        if (
+                capabilities is not None
+                and not capabilities.has_dynamic_scalar_parameter):
+            direct_fit = getattr(copula, 'fit', None)
+            if direct_fit is not None:
+                result = direct_fit(u, to_pobs=False)
+                if getattr(result, 'method', '').upper() == 'MLE':
+                    return result
 
         if is_multivariate_copula(copula):
             fit_mle = getattr(copula, '_fit_mle', None)
@@ -88,20 +101,12 @@ class MLEStrategy:
                     u, config=self.config, **optimizer_overrides)
             direct_fit = getattr(copula, 'fit', None)
             if direct_fit is not None:
-                direct_fit(u, to_pobs=False)
-                result = MLEResult(
-                    log_likelihood=float(copula.log_likelihood(u)),
-                    method='MLE',
-                    copula_name=copula.name,
-                    success=True,
-                    nfev=0,
-                    message='direct multivariate fit',
-                    copula_param=np.nan,
-                )
-                copula.fit_result = result
-                return result
+                result = direct_fit(u, to_pobs=False)
+                if getattr(result, 'method', '').upper() == 'MLE':
+                    return result
 
-        optimizer_options = self.config.mle_optimizer.options(
+        optimizer_options = lbfgsb_options(
+            self.config.mle_optimizer,
             **optimizer_overrides,
         )
 

@@ -21,7 +21,10 @@ from pyscarcopula.numerical.gas_filter import (
 from pyscarcopula.strategy._base import (
     copula_dimension,
     is_multivariate_copula,
+    lbfgsb_options,
+    lbfgsb_overrides,
     register_strategy,
+    reject_legacy_tol,
 )
 from pyscarcopula.strategy.predict_helpers import (
     predict_from_strategy,
@@ -71,6 +74,228 @@ class GASStrategy:
             return getattr(self.config, config_name)
         return self.config.gas_optimizer
 
+    def _ensure_correlation_initialized(self, copula, u):
+        ensure = getattr(copula, "_ensure_corr_initialized", None)
+        if callable(ensure):
+            ensure(u)
+
+    def _correlation_diagnostics(self, copula) -> dict:
+        diagnostics = {}
+        count_diagnostics = getattr(copula, "_corr_count_diagnostics", None)
+        if callable(count_diagnostics):
+            diagnostics.update(count_diagnostics())
+        preprocessing_diagnostics = getattr(
+            copula, "correlation_preprocessing_diagnostics", None)
+        if callable(preprocessing_diagnostics):
+            diagnostics.update(preprocessing_diagnostics())
+        corr_params = getattr(copula, "corr_params", None)
+        if callable(corr_params):
+            diagnostics["corr_params_raw"] = corr_params()
+        corr_alpha = getattr(copula, "corr_alpha", None)
+        if callable(corr_alpha):
+            diagnostics["corr_alpha"] = corr_alpha()
+        R = getattr(copula, "R", None)
+        if R is not None:
+            diagnostics["corr_matrix"] = R
+        return diagnostics
+
+    def _build_result(
+        self,
+        copula,
+        u,
+        result,
+        gas_values,
+        score_eps,
+        gamma_bound,
+        beta_bound,
+        *,
+        parameter_count=None,
+        diagnostics=None,
+    ):
+        gas_values = np.asarray(gas_values, dtype=np.float64).reshape(-1)
+        params = gas_params(
+            omega=gas_values[0],
+            gamma=gas_values[1],
+            beta=gas_values[2],
+            gamma_bound=gamma_bound,
+            beta_bound=beta_bound,
+        )
+
+        success = bool(result.success)
+        message = str(result.message)
+        try:
+            final_log_likelihood = gas_loglik(
+                gas_values[0],
+                gas_values[1],
+                gas_values[2],
+                u,
+                copula,
+                self.scaling,
+                score_eps,
+            )
+            if not np.isfinite(final_log_likelihood):
+                raise FloatingPointError(
+                    "final GAS log-likelihood is not finite")
+            r_last = gas_predict_param(
+                gas_values[0],
+                gas_values[1],
+                gas_values[2],
+                u,
+                copula,
+                self.scaling,
+                score_eps,
+            )
+        except Exception as exc:
+            success = False
+            final_log_likelihood = -1e10
+            r_last = 0.0
+            message = f"{message}; final native GAS validation failed: {exc}"
+
+        result_diagnostics = {
+            "model_score": "native",
+            "optimizer_gradient": "numerical",
+            "gradient_kind": "numerical_optimizer",
+            "setup_derivative": "not_provided",
+            "filter_derivative": "not_provided_to_optimizer",
+            "analytical_grad_requested": False,
+            "analytical_grad_used": False,
+        }
+        result_diagnostics.update(self._correlation_diagnostics(copula))
+        if diagnostics:
+            result_diagnostics.update(diagnostics)
+
+        return GASResult(
+            log_likelihood=final_log_likelihood,
+            method="GAS",
+            copula_name=copula.name,
+            success=success,
+            nfev=result.nfev,
+            message=message,
+            params=params,
+            scaling=self.scaling,
+            score_eps=score_eps,
+            r_last=r_last,
+            diagnostics=result_diagnostics,
+            parameter_count=parameter_count,
+        )
+
+    def _fit_joint_static_shrinkage(
+        self,
+        copula,
+        u,
+        gamma0,
+        optimizer_options,
+        score_eps,
+        gamma_bound,
+        beta_bound,
+        verbose,
+    ):
+        n_corr = int(copula._corr_num_params())
+        self._ensure_correlation_initialized(copula, u)
+        corr0 = np.asarray(
+            copula._initial_corr_params(u), dtype=np.float64).reshape(-1)
+        if n_corr != 1 or corr0.size != 1:
+            raise NotImplementedError(
+                "GAS joint static correlation currently supports only "
+                "corr_mode='shrinkage'")
+
+        if gamma0 is None:
+            from pyscarcopula.strategy.mle import MLEStrategy
+
+            mle_result = MLEStrategy(config=self.config).fit(copula, u)
+            mu_mle = float(
+                np.atleast_1d(
+                    copula.inv_transform(
+                        np.atleast_1d(mle_result.copula_param)
+                    )
+                )[0]
+            )
+            gas0 = np.array([mu_mle * 0.05, 0.05, 0.95])
+            fitted_corr = np.asarray(
+                copula._pack_corr_params(), dtype=np.float64).reshape(-1)
+            if fitted_corr.size == n_corr:
+                corr0 = fitted_corr
+        else:
+            gamma0 = np.asarray(gamma0, dtype=np.float64).reshape(-1)
+            if gamma0.size == 3:
+                gas0 = gamma0.copy()
+            elif gamma0.size == 3 + n_corr:
+                gas0 = gamma0[:3].copy()
+                corr0 = gamma0[3:].copy()
+            else:
+                raise ValueError(
+                    f"gamma0 must contain 3 GAS parameters or "
+                    f"{3 + n_corr} joint parameters, got {gamma0.size}")
+
+        joint0 = np.concatenate([gas0, corr0])
+        if not np.all(np.isfinite(joint0)):
+            raise ValueError("gamma0 must contain only finite values")
+
+        bounds = Bounds(
+            [-np.inf, -gamma_bound, -beta_bound, -np.inf],
+            [np.inf, gamma_bound, beta_bound, np.inf],
+        )
+
+        def objective(joint):
+            joint = np.asarray(joint, dtype=np.float64).reshape(-1)
+            if joint.size != 3 + n_corr or not np.all(np.isfinite(joint)):
+                return self.config.fail_value
+            try:
+                copula._set_corr_from_params(joint[3:])
+                return gas_negloglik(
+                    joint[0],
+                    joint[1],
+                    joint[2],
+                    u,
+                    copula,
+                    self.scaling,
+                    score_eps,
+                )
+            except Exception:
+                return self.config.fail_value
+
+        if verbose:
+            print(
+                f"GAS fit: joint shrinkage gamma0={joint0}, "
+                f"scaling={self.scaling}, score_eps={score_eps}, "
+                f"options={optimizer_options}, gamma_bound={gamma_bound}, "
+                f"beta_bound={beta_bound}"
+            )
+
+        result = minimize(
+            objective,
+            joint0,
+            method="L-BFGS-B",
+            bounds=bounds,
+            options=optimizer_options,
+        )
+        try:
+            copula._set_corr_from_params(result.x[3:])
+        except Exception as exc:
+            result.success = False
+            result.message = (
+                f"{result.message}; failed to set final correlation: {exc}")
+            copula._set_corr_from_params(corr0)
+
+        diagnostics = {
+            "joint_static": True,
+            "joint_optimizer": "python-lbfgsb",
+            "joint_correlation": "shrinkage",
+            "initial_params": joint0.copy(),
+            "final_params": np.asarray(result.x, dtype=np.float64).copy(),
+        }
+        return self._build_result(
+            copula,
+            u,
+            result,
+            result.x[:3],
+            score_eps,
+            gamma_bound,
+            beta_bound,
+            parameter_count=3 + n_corr,
+            diagnostics=diagnostics,
+        )
+
     def fit(
         self,
         copula,
@@ -91,29 +316,36 @@ class GASStrategy:
         **kwargs,
     ) -> GASResult:
         """Fit the native GAS model."""
-        if "tol" in kwargs:
-            raise TypeError("tol is not supported; use gtol")
+        reject_legacy_tol(kwargs)
         if "backend" in kwargs:
             raise TypeError(
                 "GAS backend selection was removed; native execution is "
                 "always used")
-        corr_num_params = getattr(copula, "_corr_num_params", lambda: 0)()
-        if corr_num_params:
+        corr_num_params = int(
+            getattr(copula, "_corr_num_params", lambda: 0)())
+        if (
+                corr_num_params
+                and getattr(copula, "_corr_mode", None) != "shrinkage"):
             raise NotImplementedError(
-                "joint static correlation estimation is implemented for "
-                "MLE and SCAR-TM-OU, not GAS")
+                "GAS joint static correlation currently supports only "
+                "corr_mode='shrinkage'")
+
+        self._ensure_correlation_initialized(copula, u)
         _cpp_gas.ensure_supported(copula)
         _cpp_gas.require_available()
 
-        optimizer_options = self._optimizer_config(copula).options(
-            gtol=gtol,
-            ftol=ftol,
-            maxfun=maxfun,
-            maxiter=maxiter,
-            maxls=maxls,
-            eps=eps,
-            maxcor=maxcor,
-            finite_diff_rel_step=finite_diff_rel_step,
+        optimizer_options = lbfgsb_options(
+            self._optimizer_config(copula),
+            **lbfgsb_overrides(
+                gtol=gtol,
+                ftol=ftol,
+                maxfun=maxfun,
+                maxiter=maxiter,
+                maxls=maxls,
+                eps=eps,
+                maxcor=maxcor,
+                finite_diff_rel_step=finite_diff_rel_step,
+            ),
         )
         score_eps = float(
             score_eps
@@ -134,6 +366,18 @@ class GASStrategy:
             raise ValueError("gamma_bound must be positive")
         if not 0 < beta_bound < 1:
             raise ValueError("beta_bound must be in (0, 1)")
+
+        if corr_num_params:
+            return self._fit_joint_static_shrinkage(
+                copula,
+                u,
+                gamma0,
+                optimizer_options,
+                score_eps,
+                gamma_bound,
+                beta_bound,
+                verbose,
+            )
 
         if gamma0 is None:
             from pyscarcopula.strategy.mle import MLEStrategy
@@ -178,64 +422,20 @@ class GASStrategy:
             bounds=bounds,
             options=optimizer_options,
         )
-        params = gas_params(
-            omega=result.x[0],
-            gamma=result.x[1],
-            beta=result.x[2],
-            gamma_bound=gamma_bound,
-            beta_bound=beta_bound,
-        )
-
-        success = bool(result.success)
-        message = str(result.message)
-        try:
-            final_log_likelihood = gas_loglik(
-                result.x[0],
-                result.x[1],
-                result.x[2],
-                u,
-                copula,
-                self.scaling,
-                score_eps,
-            )
-            if not np.isfinite(final_log_likelihood):
-                raise FloatingPointError(
-                    "final GAS log-likelihood is not finite")
-            r_last = gas_predict_param(
-                result.x[0],
-                result.x[1],
-                result.x[2],
-                u,
-                copula,
-                self.scaling,
-                score_eps,
-            )
-        except Exception as exc:
-            success = False
-            final_log_likelihood = -1e10
-            r_last = 0.0
-            message = f"{message}; final native GAS validation failed: {exc}"
-
-        return GASResult(
-            log_likelihood=final_log_likelihood,
-            method="GAS",
-            copula_name=copula.name,
-            success=success,
-            nfev=result.nfev,
-            message=message,
-            params=params,
-            scaling=self.scaling,
-            score_eps=score_eps,
-            r_last=r_last,
-            diagnostics={
-                "model_score": "native",
-                "optimizer_gradient": "numerical",
-                "gradient_kind": "numerical_optimizer",
-                "setup_derivative": "not_provided",
-                "filter_derivative": "not_provided_to_optimizer",
-                "analytical_grad_requested": False,
-                "analytical_grad_used": False,
-            },
+        parameter_count = None
+        corr_effective_num_params = getattr(
+            copula, "_corr_effective_num_params", None)
+        if callable(corr_effective_num_params):
+            parameter_count = 3 + int(corr_effective_num_params())
+        return self._build_result(
+            copula,
+            u,
+            result,
+            result.x,
+            score_eps,
+            gamma_bound,
+            beta_bound,
+            parameter_count=parameter_count,
         )
 
     def log_likelihood(self, copula, u: np.ndarray, result: GASResult) -> float:
