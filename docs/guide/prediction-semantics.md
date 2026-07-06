@@ -59,7 +59,7 @@ score-driven path.
 
 `predict(n, u=training_data)` on a fitted object generates forecast
 observations conditional on the supplied history. Omitting `u` uses the
-history stored by the last `fit`. The stateless equivalent is
+history stored by the last `fit`. The top-level equivalent is
 `pyscarcopula.api.predict(copula, data, result, n)`. For MLE this uses the same
 constant-parameter copula. Dynamic strategies such as GAS and SCAR-TM use
 their fitted time-varying state.
@@ -88,6 +88,13 @@ state, so the two horizons are equivalent.
 The default is `horizon='next'`, because `predict` is primarily a forecasting
 API.
 
+## `predictive_r_mode`
+
+`predictive_r_mode` controls how SCAR-TM predictive parameter samples are
+drawn for APIs that need simulated edge parameters. Supported values are
+`None`, `'grid'`, and `'histogram'`. `None` uses the strategy default. Other
+string values are rejected.
+
 ## `given`
 
 `given` is a predict-time conditioning value in pseudo-observation space:
@@ -115,10 +122,8 @@ For R-vines, `predict` uses two paths:
 - **suffix exact path**: used when the fixed variables can be placed at the end
   of the R-vine variable order, either directly or after rebuilding an
   equivalent natural-order matrix;
-- **runtime DAG + MCMC path**: used for arbitrary non-suffix conditioning
-  patterns. The DAG provides a feasible h/inverse-h initialization and MCMC
-  refines samples against the full vine density with the fixed variables held
-  constant.
+- **approximate fallback path**: used for arbitrary non-suffix conditioning
+  patterns.
 
 The suffix path is exact and fast. The arbitrary path is general but
 approximate and more expensive.
@@ -144,8 +149,8 @@ prefer structures that make this set easy to condition on exactly."
 With `conditional_strict=True`, fit rejects a structure that cannot support
 the target set through the exact suffix sampler. With
 `conditional_strict=False`, fit keeps the best available structure and
-prediction uses the arbitrary DAG + MCMC path when the exact suffix path is
-not available.
+prediction uses the approximate fallback when the exact suffix path is not
+available.
 
 Use `given_vars` when the production conditioning set is known before fitting.
 Use `given` when calling `predict`.
@@ -205,10 +210,9 @@ samples, diagnostics = vine.predict(
 Explicit kwargs override the corresponding fields in `PredictConfig`, so
 call-site options and reusable configuration objects can be mixed deliberately.
 
-`mcmc_steps` and `mcmc_burnin` apply only to arbitrary R-vine conditioning
-when `conditional_method='dag_mcmc'`. They control the number of componentwise
-Metropolis updates after and before burn-in. They do not affect suffix exact
-sampling.
+`mcmc_steps` and `mcmc_burnin` apply only to approximate R-vine conditioning
+when `conditional_method='dag_mcmc'`. They control the number of refinement
+updates after and before burn-in. They do not affect suffix exact sampling.
 
 ## Diagnostics
 
@@ -221,8 +225,8 @@ Useful diagnostic fields include:
 - `given`: normalized fixed values;
 - `dynamic_conditioning`: active dynamic-conditioning mode;
 - `updated_edges` and `skipped_edges`: dynamic-conditioning edge records;
-- `dag_steps`, `dag_edges_used`, and `mcmc`: arbitrary-conditioning details
-  when the DAG + MCMC fallback is used.
+- `dag_steps`, `dag_edges_used`, and `mcmc`: advanced details when the
+  approximate fallback is used.
 
 The `mcmc` block includes per-variable acceptance rates, summary acceptance
 statistics, burn-in count, total update count, and a `low_acceptance_warning`
@@ -237,5 +241,5 @@ Common dynamic-conditioning skip reasons include:
   state;
 - `unsupported_or_noop`: the edge has no supported update or the update leaves
   the state unchanged;
-- `dag_mcmc_not_suffix_supported`: `given_only` was requested for an arbitrary
-  DAG + MCMC conditioning path.
+- `dag_mcmc_not_suffix_supported`: `given_only` was requested for the
+  approximate fallback path.

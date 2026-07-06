@@ -121,29 +121,11 @@ StochasticStudentCopula(d=5, corr_mode="cholesky")
 `d(d-1)/2` static parameters and is intended for low-dimensional problems.
 For estimated modes, the initialization/base matrix is selected in this order:
 an explicit `corr_base`, then `R`, then a Kendall estimate from the fit data.
-These estimated-correlation modes are available for MLE and SCAR-TM-OU.
-Joint SCAR-TM-OU uses a Python-owned optimizer and correlation parameterization
-with an analytical joint Jacobian. C++ differentiates with respect to the
-current static correlation matrix for matrix, local, and spectral transitions;
-Python applies the chain rule to the `shrinkage` or `cholesky` raw parameters.
-Setting `analytical_grad=False` retains the fully numerical optimizer gradient.
-Likelihood evaluations always use the native engine. GAS uses fixed
-correlation.
-
-The C++ backend does not parameterize or optimize the static correlation
-matrix. Parameterization and L-BFGS-B ownership stay in Python.
-
-The implementation caches the full-sample Student quantile table for repeated
-emission evaluations. The transient PPF cache is independent of correlation
-state: changing `R`
-refreshes only Cholesky/log-determinant state and the C++ copula spec. The PPF
-table crosses pybind as contiguous NumPy buffers and is copied once into
-owning C++ storage without intermediate Python lists. Buffer shape, finite
-values, and strictly increasing nodes are validated at assignment. Python
-and C++ use cubic Hermite interpolation inside the node range and exact
-Student quantiles outside it. The cache is rebuilt after loading a
-persisted model. GAS filtering and likelihood evaluation use the mandatory
-native evaluator.
+Both estimated-correlation modes are available for MLE and SCAR-TM-OU.
+GAS supports fixed correlation and the one-parameter `shrinkage` mode; GAS
+with `corr_mode="cholesky"` is rejected before fitting. Setting
+`analytical_grad=False` retains a fully numerical optimizer gradient. See the
+multivariate guide for fitting details and diagnostic fields.
 
 ::: pyscarcopula.copula.multivariate.stochastic_student.StochasticStudentCopula
     options:

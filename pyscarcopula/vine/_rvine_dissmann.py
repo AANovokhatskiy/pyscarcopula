@@ -34,7 +34,11 @@ from pyscarcopula.vine._reachability import (
     analyze_conditional_reachability,
     build_rvine_dag,
 )
-from pyscarcopula.vine._selection import select_best_copula, _default_candidates
+from pyscarcopula.vine._selection import (
+    select_best_copula,
+    _default_candidates,
+    validate_fixed_copula_specs,
+)
 from pyscarcopula.vine._pair_copula import PairCopula as _PairCopula
 from pyscarcopula.vine._structure import (
     _build_next_tree,
@@ -83,7 +87,8 @@ def select_rvine(
         ``'scar-tm-ou'``.
     copulas : list-of-lists or None
         Optional fixed edge families as ``(copula_class, rotation)`` in
-        the Dissmann edge order for each tree.
+        the Dissmann edge order for each tree. This is not a candidate
+        family pool; use ``candidates=`` for automatic selection.
     config : NumericalConfig or None
         Optional numerical configuration passed to strategies.
     truncation_level : int or None
@@ -148,6 +153,7 @@ def select_rvine(
     from pyscarcopula.vine._selection import validate_pair_candidates
     candidates = candidates if candidates is not None else _default_candidates()
     validate_pair_candidates(candidates)
+    validate_fixed_copula_specs(copulas, d)
     pseudo_obs = {(i, frozenset()): u[:, i].copy() for i in range(d)}
     given_vars = tuple(given_vars or ())
 

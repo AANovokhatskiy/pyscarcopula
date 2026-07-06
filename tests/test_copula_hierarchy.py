@@ -100,8 +100,10 @@ def test_capabilities_are_immutable_and_runtime_dimension_is_separate():
 )
 def test_multivariate_classes_are_rejected_as_vine_candidates(
         vine_class, candidate):
-    with pytest.raises(TypeError, match="cannot be used as a vine pair"):
+    with pytest.raises(TypeError, match="cannot be used as a vine pair") as exc:
         vine_class(candidates=[candidate])
+    if candidate is GaussianCopula:
+        assert "BivariateGaussianCopula" in str(exc.value)
 
 
 def test_dimension_two_multivariate_dispatch_does_not_use_shape_heuristic():

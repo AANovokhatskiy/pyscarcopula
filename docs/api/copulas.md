@@ -12,9 +12,6 @@ mathematical meaning of these options.
 
 ## Top-level API
 
-All API functions are stateless: they accept a copula object, data, and a
-result, and return new values without mutation.
-
 ::: pyscarcopula.api.fit
 
 ::: pyscarcopula.api.sample

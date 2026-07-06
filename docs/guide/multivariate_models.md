@@ -29,10 +29,6 @@ The scalar state can be estimated in three ways:
 - **SCAR-TM-OU**: $g_t$ is a latent OU process. The likelihood integrates over
   the latent state using the transfer-matrix filter.
 
-This is the main implementation contract: the strategy layer does not need to
-know the full multivariate model, only how to evaluate row-wise densities and,
-for GAS, row-wise score derivatives.
-
 The shared formulas for scalar dynamic states, parameter links, SCAR filters,
 and dynamic Rosenblatt GoF are summarized in
 [Mathematical Contracts](mathematical-contracts.md).
@@ -128,19 +124,8 @@ cop = StochasticStudentCopula(d=5, corr_mode="cholesky")
 MLE or with the three OU parameters in SCAR-TM-OU. `cholesky` mode estimates
 `d(d-1)/2` additional static parameters and is intended for low-dimensional
 problems. Their initialization/base matrix uses `corr_base` when supplied,
-otherwise `R`, and otherwise a Kendall estimate from the fit data. Python owns
-the joint parameterization and L-BFGS-B optimizer, while all SCAR-TM-OU
-likelihood evaluations use the native engine. GAS keeps fixed-correlation
-semantics.
-
-The C++ layer receives the current static correlation matrix for each
-objective evaluation. It does not optimize correlation parameters internally
-but matrix and local transition backends expose analytical derivatives with
-respect to its unique off-diagonal entries. Python applies the parameterization
-chain rule and remains the owner of L-BFGS-B. The spectral transition path
-also exposes native correlation derivatives. Diagnostics report
-`correlation_gradient='analytical'` and `joint_gradient='analytical'` when
-that route is used.
+otherwise `R`, and otherwise a Kendall estimate from the fit data. GAS keeps
+fixed-correlation semantics.
 
 Static and stochastic Student models share the same Kendall preprocessing.
 Each pair uses
@@ -155,39 +140,7 @@ when necessary. Fit diagnostics report:
 - `corr_nonfinite_kendall_pairs`.
 
 Gaussian score-space correlation fitting is intentionally separate because it
-uses a different estimator and therefore does not share this Kendall contract.
-
-Implementation notes:
-
-- GAS uses the derivative of the Student copula log-density with respect to
-  $\nu_t$ and then applies the chain rule through
-  $\nu_t=2+10^{-6}+\mathrm{softplus}(g_t)$.
-- Fixed and Python-parameterized static-correlation SCAR-TM-OU can evaluate the
-  Student copula density in the C++ OU backend. Joint parameterization and
-  optimization remain in Python. With `analytical_grad=True`, the joint
-  optimizer uses analytical OU and static-correlation derivatives for C++
-  matrix/local transitions. The native spectral evaluator uses analytical OU
-  and static-correlation derivatives. `analytical_grad=False` retains a fully
-  numerical optimizer gradient.
-- The Student quantile table is built once per pseudo-observation array and
-  reused by GAS, TM, and Hermite-TM block evaluations. Block calls pass a row
-  offset into this full-sample cache instead of rebuilding quantiles for
-  temporary slices. The model uses a transient `StudentPPFCache`. Replacing
-  `R` keeps this table and refreshes only
-  correlation-specific state. C++ cache initialization accepts contiguous
-  NumPy buffers, validates them once, and performs one owning copy without
-  Python-list conversion. Python and C++ use cubic Hermite interpolation
-  inside the node range and exact Student quantiles outside it.
-- GAS filtering, likelihood, state updates, and gradients use the mandatory
-  native evaluator.
-- The Student log-density formulas are evaluated in vectorized numerical
-  kernels, but the mathematical model is the standard t-copula above.
-- Conditional Gaussian and Student sampling use native linear-algebra kernels.
-  Python retains input validation, pseudo-observation clipping, quantile/CDF
-  conversion, and ownership of `numpy.random.Generator`. It generates normal
-  and chi-square innovations before calling C++, so public seed reproducibility
-  is preserved. Native factorization errors are reported to Python and are not
-  masked by a Python fallback.
+uses a different estimator.
 
 ### Usage
 
@@ -222,7 +175,7 @@ gof = gof_test(cop, returns, to_pobs=True)
 ## Common API
 
 Static Gaussian, static Student, equicorrelation Gaussian MLE, and stochastic
-Student MLE return the same `MultivariateMLEResult` contract:
+Student MLE return the same result type:
 
 ```python
 from pyscarcopula import GaussianCopula
@@ -236,9 +189,8 @@ parameters = result.model_parameters
 print(result.log_likelihood, result.n_params, result.aic, result.bic)
 ```
 
-The result stores natural model parameters, observation count, an explicit
-correlation matrix, optimizer status, diagnostics, and the common parameter
-count used by AIC/BIC.
+The result stores model parameters, observation count, an explicit correlation
+matrix, optimizer status, diagnostics, and the parameter count used by AIC/BIC.
 
 All multivariate models support the following core operations where applicable:
 

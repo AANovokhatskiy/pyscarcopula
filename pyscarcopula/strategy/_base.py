@@ -74,21 +74,59 @@ def _uses_data_estimated_correlation(copula) -> bool:
     return getattr(copula, "_R", None) is None
 
 
+def _allows_gas_static_correlation(copula, method) -> bool:
+    if str(method).upper() != "GAS":
+        return False
+    corr_mode = getattr(copula, "_corr_mode", None)
+    if corr_mode not in {"fixed", "shrinkage"}:
+        return False
+    corr_num_params = getattr(copula, "_corr_num_params", None)
+    if not callable(corr_num_params):
+        return corr_mode == "fixed"
+    n_corr = int(corr_num_params())
+    if corr_mode == "fixed":
+        return n_corr == 0
+    return n_corr > 0
+
+
 def ensure_strategy_supported(copula, method):
     """Reject incompatible built-in strategy selections deterministically."""
     capabilities = get_copula_capabilities(copula)
     if capabilities is None:
         return
     normalized = str(method).upper()
+    dynamic_methods = {
+        "GAS",
+        "SCAR-TM-OU",
+        "SCAR-TM-JACOBI",
+        "SCAR-P-OU",
+        "SCAR-M-OU",
+    }
+    if (
+            normalized in dynamic_methods
+            and not capabilities.has_dynamic_scalar_parameter):
+        raise TypeError(f"{type(copula).__name__} does not support {normalized}")
     if normalized == "GAS" and not capabilities.supports_gas:
         raise TypeError(f"{type(copula).__name__} does not support GAS")
+    if (
+            normalized == "GAS"
+            and getattr(copula, "_corr_mode", None) == "cholesky"
+            and _uses_data_estimated_correlation(copula)):
+        raise NotImplementedError(
+            "GAS joint static correlation currently supports only "
+            "corr_mode='shrinkage'")
     if normalized == "SCAR-TM-OU" and not capabilities.supports_scar_ou:
         raise TypeError(f"{type(copula).__name__} does not support SCAR-TM-OU")
+    if (
+            normalized in {"SCAR-P-OU", "SCAR-M-OU"}
+            and not capabilities.supports_scar_mc):
+        raise TypeError(f"{type(copula).__name__} does not support {normalized}")
     if normalized == "SCAR-TM-JACOBI" and not capabilities.supports_pair_ops:
         raise TypeError(
             f"{type(copula).__name__} does not support pair Jacobi dynamics")
     if (
             normalized not in {"MLE", "SCAR-TM-OU"}
+            and not _allows_gas_static_correlation(copula, normalized)
             and _uses_data_estimated_correlation(copula)):
         raise NotImplementedError(
             "data-estimated static correlation is implemented for "

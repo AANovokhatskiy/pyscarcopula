@@ -15,7 +15,7 @@ from pyscarcopula.vine._edge_adapter import (
 def _family_name(copula):
     name = type(copula).__name__
     if name == 'BivariateGaussianCopula':
-        return 'GaussianCopula'
+        return 'GaussianPairCopula'
     return name
 
 

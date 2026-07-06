@@ -31,6 +31,7 @@ from pyscarcopula.vine._rvine_edges import (
 )
 from pyscarcopula.vine._selection import (
     select_best_copula, _default_candidates, validate_pair_candidates,
+    validate_fixed_copula_specs,
 )
 from pyscarcopula.vine._helpers import (
     _clip_unit,
@@ -118,7 +119,10 @@ class CVineCopula:
             Strategy name forwarded to bivariate copula fitting.
         to_pobs : bool
         copulas : None (auto-select) or list-of-lists of
-                  (copula_class, rotation) tuples
+                  (copula_class, rotation) tuples. This fixes the edge
+                  families and rotations; use ``candidates=`` on the
+                  constructor to provide a family pool for automatic
+                  selection.
         truncation_level : int or None
         min_edge_logL : float or None
         **kwargs : forwarded to pair-copula strategy fit()
@@ -136,6 +140,7 @@ class CVineCopula:
         T, d = u.shape
         if d < 2:
             raise ValueError(f"CVineCopula.fit: need d >= 2, got d={d}")
+        validate_fixed_copula_specs(copulas, d)
         self.d = d
         self.method = method.upper()
 

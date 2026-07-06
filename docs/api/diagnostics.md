@@ -1,15 +1,15 @@
 # Diagnostics API
 
-Diagnostics expose the numerical contract that was actually used for a fit or
-goodness-of-fit calculation. They are especially important for dynamic models,
-where optimizer convergence and approximation convergence are separate
+Diagnostics help explain which numerical method was used for a fit or
+goodness-of-fit calculation. They are especially useful for dynamic models,
+where optimizer convergence and numerical approximation accuracy are separate
 questions.
 
 ## Goodness-of-fit tests
 
 `gof_test` evaluates the Rosenblatt transform and a Cramer-von Mises statistic
 for fitted bivariate and multivariate models. With a supplied `fit_result`, the
-state semantics follow the fitted strategy:
+calculation follows the fitted strategy:
 
 - MLE uses the fitted constant parameter.
 - GAS uses the filtered point state path.

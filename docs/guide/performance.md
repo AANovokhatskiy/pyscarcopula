@@ -102,17 +102,14 @@ after a small relative objective decrease even when the gradient is still
 large. If a GAS result looks sensitive to `gamma_bound` even though the fitted
 $\gamma$ is far from the bound, rerun with tighter `ftol` and larger `maxfun`.
 
-GAS evaluates deterministic numerical work in C++: likelihood, score
-recursion, filtering, state updates, prediction, and Rosenblatt operations.
-Python retains SciPy optimizer orchestration, RNG, and sampling. Official
-wheels must contain `pyscarcopula._scar_cpp`; source builds require a C++17
-compiler. Unsupported copulas fail immediately because GAS has no Python
-numerical fallback.
+GAS uses the compiled numerical engine for likelihood, score recursion,
+filtering, prediction, and Rosenblatt operations. Unsupported copulas fail
+immediately.
 
-The native score is the model score driving the GAS recursion. It is not an
-analytical gradient of the complete likelihood with respect to
-`omega`, `gamma`, and `beta`. SciPy L-BFGS-B obtains that optimizer gradient
-by finite differences. `GASResult.diagnostics` records these as
+The model score driving the GAS recursion is not an analytical gradient of the
+complete likelihood with respect to `omega`, `gamma`, and `beta`. SciPy
+L-BFGS-B obtains that optimizer gradient by finite differences.
+`GASResult.diagnostics` records these as
 `model_score='native'` and `optimizer_gradient='numerical'`.
 
 Fisher scaling computes curvature by a second finite difference inside the GAS
@@ -166,11 +163,10 @@ deviation. For slow mean reversion this can produce large grids. If that is too
 expensive, use `grid_method='sparse'`, reduce `pts_per_sigma`, or set
 `adaptive=False` with an explicit `K`.
 
-#### Native engine
+#### Compiled engine
 
-The bundled pybind11 extension implements the SCAR-TM-OU likelihood,
-analytical gradient, grid forward quantities, and pointwise copula
-`h`/`h_inverse` kernels. It is the only SCAR-TM-OU production engine; no
+The compiled engine implements the SCAR-TM-OU likelihood, analytical gradient,
+grid forward quantities, and pointwise copula `h`/`h_inverse` kernels. No
 backend argument is accepted.
 
 SCAR-TM-OU likelihood and gradient support:
@@ -186,89 +182,27 @@ SCAR-TM-OU likelihood and gradient support:
 | Equicorr Gaussian | 0 | dimension-aware Gaussian tanh |
 | Stochastic Student | 0 | shifted softplus df transform |
 
-Pointwise C++ `h`/`h_inverse` kernels are broader: they also support the
-independence copula, xtanh transforms for Clayton/Gumbel/Joe/Frank where the
-Python copula exposes them, Frank only with rotate=0, and Gaussian only with
-rotate=0.
+Pointwise `h`/`h_inverse` support is broader than likelihood support for some
+families and transforms.
 
-The native likelihood accepts `transition_method='auto'`, `'spectral'`,
-`'matrix'`, and `'local'`. Forward/state calls are grid-based. When
-`'spectral'` is requested, posterior quantities use an explicit native grid
-reconstruction.
+The likelihood accepts `transition_method='auto'`, `'spectral'`, `'matrix'`,
+and `'local'`. Forward and prediction quantities are grid-based.
 
-The C++ kernels impose only direct numerical-configuration limits:
+The compiled kernels impose direct numerical-configuration limits:
 
 - `K <= 100000` for local and sparse-grid paths;
 - `K <= 10000` for the dense matrix path;
 - `basis_order`, `quad_order`, and `gh_order` must not exceed `1024`.
 
-Observation count, Student dimension, and derived allocation sizes do not have
-administrative caps. Their memory and runtime cost are the caller's
-responsibility. Size products are still checked for integer overflow before
-allocation, and invalid shapes or non-finite inputs are still rejected.
-
-The C++ Hermite-rule cache is a process-wide, mutex-protected LRU cache.
-Compile-time defaults limit it to 16 rules and 8 MiB of cached node, weight,
-basis, and weighted-basis vector storage. Rules larger than the byte budget
-are computed for the current call but are not cached.
-
-During Stochastic Student SCAR-TM-OU joint fits, the optimizer uses a prepared
-native objective when available. The prepared path copies observations and
-builds the native copula specification once per fit/configuration, then updates
-only the Student correlation factor on each objective call. Grid and spectral
-gradient workspaces are reused by the native evaluator, including the
-directional shrinkage correlation gradient where the native correlation result
-has one element rather than all lower-triangle correlation entries. The
-stateless functional wrapper functions remain available for direct calls and
-tests; they are not a persistent cache.
-
-The native kernels use these status codes:
-
-| Status | Name | Meaning |
-|--------|------|---------|
-| `0` | `ok` | The requested calculation completed successfully. |
-| `1` | `null_pointer` | A required pointer was null. This is primarily relevant to direct native entry points. |
-| `2` | `invalid_size` | A shape, order, grid size, or checked size product is invalid or cannot be represented safely. |
-| `3` | `invalid_family` | The requested operation is not valid for the selected copula family. |
-| `4` | `invalid_rotation` | The rotation value is invalid. |
-| `5` | `invalid_transform` | The parameter transform is invalid or unsupported for the selected family. |
-| `6` | `invalid_parameter` | An OU, copula, or numerical parameter is non-finite or outside its valid domain. |
-| `7` | `numerical_failure` | A finite, normalizable numerical result could not be produced. |
-
-The Python wrapper validates common shape and configuration errors before
-entering C++ and raises `ValueError` for those failures. Unsupported backend
-combinations raise `CppUnsupported`; non-zero native statuses raise
-`CppError` with the numeric status and symbolic name. A native
-`std::bad_alloc` is translated to Python `MemoryError`.
+Observation count, Student dimension, and derived allocation sizes are not
+artificially capped. Their memory and runtime cost depend on the data size and
+chosen numerical options.
 
 With `transition_method='auto'`, a `numerical_failure` from the spectral path
 may be recovered by trying matrix and then local transition methods. Forced
-transition methods expose the failure as `CppError`. Invalid configurations
-and unsupported combinations are not treated as recoverable numerical
-fallbacks.
-
-Because observation count, Student dimension, and derived allocation sizes
-are intentionally uncapped, a sufficiently large user-provided input may
-exhaust memory or be terminated by the operating system before Python can
-raise `MemoryError`. The direct `K` and quadrature-order limits above, integer
-overflow checks, and input validation still apply.
-
-For native safety testing, Linux builds can opt into strict compiler warnings
-and AddressSanitizer/UndefinedBehaviorSanitizer:
-
-```bash
-PYSCA_CPP_STRICT=1 PYSCA_CPP_SANITIZE=1 \
-  python -m pip install -e ".[test]"
-LD_PRELOAD="$(gcc -print-file-name=libasan.so)" \
-  ASAN_OPTIONS=detect_leaks=0:halt_on_error=1 \
-  UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
-  python -m pytest tests/test_cpp.py -m "not benchmark"
-```
-
-`PYSCA_CPP_SANITIZE` requires a GCC- or Clang-compatible platform. The
-repository's `Native safety` GitHub Actions workflow also runs direct pybind,
-limit-adjacent, forward/filter, fitting, and multivariate Student regression
-tests under both sanitizers.
+transition methods raise an error instead of trying other transition methods.
+Invalid configurations and unsupported combinations are not treated as
+recoverable numerical fallbacks.
 
 #### Transfer methods
 

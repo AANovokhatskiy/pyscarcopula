@@ -38,10 +38,8 @@ Supported estimation methods:
 pip install pyscarcopula
 ```
 
-The package includes a required pybind11 C++ extension. It provides built-in
-copula kernels, static likelihoods, GAS, and SCAR-TM-OU numerical evaluation.
-Official wheels bundle the extension and do not need a local compiler. Source
-and editable installs require a C++17 compiler:
+Official wheels include the compiled numerical extension and do not need a
+local compiler. Source and editable installs require a C++17 compiler:
 
 * Windows: Microsoft C++ Build Tools / Visual Studio Build Tools
 * Linux: GCC or Clang with the usual Python development headers
@@ -88,7 +86,7 @@ pytest tests --run-validation
 
 Core dependencies: `numpy`, `numba`, `scipy`, `joblib`, `tqdm`.
 
-Verify a native installation with:
+Verify the compiled extension with:
 
 ```bash
 python -m pyscarcopula._native_smoke
@@ -102,8 +100,7 @@ python -m pyscarcopula._native_smoke
 * Elliptical: Gaussian and Student-t
 * Independence copula for null models and vine pruning
 * Multivariate Gaussian, Student-t, equicorrelation, and stochastic Student models
-* Explicit `CopulaBase` / `BivariateCopula` / `MultivariateCopula` hierarchy
-  with capability-based strategy validation
+* Shared APIs for bivariate, multivariate, and vine models
 
 **Vine copulas**
 
@@ -116,11 +113,11 @@ python -m pyscarcopula._native_smoke
 **Sampling and prediction**
 
 * Unconditional sampling from fitted bivariate and vine models
-* Conditional sampling for R-vines, including exact suffix/rebuild paths and
-  runtime-DAG plus MCMC fallback for arbitrary conditioning sets
+* Conditional sampling for R-vines, with exact and approximate modes
 * `PredictConfig` for explicit prediction options
 * Reproducible random generation via `rng`
 * JSON persistence through `model.save()` and `ModelClass.load()`
+  (`include_data=False` can omit stored training data)
 
 **Diagnostics and risk**
 
@@ -174,15 +171,9 @@ transition representation automatically. See
 [`docs/guide/performance.md`](docs/guide/performance.md) for the details and
 the available `transition_method` values.
 
-SCAR-TM-OU uses the bundled C++ extension as its only production numerical
-engine.
-
 ```python
 result = fit(copula, u, method="scar-tm-ou")
 ```
-
-GAS uses the compiled numerical evaluator for likelihood, score recursion,
-state updates, prediction, and Rosenblatt paths:
 
 ```python
 result = fit(copula, u, method="gas")
@@ -191,12 +182,8 @@ result = fit(copula, u, method="gas")
 Use the default `scaling="unit"` for production. `scaling="fisher"` remains an
 experimental, numerically sensitive mode.
 
-See [`docs/guide/performance.md`](docs/guide/performance.md) for supported C++
+See [`docs/guide/performance.md`](docs/guide/performance.md) for supported
 families and numerical options.
-
-Custom Python copulas remain useful with custom Python strategies, sampling,
-and diagnostics. Built-in native production strategies do not execute
-arbitrary Python copula kernels: unsupported classes fail before optimization.
 
 Vine copulas decompose a `d`-dimensional dependence model into bivariate copulas
 arranged in a sequence of trees. R-vines choose the tree structure from data
@@ -213,12 +200,11 @@ Worked notebooks are available in [`examples/`](examples/):
 * [`05_risk_metrics.ipynb`](examples/05_risk_metrics.ipynb)
 * [`06_pyvinecopulib_comparison.ipynb`](examples/06_pyvinecopulib_comparison.ipynb)
 
-Additional documentation is in [`docs/`](docs/). Method semantics are described
-in [`docs/guide/estimation-methods.md`](docs/guide/estimation-methods.md), and
-performance-related details are kept in
-[`docs/guide/performance.md`](docs/guide/performance.md).
-Migration notes for the native-core and multivariate namespace changes are in
-[`docs/release-notes/native-core-migration.md`](docs/release-notes/native-core-migration.md).
+Additional documentation is in [`docs/`](docs/). Estimation methods are
+described in [`docs/guide/estimation-methods.md`](docs/guide/estimation-methods.md),
+and performance-related details are kept in
+[`docs/guide/performance.md`](docs/guide/performance.md). Release history is in
+[`CHANGELOG.md`](CHANGELOG.md).
 
 ## License
 

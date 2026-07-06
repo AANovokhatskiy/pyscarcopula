@@ -18,6 +18,13 @@ Archimedean edge families use it to select `softplus` or `xtanh`.
 uniformity, but Gaussian edges always use their bounded `GaussianTanh`
 correlation mapping.
 
+Use `candidates=` to configure the automatic family-selection pool. For
+Gaussian pair-copula edges, use `BivariateGaussianCopula`; the multivariate
+`GaussianCopula` is not a valid vine edge family. The lower-level `copulas=`
+fit argument has a different purpose: it fixes every edge family and rotation
+as `(CopulaClass, rotation)` specs in a list-of-lists matching the tree
+layout.
+
 ## C-vine
 
 A C-vine uses a star structure where the first variable is the root of tree 0,
@@ -74,7 +81,7 @@ vine.fit(
 `given_vars` is a fit-time structure-selection target. With the default
 `conditional_strict=True`, `fit` raises `ValueError` if no suffix-compatible
 exact structure is constructed. With `conditional_strict=False`, prediction can
-use the arbitrary DAG + MCMC path when the exact suffix path is not available.
+use the approximate fallback when the exact path is not available.
 
 ## Truncation
 
@@ -148,14 +155,15 @@ pred_cond2 = vine.predict(
 ```
 
 For `RVineCopula`, the fast exact conditional sampler requires the fixed
-variables to be at the end of the R-vine variable order. This order is read
-from the anti-diagonal of the natural-order matrix. The fixed variables must
-already be last in the fitted matrix, or the fitted tree structure must be
-rebuildable into an equivalent natural-order matrix where they are last.
+variables to be at the end of the fitted R-vine variable order. The fixed
+variables must already be last in the fitted structure, or the fitted structure
+must be rebuildable into an equivalent order where they are last.
 
-If that is not possible, `predict` uses the arbitrary runtime DAG + MCMC
-path. This path is general, but approximate and more expensive than suffix
-sampling.
+To inspect the fitted structure as an `RVineMatrix`, use
+`vine.to_rvine_matrix()` or `RVineMatrix.from_model(vine)`.
+
+If exact conditioning is not possible, `predict` uses the approximate fallback.
+This is more general, but more expensive than exact suffix sampling.
 
 You can inspect the fitted variable order before choosing `given`:
 
@@ -185,8 +193,8 @@ Supported behavior and limits:
 - R-vine `fit(..., conditional_mode=...)` accepts
   `conditional_mode='suffix'`.
 - R-vine `predict` does not accept `conditional_method` or `quad_order`.
-- Arbitrary R-vine conditioning uses DAG + MCMC, not an exact closed-form
-  posterior sampler.
+- Arbitrary R-vine conditioning uses an approximate fallback, not an exact
+  closed-form posterior sampler.
 - C-vine conditional sampling is separate and supports its own prefix/general
   paths.
 
@@ -198,6 +206,9 @@ For SCAR-TM edges, `predict(..., horizon='current')` uses the posterior latent
 state after the fitted history and `predict(..., horizon='next')` uses the
 one-step-ahead latent state. For SCAR-TM-OU edges, `sample` simulates
 independent OU trajectories.
+
+For SCAR-TM predictive parameter sampling, `predictive_r_mode` may be `None`,
+`"grid"`, or `"histogram"`.
 
 ## Results on 6-crypto data (T=250)
 

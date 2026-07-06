@@ -17,7 +17,7 @@ from pyscarcopula.vine._rvine_edges import (
     _edge_r_for_sample,
 )
 from pyscarcopula.vine._selection import (
-    select_best_copula, _default_candidates, _kendall_tau,
+    SelectedCopula, select_best_copula, _default_candidates, _kendall_tau,
 )
 from pyscarcopula.vine._helpers import _clip_unit
 from pyscarcopula.copula.elliptical import BivariateGaussianCopula
@@ -242,6 +242,11 @@ class TestSelection:
         u = pobs(rng.standard_normal((200, 2)))
         cop, result = select_best_copula(
             u[:, 0], u[:, 1], _default_candidates())
+        selected = select_best_copula(
+            u[:, 0], u[:, 1], _default_candidates())
+        assert isinstance(selected, SelectedCopula)
+        assert selected.copula is not None
+        assert selected.result is not None
         assert cop is not None
         assert result is not None
         assert hasattr(result, 'log_likelihood')
@@ -264,6 +269,15 @@ class TestSelection:
 
         assert isinstance(cop, BivariateGaussianCopula)
         assert result.copula_param < -0.3
+
+    def test_cvine_fixed_copulas_rejects_instances_with_helpful_message(self):
+        rng = np.random.default_rng(7)
+        u = pobs(rng.standard_normal((80, 3)))
+        with pytest.raises(TypeError, match="Use candidates="):
+            CVineCopula(candidates=[BivariateGaussianCopula]).fit(
+                u,
+                copulas=[BivariateGaussianCopula()],
+            )
 
 
 # ══════════════════════════════════════════════════════════════

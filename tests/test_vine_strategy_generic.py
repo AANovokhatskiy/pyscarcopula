@@ -124,6 +124,26 @@ def test_api_uses_registered_generic_strategy(generic_strategy):
     assert generic_strategy['predict'] == 1
 
 
+@pytest.mark.parametrize("vine_cls", [CVineCopula, RVineCopula])
+def test_api_fit_dispatches_to_vine_object_fit(vine_cls):
+    u = _data()
+    vine = vine_cls(
+        candidates=[BivariateGaussianCopula],
+        allow_rotations=False,
+    )
+
+    result = api.fit(
+        vine,
+        u,
+        method="mle",
+        copulas=_fixed_gaussian_edges(3),
+    )
+
+    assert result is vine.fit_result
+    assert result.success
+    assert np.isfinite(result.log_likelihood)
+
+
 def test_vine_strategy_kwargs_preserve_explicit_none_override():
     result = LatentResult(
         log_likelihood=0.0,

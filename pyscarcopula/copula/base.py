@@ -78,6 +78,7 @@ class CopulaCapabilities:
     supports_native_mle: bool = False
     supports_gas: bool = False
     supports_scar_ou: bool = False
+    supports_scar_mc: bool = False
     supports_latent_grid: bool = False
     supports_conditional_sampling: bool = False
     has_dynamic_scalar_parameter: bool = False
@@ -215,6 +216,7 @@ class BivariateCopula(CopulaBase):
         supports_native_point_ops=True,
         supports_gas=True,
         supports_scar_ou=True,
+        supports_scar_mc=True,
         supports_latent_grid=True,
         supports_conditional_sampling=True,
         has_dynamic_scalar_parameter=True,

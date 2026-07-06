@@ -7,9 +7,22 @@ Two-phase approach (mirroring pyvinecopulib):
   Phase 2 — Refinement: run L-BFGS-B on the top-N candidates.
 """
 
+from typing import NamedTuple
+
 import numpy as np
 
 from pyscarcopula.copula.base import CopulaCapabilities
+
+
+class SelectedCopula(NamedTuple):
+    """Result returned by :func:`select_best_copula`.
+
+    The tuple shape is intentionally ``(copula, result)`` for backward
+    compatibility with existing ``copula, result = ...`` callers.
+    """
+
+    copula: object
+    result: object
 
 
 def validate_pair_candidates(candidates):
@@ -22,9 +35,77 @@ def validate_pair_candidates(candidates):
                 isinstance(capabilities, CopulaCapabilities)
                 and not capabilities.supports_pair_ops):
             name = getattr(candidate, "__name__", type(candidate).__name__)
+            hint = ""
+            if name == "GaussianCopula":
+                hint = (
+                    "; use BivariateGaussianCopula for Gaussian vine pair "
+                    "edges"
+                )
             raise TypeError(
                 f"{name} is multivariate and cannot be used as a vine pair "
-                "copula")
+                f"copula{hint}")
+
+
+def validate_fixed_copula_specs(copulas, d=None, *, arg_name="copulas"):
+    """Validate fixed vine edge family specs passed via ``copulas=``."""
+    if copulas is None:
+        return
+    if not isinstance(copulas, (list, tuple)):
+        raise TypeError(
+            f"{arg_name}= expects a list of tree-level lists containing "
+            "(CopulaClass, rotation) pairs; use candidates= to provide a "
+            "family pool")
+
+    def _looks_like_edge_spec(value):
+        return (
+            isinstance(value, (list, tuple))
+            and len(value) == 2
+            and isinstance(value[0], type)
+        )
+
+    if copulas and (
+            not isinstance(copulas[0], (list, tuple))
+            or _looks_like_edge_spec(copulas[0])):
+        raise TypeError(
+            f"{arg_name}= expects a list-of-lists of "
+            "(CopulaClass, rotation) pairs, not copula instances or a "
+            "flat edge-spec list. Use candidates= to provide candidate "
+            "family classes.")
+
+    if d is not None and len(copulas) != max(int(d) - 1, 0):
+        raise ValueError(
+            f"{arg_name}= must contain {max(int(d) - 1, 0)} tree levels "
+            f"for d={int(d)}, got {len(copulas)}")
+
+    for tree_index, tree in enumerate(copulas):
+        if not isinstance(tree, (list, tuple)):
+            raise TypeError(
+                f"{arg_name}= expects a list-of-lists of "
+                "(CopulaClass, rotation) pairs; tree {tree_index} is "
+                f"{type(tree).__name__}")
+        if d is not None:
+            expected_edges = int(d) - tree_index - 1
+            if len(tree) != expected_edges:
+                raise ValueError(
+                    f"{arg_name}[{tree_index}] must contain "
+                    f"{expected_edges} edge specs for d={int(d)}, "
+                    f"got {len(tree)}")
+        for edge_index, spec in enumerate(tree):
+            if not isinstance(spec, (list, tuple)) or len(spec) != 2:
+                raise TypeError(
+                    f"{arg_name}= expects fixed edge specs "
+                    "(CopulaClass, rotation); got "
+                    f"{type(spec).__name__} at tree {tree_index}, "
+                    f"edge {edge_index}. Use candidates= to provide "
+                    "candidate family classes.")
+            copula_class, _rotation = spec
+            if not isinstance(copula_class, type):
+                raise TypeError(
+                    f"{arg_name}[{tree_index}][{edge_index}] must start "
+                    "with a copula class, not "
+                    f"{type(copula_class).__name__}. Use candidates= for "
+                    "family candidates or pass (CopulaClass, rotation).")
+            validate_pair_candidates([copula_class])
 
 def _default_candidates():
     """Default set of bivariate copula classes to try."""
@@ -121,8 +202,9 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
 
     Returns
     -------
-    best_copula : fitted BivariateCopula instance
-    best_result : fit result
+    SelectedCopula
+        Named tuple with ``.copula`` and ``.result`` fields. It can still be
+        unpacked as ``best_copula, best_result`` for backward compatibility.
     """
     validate_pair_candidates(candidates)
 
@@ -217,7 +299,7 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
         except Exception:
             continue
 
-    return best_copula, best_result
+    return SelectedCopula(best_copula, best_result)
 
 
 def _fit_mle_direct(copula, u_pair, alpha0=None):

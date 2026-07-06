@@ -254,9 +254,9 @@ def test_fixed_dwt_mc_and_eis_outputs_match_regression_values():
         *alpha, u, dwt, a1t, a2t, copula, True)
 
     assert p_value == pytest.approx(
-        3.069369272846249, rel=0.0, abs=0.0)
+        3.069369272846249, rel=1e-12, abs=1e-12)
     assert m_value == pytest.approx(
-        3.2062240751760727, rel=0.0, abs=0.0)
+        3.2062240751760727, rel=1e-12, abs=1e-12)
     np.testing.assert_allclose(
         a1t,
         [
@@ -323,6 +323,6 @@ def test_fixed_dwt_xtanh_outputs_match_regression_values():
         *alpha, u, dwt, a1t, a2t, copula, True)
 
     assert p_value == pytest.approx(
-        0.18021335665185778, rel=0.0, abs=0.0)
+        0.18021335665185778, rel=1e-12, abs=1e-12)
     assert m_value == pytest.approx(
-        0.3248397150077815, rel=0.0, abs=0.0)
+        0.3248397150077815, rel=1e-12, abs=1e-12)

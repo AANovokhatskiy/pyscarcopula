@@ -5,7 +5,7 @@
 ```text
 pyscarcopula/
 |-- __init__.py              # Public re-exports and BLAS thread policy
-|-- api.py                   # Stateless fit/predict/sample API
+|-- api.py                   # Top-level fit/predict/sample helpers
 |-- _types.py                # Results and numerical configuration
 |-- io.py                    # Versioned JSON persistence and migrations
 |-- stattests.py             # Goodness-of-fit orchestration
@@ -92,7 +92,7 @@ operations have one production implementation in C++.
 
 Python remains responsible for:
 
-- optimizer orchestration and immutable result construction;
+- optimizer orchestration and result construction;
 - correlation parameterization and chain rules around native evaluators;
 - RNG and conditional sampling;
 - Jacobi filtering orchestration;
@@ -106,8 +106,8 @@ SCAR-TM-OU joint Stochastic Student fits can hold a prepared native evaluator
 for one optimizer loop. That object owns the copied observations, native
 copula specification, Student PPF cache, and reusable gradient workspaces.
 Python still owns the raw correlation parameterization and updates only the
-native Student factor between objective calls. The direct functional adapters
-remain stateless entry points for one-off evaluations.
+native Student factor between objective calls. Direct functional adapters
+remain available for one-off evaluations.
 
 ## Custom Python Extensions
 
@@ -135,7 +135,7 @@ class MyStrategy:
 
 ## State And Persistence
 
-The functional API is stateless:
+The top-level API can be used directly:
 
 ```python
 from pyscarcopula.api import fit, predict
@@ -145,7 +145,7 @@ samples = predict(copula, u, result, n=1000)
 ```
 
 Model methods are convenience wrappers that store `fit_result` and the last
-fitting data. Results themselves are immutable dataclasses.
+fitting data.
 
 Persistence uses versioned JSON. The loader migrates historical experimental
 class paths to the multivariate namespace and ignores removed legacy backend
