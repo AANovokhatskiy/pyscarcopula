@@ -40,7 +40,7 @@ outer optimizer and the corresponding diagnostics.
 |--------|---------------|--------------------|---------------|-----------------|
 | MLE | Built-in supported model | Analytical | `not_applicable` | `analytical` |
 | GAS | Any supported scaling | Numerical finite differences | `native` | `numerical_optimizer` |
-| SCAR-TM-OU | `analytical_grad=True` | Analytical Jacobian | `not_applicable` | `analytical` |
+| SCAR-TM-OU | `analytical_grad=True` | Analytical native Jacobian | `not_applicable` | `analytical` |
 | SCAR-TM-OU | `analytical_grad=False` | Numerical finite differences | `not_applicable` | `numerical` |
 | SCAR-TM-JACOBI | `analytical_grad=False` | Numerical finite differences | `not_applicable` | `numerical` |
 | SCAR-TM-JACOBI | `local_fixed`, analytical gradient | Model-provided | `not_applicable` | `analytical` |

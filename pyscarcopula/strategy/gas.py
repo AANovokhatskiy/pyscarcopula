@@ -21,7 +21,10 @@ from pyscarcopula.numerical.gas_filter import (
 from pyscarcopula.strategy._base import (
     copula_dimension,
     is_multivariate_copula,
+    lbfgsb_options,
+    lbfgsb_overrides,
     register_strategy,
+    reject_legacy_tol,
 )
 from pyscarcopula.strategy.predict_helpers import (
     predict_from_strategy,
@@ -313,25 +316,36 @@ class GASStrategy:
         **kwargs,
     ) -> GASResult:
         """Fit the native GAS model."""
-        if "tol" in kwargs:
-            raise TypeError("tol is not supported; use gtol")
+        reject_legacy_tol(kwargs)
         if "backend" in kwargs:
             raise TypeError(
                 "GAS backend selection was removed; native execution is "
                 "always used")
+        corr_num_params = int(
+            getattr(copula, "_corr_num_params", lambda: 0)())
+        if (
+                corr_num_params
+                and getattr(copula, "_corr_mode", None) != "shrinkage"):
+            raise NotImplementedError(
+                "GAS joint static correlation currently supports only "
+                "corr_mode='shrinkage'")
+
         self._ensure_correlation_initialized(copula, u)
         _cpp_gas.ensure_supported(copula)
         _cpp_gas.require_available()
 
-        optimizer_options = self._optimizer_config(copula).options(
-            gtol=gtol,
-            ftol=ftol,
-            maxfun=maxfun,
-            maxiter=maxiter,
-            maxls=maxls,
-            eps=eps,
-            maxcor=maxcor,
-            finite_diff_rel_step=finite_diff_rel_step,
+        optimizer_options = lbfgsb_options(
+            self._optimizer_config(copula),
+            **lbfgsb_overrides(
+                gtol=gtol,
+                ftol=ftol,
+                maxfun=maxfun,
+                maxiter=maxiter,
+                maxls=maxls,
+                eps=eps,
+                maxcor=maxcor,
+                finite_diff_rel_step=finite_diff_rel_step,
+            ),
         )
         score_eps = float(
             score_eps
@@ -353,23 +367,17 @@ class GASStrategy:
         if not 0 < beta_bound < 1:
             raise ValueError("beta_bound must be in (0, 1)")
 
-        corr_num_params = int(
-            getattr(copula, "_corr_num_params", lambda: 0)())
         if corr_num_params:
-            if getattr(copula, "_corr_mode", None) == "shrinkage":
-                return self._fit_joint_static_shrinkage(
-                    copula,
-                    u,
-                    gamma0,
-                    optimizer_options,
-                    score_eps,
-                    gamma_bound,
-                    beta_bound,
-                    verbose,
-                )
-            raise NotImplementedError(
-                "GAS joint static correlation currently supports only "
-                "corr_mode='shrinkage'")
+            return self._fit_joint_static_shrinkage(
+                copula,
+                u,
+                gamma0,
+                optimizer_options,
+                score_eps,
+                gamma_bound,
+                beta_bound,
+                verbose,
+            )
 
         if gamma0 is None:
             from pyscarcopula.strategy.mle import MLEStrategy

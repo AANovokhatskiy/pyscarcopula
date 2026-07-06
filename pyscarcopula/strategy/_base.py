@@ -17,6 +17,40 @@ from pyscarcopula._types import (
 from pyscarcopula.copula.base import CopulaCapabilities
 
 
+def reject_legacy_tol(kwargs):
+    """Reject the removed SciPy-style ``tol`` alias consistently."""
+    if 'tol' in kwargs:
+        raise TypeError("tol is not supported; use gtol")
+
+
+def lbfgsb_overrides(
+        *,
+        gtol=None,
+        ftol=None,
+        maxfun=None,
+        maxiter=None,
+        maxls=None,
+        eps=None,
+        maxcor=None,
+        finite_diff_rel_step=None):
+    """Collect common L-BFGS-B option overrides for config objects."""
+    return {
+        'gtol': gtol,
+        'ftol': ftol,
+        'maxfun': maxfun,
+        'maxiter': maxiter,
+        'maxls': maxls,
+        'eps': eps,
+        'maxcor': maxcor,
+        'finite_diff_rel_step': finite_diff_rel_step,
+    }
+
+
+def lbfgsb_options(optimizer_config, **overrides):
+    """Return optimizer options from a config using common override keys."""
+    return optimizer_config.options(**overrides)
+
+
 def get_copula_capabilities(copula) -> CopulaCapabilities | None:
     """Return an explicit capability descriptor, or None for legacy objects."""
     descriptor = getattr(copula, "capabilities", None)

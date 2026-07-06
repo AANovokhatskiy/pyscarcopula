@@ -28,6 +28,7 @@ from pyscarcopula.numerical import _cpp_scar_ou
 from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
 from pyscarcopula.numerical.tm_functions import tm_loglik
 from pyscarcopula.strategy import scar_tm
+from pyscarcopula.strategy.gas import GASStrategy
 
 
 def _u(T=60, d=3, seed=123):
@@ -1185,6 +1186,25 @@ def test_unsupported_gas_cholesky_corr_path_is_explicit():
     assert api_model._corr_base is None
     assert not hasattr(api_model, "_last_u")
     assert api_model.fit_result is None
+
+
+def test_direct_gas_strategy_rejects_cholesky_without_mutating_corr():
+    u = _u(T=30)
+    model = StochasticStudentCopula(d=3, corr_mode="cholesky")
+
+    with pytest.raises(NotImplementedError, match="corr_mode='shrinkage'"):
+        GASStrategy().fit(
+            model,
+            u,
+            gamma0=np.array([0.1, 0.05, 0.5]),
+            maxiter=1,
+            maxfun=5,
+        )
+
+    assert model.R is None
+    assert model._corr_base is None
+    assert not hasattr(model, "_last_u")
+    assert model.fit_result is None
 
 
 def test_shrinkage_correlation_supports_gas():

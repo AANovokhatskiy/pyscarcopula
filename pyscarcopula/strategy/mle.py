@@ -18,7 +18,10 @@ from pyscarcopula.strategy._base import (
     copula_dimension,
     get_copula_capabilities,
     is_multivariate_copula,
+    lbfgsb_options,
+    lbfgsb_overrides,
     register_strategy,
+    reject_legacy_tol,
 )
 from pyscarcopula.strategy.predict_helpers import (
     predict_from_strategy,
@@ -69,18 +72,17 @@ class MLEStrategy:
         -------
         MLEResult
         """
-        if 'tol' in kwargs:
-            raise TypeError("tol is not supported; use gtol")
-        optimizer_overrides = {
-            'gtol': gtol,
-            'ftol': ftol,
-            'maxfun': maxfun,
-            'maxiter': maxiter,
-            'maxls': maxls,
-            'eps': eps,
-            'maxcor': maxcor,
-            'finite_diff_rel_step': finite_diff_rel_step,
-        }
+        reject_legacy_tol(kwargs)
+        optimizer_overrides = lbfgsb_overrides(
+            gtol=gtol,
+            ftol=ftol,
+            maxfun=maxfun,
+            maxiter=maxiter,
+            maxls=maxls,
+            eps=eps,
+            maxcor=maxcor,
+            finite_diff_rel_step=finite_diff_rel_step,
+        )
 
         capabilities = get_copula_capabilities(copula)
         if (
@@ -103,7 +105,8 @@ class MLEStrategy:
                 if getattr(result, 'method', '').upper() == 'MLE':
                     return result
 
-        optimizer_options = self.config.mle_optimizer.options(
+        optimizer_options = lbfgsb_options(
+            self.config.mle_optimizer,
             **optimizer_overrides,
         )
 
