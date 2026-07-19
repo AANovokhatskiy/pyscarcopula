@@ -195,8 +195,23 @@ The compiled kernels impose direct numerical-configuration limits:
 - `basis_order`, `quad_order`, and `gh_order` must not exceed `1024`.
 
 Observation count, Student dimension, and derived allocation sizes are not
-artificially capped. Their memory and runtime cost depend on the data size and
+artificially capped, with one exception: the multivariate Student PPF table
+(see below). Their memory and runtime cost depend on the data size and
 chosen numerical options.
+
+#### Student PPF table memory cap
+
+Multivariate Student models precompute a quantile (inverse-CDF) table of
+shape `(n_df_nodes, T, d)` (~200 df nodes) to speed up emission-density
+evaluations. The table costs `n_nodes × T × d × 8` bytes and is now bounded
+by `DEFAULT_MAX_TABLE_BYTES` (256 MiB) from
+`pyscarcopula.copula.multivariate.student_ppf_cache`. When the estimated
+size exceeds the limit, the table is not built and every evaluation falls
+back to the exact `scipy.special.stdtrit` quantile; the compiled kernels
+apply the same exact-quantile fallback when a spec carries no table.
+Results are unchanged (the fallback is exact), only evaluation is slower.
+The limit can be tuned per table via the `max_table_bytes` argument of
+`StudentPPFTable`.
 
 With `transition_method='auto'`, a `numerical_failure` from the spectral path
 may be recovered by trying matrix and then local transition methods. Forced

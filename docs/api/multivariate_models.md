@@ -127,6 +127,12 @@ with `corr_mode="cholesky"` is rejected before fitting. Setting
 `analytical_grad=False` retains a fully numerical optimizer gradient. See the
 multivariate guide for fitting details and diagnostic fields.
 
+Emission densities use a precomputed Student quantile (PPF) table of shape
+`(n_df_nodes, T, d)`. Its size is capped at
+`DEFAULT_MAX_TABLE_BYTES` (256 MiB); above the cap the table is skipped and
+all evaluations use the exact `stdtrit` quantile instead — same results,
+slower evaluation. See the performance guide for details.
+
 ::: pyscarcopula.copula.multivariate.stochastic_student.StochasticStudentCopula
     options:
       members:

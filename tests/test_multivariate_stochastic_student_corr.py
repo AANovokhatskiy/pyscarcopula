@@ -604,7 +604,8 @@ def test_posterior_state_weights_are_normalized(corr_mode, corr_params):
         weights.sum(axis=1), 1.0, rtol=0.0, atol=1e-12)
     validate_corr_matrix(model.R)
     if corr_mode == "shrinkage":
-        assert model.corr_alpha() == pytest.approx(0.5)
+        # M3 regression: passing joint params must not mutate model state.
+        assert model.corr_alpha() is None
 
 
 def test_posterior_state_weights_validates_inputs_and_param_length():
@@ -1328,3 +1329,29 @@ def test_fixed_data_estimated_corr_is_still_limited_for_mc_methods(method):
 
     with pytest.raises(NotImplementedError, match="MLE and SCAR-TM-OU only"):
         fit(StochasticStudentCopula(d=3), u, method=method, **kwargs)
+
+
+def test_posterior_state_weights_with_joint_params_does_not_mutate_model():
+    """M3 regression: joint params must not overwrite the model's
+    correlation state in a query method."""
+    u = _u(T=24)
+    model = StochasticStudentCopula(d=3, corr_mode="cholesky")
+    # Establish a non-default correlation state.
+    model.posterior_state_weights(
+        u, params=np.array([1.2, 0.5, 0.8]), K=9, adaptive=False)
+    R_before = model.R.copy()
+    alpha_before = model.corr_alpha()
+    raw_before = None if model.corr_params() is None else model.corr_params().copy()
+
+    weights = model.posterior_state_weights(
+        u, params=np.array([1.2, 0.5, 0.8, 0.4, -0.3, 0.2]),
+        K=9, adaptive=False)
+
+    assert weights.shape == (len(u), 9)
+    np.testing.assert_array_equal(model.R, R_before)
+    assert model.corr_alpha() == alpha_before
+    raw_after = model.corr_params()
+    if raw_before is None:
+        assert raw_after is None
+    else:
+        np.testing.assert_array_equal(raw_after, raw_before)

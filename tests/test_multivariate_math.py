@@ -1064,3 +1064,229 @@ def test_equicorr_conditional_mean_matches_gaussian_oracle():
     assert np.allclose(samples[:, 0], given_u)
     assert np.mean(samples[:, 1]) == pytest.approx(expected_u_mean, abs=0.01)
     assert np.mean(samples[:, 2]) == pytest.approx(expected_u_mean, abs=0.01)
+
+
+def test_fallback_predict_draws_independent_latent_parameter_per_sample():
+    """M1 regression: fallback predict (no conditioning data) must draw n
+    independent latent OU states, not a single shared one."""
+    u = _u()
+    R = _R()
+    n = 64
+
+    for copula in (EquicorrGaussianCopula(d=4),
+                   StochasticStudentCopula(d=4, R=R)):
+        result = fit(copula, u, method="scar-tm-ou", K=25, grid_range=4.0)
+        copula.fit_result = result  # ensure SCAR result, not a stored MLE one
+        copula._last_u = None  # force the stationary-OU fallback branch
+
+        captured = {}
+        original = copula.sample_conditional
+
+        def spy(n_, r=None, given=None, rng=None, _orig=original):
+            captured["r"] = np.atleast_1d(np.asarray(r, dtype=np.float64))
+            return _orig(n_, r=r, given=given, rng=rng)
+
+        copula.sample_conditional = spy
+        try:
+            copula.predict(n, rng=np.random.default_rng(0))
+        finally:
+            copula.sample_conditional = original
+
+        r = captured["r"]
+        assert r.shape == (n,)
+        assert np.unique(r).size > 1
+
+
+def test_mle_optimizer_failure_does_not_fake_convergence(monkeypatch):
+    """M2 regression: failed likelihood evaluations must not yield a zero
+    gradient that L-BFGS-B would misread as convergence."""
+    from pyscarcopula.numerical import static_likelihood
+
+    u = _u()
+    copula = StochasticStudentCopula(d=4, R=_R())
+
+    def failing_objective(self, parameter, *, fail_value=1e10):
+        return float(fail_value), np.array([0.0])
+
+    monkeypatch.setattr(
+        static_likelihood.StaticLikelihoodEvaluator,
+        "objective_and_gradient",
+        failing_objective,
+    )
+    result = copula.fit(u, method="mle")
+    assert not result.success
+
+
+def test_mle_optimizer_unexpected_error_propagates(monkeypatch):
+    """M2 regression: only expected numerical exceptions may be swallowed
+    by the objective wrapper; real bugs must surface."""
+    from pyscarcopula.numerical import static_likelihood
+
+    u = _u()
+    copula = StochasticStudentCopula(d=4, R=_R())
+
+    def buggy_objective(self, parameter, *, fail_value=1e10):
+        raise RuntimeError("simulated bug")
+
+    monkeypatch.setattr(
+        static_likelihood.StaticLikelihoodEvaluator,
+        "objective_and_gradient",
+        buggy_objective,
+    )
+    with pytest.raises(RuntimeError, match="simulated bug"):
+        copula.fit(u, method="mle")
+
+
+def test_student_ppf_table_memory_limit_falls_back_to_exact():
+    """M4 regression: over the memory budget the table is skipped and
+    evaluations use the exact stdtrit quantile."""
+    u = _u()
+    table = StudentPPFTable(u, max_table_bytes=1)
+    assert table.table is None
+    for df in (3.0, 7.5, 300.0):
+        np.testing.assert_allclose(
+            table(df), stdtrit(df, table.u), rtol=1e-12, atol=0.0)
+    np.testing.assert_allclose(
+        table.rows(4.5, 2, 9), stdtrit(4.5, table.u[2:9]),
+        rtol=1e-12, atol=0.0)
+
+
+def test_scar_log_likelihood_with_degraded_ppf_cache(monkeypatch):
+    """M4 regression: a cache without a precomputed table still works
+    end-to-end (C++ exact-quantile fallback) and matches the cached path."""
+    import pyscarcopula.copula.multivariate.stochastic_student as mod
+
+    u = _u()
+    R = _R()
+    ref_copula = StochasticStudentCopula(d=4, R=R)
+    result = fit(ref_copula, u, method="scar-tm-ou", K=25, grid_range=4.0)
+    reference = log_likelihood(
+        ref_copula, u, result, K=25, grid_range=4.0)
+
+    monkeypatch.setattr(
+        mod, "_PPFTable",
+        lambda values: StudentPPFTable(values, max_table_bytes=1))
+    degraded_copula = StochasticStudentCopula(d=4, R=R)
+    degraded = log_likelihood(
+        degraded_copula, u, result, K=25, grid_range=4.0)
+
+    assert np.isfinite(degraded)
+    assert degraded == pytest.approx(reference, rel=1e-6, abs=1e-6)
+
+
+def test_static_gaussian_student_fit_rejects_non_mle_method():
+    """M8 regression: static models declare method='mle' explicitly and
+    reject dynamic strategies with a clear error."""
+    from pyscarcopula.copula.multivariate.gaussian import GaussianCopula
+    from pyscarcopula.copula.multivariate.student import StudentCopula
+
+    u = _u()
+    for copula in (GaussianCopula(), StudentCopula()):
+        copula.fit(u)  # default method='mle' works
+        with pytest.raises(ValueError, match="only method='mle'"):
+            copula.fit(u, method="scar-tm-ou")
+        with pytest.raises(ValueError, match="only method='mle'"):
+            copula.fit(u, method="gas")
+
+
+def test_static_gaussian_student_conditional_predict_honors_given():
+    """M8 regression: GaussianCopula/StudentCopula support given= in
+    predict, matching the Stochastic/Equicorr contract."""
+    from pyscarcopula.copula.multivariate.gaussian import GaussianCopula
+    from pyscarcopula.copula.multivariate.student import StudentCopula
+
+    u = _u()
+    given = {0: 0.25, 2: 0.75}
+    for copula in (GaussianCopula(), StudentCopula()):
+        copula.fit(u)
+        samples = copula.predict(
+            64, given=given, rng=np.random.default_rng(7))
+        assert samples.shape == (64, 4)
+        assert np.allclose(samples[:, 0], 0.25)
+        assert np.allclose(samples[:, 2], 0.75)
+        assert np.all((samples > 0.0) & (samples < 1.0))
+
+
+def test_gaussian_copula_conditional_mean_matches_oracle():
+    """M8: conditional mean of free coordinates equals
+    R_fg R_gg^{-1} z_g for a general (non-equicorr) correlation."""
+    from pyscarcopula.copula.multivariate.gaussian import GaussianCopula
+
+    copula = GaussianCopula()
+    copula.fit(_u())
+    R = copula.corr
+    given_u = {0: 0.8, 1: 0.3}
+    z_g = norm.ppf(np.array([0.8, 0.3]))
+    R_gg = R[:2, :2]
+    R_fg = R[2:, :2]
+    expected_z = R_fg @ np.linalg.solve(R_gg, z_g)
+    var_z = 1.0 - np.sum((R_fg @ np.linalg.inv(R_gg)) * R_fg, axis=1)
+    expected_u_mean = norm.cdf(expected_z / np.sqrt(1.0 + var_z))
+
+    samples = copula.predict(
+        40000, given=given_u, rng=np.random.default_rng(11))
+    assert np.allclose(samples[:, 0], 0.8)
+    assert np.allclose(samples[:, 1], 0.3)
+    np.testing.assert_allclose(
+        samples[:, 2:].mean(axis=0), expected_u_mean, atol=0.01)
+
+
+def test_student_conditional_moments_match_analytic_oracle():
+    """M9: the conditional Student kernel must apply the scale
+    (nu + z_g' R_gg^{-1} z_g) / (nu + k) to the Schur complement.
+
+    For a multivariate t with df nu and correlation R, the conditional
+    distribution of the free coordinates given k fixed ones is t with
+    df nu + k, mean R_fg R_gg^{-1} z_g, and covariance
+    (nu + delta) / (nu + k - 2) * Schur, delta = z_g' R_gg^{-1} z_g.
+    """
+    nu = 8.0
+    R = np.array([
+        [1.0, 0.5, 0.3],
+        [0.5, 1.0, 0.4],
+        [0.3, 0.4, 1.0],
+    ])
+    given = {0: 0.85, 1: 0.20}
+    n = 60000
+
+    samples = sample_student_conditional(
+        n, R, nu, given=given, rng=np.random.default_rng(123))
+
+    # Latent recovery inverts the cdf applied in sample_student_conditional.
+    x_free = t_dist.ppf(samples[:, 2], df=nu)
+
+    z_g = t_dist.ppf(np.array([given[0], given[1]]), df=nu)
+    R_gg = R[:2, :2]
+    R_fg = R[2:, :2]
+    solved = np.linalg.solve(R_gg, z_g)
+    delta = float(z_g @ solved)
+    expected_mean = float((R_fg @ solved)[0])
+    schur = 1.0 - float((R_fg @ np.linalg.solve(R_gg, R_fg.T))[0, 0])
+    k = len(given)
+    expected_var = (nu + delta) / (nu + k - 2.0) * schur
+
+    assert np.allclose(samples[:, 0], given[0])
+    assert np.allclose(samples[:, 1], given[1])
+    assert np.mean(x_free) == pytest.approx(
+        expected_mean, abs=4.0 * np.sqrt(expected_var / n))
+    assert np.var(x_free) == pytest.approx(expected_var, rel=0.05)
+
+
+def test_api_fit_stores_strategy_result_on_copula():
+    """M10 regression: top-level api.fit must leave the strategy result in
+    copula.fit_result (not a stale intermediate MLE), mirroring copula.fit()."""
+    u = _u()
+    R = _R()
+
+    for copula in (EquicorrGaussianCopula(d=4),
+                   StochasticStudentCopula(d=4, R=R)):
+        result = fit(copula, u, method="scar-tm-ou", K=25, grid_range=4.0)
+        assert copula.fit_result is result
+        if "_last_latent_result" in copula.__dict__:
+            assert copula._last_latent_result is result
+        # Convenience path now reaches the SCAR branch without explicit args.
+        samples = copula.predict(8, rng=np.random.default_rng(3))
+        assert samples.shape == (8, 4)
+
+        mle = fit(copula, u, method="mle", gtol=0.5, maxiter=10, maxfun=10)
+        assert copula.fit_result is mle

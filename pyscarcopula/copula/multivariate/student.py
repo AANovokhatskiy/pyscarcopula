@@ -7,7 +7,7 @@ from scipy.stats import (
     t as t_dist,
 )
 
-from pyscarcopula._utils import clip_pseudo_observations, pobs
+from pyscarcopula._utils import pobs
 from pyscarcopula._types import MultivariateMLEResult
 from pyscarcopula.copula.base import CopulaCapabilities
 from pyscarcopula.copula.multivariate.base import MultivariateCopula
@@ -34,7 +34,9 @@ class StudentCopula(MultivariateCopula):
     no latent-state transform is used.
     """
 
-    _capabilities = CopulaCapabilities()
+    _capabilities = CopulaCapabilities(
+        supports_conditional_sampling=True,
+    )
 
     def __init__(self):
         super().__init__(name="Student-t copula")
@@ -42,7 +44,11 @@ class StudentCopula(MultivariateCopula):
         self.df = None
         self.correlation_preprocessing = None
 
-    def fit(self, data, to_pobs=False, **kwargs):
+    def fit(self, data, to_pobs=False, method='mle', **kwargs):
+        if str(method).upper() != 'MLE':
+            raise ValueError(
+                f"StudentCopula supports only method='mle', "
+                f"got {method!r}")
         u = np.asarray(data, dtype=np.float64)
         _validate_student_fit_data(u)
         if to_pobs:
@@ -101,19 +107,15 @@ class StudentCopula(MultivariateCopula):
         self._last_u = u
         return fit_result
 
-    def _nll_for_df(self, u, df):
-        u_c = clip_pseudo_observations(u)
-        x = t_dist.ppf(u_c, df=df)
-        R = estimate_kendall_correlation(x).correlation
-        return self._nll_with_params(u, R, df)
-
     def _nll_with_params(self, u, R, df):
+        from pyscarcopula.numerical import static_likelihood
+        from pyscarcopula.numerical._cpp_extension import CppError
         try:
-            from pyscarcopula.numerical import static_likelihood
             value, _ = static_likelihood.prepare_student(
                 R, u).objective_and_gradient(df)
             return value
-        except Exception:
+        except (FloatingPointError, OverflowError, ValueError,
+                np.linalg.LinAlgError, CppError):
             return 1e10
 
     def _nll(self, u):
@@ -151,6 +153,17 @@ class StudentCopula(MultivariateCopula):
         )
         return t_dist.cdf(x, df=df)
 
+    def sample_conditional(self, n, given, rng=None):
+        """Sample conditionally with ``given={var_index: u_value}``."""
+        correlation, df = self._fitted_parameters()
+        if correlation is None or df is None:
+            raise ValueError("Fit first")
+        from pyscarcopula.copula.multivariate.conditional import (
+            sample_student_conditional,
+        )
+        return sample_student_conditional(
+            n, correlation, df, given=given, rng=rng)
+
     def predict(self, n, u=None, rng=None, given=None, horizon='next',
                 predictive_r_mode=None, predict_config=None):
         if predict_config is not None:
@@ -161,6 +174,5 @@ class StudentCopula(MultivariateCopula):
                 })
             given = config.given
         if given:
-            raise NotImplementedError(
-                "Conditional prediction is not implemented for StudentCopula")
+            return self.sample_conditional(n, given=given, rng=rng)
         return self.sample(n, u=u, rng=rng)

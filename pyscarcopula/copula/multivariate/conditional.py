@@ -112,12 +112,7 @@ def sample_gaussian_conditional(n, d, rho, given, rng=None):
     rho_path = as_path(rho, n, "rho")
     given_idx, free_idx = _partition_indices(d, given)
     z_given = norm.ppf(_given_quantile_inputs(given, given_idx))
-    normal_draws = np.empty((n, len(free_idx)), dtype=np.float64)
-    for rho_val in np.unique(rho_path):
-        mask = rho_path == rho_val
-        rows = np.where(mask)[0]
-        m = int(np.sum(mask))
-        normal_draws[rows] = rng.standard_normal((m, len(free_idx)))
+    normal_draws = rng.standard_normal((n, len(free_idx)))
 
     rho_input = np.atleast_1d(np.asarray(rho, dtype=np.float64)).ravel()
     correlations = (
@@ -129,6 +124,39 @@ def sample_gaussian_conditional(n, d, rho, given, rng=None):
     from pyscarcopula.numerical import multivariate_native
     z_free = multivariate_native.gaussian_conditional_latent(
         correlations, given_idx, z_given, normal_draws)
+    out = np.empty((n, d), dtype=np.float64)
+    out[:, free_idx] = norm.cdf(z_free)
+
+    return _finalize_conditional_sample(out, free_idx, given)
+
+
+def sample_gaussian_copula_conditional(n, R, given, rng=None):
+    """Sample a Gaussian copula with an arbitrary correlation matrix
+    conditionally on fixed pseudo-observations.
+
+    Same clipping and validation policy as ``sample_gaussian_conditional``,
+    which is the equicorrelation special case.
+    """
+    if rng is None:
+        rng = np.random.default_rng()
+    n = int(n)
+    R = np.asarray(R, dtype=np.float64)
+    if R.ndim != 2 or R.shape[0] != R.shape[1]:
+        raise ValueError("R must be a square correlation matrix")
+    d = R.shape[0]
+    given = validate_multivariate_given(given, d)
+    if not given:
+        raise ValueError(
+            "sample_gaussian_copula_conditional requires non-empty given")
+    if len(given) == d:
+        return fill_given(n, d, given)
+
+    given_idx, free_idx = _partition_indices(d, given)
+    z_given = norm.ppf(_given_quantile_inputs(given, given_idx))
+    normal_draws = rng.standard_normal((n, len(free_idx)))
+    from pyscarcopula.numerical import multivariate_native
+    z_free = multivariate_native.gaussian_conditional_latent(
+        R, given_idx, z_given, normal_draws)
     out = np.empty((n, d), dtype=np.float64)
     out[:, free_idx] = norm.cdf(z_free)
 
@@ -209,6 +237,7 @@ __all__ = [
     "equicorr_matrix",
     "fill_given",
     "sample_gaussian_conditional",
+    "sample_gaussian_copula_conditional",
     "sample_student_conditional",
     "validate_multivariate_given",
 ]

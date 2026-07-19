@@ -94,7 +94,17 @@ def fit(copula, data, method='scar-tm-ou', to_pobs=False,
     validate_copula_data(copula, u)
     ensure_strategy_supported(copula, method)
     strategy = get_strategy(method, config=config, **kwargs)
-    return strategy.fit(copula, u, **kwargs)
+    result = strategy.fit(copula, u, **kwargs)
+    # Mirror the state synchronization of copula.fit() so convenience
+    # methods (predict/sample without explicit data or result) see the
+    # strategy result rather than a stale intermediate (e.g. MLE) one.
+    copula.fit_result = result
+    copula._last_u = u
+    if (
+            getattr(result, "params", None) is not None
+            and hasattr(copula, "_last_latent_result")):
+        copula._last_latent_result = result
+    return result
 
 
 def log_likelihood(copula, data, result: FitResult,

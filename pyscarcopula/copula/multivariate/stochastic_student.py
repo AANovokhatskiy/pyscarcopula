@@ -212,9 +212,11 @@ class StochasticStudentCopula(MultivariateCopula):
 
         # Correlation matrix — set during fit or at init
         self._R = None
+        self._L = None
         self._L_inv = None
         self._log_det = None
         self._corr_cache_version = 0
+        self._last_latent_result = None
         if R is not None:
             R = np.asarray(R, dtype=np.float64)
             if R.shape != (d, d):
@@ -257,6 +259,10 @@ class StochasticStudentCopula(MultivariateCopula):
         self.__dict__.pop("_ppf_table_u_id", None)
         self.__dict__.pop("_emission_cache", None)
         self._ppf_cache = None
+        if "_L" not in self.__dict__:
+            # States pickled before the Cholesky factor was cached.
+            self._L = (
+                np.linalg.cholesky(self._R) if self._R is not None else None)
 
     def _set_R(self, R, *, source="supplied"):
         """Set correlation matrix and precompute Cholesky."""
@@ -282,6 +288,7 @@ class StochasticStudentCopula(MultivariateCopula):
         except np.linalg.LinAlgError as exc:
             raise ValueError("R must be positive definite") from exc
         self._R = R
+        self._L = L
         self._L_inv = np.linalg.inv(L)
         self._log_det = 2.0 * np.sum(np.log(np.diag(L)))
         self._corr_cache_version += 1
@@ -392,6 +399,23 @@ class StochasticStudentCopula(MultivariateCopula):
         self._set_generated_R(R)
         self._corr_params_raw = params.copy()
         self._corr_alpha = None
+
+    def _snapshot_corr_state(self):
+        """Capture mutable correlation state for later restore."""
+        return (
+            self._R,
+            self._L,
+            self._L_inv,
+            self._log_det,
+            self._corr_cache_version,
+            self._corr_params_raw,
+            self._corr_alpha,
+        )
+
+    def _restore_corr_state(self, state):
+        (self._R, self._L, self._L_inv, self._log_det,
+         self._corr_cache_version,
+         self._corr_params_raw, self._corr_alpha) = state
 
     def _split_joint_params(self, params):
         params = np.asarray(params, dtype=np.float64).reshape(-1)
@@ -575,6 +599,7 @@ class StochasticStudentCopula(MultivariateCopula):
         """
         from pyscarcopula._types import MLEResult
         from pyscarcopula.numerical import static_likelihood
+        from pyscarcopula.numerical._cpp_extension import CppError
 
         config = config or DEFAULT_CONFIG
         optimizer_options = config.stochastic_student_optimizer.options(
@@ -597,6 +622,18 @@ class StochasticStudentCopula(MultivariateCopula):
         fixed_evaluator = (
             static_likelihood.prepare(self, u) if n_corr == 0 else None)
 
+        def _failure_result(x):
+            # Non-zero, large-magnitude gradient pointing back toward the
+            # starting point: a zero gradient would make L-BFGS-B report
+            # convergence at a point where evaluation actually failed.
+            direction = x - x0
+            norm = np.linalg.norm(direction)
+            if not np.isfinite(norm) or norm == 0.0:
+                direction = np.ones_like(x)
+            else:
+                direction = direction / norm
+            return fail_value, direction * np.sqrt(fail_value)
+
         def objective_and_gradient(x):
             try:
                 if n_corr:
@@ -609,8 +646,11 @@ class StochasticStudentCopula(MultivariateCopula):
                     evaluator = fixed_evaluator
                     value, df_gradient = evaluator.objective_and_gradient(
                         float(x[0]), fail_value=fail_value)
-                if not np.isfinite(value):
-                    return fail_value, np.zeros_like(x)
+                if not np.isfinite(value) or value >= fail_value:
+                    # Evaluator-reported failure comes back as fail_value
+                    # with a zero gradient, which L-BFGS-B would read as
+                    # convergence — replace with a large non-zero gradient.
+                    return _failure_result(x)
                 gradient = np.empty_like(x)
                 gradient[0] = df_gradient[0]
                 if n_corr:
@@ -622,8 +662,9 @@ class StochasticStudentCopula(MultivariateCopula):
                         self._corr_base,
                     )
                 return value, gradient
-            except Exception:
-                return fail_value, np.zeros_like(x)
+            except (FloatingPointError, OverflowError, ValueError,
+                    np.linalg.LinAlgError, CppError):
+                return _failure_result(x)
 
         # Static MLE starts and remains in natural degrees-of-freedom units.
         x0 = np.concatenate([np.array([5.0]), corr0])
@@ -782,7 +823,7 @@ class StochasticStudentCopula(MultivariateCopula):
         is_scalar = (r_arr.size == 1)
 
         d = self._d
-        L = np.linalg.cholesky(self._R)
+        L = self._L
 
         if is_scalar:
             # All samples share same df — vectorized
@@ -896,9 +937,9 @@ class StochasticStudentCopula(MultivariateCopula):
             # Fallback: stationary OU sample
             kappa, mu, nu_ou = self.fit_result.params.values
             sigma2 = nu_ou ** 2 / (2.0 * kappa)
-            x_T = rng.normal(mu, np.sqrt(sigma2))
-            df_val = self.transform(np.array([x_T]))[0]
-            return self.sample_conditional(n, r=df_val, given=given, rng=rng)
+            x_T = rng.normal(mu, np.sqrt(sigma2), size=n)
+            df_vals = self.transform(x_T)  # (n,)
+            return self.sample_conditional(n, r=df_vals, given=given, rng=rng)
 
     # Predictive mean path
 
@@ -965,16 +1006,37 @@ class StochasticStudentCopula(MultivariateCopula):
         self._ensure_corr_initialized(u)
         n_corr = self._corr_num_params()
         joint_size = 3 + n_corr
+        corr_state = None
         if params.size == 3:
             latent_params = params
         elif n_corr and params.size == joint_size:
             latent_params, corr_params = self._split_joint_params(params)
+            # Temporarily switch the correlation to the passed joint params;
+            # this is a query method and must not mutate the model.
+            corr_state = self._snapshot_corr_state()
             self._set_corr_from_params(corr_params)
         else:
             expected = "3" if n_corr == 0 else f"3 or {joint_size}"
             raise ValueError(
                 f"params must contain {expected} values for "
                 f"corr_mode={self._corr_mode!r}, got {params.size}")
+
+        try:
+            return self._posterior_state_weights_tm(
+                u, latent_params, K=K, grid_range=grid_range,
+                grid_method=grid_method, adaptive=adaptive,
+                pts_per_sigma=pts_per_sigma,
+                transition_method=transition_method, max_K=max_K,
+                r_gh=r_gh, gh_order=gh_order)
+        finally:
+            if corr_state is not None:
+                self._restore_corr_state(corr_state)
+
+    def _posterior_state_weights_tm(
+            self, u, latent_params, *, K, grid_range, grid_method,
+            adaptive, pts_per_sigma, transition_method, max_K,
+            r_gh, gh_order):
+        """TM forward-backward sweep for ``posterior_state_weights``."""
 
         config = DEFAULT_CONFIG
         K = config.default_K if K is None else int(K)

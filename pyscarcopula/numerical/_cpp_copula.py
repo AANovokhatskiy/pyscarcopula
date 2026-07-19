@@ -20,6 +20,10 @@ _STUDENT_SPEC_CACHE = weakref.WeakKeyDictionary()
 
 def _set_student_ppf_cache(spec, cache) -> None:
     """Copy a Python Student PPF cache into owning C++ storage."""
+    if cache.ppf_table is None:
+        # Over the memory budget: leave the spec table empty so the C++
+        # kernels use their exact-quantile fallback.
+        return
     nodes = np.ascontiguousarray(cache.ppf_nodes, dtype=np.float64)
     table = np.ascontiguousarray(cache.ppf_table, dtype=np.float64)
     spec.set_student_ppf_cache(nodes, table)
