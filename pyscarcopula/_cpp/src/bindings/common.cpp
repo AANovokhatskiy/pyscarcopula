@@ -141,6 +141,31 @@ std::vector<double> flat_vector_from_array(
     return out;
 }
 
+scar::DoubleView flat_view_from_array(
+    py::array_t<double, py::array::c_style | py::array::forcecast> values,
+    const char* name) {
+
+    const py::buffer_info info = values.request();
+    const double* data = static_cast<const double*>(info.ptr);
+    std::size_t size = 1;
+    for (py::ssize_t extent : info.shape) {
+        std::size_t extent_size = 0;
+        if (!scar_internal::checked_nonnegative_size(
+                static_cast<std::int64_t>(extent), extent_size)
+            || !scar_internal::checked_size_mul(size, extent_size, size)) {
+            throw std::invalid_argument(
+                std::string(name) + " shape is not representable");
+        }
+    }
+    for (std::size_t i = 0; i < size; ++i) {
+        if (!std::isfinite(data[i])) {
+            throw std::invalid_argument(
+                std::string(name) + " must contain only finite values");
+        }
+    }
+    return {data, size};
+}
+
 std::vector<int> int_vector_from_array(
     py::array_t<int, py::array::c_style | py::array::forcecast> values,
     const char* name) {

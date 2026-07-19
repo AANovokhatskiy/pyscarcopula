@@ -70,6 +70,10 @@ TrajectoryLogPdfResult copula_log_pdf_trajectory_grid(
 
     const std::size_t observation_stride =
         static_cast<std::size_t>(u.dim);
+    scar_internal::StudentWorkspace student_workspace;
+    if (copula.family == CopulaFamily::Student) {
+        student_workspace.x.reserve(observation_stride);
+    }
     for (std::size_t t = 0; t < u.size(); ++t) {
         const double* row = u.data() + t * observation_stride;
         double v1 = 0.0;
@@ -95,7 +99,8 @@ TrajectoryLogPdfResult copula_log_pdf_trajectory_grid(
                         copula,
                         row,
                         parameter,
-                        static_cast<std::int64_t>(t))
+                        static_cast<std::int64_t>(t),
+                        student_workspace)
                     : scar_internal::copula_log_pdf_unrotated(
                         copula, v1, v2, parameter);
             }

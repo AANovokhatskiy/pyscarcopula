@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- Optimizes native multivariate hot paths: shared-correlation conditional
+  Cholesky reuse, reusable Student workspaces, equicorrelation sufficient
+  statistics (including prepared SCAR-OU snapshot caching), and zero-copy
+  C-contiguous `float64` conditional inputs.
+- Preserves Student jitter semantics, finite input validation, fixed-draw
+  behavior, and vector-based native compatibility overloads.
+- Expands regression coverage for shared and row-specific correlations,
+  near-singular conditional covariance, equicorrelation prepared evaluation,
+  read-only arrays, and pybind11 forcecast fallbacks.
+
 ## 0.17.5 - 2026-07-06
 
 Version: `0.17.4` -> `0.17.5`

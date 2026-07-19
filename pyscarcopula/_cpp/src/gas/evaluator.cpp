@@ -150,16 +150,18 @@ double log_pdf_at_g(
     const CopulaSpec& copula,
     const double* row,
     std::int64_t row_index,
-    double g) {
+    double g,
+    const scar_internal::EquicorrStats* equicorr_stats,
+    scar_internal::StudentWorkspace& student_workspace) {
 
     const double r = gas_transform(copula, g);
     if (copula.family == CopulaFamily::Student) {
         return scar_internal::student_log_pdf(
-            copula, row, r, row_index);
+            copula, row, r, row_index, student_workspace);
     }
     if (copula.family == CopulaFamily::EquicorrGaussian) {
-        return scar_internal::equicorr_log_pdf(
-            copula, row, r, nullptr);
+        return scar_internal::equicorr_log_pdf_from_stats(
+            copula, *equicorr_stats, r, nullptr);
     }
     double v1 = 0.0;
     double v2 = 0.0;
@@ -175,7 +177,8 @@ RowEvaluation evaluate_row(
     std::int64_t row_index,
     double g,
     const GasConfig& config,
-    bool need_score) {
+    bool need_score,
+    scar_internal::StudentWorkspace& student_workspace) {
 
     RowEvaluation out;
     out.r = gas_transform(copula, g);
@@ -184,6 +187,13 @@ RowEvaluation evaluate_row(
         return out;
     }
 
+    scar_internal::EquicorrStats equicorr_stats;
+    if (copula.family == CopulaFamily::EquicorrGaussian
+        && !scar_internal::equicorr_sufficient_statistics(
+            copula, row, equicorr_stats)) {
+        out.status = SCAR_NUMERICAL_FAILURE;
+        return out;
+    }
     double dlog_dr = std::numeric_limits<double>::quiet_NaN();
     if (copula.family == CopulaFamily::Student) {
         if (need_score && config.scaling == GasScaling::Unit) {
@@ -193,18 +203,19 @@ RowEvaluation evaluate_row(
                     out.r,
                     row_index,
                     out.log_likelihood,
-                    dlog_dr)) {
+                    dlog_dr,
+                    student_workspace)) {
                 out.status = SCAR_NUMERICAL_FAILURE;
                 return out;
             }
         } else {
             out.log_likelihood = scar_internal::student_log_pdf(
-                copula, row, out.r, row_index);
+                copula, row, out.r, row_index, student_workspace);
         }
     } else if (copula.family == CopulaFamily::EquicorrGaussian) {
-        out.log_likelihood = scar_internal::equicorr_log_pdf(
+        out.log_likelihood = scar_internal::equicorr_log_pdf_from_stats(
             copula,
-            row,
+            equicorr_stats,
             out.r,
             need_score && config.scaling == GasScaling::Unit
                 ? &dlog_dr
@@ -233,9 +244,13 @@ RowEvaluation evaluate_row(
         out.score = dlog_dr * gas_dtransform(copula, g);
     } else {
         const double ll_plus = log_pdf_at_g(
-            copula, row, row_index, g + config.score_eps);
+            copula, row, row_index, g + config.score_eps,
+            &equicorr_stats,
+            student_workspace);
         const double ll_minus = log_pdf_at_g(
-            copula, row, row_index, g - config.score_eps);
+            copula, row, row_index, g - config.score_eps,
+            &equicorr_stats,
+            student_workspace);
         if (!std::isfinite(ll_plus) || !std::isfinite(ll_minus)) {
             out.status = SCAR_NUMERICAL_FAILURE;
             return out;
@@ -298,6 +313,12 @@ GasLogLikResult run_log_likelihood(
         set_failure(out, SCAR_NUMERICAL_FAILURE, -1);
         return out;
     }
+    scar_internal::StudentWorkspace student_workspace;
+    if (copula.family == CopulaFamily::Student) {
+        student_workspace.x.reserve(static_cast<std::size_t>(copula.dim));
+        student_workspace.dx_ddf.reserve(
+            static_cast<std::size_t>(copula.dim));
+    }
     for (std::size_t t = 0; t < u.n_obs; ++t) {
         const double* row =
             u.values + static_cast<std::size_t>(u.dim) * t;
@@ -308,7 +329,8 @@ GasLogLikResult run_log_likelihood(
             static_cast<std::int64_t>(t),
             g,
             config,
-            need_score);
+            need_score,
+            student_workspace);
         if (evaluation.status != SCAR_OK) {
             set_failure(
                 out, evaluation.status, static_cast<std::int64_t>(t));
@@ -380,6 +402,12 @@ GasFilterResult GasEvaluator::filter(
         set_failure(out, SCAR_NUMERICAL_FAILURE, -1);
         return out;
     }
+    scar_internal::StudentWorkspace student_workspace;
+    if (copula.family == CopulaFamily::Student) {
+        student_workspace.x.reserve(static_cast<std::size_t>(copula.dim));
+        student_workspace.dx_ddf.reserve(
+            static_cast<std::size_t>(copula.dim));
+    }
     for (std::size_t t = 0; t < u.n_obs; ++t) {
         out.g_path[t] = g;
         const double* row =
@@ -391,7 +419,8 @@ GasFilterResult GasEvaluator::filter(
             static_cast<std::int64_t>(t),
             g,
             config,
-            need_score);
+            need_score,
+            student_workspace);
         out.r_path[t] = evaluation.r;
         if (evaluation.status != SCAR_OK) {
             set_failure(
@@ -485,8 +514,10 @@ GasUpdateResult GasEvaluator::update_observation(
         }
     }
 
+    scar_internal::StudentWorkspace student_workspace;
     const RowEvaluation evaluation = evaluate_row(
-        copula, observation.values, 0, g, config, true);
+        copula, observation.values, 0, g, config, true,
+        student_workspace);
     out.status = evaluation.status;
     out.r = evaluation.r;
     out.log_likelihood = evaluation.log_likelihood;
@@ -528,13 +559,15 @@ GasPredictResult GasEvaluator::predict_parameter(
 
     const double* row = u.values
         + static_cast<std::size_t>(u.dim) * (u.n_obs - 1);
+    scar_internal::StudentWorkspace student_workspace;
     const RowEvaluation evaluation = evaluate_row(
         copula,
         row,
         static_cast<std::int64_t>(u.n_obs - 1),
         filtered.g_path.back(),
         config,
-        true);
+        true,
+        student_workspace);
     out.status = evaluation.status;
     if (out.status != SCAR_OK) {
         out.failure_index = static_cast<std::int64_t>(u.n_obs - 1);

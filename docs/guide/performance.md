@@ -505,6 +505,32 @@ result = fit(
 )
 ```
 
+## Multivariate Native Paths
+
+Multivariate Gaussian, Student, stochastic Student, and equicorrelation models
+use compiled row, grid, and conditional kernels. Several optimizations are
+automatic and do not require strategy options:
+
+- conditional Gaussian/Student sampling reuses the Schur-complement Cholesky
+  factor when one correlation matrix is shared by all output rows;
+- Student density workspaces are reused inside GAS, static likelihood, Monte
+  Carlo batches, and across all grid nodes within each SCAR emission row;
+- equicorrelation grids compute per-row normal-score sums once and reuse them
+  for every latent-grid node; prepared static and SCAR-OU evaluators retain
+  those statistics across repeated objective calls;
+- conditional binding inputs avoid an additional C++ copy when they are
+  C-contiguous `float64` arrays.
+
+The zero-copy condition concerns the native boundary. Python adapters may still
+normalize arbitrary user inputs with `np.ascontiguousarray`; non-contiguous
+arrays and other dtypes therefore require a temporary conversion. Numeric
+inputs are always checked for finite values, so zero-copy removes memory traffic
+but not the linear validation pass.
+
+Row-specific `(n,d,d)` correlation arrays cannot share one Cholesky factor and
+retain per-row factorization cost. Near-singular Student conditional covariance
+matrices also retain the per-row jitter path to preserve numerical semantics.
+
 ## NumericalConfig
 
 Use `NumericalConfig` when a setting should apply to many fits:

@@ -230,16 +230,41 @@ void gaussian_fill_row(
 void equicorr_fill_row(
     const scar::CopulaSpec& spec,
     const double* row,
+    std::int64_t row_index,
     const std::vector<double>& r_grid,
     const std::vector<double>& dpsi_grid,
     double* fi_row,
     double* dfi_dx_row) {
 
+    EquicorrStats stats;
+    const bool cache_available =
+        row_index >= 0
+        && spec.equicorr_sum_cache.size()
+            == spec.equicorr_sum_squares_cache.size()
+        && static_cast<std::size_t>(row_index)
+            < spec.equicorr_sum_cache.size();
+    if (cache_available) {
+        const std::size_t index = static_cast<std::size_t>(row_index);
+        stats.sum = spec.equicorr_sum_cache[index];
+        stats.sum_squares = spec.equicorr_sum_squares_cache[index];
+    } else if (!equicorr_sufficient_statistics(spec, row, stats)) {
+        std::fill(
+            fi_row,
+            fi_row + r_grid.size(),
+            std::numeric_limits<double>::quiet_NaN());
+        if (dfi_dx_row != nullptr) {
+            std::fill(
+                dfi_dx_row,
+                dfi_dx_row + r_grid.size(),
+                std::numeric_limits<double>::quiet_NaN());
+        }
+        return;
+    }
     for (std::size_t j = 0; j < r_grid.size(); ++j) {
         double dlog_dr = 0.0;
-        const double log_pdf = equicorr_log_pdf(
+        const double log_pdf = equicorr_log_pdf_from_stats(
             spec,
-            row,
+            stats,
             r_grid[j],
             dfi_dx_row == nullptr ? nullptr : &dlog_dr);
         const double pdf = std::exp(log_pdf);
@@ -511,7 +536,7 @@ void copula_pdf_row_precomputed_flat(
     if (spec.family == scar::CopulaFamily::EquicorrGaussian) {
         static const std::vector<double> no_dpsi;
         equicorr_fill_row(
-            spec, row, r_grid, no_dpsi, fi_row, nullptr);
+            spec, row, t, r_grid, no_dpsi, fi_row, nullptr);
         return;
     }
     copula_pdf_row_precomputed(spec, row[0], row[1], r_grid, fi_row);
@@ -589,7 +614,7 @@ void copula_pdf_and_grad_row_precomputed_flat(
     }
     if (spec.family == scar::CopulaFamily::EquicorrGaussian) {
         equicorr_fill_row(
-            spec, row, r_grid, dpsi_grid, fi_row, dfi_dx_row);
+            spec, row, t, r_grid, dpsi_grid, fi_row, dfi_dx_row);
         return;
     }
     copula_pdf_and_grad_row_precomputed(
@@ -719,7 +744,7 @@ void copula_fi_row_on_grid(
         copula_prepare_grid_transform(
             spec, x_grid, r_grid, dpsi_grid);
         equicorr_fill_row(
-            spec, row, r_grid, dpsi_grid, fi_row.data(), nullptr);
+            spec, row, t, r_grid, dpsi_grid, fi_row.data(), nullptr);
         return;
     }
 

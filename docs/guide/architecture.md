@@ -48,8 +48,21 @@ Native adapters own calls into the mandatory C++ extension.
 | Copula class | Model identity, parameter domain, sampling |
 | Capability metadata | Explicit strategy support |
 | Strategy | Optimization and fit-result construction |
-| Native evaluator | Density, likelihood, gradient, filtering |
-| Python coordination | RNG, Jacobi, MC/EIS, GoF, persistence |
+| Native evaluator | Density, likelihood, gradient, filtering, multivariate conditional linear algebra |
+| Python coordination | RNG and fixed draws, Jacobi, MC/EIS, GoF, persistence |
+
+## Native Array Boundary
+
+Multivariate Gaussian and Student conditional kernels consume read-only views
+of their numeric inputs. Already C-contiguous NumPy `float64` arrays are passed
+without an additional C++ vector copy and stay alive throughout the synchronous
+native call, including work performed with the GIL released. Non-contiguous
+arrays and other dtypes are converted by pybind11's `forcecast` path.
+
+Zero-copy does not remove validation: correlations, latent conditioning values,
+degrees of freedom, normal draws, and chi-square draws are checked for finite
+values before native computation starts. The small integer `given_indices`
+array is still copied into an owning vector.
 
 ## Numerical Safety Boundaries
 

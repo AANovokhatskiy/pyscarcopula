@@ -97,6 +97,9 @@ def sample_predictive(copula, n, r, given=None, rng=None, d=None):
             copula, n, r, given=given, rng=rng)
 
     if capabilities is not None and capabilities.supports_conditional_sampling:
+        if not capabilities.has_dynamic_scalar_parameter:
+            return copula.sample_conditional(
+                n, given=given, rng=rng)
         return copula.sample_conditional(n, r=r, given=given, rng=rng)
 
     if d is None:

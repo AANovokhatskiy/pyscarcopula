@@ -1,5 +1,6 @@
 #include "scar/ou.hpp"
 
+#include "scar/detail/copula.hpp"
 #include "scar/detail/safety.hpp"
 
 #include <algorithm>
@@ -70,6 +71,22 @@ PreparedScarOuEvaluator::PreparedScarOuEvaluator(
             observations_.end(),
             [](double value) { return std::isfinite(value); })) {
         throw std::invalid_argument("u must contain only finite values");
+    }
+    if (copula_.family == CopulaFamily::EquicorrGaussian) {
+        copula_.equicorr_sum_cache.resize(n_obs_size, 0.0);
+        copula_.equicorr_sum_squares_cache.resize(n_obs_size, 0.0);
+        for (std::size_t row = 0; row < n_obs_size; ++row) {
+            scar_internal::EquicorrStats stats;
+            if (!scar_internal::equicorr_sufficient_statistics(
+                    copula_,
+                    observations_.data() + row * dim_size,
+                    stats)) {
+                throw std::invalid_argument(
+                    "failed to prepare equicorrelation statistics");
+            }
+            copula_.equicorr_sum_cache[row] = stats.sum;
+            copula_.equicorr_sum_squares_cache[row] = stats.sum_squares;
+        }
     }
 }
 

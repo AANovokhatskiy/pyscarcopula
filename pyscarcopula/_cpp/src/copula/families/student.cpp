@@ -354,11 +354,6 @@ void interpolate_bivariate_ppf(
     }
 }
 
-struct StudentWorkspace {
-    std::vector<double> x;
-    std::vector<double> dx_ddf;
-};
-
 double student_log_pdf_with_work(
     const scar::CopulaSpec& spec,
     const double* row,
@@ -479,17 +474,6 @@ double student_log_pdf_with_work(
         }
     }
     return joint_log - marginal_log;
-}
-
-double student_log_pdf_impl(
-    const scar::CopulaSpec& spec,
-    const double* row,
-    double df,
-    std::int64_t row_index) {
-
-    StudentWorkspace workspace;
-    return student_log_pdf_with_work(
-        spec, row, df, row_index, workspace, nullptr);
 }
 
 bool student_corr_score_row_impl(
@@ -616,7 +600,20 @@ double student_log_pdf(
     double df,
     std::int64_t row_index) {
 
-    return student_log_pdf_impl(spec, row, df, row_index);
+    StudentWorkspace workspace;
+    return student_log_pdf(
+        spec, row, df, row_index, workspace);
+}
+
+double student_log_pdf(
+    const scar::CopulaSpec& spec,
+    const double* row,
+    double df,
+    std::int64_t row_index,
+    StudentWorkspace& workspace) {
+
+    return student_log_pdf_with_work(
+        spec, row, df, row_index, workspace, nullptr);
 }
 
 bool student_log_pdf_and_dlog_ddf(
@@ -628,6 +625,19 @@ bool student_log_pdf_and_dlog_ddf(
     double& dlog_ddf) {
 
     StudentWorkspace workspace;
+    return student_log_pdf_and_dlog_ddf(
+        spec, row, df, row_index, log_pdf, dlog_ddf, workspace);
+}
+
+bool student_log_pdf_and_dlog_ddf(
+    const scar::CopulaSpec& spec,
+    const double* row,
+    double df,
+    std::int64_t row_index,
+    double& log_pdf,
+    double& dlog_ddf,
+    StudentWorkspace& workspace) {
+
     log_pdf = student_log_pdf_with_work(
         spec, row, df, row_index, workspace, &dlog_ddf);
     if (!std::isfinite(log_pdf)) {

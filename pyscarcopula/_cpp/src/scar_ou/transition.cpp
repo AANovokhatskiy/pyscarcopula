@@ -162,11 +162,11 @@ bool matrix_forward_predictive_mean(
         r_grid[static_cast<std::size_t>(j)] =
             copula_transform(copula, grid.x_grid[static_cast<std::size_t>(j)]);
     }
+    std::vector<double> source(static_cast<std::size_t>(grid.K), 0.0);
 
     auto advance_matrix = [&](const std::vector<double>& phi,
                               const std::vector<double>& fi_row,
                               std::vector<double>& phi_next) -> bool {
-        std::vector<double> source(static_cast<std::size_t>(grid.K), 0.0);
         for (int j = 0; j < grid.K; ++j) {
             const std::size_t idx = static_cast<std::size_t>(j);
             source[idx] = fi_row[idx] * phi[idx] * grid.trap_w[idx];
@@ -217,11 +217,11 @@ bool matrix_forward_mixture_h(
         r_grid[static_cast<std::size_t>(j)] =
             copula_transform(copula, grid.x_grid[static_cast<std::size_t>(j)]);
     }
+    std::vector<double> source(static_cast<std::size_t>(grid.K), 0.0);
 
     auto advance_matrix = [&](const std::vector<double>& phi,
                               const std::vector<double>& fi_row,
                               std::vector<double>& phi_next) -> bool {
-        std::vector<double> source(static_cast<std::size_t>(grid.K), 0.0);
         for (int j = 0; j < grid.K; ++j) {
             const std::size_t idx = static_cast<std::size_t>(j);
             source[idx] = fi_row[idx] * phi[idx] * grid.trap_w[idx];
@@ -271,11 +271,11 @@ bool local_forward_predictive_mean(
         r_grid[static_cast<std::size_t>(j)] =
             copula_transform(copula, grid.x_grid[static_cast<std::size_t>(j)]);
     }
+    std::vector<double> source(static_cast<std::size_t>(grid.K), 0.0);
 
     auto advance_local = [&](const std::vector<double>& phi,
                              const std::vector<double>& fi_row,
                              std::vector<double>& phi_next) -> bool {
-        std::vector<double> source(static_cast<std::size_t>(grid.K), 0.0);
         for (int j = 0; j < grid.K; ++j) {
             const std::size_t idx = static_cast<std::size_t>(j);
             source[idx] = fi_row[idx] * phi[idx] * grid.trap_w[idx];
@@ -335,11 +335,11 @@ bool local_forward_mixture_h(
         r_grid[static_cast<std::size_t>(j)] =
             copula_transform(copula, grid.x_grid[static_cast<std::size_t>(j)]);
     }
+    std::vector<double> source(static_cast<std::size_t>(grid.K), 0.0);
 
     auto advance_local = [&](const std::vector<double>& phi,
                              const std::vector<double>& fi_row,
                              std::vector<double>& phi_next) -> bool {
-        std::vector<double> source(static_cast<std::size_t>(grid.K), 0.0);
         for (int j = 0; j < grid.K; ++j) {
             const std::size_t idx = static_cast<std::size_t>(j);
             source[idx] = fi_row[idx] * phi[idx] * grid.trap_w[idx];

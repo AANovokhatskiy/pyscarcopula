@@ -69,6 +69,47 @@ def test_native_ou_supports_equicorr_forward_and_state():
     assert np.sum(probability) == pytest.approx(1.0)
 
 
+def test_prepared_equicorr_repeated_calls_match_stateless_paths():
+    copula = EquicorrGaussianCopula(12)
+    u = np.random.default_rng(20260719).uniform(
+        0.001, 0.999, size=(40, 12))
+    config = AutoTMConfig(
+        transition_method="matrix",
+        K=28,
+        adaptive=False,
+        max_K=28,
+    )
+    params = (1.2, 0.1, 0.7)
+    prepared = _cpp_scar_ou.prepare_objective(u, copula, config)
+
+    expected_value, _ = _cpp_scar_ou.neg_loglik_info(
+        *params, u, copula, config)
+    expected_grad_value, expected_gradient, _ = (
+        _cpp_scar_ou.neg_loglik_with_grad_info(
+            *params, u, copula, config))
+    first_value, _ = prepared.neg_loglik_info(*params)
+    second_value, _ = prepared.neg_loglik_info(*params)
+    actual_grad_value, actual_gradient, _ = (
+        prepared.neg_loglik_with_grad_info(*params))
+
+    assert first_value == expected_value
+    assert second_value == expected_value
+    assert actual_grad_value == expected_grad_value
+    np.testing.assert_array_equal(actual_gradient, expected_gradient)
+    np.testing.assert_array_equal(
+        prepared.predictive_mean(*params),
+        _cpp_scar_ou.predictive_mean(*params, u, copula, config),
+    )
+    for horizon in ("current", "next"):
+        actual_z, actual_probability = prepared.state_distribution(
+            *params, horizon=horizon)
+        expected_z, expected_probability = _cpp_scar_ou.state_distribution(
+            *params, u, copula, config, horizon=horizon)
+        np.testing.assert_array_equal(actual_z, expected_z)
+        np.testing.assert_array_equal(
+            actual_probability, expected_probability)
+
+
 def test_spectral_forward_and_state_use_native_grid_reconstruction():
     copula = ClaytonCopula(transform_type="xtanh")
     u = np.random.default_rng(20260620).uniform(0.05, 0.95, size=(10, 2))

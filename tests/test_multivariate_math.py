@@ -1207,6 +1207,30 @@ def test_static_gaussian_student_conditional_predict_honors_given():
         assert np.all((samples > 0.0) & (samples < 1.0))
 
 
+def test_static_conditional_sampling_through_public_api_honors_given():
+    """Static multivariate models must not receive the dynamic ``r`` arg."""
+    from pyscarcopula.copula.multivariate.gaussian import GaussianCopula
+    from pyscarcopula.copula.multivariate.student import StudentCopula
+
+    u = _u()
+    given = {0: 0.25, 2: 0.75}
+    for copula in (GaussianCopula(), StudentCopula()):
+        result = fit(copula, u, method="mle")
+        for public_sampler in (predict, sample):
+            samples = public_sampler(
+                copula,
+                u,
+                result,
+                64,
+                given=given,
+                rng=np.random.default_rng(7),
+            )
+            assert samples.shape == (64, 4)
+            assert np.allclose(samples[:, 0], 0.25)
+            assert np.allclose(samples[:, 2], 0.75)
+            assert np.all((samples > 0.0) & (samples < 1.0))
+
+
 def test_gaussian_copula_conditional_mean_matches_oracle():
     """M8: conditional mean of free coordinates equals
     R_fg R_gg^{-1} z_g for a general (non-equicorr) correlation."""

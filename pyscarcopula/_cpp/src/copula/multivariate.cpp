@@ -102,9 +102,13 @@ void initialize_grid(
 bool cholesky_with_jitter(
     const std::vector<double>& matrix,
     std::size_t dimension,
-    std::vector<double>& lower) {
+    std::vector<double>& lower,
+    double* applied_jitter = nullptr) {
 
     lower.assign(dimension * dimension, 0.0);
+    if (applied_jitter != nullptr) {
+        *applied_jitter = std::numeric_limits<double>::quiet_NaN();
+    }
     double jitter = 0.0;
     for (int attempt = 0; attempt < 7; ++attempt) {
         std::fill(lower.begin(), lower.end(), 0.0);
@@ -138,6 +142,9 @@ bool cholesky_with_jitter(
             }
         }
         if (valid) {
+            if (applied_jitter != nullptr) {
+                *applied_jitter = jitter;
+            }
             return true;
         }
         jitter = jitter == 0.0 ? 1e-12 : jitter * 10.0;
@@ -180,14 +187,14 @@ bool solve_spd(
 }
 
 ConditionalSampleResult conditional_latent(
-    const std::vector<double>& correlations,
+    DoubleView correlations,
     std::int64_t correlation_rows,
     int dimension,
     const std::vector<int>& given_indices,
-    const std::vector<double>& given_latent,
-    const std::vector<double>* df,
-    const std::vector<double>& normal_draws,
-    const std::vector<double>* chi_square_draws,
+    DoubleView given_latent,
+    const DoubleView* df,
+    DoubleView normal_draws,
+    const DoubleView* chi_square_draws,
     std::int64_t n_rows) {
 
     ConditionalSampleResult out;
@@ -247,7 +254,9 @@ ConditionalSampleResult conditional_latent(
     std::vector<double> schur_base(n_free * n_free);
     std::vector<double> covariance(n_free * n_free);
     std::vector<double> lower_cov;
+    std::vector<double> prepared_lower_cov;
     std::vector<double> given_vector(n_given);
+    bool use_prepared_lower_cov = false;
     std::size_t prepared_corr_row =
         std::numeric_limits<std::size_t>::max();
 
@@ -311,6 +320,31 @@ ConditionalSampleResult conditional_latent(
                     schur_base[i * n_free + j] = schur;
                 }
             }
+            use_prepared_lower_cov = false;
+            if (correlation_rows == 1) {
+                double applied_jitter = 0.0;
+                const bool factorized = cholesky_with_jitter(
+                    schur_base,
+                    n_free,
+                    prepared_lower_cov,
+                    &applied_jitter);
+                if (df == nullptr) {
+                    if (!factorized) {
+                        out.status = SCAR_NUMERICAL_FAILURE;
+                        out.failure_index = static_cast<std::int64_t>(row);
+                        return out;
+                    }
+                    use_prepared_lower_cov = true;
+                } else {
+                    // Scaling a jittered factor would change the existing
+                    // semantics: sqrt(c) * chol(S + eps I) factors
+                    // c S + c eps I, not c S + eps I. Keep the current
+                    // per-row path whenever the unscaled matrix needs
+                    // jitter (or cannot be factorized).
+                    use_prepared_lower_cov =
+                        factorized && applied_jitter == 0.0;
+                }
+            }
             prepared_corr_row = corr_row;
         }
 
@@ -343,18 +377,26 @@ ConditionalSampleResult conditional_latent(
             radial_scale = std::sqrt(conditional_df / chi_square);
         }
 
-        for (std::size_t i = 0; i < n_free; ++i) {
-            for (std::size_t j = 0; j < n_free; ++j) {
-                covariance[i * n_free + j] =
-                    covariance_scale * schur_base[i * n_free + j];
+        if (!use_prepared_lower_cov) {
+            for (std::size_t i = 0; i < n_free; ++i) {
+                for (std::size_t j = 0; j < n_free; ++j) {
+                    covariance[i * n_free + j] =
+                        covariance_scale * schur_base[i * n_free + j];
+                }
+            }
+            if (!cholesky_with_jitter(covariance, n_free, lower_cov)) {
+                out.status = SCAR_NUMERICAL_FAILURE;
+                out.failure_index = static_cast<std::int64_t>(row);
+                return out;
             }
         }
-        if (!cholesky_with_jitter(covariance, n_free, lower_cov)) {
-            out.status = SCAR_NUMERICAL_FAILURE;
-            out.failure_index = static_cast<std::int64_t>(row);
-            return out;
-        }
 
+        const std::vector<double>& innovation_factor =
+            use_prepared_lower_cov ? prepared_lower_cov : lower_cov;
+        const double prepared_factor_scale =
+            use_prepared_lower_cov && df != nullptr
+            ? std::sqrt(covariance_scale)
+            : 1.0;
         for (std::size_t i = 0; i < n_free; ++i) {
             double value = 0.0;
             for (std::size_t k = 0; k < n_given; ++k) {
@@ -362,10 +404,10 @@ ConditionalSampleResult conditional_latent(
             }
             double innovation = 0.0;
             for (std::size_t j = 0; j <= i; ++j) {
-                innovation += lower_cov[i * n_free + j]
+                innovation += innovation_factor[i * n_free + j]
                     * normal_draws[row * n_free + j];
             }
-            value += radial_scale * innovation;
+            value += radial_scale * prepared_factor_scale * innovation;
             if (!std::isfinite(value)) {
                 out.status = SCAR_NUMERICAL_FAILURE;
                 out.failure_index = static_cast<std::int64_t>(row);
@@ -398,6 +440,12 @@ MultivariateRowsResult multivariate_log_pdf_and_grad(
         out.status = SCAR_INVALID_SIZE;
         return out;
     }
+    scar_internal::StudentWorkspace student_workspace;
+    if (spec.family == CopulaFamily::Student) {
+        student_workspace.x.reserve(static_cast<std::size_t>(spec.dim));
+        student_workspace.dx_ddf.reserve(
+            static_cast<std::size_t>(spec.dim));
+    }
 
     for (std::size_t i = 0; i < u.size(); ++i) {
         const double parameter = parameter_at(r, i);
@@ -411,7 +459,8 @@ MultivariateRowsResult multivariate_log_pdf_and_grad(
                 parameter,
                 row_offset + static_cast<std::int64_t>(i),
                 log_pdf,
-                dlog);
+                dlog,
+                student_workspace);
         } else if (ok) {
             log_pdf = scar_internal::equicorr_log_pdf(
                 spec, u[i].data(), parameter, &dlog);
@@ -474,10 +523,18 @@ MultivariateGridResult multivariate_pdf_and_grad_grid(
                 out.pdf.values.data() + base,
                 out.d_pdf_dx.values.data() + base);
         } else {
+            scar_internal::EquicorrStats stats;
+            if (!scar_internal::equicorr_sufficient_statistics(
+                    spec, u[i].data(), stats)) {
+                out.status = SCAR_NUMERICAL_FAILURE;
+                out.failure_index = static_cast<std::int64_t>(i);
+                return out;
+            }
             for (std::size_t j = 0; j < x_grid.size(); ++j) {
                 double dlog = 0.0;
-                const double log_pdf = scar_internal::equicorr_log_pdf(
-                    spec, u[i].data(), parameter_grid[j], &dlog);
+                const double log_pdf =
+                    scar_internal::equicorr_log_pdf_from_stats(
+                        spec, stats, parameter_grid[j], &dlog);
                 const double pdf = std::exp(log_pdf);
                 out.pdf.values[base + j] = pdf;
                 out.d_pdf_dx.values[base + j] =
@@ -505,6 +562,25 @@ ConditionalSampleResult multivariate_gaussian_conditional(
     const std::vector<double>& normal_draws,
     std::int64_t n_rows) {
 
+    return multivariate_gaussian_conditional(
+        {correlations.data(), correlations.size()},
+        correlation_rows,
+        dimension,
+        given_indices,
+        {given_latent.data(), given_latent.size()},
+        {normal_draws.data(), normal_draws.size()},
+        n_rows);
+}
+
+ConditionalSampleResult multivariate_gaussian_conditional(
+    DoubleView correlations,
+    std::int64_t correlation_rows,
+    int dimension,
+    const std::vector<int>& given_indices,
+    DoubleView given_latent,
+    DoubleView normal_draws,
+    std::int64_t n_rows) {
+
     return conditional_latent(
         correlations,
         correlation_rows,
@@ -526,6 +602,29 @@ ConditionalSampleResult multivariate_student_conditional(
     const std::vector<double>& df,
     const std::vector<double>& normal_draws,
     const std::vector<double>& chi_square_draws,
+    std::int64_t n_rows) {
+
+    return multivariate_student_conditional(
+        {correlations.data(), correlations.size()},
+        correlation_rows,
+        dimension,
+        given_indices,
+        {given_latent.data(), given_latent.size()},
+        {df.data(), df.size()},
+        {normal_draws.data(), normal_draws.size()},
+        {chi_square_draws.data(), chi_square_draws.size()},
+        n_rows);
+}
+
+ConditionalSampleResult multivariate_student_conditional(
+    DoubleView correlations,
+    std::int64_t correlation_rows,
+    int dimension,
+    const std::vector<int>& given_indices,
+    DoubleView given_latent,
+    DoubleView df,
+    DoubleView normal_draws,
+    DoubleView chi_square_draws,
     std::int64_t n_rows) {
 
     return conditional_latent(

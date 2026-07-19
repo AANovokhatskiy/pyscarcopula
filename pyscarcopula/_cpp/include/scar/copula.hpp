@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <utility>
 #include <vector>
@@ -42,9 +43,28 @@ struct CopulaSpec {
     std::int64_t ppf_n_obs = 0;
     std::vector<double> ppf_nodes;
     std::vector<double> ppf_table;
+    std::vector<double> equicorr_sum_cache;
+    std::vector<double> equicorr_sum_squares_cache;
 };
 
 using Observations = std::vector<std::vector<double>>;
+
+struct DoubleView {
+    const double* values = nullptr;
+    std::size_t count = 0;
+
+    std::size_t size() const noexcept {
+        return count;
+    }
+
+    const double* data() const noexcept {
+        return values;
+    }
+
+    const double& operator[](std::size_t index) const noexcept {
+        return values[index];
+    }
+};
 
 struct GridValues {
     std::vector<double> values;
@@ -101,6 +121,8 @@ private:
     CopulaSpec spec_;
     Observations u_;
     std::vector<double> gaussian_scores_;
+    std::vector<double> equicorr_sums_;
+    std::vector<double> equicorr_sum_squares_;
     int status_ = 0;
 };
 
@@ -197,6 +219,15 @@ ConditionalSampleResult multivariate_gaussian_conditional(
     const std::vector<double>& normal_draws,
     std::int64_t n_rows);
 
+ConditionalSampleResult multivariate_gaussian_conditional(
+    DoubleView correlations,
+    std::int64_t correlation_rows,
+    int dimension,
+    const std::vector<int>& given_indices,
+    DoubleView given_latent,
+    DoubleView normal_draws,
+    std::int64_t n_rows);
+
 ConditionalSampleResult multivariate_student_conditional(
     const std::vector<double>& correlations,
     std::int64_t correlation_rows,
@@ -206,6 +237,17 @@ ConditionalSampleResult multivariate_student_conditional(
     const std::vector<double>& df,
     const std::vector<double>& normal_draws,
     const std::vector<double>& chi_square_draws,
+    std::int64_t n_rows);
+
+ConditionalSampleResult multivariate_student_conditional(
+    DoubleView correlations,
+    std::int64_t correlation_rows,
+    int dimension,
+    const std::vector<int>& given_indices,
+    DoubleView given_latent,
+    DoubleView df,
+    DoubleView normal_draws,
+    DoubleView chi_square_draws,
     std::int64_t n_rows);
 
 }  // namespace scar
