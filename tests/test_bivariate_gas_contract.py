@@ -13,6 +13,7 @@ from pyscarcopula.numerical import _cpp_gas
 from pyscarcopula.numerical.gas_filter import (
     gas_filter,
     gas_mixture_h,
+    gas_mixture_h_pair,
     gas_negloglik,
     gas_predict_param,
     gas_rosenblatt,
@@ -468,6 +469,34 @@ def test_gaussian_loglik_h_and_rosenblatt_match_regression_values(scaling):
     assert gas_negloglik(
         *PARAMS, OBSERVATIONS, copula, scaling, SCORE_EPS
     ) == pytest.approx(-expected_log_likelihood, rel=2e-8, abs=2e-9)
+
+
+def test_gas_mixture_h_pair_uses_one_filter_path(monkeypatch):
+    import importlib
+
+    gas_filter_module = importlib.import_module(
+        "pyscarcopula.numerical.gas_filter")
+
+    copula = ClaytonCopula(rotate=90)
+    calls = 0
+    original = gas_filter_module.gas_filter
+
+    def counted_filter(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(gas_filter_module, "gas_filter", counted_filter)
+    first, second = gas_filter_module.gas_mixture_h_pair(
+        *PARAMS, OBSERVATIONS, copula, "unit", SCORE_EPS)
+    _, r_path, _ = original(
+        *PARAMS, OBSERVATIONS, copula, "unit", SCORE_EPS)
+    expected = copula.h_pair(
+        OBSERVATIONS[:, 1], OBSERVATIONS[:, 0], r_path)
+
+    assert calls == 1
+    np.testing.assert_allclose(first, expected[0])
+    np.testing.assert_allclose(second, expected[1])
 
 
 @pytest.mark.parametrize(

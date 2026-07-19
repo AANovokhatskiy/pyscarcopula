@@ -1,6 +1,7 @@
 #include "scar/detail/copula.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 
@@ -9,7 +10,7 @@ namespace {
 
 double digamma_positive(double x) {
     double result = 0.0;
-    while (x < 8.0) {
+    while (x < 12.0) {
         result -= 1.0 / x;
         x += 1.0;
     }
@@ -42,7 +43,7 @@ double frank_tau(double theta) {
 
     const long double value = static_cast<long double>(theta);
     long double integral = 0.0L;
-    if (theta <= 2.0) {
+    if (theta <= 0.25) {
         const long double value2 = value * value;
         integral =
             value
@@ -75,6 +76,33 @@ double frank_tau(double theta) {
     return static_cast<double>(tau);
 }
 
+double digamma_quotient_near_one(double epsilon) {
+    // (digamma(1 + e) + EulerGamma) / e, evaluated without the
+    // catastrophic cancellation of the direct expression.  The Taylor
+    // coefficients are alternating zeta(k), and |e| <= 0.01 makes the
+    // omitted terms smaller than double precision.
+    constexpr std::array<double, 13> coefficients = {
+        1.6449340668482264365,
+        -1.2020569031595942854,
+        1.0823232337111381915,
+        -1.0369277551433699263,
+        1.0173430619844491397,
+        -1.0083492773819228268,
+        1.0040773561979443394,
+        -1.0020083928260822144,
+        1.0009945751278180853,
+        -1.0004941886041194646,
+        1.0002460865533080483,
+        -1.0001227133475784891,
+        1.0000612481350587048,
+    };
+    double value = coefficients.back();
+    for (std::size_t index = coefficients.size() - 1; index > 0; --index) {
+        value = value * epsilon + coefficients[index - 1];
+    }
+    return value;
+}
+
 double joe_tau(double theta) {
     if (!std::isfinite(theta) || theta < 1.0) {
         return std::numeric_limits<double>::quiet_NaN();
@@ -85,11 +113,13 @@ double joe_tau(double theta) {
     const double euler_gamma = 0.577215664901532860606512090082402431;
     const double a = 2.0 / theta;
     double f_value = 0.0;
-    if (std::abs(a - 1.0) < 1e-10) {
-        f_value = kPi * kPi / 6.0 - 1.0;
+    const double epsilon = a - 1.0;
+    if (std::abs(epsilon) <= 0.01) {
+        f_value = digamma_quotient_near_one(epsilon)
+            - (digamma_positive(a + 1.0) + euler_gamma) / a;
     } else {
         f_value =
-            (digamma_positive(a) + euler_gamma) / (a - 1.0)
+            (digamma_positive(a) + euler_gamma) / epsilon
             - (digamma_positive(a + 1.0) + euler_gamma) / a;
     }
     return std::clamp(
@@ -146,7 +176,7 @@ double copula_tau_to_param(const scar::CopulaSpec& spec, double tau) {
     if (spec.family == scar::CopulaFamily::Frank) {
         return invert_positive_tau(
             tau,
-            1e-12,
+            0.0,
             std::max(1.0, 4.0 / (1.0 - tau)),
             frank_tau);
     }

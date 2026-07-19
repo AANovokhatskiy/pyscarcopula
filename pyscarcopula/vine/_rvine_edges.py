@@ -7,6 +7,7 @@ from pyscarcopula.vine._edge_adapter import (
     edge_condition_sample_state,
     edge_log_likelihood,
     edge_mixture_h,
+    edge_mixture_h_pair,
     edge_copula,
     edge_is_independent,
     edge_model_sample_state,
@@ -56,6 +57,30 @@ def _edge_h(edge, u_conditioned, u_given, config=None, u_pair=None,
 def _edge_h_pair_with_r(edge, u, v, r):
     """Compute both conditional directions for an explicit parameter path."""
     return edge_copula(edge).h_pair(u, v, r)
+
+
+def _edge_h_pair(edge, u, v, config=None, **strategy_kwargs):
+    """Compute ``h(u | v)`` and ``h(v | u)`` for one fitted edge."""
+    copula = edge_copula(edge)
+    if isinstance(copula, IndependentCopula) or edge_is_independent(edge):
+        return (
+            np.asarray(u, dtype=np.float64).copy(),
+            np.asarray(v, dtype=np.float64).copy(),
+        )
+
+    cfg = config if isinstance(config, dict) else {}
+    r = cfg.get('r')
+    result = edge_result(edge)
+    if r is None and result is None:
+        r = np.full(len(np.atleast_1d(u)), edge_param(edge))
+    if r is not None:
+        return copula.h_pair(u, v, r)
+
+    # The strategy contract consumes canonical (given, conditioned) columns
+    # and returns h(conditioned | given), h(given | conditioned).
+    u_pair = np.column_stack((v, u))
+    return edge_mixture_h_pair(
+        copula, result, u_pair, config=config, **strategy_kwargs)
 
 
 def _edge_log_likelihood(edge, u_pair, config=None, **strategy_kwargs):

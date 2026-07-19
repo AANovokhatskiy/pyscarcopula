@@ -18,9 +18,11 @@ from pyscarcopula.vine._rvine_edges import (
 )
 from pyscarcopula.vine._selection import (
     SelectedCopula, select_best_copula, _default_candidates, _kendall_tau,
+    _itau_initial_param, _rotation_compatible, _tau_for_itau,
 )
 from pyscarcopula.vine._helpers import _clip_unit
 from pyscarcopula.copula.elliptical import BivariateGaussianCopula
+from pyscarcopula import ClaytonCopula, FrankCopula, GumbelCopula, JoeCopula
 from pyscarcopula.copula.independent import IndependentCopula
 from pyscarcopula.stattests import gof_test
 from pyscarcopula._utils import pobs
@@ -269,6 +271,59 @@ class TestSelection:
 
         assert isinstance(cop, BivariateGaussianCopula)
         assert result.copula_param < -0.3
+
+    @pytest.mark.parametrize(
+        "copula",
+        [FrankCopula()] + [
+            copula_class(rotate=rotation)
+            for copula_class in (ClaytonCopula, GumbelCopula, JoeCopula)
+            for rotation in (0, 90, 180, 270)
+        ],
+    )
+    @pytest.mark.parametrize(
+        "tau", [0.1, 0.19, 0.2, 0.21, 0.3, 0.5, 0.7, 0.9])
+    def test_itau_screening_uses_exact_public_mapping(
+            self, copula, tau):
+        parameter = _itau_initial_param(copula, tau)
+
+        recovered = float(copula.param_to_tau([parameter])[0])
+        assert recovered == pytest.approx(tau, rel=1e-12, abs=1e-12)
+
+    @pytest.mark.parametrize("tau", [-0.9, -0.5, 0.0, 0.5, 0.9])
+    def test_gaussian_itau_screening_preserves_tau_sign(self, tau):
+        copula = BivariateGaussianCopula()
+
+        parameter = _itau_initial_param(copula, tau)
+
+        recovered = float(copula.param_to_tau([parameter])[0])
+        assert recovered == pytest.approx(tau, rel=1e-12, abs=1e-12)
+
+    @pytest.mark.parametrize(
+        ("tau", "compatible_rotations"),
+        [(0.5, {0, 180}), (-0.5, {90, 270})],
+    )
+    def test_rotation_compatibility_preserves_dependence_sign(
+            self, tau, compatible_rotations):
+        accepted = {
+            rotation for rotation in (0, 90, 180, 270)
+            if _rotation_compatible(tau, rotation)
+        }
+        assert accepted == compatible_rotations
+
+    @pytest.mark.parametrize("tau", [1e-12, 1e-8, 1e-4, 0.009, 0.01])
+    def test_archimedean_screening_does_not_clamp_interior_tau(self, tau):
+        assert _tau_for_itau(JoeCopula, tau) == tau
+        assert _tau_for_itau(JoeCopula, -tau) == tau
+
+    @pytest.mark.parametrize("tau", [-0.9, -1e-8, 1e-8, 0.9])
+    def test_gaussian_screening_preserves_interior_tau(self, tau):
+        assert _tau_for_itau(BivariateGaussianCopula, tau) == tau
+
+    def test_screening_handles_only_true_tau_boundaries(self):
+        assert _tau_for_itau(JoeCopula, 0.0) is None
+        assert _tau_for_itau(BivariateGaussianCopula, 0.0) is None
+        assert _tau_for_itau(JoeCopula, 1.0) is None
+        assert _tau_for_itau(BivariateGaussianCopula, -1.0) is None
 
     def test_cvine_fixed_copulas_rejects_instances_with_helpful_message(self):
         rng = np.random.default_rng(7)

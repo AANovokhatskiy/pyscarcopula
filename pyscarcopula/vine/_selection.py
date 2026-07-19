@@ -133,43 +133,39 @@ def _kendall_tau(u1, u2):
     return _kendall_tau_value(u1, u2)
 
 
-def _itau_initial_param(cop_class, tau_value, rotate):
+def _itau_initial_param(copula, tau_value):
     """Compute initial copula parameter from Kendall's tau.
 
     Returns parameter in the copula's natural domain (before inv_transform).
-    Returns None if no closed-form available.
+    Returns None when the candidate does not implement the public mapping.
     """
-    from pyscarcopula.copula.gumbel import GumbelCopula
-    from pyscarcopula.copula.clayton import ClaytonCopula
-    from pyscarcopula.copula.frank import FrankCopula
-    from pyscarcopula.copula.joe import JoeCopula
+    try:
+        parameter = copula.tau_to_param(
+            np.array([tau_value], dtype=np.float64))
+    except NotImplementedError:
+        return None
+    parameter = np.asarray(parameter, dtype=np.float64).reshape(-1)
+    if parameter.size != 1 or not np.isfinite(parameter[0]):
+        raise ValueError("tau_to_param must return one finite parameter")
+    return float(parameter[0])
+
+
+def _tau_for_itau(cop_class, tau_value):
+    """Return the family-scale tau without altering interior observations."""
     from pyscarcopula.copula.elliptical import BivariateGaussianCopula
 
-    if cop_class is BivariateGaussianCopula:
-        rho = np.sin(np.pi * tau_value / 2.0)
-        return np.clip(rho, -0.99, 0.99)
-
-    tau = max(abs(tau_value), 0.01)
-
-    if cop_class is GumbelCopula:
-        theta = 1.0 / (1.0 - min(tau, 0.95))
-        return max(theta, 1.001)
-
-    if cop_class is ClaytonCopula:
-        theta = 2.0 * tau / (1.0 - min(tau, 0.95))
-        return max(theta, 0.01)
-
-    if cop_class is FrankCopula:
-        return max(9.0 * tau, 0.1)
-
-    if cop_class is JoeCopula:
-        if tau < 0.2:
-            theta = 1.0 + 2.0 * tau
-        else:
-            theta = (1.0 + np.sqrt(1.0 + 8.0 / (1.0 - min(tau, 0.95)))) / 2.0
-        return max(theta, 1.001)
-
-    return None
+    tau = (
+        float(tau_value)
+        if cop_class is BivariateGaussianCopula
+        else abs(float(tau_value))
+    )
+    if tau == 0.0:
+        return None
+    if tau >= 1.0 or tau <= -1.0:
+        # Perfect concordance is attained only at a parameter boundary and
+        # has no finite itau start for the screening likelihood.
+        return None
+    return tau
 
 
 def _rotation_compatible(tau, rotate):
@@ -237,18 +233,17 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
                 continue
 
             try:
-                tau_for_family = (
-                    tau if cop_class is BivariateGaussianCopula
-                    else abs(tau)
-                )
-                r0 = _itau_initial_param(cop_class, tau_for_family, angle)
-                if r0 is None:
-                    continue
-
                 try:
                     cop = cop_class(rotate=angle, transform_type=transform_type)
                 except TypeError:
                     cop = cop_class(rotate=angle)
+
+                tau_for_family = _tau_for_itau(cop_class, tau)
+                if tau_for_family is None:
+                    continue
+                r0 = _itau_initial_param(cop, tau_for_family)
+                if r0 is None:
+                    continue
 
                 logL = float(cop.log_likelihood(u_pair, float(r0)))
 

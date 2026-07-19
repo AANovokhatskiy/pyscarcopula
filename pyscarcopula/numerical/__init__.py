@@ -29,11 +29,13 @@ from pyscarcopula.numerical.jacobi_tm import (
     jacobi_matrix_neg_loglik_with_grad,
     jacobi_matrix_forward_predictive_mean,
     jacobi_matrix_forward_mixture_h,
+    jacobi_matrix_forward_mixture_h_pair,
     jacobi_matrix_state_distribution,
     jacobi_loglik,
     jacobi_neg_loglik,
     jacobi_forward_predictive_mean,
     jacobi_forward_mixture_h,
+    jacobi_forward_mixture_h_pair,
     jacobi_state_distribution,
 )
 from pyscarcopula.numerical._scar_ou_config import (
@@ -45,6 +47,7 @@ from pyscarcopula.numerical.predictive_tm import sample_grid_distribution
 from pyscarcopula.numerical.gas_filter import (
     gas_filter, gas_loglik, gas_predict_param, gas_negloglik, gas_rosenblatt,
     gas_mixture_h,
+    gas_mixture_h_pair,
 )
 
 __all__ = [
@@ -59,9 +62,11 @@ __all__ = [
     'jacobi_matrix_neg_loglik_with_grad',
     'jacobi_matrix_forward_predictive_mean',
     'jacobi_matrix_forward_mixture_h',
+    'jacobi_matrix_forward_mixture_h_pair',
     'jacobi_matrix_state_distribution',
     'jacobi_loglik', 'jacobi_neg_loglik',
     'jacobi_forward_predictive_mean', 'jacobi_forward_mixture_h',
+    'jacobi_forward_mixture_h_pair',
     'jacobi_state_distribution',
     'AutoTMConfig', 'select_auto_backend',
     'tm_forward_predictive_mean',
@@ -71,4 +76,5 @@ __all__ = [
     'gas_filter', 'gas_loglik', 'gas_predict_param', 'gas_negloglik',
     'gas_rosenblatt',
     'gas_mixture_h',
+    'gas_mixture_h_pair',
 ]

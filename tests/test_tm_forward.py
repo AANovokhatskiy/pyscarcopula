@@ -27,6 +27,7 @@ from pyscarcopula.numerical.gof_blocks import (
     iter_forward_weight_blocks,
 )
 from pyscarcopula.copula.elliptical import BivariateGaussianCopula
+from pyscarcopula.copula.clayton import ClaytonCopula
 from pyscarcopula.copula.multivariate import StochasticStudentCopula
 from pyscarcopula.strategy._base import get_strategy_for_result
 from pyscarcopula.strategy.scar_tm import SCARTMStrategy
@@ -116,6 +117,55 @@ def _materialized_forward_mixture_h(kappa, mu, nu, u, copula, **kwargs):
         )
         h_mix[k] = np.sum(h_vals * weights[k])
     return np.clip(h_mix, 1e-6, 1.0 - 1e-6)
+
+
+def _materialized_forward_mixture_h_pair(
+        kappa, mu, nu, u, copula, **kwargs):
+    grid = TMGrid(kappa, mu, nu, len(u), **kwargs)
+    fi_grid = grid.copula_grid(u, copula)
+    weights = grid.forward_weights(fi_grid)
+    r_grid = copula.transform(grid.z + grid.mu)
+
+    first = np.empty(len(u))
+    second = np.empty(len(u))
+    for k, row in enumerate(u):
+        h_first, h_second = copula.h_pair(
+            np.full(grid.K, row[1]),
+            np.full(grid.K, row[0]),
+            r_grid,
+        )
+        first[k] = np.sum(h_first * weights[k])
+        second[k] = np.sum(h_second * weights[k])
+    return (
+        np.clip(first, 1e-6, 1.0 - 1e-6),
+        np.clip(second, 1e-6, 1.0 - 1e-6),
+    )
+
+
+def test_native_mixture_h_pair_matches_canonical_rotated_oracle():
+    rng = np.random.default_rng(20260720)
+    u = rng.uniform(0.05, 0.95, size=(9, 2))
+    copula = ClaytonCopula(rotate=90, transform_type="xtanh")
+    params = (1.1, 0.2, 0.8)
+    kwargs = {
+        "K": 25,
+        "grid_range": 3.0,
+        "adaptive": False,
+        "max_K": 25,
+    }
+    config = AutoTMConfig(transition_method="matrix", **kwargs)
+
+    actual = _cpp_scar_ou.mixture_h_pair(
+        *params, u, copula, config)
+    expected = _materialized_forward_mixture_h_pair(
+        *params, u, copula, transition_method="matrix", **kwargs)
+
+    np.testing.assert_allclose(actual[0], expected[0], rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(actual[1], expected[1], rtol=1e-12, atol=1e-12)
+    # A rotated copula exposes the old swapped-posterior error.
+    legacy_reverse = _cpp_scar_ou.mixture_h(
+        *params, u[:, ::-1].copy(), copula, config)
+    assert np.max(np.abs(actual[1] - legacy_reverse)) > 1e-5
 
 
 def test_forward_block_size_bounds_memory():

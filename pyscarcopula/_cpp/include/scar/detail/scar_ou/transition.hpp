@@ -72,7 +72,8 @@ bool matrix_forward_mixture_h(
     const std::vector<double>& matrix,
     const double* u,
     std::int64_t n_obs,
-    double* out);
+    double* out,
+    double* out_reverse = nullptr);
 bool local_forward_predictive_mean(
     const scar::CopulaSpec& copula,
     const OuGrid& grid,
@@ -88,6 +89,7 @@ bool local_forward_mixture_h(
     const std::vector<double>& gh_weights,
     const double* u,
     std::int64_t n_obs,
-    double* out);
+    double* out,
+    double* out_reverse = nullptr);
 
 }  // namespace scar_internal

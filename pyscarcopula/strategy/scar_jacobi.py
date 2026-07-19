@@ -16,9 +16,11 @@ from pyscarcopula._types import (
 from pyscarcopula.numerical.jacobi_tm import (
     _jacobi_stationary_shape,
     jacobi_forward_mixture_h,
+    jacobi_forward_mixture_h_pair,
     jacobi_forward_predictive_mean,
     jacobi_loglik,
     jacobi_matrix_forward_mixture_h,
+    jacobi_matrix_forward_mixture_h_pair,
     jacobi_matrix_forward_predictive_mean,
     jacobi_matrix_loglik,
     jacobi_matrix_neg_loglik,
@@ -308,6 +310,15 @@ class SCARJacobiStrategy:
         return jacobi_forward_mixture_h(
             kappa, m, xi, u, copula, **self._backend_kwargs())
 
+    def _mixture_h_pair(self, kappa, m, xi, u, copula):
+        if not self._shape_is_supported(kappa, m, xi):
+            raise ValueError("Jacobi stationary shape is outside supported range")
+        if self._uses_matrix_backend():
+            return jacobi_matrix_forward_mixture_h_pair(
+                kappa, m, xi, u, copula, **self._matrix_backend_kwargs())
+        return jacobi_forward_mixture_h_pair(
+            kappa, m, xi, u, copula, **self._backend_kwargs())
+
     def _state_distribution(self, kappa, m, xi, u, copula, horizon):
         if not self._shape_is_supported(kappa, m, xi):
             raise ValueError("Jacobi stationary shape is outside supported range")
@@ -340,7 +351,7 @@ class SCARJacobiStrategy:
                 "tau_to_param mapping"
             ) from exc
 
-    def _initial_point(self, copula, u):
+    def _initial_point(self, copula, u, initial_mle_result=None):
         if not self.smart_init:
             alpha0 = np.array([1.0, 0.5, 0.2], dtype=np.float64)
             diagnostics = _initialization_diagnostics(
@@ -353,9 +364,10 @@ class SCARJacobiStrategy:
             return alpha0, diagnostics
 
         try:
-            from pyscarcopula.strategy.mle import MLEStrategy
-            mle = MLEStrategy(config=self.config)
-            mle_result = mle.fit(copula, u)
+            mle_result = initial_mle_result
+            if mle_result is None:
+                from pyscarcopula.strategy.mle import MLEStrategy
+                mle_result = MLEStrategy(config=self.config).fit(copula, u)
             parameter = np.array([mle_result.copula_param])
             if copula_native.supported(copula):
                 tau_hat = float(
@@ -383,6 +395,9 @@ class SCARJacobiStrategy:
             alpha0,
             attempts,
         )
+        diagnostics['mle_source'] = (
+            'selection_result' if initial_mle_result is not None
+            else 'strategy_fit')
         return alpha0, diagnostics
 
     def fit(self, copula, u: np.ndarray,
@@ -396,6 +411,7 @@ class SCARJacobiStrategy:
             maxcor: int | None = None,
             finite_diff_rel_step: float | None = None,
             verbose: bool = False,
+            initial_mle_result=None,
             **kwargs) -> LatentResult:
         reject_legacy_tol(kwargs)
         if self.analytical_grad:
@@ -407,7 +423,8 @@ class SCARJacobiStrategy:
         self._check_kendall_mapping(copula)
         u = np.asarray(u, dtype=np.float64)
         if alpha0 is None:
-            alpha0, initialization = self._initial_point(copula, u)
+            alpha0, initialization = self._initial_point(
+                copula, u, initial_mle_result)
         else:
             initialization = _explicit_initialization_diagnostics(alpha0)
         alpha0 = np.asarray(alpha0, dtype=np.float64)
@@ -538,6 +555,25 @@ class SCARJacobiStrategy:
                     p.kappa, p.m, p.xi, u, copula, horizon='next')
 
         return h_mix
+
+    def mixture_h_pair(self, copula, u: np.ndarray,
+                       result: LatentResult, **kwargs):
+        """Both h-directions from one Jacobi posterior pass."""
+        p = result.params
+        h_pair = self._mixture_h_pair(p.kappa, p.m, p.xi, u, copula)
+
+        state_cache = kwargs.get('state_cache')
+        current_cache_key = kwargs.get('current_cache_key')
+        next_cache_key = kwargs.get('next_cache_key')
+        if state_cache is not None:
+            if current_cache_key is not None:
+                state_cache[current_cache_key] = self._state_distribution(
+                    p.kappa, p.m, p.xi, u, copula, horizon='current')
+            if next_cache_key is not None:
+                state_cache[next_cache_key] = self._state_distribution(
+                    p.kappa, p.m, p.xi, u, copula, horizon='next')
+
+        return h_pair
 
     def objective(self, copula, u: np.ndarray,
                   alpha: np.ndarray, **kwargs) -> float:

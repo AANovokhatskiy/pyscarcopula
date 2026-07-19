@@ -56,7 +56,7 @@ def suffix_sampling_state(d, trees, matrix, edge_map, pair_copulas,
 
     try:
         perm_matrix, rebuilt_edge_map = build_rvine_matrix_with_edge_map(
-            d, relabeled_trees)
+            d, relabeled_trees, validate=False)
     except RuntimeError:
         return None
 

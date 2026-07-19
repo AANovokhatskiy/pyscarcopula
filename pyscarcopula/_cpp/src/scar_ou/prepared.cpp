@@ -166,6 +166,13 @@ std::vector<double> PreparedScarOuEvaluator::mixture_h(
     return call_mixture_h(params, backend, status);
 }
 
+std::vector<double> PreparedScarOuEvaluator::mixture_h_pair(
+    const OuParams& params,
+    OuBackend& backend,
+    int& status) const {
+    return call_mixture_h_pair(params, backend, status);
+}
+
 StateDistribution PreparedScarOuEvaluator::state_distribution(
     const OuParams& params,
     bool horizon_next) const {
@@ -286,6 +293,26 @@ std::vector<double> PreparedScarOuEvaluator::call_mixture_h(
             params, copula_, u, config_, status);
     }
     return evaluator_.mixture_h_auto(
+        params, copula_, u, config_, backend, status);
+}
+
+std::vector<double> PreparedScarOuEvaluator::call_mixture_h_pair(
+    const OuParams& params,
+    OuBackend& backend,
+    int& status) const {
+
+    const ObservationView u = view();
+    if (method_ == "local") {
+        backend = OuBackend::LocalGh;
+        return evaluator_.mixture_h_pair_local_gh(
+            params, copula_, u, config_, status);
+    }
+    if (method_ == "matrix") {
+        backend = OuBackend::Matrix;
+        return evaluator_.mixture_h_pair_matrix(
+            params, copula_, u, config_, status);
+    }
+    return evaluator_.mixture_h_pair_auto(
         params, copula_, u, config_, backend, status);
 }
 

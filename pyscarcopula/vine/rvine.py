@@ -53,6 +53,7 @@ from pyscarcopula.vine._conditional_rvine import (
 from pyscarcopula.vine._rvine_dissmann import select_rvine
 from pyscarcopula.vine._rvine_edges import (
     _edge_h,
+    _edge_h_pair,
     _edge_h_inverse,
     _edge_initial_model_state,
     _edge_requires_stepwise_sample,
@@ -207,6 +208,7 @@ class RVineCopula:
         self._conditional_fit_supported = None
         self._conditional_mode = None
         self._fit_diagnostics = None
+        self._suffix_state_cache = {}
 
     # Fit
 
@@ -269,6 +271,8 @@ class RVineCopula:
         self : RVineCopula
             Enables chained calls, e.g. ``RVineCopula().fit(u).summary()``.
         """
+        method = method.upper()
+        self._suffix_state_cache = {}
         u = np.asarray(data, dtype=np.float64)
         if u.ndim != 2:
             raise ValueError(f"RVineCopula.fit: data must be 2D, got shape {u.shape}")
@@ -349,7 +353,8 @@ class RVineCopula:
                 },
                 'candidates': (),
             }
-        M, edge_map = build_rvine_matrix_with_edge_map(d, trees_repr)
+        M, edge_map = build_rvine_matrix_with_edge_map(
+            d, trees_repr, validate=False)
 
         pair_copulas = {}
         for (t, col), orig_idx in edge_map.items():
@@ -417,7 +422,7 @@ class RVineCopula:
         self._log_likelihood = float(sum(
             pc.log_likelihood for pc in pair_copulas.values()
         ))
-        self.method = method.upper()
+        self.method = method
         total_nfev = sum(
             int(getattr(edge_result(pc), 'nfev', 0) or 0)
             for pc in pair_copulas.values()
@@ -564,10 +569,11 @@ class RVineCopula:
                         pseudo_obs[(v1, conditioning | {v2})] = _clip_unit(
                             u1_next)
                     else:
+                        u2_next, u1_next = _edge_h_pair(pc, u2, u1)
                         pseudo_obs[(v2, conditioning | {v1})] = _clip_unit(
-                            pc.h(u2, u1))
+                            u2_next)
                         pseudo_obs[(v1, conditioning | {v2})] = _clip_unit(
-                            pc.h(u1, u2))
+                            u1_next)
         return total
 
     def _matrix_key(self, tree_level, orig_idx):
@@ -831,7 +837,14 @@ class RVineCopula:
         return given_suffix_start_col(self.d, given, matrix)
 
     def _suffix_sampling_state(self, given):
-        return suffix_sampling_state(
+        cache = getattr(self, '_suffix_state_cache', None)
+        if cache is None:
+            cache = {}
+            self._suffix_state_cache = cache
+        cache_key = frozenset(int(var) for var in given)
+        if cache_key in cache:
+            return cache[cache_key]
+        state = suffix_sampling_state(
             self.d,
             self.trees,
             self.matrix,
@@ -840,6 +853,8 @@ class RVineCopula:
             self._matrix_key,
             given,
         )
+        cache[cache_key] = state
+        return state
 
     def _find_peel_order_for_given_suffix(self, given_vars):
         from pyscarcopula.vine._conditional_rvine import (
@@ -1085,10 +1100,11 @@ class RVineCopula:
                 u1 = _clip_unit(pseudo_obs[(v1, conditioning)])
                 u2 = _clip_unit(pseudo_obs[(v2, conditioning)])
                 if t < self.d - 2:
+                    u2_next, u1_next = _edge_h_pair(pc, u2, u1)
                     pseudo_obs[(v2, conditioning | {v1})] = _clip_unit(
-                        _edge_h(pc, u2, u1))
+                        u2_next)
                     pseudo_obs[(v1, conditioning | {v2})] = _clip_unit(
-                        _edge_h(pc, u1, u2))
+                        u1_next)
         return pseudo_obs
 
     def _predict_r_for_edges(self, edge_keys, pair_copulas, edge_map, n,

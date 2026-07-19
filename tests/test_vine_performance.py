@@ -107,6 +107,7 @@ def _count_scar_tm_posterior_calls():
     original_predictive_state = SCARTMStrategy.predictive_state
     original_predictive_params = SCARTMStrategy.predictive_params
     original_mixture_h = SCARTMStrategy.mixture_h
+    original_mixture_h_pair = SCARTMStrategy.mixture_h_pair
     counts = Counter()
     elapsed = Counter()
 
@@ -125,12 +126,15 @@ def _count_scar_tm_posterior_calls():
     SCARTMStrategy.predictive_params = timed(
         "predictive_params", original_predictive_params)
     SCARTMStrategy.mixture_h = timed("mixture_h", original_mixture_h)
+    SCARTMStrategy.mixture_h_pair = timed(
+        "mixture_h_pair", original_mixture_h_pair)
     try:
         yield counts, elapsed
     finally:
         SCARTMStrategy.predictive_state = original_predictive_state
         SCARTMStrategy.predictive_params = original_predictive_params
         SCARTMStrategy.mixture_h = original_mixture_h
+        SCARTMStrategy.mixture_h_pair = original_mixture_h_pair
 
 
 _SYNTHETIC_FIT_WORKLOADS = [
@@ -323,6 +327,7 @@ def test_rvine_scar_synthetic_predict_profile(
         predictive_params_calls=counts["predictive_params"],
         predictive_state_calls=counts["predictive_state"],
         mixture_h_calls=counts["mixture_h"],
+        mixture_h_pair_calls=counts["mixture_h_pair"],
         total_ms=f"{timings.get('total', 0.0):.3f}",
         compute_pseudo_obs_ms=(
             f"{timings.get('compute_pseudo_obs', 0.0):.3f}"),
@@ -337,6 +342,8 @@ def test_rvine_scar_synthetic_predict_profile(
         predictive_state_ms=(
             f"{1e3 * elapsed_by_call['predictive_state']:.3f}"),
         mixture_h_ms=f"{1e3 * elapsed_by_call['mixture_h']:.3f}",
+        mixture_h_pair_ms=(
+            f"{1e3 * elapsed_by_call['mixture_h_pair']:.3f}"),
     )
 
 

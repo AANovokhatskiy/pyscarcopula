@@ -264,14 +264,22 @@ def _search_modes(given_vars):
     return ('given_first', 'balanced', 'fit_first')
 
 
+def _branch_pseudo_obs(pseudo_obs):
+    """Create an isolated branch map while sharing immutable array values.
+
+    Tree fitting only reads existing pseudo-observation arrays and stores new
+    arrays under new keys. Copying the dictionary is therefore sufficient to
+    isolate sibling search branches; copying every accumulated ``(T,)`` array
+    would add O(T * d²) allocation churn per branch without changing values.
+    """
+    return pseudo_obs.copy()
+
+
 def _build_and_fit_candidate(
         u, d, pseudo_obs_seed, candidates, allow_rotations, criterion, method,
         copulas, config, truncation_level, truncation_fill, threshold,
         min_edge_logL, transform_type, fit_kwargs, *, mode, given_vars=()):
-    pseudo_obs = {
-        key: value.copy()
-        for key, value in pseudo_obs_seed.items()
-    }
+    pseudo_obs = _branch_pseudo_obs(pseudo_obs_seed)
     trees_repr = []
     fitted = []
 
@@ -360,7 +368,7 @@ def _beam_search_candidates(
     # Tree 0 seeds the beam. Higher trees extend each partial structure with
     # all modes, so mode_path is an intentional per-level builder trace.
     for mode in _search_modes(given_vars):
-        pseudo_obs = {key: value.copy() for key, value in pseudo_obs_seed.items()}
+        pseudo_obs = _branch_pseudo_obs(pseudo_obs_seed)
         repr_0 = _build_tree_level_repr(
             0, u, None, pseudo_obs, mode, given_vars, truncation_level)
         fitted_0 = _fit_tree_level(
@@ -391,10 +399,7 @@ def _beam_search_candidates(
         expanded = []
         for state in beam:
             for mode in _search_modes(given_vars):
-                pseudo_obs = {
-                    key: value.copy()
-                    for key, value in state['pseudo_obs'].items()
-                }
+                pseudo_obs = _branch_pseudo_obs(state['pseudo_obs'])
                 new_repr = _build_tree_level_repr(
                     t, u, state['trees_repr'][-1], pseudo_obs, mode,
                     given_vars, truncation_level)
@@ -527,7 +532,8 @@ def _score_candidate_structure(
         trees_repr, fitted, d, given_vars, mode, *, mode_path=None):
     fit_score = _fit_score_levels(fitted)
     if given_vars:
-        matrix, edge_map = build_rvine_matrix_with_edge_map(d, trees_repr)
+        matrix, edge_map = build_rvine_matrix_with_edge_map(
+            d, trees_repr, validate=False)
         dag = build_rvine_dag(matrix, edge_map)
         dag_info = analyze_conditional_reachability(dag, given_vars, d)
         exact_supported = (
@@ -666,8 +672,10 @@ def _fit_tree_level(
             elif is_truncated or method.lower() == 'mle' or isinstance(cop, IndependentCopula):
                 result = selection_result
             else:
+                dynamic_fit_kwargs = dict(fit_kwargs)
+                dynamic_fit_kwargs['initial_mle_result'] = selection_result
                 result = _fit_with_strategy(
-                    cop, u_pair, method, config, fit_kwargs)
+                    cop, u_pair, method, config, dynamic_fit_kwargs)
                 if not bool(getattr(result, 'success', True)):
                     result = selection_result
 
@@ -677,8 +685,9 @@ def _fit_tree_level(
 
         # Propagate pseudo-observations for higher trees.
         if t < d - 2:
-            pseudo_obs[(v2, conditioning | {v1})] = _clip_unit(pc.h(u2, u1))
-            pseudo_obs[(v1, conditioning | {v2})] = _clip_unit(pc.h(u1, u2))
+            u2_next, u1_next = pc.h_pair(u2, u1)
+            pseudo_obs[(v2, conditioning | {v1})] = _clip_unit(u2_next)
+            pseudo_obs[(v1, conditioning | {v2})] = _clip_unit(u1_next)
 
     return fitted_level
 

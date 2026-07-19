@@ -89,7 +89,8 @@ def _objective_is_invalid(value):
 
 
 def _resolve_initial_point(
-        copula, u, config, smart_init, verbose, alpha0):
+        copula, u, config, smart_init, verbose, alpha0,
+        initial_mle_result=None):
     return resolve_ou_initial_point(
         copula,
         u,
@@ -98,6 +99,7 @@ def _resolve_initial_point(
         verbose,
         alpha0,
         smart_initial_point_func=smart_initial_point,
+        initial_mle_result=initial_mle_result,
     )
 
 
@@ -325,6 +327,16 @@ class _PreparedScarOuPosteriorCache:
             auto_config,
             lambda prepared: prepared.mixture_h(kappa, mu, nu),
             lambda: _cpp_scar_ou.mixture_h(
+                kappa, mu, nu, u, copula, auto_config),
+        )
+
+    def mixture_h_pair(self, kappa, mu, nu, u, copula, auto_config):
+        return self._call(
+            u,
+            copula,
+            auto_config,
+            lambda prepared: prepared.mixture_h_pair(kappa, mu, nu),
+            lambda: _cpp_scar_ou.mixture_h_pair(
                 kappa, mu, nu, u, copula, auto_config),
         )
 
@@ -792,7 +804,7 @@ class SCARTMStrategy:
         return diagnostics
 
     def _fit_joint_static(self, copula, u, alpha0, optimizer_options,
-                          verbose):
+                          verbose, initial_mle_result=None):
         """Fit OU and Python-parameterized static correlation parameters."""
 
         n_corr = int(copula._corr_num_params())
@@ -807,6 +819,7 @@ class SCARTMStrategy:
             self.smart_init,
             verbose,
             alpha0,
+            initial_mle_result,
         )
         if initialization["selected_method"] != "user_provided":
             fitted_corr = np.asarray(
@@ -1162,6 +1175,7 @@ class SCARTMStrategy:
             maxcor: int | None = None,
             finite_diff_rel_step: float | None = None,
             verbose: bool = False,
+            initial_mle_result=None,
             **kwargs) -> LatentResult:
         """Fit SCAR-TM-OU model.
 
@@ -1175,6 +1189,8 @@ class SCARTMStrategy:
         gtol, ftol, maxfun, maxiter, maxls, eps, maxcor,
         finite_diff_rel_step : L-BFGS-B options
         verbose : print progress
+        initial_mle_result : MLEResult, optional
+            Existing static fit used only for automatic initialization.
 
         Returns
         -------
@@ -1199,7 +1215,8 @@ class SCARTMStrategy:
         n_corr = int(corr_num_params()) if callable(corr_num_params) else 0
         if n_corr:
             return self._fit_joint_static(
-                copula, u, alpha0, optimizer_options, verbose)
+                copula, u, alpha0, optimizer_options, verbose,
+                initial_mle_result)
         # ── Initial point ─────────────────────────────────────────
         alpha0, initialization = _resolve_initial_point(
             copula,
@@ -1208,6 +1225,7 @@ class SCARTMStrategy:
             self.smart_init,
             verbose,
             alpha0,
+            initial_mle_result,
         )
         alpha0 = np.asarray(alpha0, dtype=np.float64)
 
@@ -1530,6 +1548,73 @@ class SCARTMStrategy:
             if next_cache_key is not None:
                 state_cache[next_cache_key] = next_state
         return h_mix
+
+    def mixture_h_pair(self, copula, u: np.ndarray,
+                       result: LatentResult, state_cache=None,
+                       current_cache_key=None, next_cache_key=None,
+                       posterior_cache=None):
+        """Both vine h-directions from one SCAR posterior pass."""
+        capabilities = get_copula_capabilities(copula)
+        if capabilities is not None and not capabilities.supports_pair_ops:
+            raise NotImplementedError(
+                "mixture_h_pair is not defined for multivariate "
+                "StochasticStudent-compatible copulas")
+        p = result.params
+        self._uses_cpp(copula)
+        cfg = self._auto_config(
+            self._grid_transition_method(),
+            kappa=p.kappa,
+            n_obs=len(u),
+        )
+        current_state = None
+        next_state = None
+        workspace = self._posterior_workspace_or_none(posterior_cache)
+        if workspace is not None:
+            h_pair = workspace.mixture_h_pair(
+                p.kappa, p.mu, p.nu, u, copula, cfg)
+            if state_cache is not None:
+                if current_cache_key is not None:
+                    current_state = workspace.state_distribution(
+                        p.kappa, p.mu, p.nu, u, copula, cfg,
+                        horizon='current')
+                if next_cache_key is not None:
+                    next_state = workspace.state_distribution(
+                        p.kappa, p.mu, p.nu, u, copula, cfg, horizon='next')
+        else:
+            prepared = None
+            try:
+                prepared = _cpp_scar_ou.prepare_objective(u, copula, cfg)
+                prepared.update_copula(copula)
+                h_pair = prepared.mixture_h_pair(p.kappa, p.mu, p.nu)
+                if state_cache is not None:
+                    if current_cache_key is not None:
+                        current_state = prepared.state_distribution(
+                            p.kappa, p.mu, p.nu, horizon='current')
+                    if next_cache_key is not None:
+                        next_state = prepared.state_distribution(
+                            p.kappa, p.mu, p.nu, horizon='next')
+            except AttributeError:
+                prepared = None
+            except _cpp_scar_ou.CppUnsupported:
+                prepared = None
+            if prepared is None:
+                h_pair = _cpp_scar_ou.mixture_h_pair(
+                    p.kappa, p.mu, p.nu, u, copula, cfg)
+                if state_cache is not None:
+                    if current_cache_key is not None:
+                        current_state = _cpp_scar_ou.state_distribution(
+                            p.kappa, p.mu, p.nu, u, copula, cfg,
+                            horizon='current')
+                    if next_cache_key is not None:
+                        next_state = _cpp_scar_ou.state_distribution(
+                            p.kappa, p.mu, p.nu, u, copula, cfg,
+                            horizon='next')
+        if state_cache is not None:
+            if current_cache_key is not None:
+                state_cache[current_cache_key] = current_state
+            if next_cache_key is not None:
+                state_cache[next_cache_key] = next_state
+        return h_pair
 
     def objective(self, copula, u: np.ndarray,
                   alpha: np.ndarray, **kwargs) -> float:

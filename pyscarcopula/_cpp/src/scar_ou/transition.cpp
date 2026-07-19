@@ -206,7 +206,8 @@ bool matrix_forward_mixture_h(
     const std::vector<double>& matrix,
     const double* u,
     std::int64_t n_obs,
-    double* out) {
+    double* out,
+    double* out_reverse) {
 
     if (copula.family == scar::CopulaFamily::Student) {
         return false;
@@ -245,13 +246,22 @@ bool matrix_forward_mixture_h(
                       const std::vector<double>& weights,
                       const std::vector<double>& /*fi_row*/) {
         double h_mix = 0.0;
+        double h_mix_reverse = 0.0;
         const double u2 = u[2 * t + 1];
         const double u1 = u[2 * t];
         for (int j = 0; j < grid.K; ++j) {
             const std::size_t idx = static_cast<std::size_t>(j);
             h_mix += weights[idx] * copula_h_rotated(copula, u2, u1, r_grid[idx]);
+            if (out_reverse != nullptr) {
+                h_mix_reverse += weights[idx]
+                    * copula_h_rotated(copula, u1, u2, r_grid[idx]);
+            }
         }
         out[t] = std::min(std::max(h_mix, kHEps), 1.0 - kHEps);
+        if (out_reverse != nullptr) {
+            out_reverse[t] = std::min(
+                std::max(h_mix_reverse, kHEps), 1.0 - kHEps);
+        }
     };
 
     return forward_filter_grid(copula, grid, u, n_obs, advance_matrix, on_row);
@@ -324,7 +334,8 @@ bool local_forward_mixture_h(
     const std::vector<double>& gh_weights,
     const double* u,
     std::int64_t n_obs,
-    double* out) {
+    double* out,
+    double* out_reverse) {
 
     if (copula.family == scar::CopulaFamily::Student) {
         return false;
@@ -371,13 +382,22 @@ bool local_forward_mixture_h(
                       const std::vector<double>& weights,
                       const std::vector<double>& /*fi_row*/) {
         double h_mix = 0.0;
+        double h_mix_reverse = 0.0;
         const double u2 = u[2 * t + 1];
         const double u1 = u[2 * t];
         for (int j = 0; j < grid.K; ++j) {
             const std::size_t idx = static_cast<std::size_t>(j);
             h_mix += weights[idx] * copula_h_rotated(copula, u2, u1, r_grid[idx]);
+            if (out_reverse != nullptr) {
+                h_mix_reverse += weights[idx]
+                    * copula_h_rotated(copula, u1, u2, r_grid[idx]);
+            }
         }
         out[t] = std::min(std::max(h_mix, kHEps), 1.0 - kHEps);
+        if (out_reverse != nullptr) {
+            out_reverse[t] = std::min(
+                std::max(h_mix_reverse, kHEps), 1.0 - kHEps);
+        }
     };
 
     return forward_filter_grid(copula, grid, u, n_obs, advance_local, on_row);

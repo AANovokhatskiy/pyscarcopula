@@ -1,6 +1,7 @@
 """Unit tests for vine._rvine_matrix_builder (natural-order convention)."""
 import numpy as np
 import pytest
+from pyscarcopula.vine import _rvine_matrix_builder as matrix_builder
 
 from pyscarcopula.vine._rvine_matrix_builder import (
     build_rvine_matrix,
@@ -62,6 +63,42 @@ def _cvine_trees(d):
 # ═══════════════════════════════════════════════════════════
 
 class TestBasic:
+
+    def test_public_builders_validate_by_default_but_allow_trusted_skip(
+            self, monkeypatch):
+        calls = 0
+        original_validate = matrix_builder.validate_natural_order_matrix
+
+        def counted_validate(matrix):
+            nonlocal calls
+            calls += 1
+            return original_validate(matrix)
+
+        monkeypatch.setattr(
+            matrix_builder, 'validate_natural_order_matrix',
+            counted_validate)
+        trees = _dvine_trees(5)
+
+        build_rvine_matrix(5, trees)
+        build_rvine_matrix_with_edge_map(5, trees)
+        assert calls == 2
+
+        build_rvine_matrix(5, trees, validate=False)
+        build_rvine_matrix_with_edge_map(5, trees, validate=False)
+        assert calls == 2
+
+    def test_public_builder_keeps_defensive_validation_default(
+            self, monkeypatch):
+        monkeypatch.setattr(
+            matrix_builder, 'validate_natural_order_matrix',
+            lambda matrix: False)
+        trees = _dvine_trees(4)
+
+        with pytest.raises(RuntimeError, match='proximity check'):
+            build_rvine_matrix(4, trees)
+
+        matrix = build_rvine_matrix(4, trees, validate=False)
+        assert matrix.shape == (4, 4)
 
     def test_d1_trivial(self):
         M = build_rvine_matrix(1, [])

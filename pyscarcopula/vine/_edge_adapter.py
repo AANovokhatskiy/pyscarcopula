@@ -224,6 +224,34 @@ def edge_mixture_h(copula, result, u_pair, config=None, **kwargs):
         return copula.h(u_pair[:, 1], u_pair[:, 0], r)
 
 
+def edge_mixture_h_pair(copula, result, u_pair, config=None, **kwargs):
+    """Compute both h-directions from the canonical ``(u1, u2)`` pair."""
+    strategy = strategy_for_result(
+        result, config=config, **_strategy_kwargs(result, **kwargs))
+    pair_method = getattr(strategy, 'mixture_h_pair', None)
+    if callable(pair_method):
+        call_kwargs = {}
+        for name in (
+                'state_cache', 'current_cache_key', 'next_cache_key',
+                'posterior_cache'):
+            value = kwargs.get(name)
+            if value is not None:
+                call_kwargs[name] = value
+        try:
+            return pair_method(copula, u_pair, result, **call_kwargs)
+        except NotImplementedError:
+            pass
+
+    # Backward-compatible path for third-party strategies implementing only
+    # the original one-directional contract. The second call necessarily
+    # retains the legacy swapped-posterior semantics.
+    first = edge_mixture_h(
+        copula, result, u_pair, config=config, **kwargs)
+    second = edge_mixture_h(
+        copula, result, u_pair[:, ::-1], config=config, **kwargs)
+    return first, second
+
+
 def edge_log_likelihood(copula, result, u_pair, config=None, **kwargs):
     """Evaluate edge log-likelihood using the strategy matching ``result``."""
     strategy = strategy_for_result(

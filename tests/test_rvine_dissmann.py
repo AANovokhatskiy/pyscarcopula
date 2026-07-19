@@ -2,6 +2,8 @@
 import numpy as np
 import pytest
 
+import pyscarcopula.vine._rvine_dissmann as dissmann_module
+
 from pyscarcopula import (
     GumbelCopula,
     IndependentCopula, BivariateGaussianCopula,
@@ -9,6 +11,7 @@ from pyscarcopula import (
 from pyscarcopula._types import GASResult, gas_params
 from pyscarcopula.vine._pair_copula import PairCopula
 from pyscarcopula.vine._rvine_dissmann import (
+    _branch_pseudo_obs,
     select_rvine,
 )
 from pyscarcopula.vine._rvine_matrix_builder import (
@@ -20,6 +23,47 @@ from pyscarcopula.vine._rvine_matrix_builder import (
 # ═══════════════════════════════════════════════════════════
 # Synthetic data helpers
 # ═══════════════════════════════════════════════════════════
+
+
+def test_pseudo_obs_branch_shares_arrays_but_isolates_new_keys():
+    base_values = np.linspace(0.1, 0.9, 8)
+    parent = {(0, frozenset()): base_values}
+
+    left = _branch_pseudo_obs(parent)
+    right = _branch_pseudo_obs(parent)
+
+    assert left is not parent
+    assert right is not parent
+    assert left[(0, frozenset())] is base_values
+    assert right[(0, frozenset())] is base_values
+
+    new_key = (1, frozenset({0}))
+    left[new_key] = np.full(8, 0.25)
+    assert new_key not in parent
+    assert new_key not in right
+
+
+def test_beam_search_only_reads_arrays_shared_between_branches(monkeypatch):
+    original = dissmann_module._branch_pseudo_obs
+
+    def readonly_branch(pseudo_obs):
+        branch = original(pseudo_obs)
+        for values in branch.values():
+            values.flags.writeable = False
+        return branch
+
+    monkeypatch.setattr(
+        dissmann_module, '_branch_pseudo_obs', readonly_branch)
+    trees, fitted = select_rvine(
+        _sample_independent(40, 4, seed=20260720),
+        candidates=[IndependentCopula],
+        given_vars=[3],
+        structure_search='beam',
+        beam_width=3,
+    )
+
+    assert [len(level) for level in trees] == [3, 2, 1]
+    assert [len(level) for level in fitted] == [3, 2, 1]
 
 def _sample_dvine_gumbel(T, d, theta, seed=0):
     """Sample a D-vine of Gumbel copulas (tree-0 path 0-1-...-(d-1)).

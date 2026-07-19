@@ -61,6 +61,11 @@ class PairCopula:
         from pyscarcopula.vine._rvine_edges import _edge_h
         return _edge_h(self, u_conditioned, u_given)
 
+    def h_pair(self, u, v):
+        """Return ``h(u | v)`` and ``h(v | u)`` using one edge pass."""
+        from pyscarcopula.vine._rvine_edges import _edge_h_pair
+        return _edge_h_pair(self, u, v)
+
     def get_r(self, u_pair, T=None):
         """Return the fitted strategy parameter path for observed pairs."""
         if self.fit_result is None:

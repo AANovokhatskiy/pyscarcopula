@@ -175,6 +175,13 @@ class MLEStrategy:
         """h(u2, u1; r_mle) — same as rosenblatt_e2 for MLE."""
         return self.rosenblatt_e2(copula, u, result)
 
+    def mixture_h_pair(self, copula, u: np.ndarray,
+                       result: MLEResult,
+                       **kwargs) -> tuple[np.ndarray, np.ndarray]:
+        """Both conditional directions at the constant MLE parameter."""
+        r = np.full(len(u), result.copula_param)
+        return copula.h_pair(u[:, 1], u[:, 0], r)
+
     def objective(self, copula, u: np.ndarray,
                   alpha: np.ndarray, **kwargs) -> float:
         """Minus log-likelihood: -sum log c(u1, u2; alpha[0])."""

@@ -161,6 +161,13 @@ def test_prepared_forward_helpers_match_stateless_wrappers(transition_method):
         rtol=0.0,
         atol=0.0,
     )
+    pair_prepared = prepared.mixture_h_pair(*params)
+    pair_expected = _cpp_scar_ou.mixture_h_pair(
+        *params, u, copula, config)
+    np.testing.assert_allclose(
+        pair_prepared[0], pair_expected[0], rtol=0.0, atol=0.0)
+    np.testing.assert_allclose(
+        pair_prepared[1], pair_expected[1], rtol=0.0, atol=0.0)
     for horizon in ("current", "next"):
         z_prepared, p_prepared = prepared.state_distribution(
             *params, horizon=horizon)

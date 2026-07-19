@@ -288,6 +288,28 @@ public:
         OuBackend& backend,
         int& status) const;
 
+    std::vector<double> mixture_h_pair_local_gh(
+        const OuParams& params,
+        const CopulaSpec& copula,
+        ObservationView u,
+        const OuNumericalConfig& config,
+        int& status) const;
+
+    std::vector<double> mixture_h_pair_matrix(
+        const OuParams& params,
+        const CopulaSpec& copula,
+        ObservationView u,
+        const OuNumericalConfig& config,
+        int& status) const;
+
+    std::vector<double> mixture_h_pair_auto(
+        const OuParams& params,
+        const CopulaSpec& copula,
+        ObservationView u,
+        const OuNumericalConfig& config,
+        OuBackend& backend,
+        int& status) const;
+
     StateDistribution state_distribution_local_gh(
         const OuParams& params,
         const CopulaSpec& copula,
@@ -354,6 +376,11 @@ public:
         OuBackend& backend,
         int& status) const;
 
+    std::vector<double> mixture_h_pair(
+        const OuParams& params,
+        OuBackend& backend,
+        int& status) const;
+
     StateDistribution state_distribution(
         const OuParams& params,
         bool horizon_next) const;
@@ -371,6 +398,10 @@ private:
         OuBackend& backend,
         int& status) const;
     std::vector<double> call_mixture_h(
+        const OuParams& params,
+        OuBackend& backend,
+        int& status) const;
+    std::vector<double> call_mixture_h_pair(
         const OuParams& params,
         OuBackend& backend,
         int& status) const;
