@@ -1,7 +1,27 @@
 # Changelog
 
-## Unreleased
+## 0.18.0 - 2026-07-20
 
+Version: `0.17.5` -> `0.18.0`
+
+- Adds conditional sampling and prediction for static multivariate Gaussian
+  and Student copulas, with fitted-correlation and analytical-moment coverage.
+- Fixes top-level `fit()` state synchronization so subsequent stateful
+  `predict()` and `sample()` calls use the requested strategy result and data.
+- Rejects dynamic methods for static Gaussian and Student copulas instead of
+  silently ignoring them.
+- Fixes stochastic multivariate prediction to draw an independent stationary
+  latent parameter per sample, and prevents joint-parameter posterior queries
+  from mutating the model correlation state.
+- Hardens stochastic Student fitting against false optimizer convergence,
+  caches its Cholesky factor, and caps the optional Student inverse-CDF table
+  at 256 MiB with an exact-quantile fallback for larger inputs.
+- Improves vine family screening with exact public Kendall-tau mappings,
+  preserving small interior dependence, Gaussian signs, and rotations while
+  handling only true parameter boundaries as unsupported starts.
+- Reuses each selected edge's static MLE to initialize dynamic fitting,
+  computes both h-function directions in one posterior pass, avoids redundant
+  pseudo-observation copies, and caches conditional suffix plans.
 - Reports requested versus actual R-vine edge methods, dynamic-fit fallbacks,
   discarded optimizer work, failure messages, and edge-level fit timings.
 - Reuses R-vine edge statistics and top-candidate static evaluators during
@@ -19,15 +39,14 @@
   rotations, mixed-edge behavior, and generic-strategy fallback.
 - Reduces median GAS `RVineCopula.sample(1000)` time on the profiled 6D data
   from about 878 ms to 3.2 ms without parallel execution.
-- Optimizes native multivariate hot paths: shared-correlation conditional
-  Cholesky reuse, reusable Student workspaces, equicorrelation sufficient
-  statistics (including prepared SCAR-OU snapshot caching), and zero-copy
-  C-contiguous `float64` conditional inputs.
-- Preserves Student jitter semantics, finite input validation, fixed-draw
-  behavior, and vector-based native compatibility overloads.
-- Expands regression coverage for shared and row-specific correlations,
-  near-singular conditional covariance, equicorrelation prepared evaluation,
-  read-only arrays, and pybind11 forcecast fallbacks.
+- Optimizes native multivariate hot paths through shared-correlation Cholesky
+  reuse, reusable Student workspaces, equicorrelation sufficient statistics,
+  prepared SCAR-OU snapshot caching, and zero-copy contiguous inputs while
+  preserving jitter, validation, fixed-draw, and compatibility semantics.
+- Adds opt-in MinGW-w64 builds on Windows with statically linked GCC runtimes;
+  MSVC remains the default toolchain.
+- Publishes the PEP 561 `py.typed` marker and expands public annotations,
+  docstrings, guides, API references, regression tests, and benchmark reports.
 
 ## 0.17.5 - 2026-07-06
 
