@@ -155,6 +155,7 @@ class StochasticStudentCopula(MultivariateCopula):
     _gas_optimizer_config = 'stochastic_student_gas_optimizer'
     _df_offset = _DF_OFFSET
     _scar_static_df_mle_initialization = True
+    _scar_log_stationary_scale_optimization = True
     _supports_scar_mixture_h = False
     _capabilities = CopulaCapabilities(
         supports_gas=True,

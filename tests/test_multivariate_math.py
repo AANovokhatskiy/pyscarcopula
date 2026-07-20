@@ -371,7 +371,7 @@ def test_stochastic_student_emission_cache_materializes_full_dataset_ppf():
 
 
 @pytest.mark.parametrize("df", [2.001, 500.0, 1000.0, 1_000_000.0])
-def test_stochastic_student_ppf_cache_uses_exact_quantiles_outside_table(df):
+def test_stochastic_student_ppf_cache_is_accurate_across_df_range(df):
     u = _u()
     copula = StochasticStudentCopula(d=4, R=_R())
     cache = copula.prepare_emission_cache(u)
@@ -380,17 +380,18 @@ def test_stochastic_student_ppf_cache_uses_exact_quantiles_outside_table(df):
         np.clip(u, PSEUDO_OBS_EPS, 1.0 - PSEUDO_OBS_EPS),
     )
 
+    tolerance = 2e-13 if df > cache.ppf_nodes[-1] else 1e-8
     np.testing.assert_allclose(
         cache.ppf(df),
         expected,
-        rtol=2e-13,
-        atol=2e-13,
+        rtol=tolerance,
+        atol=tolerance,
     )
     np.testing.assert_allclose(
         cache.ppf_rows(df, 3, 11),
         expected[3:11],
-        rtol=2e-13,
-        atol=2e-13,
+        rtol=tolerance,
+        atol=tolerance,
     )
 
 
@@ -411,7 +412,9 @@ def test_student_ppf_table_uses_common_pseudo_observation_boundaries():
     table = StudentPPFTable(u)
 
     np.testing.assert_array_equal(table.u, clipped)
-    for df in (table.nodes[0], 500.0):
+    assert table.nodes[0] == pytest.approx(2.0 + 1e-6)
+    assert table.nodes[-1] == pytest.approx(1000.0)
+    for df in (table.nodes[0], table.nodes[-1]):
         np.testing.assert_allclose(
             table(df),
             stdtrit(df, clipped),

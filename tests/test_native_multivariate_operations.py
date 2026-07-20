@@ -365,7 +365,7 @@ def test_student_native_rows_and_grid_use_full_cache_block():
 
 
 @pytest.mark.parametrize("x_value", [-7.0, 500.0, 2_500_000.0])
-def test_student_grid_uses_exact_quantiles_outside_ppf_cache_range(x_value):
+def test_student_grid_controlled_quantiles_match_exact_row_evaluator(x_value):
     u = np.array([[0.9169235897008583, 0.9500874927089409]])
     R = np.array([
         [1.0, 0.7363755858397765],
@@ -382,9 +382,9 @@ def test_student_grid_uses_exact_quantiles_outside_ppf_cache_range(x_value):
     expected_grad = expected_pdf * dlog * copula.dtransform(x_grid)
     assert np.all(np.isfinite(fi))
     assert np.all(np.isfinite(dfi))
-    np.testing.assert_allclose(fi[:, 0], expected_pdf, rtol=2e-10, atol=0.0)
+    np.testing.assert_allclose(fi[:, 0], expected_pdf, rtol=5e-9, atol=1e-12)
     np.testing.assert_allclose(
-        dfi[:, 0], expected_grad, rtol=2e-4, atol=1e-12)
+        dfi[:, 0], expected_grad, rtol=2e-4, atol=2e-10)
 
 
 def test_student_grid_mixed_cache_range_matches_exact_row_evaluator():
@@ -413,7 +413,7 @@ def test_student_grid_mixed_cache_range_matches_exact_row_evaluator():
         )
 
     np.testing.assert_allclose(
-        fi[:, [0, 2]], expected_fi[:, [0, 2]], rtol=2e-10, atol=1e-13)
+        fi[:, [0, 2]], expected_fi[:, [0, 2]], rtol=5e-9, atol=1e-12)
     np.testing.assert_allclose(
         dfi[:, [0, 2]], expected_dfi[:, [0, 2]], rtol=2e-4, atol=1e-11)
 

@@ -89,6 +89,67 @@ def _objective_is_invalid(value):
     return (not np.isfinite(value)) or float(value) >= _INVALID_OBJECTIVE_THRESHOLD
 
 
+def _uses_log_stationary_scale(copula):
+    """Whether SCAR optimization uses (log kappa, mu, log sigma_x)."""
+    return bool(getattr(
+        copula, "_scar_log_stationary_scale_optimization", False))
+
+
+def _ou_to_log_stationary(alpha):
+    """Map physical (kappa, mu, nu) to optimizer coordinates."""
+    alpha = np.asarray(alpha, dtype=np.float64)
+    kappa, mu, nu = alpha[:3]
+    if (
+            not np.isfinite(kappa)
+            or not np.isfinite(mu)
+            or not np.isfinite(nu)
+            or kappa <= 0.0
+            or nu <= 0.0):
+        raise ValueError(
+            "log-stationary SCAR coordinates require positive finite "
+            "kappa and nu and finite mu")
+    sigma_x = nu / np.sqrt(2.0 * kappa)
+    transformed = alpha.copy()
+    transformed[:3] = (np.log(kappa), mu, np.log(sigma_x))
+    return transformed
+
+
+def _ou_from_log_stationary(values):
+    """Map optimizer coordinates to physical (kappa, mu, nu)."""
+    values = np.asarray(values, dtype=np.float64)
+    log_kappa, mu, log_sigma_x = values[:3]
+    kappa = np.exp(log_kappa)
+    sigma_x = np.exp(log_sigma_x)
+    nu = sigma_x * np.sqrt(2.0 * kappa)
+    physical = values.copy()
+    physical[:3] = (kappa, mu, nu)
+    return physical
+
+
+def _ou_grad_to_log_stationary(physical, gradient):
+    """Apply the chain rule for (log kappa, mu, log sigma_x)."""
+    physical = np.asarray(physical, dtype=np.float64)
+    gradient = np.asarray(gradient, dtype=np.float64)
+    kappa, _, nu = physical[:3]
+    transformed = gradient.copy()
+    transformed[0] = gradient[0] * kappa + 0.5 * gradient[2] * nu
+    transformed[1] = gradient[1]
+    transformed[2] = gradient[2] * nu
+    return transformed
+
+
+def _ou_grad_from_log_stationary(physical, gradient):
+    """Map an optimizer-coordinate gradient back to physical OU units."""
+    physical = np.asarray(physical, dtype=np.float64)
+    gradient = np.asarray(gradient, dtype=np.float64)
+    kappa, _, nu = physical[:3]
+    transformed = gradient.copy()
+    transformed[0] = (gradient[0] - 0.5 * gradient[2]) / kappa
+    transformed[1] = gradient[1]
+    transformed[2] = gradient[2] / nu
+    return transformed
+
+
 def _resolve_initial_point(
         copula, u, config, smart_init, verbose, alpha0,
         initial_mle_result=None):
@@ -419,6 +480,9 @@ class SCARTMStrategy:
         Reduces nfev by ~3-4x. Parameters are auto-rescaled.
     smart_init : bool
         Compute initial point via analytical heuristic (default True).
+        StochasticStudentCopula keeps the public ``(kappa, mu, nu)``
+        parameters but optimizes internally in
+        ``(log(kappa), mu, log(nu / sqrt(2*kappa)))`` coordinates.
     final_validation_abs_per_obs : float
         Absolute cross-backend objective tolerance per observation.
     final_validation_rel_tol : float
@@ -846,17 +910,40 @@ class SCARTMStrategy:
         initialization["alpha0"] = [
             float(value) for value in joint0]
 
-        scale = np.maximum(np.abs(joint0), 1.0)
-        x0_scaled = joint0 / scale
+        log_stationary = _uses_log_stationary_scale(copula)
+        if log_stationary:
+            scale = np.ones_like(joint0)
+            x0_scaled = _ou_to_log_stationary(joint0)
+        else:
+            scale = np.maximum(np.abs(joint0), 1.0)
+            x0_scaled = joint0 / scale
         lower = np.full(3 + n_corr, -np.inf, dtype=np.float64)
         upper = np.full(3 + n_corr, np.inf, dtype=np.float64)
-        lower[0] = 0.001 / scale[0]
-        lower[2] = 0.001 / scale[2]
+        if log_stationary:
+            lower[0] = np.log(0.001)
+        else:
+            lower[0] = 0.001 / scale[0]
+            lower[2] = 0.001 / scale[2]
         bounds_scaled = Bounds(lower, upper)
+
+        def optimizer_to_joint(values):
+            return (
+                _ou_from_log_stationary(values)
+                if log_stationary
+                else values * scale)
+
+        def joint_to_optimizer(values):
+            return (
+                _ou_to_log_stationary(values)
+                if log_stationary
+                else values / scale)
 
         diagnostics = _new_backend_diagnostics()
         diagnostics.update({
             "initialization": initialization,
+            "optimizer_parameterization": (
+                "log_kappa_mu_log_stationary_sigma"
+                if log_stationary else "scaled_kappa_mu_nu"),
             "joint_static": True,
             "joint_optimizer": "python-lbfgsb",
             "correlation_parameterization_engine": "python",
@@ -943,7 +1030,7 @@ class SCARTMStrategy:
             )
 
         def objective_scaled(x_scaled):
-            joint = x_scaled * scale
+            joint = optimizer_to_joint(x_scaled)
             if not np.all(np.isfinite(joint)):
                 return fail_value
             try:
@@ -967,7 +1054,7 @@ class SCARTMStrategy:
             )
 
         def objective_and_grad_scaled(x_scaled):
-            joint = x_scaled * scale
+            joint = optimizer_to_joint(x_scaled)
             if not np.all(np.isfinite(joint)):
                 return fail_value, np.zeros_like(x_scaled)
             diagnostics["hybrid_gradient_evaluations"] += 1
@@ -1005,6 +1092,9 @@ class SCARTMStrategy:
                     diagnostics["correlation_fd_scheme"] = "none"
                     diagnostics[
                         "native_correlation_gradient_evaluations"] += 1
+                    if log_stationary:
+                        grad[:3] = _ou_grad_to_log_stationary(
+                            joint[:3], grad[:3])
                     return value, grad * scale
 
                 steps = correlation_fd_steps(joint)
@@ -1019,6 +1109,9 @@ class SCARTMStrategy:
                         grad[3 + index] = (trial_value - value) / step
                 finally:
                     copula._set_corr_from_params(joint[3:])
+                if log_stationary:
+                    grad[:3] = _ou_grad_to_log_stationary(
+                        joint[:3], grad[:3])
                 return value, grad * scale
             except Exception as exc:
                 try:
@@ -1050,7 +1143,7 @@ class SCARTMStrategy:
             )
         else:
             scaled_options = dict(optimizer_options)
-            if 'eps' in scaled_options:
+            if 'eps' in scaled_options and not log_stationary:
                 scaled_options['eps'] = (
                     float(scaled_options['eps']) / scale)
             result = minimize(
@@ -1060,7 +1153,7 @@ class SCARTMStrategy:
                 bounds=bounds_scaled,
                 options=scaled_options,
             )
-        result.x = result.x * scale
+        result.x = optimizer_to_joint(result.x)
 
         joint = result.x
         try:
@@ -1072,8 +1165,15 @@ class SCARTMStrategy:
             copula._set_corr_from_params(corr0)
 
         def selected_final_evaluator(values):
-            value, gradient_scaled = objective_and_grad_scaled(values / scale)
+            value, gradient_scaled = objective_and_grad_scaled(
+                joint_to_optimizer(values))
             copula._set_corr_from_params(values[3:])
+            if log_stationary:
+                # The validation contract expects the physical OU gradient.
+                gradient = np.asarray(gradient_scaled, dtype=np.float64)
+                gradient[:3] = _ou_grad_from_log_stationary(
+                    values[:3], gradient[:3])
+                return value, gradient
             return value, np.asarray(gradient_scaled) / scale
 
         def validate_correlation():
@@ -1239,6 +1339,10 @@ class SCARTMStrategy:
             self.spectral_basis_order == "auto")
         diagnostics.update({
             "initialization": initialization,
+            "optimizer_parameterization": (
+                "log_kappa_mu_log_stationary_sigma"
+                if _uses_log_stationary_scale(copula)
+                else "scaled_kappa_mu_nu"),
             "model_score": "not_applicable",
             "optimizer_gradient": (
                 "analytical" if self.analytical_grad else "numerical"),
@@ -1259,22 +1363,34 @@ class SCARTMStrategy:
 
         # ── Fit with analytical gradient ──────────────────────────
         if self.analytical_grad:
-            # Rescale parameters so all three are O(1) at start.
-            # This helps L-BFGS-B estimate the initial Hessian.
-            scale = np.array([
-                max(abs(alpha0[0]), 1.0),
-                max(abs(alpha0[1]), 1.0),
-                max(abs(alpha0[2]), 1.0),
-            ])
-            x0_scaled = alpha0 / scale
-            bounds_scaled = Bounds(
-                [0.001 / scale[0], -np.inf, 0.001 / scale[2]],
-                [np.inf, np.inf, np.inf]
-            )
+            log_stationary = _uses_log_stationary_scale(copula)
+            if log_stationary:
+                scale = np.ones(3, dtype=np.float64)
+                x0_scaled = _ou_to_log_stationary(alpha0)
+                bounds_scaled = Bounds(
+                    [np.log(0.001), -np.inf, -np.inf],
+                    [np.inf, np.inf, np.inf],
+                )
+            else:
+                # Rescale parameters so all three are O(1) at start.
+                # This helps L-BFGS-B estimate the initial Hessian.
+                scale = np.array([
+                    max(abs(alpha0[0]), 1.0),
+                    max(abs(alpha0[1]), 1.0),
+                    max(abs(alpha0[2]), 1.0),
+                ])
+                x0_scaled = alpha0 / scale
+                bounds_scaled = Bounds(
+                    [0.001 / scale[0], -np.inf, 0.001 / scale[2]],
+                    [np.inf, np.inf, np.inf]
+                )
 
             def objective_and_grad(x_scaled):
-                alpha = x_scaled * scale
-                if np.isnan(np.sum(alpha)):
+                alpha = (
+                    _ou_from_log_stationary(x_scaled)
+                    if log_stationary
+                    else x_scaled * scale)
+                if not np.all(np.isfinite(alpha)):
                     return fail_value, np.zeros(3)
                 kappa_v, mu_v, nu_v = alpha
                 try:
@@ -1283,7 +1399,9 @@ class SCARTMStrategy:
                         prepared_cache.neg_loglik_with_grad_info(
                             kappa_v, mu_v, nu_v, auto_config))
                     _record_backend_diagnostics(diagnostics, info, "cpp")
-                    return val, grad * scale  # chain rule
+                    if log_stationary:
+                        return val, _ou_grad_to_log_stationary(alpha, grad)
+                    return val, grad * scale
                 except Exception as e:
                     if verbose:
                         print(f"  error at alpha={alpha}: {e}")
@@ -1323,25 +1441,39 @@ class SCARTMStrategy:
                         f"(projected_grad={pg_norm:.3g})"
                     )
 
-            # Unscale
-            result.x = result.x * scale
+            result.x = (
+                _ou_from_log_stationary(result.x)
+                if log_stationary
+                else result.x * scale)
 
         # ── Fit with numerical gradient ───────────────────────────
         else:
-            scale = np.array([
-                max(abs(alpha0[0]), 1.0),
-                max(abs(alpha0[1]), 1.0),
-                max(abs(alpha0[2]), 1.0),
-            ])
-            x0_scaled = alpha0 / scale
-            bounds_scaled = Bounds(
-                [0.001 / scale[0], -np.inf, 0.001 / scale[2]],
-                [np.inf, np.inf, np.inf]
-            )
+            log_stationary = _uses_log_stationary_scale(copula)
+            if log_stationary:
+                scale = np.ones(3, dtype=np.float64)
+                x0_scaled = _ou_to_log_stationary(alpha0)
+                bounds_scaled = Bounds(
+                    [np.log(0.001), -np.inf, -np.inf],
+                    [np.inf, np.inf, np.inf],
+                )
+            else:
+                scale = np.array([
+                    max(abs(alpha0[0]), 1.0),
+                    max(abs(alpha0[1]), 1.0),
+                    max(abs(alpha0[2]), 1.0),
+                ])
+                x0_scaled = alpha0 / scale
+                bounds_scaled = Bounds(
+                    [0.001 / scale[0], -np.inf, 0.001 / scale[2]],
+                    [np.inf, np.inf, np.inf]
+                )
 
             def objective_scaled(x_scaled):
-                alpha = x_scaled * scale
-                if np.isnan(np.sum(alpha)):
+                alpha = (
+                    _ou_from_log_stationary(x_scaled)
+                    if log_stationary
+                    else x_scaled * scale)
+                if not np.all(np.isfinite(alpha)):
                     return fail_value
                 kappa_v, mu_v, nu_v = alpha
                 try:
@@ -1361,7 +1493,7 @@ class SCARTMStrategy:
                     f"alpha0={alpha0}")
 
             scaled_options = dict(optimizer_options)
-            if 'eps' in scaled_options:
+            if 'eps' in scaled_options and not log_stationary:
                 scaled_options['eps'] = float(scaled_options['eps']) / scale
 
             result = minimize(
@@ -1370,7 +1502,10 @@ class SCARTMStrategy:
                 bounds=bounds_scaled,
                 options=scaled_options,
             )
-            result.x = result.x * scale
+            result.x = (
+                _ou_from_log_stationary(result.x)
+                if log_stationary
+                else result.x * scale)
 
         alpha = result.x
         def evaluate_final(values, with_grad, record=False):

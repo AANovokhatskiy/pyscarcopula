@@ -20,11 +20,15 @@ _STUDENT_SPEC_CACHE = weakref.WeakKeyDictionary()
 
 def _set_student_ppf_cache(spec, cache) -> None:
     """Copy a Python Student PPF cache into owning C++ storage."""
-    if cache.ppf_table is None:
-        # Over the memory budget: leave the spec table empty so the C++
-        # kernels use their exact-quantile fallback.
-        return
     nodes = np.ascontiguousarray(cache.ppf_nodes, dtype=np.float64)
+    if cache.ppf_table is None:
+        # Preserve the covered df interval even when the observation table is
+        # over budget.  The native kernel can still select its controlled
+        # large-df asymptotic above the final node; values within the interval
+        # use the exact-quantile fallback.
+        spec.ppf_nodes = nodes.tolist()
+        spec.ppf_n_obs = int(cache.u_shape[0])
+        return
     table = np.ascontiguousarray(cache.ppf_table, dtype=np.float64)
     spec.set_student_ppf_cache(nodes, table)
 

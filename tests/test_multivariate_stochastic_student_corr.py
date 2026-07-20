@@ -132,6 +132,43 @@ def test_fixed_mode_keeps_canonical_behavior():
         u, method="scar-tm-ou", K=8, max_K=8, maxiter=1)
     assert scar_result.n_params == 3
     assert scar_result.diagnostics["selected_engine"] == "cpp"
+    assert (
+        scar_result.diagnostics["optimizer_parameterization"]
+        == "log_kappa_mu_log_stationary_sigma")
+
+
+def test_log_stationary_ou_coordinate_chain_rule():
+    alpha = np.array([2.5, -0.4, 1.2])
+    optimizer_point = scar_tm._ou_to_log_stationary(alpha)
+    np.testing.assert_allclose(
+        scar_tm._ou_from_log_stationary(optimizer_point), alpha,
+        rtol=0.0, atol=1e-14)
+
+    target = np.array([1.1, 0.2, 0.7])
+    physical_gradient = 2.0 * (alpha - target)
+    analytical = scar_tm._ou_grad_to_log_stationary(
+        alpha, physical_gradient)
+    finite_difference = np.empty(3)
+    for index in range(3):
+        step = 1e-6
+        plus = optimizer_point.copy()
+        minus = optimizer_point.copy()
+        plus[index] += step
+        minus[index] -= step
+        value_plus = np.sum(
+            (scar_tm._ou_from_log_stationary(plus) - target) ** 2)
+        value_minus = np.sum(
+            (scar_tm._ou_from_log_stationary(minus) - target) ** 2)
+        finite_difference[index] = (value_plus - value_minus) / (2.0 * step)
+
+    np.testing.assert_allclose(
+        analytical, finite_difference, rtol=1e-9, atol=1e-9)
+    np.testing.assert_allclose(
+        scar_tm._ou_grad_from_log_stationary(alpha, analytical),
+        physical_gradient,
+        rtol=0.0,
+        atol=1e-14,
+    )
 
 
 def test_correlation_property_returns_copy():
@@ -907,6 +944,9 @@ def test_scar_estimated_corr_modes_use_python_optimizer_with_native_likelihood(
     assert result.diagnostics["selected_engine"] == "cpp"
     assert result.diagnostics["joint_static"] is True
     assert result.diagnostics["joint_optimizer"] == "python-lbfgsb"
+    assert (
+        result.diagnostics["optimizer_parameterization"]
+        == "log_kappa_mu_log_stationary_sigma")
     assert result.diagnostics["prepared_native_evaluator"] is True
     assert result.diagnostics["prepared_native_evaluator_count"] >= 1
     assert (
@@ -1061,11 +1101,19 @@ def test_joint_hybrid_jacobian_uses_one_plus_n_corr_evaluations(
         eps=1e-6,
     )
 
-    scale = np.maximum(
-        np.abs(np.concatenate([alpha0, model.corr_params()])), 1.0)
     expected_physical = np.concatenate([
         2.0 * (alpha0 - np.array([1.0, 0.25, 0.75])),
         2.0 * model.corr_params() + 1e-6,
+    ])
+    expected_optimizer = expected_physical.copy()
+    expected_optimizer[0] = (
+        expected_physical[0] * alpha0[0]
+        + 0.5 * expected_physical[2] * alpha0[2])
+    expected_optimizer[2] = expected_physical[2] * alpha0[2]
+    sigma0 = alpha0[2] / np.sqrt(2.0 * alpha0[0])
+    expected_x0 = np.concatenate([
+        np.array([np.log(alpha0[0]), alpha0[1], np.log(sigma0)]),
+        model.corr_params(),
     ])
 
     assert calls == {
@@ -1073,10 +1121,13 @@ def test_joint_hybrid_jacobian_uses_one_plus_n_corr_evaluations(
         "objective": 2 * corr_n_params,
     }
     np.testing.assert_allclose(
-        captured["gradient"], expected_physical * scale,
+        captured["gradient"], expected_optimizer,
         rtol=1e-7, atol=1e-7)
     np.testing.assert_allclose(
-        captured["x0"], np.concatenate([alpha0, model.corr_params()]) / scale)
+        captured["x0"], expected_x0)
+    assert (
+        result.diagnostics["optimizer_parameterization"]
+        == "log_kappa_mu_log_stationary_sigma")
     assert result.diagnostics["objective_evaluations"] == (
         2 * (1 + corr_n_params))
     assert result.diagnostics["hybrid_gradient_evaluations"] == 2

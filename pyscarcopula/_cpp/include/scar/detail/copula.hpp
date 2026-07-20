@@ -135,6 +135,10 @@ bool student_log_pdf_and_dlog_ddf(
     double& dlog_ddf,
     StudentWorkspace& workspace);
 double student_quantile_value(double p, double df);
+void student_quantile_value_and_derivative(
+    double p, double df, double& value, double& derivative);
+void student_quantile_large_df_value_and_derivative(
+    double p, double df, double& value, double& derivative);
 bool student_precision_matrix(
     const scar::CopulaSpec& spec,
     std::vector<double>& precision);

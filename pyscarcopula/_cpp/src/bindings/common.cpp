@@ -505,6 +505,28 @@ void bind_common(py::module_& m) {
         py::arg("p"),
         py::arg("df"));
     m.def(
+        "_student_quantile_large_df",
+        [](double p, double df) {
+            double value = 0.0;
+            double derivative = 0.0;
+            scar_internal::student_quantile_large_df_value_and_derivative(
+                p, df, value, derivative);
+            return py::make_tuple(value, derivative);
+        },
+        py::arg("p"),
+        py::arg("df"));
+    m.def(
+        "_student_quantile_with_df_derivative",
+        [](double p, double df) {
+            double value = 0.0;
+            double derivative = 0.0;
+            scar_internal::student_quantile_value_and_derivative(
+                p, df, value, derivative);
+            return py::make_tuple(value, derivative);
+        },
+        py::arg("p"),
+        py::arg("df"));
+    m.def(
         "_hermite_rule_cache_info",
         []() {
             return hermite_rule_cache_info_to_dict(
