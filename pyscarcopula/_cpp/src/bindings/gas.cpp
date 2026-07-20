@@ -5,13 +5,15 @@ namespace py = pybind11;
 namespace pyscarcopula::bindings {
 
 void bind_gas(py::module_& m) {
-    py::class_<scar::GasParams>(m, "GasParams")
+    py::class_<scar::GasParams>(
+        m, "GasParams", "Parameters of the score-driven GAS recursion.")
         .def(py::init<>())
         .def_readwrite("omega", &scar::GasParams::omega)
         .def_readwrite("gamma", &scar::GasParams::gamma)
         .def_readwrite("beta", &scar::GasParams::beta);
 
-    py::class_<scar::GasConfig>(m, "GasConfig")
+    py::class_<scar::GasConfig>(
+        m, "GasConfig", "Numerical safeguards and GAS score scaling.")
         .def(py::init<>())
         .def_readwrite("scaling", &scar::GasConfig::scaling)
         .def_readwrite("score_eps", &scar::GasConfig::score_eps)
@@ -22,14 +24,16 @@ void bind_gas(py::module_& m) {
             "stationary_beta_tol",
             &scar::GasConfig::stationary_beta_tol);
 
-    py::class_<scar::GasRvineEdge>(m, "GasRvineEdge")
+    py::class_<scar::GasRvineEdge>(
+        m, "GasRvineEdge", "Native GAS R-vine edge specification.")
         .def(py::init<>())
         .def_readwrite("copula", &scar::GasRvineEdge::copula)
         .def_readwrite("gas_params", &scar::GasRvineEdge::gas_params)
         .def_readwrite("gas_config", &scar::GasRvineEdge::gas_config)
         .def_readwrite("dynamic", &scar::GasRvineEdge::dynamic);
 
-    py::class_<scar::GasRvinePlan>(m, "GasRvinePlan")
+    py::class_<scar::GasRvinePlan>(
+        m, "GasRvinePlan", "Flattened execution plan for R-vine sampling.")
         .def(py::init<>())
         .def_readwrite("dimension", &scar::GasRvinePlan::dimension)
         .def_readwrite("node_count", &scar::GasRvinePlan::node_count)
@@ -114,7 +118,8 @@ void bind_gas(py::module_& m) {
         py::arg("uniforms"),
         py::arg("parameter_paths"));
 
-    py::class_<scar::GasEvaluator>(m, "GasEvaluator")
+    py::class_<scar::GasEvaluator>(
+        m, "GasEvaluator", "Native evaluator for GAS copula dynamics.")
         .def(py::init<>())
         .def(
             "initial_state",
@@ -124,7 +129,10 @@ void bind_gas(py::module_& m) {
                const scar::GasConfig& config) {
                 return gas_state_result_to_dict(
                     evaluator.initial_state(params, copula, config));
-            })
+            },
+            py::arg("params"),
+            py::arg("copula"),
+            py::arg("config"))
         .def(
             "filter",
             [](const scar::GasEvaluator& evaluator,
@@ -140,7 +148,11 @@ void bind_gas(py::module_& m) {
                     result = evaluator.filter(params, copula, obs, config);
                 }
                 return gas_filter_result_to_dict(result);
-            })
+            },
+            py::arg("params"),
+            py::arg("copula"),
+            py::arg("u"),
+            py::arg("config"))
         .def(
             "log_likelihood",
             [](const scar::GasEvaluator& evaluator,
@@ -157,7 +169,11 @@ void bind_gas(py::module_& m) {
                         params, copula, obs, config);
                 }
                 return gas_loglik_result_to_dict(result);
-            })
+            },
+            py::arg("params"),
+            py::arg("copula"),
+            py::arg("u"),
+            py::arg("config"))
         .def(
             "negative_log_likelihood",
             [](const scar::GasEvaluator& evaluator,
@@ -174,7 +190,11 @@ void bind_gas(py::module_& m) {
                         params, copula, obs, config);
                 }
                 return gas_loglik_result_to_dict(result);
-            })
+            },
+            py::arg("params"),
+            py::arg("copula"),
+            py::arg("u"),
+            py::arg("config"))
         .def(
             "update_one",
             [](const scar::GasEvaluator& evaluator,
@@ -191,7 +211,13 @@ void bind_gas(py::module_& m) {
                         params, copula, g, u1, u2, config);
                 }
                 return gas_update_result_to_dict(result);
-            })
+            },
+            py::arg("params"),
+            py::arg("copula"),
+            py::arg("g"),
+            py::arg("u1"),
+            py::arg("u2"),
+            py::arg("config"))
         .def(
             "update_observation",
             [](const scar::GasEvaluator& evaluator,
@@ -211,7 +237,12 @@ void bind_gas(py::module_& m) {
                         params, copula, g, obs, config);
                 }
                 return gas_update_result_to_dict(result);
-            })
+            },
+            py::arg("params"),
+            py::arg("copula"),
+            py::arg("g"),
+            py::arg("observation"),
+            py::arg("config"))
         .def(
             "predict_parameter",
             [](const scar::GasEvaluator& evaluator,
@@ -251,7 +282,11 @@ void bind_gas(py::module_& m) {
                         params, copula, obs, config);
                 }
                 return gas_path_result_to_dict(result);
-            });
+            },
+            py::arg("params"),
+            py::arg("copula"),
+            py::arg("u"),
+            py::arg("config"));
 }
 
 }  // namespace pyscarcopula::bindings

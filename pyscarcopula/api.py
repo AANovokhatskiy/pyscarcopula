@@ -24,12 +24,18 @@ copula.sample) that work after copula.fit(). These delegate
 to this API internally but require copula.fit() to have been called.
 """
 
+from __future__ import annotations
+
+from typing import Any, TypeAlias
+
 import numpy as np
+from numpy.typing import ArrayLike, NDArray
 from pyscarcopula._types import (
     FitResult,
     NumericalConfig,
     PredictConfig,
 )
+from pyscarcopula.copula._protocol import CommonCopulaProtocol
 from pyscarcopula._utils import pobs as _pobs
 from pyscarcopula.strategy._base import (
     ensure_strategy_supported,
@@ -40,42 +46,66 @@ from pyscarcopula.strategy._base import (
 )
 
 
-def _as_float64_array_no_copy(value):
+FloatArray: TypeAlias = NDArray[np.float64]
+PredictOutput: TypeAlias = FloatArray | tuple[FloatArray, dict[str, Any]]
+
+
+def _as_float64_array_no_copy(value: ArrayLike) -> FloatArray:
     if type(value) is np.ndarray and value.dtype == np.float64:
         return value
     return np.asarray(value, dtype=np.float64)
 
 
-def _reject_public_posterior_cache(kwargs):
+def _reject_public_posterior_cache(kwargs: dict[str, Any]) -> None:
     if "posterior_cache" in kwargs:
         raise TypeError(
             "posterior_cache is an internal runtime cache and is not "
             "accepted by the top-level API")
 
 
-def fit(copula, data, method='scar-tm-ou', to_pobs=False,
-        config: NumericalConfig | None = None, **kwargs) -> FitResult:
+def fit(
+    copula: CommonCopulaProtocol,
+    data: ArrayLike,
+    method: str = 'scar-tm-ou',
+    to_pobs: bool = False,
+    config: NumericalConfig | None = None,
+    **kwargs: Any,
+) -> FitResult:
     """Fit a copula to data.
 
     Parameters
     ----------
-    copula : CopulaProtocol
-        Stateless copula object.
-    data : (T, 2) array
-        Log-returns or pseudo-observations.
+    copula : CommonCopulaProtocol
+        Copula instance to fit. The fitted result and training data are also
+        stored on the instance for its stateful convenience methods.
+    data : array_like of shape (n_observations, n_dimensions)
+        Raw observations or pseudo-observations. Bivariate strategies require
+        two columns; multivariate and vine models determine their own width.
     method : str
-        'mle', 'scar-tm-ou', 'scar-tm-jacobi', 'scar-p-ou',
-        'scar-m-ou', 'gas'
+        Estimation strategy name, such as ``"mle"``, ``"scar-tm-ou"``,
+        ``"scar-tm-jacobi"``, ``"scar-p-ou"``, ``"scar-m-ou"``, or
+        ``"gas"``.
     to_pobs : bool
-        Transform data to pseudo-observations first.
+        If true, rank-transform each data column before fitting.
     config : NumericalConfig or None
-        Override default numerical constants.
+        Numerical and optimizer settings. ``None`` selects library defaults.
     **kwargs
-        Forwarded to the strategy's fit() method.
+        Strategy-specific fitting options.
 
     Returns
     -------
     FitResult
+        Immutable result object appropriate for the selected strategy.
+
+    Raises
+    ------
+    ValueError
+        If the data shape or values are invalid.
+    TypeError
+        If the selected strategy is incompatible with ``copula``.
+    NotImplementedError
+        If the requested strategy/model combination is recognized but not
+        implemented.
     """
     if _is_vine_copula(copula):
         fitted = copula.fit(
@@ -107,21 +137,32 @@ def fit(copula, data, method='scar-tm-ou', to_pobs=False,
     return result
 
 
-def log_likelihood(copula, data, result: FitResult,
-                   config: NumericalConfig | None = None, **kwargs) -> float:
+def log_likelihood(
+    copula: CommonCopulaProtocol,
+    data: ArrayLike,
+    result: FitResult,
+    config: NumericalConfig | None = None,
+    **kwargs: Any,
+) -> float:
     """Evaluate log-likelihood at fitted parameters.
 
     Parameters
     ----------
-    copula : CopulaProtocol
-    data : (T, 2) pseudo-observations
-    result : FitResult from fit()
+    copula : CommonCopulaProtocol
+        Copula associated with ``result``.
+    data : array_like of shape (n_observations, n_dimensions)
+        Pseudo-observations at which to evaluate the fitted model.
+    result : FitResult
+        Result returned by :func:`fit`.
+    config : NumericalConfig or None
+        Numerical and optimizer settings.
     **kwargs
         Forwarded to the strategy constructor when applicable.
 
     Returns
     -------
     float
+        Total log-likelihood over all observations.
     """
     if _is_vine_copula(copula):
         return float(copula.log_likelihood(data, **kwargs))
@@ -132,8 +173,13 @@ def log_likelihood(copula, data, result: FitResult,
     return strategy.log_likelihood(copula, u, result)
 
 
-def predictive_mean(copula, data, result: FitResult,
-                    config: NumericalConfig | None = None, **kwargs) -> np.ndarray:
+def predictive_mean(
+    copula: CommonCopulaProtocol,
+    data: ArrayLike,
+    result: FitResult,
+    config: NumericalConfig | None = None,
+    **kwargs: Any,
+) -> FloatArray:
     """Predictive mean of the time-varying copula parameter.
 
     For MLE: constant array.
@@ -143,13 +189,19 @@ def predictive_mean(copula, data, result: FitResult,
 
     Parameters
     ----------
-    copula : CopulaProtocol
-    data : (T, 2) pseudo-observations
-    result : FitResult from fit()
+    copula : CommonCopulaProtocol
+        Fitted copula family.
+    data : array_like of shape (n_observations, n_dimensions)
+        Prediction history in pseudo-observation space.
+    result : FitResult
+        Result returned by :func:`fit`.
+    config : NumericalConfig or None
+        Numerical and optimizer settings.
 
     Returns
     -------
-    (T,) array of copula parameters
+    ndarray
+        Predictive parameter path of shape ``(n_observations,)``.
     """
     u = np.asarray(data, dtype=np.float64)
     validate_copula_data(copula, u)
@@ -158,8 +210,13 @@ def predictive_mean(copula, data, result: FitResult,
     return strategy.predictive_mean(copula, u, result)
 
 
-def mixture_h(copula, data, result: FitResult,
-              config: NumericalConfig | None = None, **kwargs) -> np.ndarray:
+def mixture_h(
+    copula: CommonCopulaProtocol,
+    data: ArrayLike,
+    result: FitResult,
+    config: NumericalConfig | None = None,
+    **kwargs: Any,
+) -> FloatArray:
     """h-function for vine pseudo-observation propagation.
 
     MLE:  h(u2, u1; theta_mle)
@@ -168,13 +225,24 @@ def mixture_h(copula, data, result: FitResult,
 
     Parameters
     ----------
-    copula : CopulaProtocol
-    data : (T, 2) pseudo-observations
-    result : FitResult from fit()
+    copula : CommonCopulaProtocol
+        Fitted bivariate copula family.
+    data : array_like of shape (n_observations, 2)
+        Pair pseudo-observations.
+    result : FitResult
+        Result returned by :func:`fit`.
+    config : NumericalConfig or None
+        Numerical and optimizer settings.
 
     Returns
     -------
-    (T,) array
+    ndarray
+        Conditional CDF values of shape ``(n_observations,)``.
+
+    Raises
+    ------
+    NotImplementedError
+        If ``copula`` does not provide pair-copula h-functions.
     """
     u = np.asarray(data, dtype=np.float64)
     validate_copula_data(copula, u)
@@ -198,8 +266,14 @@ def mixture_h(copula, data, result: FitResult,
     return strategy.mixture_h(copula, u, result, **runtime_kwargs)
 
 
-def sample(copula, data, result: FitResult, n: int,
-           config: NumericalConfig | None = None, **kwargs) -> np.ndarray:
+def sample(
+    copula: CommonCopulaProtocol,
+    data: ArrayLike,
+    result: FitResult,
+    n: int,
+    config: NumericalConfig | None = None,
+    **kwargs: Any,
+) -> FloatArray:
     """Generate n observations reproducing the fitted model.
 
     Simulates a path of length n with time-varying parameter:
@@ -211,18 +285,22 @@ def sample(copula, data, result: FitResult, n: int,
 
     Parameters
     ----------
-    copula : CopulaProtocol
-    data : (T, d) pseudo-observations
+    copula : CommonCopulaProtocol
+        Fitted copula family or vine model.
+    data : array_like of shape (n_observations, n_dimensions)
         Used by non-vine strategies where model reproduction requires fitted
         data. Vine objects retain their fitted edge state and ignore this
         stateless-dispatch argument.
-    result : FitResult from fit()
+    result : FitResult
+        Result returned by :func:`fit`. Vine models retain their edge results
+        internally.
     n : int
         Number of observations to generate.
 
     Returns
     -------
-    (n, d) pseudo-observations
+    ndarray
+        Simulated pseudo-observations of shape ``(n, n_dimensions)``.
     """
     vine_kind = _vine_kind(copula)
     if vine_kind == 'cvine':
@@ -236,7 +314,12 @@ def sample(copula, data, result: FitResult, n: int,
     return strategy.sample(copula, u, result, n, **kwargs)
 
 
-def _resolve_predict_config(predict_config, given, horizon, kwargs):
+def _resolve_predict_config(
+    predict_config: PredictConfig | None,
+    given: dict[int, float] | None,
+    horizon: str,
+    kwargs: dict[str, Any],
+) -> PredictConfig:
     predictive_r_mode = kwargs.pop('predictive_r_mode', None)
     dynamic_conditioning = kwargs.pop('dynamic_conditioning', 'ignore')
     return_diagnostics = kwargs.pop('return_diagnostics', False)
@@ -273,10 +356,17 @@ def _resolve_predict_config(predict_config, given, horizon, kwargs):
     return out
 
 
-def predict(copula, data, result: FitResult, n: int,
-            config: NumericalConfig | None = None, given=None,
-            horizon='next', predict_config: PredictConfig | None = None,
-            **kwargs) -> np.ndarray:
+def predict(
+    copula: CommonCopulaProtocol,
+    data: ArrayLike,
+    result: FitResult,
+    n: int,
+    config: NumericalConfig | None = None,
+    given: dict[int, float] | None = None,
+    horizon: str = 'next',
+    predict_config: PredictConfig | None = None,
+    **kwargs: Any,
+) -> PredictOutput:
     """Sample n observations from the predictive copula distribution.
 
     For edge models, the predictive parameter semantics are:
@@ -295,10 +385,12 @@ def predict(copula, data, result: FitResult, n: int,
 
     Parameters
     ----------
-    copula : CopulaProtocol
-    data : pseudo-observations used as prediction history
+    copula : CommonCopulaProtocol
+        Fitted copula family or vine model.
+    data : array_like
+        Pseudo-observations used as prediction history.
         Passed to both C-vines and R-vines as their canonical ``u`` history.
-    result : FitResult from fit()
+    result : FitResult
         Ignored for vine copulas, which hold fitted edge state internally.
     given : dict[int, float] or None
         Fixed pseudo-observation coordinates.
@@ -306,10 +398,20 @@ def predict(copula, data, result: FitResult, n: int,
         Predictive state timing for GAS and SCAR-TM.
     n : int
         Number of samples.
+    config : NumericalConfig or None
+        Numerical and optimizer settings.
+    predict_config : PredictConfig or None
+        Bundled prediction options. Explicit non-default arguments override
+        corresponding fields in this object.
+    **kwargs
+        Strategy- or vine-specific prediction options.
 
     Returns
     -------
-    (n, d) pseudo-observations
+    ndarray or (ndarray, dict)
+        Predictive pseudo-observations of shape ``(n, n_dimensions)``. When
+        diagnostics are requested by a supporting vine model, returns the
+        samples together with a diagnostics mapping.
     """
     pcfg = _resolve_predict_config(predict_config, given, horizon, kwargs)
     vine_kind = _vine_kind(copula)
@@ -341,11 +443,11 @@ def predict(copula, data, result: FitResult, n: int,
     )
 
 
-def _is_vine_copula(obj) -> bool:
+def _is_vine_copula(obj: object) -> bool:
     return _vine_kind(obj) is not None
 
 
-def _vine_kind(obj):
+def _vine_kind(obj: object) -> str | None:
     try:
         from pyscarcopula.vine.cvine import CVineCopula
         from pyscarcopula.vine.rvine import RVineCopula

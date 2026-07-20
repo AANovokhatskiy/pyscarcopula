@@ -552,7 +552,8 @@ void bind_common(py::module_& m) {
         py::arg("quad_order"),
         py::arg("basis_order"));
 
-    py::enum_<scar::CopulaFamily>(m, "CopulaFamily")
+    py::enum_<scar::CopulaFamily>(
+        m, "CopulaFamily", "Native copula-family dispatch identifier.")
         .value("Independent", scar::CopulaFamily::Independent)
         .value("Clayton", scar::CopulaFamily::Clayton)
         .value("Gumbel", scar::CopulaFamily::Gumbel)
@@ -567,23 +568,27 @@ void bind_common(py::module_& m) {
             "MultivariateGaussian",
             scar::CopulaFamily::MultivariateGaussian);
 
-    py::enum_<scar::Rotation>(m, "Rotation")
+    py::enum_<scar::Rotation>(
+        m, "Rotation", "Bivariate copula rotation in degrees.")
         .value("R0", scar::Rotation::R0)
         .value("R90", scar::Rotation::R90)
         .value("R180", scar::Rotation::R180)
         .value("R270", scar::Rotation::R270);
 
-    py::enum_<scar::Transform>(m, "Transform")
+    py::enum_<scar::Transform>(
+        m, "Transform", "Latent-state to copula-parameter transform.")
         .value("Softplus", scar::Transform::Softplus)
         .value("XTanh", scar::Transform::XTanh)
         .value("GaussianTanh", scar::Transform::GaussianTanh);
 
-    py::enum_<scar::OuBackend>(m, "OuBackend")
+    py::enum_<scar::OuBackend>(
+        m, "OuBackend", "Numerical SCAR-OU propagation backend.")
         .value("Spectral", scar::OuBackend::Spectral)
         .value("LocalGh", scar::OuBackend::LocalGh)
         .value("Matrix", scar::OuBackend::Matrix);
 
-    py::enum_<scar::GasScaling>(m, "GasScaling")
+    py::enum_<scar::GasScaling>(
+        m, "GasScaling", "Scaling applied to the GAS score.")
         .value("Unit", scar::GasScaling::Unit)
         .value("Fisher", scar::GasScaling::Fisher);
 }

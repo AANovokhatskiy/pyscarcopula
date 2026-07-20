@@ -9,17 +9,20 @@
 
 namespace scar {
 
+/// Scaling applied to the GAS score in the state recursion.
 enum class GasScaling : int {
     Unit = 0,
     Fisher = 1,
 };
 
+/// Parameters of `g[t+1] = omega + beta*g[t] + gamma*score[t]`.
 struct GasParams {
     double omega = 0.0;
     double gamma = 0.0;
     double beta = 0.0;
 };
 
+/// Numerical safeguards and score-scaling settings for GAS evaluation.
 struct GasConfig {
     GasScaling scaling = GasScaling::Unit;
     double score_eps = 1e-4;
@@ -35,6 +38,7 @@ struct GasLogLikResult {
     std::int64_t failure_index = -1;
 };
 
+/// Full filtered GAS paths and their total log-likelihood.
 struct GasFilterResult {
     std::vector<double> g_path;
     std::vector<double> r_path;
@@ -71,6 +75,7 @@ struct GasPathResult {
     std::int64_t failure_index = -1;
 };
 
+/// Native evaluator for bivariate score-driven copula dynamics.
 class GasEvaluator {
 public:
     GasStateResult initial_state(

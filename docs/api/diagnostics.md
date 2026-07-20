@@ -36,6 +36,15 @@ Common fit diagnostics to inspect before interpreting GoF results include:
   `corr_min_eigenvalue_before`, `corr_min_eigenvalue_after`, and
   `corr_nonfinite_kendall_pairs`.
 
+For `RVineCopula`, `vine.fit_diagnostics["edge_fits"]` additionally separates
+the requested vine method from the methods retained on individual edges. It
+contains actual method and family counts, dynamic attempt/success counts,
+fallback edges, selection and attempted-dynamic `nfev`, discarded fallback
+work, failure messages, and edge-level timings. Unsuccessful dynamic edge fits
+are replaced by their successful MLE selection results, so performance and
+model audits should check `actual_methods` and `fallback_count` rather than the
+vine-level method label alone.
+
 For the formulas behind the dynamic Rosenblatt transform and the distinction
 between optimizer and approximation convergence, see
 [Mathematical Contracts](../guide/mathematical-contracts.md).

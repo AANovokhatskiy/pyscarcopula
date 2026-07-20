@@ -9,7 +9,7 @@ import math
 from dataclasses import fields, is_dataclass
 from importlib import metadata
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar, overload
 
 import numpy as np
 from scipy.optimize import OptimizeResult
@@ -33,6 +33,8 @@ _CLASS_PATH_MIGRATIONS = {
         "StochasticStudentCopula"
     ),
 }
+
+ModelT = TypeVar("ModelT")
 
 
 def _package_version() -> str | None:
@@ -262,8 +264,51 @@ def save_model(model: object, path: str | Path, *, include_data: bool = False) -
         )
 
 
-def load_model(path: str | Path, *, expected_type: type | None = None) -> Any:
-    """Load a model persisted by :func:`save_model`."""
+@overload
+def load_model(
+    path: str | Path,
+    *,
+    expected_type: type[ModelT],
+) -> ModelT:
+    ...
+
+
+@overload
+def load_model(
+    path: str | Path,
+    *,
+    expected_type: None = None,
+) -> Any:
+    ...
+
+
+def load_model(
+    path: str | Path,
+    *,
+    expected_type: type[ModelT] | None = None,
+) -> ModelT | Any:
+    """Load a model persisted by :func:`save_model`.
+
+    Parameters
+    ----------
+    path : str or pathlib.Path
+        Source JSON document.
+    expected_type : type or None
+        Optional runtime type constraint. Supplying it also gives static type
+        checkers a precise return type.
+
+    Returns
+    -------
+    object
+        Reconstructed model instance.
+
+    Raises
+    ------
+    ValueError
+        If the document is not a supported pyscarcopula model format.
+    TypeError
+        If the reconstructed model is not an instance of ``expected_type``.
+    """
     with Path(path).open("r", encoding="utf-8") as fh:
         envelope = json.load(fh)
 

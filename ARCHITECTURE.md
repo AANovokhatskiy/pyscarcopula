@@ -25,7 +25,7 @@ pyscarcopula/
 |-- numerical/
 |   |-- copula_native.py, multivariate_native.py
 |   |-- static_likelihood.py, gas_filter.py
-|   |-- _cpp_scar_ou.py, _cpp_gas.py
+|   |-- _cpp_scar_ou.py, _cpp_gas.py, _cpp_gas_rvine.py
 |   |-- jacobi_tm.py         # Retained Python Jacobi orchestration
 |   `-- mc_samplers.py       # Retained Python SCAR-MC/EIS orchestration
 |-- vine/
@@ -87,9 +87,9 @@ stattests/ -> fitted strategy outputs + retained GoF orchestration
 ## Native Boundary
 
 The pybind11 C++ extension is mandatory. Built-in point operations, static
-likelihoods, GAS filtering, multivariate conditional linear algebra, and
-SCAR-TM-OU likelihood/gradient/forward operations have one production
-implementation in C++.
+likelihoods, GAS filtering, multivariate conditional linear algebra,
+sequential GAS R-vine sampling, and SCAR-TM-OU likelihood/gradient/forward
+operations have one production implementation in C++.
 
 Python remains responsible for:
 

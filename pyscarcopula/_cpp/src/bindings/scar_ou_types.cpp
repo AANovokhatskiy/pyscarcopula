@@ -5,13 +5,20 @@ namespace py = pybind11;
 namespace pyscarcopula::bindings {
 
 void bind_scar_ou_types(py::module_& m) {
-    py::class_<scar::OuParams>(m, "OuParams")
+    py::class_<scar::OuParams>(
+        m,
+        "OuParams",
+        "Parameters of an Ornstein-Uhlenbeck latent process.")
         .def(py::init<>())
-        .def_readwrite("kappa", &scar::OuParams::kappa)
-        .def_readwrite("mu", &scar::OuParams::mu)
-        .def_readwrite("nu", &scar::OuParams::nu);
+        .def_readwrite(
+            "kappa", &scar::OuParams::kappa, "Mean-reversion rate.")
+        .def_readwrite("mu", &scar::OuParams::mu, "Long-run mean.")
+        .def_readwrite("nu", &scar::OuParams::nu, "Diffusion scale.");
 
-    py::class_<scar::OuNumericalConfig>(m, "OuNumericalConfig")
+    py::class_<scar::OuNumericalConfig>(
+        m,
+        "OuNumericalConfig",
+        "Grid, quadrature, and backend-dispatch settings for SCAR-OU.")
         .def(py::init<>())
         .def_readwrite("K", &scar::OuNumericalConfig::K)
         .def_readwrite("grid_range", &scar::OuNumericalConfig::grid_range)

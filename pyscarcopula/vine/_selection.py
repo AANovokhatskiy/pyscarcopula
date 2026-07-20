@@ -198,6 +198,14 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
     candidates : list of copula classes
     allow_rotations : bool
     criterion : 'aic', 'bic', or 'loglik'
+    transform_type : str
+        Parameter transform forwarded to compatible candidate constructors.
+    u_pair : (T, 2) array, optional
+        Precomputed ``column_stack((u1, u2))``. When supplied, it must contain
+        the same observations as ``u1`` and ``u2`` in the same order.
+    tau_value : float, optional
+        Precomputed Kendall's tau for ``u1`` and ``u2``. When omitted, the
+        statistic is computed internally.
 
     Returns
     -------

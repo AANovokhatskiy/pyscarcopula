@@ -143,6 +143,32 @@ def test_documented_public_imports():
     assert CopulaCapabilities().supports_gas is False
 
 
+def test_top_level_api_exposes_docstrings_and_complete_annotations():
+    from pyscarcopula import api
+
+    for function in (
+        api.fit,
+        api.log_likelihood,
+        api.predictive_mean,
+        api.mixture_h,
+        api.sample,
+        api.predict,
+    ):
+        assert inspect.getdoc(function), function.__name__
+        signature = inspect.signature(function)
+        assert signature.return_annotation is not inspect.Signature.empty
+        for parameter in signature.parameters.values():
+            assert parameter.annotation is not inspect.Parameter.empty, (
+                f"{function.__name__}.{parameter.name} is not annotated"
+            )
+
+
+def test_distribution_declares_pep561_typing_marker():
+    assert (ROOT / "pyscarcopula/py.typed").is_file()
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert 'pyscarcopula = ["py.typed"]' in pyproject
+
+
 def test_documented_vine_signatures_match_runtime():
     from pyscarcopula import CVineCopula, RVineCopula
 

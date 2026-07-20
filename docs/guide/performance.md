@@ -201,17 +201,25 @@ chosen numerical options.
 
 #### Student PPF table memory cap
 
-Multivariate Student models precompute a quantile (inverse-CDF) table of
-shape `(n_df_nodes, T, d)` (~200 df nodes) to speed up emission-density
-evaluations. The table costs `n_nodes × T × d × 8` bytes and is now bounded
-by `DEFAULT_MAX_TABLE_BYTES` (256 MiB) from
+Multivariate Student models normally precompute a quantile (inverse-CDF) table
+of shape `(n_df_nodes, T, d)` (~200 df nodes) to speed up emission-density
+evaluations. The table costs `n_nodes × T × d × 8` bytes and is bounded by
+`DEFAULT_MAX_TABLE_BYTES` (256 MiB) from
 `pyscarcopula.copula.multivariate.student_ppf_cache`. When the estimated
 size exceeds the limit, the table is not built and every evaluation falls
 back to the exact `scipy.special.stdtrit` quantile; the compiled kernels
 apply the same exact-quantile fallback when a spec carries no table.
-Results are unchanged (the fallback is exact), only evaluation is slower.
-The limit can be tuned per table via the `max_table_bytes` argument of
-`StudentPPFTable`.
+Both paths target the same Student quantile, but they are not numerically
+identical: the normal cached path Hermite-interpolates between precomputed
+degrees-of-freedom nodes, whereas the fallback evaluates `stdtrit` directly.
+Small likelihood or gradient differences are therefore possible when a
+workload crosses the memory threshold, and the exact fallback is usually
+slower.
+
+`StudentPPFTable` accepts a `max_table_bytes` constructor argument for direct
+internal table construction. `StochasticStudentCopula` currently uses the
+package-wide default; there is no model-level fit or constructor option for
+overriding this cap.
 
 With `transition_method='auto'`, a `numerical_failure` from the spectral path
 may be recovered by trying matrix and then local transition methods. Forced
@@ -670,3 +678,16 @@ As with C-vines, automatic family selection is MLE-based. `gtol`, `ftol`,
 after a family has been selected. If `method='gas'`, a too-loose `ftol` can make
 some edges stop early with `success=True`; set `ftol=1e-12` and increase
 `maxfun` for difficult edges.
+
+Fitted R-vines use sequential native hot paths where the model contract permits
+them. GAS unconditional sampling executes the row recursion and causal score
+updates in one native call while preserving RNG and edge-update order. Repeated
+SCAR-TM-OU prediction against unchanged fitted history reuses
+pseudo-observations and terminal posterior state. A new `fit`, a changed
+explicit history, or an edge replacement invalidates the relevant transient
+cache. These optimizations do not parallelize edge or sample execution.
+
+When benchmarking dynamic vines, report `vine.fit_result.actual_methods` and
+`vine.fit_result.fallback_count`: unsuccessful dynamic edge fits are retained
+as MLE fallbacks and otherwise make GAS or SCAR timings look artificially fast.
+For prediction caches, measure cold and warm calls separately.

@@ -125,8 +125,9 @@ python -m pyscarcopula._native_smoke
 
 **Sampling and prediction**
 
-* Unconditional sampling from fitted bivariate and vine models
-* Conditional sampling for R-vines, with exact and approximate modes
+* Unconditional sampling from fitted bivariate, multivariate, and vine models
+* Conditional sampling for static and dynamic multivariate models and R-vines
+* Exact and approximate conditional modes for R-vines
 * `PredictConfig` for explicit prediction options
 * Reproducible random generation via `rng`
 * JSON persistence through `model.save()` and `ModelClass.load()`

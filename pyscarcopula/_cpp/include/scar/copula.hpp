@@ -7,6 +7,7 @@
 
 namespace scar {
 
+/// Copula kernels supported by the native dispatch layer.
 enum class CopulaFamily : int {
     Independent = 0,
     Clayton = 1,
@@ -19,6 +20,7 @@ enum class CopulaFamily : int {
     MultivariateGaussian = 8,
 };
 
+/// Standard pair-copula rotations, expressed in degrees.
 enum class Rotation : int {
     R0 = 0,
     R90 = 90,
@@ -26,23 +28,29 @@ enum class Rotation : int {
     R270 = 270,
 };
 
+/// Mapping used to convert an unconstrained latent state to a parameter.
 enum class Transform : int {
     Softplus = 1,
     XTanh = 2,
     GaussianTanh = 3,
 };
 
+/// Complete, immutable-by-convention input specification for copula kernels.
+///
+/// Multivariate Student and Gaussian families may populate the factor and
+/// PPF-cache fields. Bivariate families use only the family, rotation,
+/// transform, and offset fields.
 struct CopulaSpec {
-    CopulaFamily family = CopulaFamily::Clayton;
-    Rotation rotation = Rotation::R0;
-    Transform transform = Transform::Softplus;
-    double offset = 0.0001;
-    int dim = 2;
-    std::vector<double> l_inv;
-    double log_det = 0.0;
-    std::int64_t ppf_n_obs = 0;
-    std::vector<double> ppf_nodes;
-    std::vector<double> ppf_table;
+    CopulaFamily family = CopulaFamily::Clayton;  ///< Kernel family.
+    Rotation rotation = Rotation::R0;             ///< Pair rotation.
+    Transform transform = Transform::Softplus;    ///< Parameter transform.
+    double offset = 0.0001;                       ///< Transform offset.
+    int dim = 2;                                  ///< Copula dimension.
+    std::vector<double> l_inv;  ///< Row-major inverse Cholesky factor.
+    double log_det = 0.0;       ///< Log determinant of correlation factor.
+    std::int64_t ppf_n_obs = 0;  ///< Rows represented by the PPF cache.
+    std::vector<double> ppf_nodes;  ///< Student degrees-of-freedom nodes.
+    std::vector<double> ppf_table;  ///< Flattened cached Student quantiles.
     std::vector<double> gaussian_z1_cache;
     std::vector<double> gaussian_z2_cache;
     std::vector<double> equicorr_sum_cache;
@@ -51,6 +59,7 @@ struct CopulaSpec {
 
 using Observations = std::vector<std::vector<double>>;
 
+/// Lightweight non-owning view over a contiguous vector of doubles.
 struct DoubleView {
     const double* values = nullptr;
     std::size_t count = 0;
@@ -68,17 +77,20 @@ struct DoubleView {
     }
 };
 
+/// Flattened row-major values with explicit two-dimensional shape.
 struct GridValues {
-    std::vector<double> values;
-    std::int64_t n_obs = 0;
-    std::int64_t n_grid = 0;
+    std::vector<double> values;  ///< Row-major values.
+    std::int64_t n_obs = 0;      ///< Number of observation rows.
+    std::int64_t n_grid = 0;     ///< Number of grid columns.
 };
 
+/// Copula density and its derivative on the same grid.
 struct GridValuesWithGrad {
     GridValues pdf;
     GridValues d_pdf_dx;
 };
 
+/// Per-row multivariate log densities and scalar-parameter derivatives.
 struct MultivariateRowsResult {
     std::vector<double> log_pdf;
     std::vector<double> dlog_dr;
@@ -93,6 +105,7 @@ struct MultivariateGridResult {
     std::int64_t failure_index = -1;
 };
 
+/// Conditional latent samples for coordinates not supplied by the caller.
 struct ConditionalSampleResult {
     std::vector<double> values;
     std::int64_t n_rows = 0;
@@ -101,6 +114,7 @@ struct ConditionalSampleResult {
     std::int64_t failure_index = -1;
 };
 
+/// Static negative log-likelihood objective and requested gradients.
 struct StaticObjectiveResult {
     double negative_log_likelihood = 0.0;
     double negative_gradient = 0.0;
@@ -109,6 +123,11 @@ struct StaticObjectiveResult {
     std::int64_t failure_index = -1;
 };
 
+/// Reusable evaluator for a fixed copula specification and observation set.
+///
+/// Construction validates and precomputes family-specific sufficient
+/// statistics. Instances can evaluate multiple scalar parameters without
+/// rebuilding those caches.
 class StaticCopulaEvaluator {
 public:
     StaticCopulaEvaluator(CopulaSpec spec, Observations u);

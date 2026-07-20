@@ -51,6 +51,12 @@ Native adapters own calls into the mandatory C++ extension.
 | Native evaluator | Density, likelihood, gradient, filtering, multivariate conditional linear algebra |
 | Python coordination | RNG and fixed draws, Jacobi, MC/EIS, GoF, persistence |
 
+Sequential unconditional sampling for R-vines with fitted GAS edges is also a
+native operation. Python builds the flat edge/topology plan and generates the
+same fixed draws as the generic path; the C++ kernel owns the row recursion and
+causal GAS state updates. Unsupported custom stateful strategies remain on the
+generic Python path.
+
 ## Native Array Boundary
 
 Multivariate Gaussian and Student conditional kernels consume read-only views
