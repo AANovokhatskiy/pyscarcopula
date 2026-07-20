@@ -100,14 +100,14 @@ class TestGumbelSampling:
     def test_V_positive(self, r):
         """V samples must be strictly positive."""
         cop = GumbelCopula()
-        V = cop.V(10000, r)
+        V = cop.V(10000, r, rng=np.random.default_rng(10_000 + int(10 * r)))
         assert np.all(V > 0), f"Negative V at r={r}: min={V.min()}"
 
     @pytest.mark.parametrize("r", [1.5, 2.0, 5.0])
     def test_V_laplace_transform(self, r):
         """Empirical check: E[exp(-tV)] ≈ exp(-t^(1/r)) for several t."""
         cop = GumbelCopula()
-        V = cop.V(100000, r)
+        V = cop.V(100000, r, rng=np.random.default_rng(20_000 + int(10 * r)))
         alpha = 1.0 / r
         for t in [0.5, 1.0, 2.0]:
             empirical = np.mean(np.exp(-t * V))
@@ -118,7 +118,8 @@ class TestGumbelSampling:
     def test_sample_unit_interval(self):
         """Gumbel samples should be in (0,1)^2."""
         cop = GumbelCopula()
-        samples = cop.sample_at_parameter(5000, 3.0)
+        samples = cop.sample_at_parameter(
+            5000, 3.0, rng=np.random.default_rng(30_000))
         assert np.all(samples > 0) and np.all(samples < 1)
 
 

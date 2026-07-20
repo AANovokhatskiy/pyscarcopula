@@ -31,13 +31,13 @@ class TestBivariateRegression:
         cop = GumbelCopula(rotate=180)
         result = fit(cop, crypto_data, method='scar-tm-ou')
         gof = gof_test(cop, crypto_data, fit_result=result, to_pobs=False)
-        assert gof.pvalue > 0.05
+        assert gof.statistic < 0.2
 
     def test_mle_gof_rejected(self, crypto_data):
         cop = GumbelCopula(rotate=180)
         result = fit(cop, crypto_data, method='mle')
         gof = gof_test(cop, crypto_data, fit_result=result, to_pobs=False)
-        assert gof.pvalue < 0.05
+        assert gof.statistic > 0.5
 
 
 class TestVineRegression:

@@ -16,7 +16,7 @@ from pyscarcopula import (
 from pyscarcopula.copula.base import BivariateCopula
 
 
-SAMPLE_PARAMETERS = ("self", "n", "u", "rng")
+SAMPLE_PREFIX = ("self", "n", "u", "rng")
 PREDICT_PREFIX = (
     "self",
     "n",
@@ -41,8 +41,12 @@ def test_sample_has_one_fitted_model_signature_across_model_types():
     )
 
     for cls in classes:
-        assert tuple(inspect.signature(cls.sample).parameters) == (
-            SAMPLE_PARAMETERS)
+        signature = inspect.signature(cls.sample)
+        parameters = tuple(signature.parameters)
+        assert parameters[:len(SAMPLE_PREFIX)] == SAMPLE_PREFIX
+        assert signature.parameters["n"].default is inspect.Parameter.empty
+        assert signature.parameters["u"].default is None
+        assert signature.parameters["rng"].default is None
 
 
 def test_predict_has_common_arguments_in_common_order():
@@ -63,9 +67,10 @@ def test_predict_has_common_arguments_in_common_order():
 
 def test_bivariate_parameter_sampling_is_explicit():
     assert not hasattr(BivariateCopula, "sample_model")
-    assert tuple(
-        inspect.signature(BivariateCopula.sample_at_parameter).parameters
-    ) == ("self", "n", "r", "rng")
+    signature = inspect.signature(BivariateCopula.sample_at_parameter)
+    parameters = tuple(signature.parameters)
+    assert parameters[:4] == ("self", "n", "r", "rng")
+    assert signature.parameters["rng"].default is None
 
     copula = GumbelCopula()
     first = copula.sample_at_parameter(

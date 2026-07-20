@@ -1,9 +1,29 @@
-from pyscarcopula._native_smoke import run_native_smoke
-from pyscarcopula import _scar_cpp
+import numpy as np
+
+from pyscarcopula import BivariateGaussianCopula, _scar_cpp
+from pyscarcopula.api import fit
+from pyscarcopula.numerical import _cpp_gas
 
 
 def test_native_distribution_smoke():
-    run_native_smoke()
+    assert _cpp_gas.available()
+    observations = np.array([
+        [0.20, 0.70],
+        [0.60, 0.30],
+        [0.40, 0.80],
+        [0.75, 0.25],
+    ])
+    result = fit(
+        BivariateGaussianCopula(),
+        observations,
+        method="gas",
+        gamma0=np.array([0.0, 0.02, 0.7]),
+        maxiter=2,
+        maxfun=12,
+    )
+
+    assert not hasattr(result, "backend")
+    assert np.isfinite(result.log_likelihood)
 
 
 def test_native_types_and_gas_methods_are_self_documenting():

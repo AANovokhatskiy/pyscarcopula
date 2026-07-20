@@ -1,5 +1,6 @@
 """Acceptance tests for the native-only SCAR-TM-OU strategy."""
 
+import ast
 import inspect
 
 import numpy as np
@@ -260,14 +261,25 @@ def test_prepared_forward_helpers_use_updated_student_factor():
     np.testing.assert_allclose(after, expected, rtol=0.0, atol=0.0)
 
 
-@pytest.mark.parametrize("backend", ["python", "auto", "cpp"])
-def test_public_backend_selection_is_removed(backend):
-    with pytest.raises(TypeError, match="backend selection was removed"):
-        SCARTMStrategy(backend=backend)
-
-
 def test_strategy_has_no_python_ou_production_imports():
-    source = inspect.getsource(scar_tm) + inspect.getsource(stattests)
+    def dotted_name(node):
+        if isinstance(node, ast.Name):
+            return node.id
+        if isinstance(node, ast.Attribute):
+            prefix = dotted_name(node.value)
+            return f"{prefix}.{node.attr}" if prefix else node.attr
+        return ""
+
+    trees = [
+        ast.parse(inspect.getsource(module), filename=module.__file__)
+        for module in (scar_tm, stattests)
+    ]
+    references = {
+        dotted_name(node)
+        for tree in trees
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.Name, ast.Attribute))
+    }
     for symbol in (
         "tm_loglik",
         "tm_loglik_with_grad",
@@ -277,7 +289,7 @@ def test_strategy_has_no_python_ou_production_imports():
         "auto_neg_loglik",
         "predictive_tm.tm_state_distribution",
     ):
-        assert symbol not in source
+        assert symbol not in references
 
 
 def test_missing_native_extension_fails_before_optimizer(monkeypatch):

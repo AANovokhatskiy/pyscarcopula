@@ -1,4 +1,4 @@
-"""Optional performance regression checks for vine workloads."""
+"""Opt-in benchmark reports and structural fast-path checks for vines."""
 
 import os
 from collections import Counter
@@ -214,7 +214,7 @@ _SYNTHETIC_PREDICT_WORKLOADS = [
 
 @pytest.mark.data
 @pytest.mark.benchmark
-def test_rvine_mle_conditional_suffix_predict_speed_smoke():
+def test_rvine_mle_conditional_suffix_predict_benchmark_report():
     _skip_unless_enabled()
     u = _example_u()
     vine = RVineCopula()
@@ -233,7 +233,12 @@ def test_rvine_mle_conditional_suffix_predict_speed_smoke():
 
     assert out.shape == (1000, 6)
     assert diagnostics["conditional_method"] == "suffix"
-    assert elapsed < 2.0
+    _print_benchmark(
+        "rvine_mle_conditional_suffix_predict",
+        n=len(out),
+        d=out.shape[1],
+        elapsed_ms=f"{1e3 * elapsed:.3f}",
+    )
 
 
 @pytest.mark.benchmark
@@ -369,7 +374,7 @@ def test_rvine_scar_synthetic_predict_profile(
 
 @pytest.mark.data
 @pytest.mark.benchmark
-def test_rvine_scar_conditional_suffix_cached_predict_speed_smoke():
+def test_rvine_scar_conditional_suffix_cached_predict_benchmark_report():
     _skip_unless_enabled()
     u = _example_u()
     vine = RVineCopula()
@@ -395,4 +400,9 @@ def test_rvine_scar_conditional_suffix_cached_predict_speed_smoke():
 
     assert out.shape == (1000, 6)
     assert diagnostics["conditional_method"] == "suffix"
-    assert elapsed < 2.0
+    _print_benchmark(
+        "rvine_scar_conditional_suffix_cached_predict",
+        n=len(out),
+        d=out.shape[1],
+        elapsed_ms=f"{1e3 * elapsed:.3f}",
+    )

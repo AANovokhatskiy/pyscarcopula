@@ -131,8 +131,12 @@ def test_tm_loglik_gradient(cls, rot, alpha, crypto_data):
 
     val, grad = tm_loglik_with_grad(*alpha, u, cop, **tm_kwargs)
 
-    if val >= 1e10 or not np.all(np.isfinite(grad)):
-        pytest.skip("loglik returned FAIL or NaN for this parameter set")
+    assert val < 1e10, (
+        f"loglik returned optimizer failure sentinel for alpha={alpha}: {val}"
+    )
+    assert np.all(np.isfinite(grad)), (
+        f"loglik returned a non-finite gradient for alpha={alpha}: {grad}"
+    )
 
     eps = 1e-5
     grad_num = np.zeros(3)
@@ -145,8 +149,9 @@ def test_tm_loglik_gradient(cls, rot, alpha, crypto_data):
         vm = tm_loglik(*a_m, u, cls(rotate=rot), **tm_kwargs)
         grad_num[k] = (vp - vm) / (2 * eps)
 
-    if not np.all(np.isfinite(grad_num)):
-        pytest.skip("numerical gradient contains non-finite values")
+    assert np.all(np.isfinite(grad_num)), (
+        f"numerical gradient is non-finite for alpha={alpha}: {grad_num}"
+    )
 
     # Mixed tolerance: relative when |grad| >> 1, absolute when |grad| << 1
     abs_errs = np.abs(grad - grad_num)

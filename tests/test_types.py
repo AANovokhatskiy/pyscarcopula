@@ -1,4 +1,6 @@
 """Tests for _types and _utils — the foundation of the new architecture."""
+from dataclasses import FrozenInstanceError
+
 import numpy as np
 import pytest
 
@@ -85,7 +87,7 @@ class TestNumericalConfig:
 
     def test_frozen(self):
         cfg = NumericalConfig()
-        with pytest.raises(Exception):  # FrozenInstanceError
+        with pytest.raises(FrozenInstanceError):
             cfg.default_K = 999
 
 
@@ -252,7 +254,7 @@ class TestLatentProcessParams:
 
     def test_frozen(self):
         p = ou_params(1.0, 2.0, 3.0)
-        with pytest.raises(Exception):
+        with pytest.raises(FrozenInstanceError):
             p.process_type = 'xxx'
 
     def test_repr(self):
@@ -456,7 +458,7 @@ class TestFitResults:
             copula_name='Gumbel',
             success=True,
         )
-        with pytest.raises(Exception):
+        with pytest.raises(FrozenInstanceError):
             r.log_likelihood = 999.0
 
 

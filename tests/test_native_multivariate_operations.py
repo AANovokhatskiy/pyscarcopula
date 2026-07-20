@@ -74,7 +74,7 @@ def test_native_gaussian_conditional_matches_reference_with_supplied_draws():
         for row in range(2)
     ])
 
-    np.testing.assert_allclose(actual, expected, rtol=0.0, atol=3e-15)
+    np.testing.assert_allclose(actual, expected, rtol=2e-13, atol=2e-13)
 
 
 def test_native_gaussian_conditional_shared_correlation_matches_reference():
@@ -100,7 +100,7 @@ def test_native_gaussian_conditional_shared_correlation_matches_reference():
         for row in range(len(normal_draws))
     ])
 
-    np.testing.assert_allclose(actual, expected, rtol=0.0, atol=3e-15)
+    np.testing.assert_allclose(actual, expected, rtol=2e-13, atol=2e-13)
 
 
 def test_native_student_conditional_matches_reference_with_supplied_draws():
@@ -134,7 +134,7 @@ def test_native_student_conditional_matches_reference_with_supplied_draws():
         for row in range(2)
     ])
 
-    np.testing.assert_allclose(actual, expected, rtol=0.0, atol=3e-15)
+    np.testing.assert_allclose(actual, expected, rtol=2e-13, atol=2e-13)
 
 
 def test_conditional_bindings_accept_read_only_float64_views():

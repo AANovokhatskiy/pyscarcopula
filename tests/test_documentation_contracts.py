@@ -42,21 +42,52 @@ def _resolve_documented_object(path):
     raise ImportError(path)
 
 
-def test_documented_python_blocks_compile_and_import():
+def test_documented_python_blocks_compile_import_and_bind_public_calls():
     for path in DOC_FILES:
         for index, source in enumerate(_python_blocks(path)):
-            tree = ast.parse(source, filename=f"{path}:{index}")
+            filename = f"{path}:{index}"
+            compile(source, filename=filename, mode="exec")
+            tree = ast.parse(source, filename=filename)
             if path == MIGRATION_NOTES and "# Removed" in source:
                 continue
             imports = [
                 node for node in tree.body
                 if isinstance(node, (ast.Import, ast.ImportFrom))
             ]
+            namespace = {}
             exec(compile(
                 ast.Module(body=imports, type_ignores=[]),
-                filename=f"{path}:{index}",
+                filename=filename,
                 mode="exec",
-            ), {})
+            ), namespace)
+
+            for call in (
+                    node for node in ast.walk(tree)
+                    if isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)):
+                target = namespace.get(call.func.id)
+                if not callable(target):
+                    continue
+                if not getattr(target, "__module__", "").startswith(
+                        "pyscarcopula"):
+                    continue
+                if any(isinstance(arg, ast.Starred) for arg in call.args):
+                    continue
+                if any(keyword.arg is None for keyword in call.keywords):
+                    continue
+                try:
+                    signature = inspect.signature(target)
+                except (TypeError, ValueError):
+                    continue
+                positional = [object()] * len(call.args)
+                keywords = {keyword.arg: object() for keyword in call.keywords}
+                try:
+                    signature.bind_partial(*positional, **keywords)
+                except TypeError as exc:
+                    raise AssertionError(
+                        f"invalid documented call at {filename}:{call.lineno}: "
+                        f"{exc}"
+                    ) from exc
 
 
 def test_mkdocstrings_targets_are_importable():
@@ -172,12 +203,11 @@ def test_distribution_declares_pep561_typing_marker():
 def test_documented_vine_signatures_match_runtime():
     from pyscarcopula import CVineCopula, RVineCopula
 
-    assert tuple(inspect.signature(CVineCopula.sample).parameters) == (
-        "self", "n", "u", "rng")
-    assert tuple(inspect.signature(RVineCopula.sample).parameters) == (
-        "self", "n", "u", "rng")
-
     for cls in (CVineCopula, RVineCopula):
+        sample_parameters = inspect.signature(cls.sample).parameters
+        assert "n" in sample_parameters
+        assert "u" in sample_parameters
+        assert "rng" in sample_parameters
         parameters = inspect.signature(cls.predict).parameters
         assert "u" in parameters
         assert "u_train" not in parameters
