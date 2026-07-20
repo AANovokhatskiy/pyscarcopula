@@ -1,6 +1,6 @@
 """Shared pair-copula edge container for vine models."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -34,6 +34,8 @@ class PairCopula:
         Optional tree level for CVine-style layouts.
     idx : int or None
         Optional edge index within a CVine tree.
+    fit_diagnostics : dict
+        Edge-level fit provenance, including dynamic fallback details.
     """
     copula: object = None
     param: float | None = None
@@ -43,6 +45,7 @@ class PairCopula:
     fit_result: object = None
     tree: int | None = None
     idx: int | None = None
+    fit_diagnostics: dict = field(default_factory=dict)
 
     @property
     def method(self):

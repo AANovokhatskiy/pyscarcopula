@@ -52,6 +52,7 @@ class MLEStrategy:
             eps: float | None = None,
             maxcor: int | None = None,
             finite_diff_rel_step: float | None = None,
+            _prepared_evaluator=None,
             **kwargs) -> MLEResult:
         """Fit constant copula parameter.
 
@@ -116,7 +117,9 @@ class MLEStrategy:
             x0_val = copula.transform(np.array([1.5]))[0]
             x0 = np.array([x0_val])
 
-        evaluator = static_likelihood.prepare(copula, u)
+        evaluator = _prepared_evaluator
+        if evaluator is None:
+            evaluator = static_likelihood.prepare(copula, u)
 
         def objective_and_gradient(x):
             return evaluator.objective_and_gradient(

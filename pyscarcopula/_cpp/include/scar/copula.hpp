@@ -43,6 +43,8 @@ struct CopulaSpec {
     std::int64_t ppf_n_obs = 0;
     std::vector<double> ppf_nodes;
     std::vector<double> ppf_table;
+    std::vector<double> gaussian_z1_cache;
+    std::vector<double> gaussian_z2_cache;
     std::vector<double> equicorr_sum_cache;
     std::vector<double> equicorr_sum_squares_cache;
 };
@@ -114,10 +116,15 @@ public:
     StaticObjectiveResult objective(
         double parameter,
         bool correlation_gradient = false) const;
+    StaticObjectiveResult objective_value(double parameter) const;
     std::vector<double> log_pdf_rows(double parameter) const;
     int status() const noexcept;
 
 private:
+    StaticObjectiveResult evaluate_objective(
+        double parameter,
+        bool parameter_gradient_requested,
+        bool correlation_gradient_requested) const;
     CopulaSpec spec_;
     Observations u_;
     std::vector<double> gaussian_scores_;

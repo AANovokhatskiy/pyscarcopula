@@ -81,6 +81,22 @@ def test_bivariate_objective_and_gradient_match_native_point_ops(
         expected_gradient, rel=1e-12, abs=1e-12)
 
 
+@pytest.mark.parametrize("factory,parameter", _BIVARIATE_CASES)
+def test_value_only_objective_matches_gradient_objective_exactly(
+        factory, parameter):
+    evaluator = static_likelihood.prepare(factory(), _observations())
+
+    value_only = evaluator.value_result(parameter)
+    with_gradient = evaluator.result(parameter)
+
+    assert value_only["status"] == with_gradient["status"]
+    assert value_only["failure_index"] == with_gradient["failure_index"]
+    assert (
+        value_only["negative_log_likelihood"]
+        == with_gradient["negative_log_likelihood"]
+    )
+
+
 def test_static_evaluator_reports_first_numerical_failure():
     evaluator = static_likelihood.prepare(
         ClaytonCopula(), np.array([[0.2, 0.3], [0.4, 0.7]]))

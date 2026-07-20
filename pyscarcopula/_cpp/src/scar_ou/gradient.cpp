@@ -29,6 +29,76 @@ using GridGradientOperators = ScarOuGridGradientOperators;
 using GridGradientWorkspace = ScarOuGridGradientWorkspace;
 using SpectralGradientWorkspace = ScarOuSpectralGradientWorkspace;
 
+bool prepare_gaussian_spectral_terms(
+    const CopulaSpec& copula,
+    std::int64_t n_obs,
+    const std::vector<double>& r_grid,
+    SpectralGradientWorkspace& workspace) {
+
+    const std::size_t n_obs_size = static_cast<std::size_t>(n_obs);
+    if (copula.family != CopulaFamily::Gaussian
+        || copula.gaussian_z1_cache.size() != n_obs_size
+        || copula.gaussian_z2_cache.size() != n_obs_size) {
+        return false;
+    }
+
+    const std::size_t grid_size = r_grid.size();
+    workspace.gaussian_r2.resize(grid_size);
+    workspace.gaussian_omr2.resize(grid_size);
+    workspace.gaussian_log_norm.resize(grid_size);
+    workspace.gaussian_dlog_det.resize(grid_size);
+    workspace.gaussian_omr2_squared.resize(grid_size);
+    for (std::size_t j = 0; j < grid_size; ++j) {
+        const double r = r_grid[j];
+        const double r2 = r * r;
+        const double omr2 = 1.0 - r2;
+        workspace.gaussian_r2[j] = r2;
+        workspace.gaussian_omr2[j] = omr2;
+        workspace.gaussian_log_norm[j] = -0.5 * std::log(omr2);
+        workspace.gaussian_dlog_det[j] = r / omr2;
+        workspace.gaussian_omr2_squared[j] = omr2 * omr2;
+    }
+    return true;
+}
+
+void gaussian_spectral_pdf_and_grad_row(
+    const CopulaSpec& copula,
+    std::int64_t row,
+    const std::vector<double>& r_grid,
+    const std::vector<double>& dpsi_grid,
+    const SpectralGradientWorkspace& workspace,
+    double* fi_row,
+    double* dfi_dx_row) {
+
+    const std::size_t row_index = static_cast<std::size_t>(row);
+    const double z1 = copula.gaussian_z1_cache[row_index];
+    const double z2 = copula.gaussian_z2_cache[row_index];
+    const double sum_squares = z1 * z1 + z2 * z2;
+    const double cross_product = z1 * z2;
+    for (std::size_t j = 0; j < r_grid.size(); ++j) {
+        const double r = r_grid[j];
+        const double r2 = workspace.gaussian_r2[j];
+        const double omr2 = workspace.gaussian_omr2[j];
+        const double numerator =
+            r2 * sum_squares - 2.0 * r * cross_product;
+        const double log_pdf =
+            workspace.gaussian_log_norm[j] - 0.5 * numerator / omr2;
+        const double pdf = std::exp(log_pdf);
+        fi_row[j] = pdf;
+
+        const double derivative_numerator =
+            (2.0 * r * sum_squares - 2.0 * cross_product) * omr2
+            + 2.0 * r * numerator;
+        const double derivative_quadratic = derivative_numerator
+            / workspace.gaussian_omr2_squared[j];
+        const double derivative_log_pdf =
+            workspace.gaussian_dlog_det[j]
+            - 0.5 * derivative_quadratic;
+        dfi_dx_row[j] =
+            pdf * derivative_log_pdf * dpsi_grid[j];
+    }
+}
+
 void dense_grid_matvec(
     const std::vector<double>& matrix,
     int K,
@@ -763,6 +833,8 @@ GradLogLikResult spectral_neg_loglik_with_grad(
     dpsi_grid.clear();
     scar_internal::copula_prepare_grid_transform(
         copula, x_grid, r_grid, dpsi_grid);
+    const bool use_gaussian_spectral_terms =
+        prepare_gaussian_spectral_terms(copula, n_obs, r_grid, ws);
 
     std::size_t n_corr = 0;
     std::vector<double>& precision = ws.precision;
@@ -831,14 +903,25 @@ GradLogLikResult spectral_neg_loglik_with_grad(
     double dlog_scale[3] = {0.0, 0.0, 0.0};
 
     for (std::int64_t t = n_obs - 1; t >= 1; --t) {
-        scar_internal::copula_pdf_and_grad_row_precomputed_flat(
-            copula,
-            observation_values,
-            t,
-            r_grid,
-            dpsi_grid,
-            fi_row.data(),
-            dfi_dx_row.data());
+        if (use_gaussian_spectral_terms) {
+            gaussian_spectral_pdf_and_grad_row(
+                copula,
+                t,
+                r_grid,
+                dpsi_grid,
+                ws,
+                fi_row.data(),
+                dfi_dx_row.data());
+        } else {
+            scar_internal::copula_pdf_and_grad_row_precomputed_flat(
+                copula,
+                observation_values,
+                t,
+                r_grid,
+                dpsi_grid,
+                fi_row.data(),
+                dfi_dx_row.data());
+        }
 
         scar_internal::project_multiply_with_grad(
             coeff,
@@ -980,14 +1063,25 @@ GradLogLikResult spectral_neg_loglik_with_grad(
         }
     }
 
-    scar_internal::copula_pdf_and_grad_row_precomputed_flat(
-        copula,
-        observation_values,
-        0,
-        r_grid,
-        dpsi_grid,
-        fi_row.data(),
-        dfi_dx_row.data());
+    if (use_gaussian_spectral_terms) {
+        gaussian_spectral_pdf_and_grad_row(
+            copula,
+            0,
+            r_grid,
+            dpsi_grid,
+            ws,
+            fi_row.data(),
+            dfi_dx_row.data());
+    } else {
+        scar_internal::copula_pdf_and_grad_row_precomputed_flat(
+            copula,
+            observation_values,
+            0,
+            r_grid,
+            dpsi_grid,
+            fi_row.data(),
+            dfi_dx_row.data());
+    }
     scar_internal::project_multiply_with_grad(
         coeff,
         dcoeff,

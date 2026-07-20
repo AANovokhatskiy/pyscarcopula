@@ -37,6 +37,7 @@ from pyscarcopula.strategy.initial_point import (
     smart_initial_point,
 )
 from pyscarcopula.numerical import _cpp_scar_ou, copula_native
+from pyscarcopula.numerical.ou_kernels import sample_ou_trajectory
 from pyscarcopula.copula.multivariate.corr_param import (
     _corr_gradient_to_raw_params,
     _shrinkage_raw_corr_direction,
@@ -1776,17 +1777,7 @@ class SCARTMStrategy:
 
         p = result.params
         kappa, mu, nu = p.kappa, p.mu, p.nu
-        dt = 1.0 / (n - 1) if n > 1 else 1.0
-        rho_ou = np.exp(-kappa * dt)
-        sigma_cond = np.sqrt(nu ** 2 / (2.0 * kappa) * (1.0 - rho_ou ** 2))
-
-        x = np.empty(n, dtype=np.float64)
-        x[0] = rng.normal(mu, nu / np.sqrt(2.0 * kappa))
-        for t in range(1, n):
-            x[t] = (
-                mu + rho_ou * (x[t - 1] - mu)
-                + sigma_cond * rng.standard_normal()
-            )
+        x = sample_ou_trajectory(kappa, mu, nu, n, rng)
         return copula.transform(x)
 
     def model_sample_state(self, copula, result, **kwargs):

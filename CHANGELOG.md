@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- Reports requested versus actual R-vine edge methods, dynamic-fit fallbacks,
+  discarded optimizer work, failure messages, and edge-level fit timings.
+- Reuses R-vine edge statistics and top-candidate static evaluators during
+  family selection, and screens candidates with value-only native likelihoods.
+- Accelerates long SCAR-TM-OU and SCAR-M/P-OU model-sampling trajectories with
+  a sequential cached Numba OU kernel while preserving the NumPy RNG stream.
+- Reuses prepared Gaussian normal quantiles and fixed-grid spectral terms in
+  SCAR-OU gradient and mixture-h evaluation without changing transition
+  backends or basis-order policy.
+- Caches fitted or content-fingerprinted R-vine prediction histories and
+  terminal dynamic states, reducing repeated 6D SCAR-TM-OU `predict(1000)`
+  from about 351 ms cold to a 4.5 ms warm median without parallel execution.
+- Replaces row-by-row Python GAS R-vine sampling with a sequential native
+  stateful kernel while preserving the exact RNG stream, score-update order,
+  rotations, mixed-edge behavior, and generic-strategy fallback.
+- Reduces median GAS `RVineCopula.sample(1000)` time on the profiled 6D data
+  from about 878 ms to 3.2 ms without parallel execution.
 - Optimizes native multivariate hot paths: shared-correlation conditional
   Cholesky reuse, reusable Student workspaces, equicorrelation sufficient
   statistics (including prepared SCAR-OU snapshot caching), and zero-copy

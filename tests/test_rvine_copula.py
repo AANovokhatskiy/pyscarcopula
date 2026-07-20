@@ -1,5 +1,6 @@
 """Unit tests for RVineCopula."""
 from collections import Counter
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -1280,6 +1281,36 @@ class TestSampling:
         assert np.all(s > 0.0)
         assert np.all(s < 1.0)
 
+    def test_native_gas_sample_matches_legacy_stepwise_exactly(self):
+        vine = _manual_suffix_stateful_rvine()
+        max_active_tree = vine._max_non_independent_tree_level()
+        active_keys = vine._sample_active_edge_keys(max_active_tree)
+
+        actual = vine.sample(128, rng=np.random.default_rng(20260720))
+        expected = vine._sample_stepwise_stateful(
+            128,
+            np.random.default_rng(20260720),
+            active_keys=active_keys,
+            max_active_tree=max_active_tree,
+        )
+
+        assert np.array_equal(actual, expected)
+
+    def test_native_gas_sample_matches_legacy_for_mixed_dynamic_edges(self):
+        vine = _manual_multi_edge_dynamic_rvine()
+        max_active_tree = vine._max_non_independent_tree_level()
+        active_keys = vine._sample_active_edge_keys(max_active_tree)
+
+        actual = vine.sample(96, rng=np.random.default_rng(20260721))
+        expected = vine._sample_stepwise_stateful(
+            96,
+            np.random.default_rng(20260721),
+            active_keys=active_keys,
+            max_active_tree=max_active_tree,
+        )
+
+        assert np.array_equal(actual, expected)
+
     def test_scar_tm_sample_shape_and_unit_interval(self):
         u = _sample_dynamic_gaussian_chain(45, 3, seed=9)
         v = RVineCopula(candidates=[BivariateGaussianCopula]).fit(
@@ -1296,6 +1327,66 @@ class TestSampling:
 
 
 class TestDynamicFitSampleRefit:
+
+    def test_dynamic_fit_fallback_is_reported_without_changing_contract(
+            self, monkeypatch):
+        u = _sample_dynamic_gaussian_chain(120, 2, seed=20260808)
+
+        def failed_dynamic_fit(*args, **kwargs):
+            return SimpleNamespace(
+                method='GAS',
+                success=False,
+                nfev=9,
+                message='forced dynamic failure',
+            )
+
+        monkeypatch.setattr(
+            dissmann_module, '_fit_with_strategy', failed_dynamic_fit)
+        vine = RVineCopula(
+            candidates=[BivariateGaussianCopula]
+        ).fit(u, method='gas')
+
+        edge_fits = vine.fit_diagnostics['edge_fits']
+        assert vine.fit_result.success is True
+        assert vine.fit_result.method == 'GAS'
+        assert vine.fit_result.actual_methods == {'MLE': 1}
+        assert vine.fit_result.fallback_count == 1
+        assert edge_fits['requested_method'] == 'GAS'
+        assert edge_fits['actual_methods'] == {'MLE': 1}
+        assert edge_fits['dynamic_attempted_count'] == 1
+        assert edge_fits['dynamic_success_count'] == 0
+        assert edge_fits['dynamic_attempted_nfev_total'] == 9
+        assert edge_fits['fallback_discarded_nfev'] == 9
+        assert edge_fits['fallback_count'] == 1
+
+        fallback = edge_fits['fallback_edges'][0]
+        assert fallback['key'] == (0, 0)
+        assert fallback['family'] == 'BivariateGaussianCopula'
+        assert fallback['requested_method'] == 'GAS'
+        assert fallback['actual_method'] == 'MLE'
+        assert fallback['fallback_reason'] == 'dynamic_fit_unsuccessful'
+        assert fallback['attempted_method'] == 'GAS'
+        assert fallback['attempted_success'] is False
+        assert fallback['attempted_nfev'] == 9
+        assert fallback['attempted_message'] == 'forced dynamic failure'
+        summary = vine.summary(as_string=True)
+        assert 'requested_method = GAS' in summary
+        assert 'actual_methods   = MLE:1' in summary
+        assert 'dynamic_fallbacks = 1' in summary
+
+    def test_mle_fit_reports_actual_methods_without_fallback(self):
+        u = _sample_dynamic_gaussian_chain(120, 3, seed=20260809)
+        vine = RVineCopula(
+            candidates=[BivariateGaussianCopula]
+        ).fit(u, method='mle')
+
+        edge_fits = vine.fit_diagnostics['edge_fits']
+        assert edge_fits['edge_count'] == 3
+        assert sum(edge_fits['actual_methods'].values()) == 3
+        assert edge_fits['dynamic_attempted_count'] == 0
+        assert edge_fits['fallback_count'] == 0
+        assert vine.fit_result.fallback_count == 0
+        assert vine.fit_result.fallback_edges == ()
 
     def test_gas_fit_sample_refit_smoke(self):
         u = _sample_dynamic_gaussian_chain(70, 4, seed=12)
@@ -1970,6 +2061,79 @@ class TestPredict:
         assert samples.shape == (20, 3)
         assert diagnostics['updated_edges']
         assert calls[horizon] == 1
+
+    def test_fitted_history_predict_cache_reused_across_calls(
+            self, monkeypatch):
+        from pyscarcopula.strategy.scar_tm import SCARTMStrategy
+
+        vine = _manual_suffix_predictive_state_rvine()
+        pseudo_calls = 0
+        posterior_calls = 0
+        original_pseudo = vine._compute_pseudo_obs
+        original_posterior = SCARTMStrategy._prepared_or_stateless_posterior
+
+        def counted_pseudo(u):
+            nonlocal pseudo_calls
+            pseudo_calls += 1
+            return original_pseudo(u)
+
+        def counted_posterior(self, *args, **kwargs):
+            nonlocal posterior_calls
+            posterior_calls += 1
+            return original_posterior(self, *args, **kwargs)
+
+        monkeypatch.setattr(vine, '_compute_pseudo_obs', counted_pseudo)
+        monkeypatch.setattr(
+            SCARTMStrategy,
+            '_prepared_or_stateless_posterior',
+            counted_posterior,
+        )
+
+        first = vine.predict(40, rng=np.random.default_rng(12063))
+        second = vine.predict(40, rng=np.random.default_rng(12063))
+
+        np.testing.assert_array_equal(first, second)
+        assert pseudo_calls == 1
+        assert posterior_calls == 1
+
+    def test_explicit_predict_history_cache_detects_in_place_mutation(
+            self, monkeypatch):
+        vine = _manual_suffix_predictive_state_rvine()
+        calls = 0
+        original = vine._compute_pseudo_obs
+
+        def counted(u):
+            nonlocal calls
+            calls += 1
+            return original(u)
+
+        monkeypatch.setattr(vine, '_compute_pseudo_obs', counted)
+        u = vine._last_u.copy()
+
+        vine.predict(5, u=u, rng=np.random.default_rng(12064))
+        vine.predict(5, u=u, rng=np.random.default_rng(12064))
+        u[0, 0] = 0.9
+        vine.predict(5, u=u, rng=np.random.default_rng(12064))
+
+        assert calls == 2
+
+    def test_fitted_history_predict_cache_invalidates_on_edge_replacement(
+            self, monkeypatch):
+        vine = _manual_suffix_predictive_state_rvine()
+        calls = 0
+        original = vine._compute_pseudo_obs
+
+        def counted(u):
+            nonlocal calls
+            calls += 1
+            return original(u)
+
+        monkeypatch.setattr(vine, '_compute_pseudo_obs', counted)
+        vine.predict(5, rng=np.random.default_rng(12065))
+        vine.pair_copulas[(0, 1)] = _scar_tm_gaussian_pair(mu=0.2)
+        vine.predict(5, rng=np.random.default_rng(12065))
+
+        assert calls == 2
 
     def test_given_only_dynamic_conditioning_updates_predictive_state_suffix_edge(self):
         vine = _manual_suffix_predictive_state_rvine()

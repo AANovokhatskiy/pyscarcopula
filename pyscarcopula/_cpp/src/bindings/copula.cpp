@@ -49,6 +49,18 @@ void bind_copula(py::module_& m) {
             },
             py::arg("parameter"))
         .def(
+            "objective_value",
+            [](const scar::StaticCopulaEvaluator& evaluator,
+               double parameter) {
+                scar::StaticObjectiveResult result;
+                {
+                    py::gil_scoped_release release;
+                    result = evaluator.objective_value(parameter);
+                }
+                return static_objective_result_to_dict(result);
+            },
+            py::arg("parameter"))
+        .def(
             "objective_with_correlation_gradient",
             [](const scar::StaticCopulaEvaluator& evaluator,
                double parameter) {

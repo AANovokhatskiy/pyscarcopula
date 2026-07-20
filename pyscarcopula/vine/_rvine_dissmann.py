@@ -23,6 +23,8 @@ Structure selection is Dissmann-based; non-independent edges can be refit
 through the strategy registry after the MLE family-selection pass.
 """
 
+from time import perf_counter
+
 import numpy as np
 
 from pyscarcopula.copula.independent import IndependentCopula
@@ -627,6 +629,21 @@ def _fit_tree_level(
 
     fitted_level = []
     for edge_idx, (conditioned, conditioning) in enumerate(tree_repr):
+        fit_started = perf_counter()
+        edge_fit_diagnostics = {
+            'requested_method': str(method).upper(),
+            'dynamic_attempted': False,
+            'fallback_used': False,
+            'fallback_reason': None,
+            'attempted_method': None,
+            'attempted_success': None,
+            'attempted_nfev': 0,
+            'attempted_message': None,
+            'selection_nfev': 0,
+            'selection_ms': 0.0,
+            'dynamic_fit_ms': 0.0,
+        }
+        selection_result = None
         v1, v2 = sorted(conditioned)
 
         u1 = _clip_unit(pseudo_obs[(v1, conditioning)])
@@ -645,10 +662,16 @@ def _fit_tree_level(
             force_independent
             or threshold is not None and abs(tau_val) < threshold
         ):
+            selection_started = perf_counter()
             cop = IndependentCopula()
             result = cop.fit(u_pair)
-            pc = _pair_from_result(cop, result, tau_val)
+            edge_fit_diagnostics['selection_ms'] = (
+                1e3 * (perf_counter() - selection_started)
+            )
+            edge_fit_diagnostics['selection_nfev'] = int(
+                getattr(result, 'nfev', 0) or 0)
         else:
+            selection_started = perf_counter()
             if copulas is not None:
                 cop = _make_fixed_copula(copulas[edge_idx], transform_type)
                 if isinstance(cop, IndependentCopula):
@@ -660,7 +683,14 @@ def _fit_tree_level(
                 cop, selection_result = select_best_copula(
                     u1, u2, candidates, allow_rotations, criterion,
                     transform_type=transform_type,
+                    u_pair=u_pair,
+                    tau_value=tau_val,
                 )
+            edge_fit_diagnostics['selection_ms'] = (
+                1e3 * (perf_counter() - selection_started)
+            )
+            edge_fit_diagnostics['selection_nfev'] = int(
+                getattr(selection_result, 'nfev', 0) or 0)
 
             if (
                 min_edge_logL is not None
@@ -674,12 +704,43 @@ def _fit_tree_level(
             else:
                 dynamic_fit_kwargs = dict(fit_kwargs)
                 dynamic_fit_kwargs['initial_mle_result'] = selection_result
-                result = _fit_with_strategy(
+                dynamic_started = perf_counter()
+                dynamic_result = _fit_with_strategy(
                     cop, u_pair, method, config, dynamic_fit_kwargs)
-                if not bool(getattr(result, 'success', True)):
+                edge_fit_diagnostics['dynamic_fit_ms'] = (
+                    1e3 * (perf_counter() - dynamic_started)
+                )
+                edge_fit_diagnostics.update({
+                    'dynamic_attempted': True,
+                    'attempted_method': str(
+                        getattr(dynamic_result, 'method', method)).upper(),
+                    'attempted_success': bool(
+                        getattr(dynamic_result, 'success', True)),
+                    'attempted_nfev': int(
+                        getattr(dynamic_result, 'nfev', 0) or 0),
+                    'attempted_message': str(
+                        getattr(dynamic_result, 'message', '') or ''),
+                })
+                result = dynamic_result
+                if not edge_fit_diagnostics['attempted_success']:
+                    edge_fit_diagnostics['fallback_used'] = True
+                    edge_fit_diagnostics['fallback_reason'] = (
+                        'dynamic_fit_unsuccessful'
+                    )
                     result = selection_result
 
-            pc = _pair_from_result(cop, result, tau_val)
+        edge_fit_diagnostics['actual_method'] = str(
+            getattr(result, 'method', None) or 'STATIC').upper()
+        edge_fit_diagnostics['actual_success'] = bool(
+            getattr(result, 'success', True))
+        edge_fit_diagnostics['fit_ms'] = 1e3 * (
+            perf_counter() - fit_started)
+        pc = _pair_from_result(
+            cop,
+            result,
+            tau_val,
+            fit_diagnostics=edge_fit_diagnostics,
+        )
 
         fitted_level.append(pc)
 
@@ -716,7 +777,8 @@ def _fit_with_strategy(copula, u_pair, method, config, fit_kwargs):
     return strategy.fit(copula, u_pair, **fit_kwargs)
 
 
-def _pair_from_result(copula, result, tau_val):
+def _pair_from_result(
+        copula, result, tau_val, *, fit_diagnostics=None):
     result_param = getattr(result, 'copula_param', None)
     if result_param is None:
         param = 0.0 if isinstance(copula, IndependentCopula) else None
@@ -729,4 +791,5 @@ def _pair_from_result(copula, result, tau_val):
         nfev=int(getattr(result, 'nfev', 0) or 0),
         tau=float(tau_val),
         fit_result=result,
+        fit_diagnostics=dict(fit_diagnostics or {}),
     )

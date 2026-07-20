@@ -73,6 +73,7 @@ def _edge_summary(vine):
     prepared_edges = 0
     dynamic_edges = 0
     total_nfev = 0
+    fit_diagnostics = getattr(vine.fit_result, "diagnostics", {}) or {}
     for edge in vine.pair_copulas.values():
         result = getattr(edge, "fit_result", None)
         method = str(getattr(result, "method", None)).upper()
@@ -99,6 +100,17 @@ def _edge_summary(vine):
         "scar_nfev": scar_nfev,
         "total_nfev": total_nfev,
         "prepared_scar_edges": prepared_edges,
+        "fallback_count": int(fit_diagnostics.get("fallback_count", 0)),
+        "dynamic_attempted_count": int(
+            fit_diagnostics.get("dynamic_attempted_count", 0)),
+        "dynamic_success_count": int(
+            fit_diagnostics.get("dynamic_success_count", 0)),
+        "selection_nfev": int(
+            fit_diagnostics.get("selection_nfev_total", 0)),
+        "dynamic_attempted_nfev": int(
+            fit_diagnostics.get("dynamic_attempted_nfev_total", 0)),
+        "fallback_discarded_nfev": int(
+            fit_diagnostics.get("fallback_discarded_nfev", 0)),
     }
 
 
@@ -243,6 +255,8 @@ def test_rvine_synthetic_fit_profile(
 
     summary = _edge_summary(vine)
     assert summary["edges"] == d * (d - 1) // 2
+    assert summary["dynamic_success_count"] + summary["fallback_count"] == (
+        summary["dynamic_attempted_count"])
     _print_benchmark(
         "rvine_fit",
         workload=name,
@@ -256,6 +270,12 @@ def test_rvine_synthetic_fit_profile(
         total_nfev=summary["total_nfev"],
         scar_nfev=summary["scar_nfev"],
         prepared_scar_edges=summary["prepared_scar_edges"],
+        fallback_count=summary["fallback_count"],
+        dynamic_attempted=summary["dynamic_attempted_count"],
+        dynamic_success=summary["dynamic_success_count"],
+        selection_nfev=summary["selection_nfev"],
+        dynamic_attempted_nfev=summary["dynamic_attempted_nfev"],
+        fallback_discarded_nfev=summary["fallback_discarded_nfev"],
         methods=summary["methods"],
         families=summary["families"],
     )

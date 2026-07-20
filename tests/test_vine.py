@@ -253,6 +253,48 @@ class TestSelection:
         assert result is not None
         assert hasattr(result, 'log_likelihood')
 
+    def test_select_best_copula_reuses_supplied_edge_statistics(self,
+                                                               monkeypatch):
+        rng = np.random.default_rng(20260806)
+        u = pobs(rng.standard_normal((200, 2)))
+        u_pair = np.ascontiguousarray(u)
+
+        def unexpected_tau(*args, **kwargs):
+            raise AssertionError("Kendall tau should not be recomputed")
+
+        monkeypatch.setattr(
+            "pyscarcopula.vine._selection._kendall_tau", unexpected_tau)
+        selected = select_best_copula(
+            u[:, 0],
+            u[:, 1],
+            [BivariateGaussianCopula],
+            u_pair=u_pair,
+            tau_value=0.25,
+        )
+
+        assert selected.copula is not None
+        assert selected.result is not None
+
+    def test_selection_reuses_screening_evaluator_for_refinement(
+            self, monkeypatch):
+        from pyscarcopula.numerical import static_likelihood
+
+        rng = np.random.default_rng(20260807)
+        u = pobs(rng.standard_normal((300, 2)))
+        real_prepare = static_likelihood.prepare
+        prepare_calls = 0
+
+        def counted_prepare(*args, **kwargs):
+            nonlocal prepare_calls
+            prepare_calls += 1
+            return real_prepare(*args, **kwargs)
+
+        monkeypatch.setattr(static_likelihood, "prepare", counted_prepare)
+        select_best_copula(
+            u[:, 0], u[:, 1], [BivariateGaussianCopula])
+
+        assert prepare_calls == 1
+
     def test_independent_data_selects_independence(self):
         rng = np.random.default_rng(99)
         u1 = rng.uniform(0, 1, 500)

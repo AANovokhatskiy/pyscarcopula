@@ -37,6 +37,9 @@ class StaticLikelihoodEvaluator:
     def result(self, parameter: float) -> dict:
         return dict(self._native.objective(float(parameter)))
 
+    def value_result(self, parameter: float) -> dict:
+        return dict(self._native.objective_value(float(parameter)))
+
     def joint_result(self, parameter: float) -> dict:
         return dict(
             self._native.objective_with_correlation_gradient(
@@ -95,7 +98,7 @@ class StaticLikelihoodEvaluator:
         return values
 
     def log_likelihood(self, parameter: float) -> float:
-        result = self.result(parameter)
+        result = self.value_result(parameter)
         value = float(result["negative_log_likelihood"])
         if result["status"] != 0 or not np.isfinite(value):
             raise CppError(

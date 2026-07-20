@@ -2,6 +2,7 @@
 
 #include "scar/copula.hpp"
 #include "scar/gas.hpp"
+#include "scar/gas_rvine.hpp"
 #include "scar/ou.hpp"
 #include "scar/detail/copula.hpp"
 #include "scar/detail/safety.hpp"

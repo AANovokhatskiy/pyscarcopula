@@ -78,6 +78,7 @@ def check_include_boundaries(root: Path) -> list[Violation]:
     gas_files = [
         *list(_source_files(src / "gas")),
         include / "gas.hpp",
+        include / "gas_rvine.hpp",
     ]
     violations.extend(_forbid_includes(
         root,

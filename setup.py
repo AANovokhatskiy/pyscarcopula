@@ -79,6 +79,7 @@ SCAR_CORE_SOURCES = [
     "copula/multivariate.cpp",
     "likelihood/static.cpp",
     "gas/evaluator.cpp",
+    "gas/rvine_sampler.cpp",
     "scar_ou/monte_carlo.cpp",
     "scar_ou/validation.cpp",
     "scar_ou/likelihood.cpp",

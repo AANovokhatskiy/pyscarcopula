@@ -177,7 +177,8 @@ class CVineCopula:
                     cop, result = select_best_copula(
                         u1, u2, self._get_candidates(),
                         self.allow_rotations, self.criterion,
-                        transform_type=transform_type)
+                        transform_type=transform_type,
+                        u_pair=u_pair)
                 selection_result = result
 
                 # Step 2: decide whether to refit with dynamic method

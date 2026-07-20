@@ -10,6 +10,7 @@ from pyscarcopula.copula.frank import FrankCopula
 from pyscarcopula.copula.gumbel import GumbelCopula
 from pyscarcopula.copula.independent import IndependentCopula
 from pyscarcopula.copula.joe import JoeCopula
+from pyscarcopula.copula.elliptical import BivariateGaussianCopula
 from pyscarcopula.copula.multivariate.equicorr import (
     EquicorrGaussianCopula,
 )
@@ -110,6 +111,32 @@ def test_prepared_equicorr_repeated_calls_match_stateless_paths():
             actual_probability, expected_probability)
 
 
+@pytest.mark.parametrize("transition_method", ["spectral", "matrix", "local"])
+def test_prepared_gaussian_objective_matches_stateless_exactly(
+        transition_method):
+    copula = BivariateGaussianCopula()
+    u = np.random.default_rng(20260801).uniform(
+        0.001, 0.999, size=(80, 2))
+    config = AutoTMConfig(
+        transition_method=transition_method,
+        basis_order=32,
+        K=32,
+        adaptive=False,
+        max_K=32,
+    )
+    params = (8.0, 0.2, 1.4)
+    prepared = _cpp_scar_ou.prepare_objective(u, copula, config)
+
+    expected_value, expected_gradient, _ = (
+        _cpp_scar_ou.neg_loglik_with_grad_info(
+            *params, u, copula, config))
+    actual_value, actual_gradient, _ = (
+        prepared.neg_loglik_with_grad_info(*params))
+
+    assert actual_value == expected_value
+    np.testing.assert_array_equal(actual_gradient, expected_gradient)
+
+
 def test_spectral_forward_and_state_use_native_grid_reconstruction():
     copula = ClaytonCopula(transform_type="xtanh")
     u = np.random.default_rng(20260620).uniform(0.05, 0.95, size=(10, 2))
@@ -177,6 +204,27 @@ def test_prepared_forward_helpers_match_stateless_wrappers(transition_method):
             z_prepared, z_expected, rtol=0.0, atol=0.0)
         np.testing.assert_allclose(
             p_prepared, p_expected, rtol=0.0, atol=0.0)
+
+
+@pytest.mark.parametrize("transition_method", ["matrix", "local", "auto"])
+def test_prepared_gaussian_mixture_h_pair_matches_stateless_exactly(
+        transition_method):
+    copula = BivariateGaussianCopula()
+    u = np.random.default_rng(20260802).uniform(0.001, 0.999, size=(80, 2))
+    config = AutoTMConfig(
+        transition_method=transition_method,
+        K=32,
+        adaptive=False,
+        max_K=32,
+        gh_order=7,
+    )
+    params = (8.0, 0.2, 1.4)
+    prepared = _cpp_scar_ou.prepare_objective(u, copula, config)
+
+    actual = prepared.mixture_h_pair(*params)
+    expected = _cpp_scar_ou.mixture_h_pair(*params, u, copula, config)
+    np.testing.assert_array_equal(actual[0], expected[0])
+    np.testing.assert_array_equal(actual[1], expected[1])
 
 
 def test_prepared_forward_helpers_use_updated_student_factor():

@@ -101,6 +101,7 @@ void gaussian_pdf_and_grad_x_unrotated(
     double x,
     double& pdf,
     double& d_pdf_dx);
+double gaussian_h_from_quantiles(double z_u, double z_v, double rho);
 double gaussian_h_rotated(double u, double v, double rho, int rotation);
 double gaussian_h_inverse_rotated(double q, double given, double rho, int rotation);
 struct StudentWorkspace {

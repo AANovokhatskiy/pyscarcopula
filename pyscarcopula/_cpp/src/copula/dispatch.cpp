@@ -191,6 +191,38 @@ void joe_fill_row(
     }
 }
 
+void gaussian_fill_row_from_stats(
+    double sum_squares,
+    double cross_product,
+    const std::vector<double>& r_grid,
+    const std::vector<double>& dpsi_grid,
+    double* fi_row,
+    double* dfi_dx_row) {
+
+    for (std::size_t j = 0; j < r_grid.size(); ++j) {
+        const double r = r_grid[j];
+        const double r2 = r * r;
+        const double omr2 = 1.0 - r2;
+        const double log_pdf =
+            -0.5 * std::log(omr2)
+            - 0.5
+                * (r2 * sum_squares - 2.0 * r * cross_product)
+                / omr2;
+        const double pdf = std::exp(log_pdf);
+        fi_row[j] = pdf;
+        if (dfi_dx_row != nullptr) {
+            const double dlog_det = r / omr2;
+            const double num =
+                (2.0 * r * sum_squares - 2.0 * cross_product) * omr2
+                + 2.0 * r
+                    * (r2 * sum_squares - 2.0 * r * cross_product);
+            const double dquad = num / (omr2 * omr2);
+            const double dlog_dr = dlog_det - 0.5 * dquad;
+            dfi_dx_row[j] = pdf * dlog_dr * dpsi_grid[j];
+        }
+    }
+}
+
 void gaussian_fill_row(
     double u1,
     double u2,
@@ -203,28 +235,24 @@ void gaussian_fill_row(
     const double v2 = clip_pseudo_observation(u2);
     const double x1 = normal_quantile(v1);
     const double x2 = normal_quantile(v2);
-    const double s1 = x1 * x1 + x2 * x2;
-    const double s12 = x1 * x2;
+    gaussian_fill_row_from_stats(
+        x1 * x1 + x2 * x2,
+        x1 * x2,
+        r_grid,
+        dpsi_grid,
+        fi_row,
+        dfi_dx_row);
+}
 
-    for (std::size_t j = 0; j < r_grid.size(); ++j) {
-        const double r = r_grid[j];
-        const double r2 = r * r;
-        const double omr2 = 1.0 - r2;
-        const double log_pdf =
-            -0.5 * std::log(omr2)
-            - 0.5 * (r2 * s1 - 2.0 * r * s12) / omr2;
-        const double pdf = std::exp(log_pdf);
-        fi_row[j] = pdf;
-        if (dfi_dx_row != nullptr) {
-            const double dlog_det = r / omr2;
-            const double num =
-                (2.0 * r * s1 - 2.0 * s12) * omr2
-                + 2.0 * r * (r2 * s1 - 2.0 * r * s12);
-            const double dquad = num / (omr2 * omr2);
-            const double dlog_dr = dlog_det - 0.5 * dquad;
-            dfi_dx_row[j] = pdf * dlog_dr * dpsi_grid[j];
-        }
-    }
+bool gaussian_cache_available(
+    const scar::CopulaSpec& spec,
+    std::int64_t row_index) {
+
+    return row_index >= 0
+        && spec.gaussian_z1_cache.size()
+            == spec.gaussian_z2_cache.size()
+        && static_cast<std::size_t>(row_index)
+            < spec.gaussian_z1_cache.size();
 }
 
 void equicorr_fill_row(
@@ -539,6 +567,21 @@ void copula_pdf_row_precomputed_flat(
             spec, row, t, r_grid, no_dpsi, fi_row, nullptr);
         return;
     }
+    if (spec.family == scar::CopulaFamily::Gaussian
+        && gaussian_cache_available(spec, t)) {
+        static const std::vector<double> no_dpsi;
+        const std::size_t index = static_cast<std::size_t>(t);
+        const double z1 = spec.gaussian_z1_cache[index];
+        const double z2 = spec.gaussian_z2_cache[index];
+        gaussian_fill_row_from_stats(
+            z1 * z1 + z2 * z2,
+            z1 * z2,
+            r_grid,
+            no_dpsi,
+            fi_row,
+            nullptr);
+        return;
+    }
     copula_pdf_row_precomputed(spec, row[0], row[1], r_grid, fi_row);
 }
 
@@ -615,6 +658,20 @@ void copula_pdf_and_grad_row_precomputed_flat(
     if (spec.family == scar::CopulaFamily::EquicorrGaussian) {
         equicorr_fill_row(
             spec, row, t, r_grid, dpsi_grid, fi_row, dfi_dx_row);
+        return;
+    }
+    if (spec.family == scar::CopulaFamily::Gaussian
+        && gaussian_cache_available(spec, t)) {
+        const std::size_t index = static_cast<std::size_t>(t);
+        const double z1 = spec.gaussian_z1_cache[index];
+        const double z2 = spec.gaussian_z2_cache[index];
+        gaussian_fill_row_from_stats(
+            z1 * z1 + z2 * z2,
+            z1 * z2,
+            r_grid,
+            dpsi_grid,
+            fi_row,
+            dfi_dx_row);
         return;
     }
     copula_pdf_and_grad_row_precomputed(

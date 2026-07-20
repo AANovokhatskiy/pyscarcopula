@@ -13,6 +13,7 @@ from pyscarcopula.numerical.ou_kernels import (
     ou_sample_paths,
     ou_sample_paths_exact,
     ou_stationary_state_from_dwt,
+    sample_ou_trajectory,
 )
 
 
@@ -35,6 +36,31 @@ def test_ou_sample_paths_zero_aux_matches_exact_kernel():
     via_eis = ou_sample_paths(kappa, mu, nu, zeros, zeros, dwt, x0)
 
     np.testing.assert_allclose(via_eis, exact, rtol=0.0, atol=0.0)
+
+
+@pytest.mark.parametrize("n", [1, 2, 17, 1000, 10001])
+def test_sample_ou_trajectory_preserves_scalar_rng_contract(n):
+    kappa, mu, nu = 1.4, 0.2, 0.9
+    expected_rng = np.random.default_rng(20260803)
+    actual_rng = np.random.default_rng(20260803)
+
+    dt = 1.0 / (n - 1) if n > 1 else 1.0
+    rho = np.exp(-kappa * dt)
+    sigma_cond = np.sqrt(
+        nu ** 2 / (2.0 * kappa) * (1.0 - rho ** 2)
+    )
+    expected = np.empty(n, dtype=np.float64)
+    expected[0] = expected_rng.normal(mu, nu / np.sqrt(2.0 * kappa))
+    for t in range(1, n):
+        expected[t] = (
+            mu + rho * (expected[t - 1] - mu)
+            + sigma_cond * expected_rng.standard_normal()
+        )
+
+    actual = sample_ou_trajectory(kappa, mu, nu, n, actual_rng)
+
+    np.testing.assert_array_equal(actual, expected)
+    np.testing.assert_array_equal(actual_rng.random(8), expected_rng.random(8))
 
 
 def test_stationary_state_is_deterministic_from_dwt():

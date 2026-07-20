@@ -125,6 +125,11 @@ struct ScarOuSpectralGradientWorkspace {
     std::vector<double> dx_dalpha;
     std::vector<double> r_grid;
     std::vector<double> dpsi_grid;
+    std::vector<double> gaussian_r2;
+    std::vector<double> gaussian_omr2;
+    std::vector<double> gaussian_log_norm;
+    std::vector<double> gaussian_dlog_det;
+    std::vector<double> gaussian_omr2_squared;
     std::vector<double> coeff;
     std::vector<double> dcoeff;
     std::vector<double> projected;
