@@ -230,11 +230,15 @@ class StochasticStudentCopula(MultivariateCopula):
         self._log_det = None
         self._corr_cache_version = 0
         self._last_latent_result = None
+        self._constructor_R = None
+        self._constructor_corr_base = (
+            None if self._corr_base is None else self._corr_base.copy())
         if R is not None:
             R = np.asarray(R, dtype=np.float64)
             if R.shape != (d, d):
                 raise ValueError(f"R must be ({d}, {d}), got {R.shape}")
             self._set_R(R, source="supplied")
+            self._constructor_R = self._R.copy()
 
         # Transient full-sample PPF cache.
         self._ppf_cache = None

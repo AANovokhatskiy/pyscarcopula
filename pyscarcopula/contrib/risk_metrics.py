@@ -25,6 +25,10 @@ from tqdm import tqdm
 from typing import Literal
 
 from pyscarcopula._utils import pobs
+from pyscarcopula.contrib.parallel_fit import (
+    _resolve_parallelism,
+    _with_n_threads,
+)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -206,17 +210,56 @@ def _get_copula_constructor(copula):
                      min_edge_logL=copula.min_edge_logL,
                      transform_type=copula.transform_type))
     elif isinstance(copula, StochasticStudentCopula):
+        constructor_R = getattr(copula, "_constructor_R", None)
+        constructor_corr_base = getattr(
+            copula, "_constructor_corr_base", None)
+        if not hasattr(copula, "_constructor_R"):
+            if copula.corr_mode == "fixed" or copula.fit_result is None:
+                constructor_R = copula.R
+        if not hasattr(copula, "_constructor_corr_base"):
+            preprocessing = getattr(
+                copula, "_corr_base_preprocessing", None)
+            if (
+                    copula.fit_result is None
+                    or getattr(preprocessing, "source", None) == "corr_base"):
+                constructor_corr_base = getattr(copula, "_corr_base", None)
         kwargs = dict(
             d=copula.d,
-            R=(None if copula.R is None else np.array(copula.R, copy=True)),
+            R=(
+                None if constructor_R is None
+                else np.array(constructor_R, copy=True)),
             corr_mode=copula.corr_mode,
             corr_base=(
-                None if getattr(copula, "_corr_base", None) is None
-                else np.array(copula._corr_base, copy=True)),
+                None if constructor_corr_base is None
+                else np.array(constructor_corr_base, copy=True)),
             corr_shrinkage_init=copula._corr_shrinkage_init,
             cholesky_d_max=copula._cholesky_d_max,
             allow_large_cholesky=copula._allow_large_cholesky,
         )
+        # Keep the worker constructor ready for the compact factor mode.  The
+        # branch is unreachable until that mode is enabled by the model, but
+        # prevents future rolling workers from silently losing its structural
+        # policy when it is introduced.
+        if copula.corr_mode == "factor":
+            constructor_loadings = getattr(
+                copula, "_constructor_factor_loadings", None)
+            if (
+                    constructor_loadings is None
+                    and copula.fit_result is None):
+                constructor_loadings = copula.factor_loadings_
+            kwargs.pop("R", None)
+            kwargs.pop("corr_base", None)
+            kwargs.update(
+                factor_rank=copula.factor_rank,
+                factor_loadings=(
+                    None
+                    if constructor_loadings is None
+                    else np.array(constructor_loadings, copy=True)),
+                factor_estimation=copula.factor_estimation,
+                factor_tile_size=copula.factor_tile_size,
+                factor_uniqueness_min=copula.factor_uniqueness_min,
+                factor_joint_max_params=copula.factor_joint_max_params,
+            )
         return (StochasticStudentCopula, kwargs)
     elif isinstance(copula, EquicorrGaussianCopula):
         return (EquicorrGaussianCopula, dict(d=copula.d))
@@ -324,7 +367,8 @@ def _make_chunks(n_windows, n_jobs):
 def _calculate_cvar_fixed(copula, data, method, marginal_model,
                           marg_params, gamma, window_len, N_mc,
                           portfolio_weight, n_jobs=1,
-                          window_seed_sequences=None, **kwargs):
+                          window_seed_sequences=None,
+                          mp_start_method=None, **kwargs):
     """
     CVaR with fixed portfolio weights.
 
@@ -370,7 +414,8 @@ def _calculate_cvar_fixed(copula, data, method, marginal_model,
             for start, end in chunks
         ]
 
-        with mp.Pool(len(chunks)) as pool:
+        context = mp.get_context(mp_start_method)
+        with context.Pool(len(chunks)) as pool:
             chunk_results = pool.map(_process_chunk_fixed, pool_args)
 
         for chunk in chunk_results:
@@ -383,7 +428,8 @@ def _calculate_cvar_fixed(copula, data, method, marginal_model,
 
 def _calculate_cvar_optimal(copula, data, method, marginal_model,
                             marg_params, gamma, window_len, N_mc,
-                            n_jobs=1, window_seed_sequences=None, **kwargs):
+                            n_jobs=1, window_seed_sequences=None,
+                            mp_start_method=None, **kwargs):
     """
     CVaR with portfolio weight optimization.
 
@@ -441,7 +487,8 @@ def _calculate_cvar_optimal(copula, data, method, marginal_model,
             for start, end in chunks
         ]
 
-        with mp.Pool(len(chunks)) as pool:
+        context = mp.get_context(mp_start_method)
+        with context.Pool(len(chunks)) as pool:
             chunk_results = pool.map(_process_chunk_optimal, pool_args)
 
         for chunk in chunk_results:
@@ -466,6 +513,8 @@ def risk_metrics(copula, data, window_len,
                  optimize_portfolio=True,
                  portfolio_weight=None,
                  n_jobs=1,
+                 n_threads=None,
+                 mp_start_method=None,
                  rng=None,
                  **kwargs):
     """
@@ -490,6 +539,12 @@ def risk_metrics(copula, data, window_len,
         Default 1 (sequential). Use -1 for all CPU cores.
         Each worker processes a contiguous chunk of windows,
         so numba compilation overhead is paid once per worker.
+    n_threads : int or None
+        Native threads used inside each fit. With ``n_jobs != 1``, the safe
+        default is one thread per worker. Passing a value greater than one
+        explicitly opts into nested parallelism.
+    mp_start_method : str or None
+        Multiprocessing start method. ``None`` uses the platform default.
     rng : int, np.random.Generator, np.random.SeedSequence, or None
         Root randomness source. Independent child SeedSequences are spawned
         per rolling window, so parallel workers never share one Generator.
@@ -510,37 +565,59 @@ def risk_metrics(copula, data, window_len,
     if portfolio_weight is None:
         portfolio_weight = np.ones(dim) / dim
 
+    n_windows = T - window_len + 1
+    resolved_threads, parallel_diagnostics = _resolve_parallelism(
+        n_jobs,
+        n_windows,
+        n_threads,
+        (kwargs,),
+        mp_start_method,
+    )
+    resolved_jobs = parallel_diagnostics["n_jobs"]
+    kwargs = _with_n_threads(kwargs, resolved_threads)
+
     # Fit marginals
     marginal_model = MarginalModel.create(marginals_method)
     print(f"Fitting marginals ({marginals_method})...")
-    marg_params = marginal_model.fit_rolling(data, window_len, n_jobs=n_jobs)
+    marg_params = marginal_model.fit_rolling(
+        data, window_len, n_jobs=resolved_jobs)
 
     # Normalize gamma / N_mc to lists
     gammas = [gamma] if not hasattr(gamma, '__iter__') else list(gamma)
     N_mcs = [N_mc] if not hasattr(N_mc, '__iter__') else list(N_mc)
     root_seed_seq = _coerce_seed_sequence(rng)
-    n_windows = T - window_len + 1
 
     res = {}
     for g in gammas:
         res[g] = {}
         for n in N_mcs:
-            print(f"gamma={g}, N_mc={n}, method={method}, n_jobs={n_jobs}")
+            print(
+                f"gamma={g}, N_mc={n}, method={method}, "
+                f"n_jobs={resolved_jobs}, n_threads={resolved_threads}")
             window_seed_sequences = root_seed_seq.spawn(n_windows)
             if optimize_portfolio:
                 var, cvar, w = _calculate_cvar_optimal(
                     copula, data, method, marginal_model,
                     marg_params, g, window_len, n,
-                    n_jobs=n_jobs,
+                    n_jobs=resolved_jobs,
                     window_seed_sequences=window_seed_sequences,
+                    mp_start_method=parallel_diagnostics[
+                        "multiprocessing_start_method"],
                     **kwargs)
             else:
                 var, cvar, w = _calculate_cvar_fixed(
                     copula, data, method, marginal_model,
                     marg_params, g, window_len, n,
-                    portfolio_weight, n_jobs=n_jobs,
+                    portfolio_weight, n_jobs=resolved_jobs,
                     window_seed_sequences=window_seed_sequences,
+                    mp_start_method=parallel_diagnostics[
+                        "multiprocessing_start_method"],
                     **kwargs)
-            res[g][n] = {'var': var, 'cvar': cvar, 'weight': w}
+            res[g][n] = {
+                'var': var,
+                'cvar': cvar,
+                'weight': w,
+                'diagnostics': dict(parallel_diagnostics),
+            }
 
     return res

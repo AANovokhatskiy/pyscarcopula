@@ -1,6 +1,7 @@
 """Phase-1 contracts for the native per-process thread runtime."""
 
 from concurrent.futures import ThreadPoolExecutor
+import inspect
 import json
 import multiprocessing
 import os
@@ -13,8 +14,10 @@ import pytest
 
 from pyscarcopula import (
     EquicorrGaussianCopula,
+    GaussianCopula,
     NumericalConfig,
     StochasticStudentCopula,
+    StudentCopula,
 )
 from pyscarcopula.numerical import _cpp_extension, _cpp_scar_ou
 from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
@@ -154,9 +157,9 @@ def test_runtime_accepts_concurrent_independent_callers():
         assert set(block_ids) == {0, 1, 2, 3}
 
 
-def test_numerical_config_resolves_explicit_and_environment_threads(monkeypatch):
+def test_numerical_config_default_ignores_environment(monkeypatch):
     monkeypatch.setenv("PYSCARCOPULA_NUM_THREADS", "6")
-    assert NumericalConfig().n_threads == 6
+    assert NumericalConfig().n_threads == 1
     assert NumericalConfig(n_threads=3).n_threads == 3
 
     native = _cpp_scar_ou._config(
@@ -164,11 +167,52 @@ def test_numerical_config_resolves_explicit_and_environment_threads(monkeypatch)
     assert native.n_threads == 5
 
     monkeypatch.setenv("PYSCARCOPULA_NUM_THREADS", "invalid")
-    with pytest.raises(ValueError, match="n_threads"):
-        NumericalConfig()
+    assert NumericalConfig().n_threads == 1
 
 
-@pytest.mark.parametrize("value", [0, -1, 257, True, 1.5, "invalid"])
+def test_import_time_environment_cannot_enable_parallelism():
+    payload = _run_clean_interpreter(
+        "import json, os\n"
+        "os.environ['PYSCARCOPULA_NUM_THREADS'] = '8'\n"
+        "from pyscarcopula import NumericalConfig\n"
+        "from pyscarcopula._types import DEFAULT_CONFIG\n"
+        "from pyscarcopula.numerical import _cpp_extension\n"
+        "m = _cpp_extension.load()\n"
+        "print(json.dumps({\n"
+        "    'config': NumericalConfig().n_threads,\n"
+        "    'default': DEFAULT_CONFIG.n_threads,\n"
+        "    'runtime': dict(m._parallel_runtime_info()),\n"
+        "}))\n"
+    )
+    assert payload["config"] == 1
+    assert payload["default"] == 1
+    assert payload["runtime"]["initialized"] is False
+
+
+def test_multivariate_thread_arguments_have_absolute_one_default():
+    classes = (
+        EquicorrGaussianCopula,
+        GaussianCopula,
+        StochasticStudentCopula,
+        StudentCopula,
+    )
+    checked = []
+    for cls in classes:
+        for name, member in inspect.getmembers(cls, callable):
+            try:
+                parameter = inspect.signature(member).parameters.get(
+                    "n_threads")
+            except (TypeError, ValueError):
+                continue
+            if parameter is not None:
+                checked.append(f"{cls.__name__}.{name}")
+                assert parameter.default == 1
+
+    assert checked
+
+
+@pytest.mark.parametrize(
+    "value", [None, 0, -1, 257, True, 1.5, "invalid"])
 def test_numerical_config_rejects_invalid_thread_count(value):
     with pytest.raises(ValueError, match="n_threads"):
         NumericalConfig(n_threads=value)

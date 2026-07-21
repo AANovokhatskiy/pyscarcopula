@@ -7,7 +7,11 @@ import time
 import numpy as np
 import pytest
 
-from pyscarcopula import EquicorrGaussianCopula, StochasticStudentCopula
+from pyscarcopula import (
+    EquicorrGaussianCopula,
+    StochasticStudentCopula,
+    StudentCopula,
+)
 from pyscarcopula.copula.multivariate.conditional import equicorr_matrix
 from pyscarcopula.numerical import (
     _cpp_copula,
@@ -183,6 +187,23 @@ def test_public_conditional_seed_reproducibility_across_threads(family):
         n_threads=4, **kwargs)
 
     np.testing.assert_array_equal(actual, expected)
+
+
+def test_static_student_conditional_defaults_to_one_thread(monkeypatch):
+    d = 8
+    correlation = equicorr_matrix(d, 0.2)
+    copula = StudentCopula()
+    copula.shape = correlation
+    copula.df = 6.0
+    given = {0: 0.3, 2: 0.7}
+    monkeypatch.setenv("PYSCARCOPULA_NUM_THREADS", "8")
+
+    implicit = copula.sample_conditional(
+        64, given=given, rng=np.random.default_rng(812))
+    explicit = copula.sample_conditional(
+        64, given=given, rng=np.random.default_rng(812), n_threads=1)
+
+    np.testing.assert_array_equal(implicit, explicit)
 
 
 def test_conditional_small_workload_stays_sequential():

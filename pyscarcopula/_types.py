@@ -11,7 +11,6 @@ Design decisions:
 
 from __future__ import annotations
 from dataclasses import dataclass, field, replace as dataclass_replace
-import os
 from typing import Any
 import numpy as np
 
@@ -145,9 +144,9 @@ class NumericalConfig:
     # Numerical failure policy
     fail_value: float = 1e10
 
-    # Per-call native parallelism. None resolves the environment fallback once
-    # when this immutable configuration is constructed.
-    n_threads: int | None = None
+    # Per-call native parallelism. Parallel execution is strictly opt-in:
+    # process environment variables never change this default.
+    n_threads: int = 1
 
     # Transfer matrix defaults
     default_K: int = 300
@@ -187,20 +186,10 @@ class NumericalConfig:
 
     def __post_init__(self) -> None:
         n_threads = self.n_threads
-        from_environment = n_threads is None
-        if from_environment:
-            raw = os.environ.get("PYSCARCOPULA_NUM_THREADS", "").strip()
-            n_threads = 1 if not raw else raw
-        if isinstance(n_threads, (bool, np.bool_)):
-            raise ValueError("n_threads must be an integer in [1, 256]")
-        if not from_environment and not isinstance(
+        if isinstance(n_threads, (bool, np.bool_)) or not isinstance(
                 n_threads, (int, np.integer)):
             raise ValueError("n_threads must be an integer in [1, 256]")
-        try:
-            resolved_threads = int(n_threads)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(
-                "n_threads must be an integer in [1, 256]") from exc
+        resolved_threads = int(n_threads)
         if resolved_threads < 1 or resolved_threads > 256:
             raise ValueError(
                 f"n_threads must be in [1, 256], got {resolved_threads}")

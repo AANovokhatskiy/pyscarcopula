@@ -555,9 +555,89 @@ Row-specific `(n,d,d)` correlation arrays cannot share one Cholesky factor and
 retain per-row factorization cost. Near-singular Student conditional covariance
 matrices also retain the per-row jitter path to preserve numerical semantics.
 
+## Dependency-Free Linear Algebra
+
+The compiled extension contains a small C++17 linear-algebra layer for dense
+row-major matrix-vector products, symmetric Cholesky factorization, SPD solves,
+and triangular products. It has no Eigen, BLAS, OpenMP, or other external
+runtime dependency.
+
+Two internal reduction backends are retained:
+
+- `scalar` preserves the original left-to-right summation order;
+- `portable` uses four independent accumulators, giving the compiler a
+  SIMD-friendly loop without architecture-specific intrinsics.
+
+The portable path falls back to scalar reductions below 32 elements, where
+unrolling does not repay its overhead. It is selected for dense SCAR matrix
+matvec and conditional Cholesky/solve/sampling. Multivariate Student emission
+keeps its original scalar loops because isolated triangular-kernel gains did
+not produce a stable end-to-end improvement once quantile evaluation and
+likelihood work were included.
+
+On the phase-7 Windows/MSVC benchmark, portable matvec speedups over scalar at
+dimensions `20, 80, 150, 300` were approximately `1.08x, 1.43x, 1.82x, 2.03x`.
+Cholesky plus a four-column SPD solve measured approximately
+`1.02x, 1.12x, 1.30x, 1.52x`. These are kernel measurements, not universal
+fit-level guarantees. The Gaussian conditional benchmark at `n=2000, d=40`
+improved its one-thread time from the phase-5 `0.720 ms` baseline to
+`0.654 ms` in the final phase-7 run in the same project environment.
+
+The scalar implementation remains compiled and covered by cross-backend tests
+at all four dimensions. This makes numerical fallback available without a
+second binary or a dynamically loaded math library. External multiprocessing
+therefore cannot create hidden BLAS thread pools or additional
+oversubscription.
+
+## Independent Fit Parallelism
+
+Use process-level parallelism for independent datasets, bootstrap replicas,
+starting points, hyperparameter variants, or different model prototypes:
+
+```python
+from pyscarcopula import StochasticStudentCopula
+from pyscarcopula.contrib import fit_independent
+
+batch = fit_independent(
+    StochasticStudentCopula(d=u_bootstrap[0].shape[1]),
+    u_bootstrap,
+    method="scar-tm-ou",
+    fit_kwargs={"maxiter": 100},
+    n_jobs=4,
+)
+
+models = batch.models
+print(batch.diagnostics)
+```
+
+Every task reconstructs its own model from constructor-level structural
+parameters and creates its own prepared evaluator during fitting. Previous
+`fit_result`, latent state, and transient caches from the prototype are not
+copied. A list of model prototypes and a list of `fit_kwargs` can be supplied
+to run different models or initial points in the same batch.
+
+Avoid accidental CPU oversubscription. With `n_jobs > 1`, omitted `n_threads`
+means one native thread per worker. Passing `n_threads=2` or more explicitly
+enables nested process/thread parallelism; this affects performance, not task
+ownership or correctness. The same strict opt-in rule applies with one outer
+worker: if `n_threads` is omitted, exactly one native thread is used.
+
+The same policy applies to rolling `risk_metrics`. Each result leaf contains a
+`diagnostics` mapping with `n_jobs`, `n_threads`,
+`multiprocessing_start_method`, `nested_parallelism`, and the worker ownership
+contract. Per-window `SeedSequence` objects keep results independent of chunk
+partitioning. For `n_jobs=1`, sequential windows may reuse the caller's model,
+but each fit invalidates and rebuilds its transient prepared state before the
+next window.
+
 ## NumericalConfig
 
 Use `NumericalConfig` when a setting should apply to many fits:
+
+`NumericalConfig()` always uses `n_threads=1`, independently of process
+environment variables. Native parallelism is enabled only by explicitly
+passing `n_threads` to a method or by constructing
+`NumericalConfig(n_threads=N)`.
 
 ```python
 from pyscarcopula import LBFGSBConfig, NumericalConfig

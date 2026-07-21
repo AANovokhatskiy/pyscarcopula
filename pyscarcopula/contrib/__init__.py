@@ -9,4 +9,17 @@ Usage:
     from pyscarcopula.contrib.risk_metrics import risk_metrics
     from pyscarcopula.contrib.marginal import MarginalModel
     from pyscarcopula.contrib.empirical import cvar_emp_window
+    from pyscarcopula.contrib.parallel_fit import fit_independent
 """
+
+from pyscarcopula.contrib.parallel_fit import (
+    IndependentFit,
+    IndependentFitBatch,
+    fit_independent,
+)
+
+__all__ = [
+    "IndependentFit",
+    "IndependentFitBatch",
+    "fit_independent",
+]

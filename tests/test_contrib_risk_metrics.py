@@ -67,6 +67,30 @@ def test_worker_constructor_preserves_stochastic_student_corr_config():
     np.testing.assert_allclose(rebuilt._corr_base, corr_base)
 
 
+def test_worker_constructor_excludes_fitted_student_correlation_state():
+    from pyscarcopula import StochasticStudentCopula
+    from pyscarcopula.contrib.risk_metrics import _get_copula_constructor
+
+    source = StochasticStudentCopula(d=3, corr_mode="shrinkage")
+    fitted_correlation = np.array([
+        [1.0, 0.20, 0.10],
+        [0.20, 1.0, 0.15],
+        [0.10, 0.15, 1.0],
+    ])
+    source._set_R(fitted_correlation, source="generated")
+    source._corr_base = fitted_correlation.copy()
+    source.fit_result = object()
+    source._ppf_cache = object()
+
+    cls, kwargs = _get_copula_constructor(source)
+    rebuilt = cls(**kwargs)
+
+    assert kwargs["R"] is None
+    assert kwargs["corr_base"] is None
+    assert rebuilt.R is None
+    assert rebuilt._ppf_cache is None
+
+
 def test_worker_constructor_preserves_rvine_options():
     from pyscarcopula import BivariateGaussianCopula, RVineCopula
     from pyscarcopula.contrib.risk_metrics import _get_copula_constructor

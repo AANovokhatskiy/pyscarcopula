@@ -1,4 +1,5 @@
 #include "scar/detail/safety.hpp"
+#include "scar/detail/linalg.hpp"
 #include "scar/detail/scar_ou/quadrature.hpp"
 #include "scar/detail/scar_ou/transition.hpp"
 
@@ -49,17 +50,12 @@ void dense_matvec(
     const std::vector<double>& v,
     std::vector<double>& out) {
 
-    std::fill(out.begin(), out.end(), 0.0);
-    for (int row = 0; row < K; ++row) {
-        double acc = 0.0;
-        const std::size_t row_offset =
-            static_cast<std::size_t>(row) * static_cast<std::size_t>(K);
-        for (int col = 0; col < K; ++col) {
-            acc += matrix[row_offset + static_cast<std::size_t>(col)]
-                * v[static_cast<std::size_t>(col)];
-        }
-        out[static_cast<std::size_t>(row)] = acc;
-    }
+    scar_internal::linalg::row_major_matvec(
+        matrix.data(),
+        static_cast<std::size_t>(K),
+        static_cast<std::size_t>(K),
+        v.data(),
+        out.data());
 }
 
 void dense_predict_matvec(

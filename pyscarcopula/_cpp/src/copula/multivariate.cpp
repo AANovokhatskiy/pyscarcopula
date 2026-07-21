@@ -1,6 +1,7 @@
 #include "scar/copula.hpp"
 
 #include "scar/detail/copula.hpp"
+#include "scar/detail/linalg.hpp"
 #include "scar/detail/parallel.hpp"
 #include "scar/status.hpp"
 
@@ -128,51 +129,8 @@ bool cholesky_with_jitter(
     std::vector<double>& lower,
     double* applied_jitter = nullptr) {
 
-    lower.assign(dimension * dimension, 0.0);
-    if (applied_jitter != nullptr) {
-        *applied_jitter = std::numeric_limits<double>::quiet_NaN();
-    }
-    double jitter = 0.0;
-    for (int attempt = 0; attempt < 7; ++attempt) {
-        std::fill(lower.begin(), lower.end(), 0.0);
-        bool valid = true;
-        for (std::size_t i = 0; i < dimension && valid; ++i) {
-            for (std::size_t j = 0; j <= i; ++j) {
-                double value = 0.5 * (
-                    matrix[i * dimension + j]
-                    + matrix[j * dimension + i]);
-                if (i == j) {
-                    value += jitter;
-                }
-                for (std::size_t k = 0; k < j; ++k) {
-                    value -= lower[i * dimension + k]
-                        * lower[j * dimension + k];
-                }
-                if (i == j) {
-                    if (!(value > 0.0) || !std::isfinite(value)) {
-                        valid = false;
-                        break;
-                    }
-                    lower[i * dimension + j] = std::sqrt(value);
-                } else {
-                    const double diagonal = lower[j * dimension + j];
-                    if (!(diagonal > 0.0)) {
-                        valid = false;
-                        break;
-                    }
-                    lower[i * dimension + j] = value / diagonal;
-                }
-            }
-        }
-        if (valid) {
-            if (applied_jitter != nullptr) {
-                *applied_jitter = jitter;
-            }
-            return true;
-        }
-        jitter = jitter == 0.0 ? 1e-12 : jitter * 10.0;
-    }
-    return false;
+    return scar_internal::linalg::cholesky_symmetric_with_jitter(
+        matrix.data(), dimension, lower, applied_jitter);
 }
 
 bool solve_spd(
@@ -182,31 +140,8 @@ bool solve_spd(
     std::size_t columns,
     std::vector<double>& solution) {
 
-    solution.assign(dimension * columns, 0.0);
-    for (std::size_t column = 0; column < columns; ++column) {
-        for (std::size_t i = 0; i < dimension; ++i) {
-            double value = rhs[i * columns + column];
-            for (std::size_t j = 0; j < i; ++j) {
-                value -= lower[i * dimension + j]
-                    * solution[j * columns + column];
-            }
-            const double diagonal = lower[i * dimension + i];
-            if (!(diagonal > 0.0)) {
-                return false;
-            }
-            solution[i * columns + column] = value / diagonal;
-        }
-        for (std::size_t reverse = dimension; reverse-- > 0;) {
-            double value = solution[reverse * columns + column];
-            for (std::size_t j = reverse + 1; j < dimension; ++j) {
-                value -= lower[j * dimension + reverse]
-                    * solution[j * columns + column];
-            }
-            const double diagonal = lower[reverse * dimension + reverse];
-            solution[reverse * columns + column] = value / diagonal;
-        }
-    }
-    return true;
+    return scar_internal::linalg::solve_spd(
+        lower.data(), dimension, rhs.data(), columns, solution);
 }
 
 struct ConditionalFactors {
@@ -227,6 +162,8 @@ struct ConditionalWorkerWorkspace {
     std::vector<double> covariance;
     std::vector<double> lower_cov;
     std::vector<double> given_vector;
+    std::vector<double> conditional_mean;
+    std::vector<double> innovation;
 };
 
 struct ConditionalBlockResult {
@@ -419,6 +356,8 @@ ConditionalSampleResult conditional_latent(
             ConditionalWorkerWorkspace workspace;
             workspace.given_vector.assign(n_given, 0.0);
             workspace.covariance.assign(n_free * n_free, 0.0);
+            workspace.conditional_mean.assign(n_free, 0.0);
+            workspace.innovation.assign(n_free, 0.0);
             for (std::int64_t row_index = begin;
                  row_index < end;
                  ++row_index) {
@@ -508,19 +447,21 @@ ConditionalSampleResult conditional_latent(
                     factors->use_prepared_lower_cov && df != nullptr
                     ? std::sqrt(covariance_scale)
                     : 1.0;
+                scar_internal::linalg::row_major_matvec(
+                    factors->r_fg.data(),
+                    n_free,
+                    n_given,
+                    workspace.solved_given.data(),
+                    workspace.conditional_mean.data());
+                scar_internal::linalg::lower_triangular_matvec(
+                    innovation_factor.data(),
+                    n_free,
+                    normal_draws.data() + row * n_free,
+                    workspace.innovation.data());
                 for (std::size_t i = 0; i < n_free; ++i) {
-                    double value = 0.0;
-                    for (std::size_t k = 0; k < n_given; ++k) {
-                        value += factors->r_fg[i * n_given + k]
-                            * workspace.solved_given[k];
-                    }
-                    double innovation = 0.0;
-                    for (std::size_t j = 0; j <= i; ++j) {
-                        innovation += innovation_factor[i * n_free + j]
-                            * normal_draws[row * n_free + j];
-                    }
-                    value += radial_scale
-                        * prepared_factor_scale * innovation;
+                    const double value = workspace.conditional_mean[i]
+                        + radial_scale * prepared_factor_scale
+                            * workspace.innovation[i];
                     if (!std::isfinite(value)) {
                         block_result.status = SCAR_NUMERICAL_FAILURE;
                         block_result.failure_index = row_index;
