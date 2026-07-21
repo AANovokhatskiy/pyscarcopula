@@ -38,6 +38,22 @@ Common fit diagnostics to inspect before interpreting GoF results include:
 - `optimizer_parameterization`, which is
   `log_kappa_mu_log_stationary_sigma` for Stochastic Student SCAR-TM-OU fits;
   the fitted parameters themselves remain in public `(kappa, mu, nu)` units.
+- `n_threads`, the resolved native thread count used by MLE, GAS, or SCAR.
+  Omission always resolves to `1`; environment variables do not override it.
+
+Independent fit batches and rolling risk results additionally expose:
+
+- `n_jobs_requested` and resolved `n_jobs`;
+- `n_threads_requested` and resolved `n_threads`;
+- `multiprocessing_start_method`;
+- `nested_parallelism`;
+- `worker_model_ownership='per_task'` and
+  `prepared_evaluator_sharing=False`.
+
+Low-level native diagnostic variants also report block counts and a
+`failure_index`. A block count of one can be expected for small workloads even
+when multiple threads were requested. On failure, the index is the smallest
+failing row or trajectory and matches the sequential execution contract.
 
 For `RVineCopula`, `vine.fit_diagnostics["edge_fits"]` additionally separates
 the requested vine method from the methods retained on individual edges. It

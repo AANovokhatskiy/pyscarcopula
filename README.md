@@ -140,6 +140,15 @@ python -m pyscarcopula._native_smoke
 * Predictive time-varying copula parameter paths
 * VaR and CVaR utilities in `pyscarcopula.contrib`
 
+**CPU parallelism**
+
+* Explicit native threading for eligible multivariate row, emission,
+  conditional-sampling, static-likelihood, and Monte Carlo kernels
+* Process-level `fit_independent` and rolling `risk_metrics` execution
+* Absolute one-thread default: omitted `n_threads` always means `1`, regardless
+  of environment variables
+* Dependency-free C++17 linear algebra without hidden BLAS or OpenMP pools
+
 ## Mathematical background
 
 By Sklar's theorem, a joint distribution can be represented as
@@ -217,7 +226,9 @@ Worked notebooks are available in [`examples/`](examples/):
 Additional documentation is in [`docs/`](docs/). Estimation methods are
 described in [`docs/guide/estimation-methods.md`](docs/guide/estimation-methods.md),
 and performance-related details are kept in
-[`docs/guide/performance.md`](docs/guide/performance.md). Release history is in
+[`docs/guide/performance.md`](docs/guide/performance.md). CPU threading,
+process workers, thread safety, and scaling limits are documented in
+[`docs/guide/parallelism.md`](docs/guide/parallelism.md). Release history is in
 [`CHANGELOG.md`](CHANGELOG.md).
 
 ## License

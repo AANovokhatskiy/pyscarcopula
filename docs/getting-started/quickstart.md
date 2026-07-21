@@ -9,9 +9,11 @@ ranked data.
 import pandas as pd
 import numpy as np
 
-prices = pd.read_csv("data/crypto_prices.csv", index_col=0, sep=';')
-returns = np.log(prices[['BTC-USD', 'ETH-USD']] /
-                 prices[['BTC-USD', 'ETH-USD']].shift(1)).dropna()
+prices = pd.read_csv("data/crypto_prices.csv", index_col=0, sep=";")
+returns = np.log(
+    prices[["BTC-USD", "ETH-USD"]]
+    / prices[["BTC-USD", "ETH-USD"]].shift(1)
+).dropna()
 u = returns.rank(method="average").div(len(returns) + 1).to_numpy()
 ```
 
@@ -19,15 +21,14 @@ u = returns.rank(method="average").div(len(returns) + 1).to_numpy()
 
 ```python
 from pyscarcopula import GumbelCopula
-from pyscarcopula.api import fit, predictive_mean
 
 copula = GumbelCopula(rotate=180)
 
 # Constant parameter (MLE)
-result_mle = fit(copula, u, method='mle')
+result_mle = copula.fit(u, method="mle")
 
 # Time-varying parameter (SCAR)
-result_tm = fit(copula, u, method='scar-tm-ou')
+result_tm = copula.fit(u, method="scar-tm-ou")
 
 print(f"MLE:  logL = {result_mle.log_likelihood:.2f}")
 print(f"SCAR: logL = {result_tm.log_likelihood:.2f}")
@@ -45,6 +46,8 @@ print(f"p-value = {gof.pvalue:.4f}")
 ## Predictive mean copula parameter
 
 ```python
+from pyscarcopula.api import predictive_mean
+
 r_t = predictive_mean(copula, u, result_tm)
 # r_t[k] = E[Psi(x_k) | u_{1:k-1}]
 ```
@@ -52,64 +55,75 @@ r_t = predictive_mean(copula, u, result_tm)
 ## Sample and predict
 
 ```python
-from pyscarcopula.api import sample, predict
-
 # sample: reproduce the fitted model (for validation)
-v = sample(copula, u, result_tm, n=2000, rng=np.random.default_rng(2024))
-result_refit = fit(copula, v, method='scar-tm-ou', to_pobs=True)
-gof_v = gof_test(copula, v, fit_result=result_refit, to_pobs=True)
+v = copula.sample(2000, rng=np.random.default_rng(2024))
+copula_refit = GumbelCopula(rotate=180)
+result_refit = copula_refit.fit(v, method="scar-tm-ou", to_pobs=True)
+gof_v = gof_test(copula_refit, v, fit_result=result_refit, to_pobs=True)
 print(f"GoF on sample: p={gof_v.pvalue:.4f}")  # expected to pass
 
 # predict: next-step forecast (for risk metrics)
-u_pred = predict(copula, u, result_tm, n=100_000,
-                 rng=np.random.default_rng(2025))
+u_pred = copula.predict(100_000, rng=np.random.default_rng(2025))
 
 # conditional forecast in pseudo-observation space
-u_cond = predict(copula, u, result_tm, n=20_000, given={0: 0.35},
-                 horizon='current', rng=np.random.default_rng(2026))
+u_cond = copula.predict(
+    20_000,
+    given={0: 0.35},
+    horizon="current",
+    rng=np.random.default_rng(2026),
+)
 ```
 
-## Fit a multivariate C-vine
+## Fit a stochastic Student-t copula
 
 ```python
-from pyscarcopula import CVineCopula
+from pyscarcopula import StochasticStudentCopula
 
-tickers_6d = ['BTC-USD', 'ETH-USD', 'BNB-USD', 'ADA-USD', 'XRP-USD', 'DOGE-USD']
-returns_6d = np.log(prices[tickers_6d] / prices[tickers_6d].shift(1)).dropna().iloc[:250]
+tickers_6d = [
+    "BTC-USD",
+    "ETH-USD",
+    "BNB-USD",
+    "ADA-USD",
+    "XRP-USD",
+    "DOGE-USD",
+]
+returns_6d = np.log(
+    prices[tickers_6d] / prices[tickers_6d].shift(1)
+).dropna().iloc[:250]
 u_6d = returns_6d.rank(method="average").div(len(returns_6d) + 1).to_numpy()
 
-vine = CVineCopula()
-vine.fit(u_6d, method='scar-tm-ou',
-         truncation_level=2, min_edge_logL=10)
-vine.summary()
+student = StochasticStudentCopula(d=u_6d.shape[1], corr_mode="shrinkage")
+student_result = student.fit(u_6d, method="scar-tm-ou")
 
-# Vine sampling and prediction
-v6 = vine.sample(2000, rng=np.random.default_rng(2027))
-u_pred_6d = vine.predict(100_000, u=u_6d,
-                         rng=np.random.default_rng(2028))
-
-# Conditional vine forecast: fix one variable
-u_pred_6d_cond = vine.predict(20_000, u=u_6d, given={2: 0.6},
-                              rng=np.random.default_rng(2029))
+# The dynamic parameter is the Student-t degrees of freedom.
+df_t = student.predictive_mean()
+u_student_pred = student.predict(10_000, rng=np.random.default_rng(2027))
 ```
 
-If you know the target conditioning set before fitting an `RVineCopula`, pass
-it to `fit`:
+## Fit a multivariate R-vine
 
 ```python
 from pyscarcopula import RVineCopula
 
-rvine = RVineCopula().fit(
+vine = RVineCopula()
+vine.fit(
     u_6d,
-    method='scar-tm-ou',
+    method="scar-tm-ou",
+    truncation_level=2,
+    min_edge_logL=10,
     given_vars=[2],
 )
+vine.summary()
 
-u_pred_6d_cond = rvine.predict(
+# Vine sampling and prediction
+v6 = vine.sample(2_000, rng=np.random.default_rng(2028))
+u_pred_6d = vine.predict(100_000, rng=np.random.default_rng(2029))
+
+# Conditional vine forecast: fix one variable
+u_pred_6d_cond = vine.predict(
     20_000,
-    u=u_6d,
     given={2: 0.6},
-    horizon='next',
+    horizon="next",
     rng=np.random.default_rng(2030),
 )
 ```

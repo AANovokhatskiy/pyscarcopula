@@ -19,6 +19,15 @@ When more than one worker process is used, both `risk_metrics` and
 worker count, native thread count, multiprocessing start method, and ownership
 policy are available in result diagnostics.
 
+When no native thread count is supplied anywhere, the result is always one
+thread, independently of environment variables. Each process owns a separate
+model and prepared evaluator. For `n_jobs=1`, rolling windows remain
+sequential and may reuse the caller's model; each fit invalidates transient
+prepared state before the next window.
+
+See [CPU Parallelism](../guide/parallelism.md) for oversubscription,
+reproducibility, and thread-safety guidance.
+
 ## fit_independent
 
 ::: pyscarcopula.contrib.parallel_fit.fit_independent

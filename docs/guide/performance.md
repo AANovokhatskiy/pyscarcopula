@@ -8,6 +8,9 @@ For the statistical meaning of each method, see
 [Estimation Methods](estimation-methods.md). This page focuses on runtime,
 optimizer, and numerical-stability controls.
 
+For the complete native-thread, process-worker, determinism, thread-safety,
+and dimensional-scaling contract, see [CPU Parallelism](parallelism.md).
+
 ## Bivariate Models
 
 All bivariate fits go through the strategy registry:

@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.19.0 - 2026-07-21
+
+Version: `0.18.0` -> `0.19.0`
+
+- Adds opt-in native CPU threading for stochastic Student and
+  equicorrelation emission/gradient grids, static multivariate row
+  likelihoods and MLE, Gaussian/Student conditional sampling, and historical
+  SCAR Monte Carlo trajectory evaluation.
+- Introduces a reusable process-local C++17 thread runtime with deterministic
+  block partitioning, sequential nested-call fallback, exception propagation,
+  process ownership checks, and a no-pool `n_threads=1` fast path.
+- Makes parallelism strictly explicit: omitted `n_threads` always means one
+  native thread, `NumericalConfig()` defaults to `1`, and environment variables
+  cannot enable threads implicitly.
+- Preserves fixed-input/fixed-draw results across supported thread counts and
+  reports the same smallest failure index in sequential and parallel kernels.
+- Serializes mutable operations on one model instance and protects prepared
+  evaluator workspace, while allowing independent models to execute
+  concurrently and safely in rolling-window workflows.
+- Adds prepared static likelihood evaluators, reusable Student workspaces and
+  inverse-CDF caches, and equicorrelation sufficient-statistic reuse across
+  optimizer calls.
+- Adds `fit_independent` for process-level batches and extends rolling
+  `risk_metrics` with explicit `n_jobs`, `n_threads`, multiprocessing method,
+  per-window seed ownership, and nested-parallelism diagnostics.
+- Adds a dependency-free native linear-algebra layer with scalar and portable
+  compiler-vectorizable backends; no Eigen, BLAS, OpenMP, or other external
+  runtime dependency is introduced.
+- Documents CPU configuration, thread safety, deterministic sampling,
+  oversubscription, diagnostics, and current large-dimension limits. Dense
+  Student correlation modes remain `O(d^2)`; `corr_mode="factor"` is not yet
+  available.
+
 ## 0.18.0 - 2026-07-21
 
 Version: `0.17.5` -> `0.18.0`

@@ -18,12 +18,18 @@ matrix method.
 - **C-vine copulas**: automatic family selection, truncation, mixed SCAR/MLE
 - **R-vine conditional sampling**: exact and approximate conditional
   prediction modes
+- **Explicit CPU parallelism**: native threads for eligible multivariate
+  kernels and process workers for independent fits, with an absolute
+  one-thread default
 - **Estimation**: MLE, GAS, SCAR-TM-OU, SCAR-TM-JACOBI
 - **Compiled numerical engine** included in official wheels
 - **Prediction controls**: `PredictConfig`, diagnostics, dynamic conditioning,
   reproducible `rng`
 - **Transform functions**: `softplus` (default), `xtanh` (symmetric)
 - **Diagnostics**: GoF test, predictive mean parameter paths
+
+For native threading, rolling-window safety, external process workers, and
+large-dimension limits, see [CPU Parallelism](guide/parallelism.md).
 
 ## Quick Example
 

@@ -24,7 +24,8 @@ result.bic
 
 Static `GaussianCopula` and `StudentCopula` accept only `method='mle'`. Both
 provide exact conditional generation in pseudo-observation space through
-`sample_conditional(n, given, rng=None)` and `predict(n, given=..., rng=...)`:
+`sample_conditional(n, given, rng=None, *, n_threads=1)` and
+`predict(n, given=..., rng=...)`:
 
 ```python
 import numpy as np
@@ -33,11 +34,16 @@ conditional = cop.sample_conditional(
     n=10_000,
     given={0: 0.25, 2: 0.8},
     rng=np.random.default_rng(2026),
+    n_threads=4,
 )
 ```
 
 The supplied columns remain fixed. Supplying every variable returns constant
 rows equal to `given`.
+
+All multivariate APIs that expose `n_threads` use a literal default of `1`.
+No environment variable changes that default. Fit-level native parallelism is
+enabled with `NumericalConfig(n_threads=N)`.
 
 ## Equicorrelation Gaussian Copula
 
@@ -99,10 +105,17 @@ For heterogeneous dependence, use a C-vine or R-vine instead.
       members:
         - fit
         - sample
+        - sample_conditional
         - predict
         - predictive_mean
         - xT_distribution
         - log_likelihood
+        - log_pdf_rows
+        - dlog_pdf_dr_rows
+        - log_pdf_and_dlog_dr_rows
+        - pdf_on_grid
+        - pdf_and_grad_on_grid
+        - pdf_and_grad_on_grid_batch
         - transform
         - inv_transform
         - dtransform
@@ -162,15 +175,25 @@ large-`df` paths, so an out-of-cache gradient does not repeat the expensive
 quantile inversion through finite differences. See the performance guide for
 accuracy and memory details.
 
+Pass `NumericalConfig(n_threads=N)` to `fit` to parallelize eligible native
+emission, row-likelihood, and Monte Carlo work. Methods with a direct
+`n_threads` parameter, including conditional sampling and row/grid evaluation,
+can opt in per call. Omitting it always selects one native thread.
+
 ::: pyscarcopula.copula.multivariate.stochastic_student.StochasticStudentCopula
     options:
       members:
         - fit
         - sample
+        - sample_conditional
         - predict
         - predictive_mean
         - xT_distribution
         - log_likelihood
+        - log_pdf_rows
+        - log_pdf_and_dlog_dr_rows
+        - pdf_on_grid
+        - pdf_and_grad_on_grid
         - transform
         - inv_transform
         - dtransform

@@ -74,6 +74,22 @@ cop.fit(u, method='gas')
 cop.fit(u, method='scar-tm-ou')
 ```
 
+Native row and emission work can be parallelized explicitly for a large fit:
+
+```python
+from pyscarcopula import NumericalConfig
+
+result = cop.fit(
+    u,
+    method="scar-tm-ou",
+    config=NumericalConfig(n_threads=4),
+)
+```
+
+If `NumericalConfig` is omitted, the fit always uses one native thread. See
+[CPU Parallelism](parallelism.md) for deterministic execution, thread-safety,
+and nested process/thread guidance.
+
 ### When to use
 
 Equicorrelation SCAR is a good fit when:
@@ -83,6 +99,10 @@ Equicorrelation SCAR is a good fit when:
 - You want a compact, interpretable model with 3 parameters
 
 For heterogeneous dependence, use C-vine or R-vine instead.
+
+The equicorrelation density hot path is linear in `d` and does not construct a
+dense correlation matrix. Output arrays and input storage still determine the
+end-to-end memory footprint, so large sampling jobs should be batched.
 
 ## Stochastic Student-t Copula
 
@@ -194,6 +214,11 @@ gof = gof_test(cop, returns, to_pobs=True)
 - When the correlation structure is relatively stable but tail thickness changes
 - As an alternative to vine copulas for moderate dimensions
 
+The currently available `fixed`, `shrinkage`, and `cholesky` correlation modes
+retain a dense `O(d^2)` correlation representation. Native threads accelerate
+independent computation but do not remove that memory limit. The proposed
+`corr_mode="factor"` mode for `d >> 10^4` is not yet implemented.
+
 ## Common API
 
 Static Gaussian, static Student, equicorrelation Gaussian MLE, and stochastic
@@ -245,14 +270,16 @@ gaussian_conditional = gaussian.sample_conditional(
     n=10_000,
     given={0: 0.25, 2: 0.8},
     rng=np.random.default_rng(2026),
+    n_threads=4,
 )
 
 student = StudentCopula()
 student.fit(u, method='mle')
-student_conditional = student.predict(
+student_conditional = student.sample_conditional(
     n=10_000,
     given={1: 0.6},
     rng=np.random.default_rng(2026),
+    n_threads=4,
 )
 ```
 
@@ -261,3 +288,7 @@ The supplied columns remain fixed and the remaining coordinates are drawn from
 the fitted conditional copula. If every variable is supplied, both APIs return
 constant rows. Static `GaussianCopula` and `StudentCopula` accept only
 `method='mle'`.
+
+The conditional kernels generate random draws in Python before entering the
+native implementation. Reusing the same seed produces the same tested output
+for `n_threads=1` and parallel thread counts.

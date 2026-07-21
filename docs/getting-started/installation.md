@@ -17,6 +17,11 @@ pip install -e ".[test]"
 Official wheels contain the compiled extension used for built-in copula
 families, static likelihoods, GAS, and SCAR-TM-OU evaluation.
 
+The extension's parallel runtime and portable linear-algebra kernels use only
+the C++17 standard library. Wheels do not require Eigen, BLAS, or OpenMP and do
+not create an additional third-party thread pool. Native threads remain
+disabled unless `n_threads` is passed explicitly.
+
 Source installs build this extension and fail if it cannot be compiled. You
 need a C++17 compiler: MSVC Build Tools or MinGW-w64 GCC on Windows, Xcode
 Command Line Tools on macOS, or GCC/Clang on Linux. MSVC remains the default
