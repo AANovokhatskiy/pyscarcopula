@@ -123,9 +123,9 @@ def test_mle_fit_uses_one_prepared_native_evaluator(monkeypatch):
     calls = {"prepare": 0, "objective": 0}
     real_prepare = static_likelihood.prepare
 
-    def counted_prepare(copula_arg, u_arg):
+    def counted_prepare(copula_arg, u_arg, **kwargs):
         calls["prepare"] += 1
-        evaluator = real_prepare(copula_arg, u_arg)
+        evaluator = real_prepare(copula_arg, u_arg, **kwargs)
         real_objective = evaluator.objective_and_gradient
 
         def counted_objective(*args, **kwargs):
@@ -173,7 +173,11 @@ def test_mle_explicit_alpha0_is_a_natural_parameter(monkeypatch):
             message="ok",
         )
 
-    monkeypatch.setattr(static_likelihood, "prepare", lambda *args: Evaluator())
+    monkeypatch.setattr(
+        static_likelihood,
+        "prepare",
+        lambda *args, **kwargs: Evaluator(),
+    )
     monkeypatch.setattr(mle_module, "minimize", fake_minimize)
     monkeypatch.setattr(
         copula,
@@ -208,7 +212,11 @@ def test_static_student_mle_optimizes_natural_df(monkeypatch):
         np.testing.assert_array_equal(gradient, [0.0])
         return SimpleNamespace(x=trial, fun=0.0, success=True)
 
-    monkeypatch.setattr(static_likelihood, "prepare", lambda *args: Evaluator())
+    monkeypatch.setattr(
+        static_likelihood,
+        "prepare",
+        lambda *args, **kwargs: Evaluator(),
+    )
     monkeypatch.setattr(static_student, "minimize", fake_minimize)
     monkeypatch.setattr(copula, "_nll", lambda observations: 0.0)
 
@@ -264,7 +272,11 @@ def test_stochastic_student_mle_optimizes_natural_df(
             message="ok",
         )
 
-    monkeypatch.setattr(static_likelihood, "prepare", lambda *args: Evaluator())
+    monkeypatch.setattr(
+        static_likelihood,
+        "prepare",
+        lambda *args, **kwargs: Evaluator(),
+    )
     monkeypatch.setattr(stochastic_student, "minimize", fake_minimize)
     monkeypatch.setattr(
         copula,

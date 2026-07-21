@@ -25,13 +25,17 @@ Usage:
 """
 
 from dataclasses import replace
+import threading
 
 import numpy as np
 from scipy.stats import t as t_dist
 from scipy.optimize import minimize
 
 from pyscarcopula.copula.base import CopulaCapabilities
-from pyscarcopula.copula.multivariate.base import MultivariateCopula
+from pyscarcopula.copula.multivariate.base import (
+    MultivariateCopula,
+    model_state_locked,
+)
 from pyscarcopula._types import DEFAULT_CONFIG, NumericalConfig
 from pyscarcopula._utils import pobs
 from pyscarcopula.copula.multivariate.conditional import (
@@ -150,6 +154,14 @@ class StochasticStudentCopula(MultivariateCopula):
         Explicit initialization/base matrix for an estimated correlation
         mode. Initialization priority is ``corr_base``, then ``R``, then a
         Kendall estimate from the fit data.
+
+    Notes
+    -----
+    SCAR-TM-OU accepts and returns physical ``(kappa, mu, nu)`` parameters,
+    but this model is optimized internally in
+    ``(log(kappa), mu, log(sigma_x))``, where
+    ``sigma_x = nu / sqrt(2 * kappa)``. The internal representation is
+    reported in the fit diagnostics.
     """
 
     _gas_optimizer_config = 'stochastic_student_gas_optimizer'
@@ -243,12 +255,14 @@ class StochasticStudentCopula(MultivariateCopula):
 
     def __getstate__(self):
         state = self.__dict__.copy()
+        state.pop("_state_lock", None)
         state.pop("_emission_cache", None)
         state["_ppf_cache"] = None
         return state
 
     def __setstate__(self, state):
         self.__dict__.update(state)
+        self._state_lock = threading.RLock()
         self._corr_cache_version = int(
             getattr(self, "_corr_cache_version", 0))
         self._corr_preprocessing = getattr(
@@ -457,6 +471,7 @@ class StochasticStudentCopula(MultivariateCopula):
     def dtransform_scalar(self, x):
         return float(self.dtransform(np.array([x], dtype=np.float64))[0])
 
+    @model_state_locked
     def prepare_emission_cache(self, u):
         """Return the reusable full-sample Student PPF cache."""
         if self._R is None:
@@ -473,7 +488,8 @@ class StochasticStudentCopula(MultivariateCopula):
 
     # ── Density ──────────────────────────────────────────────
 
-    def log_likelihood(self, u, r=None):
+    @model_state_locked
+    def log_likelihood(self, u, r=None, *, n_threads=1):
         """
         Log-likelihood for d-dimensional data.
 
@@ -494,37 +510,44 @@ class StochasticStudentCopula(MultivariateCopula):
                     np.array([self.fit_result.params.mu]))[0])
 
         from pyscarcopula.numerical import static_likelihood
-        return static_likelihood.prepare(self, u).log_likelihood(float(r))
+        return static_likelihood.prepare(
+            self, u, n_threads=n_threads).log_likelihood(float(r))
 
-    def log_pdf_rows(self, u, r, t_index=None, cache=None):
+    def log_pdf_rows(
+            self, u, r, t_index=None, cache=None, *, n_threads=1):
         """Return one log-density per row for scalar/row-wise df values."""
         if self._R is None:
             raise ValueError("Correlation matrix R not set. Call fit() first.")
         from pyscarcopula.numerical import multivariate_native
         values, _ = multivariate_native.log_pdf_and_dlog_rows(
-            self, u, r, t_index=t_index, cache=cache)
+            self, u, r, t_index=t_index, cache=cache,
+            n_threads=n_threads)
         return values
 
-    def dlog_pdf_dr_rows(self, u, r, t_index=None, cache=None):
+    def dlog_pdf_dr_rows(
+            self, u, r, t_index=None, cache=None, *, n_threads=1):
         """Return d log c(u_t; df_t) / d df_t for each row."""
         if self._R is None:
             raise ValueError("Correlation matrix R not set. Call fit() first.")
 
         from pyscarcopula.numerical import multivariate_native
         _, values = multivariate_native.log_pdf_and_dlog_rows(
-            self, u, r, t_index=t_index, cache=cache)
+            self, u, r, t_index=t_index, cache=cache,
+            n_threads=n_threads)
         return values
 
-    def log_pdf_and_dlog_dr_rows(self, u, r, t_index=None, cache=None):
+    def log_pdf_and_dlog_dr_rows(
+            self, u, r, t_index=None, cache=None, *, n_threads=1):
         """Return per-row log-density and d log c(u_t; df_t) / d df_t."""
         if self._R is None:
             raise ValueError("Correlation matrix R not set. Call fit() first.")
 
         from pyscarcopula.numerical import multivariate_native
         return multivariate_native.log_pdf_and_dlog_rows(
-            self, u, r, t_index=t_index, cache=cache)
+            self, u, r, t_index=t_index, cache=cache,
+            n_threads=n_threads)
 
-    def pdf_on_grid(self, u_row, z_grid):
+    def pdf_on_grid(self, u_row, z_grid, *, n_threads=1):
         """Copula density on latent grid for one observation.
 
         u_row : (d,) single observation
@@ -537,10 +560,14 @@ class StochasticStudentCopula(MultivariateCopula):
 
         from pyscarcopula.numerical import multivariate_native
         fi, _ = multivariate_native.pdf_and_grad_grid(
-            self, np.asarray(u_row, dtype=np.float64)[None, :], z_grid)
+            self,
+            np.asarray(u_row, dtype=np.float64)[None, :],
+            z_grid,
+            n_threads=n_threads,
+        )
         return fi[0]
 
-    def pdf_and_grad_on_grid(self, u_row, z_grid):
+    def pdf_and_grad_on_grid(self, u_row, z_grid, *, n_threads=1):
         """
         Compute fi(z) and dfi/dz on the grid analytically.
 
@@ -555,18 +582,27 @@ class StochasticStudentCopula(MultivariateCopula):
 
         from pyscarcopula.numerical import multivariate_native
         fi, dfi = multivariate_native.pdf_and_grad_grid(
-            self, np.asarray(u_row, dtype=np.float64)[None, :], z_grid)
+            self,
+            np.asarray(u_row, dtype=np.float64)[None, :],
+            z_grid,
+            n_threads=n_threads,
+        )
         return fi[0], dfi[0]
 
-    def pdf_and_grad_on_grid_batch(self, u, x_grid, t_index=0, cache=None):
+    def pdf_and_grad_on_grid_batch(
+            self, u, x_grid, t_index=0, cache=None, *, n_threads=1):
         """
         Batch evaluation for all T observations.
 
-        Optimized: uses precomputed PPF lookup table (~300× faster ppf calls),
-        inlined density computation, single table build per fit.
+        Uses a reusable PPF table when it fits the memory budget. Native
+        out-of-table evaluation uses analytical df derivatives and a
+        controlled normal-quantile asymptotic above the final df node.
 
         u : (T, d) pseudo-observations
         x_grid : (K,) latent grid values
+        n_threads : int, keyword-only
+            Maximum native worker count. ``1`` preserves the sequential
+            fast path; small batches stay sequential for any value.
 
         Returns: (fi, dfi) each (T, K)
         """
@@ -575,16 +611,29 @@ class StochasticStudentCopula(MultivariateCopula):
 
         from pyscarcopula.numerical import multivariate_native
         return multivariate_native.pdf_and_grad_grid(
-            self, u, x_grid, t_index=t_index, cache=cache)
+            self,
+            u,
+            x_grid,
+            t_index=t_index,
+            cache=cache,
+            n_threads=n_threads,
+        )
 
-    def copula_grid_batch(self, u, x_grid, t_index=0, cache=None):
+    def copula_grid_batch(
+            self, u, x_grid, t_index=0, cache=None, *, n_threads=1):
         """Batch version of pdf_on_grid (value only)."""
         if self._R is None:
             raise ValueError("R not set")
 
         from pyscarcopula.numerical import multivariate_native
         fi, _ = multivariate_native.pdf_and_grad_grid(
-            self, u, x_grid, t_index=t_index, cache=cache)
+            self,
+            u,
+            x_grid,
+            t_index=t_index,
+            cache=cache,
+            n_threads=n_threads,
+        )
         return fi
 
     # ── MLE fit ──────────────────────────────────────────────
@@ -621,7 +670,9 @@ class StochasticStudentCopula(MultivariateCopula):
         fail_value = float(getattr(config, 'fail_value', 1e10))
 
         fixed_evaluator = (
-            static_likelihood.prepare(self, u) if n_corr == 0 else None)
+            static_likelihood.prepare(
+                self, u, n_threads=config.n_threads)
+            if n_corr == 0 else None)
 
         def _failure_result(x):
             # Non-zero, large-magnitude gradient pointing back toward the
@@ -639,7 +690,8 @@ class StochasticStudentCopula(MultivariateCopula):
             try:
                 if n_corr:
                     self._set_corr_from_params(x[1:])
-                    evaluator = static_likelihood.prepare(self, u)
+                    evaluator = static_likelihood.prepare(
+                        self, u, n_threads=config.n_threads)
                     value, df_gradient, corr_gradient = (
                         evaluator.objective_and_joint_gradient(
                             float(x[0]), fail_value=fail_value))
@@ -686,6 +738,7 @@ class StochasticStudentCopula(MultivariateCopula):
 
         df_hat = float(res.x[0])
         diagnostics = {
+            'n_threads': config.n_threads,
             'parameterization': 'natural_df',
             'gradient_mode': gradient_mode,
             'model_score': 'not_applicable',
@@ -735,6 +788,7 @@ class StochasticStudentCopula(MultivariateCopula):
 
     # ── Fit (MLE + SCAR) ────────────────────────────────────
 
+    @model_state_locked
     def fit(self, data, method='scar-tm-ou', to_pobs=False, **kwargs):
         """
         Fit the stochastic Student-t copula.
@@ -857,6 +911,7 @@ class StochasticStudentCopula(MultivariateCopula):
 
         return u
 
+    @model_state_locked
     def sample(self, n, u=None, rng=None):
         """Generate observations reproducing the fitted model."""
         if self.fit_result is None:
@@ -872,7 +927,9 @@ class StochasticStudentCopula(MultivariateCopula):
 
     # ── Predict ──────────────────────────────────────────────
 
-    def sample_conditional(self, n, r=None, given=None, rng=None):
+    @model_state_locked
+    def sample_conditional(
+            self, n, r=None, given=None, rng=None, *, n_threads=1):
         """Sample conditionally with ``given={var_index: u_value}``."""
         if self._R is None:
             raise ValueError("Correlation matrix R not set. Call fit() first.")
@@ -891,8 +948,10 @@ class StochasticStudentCopula(MultivariateCopula):
                 r = self.transform(
                     np.array([self.fit_result.params.mu]))[0]
         return sample_student_conditional(
-            n, self._R, r, given=given, rng=rng)
+            n, self._R, r, given=given, rng=rng,
+            n_threads=n_threads)
 
+    @model_state_locked
     def predict(self, n, u=None, rng=None, given=None, horizon='next',
                 predictive_r_mode=None, predict_config=None):
         """
@@ -944,6 +1003,7 @@ class StochasticStudentCopula(MultivariateCopula):
 
     # Predictive mean path
 
+    @model_state_locked
     def predictive_mean(self, u=None):
         """Return predictive mean df(t) from TM forward pass."""
         if self.fit_result is None:
@@ -957,6 +1017,7 @@ class StochasticStudentCopula(MultivariateCopula):
         return _cpp_scar_ou.predictive_mean(
             kappa, mu, nu_ou, u_data, self)
 
+    @model_state_locked
     def xT_distribution(self, u, K=300, grid_range=5.0):
         """Distribution of x_T on grid (for predict)."""
         if self.fit_result is None:
@@ -973,6 +1034,7 @@ class StochasticStudentCopula(MultivariateCopula):
             AutoTMConfig(K=K, grid_range=grid_range),
         )
 
+    @model_state_locked
     def posterior_state_weights(
             self, u, params=None, *, K=None, grid_range=None,
             grid_method=None, adaptive=None, pts_per_sigma=None,

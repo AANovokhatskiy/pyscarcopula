@@ -1,10 +1,14 @@
 #include "scar/detail/copula.hpp"
+#include "scar/detail/parallel.hpp"
 
 #include <cmath>
 
 namespace scar_internal {
 
 namespace {
+
+constexpr std::int64_t kEquicorrGridMinRowsPerBlock = 64;
+constexpr std::size_t kEquicorrGridMinCells = 262144;
 
 void clayton_fill_row(
     double u1,
@@ -685,7 +689,8 @@ void copula_pdf_and_grad_grid_precomputed(
     const std::vector<double>& r_grid,
     const std::vector<double>& dpsi_grid,
     std::vector<double>& fi,
-    std::vector<double>& dfi_dx) {
+    std::vector<double>& dfi_dx,
+    int n_threads) {
 
     const std::size_t K = r_grid.size();
     std::size_t n_obs_size = 0;
@@ -706,7 +711,74 @@ void copula_pdf_and_grad_grid_precomputed(
             r_grid,
             dpsi_grid,
             fi.data(),
-            dfi_dx.data())) {
+            dfi_dx.data(),
+            n_threads)) {
+        return;
+    }
+    if (spec.family == scar::CopulaFamily::Student && n_threads > 1) {
+        constexpr std::int64_t min_rows_per_block = 8;
+        parallel_for_blocks(
+            0,
+            n_obs,
+            min_rows_per_block,
+            n_threads,
+            [&](std::int64_t begin,
+                std::int64_t end,
+                std::size_t) {
+                StudentWorkspace workspace;
+                workspace.reserve_x(static_cast<std::size_t>(spec.dim));
+                workspace.reserve_dx_ddf(
+                    static_cast<std::size_t>(spec.dim));
+                for (std::int64_t t = begin; t < end; ++t) {
+                    const std::size_t output_row =
+                        static_cast<std::size_t>(t) * K;
+                    const double* observation_row =
+                        u + static_cast<std::size_t>(t)
+                            * static_cast<std::size_t>(spec.dim);
+                    student_fill_row_with_workspace(
+                        spec,
+                        observation_row,
+                        t,
+                        r_grid,
+                        dpsi_grid,
+                        fi.data() + output_row,
+                        dfi_dx.data() + output_row,
+                        workspace);
+                }
+            });
+        return;
+    }
+    if (spec.family == scar::CopulaFamily::EquicorrGaussian
+        && n_threads > 1
+        && grid_parallel_worthwhile(
+            n_obs_size,
+            K,
+            static_cast<std::size_t>(kEquicorrGridMinRowsPerBlock),
+            kEquicorrGridMinCells)) {
+        parallel_for_blocks(
+            0,
+            n_obs,
+            kEquicorrGridMinRowsPerBlock,
+            n_threads,
+            [&](std::int64_t begin,
+                std::int64_t end,
+                std::size_t) {
+                for (std::int64_t t = begin; t < end; ++t) {
+                    const std::size_t output_row =
+                        static_cast<std::size_t>(t) * K;
+                    const double* observation_row =
+                        u + static_cast<std::size_t>(t)
+                            * static_cast<std::size_t>(spec.dim);
+                    equicorr_fill_row(
+                        spec,
+                        observation_row,
+                        t,
+                        r_grid,
+                        dpsi_grid,
+                        fi.data() + output_row,
+                        dfi_dx.data() + output_row);
+                }
+            });
         return;
     }
     for (std::int64_t t = 0; t < n_obs; ++t) {

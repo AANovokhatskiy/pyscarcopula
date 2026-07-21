@@ -43,7 +43,9 @@ bool valid_ou_params(const OuParams& params) {
 bool finite_config_doubles(const OuNumericalConfig& config) {
     return std::isfinite(config.grid_range)
         && std::isfinite(config.r_gh)
-        && std::isfinite(config.auto_small_kdt);
+        && std::isfinite(config.auto_small_kdt)
+        && config.n_threads >= 1
+        && config.n_threads <= 256;
 }
 
 bool valid_grid_config(

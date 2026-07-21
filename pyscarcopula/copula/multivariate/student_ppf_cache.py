@@ -15,9 +15,9 @@ from pyscarcopula._utils import clip_pseudo_observations
 _CACHE_VERSIONS = count(1)
 
 # Upper bound for the precomputed PPF table (nodes × T × d × 8 bytes).
-# Above the limit the table is skipped and every evaluation falls back to
-# the exact ``stdtrit`` quantile — the C++ kernels do the same when the
-# spec carries no table.
+# Above the limit the values table is skipped. Python calls use exact
+# ``stdtrit`` values; native dynamic specs retain the nodes so they can use
+# the controlled large-df asymptotic above the final node.
 DEFAULT_MAX_TABLE_BYTES = 256 * 1024 ** 2
 
 

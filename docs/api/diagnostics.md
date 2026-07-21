@@ -35,6 +35,9 @@ Common fit diagnostics to inspect before interpreting GoF results include:
   `corr_initialization_source`, `corr_projection_applied`,
   `corr_min_eigenvalue_before`, `corr_min_eigenvalue_after`, and
   `corr_nonfinite_kendall_pairs`.
+- `optimizer_parameterization`, which is
+  `log_kappa_mu_log_stationary_sigma` for Stochastic Student SCAR-TM-OU fits;
+  the fitted parameters themselves remain in public `(kappa, mu, nu)` units.
 
 For `RVineCopula`, `vine.fit_diagnostics["edge_fits"]` additionally separates
 the requested vine method from the methods retained on individual edges. It

@@ -98,6 +98,7 @@ def _config(module, cfg: AutoTMConfig):
     out.auto_small_kdt = float(cfg.small_kdt)
     out.spectral_basis_order = int(cfg.basis_order)
     out.spectral_quad_order = 0 if cfg.quad_order is None else int(cfg.quad_order)
+    out.n_threads = int(cfg.n_threads)
     return out
 
 

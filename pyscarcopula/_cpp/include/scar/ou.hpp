@@ -5,6 +5,7 @@
 #include "scar/status.hpp"
 
 #include <cstdint>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -36,6 +37,7 @@ struct OuNumericalConfig {
     double auto_small_kdt = 1e-2;
     int spectral_basis_order = 32;
     int spectral_quad_order = 0;
+    int n_threads = 1;
 };
 
 /// Likelihood value together with backend and fallback diagnostics.
@@ -72,13 +74,16 @@ struct TrajectoryLogPdfResult {
     GridValues log_pdf;
     int status = SCAR_OK;
     std::int64_t failure_index = -1;
+    int n_threads_requested = 1;
+    int parallel_blocks = 0;
 };
 
 TrajectoryLogPdfResult copula_log_pdf_trajectory_grid(
     const CopulaSpec& copula,
     ObservationView u,
     const double* latent_paths,
-    std::size_t n_trajectories);
+    std::size_t n_trajectories,
+    int n_threads = 1);
 
 struct ScarOuGridGradientOperators {
     int K = 0;
@@ -435,6 +440,7 @@ private:
     int dim_ = 0;
     OuNumericalConfig config_;
     std::string method_;
+    mutable std::mutex call_mutex_;
     ScarOuEvaluator evaluator_;
 };
 

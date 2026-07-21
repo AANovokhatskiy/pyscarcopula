@@ -577,6 +577,7 @@ class SCARTMStrategy:
                     max_K=self.max_K,
                     gh_order=self.gh_order,
                     r_gh=self.r_gh,
+                    n_threads=self.config.n_threads,
             )
         )
 
@@ -646,6 +647,7 @@ class SCARTMStrategy:
             max_K=self.max_K,
             gh_order=self.gh_order,
             r_gh=self.r_gh,
+            n_threads=self.config.n_threads,
         )
 
     def _uses_cpp(self, copula):
@@ -939,6 +941,7 @@ class SCARTMStrategy:
                 else values / scale)
 
         diagnostics = _new_backend_diagnostics()
+        diagnostics["n_threads"] = self.config.n_threads
         diagnostics.update({
             "initialization": initialization,
             "optimizer_parameterization": (
@@ -1333,6 +1336,7 @@ class SCARTMStrategy:
         self._uses_cpp(copula)
         selected_engine = "cpp"
         diagnostics = _new_backend_diagnostics()
+        diagnostics["n_threads"] = self.config.n_threads
         diagnostics["adaptive_spectral_basis_order"] = (
             self.spectral_basis_order == "auto")
         diagnostics["auto_spectral_basis_order"] = (

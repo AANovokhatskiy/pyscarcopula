@@ -119,7 +119,8 @@ class MLEStrategy:
 
         evaluator = _prepared_evaluator
         if evaluator is None:
-            evaluator = static_likelihood.prepare(copula, u)
+            evaluator = static_likelihood.prepare(
+                copula, u, n_threads=self.config.n_threads)
 
         def objective_and_gradient(x):
             return evaluator.objective_and_gradient(
@@ -159,7 +160,8 @@ class MLEStrategy:
                 return float(copula.log_likelihood(u, result.copula_param))
             except TypeError:
                 return float(copula.log_likelihood(u))
-        evaluator = static_likelihood.prepare(copula, u)
+        evaluator = static_likelihood.prepare(
+            copula, u, n_threads=self.config.n_threads)
         return evaluator.log_likelihood(result.copula_param)
 
     def predictive_mean(self, copula, u: np.ndarray,
@@ -194,7 +196,8 @@ class MLEStrategy:
                     return -float(copula.log_likelihood(u, float(alpha[0])))
                 except TypeError:
                     return -float(copula.log_likelihood(u))
-            evaluator = static_likelihood.prepare(copula, u)
+            evaluator = static_likelihood.prepare(
+                copula, u, n_threads=self.config.n_threads)
             value, _ = evaluator.objective_and_gradient(
                 float(alpha[0]), fail_value=self.config.fail_value)
             return value

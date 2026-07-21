@@ -124,6 +124,13 @@ $$c(u_t;R,\nu_t)=
 score-driven recursion for $g_t$, and `method='scar-tm-ou'` treats $g_t$ as a
 latent OU process integrated by transfer matrix.
 
+SCAR-TM-OU accepts and returns the physical OU parameters
+`(kappa, mu, nu)`. For this model only, optimization is performed internally
+in `(log(kappa), mu, log(sigma_x))`, where
+`sigma_x = nu / sqrt(2 * kappa)`. The representation used by the optimizer is
+reported in `result.diagnostics['optimizer_parameterization']`; it does not
+change `alpha0` or the fitted parameter values exposed by the API.
+
 ### Stochastic Student copula with estimated static correlation
 
 Static correlation modes are selected with `corr_mode`:
@@ -144,13 +151,16 @@ with `corr_mode="cholesky"` is rejected before fitting. Setting
 `analytical_grad=False` retains a fully numerical optimizer gradient. See the
 multivariate guide for fitting details and diagnostic fields.
 
-Emission densities normally use an interpolated, precomputed Student quantile
-(PPF) table of shape `(n_df_nodes, T, d)`. Its size is capped at
-`DEFAULT_MAX_TABLE_BYTES` (256 MiB); above the cap the table is skipped and
-evaluations use the exact `stdtrit` quantile instead. Both paths target the
-same Student quantile, but they are not numerically identical because the
-table path interpolates between degrees-of-freedom nodes. The exact fallback
-is usually slower. See the performance guide for details.
+Dynamic emission densities normally use an interpolated, precomputed Student
+quantile (PPF) table of shape `(n_df_nodes, T, d)`, covering the model boundary
+through `df = 1000`. Its size is capped at `DEFAULT_MAX_TABLE_BYTES`
+(256 MiB). If the values table is skipped, native evaluation keeps the node
+range metadata, uses exact quantiles through the final node, and switches to
+a controlled third-order normal-quantile asymptotic above it. Quantile
+derivatives with respect to `df` are analytical both in the exact and
+large-`df` paths, so an out-of-cache gradient does not repeat the expensive
+quantile inversion through finite differences. See the performance guide for
+accuracy and memory details.
 
 ::: pyscarcopula.copula.multivariate.stochastic_student.StochasticStudentCopula
     options:

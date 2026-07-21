@@ -1,6 +1,7 @@
 #include "scar/ou.hpp"
 
 #include "scar/detail/copula.hpp"
+#include "scar/detail/parallel.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -8,6 +9,12 @@
 
 namespace scar {
 namespace {
+
+struct TrajectoryBlockResult {
+    bool ran = false;
+    std::size_t failure_flat_index =
+        std::numeric_limits<std::size_t>::max();
+};
 
 bool valid_student_spec(const CopulaSpec& spec, std::size_t n_obs) {
     std::size_t square = 0;
@@ -45,9 +52,11 @@ TrajectoryLogPdfResult copula_log_pdf_trajectory_grid(
     const CopulaSpec& copula,
     ObservationView u,
     const double* latent_paths,
-    std::size_t n_trajectories) {
+    std::size_t n_trajectories,
+    int n_threads) {
 
     TrajectoryLogPdfResult out;
+    out.n_threads_requested = n_threads;
     out.log_pdf.n_obs = static_cast<std::int64_t>(u.size());
     out.log_pdf.n_grid = static_cast<std::int64_t>(n_trajectories);
 
@@ -67,50 +76,99 @@ TrajectoryLogPdfResult copula_log_pdf_trajectory_grid(
         out.status = SCAR_INVALID_FAMILY;
         return out;
     }
+    if (n_threads < 1 || n_threads > 256
+        || elements > static_cast<std::size_t>(
+            std::numeric_limits<std::int64_t>::max())) {
+        out.status = SCAR_INVALID_PARAMETER;
+        return out;
+    }
 
     const std::size_t observation_stride =
         static_cast<std::size_t>(u.dim);
-    scar_internal::StudentWorkspace student_workspace;
-    if (copula.family == CopulaFamily::Student) {
-        student_workspace.x.reserve(observation_stride);
-    }
-    for (std::size_t t = 0; t < u.size(); ++t) {
-        const double* row = u.data() + t * observation_stride;
-        double v1 = 0.0;
-        double v2 = 0.0;
-        if (copula.family != CopulaFamily::Student) {
-            scar_internal::apply_rotation(
-                row[0],
-                row[1],
-                static_cast<int>(copula.rotation),
-                v1,
-                v2);
-        }
+    constexpr std::size_t min_cells_student = 4096;
+    constexpr std::size_t min_cells_other = 262144;
+    constexpr std::int64_t min_cells_per_block = 1024;
+    const std::size_t min_cells = copula.family == CopulaFamily::Student
+        ? min_cells_student
+        : min_cells_other;
+    const bool use_threads = n_threads > 1 && elements >= min_cells;
+    std::vector<TrajectoryBlockResult> block_results(
+        static_cast<std::size_t>(use_threads ? n_threads : 1));
+    scar_internal::parallel_for_blocks(
+        0,
+        static_cast<std::int64_t>(elements),
+        min_cells_per_block,
+        use_threads ? n_threads : 1,
+        [&](std::int64_t begin,
+            std::int64_t end,
+            std::size_t block) {
+            TrajectoryBlockResult& block_result = block_results[block];
+            block_result.ran = true;
+            scar_internal::StudentWorkspace student_workspace;
+            if (copula.family == CopulaFamily::Student) {
+                student_workspace.reserve_x(observation_stride);
+            }
+            std::size_t current_t = std::numeric_limits<std::size_t>::max();
+            const double* row = nullptr;
+            double v1 = 0.0;
+            double v2 = 0.0;
+            for (std::int64_t flat_index = begin;
+                 flat_index < end;
+                 ++flat_index) {
+                const std::size_t flat =
+                    static_cast<std::size_t>(flat_index);
+                const std::size_t t = flat / n_trajectories;
+                if (t != current_t) {
+                    current_t = t;
+                    row = u.data() + t * observation_stride;
+                    if (copula.family != CopulaFamily::Student) {
+                        scar_internal::apply_rotation(
+                            row[0],
+                            row[1],
+                            static_cast<int>(copula.rotation),
+                            v1,
+                            v2);
+                    }
+                }
+                const double latent = latent_paths[flat];
+                const double parameter =
+                    scar_internal::copula_transform(copula, latent);
+                double value = -std::numeric_limits<double>::infinity();
+                if (std::isfinite(parameter)) {
+                    value = copula.family == CopulaFamily::Student
+                        ? scar_internal::student_log_pdf(
+                            copula,
+                            row,
+                            parameter,
+                            static_cast<std::int64_t>(t),
+                            student_workspace)
+                        : scar_internal::copula_log_pdf_unrotated(
+                            copula, v1, v2, parameter);
+                }
+                if (!std::isfinite(value)) {
+                    block_result.failure_flat_index = flat;
+                    return;
+                }
+                out.log_pdf.values[flat] = value;
+            }
+        });
 
-        const std::size_t base = t * n_trajectories;
-        for (std::size_t j = 0; j < n_trajectories; ++j) {
-            const double latent = latent_paths[base + j];
-            const double parameter =
-                scar_internal::copula_transform(copula, latent);
-            double value = -std::numeric_limits<double>::infinity();
-            if (std::isfinite(parameter)) {
-                value = copula.family == CopulaFamily::Student
-                    ? scar_internal::student_log_pdf(
-                        copula,
-                        row,
-                        parameter,
-                        static_cast<std::int64_t>(t),
-                        student_workspace)
-                    : scar_internal::copula_log_pdf_unrotated(
-                        copula, v1, v2, parameter);
-            }
-            if (!std::isfinite(value)) {
-                out.status = SCAR_NUMERICAL_FAILURE;
-                out.failure_index = static_cast<std::int64_t>(t);
-                return out;
-            }
-            out.log_pdf.values[base + j] = value;
+    std::size_t failure_flat = std::numeric_limits<std::size_t>::max();
+    for (const TrajectoryBlockResult& block : block_results) {
+        if (!block.ran) {
+            continue;
         }
+        ++out.parallel_blocks;
+        failure_flat = std::min(failure_flat, block.failure_flat_index);
+    }
+    if (failure_flat != std::numeric_limits<std::size_t>::max()) {
+        out.status = SCAR_NUMERICAL_FAILURE;
+        out.failure_index = static_cast<std::int64_t>(
+            failure_flat / n_trajectories);
+        std::fill(
+            out.log_pdf.values.begin() + failure_flat,
+            out.log_pdf.values.end(),
+            -std::numeric_limits<double>::infinity());
     }
     return out;
 }

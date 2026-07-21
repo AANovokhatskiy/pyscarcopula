@@ -476,7 +476,8 @@ GradLogLikResult grid_neg_loglik_with_grad(
         r_grid,
         dpsi_grid,
         fi,
-        dfi_dx);
+        dfi_dx,
+        config.n_threads);
 
     std::vector<double>& beta = ws.beta;
     std::vector<double>& c_vals = ws.c_vals;

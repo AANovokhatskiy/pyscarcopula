@@ -315,8 +315,8 @@ GasLogLikResult run_log_likelihood(
     }
     scar_internal::StudentWorkspace student_workspace;
     if (copula.family == CopulaFamily::Student) {
-        student_workspace.x.reserve(static_cast<std::size_t>(copula.dim));
-        student_workspace.dx_ddf.reserve(
+        student_workspace.reserve_x(static_cast<std::size_t>(copula.dim));
+        student_workspace.reserve_dx_ddf(
             static_cast<std::size_t>(copula.dim));
     }
     for (std::size_t t = 0; t < u.n_obs; ++t) {
@@ -404,8 +404,8 @@ GasFilterResult GasEvaluator::filter(
     }
     scar_internal::StudentWorkspace student_workspace;
     if (copula.family == CopulaFamily::Student) {
-        student_workspace.x.reserve(static_cast<std::size_t>(copula.dim));
-        student_workspace.dx_ddf.reserve(
+        student_workspace.reserve_x(static_cast<std::size_t>(copula.dim));
+        student_workspace.reserve_dx_ddf(
             static_cast<std::size_t>(copula.dim));
     }
     for (std::size_t t = 0; t < u.n_obs; ++t) {

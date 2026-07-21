@@ -112,6 +112,8 @@ void PreparedScarOuEvaluator::update_student_factor(
     const std::vector<double>& l_inv,
     double log_det) {
 
+    const std::lock_guard<std::mutex> lock(call_mutex_);
+
     // Joint Student fits mutate only the static correlation factor; PPF cache
     // and observations stay prepared for the lifetime of this evaluator.
     if (copula_.family != CopulaFamily::Student) {
@@ -150,16 +152,19 @@ ObservationView PreparedScarOuEvaluator::view() const noexcept {
 
 LogLikResult PreparedScarOuEvaluator::loglik(
     const OuParams& params) const {
+    const std::lock_guard<std::mutex> lock(call_mutex_);
     return call_loglik(params);
 }
 
 GradLogLikResult PreparedScarOuEvaluator::neg_loglik_with_grad(
     const OuParams& params) const {
+    const std::lock_guard<std::mutex> lock(call_mutex_);
     return call_no_corr(params);
 }
 
 GradLogLikResult PreparedScarOuEvaluator::neg_loglik_with_grad_and_corr(
     const OuParams& params) const {
+    const std::lock_guard<std::mutex> lock(call_mutex_);
     return call_full_corr(params);
 }
 
@@ -167,6 +172,7 @@ GradLogLikResult
 PreparedScarOuEvaluator::neg_loglik_with_grad_and_corr_directional(
     const OuParams& params,
     const std::vector<double>& corr_direction) const {
+    const std::lock_guard<std::mutex> lock(call_mutex_);
     return call_directional_corr(params, corr_direction);
 }
 
@@ -174,6 +180,7 @@ std::vector<double> PreparedScarOuEvaluator::predictive_mean(
     const OuParams& params,
     OuBackend& backend,
     int& status) const {
+    const std::lock_guard<std::mutex> lock(call_mutex_);
     return call_predictive_mean(params, backend, status);
 }
 
@@ -181,6 +188,7 @@ std::vector<double> PreparedScarOuEvaluator::mixture_h(
     const OuParams& params,
     OuBackend& backend,
     int& status) const {
+    const std::lock_guard<std::mutex> lock(call_mutex_);
     return call_mixture_h(params, backend, status);
 }
 
@@ -188,12 +196,14 @@ std::vector<double> PreparedScarOuEvaluator::mixture_h_pair(
     const OuParams& params,
     OuBackend& backend,
     int& status) const {
+    const std::lock_guard<std::mutex> lock(call_mutex_);
     return call_mixture_h_pair(params, backend, status);
 }
 
 StateDistribution PreparedScarOuEvaluator::state_distribution(
     const OuParams& params,
     bool horizon_next) const {
+    const std::lock_guard<std::mutex> lock(call_mutex_);
     return call_state_distribution(params, horizon_next);
 }
 

@@ -91,7 +91,8 @@ def _finalize_conditional_sample(out, free_idx, given):
     return out
 
 
-def sample_gaussian_conditional(n, d, rho, given, rng=None):
+def sample_gaussian_conditional(
+        n, d, rho, given, rng=None, *, n_threads=1):
     """Sample a Gaussian copula conditional on fixed pseudo-observations.
 
     Conditional Gaussian quantiles use the same ``PSEUDO_OBS_EPS`` clipping
@@ -123,14 +124,16 @@ def sample_gaussian_conditional(n, d, rho, given, rng=None):
     )
     from pyscarcopula.numerical import multivariate_native
     z_free = multivariate_native.gaussian_conditional_latent(
-        correlations, given_idx, z_given, normal_draws)
+        correlations, given_idx, z_given, normal_draws,
+        n_threads=n_threads)
     out = np.empty((n, d), dtype=np.float64)
     out[:, free_idx] = norm.cdf(z_free)
 
     return _finalize_conditional_sample(out, free_idx, given)
 
 
-def sample_gaussian_copula_conditional(n, R, given, rng=None):
+def sample_gaussian_copula_conditional(
+        n, R, given, rng=None, *, n_threads=1):
     """Sample a Gaussian copula with an arbitrary correlation matrix
     conditionally on fixed pseudo-observations.
 
@@ -156,14 +159,15 @@ def sample_gaussian_copula_conditional(n, R, given, rng=None):
     normal_draws = rng.standard_normal((n, len(free_idx)))
     from pyscarcopula.numerical import multivariate_native
     z_free = multivariate_native.gaussian_conditional_latent(
-        R, given_idx, z_given, normal_draws)
+        R, given_idx, z_given, normal_draws, n_threads=n_threads)
     out = np.empty((n, d), dtype=np.float64)
     out[:, free_idx] = norm.cdf(z_free)
 
     return _finalize_conditional_sample(out, free_idx, given)
 
 
-def sample_student_conditional(n, R_path, df, given, rng=None):
+def sample_student_conditional(
+        n, R_path, df, given, rng=None, *, n_threads=1):
     """Sample a Student-t copula conditional on fixed pseudo-observations.
 
     Conditional Student quantiles use the same ``PSEUDO_OBS_EPS`` clipping
@@ -225,6 +229,7 @@ def sample_student_conditional(n, R_path, df, given, rng=None):
         df_path,
         normal_draws,
         chi_square_draws,
+        n_threads=n_threads,
     )
     out = np.empty((n, d), dtype=np.float64)
     out[:, free_idx] = t_dist.cdf(x_free, df=df_path[:, None])

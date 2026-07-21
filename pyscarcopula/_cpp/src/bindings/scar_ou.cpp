@@ -1,5 +1,6 @@
 #include "common.hpp"
 
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -8,7 +9,8 @@ namespace py = pybind11;
 namespace pyscarcopula::bindings {
 namespace {
 
-scar::PreparedScarOuEvaluator make_prepared_scar_ou_evaluator(
+std::unique_ptr<scar::PreparedScarOuEvaluator>
+make_prepared_scar_ou_evaluator(
     scar::CopulaSpec copula,
     py::array_t<double, py::array::c_style | py::array::forcecast> u,
     const scar::OuNumericalConfig& config,
@@ -22,7 +24,7 @@ scar::PreparedScarOuEvaluator make_prepared_scar_ou_evaluator(
     const auto n_obs = static_cast<std::int64_t>(info.shape[0]);
     const auto dim = static_cast<int>(info.shape[1]);
     std::vector<double> observations = flat_vector_from_array(u, "u");
-    return scar::PreparedScarOuEvaluator(
+    return std::make_unique<scar::PreparedScarOuEvaluator>(
         std::move(copula),
         std::move(observations),
         n_obs,
@@ -42,28 +44,42 @@ void bind_scar_ou(py::module_& m) {
                py::array_t<double, py::array::c_style | py::array::forcecast>
                    l_inv,
                double log_det) {
-                evaluator.update_student_factor(
-                    vector_from_array(l_inv), log_det);
+                const std::vector<double> factor = vector_from_array(l_inv);
+                py::gil_scoped_release release;
+                evaluator.update_student_factor(factor, log_det);
             })
         .def(
             "loglik",
             [](const scar::PreparedScarOuEvaluator& evaluator,
                const scar::OuParams& params) {
-                return loglik_result_to_dict(evaluator.loglik(params));
+                scar::LogLikResult result;
+                {
+                    py::gil_scoped_release release;
+                    result = evaluator.loglik(params);
+                }
+                return loglik_result_to_dict(result);
             })
         .def(
             "neg_loglik_with_grad",
             [](const scar::PreparedScarOuEvaluator& evaluator,
                const scar::OuParams& params) {
-                return grad_loglik_result_to_dict(
-                    evaluator.neg_loglik_with_grad(params));
+                scar::GradLogLikResult result;
+                {
+                    py::gil_scoped_release release;
+                    result = evaluator.neg_loglik_with_grad(params);
+                }
+                return grad_loglik_result_to_dict(result);
             })
         .def(
             "neg_loglik_with_grad_and_corr",
             [](const scar::PreparedScarOuEvaluator& evaluator,
                const scar::OuParams& params) {
-                return grad_loglik_result_to_dict(
-                    evaluator.neg_loglik_with_grad_and_corr(params));
+                scar::GradLogLikResult result;
+                {
+                    py::gil_scoped_release release;
+                    result = evaluator.neg_loglik_with_grad_and_corr(params);
+                }
+                return grad_loglik_result_to_dict(result);
             })
         .def(
             "neg_loglik_with_grad_and_corr_directional",
@@ -71,9 +87,16 @@ void bind_scar_ou(py::module_& m) {
                const scar::OuParams& params,
                py::array_t<double, py::array::c_style | py::array::forcecast>
                    corr_direction) {
-                return grad_loglik_result_to_dict(
-                    evaluator.neg_loglik_with_grad_and_corr_directional(
-                        params, vector_from_array(corr_direction)));
+                const std::vector<double> direction =
+                    vector_from_array(corr_direction);
+                scar::GradLogLikResult result;
+                {
+                    py::gil_scoped_release release;
+                    result =
+                        evaluator.neg_loglik_with_grad_and_corr_directional(
+                            params, direction);
+                }
+                return grad_loglik_result_to_dict(result);
             })
         .def(
             "predictive_mean",
@@ -81,8 +104,11 @@ void bind_scar_ou(py::module_& m) {
                const scar::OuParams& params) {
                 int status = 0;
                 scar::OuBackend backend = scar::OuBackend::Matrix;
-                std::vector<double> values =
-                    evaluator.predictive_mean(params, backend, status);
+                std::vector<double> values;
+                {
+                    py::gil_scoped_release release;
+                    values = evaluator.predictive_mean(params, backend, status);
+                }
                 return vector_result_to_dict(
                     values, status, static_cast<int>(backend));
             })
@@ -92,8 +118,11 @@ void bind_scar_ou(py::module_& m) {
                const scar::OuParams& params) {
                 int status = 0;
                 scar::OuBackend backend = scar::OuBackend::Matrix;
-                std::vector<double> values =
-                    evaluator.mixture_h(params, backend, status);
+                std::vector<double> values;
+                {
+                    py::gil_scoped_release release;
+                    values = evaluator.mixture_h(params, backend, status);
+                }
                 return vector_result_to_dict(
                     values, status, static_cast<int>(backend));
             })
@@ -103,8 +132,11 @@ void bind_scar_ou(py::module_& m) {
                const scar::OuParams& params) {
                 int status = 0;
                 scar::OuBackend backend = scar::OuBackend::Matrix;
-                std::vector<double> values =
-                    evaluator.mixture_h_pair(params, backend, status);
+                std::vector<double> values;
+                {
+                    py::gil_scoped_release release;
+                    values = evaluator.mixture_h_pair(params, backend, status);
+                }
                 return vector_result_to_dict(
                     values, status, static_cast<int>(backend));
             })
@@ -113,8 +145,12 @@ void bind_scar_ou(py::module_& m) {
             [](const scar::PreparedScarOuEvaluator& evaluator,
                const scar::OuParams& params,
                bool horizon_next) {
-                return state_distribution_to_dict(
-                    evaluator.state_distribution(params, horizon_next));
+                scar::StateDistribution result;
+                {
+                    py::gil_scoped_release release;
+                    result = evaluator.state_distribution(params, horizon_next);
+                }
+                return state_distribution_to_dict(result);
             });
 
     py::class_<scar::ScarOuEvaluator>(m, "ScarOuEvaluator")

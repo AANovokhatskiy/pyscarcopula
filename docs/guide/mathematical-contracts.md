@@ -203,6 +203,25 @@ normalized filtering recursion. For joint Stochastic Student fits, the
 compiled engine supplies OU and static-correlation derivatives, and Python
 applies the configured correlation-parameter chain rule.
 
+`StochasticStudentCopula` additionally reparameterizes the OU block during
+optimization. If $\sigma_x=\nu/\sqrt{2\kappa}$ and
+$y=(\log\kappa,\mu,\log\sigma_x)$, the public likelihood remains a function
+of $\alpha=(\kappa,\mu,\nu)$, while the optimizer receives
+
+$$
+\frac{\partial \ell}{\partial y_1}
+=\kappa\frac{\partial\ell}{\partial\kappa}
++\frac{\nu}{2}\frac{\partial\ell}{\partial\nu},\qquad
+\frac{\partial \ell}{\partial y_2}
+=\frac{\partial\ell}{\partial\mu},\qquad
+\frac{\partial \ell}{\partial y_3}
+=\nu\frac{\partial\ell}{\partial\nu}.
+$$
+
+Inputs and results are converted at the strategy boundary, so `alpha0`,
+`LatentResult.params`, likelihood evaluation, serialization, and prediction
+continue to use $(\kappa,\mu,\nu)$.
+
 ## SCAR-TM-JACOBI
 
 SCAR-TM-JACOBI evolves Kendall's tau directly inside `(0, 1)`:

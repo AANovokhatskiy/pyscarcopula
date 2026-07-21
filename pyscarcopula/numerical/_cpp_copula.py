@@ -417,6 +417,14 @@ def make_multivariate_transform_spec(module, copula):
 
 def make_multivariate_spec(module, copula, cache=None):
     """Build a native dynamic multivariate spec with an optional PPF cache."""
+    state_lock = getattr(copula, "_state_lock", None)
+    if state_lock is None:
+        return _make_multivariate_spec_unlocked(module, copula, cache)
+    with state_lock:
+        return _make_multivariate_spec_unlocked(module, copula, cache)
+
+
+def _make_multivariate_spec_unlocked(module, copula, cache=None):
     from pyscarcopula.copula.multivariate.equicorr import (
         EquicorrGaussianCopula,
     )
@@ -455,6 +463,14 @@ def make_multivariate_spec(module, copula, cache=None):
 
 def make_spec(module, copula, u=None):
     """Build a C++ ``CopulaSpec`` for SCAR-TM-OU kernels."""
+    state_lock = getattr(copula, "_state_lock", None)
+    if state_lock is None:
+        return _make_spec_unlocked(module, copula, u)
+    with state_lock:
+        return _make_spec_unlocked(module, copula, u)
+
+
+def _make_spec_unlocked(module, copula, u=None):
     ensure_supported_for_scar_ou(copula)
     spec = module.CopulaSpec()
     spec.rotation = {

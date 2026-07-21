@@ -144,6 +144,14 @@ and predictive paths are needed.
 | `analytical_grad` | strategy kwarg | `True` | Uses analytical gradient and parameter rescaling. Usually much faster. |
 | `smart_init` | strategy kwarg | `True` | Uses a heuristic initial point before falling back to MLE-based init. |
 
+For `StochasticStudentCopula`, `alpha0` is still supplied as
+`[kappa, mu, nu]`, but the optimizer internally uses
+`[log(kappa), mu, log(sigma_x)]`, where
+`sigma_x = nu / sqrt(2 * kappa)`. The result is converted back to
+`[kappa, mu, nu]`. This is a model-specific conditioning measure; it is not a
+global change to bivariate SCAR-TM-OU optimization. Inspect
+`result.diagnostics['optimizer_parameterization']` when auditing fits.
+
 ```python
 result = fit(
     copula,
@@ -202,19 +210,27 @@ chosen numerical options.
 #### Student PPF table memory cap
 
 Multivariate Student models normally precompute a quantile (inverse-CDF) table
-of shape `(n_df_nodes, T, d)` (~200 df nodes) to speed up emission-density
-evaluations. The table costs `n_nodes × T × d × 8` bytes and is bounded by
-`DEFAULT_MAX_TABLE_BYTES` (256 MiB) from
-`pyscarcopula.copula.multivariate.student_ppf_cache`. When the estimated
-size exceeds the limit, the table is not built and every evaluation falls
-back to the exact `scipy.special.stdtrit` quantile; the compiled kernels
-apply the same exact-quantile fallback when a spec carries no table.
-Both paths target the same Student quantile, but they are not numerically
-identical: the normal cached path Hermite-interpolates between precomputed
-degrees-of-freedom nodes, whereas the fallback evaluates `stdtrit` directly.
-Small likelihood or gradient differences are therefore possible when a
-workload crosses the memory threshold, and the exact fallback is usually
-slower.
+of shape `(n_df_nodes, T, d)` (about 360 df nodes by default) to speed up
+emission-density evaluations. The table costs `n_nodes × T × d × 8` bytes and
+is bounded by `DEFAULT_MAX_TABLE_BYTES` (256 MiB) from
+`pyscarcopula.copula.multivariate.student_ppf_cache`. The default nodes include
+a dense geometric layer above `df = 2 + 1e-6`, where the quantile changes
+rapidly, and extend through `df = 1000`.
+
+When the estimated size exceeds the limit, the values table is not built.
+Python-level table calls then use exact `scipy.special.stdtrit` values. Native
+dynamic-emission specs retain the df nodes even without the values table:
+they use exact quantiles up to the final node and a third-order Cornish-Fisher
+normal-quantile expansion above it. Static Student likelihoods carry no
+dynamic node metadata and retain exact quantiles at all finite `df` values.
+
+The native exact path obtains the quantile's `df` derivative by implicit
+differentiation of the Student CDF. The large-`df` expansion has a matching
+analytical derivative. Consequently, an analytical SCAR gradient outside the
+cache no longer evaluates the full emission likelihood at perturbed `df`
+values. Cached interpolation, exact evaluation, and the controlled asymptotic
+are close but not bit-identical, so small likelihood or gradient differences
+are possible at their boundaries.
 
 `StudentPPFTable` accepts a `max_table_bytes` constructor argument for direct
 internal table construction. `StochasticStudentCopula` currently uses the

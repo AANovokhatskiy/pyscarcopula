@@ -340,6 +340,8 @@ py::dict static_objective_result_to_dict(
         vector_to_array(result.negative_correlation_gradient);
     out["status"] = result.status;
     out["failure_index"] = result.failure_index;
+    out["n_threads_requested"] = result.n_threads_requested;
+    out["parallel_blocks"] = result.parallel_blocks;
     return out;
 }
 
@@ -351,6 +353,16 @@ py::dict multivariate_rows_result_to_dict(
     out["dlog_dr"] = vector_to_array(result.dlog_dr);
     out["status"] = result.status;
     out["failure_index"] = result.failure_index;
+    out["student_ppf_cache_values"] = result.student_ppf_cache_values;
+    out["student_ppf_exact_values"] = result.student_ppf_exact_values;
+    out["student_ppf_asymptotic_values"] =
+        result.student_ppf_asymptotic_values;
+    out["student_workspace_growth_events"] =
+        result.student_workspace_growth_events;
+    out["student_workspace_peak_bytes"] =
+        result.student_workspace_peak_bytes;
+    out["n_threads_requested"] = result.n_threads_requested;
+    out["row_parallel_blocks"] = result.row_parallel_blocks;
     return out;
 }
 
@@ -362,6 +374,17 @@ py::dict multivariate_grid_result_to_dict(
     out["d_pdf_dx"] = grid_values_to_array(result.d_pdf_dx);
     out["status"] = result.status;
     out["failure_index"] = result.failure_index;
+    out["student_ppf_cache_values"] = result.student_ppf_cache_values;
+    out["student_ppf_exact_values"] = result.student_ppf_exact_values;
+    out["student_ppf_asymptotic_values"] =
+        result.student_ppf_asymptotic_values;
+    out["student_workspace_growth_events"] =
+        result.student_workspace_growth_events;
+    out["student_workspace_peak_bytes"] =
+        result.student_workspace_peak_bytes;
+    out["n_threads_requested"] = result.n_threads_requested;
+    out["student_parallel_blocks"] = result.student_parallel_blocks;
+    out["equicorr_parallel_blocks"] = result.equicorr_parallel_blocks;
     return out;
 }
 
@@ -379,6 +402,10 @@ py::dict conditional_sample_result_to_dict(
     out["values"] = std::move(values);
     out["status"] = result.status;
     out["failure_index"] = result.failure_index;
+    out["n_threads_requested"] = result.n_threads_requested;
+    out["parallel_blocks"] = result.parallel_blocks;
+    out["correlation_factorizations"] =
+        result.correlation_factorizations;
     return out;
 }
 
@@ -389,6 +416,8 @@ py::dict trajectory_log_pdf_result_to_dict(
     out["log_pdf"] = grid_values_to_array(result.log_pdf);
     out["status"] = result.status;
     out["failure_index"] = result.failure_index;
+    out["n_threads_requested"] = result.n_threads_requested;
+    out["parallel_blocks"] = result.parallel_blocks;
     return out;
 }
 

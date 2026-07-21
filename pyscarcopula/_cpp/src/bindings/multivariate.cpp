@@ -10,7 +10,8 @@ void bind_multivariate(py::module_& m) {
         [](const scar::CopulaSpec& copula,
            py::array_t<double, py::array::c_style | py::array::forcecast> u,
            py::array_t<double, py::array::c_style | py::array::forcecast> r,
-           std::int64_t row_offset) {
+           std::int64_t row_offset,
+           int n_threads) {
             scar::MultivariateRowsResult result;
             const scar::Observations observations =
                 observations_from_array(u);
@@ -18,14 +19,15 @@ void bind_multivariate(py::module_& m) {
             {
                 py::gil_scoped_release release;
                 result = scar::multivariate_log_pdf_and_grad(
-                    copula, observations, parameters, row_offset);
+                    copula, observations, parameters, row_offset, n_threads);
             }
             return multivariate_rows_result_to_dict(result);
         },
         py::arg("copula"),
         py::arg("u"),
         py::arg("r"),
-        py::arg("row_offset") = 0);
+        py::arg("row_offset") = 0,
+        py::arg("n_threads") = 1);
 
     m.def(
         "multivariate_pdf_and_grad_grid",
@@ -33,7 +35,8 @@ void bind_multivariate(py::module_& m) {
            py::array_t<double, py::array::c_style | py::array::forcecast> u,
            py::array_t<double, py::array::c_style | py::array::forcecast>
                x_grid,
-           std::int64_t row_offset) {
+           std::int64_t row_offset,
+           int n_threads) {
             scar::MultivariateGridResult result;
             const scar::Observations observations =
                 observations_from_array(u);
@@ -41,14 +44,15 @@ void bind_multivariate(py::module_& m) {
             {
                 py::gil_scoped_release release;
                 result = scar::multivariate_pdf_and_grad_grid(
-                    copula, observations, grid, row_offset);
+                    copula, observations, grid, row_offset, n_threads);
             }
             return multivariate_grid_result_to_dict(result);
         },
         py::arg("copula"),
         py::arg("u"),
         py::arg("x_grid"),
-        py::arg("row_offset") = 0);
+        py::arg("row_offset") = 0,
+        py::arg("n_threads") = 1);
 
     m.def(
         "multivariate_gaussian_conditional",
@@ -60,7 +64,8 @@ void bind_multivariate(py::module_& m) {
             py::array_t<double, py::array::c_style | py::array::forcecast>
                 given_latent,
             py::array_t<double, py::array::c_style | py::array::forcecast>
-                normal_draws) {
+                normal_draws,
+            int n_threads) {
 
             const py::buffer_info corr_info = correlations.request();
             const py::buffer_info draw_info = normal_draws.request();
@@ -90,14 +95,15 @@ void bind_multivariate(py::module_& m) {
                 py::gil_scoped_release release;
                 result = scar::multivariate_gaussian_conditional(
                     corr, correlation_rows, dimension, indices,
-                    latent, draws, n_rows);
+                    latent, draws, n_rows, n_threads);
             }
             return conditional_sample_result_to_dict(result);
         },
         py::arg("correlations"),
         py::arg("given_indices"),
         py::arg("given_latent"),
-        py::arg("normal_draws"));
+        py::arg("normal_draws"),
+        py::arg("n_threads") = 1);
 
     m.def(
         "multivariate_student_conditional",
@@ -113,7 +119,8 @@ void bind_multivariate(py::module_& m) {
             py::array_t<double, py::array::c_style | py::array::forcecast>
                 normal_draws,
             py::array_t<double, py::array::c_style | py::array::forcecast>
-                chi_square_draws) {
+                chi_square_draws,
+            int n_threads) {
 
             const py::buffer_info corr_info = correlations.request();
             const py::buffer_info draw_info = normal_draws.request();
@@ -146,7 +153,7 @@ void bind_multivariate(py::module_& m) {
                 py::gil_scoped_release release;
                 result = scar::multivariate_student_conditional(
                     corr, correlation_rows, dimension, indices,
-                    latent, degrees, draws, chi, n_rows);
+                    latent, degrees, draws, chi, n_rows, n_threads);
             }
             return conditional_sample_result_to_dict(result);
         },
@@ -155,7 +162,8 @@ void bind_multivariate(py::module_& m) {
         py::arg("given_latent"),
         py::arg("df"),
         py::arg("normal_draws"),
-        py::arg("chi_square_draws"));
+        py::arg("chi_square_draws"),
+        py::arg("n_threads") = 1);
 }
 
 }  // namespace pyscarcopula::bindings

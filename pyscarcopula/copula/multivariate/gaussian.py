@@ -127,7 +127,7 @@ class GaussianCopula(MultivariateCopula):
         x = rng.multivariate_normal(np.zeros(d), correlation, size=n)
         return norm.cdf(x)
 
-    def sample_conditional(self, n, given, rng=None):
+    def sample_conditional(self, n, given, rng=None, *, n_threads=1):
         """Sample conditionally with ``given={var_index: u_value}``."""
         correlation = self._fitted_correlation()
         if correlation is None:
@@ -136,7 +136,8 @@ class GaussianCopula(MultivariateCopula):
             sample_gaussian_copula_conditional,
         )
         return sample_gaussian_copula_conditional(
-            n, correlation, given=given, rng=rng)
+            n, correlation, given=given, rng=rng,
+            n_threads=n_threads)
 
     def predict(self, n, u=None, rng=None, given=None, horizon='next',
                 predictive_r_mode=None, predict_config=None):

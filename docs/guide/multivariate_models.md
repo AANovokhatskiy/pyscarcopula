@@ -105,6 +105,28 @@ The latent/dynamic part of the model controls only tail thickness. Smaller
 $\nu_t$ means heavier joint tails; larger $\nu_t$ moves the copula toward the
 Gaussian copula.
 
+For `method='scar-tm-ou'`, the public OU parameters remain
+`(kappa, mu, nu)`, where `nu` is the diffusion coefficient. Internally,
+`StochasticStudentCopula` is optimized in
+`(log(kappa), mu, log(sigma_x))`, with stationary latent standard deviation
+
+$$\sigma_x=\frac{\nu}{\sqrt{2\kappa}}.$$
+
+This parameterization keeps the two positive scale parameters unconstrained
+and avoids the poorly conditioned combination of very small mean reversion
+and very large stationary variance. `alpha0` and the fitted result still use
+the public `(kappa, mu, nu)` representation; no conversion is required in
+user code. The fit diagnostics expose the internal choice as
+`optimizer_parameterization='log_kappa_mu_log_stationary_sigma'`.
+
+Dynamic emission evaluation uses a Student inverse-CDF table from the model
+boundary at `df = 2 + 1e-6` through `df = 1000`. Outside the table, the native
+gradient obtains the quantile derivative analytically from the Student CDF;
+it does not finite-difference the complete emission likelihood. Above the
+final table node, dynamic fits use a third-order Cornish-Fisher expansion
+toward the normal quantile, together with its analytical `df` derivative.
+Static Student likelihoods retain exact quantiles.
+
 ### Stochastic Student copula with estimated static correlation
 
 Static correlation can be handled in three modes:

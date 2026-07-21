@@ -6,7 +6,10 @@ from scipy.stats import norm
 
 from pyscarcopula._types import DEFAULT_CONFIG, NumericalConfig
 from pyscarcopula.copula.base import CopulaCapabilities
-from pyscarcopula.copula.multivariate.base import MultivariateCopula
+from pyscarcopula.copula.multivariate.base import (
+    MultivariateCopula,
+    model_state_locked,
+)
 from pyscarcopula.copula.multivariate.conditional import (
     sample_gaussian_conditional,
     validate_multivariate_given,
@@ -60,7 +63,8 @@ class EquicorrGaussianCopula(MultivariateCopula):
         from pyscarcopula.numerical import multivariate_native
         return multivariate_native.dtransform(self, x)
 
-    def log_likelihood(self, u, r=None):
+    @model_state_locked
+    def log_likelihood(self, u, r=None, *, n_threads=1):
         if r is None:
             from pyscarcopula._types import MLEResult
             if isinstance(self.fit_result, MLEResult):
@@ -69,41 +73,52 @@ class EquicorrGaussianCopula(MultivariateCopula):
                 r = float(self.transform(
                     np.array([self.fit_result.params.mu]))[0])
         from pyscarcopula.numerical import static_likelihood
-        return static_likelihood.prepare(self, u).log_likelihood(float(r))
+        return static_likelihood.prepare(
+            self, u, n_threads=n_threads).log_likelihood(float(r))
 
-    def log_pdf_rows(self, u, r, t_index=None):
+    def log_pdf_rows(self, u, r, t_index=None, *, n_threads=1):
         from pyscarcopula.numerical import multivariate_native
         values, _ = multivariate_native.log_pdf_and_dlog_rows(
-            self, u, r, t_index=t_index)
+            self, u, r, t_index=t_index, n_threads=n_threads)
         return values
 
-    def dlog_pdf_dr_rows(self, u, r, t_index=None):
+    def dlog_pdf_dr_rows(self, u, r, t_index=None, *, n_threads=1):
         from pyscarcopula.numerical import multivariate_native
         _, values = multivariate_native.log_pdf_and_dlog_rows(
-            self, u, r, t_index=t_index)
+            self, u, r, t_index=t_index, n_threads=n_threads)
         return values
 
-    def log_pdf_and_dlog_dr_rows(self, u, r, t_index=None):
+    def log_pdf_and_dlog_dr_rows(
+            self, u, r, t_index=None, *, n_threads=1):
         from pyscarcopula.numerical import multivariate_native
         return multivariate_native.log_pdf_and_dlog_rows(
-            self, u, r, t_index=t_index)
+            self, u, r, t_index=t_index, n_threads=n_threads)
 
-    def pdf_on_grid(self, u_row, z_grid):
+    def pdf_on_grid(self, u_row, z_grid, *, n_threads=1):
         values, _ = self.pdf_and_grad_on_grid_batch(
-            np.asarray(u_row, dtype=np.float64)[None, :], z_grid)
+            np.asarray(u_row, dtype=np.float64)[None, :],
+            z_grid,
+            n_threads=n_threads,
+        )
         return values[0]
 
-    def pdf_and_grad_on_grid(self, u_row, z_grid):
+    def pdf_and_grad_on_grid(self, u_row, z_grid, *, n_threads=1):
         values, gradients = self.pdf_and_grad_on_grid_batch(
-            np.asarray(u_row, dtype=np.float64)[None, :], z_grid)
+            np.asarray(u_row, dtype=np.float64)[None, :],
+            z_grid,
+            n_threads=n_threads,
+        )
         return values[0], gradients[0]
 
-    def pdf_and_grad_on_grid_batch(self, u, x_grid):
+    def pdf_and_grad_on_grid_batch(self, u, x_grid, *, n_threads=1):
+        """Evaluate an observation/grid batch with optional native threads."""
         from pyscarcopula.numerical import multivariate_native
-        return multivariate_native.pdf_and_grad_grid(self, u, x_grid)
+        return multivariate_native.pdf_and_grad_grid(
+            self, u, x_grid, n_threads=n_threads)
 
-    def copula_grid_batch(self, u, x_grid):
-        values, _ = self.pdf_and_grad_on_grid_batch(u, x_grid)
+    def copula_grid_batch(self, u, x_grid, *, n_threads=1):
+        values, _ = self.pdf_and_grad_on_grid_batch(
+            u, x_grid, n_threads=n_threads)
         return values
 
     def _fit_mle(
@@ -132,7 +147,8 @@ class EquicorrGaussianCopula(MultivariateCopula):
             finite_diff_rel_step=finite_diff_rel_step,
         )
         from pyscarcopula.numerical import static_likelihood
-        evaluator = static_likelihood.prepare(self, u)
+        evaluator = static_likelihood.prepare(
+            self, u, n_threads=config.n_threads)
 
         def neg_ll_and_grad(x):
             rho = self.transform(np.array([x[0]]))[0]
@@ -168,6 +184,7 @@ class EquicorrGaussianCopula(MultivariateCopula):
             model_parameters={"rho": rho_hat},
             correlation_matrix=correlation.copy(),
             diagnostics={
+                "n_threads": config.n_threads,
                 "model_score": "not_applicable",
                 "optimizer_gradient": "analytical",
                 "gradient_kind": "analytical_chain_rule",
@@ -181,6 +198,7 @@ class EquicorrGaussianCopula(MultivariateCopula):
         self.fit_result = fitted
         return fitted
 
+    @model_state_locked
     def fit(self, data, method="scar-tm-ou", to_pobs=False, **kwargs):
         from pyscarcopula._utils import pobs
 
@@ -236,6 +254,7 @@ class EquicorrGaussianCopula(MultivariateCopula):
                     correlation).T
         return norm.cdf(values)
 
+    @model_state_locked
     def sample(self, n, u=None, rng=None):
         """Generate observations reproducing the fitted model."""
         if self.fit_result is None:
@@ -249,7 +268,9 @@ class EquicorrGaussianCopula(MultivariateCopula):
                 "Either call fit() first or pass u= explicitly.")
         return _api_sample(self, u_data, self.fit_result, n, rng=rng)
 
-    def sample_conditional(self, n, r=None, given=None, rng=None):
+    @model_state_locked
+    def sample_conditional(
+            self, n, r=None, given=None, rng=None, *, n_threads=1):
         if rng is None:
             rng = np.random.default_rng()
         given = validate_multivariate_given(given, self._d)
@@ -260,8 +281,10 @@ class EquicorrGaussianCopula(MultivariateCopula):
         if r is None:
             r = self.fit_result.copula_param if self.fit_result else 0.5
         return sample_gaussian_conditional(
-            n, self._d, r, given=given, rng=rng)
+            n, self._d, r, given=given, rng=rng,
+            n_threads=n_threads)
 
+    @model_state_locked
     def predict(
             self,
             n,
@@ -305,6 +328,7 @@ class EquicorrGaussianCopula(MultivariateCopula):
         return self.sample_conditional(
             n, r=parameters, given=given, rng=rng)
 
+    @model_state_locked
     def predictive_mean(self, u):
         if self.fit_result is None:
             raise ValueError("Fit with SCAR first")
@@ -312,6 +336,7 @@ class EquicorrGaussianCopula(MultivariateCopula):
         from pyscarcopula.numerical import _cpp_scar_ou
         return _cpp_scar_ou.predictive_mean(kappa, mu, nu, u, self)
 
+    @model_state_locked
     def xT_distribution(self, u, K=300, grid_range=5.0):
         if self.fit_result is None:
             raise ValueError("Fit with SCAR first")

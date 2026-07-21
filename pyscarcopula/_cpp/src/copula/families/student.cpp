@@ -1,4 +1,5 @@
 #include "scar/detail/copula.hpp"
+#include "scar/detail/parallel.hpp"
 
 #include <algorithm>
 #include <array>
@@ -596,20 +597,28 @@ double student_log_pdf_with_work(
         return -std::numeric_limits<double>::infinity();
     }
 
-    workspace.x.resize(static_cast<std::size_t>(d));
+    workspace.resize_x(static_cast<std::size_t>(d));
     const bool use_cache =
         student_ppf_cache_available(spec, row_index)
         && df >= spec.ppf_nodes.front()
         && df <= spec.ppf_nodes.back();
     const bool compute_derivative = dlog_ddf != nullptr;
     if (compute_derivative) {
-        workspace.dx_ddf.resize(static_cast<std::size_t>(d));
+        workspace.resize_dx_ddf(static_cast<std::size_t>(d));
     } else {
         workspace.dx_ddf.clear();
     }
     PpfInterpolation interpolation;
     if (use_cache) {
         interpolation = make_ppf_interpolation(spec.ppf_nodes, df);
+        workspace.diagnostics.ppf_cache_values +=
+            static_cast<std::uint64_t>(d);
+    } else if (use_large_df_quantile(spec, df)) {
+        workspace.diagnostics.ppf_asymptotic_values +=
+            static_cast<std::uint64_t>(d);
+    } else {
+        workspace.diagnostics.ppf_exact_values +=
+            static_cast<std::uint64_t>(d);
     }
     for (int i = 0; i < d; ++i) {
         if (use_cache) {
@@ -985,11 +994,36 @@ void student_fill_row(
     const std::vector<double>& df_grid,
     const std::vector<double>& dpsi_grid,
     double* fi_row,
-    double* dfi_dx_row) {
+    double* dfi_dx_row,
+    StudentWorkspace::Diagnostics* diagnostics) {
 
     StudentWorkspace workspace;
-    workspace.x.reserve(static_cast<std::size_t>(spec.dim));
-    workspace.dx_ddf.reserve(static_cast<std::size_t>(spec.dim));
+    workspace.reserve_x(static_cast<std::size_t>(spec.dim));
+    workspace.reserve_dx_ddf(static_cast<std::size_t>(spec.dim));
+    student_fill_row_with_workspace(
+        spec,
+        row,
+        row_index,
+        df_grid,
+        dpsi_grid,
+        fi_row,
+        dfi_dx_row,
+        workspace);
+    if (diagnostics != nullptr) {
+        *diagnostics = workspace.diagnostics;
+    }
+}
+
+void student_fill_row_with_workspace(
+    const scar::CopulaSpec& spec,
+    const double* row,
+    std::int64_t row_index,
+    const std::vector<double>& df_grid,
+    const std::vector<double>& dpsi_grid,
+    double* fi_row,
+    double* dfi_dx_row,
+    StudentWorkspace& workspace) {
+
     for (std::size_t j = 0; j < df_grid.size(); ++j) {
         const double df = df_grid[j];
         double dlog = std::numeric_limits<double>::quiet_NaN();
@@ -1016,7 +1050,7 @@ void student_fill_row_from_x_grid(
     double* fi_row) {
 
     StudentWorkspace workspace;
-    workspace.x.reserve(static_cast<std::size_t>(spec.dim));
+    workspace.reserve_x(static_cast<std::size_t>(spec.dim));
     for (std::size_t j = 0; j < x_grid.size(); ++j) {
         const double df = copula_transform(spec, x_grid[j]);
         fi_row[j] = std::exp(student_log_pdf_with_work(
@@ -1030,7 +1064,8 @@ bool student_fill_grid_bivariate(
     const std::vector<double>& df_grid,
     const std::vector<double>& dpsi_grid,
     double* fi,
-    double* dfi_dx) {
+    double* dfi_dx,
+    int n_threads) {
 
     if (spec.dim != 2
         || n_obs <= 0
@@ -1045,6 +1080,7 @@ bool student_fill_grid_bivariate(
             df_grid.end(),
             [&spec](double df) {
                 return std::isfinite(df)
+                    && df > 2.0
                     && df >= spec.ppf_nodes.front()
                     && df <= spec.ppf_nodes.back();
             })) {
@@ -1065,13 +1101,17 @@ bool student_fill_grid_bivariate(
     }
 
     const std::size_t K = df_grid.size();
-    for (std::size_t j = 0; j < K; ++j) {
-        const double df = df_grid[j];
-        if (!std::isfinite(df) || df <= 2.0) {
-            return false;
-        }
-        const PpfInterpolation interpolation =
-            make_ppf_interpolation(spec.ppf_nodes, df);
+    constexpr std::int64_t min_rows_per_block = 8;
+    parallel_for_blocks(
+        0,
+        n_obs,
+        min_rows_per_block,
+        n_threads,
+        [&](std::int64_t begin, std::int64_t end, std::size_t) {
+            for (std::size_t j = 0; j < K; ++j) {
+                const double df = df_grid[j];
+                const PpfInterpolation interpolation =
+                    make_ppf_interpolation(spec.ppf_nodes, df);
 
         const double half_df = 0.5 * df;
         const double log_df_pi = std::log(df * kPi);
@@ -1098,7 +1138,7 @@ bool student_fill_grid_bivariate(
         const double copula_const_derivative =
             joint_const_derivative - 2.0 * marginal_const_derivative;
 
-        for (std::int64_t t = 0; t < n_obs; ++t) {
+        for (std::int64_t t = begin; t < end; ++t) {
             double x1 = 0.0;
             double x2 = 0.0;
             double dx1 = 0.0;
@@ -1156,8 +1196,9 @@ bool student_fill_grid_bivariate(
                 static_cast<std::size_t>(t) * K + j;
             fi[output] = pdf;
             dfi_dx[output] = pdf * dlog_ddf * dpsi_grid[j];
-        }
-    }
+            }
+            }
+        });
     return true;
 }
 

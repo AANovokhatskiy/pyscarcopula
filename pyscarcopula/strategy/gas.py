@@ -165,6 +165,7 @@ class GASStrategy:
             message = f"{message}; final native GAS validation failed: {exc}"
 
         result_diagnostics = {
+            "n_threads": self.config.n_threads,
             "model_score": "native",
             "optimizer_gradient": "numerical",
             "gradient_kind": "numerical_optimizer",

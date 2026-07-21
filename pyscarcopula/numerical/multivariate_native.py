@@ -26,6 +26,40 @@ def _rows(copula, u) -> np.ndarray:
     return values
 
 
+def _kernel_diagnostics(result) -> dict:
+    keys = (
+        "student_ppf_cache_values",
+        "student_ppf_exact_values",
+        "student_ppf_asymptotic_values",
+        "student_workspace_growth_events",
+        "student_workspace_peak_bytes",
+        "n_threads_requested",
+        "student_parallel_blocks",
+        "equicorr_parallel_blocks",
+        "row_parallel_blocks",
+    )
+    diagnostics = {key: int(result.get(key, 0)) for key in keys}
+    diagnostics["student_ppf_total_values"] = sum(
+        diagnostics[key]
+        for key in (
+            "student_ppf_cache_values",
+            "student_ppf_exact_values",
+            "student_ppf_asymptotic_values",
+        )
+    )
+    return diagnostics
+
+
+def _validated_n_threads(n_threads) -> int:
+    if isinstance(n_threads, (bool, np.bool_)) or not isinstance(
+            n_threads, (int, np.integer)):
+        raise ValueError("n_threads must be an integer in [1, 256]")
+    value = int(n_threads)
+    if value < 1 or value > 256:
+        raise ValueError(f"n_threads must be in [1, 256], got {value}")
+    return value
+
+
 def _student_cache_block(copula, u, cache, t_index, *, prepare):
     from pyscarcopula.copula.multivariate.stochastic_student import (
         StochasticStudentCopula,
@@ -65,8 +99,8 @@ def dtransform(copula, x) -> np.ndarray:
         module.copula_dtransform(spec, _values(x)), dtype=np.float64)
 
 
-def log_pdf_and_dlog_rows(
-        copula, u, r, *, t_index=None, cache=None):
+def _log_pdf_and_dlog_rows_result(
+        copula, u, r, *, t_index=None, cache=None, n_threads=1):
     module = _cpp_extension.load()
     observations = _rows(copula, u)
     cache, row_offset = _student_cache_block(
@@ -74,20 +108,41 @@ def log_pdf_and_dlog_rows(
     spec = _cpp_copula.make_multivariate_spec(
         module, copula, cache=cache)
     result = dict(module.multivariate_log_pdf_and_grad(
-        spec, observations, _values(r), row_offset))
+        spec,
+        observations,
+        _values(r),
+        row_offset,
+        _validated_n_threads(n_threads),
+    ))
     if result["status"] != module.SCAR_OK:
         raise CppError(
             "C++ multivariate row evaluation failed with "
             f"status={result['status']}, "
             f"failure_index={result['failure_index']}")
-    return (
+    return result, (
         np.asarray(result["log_pdf"], dtype=np.float64),
         np.asarray(result["dlog_dr"], dtype=np.float64),
     )
 
 
-def pdf_and_grad_grid(
-        copula, u, x_grid, *, t_index=0, cache=None):
+def log_pdf_and_dlog_rows(
+        copula, u, r, *, t_index=None, cache=None, n_threads=1):
+    """Return row values without instrumentation metadata."""
+    _, values = _log_pdf_and_dlog_rows_result(
+        copula, u, r, t_index=t_index, cache=cache, n_threads=n_threads)
+    return values
+
+
+def log_pdf_and_dlog_rows_info(
+        copula, u, r, *, t_index=None, cache=None, n_threads=1):
+    """Return row values and read-only native kernel diagnostics."""
+    result, values = _log_pdf_and_dlog_rows_result(
+        copula, u, r, t_index=t_index, cache=cache, n_threads=n_threads)
+    return (*values, _kernel_diagnostics(result))
+
+
+def _pdf_and_grad_grid_result(
+        copula, u, x_grid, *, t_index=0, cache=None, n_threads=1):
     module = _cpp_extension.load()
     observations = _rows(copula, u)
     grid = _values(x_grid)
@@ -98,20 +153,54 @@ def pdf_and_grad_grid(
     spec = _cpp_copula.make_multivariate_spec(
         module, copula, cache=cache)
     result = dict(module.multivariate_pdf_and_grad_grid(
-        spec, observations, grid, row_offset))
+        spec,
+        observations,
+        grid,
+        row_offset,
+        _validated_n_threads(n_threads),
+    ))
     if result["status"] != module.SCAR_OK:
         raise CppError(
             "C++ multivariate grid evaluation failed with "
             f"status={result['status']}, "
             f"failure_index={result['failure_index']}")
-    return (
+    return result, (
         np.asarray(result["pdf"], dtype=np.float64),
         np.asarray(result["d_pdf_dx"], dtype=np.float64),
     )
 
 
-def gaussian_conditional_latent(
-        correlations, given_indices, given_latent, normal_draws):
+def pdf_and_grad_grid(
+        copula, u, x_grid, *, t_index=0, cache=None, n_threads=1):
+    """Return grid values without instrumentation metadata."""
+    _, values = _pdf_and_grad_grid_result(
+        copula,
+        u,
+        x_grid,
+        t_index=t_index,
+        cache=cache,
+        n_threads=n_threads,
+    )
+    return values
+
+
+def pdf_and_grad_grid_info(
+        copula, u, x_grid, *, t_index=0, cache=None, n_threads=1):
+    """Return grid values and read-only native kernel diagnostics."""
+    result, values = _pdf_and_grad_grid_result(
+        copula,
+        u,
+        x_grid,
+        t_index=t_index,
+        cache=cache,
+        n_threads=n_threads,
+    )
+    return (*values, _kernel_diagnostics(result))
+
+
+def _gaussian_conditional_latent_result(
+        correlations, given_indices, given_latent, normal_draws, *,
+        n_threads=1):
     """Evaluate native Gaussian conditional latent samples."""
     module = _cpp_extension.load()
     result = dict(module.multivariate_gaussian_conditional(
@@ -119,18 +208,53 @@ def gaussian_conditional_latent(
         np.ascontiguousarray(given_indices, dtype=np.int32),
         np.ascontiguousarray(given_latent, dtype=np.float64),
         np.ascontiguousarray(normal_draws, dtype=np.float64),
+        _validated_n_threads(n_threads),
     ))
     if result["status"] != module.SCAR_OK:
         raise CppError(
             "C++ Gaussian conditional sampling failed with "
             f"status={result['status']}, "
             f"failure_index={result['failure_index']}")
-    return np.asarray(result["values"], dtype=np.float64)
+    return result, np.asarray(result["values"], dtype=np.float64)
 
 
-def student_conditional_latent(
+def gaussian_conditional_latent(
+        correlations, given_indices, given_latent, normal_draws, *,
+        n_threads=1):
+    """Evaluate native Gaussian conditional latent samples."""
+    return _gaussian_conditional_latent_result(
+        correlations,
+        given_indices,
+        given_latent,
+        normal_draws,
+        n_threads=n_threads,
+    )[1]
+
+
+def gaussian_conditional_latent_info(
+        correlations, given_indices, given_latent, normal_draws, *,
+        n_threads=1):
+    """Return Gaussian latent samples and parallel diagnostics."""
+    result, values = _gaussian_conditional_latent_result(
+        correlations,
+        given_indices,
+        given_latent,
+        normal_draws,
+        n_threads=n_threads,
+    )
+    return values, {
+        key: int(result.get(key, 0))
+        for key in (
+            "n_threads_requested",
+            "parallel_blocks",
+            "correlation_factorizations",
+        )
+    }
+
+
+def _student_conditional_latent_result(
         correlations, given_indices, given_latent, df,
-        normal_draws, chi_square_draws):
+        normal_draws, chi_square_draws, *, n_threads=1):
     """Evaluate native Student conditional latent samples."""
     module = _cpp_extension.load()
     result = dict(module.multivariate_student_conditional(
@@ -140,10 +264,49 @@ def student_conditional_latent(
         np.ascontiguousarray(df, dtype=np.float64),
         np.ascontiguousarray(normal_draws, dtype=np.float64),
         np.ascontiguousarray(chi_square_draws, dtype=np.float64),
+        _validated_n_threads(n_threads),
     ))
     if result["status"] != module.SCAR_OK:
         raise CppError(
             "C++ Student conditional sampling failed with "
             f"status={result['status']}, "
             f"failure_index={result['failure_index']}")
-    return np.asarray(result["values"], dtype=np.float64)
+    return result, np.asarray(result["values"], dtype=np.float64)
+
+
+def student_conditional_latent(
+        correlations, given_indices, given_latent, df,
+        normal_draws, chi_square_draws, *, n_threads=1):
+    """Evaluate native Student conditional latent samples."""
+    return _student_conditional_latent_result(
+        correlations,
+        given_indices,
+        given_latent,
+        df,
+        normal_draws,
+        chi_square_draws,
+        n_threads=n_threads,
+    )[1]
+
+
+def student_conditional_latent_info(
+        correlations, given_indices, given_latent, df,
+        normal_draws, chi_square_draws, *, n_threads=1):
+    """Return Student latent samples and parallel diagnostics."""
+    result, values = _student_conditional_latent_result(
+        correlations,
+        given_indices,
+        given_latent,
+        df,
+        normal_draws,
+        chi_square_draws,
+        n_threads=n_threads,
+    )
+    return values, {
+        key: int(result.get(key, 0))
+        for key in (
+            "n_threads_requested",
+            "parallel_blocks",
+            "correlation_factorizations",
+        )
+    }

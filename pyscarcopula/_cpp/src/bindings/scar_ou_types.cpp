@@ -33,7 +33,8 @@ void bind_scar_ou_types(py::module_& m) {
             &scar::OuNumericalConfig::spectral_basis_order)
         .def_readwrite(
             "spectral_quad_order",
-            &scar::OuNumericalConfig::spectral_quad_order);
+            &scar::OuNumericalConfig::spectral_quad_order)
+        .def_readwrite("n_threads", &scar::OuNumericalConfig::n_threads);
 }
 
 }  // namespace pyscarcopula::bindings

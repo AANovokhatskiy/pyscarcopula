@@ -35,12 +35,14 @@ void bind_copula(py::module_& m) {
                 const scar::CopulaSpec& copula,
                 py::array_t<
                     double,
-                    py::array::c_style | py::array::forcecast> u) {
+                    py::array::c_style | py::array::forcecast> u,
+                int n_threads) {
                 return scar::StaticCopulaEvaluator(
-                    copula, observations_from_array(u));
+                    copula, observations_from_array(u), n_threads);
             }),
             py::arg("copula"),
-            py::arg("u"))
+            py::arg("u"),
+            py::arg("n_threads") = 1)
         .def(
             "objective",
             [](const scar::StaticCopulaEvaluator& evaluator,
@@ -294,7 +296,8 @@ void bind_copula(py::module_& m) {
         [](const scar::CopulaSpec& copula,
            py::array_t<double, py::array::c_style | py::array::forcecast> u,
            py::array_t<double, py::array::c_style | py::array::forcecast>
-               latent_paths) {
+               latent_paths,
+           int n_threads) {
             const scar::ObservationView observations =
                 observation_view_from_array(copula, u);
             const py::buffer_info paths_info = latent_paths.request();
@@ -314,13 +317,15 @@ void bind_copula(py::module_& m) {
                     copula,
                     observations,
                     paths,
-                    static_cast<std::size_t>(paths_info.shape[1]));
+                    static_cast<std::size_t>(paths_info.shape[1]),
+                    n_threads);
             }
             return trajectory_log_pdf_result_to_dict(result);
         },
         py::arg("copula"),
         py::arg("u"),
-        py::arg("latent_paths"));
+        py::arg("latent_paths"),
+        py::arg("n_threads") = 1);
 }
 
 }  // namespace pyscarcopula::bindings
