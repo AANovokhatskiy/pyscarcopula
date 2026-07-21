@@ -5,12 +5,22 @@ adapter. Subclasses provide family metadata plus family-specific sampling and
 Kendall-tau helpers where needed.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass, replace
+from os import PathLike
+from typing import Any, TypeVar
 
 import numpy as np
+from numpy.typing import ArrayLike, NDArray
 
 from pyscarcopula._constants import PSEUDO_OBS_EPS
+from pyscarcopula._types import FitResult, PredictConfig
 from pyscarcopula._utils import pobs, broadcast as _broadcast  # noqa: F401
+
+
+FloatArray = NDArray[np.float64]
+CopulaT = TypeVar("CopulaT", bound="CopulaBase")
 
 
 def _xtanh_transform(x, offset):
@@ -70,7 +80,12 @@ def _softplus_inv_transform(r, offset):
 
 @dataclass(frozen=True)
 class CopulaCapabilities:
-    """Immutable strategy and numerical capability descriptor."""
+    """Immutable strategy and numerical capability descriptor.
+
+    Capability flags are consumed by validation and strategy dispatch. They
+    describe supported operations; they do not imply that a model has already
+    been fitted.
+    """
 
     dimension: int | None = None
     supports_pair_ops: bool = False
@@ -85,27 +100,57 @@ class CopulaCapabilities:
 
 
 class CopulaBase:
-    """Common stateful convenience API for all copula dimensions."""
+    """Common stateful convenience API for all copula dimensions.
+
+    The object API stores the latest fit result and training data, then
+    delegates numerical work to :mod:`pyscarcopula.api`. Use the functions in
+    that module when explicit, stateless data flow is preferable.
+
+    Parameters
+    ----------
+    name : str
+        Human-readable model name used in results and diagnostics.
+    """
 
     _capabilities = CopulaCapabilities()
 
-    def __init__(self, *, name="Copula"):
+    def __init__(self, *, name: str = "Copula") -> None:
         self._name = name
-        self.fit_result = None
+        self.fit_result: FitResult | None = None
 
     @property
-    def name(self):
+    def name(self) -> str:
+        """Human-readable copula name."""
         return self._name
 
     @property
-    def dimension(self):
+    def dimension(self) -> int | None:
+        """Required data width, or ``None`` when not fixed by the class."""
         return None
 
     @property
-    def capabilities(self):
+    def capabilities(self) -> CopulaCapabilities:
+        """Capabilities used for strategy and numerical dispatch."""
         return replace(self._capabilities, dimension=self.dimension)
 
-    def validate_dimension(self, data):
+    def validate_dimension(self, data: ArrayLike) -> np.ndarray:
+        """Validate and return a two-dimensional data array.
+
+        Parameters
+        ----------
+        data : array_like
+            Observations with rows as samples and columns as dimensions.
+
+        Returns
+        -------
+        ndarray
+            ``data`` converted with :func:`numpy.asarray`.
+
+        Raises
+        ------
+        ValueError
+            If ``data`` is not two-dimensional or has the wrong width.
+        """
         u = np.asarray(data)
         if u.ndim != 2:
             raise ValueError(
@@ -118,11 +163,23 @@ class CopulaBase:
         return u
 
     @staticmethod
-    def list_of_methods():
+    def list_of_methods() -> list[str]:
+        """Return registered estimation strategy names."""
         from pyscarcopula.strategy._base import list_methods
         return list_methods()
 
-    def mlog_likelihood(self, alpha, u, method='mle', **kwargs):
+    def mlog_likelihood(
+        self,
+        alpha: ArrayLike,
+        u: ArrayLike,
+        method: str = 'mle',
+        **kwargs: Any,
+    ) -> float:
+        """Evaluate a strategy's negative log-likelihood objective.
+
+        This low-level optimizer hook accepts parameters in the strategy's
+        unconstrained representation.
+        """
         from pyscarcopula.strategy._base import get_strategy
 
         u = np.asarray(u, dtype=np.float64)
@@ -130,7 +187,31 @@ class CopulaBase:
         strategy = get_strategy(method, **kwargs)
         return strategy.objective(self, u, alpha, **kwargs)
 
-    def fit(self, data, method='scar-tm-ou', to_pobs=False, **kwargs):
+    def fit(
+        self,
+        data: ArrayLike,
+        method: str = 'scar-tm-ou',
+        to_pobs: bool = False,
+        **kwargs: Any,
+    ) -> FitResult:
+        """Fit this copula and retain the result for convenience methods.
+
+        Parameters
+        ----------
+        data : array_like
+            Raw observations or pseudo-observations.
+        method : str
+            Registered estimation strategy.
+        to_pobs : bool
+            Rank-transform columns before fitting.
+        **kwargs
+            Strategy-specific options forwarded to :func:`pyscarcopula.api.fit`.
+
+        Returns
+        -------
+        FitResult
+            Immutable strategy-specific fit result.
+        """
         from pyscarcopula.api import fit as _api_fit
 
         u = np.asarray(data, dtype=np.float64)
@@ -141,8 +222,26 @@ class CopulaBase:
         self._last_u = u
         return result
 
-    def predict(self, n, u=None, rng=None, given=None, horizon='next',
-                predictive_r_mode=None, predict_config=None):
+    def predict(
+        self,
+        n: int,
+        u: ArrayLike | None = None,
+        rng: np.random.Generator | None = None,
+        given: dict[int, float] | None = None,
+        horizon: str = 'next',
+        predictive_r_mode: str | None = None,
+        predict_config: PredictConfig | None = None,
+    ) -> FloatArray:
+        """Draw samples from the fitted predictive distribution.
+
+        ``u`` defaults to the data retained by :meth:`fit`. ``given`` fixes
+        selected coordinates in pseudo-observation space.
+
+        Raises
+        ------
+        ValueError
+            If the model has not been fitted or no prediction history exists.
+        """
         if self.fit_result is None:
             raise ValueError("Fit first")
         from pyscarcopula.api import predict as _api_predict
@@ -158,7 +257,22 @@ class CopulaBase:
             predictive_r_mode=predictive_r_mode,
             predict_config=predict_config)
 
-    def sample(self, n, u=None, rng=None):
+    def sample(
+        self,
+        n: int,
+        u: ArrayLike | None = None,
+        rng: np.random.Generator | None = None,
+    ) -> FloatArray:
+        """Simulate a path reproducing the fitted model.
+
+        ``u`` defaults to the data retained by :meth:`fit` and is used by
+        dynamic strategies to initialize their simulation state.
+
+        Raises
+        ------
+        ValueError
+            If the model has not been fitted or no fitted history exists.
+        """
         if self.fit_result is None:
             raise ValueError("Fit first")
         from pyscarcopula.api import sample as _api_sample
@@ -170,13 +284,32 @@ class CopulaBase:
                 "Either call fit() first or pass u= explicitly.")
         return _api_sample(self, u_data, self.fit_result, n, rng=rng)
 
-    def save(self, path, *, include_data=True):
+    def save(
+        self,
+        path: str | PathLike[str],
+        *,
+        include_data: bool = True,
+    ) -> None:
+        """Serialize this model to a versioned JSON document.
+
+        Parameters
+        ----------
+        path : path-like
+            Destination file.
+        include_data : bool
+            Include retained training data. Disable this to reduce file size
+            or avoid persisting source observations.
+        """
         from pyscarcopula.io import save_model
 
         save_model(self, path, include_data=include_data)
 
     @classmethod
-    def load(cls, path):
+    def load(
+        cls: type[CopulaT],
+        path: str | PathLike[str],
+    ) -> CopulaT:
+        """Load a model and require it to be an instance of ``cls``."""
         from pyscarcopula.io import load_model
 
         return load_model(path, expected_type=cls)

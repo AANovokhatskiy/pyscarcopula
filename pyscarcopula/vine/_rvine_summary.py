@@ -57,6 +57,20 @@ def format_rvine_summary(vine):
     lines.append(f"  log_likelihood = {vine._log_likelihood:.4f}")
     lines.append(f"  n_parameters   = {vine.n_parameters}")
     lines.append(f"  AIC = {vine.aic:.4f}   BIC = {vine.bic:.4f}")
+    fit_diagnostics = getattr(
+        getattr(vine, 'fit_result', None), 'diagnostics', {}) or {}
+    if fit_diagnostics:
+        actual_methods = ", ".join(
+            f"{name}:{count}"
+            for name, count in fit_diagnostics.get(
+                'actual_methods', {}).items())
+        lines.append(
+            "  requested_method = "
+            f"{fit_diagnostics.get('requested_method', vine.method)}")
+        lines.append(f"  actual_methods   = {actual_methods or '-'}")
+        lines.append(
+            "  dynamic_fallbacks = "
+            f"{fit_diagnostics.get('fallback_count', 0)}")
     if vine.truncation_level is not None:
         lines.append(f"  truncation_level = {vine.truncation_level}")
         lines.append(f"  truncation_fill  = {vine.truncation_fill}")

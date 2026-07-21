@@ -1,4 +1,4 @@
-"""Optional performance regression checks for vine workloads."""
+"""Opt-in benchmark reports and structural fast-path checks for vines."""
 
 import os
 from collections import Counter
@@ -73,6 +73,7 @@ def _edge_summary(vine):
     prepared_edges = 0
     dynamic_edges = 0
     total_nfev = 0
+    fit_diagnostics = getattr(vine.fit_result, "diagnostics", {}) or {}
     for edge in vine.pair_copulas.values():
         result = getattr(edge, "fit_result", None)
         method = str(getattr(result, "method", None)).upper()
@@ -99,6 +100,17 @@ def _edge_summary(vine):
         "scar_nfev": scar_nfev,
         "total_nfev": total_nfev,
         "prepared_scar_edges": prepared_edges,
+        "fallback_count": int(fit_diagnostics.get("fallback_count", 0)),
+        "dynamic_attempted_count": int(
+            fit_diagnostics.get("dynamic_attempted_count", 0)),
+        "dynamic_success_count": int(
+            fit_diagnostics.get("dynamic_success_count", 0)),
+        "selection_nfev": int(
+            fit_diagnostics.get("selection_nfev_total", 0)),
+        "dynamic_attempted_nfev": int(
+            fit_diagnostics.get("dynamic_attempted_nfev_total", 0)),
+        "fallback_discarded_nfev": int(
+            fit_diagnostics.get("fallback_discarded_nfev", 0)),
     }
 
 
@@ -107,6 +119,7 @@ def _count_scar_tm_posterior_calls():
     original_predictive_state = SCARTMStrategy.predictive_state
     original_predictive_params = SCARTMStrategy.predictive_params
     original_mixture_h = SCARTMStrategy.mixture_h
+    original_mixture_h_pair = SCARTMStrategy.mixture_h_pair
     counts = Counter()
     elapsed = Counter()
 
@@ -125,12 +138,15 @@ def _count_scar_tm_posterior_calls():
     SCARTMStrategy.predictive_params = timed(
         "predictive_params", original_predictive_params)
     SCARTMStrategy.mixture_h = timed("mixture_h", original_mixture_h)
+    SCARTMStrategy.mixture_h_pair = timed(
+        "mixture_h_pair", original_mixture_h_pair)
     try:
         yield counts, elapsed
     finally:
         SCARTMStrategy.predictive_state = original_predictive_state
         SCARTMStrategy.predictive_params = original_predictive_params
         SCARTMStrategy.mixture_h = original_mixture_h
+        SCARTMStrategy.mixture_h_pair = original_mixture_h_pair
 
 
 _SYNTHETIC_FIT_WORKLOADS = [
@@ -198,7 +214,7 @@ _SYNTHETIC_PREDICT_WORKLOADS = [
 
 @pytest.mark.data
 @pytest.mark.benchmark
-def test_rvine_mle_conditional_suffix_predict_speed_smoke():
+def test_rvine_mle_conditional_suffix_predict_benchmark_report():
     _skip_unless_enabled()
     u = _example_u()
     vine = RVineCopula()
@@ -217,7 +233,12 @@ def test_rvine_mle_conditional_suffix_predict_speed_smoke():
 
     assert out.shape == (1000, 6)
     assert diagnostics["conditional_method"] == "suffix"
-    assert elapsed < 2.0
+    _print_benchmark(
+        "rvine_mle_conditional_suffix_predict",
+        n=len(out),
+        d=out.shape[1],
+        elapsed_ms=f"{1e3 * elapsed:.3f}",
+    )
 
 
 @pytest.mark.benchmark
@@ -239,6 +260,8 @@ def test_rvine_synthetic_fit_profile(
 
     summary = _edge_summary(vine)
     assert summary["edges"] == d * (d - 1) // 2
+    assert summary["dynamic_success_count"] + summary["fallback_count"] == (
+        summary["dynamic_attempted_count"])
     _print_benchmark(
         "rvine_fit",
         workload=name,
@@ -252,6 +275,12 @@ def test_rvine_synthetic_fit_profile(
         total_nfev=summary["total_nfev"],
         scar_nfev=summary["scar_nfev"],
         prepared_scar_edges=summary["prepared_scar_edges"],
+        fallback_count=summary["fallback_count"],
+        dynamic_attempted=summary["dynamic_attempted_count"],
+        dynamic_success=summary["dynamic_success_count"],
+        selection_nfev=summary["selection_nfev"],
+        dynamic_attempted_nfev=summary["dynamic_attempted_nfev"],
+        fallback_discarded_nfev=summary["fallback_discarded_nfev"],
         methods=summary["methods"],
         families=summary["families"],
     )
@@ -323,6 +352,7 @@ def test_rvine_scar_synthetic_predict_profile(
         predictive_params_calls=counts["predictive_params"],
         predictive_state_calls=counts["predictive_state"],
         mixture_h_calls=counts["mixture_h"],
+        mixture_h_pair_calls=counts["mixture_h_pair"],
         total_ms=f"{timings.get('total', 0.0):.3f}",
         compute_pseudo_obs_ms=(
             f"{timings.get('compute_pseudo_obs', 0.0):.3f}"),
@@ -337,12 +367,14 @@ def test_rvine_scar_synthetic_predict_profile(
         predictive_state_ms=(
             f"{1e3 * elapsed_by_call['predictive_state']:.3f}"),
         mixture_h_ms=f"{1e3 * elapsed_by_call['mixture_h']:.3f}",
+        mixture_h_pair_ms=(
+            f"{1e3 * elapsed_by_call['mixture_h_pair']:.3f}"),
     )
 
 
 @pytest.mark.data
 @pytest.mark.benchmark
-def test_rvine_scar_conditional_suffix_cached_predict_speed_smoke():
+def test_rvine_scar_conditional_suffix_cached_predict_benchmark_report():
     _skip_unless_enabled()
     u = _example_u()
     vine = RVineCopula()
@@ -368,4 +400,9 @@ def test_rvine_scar_conditional_suffix_cached_predict_speed_smoke():
 
     assert out.shape == (1000, 6)
     assert diagnostics["conditional_method"] == "suffix"
-    assert elapsed < 2.0
+    _print_benchmark(
+        "rvine_scar_conditional_suffix_cached_predict",
+        n=len(out),
+        d=out.shape[1],
+        elapsed_ms=f"{1e3 * elapsed:.3f}",
+    )

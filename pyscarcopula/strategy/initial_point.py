@@ -63,10 +63,12 @@ def _fallback_initialization_diagnostics(
     return diagnostics
 
 
-def _mle_info(copula, u):
+def _mle_info(copula, u, initial_mle_result=None):
     """Fit MLE and return (theta_mle, mu, log_likelihood)."""
-    from pyscarcopula.strategy.mle import MLEStrategy
-    mle_result = MLEStrategy().fit(copula, u)
+    mle_result = initial_mle_result
+    if mle_result is None:
+        from pyscarcopula.strategy.mle import MLEStrategy
+        mle_result = MLEStrategy().fit(copula, u)
     theta = float(np.atleast_1d(mle_result.copula_param)[0])
     mu = float(np.atleast_1d(
         copula.inv_transform(np.atleast_1d(theta))
@@ -74,14 +76,16 @@ def _mle_info(copula, u):
     return theta, mu, float(mle_result.log_likelihood)
 
 
-def _mle_mu(copula, u):
+def _mle_mu(copula, u, initial_mle_result=None):
     """Fit MLE via strategy and return mu = inv_transform(copula_param)."""
-    return _mle_info(copula, u)[1]
+    if initial_mle_result is None:
+        return _mle_info(copula, u)[1]
+    return _mle_info(copula, u, initial_mle_result)[1]
 
 
 def resolve_ou_initial_point(
         copula, u, config, smart_init, verbose, alpha0,
-        smart_initial_point_func=None):
+        smart_initial_point_func=None, initial_mle_result=None):
     """Return an OU initial point and common initialization diagnostics."""
     if alpha0 is not None:
         alpha = np.asarray(alpha0, dtype=np.float64)
@@ -95,12 +99,18 @@ def resolve_ou_initial_point(
     smart_diagnostics = None
     if smart_init:
         try:
-            alpha, info = smart_initial(
-                u, copula, verbose=verbose)
+            smart_kwargs = {'verbose': verbose}
+            if initial_mle_result is not None:
+                smart_kwargs['initial_mle_result'] = initial_mle_result
+            alpha, info = smart_initial(u, copula, **smart_kwargs)
             if verbose:
                 print(f"Smart init: {info.get('chosen_method')}, "
                       f"alpha0={alpha}")
-            return alpha, info['initialization']
+            diagnostics = dict(info['initialization'])
+            diagnostics['mle_source'] = (
+                'selection_result' if initial_mle_result is not None
+                else 'strategy_fit')
+            return alpha, diagnostics
         except Exception as exc:
             smart_diagnostics = _initialization_diagnostics(
                 'automatic',
@@ -115,10 +125,11 @@ def resolve_ou_initial_point(
                     "Smart init failed "
                     f"({type(exc).__name__}: {exc}); trying mle_default")
 
-    from pyscarcopula.strategy.mle import MLEStrategy
-    mle = MLEStrategy(config=config)
     try:
-        mle_result = mle.fit(copula, u)
+        mle_result = initial_mle_result
+        if mle_result is None:
+            from pyscarcopula.strategy.mle import MLEStrategy
+            mle_result = MLEStrategy(config=config).fit(copula, u)
         mu0 = float(np.atleast_1d(
             copula.inv_transform(
                 np.atleast_1d(mle_result.copula_param))
@@ -144,11 +155,14 @@ def resolve_ou_initial_point(
     else:
         diagnostics = _fallback_initialization_diagnostics(
             smart_diagnostics, 'mle_default', alpha)
+    diagnostics['mle_source'] = (
+        'selection_result' if initial_mle_result is not None
+        else 'strategy_fit')
     return alpha, diagnostics
 
 
 def _heuristic_initial_point(u, copula, rho_target=0.95,
-                             sigma_frac=0.3):
+                             sigma_frac=0.3, initial_mle_result=None):
     """
     Legacy analytical heuristic for (kappa, mu, nu).
 
@@ -158,7 +172,7 @@ def _heuristic_initial_point(u, copula, rho_target=0.95,
     T = len(u)
     dt = 1.0 / (T - 1)
 
-    mu = _mle_mu(copula, u)
+    mu = _mle_mu(copula, u, initial_mle_result)
 
     # kappa from target autocorrelation: rho = exp(-kappa*dt)
     kappa = -np.log(rho_target) / dt
@@ -198,10 +212,15 @@ def _kappa_from_target_autocorr(T, rho_target=0.96,
 
 
 def _stochastic_student_initial_point(
-        u, copula, rho_target=0.96, nu0=0.1):
+        u, copula, rho_target=0.96, nu0=0.1,
+        initial_mle_result=None):
     """Initialize stochastic Student df dynamics near the static MLE."""
     u = np.asarray(u, dtype=np.float64)
-    df0, inverse_mu0, static_loglik = _mle_info(copula, u)
+    if initial_mle_result is None:
+        df0, inverse_mu0, static_loglik = _mle_info(copula, u)
+    else:
+        df0, inverse_mu0, static_loglik = _mle_info(
+            copula, u, initial_mle_result)
     mu0 = float(inverse_mu0)
     kappa0 = _kappa_from_target_autocorr(
         len(u), rho_target=rho_target)
@@ -227,7 +246,8 @@ def _strength_aware_initial_point(
         u, copula, rho_target=0.96, sigma_frac=0.3,
         weak_tau=0.06, strong_tau=0.25,
         weak_loglik_per_obs=0.003, strong_loglik_per_obs=0.04,
-        weak_sigma_x=0.01, sigma_x_max=2.0):
+        weak_sigma_x=0.01, sigma_x_max=2.0,
+        initial_mle_result=None):
     """
     Dependence-aware analytical heuristic for (kappa, mu, nu).
 
@@ -238,7 +258,11 @@ def _strength_aware_initial_point(
     """
     u = np.asarray(u, dtype=np.float64)
     T = len(u)
-    theta, mu, static_loglik = _mle_info(copula, u)
+    if initial_mle_result is None:
+        theta, mu, static_loglik = _mle_info(copula, u)
+    else:
+        theta, mu, static_loglik = _mle_info(
+            copula, u, initial_mle_result)
 
     tau_abs = _kendall_tau_abs(u)
     static_per_obs = static_loglik / max(T, 1)
@@ -287,7 +311,8 @@ def _strength_aware_initial_point(
     return alpha0, info
 
 
-def _gas_initial_point(u, copula, verbose=False):
+def _gas_initial_point(
+        u, copula, verbose=False, initial_mle_result=None):
     """
     Estimate (kappa, mu, nu) via grid-search GAS + moment matching.
 
@@ -299,7 +324,7 @@ def _gas_initial_point(u, copula, verbose=False):
     dt = 1.0 / (T - 1)
 
     try:
-        g_mle = _mle_mu(copula, u)
+        g_mle = _mle_mu(copula, u, initial_mle_result)
     except Exception:
         return np.array([1.0, 0.0, 1.0])
 
@@ -343,7 +368,9 @@ def _gas_initial_point(u, copula, verbose=False):
     return np.array([kappa_est, mu_est, nu_est])
 
 
-def _fallback_initial_point(u, copula, use_gas=False, verbose=False):
+def _fallback_initial_point(
+        u, copula, use_gas=False, verbose=False,
+        initial_mle_result=None):
     """
     Legacy smart initial point for SCAR-TM-OU optimization.
 
@@ -355,7 +382,11 @@ def _fallback_initial_point(u, copula, use_gas=False, verbose=False):
     attempts = []
 
     try:
-        alpha_h = _heuristic_initial_point(u, copula)
+        if initial_mle_result is None:
+            alpha_h = _heuristic_initial_point(u, copula)
+        else:
+            alpha_h = _heuristic_initial_point(
+                u, copula, initial_mle_result=initial_mle_result)
         attempts.append(_initialization_attempt(
             'heuristic', success=True))
         info['heuristic_alpha'] = alpha_h.copy()
@@ -375,7 +406,7 @@ def _fallback_initial_point(u, copula, use_gas=False, verbose=False):
                 'legacy_heuristic', 'heuristic', alpha_h, attempts)
             return alpha_h, info
         try:
-            mu = _mle_mu(copula, u)
+            mu = _mle_mu(copula, u, initial_mle_result)
             alpha0 = np.array([1.0, mu, 1.0])
             attempts.append(_initialization_attempt(
                 'mle_default', success=True))
@@ -400,7 +431,10 @@ def _fallback_initial_point(u, copula, use_gas=False, verbose=False):
         return alpha0, info
 
     try:
-        alpha_from_gas = _gas_initial_point(u, copula, verbose=verbose)
+        gas_kwargs = {'verbose': verbose}
+        if initial_mle_result is not None:
+            gas_kwargs['initial_mle_result'] = initial_mle_result
+        alpha_from_gas = _gas_initial_point(u, copula, **gas_kwargs)
         attempts.append(_initialization_attempt('gas', success=True))
         info['gas_initial'] = alpha_from_gas.copy()
     except Exception as exc:
@@ -431,7 +465,9 @@ def _fallback_initial_point(u, copula, use_gas=False, verbose=False):
     return alpha0, info
 
 
-def smart_initial_point(u, copula, use_gas=False, verbose=False):
+def smart_initial_point(
+        u, copula, use_gas=False, verbose=False,
+        initial_mle_result=None):
     """
     Compute a static-MLE-based initial point for SCAR-TM-OU optimization.
 
@@ -441,7 +477,8 @@ def smart_initial_point(u, copula, use_gas=False, verbose=False):
     """
     if use_gas:
         return _fallback_initial_point(
-            u, copula, use_gas=True, verbose=verbose)
+            u, copula, use_gas=True, verbose=verbose,
+            initial_mle_result=initial_mle_result)
 
     static_df_mle = bool(getattr(
         copula, '_scar_static_df_mle_initialization', False))
@@ -449,9 +486,17 @@ def smart_initial_point(u, copula, use_gas=False, verbose=False):
         'stochastic_student_mle' if static_df_mle else 'strength_aware')
     try:
         if static_df_mle:
-            alpha0, info = _stochastic_student_initial_point(u, copula)
+            if initial_mle_result is None:
+                alpha0, info = _stochastic_student_initial_point(u, copula)
+            else:
+                alpha0, info = _stochastic_student_initial_point(
+                    u, copula, initial_mle_result=initial_mle_result)
         else:
-            alpha0, info = _strength_aware_initial_point(u, copula)
+            if initial_mle_result is None:
+                alpha0, info = _strength_aware_initial_point(u, copula)
+            else:
+                alpha0, info = _strength_aware_initial_point(
+                    u, copula, initial_mle_result=initial_mle_result)
         if verbose:
             if info['method'] == 'stochastic_student_mle':
                 print(
@@ -481,7 +526,8 @@ def smart_initial_point(u, copula, use_gas=False, verbose=False):
         return alpha0, info
     except Exception as exc:
         alpha0, info = _fallback_initial_point(
-            u, copula, use_gas=False, verbose=verbose)
+            u, copula, use_gas=False, verbose=verbose,
+            initial_mle_result=initial_mle_result)
         info = dict(info)
         info['fallback_from'] = requested_method
         legacy_diagnostics = info.get('initialization', {})

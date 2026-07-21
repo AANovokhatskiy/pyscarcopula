@@ -37,6 +37,7 @@ Usage
 """
 
 from copy import deepcopy
+import hashlib
 import time
 
 import numpy as np
@@ -53,6 +54,7 @@ from pyscarcopula.vine._conditional_rvine import (
 from pyscarcopula.vine._rvine_dissmann import select_rvine
 from pyscarcopula.vine._rvine_edges import (
     _edge_h,
+    _edge_h_pair,
     _edge_h_inverse,
     _edge_initial_model_state,
     _edge_requires_stepwise_sample,
@@ -207,6 +209,19 @@ class RVineCopula:
         self._conditional_fit_supported = None
         self._conditional_mode = None
         self._fit_diagnostics = None
+        self._suffix_state_cache = {}
+        self._predict_history_cache = {}
+
+    def __getstate__(self):
+        """Return persistent model state without transient prediction caches."""
+        state = self.__dict__.copy()
+        state.pop('_predict_history_cache', None)
+        return state
+
+    def __setstate__(self, state):
+        """Restore models saved before or after prediction caching existed."""
+        self.__dict__.update(state)
+        self._predict_history_cache = {}
 
     # Fit
 
@@ -269,6 +284,9 @@ class RVineCopula:
         self : RVineCopula
             Enables chained calls, e.g. ``RVineCopula().fit(u).summary()``.
         """
+        method = method.upper()
+        self._suffix_state_cache = {}
+        self._predict_history_cache = {}
         u = np.asarray(data, dtype=np.float64)
         if u.ndim != 2:
             raise ValueError(f"RVineCopula.fit: data must be 2D, got shape {u.shape}")
@@ -349,7 +367,8 @@ class RVineCopula:
                 },
                 'candidates': (),
             }
-        M, edge_map = build_rvine_matrix_with_edge_map(d, trees_repr)
+        M, edge_map = build_rvine_matrix_with_edge_map(
+            d, trees_repr, validate=False)
 
         pair_copulas = {}
         for (t, col), orig_idx in edge_map.items():
@@ -417,7 +436,10 @@ class RVineCopula:
         self._log_likelihood = float(sum(
             pc.log_likelihood for pc in pair_copulas.values()
         ))
-        self.method = method.upper()
+        self.method = method
+        edge_fit_summary = self._build_edge_fit_summary(
+            pair_copulas, requested_method=method)
+        self._fit_diagnostics['edge_fits'] = deepcopy(edge_fit_summary)
         total_nfev = sum(
             int(getattr(edge_result(pc), 'nfev', 0) or 0)
             for pc in pair_copulas.values()
@@ -431,11 +453,20 @@ class RVineCopula:
         self.fit_result.nfev = total_nfev
         self.fit_result.n_params = n_params
         self.fit_result.parameter_count = n_params
+        self.fit_result.diagnostics = deepcopy(edge_fit_summary)
+        self.fit_result.actual_methods = dict(
+            edge_fit_summary['actual_methods'])
+        self.fit_result.fallback_count = edge_fit_summary['fallback_count']
+        self.fit_result.fallback_edges = deepcopy(
+            edge_fit_summary['fallback_edges'])
         self.fit_result.success = all(
             bool(getattr(edge_result(pc), 'success', True))
             for pc in pair_copulas.values()
         )
-        self._last_u = u
+        # Prediction caches are valid only for this owned, immutable snapshot.
+        # Explicit ``predict(..., u=...)`` inputs deliberately bypass them.
+        self._last_u = u.copy()
+        self._last_u.flags.writeable = False
         self._target_given_vars = given_vars
         self._conditional_fit_supported = conditional_supported
         self._conditional_mode = conditional_mode if given_vars else None
@@ -457,6 +488,93 @@ class RVineCopula:
             'conditional_fit_supported': bool(conditional_supported),
             'reject_reason': reject_reason,
             'selection': deepcopy(selection_diagnostics),
+        }
+
+    @staticmethod
+    def _build_edge_fit_summary(pair_copulas, *, requested_method):
+        actual_methods = {}
+        family_counts = {}
+        edge_records = []
+        fallback_records = []
+        dynamic_attempted_count = 0
+        dynamic_success_count = 0
+        selection_nfev_total = 0
+        dynamic_attempted_nfev_total = 0
+        fallback_discarded_nfev = 0
+
+        for key in sorted(pair_copulas):
+            edge = pair_copulas[key]
+            result = edge_result(edge)
+            provenance = dict(
+                getattr(edge, 'fit_diagnostics', {}) or {})
+            actual_method = str(
+                getattr(result, 'method', None) or 'STATIC').upper()
+            family = type(edge_copula(edge)).__name__
+            actual_methods[actual_method] = (
+                actual_methods.get(actual_method, 0) + 1)
+            family_counts[family] = family_counts.get(family, 0) + 1
+
+            dynamic_attempted = bool(
+                provenance.get('dynamic_attempted', False))
+            attempted_success = provenance.get('attempted_success')
+            if dynamic_attempted:
+                dynamic_attempted_count += 1
+                dynamic_attempted_nfev_total += int(
+                    provenance.get('attempted_nfev', 0) or 0)
+                if attempted_success:
+                    dynamic_success_count += 1
+            selection_nfev_total += int(
+                provenance.get('selection_nfev', 0) or 0)
+
+            record = {
+                'key': tuple(key),
+                'family': family,
+                'rotation': int(getattr(edge_copula(edge), 'rotate', 0)),
+                'requested_method': str(
+                    provenance.get('requested_method', requested_method)
+                ).upper(),
+                'actual_method': actual_method,
+                'actual_success': bool(
+                    getattr(result, 'success', True)),
+                'actual_nfev': int(getattr(result, 'nfev', 0) or 0),
+                'selection_nfev': int(
+                    provenance.get('selection_nfev', 0) or 0),
+                'dynamic_attempted': dynamic_attempted,
+                'fallback_used': bool(
+                    provenance.get('fallback_used', False)),
+                'fallback_reason': provenance.get('fallback_reason'),
+                'attempted_method': provenance.get('attempted_method'),
+                'attempted_success': attempted_success,
+                'attempted_nfev': int(
+                    provenance.get('attempted_nfev', 0) or 0),
+                'attempted_message': provenance.get('attempted_message'),
+                'timings_ms': {
+                    'selection': float(
+                        provenance.get('selection_ms', 0.0) or 0.0),
+                    'dynamic_fit': float(
+                        provenance.get('dynamic_fit_ms', 0.0) or 0.0),
+                    'total_fit': float(
+                        provenance.get('fit_ms', 0.0) or 0.0),
+                },
+            }
+            edge_records.append(record)
+            if record['fallback_used']:
+                fallback_records.append(record)
+                fallback_discarded_nfev += record['attempted_nfev']
+
+        return {
+            'requested_method': str(requested_method).upper(),
+            'edge_count': len(edge_records),
+            'actual_methods': dict(sorted(actual_methods.items())),
+            'family_counts': dict(sorted(family_counts.items())),
+            'dynamic_attempted_count': dynamic_attempted_count,
+            'dynamic_success_count': dynamic_success_count,
+            'selection_nfev_total': selection_nfev_total,
+            'dynamic_attempted_nfev_total': dynamic_attempted_nfev_total,
+            'fallback_discarded_nfev': fallback_discarded_nfev,
+            'fallback_count': len(fallback_records),
+            'fallback_edges': tuple(fallback_records),
+            'edges': tuple(edge_records),
         }
 
     # Convenience predicates
@@ -564,10 +682,11 @@ class RVineCopula:
                         pseudo_obs[(v1, conditioning | {v2})] = _clip_unit(
                             u1_next)
                     else:
+                        u2_next, u1_next = _edge_h_pair(pc, u2, u1)
                         pseudo_obs[(v2, conditioning | {v1})] = _clip_unit(
-                            pc.h(u2, u1))
+                            u2_next)
                         pseudo_obs[(v1, conditioning | {v2})] = _clip_unit(
-                            pc.h(u1, u2))
+                            u1_next)
         return total
 
     def _matrix_key(self, tree_level, orig_idx):
@@ -744,6 +863,18 @@ class RVineCopula:
         active_keys = self._sample_active_edge_keys(max_active_tree)
         if any(_edge_requires_stepwise_sample(self.pair_copulas[key])
                for key in active_keys):
+            from pyscarcopula.numerical._cpp_gas_rvine import (
+                sample as native_gas_rvine_sample,
+            )
+            native = native_gas_rvine_sample(
+                self,
+                n,
+                rng,
+                active_keys,
+                max_active_tree,
+            )
+            if native is not None:
+                return native
             return self._sample_stepwise_stateful(
                 n, rng, active_keys=active_keys,
                 max_active_tree=max_active_tree)
@@ -831,7 +962,14 @@ class RVineCopula:
         return given_suffix_start_col(self.d, given, matrix)
 
     def _suffix_sampling_state(self, given):
-        return suffix_sampling_state(
+        cache = getattr(self, '_suffix_state_cache', None)
+        if cache is None:
+            cache = {}
+            self._suffix_state_cache = cache
+        cache_key = frozenset(int(var) for var in given)
+        if cache_key in cache:
+            return cache[cache_key]
+        state = suffix_sampling_state(
             self.d,
             self.trees,
             self.matrix,
@@ -840,6 +978,8 @@ class RVineCopula:
             self._matrix_key,
             given,
         )
+        cache[cache_key] = state
+        return state
 
     def _find_peel_order_for_given_suffix(self, given_vars):
         from pyscarcopula.vine._conditional_rvine import (
@@ -1085,11 +1225,51 @@ class RVineCopula:
                 u1 = _clip_unit(pseudo_obs[(v1, conditioning)])
                 u2 = _clip_unit(pseudo_obs[(v2, conditioning)])
                 if t < self.d - 2:
+                    u2_next, u1_next = _edge_h_pair(pc, u2, u1)
                     pseudo_obs[(v2, conditioning | {v1})] = _clip_unit(
-                        _edge_h(pc, u2, u1))
+                        u2_next)
                     pseudo_obs[(v1, conditioning | {v2})] = _clip_unit(
-                        _edge_h(pc, u1, u2))
+                        u1_next)
         return pseudo_obs
+
+    def _history_prediction_cache(self, u, *, fitted_history):
+        """Return a mutation-safe cache scoped to one prediction history."""
+        root = getattr(self, '_predict_history_cache', None)
+        if root is None:
+            root = {}
+            self._predict_history_cache = root
+        cache = root.setdefault(
+            'fitted' if fitted_history else 'explicit', {})
+
+        edge_token = tuple(
+            (
+                key,
+                id(edge),
+                id(edge_copula(edge)),
+                id(edge_result(edge)),
+                edge_param(edge),
+                getattr(edge_copula(edge), 'rotate', None),
+                getattr(edge_copula(edge), '_transform_type', None),
+            )
+            for key, edge in sorted(self.pair_copulas.items())
+        )
+        if fitted_history:
+            history_token = id(u)
+        else:
+            contiguous = np.ascontiguousarray(u, dtype=np.float64)
+            history_token = (
+                contiguous.shape,
+                hashlib.blake2b(
+                    memoryview(contiguous).cast('B'), digest_size=16
+                ).digest(),
+            )
+        token = (history_token, edge_token)
+        if cache.get('token') != token:
+            cache.clear()
+            cache['token'] = token
+            cache['state_cache'] = {}
+            cache['posterior_cache'] = {}
+        return cache
 
     def _predict_r_for_edges(self, edge_keys, pair_copulas, edge_map, n,
                              train_pseudo, horizon, rng,
@@ -1359,6 +1539,7 @@ class RVineCopula:
             lambda: self._suffix_sampling_state(given) if given else None,
         )
 
+        use_fitted_history_cache = u is None and self._last_u is not None
         u_ref = self._last_u if u is None else np.asarray(
             u, dtype=np.float64)
         if u_ref is not None and (u_ref.ndim != 2 or u_ref.shape[1] != self.d):
@@ -1367,13 +1548,23 @@ class RVineCopula:
                 f"got {u_ref.shape}"
             )
 
-        train_pseudo = timed(
-            "compute_pseudo_obs",
-            lambda: (
-                self._compute_pseudo_obs(u_ref)
-                if u_ref is not None else None
-            ),
+        history_cache = (
+            self._history_prediction_cache(
+                u_ref, fitted_history=use_fitted_history_cache)
+            if u_ref is not None else None
         )
+        if history_cache is not None and 'train_pseudo' in history_cache:
+            train_pseudo = history_cache['train_pseudo']
+        else:
+            train_pseudo = timed(
+                "compute_pseudo_obs",
+                lambda: (
+                    self._compute_pseudo_obs(u_ref)
+                    if u_ref is not None else None
+                ),
+            )
+            if history_cache is not None:
+                history_cache['train_pseudo'] = train_pseudo
         if suffix_state is None:
             suffix_start_col = None
             matrix = self.matrix
@@ -1394,8 +1585,12 @@ class RVineCopula:
             'updated_edges': [],
             'skipped_edges': [],
         }
-        state_cache = {}
-        posterior_cache = {}
+        if history_cache is None:
+            state_cache = {}
+            posterior_cache = {}
+        else:
+            state_cache = history_cache['state_cache']
+            posterior_cache = history_cache['posterior_cache']
 
         if given:
             if suffix_start_col is None:

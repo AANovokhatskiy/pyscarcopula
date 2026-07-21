@@ -42,14 +42,24 @@ def _gaussian_score_correlation(u):
 class GaussianCopula(MultivariateCopula):
     """d-dimensional Gaussian copula with a fitted correlation matrix."""
 
-    _capabilities = CopulaCapabilities()
+    _capabilities = CopulaCapabilities(
+        supports_conditional_sampling=True,
+    )
 
     def __init__(self):
         super().__init__(name="Gaussian copula")
         self.corr = None
 
-    def fit(self, data, to_pobs=False, **kwargs):
-        """Fit the correlation matrix in Gaussian score space."""
+    def fit(self, data, to_pobs=False, method='mle', **kwargs):
+        """Fit the correlation matrix in Gaussian score space.
+
+        Only ``method='mle'`` is supported: this is a static model without
+        a dynamic scalar parameter.
+        """
+        if str(method).upper() != 'MLE':
+            raise ValueError(
+                f"GaussianCopula supports only method='mle', "
+                f"got {method!r}")
         u = np.asarray(data, dtype=np.float64)
         _validate_gaussian_fit_data(u)
         if to_pobs:
@@ -117,6 +127,17 @@ class GaussianCopula(MultivariateCopula):
         x = rng.multivariate_normal(np.zeros(d), correlation, size=n)
         return norm.cdf(x)
 
+    def sample_conditional(self, n, given, rng=None):
+        """Sample conditionally with ``given={var_index: u_value}``."""
+        correlation = self._fitted_correlation()
+        if correlation is None:
+            raise ValueError("Fit first")
+        from pyscarcopula.copula.multivariate.conditional import (
+            sample_gaussian_copula_conditional,
+        )
+        return sample_gaussian_copula_conditional(
+            n, correlation, given=given, rng=rng)
+
     def predict(self, n, u=None, rng=None, given=None, horizon='next',
                 predictive_r_mode=None, predict_config=None):
         if predict_config is not None:
@@ -127,6 +148,5 @@ class GaussianCopula(MultivariateCopula):
                 })
             given = config.given
         if given:
-            raise NotImplementedError(
-                "Conditional prediction is not implemented for GaussianCopula")
+            return self.sample_conditional(n, given=given, rng=rng)
         return self.sample(n, u=u, rng=rng)

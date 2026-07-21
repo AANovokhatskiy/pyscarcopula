@@ -1,6 +1,6 @@
 """Shared pair-copula edge container for vine models."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -34,6 +34,8 @@ class PairCopula:
         Optional tree level for CVine-style layouts.
     idx : int or None
         Optional edge index within a CVine tree.
+    fit_diagnostics : dict
+        Edge-level fit provenance, including dynamic fallback details.
     """
     copula: object = None
     param: float | None = None
@@ -43,6 +45,7 @@ class PairCopula:
     fit_result: object = None
     tree: int | None = None
     idx: int | None = None
+    fit_diagnostics: dict = field(default_factory=dict)
 
     @property
     def method(self):
@@ -60,6 +63,11 @@ class PairCopula:
         """h(u_conditioned | u_given) using this edge's fit result."""
         from pyscarcopula.vine._rvine_edges import _edge_h
         return _edge_h(self, u_conditioned, u_given)
+
+    def h_pair(self, u, v):
+        """Return ``h(u | v)`` and ``h(v | u)`` using one edge pass."""
+        from pyscarcopula.vine._rvine_edges import _edge_h_pair
+        return _edge_h_pair(self, u, v)
 
     def get_r(self, u_pair, T=None):
         """Return the fitted strategy parameter path for observed pairs."""

@@ -195,8 +195,31 @@ The compiled kernels impose direct numerical-configuration limits:
 - `basis_order`, `quad_order`, and `gh_order` must not exceed `1024`.
 
 Observation count, Student dimension, and derived allocation sizes are not
-artificially capped. Their memory and runtime cost depend on the data size and
+artificially capped, with one exception: the multivariate Student PPF table
+(see below). Their memory and runtime cost depend on the data size and
 chosen numerical options.
+
+#### Student PPF table memory cap
+
+Multivariate Student models normally precompute a quantile (inverse-CDF) table
+of shape `(n_df_nodes, T, d)` (~200 df nodes) to speed up emission-density
+evaluations. The table costs `n_nodes × T × d × 8` bytes and is bounded by
+`DEFAULT_MAX_TABLE_BYTES` (256 MiB) from
+`pyscarcopula.copula.multivariate.student_ppf_cache`. When the estimated
+size exceeds the limit, the table is not built and every evaluation falls
+back to the exact `scipy.special.stdtrit` quantile; the compiled kernels
+apply the same exact-quantile fallback when a spec carries no table.
+Both paths target the same Student quantile, but they are not numerically
+identical: the normal cached path Hermite-interpolates between precomputed
+degrees-of-freedom nodes, whereas the fallback evaluates `stdtrit` directly.
+Small likelihood or gradient differences are therefore possible when a
+workload crosses the memory threshold, and the exact fallback is usually
+slower.
+
+`StudentPPFTable` accepts a `max_table_bytes` constructor argument for direct
+internal table construction. `StochasticStudentCopula` currently uses the
+package-wide default; there is no model-level fit or constructor option for
+overriding this cap.
 
 With `transition_method='auto'`, a `numerical_failure` from the spectral path
 may be recovered by trying matrix and then local transition methods. Forced
@@ -490,6 +513,32 @@ result = fit(
 )
 ```
 
+## Multivariate Native Paths
+
+Multivariate Gaussian, Student, stochastic Student, and equicorrelation models
+use compiled row, grid, and conditional kernels. Several optimizations are
+automatic and do not require strategy options:
+
+- conditional Gaussian/Student sampling reuses the Schur-complement Cholesky
+  factor when one correlation matrix is shared by all output rows;
+- Student density workspaces are reused inside GAS, static likelihood, Monte
+  Carlo batches, and across all grid nodes within each SCAR emission row;
+- equicorrelation grids compute per-row normal-score sums once and reuse them
+  for every latent-grid node; prepared static and SCAR-OU evaluators retain
+  those statistics across repeated objective calls;
+- conditional binding inputs avoid an additional C++ copy when they are
+  C-contiguous `float64` arrays.
+
+The zero-copy condition concerns the native boundary. Python adapters may still
+normalize arbitrary user inputs with `np.ascontiguousarray`; non-contiguous
+arrays and other dtypes therefore require a temporary conversion. Numeric
+inputs are always checked for finite values, so zero-copy removes memory traffic
+but not the linear validation pass.
+
+Row-specific `(n,d,d)` correlation arrays cannot share one Cholesky factor and
+retain per-row factorization cost. Near-singular Student conditional covariance
+matrices also retain the per-row jitter path to preserve numerical semantics.
+
 ## NumericalConfig
 
 Use `NumericalConfig` when a setting should apply to many fits:
@@ -629,3 +678,16 @@ As with C-vines, automatic family selection is MLE-based. `gtol`, `ftol`,
 after a family has been selected. If `method='gas'`, a too-loose `ftol` can make
 some edges stop early with `success=True`; set `ftol=1e-12` and increase
 `maxfun` for difficult edges.
+
+Fitted R-vines use sequential native hot paths where the model contract permits
+them. GAS unconditional sampling executes the row recursion and causal score
+updates in one native call while preserving RNG and edge-update order. Repeated
+SCAR-TM-OU prediction against unchanged fitted history reuses
+pseudo-observations and terminal posterior state. A new `fit`, a changed
+explicit history, or an edge replacement invalidates the relevant transient
+cache. These optimizations do not parallelize edge or sample execution.
+
+When benchmarking dynamic vines, report `vine.fit_result.actual_methods` and
+`vine.fit_result.fallback_count`: unsuccessful dynamic edge fits are retained
+as MLE fallbacks and otherwise make GAS or SCAR timings look artificially fast.
+For prediction caches, measure cold and warm calls separately.

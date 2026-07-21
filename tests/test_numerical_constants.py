@@ -1,5 +1,6 @@
 """Contracts for named numerical safety boundaries."""
 
+import ast
 from pathlib import Path
 
 import numpy as np
@@ -87,5 +88,12 @@ def test_python_and_cpp_safety_constants_match():
 def test_vine_runtime_has_no_local_generic_eps_constants():
     vine_root = Path(__file__).resolve().parents[1] / "pyscarcopula" / "vine"
     for path in vine_root.glob("*.py"):
-        text = path.read_text(encoding="utf-8")
-        assert "_EPS = 1e-10" not in text
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        assignments = {
+            node.id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+        }
+        assert "_EPS" not in assignments, (
+            f"{path.name} defines a local generic _EPS constant"
+        )

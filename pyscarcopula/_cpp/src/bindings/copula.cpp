@@ -5,7 +5,10 @@ namespace py = pybind11;
 namespace pyscarcopula::bindings {
 
 void bind_copula(py::module_& m) {
-    py::class_<scar::CopulaSpec>(m, "CopulaSpec")
+    py::class_<scar::CopulaSpec>(
+        m,
+        "CopulaSpec",
+        "Native copula family, transform, dimension, and cached factors.")
         .def(py::init<>())
         .def_readwrite("family", &scar::CopulaSpec::family)
         .def_readwrite("rotation", &scar::CopulaSpec::rotation)
@@ -23,7 +26,10 @@ void bind_copula(py::module_& m) {
             py::arg("nodes"),
             py::arg("table"));
 
-    py::class_<scar::StaticCopulaEvaluator>(m, "StaticCopulaEvaluator")
+    py::class_<scar::StaticCopulaEvaluator>(
+        m,
+        "StaticCopulaEvaluator",
+        "Reusable static-likelihood evaluator for fixed observations.")
         .def(
             py::init([](
                 const scar::CopulaSpec& copula,
@@ -46,6 +52,18 @@ void bind_copula(py::module_& m) {
                 }
                 return static_objective_result_to_dict(
                     result);
+            },
+            py::arg("parameter"))
+        .def(
+            "objective_value",
+            [](const scar::StaticCopulaEvaluator& evaluator,
+               double parameter) {
+                scar::StaticObjectiveResult result;
+                {
+                    py::gil_scoped_release release;
+                    result = evaluator.objective_value(parameter);
+                }
+                return static_objective_result_to_dict(result);
             },
             py::arg("parameter"))
         .def(

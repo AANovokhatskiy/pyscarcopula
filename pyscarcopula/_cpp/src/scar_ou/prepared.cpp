@@ -1,5 +1,6 @@
 #include "scar/ou.hpp"
 
+#include "scar/detail/copula.hpp"
 #include "scar/detail/safety.hpp"
 
 #include <algorithm>
@@ -70,6 +71,40 @@ PreparedScarOuEvaluator::PreparedScarOuEvaluator(
             observations_.end(),
             [](double value) { return std::isfinite(value); })) {
         throw std::invalid_argument("u must contain only finite values");
+    }
+    if (copula_.family == CopulaFamily::EquicorrGaussian) {
+        copula_.equicorr_sum_cache.resize(n_obs_size, 0.0);
+        copula_.equicorr_sum_squares_cache.resize(n_obs_size, 0.0);
+        for (std::size_t row = 0; row < n_obs_size; ++row) {
+            scar_internal::EquicorrStats stats;
+            if (!scar_internal::equicorr_sufficient_statistics(
+                    copula_,
+                    observations_.data() + row * dim_size,
+                    stats)) {
+                throw std::invalid_argument(
+                    "failed to prepare equicorrelation statistics");
+            }
+            copula_.equicorr_sum_cache[row] = stats.sum;
+            copula_.equicorr_sum_squares_cache[row] = stats.sum_squares;
+        }
+    }
+    if (copula_.family == CopulaFamily::Gaussian) {
+        copula_.gaussian_z1_cache.resize(n_obs_size, 0.0);
+        copula_.gaussian_z2_cache.resize(n_obs_size, 0.0);
+        for (std::size_t row = 0; row < n_obs_size; ++row) {
+            double u1 = 0.0;
+            double u2 = 0.0;
+            scar_internal::apply_rotation(
+                observations_[2 * row],
+                observations_[2 * row + 1],
+                static_cast<int>(copula_.rotation),
+                u1,
+                u2);
+            const double x1 = scar_internal::normal_quantile(u1);
+            const double x2 = scar_internal::normal_quantile(u2);
+            copula_.gaussian_z1_cache[row] = x1;
+            copula_.gaussian_z2_cache[row] = x2;
+        }
     }
 }
 
@@ -147,6 +182,13 @@ std::vector<double> PreparedScarOuEvaluator::mixture_h(
     OuBackend& backend,
     int& status) const {
     return call_mixture_h(params, backend, status);
+}
+
+std::vector<double> PreparedScarOuEvaluator::mixture_h_pair(
+    const OuParams& params,
+    OuBackend& backend,
+    int& status) const {
+    return call_mixture_h_pair(params, backend, status);
 }
 
 StateDistribution PreparedScarOuEvaluator::state_distribution(
@@ -269,6 +311,26 @@ std::vector<double> PreparedScarOuEvaluator::call_mixture_h(
             params, copula_, u, config_, status);
     }
     return evaluator_.mixture_h_auto(
+        params, copula_, u, config_, backend, status);
+}
+
+std::vector<double> PreparedScarOuEvaluator::call_mixture_h_pair(
+    const OuParams& params,
+    OuBackend& backend,
+    int& status) const {
+
+    const ObservationView u = view();
+    if (method_ == "local") {
+        backend = OuBackend::LocalGh;
+        return evaluator_.mixture_h_pair_local_gh(
+            params, copula_, u, config_, status);
+    }
+    if (method_ == "matrix") {
+        backend = OuBackend::Matrix;
+        return evaluator_.mixture_h_pair_matrix(
+            params, copula_, u, config_, status);
+    }
+    return evaluator_.mixture_h_pair_auto(
         params, copula_, u, config_, backend, status);
 }
 

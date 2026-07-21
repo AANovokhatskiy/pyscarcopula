@@ -132,6 +132,43 @@ def test_fixed_mode_keeps_canonical_behavior():
         u, method="scar-tm-ou", K=8, max_K=8, maxiter=1)
     assert scar_result.n_params == 3
     assert scar_result.diagnostics["selected_engine"] == "cpp"
+    assert (
+        scar_result.diagnostics["optimizer_parameterization"]
+        == "log_kappa_mu_log_stationary_sigma")
+
+
+def test_log_stationary_ou_coordinate_chain_rule():
+    alpha = np.array([2.5, -0.4, 1.2])
+    optimizer_point = scar_tm._ou_to_log_stationary(alpha)
+    np.testing.assert_allclose(
+        scar_tm._ou_from_log_stationary(optimizer_point), alpha,
+        rtol=0.0, atol=1e-14)
+
+    target = np.array([1.1, 0.2, 0.7])
+    physical_gradient = 2.0 * (alpha - target)
+    analytical = scar_tm._ou_grad_to_log_stationary(
+        alpha, physical_gradient)
+    finite_difference = np.empty(3)
+    for index in range(3):
+        step = 1e-6
+        plus = optimizer_point.copy()
+        minus = optimizer_point.copy()
+        plus[index] += step
+        minus[index] -= step
+        value_plus = np.sum(
+            (scar_tm._ou_from_log_stationary(plus) - target) ** 2)
+        value_minus = np.sum(
+            (scar_tm._ou_from_log_stationary(minus) - target) ** 2)
+        finite_difference[index] = (value_plus - value_minus) / (2.0 * step)
+
+    np.testing.assert_allclose(
+        analytical, finite_difference, rtol=1e-9, atol=1e-9)
+    np.testing.assert_allclose(
+        scar_tm._ou_grad_from_log_stationary(alpha, analytical),
+        physical_gradient,
+        rtol=0.0,
+        atol=1e-14,
+    )
 
 
 def test_correlation_property_returns_copy():
@@ -604,7 +641,8 @@ def test_posterior_state_weights_are_normalized(corr_mode, corr_params):
         weights.sum(axis=1), 1.0, rtol=0.0, atol=1e-12)
     validate_corr_matrix(model.R)
     if corr_mode == "shrinkage":
-        assert model.corr_alpha() == pytest.approx(0.5)
+        # M3 regression: passing joint params must not mutate model state.
+        assert model.corr_alpha() is None
 
 
 def test_posterior_state_weights_validates_inputs_and_param_length():
@@ -906,6 +944,9 @@ def test_scar_estimated_corr_modes_use_python_optimizer_with_native_likelihood(
     assert result.diagnostics["selected_engine"] == "cpp"
     assert result.diagnostics["joint_static"] is True
     assert result.diagnostics["joint_optimizer"] == "python-lbfgsb"
+    assert (
+        result.diagnostics["optimizer_parameterization"]
+        == "log_kappa_mu_log_stationary_sigma")
     assert result.diagnostics["prepared_native_evaluator"] is True
     assert result.diagnostics["prepared_native_evaluator_count"] >= 1
     assert (
@@ -1060,11 +1101,19 @@ def test_joint_hybrid_jacobian_uses_one_plus_n_corr_evaluations(
         eps=1e-6,
     )
 
-    scale = np.maximum(
-        np.abs(np.concatenate([alpha0, model.corr_params()])), 1.0)
     expected_physical = np.concatenate([
         2.0 * (alpha0 - np.array([1.0, 0.25, 0.75])),
         2.0 * model.corr_params() + 1e-6,
+    ])
+    expected_optimizer = expected_physical.copy()
+    expected_optimizer[0] = (
+        expected_physical[0] * alpha0[0]
+        + 0.5 * expected_physical[2] * alpha0[2])
+    expected_optimizer[2] = expected_physical[2] * alpha0[2]
+    sigma0 = alpha0[2] / np.sqrt(2.0 * alpha0[0])
+    expected_x0 = np.concatenate([
+        np.array([np.log(alpha0[0]), alpha0[1], np.log(sigma0)]),
+        model.corr_params(),
     ])
 
     assert calls == {
@@ -1072,10 +1121,13 @@ def test_joint_hybrid_jacobian_uses_one_plus_n_corr_evaluations(
         "objective": 2 * corr_n_params,
     }
     np.testing.assert_allclose(
-        captured["gradient"], expected_physical * scale,
+        captured["gradient"], expected_optimizer,
         rtol=1e-7, atol=1e-7)
     np.testing.assert_allclose(
-        captured["x0"], np.concatenate([alpha0, model.corr_params()]) / scale)
+        captured["x0"], expected_x0)
+    assert (
+        result.diagnostics["optimizer_parameterization"]
+        == "log_kappa_mu_log_stationary_sigma")
     assert result.diagnostics["objective_evaluations"] == (
         2 * (1 + corr_n_params))
     assert result.diagnostics["hybrid_gradient_evaluations"] == 2
@@ -1328,3 +1380,29 @@ def test_fixed_data_estimated_corr_is_still_limited_for_mc_methods(method):
 
     with pytest.raises(NotImplementedError, match="MLE and SCAR-TM-OU only"):
         fit(StochasticStudentCopula(d=3), u, method=method, **kwargs)
+
+
+def test_posterior_state_weights_with_joint_params_does_not_mutate_model():
+    """M3 regression: joint params must not overwrite the model's
+    correlation state in a query method."""
+    u = _u(T=24)
+    model = StochasticStudentCopula(d=3, corr_mode="cholesky")
+    # Establish a non-default correlation state.
+    model.posterior_state_weights(
+        u, params=np.array([1.2, 0.5, 0.8]), K=9, adaptive=False)
+    R_before = model.R.copy()
+    alpha_before = model.corr_alpha()
+    raw_before = None if model.corr_params() is None else model.corr_params().copy()
+
+    weights = model.posterior_state_weights(
+        u, params=np.array([1.2, 0.5, 0.8, 0.4, -0.3, 0.2]),
+        K=9, adaptive=False)
+
+    assert weights.shape == (len(u), 9)
+    np.testing.assert_array_equal(model.R, R_before)
+    assert model.corr_alpha() == alpha_before
+    raw_after = model.corr_params()
+    if raw_before is None:
+        assert raw_after is None
+    else:
+        np.testing.assert_array_equal(raw_after, raw_before)

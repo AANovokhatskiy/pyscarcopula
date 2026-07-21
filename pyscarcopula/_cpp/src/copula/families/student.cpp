@@ -9,6 +9,52 @@
 namespace scar_internal {
 namespace {
 
+struct DualValue {
+    double value;
+    double derivative;
+};
+
+constexpr double kStudentNormalAsymptoticDf = 1000.0;
+
+DualValue operator+(DualValue lhs, DualValue rhs) {
+    return {
+        lhs.value + rhs.value,
+        lhs.derivative + rhs.derivative,
+    };
+}
+
+DualValue operator-(DualValue lhs, DualValue rhs) {
+    return {
+        lhs.value - rhs.value,
+        lhs.derivative - rhs.derivative,
+    };
+}
+
+DualValue operator-(DualValue value) {
+    return {-value.value, -value.derivative};
+}
+
+DualValue operator*(DualValue lhs, DualValue rhs) {
+    return {
+        lhs.value * rhs.value,
+        lhs.derivative * rhs.value + lhs.value * rhs.derivative,
+    };
+}
+
+DualValue operator/(DualValue lhs, DualValue rhs) {
+    const double inverse = 1.0 / rhs.value;
+    return {
+        lhs.value * inverse,
+        (lhs.derivative - lhs.value * inverse * rhs.derivative) * inverse,
+    };
+}
+
+DualValue dual(double value, double derivative = 0.0) {
+    return {value, derivative};
+}
+
+double digamma_positive(double x);
+
 double betacf(double a, double b, double x) {
     constexpr int max_iter = 200;
     constexpr double eps = 3e-14;
@@ -60,6 +106,61 @@ double betacf(double a, double b, double x) {
     return h;
 }
 
+DualValue betacf_dual(DualValue a, DualValue b, DualValue x) {
+    constexpr int max_iter = 200;
+    constexpr double eps = 3e-14;
+    constexpr double fpmin = 1e-300;
+
+    const DualValue one = dual(1.0);
+    const DualValue qab = a + b;
+    const DualValue qap = a + one;
+    const DualValue qam = a - one;
+    DualValue c = one;
+    DualValue d = one - qab * x / qap;
+    if (std::abs(d.value) < fpmin) {
+        d = dual(fpmin);
+    }
+    d = one / d;
+    DualValue h = d;
+
+    for (int m = 1; m <= max_iter; ++m) {
+        const double m_value = static_cast<double>(m);
+        const double m2 = static_cast<double>(2 * m);
+        DualValue aa = (
+            dual(m_value) * (b - dual(m_value)) * x
+            / ((qam + dual(m2)) * (a + dual(m2))));
+        d = one + aa * d;
+        if (std::abs(d.value) < fpmin) {
+            d = dual(fpmin);
+        }
+        c = one + aa / c;
+        if (std::abs(c.value) < fpmin) {
+            c = dual(fpmin);
+        }
+        d = one / d;
+        h = h * d * c;
+
+        aa = -(
+            (a + dual(m_value)) * (qab + dual(m_value)) * x
+            / ((a + dual(m2)) * (qap + dual(m2))));
+        d = one + aa * d;
+        if (std::abs(d.value) < fpmin) {
+            d = dual(fpmin);
+        }
+        c = one + aa / c;
+        if (std::abs(c.value) < fpmin) {
+            c = dual(fpmin);
+        }
+        d = one / d;
+        const DualValue change = d * c;
+        h = h * change;
+        if (std::abs(change.value - 1.0) < eps) {
+            break;
+        }
+    }
+    return h;
+}
+
 double regularized_beta(double x, double a, double b) {
     if (x <= 0.0) {
         return 0.0;
@@ -76,6 +177,42 @@ double regularized_beta(double x, double a, double b) {
     return 1.0 - bt * betacf(b, a, 1.0 - x) / b;
 }
 
+DualValue regularized_beta_dual(
+    DualValue x,
+    DualValue a,
+    DualValue b) {
+
+    if (x.value <= 0.0) {
+        return dual(0.0);
+    }
+    if (x.value >= 1.0) {
+        return dual(1.0);
+    }
+    const double log_bt =
+        std::lgamma(a.value + b.value)
+        - std::lgamma(a.value)
+        - std::lgamma(b.value)
+        + a.value * std::log(x.value)
+        + b.value * std::log1p(-x.value);
+    const double log_bt_derivative =
+        digamma_positive(a.value + b.value)
+            * (a.derivative + b.derivative)
+        - digamma_positive(a.value) * a.derivative
+        - digamma_positive(b.value) * b.derivative
+        + a.derivative * std::log(x.value)
+        + a.value * x.derivative / x.value
+        + b.derivative * std::log1p(-x.value)
+        - b.value * x.derivative / (1.0 - x.value);
+    const double bt_value = std::exp(log_bt);
+    const DualValue bt = dual(
+        bt_value, bt_value * log_bt_derivative);
+    if (x.value < (a.value + 1.0) / (a.value + b.value + 2.0)) {
+        return bt * betacf_dual(a, b, x) / a;
+    }
+    return dual(1.0)
+        - bt * betacf_dual(b, a, dual(1.0) - x) / b;
+}
+
 double student_pdf(double t, double df) {
     const double log_pdf =
         std::lgamma(0.5 * (df + 1.0))
@@ -88,6 +225,16 @@ double student_pdf(double t, double df) {
 double student_survival_positive(double t, double df) {
     const double x = df / (df + t * t);
     return 0.5 * regularized_beta(x, 0.5 * df, 0.5);
+}
+
+DualValue student_survival_positive_df(double t, double df) {
+    const double t2 = t * t;
+    const double denominator = df + t2;
+    const DualValue x = dual(
+        df / denominator,
+        t2 / (denominator * denominator));
+    return dual(0.5) * regularized_beta_dual(
+        x, dual(0.5 * df, 0.5), dual(0.5));
 }
 
 double student_quantile_initial(double p, double df) {
@@ -148,6 +295,82 @@ double student_quantile(double p, double df) {
     }
     const double result = 0.5 * (lo + hi);
     return negative ? -result : result;
+}
+
+void student_quantile_large_df(
+    double p,
+    double df,
+    double& value,
+    double* derivative) {
+
+    const double z = normal_quantile_refined(clip_pseudo_observation(p));
+    const double z2 = z * z;
+    const double z3 = z * z2;
+    const double z5 = z3 * z2;
+    const double z7 = z5 * z2;
+    const double a1 = 0.25 * (z3 + z);
+    const double a2 =
+        (5.0 * z5 + 16.0 * z3 + 3.0 * z) / 96.0;
+    const double a3 =
+        (3.0 * z7 + 19.0 * z5 + 17.0 * z3 - 15.0 * z)
+        / 384.0;
+    const double inv_df = 1.0 / df;
+    const double inv_df2 = inv_df * inv_df;
+    const double inv_df3 = inv_df2 * inv_df;
+    value = z + a1 * inv_df + a2 * inv_df2 + a3 * inv_df3;
+    if (derivative != nullptr) {
+        *derivative = -a1 * inv_df2
+            - 2.0 * a2 * inv_df3
+            - 3.0 * a3 * inv_df3 * inv_df;
+    }
+}
+
+void student_quantile_exact_with_derivative(
+    double p,
+    double df,
+    double& value,
+    double& derivative) {
+
+    value = student_quantile(p, df);
+    if (value == 0.0) {
+        derivative = 0.0;
+        return;
+    }
+    const double magnitude = std::abs(value);
+    const DualValue survival = student_survival_positive_df(magnitude, df);
+    const double slope = survival.derivative / student_pdf(magnitude, df);
+    derivative = value < 0.0 ? -slope : slope;
+}
+
+bool use_large_df_quantile(
+    const scar::CopulaSpec& spec,
+    double df) {
+
+    // A populated dynamic PPF cache defines the point beyond which the
+    // third-order Cornish-Fisher expansion is used.  Static Student
+    // likelihoods carry no nodes and therefore retain exact quantiles.
+    return !spec.ppf_nodes.empty()
+        && df > std::max(
+            kStudentNormalAsymptoticDf, spec.ppf_nodes.back());
+}
+
+void student_quantile_for_emission(
+    const scar::CopulaSpec& spec,
+    double p,
+    double df,
+    double& value,
+    double* derivative) {
+
+    if (use_large_df_quantile(spec, df)) {
+        student_quantile_large_df(p, df, value, derivative);
+        return;
+    }
+    if (derivative == nullptr) {
+        value = student_quantile(p, df);
+        return;
+    }
+    student_quantile_exact_with_derivative(
+        p, df, value, *derivative);
 }
 
 bool student_ppf_cache_available(
@@ -354,11 +577,6 @@ void interpolate_bivariate_ppf(
     }
 }
 
-struct StudentWorkspace {
-    std::vector<double> x;
-    std::vector<double> dx_ddf;
-};
-
 double student_log_pdf_with_work(
     const scar::CopulaSpec& spec,
     const double* row,
@@ -383,7 +601,7 @@ double student_log_pdf_with_work(
         student_ppf_cache_available(spec, row_index)
         && df >= spec.ppf_nodes.front()
         && df <= spec.ppf_nodes.back();
-    const bool compute_derivative = dlog_ddf != nullptr && use_cache;
+    const bool compute_derivative = dlog_ddf != nullptr;
     if (compute_derivative) {
         workspace.dx_ddf.resize(static_cast<std::size_t>(d));
     } else {
@@ -394,16 +612,25 @@ double student_log_pdf_with_work(
         interpolation = make_ppf_interpolation(spec.ppf_nodes, df);
     }
     for (int i = 0; i < d; ++i) {
-        workspace.x[static_cast<std::size_t>(i)] = use_cache
-            ? interpolate_ppf_value(
+        if (use_cache) {
+            workspace.x[static_cast<std::size_t>(i)] = interpolate_ppf_value(
                 spec,
                 interpolation,
                 row_index,
                 i,
                 compute_derivative
                     ? &workspace.dx_ddf[static_cast<std::size_t>(i)]
-                    : nullptr)
-            : student_quantile(row[i], df);
+                    : nullptr);
+        } else {
+            student_quantile_for_emission(
+                spec,
+                row[i],
+                df,
+                workspace.x[static_cast<std::size_t>(i)],
+                compute_derivative
+                    ? &workspace.dx_ddf[static_cast<std::size_t>(i)]
+                    : nullptr);
+        }
     }
 
     double quad = 0.0;
@@ -461,9 +688,7 @@ double student_log_pdf_with_work(
         - 0.5 * spec.log_det
         - 0.5 * (df + static_cast<double>(d)) * joint_shape;
     if (dlog_ddf != nullptr) {
-        if (!compute_derivative) {
-            *dlog_ddf = std::numeric_limits<double>::quiet_NaN();
-        } else {
+        if (compute_derivative) {
             const double joint_const_derivative =
                 0.5 * digamma_positive(
                     0.5 * (df + static_cast<double>(d)))
@@ -476,20 +701,11 @@ double student_log_pdf_with_work(
                 - 0.5 * joint_shape
                 - 0.5 * (df + static_cast<double>(d)) * dshape_ddf;
             *dlog_ddf = joint_dlog_ddf - marginal_dlog_ddf;
+        } else {
+            *dlog_ddf = std::numeric_limits<double>::quiet_NaN();
         }
     }
     return joint_log - marginal_log;
-}
-
-double student_log_pdf_impl(
-    const scar::CopulaSpec& spec,
-    const double* row,
-    double df,
-    std::int64_t row_index) {
-
-    StudentWorkspace workspace;
-    return student_log_pdf_with_work(
-        spec, row, df, row_index, workspace, nullptr);
 }
 
 bool student_corr_score_row_impl(
@@ -550,10 +766,14 @@ bool student_corr_score_row_impl(
             interpolation = make_ppf_interpolation(spec.ppf_nodes, df);
         }
         for (int i = 0; i < d; ++i) {
-            x[static_cast<std::size_t>(i)] = use_cache
-                ? interpolate_ppf_value(
-                    spec, interpolation, row_index, i, nullptr)
-                : student_quantile(row[i], df);
+            if (use_cache) {
+                x[static_cast<std::size_t>(i)] = interpolate_ppf_value(
+                    spec, interpolation, row_index, i, nullptr);
+            } else {
+                student_quantile_for_emission(
+                    spec, row[i], df,
+                    x[static_cast<std::size_t>(i)], nullptr);
+            }
         }
 
         double quad = 0.0;
@@ -616,7 +836,20 @@ double student_log_pdf(
     double df,
     std::int64_t row_index) {
 
-    return student_log_pdf_impl(spec, row, df, row_index);
+    StudentWorkspace workspace;
+    return student_log_pdf(
+        spec, row, df, row_index, workspace);
+}
+
+double student_log_pdf(
+    const scar::CopulaSpec& spec,
+    const double* row,
+    double df,
+    std::int64_t row_index,
+    StudentWorkspace& workspace) {
+
+    return student_log_pdf_with_work(
+        spec, row, df, row_index, workspace, nullptr);
 }
 
 bool student_log_pdf_and_dlog_ddf(
@@ -628,26 +861,47 @@ bool student_log_pdf_and_dlog_ddf(
     double& dlog_ddf) {
 
     StudentWorkspace workspace;
+    return student_log_pdf_and_dlog_ddf(
+        spec, row, df, row_index, log_pdf, dlog_ddf, workspace);
+}
+
+bool student_log_pdf_and_dlog_ddf(
+    const scar::CopulaSpec& spec,
+    const double* row,
+    double df,
+    std::int64_t row_index,
+    double& log_pdf,
+    double& dlog_ddf,
+    StudentWorkspace& workspace) {
+
     log_pdf = student_log_pdf_with_work(
         spec, row, df, row_index, workspace, &dlog_ddf);
     if (!std::isfinite(log_pdf)) {
         return false;
-    }
-    if (!std::isfinite(dlog_ddf)) {
-        const double step = std::max(1e-4, 1e-5 * std::abs(df));
-        const double lo = std::max(2.0 + 1e-6, df - step);
-        const double hi = df + step;
-        const double log_hi = student_log_pdf_with_work(
-            spec, row, hi, row_index, workspace, nullptr);
-        const double log_lo = student_log_pdf_with_work(
-            spec, row, lo, row_index, workspace, nullptr);
-        dlog_ddf = (log_hi - log_lo) / (hi - lo);
     }
     return std::isfinite(dlog_ddf);
 }
 
 double student_quantile_value(double p, double df) {
     return student_quantile(p, df);
+}
+
+void student_quantile_value_and_derivative(
+    double p,
+    double df,
+    double& value,
+    double& derivative) {
+
+    student_quantile_exact_with_derivative(p, df, value, derivative);
+}
+
+void student_quantile_large_df_value_and_derivative(
+    double p,
+    double df,
+    double& value,
+    double& derivative) {
+
+    student_quantile_large_df(p, df, value, &derivative);
 }
 
 bool student_precision_matrix(
@@ -749,17 +1003,6 @@ void student_fill_row(
         const double pdf = std::exp(log_pdf);
         fi_row[j] = pdf;
         if (dfi_dx_row != nullptr) {
-            if (!std::isfinite(dlog)) {
-                const double step = std::max(1e-4, 1e-5 * std::abs(df));
-                const double lo = std::max(2.0 + 1e-6, df - step);
-                const double hi = df + step;
-                dlog =
-                    (student_log_pdf_with_work(
-                        spec, row, hi, row_index, workspace, nullptr)
-                     - student_log_pdf_with_work(
-                        spec, row, lo, row_index, workspace, nullptr))
-                    / (hi - lo);
-            }
             dfi_dx_row[j] = pdf * dlog * dpsi_grid[j];
         }
     }

@@ -138,23 +138,44 @@ double equicorr_log_pdf(
     double rho,
     double* dlog_drho) {
 
+    EquicorrStats stats;
+    if (!equicorr_sufficient_statistics(spec, row, stats)) {
+        return -std::numeric_limits<double>::infinity();
+    }
+    return equicorr_log_pdf_from_stats(spec, stats, rho, dlog_drho);
+}
+
+bool equicorr_sufficient_statistics(
+    const scar::CopulaSpec& spec,
+    const double* row,
+    EquicorrStats& stats) {
+
+    if (row == nullptr) {
+        return false;
+    }
+    stats = EquicorrStats{};
+    for (int j = 0; j < spec.dim; ++j) {
+        const double z = normal_quantile_refined(row[j]);
+        stats.sum_squares += z * z;
+        stats.sum += z;
+    }
+    return std::isfinite(stats.sum) && std::isfinite(stats.sum_squares);
+}
+
+double equicorr_log_pdf_from_stats(
+    const scar::CopulaSpec& spec,
+    const EquicorrStats& stats,
+    double rho,
+    double* dlog_drho) {
+
     const double one_minus_rho = 1.0 - rho;
     const double common_eigenvalue =
         1.0 + static_cast<double>(spec.dim - 1) * rho;
-    if (row == nullptr
-        || one_minus_rho <= 0.0
-        || common_eigenvalue <= 0.0) {
+    if (one_minus_rho <= 0.0 || common_eigenvalue <= 0.0) {
         return -std::numeric_limits<double>::infinity();
     }
 
-    double sum_squares = 0.0;
-    double sum = 0.0;
-    for (int j = 0; j < spec.dim; ++j) {
-        const double z = normal_quantile_refined(row[j]);
-        sum_squares += z * z;
-        sum += z;
-    }
-    const double square_sum = sum * sum;
+    const double square_sum = stats.sum * stats.sum;
     const double log_det =
         static_cast<double>(spec.dim - 1) * std::log(one_minus_rho)
         + std::log(common_eigenvalue);
@@ -175,11 +196,12 @@ double equicorr_log_pdf(
             / std::pow(one_minus_rho * common_eigenvalue, 2.0);
         *dlog_drho =
             -0.5 * dlog_det
-            -0.5 * (ddiagonal * sum_squares + dcommon * square_sum);
+            -0.5 * (
+                ddiagonal * stats.sum_squares + dcommon * square_sum);
     }
     return -0.5 * log_det
         -0.5 * (
-            diagonal_term * sum_squares + common_term * square_sum);
+            diagonal_term * stats.sum_squares + common_term * square_sum);
 }
 
 double copula_transform(const scar::CopulaSpec& spec, double x) {

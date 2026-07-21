@@ -162,11 +162,11 @@ bool matrix_forward_predictive_mean(
         r_grid[static_cast<std::size_t>(j)] =
             copula_transform(copula, grid.x_grid[static_cast<std::size_t>(j)]);
     }
+    std::vector<double> source(static_cast<std::size_t>(grid.K), 0.0);
 
     auto advance_matrix = [&](const std::vector<double>& phi,
                               const std::vector<double>& fi_row,
                               std::vector<double>& phi_next) -> bool {
-        std::vector<double> source(static_cast<std::size_t>(grid.K), 0.0);
         for (int j = 0; j < grid.K; ++j) {
             const std::size_t idx = static_cast<std::size_t>(j);
             source[idx] = fi_row[idx] * phi[idx] * grid.trap_w[idx];
@@ -206,7 +206,8 @@ bool matrix_forward_mixture_h(
     const std::vector<double>& matrix,
     const double* u,
     std::int64_t n_obs,
-    double* out) {
+    double* out,
+    double* out_reverse) {
 
     if (copula.family == scar::CopulaFamily::Student) {
         return false;
@@ -217,11 +218,17 @@ bool matrix_forward_mixture_h(
         r_grid[static_cast<std::size_t>(j)] =
             copula_transform(copula, grid.x_grid[static_cast<std::size_t>(j)]);
     }
+    std::vector<double> source(static_cast<std::size_t>(grid.K), 0.0);
+    const std::size_t n_obs_size = static_cast<std::size_t>(n_obs);
+    const bool use_gaussian_quantiles =
+        copula.family == scar::CopulaFamily::Gaussian
+        && copula.rotation == scar::Rotation::R0
+        && copula.gaussian_z1_cache.size() == n_obs_size
+        && copula.gaussian_z2_cache.size() == n_obs_size;
 
     auto advance_matrix = [&](const std::vector<double>& phi,
                               const std::vector<double>& fi_row,
                               std::vector<double>& phi_next) -> bool {
-        std::vector<double> source(static_cast<std::size_t>(grid.K), 0.0);
         for (int j = 0; j < grid.K; ++j) {
             const std::size_t idx = static_cast<std::size_t>(j);
             source[idx] = fi_row[idx] * phi[idx] * grid.trap_w[idx];
@@ -245,13 +252,38 @@ bool matrix_forward_mixture_h(
                       const std::vector<double>& weights,
                       const std::vector<double>& /*fi_row*/) {
         double h_mix = 0.0;
+        double h_mix_reverse = 0.0;
         const double u2 = u[2 * t + 1];
         const double u1 = u[2 * t];
-        for (int j = 0; j < grid.K; ++j) {
-            const std::size_t idx = static_cast<std::size_t>(j);
-            h_mix += weights[idx] * copula_h_rotated(copula, u2, u1, r_grid[idx]);
+        if (use_gaussian_quantiles) {
+            const std::size_t row = static_cast<std::size_t>(t);
+            const double z1 = copula.gaussian_z1_cache[row];
+            const double z2 = copula.gaussian_z2_cache[row];
+            for (int j = 0; j < grid.K; ++j) {
+                const std::size_t idx = static_cast<std::size_t>(j);
+                h_mix += weights[idx]
+                    * gaussian_h_from_quantiles(z2, z1, r_grid[idx]);
+                if (out_reverse != nullptr) {
+                    h_mix_reverse += weights[idx]
+                        * gaussian_h_from_quantiles(z1, z2, r_grid[idx]);
+                }
+            }
+        } else {
+            for (int j = 0; j < grid.K; ++j) {
+                const std::size_t idx = static_cast<std::size_t>(j);
+                h_mix += weights[idx]
+                    * copula_h_rotated(copula, u2, u1, r_grid[idx]);
+                if (out_reverse != nullptr) {
+                    h_mix_reverse += weights[idx]
+                        * copula_h_rotated(copula, u1, u2, r_grid[idx]);
+                }
+            }
         }
         out[t] = std::min(std::max(h_mix, kHEps), 1.0 - kHEps);
+        if (out_reverse != nullptr) {
+            out_reverse[t] = std::min(
+                std::max(h_mix_reverse, kHEps), 1.0 - kHEps);
+        }
     };
 
     return forward_filter_grid(copula, grid, u, n_obs, advance_matrix, on_row);
@@ -271,11 +303,11 @@ bool local_forward_predictive_mean(
         r_grid[static_cast<std::size_t>(j)] =
             copula_transform(copula, grid.x_grid[static_cast<std::size_t>(j)]);
     }
+    std::vector<double> source(static_cast<std::size_t>(grid.K), 0.0);
 
     auto advance_local = [&](const std::vector<double>& phi,
                              const std::vector<double>& fi_row,
                              std::vector<double>& phi_next) -> bool {
-        std::vector<double> source(static_cast<std::size_t>(grid.K), 0.0);
         for (int j = 0; j < grid.K; ++j) {
             const std::size_t idx = static_cast<std::size_t>(j);
             source[idx] = fi_row[idx] * phi[idx] * grid.trap_w[idx];
@@ -324,7 +356,8 @@ bool local_forward_mixture_h(
     const std::vector<double>& gh_weights,
     const double* u,
     std::int64_t n_obs,
-    double* out) {
+    double* out,
+    double* out_reverse) {
 
     if (copula.family == scar::CopulaFamily::Student) {
         return false;
@@ -335,11 +368,17 @@ bool local_forward_mixture_h(
         r_grid[static_cast<std::size_t>(j)] =
             copula_transform(copula, grid.x_grid[static_cast<std::size_t>(j)]);
     }
+    std::vector<double> source(static_cast<std::size_t>(grid.K), 0.0);
+    const std::size_t n_obs_size = static_cast<std::size_t>(n_obs);
+    const bool use_gaussian_quantiles =
+        copula.family == scar::CopulaFamily::Gaussian
+        && copula.rotation == scar::Rotation::R0
+        && copula.gaussian_z1_cache.size() == n_obs_size
+        && copula.gaussian_z2_cache.size() == n_obs_size;
 
     auto advance_local = [&](const std::vector<double>& phi,
                              const std::vector<double>& fi_row,
                              std::vector<double>& phi_next) -> bool {
-        std::vector<double> source(static_cast<std::size_t>(grid.K), 0.0);
         for (int j = 0; j < grid.K; ++j) {
             const std::size_t idx = static_cast<std::size_t>(j);
             source[idx] = fi_row[idx] * phi[idx] * grid.trap_w[idx];
@@ -371,13 +410,38 @@ bool local_forward_mixture_h(
                       const std::vector<double>& weights,
                       const std::vector<double>& /*fi_row*/) {
         double h_mix = 0.0;
+        double h_mix_reverse = 0.0;
         const double u2 = u[2 * t + 1];
         const double u1 = u[2 * t];
-        for (int j = 0; j < grid.K; ++j) {
-            const std::size_t idx = static_cast<std::size_t>(j);
-            h_mix += weights[idx] * copula_h_rotated(copula, u2, u1, r_grid[idx]);
+        if (use_gaussian_quantiles) {
+            const std::size_t row = static_cast<std::size_t>(t);
+            const double z1 = copula.gaussian_z1_cache[row];
+            const double z2 = copula.gaussian_z2_cache[row];
+            for (int j = 0; j < grid.K; ++j) {
+                const std::size_t idx = static_cast<std::size_t>(j);
+                h_mix += weights[idx]
+                    * gaussian_h_from_quantiles(z2, z1, r_grid[idx]);
+                if (out_reverse != nullptr) {
+                    h_mix_reverse += weights[idx]
+                        * gaussian_h_from_quantiles(z1, z2, r_grid[idx]);
+                }
+            }
+        } else {
+            for (int j = 0; j < grid.K; ++j) {
+                const std::size_t idx = static_cast<std::size_t>(j);
+                h_mix += weights[idx]
+                    * copula_h_rotated(copula, u2, u1, r_grid[idx]);
+                if (out_reverse != nullptr) {
+                    h_mix_reverse += weights[idx]
+                        * copula_h_rotated(copula, u1, u2, r_grid[idx]);
+                }
+            }
         }
         out[t] = std::min(std::max(h_mix, kHEps), 1.0 - kHEps);
+        if (out_reverse != nullptr) {
+            out_reverse[t] = std::min(
+                std::max(h_mix_reverse, kHEps), 1.0 - kHEps);
+        }
     };
 
     return forward_filter_grid(copula, grid, u, n_obs, advance_local, on_row);

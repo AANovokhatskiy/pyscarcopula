@@ -159,6 +159,24 @@ They include the target `given_vars`, selected candidate, candidate-level
 reachability statistics, and for beam search the selected per-tree
 `mode_path`.
 
+The `edge_fits` entry records the method that was requested and the methods
+actually retained on fitted edges. A dynamic GAS or SCAR edge that does not
+converge is replaced by its successful MLE family-selection result; this keeps
+the existing fit contract but means the vine-level requested method alone does
+not describe every edge. Inspect:
+
+- `actual_methods` and `family_counts` for final edge counts;
+- `dynamic_attempted_count` and `dynamic_success_count` for dynamic refits;
+- `fallback_count` and `fallback_edges` for MLE replacements;
+- `selection_nfev_total`, `dynamic_attempted_nfev_total`, and
+  `fallback_discarded_nfev` for optimizer work;
+- `edges[*].attempted_message` and `edges[*].timings_ms` for edge-level failure
+  messages and selection, dynamic-fit, and total timings.
+
+The compact `actual_methods`, `fallback_count`, and `fallback_edges` fields are
+also copied to `vine.fit_result`, and `vine.summary()` prints the requested
+method, actual method counts, and dynamic fallback count.
+
 At prediction time:
 
 ```python

@@ -4,12 +4,14 @@ import pytest
 from pyscarcopula import GumbelCopula
 from pyscarcopula.numerical.jacobi_tm import (
     jacobi_forward_mixture_h,
+    jacobi_forward_mixture_h_pair,
     jacobi_forward_predictive_mean,
     jacobi_local_transition_matrix,
     jacobi_matrix_neg_loglik,
     jacobi_matrix_neg_loglik_with_grad,
     jacobi_loglik,
     jacobi_matrix_forward_mixture_h,
+    jacobi_matrix_forward_mixture_h_pair,
     jacobi_matrix_forward_predictive_mean,
     jacobi_matrix_loglik,
     jacobi_matrix_state_distribution,
@@ -383,6 +385,40 @@ def test_jacobi_forward_outputs_are_in_valid_ranges():
     assert tau.shape == prob.shape
     assert np.all((tau > 0.0) & (tau < 1.0))
     np.testing.assert_allclose(np.sum(prob), 1.0, rtol=1e-12, atol=1e-12)
+
+
+def test_jacobi_mixture_h_pair_matches_directional_calls():
+    u = np.array([[0.2, 0.3], [0.4, 0.7], [0.8, 0.6]])
+    copula = GumbelCopula()
+    kwargs = dict(basis_order=6, quad_order=32)
+
+    first, second = jacobi_forward_mixture_h_pair(
+        1.5, 0.4, 0.35, u, copula, **kwargs)
+    np.testing.assert_allclose(
+        first,
+        jacobi_forward_mixture_h(1.5, 0.4, 0.35, u, copula, **kwargs),
+    )
+    np.testing.assert_allclose(
+        second,
+        jacobi_forward_mixture_h(
+            1.5, 0.4, 0.35, u[:, ::-1], copula, **kwargs),
+    )
+
+    first_matrix, second_matrix = jacobi_matrix_forward_mixture_h_pair(
+        1.5, 0.4, 0.35, u, copula,
+        transition_method="local", **kwargs)
+    np.testing.assert_allclose(
+        first_matrix,
+        jacobi_matrix_forward_mixture_h(
+            1.5, 0.4, 0.35, u, copula,
+            transition_method="local", **kwargs),
+    )
+    np.testing.assert_allclose(
+        second_matrix,
+        jacobi_matrix_forward_mixture_h(
+            1.5, 0.4, 0.35, u[:, ::-1], copula,
+            transition_method="local", **kwargs),
+    )
 
 
 def test_jacobi_matrix_forward_outputs_are_in_valid_ranges():

@@ -1,4 +1,4 @@
-"""Optional performance smoke test for the native bivariate GAS filter."""
+"""Opt-in benchmark reporter for the native bivariate GAS filter."""
 
 import os
 import time
@@ -11,7 +11,7 @@ from pyscarcopula.numerical import _cpp_gas
 
 
 @pytest.mark.benchmark
-def test_native_bivariate_gas_filter_speed_smoke():
+def test_native_bivariate_gas_filter_benchmark_report():
     if os.environ.get("PYSCA_RUN_BENCHMARKS") != "1":
         pytest.skip("set PYSCA_RUN_BENCHMARKS=1 to run benchmark checks")
 
@@ -29,4 +29,6 @@ def test_native_bivariate_gas_filter_speed_smoke():
     assert g_path.shape == (len(u),)
     assert r_path.shape == (len(u),)
     assert np.isfinite(log_likelihood)
-    assert elapsed < 5.0
+    # Measurement-only benchmark: absolute wall-clock gates are not portable.
+    print(f"BENCH bivariate_gas_filter elapsed_ms={1e3 * elapsed:.3f}",
+          flush=True)

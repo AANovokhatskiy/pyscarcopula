@@ -15,6 +15,7 @@ from pyscarcopula.numerical.gas_filter import (
     gas_filter,
     gas_loglik,
     gas_mixture_h,
+    gas_mixture_h_pair,
     gas_negloglik,
     gas_predict_param,
 )
@@ -30,6 +31,18 @@ from pyscarcopula.strategy.predict_helpers import (
     predict_from_strategy,
     sample_predictive,
 )
+
+
+def _automatic_gas_start(copula, u, config, initial_mle_result=None):
+    """Build the standard GAS start, reusing a static fit when available."""
+    mle_result = initial_mle_result
+    if mle_result is None:
+        from pyscarcopula.strategy.mle import MLEStrategy
+        mle_result = MLEStrategy(config=config).fit(copula, u)
+    mu_mle = float(np.atleast_1d(
+        copula.inv_transform(np.atleast_1d(mle_result.copula_param))
+    )[0])
+    return np.array([mu_mle * 0.05, 0.05, 0.95])
 
 
 @register_strategy("GAS")
@@ -189,6 +202,7 @@ class GASStrategy:
         gamma_bound,
         beta_bound,
         verbose,
+        initial_mle_result=None,
     ):
         n_corr = int(copula._corr_num_params())
         self._ensure_correlation_initialized(copula, u)
@@ -200,17 +214,8 @@ class GASStrategy:
                 "corr_mode='shrinkage'")
 
         if gamma0 is None:
-            from pyscarcopula.strategy.mle import MLEStrategy
-
-            mle_result = MLEStrategy(config=self.config).fit(copula, u)
-            mu_mle = float(
-                np.atleast_1d(
-                    copula.inv_transform(
-                        np.atleast_1d(mle_result.copula_param)
-                    )
-                )[0]
-            )
-            gas0 = np.array([mu_mle * 0.05, 0.05, 0.95])
+            gas0 = _automatic_gas_start(
+                copula, u, self.config, initial_mle_result)
             fitted_corr = np.asarray(
                 copula._pack_corr_params(), dtype=np.float64).reshape(-1)
             if fitted_corr.size == n_corr:
@@ -284,6 +289,12 @@ class GASStrategy:
             "initial_params": joint0.copy(),
             "final_params": np.asarray(result.x, dtype=np.float64).copy(),
         }
+        if gamma0 is None:
+            diagnostics["initialization"] = {
+                "mle_source": (
+                    "selection_result" if initial_mle_result is not None
+                    else "strategy_fit")
+            }
         return self._build_result(
             copula,
             u,
@@ -313,6 +324,7 @@ class GASStrategy:
         gamma_bound: float | None = None,
         beta_bound: float | None = None,
         verbose: bool = False,
+        initial_mle_result=None,
         **kwargs,
     ) -> GASResult:
         """Fit the native GAS model."""
@@ -367,6 +379,7 @@ class GASStrategy:
         if not 0 < beta_bound < 1:
             raise ValueError("beta_bound must be in (0, 1)")
 
+        automatic_initialization = gamma0 is None
         if corr_num_params:
             return self._fit_joint_static_shrinkage(
                 copula,
@@ -377,20 +390,12 @@ class GASStrategy:
                 gamma_bound,
                 beta_bound,
                 verbose,
+                initial_mle_result,
             )
 
         if gamma0 is None:
-            from pyscarcopula.strategy.mle import MLEStrategy
-
-            mle_result = MLEStrategy(config=self.config).fit(copula, u)
-            mu_mle = float(
-                np.atleast_1d(
-                    copula.inv_transform(
-                        np.atleast_1d(mle_result.copula_param)
-                    )
-                )[0]
-            )
-            gamma0 = np.array([mu_mle * 0.05, 0.05, 0.95])
+            gamma0 = _automatic_gas_start(
+                copula, u, self.config, initial_mle_result)
 
         if verbose:
             print(
@@ -436,6 +441,15 @@ class GASStrategy:
             gamma_bound,
             beta_bound,
             parameter_count=parameter_count,
+            diagnostics=(
+                {"initialization": {
+                    "mle_source": (
+                        "selection_result"
+                        if initial_mle_result is not None
+                        else "strategy_fit")
+                }}
+                if automatic_initialization else None
+            ),
         )
 
     def log_likelihood(self, copula, u: np.ndarray, result: GASResult) -> float:
@@ -455,6 +469,7 @@ class GASStrategy:
         copula,
         u: np.ndarray,
         result: GASResult,
+        **kwargs,
     ) -> np.ndarray:
         p = result.params
         _, r_path, _ = gas_filter(
@@ -487,6 +502,27 @@ class GASStrategy:
                 "pair h-functions are not defined for multivariate GAS")
         p = result.params
         return gas_mixture_h(
+            p.omega,
+            p.gamma,
+            p.beta,
+            u,
+            copula,
+            result.scaling,
+            self._score_eps(result),
+        )
+
+    def mixture_h_pair(
+        self,
+        copula,
+        u: np.ndarray,
+        result: GASResult,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Both h-directions from one GAS-filtered parameter path."""
+        if is_multivariate_copula(copula):
+            raise NotImplementedError(
+                "pair h-functions are not defined for multivariate GAS")
+        p = result.params
+        return gas_mixture_h_pair(
             p.omega,
             p.gamma,
             p.beta,

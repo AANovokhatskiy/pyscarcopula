@@ -652,6 +652,13 @@ def _h_grid_on_theta(copula, u, theta):
     ])
 
 
+def _h_pair_grids_on_theta(copula, u, theta):
+    """Return h(u2 | u1) and h(u1 | u2) grids for one orientation."""
+    first = _h_grid_on_theta(copula, u, theta)
+    second = _h_grid_on_theta(copula, np.asarray(u)[:, ::-1], theta)
+    return first, second
+
+
 def _matrix_setup(
         kappa,
         m,
@@ -1046,6 +1053,37 @@ def jacobi_matrix_forward_mixture_h(
     return clip_h_function_values(out)
 
 
+def jacobi_matrix_forward_mixture_h_pair(
+        kappa,
+        m,
+        xi,
+        u,
+        copula,
+        basis_order=32,
+        quad_order=None,
+        theta_cap=None,
+        transition_method="auto",
+        clip_negative=False,
+        negative_mass_tol=1e-5,
+        gh_order=5):
+    """Return both h-directions from one Jacobi matrix filter pass."""
+    setup = _matrix_setup(
+        kappa, m, xi, u, copula, basis_order, quad_order, theta_cap,
+        transition_method, clip_negative, negative_mass_tol, gh_order)
+    if setup is None:
+        raise ValueError("invalid Jacobi parameters or observations")
+    u, _, weights, transition, fi_grid, theta = setup
+
+    first = np.empty(len(u), dtype=np.float64)
+    second = np.empty(len(u), dtype=np.float64)
+    first_grid, second_grid = _h_pair_grids_on_theta(copula, u, theta)
+    for t, predicted, _, _ in _iter_matrix_filter(
+            weights, transition, fi_grid):
+        first[t] = np.sum(predicted * first_grid[t])
+        second[t] = np.sum(predicted * second_grid[t])
+    return clip_h_function_values(first), clip_h_function_values(second)
+
+
 def jacobi_matrix_state_distribution(
         kappa,
         m,
@@ -1217,6 +1255,32 @@ def jacobi_forward_mixture_h(
         density_ratio = basis @ predicted_coeff
         out[t] = np.sum(weights * h_grid[t] * density_ratio)
     return clip_h_function_values(out)
+
+
+def jacobi_forward_mixture_h_pair(
+        kappa,
+        m,
+        xi,
+        u,
+        copula,
+        basis_order=32,
+        quad_order=None,
+        theta_cap=None):
+    """Return both h-directions from one Jacobi coefficient filter pass."""
+    setup = _setup(kappa, m, xi, u, copula, basis_order, quad_order, theta_cap)
+    if setup is None:
+        raise ValueError("invalid Jacobi parameters or observations")
+    u, _, weights, basis, powers, fi_grid, theta = setup
+
+    first = np.empty(len(u), dtype=np.float64)
+    second = np.empty(len(u), dtype=np.float64)
+    first_grid, second_grid = _h_pair_grids_on_theta(copula, u, theta)
+    for t, predicted_coeff, _, _ in _iter_coeff_filter(
+            powers, fi_grid, weights, basis):
+        density_ratio = basis @ predicted_coeff
+        first[t] = np.sum(weights * first_grid[t] * density_ratio)
+        second[t] = np.sum(weights * second_grid[t] * density_ratio)
+    return clip_h_function_values(first), clip_h_function_values(second)
 
 
 def _coeff_to_prob(coeff, weights, basis):

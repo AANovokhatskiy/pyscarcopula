@@ -2,8 +2,63 @@ import os
 import sys
 from pathlib import Path
 
-from pybind11.setup_helpers import Pybind11Extension, build_ext
+from pybind11.setup_helpers import Pybind11Extension
+from pybind11.setup_helpers import build_ext as _build_ext
 from setuptools import setup
+
+
+class build_ext(_build_ext):
+    """Support building the extension with MinGW GCC on Windows.
+
+    MSVC remains the default Windows toolchain. To use GCC instead:
+
+        python setup.py build_ext --compiler=mingw32
+
+    or, for pip/PEP 517 builds, set the environment variable:
+
+        PYSCA_CPP_COMPILER=mingw32
+    """
+
+    def finalize_options(self):
+        compiler = os.environ.get("PYSCA_CPP_COMPILER", "").strip()
+        if compiler:
+            self.compiler = compiler
+        super().finalize_options()
+
+    def build_extension(self, ext):
+        if self.compiler.compiler_type == "mingw32":
+            # pybind11 assumes MSVC on Windows and injects cl-style flags;
+            # translate them for GCC.
+            translated = []
+            for arg in ext.extra_compile_args:
+                if arg.startswith("/std:"):
+                    translated.append("-std=" + arg[len("/std:"):])
+                elif arg == "/W4":
+                    translated.extend(["-Wall", "-Wextra"])
+                elif arg == "/WX":
+                    translated.append("-Werror")
+                elif arg in ("/EHsc", "/bigobj"):
+                    continue  # no GCC equivalent needed
+                else:
+                    translated.append(arg)
+            if "-fvisibility=hidden" not in translated:
+                translated.append("-fvisibility=hidden")
+            # Match the optimization level of the MSVC release build
+            # (/O2 /DNDEBUG). Prepended so that user-supplied CFLAGS
+            # (appended by pybind11 at the end) can still override it.
+            ext.extra_compile_args = ["-O2", "-DNDEBUG", *translated]
+            # Link the GCC runtime statically so the built .pyd does not
+            # depend on MSYS2 DLLs (libstdc++-6.dll, libgcc_s_seh-1.dll,
+            # libwinpthread-1.dll) being importable at runtime.
+            ext.extra_link_args = [
+                *ext.extra_link_args,
+                "-static-libstdc++",
+                "-static-libgcc",
+                "-Wl,-Bstatic",
+                "-lwinpthread",
+                "-Wl,-Bdynamic",
+            ]
+        super().build_extension(ext)
 
 
 ROOT = Path(__file__).resolve().parent
@@ -24,6 +79,7 @@ SCAR_CORE_SOURCES = [
     "copula/multivariate.cpp",
     "likelihood/static.cpp",
     "gas/evaluator.cpp",
+    "gas/rvine_sampler.cpp",
     "scar_ou/monte_carlo.cpp",
     "scar_ou/validation.cpp",
     "scar_ou/likelihood.cpp",

@@ -31,7 +31,12 @@ _LBFGSB_OPTION_NAMES = (
 
 @dataclass(frozen=True)
 class LBFGSBConfig:
-    """Default options for scipy.optimize.minimize(method='L-BFGS-B')."""
+    """Options for SciPy's L-BFGS-B optimizer.
+
+    ``None`` means "inherit the library default" when the configuration is
+    merged into :class:`NumericalConfig`. All supplied values must be
+    strictly positive.
+    """
 
     gtol: float | None = None
     ftol: float | None = None
@@ -43,6 +48,7 @@ class LBFGSBConfig:
     finite_diff_rel_step: float | None = None
 
     def merged(self, override: "LBFGSBConfig") -> "LBFGSBConfig":
+        """Return a copy with non-``None`` values from ``override``."""
         values = {
             name: getattr(override, name)
             for name in _LBFGSB_OPTION_NAMES
@@ -50,7 +56,15 @@ class LBFGSBConfig:
         }
         return dataclass_replace(self, **values)
 
-    def options(self, **overrides) -> dict[str, float | int]:
+    def options(
+        self,
+        **overrides: float | int | None,
+    ) -> dict[str, float | int]:
+        """Return validated options suitable for ``scipy.optimize.minimize``.
+
+        Keyword arguments override fields on this object. Unknown option
+        names raise :class:`TypeError` instead of being silently ignored.
+        """
         values = {
             name: getattr(self, name)
             for name in _LBFGSB_OPTION_NAMES
@@ -71,7 +85,7 @@ class LBFGSBConfig:
         }
 
     @staticmethod
-    def _validated_option(name: str, value):
+    def _validated_option(name: str, value: float | int) -> float | int:
         if name in ('maxfun', 'maxiter', 'maxls', 'maxcor'):
             value = int(value)
         else:
@@ -118,8 +132,13 @@ DEFAULT_STOCHASTIC_STUDENT_GAS_OPTIMIZER = LBFGSBConfig(
 class NumericalConfig:
     """Shared optimizer and algorithm configuration.
 
-    Users can override defaults at construction time:
-        config = NumericalConfig(default_K=500, bisection_tol=1e-12)
+    This immutable object centralizes numerical tolerances, grid sizes, Monte
+    Carlo defaults, and optimizer options. Unspecified optimizer fields are
+    filled from the method-specific defaults during initialization.
+
+    Examples
+    --------
+    >>> config = NumericalConfig(default_K=500, bisection_tol=1e-12)
     """
 
     # Numerical failure policy
@@ -161,7 +180,7 @@ class NumericalConfig:
     default_n_tr: int = 500
     default_M_iterations: int = 3
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         object.__setattr__(
             self, 'mle_optimizer',
             DEFAULT_MLE_OPTIMIZER.merged(self.mle_optimizer))
@@ -189,7 +208,29 @@ DEFAULT_CONFIG = NumericalConfig()
 
 @dataclass(frozen=True)
 class PredictConfig:
-    """Prediction-time options shared by API, copulas, vines, and strategies."""
+    """Prediction-time options shared by copulas, vines, and strategies.
+
+    Parameters
+    ----------
+    given : dict[int, float] or None
+        Coordinates fixed during conditional sampling, expressed in
+        pseudo-observation space.
+    horizon : {"current", "next"}
+        Whether to use the filtered current state or advance it one step.
+    predictive_r_mode : {"grid", "histogram"} or None
+        Sampling representation for a predictive scalar parameter.
+    dynamic_conditioning : {"ignore", "given_only"}
+        Policy for updating dynamic vine edges from conditioned values.
+    return_diagnostics : bool
+        Request prediction diagnostics from models that support them.
+    mcmc_steps, mcmc_burnin : int or None
+        Optional non-negative controls for conditional MCMC sampling.
+
+    Notes
+    -----
+    Call :meth:`validated` after direct construction, or use :meth:`replace`,
+    to normalize string values and validate integer controls.
+    """
 
     given: dict[int, float] | None = None
     horizon: str = 'next'
@@ -200,6 +241,7 @@ class PredictConfig:
     mcmc_burnin: int | None = None
 
     def validated(self) -> "PredictConfig":
+        """Return a normalized, validated copy of this configuration."""
         horizon = str(self.horizon).lower()
         if horizon not in ('current', 'next'):
             raise ValueError("horizon must be 'current' or 'next'")
@@ -234,11 +276,15 @@ class PredictConfig:
             mcmc_burnin=mcmc_burnin,
         )
 
-    def replace(self, **kwargs) -> "PredictConfig":
+    def replace(self, **kwargs: Any) -> "PredictConfig":
+        """Return a validated copy with selected fields replaced."""
         return dataclass_replace(self, **kwargs).validated()
 
     @staticmethod
-    def _validate_optional_nonnegative_int(value, name):
+    def _validate_optional_nonnegative_int(
+        value: int | None,
+        name: str,
+    ) -> int | None:
         if value is None:
             return None
         if isinstance(value, (bool, np.bool_)) or not isinstance(
@@ -252,7 +298,12 @@ class PredictConfig:
 
 @dataclass(frozen=True)
 class PredictiveState:
-    """Strategy-level predictive state used to sample copula parameters."""
+    """Strategy-level predictive state used to sample copula parameters.
+
+    This is an internal interchange object. Depending on ``kind``, the state
+    is represented either by a point/path in ``r`` or by probabilities on
+    ``z_grid``. ``metadata`` carries strategy-specific diagnostics.
+    """
 
     method: str
     horizon: str
@@ -285,7 +336,7 @@ class LatentProcessParams:
     bounds_lower: np.ndarray | None = None     # per-param lower bounds
     bounds_upper: np.ndarray | None = None     # per-param upper bounds
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         # Ensure values is a proper numpy array
         object.__setattr__(self, 'values',
                            np.asarray(self.values, dtype=np.float64))
@@ -315,12 +366,17 @@ class LatentProcessParams:
 
     @property
     def n_params(self) -> int:
+        """Number of named process parameters."""
         return len(self.names)
 
     def to_dict(self) -> dict[str, float]:
-        return dict(zip(self.names, self.values))
+        """Return process parameters keyed by their names."""
+        return {
+            name: float(value)
+            for name, value in zip(self.names, self.values)
+        }
 
-    def replace(self, **kwargs) -> LatentProcessParams:
+    def replace(self, **kwargs: float) -> LatentProcessParams:
         """Return a new LatentProcessParams with some values changed."""
         d = self.to_dict()
         d.update(kwargs)
@@ -333,7 +389,7 @@ class LatentProcessParams:
             bounds_upper=self.bounds_upper,
         )
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         pairs = ', '.join(f'{n}={v:.4f}' for n, v in zip(self.names, self.values))
         return f"LatentProcessParams({self.process_type}: {pairs})"
 

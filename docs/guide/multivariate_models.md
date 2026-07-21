@@ -208,3 +208,34 @@ pred = cop.predict(n=10000)
 # Predictive mean parameter path
 params_t = cop.predictive_mean()
 ```
+
+Static Gaussian and Student models also support exact conditional generation
+in pseudo-observation space:
+
+```python
+import numpy as np
+
+from pyscarcopula import GaussianCopula, StudentCopula
+
+gaussian = GaussianCopula()
+gaussian.fit(u, method='mle')
+gaussian_conditional = gaussian.sample_conditional(
+    n=10_000,
+    given={0: 0.25, 2: 0.8},
+    rng=np.random.default_rng(2026),
+)
+
+student = StudentCopula()
+student.fit(u, method='mle')
+student_conditional = student.predict(
+    n=10_000,
+    given={1: 0.6},
+    rng=np.random.default_rng(2026),
+)
+```
+
+`given` maps zero-based variable indices to values strictly inside `(0, 1)`.
+The supplied columns remain fixed and the remaining coordinates are drawn from
+the fitted conditional copula. If every variable is supplied, both APIs return
+constant rows. Static `GaussianCopula` and `StudentCopula` accept only
+`method='mle'`.

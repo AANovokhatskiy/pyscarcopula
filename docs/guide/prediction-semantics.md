@@ -114,6 +114,13 @@ remaining columns from the fitted conditional copula.
 
 For bivariate copulas, `given` can fix variable `0`, variable `1`, or both.
 
+Static multivariate `GaussianCopula` and `StudentCopula` models provide exact
+conditional generation through both `sample_conditional(n, given, rng=...)`
+and `predict(n, given=..., rng=...)`. Dynamic multivariate models apply their
+fitted or predictive parameter path before sampling the free coordinates.
+For every multivariate model, fixing all variables returns constant rows equal
+to the supplied values.
+
 For C-vines, prediction uses C-vine-specific prefix and general conditional
 paths.
 

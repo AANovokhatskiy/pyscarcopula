@@ -7,6 +7,7 @@ Two-phase approach (mirroring pyvinecopulib):
   Phase 2 — Refinement: run L-BFGS-B on the top-N candidates.
 """
 
+from functools import lru_cache
 from typing import NamedTuple
 
 import numpy as np
@@ -115,16 +116,17 @@ def _default_candidates():
             BivariateGaussianCopula]
 
 
+@lru_cache(maxsize=None)
 def _all_rotations(copula_class):
     """Get valid rotations for a copula class."""
     cop = copula_class()
     if hasattr(cop, 'rotatable') and not cop.rotatable:
-        return [0]
+        return (0,)
     try:
         copula_class(rotate=180)
-        return [0, 90, 180, 270]
+        return (0, 90, 180, 270)
     except (ValueError, TypeError):
-        return [0]
+        return (0,)
 
 
 def _kendall_tau(u1, u2):
@@ -133,43 +135,39 @@ def _kendall_tau(u1, u2):
     return _kendall_tau_value(u1, u2)
 
 
-def _itau_initial_param(cop_class, tau_value, rotate):
+def _itau_initial_param(copula, tau_value):
     """Compute initial copula parameter from Kendall's tau.
 
     Returns parameter in the copula's natural domain (before inv_transform).
-    Returns None if no closed-form available.
+    Returns None when the candidate does not implement the public mapping.
     """
-    from pyscarcopula.copula.gumbel import GumbelCopula
-    from pyscarcopula.copula.clayton import ClaytonCopula
-    from pyscarcopula.copula.frank import FrankCopula
-    from pyscarcopula.copula.joe import JoeCopula
+    try:
+        parameter = copula.tau_to_param(
+            np.array([tau_value], dtype=np.float64))
+    except NotImplementedError:
+        return None
+    parameter = np.asarray(parameter, dtype=np.float64).reshape(-1)
+    if parameter.size != 1 or not np.isfinite(parameter[0]):
+        raise ValueError("tau_to_param must return one finite parameter")
+    return float(parameter[0])
+
+
+def _tau_for_itau(cop_class, tau_value):
+    """Return the family-scale tau without altering interior observations."""
     from pyscarcopula.copula.elliptical import BivariateGaussianCopula
 
-    if cop_class is BivariateGaussianCopula:
-        rho = np.sin(np.pi * tau_value / 2.0)
-        return np.clip(rho, -0.99, 0.99)
-
-    tau = max(abs(tau_value), 0.01)
-
-    if cop_class is GumbelCopula:
-        theta = 1.0 / (1.0 - min(tau, 0.95))
-        return max(theta, 1.001)
-
-    if cop_class is ClaytonCopula:
-        theta = 2.0 * tau / (1.0 - min(tau, 0.95))
-        return max(theta, 0.01)
-
-    if cop_class is FrankCopula:
-        return max(9.0 * tau, 0.1)
-
-    if cop_class is JoeCopula:
-        if tau < 0.2:
-            theta = 1.0 + 2.0 * tau
-        else:
-            theta = (1.0 + np.sqrt(1.0 + 8.0 / (1.0 - min(tau, 0.95)))) / 2.0
-        return max(theta, 1.001)
-
-    return None
+    tau = (
+        float(tau_value)
+        if cop_class is BivariateGaussianCopula
+        else abs(float(tau_value))
+    )
+    if tau == 0.0:
+        return None
+    if tau >= 1.0 or tau <= -1.0:
+        # Perfect concordance is attained only at a parameter boundary and
+        # has no finite itau start for the screening likelihood.
+        return None
+    return tau
 
 
 def _rotation_compatible(tau, rotate):
@@ -183,7 +181,8 @@ def _rotation_compatible(tau, rotate):
 
 
 def select_best_copula(u1, u2, candidates, allow_rotations=True,
-                       criterion='aic', transform_type='softplus'):
+                       criterion='aic', transform_type='softplus', *,
+                       u_pair=None, tau_value=None):
     """
     Select best bivariate copula for (u1, u2) by AIC/BIC/logL.
 
@@ -199,6 +198,14 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
     candidates : list of copula classes
     allow_rotations : bool
     criterion : 'aic', 'bic', or 'loglik'
+    transform_type : str
+        Parameter transform forwarded to compatible candidate constructors.
+    u_pair : (T, 2) array, optional
+        Precomputed ``column_stack((u1, u2))``. When supplied, it must contain
+        the same observations as ``u1`` and ``u2`` in the same order.
+    tau_value : float, optional
+        Precomputed Kendall's tau for ``u1`` and ``u2``. When omitted, the
+        statistic is computed internally.
 
     Returns
     -------
@@ -213,9 +220,10 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
     from pyscarcopula._types import IndependentResult
 
     T = len(u1)
-    u_pair = np.column_stack((u1, u2))
+    if u_pair is None:
+        u_pair = np.column_stack((u1, u2))
 
-    tau = _kendall_tau(u1, u2)
+    tau = _kendall_tau(u1, u2) if tau_value is None else float(tau_value)
 
     indep = IndependentCopula()
     indep_result = IndependentResult(
@@ -229,7 +237,10 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
         if cop_class is IndependentCopula:
             continue
 
-        rotations = _all_rotations(cop_class) if allow_rotations else [0]
+        rotations = _all_rotations(cop_class) if allow_rotations else (0,)
+        tau_for_family = _tau_for_itau(cop_class, tau)
+        if tau_for_family is None:
+            continue
 
         for angle in rotations:
             if (cop_class is not BivariateGaussianCopula
@@ -237,20 +248,17 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
                 continue
 
             try:
-                tau_for_family = (
-                    tau if cop_class is BivariateGaussianCopula
-                    else abs(tau)
-                )
-                r0 = _itau_initial_param(cop_class, tau_for_family, angle)
-                if r0 is None:
-                    continue
-
                 try:
                     cop = cop_class(rotate=angle, transform_type=transform_type)
                 except TypeError:
                     cop = cop_class(rotate=angle)
 
-                logL = float(cop.log_likelihood(u_pair, float(r0)))
+                r0 = _itau_initial_param(cop, tau_for_family)
+                if r0 is None:
+                    continue
+
+                logL, evaluator = _screen_log_likelihood(
+                    cop, u_pair, float(r0))
 
                 if not np.isfinite(logL):
                     continue
@@ -263,7 +271,8 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
                 else:
                     score = -logL
 
-                itau_candidates.append((score, cop, r0))
+                itau_candidates.append([score, cop, r0, evaluator])
+                _retain_top_prepared_evaluators(itau_candidates, 3)
             except Exception:
                 continue
 
@@ -276,12 +285,13 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
     best_result = indep_result
 
     for idx in range(n_refine):
-        _, cop, r0 = itau_candidates[idx]
+        _, cop, r0, evaluator = itau_candidates[idx]
         try:
             x0 = cop.inv_transform(
                 np.atleast_1d(np.array([r0], dtype=np.float64)))
             alpha0 = np.atleast_1d(x0)[0:1]
-            result = _fit_mle_direct(cop, u_pair, alpha0=alpha0)
+            result = _fit_mle_direct(
+                cop, u_pair, alpha0=alpha0, evaluator=evaluator)
             logL = result.log_likelihood
 
             n_params = 1
@@ -302,8 +312,41 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
     return SelectedCopula(best_copula, best_result)
 
 
-def _fit_mle_direct(copula, u_pair, alpha0=None):
+def _screen_log_likelihood(copula, u_pair, parameter):
+    """Evaluate screening logL and retain reusable native state when safe."""
+    from pyscarcopula.copula.base import BivariateCopula
+    from pyscarcopula.numerical import static_likelihood
+
+    uses_native_base = (
+        getattr(type(copula), "log_likelihood", None)
+        is BivariateCopula.log_likelihood
+    )
+    if uses_native_base and static_likelihood.supported(copula):
+        evaluator = static_likelihood.prepare(copula, u_pair)
+        return float(evaluator.log_likelihood(parameter)), evaluator
+    return float(copula.log_likelihood(u_pair, parameter)), None
+
+
+def _retain_top_prepared_evaluators(candidates, limit):
+    """Keep native observation copies only for the current stable top-N."""
+    if len(candidates) <= limit:
+        return
+    retained = set(sorted(
+        range(len(candidates)),
+        key=lambda index: candidates[index][0],
+    )[:limit])
+    for index, candidate in enumerate(candidates):
+        if index not in retained:
+            candidate[3] = None
+
+
+def _fit_mle_direct(copula, u_pair, alpha0=None, evaluator=None):
     """Fit MLE without the public API dispatch overhead."""
     from pyscarcopula.strategy.mle import MLEStrategy
 
-    return MLEStrategy().fit(copula, u_pair, alpha0=alpha0)
+    return MLEStrategy().fit(
+        copula,
+        u_pair,
+        alpha0=alpha0,
+        _prepared_evaluator=evaluator,
+    )

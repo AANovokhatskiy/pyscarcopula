@@ -81,6 +81,22 @@ def test_bivariate_objective_and_gradient_match_native_point_ops(
         expected_gradient, rel=1e-12, abs=1e-12)
 
 
+@pytest.mark.parametrize("factory,parameter", _BIVARIATE_CASES)
+def test_value_only_objective_matches_gradient_objective_exactly(
+        factory, parameter):
+    evaluator = static_likelihood.prepare(factory(), _observations())
+
+    value_only = evaluator.value_result(parameter)
+    with_gradient = evaluator.result(parameter)
+
+    assert value_only["status"] == with_gradient["status"]
+    assert value_only["failure_index"] == with_gradient["failure_index"]
+    assert (
+        value_only["negative_log_likelihood"]
+        == with_gradient["negative_log_likelihood"]
+    )
+
+
 def test_static_evaluator_reports_first_numerical_failure():
     evaluator = static_likelihood.prepare(
         ClaytonCopula(), np.array([[0.2, 0.3], [0.4, 0.7]]))
@@ -373,7 +389,7 @@ def test_multivariate_student_rows_objective_and_gradient():
         finite_difference, abs=2e-7)
 
 
-@pytest.mark.parametrize("family", ["gaussian", "student"])
+@pytest.mark.parametrize("family", ["gaussian", "equicorr", "student"])
 def test_static_likelihood_quantile_boundaries_match_clipped_inputs(family):
     u = np.array(
         [
@@ -393,6 +409,9 @@ def test_static_likelihood_quantile_boundaries_match_clipped_inputs(family):
         copula._set_dimension(3, allow_change=True)
         copula.corr = _correlation()
         parameter = 0.0
+    elif family == "equicorr":
+        copula = EquicorrGaussianCopula(d=3)
+        parameter = 0.25
     else:
         copula = StudentCopula()
         copula._set_dimension(3, allow_change=True)
@@ -423,6 +442,19 @@ def test_equicorr_objective_gradient_is_in_parameter_space():
 
     assert result["negative_gradient"] == pytest.approx(
         finite_difference, abs=2e-7)
+
+
+@pytest.mark.parametrize("rho", [-0.2, 0.0, 0.65])
+def test_equicorr_prepared_rows_match_direct_native_rows(rho):
+    u = _observations(37, 4)
+    copula = EquicorrGaussianCopula(d=4)
+    evaluator = static_likelihood.prepare(copula, u)
+
+    expected = copula.log_pdf_rows(u, rho)
+    np.testing.assert_allclose(
+        evaluator.log_pdf_rows(rho), expected, rtol=0.0, atol=2e-14)
+    assert evaluator.result(rho)["negative_log_likelihood"] == pytest.approx(
+        -np.sum(expected), rel=0.0, abs=2e-13)
 
 
 def test_stochastic_student_static_objective_uses_exact_native_quantiles():

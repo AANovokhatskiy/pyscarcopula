@@ -39,7 +39,10 @@ from pyscarcopula.strategy.initial_point import (
 from pyscarcopula.numerical.mc_samplers import (
     p_sampler_loglik, m_sampler_loglik, eis_find_auxiliary,
 )
-from pyscarcopula.numerical.ou_kernels import calculate_dwt
+from pyscarcopula.numerical.ou_kernels import (
+    calculate_dwt,
+    sample_ou_trajectory,
+)
 
 
 class _SCARMCBase:
@@ -159,16 +162,7 @@ class _SCARMCBase:
             rng = np.random.default_rng()
         p = result.params
         kappa, mu, nu = p.kappa, p.mu, p.nu
-        dt = 1.0 / (n - 1) if n > 1 else 1.0
-        rho_ou = np.exp(-kappa * dt)
-        sigma_cond = np.sqrt(nu ** 2 / (2.0 * kappa) * (1.0 - rho_ou ** 2))
-        x = np.empty(n)
-        x[0] = rng.normal(mu, nu / np.sqrt(2.0 * kappa))
-        for t in range(1, n):
-            x[t] = (
-                mu + rho_ou * (x[t - 1] - mu)
-                + sigma_cond * rng.standard_normal()
-            )
+        x = sample_ou_trajectory(kappa, mu, nu, n, rng)
         return copula.transform(x)
 
     def model_sample_state(self, copula, result, **kwargs):

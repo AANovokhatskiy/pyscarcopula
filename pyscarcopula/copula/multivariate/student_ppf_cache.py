@@ -14,6 +14,12 @@ from pyscarcopula._utils import clip_pseudo_observations
 
 _CACHE_VERSIONS = count(1)
 
+# Upper bound for the precomputed PPF table (nodes × T × d × 8 bytes).
+# Above the limit the table is skipped and every evaluation falls back to
+# the exact ``stdtrit`` quantile — the C++ kernels do the same when the
+# spec carries no table.
+DEFAULT_MAX_TABLE_BYTES = 256 * 1024 ** 2
+
 
 def _normalized_snapshot(u) -> np.ndarray:
     values = np.ascontiguousarray(np.asarray(u, dtype=np.float64))
@@ -67,14 +73,45 @@ def _interpolate_ppf_table(nodes, table, df):
 
 
 class StudentPPFTable:
-    """Precomputed Student inverse-CDF table with smooth df interpolation."""
+    """Precomputed Student inverse-CDF table with smooth df interpolation.
 
-    def __init__(self, u, df_lo=2.005, df_hi=250.0, n_lo=120, n_hi=80):
+    The table has shape ``(n_df_nodes, T, d)`` and costs
+    ``n_nodes * T * d * 8`` bytes. When that estimate exceeds
+    ``max_table_bytes`` (default ``DEFAULT_MAX_TABLE_BYTES``, 256 MiB) the
+    table is not built (``table is None``) and Python evaluations fall back
+    to the exact ``stdtrit`` quantile. Nodes include a dense boundary layer
+    at the model's ``2 + 1e-6`` df limit and extend to 1000, above which the
+    native dynamic-emission kernel uses a controlled normal asymptotic.
+    """
+
+    def __init__(self, u, df_lo=2.0 + 1e-6, df_hi=1000.0,
+                 n_boundary=80, n_lo=120, n_hi=160,
+                 max_table_bytes=DEFAULT_MAX_TABLE_BYTES):
         u_c = clip_pseudo_observations(u)
         self.u = np.ascontiguousarray(u_c, dtype=np.float64)
-        nodes_lo = np.linspace(df_lo, 5.0, n_lo)
+        if not (2.0 < df_lo < 2.005):
+            raise ValueError("df_lo must cover the model boundary below 2.005")
+        if df_hi <= 5.0:
+            raise ValueError("df_hi must exceed 5")
+        # The softplus transform can approach 2 + 1e-6 very closely.  A
+        # geometric boundary layer preserves interpolation accuracy there
+        # without forcing exact Student quantiles inside optimizer loops.
+        boundary_stop = 2.005
+        boundary_delta = boundary_stop - df_lo
+        nodes_boundary = np.concatenate((
+            np.array([df_lo]),
+            df_lo + np.geomspace(1e-10, boundary_delta, n_boundary),
+        ))
+        nodes_lo = np.linspace(boundary_stop, 5.0, n_lo)
         nodes_hi = np.geomspace(5.0, df_hi, n_hi)
-        self.nodes = np.unique(np.concatenate([nodes_lo, nodes_hi]))
+        self.nodes = np.unique(np.concatenate([
+            nodes_boundary, nodes_lo, nodes_hi]))
+        table_bytes = len(self.nodes) * self.u.size * np.dtype(
+            np.float64).itemsize
+        if table_bytes > max_table_bytes:
+            # Too much memory: degrade to exact per-call quantiles.
+            self.table = None
+            return
         self.table = np.empty(
             (len(self.nodes),) + u_c.shape, dtype=np.float64)
         for index, df_value in enumerate(self.nodes):
@@ -84,7 +121,7 @@ class StudentPPFTable:
         df = float(df)
         if not np.isfinite(df):
             raise ValueError("df must be finite")
-        if df < self.nodes[0] or df > self.nodes[-1]:
+        if self.table is None or df < self.nodes[0] or df > self.nodes[-1]:
             return stdtrit(df, self.u)
         return _interpolate_ppf_table(self.nodes, self.table, df)
 
@@ -93,7 +130,7 @@ class StudentPPFTable:
         df = float(df)
         if not np.isfinite(df):
             raise ValueError("df must be finite")
-        if df < self.nodes[0] or df > self.nodes[-1]:
+        if self.table is None or df < self.nodes[0] or df > self.nodes[-1]:
             return stdtrit(df, self.u[start:stop])
         return _interpolate_ppf_table(
             self.nodes, self.table[:, start:stop], df)
@@ -105,7 +142,7 @@ class StudentPPFCache:
 
     u_shape: tuple
     ppf_nodes: np.ndarray
-    ppf_table: np.ndarray
+    ppf_table: np.ndarray | None
     d: int
     source_ref: object
     _ppf: object

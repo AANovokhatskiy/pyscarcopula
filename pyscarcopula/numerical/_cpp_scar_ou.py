@@ -263,6 +263,18 @@ class PreparedScarOuObjective:
         result = self._native.mixture_h(params)
         return clip_h_function_values(_vector_result(result))
 
+    def mixture_h_pair(
+            self, kappa, mu, nu) -> tuple[np.ndarray, np.ndarray]:
+        """Return both h-directions from one prepared native forward pass."""
+        params = _params(self.module, kappa, mu, nu)
+        result = self._native.mixture_h_pair(params)
+        values = _vector_result(result)
+        first, second = np.split(values, 2)
+        return (
+            clip_h_function_values(first),
+            clip_h_function_values(second),
+        )
+
     def state_distribution(
             self, kappa, mu, nu,
             horizon: str = "current") -> tuple[np.ndarray, np.ndarray]:
@@ -596,6 +608,23 @@ def mixture_h(kappa, mu, nu, u, copula,
         module.ScarOuEvaluator(), "mixture_h",
         method, params, spec, obs, cfg)
     return clip_h_function_values(_vector_result(result))
+
+
+def mixture_h_pair(kappa, mu, nu, u, copula,
+                   config: AutoTMConfig | None = None
+                   ) -> tuple[np.ndarray, np.ndarray]:
+    """Return both SCAR-TM h-directions from one C++ grid filter pass."""
+    module, params, spec, obs, cfg, method = _inputs(
+        kappa, mu, nu, u, copula, _grid_config(config))
+    result = _call_vector(
+        module.ScarOuEvaluator(), "mixture_h_pair",
+        method, params, spec, obs, cfg)
+    values = _vector_result(result)
+    first, second = np.split(values, 2)
+    return (
+        clip_h_function_values(first),
+        clip_h_function_values(second),
+    )
 
 
 def state_distribution(kappa, mu, nu, u, copula,

@@ -18,8 +18,19 @@ Official wheels contain the compiled extension used for built-in copula
 families, static likelihoods, GAS, and SCAR-TM-OU evaluation.
 
 Source installs build this extension and fail if it cannot be compiled. You
-need a C++17 compiler: MSVC Build Tools on Windows, Xcode Command Line Tools
-on macOS, or GCC/Clang on Linux.
+need a C++17 compiler: MSVC Build Tools or MinGW-w64 GCC on Windows, Xcode
+Command Line Tools on macOS, or GCC/Clang on Linux. MSVC remains the default
+Windows toolchain. To opt into MinGW-w64 explicitly (for example from an MSYS2
+`ucrt64` shell), use:
+
+```bash
+PYSCA_CPP_COMPILER=mingw32 pip install .
+# or, from the source tree:
+python setup.py build_ext --compiler=mingw32 --inplace
+```
+
+MinGW builds link the GCC and winpthreads runtimes statically, so the resulting
+extension does not require MSYS2 runtime DLLs when imported.
 
 SCAR-TM-OU and GAS require compiled support for the selected family. Custom
 Python copulas may still be used by custom Python strategies and utilities.

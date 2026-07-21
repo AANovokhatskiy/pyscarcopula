@@ -16,12 +16,25 @@ double log1mexp(double x);
 double logsumexp(double a, double b);
 double normal_quantile(double p);
 double normal_quantile_refined(double p);
+struct EquicorrStats {
+    double sum = 0.0;
+    double sum_squares = 0.0;
+};
+bool equicorr_sufficient_statistics(
+    const scar::CopulaSpec& spec,
+    const double* row,
+    EquicorrStats& stats);
 double equicorr_transform(const scar::CopulaSpec& spec, double x);
 double equicorr_inverse_transform(const scar::CopulaSpec& spec, double rho);
 double equicorr_dtransform(const scar::CopulaSpec& spec, double x);
 double equicorr_log_pdf(
     const scar::CopulaSpec& spec,
     const double* row,
+    double rho,
+    double* dlog_drho);
+double equicorr_log_pdf_from_stats(
+    const scar::CopulaSpec& spec,
+    const EquicorrStats& stats,
     double rho,
     double* dlog_drho);
 double copula_transform(const scar::CopulaSpec& spec, double x);
@@ -88,13 +101,24 @@ void gaussian_pdf_and_grad_x_unrotated(
     double x,
     double& pdf,
     double& d_pdf_dx);
+double gaussian_h_from_quantiles(double z_u, double z_v, double rho);
 double gaussian_h_rotated(double u, double v, double rho, int rotation);
 double gaussian_h_inverse_rotated(double q, double given, double rho, int rotation);
+struct StudentWorkspace {
+    std::vector<double> x;
+    std::vector<double> dx_ddf;
+};
 double student_log_pdf(
     const scar::CopulaSpec& spec,
     const double* row,
     double df,
     std::int64_t row_index);
+double student_log_pdf(
+    const scar::CopulaSpec& spec,
+    const double* row,
+    double df,
+    std::int64_t row_index,
+    StudentWorkspace& workspace);
 bool student_log_pdf_and_dlog_ddf(
     const scar::CopulaSpec& spec,
     const double* row,
@@ -102,7 +126,19 @@ bool student_log_pdf_and_dlog_ddf(
     std::int64_t row_index,
     double& log_pdf,
     double& dlog_ddf);
+bool student_log_pdf_and_dlog_ddf(
+    const scar::CopulaSpec& spec,
+    const double* row,
+    double df,
+    std::int64_t row_index,
+    double& log_pdf,
+    double& dlog_ddf,
+    StudentWorkspace& workspace);
 double student_quantile_value(double p, double df);
+void student_quantile_value_and_derivative(
+    double p, double df, double& value, double& derivative);
+void student_quantile_large_df_value_and_derivative(
+    double p, double df, double& value, double& derivative);
 bool student_precision_matrix(
     const scar::CopulaSpec& spec,
     std::vector<double>& precision);

@@ -25,7 +25,7 @@ pyscarcopula/
 |-- numerical/
 |   |-- copula_native.py, multivariate_native.py
 |   |-- static_likelihood.py, gas_filter.py
-|   |-- _cpp_scar_ou.py, _cpp_gas.py
+|   |-- _cpp_scar_ou.py, _cpp_gas.py, _cpp_gas_rvine.py
 |   |-- jacobi_tm.py         # Retained Python Jacobi orchestration
 |   `-- mc_samplers.py       # Retained Python SCAR-MC/EIS orchestration
 |-- vine/
@@ -87,14 +87,15 @@ stattests/ -> fitted strategy outputs + retained GoF orchestration
 ## Native Boundary
 
 The pybind11 C++ extension is mandatory. Built-in point operations, static
-likelihoods, GAS filtering, and SCAR-TM-OU likelihood/gradient/forward
+likelihoods, GAS filtering, multivariate conditional linear algebra,
+sequential GAS R-vine sampling, and SCAR-TM-OU likelihood/gradient/forward
 operations have one production implementation in C++.
 
 Python remains responsible for:
 
 - optimizer orchestration and result construction;
 - correlation parameterization and chain rules around native evaluators;
-- RNG and conditional sampling;
+- RNG and generation of fixed draws used by native conditional sampling;
 - Jacobi filtering orchestration;
 - SCAR-MC/EIS orchestration;
 - goodness-of-fit and contribution analytics.
@@ -108,6 +109,18 @@ copula specification, Student PPF cache, and reusable gradient workspaces.
 Python still owns the raw correlation parameterization and updates only the
 native Student factor between objective calls. Direct functional adapters
 remain available for one-off evaluations.
+
+Gaussian and Student multivariate conditional kernels accept read-only native
+views. C-contiguous NumPy `float64` inputs remain alive for the complete
+synchronous binding call, including the section executed without the GIL, and
+are not copied into C++ vectors. Non-contiguous arrays and other dtypes retain
+pybind11's `forcecast` fallback. Every numeric input still receives one finite
+validation pass before the GIL is released.
+
+Static and prepared SCAR-OU equicorrelation evaluators cache per-row `sum(z)`
+and `sum(z^2)` statistics for their owned observation snapshots. Repeated
+objective, gradient, and forward calls therefore reuse both the per-row normal
+scores and the statistics across every latent-grid node.
 
 ## Custom Python Extensions
 

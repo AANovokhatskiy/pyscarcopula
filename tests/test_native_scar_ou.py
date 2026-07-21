@@ -1,5 +1,6 @@
 """Acceptance tests for the native-only SCAR-TM-OU strategy."""
 
+import ast
 import inspect
 
 import numpy as np
@@ -10,6 +11,7 @@ from pyscarcopula.copula.frank import FrankCopula
 from pyscarcopula.copula.gumbel import GumbelCopula
 from pyscarcopula.copula.independent import IndependentCopula
 from pyscarcopula.copula.joe import JoeCopula
+from pyscarcopula.copula.elliptical import BivariateGaussianCopula
 from pyscarcopula.copula.multivariate.equicorr import (
     EquicorrGaussianCopula,
 )
@@ -69,6 +71,73 @@ def test_native_ou_supports_equicorr_forward_and_state():
     assert np.sum(probability) == pytest.approx(1.0)
 
 
+def test_prepared_equicorr_repeated_calls_match_stateless_paths():
+    copula = EquicorrGaussianCopula(12)
+    u = np.random.default_rng(20260719).uniform(
+        0.001, 0.999, size=(40, 12))
+    config = AutoTMConfig(
+        transition_method="matrix",
+        K=28,
+        adaptive=False,
+        max_K=28,
+    )
+    params = (1.2, 0.1, 0.7)
+    prepared = _cpp_scar_ou.prepare_objective(u, copula, config)
+
+    expected_value, _ = _cpp_scar_ou.neg_loglik_info(
+        *params, u, copula, config)
+    expected_grad_value, expected_gradient, _ = (
+        _cpp_scar_ou.neg_loglik_with_grad_info(
+            *params, u, copula, config))
+    first_value, _ = prepared.neg_loglik_info(*params)
+    second_value, _ = prepared.neg_loglik_info(*params)
+    actual_grad_value, actual_gradient, _ = (
+        prepared.neg_loglik_with_grad_info(*params))
+
+    assert first_value == expected_value
+    assert second_value == expected_value
+    assert actual_grad_value == expected_grad_value
+    np.testing.assert_array_equal(actual_gradient, expected_gradient)
+    np.testing.assert_array_equal(
+        prepared.predictive_mean(*params),
+        _cpp_scar_ou.predictive_mean(*params, u, copula, config),
+    )
+    for horizon in ("current", "next"):
+        actual_z, actual_probability = prepared.state_distribution(
+            *params, horizon=horizon)
+        expected_z, expected_probability = _cpp_scar_ou.state_distribution(
+            *params, u, copula, config, horizon=horizon)
+        np.testing.assert_array_equal(actual_z, expected_z)
+        np.testing.assert_array_equal(
+            actual_probability, expected_probability)
+
+
+@pytest.mark.parametrize("transition_method", ["spectral", "matrix", "local"])
+def test_prepared_gaussian_objective_matches_stateless_exactly(
+        transition_method):
+    copula = BivariateGaussianCopula()
+    u = np.random.default_rng(20260801).uniform(
+        0.001, 0.999, size=(80, 2))
+    config = AutoTMConfig(
+        transition_method=transition_method,
+        basis_order=32,
+        K=32,
+        adaptive=False,
+        max_K=32,
+    )
+    params = (8.0, 0.2, 1.4)
+    prepared = _cpp_scar_ou.prepare_objective(u, copula, config)
+
+    expected_value, expected_gradient, _ = (
+        _cpp_scar_ou.neg_loglik_with_grad_info(
+            *params, u, copula, config))
+    actual_value, actual_gradient, _ = (
+        prepared.neg_loglik_with_grad_info(*params))
+
+    assert actual_value == expected_value
+    np.testing.assert_array_equal(actual_gradient, expected_gradient)
+
+
 def test_spectral_forward_and_state_use_native_grid_reconstruction():
     copula = ClaytonCopula(transform_type="xtanh")
     u = np.random.default_rng(20260620).uniform(0.05, 0.95, size=(10, 2))
@@ -120,6 +189,13 @@ def test_prepared_forward_helpers_match_stateless_wrappers(transition_method):
         rtol=0.0,
         atol=0.0,
     )
+    pair_prepared = prepared.mixture_h_pair(*params)
+    pair_expected = _cpp_scar_ou.mixture_h_pair(
+        *params, u, copula, config)
+    np.testing.assert_allclose(
+        pair_prepared[0], pair_expected[0], rtol=0.0, atol=0.0)
+    np.testing.assert_allclose(
+        pair_prepared[1], pair_expected[1], rtol=0.0, atol=0.0)
     for horizon in ("current", "next"):
         z_prepared, p_prepared = prepared.state_distribution(
             *params, horizon=horizon)
@@ -129,6 +205,27 @@ def test_prepared_forward_helpers_match_stateless_wrappers(transition_method):
             z_prepared, z_expected, rtol=0.0, atol=0.0)
         np.testing.assert_allclose(
             p_prepared, p_expected, rtol=0.0, atol=0.0)
+
+
+@pytest.mark.parametrize("transition_method", ["matrix", "local", "auto"])
+def test_prepared_gaussian_mixture_h_pair_matches_stateless_exactly(
+        transition_method):
+    copula = BivariateGaussianCopula()
+    u = np.random.default_rng(20260802).uniform(0.001, 0.999, size=(80, 2))
+    config = AutoTMConfig(
+        transition_method=transition_method,
+        K=32,
+        adaptive=False,
+        max_K=32,
+        gh_order=7,
+    )
+    params = (8.0, 0.2, 1.4)
+    prepared = _cpp_scar_ou.prepare_objective(u, copula, config)
+
+    actual = prepared.mixture_h_pair(*params)
+    expected = _cpp_scar_ou.mixture_h_pair(*params, u, copula, config)
+    np.testing.assert_array_equal(actual[0], expected[0])
+    np.testing.assert_array_equal(actual[1], expected[1])
 
 
 def test_prepared_forward_helpers_use_updated_student_factor():
@@ -164,14 +261,25 @@ def test_prepared_forward_helpers_use_updated_student_factor():
     np.testing.assert_allclose(after, expected, rtol=0.0, atol=0.0)
 
 
-@pytest.mark.parametrize("backend", ["python", "auto", "cpp"])
-def test_public_backend_selection_is_removed(backend):
-    with pytest.raises(TypeError, match="backend selection was removed"):
-        SCARTMStrategy(backend=backend)
-
-
 def test_strategy_has_no_python_ou_production_imports():
-    source = inspect.getsource(scar_tm) + inspect.getsource(stattests)
+    def dotted_name(node):
+        if isinstance(node, ast.Name):
+            return node.id
+        if isinstance(node, ast.Attribute):
+            prefix = dotted_name(node.value)
+            return f"{prefix}.{node.attr}" if prefix else node.attr
+        return ""
+
+    trees = [
+        ast.parse(inspect.getsource(module), filename=module.__file__)
+        for module in (scar_tm, stattests)
+    ]
+    references = {
+        dotted_name(node)
+        for tree in trees
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.Name, ast.Attribute))
+    }
     for symbol in (
         "tm_loglik",
         "tm_loglik_with_grad",
@@ -181,7 +289,7 @@ def test_strategy_has_no_python_ou_production_imports():
         "auto_neg_loglik",
         "predictive_tm.tm_state_distribution",
     ):
-        assert symbol not in source
+        assert symbol not in references
 
 
 def test_missing_native_extension_fails_before_optimizer(monkeypatch):

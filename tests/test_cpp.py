@@ -128,6 +128,68 @@ def test_cpp_and_python_quantile_boundary_constants_match():
     assert module.PSEUDO_OBS_EPS == PSEUDO_OBS_EPS
 
 
+@pytest.mark.parametrize("df", [1000.0, 2500.0, 10000.0])
+def test_cpp_large_df_student_quantile_asymptotic_is_accurate(df):
+    module = _cpp_scar_ou._cpp_extension.load()
+    probabilities = np.array([
+        PSEUDO_OBS_EPS,
+        1e-6,
+        1e-3,
+        0.1,
+        0.5,
+        0.9,
+        1.0 - 1e-3,
+        1.0 - 1e-6,
+        1.0 - PSEUDO_OBS_EPS,
+    ])
+    result = np.array([
+        module._student_quantile_large_df(float(p), df)
+        for p in probabilities
+    ])
+    values = result[:, 0]
+    derivatives = result[:, 1]
+    expected = t_dist.ppf(probabilities, df=df)
+    step = 1e-2 * max(1.0, df / 1000.0)
+    expected_derivative = (
+        t_dist.ppf(probabilities, df=df + step)
+        - t_dist.ppf(probabilities, df=df - step)
+    ) / (2.0 * step)
+
+    np.testing.assert_allclose(values, expected, rtol=8e-9, atol=5e-8)
+    np.testing.assert_allclose(
+        derivatives, expected_derivative, rtol=2e-5, atol=2e-10)
+
+
+@pytest.mark.parametrize("df", [2.0001, 2.1, 5.0, 30.0, 500.0])
+def test_cpp_exact_student_quantile_df_derivative_matches_scipy(df):
+    module = _cpp_scar_ou._cpp_extension.load()
+    probabilities = np.array([
+        1e-6,
+        1e-3,
+        0.1,
+        0.5,
+        0.9,
+        1.0 - 1e-3,
+        1.0 - 1e-6,
+    ])
+    result = np.array([
+        module._student_quantile_with_df_derivative(float(p), df)
+        for p in probabilities
+    ])
+    step = min(1e-4 * max(df, 1.0), 0.25 * (df - 2.0))
+    expected_derivative = (
+        t_dist.ppf(probabilities, df=df + step)
+        - t_dist.ppf(probabilities, df=df - step)
+    ) / (2.0 * step)
+
+    np.testing.assert_allclose(
+        result[:, 0], t_dist.ppf(probabilities, df=df),
+        rtol=2e-9, atol=2e-10)
+    np.testing.assert_allclose(
+        result[:, 1], expected_derivative,
+        rtol=2e-5, atol=2e-8)
+
+
 @pytest.mark.parametrize("transition_method", ["local", "spectral"])
 def test_cpp_stochastic_student_gradient_matches_python(transition_method):
     rng = np.random.default_rng(20260608)
@@ -614,6 +676,45 @@ def test_cpp_stochastic_student_analytic_gradient_matches_finite_difference():
 
     assert np.isfinite(value)
     np.testing.assert_allclose(grad, finite_diff, rtol=0.0, atol=5e-5)
+
+
+def test_cpp_stochastic_student_large_df_gradient_matches_finite_difference():
+    rng = np.random.default_rng(20260721)
+    u = rng.uniform(0.01, 0.99, size=(18, 3))
+    copula = StochasticStudentCopula(
+        d=3,
+        R=np.array([
+            [1.0, 0.35, 0.1],
+            [0.35, 1.0, 0.3],
+            [0.1, 0.3, 1.0],
+        ]),
+    )
+    cfg = AutoTMConfig(
+        transition_method="local",
+        K=16,
+        adaptive=False,
+        max_K=16,
+        gh_order=5,
+    )
+    # Every grid emission lies beyond the PPF table and therefore exercises
+    # the controlled normal-quantile asymptotic and its analytical df slope.
+    alpha = np.array([1.2, 1200.0, 0.8])
+    value, grad = _cpp_scar_ou.neg_loglik_with_grad(
+        *alpha, u, copula, cfg)
+    finite_diff = np.empty(3)
+    steps = (1e-5, 1e-3, 1e-5)
+    for i, step in enumerate(steps):
+        plus = alpha.copy()
+        minus = alpha.copy()
+        plus[i] += step
+        minus[i] -= step
+        finite_diff[i] = (
+            _cpp_scar_ou.neg_loglik(*plus, u, copula, cfg)
+            - _cpp_scar_ou.neg_loglik(*minus, u, copula, cfg)
+        ) / (2.0 * step)
+
+    assert np.isfinite(value)
+    np.testing.assert_allclose(grad, finite_diff, rtol=0.0, atol=2e-5)
 
 
 @pytest.mark.parametrize("transition_method", ["matrix", "local"])

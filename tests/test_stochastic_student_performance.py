@@ -1,4 +1,4 @@
-"""Optional performance checks for StochasticStudent fast paths."""
+"""Opt-in benchmark reporters for StochasticStudent fast paths."""
 
 import os
 import statistics
@@ -95,7 +95,7 @@ def _print_benchmark(name, **fields):
 
 
 @pytest.mark.benchmark
-def test_stochastic_student_gas_cpp_fast_path_speed_smoke():
+def test_stochastic_student_gas_cpp_fast_path_benchmark_report():
     _skip_unless_enabled()
     copula, u = _example_student()
     params = (0.08, 0.04, 0.92)
@@ -113,7 +113,12 @@ def test_stochastic_student_gas_cpp_fast_path_speed_smoke():
     assert np.all(np.isfinite(g_fast))
     assert np.all(np.isfinite(r_fast))
     assert np.isfinite(ll_fast)
-    assert fast_elapsed < 5.0
+    _print_benchmark(
+        "stochastic_student_gas_fast_path",
+        T=len(u),
+        d=copula.d,
+        elapsed_ms=f"{1e3 * fast_elapsed:.3f}",
+    )
 
 
 @pytest.mark.benchmark

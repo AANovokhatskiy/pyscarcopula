@@ -10,18 +10,21 @@
 
 namespace scar {
 
+/// Numerical representation used for SCAR-OU state propagation.
 enum class OuBackend : int {
     Spectral = 0,
     LocalGh = 1,
     Matrix = 2,
 };
 
+/// Ornstein-Uhlenbeck parameters `(kappa, mu, nu)`.
 struct OuParams {
     double kappa = 1.0;
     double mu = 0.0;
     double nu = 1.0;
 };
 
+/// Grid, quadrature, and automatic-dispatch settings for SCAR-OU kernels.
 struct OuNumericalConfig {
     int K = 300;
     double grid_range = 5.0;
@@ -35,6 +38,7 @@ struct OuNumericalConfig {
     int spectral_quad_order = 0;
 };
 
+/// Likelihood value together with backend and fallback diagnostics.
 struct LogLikResult {
     double log_likelihood = 0.0;
     OuBackend backend = OuBackend::Spectral;
@@ -44,6 +48,7 @@ struct LogLikResult {
     int matrix_fallback_reason = SCAR_FALLBACK_NONE;
 };
 
+/// Negative likelihood and gradients with backend diagnostics.
 struct GradLogLikResult {
     double neg_log_likelihood = 0.0;
     std::vector<double> neg_gradient;
@@ -55,6 +60,7 @@ struct GradLogLikResult {
     std::vector<double> neg_corr_gradient;
 };
 
+/// Discrete posterior or predictive distribution over latent states.
 struct StateDistribution {
     std::vector<double> z_grid;
     std::vector<double> prob;
@@ -125,6 +131,11 @@ struct ScarOuSpectralGradientWorkspace {
     std::vector<double> dx_dalpha;
     std::vector<double> r_grid;
     std::vector<double> dpsi_grid;
+    std::vector<double> gaussian_r2;
+    std::vector<double> gaussian_omr2;
+    std::vector<double> gaussian_log_norm;
+    std::vector<double> gaussian_dlog_det;
+    std::vector<double> gaussian_omr2_squared;
     std::vector<double> coeff;
     std::vector<double> dcoeff;
     std::vector<double> projected;
@@ -142,6 +153,10 @@ struct ScarOuSpectralGradientWorkspace {
     std::vector<double> corr_dlog_scale;
 };
 
+/// Reusable SCAR-OU evaluator.
+///
+/// Each instance owns mutable scratch buffers and is intentionally not safe
+/// for concurrent calls. Use one evaluator per thread.
 class ScarOuEvaluator {
 public:
     LogLikResult loglik_spectral(
@@ -288,6 +303,28 @@ public:
         OuBackend& backend,
         int& status) const;
 
+    std::vector<double> mixture_h_pair_local_gh(
+        const OuParams& params,
+        const CopulaSpec& copula,
+        ObservationView u,
+        const OuNumericalConfig& config,
+        int& status) const;
+
+    std::vector<double> mixture_h_pair_matrix(
+        const OuParams& params,
+        const CopulaSpec& copula,
+        ObservationView u,
+        const OuNumericalConfig& config,
+        int& status) const;
+
+    std::vector<double> mixture_h_pair_auto(
+        const OuParams& params,
+        const CopulaSpec& copula,
+        ObservationView u,
+        const OuNumericalConfig& config,
+        OuBackend& backend,
+        int& status) const;
+
     StateDistribution state_distribution_local_gh(
         const OuParams& params,
         const CopulaSpec& copula,
@@ -317,6 +354,11 @@ private:
     mutable ScarOuSpectralGradientWorkspace spectral_gradient_workspace_;
 };
 
+/// Evaluator that owns validated observations and a fixed numerical setup.
+///
+/// Prepared evaluators avoid repeated conversion and allocation inside an
+/// optimizer loop. Like `ScarOuEvaluator`, an instance is not safe for
+/// concurrent calls.
 class PreparedScarOuEvaluator {
 public:
     PreparedScarOuEvaluator(
@@ -354,6 +396,11 @@ public:
         OuBackend& backend,
         int& status) const;
 
+    std::vector<double> mixture_h_pair(
+        const OuParams& params,
+        OuBackend& backend,
+        int& status) const;
+
     StateDistribution state_distribution(
         const OuParams& params,
         bool horizon_next) const;
@@ -371,6 +418,10 @@ private:
         OuBackend& backend,
         int& status) const;
     std::vector<double> call_mixture_h(
+        const OuParams& params,
+        OuBackend& backend,
+        int& status) const;
+    std::vector<double> call_mixture_h_pair(
         const OuParams& params,
         OuBackend& backend,
         int& status) const;

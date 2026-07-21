@@ -242,6 +242,18 @@ class FitStrategy(Protocol):
         """
         ...
 
+    def mixture_h_pair(self, copula, u: np.ndarray,
+                       result: FitResult,
+                       **kwargs) -> tuple[np.ndarray, np.ndarray]:
+        """Return both vine h-directions from one canonical edge posterior.
+
+        ``u`` is ordered as ``(u1, u2)``. The returned arrays are
+        ``h(u2 | u1)`` and ``h(u1 | u2)`` respectively. Strategies that do
+        not implement this optional optimization are handled by the vine
+        adapter through the legacy two-call fallback.
+        """
+        ...
+
     def objective(self, copula, u: np.ndarray,
                   alpha: np.ndarray, **kwargs) -> float:
         """Minus log-likelihood at raw parameter array.

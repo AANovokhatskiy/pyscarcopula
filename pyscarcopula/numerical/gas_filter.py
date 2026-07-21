@@ -151,10 +151,28 @@ def gas_mixture_h(
     )
 
 
+def gas_mixture_h_pair(
+    omega,
+    gamma,
+    beta,
+    u,
+    copula,
+    scaling="unit",
+    score_eps=1e-4,
+):
+    """Evaluate both h-directions along one native GAS filter path."""
+    observations = as_float64_array(u)
+    _, r_path, _ = gas_filter(
+        omega, gamma, beta, observations, copula, scaling, score_eps)
+    return copula.h_pair(
+        observations[:, 1], observations[:, 0], r_path)
+
+
 __all__ = [
     "gas_filter",
     "gas_loglik",
     "gas_mixture_h",
+    "gas_mixture_h_pair",
     "gas_negloglik",
     "gas_predict_param",
     "gas_rosenblatt",

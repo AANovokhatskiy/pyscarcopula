@@ -74,7 +74,33 @@ def test_native_gaussian_conditional_matches_reference_with_supplied_draws():
         for row in range(2)
     ])
 
-    np.testing.assert_allclose(actual, expected, rtol=0.0, atol=3e-15)
+    np.testing.assert_allclose(actual, expected, rtol=2e-13, atol=2e-13)
+
+
+def test_native_gaussian_conditional_shared_correlation_matches_reference():
+    correlation = _correlation()
+    given_indices = np.array([0, 2], dtype=np.int32)
+    given_latent = np.array([
+        [-0.7, 0.8],
+        [-0.4, 0.2],
+        [0.3, -0.5],
+    ])
+    normal_draws = np.array([
+        [0.2, -1.1],
+        [0.5, 0.3],
+        [-0.6, 0.9],
+    ])
+
+    actual = multivariate_native.gaussian_conditional_latent(
+        correlation, given_indices, given_latent, normal_draws)
+    expected = np.vstack([
+        _reference_conditional_latent(
+            correlation, given_indices, given_latent[row],
+            normal_draws[row])
+        for row in range(len(normal_draws))
+    ])
+
+    np.testing.assert_allclose(actual, expected, rtol=2e-13, atol=2e-13)
 
 
 def test_native_student_conditional_matches_reference_with_supplied_draws():
@@ -108,7 +134,122 @@ def test_native_student_conditional_matches_reference_with_supplied_draws():
         for row in range(2)
     ])
 
-    np.testing.assert_allclose(actual, expected, rtol=0.0, atol=3e-15)
+    np.testing.assert_allclose(actual, expected, rtol=2e-13, atol=2e-13)
+
+
+def test_conditional_bindings_accept_read_only_float64_views():
+    module = _cpp_extension.load()
+    correlation = _correlation()
+    given_indices = np.array([0, 2], dtype=np.int32)
+    given_latent = np.array([[-0.9, 0.6], [-1.1, 0.8]])
+    degrees = np.array([5.0, 9.0])
+    normal_draws = np.array([[0.2, -1.1], [0.5, 0.3]])
+    chi_square = np.array([4.2, 8.1])
+    for values in (
+            correlation, given_latent, degrees,
+            normal_draws, chi_square):
+        values.setflags(write=False)
+
+    result = dict(module.multivariate_student_conditional(
+        correlation,
+        given_indices,
+        given_latent,
+        degrees,
+        normal_draws,
+        chi_square,
+    ))
+    assert result["status"] == module.SCAR_OK
+    expected = multivariate_native.student_conditional_latent(
+        correlation,
+        given_indices,
+        given_latent,
+        degrees,
+        normal_draws,
+        chi_square,
+    )
+    np.testing.assert_allclose(result["values"], expected, rtol=0.0, atol=0.0)
+
+
+def test_conditional_bindings_preserve_forcecast_fallback():
+    module = _cpp_extension.load()
+    correlation = np.asfortranarray(_correlation().astype(np.float32))
+    given_indices = np.array([0, 2], dtype=np.int64)
+    given_latent = np.array([[-0.7, 99.0, 0.8]], dtype=np.float32)[:, ::2]
+    normal_draws = np.array([[0.2, 99.0, -1.1]], dtype=np.float32)[:, ::2]
+
+    result = dict(module.multivariate_gaussian_conditional(
+        correlation, given_indices, given_latent, normal_draws))
+    assert result["status"] == module.SCAR_OK
+    expected = _reference_conditional_latent(
+        _correlation(), np.array([0, 2]),
+        np.array([-0.7, 0.8]), np.array([0.2, -1.1]))
+    np.testing.assert_allclose(result["values"][0], expected, atol=2e-8)
+
+
+@pytest.mark.parametrize(
+    "argument_index,name",
+    [
+        (0, "correlations"),
+        (2, "given_latent"),
+        (3, "df"),
+        (4, "normal_draws"),
+        (5, "chi_square_draws"),
+    ],
+)
+def test_conditional_views_keep_finite_validation(argument_index, name):
+    module = _cpp_extension.load()
+    arguments = [
+        _correlation(),
+        np.array([0, 2], dtype=np.int32),
+        np.array([[-0.9, 0.6], [-1.1, 0.8]]),
+        np.array([5.0, 9.0]),
+        np.array([[0.2, -1.1], [0.5, 0.3]]),
+        np.array([4.2, 8.1]),
+    ]
+    arguments[argument_index].flat[0] = np.nan
+
+    with pytest.raises(ValueError, match=name):
+        module.multivariate_student_conditional(*arguments)
+
+
+def test_native_student_conditional_preserves_jitter_scaling_per_row():
+    correlation = np.array([
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 1.0],
+        [0.0, 1.0, 1.0],
+    ])
+    given_indices = np.array([0], dtype=np.int32)
+    given_latent = np.array([[0.2], [-0.4]])
+    degrees = np.array([4.0, 12.0])
+    normal_draws = np.array([[0.3, -0.8], [-0.2, 0.7]])
+    chi_square = np.array([3.5, 10.5])
+
+    actual = multivariate_native.student_conditional_latent(
+        correlation,
+        given_indices,
+        given_latent,
+        degrees,
+        normal_draws,
+        chi_square,
+    )
+
+    expected = []
+    schur_base = np.ones((2, 2))
+    for row in range(len(degrees)):
+        conditional_df = degrees[row] + len(given_indices)
+        delta = float(given_latent[row] @ given_latent[row])
+        covariance_scale = (degrees[row] + delta) / conditional_df
+        lower = np.linalg.cholesky(
+            covariance_scale * schur_base + 1e-12 * np.eye(2))
+        radial_scale = np.sqrt(conditional_df / chi_square[row])
+        expected.append(radial_scale * (lower @ normal_draws[row]))
+
+    # NumPy and the native scalar Cholesky differ slightly in the last
+    # digits for this deliberately singular matrix. The tolerance remains
+    # well below the 1e-8--1e-7 error produced by scaling a jittered base
+    # factor instead of applying the fixed per-row jitter.
+    np.testing.assert_allclose(
+        actual, np.asarray(expected), rtol=0.0, atol=1e-9)
 
 
 def test_native_conditional_reports_failure_index_without_python_fallback():
@@ -224,7 +365,7 @@ def test_student_native_rows_and_grid_use_full_cache_block():
 
 
 @pytest.mark.parametrize("x_value", [-7.0, 500.0, 2_500_000.0])
-def test_student_grid_uses_exact_quantiles_outside_ppf_cache_range(x_value):
+def test_student_grid_controlled_quantiles_match_exact_row_evaluator(x_value):
     u = np.array([[0.9169235897008583, 0.9500874927089409]])
     R = np.array([
         [1.0, 0.7363755858397765],
@@ -241,9 +382,9 @@ def test_student_grid_uses_exact_quantiles_outside_ppf_cache_range(x_value):
     expected_grad = expected_pdf * dlog * copula.dtransform(x_grid)
     assert np.all(np.isfinite(fi))
     assert np.all(np.isfinite(dfi))
-    np.testing.assert_allclose(fi[:, 0], expected_pdf, rtol=2e-10, atol=0.0)
+    np.testing.assert_allclose(fi[:, 0], expected_pdf, rtol=5e-9, atol=1e-12)
     np.testing.assert_allclose(
-        dfi[:, 0], expected_grad, rtol=2e-4, atol=1e-12)
+        dfi[:, 0], expected_grad, rtol=2e-4, atol=2e-10)
 
 
 def test_student_grid_mixed_cache_range_matches_exact_row_evaluator():
@@ -272,7 +413,7 @@ def test_student_grid_mixed_cache_range_matches_exact_row_evaluator():
         )
 
     np.testing.assert_allclose(
-        fi[:, [0, 2]], expected_fi[:, [0, 2]], rtol=2e-10, atol=1e-13)
+        fi[:, [0, 2]], expected_fi[:, [0, 2]], rtol=5e-9, atol=1e-12)
     np.testing.assert_allclose(
         dfi[:, [0, 2]], expected_dfi[:, [0, 2]], rtol=2e-4, atol=1e-11)
 

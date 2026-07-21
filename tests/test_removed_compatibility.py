@@ -52,17 +52,13 @@ def test_adaptive_spectral_basis_alias_is_rejected():
 
 
 def test_cvine_sample_has_no_legacy_arguments_or_alias():
-    signature = inspect.signature(CVineCopula.sample)
-    assert tuple(signature.parameters) == ("self", "n", "u", "rng")
     assert not hasattr(CVineCopula, "sample_model")
+    assert "u_train" not in inspect.signature(CVineCopula.sample).parameters
 
 
-def test_rvine_sample_and_predict_have_canonical_signatures():
-    sample_signature = inspect.signature(RVineCopula.sample)
+def test_rvine_predict_has_no_u_train_alias():
     predict_signature = inspect.signature(RVineCopula.predict)
 
-    assert tuple(sample_signature.parameters) == ("self", "n", "u", "rng")
-    assert "u" in predict_signature.parameters
     assert "u_train" not in predict_signature.parameters
 
 

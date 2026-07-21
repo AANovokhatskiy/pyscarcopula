@@ -1,4 +1,8 @@
-"""Optional reproducible performance baselines for numerical workloads."""
+"""Opt-in timing reports for numerical workloads.
+
+Correctness is asserted here; timings are observational and intentionally have
+no host-dependent wall-clock gate.
+"""
 
 import json
 import os
@@ -55,7 +59,7 @@ def _report(name, elapsed, *, workload, cache_state):
 
 
 @pytest.mark.benchmark
-def test_bivariate_mle_objective_baseline():
+def test_bivariate_mle_objective_benchmark_report():
     _enabled()
     u = np.random.default_rng(20260622).uniform(0.01, 0.99, (20_000, 2))
     copula = GumbelCopula(rotate=180)
@@ -77,7 +81,7 @@ def test_bivariate_mle_objective_baseline():
 
 
 @pytest.mark.benchmark
-def test_gaussian_mle_objective_baseline():
+def test_gaussian_mle_objective_benchmark_report():
     _enabled()
     d = 5
     u = np.random.default_rng(20260623).uniform(0.01, 0.99, (20_000, d))
@@ -99,7 +103,7 @@ def test_gaussian_mle_objective_baseline():
 
 
 @pytest.mark.benchmark
-def test_jacobi_emission_construction_baseline():
+def test_jacobi_emission_construction_benchmark_report():
     _enabled()
     u = np.random.default_rng(20260624).uniform(0.01, 0.99, (1_000, 2))
     tau = np.linspace(0.01, 0.95, 64)
@@ -120,7 +124,7 @@ def test_jacobi_emission_construction_baseline():
 
 
 @pytest.mark.benchmark
-def test_mc_copula_density_accumulation_baseline():
+def test_mc_copula_density_accumulation_benchmark_report():
     _enabled()
     T = 200
     n_tr = 2_000
@@ -142,7 +146,7 @@ def test_mc_copula_density_accumulation_baseline():
 
 
 @pytest.mark.benchmark
-def test_multivariate_student_grid_emission_baseline():
+def test_multivariate_student_grid_emission_benchmark_report():
     _enabled()
     T = 300
     d = 5

@@ -23,6 +23,8 @@ Structure selection is Dissmann-based; non-independent edges can be refit
 through the strategy registry after the MLE family-selection pass.
 """
 
+from time import perf_counter
+
 import numpy as np
 
 from pyscarcopula.copula.independent import IndependentCopula
@@ -264,14 +266,22 @@ def _search_modes(given_vars):
     return ('given_first', 'balanced', 'fit_first')
 
 
+def _branch_pseudo_obs(pseudo_obs):
+    """Create an isolated branch map while sharing immutable array values.
+
+    Tree fitting only reads existing pseudo-observation arrays and stores new
+    arrays under new keys. Copying the dictionary is therefore sufficient to
+    isolate sibling search branches; copying every accumulated ``(T,)`` array
+    would add O(T * d²) allocation churn per branch without changing values.
+    """
+    return pseudo_obs.copy()
+
+
 def _build_and_fit_candidate(
         u, d, pseudo_obs_seed, candidates, allow_rotations, criterion, method,
         copulas, config, truncation_level, truncation_fill, threshold,
         min_edge_logL, transform_type, fit_kwargs, *, mode, given_vars=()):
-    pseudo_obs = {
-        key: value.copy()
-        for key, value in pseudo_obs_seed.items()
-    }
+    pseudo_obs = _branch_pseudo_obs(pseudo_obs_seed)
     trees_repr = []
     fitted = []
 
@@ -360,7 +370,7 @@ def _beam_search_candidates(
     # Tree 0 seeds the beam. Higher trees extend each partial structure with
     # all modes, so mode_path is an intentional per-level builder trace.
     for mode in _search_modes(given_vars):
-        pseudo_obs = {key: value.copy() for key, value in pseudo_obs_seed.items()}
+        pseudo_obs = _branch_pseudo_obs(pseudo_obs_seed)
         repr_0 = _build_tree_level_repr(
             0, u, None, pseudo_obs, mode, given_vars, truncation_level)
         fitted_0 = _fit_tree_level(
@@ -391,10 +401,7 @@ def _beam_search_candidates(
         expanded = []
         for state in beam:
             for mode in _search_modes(given_vars):
-                pseudo_obs = {
-                    key: value.copy()
-                    for key, value in state['pseudo_obs'].items()
-                }
+                pseudo_obs = _branch_pseudo_obs(state['pseudo_obs'])
                 new_repr = _build_tree_level_repr(
                     t, u, state['trees_repr'][-1], pseudo_obs, mode,
                     given_vars, truncation_level)
@@ -527,7 +534,8 @@ def _score_candidate_structure(
         trees_repr, fitted, d, given_vars, mode, *, mode_path=None):
     fit_score = _fit_score_levels(fitted)
     if given_vars:
-        matrix, edge_map = build_rvine_matrix_with_edge_map(d, trees_repr)
+        matrix, edge_map = build_rvine_matrix_with_edge_map(
+            d, trees_repr, validate=False)
         dag = build_rvine_dag(matrix, edge_map)
         dag_info = analyze_conditional_reachability(dag, given_vars, d)
         exact_supported = (
@@ -621,6 +629,21 @@ def _fit_tree_level(
 
     fitted_level = []
     for edge_idx, (conditioned, conditioning) in enumerate(tree_repr):
+        fit_started = perf_counter()
+        edge_fit_diagnostics = {
+            'requested_method': str(method).upper(),
+            'dynamic_attempted': False,
+            'fallback_used': False,
+            'fallback_reason': None,
+            'attempted_method': None,
+            'attempted_success': None,
+            'attempted_nfev': 0,
+            'attempted_message': None,
+            'selection_nfev': 0,
+            'selection_ms': 0.0,
+            'dynamic_fit_ms': 0.0,
+        }
+        selection_result = None
         v1, v2 = sorted(conditioned)
 
         u1 = _clip_unit(pseudo_obs[(v1, conditioning)])
@@ -639,10 +662,16 @@ def _fit_tree_level(
             force_independent
             or threshold is not None and abs(tau_val) < threshold
         ):
+            selection_started = perf_counter()
             cop = IndependentCopula()
             result = cop.fit(u_pair)
-            pc = _pair_from_result(cop, result, tau_val)
+            edge_fit_diagnostics['selection_ms'] = (
+                1e3 * (perf_counter() - selection_started)
+            )
+            edge_fit_diagnostics['selection_nfev'] = int(
+                getattr(result, 'nfev', 0) or 0)
         else:
+            selection_started = perf_counter()
             if copulas is not None:
                 cop = _make_fixed_copula(copulas[edge_idx], transform_type)
                 if isinstance(cop, IndependentCopula):
@@ -654,7 +683,14 @@ def _fit_tree_level(
                 cop, selection_result = select_best_copula(
                     u1, u2, candidates, allow_rotations, criterion,
                     transform_type=transform_type,
+                    u_pair=u_pair,
+                    tau_value=tau_val,
                 )
+            edge_fit_diagnostics['selection_ms'] = (
+                1e3 * (perf_counter() - selection_started)
+            )
+            edge_fit_diagnostics['selection_nfev'] = int(
+                getattr(selection_result, 'nfev', 0) or 0)
 
             if (
                 min_edge_logL is not None
@@ -666,19 +702,53 @@ def _fit_tree_level(
             elif is_truncated or method.lower() == 'mle' or isinstance(cop, IndependentCopula):
                 result = selection_result
             else:
-                result = _fit_with_strategy(
-                    cop, u_pair, method, config, fit_kwargs)
-                if not bool(getattr(result, 'success', True)):
+                dynamic_fit_kwargs = dict(fit_kwargs)
+                dynamic_fit_kwargs['initial_mle_result'] = selection_result
+                dynamic_started = perf_counter()
+                dynamic_result = _fit_with_strategy(
+                    cop, u_pair, method, config, dynamic_fit_kwargs)
+                edge_fit_diagnostics['dynamic_fit_ms'] = (
+                    1e3 * (perf_counter() - dynamic_started)
+                )
+                edge_fit_diagnostics.update({
+                    'dynamic_attempted': True,
+                    'attempted_method': str(
+                        getattr(dynamic_result, 'method', method)).upper(),
+                    'attempted_success': bool(
+                        getattr(dynamic_result, 'success', True)),
+                    'attempted_nfev': int(
+                        getattr(dynamic_result, 'nfev', 0) or 0),
+                    'attempted_message': str(
+                        getattr(dynamic_result, 'message', '') or ''),
+                })
+                result = dynamic_result
+                if not edge_fit_diagnostics['attempted_success']:
+                    edge_fit_diagnostics['fallback_used'] = True
+                    edge_fit_diagnostics['fallback_reason'] = (
+                        'dynamic_fit_unsuccessful'
+                    )
                     result = selection_result
 
-            pc = _pair_from_result(cop, result, tau_val)
+        edge_fit_diagnostics['actual_method'] = str(
+            getattr(result, 'method', None) or 'STATIC').upper()
+        edge_fit_diagnostics['actual_success'] = bool(
+            getattr(result, 'success', True))
+        edge_fit_diagnostics['fit_ms'] = 1e3 * (
+            perf_counter() - fit_started)
+        pc = _pair_from_result(
+            cop,
+            result,
+            tau_val,
+            fit_diagnostics=edge_fit_diagnostics,
+        )
 
         fitted_level.append(pc)
 
         # Propagate pseudo-observations for higher trees.
         if t < d - 2:
-            pseudo_obs[(v2, conditioning | {v1})] = _clip_unit(pc.h(u2, u1))
-            pseudo_obs[(v1, conditioning | {v2})] = _clip_unit(pc.h(u1, u2))
+            u2_next, u1_next = pc.h_pair(u2, u1)
+            pseudo_obs[(v2, conditioning | {v1})] = _clip_unit(u2_next)
+            pseudo_obs[(v1, conditioning | {v2})] = _clip_unit(u1_next)
 
     return fitted_level
 
@@ -707,7 +777,8 @@ def _fit_with_strategy(copula, u_pair, method, config, fit_kwargs):
     return strategy.fit(copula, u_pair, **fit_kwargs)
 
 
-def _pair_from_result(copula, result, tau_val):
+def _pair_from_result(
+        copula, result, tau_val, *, fit_diagnostics=None):
     result_param = getattr(result, 'copula_param', None)
     if result_param is None:
         param = 0.0 if isinstance(copula, IndependentCopula) else None
@@ -720,4 +791,5 @@ def _pair_from_result(copula, result, tau_val):
         nfev=int(getattr(result, 'nfev', 0) or 0),
         tau=float(tau_val),
         fit_result=result,
+        fit_diagnostics=dict(fit_diagnostics or {}),
     )

@@ -79,13 +79,13 @@ void bind_multivariate(py::module_& m) {
             const std::int64_t n_rows = draw_info.shape[0];
             scar::ConditionalSampleResult result;
             {
-                const auto corr = flat_vector_from_array(
+                const auto corr = flat_view_from_array(
                     correlations, "correlations");
                 const auto indices = int_vector_from_array(
                     given_indices, "given_indices");
-                const auto latent = flat_vector_from_array(
+                const auto latent = flat_view_from_array(
                     given_latent, "given_latent");
-                const auto draws = flat_vector_from_array(
+                const auto draws = flat_view_from_array(
                     normal_draws, "normal_draws");
                 py::gil_scoped_release release;
                 result = scar::multivariate_gaussian_conditional(
@@ -132,16 +132,16 @@ void bind_multivariate(py::module_& m) {
             const std::int64_t n_rows = draw_info.shape[0];
             scar::ConditionalSampleResult result;
             {
-                const auto corr = flat_vector_from_array(
+                const auto corr = flat_view_from_array(
                     correlations, "correlations");
                 const auto indices = int_vector_from_array(
                     given_indices, "given_indices");
-                const auto latent = flat_vector_from_array(
+                const auto latent = flat_view_from_array(
                     given_latent, "given_latent");
-                const auto degrees = flat_vector_from_array(df, "df");
-                const auto draws = flat_vector_from_array(
+                const auto degrees = flat_view_from_array(df, "df");
+                const auto draws = flat_view_from_array(
                     normal_draws, "normal_draws");
-                const auto chi = flat_vector_from_array(
+                const auto chi = flat_view_from_array(
                     chi_square_draws, "chi_square_draws");
                 py::gil_scoped_release release;
                 result = scar::multivariate_student_conditional(

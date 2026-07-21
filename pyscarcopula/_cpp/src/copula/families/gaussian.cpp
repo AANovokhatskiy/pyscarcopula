@@ -77,8 +77,12 @@ void gaussian_pdf_and_grad_x_unrotated(
 double gaussian_h_unrotated(double u, double v, double rho) {
     const double u_clipped = clip_pseudo_observation(u);
     const double v_clipped = clip_pseudo_observation(v);
-    const double z = (normal_quantile(u_clipped) - rho * normal_quantile(v_clipped))
-        / std::sqrt(1.0 - rho * rho);
+    return gaussian_h_from_quantiles(
+        normal_quantile(u_clipped), normal_quantile(v_clipped), rho);
+}
+
+double gaussian_h_from_quantiles(double z_u, double z_v, double rho) {
+    const double z = (z_u - rho * z_v) / std::sqrt(1.0 - rho * rho);
     return norm_cdf(z);
 }
 

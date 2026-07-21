@@ -22,6 +22,23 @@ result.bic
 
 ::: pyscarcopula.MultivariateMLEResult
 
+Static `GaussianCopula` and `StudentCopula` accept only `method='mle'`. Both
+provide exact conditional generation in pseudo-observation space through
+`sample_conditional(n, given, rng=None)` and `predict(n, given=..., rng=...)`:
+
+```python
+import numpy as np
+
+conditional = cop.sample_conditional(
+    n=10_000,
+    given={0: 0.25, 2: 0.8},
+    rng=np.random.default_rng(2026),
+)
+```
+
+The supplied columns remain fixed. Supplying every variable returns constant
+rows equal to `given`.
+
 ## Equicorrelation Gaussian Copula
 
 For $d$ assets, the standard Gaussian copula has $d(d-1)/2$ static
@@ -126,6 +143,14 @@ GAS supports fixed correlation and the one-parameter `shrinkage` mode; GAS
 with `corr_mode="cholesky"` is rejected before fitting. Setting
 `analytical_grad=False` retains a fully numerical optimizer gradient. See the
 multivariate guide for fitting details and diagnostic fields.
+
+Emission densities normally use an interpolated, precomputed Student quantile
+(PPF) table of shape `(n_df_nodes, T, d)`. Its size is capped at
+`DEFAULT_MAX_TABLE_BYTES` (256 MiB); above the cap the table is skipped and
+evaluations use the exact `stdtrit` quantile instead. Both paths target the
+same Student quantile, but they are not numerically identical because the
+table path interpolates between degrees-of-freedom nodes. The exact fallback
+is usually slower. See the performance guide for details.
 
 ::: pyscarcopula.copula.multivariate.stochastic_student.StochasticStudentCopula
     options:

@@ -300,10 +300,10 @@ class EquicorrGaussianCopula(MultivariateCopula):
 
         kappa, mu, nu = self.fit_result.params.values
         variance = nu ** 2 / (2.0 * kappa)
-        state = rng.normal(mu, np.sqrt(variance))
-        parameter = self.transform(np.array([state]))[0]
+        states = rng.normal(mu, np.sqrt(variance), size=n)
+        parameters = self.transform(states)  # (n,)
         return self.sample_conditional(
-            n, r=parameter, given=given, rng=rng)
+            n, r=parameters, given=given, rng=rng)
 
     def predictive_mean(self, u):
         if self.fit_result is None:

@@ -63,6 +63,7 @@ nav:
     - Prediction Semantics: guide/prediction-semantics.md
     - R-vine Conditioning: guide/rvine-conditioning.md
     - Multivariate Models: guide/multivariate_models.md
+    - Developer Architecture: guide/architecture.md
     - Transform Functions: guide/transforms.md
     - Performance Tuning: guide/performance.md
   - API Reference:

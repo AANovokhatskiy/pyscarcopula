@@ -141,6 +141,31 @@ std::vector<double> flat_vector_from_array(
     return out;
 }
 
+scar::DoubleView flat_view_from_array(
+    py::array_t<double, py::array::c_style | py::array::forcecast> values,
+    const char* name) {
+
+    const py::buffer_info info = values.request();
+    const double* data = static_cast<const double*>(info.ptr);
+    std::size_t size = 1;
+    for (py::ssize_t extent : info.shape) {
+        std::size_t extent_size = 0;
+        if (!scar_internal::checked_nonnegative_size(
+                static_cast<std::int64_t>(extent), extent_size)
+            || !scar_internal::checked_size_mul(size, extent_size, size)) {
+            throw std::invalid_argument(
+                std::string(name) + " shape is not representable");
+        }
+    }
+    for (std::size_t i = 0; i < size; ++i) {
+        if (!std::isfinite(data[i])) {
+            throw std::invalid_argument(
+                std::string(name) + " must contain only finite values");
+        }
+    }
+    return {data, size};
+}
+
 std::vector<int> int_vector_from_array(
     py::array_t<int, py::array::c_style | py::array::forcecast> values,
     const char* name) {
@@ -480,6 +505,28 @@ void bind_common(py::module_& m) {
         py::arg("p"),
         py::arg("df"));
     m.def(
+        "_student_quantile_large_df",
+        [](double p, double df) {
+            double value = 0.0;
+            double derivative = 0.0;
+            scar_internal::student_quantile_large_df_value_and_derivative(
+                p, df, value, derivative);
+            return py::make_tuple(value, derivative);
+        },
+        py::arg("p"),
+        py::arg("df"));
+    m.def(
+        "_student_quantile_with_df_derivative",
+        [](double p, double df) {
+            double value = 0.0;
+            double derivative = 0.0;
+            scar_internal::student_quantile_value_and_derivative(
+                p, df, value, derivative);
+            return py::make_tuple(value, derivative);
+        },
+        py::arg("p"),
+        py::arg("df"));
+    m.def(
         "_hermite_rule_cache_info",
         []() {
             return hermite_rule_cache_info_to_dict(
@@ -527,7 +574,8 @@ void bind_common(py::module_& m) {
         py::arg("quad_order"),
         py::arg("basis_order"));
 
-    py::enum_<scar::CopulaFamily>(m, "CopulaFamily")
+    py::enum_<scar::CopulaFamily>(
+        m, "CopulaFamily", "Native copula-family dispatch identifier.")
         .value("Independent", scar::CopulaFamily::Independent)
         .value("Clayton", scar::CopulaFamily::Clayton)
         .value("Gumbel", scar::CopulaFamily::Gumbel)
@@ -542,23 +590,27 @@ void bind_common(py::module_& m) {
             "MultivariateGaussian",
             scar::CopulaFamily::MultivariateGaussian);
 
-    py::enum_<scar::Rotation>(m, "Rotation")
+    py::enum_<scar::Rotation>(
+        m, "Rotation", "Bivariate copula rotation in degrees.")
         .value("R0", scar::Rotation::R0)
         .value("R90", scar::Rotation::R90)
         .value("R180", scar::Rotation::R180)
         .value("R270", scar::Rotation::R270);
 
-    py::enum_<scar::Transform>(m, "Transform")
+    py::enum_<scar::Transform>(
+        m, "Transform", "Latent-state to copula-parameter transform.")
         .value("Softplus", scar::Transform::Softplus)
         .value("XTanh", scar::Transform::XTanh)
         .value("GaussianTanh", scar::Transform::GaussianTanh);
 
-    py::enum_<scar::OuBackend>(m, "OuBackend")
+    py::enum_<scar::OuBackend>(
+        m, "OuBackend", "Numerical SCAR-OU propagation backend.")
         .value("Spectral", scar::OuBackend::Spectral)
         .value("LocalGh", scar::OuBackend::LocalGh)
         .value("Matrix", scar::OuBackend::Matrix);
 
-    py::enum_<scar::GasScaling>(m, "GasScaling")
+    py::enum_<scar::GasScaling>(
+        m, "GasScaling", "Scaling applied to the GAS score.")
         .value("Unit", scar::GasScaling::Unit)
         .value("Fisher", scar::GasScaling::Fisher);
 }

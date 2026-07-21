@@ -1,5 +1,60 @@
 # Changelog
 
+## 0.18.0 - 2026-07-21
+
+Version: `0.17.5` -> `0.18.0`
+
+- Adds conditional sampling and prediction for static multivariate Gaussian
+  and Student copulas, with fitted-correlation and analytical-moment coverage.
+- Fixes top-level `fit()` state synchronization so subsequent stateful
+  `predict()` and `sample()` calls use the requested strategy result and data.
+- Rejects dynamic methods for static Gaussian and Student copulas instead of
+  silently ignoring them.
+- Fixes stochastic multivariate prediction to draw an independent stationary
+  latent parameter per sample, and prevents joint-parameter posterior queries
+  from mutating the model correlation state.
+- Hardens stochastic Student fitting against false optimizer convergence,
+  caches its Cholesky factor, and caps the optional Student inverse-CDF table
+  at 256 MiB with an exact-quantile fallback for larger inputs.
+- Accelerates Stochastic Student SCAR-TM-OU fitting with internal
+  `(log(kappa), mu, log(sigma_x))` optimizer coordinates while preserving the
+  public `(kappa, mu, nu)` parameterization and reporting the selected
+  parameterization in fit diagnostics.
+- Stabilizes Student degrees-of-freedom gradients with native analytical
+  quantile derivatives, dense inverse-CDF nodes near the `df > 2` boundary,
+  coverage through `df = 1000`, and a controlled large-`df` normal asymptotic.
+- Improves vine family screening with exact public Kendall-tau mappings,
+  preserving small interior dependence, Gaussian signs, and rotations while
+  handling only true parameter boundaries as unsupported starts.
+- Reuses each selected edge's static MLE to initialize dynamic fitting,
+  computes both h-function directions in one posterior pass, avoids redundant
+  pseudo-observation copies, and caches conditional suffix plans.
+- Reports requested versus actual R-vine edge methods, dynamic-fit fallbacks,
+  discarded optimizer work, failure messages, and edge-level fit timings.
+- Reuses R-vine edge statistics and top-candidate static evaluators during
+  family selection, and screens candidates with value-only native likelihoods.
+- Accelerates long SCAR-TM-OU and SCAR-M/P-OU model-sampling trajectories with
+  a sequential cached Numba OU kernel while preserving the NumPy RNG stream.
+- Reuses prepared Gaussian normal quantiles and fixed-grid spectral terms in
+  SCAR-OU gradient and mixture-h evaluation without changing transition
+  backends or basis-order policy.
+- Caches fitted or content-fingerprinted R-vine prediction histories and
+  terminal dynamic states, reducing repeated 6D SCAR-TM-OU `predict(1000)`
+  from about 351 ms cold to a 4.5 ms warm median without parallel execution.
+- Replaces row-by-row Python GAS R-vine sampling with a sequential native
+  stateful kernel while preserving the exact RNG stream, score-update order,
+  rotations, mixed-edge behavior, and generic-strategy fallback.
+- Reduces median GAS `RVineCopula.sample(1000)` time on the profiled 6D data
+  from about 878 ms to 3.2 ms without parallel execution.
+- Optimizes native multivariate hot paths through shared-correlation Cholesky
+  reuse, reusable Student workspaces, equicorrelation sufficient statistics,
+  prepared SCAR-OU snapshot caching, and zero-copy contiguous inputs while
+  preserving jitter, validation, fixed-draw, and compatibility semantics.
+- Adds opt-in MinGW-w64 builds on Windows with statically linked GCC runtimes;
+  MSVC remains the default toolchain.
+- Publishes the PEP 561 `py.typed` marker and expands public annotations,
+  docstrings, guides, API references, regression tests, and benchmark reports.
+
 ## 0.17.5 - 2026-07-06
 
 Version: `0.17.4` -> `0.17.5`

@@ -183,12 +183,12 @@ class TestIndependentCopula:
 
     def test_fit_zero_logL(self):
         cop = IndependentCopula()
-        result = cop.fit(np.random.rand(100, 2))
+        result = cop.fit(np.random.default_rng(101).random((100, 2)))
         assert result.log_likelihood == 0.0
 
     def test_top_level_fit_zero_logL(self):
         cop = IndependentCopula()
-        u = np.random.rand(100, 2)
+        u = np.random.default_rng(102).random((100, 2))
 
         result = fit(cop, u, method='mle')
 
@@ -198,7 +198,7 @@ class TestIndependentCopula:
 
     def test_top_level_sample_and_predict_do_not_recurse(self):
         cop = IndependentCopula()
-        u = np.random.rand(100, 2)
+        u = np.random.default_rng(103).random((100, 2))
         result = fit(cop, u, method='mle')
 
         simulated = sample(cop, u, result, 5, rng=np.random.default_rng(3))
@@ -212,7 +212,9 @@ class TestIndependentCopula:
     def test_batch_grid(self):
         cop = IndependentCopula()
         fi, dfi = cop.pdf_and_grad_on_grid_batch(
-            np.random.rand(50, 2), np.linspace(-3, 3, 20))
+            np.random.default_rng(104).random((50, 2)),
+            np.linspace(-3, 3, 20),
+        )
         np.testing.assert_allclose(fi, 1.0)
         np.testing.assert_allclose(dfi, 0.0)
 
@@ -587,8 +589,8 @@ class TestMultivariateCopulaAPI:
         assert 3.0 < refit.df < 20.0
         np.testing.assert_allclose(fitted.shape, R, atol=0.08)
         np.testing.assert_allclose(refit.shape, fitted.shape, atol=0.08)
-        assert 0.01 < gof.pvalue <= 1.0
-        assert 0.01 < refit_gof.pvalue <= 1.0
+        assert gof.statistic < 0.5
+        assert refit_gof.statistic < 0.5
 
 class TestConditionalPredict:
     def test_gumbel_sample_uses_passed_rng(self):

@@ -131,6 +131,7 @@ class CVineCopula:
         -------
         self
         """
+        method = method.upper()
         u = np.asarray(data, dtype=np.float64)
         if u.ndim != 2:
             raise ValueError(f"CVineCopula.fit: data must be 2D, got shape {u.shape}")
@@ -142,7 +143,7 @@ class CVineCopula:
             raise ValueError(f"CVineCopula.fit: need d >= 2, got d={d}")
         validate_fixed_copula_specs(copulas, d)
         self.d = d
-        self.method = method.upper()
+        self.method = method
 
         v = [[None] * d for _ in range(d)]
         for i in range(d):
@@ -176,7 +177,8 @@ class CVineCopula:
                     cop, result = select_best_copula(
                         u1, u2, self._get_candidates(),
                         self.allow_rotations, self.criterion,
-                        transform_type=transform_type)
+                        transform_type=transform_type,
+                        u_pair=u_pair)
                 selection_result = result
 
                 # Step 2: decide whether to refit with dynamic method
@@ -192,8 +194,10 @@ class CVineCopula:
 
                 if not skip_dynamic:
                     from pyscarcopula.api import fit as _api_fit
+                    dynamic_kwargs = dict(kwargs)
+                    dynamic_kwargs['initial_mle_result'] = selection_result
                     dynamic_result = _api_fit(
-                        cop, u_pair, method=method, **kwargs)
+                        cop, u_pair, method=method, **dynamic_kwargs)
                     if bool(getattr(dynamic_result, 'success', True)):
                         result = dynamic_result
                     else:

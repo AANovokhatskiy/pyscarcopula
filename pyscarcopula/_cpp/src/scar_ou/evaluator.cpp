@@ -283,6 +283,40 @@ std::vector<double> ScarOuEvaluator::mixture_h_auto(
     return mixture_h_local_gh(params, copula, u, config, status);
 }
 
+std::vector<double> ScarOuEvaluator::mixture_h_pair_auto(
+    const OuParams& params,
+    const CopulaSpec& copula,
+    ObservationView u,
+    const OuNumericalConfig& config,
+    OuBackend& backend,
+    int& status) const {
+
+    scar_internal::OuGrid grid;
+    if (!supported_ou_copula(copula)) {
+        status = SCAR_INVALID_TRANSFORM;
+        return std::vector<double>(2 * u.size(), 0.0);
+    }
+    if (!valid_ou_params(params) || !finite_config_doubles(config)) {
+        status = SCAR_INVALID_PARAMETER;
+        return std::vector<double>(2 * u.size(), 0.0);
+    }
+    if (!scar_internal::build_ou_grid(
+            params.kappa, params.mu, params.nu,
+            static_cast<std::int64_t>(u.size()), config.K,
+            config.grid_range, config.adaptive, config.pts_per_sigma,
+            config.max_K, grid)) {
+        status = SCAR_INVALID_SIZE;
+        return std::vector<double>(2 * u.size(), 0.0);
+    }
+    const int selected = scar_internal::select_grid_transition_backend(
+        grid, config.r_gh);
+    backend = selected == 0 ? OuBackend::Matrix : OuBackend::LocalGh;
+    if (backend == OuBackend::Matrix) {
+        return mixture_h_pair_matrix(params, copula, u, config, status);
+    }
+    return mixture_h_pair_local_gh(params, copula, u, config, status);
+}
+
 StateDistribution ScarOuEvaluator::state_distribution_auto(
     const OuParams& params,
     const CopulaSpec& copula,

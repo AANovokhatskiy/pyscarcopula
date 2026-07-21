@@ -266,7 +266,7 @@ def validate_natural_order_matrix(M):
 # ──────────────────────────────────────────────────────────────
 
 
-def build_rvine_matrix(d, trees):
+def build_rvine_matrix(d, trees, *, validate=True):
     """Build the natural-order R-vine matrix from a valid tree list.
 
     Parameters
@@ -275,6 +275,9 @@ def build_rvine_matrix(d, trees):
         Number of variables.
     trees : list of lists
         Tree-by-tree edge lists; see the module docstring.
+    validate : bool, default True
+        Run the defensive decoded-tree proximity check on the result. Trusted
+        internal callers may disable this after validating the tree source.
 
     Returns
     -------
@@ -283,11 +286,12 @@ def build_rvine_matrix(d, trees):
         pyvinecopulib convention). The lower-right anti-triangle is
         zero-padded.
     """
-    M, _ = build_rvine_matrix_with_edge_map(d, trees)
+    M, _ = build_rvine_matrix_with_edge_map(
+        d, trees, validate=validate)
     return M
 
 
-def build_rvine_matrix_with_edge_map(d, trees):
+def build_rvine_matrix_with_edge_map(d, trees, *, validate=True):
     """Build the matrix and the ``(tree, col) -> input_edge_index`` map.
 
     The edge map is what later stages need to attach fitted pair
@@ -301,6 +305,8 @@ def build_rvine_matrix_with_edge_map(d, trees):
         Keys ``(tree, col)`` for ``0 <= tree <= d-2`` and
         ``0 <= col <= d-2-tree``; values are indices into
         ``trees[tree]``.
+    validate : bool, default True
+        Run the defensive decoded-tree proximity check on the result.
     """
     if not isinstance(d, int) or d < 1:
         raise RuntimeError(f"build_rvine_matrix: d must be int >= 1, got {d!r}")
@@ -404,7 +410,7 @@ def build_rvine_matrix_with_edge_map(d, trees):
     M[0, d - 1] = remaining.pop()
 
     # Defensive validation (should never fail for a valid R-vine input).
-    if not validate_natural_order_matrix(M):
+    if validate and not validate_natural_order_matrix(M):
         raise RuntimeError(
             "build_rvine_matrix: produced matrix fails the natural-order "
             "proximity check. This indicates the input trees do not form a "

@@ -2,6 +2,7 @@
 
 #include "scar/copula.hpp"
 #include "scar/gas.hpp"
+#include "scar/gas_rvine.hpp"
 #include "scar/ou.hpp"
 #include "scar/detail/copula.hpp"
 #include "scar/detail/safety.hpp"
@@ -30,6 +31,11 @@ std::vector<double> vector_from_array(
         double,
         pybind11::array::c_style | pybind11::array::forcecast> values);
 std::vector<double> flat_vector_from_array(
+    pybind11::array_t<
+        double,
+        pybind11::array::c_style | pybind11::array::forcecast> values,
+    const char* name);
+scar::DoubleView flat_view_from_array(
     pybind11::array_t<
         double,
         pybind11::array::c_style | pybind11::array::forcecast> values,

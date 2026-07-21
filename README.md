@@ -41,9 +41,22 @@ pip install pyscarcopula
 Official wheels include the compiled numerical extension and do not need a
 local compiler. Source and editable installs require a C++17 compiler:
 
-* Windows: Microsoft C++ Build Tools / Visual Studio Build Tools
+* Windows: Microsoft C++ Build Tools / Visual Studio Build Tools, or
+  MinGW-w64 GCC (see below)
 * Linux: GCC or Clang with the usual Python development headers
 * macOS: Xcode Command Line Tools
+
+On Windows, a MinGW-w64 GCC toolchain (for example the MSYS2 `ucrt64` GCC) can
+be used instead of the Microsoft compiler by opting in explicitly:
+
+```bash
+PYSCA_CPP_COMPILER=mingw32 pip install .
+# or, from the source tree:
+python setup.py build_ext --compiler=mingw32 --inplace
+```
+
+The GCC runtime is linked statically, so the resulting extension does not need
+MSYS2 DLLs at runtime. MSVC remains the default Windows toolchain.
 
 For local development:
 
@@ -112,8 +125,9 @@ python -m pyscarcopula._native_smoke
 
 **Sampling and prediction**
 
-* Unconditional sampling from fitted bivariate and vine models
-* Conditional sampling for R-vines, with exact and approximate modes
+* Unconditional sampling from fitted bivariate, multivariate, and vine models
+* Conditional sampling for static and dynamic multivariate models and R-vines
+* Exact and approximate conditional modes for R-vines
 * `PredictConfig` for explicit prediction options
 * Reproducible random generation via `rng`
 * JSON persistence through `model.save()` and `ModelClass.load()`

@@ -98,6 +98,17 @@ void bind_scar_ou(py::module_& m) {
                     values, status, static_cast<int>(backend));
             })
         .def(
+            "mixture_h_pair",
+            [](const scar::PreparedScarOuEvaluator& evaluator,
+               const scar::OuParams& params) {
+                int status = 0;
+                scar::OuBackend backend = scar::OuBackend::Matrix;
+                std::vector<double> values =
+                    evaluator.mixture_h_pair(params, backend, status);
+                return vector_result_to_dict(
+                    values, status, static_cast<int>(backend));
+            })
+        .def(
             "state_distribution",
             [](const scar::PreparedScarOuEvaluator& evaluator,
                const scar::OuParams& params,
@@ -404,6 +415,52 @@ void bind_scar_ou(py::module_& m) {
                 const scar::ObservationView obs =
                     observation_view_from_array(copula, u);
                 std::vector<double> values = evaluator.mixture_h_auto(
+                    params, copula, obs, config, backend, status);
+                return vector_result_to_dict(
+                    values, status, static_cast<int>(backend));
+            })
+        .def(
+            "mixture_h_pair_local_gh",
+            [](const scar::ScarOuEvaluator& evaluator,
+               const scar::OuParams& params,
+               const scar::CopulaSpec& copula,
+               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               const scar::OuNumericalConfig& config) {
+                int status = 0;
+                const scar::ObservationView obs =
+                    observation_view_from_array(copula, u);
+                std::vector<double> values = evaluator.mixture_h_pair_local_gh(
+                    params, copula, obs, config, status);
+                return vector_result_to_dict(
+                    values, status, static_cast<int>(scar::OuBackend::LocalGh));
+            })
+        .def(
+            "mixture_h_pair_matrix",
+            [](const scar::ScarOuEvaluator& evaluator,
+               const scar::OuParams& params,
+               const scar::CopulaSpec& copula,
+               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               const scar::OuNumericalConfig& config) {
+                int status = 0;
+                const scar::ObservationView obs =
+                    observation_view_from_array(copula, u);
+                std::vector<double> values = evaluator.mixture_h_pair_matrix(
+                    params, copula, obs, config, status);
+                return vector_result_to_dict(
+                    values, status, static_cast<int>(scar::OuBackend::Matrix));
+            })
+        .def(
+            "mixture_h_pair_auto",
+            [](const scar::ScarOuEvaluator& evaluator,
+               const scar::OuParams& params,
+               const scar::CopulaSpec& copula,
+               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               const scar::OuNumericalConfig& config) {
+                int status = 0;
+                scar::OuBackend backend = scar::OuBackend::Matrix;
+                const scar::ObservationView obs =
+                    observation_view_from_array(copula, u);
+                std::vector<double> values = evaluator.mixture_h_pair_auto(
                     params, copula, obs, config, backend, status);
                 return vector_result_to_dict(
                     values, status, static_cast<int>(backend));
