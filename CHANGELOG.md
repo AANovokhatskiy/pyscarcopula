@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.18.0 - 2026-07-20
+## 0.18.0 - 2026-07-21
 
 Version: `0.17.5` -> `0.18.0`
 
@@ -16,6 +16,13 @@ Version: `0.17.5` -> `0.18.0`
 - Hardens stochastic Student fitting against false optimizer convergence,
   caches its Cholesky factor, and caps the optional Student inverse-CDF table
   at 256 MiB with an exact-quantile fallback for larger inputs.
+- Accelerates Stochastic Student SCAR-TM-OU fitting with internal
+  `(log(kappa), mu, log(sigma_x))` optimizer coordinates while preserving the
+  public `(kappa, mu, nu)` parameterization and reporting the selected
+  parameterization in fit diagnostics.
+- Stabilizes Student degrees-of-freedom gradients with native analytical
+  quantile derivatives, dense inverse-CDF nodes near the `df > 2` boundary,
+  coverage through `df = 1000`, and a controlled large-`df` normal asymptotic.
 - Improves vine family screening with exact public Kendall-tau mappings,
   preserving small interior dependence, Gaussian signs, and rotations while
   handling only true parameter boundaries as unsupported starts.
