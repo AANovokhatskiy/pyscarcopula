@@ -11,6 +11,10 @@ build/
 site/
 tools/*
 !tools/check_cpp_architecture.py
+!tools/aggregate_release_validation.py
+!tools/allocation_probe.c
+!tools/native_dependency_audit.py
+!tools/write_release_metadata.py
 benchmarks/
 scripts/
 results/

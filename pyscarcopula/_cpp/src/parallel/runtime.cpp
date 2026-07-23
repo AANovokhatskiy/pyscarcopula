@@ -79,6 +79,9 @@ public:
                 });
             }
             ++batches_submitted_;
+            tasks_submitted_ += static_cast<std::uint64_t>(tasks.size());
+            peak_queued_tasks_ = std::max(
+                peak_queued_tasks_, queue_.size());
         }
         ready_.notify_all();
 
@@ -97,6 +100,9 @@ public:
             owner_pid_,
             workers_.size(),
             batches_submitted_,
+            worker_start_events_,
+            tasks_submitted_,
+            peak_queued_tasks_,
         };
     }
 
@@ -125,6 +131,7 @@ private:
         }
         while (workers_.size() < count) {
             workers_.emplace_back([this]() { worker_loop(); });
+            ++worker_start_events_;
         }
     }
 
@@ -155,6 +162,9 @@ private:
     std::vector<std::thread> workers_;
     bool stopping_ = false;
     std::uint64_t batches_submitted_ = 0;
+    std::uint64_t worker_start_events_ = 0;
+    std::uint64_t tasks_submitted_ = 0;
+    std::size_t peak_queued_tasks_ = 0;
 };
 
 std::atomic<ThreadPool*> runtime{nullptr};

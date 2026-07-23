@@ -142,6 +142,11 @@ The native pool belongs to the current process. Spawned or forked workers do
 not reuse a parent's pool. The pool also supports nested native calls through
 a worker-local sequential fallback, avoiding pool starvation and deadlock.
 
+Embedded CPython subinterpreters are intentionally not supported. The native
+module declares `multiple_interpreters::not_supported()` and import from a
+subinterpreter must fail immediately. Ordinary Python threads and independent
+worker processes remain supported under the ownership rules above.
+
 ## Independent fits and rolling windows
 
 Use `fit_independent` when datasets, bootstrap replicas, model prototypes, or
@@ -228,3 +233,7 @@ the explicit `n_threads` contract and avoids hidden BLAS oversubscription.
 For optimizer and approximation controls, see
 [Performance Tuning](performance.md). For process-level helper signatures, see
 the [Contrib API](../api/contrib.md).
+
+The cross-platform compiler, sanitizer, process-lifecycle, allocation, and
+binary-dependency acceptance matrix is tracked in
+[Parallel Release Validation](../validation/parallel-release-gates.md).

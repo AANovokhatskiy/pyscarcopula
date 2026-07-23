@@ -11,6 +11,9 @@ struct ParallelRuntimeInfo {
     std::uint64_t owner_pid = 0;
     std::size_t worker_count = 0;
     std::uint64_t batches_submitted = 0;
+    std::uint64_t worker_start_events = 0;
+    std::uint64_t tasks_submitted = 0;
+    std::size_t peak_queued_tasks = 0;
 };
 
 /// Return whether a row-major grid is large enough to amortize dispatch.

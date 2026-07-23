@@ -56,6 +56,21 @@ def test_n_threads_one_never_initializes_runtime():
     assert payload["result"]["block_ids"] == [0] * 100
 
 
+def test_runtime_resource_counters_track_reuse_without_worker_growth():
+    module = _cpp_extension.load()
+    module._parallel_runtime_shutdown()
+
+    first = dict(module._parallel_for_blocks_probe(32, 1, 4))["runtime"]
+    second = dict(module._parallel_for_blocks_probe(32, 1, 2))["runtime"]
+
+    assert first["worker_start_events"] == 4
+    assert first["tasks_submitted"] == 4
+    assert first["peak_queued_tasks"] <= 4
+    assert second["worker_start_events"] == first["worker_start_events"]
+    assert second["tasks_submitted"] == first["tasks_submitted"] + 2
+    assert second["peak_queued_tasks"] <= 4
+
+
 def test_spawned_interpreter_n_threads_one_ignores_parent_pool():
     payload = _run_clean_interpreter(
         "import json, subprocess, sys\n"

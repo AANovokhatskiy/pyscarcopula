@@ -116,13 +116,35 @@ if _env_flag("PYSCA_CPP_STRICT"):
     else:
         extra_compile_args.extend(["-Wall", "-Wextra", "-Wpedantic", "-Werror"])
 
-if _env_flag("PYSCA_CPP_SANITIZE"):
+sanitize = _env_flag("PYSCA_CPP_SANITIZE")
+thread_sanitize = _env_flag("PYSCA_CPP_THREAD_SANITIZE")
+if sanitize and thread_sanitize:
+    raise RuntimeError(
+        "PYSCA_CPP_SANITIZE and PYSCA_CPP_THREAD_SANITIZE are mutually "
+        "exclusive"
+    )
+
+if sanitize:
     if sys.platform == "win32":
         raise RuntimeError(
             "PYSCA_CPP_SANITIZE requires a GCC- or Clang-compatible platform"
         )
     sanitizer_flags = [
         "-fsanitize=address,undefined",
+        "-fno-omit-frame-pointer",
+        "-fno-sanitize-recover=all",
+    ]
+    extra_compile_args.extend([*sanitizer_flags, "-O1", "-g"])
+    extra_link_args.extend(sanitizer_flags)
+
+if thread_sanitize:
+    if sys.platform == "win32":
+        raise RuntimeError(
+            "PYSCA_CPP_THREAD_SANITIZE requires a GCC- or "
+            "Clang-compatible platform"
+        )
+    sanitizer_flags = [
+        "-fsanitize=thread",
         "-fno-omit-frame-pointer",
         "-fno-sanitize-recover=all",
     ]

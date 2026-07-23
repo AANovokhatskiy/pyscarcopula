@@ -21,6 +21,9 @@ py::dict runtime_info_to_dict(
     out["owner_pid"] = info.owner_pid;
     out["worker_count"] = info.worker_count;
     out["batches_submitted"] = info.batches_submitted;
+    out["worker_start_events"] = info.worker_start_events;
+    out["tasks_submitted"] = info.tasks_submitted;
+    out["peak_queued_tasks"] = info.peak_queued_tasks;
     return out;
 }
 

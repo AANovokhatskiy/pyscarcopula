@@ -28,6 +28,10 @@ Version: `0.18.0` -> `0.19.0`
 - Adds a dependency-free native linear-algebra layer with scalar and portable
   compiler-vectorizable backends; no Eigen, BLAS, OpenMP, or other external
   runtime dependency is introduced.
+- Adds the parallel release-gate matrix: strict GCC/Clang/MSVC wheels,
+  Linux/macOS/Windows dependency audits, ASan/UBSan, ThreadSanitizer, Unix
+  process-lifecycle stress, allocation/RSS instrumentation, explicit
+  subinterpreter rejection, and aggregate validation artifacts.
 - Documents CPU configuration, thread safety, deterministic sampling,
   oversubscription, diagnostics, and current large-dimension limits. Dense
   Student correlation modes remain `O(d^2)`; `corr_mode="factor"` is not yet
