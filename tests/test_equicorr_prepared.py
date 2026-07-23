@@ -208,6 +208,44 @@ def test_mle_accepts_prepared_data_without_dense_correlation_result():
     assert np.isfinite(result.diagnostics["equicorrelation_rho"])
 
 
+def test_fitted_mle_sampling_and_prediction_batches_are_bounded():
+    rng = np.random.default_rng(291)
+    u = rng.uniform(0.05, 0.95, size=(40, 6))
+    model = EquicorrGaussianCopula(d=6)
+    prepared = model.prepare_sufficient_statistics(u)
+    model.fit(prepared, method="MLE")
+
+    sample_blocks = list(model.sample_batches(
+        11,
+        batch_rows=4,
+        given={0: 0.25},
+        memory_budget_bytes=4 * 6 * 8,
+        rng=np.random.default_rng(292),
+    ))
+    predict_blocks = list(model.predict_batches(
+        11,
+        batch_rows=4,
+        memory_budget_bytes=4 * 6 * 8,
+        rng=np.random.default_rng(293),
+    ))
+    assert [block.shape for block in sample_blocks] == [
+        (4, 6), (4, 6), (3, 6)]
+    assert [block.shape for block in predict_blocks] == [
+        (4, 6), (4, 6), (3, 6)]
+    np.testing.assert_array_equal(
+        np.concatenate(sample_blocks)[:, 0],
+        np.full(11, 0.25),
+    )
+
+    with pytest.raises(MemoryError, match="sample_batches"):
+        model.sample(11, memory_budget_bytes=11 * 6 * 8 - 1)
+    with pytest.raises(MemoryError, match="predict_batches"):
+        model.predict(11, memory_budget_bytes=11 * 6 * 8 - 1)
+    with pytest.raises(MemoryError, match="reduce batch_rows"):
+        list(model.sample_batches(
+            11, batch_rows=4, memory_budget_bytes=4 * 6 * 8 - 1))
+
+
 def test_top_level_api_consumes_prepared_and_rejects_other_models():
     rng = np.random.default_rng(30)
     u = rng.uniform(0.05, 0.95, size=(35, 5))
@@ -309,6 +347,18 @@ def test_gas_fit_accepts_prepared_data():
     assert result.log_likelihood != -1e10
     assert model._last_prepared is prepared
 
+    expected = model.sample(9, rng=np.random.default_rng(330))
+    actual = np.concatenate(list(model.sample_batches(
+        9, batch_rows=4, rng=np.random.default_rng(330))))
+    np.testing.assert_array_equal(actual, expected)
+
+    prediction = np.concatenate(list(model.predict_batches(
+        9, batch_rows=4, rng=np.random.default_rng(331))))
+    assert prediction.shape == (9, 5)
+    assert np.all(np.isfinite(prediction))
+    assert model.predict(
+        9, rng=np.random.default_rng(331)).shape == (9, 5)
+
 
 def test_scar_evaluator_consumes_prepared_statistics_directly():
     rng = np.random.default_rng(44)
@@ -373,6 +423,21 @@ def test_scar_fit_accepts_prepared_data():
     assert np.isfinite(result.log_likelihood)
     assert result.diagnostics["prepared_native_evaluator"] is True
     assert model._last_prepared is prepared
+
+    first = np.concatenate(list(model.sample_batches(
+        9, batch_rows=4, rng=np.random.default_rng(450))))
+    second = np.concatenate(list(model.sample_batches(
+        9, batch_rows=4, rng=np.random.default_rng(450))))
+    np.testing.assert_array_equal(first, second)
+
+    prediction = np.concatenate(list(model.predict_batches(
+        9,
+        batch_rows=4,
+        given={1: 0.6},
+        rng=np.random.default_rng(451),
+    )))
+    assert prediction.shape == (9, 5)
+    np.testing.assert_array_equal(prediction[:, 1], np.full(9, 0.6))
 
 
 def test_public_constructor_copies_caller_owned_arrays():

@@ -13,6 +13,10 @@
 - Adds bounded row-batch grid output with a pre-allocation memory budget and
   structural `O(n*d)` Equicorr sampling over the full admissible correlation
   interval, including negative correlation.
+- Adds fitted `sample_batches` and `predict_batches` for Equicorr MLE, GAS,
+  and SCAR-TM-OU while preserving per-row GAS recursion and SCAR path or
+  posterior semantics. Monolithic sampling APIs can reject oversized output
+  before allocation.
 - Adds opt-in `d=10^4`, `10^5`, and `10^6` preparation benchmark gates with
   exact cross-thread result checks and an enforceable four-thread efficiency
   target.

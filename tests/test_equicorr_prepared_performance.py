@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+from pathlib import Path
 import time
 
 import numpy as np
@@ -73,7 +74,10 @@ def _run_gate(*, n_obs: int, dimension: int, large: bool) -> None:
     }
     efficiency_4 = (
         speedup[4] / 4.0 if 4 in speedup else None)
-    target_met = efficiency_4 is None or efficiency_4 >= 0.60
+    target_applicable = n_obs * dimension >= 320_000
+    target_met = (
+        not target_applicable
+        or (efficiency_4 is not None and efficiency_4 >= 0.60))
     payload = {
         "name": "phase8_equicorr_preparation_scaling",
         "workload": {"T": n_obs, "d": dimension},
@@ -81,6 +85,7 @@ def _run_gate(*, n_obs: int, dimension: int, large: bool) -> None:
         "speedup": {str(key): value for key, value in speedup.items()},
         "parallel_efficiency_4": efficiency_4,
         "parallel_efficiency_target": 0.60,
+        "parallel_efficiency_target_applicable": target_applicable,
         "target_met": target_met,
         "peak_temporary_values": diagnostics["peak_temporary_values"],
         "prepared_bytes": 2 * n_obs * np.dtype(np.float64).itemsize,
@@ -94,15 +99,36 @@ def _run_gate(*, n_obs: int, dimension: int, large: bool) -> None:
         + json.dumps(payload, sort_keys=True),
         flush=True,
     )
+    output = os.environ.get("PYSCA_PHASE8_BENCHMARK_OUTPUT")
+    if output:
+        path = Path(output)
+        try:
+            report = json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            report = {"status": "passed", "workloads": []}
+        report["workloads"].append(payload)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
 
     if os.environ.get("PYSCA_ENFORCE_PERFORMANCE_GATES") == "1":
         assert target_met, payload
 
 
 @pytest.mark.benchmark
-@pytest.mark.parametrize("dimension", [10_000, 100_000])
-def test_equicorr_preparation_scaling_gate(dimension):
-    _run_gate(n_obs=32, dimension=dimension, large=False)
+@pytest.mark.parametrize(
+    ("n_obs", "dimension"),
+    [
+        (1, 100_000),
+        (32, 10_000),
+        (32, 100_000),
+        (1000, 10_000),
+    ],
+)
+def test_equicorr_preparation_scaling_gate(n_obs, dimension):
+    _run_gate(n_obs=n_obs, dimension=dimension, large=False)
 
 
 @pytest.mark.benchmark

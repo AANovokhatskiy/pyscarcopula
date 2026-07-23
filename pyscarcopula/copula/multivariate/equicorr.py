@@ -228,6 +228,25 @@ class EquicorrGaussianCopula(MultivariateCopula):
             raise ValueError("grid output dimensions must be non-negative")
         return 2 * n_obs * n_grid * np.dtype(np.float64).itemsize
 
+    def _sample_output_bytes(self, n_rows):
+        n_rows = int(n_rows)
+        if n_rows < 0:
+            raise ValueError("sample output rows must be non-negative")
+        return n_rows * self._d * np.dtype(np.float64).itemsize
+
+    @staticmethod
+    def _validated_memory_budget(memory_budget_bytes, required, guidance):
+        if memory_budget_bytes is None:
+            return
+        if (
+                isinstance(memory_budget_bytes, (bool, np.bool_))
+                or not isinstance(
+                    memory_budget_bytes, (int, np.integer))):
+            raise TypeError("memory_budget_bytes must be an integer")
+        if int(memory_budget_bytes) < required:
+            raise MemoryError(
+                f"output requires {required} bytes; {guidance}")
+
     def pdf_and_grad_on_grid_batch(
             self,
             u,
@@ -238,17 +257,12 @@ class EquicorrGaussianCopula(MultivariateCopula):
         """Evaluate a grid batch, optionally enforcing an output budget."""
         from pyscarcopula.numerical import multivariate_native
         required = self._grid_output_bytes(len(u), len(x_grid))
-        if memory_budget_bytes is not None:
-            if (
-                    isinstance(memory_budget_bytes, (bool, np.bool_))
-                    or not isinstance(
-                        memory_budget_bytes, (int, np.integer))):
-                raise TypeError("memory_budget_bytes must be an integer")
-            if int(memory_budget_bytes) < required:
-                raise MemoryError(
-                    f"grid output requires {required} bytes; use "
-                    "pdf_and_grad_on_grid_batches() or increase "
-                    "memory_budget_bytes")
+        self._validated_memory_budget(
+            memory_budget_bytes,
+            required,
+            "use pdf_and_grad_on_grid_batches() or increase "
+            "memory_budget_bytes",
+        )
         return multivariate_native.pdf_and_grad_grid(
             self, u, x_grid, n_threads=n_threads)
 
@@ -274,11 +288,11 @@ class EquicorrGaussianCopula(MultivariateCopula):
         n_grid = len(x_grid)
         per_block = self._grid_output_bytes(
             min(batch_rows, len(u)), n_grid)
-        if memory_budget_bytes is not None and int(
-                memory_budget_bytes) < per_block:
-            raise MemoryError(
-                f"one grid block requires up to {per_block} bytes; "
-                "reduce batch_rows or increase memory_budget_bytes")
+        self._validated_memory_budget(
+            memory_budget_bytes,
+            per_block,
+            "reduce batch_rows or increase memory_budget_bytes",
+        )
 
         for start in range(0, len(u), batch_rows):
             stop = min(len(u), start + batch_rows)
@@ -448,7 +462,20 @@ class EquicorrGaussianCopula(MultivariateCopula):
         self.fit_result = result
         return result
 
-    def sample_at_parameter(self, n, r, rng=None):
+    def sample_at_parameter(
+            self, n, r, rng=None, *, memory_budget_bytes=None):
+        if isinstance(n, (bool, np.bool_)) or not isinstance(
+                n, (int, np.integer)):
+            raise TypeError("n must be an integer")
+        n = int(n)
+        if n < 0:
+            raise ValueError("n must be non-negative")
+        self._validated_memory_budget(
+            memory_budget_bytes,
+            self._sample_output_bytes(n),
+            "use sample_at_parameter_batches() or increase "
+            "memory_budget_bytes",
+        )
         if rng is None:
             rng = np.random.default_rng()
         parameters = np.atleast_1d(np.asarray(r, dtype=np.float64)).ravel()
@@ -484,7 +511,13 @@ class EquicorrGaussianCopula(MultivariateCopula):
         return norm.cdf(values)
 
     def sample_at_parameter_batches(
-            self, n, r, *, batch_rows=128, rng=None):
+            self,
+            n,
+            r,
+            *,
+            batch_rows=128,
+            rng=None,
+            memory_budget_bytes=None):
         """Yield unconditional samples without allocating the full ``(n,d)``.
 
         The returned iterator owns no model state. Each yielded array has at
@@ -503,6 +536,11 @@ class EquicorrGaussianCopula(MultivariateCopula):
             raise ValueError("n must be non-negative")
         if batch_rows < 1:
             raise ValueError("batch_rows must be positive")
+        self._validated_memory_budget(
+            memory_budget_bytes,
+            self._sample_output_bytes(min(n, batch_rows)),
+            "reduce batch_rows or increase memory_budget_bytes",
+        )
         if rng is None:
             rng = np.random.default_rng()
 
@@ -525,13 +563,23 @@ class EquicorrGaussianCopula(MultivariateCopula):
             block_r = parameters if parameters.size == 1 else (
                 parameters[start:stop])
             yield self.sample_at_parameter(
-                stop - start, block_r, rng=rng)
+                stop - start,
+                block_r,
+                rng=rng,
+                memory_budget_bytes=memory_budget_bytes,
+            )
 
     @model_state_locked
-    def sample(self, n, u=None, rng=None):
+    def sample(
+            self, n, u=None, rng=None, *, memory_budget_bytes=None):
         """Generate observations reproducing the fitted model."""
         if self.fit_result is None:
             raise ValueError("Fit first")
+        self._validated_memory_budget(
+            memory_budget_bytes,
+            self._sample_output_bytes(n),
+            "use sample_batches() or increase memory_budget_bytes",
+        )
         from pyscarcopula.api import sample as _api_sample
 
         u_data = u if u is not None else getattr(self, "_last_u", None)
@@ -544,15 +592,108 @@ class EquicorrGaussianCopula(MultivariateCopula):
         return _api_sample(self, u_data, self.fit_result, n, rng=rng)
 
     @model_state_locked
+    def sample_batches(
+            self,
+            n,
+            u=None,
+            rng=None,
+            *,
+            batch_rows=128,
+            given=None,
+            memory_budget_bytes=None):
+        """Yield fitted-model samples in bounded row blocks.
+
+        GAS is advanced one generated observation at a time. MLE and SCAR
+        use their constant or OU model parameter paths respectively.
+        """
+        if self.fit_result is None:
+            raise ValueError("Fit first")
+        if isinstance(n, (bool, np.bool_)) or not isinstance(
+                n, (int, np.integer)):
+            raise TypeError("n must be an integer")
+        if isinstance(batch_rows, (bool, np.bool_)) or not isinstance(
+                batch_rows, (int, np.integer)):
+            raise TypeError("batch_rows must be an integer")
+        n = int(n)
+        batch_rows = int(batch_rows)
+        if n < 0:
+            raise ValueError("n must be non-negative")
+        if batch_rows < 1:
+            raise ValueError("batch_rows must be positive")
+        self._validated_memory_budget(
+            memory_budget_bytes,
+            self._sample_output_bytes(min(n, batch_rows)),
+            "reduce batch_rows or increase memory_budget_bytes",
+        )
+        if rng is None:
+            rng = np.random.default_rng()
+
+        from pyscarcopula.strategy._base import get_strategy_for_result
+        result = self.fit_result
+        strategy = get_strategy_for_result(result)
+        state = strategy.model_sample_state(self, result)
+        if state is None:
+            parameters = strategy.model_sample_params(
+                self, result, n, rng=rng)
+
+            def independent_blocks():
+                for start in range(0, n, batch_rows):
+                    stop = min(n, start + batch_rows)
+                    yield self.sample_conditional(
+                        stop - start,
+                        r=parameters[start:stop],
+                        given=given,
+                        rng=rng,
+                    )
+
+            return independent_blocks()
+
+        def recursive_blocks():
+            current = state
+            for start in range(0, n, batch_rows):
+                stop = min(n, start + batch_rows)
+                block = np.empty((stop - start, self._d), dtype=np.float64)
+                for row in range(stop - start):
+                    parameter = strategy.sample_params(
+                        self, current, 1, rng=rng)[0]
+                    observation = self.sample_conditional(
+                        1, r=parameter, given=given, rng=rng)
+                    block[row] = observation[0]
+                    current = strategy.condition_state(
+                        self, current, observation, result)
+                yield block
+
+        return recursive_blocks()
+
+    @model_state_locked
     def sample_conditional(
-            self, n, r=None, given=None, rng=None, *, n_threads=1):
+            self,
+            n,
+            r=None,
+            given=None,
+            rng=None,
+            *,
+            n_threads=1,
+            memory_budget_bytes=None):
+        self._validated_memory_budget(
+            memory_budget_bytes,
+            self._sample_output_bytes(n),
+            "use sample_batches()/predict_batches() or increase "
+            "memory_budget_bytes",
+        )
         if rng is None:
             rng = np.random.default_rng()
         given = validate_multivariate_given(given, self._d)
         if not given:
             if r is None:
-                return self.sample(n, rng=rng)
-            return self.sample_at_parameter(n, r=r, rng=rng)
+                return self.sample(
+                    n, rng=rng, memory_budget_bytes=memory_budget_bytes)
+            return self.sample_at_parameter(
+                n,
+                r=r,
+                rng=rng,
+                memory_budget_bytes=memory_budget_bytes,
+            )
         if r is None:
             r = self.fit_result.copula_param if self.fit_result else 0.5
         return sample_gaussian_conditional(
@@ -568,7 +709,8 @@ class EquicorrGaussianCopula(MultivariateCopula):
             given=None,
             horizon="next",
             predictive_r_mode=None,
-            predict_config=None):
+            predict_config=None,
+            memory_budget_bytes=None):
         if predict_config is not None:
             from pyscarcopula.api import _resolve_predict_config
             config = _resolve_predict_config(
@@ -580,6 +722,11 @@ class EquicorrGaussianCopula(MultivariateCopula):
             predictive_r_mode = config.predictive_r_mode
         if self.fit_result is None:
             raise ValueError("Fit first")
+        self._validated_memory_budget(
+            memory_budget_bytes,
+            self._sample_output_bytes(n),
+            "use predict_batches() or increase memory_budget_bytes",
+        )
         if rng is None:
             rng = np.random.default_rng()
 
@@ -591,19 +738,98 @@ class EquicorrGaussianCopula(MultivariateCopula):
         observations = u if u is not None else getattr(self, "_last_u", None)
         if observations is None:
             observations = getattr(self, "_last_prepared", None)
-        if observations is not None:
-            grid, probability = self.xT_distribution(observations)
-            indices = rng.choice(len(grid), size=n, p=probability)
-            parameters = self.transform(grid[indices])
-            return self.sample_conditional(
-                n, r=parameters, given=given, rng=rng)
+        blocks = self.predict_batches(
+            n,
+            u=observations,
+            rng=rng,
+            batch_rows=max(1, n),
+            given=given,
+            horizon=horizon,
+            predictive_r_mode=predictive_r_mode,
+            memory_budget_bytes=memory_budget_bytes,
+        )
+        try:
+            return next(blocks)
+        except StopIteration:
+            return np.empty((0, self._d), dtype=np.float64)
 
-        kappa, mu, nu = self.fit_result.params.values
-        variance = nu ** 2 / (2.0 * kappa)
-        states = rng.normal(mu, np.sqrt(variance), size=n)
-        parameters = self.transform(states)  # (n,)
-        return self.sample_conditional(
-            n, r=parameters, given=given, rng=rng)
+    @model_state_locked
+    def predict_batches(
+            self,
+            n,
+            u=None,
+            rng=None,
+            *,
+            batch_rows=128,
+            given=None,
+            horizon="next",
+            predictive_r_mode=None,
+            predict_config=None,
+            memory_budget_bytes=None):
+        """Yield fitted predictive samples from one frozen predictive state."""
+        if self.fit_result is None:
+            raise ValueError("Fit first")
+        if isinstance(n, (bool, np.bool_)) or not isinstance(
+                n, (int, np.integer)):
+            raise TypeError("n must be an integer")
+        if isinstance(batch_rows, (bool, np.bool_)) or not isinstance(
+                batch_rows, (int, np.integer)):
+            raise TypeError("batch_rows must be an integer")
+        n = int(n)
+        batch_rows = int(batch_rows)
+        if n < 0:
+            raise ValueError("n must be non-negative")
+        if batch_rows < 1:
+            raise ValueError("batch_rows must be positive")
+        self._validated_memory_budget(
+            memory_budget_bytes,
+            self._sample_output_bytes(min(n, batch_rows)),
+            "reduce batch_rows or increase memory_budget_bytes",
+        )
+        if rng is None:
+            rng = np.random.default_rng()
+
+        from pyscarcopula.api import _resolve_predict_config
+        config = _resolve_predict_config(
+            predict_config,
+            given,
+            horizon,
+            {"predictive_r_mode": predictive_r_mode},
+        )
+        observations = u if u is not None else getattr(
+            self, "_last_u", None)
+        if observations is None:
+            observations = getattr(self, "_last_prepared", None)
+
+        from pyscarcopula.strategy._base import get_strategy_for_result
+        result = self.fit_result
+        strategy = get_strategy_for_result(result)
+        state = strategy.predictive_state(
+            self,
+            observations,
+            result,
+            horizon=config.horizon,
+            predictive_r_mode=config.predictive_r_mode,
+        )
+
+        def blocks():
+            for start in range(0, n, batch_rows):
+                count = min(batch_rows, n - start)
+                parameters = strategy.sample_params(
+                    self,
+                    state,
+                    count,
+                    rng=rng,
+                    predictive_r_mode=config.predictive_r_mode,
+                )
+                yield self.sample_conditional(
+                    count,
+                    r=parameters,
+                    given=config.given,
+                    rng=rng,
+                )
+
+        return blocks()
 
     @model_state_locked
     def predictive_mean(self, u):

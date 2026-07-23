@@ -210,7 +210,10 @@ Parallel threads do not change the asymptotic representation of a model.
   output before native allocation. Unconditional
   `sample_at_parameter_batches` uses `O(batch_rows*d)` output memory and the
   structural equicorrelation eigenspaces for negative as well as positive
-  correlation.
+  correlation. Fitted `sample_batches` and `predict_batches` retain the
+  sequential GAS update and SCAR path/posterior semantics while bounding each
+  materialized output block. Monolithic sampling methods accept the same
+  pre-allocation budget contract.
 - `StochasticStudentCopula` with `corr_mode="fixed"`, `"shrinkage"`, or
   `"cholesky"` still uses a dense correlation representation with
   `O(d^2)` storage/factorization costs.

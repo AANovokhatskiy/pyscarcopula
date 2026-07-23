@@ -65,6 +65,7 @@ nav:
     - Multivariate Models: guide/multivariate_models.md
     - CPU Parallelism: guide/parallelism.md
     - Parallel Release Validation: validation/parallel-release-gates.md
+    - Phase 8 Validation: validation/phase8-validation.md
     - Developer Architecture: guide/architecture.md
     - Transform Functions: guide/transforms.md
     - Performance Tuning: guide/performance.md

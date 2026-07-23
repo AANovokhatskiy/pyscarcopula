@@ -150,11 +150,31 @@ for block in cop.sample_at_parameter_batches(
     n=1_000_000, r=-1e-6, batch_rows=128
 ):
     consume(block)
+
+# Bounded output from a fitted MLE, GAS, or SCAR-TM-OU model:
+for block in cop.sample_batches(
+    n=1_000_000,
+    batch_rows=128,
+    memory_budget_bytes=128 * cop.d * 8,
+):
+    consume(block)
+
+for block in cop.predict_batches(
+    n=1_000_000,
+    batch_rows=128,
+    memory_budget_bytes=128 * cop.d * 8,
+):
+    consume(block)
 ```
 
 The structural sampler costs `O(n*d)` and does not construct a dense
 correlation matrix. It supports the full admissible open interval
-`-1/(d-1) < rho < 1`.
+`-1/(d-1) < rho < 1`. Fitted batching preserves model semantics: GAS updates
+its state after every generated row, while SCAR uses one OU path for
+unconditional sampling and one frozen posterior state for prediction.
+Monolithic `sample`, `predict`, `sample_conditional`, and
+`sample_at_parameter` also accept `memory_budget_bytes` and fail before
+allocating an oversized output.
 
 ### When to use
 
@@ -174,8 +194,10 @@ For heterogeneous dependence, use a C-vine or R-vine instead.
         - fit
         - prepare_sufficient_statistics
         - sample
+        - sample_batches
         - sample_conditional
         - predict
+        - predict_batches
         - predictive_mean
         - xT_distribution
         - log_likelihood

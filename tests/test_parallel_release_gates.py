@@ -61,6 +61,9 @@ def _measure_allocations(probe, function):
 
 
 def _lifecycle_child(connection, n_threads, exercise_failure):
+    import numpy as np
+
+    from pyscarcopula import EquicorrGaussianCopula
     from pyscarcopula.numerical import _cpp_extension
 
     module = _cpp_extension.load()
@@ -75,6 +78,12 @@ def _lifecycle_child(connection, n_threads, exercise_failure):
         first = dict(module._parallel_for_blocks_probe(
             32, 1, n_threads))
         sequential = dict(module._parallel_for_blocks_probe(16, 1, 1))
+        compact = EquicorrGaussianCopula(
+            d=8192).prepare_sufficient_statistics(
+                np.full((2, 8192), 0.5),
+                dimension_tile=256,
+                n_threads=n_threads,
+            )
         second = dict(module._parallel_for_blocks_probe(
             32, 1, n_threads))
         connection.send({
@@ -82,6 +91,7 @@ def _lifecycle_child(connection, n_threads, exercise_failure):
             "first": first,
             "sequential": sequential,
             "second": second,
+            "equicorr_prepared_rows": len(compact),
         })
     finally:
         connection.close()
@@ -134,6 +144,7 @@ def test_unix_start_methods_own_parallel_runtime(start_method, n_threads):
         start_method, n_threads, exercise_failure=True)
     first_runtime = result["first"]["runtime"]
     second_runtime = result["second"]["runtime"]
+    assert result["equicorr_prepared_rows"] == 2
     if n_threads == 1:
         assert first_runtime["initialized"] is False
         assert second_runtime["initialized"] is False
@@ -237,6 +248,13 @@ def test_repeated_native_hot_paths_have_bounded_resident_memory():
         "np.fill_diagonal(R, 1.0)\n"
         "student = StochasticStudentCopula(d=8, R=R)\n"
         "equicorr = EquicorrGaussianCopula(d=8)\n"
+        "equicorr_large = EquicorrGaussianCopula(d=10000)\n"
+        "large_u = rng.uniform(0.05, 0.95, (8, 10000))\n"
+        "compact = equicorr_large.prepare_sufficient_statistics("
+        "large_u, batch_rows=4, dimension_tile=1024, n_threads=4)\n"
+        "del large_u\n"
+        "compact_evaluator = static_likelihood.prepare("
+        "equicorr_large, compact, n_threads=4)\n"
         "prepared = static_likelihood.prepare("
         "student, u, n_threads=4)\n"
         "def exercise():\n"
@@ -244,6 +262,9 @@ def test_repeated_native_hot_paths_have_bounded_resident_memory():
         "u, grid, n_threads=4)\n"
         "    equicorr.pdf_and_grad_on_grid_batch("
         "u, grid, n_threads=4)\n"
+        "    equicorr_large.pdf_and_grad_on_grid_batch("
+        "compact, grid, n_threads=4)\n"
+        "    compact_evaluator.objective_and_gradient(0.1)\n"
         "    prepared.joint_result(6.0)\n"
         "for _ in range(20): exercise()\n"
         "gc.collect()\n"
@@ -306,6 +327,42 @@ def test_native_grid_has_no_allocation_per_grid_cell():
     _record_metric("allocation_probe", {
         "small_grid": small,
         "large_grid": large,
+        "max_call_growth": 32,
+        "max_large_calls": 255,
+    })
+
+
+@pytest.mark.validation
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"),
+    reason="glibc allocation probe requires Linux",
+)
+def test_equicorr_preparation_allocation_count_is_tile_bounded():
+    import numpy as np
+
+    from pyscarcopula.numerical import _cpp_extension
+
+    probe = _allocation_probe()
+    module = _cpp_extension.load()
+    rng = np.random.default_rng(915)
+    small = rng.uniform(0.05, 0.95, (4, 10_000))
+    large = rng.uniform(0.05, 0.95, (4, 100_000))
+
+    def prepare(values):
+        return module.prepare_equicorr_sufficient_statistics(
+            values, 4096, 4)
+
+    prepare(small)
+    _, small_allocations = _measure_allocations(
+        probe, lambda: prepare(small))
+    _, large_allocations = _measure_allocations(
+        probe, lambda: prepare(large))
+
+    assert large_allocations["calls"] <= small_allocations["calls"] + 32
+    assert large_allocations["calls"] < 256
+    _record_metric("equicorr_preparation_allocation_probe", {
+        "d_10000": small_allocations,
+        "d_100000": large_allocations,
         "max_call_growth": 32,
         "max_large_calls": 255,
     })
