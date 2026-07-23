@@ -2,6 +2,7 @@
 
 #include "scar/detail/copula.hpp"
 #include "scar/detail/parallel.hpp"
+#include "scar/factor.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -18,12 +19,21 @@ struct TrajectoryBlockResult {
 
 bool valid_student_spec(const CopulaSpec& spec, std::size_t n_obs) {
     std::size_t square = 0;
+    const bool factor_correlation =
+        spec.correlation_kind == CorrelationKind::Factor
+        && spec.factor_correlation != nullptr
+        && spec.factor_correlation->dimension()
+            == static_cast<std::size_t>(spec.dim)
+        && std::isfinite(spec.factor_correlation->logdet());
     if (spec.dim < 2
         || spec.rotation != Rotation::R0
         || spec.transform != Transform::Softplus
         || !scar_internal::valid_student_dimension(spec.dim, square)
-        || spec.l_inv.size() != square
-        || !std::isfinite(spec.log_det)) {
+        || (!factor_correlation && spec.l_inv.size() != square)
+        || !std::isfinite(
+            factor_correlation
+                ? spec.factor_correlation->logdet()
+                : spec.log_det)) {
         return false;
     }
     if (!spec.ppf_nodes.empty() || !spec.ppf_table.empty()) {

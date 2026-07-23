@@ -160,6 +160,14 @@ cop = StochasticStudentCopula(d=5, corr_mode="shrinkage")
 
 # full static correlation for small dimensions
 cop = StochasticStudentCopula(d=5, corr_mode="cholesky")
+
+# compact fixed factor correlation for large dimensions
+cop = StochasticStudentCopula(
+    d=u.shape[1],
+    corr_mode="factor",
+    factor_rank=8,
+)
+cop.initialize_factor(u)
 ```
 
 `shrinkage` and `cholesky` estimate static correlation jointly with constant-df
@@ -214,10 +222,59 @@ gof = gof_test(cop, returns, to_pobs=True)
 - When the correlation structure is relatively stable but tail thickness changes
 - As an alternative to vine copulas for moderate dimensions
 
-The currently available `fixed`, `shrinkage`, and `cholesky` correlation modes
-retain a dense `O(d^2)` correlation representation. Native threads accelerate
-independent computation but do not remove that memory limit. The proposed
-`corr_mode="factor"` mode for `d >> 10^4` is not yet implemented.
+The `fixed`, `shrinkage`, and `cholesky` modes retain a dense `O(d^2)`
+correlation representation. The phase-9.4 `factor` mode instead stores
+`O(d*k + k^2)` state, can accept validated loadings or estimate them with a
+deterministic tiled randomized SVD, and exposes static row/grid evaluation.
+It never creates dense `R` implicitly. Phase 9.5 supports static MLE, native
+GAS, SCAR-TM-OU matrix/local/spectral fitting and native SCAR-MC trajectory
+likelihood without changing that representation. Phase 9.6 adds structural
+factor Student generation, bounded `sample_at_parameter_batches`,
+fitted-model `sample_batches`/`predict_batches`, and exact conditional
+sampling without a dense Schur complement.
+
+Static MLE can also refine `df` and the factor loadings jointly when the
+identifiable parameter count is deliberately bounded:
+
+```python
+joint = StochasticStudentCopula(
+    d=u.shape[1],
+    corr_mode="factor",
+    factor_rank=4,
+    factor_estimation="joint",
+    factor_joint_max_params=100_000,
+)
+joint_result = joint.fit(
+    u, method="mle", config=NumericalConfig(n_threads=4))
+```
+
+The joint path uses analytical matrix-free gradients and an identified
+pivoted lower-triangular loading convention. Diagnostics report the anchor
+rows, initial/final penalized objective, terminal gradient and acceptance
+threshold, condition estimate, and native reduction workspace. `success=True`
+requires both optimizer success and the terminal-gradient gate. Joint
+loadings for GAS and SCAR are rejected: those methods require additional
+derivatives through their sequential recursions. Use the production
+`two-stage` policy for dynamic models and large `d`.
+
+```python
+factor_samples = cop.sample_at_parameter(
+    50_000, r=6.0, rng=np.random.default_rng(2026), n_threads=4)
+
+factor_conditional = cop.sample_conditional(
+    50_000,
+    r=6.0,
+    given={0: 0.25, 3: 0.8},
+    rng=np.random.default_rng(2027),
+    n_threads=4,
+)
+```
+
+For fixed coordinates `G`, conditioning factorizes only
+`I + B_G.T @ D_G^-1 @ B_G`, a `k*k` matrix. Free coordinates retain a
+diagonal-plus-low-rank covariance, so memory remains linear in `d*k` plus
+the requested output. Use the batch APIs and `memory_budget_bytes` when
+`n*d` itself is large.
 
 ## Common API
 
@@ -238,6 +295,9 @@ print(result.log_likelihood, result.n_params, result.aic, result.bic)
 
 The result stores model parameters, observation count, an explicit correlation
 matrix, optimizer status, diagnostics, and the parameter count used by AIC/BIC.
+For `GaussianCopula(corr_mode="factor")` and factor Student models, the result
+intentionally stores `correlation_matrix=None` and keeps compact loadings and
+uniqueness in `model_parameters`.
 
 All multivariate models support the following core operations where applicable:
 
@@ -292,3 +352,37 @@ constant rows. Static `GaussianCopula` and `StudentCopula` accept only
 The conditional kernels generate random draws in Python before entering the
 native implementation. Reusing the same seed produces the same tested output
 for `n_threads=1` and parallel thread counts.
+
+For a static Gaussian model with large `d`, select factor correlation
+explicitly:
+
+```python
+from pyscarcopula import NumericalConfig
+
+factor_gaussian = GaussianCopula(
+    d=u.shape[1],
+    corr_mode="factor",
+    factor_rank=8,
+    factor_tile_size=16_384,
+)
+factor_result = factor_gaussian.fit(
+    u,
+    method="mle",
+    config=NumericalConfig(n_threads=4),
+)
+
+for block in factor_gaussian.sample_batches(
+    1_000_000,
+    batch_rows=128,
+    given={0: 0.25},
+    n_threads=4,
+):
+    consume(block)
+```
+
+The Gaussian adapter reuses `FactorCorrelation` for likelihood, sampling,
+conditioning, persistence, and rolling-window reconstruction. Two-stage
+normal-score estimation is tiled and does not build a `d*d` covariance.
+Likelihood and sampling remain `O(d*k)` per row; conditional generation uses
+only a `k*k` factor system. The factor Rosenblatt transform used by
+`gof_test` keeps `O(T*k + k^2)` workspace.

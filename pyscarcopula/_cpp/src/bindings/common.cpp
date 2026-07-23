@@ -636,6 +636,12 @@ void bind_common(py::module_& m) {
         .value(
             "MultivariateGaussian",
             scar::CopulaFamily::MultivariateGaussian);
+    py::enum_<scar::CorrelationKind>(
+        m, "CorrelationKind", "Native correlation representation.")
+        .value(
+            "DenseCholesky",
+            scar::CorrelationKind::DenseCholesky)
+        .value("Factor", scar::CorrelationKind::Factor);
 
     py::enum_<scar::Rotation>(
         m, "Rotation", "Bivariate copula rotation in degrees.")

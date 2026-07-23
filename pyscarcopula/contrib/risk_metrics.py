@@ -259,12 +259,45 @@ def _get_copula_constructor(copula):
                 factor_tile_size=copula.factor_tile_size,
                 factor_uniqueness_min=copula.factor_uniqueness_min,
                 factor_joint_max_params=copula.factor_joint_max_params,
+                factor_joint_penalty=copula.factor_joint_penalty,
+                factor_joint_condition_max=
+                    copula.factor_joint_condition_max,
+                factor_seed=copula._factor_seed,
+                factor_oversampling=copula._factor_oversampling,
             )
         return (StochasticStudentCopula, kwargs)
     elif isinstance(copula, EquicorrGaussianCopula):
         return (EquicorrGaussianCopula, dict(d=copula.d))
-    elif isinstance(copula, (GaussianCopula, StudentCopula)):
-        return (type(copula), {})
+    elif isinstance(copula, GaussianCopula):
+        if getattr(copula, "corr_mode", "dense") == "factor":
+            constructor_loadings = getattr(
+                copula, "_constructor_factor_loadings", None)
+            if (
+                    constructor_loadings is None
+                    and copula.fit_result is None):
+                constructor_loadings = copula.factor_loadings_
+            return (
+                GaussianCopula,
+                {
+                    "d": copula.d,
+                    "corr_mode": "factor",
+                    "factor_rank": copula.factor_rank,
+                    "factor_loadings": (
+                        None
+                        if constructor_loadings is None
+                        else np.array(
+                            constructor_loadings, copy=True)),
+                    "factor_tile_size": copula.factor_tile_size,
+                    "factor_uniqueness_min":
+                        copula._factor_uniqueness_min,
+                    "factor_seed": copula._factor_seed,
+                    "factor_oversampling":
+                        copula._factor_oversampling,
+                },
+            )
+        return (GaussianCopula, {})
+    elif isinstance(copula, StudentCopula):
+        return (StudentCopula, {})
     else:
         kwargs = dict(rotate=copula._rotate)
         transform_type = getattr(copula, "_transform_type", None)

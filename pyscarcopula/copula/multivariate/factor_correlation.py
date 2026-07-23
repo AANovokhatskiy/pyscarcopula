@@ -1,0 +1,475 @@
+"""Reusable low-rank correlation operators independent of copula families."""
+
+from __future__ import annotations
+
+from dataclasses import InitVar, dataclass, field
+import json
+from pathlib import Path
+from types import MappingProxyType
+from typing import Any, Mapping
+
+import numpy as np
+
+
+FACTOR_CORRELATION_FORMAT_VERSION = 1
+
+
+def _positive_integer(name, value, *, allow_zero=False):
+    if isinstance(value, (bool, np.bool_)) or not isinstance(
+            value, (int, np.integer)):
+        raise TypeError(f"{name} must be an integer")
+    value = int(value)
+    minimum = 0 if allow_zero else 1
+    if value < minimum:
+        qualifier = "non-negative" if allow_zero else "positive"
+        raise ValueError(f"{name} must be {qualifier}")
+    return value
+
+
+def _validated_n_threads(value):
+    if isinstance(value, (bool, np.bool_)) or not isinstance(
+            value, (int, np.integer)):
+        raise ValueError("n_threads must be an integer in [1, 256]")
+    value = int(value)
+    if value < 1 or value > 256:
+        raise ValueError("n_threads must be an integer in [1, 256]")
+    return value
+
+
+def _validated_budget(memory_budget_bytes, required, guidance):
+    if memory_budget_bytes is None:
+        return
+    if (
+            isinstance(memory_budget_bytes, (bool, np.bool_))
+            or not isinstance(memory_budget_bytes, (int, np.integer))):
+        raise TypeError("memory_budget_bytes must be an integer")
+    if int(memory_budget_bytes) < required:
+        raise MemoryError(f"operation requires {required} bytes; {guidance}")
+
+
+def _metadata(factor: "FactorCorrelation") -> dict[str, Any]:
+    return {
+        "format_version": factor.format_version,
+        "uniqueness_min": factor.uniqueness_min,
+        "diagnostics": dict(factor.diagnostics),
+    }
+
+
+@dataclass(frozen=True)
+class FactorCorrelation:
+    """Immutable factor correlation ``R = D + B B.T``.
+
+    ``D`` is derived from the row norms of ``loadings`` so every diagonal
+    entry of ``R`` equals one. This value object does not depend on a copula
+    family. Call :meth:`prepare` to construct the reusable native Woodbury
+    operator.
+    """
+
+    loadings: np.ndarray
+    uniqueness_min: float = 1e-8
+    format_version: int = FACTOR_CORRELATION_FORMAT_VERSION
+    diagnostics: Mapping[str, Any] = field(default_factory=dict)
+    _copy_arrays: InitVar[bool] = True
+    _uniqueness: np.ndarray = field(init=False, repr=False)
+
+    def __post_init__(self, _copy_arrays: bool) -> None:
+        if self.format_version != FACTOR_CORRELATION_FORMAT_VERSION:
+            raise ValueError(
+                f"unsupported factor-correlation format version "
+                f"{self.format_version}")
+        if not np.isfinite(self.uniqueness_min) or not (
+                0.0 < self.uniqueness_min < 1.0):
+            raise ValueError(
+                "uniqueness_min must be finite and in (0, 1)")
+
+        convert = np.array if _copy_arrays else np.asanyarray
+        loadings = convert(self.loadings, dtype=np.float64)
+        if (
+                loadings.ndim != 2
+                or loadings.shape[0] < 2
+                or loadings.shape[1] < 1
+                or loadings.shape[1] >= loadings.shape[0]):
+            raise ValueError(
+                "loadings must have shape (d, k), 1 <= k < d")
+        if not loadings.flags.c_contiguous:
+            loadings = np.ascontiguousarray(loadings)
+        if not np.all(np.isfinite(loadings)):
+            raise ValueError("loadings must contain only finite values")
+
+        uniqueness = 1.0 - np.einsum(
+            "ij,ij->i", loadings, loadings, optimize=False)
+        if np.any(uniqueness < self.uniqueness_min):
+            raise ValueError(
+                "each loading row must satisfy "
+                "1 - squared_norm >= uniqueness_min")
+        loadings.setflags(write=False)
+        uniqueness.setflags(write=False)
+        object.__setattr__(self, "loadings", loadings)
+        object.__setattr__(self, "_uniqueness", uniqueness)
+        object.__setattr__(
+            self,
+            "diagnostics",
+            MappingProxyType(dict(self.diagnostics)),
+        )
+
+    @property
+    def dimension(self) -> int:
+        return int(self.loadings.shape[0])
+
+    @property
+    def rank(self) -> int:
+        return int(self.loadings.shape[1])
+
+    @property
+    def uniqueness(self) -> np.ndarray:
+        return self._uniqueness
+
+    @property
+    def storage_bytes(self) -> int:
+        return int(self.loadings.nbytes + self.uniqueness.nbytes)
+
+    @classmethod
+    def from_unconstrained(
+            cls,
+            values,
+            *,
+            uniqueness_min=1e-8) -> "FactorCorrelation":
+        """Map arbitrary finite rows into the valid factor-correlation set."""
+        unconstrained = np.asarray(values, dtype=np.float64)
+        if (
+                unconstrained.ndim != 2
+                or unconstrained.shape[0] < 2
+                or unconstrained.shape[1] < 1
+                or unconstrained.shape[1] >= unconstrained.shape[0]
+                or not np.all(np.isfinite(unconstrained))):
+            raise ValueError(
+                "unconstrained values must have shape (d, k), "
+                "1 <= k < d, and be finite")
+        if not np.isfinite(uniqueness_min) or not (
+                0.0 < float(uniqueness_min) < 1.0):
+            raise ValueError(
+                "uniqueness_min must be finite and in (0, 1)")
+        row_scale = np.max(np.abs(unconstrained), axis=1)
+        scaled = np.divide(
+            unconstrained,
+            row_scale[:, None],
+            out=np.zeros_like(unconstrained),
+            where=row_scale[:, None] > 0.0,
+        )
+        scaled_norms_squared = np.einsum(
+            "ij,ij->i", scaled, scaled, optimize=False)
+        inverse_scale = np.divide(
+            1.0,
+            row_scale,
+            out=np.zeros_like(row_scale),
+            where=row_scale > 0.0,
+        )
+        inverse_scale_squared = inverse_scale * inverse_scale
+        denominator = np.sqrt(
+            scaled_norms_squared + inverse_scale_squared)
+        loadings = np.divide(
+            scaled,
+            denominator[:, None],
+            out=np.zeros_like(scaled),
+            where=denominator[:, None] > 0.0,
+        )
+        max_norm = np.sqrt(np.nextafter(
+            1.0 - float(uniqueness_min), 0.0))
+        norms = np.sqrt(np.einsum(
+            "ij,ij->i", loadings, loadings, optimize=False))
+        scale = np.minimum(
+            1.0,
+            np.divide(
+                max_norm,
+                norms,
+                out=np.ones_like(norms),
+                where=norms > 0.0,
+            ),
+        )
+        return cls(
+            loadings=loadings * scale[:, None],
+            uniqueness_min=uniqueness_min,
+            diagnostics={"source": "unconstrained_row_transform"},
+        )
+
+    def prepare(self) -> "PreparedFactorCorrelation":
+        """Build the immutable native Woodbury workspace."""
+        return PreparedFactorCorrelation(self)
+
+    def to_dense(
+            self,
+            *,
+            max_dimension=2048,
+            memory_budget_bytes=None) -> np.ndarray:
+        """Explicitly materialize ``R`` for small diagnostic problems."""
+        max_dimension = _positive_integer(
+            "max_dimension", max_dimension)
+        required = self.dimension * self.dimension * 8
+        if self.dimension > max_dimension:
+            raise MemoryError(
+                f"dense correlation is disabled for dimension "
+                f"{self.dimension}; increase max_dimension explicitly")
+        _validated_budget(
+            memory_budget_bytes,
+            required,
+            "increase memory_budget_bytes or use prepare()",
+        )
+        dense = self.loadings @ self.loadings.T
+        dense.flat[::self.dimension + 1] += self.uniqueness
+        return dense
+
+    def save_npz(self, path) -> Path:
+        """Write the compact factor representation."""
+        target = Path(path)
+        if target.suffix.lower() != ".npz":
+            target = Path(f"{target}.npz")
+        np.savez_compressed(
+            target,
+            loadings=np.asarray(self.loadings),
+            metadata=np.asarray(json.dumps(
+                _metadata(self), sort_keys=True, separators=(",", ":"))),
+        )
+        return target
+
+    @classmethod
+    def load_npz(cls, path) -> "FactorCorrelation":
+        with np.load(Path(path), allow_pickle=False) as archive:
+            metadata = json.loads(str(archive["metadata"].item()))
+            return cls(loadings=archive["loadings"], **metadata)
+
+    def save_mmap(self, directory) -> Path:
+        """Write an mmap-friendly directory without overwriting it."""
+        target = Path(directory)
+        target.mkdir(parents=True, exist_ok=False)
+        np.save(target / "loadings.npy", np.asarray(self.loadings))
+        (target / "metadata.json").write_text(
+            json.dumps(
+                _metadata(self), sort_keys=True, separators=(",", ":")),
+            encoding="utf-8",
+        )
+        return target
+
+    @classmethod
+    def load_mmap(cls, directory) -> "FactorCorrelation":
+        source = Path(directory)
+        metadata = json.loads(
+            (source / "metadata.json").read_text(encoding="utf-8"))
+        return cls(
+            loadings=np.load(
+                source / "loadings.npy",
+                mmap_mode="r",
+                allow_pickle=False,
+            ),
+            _copy_arrays=False,
+            **metadata,
+        )
+
+
+@dataclass(frozen=True, init=False)
+class PreparedFactorCorrelation:
+    """Thread-safe native Woodbury workspace for a factor correlation."""
+
+    factor: FactorCorrelation
+    _native: Any = field(repr=False)
+    diagnostics: Mapping[str, Any]
+
+    def __init__(self, factor: FactorCorrelation) -> None:
+        if not isinstance(factor, FactorCorrelation):
+            raise TypeError("factor must be a FactorCorrelation")
+        from pyscarcopula.numerical import _cpp_extension
+
+        native = _cpp_extension.load()._FactorCorrelationOperator(
+            factor.loadings,
+            factor.uniqueness_min,
+        )
+        diagnostics = MappingProxyType({
+            "dimension": factor.dimension,
+            "rank": factor.rank,
+            "uniqueness_min": factor.uniqueness_min,
+            "min_uniqueness": float(np.min(factor.uniqueness)),
+            "max_uniqueness": float(np.max(factor.uniqueness)),
+            "condition_estimate_m": float(native.condition_estimate),
+            "prepared_storage_bytes": int(
+                2 * factor.loadings.nbytes
+                + 2 * factor.uniqueness.nbytes
+                + factor.rank * factor.rank * 8
+            ),
+            "representation": "factor_woodbury",
+        })
+        object.__setattr__(self, "factor", factor)
+        object.__setattr__(self, "_native", native)
+        object.__setattr__(self, "diagnostics", diagnostics)
+
+    @property
+    def dimension(self) -> int:
+        return self.factor.dimension
+
+    @property
+    def rank(self) -> int:
+        return self.factor.rank
+
+    @property
+    def loadings(self) -> np.ndarray:
+        return self.factor.loadings
+
+    @property
+    def uniqueness(self) -> np.ndarray:
+        return self.factor.uniqueness
+
+    @property
+    def logdet(self) -> float:
+        return float(self._native.logdet)
+
+    def _rows(self, values):
+        array = np.asarray(values, dtype=np.float64)
+        squeeze = array.ndim == 1
+        if squeeze:
+            array = array[None, :]
+        if array.ndim != 2 or array.shape[1] != self.dimension:
+            raise ValueError(
+                f"values must have shape ({self.dimension},) or "
+                f"(n, {self.dimension})")
+        if not np.all(np.isfinite(array)):
+            raise ValueError("values must contain only finite values")
+        return np.ascontiguousarray(array), squeeze
+
+    def matvec(self, values, *, n_threads=1):
+        rows, squeeze = self._rows(values)
+        output = np.asarray(
+            self._native.matvec(
+                rows, _validated_n_threads(n_threads)),
+            dtype=np.float64,
+        )
+        return output[0] if squeeze else output
+
+    def solve(self, values, *, n_threads=1):
+        rows, squeeze = self._rows(values)
+        output = np.asarray(
+            self._native.solve(
+                rows, _validated_n_threads(n_threads)),
+            dtype=np.float64,
+        )
+        return output[0] if squeeze else output
+
+    def quadratic_forms(self, values, *, n_threads=1) -> np.ndarray:
+        rows, _ = self._rows(values)
+        return np.asarray(
+            self._native.quadratic_forms(
+                rows, _validated_n_threads(n_threads)),
+            dtype=np.float64,
+        )
+
+    def quadratic_form(self, value, *, n_threads=1) -> float:
+        array = np.asarray(value)
+        if array.ndim != 1:
+            raise ValueError("quadratic_form expects one 1D vector")
+        return float(self.quadratic_forms(
+            array, n_threads=n_threads)[0])
+
+    def to_dense(
+            self,
+            *,
+            max_dimension=2048,
+            memory_budget_bytes=None) -> np.ndarray:
+        return self.factor.to_dense(
+            max_dimension=max_dimension,
+            memory_budget_bytes=memory_budget_bytes,
+        )
+
+    def sample_normal(
+            self,
+            n,
+            *,
+            rng=None,
+            n_threads=1,
+            memory_budget_bytes=None) -> np.ndarray:
+        n = _positive_integer("n", n, allow_zero=True)
+        required = n * (self.dimension + self.rank) * 8
+        _validated_budget(
+            memory_budget_bytes,
+            required,
+            "use sample_normal_batches() or increase memory_budget_bytes",
+        )
+        if rng is None:
+            rng = np.random.default_rng()
+        factors = np.ascontiguousarray(
+            rng.standard_normal((n, self.rank)), dtype=np.float64)
+        residuals = np.ascontiguousarray(
+            rng.standard_normal((n, self.dimension)), dtype=np.float64)
+        self._native.sample_normal_inplace(
+            factors,
+            residuals,
+            _validated_n_threads(n_threads),
+        )
+        return residuals
+
+    def transform_normal_draws(
+            self,
+            factor_draws,
+            residual_draws,
+            *,
+            n_threads=1) -> np.ndarray:
+        """Transform fixed independent draws into factor-normal rows.
+
+        The returned array is a copy of ``residual_draws``. Keeping random
+        number generation outside the native operator makes results exactly
+        reproducible across thread counts and also supports conditional
+        factor distributions whose factor draws have a non-identity small
+        covariance.
+        """
+        factors = np.asarray(factor_draws, dtype=np.float64)
+        residuals = np.asarray(residual_draws, dtype=np.float64)
+        if (
+                factors.ndim != 2
+                or factors.shape[1] != self.rank):
+            raise ValueError(
+                f"factor_draws must have shape (n, {self.rank})")
+        if (
+                residuals.ndim != 2
+                or residuals.shape
+                != (factors.shape[0], self.dimension)):
+            raise ValueError(
+                "residual_draws must have shape "
+                f"(n, {self.dimension}) and share the row count")
+        if (
+                not np.all(np.isfinite(factors))
+                or not np.all(np.isfinite(residuals))):
+            raise ValueError(
+                "factor_draws and residual_draws must be finite")
+        factors = np.ascontiguousarray(factors)
+        output = np.array(residuals, dtype=np.float64, order="C", copy=True)
+        self._native.sample_normal_inplace(
+            factors,
+            output,
+            _validated_n_threads(n_threads),
+        )
+        return output
+
+    def sample_normal_batches(
+            self,
+            n,
+            *,
+            batch_rows=128,
+            rng=None,
+            n_threads=1,
+            memory_budget_bytes=None):
+        n = _positive_integer("n", n, allow_zero=True)
+        batch_rows = _positive_integer("batch_rows", batch_rows)
+        _validated_n_threads(n_threads)
+        required = min(n, batch_rows) * (
+            self.dimension + self.rank) * 8
+        _validated_budget(
+            memory_budget_bytes,
+            required,
+            "reduce batch_rows or increase memory_budget_bytes",
+        )
+        if rng is None:
+            rng = np.random.default_rng()
+        for start in range(0, n, batch_rows):
+            count = min(batch_rows, n - start)
+            yield self.sample_normal(
+                count,
+                rng=rng,
+                n_threads=n_threads,
+                memory_budget_bytes=memory_budget_bytes,
+            )

@@ -2,6 +2,54 @@
 
 ## Unreleased
 
+- Adds reusable, copula-independent `FactorCorrelation` and
+  `PreparedFactorCorrelation` objects for correlations of the form
+  `R = D + B B.T`, with unit diagonal and explicit uniqueness bounds.
+- Adds a dependency-free native Woodbury backend for factor-correlation
+  matrix products, solves, quadratic forms, log determinants, and normal
+  sampling. Row kernels are deterministic across thread counts, default to
+  one thread, and a prepared operator is safe for concurrent read-only calls.
+- Adds the independent `FactorStudentEvaluator` adapter with static Student
+  copula row log densities, analytical degrees-of-freedom derivatives,
+  scalar or row-specific `df`, optimizer-ready likelihood reduction, and
+  deterministic native row parallelism. Dense and factor paths share the
+  same Student normalization and derivative implementation.
+- Adds tiled factor-Student emission over a degrees-of-freedom grid without
+  an `O(T*K*d)` quantile cache. Fixed dimension tiles are reduced in a
+  deterministic order, parallel work selects either independent grid cells
+  or dimension tiles, and row-batch APIs enforce a peak-memory budget.
+- Adds bounded factor-normal sampling, explicit guarded dense
+  materialization, compact `.npz` persistence, and read-only mmap
+  persistence. Storage remains `O(d*k + k^2)`.
+- Adds the phase-9.4 `StochasticStudentCopula(corr_mode="factor")` model
+  adapter with supplied or deterministic two-stage randomized-SVD loadings,
+  compact diagnostics and model persistence, guarded explicit dense
+  materialization, static row likelihood, and tiled latent-grid evaluation.
+- Integrates factor Student correlation with static MLE, native GAS,
+  SCAR-TM-OU matrix/local/spectral objectives and gradients, and native
+  SCAR-MC trajectory likelihood. A shared immutable operator in `CopulaSpec`
+  avoids copying loadings or constructing dense Cholesky factors; SCAR
+  emission directly reuses the tiled factor grid kernel.
+- Adds unconditional, bounded-batch, fitted-model, predictive, and exact
+  conditional sampling for factor Student models. Conditional generation
+  factorizes only a `k*k` system and never constructs a dense Schur
+  complement. Fixed-seed results are exact across native thread counts,
+  sampling defaults literally to `n_threads=1`, and memory budgets can reject
+  oversized monolithic or batch requests before their main allocations.
+- Reuses the independent factor-correlation operator in
+  `GaussianCopula(corr_mode="factor")`. Supplied or tiled two-stage loadings
+  feed native matrix-free likelihood, compact MLE results, deterministic
+  sampling, bounded batches, exact conditional generation, rolling-window
+  reconstruction, persistence, and an `O(T*k + k^2)` Rosenblatt transform.
+  No Gaussian factor path constructs a dense correlation or Schur complement.
+- Adds guarded joint factor estimation for static Student MLE. A native
+  matrix-free kernel returns analytical gradients for common `df` and every
+  loading, while pivoted lower-triangular positive-diagonal coordinates remove
+  rotational degrees of freedom. Fixed reduction blocks make gradients exact
+  across thread counts. The optimizer enforces parameter-count, uniqueness,
+  Woodbury-condition, regularization, and terminal-gradient convergence
+  gates. Dynamic GAS/SCAR joint loading estimation remains explicitly
+  unsupported pending derivatives through their sequential filters.
 - Adds deterministic, tiled CPU preparation of equicorrelation Gaussian
   sufficient statistics from ndarray, memmap, or streamed observation blocks.
 - Adds immutable `EquicorrPreparedData` with compact `.npz` and read-only
@@ -55,8 +103,8 @@ Version: `0.18.0` -> `0.19.0`
   subinterpreter rejection, and aggregate validation artifacts.
 - Documents CPU configuration, thread safety, deterministic sampling,
   oversubscription, diagnostics, and current large-dimension limits. Dense
-  Student correlation modes remain `O(d^2)`; `corr_mode="factor"` is not yet
-  available.
+  correlation modes remain `O(d^2)`; factor Student and Gaussian modes are
+  available only when `corr_mode="factor"` is selected explicitly.
 
 ## 0.18.0 - 2026-07-21
 

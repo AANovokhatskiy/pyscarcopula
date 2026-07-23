@@ -15,7 +15,16 @@ void bind_copula(py::module_& m) {
         .def_readwrite("transform", &scar::CopulaSpec::transform)
         .def_readwrite("offset", &scar::CopulaSpec::offset)
         .def_readwrite("dim", &scar::CopulaSpec::dim)
+        .def_readwrite(
+            "correlation_kind",
+            &scar::CopulaSpec::correlation_kind)
         .def_readwrite("l_inv", &scar::CopulaSpec::l_inv)
+        .def_readwrite(
+            "factor_correlation",
+            &scar::CopulaSpec::factor_correlation)
+        .def_readwrite(
+            "factor_dimension_tile",
+            &scar::CopulaSpec::factor_dimension_tile)
         .def_readwrite("log_det", &scar::CopulaSpec::log_det)
         .def_readwrite("ppf_n_obs", &scar::CopulaSpec::ppf_n_obs)
         .def_readwrite("ppf_nodes", &scar::CopulaSpec::ppf_nodes)

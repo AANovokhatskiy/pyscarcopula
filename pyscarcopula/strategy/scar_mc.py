@@ -134,7 +134,10 @@ class _SCARMCBase:
             nfev=result.nfev,
             params=params,
             n_tr=self.n_tr,
-            diagnostics={"initialization": initialization},
+            diagnostics={
+                "initialization": initialization,
+                "n_threads": self.config.n_threads,
+            },
             **extra,
         )
 

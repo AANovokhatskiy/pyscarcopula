@@ -99,12 +99,15 @@ bool matrix_backward_loglik(
 
     double log_scale = 0.0;
     for (std::int64_t t = n_obs - 1; t >= 1; --t) {
+        double emission_log_scale = 0.0;
         copula_pdf_row_precomputed_flat(
             copula,
             u,
             t,
             r_grid,
-            fi_row.data());
+            fi_row.data(),
+            &emission_log_scale);
+        log_scale += emission_log_scale;
         for (int j = 0; j < grid.K; ++j) {
             const std::size_t idx = static_cast<std::size_t>(j);
             v[idx] = fi_row[idx] * msg[idx];
@@ -126,12 +129,15 @@ bool matrix_backward_loglik(
         log_scale += std::log(scale);
     }
 
+    double emission_log_scale = 0.0;
     copula_pdf_row_precomputed_flat(
         copula,
         u,
         0,
         r_grid,
-        fi_row.data());
+        fi_row.data(),
+        &emission_log_scale);
+    log_scale += emission_log_scale;
     double result = 0.0;
     for (int j = 0; j < grid.K; ++j) {
         const std::size_t idx = static_cast<std::size_t>(j);

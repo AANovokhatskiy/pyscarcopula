@@ -29,7 +29,13 @@ from pyscarcopula.copula.elliptical import BivariateGaussianCopula
 from pyscarcopula.copula.multivariate import (
     EquicorrPreparedData,
     EquicorrGaussianCopula,
+    FactorCorrelation,
+    FactorStudentEvaluation,
+    FactorStudentEvaluator,
+    FactorStudentGridEvaluation,
+    FactorStudentJointEvaluation,
     GaussianCopula,
+    PreparedFactorCorrelation,
     StochasticStudentCopula,
     StudentCopula,
 )
@@ -58,6 +64,12 @@ __all__ = (
     # Dynamic multivariate
     'EquicorrGaussianCopula',
     'EquicorrPreparedData',
+    'FactorCorrelation',
+    'FactorStudentEvaluation',
+    'FactorStudentEvaluator',
+    'FactorStudentGridEvaluation',
+    'FactorStudentJointEvaluation',
+    'PreparedFactorCorrelation',
     'StochasticStudentCopula',
     # Base hierarchy and capability contract
     'CopulaBase', 'BivariateCopula', 'MultivariateCopula',

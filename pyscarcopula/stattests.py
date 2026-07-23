@@ -701,6 +701,46 @@ def gaussian_rosenblatt_transform(R, u):
     return clip_pseudo_observations(e)
 
 
+def factor_gaussian_rosenblatt_transform(correlation, u):
+    """Rosenblatt transform for a Gaussian factor correlation.
+
+    The sequential conditional distribution is evaluated with the
+    rank-dimensional posterior of the latent factor. Storage is
+    ``O(T*k + k*k)`` and no dense correlation or Cholesky factor is formed.
+    """
+    u_c = clip_pseudo_observations_no_copy(u)
+    x = norm.ppf(u_c)
+    if x.ndim != 2 or x.shape[1] != correlation.dimension:
+        raise ValueError(
+            "data width must match factor correlation dimension")
+
+    rows, dimension = x.shape
+    rank = correlation.rank
+    loadings = correlation.loadings
+    uniqueness = correlation.uniqueness
+    factor_mean = np.zeros((rows, rank), dtype=np.float64)
+    factor_covariance = np.eye(rank, dtype=np.float64)
+    transformed = np.empty_like(x)
+
+    for index in range(dimension):
+        loading = loadings[index]
+        covariance_loading = factor_covariance @ loading
+        conditional_variance = (
+            uniqueness[index] + loading @ covariance_loading)
+        residual = x[:, index] - factor_mean @ loading
+        transformed[:, index] = norm.cdf(
+            residual / np.sqrt(conditional_variance))
+        factor_mean += (
+            residual / conditional_variance)[:, None] * (
+                covariance_loading[None, :])
+        factor_covariance -= np.outer(
+            covariance_loading,
+            covariance_loading,
+        ) / conditional_variance
+
+    return clip_pseudo_observations(transformed)
+
+
 def gaussian_gof_test(copula, data, to_pobs=True):
     """
     Goodness-of-fit test for a fitted GaussianCopula.
@@ -721,10 +761,16 @@ def gaussian_gof_test(copula, data, to_pobs=True):
     if to_pobs:
         u = compute_pobs(u)
 
-    if copula.corr is None:
-        raise ValueError("Fit the copula first")
-
-    e = gaussian_rosenblatt_transform(copula.corr, u)
+    if getattr(copula, "corr_mode", "dense") == "factor":
+        try:
+            correlation = copula.correlation_operator_
+        except (AttributeError, ValueError) as exc:
+            raise ValueError("Fit the copula first") from exc
+        e = factor_gaussian_rosenblatt_transform(correlation, u)
+    else:
+        if copula.corr is None:
+            raise ValueError("Fit the copula first")
+        e = gaussian_rosenblatt_transform(copula.corr, u)
     return cvm_test(e)
 
 

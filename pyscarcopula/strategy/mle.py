@@ -91,7 +91,8 @@ class MLEStrategy:
                 and not capabilities.has_dynamic_scalar_parameter):
             direct_fit = getattr(copula, 'fit', None)
             if direct_fit is not None:
-                result = direct_fit(u, to_pobs=False)
+                result = direct_fit(
+                    u, to_pobs=False, config=self.config)
                 if getattr(result, 'method', '').upper() == 'MLE':
                     return result
 
@@ -102,7 +103,8 @@ class MLEStrategy:
                     u, config=self.config, **optimizer_overrides)
             direct_fit = getattr(copula, 'fit', None)
             if direct_fit is not None:
-                result = direct_fit(u, to_pobs=False)
+                result = direct_fit(
+                    u, to_pobs=False, config=self.config)
                 if getattr(result, 'method', '').upper() == 'MLE':
                     return result
 

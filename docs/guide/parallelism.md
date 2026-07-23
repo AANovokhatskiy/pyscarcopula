@@ -93,6 +93,8 @@ the sequential time recursions required by GAS and SCAR:
 | Equicorrelation Gaussian emission grids | observation rows | Reuses per-row normal-score sufficient statistics |
 | Static multivariate row likelihoods and MLE | observation rows | Uses a prepared evaluator across optimizer calls |
 | Gaussian and Student conditional sampling | generated rows | Reuses one conditional factorization when correlation is shared |
+| Factor Student unconditional/conditional sampling | generated rows | Uses fixed Python draws and a compact native factor transform |
+| Factor Gaussian likelihood and sampling | observation/generated rows | Reuses the immutable Woodbury operator; conditioning solves only `k*k` |
 | Historical SCAR Monte Carlo likelihood | trajectories | Uses caller-generated fixed draws |
 
 GAS state updates and SCAR forward/backward filtering remain sequential over
@@ -217,17 +219,56 @@ Parallel threads do not change the asymptotic representation of a model.
 - `StochasticStudentCopula` with `corr_mode="fixed"`, `"shrinkage"`, or
   `"cholesky"` still uses a dense correlation representation with
   `O(d^2)` storage/factorization costs.
+- Its `corr_mode="factor"` adapter stores `O(d*k + k^2)` state and routes
+  static row and tiled latent-grid evaluation through the factor kernels.
+  Supplied loadings or explicit two-stage initialization never build a dense
+  covariance matrix. Static MLE, GAS, SCAR-TM-OU and SCAR-MC trajectory
+  likelihood consume the same immutable operator. SCAR emission selects
+  independent cells or dimension tiles using the phase-9.3 kernel.
+  Unconditional and conditional Student generation uses the same operator;
+  conditioning builds only a `k*k` factor system. Row batches bound the
+  `n*d` output, and fixed seeds give identical results across thread counts.
+  Static MLE additionally supports `factor_estimation="joint"` under the
+  explicit `factor_joint_max_params` guard. Analytical loading gradients use
+  fixed reduction blocks whose partition is independent of `n_threads`, so
+  one- and multi-thread results are exact. The reduction workspace is a
+  bounded constant multiple of `d*k`; no `d*d` gradient is formed.
+  Joint GAS/SCAR loadings remain unsupported.
+- `GaussianCopula(corr_mode="factor")` composes the same operator for native
+  static likelihood, compact MLE, normal sampling, bounded batches, and exact
+  conditioning. Tiled two-stage estimation, persistence, rolling workers, and
+  the rank-dimensional Rosenblatt transform preserve the compact
+  representation. The dense Gaussian mode remains the default.
+- The independent `FactorCorrelation` representation stores
+  `O(d*k + k^2)` values and exposes prepared Woodbury matrix products,
+  solves, quadratic forms, log determinants, and normal sampling. Its row
+  kernels have an unconditional `n_threads=1` default and accept explicit
+  native row parallelism. Bounded sampling prevents an oversized monolithic
+  output allocation.
+- `FactorStudentEvaluator` composes the factor operator with immutable
+  observations for static Student row log densities and analytical
+  derivatives with respect to `df`. Rows are the parallel axis; one active
+  worker uses `O(d)` quantile/derivative/solve workspace. The default remains
+  one thread and does not initialize the native pool.
+- Its tiled grid path does not retain an `O(T*K*d)` PPF table. It accumulates
+  fixed dimension tiles directly into `O(k)` Woodbury and marginal summaries.
+  Independent `(row, df)` cells are normally parallel; for a small grid and
+  very large dimension, fixed dimension tiles are parallel and merged in
+  deterministic order. `evaluate_grid_batches` bounds the `(T,K)` output and
+  includes native/Python coexistence plus partial reductions in its
+  peak-memory check.
 - A cached dynamic Student PPF table can require `O(T * K * d)` memory. It is
   capped at 256 MiB; when the values table is skipped, exact and asymptotic
   quantile paths preserve correctness with different performance tradeoffs.
 - Conditional sampling returns an `O(n * d)` result, so use application-level
   batches when the requested output itself is large.
 
-Consequently, CPU threading alone does not make the current dense Student
-correlation modes suitable for `d >> 10^4`. The planned
-`corr_mode="factor"` representation is not part of phases 0–7 and is not yet
-available. Do not assume that passing a large `n_threads` value removes dense
-memory limits.
+Consequently, CPU threading alone does not make dense Student correlation
+modes suitable for `d >> 10^4`. The phase-9.4 factor model adapter removes
+the dense correlation and PPF-cache limits for initialization and row/grid
+evaluation, and phase 9.5 carries that representation through MLE, GAS and
+SCAR fitting. A large `n_threads` value by itself still does not change the
+representation; `corr_mode="factor"` must be selected explicitly.
 
 The compact Equicorr prepared object is consumed directly by static MLE,
 row/grid evaluation, GAS, and SCAR-TM-OU. These paths retain only the two

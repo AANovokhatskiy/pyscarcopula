@@ -1,5 +1,6 @@
 #include "scar/detail/copula.hpp"
 #include "scar/detail/parallel.hpp"
+#include "scar/factor.hpp"
 
 #include <cmath>
 
@@ -344,6 +345,17 @@ bool copula_is_supported(const scar::CopulaSpec& spec) {
         if (!valid_student_dimension(spec.dim, expected)) {
             return false;
         }
+        if (spec.correlation_kind == scar::CorrelationKind::Factor) {
+            return spec.rotation == scar::Rotation::R0
+                && spec.transform == scar::Transform::Softplus
+                && spec.offset >= 2.0
+                && spec.dim >= 2
+                && spec.factor_correlation != nullptr
+                && spec.factor_correlation->dimension()
+                    == static_cast<std::size_t>(spec.dim)
+                && std::isfinite(
+                    spec.factor_correlation->logdet());
+        }
         const bool valid_values = std::all_of(
             spec.l_inv.begin(), spec.l_inv.end(), [](double value) {
                 return std::isfinite(value);
@@ -551,7 +563,52 @@ void copula_pdf_row_precomputed_flat(
     const double* u,
     std::int64_t t,
     const std::vector<double>& r_grid,
-    double* fi_row) {
+    double* fi_row,
+    double* log_scale) {
+
+    if (log_scale != nullptr) {
+        *log_scale = 0.0;
+    }
+    if (spec.family == scar::CopulaFamily::Student
+        && spec.correlation_kind == scar::CorrelationKind::Factor
+        && spec.factor_correlation != nullptr) {
+        const std::size_t row_offset =
+            static_cast<std::size_t>(t)
+            * static_cast<std::size_t>(spec.dim);
+        const scar::FactorStudentGridResult result =
+            scar::factor_student_log_pdf_and_dlog_ddf_grid(
+                *spec.factor_correlation,
+                u + row_offset,
+                1,
+                r_grid.data(),
+                r_grid.size(),
+                spec.factor_dimension_tile,
+                1);
+        if (result.failure_index >= 0
+            || result.log_pdf.size() != r_grid.size()) {
+            std::fill(
+                fi_row,
+                fi_row + r_grid.size(),
+                std::numeric_limits<double>::quiet_NaN());
+            return;
+        }
+        const double row_scale = *std::max_element(
+            result.log_pdf.begin(), result.log_pdf.end());
+        if (!std::isfinite(row_scale)) {
+            std::fill(
+                fi_row,
+                fi_row + r_grid.size(),
+                std::numeric_limits<double>::quiet_NaN());
+            return;
+        }
+        for (std::size_t j = 0; j < r_grid.size(); ++j) {
+            fi_row[j] = std::exp(result.log_pdf[j] - row_scale);
+        }
+        if (log_scale != nullptr) {
+            *log_scale = row_scale;
+        }
+        return;
+    }
 
     if (spec.family == scar::CopulaFamily::EquicorrGaussian) {
         static const std::vector<double> no_dpsi;
@@ -652,7 +709,64 @@ void copula_pdf_and_grad_row_precomputed_flat(
     const std::vector<double>& r_grid,
     const std::vector<double>& dpsi_grid,
     double* fi_row,
-    double* dfi_dx_row) {
+    double* dfi_dx_row,
+    double* log_scale) {
+
+    if (log_scale != nullptr) {
+        *log_scale = 0.0;
+    }
+    if (spec.family == scar::CopulaFamily::Student
+        && spec.correlation_kind == scar::CorrelationKind::Factor
+        && spec.factor_correlation != nullptr) {
+        const std::size_t row_offset =
+            static_cast<std::size_t>(t)
+            * static_cast<std::size_t>(spec.dim);
+        const scar::FactorStudentGridResult result =
+            scar::factor_student_log_pdf_and_dlog_ddf_grid(
+                *spec.factor_correlation,
+                u + row_offset,
+                1,
+                r_grid.data(),
+                r_grid.size(),
+                spec.factor_dimension_tile,
+                1);
+        if (result.failure_index >= 0
+            || result.log_pdf.size() != r_grid.size()
+            || result.dlog_ddf.size() != r_grid.size()) {
+            std::fill(
+                fi_row,
+                fi_row + r_grid.size(),
+                std::numeric_limits<double>::quiet_NaN());
+            std::fill(
+                dfi_dx_row,
+                dfi_dx_row + r_grid.size(),
+                std::numeric_limits<double>::quiet_NaN());
+            return;
+        }
+        const double row_scale = *std::max_element(
+            result.log_pdf.begin(), result.log_pdf.end());
+        if (!std::isfinite(row_scale)) {
+            std::fill(
+                fi_row,
+                fi_row + r_grid.size(),
+                std::numeric_limits<double>::quiet_NaN());
+            std::fill(
+                dfi_dx_row,
+                dfi_dx_row + r_grid.size(),
+                std::numeric_limits<double>::quiet_NaN());
+            return;
+        }
+        for (std::size_t j = 0; j < r_grid.size(); ++j) {
+            const double density = std::exp(result.log_pdf[j] - row_scale);
+            fi_row[j] = density;
+            dfi_dx_row[j] =
+                density * result.dlog_ddf[j] * dpsi_grid[j];
+        }
+        if (log_scale != nullptr) {
+            *log_scale = row_scale;
+        }
+        return;
+    }
 
     if (spec.family == scar::CopulaFamily::EquicorrGaussian) {
         const bool cache_available =
@@ -704,7 +818,12 @@ void copula_pdf_and_grad_grid_precomputed(
     const std::vector<double>& dpsi_grid,
     std::vector<double>& fi,
     std::vector<double>& dfi_dx,
-    int n_threads) {
+    int n_threads,
+    double* log_scale_sum) {
+
+    if (log_scale_sum != nullptr) {
+        *log_scale_sum = 0.0;
+    }
 
     const std::size_t K = r_grid.size();
     std::size_t n_obs_size = 0;
@@ -717,6 +836,67 @@ void copula_pdf_and_grad_grid_precomputed(
     }
     fi.assign(elements, 0.0);
     dfi_dx.assign(elements, 0.0);
+    if (spec.family == scar::CopulaFamily::Student
+        && spec.correlation_kind == scar::CorrelationKind::Factor
+        && spec.factor_correlation != nullptr) {
+        const scar::FactorStudentGridResult result =
+            scar::factor_student_log_pdf_and_dlog_ddf_grid(
+                *spec.factor_correlation,
+                u,
+                n_obs_size,
+                r_grid.data(),
+                K,
+                spec.factor_dimension_tile,
+                n_threads);
+        if (result.failure_index >= 0
+            || result.log_pdf.size() != elements
+            || result.dlog_ddf.size() != elements) {
+            std::fill(
+                fi.begin(),
+                fi.end(),
+                std::numeric_limits<double>::quiet_NaN());
+            std::fill(
+                dfi_dx.begin(),
+                dfi_dx.end(),
+                std::numeric_limits<double>::quiet_NaN());
+            return;
+        }
+        double total_scale = 0.0;
+        for (std::size_t row = 0; row < n_obs_size; ++row) {
+            const std::size_t offset = row * K;
+            const auto row_begin =
+                result.log_pdf.begin()
+                + static_cast<std::ptrdiff_t>(offset);
+            const double row_scale = *std::max_element(
+                row_begin,
+                row_begin + static_cast<std::ptrdiff_t>(K));
+            if (!std::isfinite(row_scale)) {
+                std::fill(
+                    fi.begin(),
+                    fi.end(),
+                    std::numeric_limits<double>::quiet_NaN());
+                std::fill(
+                    dfi_dx.begin(),
+                    dfi_dx.end(),
+                    std::numeric_limits<double>::quiet_NaN());
+                return;
+            }
+            total_scale += row_scale;
+            for (std::size_t grid = 0; grid < K; ++grid) {
+                const std::size_t index = offset + grid;
+                const double density =
+                    std::exp(result.log_pdf[index] - row_scale);
+                fi[index] = density;
+                dfi_dx[index] = density
+                    * result.dlog_ddf[index]
+                    * dpsi_grid[grid];
+            }
+        }
+        if (log_scale_sum != nullptr) {
+            *log_scale_sum = total_scale;
+        }
+        return;
+    }
     if (spec.family == scar::CopulaFamily::Student
         && spec.dim == 2
         && student_fill_grid_bivariate(

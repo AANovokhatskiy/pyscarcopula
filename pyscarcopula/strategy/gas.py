@@ -107,9 +107,10 @@ class GASStrategy:
         corr_alpha = getattr(copula, "corr_alpha", None)
         if callable(corr_alpha):
             diagnostics["corr_alpha"] = corr_alpha()
-        R = getattr(copula, "R", None)
-        if R is not None:
-            diagnostics["corr_matrix"] = R
+        if getattr(copula, "_corr_mode", None) != "factor":
+            R = getattr(copula, "R", None)
+            if R is not None:
+                diagnostics["corr_matrix"] = R
         return diagnostics
 
     def _build_result(

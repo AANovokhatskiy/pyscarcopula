@@ -6,6 +6,16 @@ from pyscarcopula.copula.multivariate.equicorr_prepared import (
     EquicorrPreparedData,
 )
 from pyscarcopula.copula.multivariate.gaussian import GaussianCopula
+from pyscarcopula.copula.multivariate.factor_correlation import (
+    FactorCorrelation,
+    PreparedFactorCorrelation,
+)
+from pyscarcopula.copula.multivariate.factor_student import (
+    FactorStudentEvaluation,
+    FactorStudentEvaluator,
+    FactorStudentGridEvaluation,
+    FactorStudentJointEvaluation,
+)
 from pyscarcopula.copula.multivariate.stochastic_student import (
     StochasticStudentCopula,
 )
@@ -17,5 +27,11 @@ __all__ = (
     "StudentCopula",
     "EquicorrGaussianCopula",
     "EquicorrPreparedData",
+    "FactorCorrelation",
+    "FactorStudentEvaluation",
+    "FactorStudentEvaluator",
+    "FactorStudentGridEvaluation",
+    "FactorStudentJointEvaluation",
+    "PreparedFactorCorrelation",
     "StochasticStudentCopula",
 )

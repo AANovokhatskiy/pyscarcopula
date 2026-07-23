@@ -4,10 +4,13 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <utility>
 #include <vector>
 
 namespace scar {
+
+class FactorCorrelationOperator;
 
 /// Copula kernels supported by the native dispatch layer.
 enum class CopulaFamily : int {
@@ -37,6 +40,11 @@ enum class Transform : int {
     GaussianTanh = 3,
 };
 
+enum class CorrelationKind : int {
+    DenseCholesky = 0,
+    Factor = 1,
+};
+
 /// Complete, immutable-by-convention input specification for copula kernels.
 ///
 /// Multivariate Student and Gaussian families may populate the factor and
@@ -48,7 +56,11 @@ struct CopulaSpec {
     Transform transform = Transform::Softplus;    ///< Parameter transform.
     double offset = 0.0001;                       ///< Transform offset.
     int dim = 2;                                  ///< Copula dimension.
+    CorrelationKind correlation_kind =
+        CorrelationKind::DenseCholesky;
     std::vector<double> l_inv;  ///< Row-major inverse Cholesky factor.
+    std::shared_ptr<const FactorCorrelationOperator> factor_correlation;
+    std::size_t factor_dimension_tile = 16384;
     double log_det = 0.0;       ///< Log determinant of correlation factor.
     std::int64_t ppf_n_obs = 0;  ///< Rows represented by the PPF cache.
     std::vector<double> ppf_nodes;  ///< Student degrees-of-freedom nodes.

@@ -1,5 +1,6 @@
 #include "scar/detail/copula.hpp"
 #include "scar/detail/parallel.hpp"
+#include "scar/factor.hpp"
 
 #include <algorithm>
 #include <array>
@@ -9,6 +10,57 @@
 
 namespace scar_internal {
 namespace {
+
+bool valid_factor_student_spec(const scar::CopulaSpec& spec) {
+    return spec.correlation_kind == scar::CorrelationKind::Factor
+        && spec.factor_correlation != nullptr
+        && spec.dim >= 2
+        && spec.factor_correlation->dimension()
+            == static_cast<std::size_t>(spec.dim)
+        && std::isfinite(spec.factor_correlation->logdet());
+}
+
+bool factor_precision_product(
+    const scar::FactorCorrelationOperator& correlation,
+    const std::vector<double>& values,
+    StudentWorkspace& workspace) {
+
+    const std::size_t dimension = correlation.dimension();
+    const std::size_t rank = correlation.rank();
+    if (values.size() != dimension) {
+        return false;
+    }
+    workspace.resize_precision_x(dimension);
+    workspace.resize_factor_small(rank);
+    std::fill(
+        workspace.factor_small.begin(),
+        workspace.factor_small.end(),
+        0.0);
+    const std::vector<double>& weighted =
+        correlation.weighted_loadings();
+    for (std::size_t column = 0; column < dimension; ++column) {
+        const double* loading = weighted.data() + column * rank;
+        for (std::size_t factor = 0; factor < rank; ++factor) {
+            workspace.factor_small[factor] +=
+                loading[factor] * values[column];
+        }
+    }
+    correlation.solve_core_inplace(workspace.factor_small.data());
+    const std::vector<double>& inverse_uniqueness =
+        correlation.inverse_uniqueness();
+    for (std::size_t column = 0; column < dimension; ++column) {
+        const double* loading = weighted.data() + column * rank;
+        double result = inverse_uniqueness[column] * values[column];
+        for (std::size_t factor = 0; factor < rank; ++factor) {
+            result -= loading[factor] * workspace.factor_small[factor];
+        }
+        if (!std::isfinite(result)) {
+            return false;
+        }
+        workspace.precision_x[column] = result;
+    }
+    return true;
+}
 
 struct DualValue {
     double value;
@@ -588,10 +640,15 @@ double student_log_pdf_with_work(
 
     const int d = spec.dim;
     std::size_t matrix_elements = 0;
+    const bool factor_correlation = valid_factor_student_spec(spec);
     if (d < 2
         || !valid_student_dimension(d, matrix_elements)
-        || spec.l_inv.size() != matrix_elements
-        || !std::isfinite(spec.log_det)
+        || (!factor_correlation
+            && spec.l_inv.size() != matrix_elements)
+        || !std::isfinite(
+            factor_correlation
+                ? spec.factor_correlation->logdet()
+                : spec.log_det)
         || !std::isfinite(df)
         || df <= 2.0) {
         return -std::numeric_limits<double>::infinity();
@@ -644,77 +701,60 @@ double student_log_pdf_with_work(
 
     double quad = 0.0;
     double dquad_ddf = 0.0;
-    double marginal_log = 0.0;
-    double marginal_dlog_ddf = 0.0;
-    const double marginal_const =
-        std::lgamma(0.5 * (df + 1.0))
-        - std::lgamma(0.5 * df)
-        - 0.5 * std::log(df * kPi);
-    const double marginal_const_derivative =
-        0.5 * digamma_positive(0.5 * (df + 1.0))
-        - 0.5 * digamma_positive(0.5 * df)
-        - 0.5 / df;
-    for (int i = 0; i < d; ++i) {
-        const double xi = workspace.x[static_cast<std::size_t>(i)];
-        double yi = 0.0;
-        double dyi_ddf = 0.0;
-        const std::size_t row_offset =
-            static_cast<std::size_t>(i) * static_cast<std::size_t>(d);
-        for (int j = 0; j <= i; ++j) {
-            yi += spec.l_inv[row_offset + static_cast<std::size_t>(j)]
-                * workspace.x[static_cast<std::size_t>(j)];
+    if (factor_correlation) {
+        if (!factor_precision_product(
+                *spec.factor_correlation, workspace.x, workspace)) {
+            return -std::numeric_limits<double>::infinity();
+        }
+        for (int i = 0; i < d; ++i) {
+            const std::size_t index = static_cast<std::size_t>(i);
+            quad += workspace.x[index] * workspace.precision_x[index];
             if (compute_derivative) {
-                dyi_ddf +=
-                    spec.l_inv[row_offset + static_cast<std::size_t>(j)]
-                    * workspace.dx_ddf[static_cast<std::size_t>(j)];
+                dquad_ddf +=
+                    2.0
+                    * workspace.precision_x[index]
+                    * workspace.dx_ddf[index];
             }
         }
-        quad += yi * yi;
-        if (compute_derivative) {
-            dquad_ddf += 2.0 * yi * dyi_ddf;
-        }
-        const double xi2 = xi * xi;
-        const double marginal_shape = std::log1p(xi2 / df);
-        marginal_log += marginal_const
-            - 0.5 * (df + 1.0) * marginal_shape;
-        if (compute_derivative) {
-            const double dxi2_ddf =
-                2.0 * xi * workspace.dx_ddf[static_cast<std::size_t>(i)];
-            const double dshape_ddf =
-                (df * dxi2_ddf - xi2) / (df * (df + xi2));
-            marginal_dlog_ddf +=
-                marginal_const_derivative
-                - 0.5 * marginal_shape
-                - 0.5 * (df + 1.0) * dshape_ddf;
+    } else {
+        for (int i = 0; i < d; ++i) {
+            double yi = 0.0;
+            double dyi_ddf = 0.0;
+            const std::size_t row_offset =
+                static_cast<std::size_t>(i) * static_cast<std::size_t>(d);
+            for (int j = 0; j <= i; ++j) {
+                yi += spec.l_inv[
+                    row_offset + static_cast<std::size_t>(j)]
+                    * workspace.x[static_cast<std::size_t>(j)];
+                if (compute_derivative) {
+                    dyi_ddf += spec.l_inv[
+                        row_offset + static_cast<std::size_t>(j)]
+                        * workspace.dx_ddf[static_cast<std::size_t>(j)];
+                }
+            }
+            quad += yi * yi;
+            if (compute_derivative) {
+                dquad_ddf += 2.0 * yi * dyi_ddf;
+            }
         }
     }
 
-    const double joint_shape = std::log1p(quad / df);
-    const double joint_log =
-        std::lgamma(0.5 * (df + static_cast<double>(d)))
-        - std::lgamma(0.5 * df)
-        - 0.5 * static_cast<double>(d) * std::log(df * kPi)
-        - 0.5 * spec.log_det
-        - 0.5 * (df + static_cast<double>(d)) * joint_shape;
-    if (dlog_ddf != nullptr) {
-        if (compute_derivative) {
-            const double joint_const_derivative =
-                0.5 * digamma_positive(
-                    0.5 * (df + static_cast<double>(d)))
-                - 0.5 * digamma_positive(0.5 * df)
-                - 0.5 * static_cast<double>(d) / df;
-            const double dshape_ddf =
-                (df * dquad_ddf - quad) / (df * (df + quad));
-            const double joint_dlog_ddf =
-                joint_const_derivative
-                - 0.5 * joint_shape
-                - 0.5 * (df + static_cast<double>(d)) * dshape_ddf;
-            *dlog_ddf = joint_dlog_ddf - marginal_dlog_ddf;
-        } else {
-            *dlog_ddf = std::numeric_limits<double>::quiet_NaN();
-        }
+    double log_pdf = -std::numeric_limits<double>::infinity();
+    if (!student_log_pdf_from_quantiles(
+            workspace.x.data(),
+            compute_derivative ? workspace.dx_ddf.data() : nullptr,
+            static_cast<std::size_t>(d),
+            df,
+            factor_correlation
+                ? spec.factor_correlation->logdet()
+                : spec.log_det,
+            quad,
+            dquad_ddf,
+            log_pdf,
+            dlog_ddf)) {
+        return -std::numeric_limits<double>::infinity();
     }
-    return joint_log - marginal_log;
+    return log_pdf;
 }
 
 bool student_corr_score_row_impl(
@@ -838,6 +878,181 @@ bool student_corr_score_row_impl(
 }
 
 }  // namespace
+
+bool student_log_pdf_from_quantiles(
+    const double* quantiles,
+    const double* quantile_derivatives,
+    std::size_t dimension,
+    double df,
+    double logdet,
+    double quadratic_form,
+    double quadratic_form_derivative,
+    double& log_pdf,
+    double* dlog_ddf) {
+
+    const bool compute_derivative = dlog_ddf != nullptr;
+    if (quantiles == nullptr
+        || dimension < 2
+        || !std::isfinite(df)
+        || df <= 2.0
+        || !std::isfinite(logdet)
+        || !std::isfinite(quadratic_form)
+        || quadratic_form < 0.0
+        || (compute_derivative
+            && (quantile_derivatives == nullptr
+                || !std::isfinite(quadratic_form_derivative)))) {
+        return false;
+    }
+
+    double marginal_log = 0.0;
+    double marginal_dlog_ddf = 0.0;
+    double marginal_constant = 0.0;
+    double marginal_constant_derivative = 0.0;
+    if (!student_marginal_log_pdf_constants(
+            df,
+            marginal_constant,
+            marginal_constant_derivative)) {
+        return false;
+    }
+    for (std::size_t index = 0; index < dimension; ++index) {
+        const double quantile = quantiles[index];
+        if (!std::isfinite(quantile)
+            || (compute_derivative
+                && !std::isfinite(quantile_derivatives[index]))) {
+            return false;
+        }
+        double marginal_value = 0.0;
+        double marginal_derivative = 0.0;
+        if (!student_marginal_log_pdf_from_quantile(
+                quantile,
+                compute_derivative ? quantile_derivatives[index] : 0.0,
+                df,
+                marginal_constant,
+                marginal_constant_derivative,
+                marginal_value,
+                marginal_derivative)) {
+            return false;
+        }
+        marginal_log += marginal_value;
+        marginal_dlog_ddf += marginal_derivative;
+    }
+
+    return student_log_pdf_from_summaries(
+        dimension,
+        df,
+        logdet,
+        quadratic_form,
+        quadratic_form_derivative,
+        marginal_log,
+        marginal_dlog_ddf,
+        log_pdf,
+        dlog_ddf);
+}
+
+bool student_marginal_log_pdf_from_quantile(
+    double quantile,
+    double quantile_derivative,
+    double df,
+    double marginal_constant,
+    double marginal_constant_derivative,
+    double& log_pdf,
+    double& dlog_ddf) {
+
+    if (!std::isfinite(quantile)
+        || !std::isfinite(quantile_derivative)
+        || !std::isfinite(df)
+        || df <= 2.0
+        || !std::isfinite(marginal_constant)
+        || !std::isfinite(marginal_constant_derivative)) {
+        return false;
+    }
+    const double quantile_squared = quantile * quantile;
+    const double marginal_shape =
+        std::log1p(quantile_squared / df);
+    log_pdf = marginal_constant
+        - 0.5 * (df + 1.0) * marginal_shape;
+    const double quantile_squared_derivative =
+        2.0 * quantile * quantile_derivative;
+    const double marginal_shape_derivative =
+        (df * quantile_squared_derivative - quantile_squared)
+        / (df * (df + quantile_squared));
+    dlog_ddf =
+        marginal_constant_derivative
+        - 0.5 * marginal_shape
+        - 0.5 * (df + 1.0) * marginal_shape_derivative;
+    return std::isfinite(log_pdf) && std::isfinite(dlog_ddf);
+}
+
+bool student_marginal_log_pdf_constants(
+    double df,
+    double& marginal_constant,
+    double& marginal_constant_derivative) {
+
+    if (!std::isfinite(df) || df <= 2.0) {
+        return false;
+    }
+    marginal_constant =
+        std::lgamma(0.5 * (df + 1.0))
+        - std::lgamma(0.5 * df)
+        - 0.5 * std::log(df * kPi);
+    marginal_constant_derivative =
+        0.5 * digamma_positive(0.5 * (df + 1.0))
+        - 0.5 * digamma_positive(0.5 * df)
+        - 0.5 / df;
+    return std::isfinite(marginal_constant)
+        && std::isfinite(marginal_constant_derivative);
+}
+
+bool student_log_pdf_from_summaries(
+    std::size_t dimension,
+    double df,
+    double logdet,
+    double quadratic_form,
+    double quadratic_form_derivative,
+    double marginal_log_pdf,
+    double marginal_dlog_ddf,
+    double& log_pdf,
+    double* dlog_ddf) {
+
+    const bool compute_derivative = dlog_ddf != nullptr;
+    if (dimension < 2
+        || !std::isfinite(df)
+        || df <= 2.0
+        || !std::isfinite(logdet)
+        || !std::isfinite(quadratic_form)
+        || quadratic_form < 0.0
+        || !std::isfinite(marginal_log_pdf)
+        || (compute_derivative
+            && (!std::isfinite(quadratic_form_derivative)
+                || !std::isfinite(marginal_dlog_ddf)))) {
+        return false;
+    }
+    const double dimension_value = static_cast<double>(dimension);
+    const double joint_shape = std::log1p(quadratic_form / df);
+    const double joint_log =
+        std::lgamma(0.5 * (df + dimension_value))
+        - std::lgamma(0.5 * df)
+        - 0.5 * dimension_value * std::log(df * kPi)
+        - 0.5 * logdet
+        - 0.5 * (df + dimension_value) * joint_shape;
+    log_pdf = joint_log - marginal_log_pdf;
+    if (compute_derivative) {
+        const double joint_const_derivative =
+            0.5 * digamma_positive(0.5 * (df + dimension_value))
+            - 0.5 * digamma_positive(0.5 * df)
+            - 0.5 * dimension_value / df;
+        const double joint_shape_derivative =
+            (df * quadratic_form_derivative - quadratic_form)
+            / (df * (df + quadratic_form));
+        const double joint_dlog_ddf =
+            joint_const_derivative
+            - 0.5 * joint_shape
+            - 0.5 * (df + dimension_value) * joint_shape_derivative;
+        *dlog_ddf = joint_dlog_ddf - marginal_dlog_ddf;
+    }
+    return std::isfinite(log_pdf)
+        && (!compute_derivative || std::isfinite(*dlog_ddf));
+}
 
 double student_log_pdf(
     const scar::CopulaSpec& spec,

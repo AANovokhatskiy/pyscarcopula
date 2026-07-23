@@ -116,11 +116,17 @@ struct StudentWorkspace {
     } diagnostics;
     std::vector<double> x;
     std::vector<double> dx_ddf;
+    std::vector<double> precision_x;
+    std::vector<double> factor_small;
 
     void update_peak_capacity() noexcept {
         diagnostics.peak_capacity_bytes = std::max(
             diagnostics.peak_capacity_bytes,
-            (x.capacity() + dx_ddf.capacity()) * sizeof(double));
+            (x.capacity()
+             + dx_ddf.capacity()
+             + precision_x.capacity()
+             + factor_small.capacity())
+                * sizeof(double));
     }
 
     void reserve_x(std::size_t size) {
@@ -154,6 +160,22 @@ struct StudentWorkspace {
         dx_ddf.resize(size);
         update_peak_capacity();
     }
+
+    void resize_precision_x(std::size_t size) {
+        if (size > precision_x.capacity()) {
+            ++diagnostics.growth_events;
+        }
+        precision_x.resize(size);
+        update_peak_capacity();
+    }
+
+    void resize_factor_small(std::size_t size) {
+        if (size > factor_small.capacity()) {
+            ++diagnostics.growth_events;
+        }
+        factor_small.resize(size);
+        update_peak_capacity();
+    }
 };
 double student_log_pdf(
     const scar::CopulaSpec& spec,
@@ -181,6 +203,38 @@ bool student_log_pdf_and_dlog_ddf(
     double& log_pdf,
     double& dlog_ddf,
     StudentWorkspace& workspace);
+bool student_log_pdf_from_quantiles(
+    const double* quantiles,
+    const double* quantile_derivatives,
+    std::size_t dimension,
+    double df,
+    double logdet,
+    double quadratic_form,
+    double quadratic_form_derivative,
+    double& log_pdf,
+    double* dlog_ddf);
+bool student_marginal_log_pdf_from_quantile(
+    double quantile,
+    double quantile_derivative,
+    double df,
+    double marginal_constant,
+    double marginal_constant_derivative,
+    double& log_pdf,
+    double& dlog_ddf);
+bool student_marginal_log_pdf_constants(
+    double df,
+    double& marginal_constant,
+    double& marginal_constant_derivative);
+bool student_log_pdf_from_summaries(
+    std::size_t dimension,
+    double df,
+    double logdet,
+    double quadratic_form,
+    double quadratic_form_derivative,
+    double marginal_log_pdf,
+    double marginal_dlog_ddf,
+    double& log_pdf,
+    double* dlog_ddf);
 double student_quantile_value(double p, double df);
 void student_quantile_value_and_derivative(
     double p, double df, double& value, double& derivative);
@@ -277,7 +331,8 @@ void copula_pdf_row_precomputed_flat(
     const double* u,
     std::int64_t t,
     const std::vector<double>& r_grid,
-    double* fi_row);
+    double* fi_row,
+    double* log_scale = nullptr);
 void copula_pdf_and_grad_row_precomputed(
     const scar::CopulaSpec& spec,
     double u1,
@@ -293,7 +348,8 @@ void copula_pdf_and_grad_row_precomputed_flat(
     const std::vector<double>& r_grid,
     const std::vector<double>& dpsi_grid,
     double* fi_row,
-    double* dfi_dx_row);
+    double* dfi_dx_row,
+    double* log_scale = nullptr);
 void copula_pdf_and_grad_grid_precomputed(
     const scar::CopulaSpec& spec,
     const double* u,
@@ -302,7 +358,8 @@ void copula_pdf_and_grad_grid_precomputed(
     const std::vector<double>& dpsi_grid,
     std::vector<double>& fi,
     std::vector<double>& dfi_dx,
-    int n_threads = 1);
+    int n_threads = 1,
+    double* log_scale_sum = nullptr);
 double copula_h_rotated(
     const scar::CopulaSpec& spec,
     double u,
