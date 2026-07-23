@@ -76,6 +76,8 @@ pybind11::dict multivariate_rows_result_to_dict(
     const scar::MultivariateRowsResult& result);
 pybind11::dict multivariate_grid_result_to_dict(
     const scar::MultivariateGridResult& result);
+pybind11::dict equicorr_preparation_result_to_dict(
+    const scar::EquicorrPreparationResult& result);
 pybind11::dict conditional_sample_result_to_dict(
     const scar::ConditionalSampleResult& result);
 pybind11::dict trajectory_log_pdf_result_to_dict(

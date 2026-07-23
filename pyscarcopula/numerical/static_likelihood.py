@@ -13,6 +13,18 @@ class StaticLikelihoodEvaluator:
 
     def __init__(self, copula, u, *, n_threads=1):
         module = _cpp_extension.load()
+        from pyscarcopula.copula.multivariate.equicorr_prepared import (
+            EquicorrPreparedData,
+        )
+        if isinstance(u, EquicorrPreparedData):
+            if int(getattr(copula, "d", -1)) != u.dimension:
+                raise ValueError(
+                    "prepared dimension does not match copula dimension")
+            spec = _cpp_copula.make_static_likelihood_spec(
+                module, copula, u=None)
+            self._initialize_prepared(
+                module, spec, u, n_threads)
+            return
         observations = np.ascontiguousarray(
             np.asarray(u, dtype=np.float64))
         spec = _cpp_copula.make_static_likelihood_spec(
@@ -29,6 +41,21 @@ class StaticLikelihoodEvaluator:
             raise CppError(
                 "C++ static likelihood evaluator rejected its inputs "
                 f"with status={self._native.status}")
+
+    def _initialize_prepared(self, module, spec, prepared, n_threads):
+        from pyscarcopula.numerical.multivariate_native import (
+            _validated_n_threads,
+        )
+        self._native = module.StaticCopulaEvaluator(
+            spec,
+            prepared.sum_z,
+            prepared.sum_z2,
+            _validated_n_threads(n_threads),
+        )
+        if self._native.status != module.SCAR_OK:
+            raise CppError(
+                "C++ static likelihood evaluator rejected prepared "
+                f"statistics with status={self._native.status}")
 
     @classmethod
     def from_spec(cls, module, spec, u, *, n_threads=1):

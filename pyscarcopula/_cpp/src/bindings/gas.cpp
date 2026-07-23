@@ -3,6 +3,29 @@
 namespace py = pybind11;
 
 namespace pyscarcopula::bindings {
+namespace {
+
+scar::ObservationView set_equicorr_prepared(
+    scar::CopulaSpec& copula,
+    py::array_t<double, py::array::c_style | py::array::forcecast> sum_z,
+    py::array_t<double, py::array::c_style | py::array::forcecast> sum_z2) {
+
+    copula.equicorr_sum_cache = vector_from_array(sum_z);
+    copula.equicorr_sum_squares_cache = vector_from_array(sum_z2);
+    if (copula.equicorr_sum_cache.empty()
+        || copula.equicorr_sum_squares_cache.size()
+            != copula.equicorr_sum_cache.size()) {
+        throw std::invalid_argument(
+            "prepared Equicorr statistics must be non-empty and equal-sized");
+    }
+    return {
+        nullptr,
+        copula.equicorr_sum_cache.size(),
+        copula.dim,
+    };
+}
+
+}  // namespace
 
 void bind_gas(py::module_& m) {
     py::class_<scar::GasParams>(
@@ -154,6 +177,33 @@ void bind_gas(py::module_& m) {
             py::arg("u"),
             py::arg("config"))
         .def(
+            "filter_equicorr_prepared",
+            [](const scar::GasEvaluator& evaluator,
+               const scar::GasParams& params,
+               scar::CopulaSpec copula,
+               py::array_t<
+                   double,
+                   py::array::c_style | py::array::forcecast> sum_z,
+               py::array_t<
+                   double,
+                   py::array::c_style | py::array::forcecast> sum_z2,
+               const scar::GasConfig& config) {
+                const auto obs = set_equicorr_prepared(
+                    copula, sum_z, sum_z2);
+                scar::GasFilterResult result;
+                {
+                    py::gil_scoped_release release;
+                    result = evaluator.filter(
+                        params, copula, obs, config);
+                }
+                return gas_filter_result_to_dict(result);
+            },
+            py::arg("params"),
+            py::arg("copula"),
+            py::arg("sum_z"),
+            py::arg("sum_z2"),
+            py::arg("config"))
+        .def(
             "log_likelihood",
             [](const scar::GasEvaluator& evaluator,
                const scar::GasParams& params,
@@ -175,6 +225,33 @@ void bind_gas(py::module_& m) {
             py::arg("u"),
             py::arg("config"))
         .def(
+            "log_likelihood_equicorr_prepared",
+            [](const scar::GasEvaluator& evaluator,
+               const scar::GasParams& params,
+               scar::CopulaSpec copula,
+               py::array_t<
+                   double,
+                   py::array::c_style | py::array::forcecast> sum_z,
+               py::array_t<
+                   double,
+                   py::array::c_style | py::array::forcecast> sum_z2,
+               const scar::GasConfig& config) {
+                const auto obs = set_equicorr_prepared(
+                    copula, sum_z, sum_z2);
+                scar::GasLogLikResult result;
+                {
+                    py::gil_scoped_release release;
+                    result = evaluator.log_likelihood(
+                        params, copula, obs, config);
+                }
+                return gas_loglik_result_to_dict(result);
+            },
+            py::arg("params"),
+            py::arg("copula"),
+            py::arg("sum_z"),
+            py::arg("sum_z2"),
+            py::arg("config"))
+        .def(
             "negative_log_likelihood",
             [](const scar::GasEvaluator& evaluator,
                const scar::GasParams& params,
@@ -194,6 +271,33 @@ void bind_gas(py::module_& m) {
             py::arg("params"),
             py::arg("copula"),
             py::arg("u"),
+            py::arg("config"))
+        .def(
+            "negative_log_likelihood_equicorr_prepared",
+            [](const scar::GasEvaluator& evaluator,
+               const scar::GasParams& params,
+               scar::CopulaSpec copula,
+               py::array_t<
+                   double,
+                   py::array::c_style | py::array::forcecast> sum_z,
+               py::array_t<
+                   double,
+                   py::array::c_style | py::array::forcecast> sum_z2,
+               const scar::GasConfig& config) {
+                const auto obs = set_equicorr_prepared(
+                    copula, sum_z, sum_z2);
+                scar::GasLogLikResult result;
+                {
+                    py::gil_scoped_release release;
+                    result = evaluator.negative_log_likelihood(
+                        params, copula, obs, config);
+                }
+                return gas_loglik_result_to_dict(result);
+            },
+            py::arg("params"),
+            py::arg("copula"),
+            py::arg("sum_z"),
+            py::arg("sum_z2"),
             py::arg("config"))
         .def(
             "update_one",
@@ -264,6 +368,35 @@ void bind_gas(py::module_& m) {
             py::arg("params"),
             py::arg("copula"),
             py::arg("u"),
+            py::arg("config"),
+            py::arg("horizon_next"))
+        .def(
+            "predict_parameter_equicorr_prepared",
+            [](const scar::GasEvaluator& evaluator,
+               const scar::GasParams& params,
+               scar::CopulaSpec copula,
+               py::array_t<
+                   double,
+                   py::array::c_style | py::array::forcecast> sum_z,
+               py::array_t<
+                   double,
+                   py::array::c_style | py::array::forcecast> sum_z2,
+               const scar::GasConfig& config,
+               bool horizon_next) {
+                const auto obs = set_equicorr_prepared(
+                    copula, sum_z, sum_z2);
+                scar::GasPredictResult result;
+                {
+                    py::gil_scoped_release release;
+                    result = evaluator.predict_parameter(
+                        params, copula, obs, config, horizon_next);
+                }
+                return gas_predict_result_to_dict(result);
+            },
+            py::arg("params"),
+            py::arg("copula"),
+            py::arg("sum_z"),
+            py::arg("sum_z2"),
             py::arg("config"),
             py::arg("horizon_next"))
         .def(

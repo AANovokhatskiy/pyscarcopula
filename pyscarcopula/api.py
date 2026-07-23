@@ -63,6 +63,26 @@ def _reject_public_posterior_cache(kwargs: dict[str, Any]) -> None:
             "accepted by the top-level API")
 
 
+def _prepared_equicorr_or_none(copula, data):
+    from pyscarcopula.copula.multivariate.equicorr import (
+        EquicorrGaussianCopula,
+    )
+    from pyscarcopula.copula.multivariate.equicorr_prepared import (
+        EquicorrPreparedData,
+    )
+
+    if not isinstance(data, EquicorrPreparedData):
+        return None
+    if not isinstance(copula, EquicorrGaussianCopula):
+        raise TypeError(
+            "EquicorrPreparedData is accepted only by "
+            "EquicorrGaussianCopula")
+    if copula.d != data.dimension:
+        raise ValueError(
+            "prepared dimension does not match copula dimension")
+    return data
+
+
 def fit(
     copula: CommonCopulaProtocol,
     data: ArrayLike,
@@ -117,11 +137,25 @@ def fit(
         )
         return fitted.fit_result
 
-    u = _as_float64_array_no_copy(data)
-    if to_pobs:
-        u = _pobs(u)
-
-    validate_copula_data(copula, u)
+    prepared = _prepared_equicorr_or_none(copula, data)
+    prepared_input = prepared is not None
+    if prepared_input:
+        if to_pobs:
+            raise ValueError(
+                "to_pobs=True is unavailable for prepared statistics")
+        if int(getattr(copula, "d", -1)) != data.dimension:
+            raise ValueError(
+                "prepared dimension does not match copula dimension")
+        if method.upper() not in {"MLE", "GAS", "SCAR-TM-OU"}:
+            raise ValueError(
+                "prepared Equicorr statistics currently support only "
+                "MLE, GAS, and SCAR-TM-OU strategies")
+        u = data
+    else:
+        u = _as_float64_array_no_copy(data)
+        if to_pobs:
+            u = _pobs(u)
+        validate_copula_data(copula, u)
     ensure_strategy_supported(copula, method)
     strategy = get_strategy(method, config=config, **kwargs)
     result = strategy.fit(copula, u, **kwargs)
@@ -129,7 +163,13 @@ def fit(
     # methods (predict/sample without explicit data or result) see the
     # strategy result rather than a stale intermediate (e.g. MLE) one.
     copula.fit_result = result
-    copula._last_u = u
+    if prepared_input:
+        copula._last_prepared = u
+        copula._last_u = None
+    else:
+        copula._last_u = u
+        if hasattr(copula, "_last_prepared"):
+            copula._last_prepared = None
     if (
             getattr(result, "params", None) is not None
             and hasattr(copula, "_last_latent_result")):
@@ -167,8 +207,12 @@ def log_likelihood(
     if _is_vine_copula(copula):
         return float(copula.log_likelihood(data, **kwargs))
 
-    u = np.asarray(data, dtype=np.float64)
-    validate_copula_data(copula, u)
+    prepared = _prepared_equicorr_or_none(copula, data)
+    if prepared is None:
+        u = np.asarray(data, dtype=np.float64)
+        validate_copula_data(copula, u)
+    else:
+        u = prepared
     strategy = get_strategy_for_result(result, config=config, **kwargs)
     return strategy.log_likelihood(copula, u, result)
 
@@ -203,8 +247,12 @@ def predictive_mean(
     ndarray
         Predictive parameter path of shape ``(n_observations,)``.
     """
-    u = np.asarray(data, dtype=np.float64)
-    validate_copula_data(copula, u)
+    prepared = _prepared_equicorr_or_none(copula, data)
+    if prepared is None:
+        u = np.asarray(data, dtype=np.float64)
+        validate_copula_data(copula, u)
+    else:
+        u = prepared
     _reject_public_posterior_cache(kwargs)
     strategy = get_strategy_for_result(result, config=config, **kwargs)
     return strategy.predictive_mean(copula, u, result)
@@ -244,8 +292,12 @@ def mixture_h(
     NotImplementedError
         If ``copula`` does not provide pair-copula h-functions.
     """
-    u = np.asarray(data, dtype=np.float64)
-    validate_copula_data(copula, u)
+    prepared = _prepared_equicorr_or_none(copula, data)
+    if prepared is None:
+        u = np.asarray(data, dtype=np.float64)
+        validate_copula_data(copula, u)
+    else:
+        u = prepared
     capabilities = get_copula_capabilities(copula)
     if capabilities is not None and not capabilities.supports_pair_ops:
         raise NotImplementedError(
@@ -308,8 +360,12 @@ def sample(
     if vine_kind == 'rvine':
         return copula.sample(n, **kwargs)
 
-    u = np.asarray(data, dtype=np.float64)
-    validate_copula_data(copula, u)
+    prepared = _prepared_equicorr_or_none(copula, data)
+    if prepared is None:
+        u = np.asarray(data, dtype=np.float64)
+        validate_copula_data(copula, u)
+    else:
+        u = prepared
     strategy = get_strategy_for_result(result, config=config, **kwargs)
     return strategy.sample(copula, u, result, n, **kwargs)
 
@@ -428,8 +484,12 @@ def predict(
         return copula.predict(
             n, u=data, predict_config=pcfg, **kwargs)
 
-    u = np.asarray(data, dtype=np.float64)
-    validate_copula_data(copula, u)
+    prepared = _prepared_equicorr_or_none(copula, data)
+    if prepared is None:
+        u = np.asarray(data, dtype=np.float64)
+        validate_copula_data(copula, u)
+    else:
+        u = prepared
     strategy = get_strategy_for_result(result, config=config, **kwargs)
     return strategy.predict(
         copula,

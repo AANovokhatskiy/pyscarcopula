@@ -373,6 +373,12 @@ public:
         int dim,
         OuNumericalConfig config,
         std::string method);
+    PreparedScarOuEvaluator(
+        CopulaSpec copula,
+        std::vector<double> equicorr_sums,
+        std::vector<double> equicorr_sum_squares,
+        OuNumericalConfig config,
+        std::string method);
 
     void update_student_factor(
         const std::vector<double>& l_inv,

@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+- Adds deterministic, tiled CPU preparation of equicorrelation Gaussian
+  sufficient statistics from ndarray, memmap, or streamed observation blocks.
+- Adds immutable `EquicorrPreparedData` with compact `.npz` and read-only
+  memory-mapped persistence. The prepared representation stores two `O(T)`
+  vectors and never retains the original `T * d` observation matrix.
+- Lets static MLE, row/grid evaluation, GAS, and SCAR-TM-OU consume prepared
+  Equicorr statistics directly. Prepared MLE avoids materializing a dense
+  correlation matrix in its result.
+- Adds bounded row-batch grid output with a pre-allocation memory budget and
+  structural `O(n*d)` Equicorr sampling over the full admissible correlation
+  interval, including negative correlation.
+- Adds opt-in `d=10^4`, `10^5`, and `10^6` preparation benchmark gates with
+  exact cross-thread result checks and an enforceable four-thread efficiency
+  target.
+
 ## 0.19.0 - 2026-07-21
 
 Version: `0.18.0` -> `0.19.0`

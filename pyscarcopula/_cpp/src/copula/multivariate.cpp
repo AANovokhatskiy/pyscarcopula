@@ -6,6 +6,7 @@
 #include "scar/status.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <limits>
 
@@ -16,6 +17,7 @@ constexpr std::int64_t kStudentGridMinRowsPerBlock = 8;
 constexpr std::int64_t kEquicorrGridMinRowsPerBlock = 64;
 constexpr std::size_t kEquicorrGridMinCells = 262144;
 constexpr std::size_t kStudentRowsMinCells = 4096;
+constexpr std::size_t kEquicorrPreparationMinCells = 4096;
 
 struct StudentGridBlockResult {
     bool ran = false;
@@ -498,6 +500,200 @@ ConditionalSampleResult conditional_latent(
 
 }  // namespace
 
+EquicorrPreparationResult prepare_equicorr_sufficient_statistics(
+    ObservationView u,
+    std::size_t dimension_tile,
+    int n_threads) {
+
+    EquicorrPreparationResult out;
+    out.n_threads_requested = n_threads;
+    if (u.empty() || u.values == nullptr || u.dim < 2
+        || dimension_tile == 0) {
+        out.status = SCAR_INVALID_SIZE;
+        return out;
+    }
+    if (n_threads < 1 || n_threads > 256) {
+        out.status = SCAR_INVALID_PARAMETER;
+        return out;
+    }
+
+    const std::size_t dimension = static_cast<std::size_t>(u.dim);
+    std::size_t input_values = 0;
+    if (!scar_internal::checked_size_mul(
+            u.n_obs, dimension, input_values)
+        || input_values
+            > static_cast<std::size_t>(
+                std::numeric_limits<std::int64_t>::max())) {
+        out.status = SCAR_INVALID_SIZE;
+        return out;
+    }
+    const std::size_t dimension_tiles =
+        dimension / dimension_tile
+        + (dimension % dimension_tile == 0 ? 0 : 1);
+    std::size_t partial_values = 0;
+    if (!scar_internal::checked_size_mul(
+            u.n_obs, dimension_tiles, partial_values)) {
+        out.status = SCAR_INVALID_SIZE;
+        return out;
+    }
+    std::size_t temporary_values = 0;
+    if (!scar_internal::checked_size_mul(
+            partial_values, std::size_t{2}, temporary_values)) {
+        out.status = SCAR_INVALID_SIZE;
+        return out;
+    }
+
+    out.dimension_tiles = dimension_tiles;
+    out.temporary_values = temporary_values;
+    out.sum_z.assign(u.n_obs, 0.0);
+    out.sum_z2.assign(u.n_obs, 0.0);
+    std::vector<double> partial_sum(partial_values, 0.0);
+    std::vector<double> partial_sum2(partial_values, 0.0);
+    std::atomic<std::uint64_t> clipping_events{0};
+    std::atomic<std::uint64_t> nonfinite_values{0};
+    std::atomic<std::int64_t> first_failure{
+        std::numeric_limits<std::int64_t>::max()};
+
+    const auto update_first_failure =
+        [&first_failure](std::int64_t index) {
+            std::int64_t current =
+                first_failure.load(std::memory_order_relaxed);
+            while (index < current
+                   && !first_failure.compare_exchange_weak(
+                       current, index, std::memory_order_relaxed)) {
+            }
+        };
+    const auto neumaier_add = [](double value, double& sum, double& carry) {
+        const double next = sum + value;
+        if (std::abs(sum) >= std::abs(value)) {
+            carry += (sum - next) + value;
+        } else {
+            carry += (value - next) + sum;
+        }
+        sum = next;
+    };
+    const auto evaluate_tile =
+        [&](std::size_t row, std::size_t tile) {
+            const std::size_t begin = tile * dimension_tile;
+            const std::size_t end =
+                std::min(begin + dimension_tile, dimension);
+            const std::size_t row_offset = row * dimension;
+            double sum = 0.0;
+            double carry = 0.0;
+            double sum2 = 0.0;
+            double carry2 = 0.0;
+            std::uint64_t local_clipping = 0;
+            std::uint64_t local_nonfinite = 0;
+            for (std::size_t column = begin; column < end; ++column) {
+                const std::size_t index = row_offset + column;
+                const double value = u.values[index];
+                if (!std::isfinite(value)) {
+                    ++local_nonfinite;
+                    update_first_failure(
+                        static_cast<std::int64_t>(index));
+                    continue;
+                }
+                const double clipped =
+                    scar_internal::clip_pseudo_observation(value);
+                local_clipping += clipped != value ? 1U : 0U;
+                const double z =
+                    scar_internal::normal_quantile_refined(clipped);
+                neumaier_add(z, sum, carry);
+                neumaier_add(z * z, sum2, carry2);
+            }
+            const std::size_t partial_index =
+                row * dimension_tiles + tile;
+            partial_sum[partial_index] = sum + carry;
+            partial_sum2[partial_index] = sum2 + carry2;
+            clipping_events.fetch_add(
+                local_clipping, std::memory_order_relaxed);
+            nonfinite_values.fetch_add(
+                local_nonfinite, std::memory_order_relaxed);
+        };
+
+    const bool enough_work =
+        input_values >= kEquicorrPreparationMinCells;
+    const bool row_parallel =
+        enough_work && n_threads > 1
+        && u.n_obs >= static_cast<std::size_t>(4 * n_threads);
+    const bool tile_parallel =
+        enough_work && n_threads > 1 && !row_parallel
+        && partial_values > 1;
+    if (row_parallel) {
+        out.parallel_axis = 1;
+        out.parallel_blocks = static_cast<int>(std::min(
+            static_cast<std::size_t>(n_threads), u.n_obs));
+        scar_internal::parallel_for_blocks(
+            0,
+            static_cast<std::int64_t>(u.n_obs),
+            1,
+            n_threads,
+            [&](std::int64_t begin, std::int64_t end, std::size_t) {
+                for (std::int64_t row = begin; row < end; ++row) {
+                    for (std::size_t tile = 0;
+                         tile < dimension_tiles;
+                         ++tile) {
+                        evaluate_tile(
+                            static_cast<std::size_t>(row), tile);
+                    }
+                }
+            });
+    } else if (tile_parallel) {
+        out.parallel_axis = 2;
+        out.parallel_blocks = static_cast<int>(std::min(
+            static_cast<std::size_t>(n_threads), partial_values));
+        scar_internal::parallel_for_blocks(
+            0,
+            static_cast<std::int64_t>(partial_values),
+            1,
+            n_threads,
+            [&](std::int64_t begin, std::int64_t end, std::size_t) {
+                for (std::int64_t index = begin; index < end; ++index) {
+                    const std::size_t flat =
+                        static_cast<std::size_t>(index);
+                    evaluate_tile(
+                        flat / dimension_tiles,
+                        flat % dimension_tiles);
+                }
+            });
+    } else {
+        for (std::size_t row = 0; row < u.n_obs; ++row) {
+            for (std::size_t tile = 0;
+                 tile < dimension_tiles;
+                 ++tile) {
+                evaluate_tile(row, tile);
+            }
+        }
+    }
+
+    out.clipping_events =
+        clipping_events.load(std::memory_order_relaxed);
+    out.nonfinite_values =
+        nonfinite_values.load(std::memory_order_relaxed);
+    if (out.nonfinite_values != 0) {
+        out.status = SCAR_INVALID_PARAMETER;
+        out.failure_index =
+            first_failure.load(std::memory_order_relaxed);
+        return out;
+    }
+
+    for (std::size_t row = 0; row < u.n_obs; ++row) {
+        double sum = 0.0;
+        double carry = 0.0;
+        double sum2 = 0.0;
+        double carry2 = 0.0;
+        for (std::size_t tile = 0; tile < dimension_tiles; ++tile) {
+            const std::size_t index = row * dimension_tiles + tile;
+            neumaier_add(partial_sum[index], sum, carry);
+            neumaier_add(partial_sum2[index], sum2, carry2);
+        }
+        out.sum_z[row] = sum + carry;
+        out.sum_z2[row] = sum2 + carry2;
+    }
+    out.status = SCAR_OK;
+    return out;
+}
+
 MultivariateRowsResult multivariate_log_pdf_and_grad(
     const CopulaSpec& spec,
     const Observations& u,
@@ -621,6 +817,107 @@ MultivariateRowsResult multivariate_log_pdf_and_grad(
             out.dlog_dr.begin() + first_uncomputed,
             out.dlog_dr.end(),
             std::numeric_limits<double>::quiet_NaN());
+    }
+    return out;
+}
+
+MultivariateRowsResult equicorr_log_pdf_and_grad_from_stats(
+    const CopulaSpec& spec,
+    DoubleView sum_z,
+    DoubleView sum_z2,
+    const std::vector<double>& r,
+    int n_threads) {
+
+    MultivariateRowsResult out;
+    out.n_threads_requested = n_threads;
+    out.log_pdf.assign(
+        sum_z.size(), -std::numeric_limits<double>::infinity());
+    out.dlog_dr.assign(
+        sum_z.size(), std::numeric_limits<double>::quiet_NaN());
+    if (spec.family != CopulaFamily::EquicorrGaussian
+        || spec.rotation != Rotation::R0
+        || spec.transform != Transform::GaussianTanh
+        || spec.dim < 2) {
+        out.status = SCAR_INVALID_FAMILY;
+        return out;
+    }
+    if (sum_z.size() == 0 || sum_z.data() == nullptr
+        || sum_z2.data() == nullptr
+        || sum_z2.size() != sum_z.size()
+        || (r.size() != 1 && r.size() != sum_z.size())) {
+        out.status = SCAR_INVALID_SIZE;
+        return out;
+    }
+    if (n_threads < 1 || n_threads > 256) {
+        out.status = SCAR_INVALID_PARAMETER;
+        return out;
+    }
+    for (std::size_t row = 0; row < sum_z.size(); ++row) {
+        if (!std::isfinite(sum_z[row])
+            || !std::isfinite(sum_z2[row])
+            || sum_z2[row] < 0.0) {
+            out.status = SCAR_INVALID_PARAMETER;
+            out.failure_index = static_cast<std::int64_t>(row);
+            return out;
+        }
+    }
+
+    const bool use_threads =
+        n_threads > 1
+        && scar_internal::grid_parallel_worthwhile(
+            sum_z.size(),
+            std::size_t{1},
+            static_cast<std::size_t>(kEquicorrGridMinRowsPerBlock),
+            kEquicorrGridMinCells);
+    std::vector<MultivariateRowsBlockResult> block_results(
+        static_cast<std::size_t>(use_threads ? n_threads : 1));
+    scar_internal::parallel_for_blocks(
+        0,
+        static_cast<std::int64_t>(sum_z.size()),
+        kEquicorrGridMinRowsPerBlock,
+        use_threads ? n_threads : 1,
+        [&](std::int64_t begin,
+            std::int64_t end,
+            std::size_t block) {
+            auto& block_result = block_results[block];
+            block_result.ran = true;
+            for (std::int64_t row_index = begin;
+                 row_index < end;
+                 ++row_index) {
+                const std::size_t row =
+                    static_cast<std::size_t>(row_index);
+                const double parameter = parameter_at(r, row);
+                double derivative = 0.0;
+                const scar_internal::EquicorrStats stats{
+                    sum_z[row], sum_z2[row]};
+                const double value =
+                    scar_internal::equicorr_log_pdf_from_stats(
+                        spec, stats, parameter, &derivative);
+                if (!std::isfinite(parameter)
+                    || !std::isfinite(value)
+                    || !std::isfinite(derivative)) {
+                    block_result.failure_index = row_index;
+                    return;
+                }
+                out.log_pdf[row] = value;
+                out.dlog_dr[row] = derivative;
+            }
+        });
+    for (const auto& block : block_results) {
+        if (!block.ran) {
+            continue;
+        }
+        ++out.row_parallel_blocks;
+        if (block.failure_index >= 0
+            && (out.failure_index < 0
+                || block.failure_index < out.failure_index)) {
+            out.failure_index = block.failure_index;
+        }
+    }
+    if (out.failure_index >= 0) {
+        out.status = SCAR_NUMERICAL_FAILURE;
+    } else {
+        out.status = SCAR_OK;
     }
     return out;
 }
@@ -824,6 +1121,127 @@ MultivariateGridResult multivariate_pdf_and_grad_grid(
             out.d_pdf_dx.values.begin() + first_uncomputed,
             out.d_pdf_dx.values.end(),
             0.0);
+    }
+    return out;
+}
+
+MultivariateGridResult equicorr_pdf_and_grad_grid_from_stats(
+    const CopulaSpec& spec,
+    DoubleView sum_z,
+    DoubleView sum_z2,
+    const std::vector<double>& x_grid,
+    int n_threads) {
+
+    MultivariateGridResult out;
+    out.n_threads_requested = n_threads;
+    initialize_grid(out, sum_z.size(), x_grid.size());
+    if (out.status != SCAR_OK) {
+        return out;
+    }
+    if (spec.family != CopulaFamily::EquicorrGaussian
+        || spec.rotation != Rotation::R0
+        || spec.transform != Transform::GaussianTanh
+        || spec.dim < 2) {
+        out.status = SCAR_INVALID_FAMILY;
+        return out;
+    }
+    if (sum_z.size() == 0 || sum_z.data() == nullptr
+        || sum_z2.data() == nullptr
+        || sum_z2.size() != sum_z.size()
+        || x_grid.empty()) {
+        out.status = SCAR_INVALID_SIZE;
+        return out;
+    }
+    if (n_threads < 1 || n_threads > 256) {
+        out.status = SCAR_INVALID_PARAMETER;
+        return out;
+    }
+    for (std::size_t row = 0; row < sum_z.size(); ++row) {
+        if (!std::isfinite(sum_z[row])
+            || !std::isfinite(sum_z2[row])
+            || sum_z2[row] < 0.0) {
+            out.status = SCAR_INVALID_PARAMETER;
+            out.failure_index = static_cast<std::int64_t>(row);
+            return out;
+        }
+    }
+    if (!std::all_of(x_grid.begin(), x_grid.end(), [](double value) {
+            return std::isfinite(value);
+        })) {
+        out.status = SCAR_INVALID_PARAMETER;
+        return out;
+    }
+
+    std::vector<double> parameter_grid(x_grid.size(), 0.0);
+    std::vector<double> dpsi_grid(x_grid.size(), 0.0);
+    for (std::size_t column = 0; column < x_grid.size(); ++column) {
+        parameter_grid[column] =
+            scar_internal::copula_transform(spec, x_grid[column]);
+        dpsi_grid[column] =
+            scar_internal::copula_dtransform(spec, x_grid[column]);
+    }
+    const bool use_threads =
+        n_threads > 1
+        && scar_internal::grid_parallel_worthwhile(
+            sum_z.size(),
+            x_grid.size(),
+            static_cast<std::size_t>(kEquicorrGridMinRowsPerBlock),
+            kEquicorrGridMinCells);
+    std::vector<EquicorrGridBlockResult> block_results(
+        static_cast<std::size_t>(use_threads ? n_threads : 1));
+    scar_internal::parallel_for_blocks(
+        0,
+        static_cast<std::int64_t>(sum_z.size()),
+        kEquicorrGridMinRowsPerBlock,
+        use_threads ? n_threads : 1,
+        [&](std::int64_t begin,
+            std::int64_t end,
+            std::size_t block) {
+            auto& block_result = block_results[block];
+            block_result.ran = true;
+            for (std::int64_t row_index = begin;
+                 row_index < end;
+                 ++row_index) {
+                const std::size_t row =
+                    static_cast<std::size_t>(row_index);
+                const std::size_t base = row * x_grid.size();
+                const scar_internal::EquicorrStats stats{
+                    sum_z[row], sum_z2[row]};
+                for (std::size_t column = 0;
+                     column < x_grid.size();
+                     ++column) {
+                    double dlog = 0.0;
+                    const double log_pdf =
+                        scar_internal::equicorr_log_pdf_from_stats(
+                            spec, stats, parameter_grid[column], &dlog);
+                    const double pdf = std::exp(log_pdf);
+                    out.pdf.values[base + column] = pdf;
+                    out.d_pdf_dx.values[base + column] =
+                        pdf * dlog * dpsi_grid[column];
+                    if (!std::isfinite(out.pdf.values[base + column])
+                        || !std::isfinite(
+                            out.d_pdf_dx.values[base + column])) {
+                        block_result.failure_index = row_index;
+                        return;
+                    }
+                }
+            }
+        });
+    for (const auto& block : block_results) {
+        if (!block.ran) {
+            continue;
+        }
+        ++out.equicorr_parallel_blocks;
+        if (block.failure_index >= 0
+            && (out.failure_index < 0
+                || block.failure_index < out.failure_index)) {
+            out.failure_index = block.failure_index;
+        }
+    }
+    if (out.failure_index >= 0) {
+        out.status = SCAR_NUMERICAL_FAILURE;
+    } else {
+        out.status = SCAR_OK;
     }
     return out;
 }

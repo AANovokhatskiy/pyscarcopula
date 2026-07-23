@@ -22,7 +22,11 @@ const double* observation_data(const CopulaSpec& copula, ObservationView u) {
     if (u.dim != expected_dim) {
         throw std::invalid_argument("u dimension does not match CopulaSpec::dim");
     }
-    if (!u.empty() && u.data() == nullptr) {
+    const bool prepared_equicorr =
+        copula.family == CopulaFamily::EquicorrGaussian
+        && copula.equicorr_sum_cache.size() == u.size()
+        && copula.equicorr_sum_squares_cache.size() == u.size();
+    if (!u.empty() && u.data() == nullptr && !prepared_equicorr) {
         throw std::invalid_argument("u data pointer must not be null");
     }
     return u.data();

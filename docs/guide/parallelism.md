@@ -202,7 +202,15 @@ Parallel threads do not change the asymptotic representation of a model.
 
 - `EquicorrGaussianCopula` row and emission calculations use the scalar
   equicorrelation structure and avoid a dense correlation matrix in their hot
-  path. Prepared row statistics reduce repeated work across optimizer calls.
+  path. `prepare_sufficient_statistics` accepts ndarray, memmap, and streamed
+  blocks and stores only two `O(T)` vectors. Fixed dimension-tile reduction is
+  deterministic across thread counts, and its default `n_threads=1` does not
+  initialize the native pool. `pdf_and_grad_on_grid_batches` bounds the
+  `(T,K)` output, while `memory_budget_bytes` rejects an oversized monolithic
+  output before native allocation. Unconditional
+  `sample_at_parameter_batches` uses `O(batch_rows*d)` output memory and the
+  structural equicorrelation eigenspaces for negative as well as positive
+  correlation.
 - `StochasticStudentCopula` with `corr_mode="fixed"`, `"shrinkage"`, or
   `"cholesky"` still uses a dense correlation representation with
   `O(d^2)` storage/factorization costs.
@@ -217,6 +225,12 @@ correlation modes suitable for `d >> 10^4`. The planned
 `corr_mode="factor"` representation is not part of phases 0–7 and is not yet
 available. Do not assume that passing a large `n_threads` value removes dense
 memory limits.
+
+The compact Equicorr prepared object is consumed directly by static MLE,
+row/grid evaluation, GAS, and SCAR-TM-OU. These paths retain only the two
+statistic vectors after preparation. Streaming prediction/sampling output is
+a separate concern because the returned samples themselves require
+`O(n * d)` storage.
 
 ## Native linear algebra
 

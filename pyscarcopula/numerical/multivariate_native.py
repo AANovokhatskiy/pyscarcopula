@@ -60,6 +60,54 @@ def _validated_n_threads(n_threads) -> int:
     return value
 
 
+def prepare_equicorr_statistics(
+        u, *, dimension_tile=16384, n_threads=1):
+    """Compute equicorrelation sufficient statistics for one dense block."""
+    if isinstance(dimension_tile, (bool, np.bool_)) or not isinstance(
+            dimension_tile, (int, np.integer)):
+        raise ValueError("dimension_tile must be a positive integer")
+    dimension_tile = int(dimension_tile)
+    if dimension_tile < 1:
+        raise ValueError("dimension_tile must be a positive integer")
+    observations = np.ascontiguousarray(np.asarray(u, dtype=np.float64))
+    if observations.ndim != 2 or observations.shape[1] < 2:
+        raise ValueError(
+            "u must be a 2D array with shape (T, d), d >= 2")
+    if len(observations) == 0:
+        raise ValueError("u must contain at least one observation")
+
+    module = _cpp_extension.load()
+    result = dict(module.prepare_equicorr_sufficient_statistics(
+        observations,
+        dimension_tile,
+        _validated_n_threads(n_threads),
+    ))
+    if result["status"] != module.SCAR_OK:
+        if int(result.get("nonfinite_values", 0)):
+            raise ValueError(
+                "u must contain only finite values; first invalid flat "
+                f"index={result['failure_index']}")
+        raise CppError(
+            "C++ equicorrelation preparation failed with "
+            f"status={result['status']}, "
+            f"failure_index={result['failure_index']}")
+    axis = {0: "sequential", 1: "rows", 2: "dimension_tiles"}.get(
+        int(result["parallel_axis"]), "unknown")
+    return (
+        np.asarray(result["sum_z"], dtype=np.float64),
+        np.asarray(result["sum_z2"], dtype=np.float64),
+        {
+            "n_threads_requested": int(result["n_threads_requested"]),
+            "parallel_blocks": int(result["parallel_blocks"]),
+            "parallel_axis": axis,
+            "dimension_tiles": int(result["dimension_tiles"]),
+            "temporary_values": int(result["temporary_values"]),
+            "clipping_events": int(result["clipping_events"]),
+            "nonfinite_values": int(result["nonfinite_values"]),
+        },
+    )
+
+
 def _student_cache_block(copula, u, cache, t_index, *, prepare):
     from pyscarcopula.copula.multivariate.stochastic_student import (
         StochasticStudentCopula,
@@ -102,6 +150,30 @@ def dtransform(copula, x) -> np.ndarray:
 def _log_pdf_and_dlog_rows_result(
         copula, u, r, *, t_index=None, cache=None, n_threads=1):
     module = _cpp_extension.load()
+    from pyscarcopula.copula.multivariate.equicorr_prepared import (
+        EquicorrPreparedData,
+    )
+    if isinstance(u, EquicorrPreparedData):
+        if int(getattr(copula, "d", -1)) != u.dimension:
+            raise ValueError(
+                "prepared dimension does not match copula dimension")
+        spec = _cpp_copula.make_multivariate_spec(module, copula)
+        result = dict(module.equicorr_log_pdf_and_grad_from_stats(
+            spec,
+            u.sum_z,
+            u.sum_z2,
+            _values(r),
+            _validated_n_threads(n_threads),
+        ))
+        if result["status"] != module.SCAR_OK:
+            raise CppError(
+                "C++ prepared Equicorr row evaluation failed with "
+                f"status={result['status']}, "
+                f"failure_index={result['failure_index']}")
+        return result, (
+            np.asarray(result["log_pdf"], dtype=np.float64),
+            np.asarray(result["dlog_dr"], dtype=np.float64),
+        )
     observations = _rows(copula, u)
     cache, row_offset = _student_cache_block(
         copula, observations, cache, t_index, prepare=False)
@@ -144,6 +216,33 @@ def log_pdf_and_dlog_rows_info(
 def _pdf_and_grad_grid_result(
         copula, u, x_grid, *, t_index=0, cache=None, n_threads=1):
     module = _cpp_extension.load()
+    from pyscarcopula.copula.multivariate.equicorr_prepared import (
+        EquicorrPreparedData,
+    )
+    if isinstance(u, EquicorrPreparedData):
+        if int(getattr(copula, "d", -1)) != u.dimension:
+            raise ValueError(
+                "prepared dimension does not match copula dimension")
+        grid = _values(x_grid)
+        if len(grid) == 0:
+            raise ValueError("x_grid must contain at least one value")
+        spec = _cpp_copula.make_multivariate_spec(module, copula)
+        result = dict(module.equicorr_pdf_and_grad_grid_from_stats(
+            spec,
+            u.sum_z,
+            u.sum_z2,
+            grid,
+            _validated_n_threads(n_threads),
+        ))
+        if result["status"] != module.SCAR_OK:
+            raise CppError(
+                "C++ prepared Equicorr grid evaluation failed with "
+                f"status={result['status']}, "
+                f"failure_index={result['failure_index']}")
+        return result, (
+            np.asarray(result["pdf"], dtype=np.float64),
+            np.asarray(result["d_pdf_dx"], dtype=np.float64),
+        )
     observations = _rows(copula, u)
     grid = _values(x_grid)
     if len(grid) == 0:

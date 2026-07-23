@@ -12,6 +12,13 @@ from pyscarcopula.numerical import _cpp_gas
 from pyscarcopula.numerical._arrays import as_float64_array
 
 
+def _gas_input(u):
+    from pyscarcopula.copula.multivariate.equicorr_prepared import (
+        EquicorrPreparedData,
+    )
+    return u if isinstance(u, EquicorrPreparedData) else as_float64_array(u)
+
+
 def gas_filter(
     omega,
     gamma,
@@ -26,7 +33,7 @@ def gas_filter(
         omega,
         gamma,
         beta,
-        as_float64_array(u),
+        _gas_input(u),
         copula,
         scaling,
         score_eps,
@@ -48,7 +55,7 @@ def gas_predict_param(
         omega,
         gamma,
         beta,
-        as_float64_array(u),
+        _gas_input(u),
         copula,
         scaling,
         score_eps,
@@ -70,7 +77,7 @@ def gas_loglik(
         omega,
         gamma,
         beta,
-        as_float64_array(u),
+        _gas_input(u),
         copula,
         scaling,
         score_eps,
@@ -92,7 +99,7 @@ def gas_negloglik(
             omega,
             gamma,
             beta,
-            as_float64_array(u),
+            _gas_input(u),
             copula,
             scaling,
             score_eps,

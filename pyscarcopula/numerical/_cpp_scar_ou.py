@@ -134,10 +134,20 @@ def _inputs(kappa, mu, nu, u, copula, config):
 def _prepared_inputs(u, copula, config):
     module = _cpp_extension.load()
     cfg = config or AutoTMConfig()
-    obs = as_float64_array(u)
+    from pyscarcopula.copula.multivariate.equicorr_prepared import (
+        EquicorrPreparedData,
+    )
+    prepared_input = isinstance(u, EquicorrPreparedData)
+    if prepared_input:
+        if int(getattr(copula, "d", -1)) != u.dimension:
+            raise ValueError(
+                "prepared dimension does not match copula dimension")
+        obs = u
+    else:
+        obs = as_float64_array(u)
     method = normalize_ou_transition_method(cfg.transition_method)
     validate_cpp_config(cfg, transition_method=method)
-    if obs.ndim != 2:
+    if not prepared_input and obs.ndim != 2:
         raise ValueError("u must have 2D shape (n_obs, dimension)")
 
     student_dim = getattr(copula, "d", None)
@@ -152,7 +162,8 @@ def _prepared_inputs(u, copula, config):
 
     return (
         module,
-        _cpp_copula.make_spec(module, copula, obs),
+        _cpp_copula.make_spec(
+            module, copula, None if prepared_input else obs),
         obs,
         _config(module, cfg),
         method,
@@ -178,8 +189,17 @@ class PreparedScarOuObjective:
             self.method,
             self.cfg_py,
         ) = _prepared_inputs(u, copula, config)
-        self._native = self.module.PreparedScarOuEvaluator(
-            self.spec, self.obs, self.config, self.method)
+        if hasattr(self.obs, "sum_z") and hasattr(self.obs, "sum_z2"):
+            self._native = self.module.PreparedScarOuEvaluator(
+                self.spec,
+                self.obs.sum_z,
+                self.obs.sum_z2,
+                self.config,
+                self.method,
+            )
+        else:
+            self._native = self.module.PreparedScarOuEvaluator(
+                self.spec, self.obs, self.config, self.method)
         self._student_corr_version = getattr(
             copula, "_corr_cache_version", None)
 

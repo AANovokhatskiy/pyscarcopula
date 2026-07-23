@@ -1314,7 +1314,11 @@ class SCARTMStrategy:
                 finite_diff_rel_step=finite_diff_rel_step,
             ),
         )
-        u = as_float64_array(u)
+        from pyscarcopula.copula.multivariate.equicorr_prepared import (
+            EquicorrPreparedData,
+        )
+        if not isinstance(u, EquicorrPreparedData):
+            u = as_float64_array(u)
         corr_num_params = getattr(copula, "_corr_num_params", None)
         n_corr = int(corr_num_params()) if callable(corr_num_params) else 0
         if n_corr:

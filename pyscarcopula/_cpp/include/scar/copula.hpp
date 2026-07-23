@@ -1,5 +1,7 @@
 #pragma once
 
+#include "scar/observation.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <utility>
@@ -120,6 +122,24 @@ struct MultivariateGridResult {
     int equicorr_parallel_blocks = 0;
 };
 
+/// Per-row sufficient statistics for an equicorrelation Gaussian copula.
+///
+/// The result owns only O(n_obs) output plus bounded tile-reduction
+/// diagnostics; it never materializes a dense dimension-by-dimension matrix.
+struct EquicorrPreparationResult {
+    std::vector<double> sum_z;
+    std::vector<double> sum_z2;
+    int status = 0;
+    std::int64_t failure_index = -1;
+    int n_threads_requested = 1;
+    int parallel_blocks = 0;
+    int parallel_axis = 0;  ///< 0 sequential, 1 rows, 2 dimension tiles.
+    std::size_t dimension_tiles = 0;
+    std::size_t temporary_values = 0;
+    std::uint64_t clipping_events = 0;
+    std::uint64_t nonfinite_values = 0;
+};
+
 /// Conditional latent samples for coordinates not supplied by the caller.
 struct ConditionalSampleResult {
     std::vector<double> values;
@@ -151,6 +171,11 @@ struct StaticObjectiveResult {
 class StaticCopulaEvaluator {
 public:
     StaticCopulaEvaluator(CopulaSpec spec, Observations u, int n_threads = 1);
+    StaticCopulaEvaluator(
+        CopulaSpec spec,
+        std::vector<double> equicorr_sums,
+        std::vector<double> equicorr_sum_squares,
+        int n_threads = 1);
 
     StaticObjectiveResult objective(
         double parameter,
@@ -169,6 +194,7 @@ private:
     std::vector<double> gaussian_scores_;
     std::vector<double> equicorr_sums_;
     std::vector<double> equicorr_sum_squares_;
+    std::size_t n_obs_ = 0;
     int n_threads_ = 1;
     int status_ = 0;
 };
@@ -252,11 +278,30 @@ MultivariateRowsResult multivariate_log_pdf_and_grad(
     std::int64_t row_offset = 0,
     int n_threads = 1);
 
+MultivariateRowsResult equicorr_log_pdf_and_grad_from_stats(
+    const CopulaSpec& spec,
+    DoubleView sum_z,
+    DoubleView sum_z2,
+    const std::vector<double>& r,
+    int n_threads = 1);
+
 MultivariateGridResult multivariate_pdf_and_grad_grid(
     const CopulaSpec& spec,
     const Observations& u,
     const std::vector<double>& x_grid,
     std::int64_t row_offset = 0,
+    int n_threads = 1);
+
+MultivariateGridResult equicorr_pdf_and_grad_grid_from_stats(
+    const CopulaSpec& spec,
+    DoubleView sum_z,
+    DoubleView sum_z2,
+    const std::vector<double>& x_grid,
+    int n_threads = 1);
+
+EquicorrPreparationResult prepare_equicorr_sufficient_statistics(
+    ObservationView u,
+    std::size_t dimension_tile = 16384,
     int n_threads = 1);
 
 ConditionalSampleResult multivariate_gaussian_conditional(

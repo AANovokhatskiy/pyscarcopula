@@ -73,6 +73,64 @@ cop.fit(u, method='scar-tm-ou')
 cop.fit(u, method='gas')
 ```
 
+### High-dimensional preparation
+
+For data that is already expressed as pseudo-observations, prepare the two
+equicorrelation sufficient statistics without materializing a dense
+correlation matrix:
+
+```python
+from pyscarcopula import EquicorrGaussianCopula
+
+cop = EquicorrGaussianCopula(d=100_000)
+prepared = cop.prepare_sufficient_statistics(
+    u_batches,                 # ndarray, memmap, or iterable of 2D blocks
+    batch_rows=256,
+    dimension_tile=16_384,
+    n_threads=4,               # omit for the unconditional one-thread default
+)
+
+prepared.save_npz("equicorr-statistics.npz")
+prepared.save_mmap("equicorr-statistics-mmap")
+
+mle_result = cop.fit(prepared, method="MLE")
+gas_result = cop.fit(prepared, method="GAS")
+scar_result = cop.fit(prepared, method="scar-tm-ou")
+```
+
+`prepared` is an immutable `EquicorrPreparedData` object containing only
+`sum_z` and `sum_z2`, two `float64` vectors of length `T`. It does not retain
+the input matrix. The native reduction clips values with the library's
+pseudo-observation policy, evaluates each normal quantile once, and merges
+fixed dimension tiles in deterministic order. Results are therefore identical
+across supported thread counts for a fixed `dimension_tile`.
+
+The mmap directory format stores each vector as a read-only `.npy` mapping;
+the `.npz` format is the compact portable option. Diagnostics report clipping,
+block/tile counts, the selected parallel axes, and peak temporary scalar
+storage.
+
+This preparation API expects pseudo-observations and does not perform global
+ranking. MLE, GAS, and SCAR-TM-OU consume the prepared vectors directly;
+static row likelihood and emission-grid methods do the same. Existing ndarray
+inputs remain supported. A prepared MLE result represents correlation by its
+scalar `equicorrelation_rho` and leaves `correlation_matrix=None`, avoiding an
+otherwise prohibitive `d * d` result allocation.
+
+Grid output can also be bounded explicitly. Both the density and gradient
+arrays count toward `memory_budget_bytes`:
+
+```python
+for pdf_block, grad_block in cop.pdf_and_grad_on_grid_batches(
+    prepared,
+    x_grid,
+    batch_rows=64,
+    memory_budget_bytes=2 * 64 * len(x_grid) * 8,
+    n_threads=4,
+):
+    consume(pdf_block, grad_block)
+```
+
 ### Goodness of fit
 
 ```python
@@ -86,7 +144,17 @@ gof = gof_test(cop, u, to_pobs=False)
 samples = cop.predict(n=10000)
 samples = cop.sample(n=10000)
 parameter_samples = cop.sample_at_parameter(n=10000, r=0.5)
+
+# Bounded-memory unconditional generation, including negative rho:
+for block in cop.sample_at_parameter_batches(
+    n=1_000_000, r=-1e-6, batch_rows=128
+):
+    consume(block)
 ```
+
+The structural sampler costs `O(n*d)` and does not construct a dense
+correlation matrix. It supports the full admissible open interval
+`-1/(d-1) < rho < 1`.
 
 ### When to use
 
@@ -104,6 +172,7 @@ For heterogeneous dependence, use a C-vine or R-vine instead.
     options:
       members:
         - fit
+        - prepare_sufficient_statistics
         - sample
         - sample_conditional
         - predict
@@ -116,6 +185,9 @@ For heterogeneous dependence, use a C-vine or R-vine instead.
         - pdf_on_grid
         - pdf_and_grad_on_grid
         - pdf_and_grad_on_grid_batch
+        - pdf_and_grad_on_grid_batches
+        - sample_at_parameter
+        - sample_at_parameter_batches
         - transform
         - inv_transform
         - dtransform

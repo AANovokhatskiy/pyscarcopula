@@ -6,6 +6,48 @@ namespace pyscarcopula::bindings {
 
 void bind_multivariate(py::module_& m) {
     m.def(
+        "prepare_equicorr_sufficient_statistics",
+        [](
+            py::array_t<double, py::array::c_style | py::array::forcecast> u,
+            std::size_t dimension_tile,
+            int n_threads) {
+            const py::buffer_info info = u.request();
+            if (info.ndim != 2 || info.shape[1] < 2) {
+                throw std::invalid_argument(
+                    "u must be a 2D float64 array with shape (n, d), d >= 2");
+            }
+            std::size_t n_obs = 0;
+            std::size_t dimension = 0;
+            std::size_t values = 0;
+            if (!scar_internal::checked_nonnegative_size(
+                    info.shape[0], n_obs)
+                || !scar_internal::checked_nonnegative_size(
+                    info.shape[1], dimension)
+                || dimension
+                    > static_cast<std::size_t>(
+                        std::numeric_limits<int>::max())
+                || !scar_internal::checked_size_mul(
+                    n_obs, dimension, values)) {
+                throw std::invalid_argument("u shape is not representable");
+            }
+            scar::EquicorrPreparationResult result;
+            {
+                const scar::ObservationView observations{
+                    static_cast<const double*>(info.ptr),
+                    n_obs,
+                    static_cast<int>(dimension),
+                };
+                py::gil_scoped_release release;
+                result = scar::prepare_equicorr_sufficient_statistics(
+                    observations, dimension_tile, n_threads);
+            }
+            return equicorr_preparation_result_to_dict(result);
+        },
+        py::arg("u"),
+        py::arg("dimension_tile") = 16384,
+        py::arg("n_threads") = 1);
+
+    m.def(
         "multivariate_log_pdf_and_grad",
         [](const scar::CopulaSpec& copula,
            py::array_t<double, py::array::c_style | py::array::forcecast> u,
@@ -27,6 +69,33 @@ void bind_multivariate(py::module_& m) {
         py::arg("u"),
         py::arg("r"),
         py::arg("row_offset") = 0,
+        py::arg("n_threads") = 1);
+
+    m.def(
+        "equicorr_log_pdf_and_grad_from_stats",
+        [](
+            const scar::CopulaSpec& copula,
+            py::array_t<double, py::array::c_style | py::array::forcecast>
+                sum_z,
+            py::array_t<double, py::array::c_style | py::array::forcecast>
+                sum_z2,
+            py::array_t<double, py::array::c_style | py::array::forcecast> r,
+            int n_threads) {
+            scar::MultivariateRowsResult result;
+            const auto sums = flat_view_from_array(sum_z, "sum_z");
+            const auto sums2 = flat_view_from_array(sum_z2, "sum_z2");
+            const auto parameters = vector_from_array(r);
+            {
+                py::gil_scoped_release release;
+                result = scar::equicorr_log_pdf_and_grad_from_stats(
+                    copula, sums, sums2, parameters, n_threads);
+            }
+            return multivariate_rows_result_to_dict(result);
+        },
+        py::arg("copula"),
+        py::arg("sum_z"),
+        py::arg("sum_z2"),
+        py::arg("r"),
         py::arg("n_threads") = 1);
 
     m.def(
@@ -52,6 +121,34 @@ void bind_multivariate(py::module_& m) {
         py::arg("u"),
         py::arg("x_grid"),
         py::arg("row_offset") = 0,
+        py::arg("n_threads") = 1);
+
+    m.def(
+        "equicorr_pdf_and_grad_grid_from_stats",
+        [](
+            const scar::CopulaSpec& copula,
+            py::array_t<double, py::array::c_style | py::array::forcecast>
+                sum_z,
+            py::array_t<double, py::array::c_style | py::array::forcecast>
+                sum_z2,
+            py::array_t<double, py::array::c_style | py::array::forcecast>
+                x_grid,
+            int n_threads) {
+            scar::MultivariateGridResult result;
+            const auto sums = flat_view_from_array(sum_z, "sum_z");
+            const auto sums2 = flat_view_from_array(sum_z2, "sum_z2");
+            const auto grid = vector_from_array(x_grid);
+            {
+                py::gil_scoped_release release;
+                result = scar::equicorr_pdf_and_grad_grid_from_stats(
+                    copula, sums, sums2, grid, n_threads);
+            }
+            return multivariate_grid_result_to_dict(result);
+        },
+        py::arg("copula"),
+        py::arg("sum_z"),
+        py::arg("sum_z2"),
+        py::arg("x_grid"),
         py::arg("n_threads") = 1);
 
     m.def(

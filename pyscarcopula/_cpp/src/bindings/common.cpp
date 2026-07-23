@@ -388,6 +388,24 @@ py::dict multivariate_grid_result_to_dict(
     return out;
 }
 
+py::dict equicorr_preparation_result_to_dict(
+    const scar::EquicorrPreparationResult& result) {
+
+    py::dict out;
+    out["sum_z"] = vector_to_array(result.sum_z);
+    out["sum_z2"] = vector_to_array(result.sum_z2);
+    out["status"] = result.status;
+    out["failure_index"] = result.failure_index;
+    out["n_threads_requested"] = result.n_threads_requested;
+    out["parallel_blocks"] = result.parallel_blocks;
+    out["parallel_axis"] = result.parallel_axis;
+    out["dimension_tiles"] = result.dimension_tiles;
+    out["temporary_values"] = result.temporary_values;
+    out["clipping_events"] = result.clipping_events;
+    out["nonfinite_values"] = result.nonfinite_values;
+    return out;
+}
+
 py::dict conditional_sample_result_to_dict(
     const scar::ConditionalSampleResult& result) {
 

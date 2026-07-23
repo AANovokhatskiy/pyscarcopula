@@ -553,22 +553,29 @@ void copula_pdf_row_precomputed_flat(
     const std::vector<double>& r_grid,
     double* fi_row) {
 
+    if (spec.family == scar::CopulaFamily::EquicorrGaussian) {
+        static const std::vector<double> no_dpsi;
+        const bool cache_available =
+            t >= 0
+            && spec.equicorr_sum_cache.size()
+                == spec.equicorr_sum_squares_cache.size()
+            && static_cast<std::size_t>(t)
+                < spec.equicorr_sum_cache.size();
+        const double* row = cache_available || u == nullptr
+            ? nullptr
+            : u + static_cast<std::size_t>(t)
+                * static_cast<std::size_t>(spec.dim);
+        equicorr_fill_row(
+            spec, row, t, r_grid, no_dpsi, fi_row, nullptr);
+        return;
+    }
     const int stride =
-        (spec.family == scar::CopulaFamily::Student
-         || spec.family == scar::CopulaFamily::EquicorrGaussian)
-        ? spec.dim
-        : 2;
+        spec.family == scar::CopulaFamily::Student ? spec.dim : 2;
     const double* row =
         u + static_cast<std::size_t>(t) * static_cast<std::size_t>(stride);
     if (spec.family == scar::CopulaFamily::Student) {
         static const std::vector<double> no_dpsi;
         student_fill_row(spec, row, t, r_grid, no_dpsi, fi_row, nullptr);
-        return;
-    }
-    if (spec.family == scar::CopulaFamily::EquicorrGaussian) {
-        static const std::vector<double> no_dpsi;
-        equicorr_fill_row(
-            spec, row, t, r_grid, no_dpsi, fi_row, nullptr);
         return;
     }
     if (spec.family == scar::CopulaFamily::Gaussian
@@ -647,20 +654,27 @@ void copula_pdf_and_grad_row_precomputed_flat(
     double* fi_row,
     double* dfi_dx_row) {
 
+    if (spec.family == scar::CopulaFamily::EquicorrGaussian) {
+        const bool cache_available =
+            t >= 0
+            && spec.equicorr_sum_cache.size()
+                == spec.equicorr_sum_squares_cache.size()
+            && static_cast<std::size_t>(t)
+                < spec.equicorr_sum_cache.size();
+        const double* row = cache_available || u == nullptr
+            ? nullptr
+            : u + static_cast<std::size_t>(t)
+                * static_cast<std::size_t>(spec.dim);
+        equicorr_fill_row(
+            spec, row, t, r_grid, dpsi_grid, fi_row, dfi_dx_row);
+        return;
+    }
     const int stride =
-        (spec.family == scar::CopulaFamily::Student
-         || spec.family == scar::CopulaFamily::EquicorrGaussian)
-        ? spec.dim
-        : 2;
+        spec.family == scar::CopulaFamily::Student ? spec.dim : 2;
     const double* row =
         u + static_cast<std::size_t>(t) * static_cast<std::size_t>(stride);
     if (spec.family == scar::CopulaFamily::Student) {
         student_fill_row(
-            spec, row, t, r_grid, dpsi_grid, fi_row, dfi_dx_row);
-        return;
-    }
-    if (spec.family == scar::CopulaFamily::EquicorrGaussian) {
-        equicorr_fill_row(
             spec, row, t, r_grid, dpsi_grid, fi_row, dfi_dx_row);
         return;
     }
@@ -766,8 +780,15 @@ void copula_pdf_and_grad_grid_precomputed(
                 for (std::int64_t t = begin; t < end; ++t) {
                     const std::size_t output_row =
                         static_cast<std::size_t>(t) * K;
+                    const bool cache_available =
+                        spec.equicorr_sum_cache.size()
+                            == spec.equicorr_sum_squares_cache.size()
+                        && static_cast<std::size_t>(t)
+                            < spec.equicorr_sum_cache.size();
                     const double* observation_row =
-                        u + static_cast<std::size_t>(t)
+                        cache_available || u == nullptr
+                        ? nullptr
+                        : u + static_cast<std::size_t>(t)
                             * static_cast<std::size_t>(spec.dim);
                     equicorr_fill_row(
                         spec,

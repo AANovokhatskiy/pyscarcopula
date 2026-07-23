@@ -33,11 +33,28 @@ make_prepared_scar_ou_evaluator(
         method);
 }
 
+std::unique_ptr<scar::PreparedScarOuEvaluator>
+make_prepared_equicorr_scar_ou_evaluator(
+    scar::CopulaSpec copula,
+    py::array_t<double, py::array::c_style | py::array::forcecast> sum_z,
+    py::array_t<double, py::array::c_style | py::array::forcecast> sum_z2,
+    const scar::OuNumericalConfig& config,
+    const std::string& method) {
+
+    return std::make_unique<scar::PreparedScarOuEvaluator>(
+        std::move(copula),
+        vector_from_array(sum_z),
+        vector_from_array(sum_z2),
+        config,
+        method);
+}
+
 }  // namespace
 
 void bind_scar_ou(py::module_& m) {
     py::class_<scar::PreparedScarOuEvaluator>(m, "PreparedScarOuEvaluator")
         .def(py::init(&make_prepared_scar_ou_evaluator))
+        .def(py::init(&make_prepared_equicorr_scar_ou_evaluator))
         .def(
             "update_student_factor",
             [](scar::PreparedScarOuEvaluator& evaluator,

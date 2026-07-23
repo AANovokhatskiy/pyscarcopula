@@ -2,6 +2,9 @@
 
 from pyscarcopula.copula.multivariate.base import MultivariateCopula
 from pyscarcopula.copula.multivariate.equicorr import EquicorrGaussianCopula
+from pyscarcopula.copula.multivariate.equicorr_prepared import (
+    EquicorrPreparedData,
+)
 from pyscarcopula.copula.multivariate.gaussian import GaussianCopula
 from pyscarcopula.copula.multivariate.stochastic_student import (
     StochasticStudentCopula,
@@ -13,5 +16,6 @@ __all__ = (
     "GaussianCopula",
     "StudentCopula",
     "EquicorrGaussianCopula",
+    "EquicorrPreparedData",
     "StochasticStudentCopula",
 )

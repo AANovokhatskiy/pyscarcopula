@@ -145,6 +145,7 @@ StaticCopulaEvaluator::StaticCopulaEvaluator(
     int n_threads)
     : spec_(std::move(spec)),
       u_(std::move(u)),
+      n_obs_(u_.size()),
       n_threads_(n_threads),
       status_(validate(spec_, u_)) {
 
@@ -188,6 +189,44 @@ StaticCopulaEvaluator::StaticCopulaEvaluator(
                         u_[i][static_cast<std::size_t>(j)]));
         }
     }
+}
+
+StaticCopulaEvaluator::StaticCopulaEvaluator(
+    CopulaSpec spec,
+    std::vector<double> equicorr_sums,
+    std::vector<double> equicorr_sum_squares,
+    int n_threads)
+    : spec_(std::move(spec)),
+      equicorr_sums_(std::move(equicorr_sums)),
+      equicorr_sum_squares_(std::move(equicorr_sum_squares)),
+      n_obs_(equicorr_sums_.size()),
+      n_threads_(n_threads) {
+
+    if (spec_.family != CopulaFamily::EquicorrGaussian
+        || spec_.rotation != Rotation::R0
+        || spec_.transform != Transform::GaussianTanh
+        || spec_.dim < 2) {
+        status_ = SCAR_INVALID_FAMILY;
+        return;
+    }
+    if (n_threads_ < 1 || n_threads_ > 256) {
+        status_ = SCAR_INVALID_PARAMETER;
+        return;
+    }
+    if (n_obs_ == 0
+        || equicorr_sum_squares_.size() != n_obs_) {
+        status_ = SCAR_INVALID_SIZE;
+        return;
+    }
+    for (std::size_t row = 0; row < n_obs_; ++row) {
+        if (!std::isfinite(equicorr_sums_[row])
+            || !std::isfinite(equicorr_sum_squares_[row])
+            || equicorr_sum_squares_[row] < 0.0) {
+            status_ = SCAR_INVALID_PARAMETER;
+            return;
+        }
+    }
+    status_ = SCAR_OK;
 }
 
 StaticObjectiveResult StaticCopulaEvaluator::objective(
@@ -241,12 +280,12 @@ StaticObjectiveResult StaticCopulaEvaluator::evaluate_objective(
     }
 
     const bool use_threads = static_parallel_worthwhile(
-        spec_, u_.size(), n_threads_);
+        spec_, n_obs_, n_threads_);
     std::vector<StaticObjectiveBlockResult> block_results(
         static_cast<std::size_t>(use_threads ? n_threads_ : 1));
     scar_internal::parallel_for_blocks(
         0,
-        static_cast<std::int64_t>(u_.size()),
+        static_cast<std::int64_t>(n_obs_),
         static_min_rows(spec_),
         use_threads ? n_threads_ : 1,
         [&](std::int64_t begin,
@@ -270,7 +309,10 @@ StaticObjectiveResult StaticCopulaEvaluator::evaluate_objective(
                 double log_pdf = 0.0;
                 double dlog = 0.0;
                 bool ok = true;
-                const double* row = u_[i].data();
+                const double* row =
+                    spec_.family == CopulaFamily::EquicorrGaussian
+                    ? nullptr
+                    : u_[i].data();
 
                 if (spec_.family == CopulaFamily::Student) {
                     if (!parameter_gradient_requested) {
@@ -377,16 +419,16 @@ std::vector<double> StaticCopulaEvaluator::log_pdf_rows(
     double parameter) const {
 
     std::vector<double> out(
-        u_.size(), -std::numeric_limits<double>::infinity());
+        n_obs_, -std::numeric_limits<double>::infinity());
     if (status_ != SCAR_OK || !std::isfinite(parameter)) {
         return out;
     }
     const int dim = expected_dimension(spec_);
     const bool use_threads = static_parallel_worthwhile(
-        spec_, u_.size(), n_threads_);
+        spec_, n_obs_, n_threads_);
     scar_internal::parallel_for_blocks(
         0,
-        static_cast<std::int64_t>(u_.size()),
+        static_cast<std::int64_t>(n_obs_),
         static_min_rows(spec_),
         use_threads ? n_threads_ : 1,
         [&](std::int64_t begin,
@@ -402,7 +444,10 @@ std::vector<double> StaticCopulaEvaluator::log_pdf_rows(
                  ++row_index) {
                 const std::size_t i =
                     static_cast<std::size_t>(row_index);
-                const double* row = u_[i].data();
+                const double* row =
+                    spec_.family == CopulaFamily::EquicorrGaussian
+                    ? nullptr
+                    : u_[i].data();
                 if (spec_.family == CopulaFamily::Student) {
                     out[i] = scar_internal::student_log_pdf(
                         spec_, row, parameter, row_index,

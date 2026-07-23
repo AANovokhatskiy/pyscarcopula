@@ -44,6 +44,26 @@ void bind_copula(py::module_& m) {
             py::arg("u"),
             py::arg("n_threads") = 1)
         .def(
+            py::init([](
+                const scar::CopulaSpec& copula,
+                py::array_t<
+                    double,
+                    py::array::c_style | py::array::forcecast> sum_z,
+                py::array_t<
+                    double,
+                    py::array::c_style | py::array::forcecast> sum_z2,
+                int n_threads) {
+                return scar::StaticCopulaEvaluator(
+                    copula,
+                    vector_from_array(sum_z),
+                    vector_from_array(sum_z2),
+                    n_threads);
+            }),
+            py::arg("copula"),
+            py::arg("sum_z"),
+            py::arg("sum_z2"),
+            py::arg("n_threads") = 1)
+        .def(
             "objective",
             [](const scar::StaticCopulaEvaluator& evaluator,
                double parameter) {
