@@ -55,58 +55,67 @@ void bind_gas(py::module_& m) {
         .def_readwrite("gas_config", &scar::GasRvineEdge::gas_config)
         .def_readwrite("dynamic", &scar::GasRvineEdge::dynamic);
 
-    py::class_<scar::GasRvinePlan>(
-        m, "GasRvinePlan", "Flattened execution plan for R-vine sampling.")
+    py::class_<scar::RvineTraversalPlan>(
+        m,
+        "RvineTraversalPlan",
+        "Model-independent execution plan for R-vine sampling.")
         .def(py::init<>())
-        .def_readwrite("dimension", &scar::GasRvinePlan::dimension)
-        .def_readwrite("node_count", &scar::GasRvinePlan::node_count)
+        .def_readwrite("dimension", &scar::RvineTraversalPlan::dimension)
+        .def_readwrite("node_count", &scar::RvineTraversalPlan::node_count)
         .def_readwrite(
             "last_uniform_column",
-            &scar::GasRvinePlan::last_uniform_column)
+            &scar::RvineTraversalPlan::last_uniform_column)
         .def_readwrite(
             "last_output_node",
-            &scar::GasRvinePlan::last_output_node)
-        .def_readwrite("output_nodes", &scar::GasRvinePlan::output_nodes)
-        .def_readwrite("column_uniforms", &scar::GasRvinePlan::column_uniforms)
-        .def_readwrite("inverse_offsets", &scar::GasRvinePlan::inverse_offsets)
-        .def_readwrite("inverse_edges", &scar::GasRvinePlan::inverse_edges)
+            &scar::RvineTraversalPlan::last_output_node)
+        .def_readwrite(
+            "output_nodes", &scar::RvineTraversalPlan::output_nodes)
+        .def_readwrite(
+            "column_uniforms", &scar::RvineTraversalPlan::column_uniforms)
+        .def_readwrite(
+            "inverse_offsets", &scar::RvineTraversalPlan::inverse_offsets)
+        .def_readwrite(
+            "inverse_edges", &scar::RvineTraversalPlan::inverse_edges)
         .def_readwrite(
             "inverse_partner_nodes",
-            &scar::GasRvinePlan::inverse_partner_nodes)
+            &scar::RvineTraversalPlan::inverse_partner_nodes)
         .def_readwrite(
             "inverse_output_nodes",
-            &scar::GasRvinePlan::inverse_output_nodes)
+            &scar::RvineTraversalPlan::inverse_output_nodes)
         .def_readwrite(
             "inverse_transposed",
-            &scar::GasRvinePlan::inverse_transposed)
-        .def_readwrite("forward_offsets", &scar::GasRvinePlan::forward_offsets)
-        .def_readwrite("forward_edges", &scar::GasRvinePlan::forward_edges)
+            &scar::RvineTraversalPlan::inverse_transposed)
+        .def_readwrite(
+            "forward_offsets", &scar::RvineTraversalPlan::forward_offsets)
+        .def_readwrite(
+            "forward_edges", &scar::RvineTraversalPlan::forward_edges)
         .def_readwrite(
             "forward_leaf_nodes",
-            &scar::GasRvinePlan::forward_leaf_nodes)
+            &scar::RvineTraversalPlan::forward_leaf_nodes)
         .def_readwrite(
             "forward_partner_nodes",
-            &scar::GasRvinePlan::forward_partner_nodes)
+            &scar::RvineTraversalPlan::forward_partner_nodes)
         .def_readwrite(
             "forward_leaf_output_nodes",
-            &scar::GasRvinePlan::forward_leaf_output_nodes)
+            &scar::RvineTraversalPlan::forward_leaf_output_nodes)
         .def_readwrite(
             "forward_partner_output_nodes",
-            &scar::GasRvinePlan::forward_partner_output_nodes)
+            &scar::RvineTraversalPlan::forward_partner_output_nodes)
         .def_readwrite(
             "forward_transposed",
-            &scar::GasRvinePlan::forward_transposed)
+            &scar::RvineTraversalPlan::forward_transposed)
         .def_readwrite(
             "update_u1_nodes",
-            &scar::GasRvinePlan::update_u1_nodes)
+            &scar::RvineTraversalPlan::update_u1_nodes)
         .def_readwrite(
             "update_u2_nodes",
-            &scar::GasRvinePlan::update_u2_nodes);
+            &scar::RvineTraversalPlan::update_u2_nodes);
+    m.attr("GasRvinePlan") = m.attr("RvineTraversalPlan");
 
     m.def(
         "gas_rvine_sample",
         [](const std::vector<scar::GasRvineEdge>& edges,
-           const scar::GasRvinePlan& plan,
+           const scar::RvineTraversalPlan& plan,
            py::array_t<
                double,
                py::array::c_style | py::array::forcecast> uniforms,

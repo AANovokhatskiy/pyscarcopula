@@ -40,3 +40,40 @@ def validate_positive_int(value, name):
     if result <= 0:
         raise ValueError(f"{name} must be positive")
     return result
+
+
+def validate_float64_allocation(
+        shape, *, name="array", memory_budget_bytes=None):
+    """Validate a float64 allocation and return its required byte count."""
+    elements = 1
+    max_size = int(np.iinfo(np.intp).max)
+    for extent in shape:
+        if isinstance(extent, (bool, np.bool_)) or not isinstance(
+                extent, (int, np.integer)):
+            raise TypeError(f"{name} dimensions must be integers")
+        extent = int(extent)
+        if extent < 0:
+            raise ValueError(f"{name} dimensions must be non-negative")
+        if extent and elements > max_size // extent:
+            raise MemoryError(f"{name} is too large to allocate")
+        elements *= extent
+
+    itemsize = np.dtype(np.float64).itemsize
+    if elements > max_size // itemsize:
+        raise MemoryError(f"{name} is too large to allocate")
+    required = elements * itemsize
+
+    if memory_budget_bytes is None:
+        return required
+    if (
+            isinstance(memory_budget_bytes, (bool, np.bool_))
+            or not isinstance(memory_budget_bytes, (int, np.integer))):
+        raise TypeError("memory_budget_bytes must be an integer or None")
+    memory_budget_bytes = int(memory_budget_bytes)
+    if memory_budget_bytes < 0:
+        raise ValueError("memory_budget_bytes must be non-negative")
+    if required > memory_budget_bytes:
+        raise MemoryError(
+            f"{name} requires an estimated {required} bytes, exceeding "
+            f"memory_budget_bytes={memory_budget_bytes}")
+    return required

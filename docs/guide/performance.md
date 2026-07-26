@@ -121,6 +121,11 @@ Together with the Fisher floor and score clipping, this can produce a
 piecewise, step-sensitive objective. Prefer `scaling='unit'` unless Fisher
 behavior is specifically under study.
 
+GAS `sample` and `predict` require a positive integer draw count. Both accept
+`memory_budget_bytes=` as a pre-allocation guard; `sample` accounts for its
+output and `predict` accounts for its output plus the predictive parameter
+path. The causal GAS sample recursion is not split into batches.
+
 ### SCAR-TM-OU
 
 SCAR-TM-OU uses a deterministic transfer-matrix likelihood for an OU latent
@@ -727,6 +732,9 @@ SCAR-TM-OU prediction against unchanged fitted history reuses
 pseudo-observations and terminal posterior state. A new `fit`, a changed
 explicit history, or an edge replacement invalidates the relevant transient
 cache. These optimizations do not parallelize edge or sample execution.
+The Python reference sampler and native GAS executor consume the same
+model-independent R-vine traversal plan, so matrix order, conditioned nodes,
+and edge orientation have one authoritative representation.
 
 Static `VineCopula` sampling bounds temporary vectorized workspace by processing at
 most 8192 rows at a time. Use `sample(..., batch_rows=...)` to trade throughput

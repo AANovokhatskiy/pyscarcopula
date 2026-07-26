@@ -34,6 +34,7 @@ def test_native_types_and_gas_methods_are_self_documenting():
         _scar_cpp.GasParams: "score-driven GAS recursion",
         _scar_cpp.GasConfig: "GAS score scaling",
         _scar_cpp.GasEvaluator: "GAS copula dynamics",
+        _scar_cpp.RvineTraversalPlan: "Model-independent execution plan",
     }
     for native_type, phrase in expected_class_docs.items():
         assert phrase in (native_type.__doc__ or "")
@@ -51,3 +52,5 @@ def test_native_types_and_gas_methods_are_self_documenting():
         docstring = getattr(_scar_cpp.GasEvaluator, method_name).__doc__ or ""
         for parameter_name in parameter_names:
             assert f"{parameter_name}:" in docstring
+
+    assert _scar_cpp.GasRvinePlan is _scar_cpp.RvineTraversalPlan

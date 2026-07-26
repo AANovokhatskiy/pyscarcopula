@@ -34,6 +34,7 @@ pyscarcopula/
 |   |-- cvine.py              # Legacy CVineCopula implementation
 |   |-- _structure.py         # RVineMatrix and C/D structure factories
 |   |-- _vine_fit.py          # Shared fixed-structure edge fitting
+|   |-- _rvine_sampling_plan.py # Canonical unconditional traversal plan
 |   `-- _rvine_*.py, _selection.py
 `-- contrib/                 # Marginals and risk analytics
 ```
@@ -126,6 +127,13 @@ Static and prepared SCAR-OU equicorrelation evaluators cache per-row `sum(z)`
 and `sum(z^2)` statistics for their owned observation snapshots. Repeated
 objective, gradient, and forward calls therefore reuse both the per-row normal
 scores and the statistics across every latent-grid node.
+
+Unconditional generic R-vine sampling compiles the natural-order matrix,
+semantic trees, and edge map into one model-independent
+`RvineTraversalPlan`. The Python reference sampler and the native sequential
+GAS sampler execute that same plan. Model-specific parameter generation and
+state updates remain in their strategy executors; the plan owns only topology,
+node dependencies, edge orientation, and operation order.
 
 ## Custom Python Extensions
 

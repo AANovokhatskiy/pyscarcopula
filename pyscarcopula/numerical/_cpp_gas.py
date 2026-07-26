@@ -12,6 +12,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from pyscarcopula.numerical import _cpp_copula, _cpp_extension
+from pyscarcopula.numerical._arrays import as_float64_array
 from pyscarcopula.numerical._cpp_extension import (
     CppError,
     CppUnavailable,
@@ -79,10 +80,7 @@ def _observations(
     *,
     allow_single_row: bool = False,
 ) -> np.ndarray:
-    try:
-        obs = np.asarray(u, dtype=np.float64)
-    except (TypeError, ValueError, OverflowError) as exc:
-        raise ValueError("u must be convertible to a float64 array") from exc
+    obs = as_float64_array(u, name="u")
     expected_dim = int(getattr(copula, "d", 2))
     if allow_single_row and obs.ndim == 1 and obs.shape == (expected_dim,):
         obs = obs.reshape(1, expected_dim)

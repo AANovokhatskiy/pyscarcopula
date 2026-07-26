@@ -87,6 +87,10 @@ from pyscarcopula.vine._rvine_dag import (
 from pyscarcopula.vine._rvine_matrix_builder import (
     build_rvine_matrix_with_edge_map,
 )
+from pyscarcopula.vine._rvine_sampling_plan import (
+    build_rvine_sampling_plan,
+    rvine_sampling_edge_keys,
+)
 from pyscarcopula.vine._edge_adapter import (
     edge_copula,
     edge_has_dynamic_params,
@@ -1191,16 +1195,7 @@ class VineCopula:
         self._require_fit()
         if max_active_tree is None:
             max_active_tree = self._max_non_independent_tree_level()
-        if max_active_tree < 0:
-            return ()
-
-        keys = []
-        d = self.d
-        for col in range(d - 2, -1, -1):
-            top_tree = d - 2 - col
-            active_top = min(top_tree, max_active_tree)
-            keys.extend((t, col) for t in range(active_top + 1))
-        return tuple(keys)
+        return rvine_sampling_edge_keys(self.d, max_active_tree)
 
     # Introspection
 
@@ -1346,6 +1341,18 @@ class VineCopula:
             _edge_requires_stepwise_sample(self.pair_copulas[key])
             for key in active_keys
         )
+        traversal_plan = (
+            build_rvine_sampling_plan(
+                self.d,
+                self._natural_order_matrix,
+                self._trees,
+                self._edge_map,
+                active_keys,
+                max_active_tree,
+            )
+            if active_keys
+            else None
+        )
         is_static = all(
             not edge_has_dynamic_params(self.pair_copulas[key])
             for key in active_keys
@@ -1367,12 +1374,14 @@ class VineCopula:
                 rng,
                 active_keys,
                 max_active_tree,
+                traversal_plan=traversal_plan,
             )
             if native is not None:
                 return native
             return self._sample_stepwise_stateful(
                 n, rng, active_keys=active_keys,
-                max_active_tree=max_active_tree)
+                max_active_tree=max_active_tree,
+                traversal_plan=traversal_plan)
 
         if is_static:
             r_all = {
@@ -1391,17 +1400,28 @@ class VineCopula:
                         r_all,
                         rng,
                         max_active_tree=max_active_tree,
+                        traversal_plan=traversal_plan,
                     )
                 return out
             return self._sample_with_r(
-                n, r_all, rng, max_active_tree=max_active_tree)
+                n,
+                r_all,
+                rng,
+                max_active_tree=max_active_tree,
+                traversal_plan=traversal_plan,
+            )
 
         r_all = {
             key: _edge_r_for_sample(self.pair_copulas[key], n, rng)
             for key in active_keys
         }
         return self._sample_with_r(
-            n, r_all, rng, max_active_tree=max_active_tree)
+            n,
+            r_all,
+            rng,
+            max_active_tree=max_active_tree,
+            traversal_plan=traversal_plan,
+        )
 
     def _check_sample_memory_budget(
             self, n, working_rows, active_edge_count, memory_budget_bytes):
@@ -1426,9 +1446,8 @@ class VineCopula:
             )
 
     def _sample_with_r(self, n, r_all, rng, return_pseudo=False,
-                       max_active_tree=None):
+                       max_active_tree=None, traversal_plan=None):
         d = self.d
-        M = self._natural_order_matrix
         w = _open_unit_uniform(rng, size=(n, d))
         if max_active_tree is None:
             max_active_tree = self._max_non_independent_tree_level()
@@ -1441,66 +1460,74 @@ class VineCopula:
                 return w, pseudo_obs
             return w
 
-        pseudo_obs = {}
-        last_var = int(M[0, d - 1])
-        pseudo_obs[(last_var, frozenset())] = w[:, d - 1].copy()
+        if traversal_plan is None:
+            active_keys = self._sample_active_edge_keys(max_active_tree)
+            traversal_plan = build_rvine_sampling_plan(
+                d,
+                self._natural_order_matrix,
+                self._trees,
+                self._edge_map,
+                active_keys,
+                max_active_tree,
+            )
+        nodes = [None] * len(traversal_plan.node_keys)
+        nodes[traversal_plan.last_output_node] = w[
+            :, traversal_plan.last_uniform_column].copy()
 
-        for col in range(d - 2, -1, -1):
-            leaf = int(M[d - 1 - col, col])
-            top_tree = d - 2 - col
-            active_top = min(top_tree, max_active_tree)
-            current = w[:, col].copy()
+        for column, uniform_column in enumerate(
+                traversal_plan.column_uniforms):
+            current = w[:, uniform_column].copy()
 
-            for t in range(active_top, -1, -1):
-                row = d - 2 - col - t
-                partner = int(M[row, col])
-                conditioning = frozenset(
-                    int(M[r, col])
-                    for r in range(row + 1, d - 1 - col)
-                )
-                partner_val = pseudo_obs[(partner, conditioning)]
-                edge = self.pair_copulas[(t, col)]
-                r = r_all[(t, col)]
+            for index in range(
+                    traversal_plan.inverse_offsets[column],
+                    traversal_plan.inverse_offsets[column + 1]):
+                edge_key = traversal_plan.active_keys[
+                    traversal_plan.inverse_edges[index]]
+                partner_node = traversal_plan.inverse_partner_nodes[index]
+                output_node = traversal_plan.inverse_output_nodes[index]
+                target_variable = traversal_plan.node_keys[output_node][0]
+                partner_variable = traversal_plan.node_keys[partner_node][0]
                 current = _clip_unit(_edge_h_inverse_for_variables(
-                    edge,
-                    leaf,
+                    self.pair_copulas[edge_key],
+                    target_variable,
                     current,
-                    partner,
-                    partner_val,
-                    config={'r': r},
+                    partner_variable,
+                    nodes[partner_node],
+                    config={'r': r_all[edge_key]},
                 ))
-                pseudo_obs[(leaf, conditioning)] = current
+                nodes[output_node] = current
 
-            for t in range(active_top + 1):
-                row = d - 2 - col - t
-                partner = int(M[row, col])
-                conditioning = frozenset(
-                    int(M[r, col])
-                    for r in range(row + 1, d - 1 - col)
-                )
-                next_leaf_cond = conditioning | {partner}
-                next_partner_cond = conditioning | {leaf}
-                edge = self.pair_copulas[(t, col)]
-                r = r_all[(t, col)]
-
-                leaf_val = pseudo_obs[(leaf, conditioning)]
-                partner_val = pseudo_obs[(partner, conditioning)]
+            for index in range(
+                    traversal_plan.forward_offsets[column],
+                    traversal_plan.forward_offsets[column + 1]):
+                edge_key = traversal_plan.active_keys[
+                    traversal_plan.forward_edges[index]]
+                leaf_node = traversal_plan.forward_leaf_nodes[index]
+                partner_node = traversal_plan.forward_partner_nodes[index]
+                leaf_output = traversal_plan.forward_leaf_output_nodes[index]
+                partner_output = (
+                    traversal_plan.forward_partner_output_nodes[index])
+                leaf_variable = traversal_plan.node_keys[leaf_node][0]
+                partner_variable = traversal_plan.node_keys[partner_node][0]
                 leaf_next, partner_next = _edge_h_pair_for_variables(
-                    edge,
-                    leaf,
-                    leaf_val,
-                    partner,
-                    partner_val,
-                    config={'r': r},
+                    self.pair_copulas[edge_key],
+                    leaf_variable,
+                    nodes[leaf_node],
+                    partner_variable,
+                    nodes[partner_node],
+                    config={'r': r_all[edge_key]},
                 )
-                pseudo_obs[(leaf, next_leaf_cond)] = _clip_unit(leaf_next)
-                pseudo_obs[(partner, next_partner_cond)] = _clip_unit(
-                    partner_next)
+                nodes[leaf_output] = _clip_unit(leaf_next)
+                nodes[partner_output] = _clip_unit(partner_next)
 
         out = np.empty((n, d), dtype=np.float64)
-        for var in range(d):
-            out[:, var] = pseudo_obs[(var, frozenset())]
+        for variable, node in enumerate(traversal_plan.output_nodes):
+            out[:, variable] = nodes[node]
         if return_pseudo:
+            pseudo_obs = {
+                key: nodes[index]
+                for index, key in enumerate(traversal_plan.node_keys)
+            }
             return out, pseudo_obs
         return out
 
@@ -1714,12 +1741,26 @@ class VineCopula:
 
         return updated, diagnostics
 
-    def _sample_stepwise_stateful(self, n, rng, active_keys=None,
-                                  max_active_tree=None):
+    def _sample_stepwise_stateful(
+            self,
+            n,
+            rng,
+            active_keys=None,
+            max_active_tree=None,
+            traversal_plan=None):
         if max_active_tree is None:
             max_active_tree = self._max_non_independent_tree_level()
         if active_keys is None:
             active_keys = self._sample_active_edge_keys(max_active_tree)
+        if traversal_plan is None:
+            traversal_plan = build_rvine_sampling_plan(
+                self.d,
+                self._natural_order_matrix,
+                self._trees,
+                self._edge_map,
+                active_keys,
+                max_active_tree,
+            )
 
         edge_state = {}
         for key in active_keys:
@@ -1748,7 +1789,8 @@ class VineCopula:
 
             row, pseudo_obs = self._sample_with_r(
                 1, r_i, rng, return_pseudo=True,
-                max_active_tree=max_active_tree)
+                max_active_tree=max_active_tree,
+                traversal_plan=traversal_plan)
             out[i, :] = row[0]
 
             for key, state in edge_state.items():
