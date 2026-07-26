@@ -2,7 +2,6 @@
 
 import inspect
 import json
-from pathlib import Path
 import subprocess
 import sys
 
@@ -315,7 +314,6 @@ def test_joint_evaluator_default_is_one_thread_and_does_not_start_pool():
     ).parameters["n_threads"]
     assert parameter.default == 1
 
-    root = Path(__file__).resolve().parents[1]
     code = (
         "import json, numpy as np\n"
         "from pyscarcopula import FactorCorrelation, FactorStudentEvaluator\n"
@@ -331,7 +329,6 @@ def test_joint_evaluator_default_is_one_thread_and_does_not_start_pool():
     )
     completed = subprocess.run(
         [sys.executable, "-c", code],
-        cwd=root,
         check=True,
         capture_output=True,
         text=True,

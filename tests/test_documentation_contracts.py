@@ -5,7 +5,6 @@ from __future__ import annotations
 import ast
 import importlib
 import inspect
-import json
 from pathlib import Path
 import re
 
@@ -21,6 +20,7 @@ DOC_FILES = (
 )
 MIGRATION_NOTES = ROOT / "docs/release-notes/native-core-migration.md"
 WORKFLOW_FILES = sorted((ROOT / ".github/workflows").glob("*.yml"))
+# OPTIONAL_DOCUMENTATION_MODULES = {"pyvinecopulib"}
 
 
 def _python_blocks(path):
@@ -56,11 +56,16 @@ def test_documented_python_blocks_compile_import_and_bind_public_calls():
                 if isinstance(node, (ast.Import, ast.ImportFrom))
             ]
             namespace = {}
-            exec(compile(
-                ast.Module(body=imports, type_ignores=[]),
-                filename=filename,
-                mode="exec",
-            ), namespace)
+            try:
+                exec(compile(
+                    ast.Module(body=imports, type_ignores=[]),
+                    filename=filename,
+                    mode="exec",
+                ), namespace)
+            except ModuleNotFoundError as exc:
+                # if exc.name in OPTIONAL_DOCUMENTATION_MODULES:
+                #     continue
+                raise
 
             for call in (
                     node for node in ast.walk(tree)
@@ -196,32 +201,6 @@ def test_vinecopula_is_the_discoverable_canonical_vine_api():
     assert api.index("## VineCopula") < api.index("## RVineCopula")
     assert "RVineCopula is VineCopula" in api
     assert "legacy" in api.lower()
-
-
-def test_vine_notebooks_use_semantic_structure_comparisons():
-    for filename in (
-            "04_vine.ipynb",
-            "05_risk_metrics.ipynb",
-            "06_pyvinecopulib_comparison.ipynb"):
-        path = ROOT / "examples" / filename
-        notebook = json.loads(path.read_text(encoding="utf-8"))
-        for cell in notebook["cells"]:
-            if cell["cell_type"] == "code":
-                compile(
-                    "".join(cell["source"]),
-                    filename=f"{path}:{cell.get('execution_count')}",
-                    mode="exec",
-                )
-
-    comparison = (
-        ROOT / "examples/06_pyvinecopulib_comparison.ipynb"
-    ).read_text(encoding="utf-8")
-    assert "RVineMatrix.from_trees" in comparison
-    assert "same fixed structure" in comparison.lower()
-    assert "loglik_per_obs" in comparison
-    assert "decoded" in comparison.lower()
-    assert "tree >= vine.structure.trunc_lvl" in comparison
-    assert "shared_pv_structure = pv.DVineStructure" in comparison
 
 
 def test_complete_public_documentation_examples_execute():

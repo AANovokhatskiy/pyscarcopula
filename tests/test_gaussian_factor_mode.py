@@ -3,7 +3,6 @@
 from concurrent.futures import ThreadPoolExecutor
 import inspect
 import json
-from pathlib import Path
 import pickle
 import subprocess
 import sys
@@ -288,7 +287,6 @@ def test_factor_gaussian_public_methods_default_to_one_thread(method):
 
 
 def test_default_factor_gaussian_calls_do_not_initialize_native_pool():
-    root = Path(__file__).resolve().parents[1]
     code = (
         "import json, numpy as np\n"
         "from pyscarcopula import GaussianCopula\n"
@@ -305,7 +303,6 @@ def test_default_factor_gaussian_calls_do_not_initialize_native_pool():
     )
     completed = subprocess.run(
         [sys.executable, "-c", code],
-        cwd=root,
         check=True,
         capture_output=True,
         text=True,

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 import json
-from pathlib import Path
 import subprocess
 import sys
 
@@ -229,7 +228,6 @@ def test_invalid_operator_inputs_are_rejected():
 
 
 def test_default_operator_calls_do_not_initialize_parallel_runtime():
-    root = Path(__file__).resolve().parents[1]
     code = (
         "import json, numpy as np\n"
         "from pyscarcopula import FactorCorrelation\n"
@@ -243,7 +241,6 @@ def test_default_operator_calls_do_not_initialize_parallel_runtime():
     )
     completed = subprocess.run(
         [sys.executable, "-c", code],
-        cwd=root,
         check=True,
         capture_output=True,
         text=True,

@@ -5,6 +5,15 @@ from __future__ import annotations
 import numpy as np
 
 
+def parallel_runtime_child_probe(queue, n_threads: int) -> None:
+    """Exercise the native runtime from an importable multiprocessing target."""
+    from pyscarcopula.numerical import _cpp_extension
+
+    module = _cpp_extension.load()
+    module._parallel_for_blocks_probe(16, 1, n_threads)
+    queue.put(dict(module._parallel_runtime_info()))
+
+
 def run_native_smoke() -> None:
     import pyscarcopula._scar_cpp  # noqa: F401
     from pyscarcopula.api import fit

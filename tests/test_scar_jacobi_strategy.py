@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -23,6 +25,9 @@ from pyscarcopula.strategy._base import (
     list_methods,
 )
 from pyscarcopula.strategy import scar_jacobi
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _u_sample():
@@ -279,7 +284,8 @@ def test_scar_jacobi_fit_crypto_notebook_smoke():
     import pandas as pd
     from pyscarcopula._utils import pobs
 
-    prices = pd.read_csv("data/crypto_prices.csv", index_col=0, sep=";")
+    prices = pd.read_csv(
+        ROOT / "data/crypto_prices.csv", index_col=0, sep=";")
     tickers = ["BTC-USD", "ETH-USD"]
     returns = np.log(prices[tickers] / prices[tickers].shift(1))[1:181].values
     u = pobs(returns)
@@ -452,7 +458,8 @@ def test_scar_jacobi_gof_full_crypto_default_grid_is_finite():
     import pandas as pd
     from pyscarcopula._utils import pobs
 
-    prices = pd.read_csv("data/crypto_prices.csv", index_col=0, sep=";")
+    prices = pd.read_csv(
+        ROOT / "data/crypto_prices.csv", index_col=0, sep=";")
     tickers = ["BTC-USD", "ETH-USD"]
     returns = np.log(prices[tickers] / prices[tickers].shift(1))[1:].values
     u = pobs(returns)

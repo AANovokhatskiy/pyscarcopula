@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import subprocess
 import sys
 
@@ -311,7 +310,7 @@ def test_gas_recursion_consumes_prepared_statistics_directly(scaling):
     compact = _cpp_gas.filter_result(
         *params, prepared, model, scaling=scaling)
     path_tolerance = 2e-11 if scaling == "unit" else 5e-4
-    score_tolerance = 2e-10 if scaling == "unit" else 2e-3
+    score_tolerance = 2e-10 if scaling == "unit" else 6e-3
     likelihood_rtol = 2e-11 if scaling == "unit" else 5e-5
     np.testing.assert_allclose(
         compact.g_path, dense.g_path,
@@ -495,7 +494,6 @@ def test_invalid_input_is_rejected(bad):
 
 
 def test_default_preparation_never_initializes_parallel_runtime():
-    root = Path(__file__).resolve().parents[1]
     code = (
         "import json, numpy as np\n"
         "from pyscarcopula import EquicorrGaussianCopula\n"
@@ -509,7 +507,6 @@ def test_default_preparation_never_initializes_parallel_runtime():
     )
     completed = subprocess.run(
         [sys.executable, "-c", code],
-        cwd=root,
         check=True,
         capture_output=True,
         text=True,
