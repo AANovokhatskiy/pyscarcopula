@@ -190,7 +190,7 @@ jobs:
             tests/test_sampling_parallelization.py \
             tests/test_external_parallel_fit.py \
             tests/test_equicorr_prepared.py \
-            -m "not benchmark and not sanitizer_numerical"
+            -m "not benchmark and not sanitizer_numerical and not tsan_incompatible"
       - name: Write sanitizer metadata
         env:
           CC: gcc

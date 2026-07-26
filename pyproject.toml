@@ -66,5 +66,6 @@ markers = [
     "data: tests requiring data/ directory (csv files)",
     "benchmark: optional performance regression checks",
     "sanitizer_numerical: exact floating-point golden checks excluded from sanitizer builds",
+    "tsan_incompatible: fork-after-threads checks unsupported by ThreadSanitizer",
     "validation: optional distributional validation checks",
 ]

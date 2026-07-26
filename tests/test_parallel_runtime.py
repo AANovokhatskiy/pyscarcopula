@@ -493,6 +493,7 @@ def test_forked_child_n_threads_one_ignores_inherited_pool():
 
 
 @pytest.mark.skipif(os.name == "nt", reason="fork is unavailable on Windows")
+@pytest.mark.tsan_incompatible
 def test_forked_child_recreates_pool_for_parallel_work():
     payload = _run_clean_interpreter(
         "import json, os\n"
