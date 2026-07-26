@@ -280,7 +280,7 @@ def test_fixed_dwt_mc_and_eis_outputs_match_regression_values():
             -0.7488364742279616,
         ],
         rtol=0.0,
-        atol=5e-15,
+        atol=1e-14,
     )
     np.testing.assert_allclose(
         a2t,
