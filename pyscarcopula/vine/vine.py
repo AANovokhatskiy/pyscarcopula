@@ -411,24 +411,22 @@ class VineCopula:
         return state
 
     def __setstate__(self, state):
-        """Migrate and validate persisted generic or legacy R-vine state.
-
-        This method is also the v2-to-v3 migration boundary. Historical v2
-        payloads may contain ``matrix`` instead of ``_natural_order_matrix``,
-        omit canonical structures and edge maps, and resolve from the old
-        ``pyscarcopula.vine.rvine.RVineCopula`` class path. These branches are
-        required for persisted-file compatibility and must remain aligned
-        with the v2 golden fixture tests when the runtime state evolves.
-        """
+        """Validate and restore persisted generic vine state."""
         state = dict(state)
-        legacy_matrix = state.pop('matrix', None)
-        if '_natural_order_matrix' not in state:
-            state['_natural_order_matrix'] = legacy_matrix
-        if '_configured_structure' not in state:
-            state['_configured_structure'] = None
-        if '_configured_vine_type' not in state:
-            state['_configured_vine_type'] = None
-        persisted_source = state.pop('_structure_source', None)
+        required_fields = {
+            '_configured_structure',
+            '_configured_vine_type',
+            '_edge_map',
+            '_natural_order_matrix',
+            '_orig_edge_key',
+            '_structure_source',
+        }
+        missing_fields = required_fields.difference(state)
+        if missing_fields:
+            missing = ", ".join(sorted(missing_fields))
+            raise ValueError(
+                f"Persisted VineCopula state is missing fields: {missing}")
+        persisted_source = state.pop('_structure_source')
 
         configured_type = state['_configured_vine_type']
         if configured_type not in {None, "cvine", "dvine", "rvine"}:
@@ -459,9 +457,7 @@ class VineCopula:
         state['_configured_structure'] = configured_structure
         expected_source = (
             "fixed" if configured_structure is not None else "auto")
-        if (
-                persisted_source is not None
-                and persisted_source != expected_source):
+        if persisted_source != expected_source:
             raise ValueError(
                 "Persisted VineCopula structure source does not match "
                 "configured structure")
@@ -517,10 +513,8 @@ class VineCopula:
                     "match fitted trees")
 
             expected_edge_map = dict(expected_edge_map)
-            stored_edge_map = state.get('_edge_map')
-            if (
-                    stored_edge_map is not None
-                    and dict(stored_edge_map) != expected_edge_map):
+            stored_edge_map = state['_edge_map']
+            if dict(stored_edge_map) != expected_edge_map:
                 raise ValueError(
                     "Persisted VineCopula edge map does not match trees")
             expected_orig_edge_key = {
@@ -528,11 +522,8 @@ class VineCopula:
                 for (tree, column), orig_index
                 in expected_edge_map.items()
             }
-            stored_orig_edge_key = state.get('_orig_edge_key')
-            if (
-                    stored_orig_edge_key is not None
-                    and dict(stored_orig_edge_key)
-                    != expected_orig_edge_key):
+            stored_orig_edge_key = state['_orig_edge_key']
+            if dict(stored_orig_edge_key) != expected_orig_edge_key:
                 raise ValueError(
                     "Persisted VineCopula reverse edge map does not "
                     "match trees")

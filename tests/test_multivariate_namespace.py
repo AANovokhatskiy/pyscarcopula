@@ -61,7 +61,9 @@ def test_serialized_models_only_contain_canonical_multivariate_class_paths(facto
         text = path.read_text(encoding="utf-8")
         envelope = json.loads(text)
 
-        assert envelope["format_version"] == 3
+        assert set(envelope) == {
+            "class", "format", "include_data", "state",
+        }
         assert envelope["class"].startswith(
             "pyscarcopula.copula.multivariate.")
         assert "copula.experimental" not in text

@@ -1,8 +1,6 @@
-"""Versioned persistence and migration contracts for ``VineCopula``."""
+"""Persistence contracts for ``VineCopula``."""
 
 import json
-from pathlib import Path
-
 import numpy as np
 import pytest
 
@@ -22,20 +20,6 @@ from pyscarcopula.vine import (
     RVineMatrix,
     cvine_structure,
     dvine_structure,
-)
-
-
-V2_RVINE_FIXTURE = (
-    Path(__file__).parent
-    / "fixtures"
-    / "persistence"
-    / "v2_rvine_current_path.json"
-)
-V2_CVINE_FIXTURE = (
-    Path(__file__).parent
-    / "fixtures"
-    / "persistence"
-    / "v2_cvine_legacy_path.json"
 )
 
 
@@ -91,21 +75,7 @@ def _factories():
     )
 
 
-def test_v2_rvine_fixture_migrates_to_canonical_vine_type_and_state():
-    loaded = load_model(V2_RVINE_FIXTURE, expected_type=VineCopula)
-
-    assert type(loaded) is VineCopula
-    assert isinstance(loaded, RVineCopula)
-    assert loaded.structure_source == "auto"
-    assert loaded.vine_type == "rvine"
-    assert loaded.structure == RVineMatrix.from_trees(loaded.d, loaded.trees)
-    assert loaded._edge_map == {(0, 0): 0}
-    assert loaded._orig_edge_key == {(0, 0): (0, 0)}
-    assert loaded._suffix_state_cache == {}
-    assert loaded._predict_history_cache == {}
-
-
-def test_v3_persistence_preserves_heterogeneous_canonical_edge_mapping(
+def test_persistence_preserves_heterogeneous_canonical_edge_mapping(
         tmp_path):
     structure = cvine_structure(4)
     specs = [
@@ -142,7 +112,7 @@ def test_v3_persistence_preserves_heterogeneous_canonical_edge_mapping(
 
 
 @pytest.mark.parametrize(("expected_type", "factory"), _factories())
-def test_v3_generic_vine_roundtrip_preserves_mode_structure_and_runtime(
+def test_generic_vine_roundtrip_preserves_mode_structure_and_runtime(
         tmp_path, expected_type, factory):
     data = _data()
     vine = factory().fit(data, method="mle")
@@ -154,7 +124,9 @@ def test_v3_generic_vine_roundtrip_preserves_mode_structure_and_runtime(
 
     envelope = json.loads(path.read_text(encoding="utf-8"))
     serialized = path.read_text(encoding="utf-8")
-    assert envelope["format_version"] == 3
+    assert set(envelope) == {
+        "class", "format", "include_data", "state",
+    }
     assert envelope["class"] == "pyscarcopula.vine.vine.VineCopula"
     assert envelope["state"]["class"] == (
         "pyscarcopula.vine.vine.VineCopula")
@@ -191,7 +163,7 @@ def test_v3_generic_vine_roundtrip_preserves_mode_structure_and_runtime(
         second.natural_order_matrix, loaded.natural_order_matrix)
 
 
-def test_v3_vine_include_data_false_preserves_fit_but_drops_history(tmp_path):
+def test_vine_include_data_false_preserves_fit_but_drops_history(tmp_path):
     data = _data(dimension=4)
     vine = VineCopula.dvine(
         4, candidates=[IndependentCopula]).fit(data)
@@ -206,37 +178,16 @@ def test_v3_vine_include_data_false_preserves_fit_but_drops_history(tmp_path):
         5, u=data, rng=np.random.default_rng(3)).shape == (5, 4)
 
 
-def test_legacy_cvine_loads_from_v2_and_v3_without_type_migration(tmp_path):
+def test_cvine_roundtrip_preserves_runtime_type(tmp_path):
     data = _data(dimension=3)
     legacy = CVineCopula(
         candidates=[IndependentCopula]).fit(data, method="mle")
-    v3_path = tmp_path / "legacy-v3.json"
-    legacy.save(v3_path, include_data=True)
+    path = tmp_path / "cvine.json"
+    legacy.save(path, include_data=True)
 
-    v3_loaded = load_model(v3_path)
-    assert type(v3_loaded) is CVineCopula
-    assert not isinstance(v3_loaded, VineCopula)
-
-    v2_loaded = load_model(V2_CVINE_FIXTURE)
-    assert type(v2_loaded) is CVineCopula
-    assert v2_loaded.d == 2
-    assert v2_loaded.fit_result.log_likelihood == 0.0
-    assert v2_loaded.sample(
-        6, rng=np.random.default_rng(4)).shape == (6, 2)
-
-
-def test_v2_missing_edge_maps_are_reconstructed(tmp_path):
-    envelope = json.loads(V2_RVINE_FIXTURE.read_text(encoding="utf-8"))
-    state = envelope["state"]["state"]
-    state.pop("_edge_map")
-    state.pop("_orig_edge_key")
-    path = tmp_path / "v2-missing-maps.json"
-    path.write_text(json.dumps(envelope), encoding="utf-8")
-
-    loaded = VineCopula.load(path)
-
-    assert loaded._edge_map == {(0, 0): 0}
-    assert loaded._orig_edge_key == {(0, 0): (0, 0)}
+    loaded = load_model(path)
+    assert type(loaded) is CVineCopula
+    assert not isinstance(loaded, VineCopula)
 
 
 @pytest.mark.parametrize(
@@ -255,7 +206,7 @@ def test_v2_missing_edge_maps_are_reconstructed(tmp_path):
         ),
     ),
 )
-def test_v3_rejects_mismatched_persisted_structure_state(
+def test_rejects_mismatched_persisted_structure_state(
         tmp_path, field, replacement, message):
     vine = VineCopula.dvine(
         4, candidates=[IndependentCopula]).fit(

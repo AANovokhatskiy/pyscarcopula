@@ -1,12 +1,9 @@
-"""Stage-0 compatibility contract for the pre-unification vine API.
+"""Stage-0 characterization contract for the pre-unification vine API.
 
 These characterization tests intentionally describe the current
 ``RVineCopula`` behavior.  They are the refactoring guardrail for introducing
 ``VineCopula`` without changing numerical or runtime semantics.
 """
-
-import json
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -23,14 +20,9 @@ from pyscarcopula import (
 from pyscarcopula.api import fit as api_fit
 from pyscarcopula.api import predict as api_predict
 from pyscarcopula.api import sample as api_sample
-from pyscarcopula.io import load_model
 from pyscarcopula.stattests import gof_test
 from pyscarcopula.vine._pair_copula import PairCopula
 from pyscarcopula.vine._structure import RVineMatrix
-
-
-FIXTURE_DIR = Path(__file__).parents[2] / "fixtures" / "persistence"
-RVINE_V2_FIXTURE = FIXTURE_DIR / "v2_rvine_current_path.json"
 
 
 def _structure_data():
@@ -195,33 +187,6 @@ def test_rvine_suffix_and_arbitrary_conditioning_runtime_contract():
     np.testing.assert_array_equal(arbitrary, repeated)
     np.testing.assert_array_equal(arbitrary[:, 0], np.full(10, 0.25))
     np.testing.assert_array_equal(arbitrary[:, 3], np.full(10, 0.75))
-
-
-def test_current_rvine_format_v2_golden_fixture_is_loadable():
-    with RVINE_V2_FIXTURE.open(encoding="utf-8") as fixture_file:
-        envelope = json.load(fixture_file)
-    assert envelope["format"] == "pyscarcopula-model"
-    assert envelope["format_version"] == 2
-    assert envelope["include_data"] is False
-    assert envelope["class"] == "pyscarcopula.vine.rvine.RVineCopula"
-
-    vine = load_model(RVINE_V2_FIXTURE, expected_type=RVineCopula)
-
-    assert vine.d == 2
-    assert vine.method == "MLE"
-    assert vine._last_u is None
-    np.testing.assert_array_equal(vine.matrix, np.array([[1, 1], [0, 0]]))
-    assert _normalized_trees(vine) == [[((0, 1), ())]]
-    assert sorted(vine.pair_copulas) == [(0, 0)]
-    assert vine.fit_result.success is True
-    assert vine.fit_diagnostics["edge_fits"]["family_counts"] == {
-        "IndependentCopula": 1,
-    }
-    assert repr(vine) == "VineCopula(d=2, T=5, logL=0.000, n_params=0)"
-
-    first = vine.sample(8, rng=np.random.default_rng(10))
-    second = vine.sample(8, rng=np.random.default_rng(10))
-    np.testing.assert_array_equal(first, second)
 
 
 def test_top_level_vine_dispatch_contract(monkeypatch):

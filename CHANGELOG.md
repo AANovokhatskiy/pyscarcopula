@@ -7,8 +7,8 @@
   supported legacy implementation. No runtime deprecation warning is emitted
   for `CVineCopula`; new C-vine code should use `VineCopula.cvine(...)`.
 - Adds fixed C-vine/D-vine factories, arbitrary validated `RVineMatrix`
-  structures, shared fixed-edge fitting, type-aware GoF, and v3 persistence
-  with v2 `RVineCopula` migration. Documentation and notebooks now use
+  structures, shared fixed-edge fitting, type-aware GoF, and canonical JSON
+  persistence. Documentation and notebooks now use
   decoded tree edges for structure comparison instead of raw matrix
   conventions.
 - Adds reusable, copula-independent `FactorCorrelation` and

@@ -1,14 +1,4 @@
-"""JSON model persistence helpers.
-
-Persistence compatibility
--------------------------
-New files are written with :data:`MODEL_FORMAT_VERSION` (currently v3), but
-the loader intentionally continues to accept v2.  Version 2 contains
-historical class paths and the pre-``VineCopula`` R-vine state layout; it is a
-supported migration input, not dead code.  Do not remove v2 support without a
-separate file-format deprecation/migration policy and replacement coverage for
-the golden v2 fixtures under ``tests/fixtures/persistence``.
-"""
+"""JSON model persistence helpers."""
 
 from __future__ import annotations
 
@@ -17,7 +7,6 @@ import importlib
 import json
 import math
 from dataclasses import fields, is_dataclass
-from importlib import metadata
 from pathlib import Path
 from typing import Any, TypeVar, overload
 
@@ -26,35 +15,9 @@ from scipy.optimize import OptimizeResult
 
 
 MODEL_FORMAT = "pyscarcopula-model"
-MODEL_FORMAT_VERSION = 3
-SUPPORTED_MODEL_FORMAT_VERSIONS = frozenset({2, 3})
 _TYPE = "__pyscarcopula_type__"
-_CLASS_PATH_MIGRATIONS = {
-    "pyscarcopula.vine.rvine.RVineCopula":
-        "pyscarcopula.vine.vine.VineCopula",
-    "pyscarcopula.copula.elliptical.GaussianCopula":
-        "pyscarcopula.copula.multivariate.gaussian.GaussianCopula",
-    "pyscarcopula.copula.elliptical.StudentCopula":
-        "pyscarcopula.copula.multivariate.student.StudentCopula",
-    "pyscarcopula.copula.experimental.equicorr.EquicorrGaussianCopula":
-        "pyscarcopula.copula.multivariate.equicorr.EquicorrGaussianCopula",
-    (
-        "pyscarcopula.copula.experimental.stochastic_student."
-        "StochasticStudentCopula"
-    ): (
-        "pyscarcopula.copula.multivariate.stochastic_student."
-        "StochasticStudentCopula"
-    ),
-}
 
 ModelT = TypeVar("ModelT")
-
-
-def _package_version() -> str | None:
-    try:
-        return metadata.version("pyscarcopula")
-    except metadata.PackageNotFoundError:
-        return None
 
 
 def _class_path(cls: type) -> str:
@@ -66,7 +29,6 @@ def _qualified_name(obj: object) -> str:
 
 
 def _resolve_class(path: str) -> type:
-    path = _CLASS_PATH_MIGRATIONS.get(path, path)
     module_name, _, qualname = path.rpartition(".")
     if not module_name or not qualname:
         raise ValueError(f"Invalid class path: {path!r}")
@@ -245,11 +207,6 @@ def _from_jsonable(payload: Any) -> Any:
 def save_model(model: object, path: str | Path, *, include_data: bool = False) -> None:
     """Persist a fitted model to ``path`` as JSON.
 
-    Files are always written using the current format version. Loading and
-    re-saving a historical v2 model therefore migrates it to v3. The write
-    version must not be used to narrow the versions accepted by
-    :func:`load_model`.
-
     Parameters
     ----------
     model : object
@@ -266,8 +223,6 @@ def save_model(model: object, path: str | Path, *, include_data: bool = False) -
     payload_model = model if include_data else _without_training_data(model)
     envelope = {
         "format": MODEL_FORMAT,
-        "format_version": MODEL_FORMAT_VERSION,
-        "package_version": _package_version(),
         "class": _qualified_name(payload_model),
         "include_data": bool(include_data),
         "state": _to_jsonable(payload_model),
@@ -307,14 +262,6 @@ def load_model(
 ) -> ModelT | Any:
     """Load a model persisted by :func:`save_model`.
 
-    Compatibility note
-    ------------------
-    Both v2 and v3 are deliberately supported. In particular, v2
-    ``pyscarcopula.vine.rvine.RVineCopula`` payloads are migrated to the
-    canonical ``pyscarcopula.vine.vine.VineCopula`` type. Keep this migration
-    path while v2 model files are supported; do not replace the supported
-    version set with a check against only ``MODEL_FORMAT_VERSION``.
-
     Parameters
     ----------
     path : str or pathlib.Path
@@ -340,11 +287,6 @@ def load_model(
 
     if not isinstance(envelope, dict) or envelope.get("format") != MODEL_FORMAT:
         raise ValueError("Not a pyscarcopula model file")
-    if envelope.get("format_version") not in SUPPORTED_MODEL_FORMAT_VERSIONS:
-        raise ValueError(
-            "Unsupported pyscarcopula model format version: "
-            f"{envelope.get('format_version')!r}"
-        )
 
     model = _from_jsonable(envelope.get("state"))
     declared_path = envelope.get("class")

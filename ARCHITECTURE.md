@@ -7,7 +7,7 @@ pyscarcopula/
 |-- __init__.py              # Public re-exports and BLAS thread policy
 |-- api.py                   # Top-level fit/predict/sample helpers
 |-- _types.py                # Results and numerical configuration
-|-- io.py                    # Versioned JSON persistence and migrations
+|-- io.py                    # JSON model persistence
 |-- stattests.py             # Goodness-of-fit orchestration
 |-- copula/
 |   |-- _protocol.py         # Common, bivariate, multivariate protocols
@@ -173,10 +173,8 @@ samples = predict(copula, u, result, n=1000)
 Model methods are convenience wrappers that store `fit_result` and the last
 fitting data.
 
-Persistence uses versioned JSON. New files use v3; the loader retains v2
-migrations, including the historical
-`pyscarcopula.vine.rvine.RVineCopula` path and pre-`VineCopula` state layout.
-Removing v2 support requires a separate file-format migration policy.
+Persistence uses a single JSON representation. The loader restores the same
+canonical class paths and state layout written by the current package.
 
 For generic vines, `RVineMatrix` is the canonical public structure. The model
 stores a separate natural-order matrix for numerical traversal:

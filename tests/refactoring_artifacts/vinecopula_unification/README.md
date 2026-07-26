@@ -5,9 +5,8 @@ It may be removed after the generic `VineCopula` tests cover all permanent
 contracts and every intentionally changed assertion is documented in
 `VINECOPULA_UNIFICATION_PLAN.md`.
 
-The format-v2 RVine and legacy CVine persistence fixtures are not temporary.
-They remain under `tests/fixtures/persistence/` to guard backward-compatible
-loading.
+Persistence coverage lives in the permanent test suite for the canonical
+`VineCopula` runtime.
 
 `test_stage8_oracles.py` contains independent release-gate comparisons with
 `pyvinecopulib`, permutation invariance, and Monte Carlo density
