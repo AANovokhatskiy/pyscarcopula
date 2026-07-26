@@ -101,6 +101,28 @@ def test_constructor_rejects_non_rvine_matrix_structure(structure):
         VineCopula(structure=structure)
 
 
+def test_constructor_rejects_vine_type_inconsistent_with_structure():
+    with pytest.raises(ValueError, match="does not match"):
+        VineCopula(structure=dvine_structure(4), vine_type="cvine")
+    with pytest.raises(ValueError, match="does not match"):
+        VineCopula(structure=cvine_structure(4), vine_type="dvine")
+
+
+@pytest.mark.parametrize(
+    "fit_kwargs",
+    [
+        {"structure_search": "beam"},
+        {"beam_width": 4},
+        {"structure_search": "beam", "beam_width": 4},
+    ],
+)
+def test_fixed_fit_rejects_explicit_structure_search_options(fit_kwargs):
+    with pytest.raises(ValueError, match="automatic structure selection"):
+        VineCopula.dvine(
+            4, candidates=[IndependentCopula]).fit(
+                _data(dimension=4), **fit_kwargs)
+
+
 def test_structure_and_matrix_state_are_defensive_and_refit_clears_caches():
     source = dvine_structure(4)
     vine = VineCopula(
@@ -117,8 +139,13 @@ def test_structure_and_matrix_state_are_defensive_and_refit_clears_caches():
     returned_matrix[3, 0] = 99
     compatibility_matrix = vine.matrix
     compatibility_matrix[0, 0] = 99
+    returned_trees = vine.trees
+    returned_trees[0].clear()
+    with pytest.raises(AttributeError):
+        vine.trees = []
     assert vine.structure == dvine_structure(4)
     assert vine.matrix[0, 0] != 99
+    assert len(vine.trees[0]) == 3
 
     vine._suffix_state_cache["stale"] = object()
     vine._predict_history_cache["stale"] = object()
@@ -126,3 +153,26 @@ def test_structure_and_matrix_state_are_defensive_and_refit_clears_caches():
     assert vine._suffix_state_cache == {}
     assert vine._predict_history_cache == {}
 
+
+def test_failed_refit_preserves_previous_fitted_snapshot():
+    data = _data(dimension=4)
+    vine = VineCopula.dvine(
+        4, candidates=[IndependentCopula]).fit(data)
+    previous_diagnostics = vine.fit_diagnostics
+    previous_structure = vine.structure
+    previous_pairs = vine.pair_copulas
+    vine._suffix_state_cache["retained"] = object()
+    vine._predict_history_cache["retained"] = object()
+
+    with pytest.raises(ValueError, match="given_vars=\\[0, 2\\]"):
+        vine.fit(
+            data,
+            given_vars=[0, 2],
+            conditional_strict=True,
+        )
+
+    assert vine.fit_diagnostics == previous_diagnostics
+    assert vine.structure == previous_structure
+    assert vine.pair_copulas is previous_pairs
+    assert "retained" in vine._suffix_state_cache
+    assert "retained" in vine._predict_history_cache

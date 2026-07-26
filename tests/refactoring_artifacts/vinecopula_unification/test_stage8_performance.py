@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import gc
 import os
+import tracemalloc
+from statistics import median
 from time import perf_counter
 
 import numpy as np
@@ -23,6 +25,24 @@ pytestmark = pytest.mark.benchmark
 def _require_benchmarks():
     if os.environ.get("PYSCA_RUN_VINE_BENCHMARKS") != "1":
         pytest.skip("set PYSCA_RUN_VINE_BENCHMARKS=1")
+
+
+def _profile(call, repeats=3):
+    """Warm a workload, then report median wall time and peak allocations."""
+    call()
+    timings = []
+    peaks = []
+    result = None
+    for _ in range(repeats):
+        gc.collect()
+        tracemalloc.start()
+        started = perf_counter()
+        result = call()
+        timings.append(perf_counter() - started)
+        _, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        peaks.append(peak)
+    return result, median(timings), max(peaks)
 
 
 def _data(rows, dimension, seed):
@@ -56,12 +76,10 @@ def test_stage8_auto_versus_fixed_fit_profile(dimension):
     _require_benchmarks()
     u = _data(80, dimension, 20260800 + dimension)
 
-    started = perf_counter()
-    auto = VineCopula(
+    auto, auto_seconds, auto_peak = _profile(lambda: VineCopula(
         candidates=[BivariateGaussianCopula],
         allow_rotations=False,
-    ).fit(u, method="mle")
-    auto_seconds = perf_counter() - started
+    ).fit(u, method="mle"))
 
     auto_pairs_by_identity = {
         _edge_identity(edge): auto.pair_copulas[
@@ -83,13 +101,12 @@ def test_stage8_auto_versus_fixed_fit_profile(dimension):
         ]
         for level in fixed_trees
     ]
-    started = perf_counter()
-    fixed = VineCopula(structure=auto.structure).fit(
-        u,
-        method="mle",
-        copulas=fixed_specs,
-    )
-    fixed_seconds = perf_counter() - started
+    fixed, fixed_seconds, fixed_peak = _profile(
+        lambda: VineCopula(structure=auto.structure).fit(
+            u,
+            method="mle",
+            copulas=fixed_specs,
+        ))
 
     assert [
         {_edge_identity(edge) for edge in level}
@@ -107,6 +124,8 @@ def test_stage8_auto_versus_fixed_fit_profile(dimension):
         f" d={dimension} T={len(u)}"
         f" auto_ms={1e3 * auto_seconds:.3f}"
         f" fixed_ms={1e3 * fixed_seconds:.3f}"
+        f" auto_peak_mib={auto_peak / 2**20:.3f}"
+        f" fixed_peak_mib={fixed_peak / 2**20:.3f}"
         f" auto_over_fixed={auto_seconds / fixed_seconds:.3f}",
         flush=True,
     )
@@ -124,13 +143,11 @@ def test_stage8_static_sampling_scaling_profile():
         previous_seconds = None
         previous_n = None
         for n in (1_000, 10_000, 100_000):
-            started = perf_counter()
-            samples = model.sample(
+            samples, elapsed, peak = _profile(lambda: model.sample(
                 n,
                 batch_rows=2_048,
                 rng=np.random.default_rng(20260830 + n),
-            )
-            elapsed = perf_counter() - started
+            ))
             assert samples.shape == (n, dimension)
             assert np.all(np.isfinite(samples))
             ratio = (
@@ -147,6 +164,7 @@ def test_stage8_static_sampling_scaling_profile():
                 "BENCH stage8_sample"
                 f" d={dimension} n={n}"
                 f" elapsed_ms={1e3 * elapsed:.3f}"
+                f" peak_mib={peak / 2**20:.3f}"
                 f" time_ratio={ratio:.3f}"
                 f" size_ratio={size_ratio:.1f}",
                 flush=True,
@@ -167,21 +185,21 @@ def test_stage8_suffix_sampling_typical_and_stress_profile():
         copulas=_specs(VineCopula.dvine(dimension).structure.to_trees()),
     )
     for n in (1_000, 20_000):
-        started = perf_counter()
-        samples, diagnostics = model.predict(
+        result, elapsed, peak = _profile(lambda: model.predict(
             n,
             u=u,
             given={0: 0.25, 1: 0.75},
             rng=np.random.default_rng(20260841),
             return_diagnostics=True,
-        )
-        elapsed = perf_counter() - started
+        ))
+        samples, diagnostics = result
         assert samples.shape == (n, dimension)
         assert diagnostics["conditional_method"] == "suffix"
         print(
             "BENCH stage8_suffix"
             f" d={dimension} n={n}"
-            f" elapsed_ms={1e3 * elapsed:.3f}",
+            f" elapsed_ms={1e3 * elapsed:.3f}"
+            f" peak_mib={peak / 2**20:.3f}",
             flush=True,
         )
 
@@ -203,21 +221,24 @@ def test_stage8_dag_mcmc_given_free_scaling_profile():
         allow_rotations=False,
     ).fit(u)
     for given in ({0: 0.25, 3: 0.75}, {0: 0.25, 1: 0.5, 3: 0.75}):
-        started = perf_counter()
-        samples, diagnostics = model.predict(
+        result, elapsed, peak = _profile(lambda: model.predict(
             1_000,
             given=given,
             mcmc_steps=5,
             mcmc_burnin=3,
             rng=np.random.default_rng(20260850 + len(given)),
             return_diagnostics=True,
-        )
-        elapsed = perf_counter() - started
+        ))
+        samples, diagnostics = result
         assert samples.shape == (1_000, 4)
         assert diagnostics["conditional_method"] == "dag_mcmc"
+        acceptance = diagnostics["mcmc"]["acceptance_mean"]
+        assert 0.0 <= acceptance <= 1.0
         print(
             "BENCH stage8_dag_mcmc"
             f" given={len(given)} free={4 - len(given)}"
-            f" n=1000 elapsed_ms={1e3 * elapsed:.3f}",
+            f" n=1000 elapsed_ms={1e3 * elapsed:.3f}"
+            f" peak_mib={peak / 2**20:.3f}"
+            f" acceptance={acceptance:.4f}",
             flush=True,
         )

@@ -4,10 +4,10 @@ vine.vine - generic vine copula with strategy-backed edge models.
 Layout
 ------
 Build path:
-    u -> select_rvine (Dissmann) -> (trees_repr, fitted pair copulas)
+    u -> select_rvine_structure (Dissmann) -> VineStructureSelection
                                                   │
                                                   ▼
-                  build_rvine_matrix_with_edge_map -> (M, edge_map)
+                       fit_vine_edges(canonical decoded trees)
                                                   │
                                                   ▼
                      ``VineCopula`` stores M, trees, pair_copulas (by (t, col))
@@ -56,7 +56,10 @@ from pyscarcopula.vine._conditional_rvine import (
     validate_rvine_given_vars,
     validate_rvine_given,
 )
-from pyscarcopula.vine._rvine_dissmann import select_rvine
+from pyscarcopula.vine._rvine_dissmann import (
+    select_rvine,
+    select_rvine_structure,
+)
 from pyscarcopula.vine._vine_fit import fit_vine_edges
 from pyscarcopula.vine._structure import (
     RVineMatrix,
@@ -152,6 +155,79 @@ def _validated_memory_budget(memory_budget_bytes):
     return int(memory_budget_bytes)
 
 
+def _freeze_trees(trees):
+    """Own a vine tree representation without retaining mutable containers."""
+    if trees is None:
+        return None
+    return tuple(
+        tuple(
+            (frozenset(conditioned), frozenset(conditioning))
+            for conditioned, conditioning in level
+        )
+        for level in trees
+    )
+
+
+def _copy_trees(trees):
+    """Return the historical nested-list tree representation defensively."""
+    if trees is None:
+        return None
+    return [
+        [
+            (frozenset(conditioned), frozenset(conditioning))
+            for conditioned, conditioning in level
+        ]
+        for level in trees
+    ]
+
+
+def _edge_identity(edge):
+    conditioned, conditioning = edge
+    return frozenset(conditioned), frozenset(conditioning)
+
+
+def _canonicalize_fitted_levels(structure, source_trees, fitted_levels):
+    """Reindex fitted edges from a construction order to canonical tree order."""
+    fitted_by_identity = {
+        _edge_identity(edge): fitted_levels[tree][edge_index]
+        for tree, level in enumerate(source_trees)
+        for edge_index, edge in enumerate(level)
+    }
+    canonical_trees = structure.to_trees()
+    canonical_levels = [
+        [fitted_by_identity[_edge_identity(edge)] for edge in level]
+        for level in canonical_trees
+    ]
+    return canonical_trees, canonical_levels
+
+
+def _structure_kinds(structure):
+    """Return all standard vine kinds compatible with a fixed structure."""
+    trees = structure.to_trees()
+    is_cvine = all(
+        len(level) <= 1
+        or bool(set.intersection(*(
+            set(conditioned) for conditioned, _ in level
+        )))
+        for level in trees
+    )
+    degrees = {}
+    for conditioned, _ in trees[0]:
+        for variable in conditioned:
+            degrees[variable] = degrees.get(variable, 0) + 1
+    is_dvine = max(degrees.values(), default=0) <= 2
+    kinds = set()
+    if is_cvine:
+        kinds.add("cvine")
+    if is_dvine:
+        kinds.add("dvine")
+    if not kinds:
+        kinds.add("rvine")
+    if structure.d == 2:
+        kinds.add("rvine")
+    return frozenset(kinds)
+
+
 class VineCopula:
     """Generic vine copula with automatic or fixed structure.
 
@@ -198,7 +274,8 @@ class VineCopula:
         leaf peeled at column ``col``.
     trees : list of ``(d - 1)`` lists
         ``trees[t][i]`` = ``(conditioned_frozenset, conditioning_frozenset)``
-        returned by the Dissmann selection step.
+        in the canonical order decoded from ``structure``. Each access returns
+        a defensive nested-list copy.
     pair_copulas : dict
         ``pair_copulas[(t, col)]`` = ``PairCopula`` for the edge encoded
         at matrix tree level ``t`` and column ``col``
@@ -265,12 +342,20 @@ class VineCopula:
         self.transform_type = transform_type
         self._configured_structure = (
             None if structure is None else RVineMatrix(structure.matrix))
+        if (
+                self._configured_structure is not None
+                and vine_type is not None
+                and vine_type not in _structure_kinds(
+                    self._configured_structure)):
+            raise ValueError(
+                f"vine_type={vine_type!r} does not match the fixed "
+                "RVineMatrix structure")
         self._configured_vine_type = vine_type
         self._structure = None
 
         self.d = None
         self._natural_order_matrix = None
-        self.trees = None
+        self._trees = None
         self.pair_copulas = None
         self._edge_map = None  # (t, col) -> orig_idx in trees[t]
         self._orig_edge_key = None  # (t, orig_idx) -> (t, col)
@@ -311,6 +396,7 @@ class VineCopula:
     def __getstate__(self):
         """Return persistent model state without transient prediction caches."""
         state = self.__dict__.copy()
+        state['trees'] = _copy_trees(state.pop('_trees', None))
         state.pop('_predict_history_cache', None)
         state.pop('_suffix_state_cache', None)
         state['_structure_source'] = self.structure_source
@@ -373,7 +459,7 @@ class VineCopula:
                 "configured structure")
 
         d = state.get('d')
-        trees = state.get('trees')
+        trees = state.get('trees', state.get('_trees'))
         natural_matrix = state.get('_natural_order_matrix')
         serialized_structure = normalized_structure(
             state.get('_structure'),
@@ -455,6 +541,15 @@ class VineCopula:
             state['_edge_map'] = expected_edge_map
             state['_orig_edge_key'] = expected_orig_edge_key
 
+        if (
+                configured_structure is not None
+                and configured_type is not None
+                and configured_type not in _structure_kinds(
+                    configured_structure)):
+            raise ValueError(
+                "Persisted VineCopula vine_type does not match configured "
+                "structure")
+
         last_u = state.get('_last_u')
         if last_u is not None:
             last_u = np.asarray(last_u, dtype=np.float64).copy()
@@ -468,6 +563,8 @@ class VineCopula:
 
         state.pop('_suffix_state_cache', None)
         state.pop('_predict_history_cache', None)
+        state.pop('trees', None)
+        state['_trees'] = _freeze_trees(trees)
         self.__dict__.update(state)
         self._suffix_state_cache = {}
         self._predict_history_cache = {}
@@ -498,7 +595,8 @@ class VineCopula:
             If True, transform ``data`` to pseudo-observations before fitting.
         copulas : list-of-lists or None
             Optional fixed edge families as ``(copula_class, rotation)`` in
-            the Dissmann edge order for each tree. If ``None``, the best
+            the canonical order returned by ``structure.to_trees()`` for each
+            tree. If ``None``, the best
             family is selected for each edge from the candidate pool. Use
             ``candidates=`` on the constructor for automatic family pools;
             ``copulas=`` is for pre-specified edge family/rotation specs, not
@@ -534,8 +632,6 @@ class VineCopula:
             Enables chained calls, e.g. ``VineCopula().fit(u).summary()``.
         """
         method = method.upper()
-        self._suffix_state_cache = {}
-        self._predict_history_cache = {}
         u = _as_rvine_observations(
             data, operation="fit", to_pobs=to_pobs)
 
@@ -556,6 +652,10 @@ class VineCopula:
         threshold = kwargs.pop('threshold', self.threshold)
         min_edge_logL = kwargs.pop('min_edge_logL', self.min_edge_logL)
         transform_type = kwargs.pop('transform_type', self.transform_type)
+        structure_search_supplied = 'structure_search' in kwargs
+        beam_width_supplied = 'beam_width' in kwargs
+        structure_search = kwargs.pop('structure_search', 'beam')
+        beam_width = kwargs.pop('beam_width', 4)
 
         if truncation_level is not None:
             if not isinstance(truncation_level, (int, np.integer)):
@@ -576,8 +676,10 @@ class VineCopula:
             raise ValueError(f"threshold must be >= 0 or None, got {threshold}")
 
         if self._configured_structure is None:
-            select_result = select_rvine(
+            selection, working_fits = select_rvine_structure(
                 u,
+                _selector=select_rvine,
+                _return_working_fits=True,
                 candidates=self.candidates,
                 allow_rotations=self.allow_rotations,
                 criterion=self.criterion,
@@ -591,59 +693,51 @@ class VineCopula:
                 transform_type=transform_type,
                 given_vars=given_vars,
                 return_diagnostics=True,
+                structure_search=structure_search,
+                beam_width=beam_width,
                 **kwargs,
             )
-            if len(select_result) == 3:
-                trees_repr, fitted, selection_diagnostics = select_result
-            else:
-                trees_repr, fitted = select_result
-                selection_diagnostics = {
-                    'target_given_vars': tuple(given_vars),
-                    'selected_mode': None,
-                    'selected_index': None,
-                    'selected_candidate': {
-                        'mode': None,
-                        'exact_supported': False,
-                        'dag_complete': False,
-                        'fit_score': 0.0,
-                        'missing_base_vars': tuple(given_vars),
-                        'reachable_base_vars': (),
-                        'n_known_nodes': 0,
-                        'n_steps': 0,
-                        'n_inverse_steps': 0,
-                    },
-                    'candidates': (),
-                }
+            selected_structure = selection.structure
+            selection_diagnostics = deepcopy(selection.diagnostics)
+            trees_for_fit = _copy_trees(selection.trees)
         else:
             if self._configured_structure.d != d:
                 raise ValueError(
                     "VineCopula.fit: fixed structure dimension "
                     f"{self._configured_structure.d} does not match "
                     f"data dimension {d}")
-            structure_search = kwargs.pop('structure_search', 'beam')
-            beam_width = kwargs.pop('beam_width', 4)
-            if structure_search != 'beam' or beam_width != 4:
+            if structure_search_supplied or beam_width_supplied:
                 raise ValueError(
                     "structure_search and beam_width apply only to "
                     "automatic structure selection")
-            trees_repr = self._configured_structure.to_trees()
-            fixed_fit = fit_vine_edges(
-                u,
-                trees_repr,
-                candidates=self.candidates,
-                copulas=copulas,
-                method=method,
-                criterion=self.criterion,
-                allow_rotations=self.allow_rotations,
-                truncation_level=truncation_level,
-                truncation_fill=truncation_fill,
-                threshold=threshold,
-                min_edge_logL=min_edge_logL,
-                transform_type=transform_type,
-                config=config,
-                fit_kwargs=kwargs,
-            )
-            fitted = fixed_fit.as_levels()
+            selected_structure = RVineMatrix(
+                self._configured_structure.matrix)
+            trees_for_fit = selected_structure.to_trees()
+            working_fits = None
+
+        fixed_fit = fit_vine_edges(
+            u,
+            trees_for_fit,
+            candidates=self.candidates,
+            copulas=copulas,
+            method=method,
+            criterion=self.criterion,
+            allow_rotations=self.allow_rotations,
+            truncation_level=truncation_level,
+            truncation_fill=truncation_fill,
+            threshold=threshold,
+            min_edge_logL=min_edge_logL,
+            transform_type=transform_type,
+            config=config,
+            fit_kwargs=kwargs,
+            _pre_fitted=working_fits,
+        )
+        trees_repr, fitted = _canonicalize_fitted_levels(
+            selected_structure,
+            trees_for_fit,
+            fixed_fit.as_levels(),
+        )
+        if self._configured_structure is not None:
             selection_diagnostics = {
                 'target_given_vars': tuple(given_vars),
                 'selected_mode': 'fixed',
@@ -678,7 +772,7 @@ class VineCopula:
             probe = self.__class__()
             probe.d = d
             probe._natural_order_matrix = M.copy()
-            probe.trees = trees_repr
+            probe._trees = _freeze_trees(trees_repr)
             probe.pair_copulas = pair_copulas
             probe._edge_map = dict(edge_map)
             probe._orig_edge_key = orig_edge_key
@@ -695,7 +789,7 @@ class VineCopula:
                     tuple(given_vars) if conditional_supported else ())
             if not conditional_supported:
                 reject_reason = 'unsupported_given_vars'
-            self._fit_diagnostics = self._build_fit_diagnostics(
+            fit_diagnostics = self._build_fit_diagnostics(
                 given_vars,
                 conditional_mode,
                 conditional_strict,
@@ -704,6 +798,11 @@ class VineCopula:
                 reject_reason=reject_reason,
             )
             if conditional_strict and not conditional_supported:
+                if self.fit_result is None:
+                    # An unfitted instance has no successful state to preserve;
+                    # retain rejection diagnostics for the caller. A failed
+                    # refit must leave the previous fitted snapshot untouched.
+                    self._fit_diagnostics = deepcopy(fit_diagnostics)
                 missing_base_vars = ()
                 selected_mode = None
                 if selection_diagnostics['selected_candidate'] is not None:
@@ -719,7 +818,7 @@ class VineCopula:
                     f"{list(missing_base_vars)}"
                 )
         else:
-            self._fit_diagnostics = self._build_fit_diagnostics(
+            fit_diagnostics = self._build_fit_diagnostics(
                 given_vars,
                 None,
                 conditional_strict,
@@ -731,7 +830,7 @@ class VineCopula:
         self.d = d
         self._natural_order_matrix = M.copy()
         self._structure = RVineMatrix.from_trees(d, trees_repr)
-        self.trees = trees_repr
+        self._trees = _freeze_trees(trees_repr)
         self.pair_copulas = pair_copulas
         self._edge_map = dict(edge_map)
         self._orig_edge_key = orig_edge_key
@@ -742,7 +841,8 @@ class VineCopula:
         self.method = method
         edge_fit_summary = self._build_edge_fit_summary(
             pair_copulas, requested_method=method)
-        self._fit_diagnostics['edge_fits'] = deepcopy(edge_fit_summary)
+        fit_diagnostics['edge_fits'] = deepcopy(edge_fit_summary)
+        self._fit_diagnostics = fit_diagnostics
         total_nfev = sum(
             int(getattr(edge_result(pc), 'nfev', 0) or 0)
             for pc in pair_copulas.values()
@@ -774,6 +874,8 @@ class VineCopula:
         self._target_given_vars = given_vars
         self._conditional_fit_supported = conditional_supported
         self._conditional_mode = conditional_mode if given_vars else None
+        self._suffix_state_cache = {}
+        self._predict_history_cache = {}
         return self
 
     def _build_fit_diagnostics(
@@ -907,6 +1009,11 @@ class VineCopula:
         return None if value is None else RVineMatrix(value.matrix)
 
     @property
+    def trees(self):
+        """Decoded semantic edges as a defensive nested-list copy."""
+        return _copy_trees(self._trees)
+
+    @property
     def structure_source(self):
         """Whether structure selection is automatic or fixed."""
         return "fixed" if self._configured_structure is not None else "auto"
@@ -917,21 +1024,10 @@ class VineCopula:
         structure = self._structure or self._configured_structure
         if structure is None:
             return "regular vine"
-        trees = structure.to_trees()
-        is_cvine = all(
-            len(level) <= 1
-            or bool(set.intersection(*(
-                set(conditioned) for conditioned, _ in level
-            )))
-            for level in trees
-        )
-        if is_cvine:
+        kinds = _structure_kinds(structure)
+        if "cvine" in kinds:
             return "C-vine"
-        degrees = {}
-        for conditioned, _ in trees[0]:
-            for variable in conditioned:
-                degrees[variable] = degrees.get(variable, 0) + 1
-        if max(degrees.values(), default=0) <= 2:
+        if "dvine" in kinds:
             return "D-vine"
         return "regular vine"
 
@@ -1015,7 +1111,7 @@ class VineCopula:
 
         pseudo_obs = {(i, frozenset()): u[:, i].copy() for i in range(self.d)}
         total = 0.0
-        for t, level in enumerate(self.trees[:max_active_tree + 1]):
+        for t, level in enumerate(self._trees[:max_active_tree + 1]):
             for orig_idx, (conditioned, conditioning) in enumerate(level):
                 pc = self.pair_copulas[self._matrix_key(t, orig_idx)]
                 v1, v2 = sorted(conditioned)
@@ -1410,7 +1506,7 @@ class VineCopula:
             return cache[cache_key]
         state = suffix_sampling_state(
             self.d,
-            self.trees,
+            self._trees,
             self._natural_order_matrix,
             self._edge_map,
             self.pair_copulas,
@@ -1425,7 +1521,7 @@ class VineCopula:
             find_rvine_peel_order_for_given_suffix,
         )
         return find_rvine_peel_order_for_given_suffix(
-            self.trees, self.d, given_vars)
+            self._trees, self.d, given_vars)
 
     def _sample_suffix_given_with_r(self, n, r_all, rng, given, start_col,
                                     matrix=None, pair_copulas=None):
@@ -1443,7 +1539,7 @@ class VineCopula:
         edge_map = self._edge_map if edge_map is None else edge_map
         return given_suffix_edge_observations_with_r(
             self.d,
-            self.trees,
+            self._trees,
             n,
             r_all,
             given,
@@ -1502,7 +1598,7 @@ class VineCopula:
     def _dynamic_update_record(
             self, key, edge, edge_map, r_before, r_after, status, reason=None):
         return dynamic_update_record(
-            self.trees,
+            self._trees,
             key,
             edge,
             edge_map,
@@ -1515,7 +1611,7 @@ class VineCopula:
     def _dynamic_skip_records(
             self, pair_copulas, edge_map, r_all, reason):
         return dynamic_skip_records(
-            self.trees, pair_copulas, edge_map, r_all, reason)
+            self._trees, pair_copulas, edge_map, r_all, reason)
 
     def _apply_given_only_dynamic_updates_ordered(
             self, n, r_all, given, start_col, matrix, pair_copulas, edge_map,
@@ -1650,14 +1746,14 @@ class VineCopula:
 
     def _edge_pair_from_pseudo_map(self, key, pseudo_obs, edge_map):
         return edge_pair_from_pseudo_map(
-            self.trees, key, pseudo_obs, edge_map)
+            self._trees, key, pseudo_obs, edge_map)
 
     def _compute_pseudo_obs(self, u):
         pseudo_obs = {
             (i, frozenset()): u[:, i].copy()
             for i in range(self.d)
         }
-        for t, level in enumerate(self.trees):
+        for t, level in enumerate(self._trees):
             for orig_idx, (conditioned, conditioning) in enumerate(level):
                 pc = self.pair_copulas[self._matrix_key(t, orig_idx)]
                 v1, v2 = sorted(conditioned)
@@ -1750,7 +1846,7 @@ class VineCopula:
             for i in range(self.d)
         }
         logp = np.zeros(len(u), dtype=np.float64)
-        for t, level in enumerate(self.trees):
+        for t, level in enumerate(self._trees):
             for orig_idx, (conditioned, conditioning) in enumerate(level):
                 key = self._matrix_key_from_map(t, orig_idx, edge_map)
                 pc = pair_copulas[key]

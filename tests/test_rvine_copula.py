@@ -336,7 +336,7 @@ def _manual_suffix_stateful_rvine():
         [1, 1, 0],
         [2, 0, 0],
     ], dtype=int)
-    vine.trees = [
+    vine._trees = tuple(tuple(level) for level in [
         [
             (frozenset({1, 2}), frozenset()),
             (frozenset({0, 1}), frozenset()),
@@ -344,7 +344,7 @@ def _manual_suffix_stateful_rvine():
         [
             (frozenset({0, 2}), frozenset({1})),
         ],
-    ]
+    ])
     vine._edge_map = {(0, 0): 0, (0, 1): 1, (1, 0): 0}
     vine.pair_copulas = {
         (0, 0): _independent_pair(),
@@ -389,7 +389,7 @@ def _manual_multi_edge_dynamic_rvine():
     vine = RVineCopula(candidates=[BivariateGaussianCopula])
     vine.d = 4
     vine.matrix = matrix
-    vine.trees = trees
+    vine._trees = tuple(tuple(level) for level in trees)
     vine._edge_map = dict(edge_map)
     vine.pair_copulas = {
         key: _independent_pair()

@@ -23,6 +23,9 @@ Structure selection is Dissmann-based; non-independent edges can be refit
 through the strategy registry after the MLE family-selection pass.
 """
 
+from dataclasses import dataclass
+from typing import Any, Mapping
+
 import numpy as np
 
 from pyscarcopula.numerical._arrays import as_pseudo_observation_array
@@ -39,6 +42,7 @@ from pyscarcopula.vine._selection import (
     validate_fixed_copula_specs,
 )
 from pyscarcopula.vine._structure import (
+    RVineMatrix,
     _build_next_tree,
     _build_next_tree_conditional,
     _build_tree_0,
@@ -50,6 +54,72 @@ from pyscarcopula.vine._vine_fit import (
     _make_fixed_copula,
     _pair_from_result,
 )
+
+
+@dataclass(frozen=True)
+class VineStructureSelection:
+    """Structure-only result of automatic regular-vine selection.
+
+    Dissmann needs temporary fitted edges to construct higher-tree
+    pseudo-observations, but those working fits are deliberately excluded
+    from this result. The owning model performs its final edge fit separately.
+    """
+
+    structure: RVineMatrix
+    trees: tuple
+    diagnostics: Mapping[str, Any]
+
+
+def select_rvine_structure(
+        u, *, _selector=None, _return_working_fits=False, **kwargs):
+    """Select an R-vine structure without exposing temporary fitted edges.
+
+    ``select_rvine`` remains the compatibility API for callers that consume
+    its historical tuple. New orchestration should use this function and fit
+    the returned trees explicitly with ``fit_vine_edges``.
+    """
+    selector = select_rvine if _selector is None else _selector
+    options = dict(kwargs)
+    options['return_diagnostics'] = True
+    result = selector(u, **options)
+    if len(result) == 3:
+        trees, working_fits, diagnostics = result
+    else:
+        trees, working_fits = result
+        given_vars = tuple(options.get('given_vars') or ())
+        diagnostics = {
+            'target_given_vars': given_vars,
+            'selected_mode': None,
+            'selected_index': None,
+            'selected_candidate': {
+                'mode': None,
+                'exact_supported': False,
+                'dag_complete': False,
+                'fit_score': 0.0,
+                'missing_base_vars': given_vars,
+                'reachable_base_vars': (),
+                'n_known_nodes': 0,
+                'n_steps': 0,
+                'n_inverse_steps': 0,
+            },
+            'candidates': (),
+        }
+    frozen_trees = tuple(
+        tuple(
+            (frozenset(conditioned), frozenset(conditioning))
+            for conditioned, conditioning in level
+        )
+        for level in trees
+    )
+    structure = RVineMatrix.from_trees(len(frozen_trees) + 1, frozen_trees)
+    selection = VineStructureSelection(
+        structure=structure,
+        trees=frozen_trees,
+        diagnostics=diagnostics,
+    )
+    if _return_working_fits:
+        return selection, working_fits
+    return selection
 
 
 def select_rvine(

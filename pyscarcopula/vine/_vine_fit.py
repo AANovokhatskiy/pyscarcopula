@@ -95,6 +95,7 @@ def fit_vine_edges(
     transform_type="xtanh",
     config=None,
     fit_kwargs=None,
+    _pre_fitted=None,
 ):
     """Fit pair copulas for a validated, fixed regular-vine structure.
 
@@ -121,6 +122,24 @@ def fit_vine_edges(
         candidates if candidates is not None else _default_candidates())
     validate_pair_candidates(candidates)
     validate_fixed_copula_specs(copulas, d)
+
+    if _pre_fitted is not None:
+        fitted_levels = [list(level) for level in _pre_fitted]
+        if (
+                len(fitted_levels) != len(tree_levels)
+                or any(
+                    len(fitted) != len(edges)
+                    for fitted, edges in zip(fitted_levels, tree_levels)
+                )
+                or any(
+                    not isinstance(pair, PairCopula)
+                    for level in fitted_levels
+                    for pair in level
+                )):
+            raise ValueError(
+                "fit_vine_edges: pre-fitted working edges do not match trees")
+        return _build_vine_edge_fit(
+            fitted_levels, requested_method=method)
 
     pseudo_obs = {
         (variable, frozenset()): u[:, variable].copy()
@@ -371,15 +390,31 @@ def _build_vine_edge_fit(fitted_levels, *, requested_method):
         for tree, level in enumerate(fitted_levels)
         for edge, pair in enumerate(level)
     }
-    edge_records = tuple(
-        {
+    records = []
+    for key, pair in pair_copulas.items():
+        record = {
             "key": key,
             "family": type(pair.copula).__name__,
             "rotation": int(getattr(pair.copula, "rotate", 0)),
             **dict(pair.fit_diagnostics),
         }
-        for key, pair in pair_copulas.items()
-    )
+        result = getattr(pair, "fit_result", None)
+        record.setdefault(
+            "actual_method",
+            str(getattr(result, "method", requested_method)).upper(),
+        )
+        record.setdefault(
+            "actual_success",
+            bool(getattr(result, "success", True)),
+        )
+        record.setdefault("actual_nfev", int(
+            getattr(result, "nfev", 0) or 0))
+        record.setdefault("selection_nfev", record["actual_nfev"])
+        record.setdefault("dynamic_attempted", False)
+        record.setdefault("fallback_used", False)
+        record.setdefault("fallback_reason", None)
+        records.append(record)
+    edge_records = tuple(records)
     actual_methods = {}
     for record in edge_records:
         method = record["actual_method"]

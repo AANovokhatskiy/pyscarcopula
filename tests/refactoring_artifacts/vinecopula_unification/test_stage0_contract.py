@@ -78,8 +78,8 @@ def test_rvine_auto_structure_and_public_fitted_state_contract():
         ]),
     )
     assert _normalized_trees(vine) == [
-        [((0, 2), ()), ((2, 3), ()), ((0, 1), ())],
-        [((0, 3), (2,)), ((1, 2), (0,))],
+        [((0, 1), ()), ((0, 2), ()), ((2, 3), ())],
+        [((1, 2), (0,)), ((0, 3), (2,))],
         [((1, 3), (0, 2))],
     ]
     assert sorted(vine.pair_copulas) == [

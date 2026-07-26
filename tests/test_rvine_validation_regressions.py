@@ -64,6 +64,50 @@ def test_fit_rejects_complex_data_without_lossy_cast():
 
 
 @pytest.mark.parametrize(
+    "factory",
+    [
+        lambda a: a.tolist(),
+        lambda a: a.astype(np.float32),
+        lambda a: np.asfortranarray(a),
+        lambda a: a[:, ::-1],
+        lambda a: a.astype(object),
+    ],
+)
+def test_fit_accepts_supported_array_representations_without_mutation(factory):
+    base = np.array([
+        [0.15, 0.25],
+        [0.35, 0.45],
+        [0.55, 0.65],
+        [0.75, 0.85],
+    ])
+    data = factory(base)
+    if isinstance(data, np.ndarray):
+        before = data.copy()
+        data.flags.writeable = False
+
+    vine = RVineCopula(candidates=[IndependentCopula]).fit(data)
+
+    assert vine.d == 2
+    if isinstance(data, np.ndarray):
+        np.testing.assert_array_equal(data, before)
+
+
+@pytest.mark.parametrize(
+    "bad_data",
+    [
+        0.5,
+        np.array([0.2, 0.4]),
+        np.zeros((2, 2, 1)),
+        np.array([[0, 1], [1, 0]], dtype=np.int64),
+    ],
+)
+def test_fit_rejects_ambiguous_shapes_and_integer_pseudo_observations(
+        bad_data):
+    with pytest.raises((TypeError, ValueError)):
+        RVineCopula(candidates=[IndependentCopula]).fit(bad_data)
+
+
+@pytest.mark.parametrize(
     "bad_data",
     [
         np.array([[0.2, np.nan]]),
@@ -140,6 +184,15 @@ def test_sample_memory_budget_is_checked_before_allocation():
             batch_rows=10,
             memory_budget_bytes=100,
             rng=np.random.default_rng(4),
+        )
+
+
+def test_sample_overflow_scale_request_is_rejected_before_allocation():
+    with pytest.raises(MemoryError, match="memory_budget_bytes"):
+        _independent_vine().sample(
+            2**62,
+            batch_rows=8,
+            memory_budget_bytes=1,
         )
 
 

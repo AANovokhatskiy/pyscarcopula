@@ -14,11 +14,16 @@ from pyscarcopula import (
     GumbelCopula,
     IndependentCopula,
     JoeCopula,
+    VineCopula,
 )
 from pyscarcopula._types import GASResult, gas_params
 from pyscarcopula.api import fit as fit_copula
 from pyscarcopula.vine import cvine_structure, dvine_structure
-from pyscarcopula.vine._rvine_dissmann import select_rvine
+from pyscarcopula.vine._rvine_dissmann import (
+    VineStructureSelection,
+    select_rvine,
+    select_rvine_structure,
+)
 from pyscarcopula.vine._vine_fit import VineEdgeFit, fit_vine_edges
 
 
@@ -139,6 +144,66 @@ def test_auto_selected_trees_refit_with_same_families_reproduce_edges():
                 auto_pair.param, abs=1e-6)
             assert fixed_pair.log_likelihood == pytest.approx(
                 auto_pair.log_likelihood, abs=2e-6)
+
+
+def test_structure_selection_result_excludes_temporary_fitted_edges():
+    selection = select_rvine_structure(
+        _gaussian_data(dimension=4),
+        candidates=[BivariateGaussianCopula],
+        allow_rotations=False,
+    )
+
+    assert isinstance(selection, VineStructureSelection)
+    assert selection.structure == structure_module.RVineMatrix.from_trees(
+        4, selection.trees)
+    assert not hasattr(selection, "fitted")
+    assert isinstance(selection.trees, tuple)
+    assert all(isinstance(level, tuple) for level in selection.trees)
+
+
+def test_public_auto_replay_uses_canonical_order_and_preserves_fit_results():
+    u = _gaussian_data(dimension=4)
+    auto = VineCopula(
+        candidates=[BivariateGaussianCopula],
+        allow_rotations=False,
+    ).fit(u)
+    canonical_trees = auto.structure.to_trees()
+    specs = [
+        [
+            (
+                type(auto.pair_copulas[
+                    auto._matrix_key(tree, edge)].copula),
+                auto.pair_copulas[
+                    auto._matrix_key(tree, edge)].copula.rotate,
+            )
+            for edge, _ in enumerate(level)
+        ]
+        for tree, level in enumerate(canonical_trees)
+    ]
+    replay = VineCopula(
+        structure=auto.structure,
+        allow_rotations=False,
+    ).fit(u, copulas=specs)
+
+    assert auto.trees == canonical_trees
+    assert replay.trees == canonical_trees
+    assert replay.log_likelihood() == pytest.approx(
+        auto.log_likelihood(), abs=1e-5)
+    assert isinstance(replay.fit_result.nfev, int)
+    assert isinstance(auto.fit_result.nfev, int)
+    assert (
+        replay.fit_result.actual_methods
+        == auto.fit_result.actual_methods
+    )
+    for key, auto_pair in auto.pair_copulas.items():
+        replay_pair = replay.pair_copulas[key]
+        assert replay_pair.param == pytest.approx(auto_pair.param, abs=1e-6)
+        assert isinstance(replay_pair.nfev, int)
+        assert isinstance(auto_pair.nfev, int)
+        assert (
+            replay_pair.fit_diagnostics["actual_method"]
+            == auto_pair.fit_diagnostics["actual_method"]
+        )
 
 
 @pytest.mark.parametrize(

@@ -7,7 +7,11 @@ import numpy as np
 import pytest
 
 from pyscarcopula import (
+    BivariateGaussianCopula,
+    ClaytonCopula,
     CVineCopula,
+    FrankCopula,
+    GumbelCopula,
     IndependentCopula,
     RVineCopula,
     VineCopula,
@@ -26,6 +30,12 @@ V2_RVINE_FIXTURE = (
     / "fixtures"
     / "persistence"
     / "v2_rvine_current_path.json"
+)
+V2_CVINE_FIXTURE = (
+    Path(__file__).parent
+    / "fixtures"
+    / "persistence"
+    / "v2_cvine_legacy_path.json"
 )
 
 
@@ -93,6 +103,42 @@ def test_v2_rvine_fixture_migrates_to_canonical_vine_type_and_state():
     assert loaded._orig_edge_key == {(0, 0): (0, 0)}
     assert loaded._suffix_state_cache == {}
     assert loaded._predict_history_cache == {}
+
+
+def test_v3_persistence_preserves_heterogeneous_canonical_edge_mapping(
+        tmp_path):
+    structure = cvine_structure(4)
+    specs = [
+        [
+            (IndependentCopula, 0),
+            (BivariateGaussianCopula, 0),
+            (FrankCopula, 0),
+        ],
+        [
+            (ClaytonCopula, 0),
+            (ClaytonCopula, 90),
+        ],
+        [
+            (GumbelCopula, 180),
+        ],
+    ]
+    vine = VineCopula(
+        structure=structure,
+        allow_rotations=True,
+    ).fit(_data(rows=100, dimension=4), copulas=specs)
+    path = tmp_path / "heterogeneous.json"
+    vine.save(path, include_data=False)
+
+    loaded = VineCopula.load(path)
+
+    assert loaded.trees == structure.to_trees()
+    for tree, level in enumerate(specs):
+        for edge, (family, rotation) in enumerate(level):
+            key = loaded._matrix_key(tree, edge)
+            pair = loaded.pair_copulas[key]
+            assert type(pair.copula) is family
+            assert pair.copula.rotate == rotation
+            assert pair.param == vine.pair_copulas[key].param
 
 
 @pytest.mark.parametrize(("expected_type", "factory"), _factories())
@@ -171,19 +217,12 @@ def test_legacy_cvine_loads_from_v2_and_v3_without_type_migration(tmp_path):
     assert type(v3_loaded) is CVineCopula
     assert not isinstance(v3_loaded, VineCopula)
 
-    envelope = json.loads(v3_path.read_text(encoding="utf-8"))
-    envelope["format_version"] = 2
-    v2_path = tmp_path / "legacy-v2.json"
-    v2_path.write_text(
-        json.dumps(envelope, separators=(",", ":")),
-        encoding="utf-8",
-    )
-    v2_loaded = load_model(v2_path)
+    v2_loaded = load_model(V2_CVINE_FIXTURE)
     assert type(v2_loaded) is CVineCopula
-    np.testing.assert_array_equal(
-        v2_loaded.sample(6, rng=np.random.default_rng(4)),
-        legacy.sample(6, rng=np.random.default_rng(4)),
-    )
+    assert v2_loaded.d == 2
+    assert v2_loaded.fit_result.log_likelihood == 0.0
+    assert v2_loaded.sample(
+        6, rng=np.random.default_rng(4)).shape == (6, 2)
 
 
 def test_v2_missing_edge_maps_are_reconstructed(tmp_path):
