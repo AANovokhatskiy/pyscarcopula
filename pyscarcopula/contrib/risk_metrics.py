@@ -18,6 +18,8 @@ Usage:
     )
 """
 
+import importlib.util
+
 import numpy as np
 from numba import njit
 from scipy.optimize import minimize, Bounds
@@ -388,6 +390,44 @@ def _process_chunk_optimal(args):
     return results
 
 
+def _require_multiprocessing_importable(
+        obj,
+        argument_name,
+        context,
+):
+    """Ensure spawn/forkserver workers can import a payload class."""
+    start_method = context.get_start_method()
+
+    if start_method == "fork":
+        return
+
+    cls = type(obj)
+    module_name = getattr(cls, "__module__", None)
+    qualname = getattr(cls, "__qualname__", cls.__name__)
+
+    if (
+            not module_name
+            or module_name == "__main__"
+            or "<locals>" in qualname):
+        raise TypeError(
+            f"{argument_name} must use an importable top-level class "
+            f"with multiprocessing start method {start_method!r}; "
+            f"got {module_name}.{qualname}"
+        )
+
+    try:
+        spec = importlib.util.find_spec(module_name)
+    except (ImportError, AttributeError, ValueError):
+        spec = None
+
+    if spec is None:
+        raise TypeError(
+            f"{argument_name} class {module_name}.{qualname} cannot "
+            f"be imported by {start_method!r} multiprocessing workers. "
+            "Use a class from an installed module or run with n_jobs=1."
+        )
+
+
 def _make_chunks(n_windows, n_jobs):
     """Split n_windows into n_jobs roughly equal chunks."""
     if n_jobs <= 0:
@@ -455,6 +495,11 @@ def _calculate_cvar_fixed(copula, data, method, marginal_model,
         ]
 
         context = mp.get_context(mp_start_method)
+        _require_multiprocessing_importable(
+            marginal_model,
+            "marginal_model",
+            context,
+        )
         with context.Pool(len(chunks)) as pool:
             chunk_results = pool.map(_process_chunk_fixed, pool_args)
 
@@ -528,6 +573,11 @@ def _calculate_cvar_optimal(copula, data, method, marginal_model,
         ]
 
         context = mp.get_context(mp_start_method)
+        _require_multiprocessing_importable(
+            marginal_model,
+            "marginal_model",
+            context,
+        )
         with context.Pool(len(chunks)) as pool:
             chunk_results = pool.map(_process_chunk_optimal, pool_args)
 
