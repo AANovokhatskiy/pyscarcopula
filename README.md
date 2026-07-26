@@ -234,3 +234,7 @@ process workers, thread safety, and scaling limits are documented in
 ## License
 
 MIT License. See [`LICENSE.txt`](LICENSE.txt).
+
+## Contacts
+
+Contact me for any questions or discussion aanovokhatskiy@gmail.com

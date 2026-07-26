@@ -150,6 +150,59 @@ def test_removed_experimental_namespace_is_physically_absent():
     assert not (ROOT / "pyscarcopula/copula/experimental").exists()
 
 
+def test_public_docs_exclude_development_plans_and_phase_reports():
+    forbidden = (
+        "phase-8",
+        "phase 8",
+        "phase-9",
+        "release gate",
+        "release-gate",
+        "future work",
+        "not implemented",
+        "proposed api",
+    )
+    for path in DOC_FILES:
+        text = path.read_text(encoding="utf-8").lower()
+        for phrase in forbidden:
+            assert phrase not in text, (
+                f"{path.relative_to(ROOT)} contains development artifact "
+                f"{phrase!r}"
+            )
+
+    assert not (ROOT / "docs/validation").exists()
+    nav = (ROOT / "mkdocs.yml").read_text(encoding="utf-8")
+    assert "validation/" not in nav
+
+
+def test_notebooks_do_not_import_private_pyscarcopula_modules():
+    for path in sorted((ROOT / "examples").glob("*.ipynb")):
+        text = path.read_text(encoding="utf-8")
+        assert "from pyscarcopula._" not in text
+        assert "import pyscarcopula._" not in text
+
+
+def test_complete_public_documentation_examples_execute():
+    namespaces = {}
+    for relative_path in (
+            "docs/index.md",
+            "docs/api/copulas.md",
+            "docs/api/persistence.md"):
+        path = ROOT / relative_path
+        namespace = {"__name__": "__documentation_example__"}
+        for source in _python_blocks(path):
+            exec(compile(source, filename=str(path), mode="exec"), namespace)
+        namespaces[relative_path] = namespace
+
+    assert namespaces["docs/index.md"]["u"].shape == (400, 2)
+    assert np.isfinite(
+        namespaces["docs/api/copulas.md"]["fitted_log_likelihood"])
+    assert (
+        namespaces["docs/api/copulas.md"]["conditional_cdf"].shape
+        == (200,)
+    )
+    assert namespaces["docs/api/persistence.md"]["samples"].shape == (20, 2)
+
+
 def test_documented_public_imports():
     from pyscarcopula import (
         BivariateCopula,

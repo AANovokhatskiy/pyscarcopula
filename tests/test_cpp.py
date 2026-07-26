@@ -16,7 +16,7 @@ from pyscarcopula import (
 from pyscarcopula._constants import PSEUDO_OBS_EPS
 from pyscarcopula._utils import pobs
 from pyscarcopula._types import LatentResult, ou_params
-from pyscarcopula.api import fit
+from pyscarcopula.api import fit, sample
 from pyscarcopula.copula.multivariate import StochasticStudentCopula
 from pyscarcopula.copula.independent import IndependentCopula
 from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
@@ -1604,6 +1604,48 @@ def test_cpp_rejects_non_finite_observations_before_kernel_call():
         _cpp_scar_ou.loglik(1.0, 0.0, 1.0, u, copula, cfg)
 
 
+@pytest.mark.parametrize("invalid", [-0.01, 1.01])
+def test_cpp_rejects_out_of_range_pseudo_observations(invalid):
+    u = _data(seed=20260724, n=8)
+    u[3, 0] = invalid
+    copula = ClaytonCopula(rotate=0, transform_type="softplus")
+    cfg = AutoTMConfig(
+        transition_method="matrix",
+        K=16,
+        adaptive=False,
+        max_K=None,
+    )
+
+    with pytest.raises(ValueError, match=r"pseudo-observations in \[0, 1\]"):
+        _cpp_scar_ou.loglik(1.0, 0.0, 1.0, u, copula, cfg)
+
+
+def test_cpp_rejects_complex_observations_without_discarding_imaginary_part():
+    u = _data(seed=20260724, n=8).astype(np.complex128)
+    u += 7.0j
+    copula = ClaytonCopula(rotate=0, transform_type="softplus")
+    cfg = AutoTMConfig(transition_method="spectral")
+
+    with pytest.raises(TypeError, match="real values"):
+        _cpp_scar_ou.loglik(1.0, 0.0, 1.0, u, copula, cfg)
+
+
+def test_direct_pybind_rejects_out_of_range_pseudo_observations():
+    module = _cpp_scar_ou._cpp_extension.load()
+    u = _data(seed=20260724, n=8)
+    copula = ClaytonCopula(rotate=0, transform_type="softplus")
+    spec = _cpp_scar_ou._cpp_copula.make_spec(module, copula, u)
+    params = module.OuParams()
+    config = module.OuNumericalConfig()
+    config.spectral_basis_order = 16
+    config.spectral_quad_order = 48
+    u[0, 0] = -0.01
+
+    with pytest.raises(ValueError, match=r"pseudo-observations in \[0, 1\]"):
+        module.ScarOuEvaluator().loglik_spectral(
+            params, spec, u, config)
+
+
 def test_cpp_rejects_invalid_observation_shape_before_kernel_call():
     u = np.array([0.2, 0.4, 0.6], dtype=np.float64)
     copula = ClaytonCopula(rotate=0, transform_type="softplus")
@@ -1654,6 +1696,19 @@ def test_cpp_observation_view_preserves_array_conversion_semantics(convert):
         1.0, 0.0, 1.0, convert(u), copula, cfg)
 
     np.testing.assert_allclose(actual, expected, rtol=0.0, atol=2e-7)
+
+
+def test_scar_model_sample_zero_returns_empty_without_advancing_rng():
+    u = _data(seed=20260724, n=8)
+    copula = BivariateGaussianCopula()
+    actual_rng = np.random.default_rng(20260724)
+    expected_rng = np.random.default_rng(20260724)
+
+    actual = sample(copula, u, _result(copula_name=copula.name), 0,
+                    rng=actual_rng)
+
+    assert actual.shape == (0, 2)
+    np.testing.assert_array_equal(actual_rng.random(8), expected_rng.random(8))
 
 
 @pytest.mark.parametrize(

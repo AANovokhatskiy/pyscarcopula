@@ -33,6 +33,10 @@ The shared formulas for scalar dynamic states, parameter links, SCAR filters,
 and dynamic Rosenblatt GoF are summarized in
 [Mathematical Contracts](mathematical-contracts.md).
 
+Factor correlation, static and joint MLE, dynamic GAS/SCAR examples, and
+standalone operator usage are covered on the dedicated
+[Factor Models](factor-models.md) page.
+
 ## Equicorrelation Gaussian Copula
 
 For $d$ assets, the standard Gaussian copula has $d(d-1)/2$ static
@@ -101,8 +105,12 @@ Equicorrelation SCAR is a good fit when:
 For heterogeneous dependence, use C-vine or R-vine instead.
 
 The equicorrelation density hot path is linear in `d` and does not construct a
-dense correlation matrix. Output arrays and input storage still determine the
-end-to-end memory footprint, so large sampling jobs should be batched.
+dense correlation matrix. Conditional sampling uses the closed-form
+equicorrelation conditional mean and covariance decomposition and likewise
+does not construct `R` or a dense Schur complement. Static MLE results retain
+only scalar `rho`, with `correlation_matrix=None`. Output arrays and input
+storage still determine the end-to-end memory footprint, so large sampling
+jobs should be batched.
 
 ## Stochastic Student-t Copula
 
@@ -165,7 +173,7 @@ cop = StochasticStudentCopula(d=5, corr_mode="cholesky")
 cop = StochasticStudentCopula(
     d=u.shape[1],
     corr_mode="factor",
-    factor_rank=8,
+    factor_rank=3,
 )
 cop.initialize_factor(u)
 ```
@@ -174,8 +182,9 @@ cop.initialize_factor(u)
 MLE or with the three OU parameters in SCAR-TM-OU. `cholesky` mode estimates
 `d(d-1)/2` additional static parameters and is intended for low-dimensional
 problems. Their initialization/base matrix uses `corr_base` when supplied,
-otherwise `R`, and otherwise a Kendall estimate from the fit data. GAS keeps
-fixed-correlation semantics.
+otherwise `R`, and otherwise a Kendall estimate from the fit data. GAS
+supports `fixed`, `shrinkage`, and `factor` correlation modes; `cholesky` is
+restricted to MLE and SCAR-TM-OU.
 
 Static and stochastic Student models share the same Kendall preprocessing.
 Each pair uses
@@ -223,15 +232,11 @@ gof = gof_test(cop, returns, to_pobs=True)
 - As an alternative to vine copulas for moderate dimensions
 
 The `fixed`, `shrinkage`, and `cholesky` modes retain a dense `O(d^2)`
-correlation representation. The phase-9.4 `factor` mode instead stores
-`O(d*k + k^2)` state, can accept validated loadings or estimate them with a
-deterministic tiled randomized SVD, and exposes static row/grid evaluation.
-It never creates dense `R` implicitly. Phase 9.5 supports static MLE, native
-GAS, SCAR-TM-OU matrix/local/spectral fitting and native SCAR-MC trajectory
-likelihood without changing that representation. Phase 9.6 adds structural
-factor Student generation, bounded `sample_at_parameter_batches`,
-fitted-model `sample_batches`/`predict_batches`, and exact conditional
-sampling without a dense Schur complement.
+correlation representation. The `factor` mode instead stores
+`O(d*k + k^2)` state, accepts validated loadings or estimates them with a
+deterministic tiled randomized SVD, and never creates dense `R` implicitly.
+It supports static MLE, GAS, SCAR-TM-OU, row/grid evaluation, bounded batch
+generation, and exact conditional sampling without a dense Schur complement.
 
 Static MLE can also refine `df` and the factor loadings jointly when the
 identifiable parameter count is deliberately bounded:

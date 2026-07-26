@@ -20,7 +20,27 @@ mathematical meaning of these options.
 
 ::: pyscarcopula.api.predictive_mean
 
+::: pyscarcopula.api.log_likelihood
+
 ::: pyscarcopula.api.mixture_h
+
+The following complete example evaluates both fitted likelihood and the
+conditional CDF used by pair-copula and vine calculations:
+
+```python
+import numpy as np
+from pyscarcopula import GumbelCopula
+from pyscarcopula.api import fit, log_likelihood, mixture_h
+
+rng = np.random.default_rng(2026)
+source = GumbelCopula(rotate=180)
+u = source.sample_at_parameter(200, np.full(200, 1.7), rng=rng)
+
+copula = GumbelCopula(rotate=180)
+result = fit(copula, u, method="mle")
+fitted_log_likelihood = log_likelihood(copula, u, result)
+conditional_cdf = mixture_h(copula, u, result)
+```
 
 ## BivariateCopula (base class)
 
@@ -31,6 +51,27 @@ mathematical meaning of these options.
 the multivariate and vine APIs. Use
 `BivariateCopula.sample_at_parameter(n, r, ...)` for generation at an
 explicit copula parameter.
+
+All built-in bivariate families share the same fitting surface:
+
+```python
+from pyscarcopula import (
+    BivariateGaussianCopula,
+    ClaytonCopula,
+    FrankCopula,
+    IndependentCopula,
+    JoeCopula,
+)
+
+models = [
+    ClaytonCopula(),
+    FrankCopula(),
+    JoeCopula(),
+    BivariateGaussianCopula(),
+    IndependentCopula(),
+]
+results = [model.fit(u, method="mle") for model in models]
+```
 
 Kendall-tau dynamic fitting with `method='scar-tm-jacobi'` requires
 `tau_to_param` and `param_to_tau`. These mappings are implemented for
@@ -93,29 +134,3 @@ Kendall-tau dynamic fitting with `method='scar-tm-jacobi'` requires
     options:
       show_bases: false
       members: false
-
-## GaussianCopula
-
-::: pyscarcopula.copula.multivariate.gaussian.GaussianCopula
-    options:
-      show_bases: false
-      members: false
-
-## StudentCopula
-
-::: pyscarcopula.copula.multivariate.student.StudentCopula
-    options:
-      show_bases: false
-      members: false
-
-## StochasticStudentCopula
-
-::: pyscarcopula.copula.multivariate.stochastic_student.StochasticStudentCopula
-    options:
-      members:
-        - fit
-        - sample
-        - predict
-        - predictive_mean
-        - transform
-        - inv_transform

@@ -37,8 +37,14 @@ large-dimension limits, see [CPU Parallelism](guide/parallelism.md).
 from pyscarcopula import GumbelCopula
 from pyscarcopula.api import fit, predictive_mean
 from pyscarcopula.stattests import gof_test
+import numpy as np
 
-u = returns.rank(method="average").div(len(returns) + 1).to_numpy()
+source = GumbelCopula(rotate=180)
+u = source.sample_at_parameter(
+    400,
+    r=np.full(400, 1.8),
+    rng=np.random.default_rng(2026),
+)
 copula = GumbelCopula(rotate=180)
 
 result = fit(copula, u, method='scar-tm-ou')
@@ -50,10 +56,15 @@ print(f"GoF p-value = {gof.pvalue:.4f}")
 r_t = predictive_mean(copula, u, result)
 ```
 
-## Comparison on BTC-ETH daily data (T=1460)
+## Where to Go Next
 
-| Model | logL | GoF p-value |
-|-------|------|-------------|
-| MLE (constant) | 955.63 | 0.0105 |
-| GAS (score-driven) | 1031.42 | 0.5187 |
-| **SCAR-TM-OU** | **1042.47** | **0.6544** |
+- [Install pyscarcopula](getting-started/installation.md) and run the
+  [end-to-end quick start](getting-started/quickstart.md).
+- Use [Choosing a Model](getting-started/choosing-a-model.md) to select between
+  bivariate, multivariate, factor, and vine models.
+- Read [Estimation Methods](guide/estimation-methods.md) before comparing MLE,
+  GAS, and SCAR fits.
+- Read [Prediction Semantics](guide/prediction-semantics.md) before using
+  conditional or dynamic forecasts.
+- Go directly to the [API Reference](api/copulas.md) when you already know the
+  model and operation you need.

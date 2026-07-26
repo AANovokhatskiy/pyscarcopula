@@ -1031,6 +1031,26 @@ class TestTruncationAndPrune:
             if t >= 2:
                 assert isinstance(pc.copula, IndependentCopula)
 
+    def test_full_independent_truncation_uses_validated_fast_path(
+            self, monkeypatch):
+        u = _sample_dvine_gumbel(500, 5, 3.0, seed=0)
+
+        def fail_public_fit(*args, **kwargs):
+            raise AssertionError(
+                "truncated R-vine rescanned an already validated edge")
+
+        monkeypatch.setattr(IndependentCopula, "fit", fail_public_fit)
+        vine = RVineCopula(
+            truncation_level=0,
+            truncation_fill="independent",
+        ).fit(u)
+
+        assert vine.n_parameters == 0
+        assert all(
+            isinstance(pc.copula, IndependentCopula)
+            for pc in vine.pair_copulas.values()
+        )
+
     def test_fit_truncation_kwargs_override_constructor_defaults(self):
         u = _sample_dvine_gumbel(500, 5, 3.0, seed=0)
         v = RVineCopula().fit(

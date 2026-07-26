@@ -81,7 +81,7 @@ import numpy as np
 from pyscarcopula.api import sample, predict
 
 v = sample(copula, u, result, n=2000, rng=np.random.default_rng(2024))
-result_refit = fit(copula, v, method='scar-tm-ou', to_pobs=True)
+result_refit = fit(copula, v, method='scar-tm-ou')
 ```
 
 **`predict`** generates samples for next-step forecasting. It also supports

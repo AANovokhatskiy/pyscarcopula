@@ -378,11 +378,6 @@ class EquicorrGaussianCopula(MultivariateCopula):
             options=optimizer_options,
         )
         rho_hat = self.transform(result.x)[0]
-        prepared_input = isinstance(u, EquicorrPreparedData)
-        correlation = None if prepared_input else (
-            (1.0 - rho_hat) * np.eye(self.d)
-            + rho_hat * np.ones((self.d, self.d))
-        )
         fitted = MultivariateMLEResult(
             log_likelihood=-result.fun,
             method="MLE",
@@ -394,8 +389,7 @@ class EquicorrGaussianCopula(MultivariateCopula):
             parameter_count=1,
             n_observations=len(u),
             model_parameters={"rho": rho_hat},
-            correlation_matrix=(
-                None if correlation is None else correlation.copy()),
+            correlation_matrix=None,
             diagnostics={
                 "n_threads": config.n_threads,
                 "model_score": "not_applicable",
@@ -405,11 +399,8 @@ class EquicorrGaussianCopula(MultivariateCopula):
                 "filter_derivative": "not_applicable",
                 "parameter_gradient": "analytical_rho",
                 "transform_chain_rule": True,
-                "corr_matrix": (
-                    None if correlation is None else correlation.copy()),
-                "correlation_representation": (
-                    "equicorrelation_scalar"
-                    if prepared_input else "dense"),
+                "corr_matrix": None,
+                "correlation_representation": "equicorrelation_scalar",
                 "equicorrelation_rho": float(rho_hat),
             },
         )
@@ -438,14 +429,21 @@ class EquicorrGaussianCopula(MultivariateCopula):
                     "prepared statistics currently support MLE, GAS, and "
                     "SCAR-TM-OU")
             observations = data
-            self._last_prepared = data
-            self._last_u = None
         else:
             observations = np.asarray(data, dtype=np.float64)
+            if observations.ndim != 2 or observations.shape[1] != self._d:
+                raise ValueError(
+                    f"data must have shape (n_observations, {self._d})")
+            if observations.shape[0] == 0:
+                raise ValueError(
+                    "data must contain at least one observation")
+            if not np.all(np.isfinite(observations)):
+                raise ValueError("data must contain only finite values")
             if to_pobs:
                 observations = pobs(observations)
-            self._last_u = observations
-            self._last_prepared = None
+                if not np.all(np.isfinite(observations)):
+                    raise ValueError(
+                        "pseudo-observations must contain only finite values")
 
         if method.upper() == "MLE":
             optimizer_kwargs = {
@@ -453,13 +451,23 @@ class EquicorrGaussianCopula(MultivariateCopula):
                 for key in _LBFGSB_FIT_KEYS
                 if key in kwargs
             }
-            return self._fit_mle(
+            if kwargs:
+                unexpected = ", ".join(sorted(kwargs))
+                raise TypeError(
+                    f"unexpected MLE keyword argument(s): {unexpected}")
+            result = self._fit_mle(
                 observations, config=config, **optimizer_kwargs)
-
-        from pyscarcopula.api import fit
-        result = fit(
-            self, observations, method=method, config=config, **kwargs)
-        self.fit_result = result
+        else:
+            from pyscarcopula.api import fit
+            result = fit(
+                self, observations, method=method, config=config, **kwargs)
+            self.fit_result = result
+        if isinstance(observations, EquicorrPreparedData):
+            self._last_prepared = observations
+            self._last_u = None
+        else:
+            self._last_u = observations
+            self._last_prepared = None
         return result
 
     def sample_at_parameter(

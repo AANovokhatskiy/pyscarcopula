@@ -32,6 +32,10 @@ from pyscarcopula._utils import (
     clip_pseudo_observations_no_copy,
     clip_rosenblatt_output,
 )
+from pyscarcopula.numerical._arrays import (
+    as_float64_array,
+    as_pseudo_observation_array,
+)
 
 
 @dataclass(frozen=True)
@@ -85,9 +89,7 @@ def cvm_test(e):
 
 def _as_float64_array_no_copy(value):
     """Return a float64 array while preserving an already compatible input."""
-    if type(value) is np.ndarray and value.dtype == np.float64:
-        return value
-    return np.asarray(value, dtype=np.float64)
+    return as_float64_array(value, name="data")
 
 
 def _grid_transition_method(transition_method):
@@ -272,6 +274,7 @@ def _gof_bivariate(copula, data, to_pobs=True, K=300, grid_range=5.0,
     u = _as_float64_array_no_copy(data)
     if to_pobs:
         u = compute_pobs(u)
+    u = as_pseudo_observation_array(u)
 
     fr = fit_result if fit_result is not None else getattr(copula, 'fit_result', None)
     if fr is None:
@@ -1215,6 +1218,7 @@ def stochastic_student_gof_test(copula, data, to_pobs=True,
     u = _as_float64_array_no_copy(data)
     if to_pobs:
         u = compute_pobs(u)
+    u = as_pseudo_observation_array(u)
 
     fr = fit_result if fit_result is not None else getattr(copula, 'fit_result', None)
     if fr is None:

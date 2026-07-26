@@ -169,7 +169,7 @@ class CVineCopula:
                         cop = cop_class(rotate=rotation)
                     from pyscarcopula.copula.independent import IndependentCopula
                     if isinstance(cop, IndependentCopula):
-                        result = cop.fit(u_pair)
+                        result = cop._fit_validated(u_pair)
                     else:
                         from pyscarcopula.api import fit as _api_fit
                         result = _api_fit(cop, u_pair, method='mle')

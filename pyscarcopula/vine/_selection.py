@@ -287,9 +287,7 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
     for idx in range(n_refine):
         _, cop, r0, evaluator = itau_candidates[idx]
         try:
-            x0 = cop.inv_transform(
-                np.atleast_1d(np.array([r0], dtype=np.float64)))
-            alpha0 = np.atleast_1d(x0)[0:1]
+            alpha0 = np.array([r0], dtype=np.float64)
             result = _fit_mle_direct(
                 cop, u_pair, alpha0=alpha0, evaluator=evaluator)
             logL = result.log_likelihood

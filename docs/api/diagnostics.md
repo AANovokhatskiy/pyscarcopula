@@ -50,16 +50,6 @@ Independent fit batches and rolling risk results additionally expose:
 - `worker_model_ownership='per_task'` and
   `prepared_evaluator_sharing=False`.
 
-Low-level native diagnostic variants also report block counts and a
-`failure_index`. A block count of one can be expected for small workloads even
-when multiple threads were requested. On failure, the index is the smallest
-failing row or trajectory and matches the sequential execution contract.
-
-The private runtime diagnostic snapshot includes `worker_start_events`,
-`tasks_submitted`, and `peak_queued_tasks`. These counters are intended for
-release validation and resource-regression tests, not as stable public tuning
-parameters.
-
 For `RVineCopula`, `vine.fit_diagnostics["edge_fits"]` additionally separates
 the requested vine method from the methods retained on individual edges. It
 contains actual method and family counts, dynamic attempt/success counts,

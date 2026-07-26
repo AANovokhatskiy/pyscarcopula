@@ -71,6 +71,22 @@ class TestFitResultTypes:
         assert result.params.kappa > 0
         assert result.params.nu > 0
 
+    @pytest.mark.parametrize(
+        "invalid_data",
+        [
+            np.array([[-0.01, 0.5], [0.4, 0.6]]),
+            np.array([[0.01, 1.01], [0.4, 0.6]]),
+            np.array([[0.2 + 3.0j, 0.5], [0.4, 0.6]]),
+        ],
+    )
+    def test_fit_rejects_invalid_pseudo_observations_before_strategy(
+            self, invalid_data):
+        copula = GumbelCopula(rotate=180)
+        error = TypeError if np.iscomplexobj(invalid_data) else ValueError
+
+        with pytest.raises(error, match="real values|pseudo-observations"):
+            fit(copula, invalid_data, method="scar-tm-ou")
+
     def test_gas_returns_gas_result(self, random_u2):
         cop = GumbelCopula(rotate=180)
         result = fit(cop, random_u2, method='gas')
@@ -185,6 +201,39 @@ class TestIndependentCopula:
         cop = IndependentCopula()
         result = cop.fit(np.random.default_rng(101).random((100, 2)))
         assert result.log_likelihood == 0.0
+
+    @pytest.mark.parametrize(
+        "data",
+        [
+            np.empty((0, 2)),
+            np.array([[np.nan, 0.2]]),
+            np.array([[-0.1, 0.2]]),
+            np.ones((2, 3)),
+            np.array([0.2, 0.3]),
+        ],
+    )
+    def test_direct_fit_rejects_invalid_data(self, data):
+        with pytest.raises(ValueError):
+            IndependentCopula().fit(data)
+
+    def test_direct_fit_rejects_complex_data(self):
+        with pytest.raises(TypeError, match="real values"):
+            IndependentCopula().fit(
+                np.array([[0.2 + 1.0j, 0.3], [0.4, 0.5]]))
+
+    def test_direct_fit_rejects_non_mle_method(self, random_u2):
+        with pytest.raises(TypeError, match="does not support GAS"):
+            IndependentCopula().fit(random_u2, method="gas")
+
+    def test_direct_fit_honors_to_pobs(self):
+        raw = np.array([[10.0, -2.0], [30.0, 5.0], [20.0, 1.0]])
+        copula = IndependentCopula()
+
+        result = copula.fit(raw, to_pobs=True)
+
+        assert result.success
+        assert copula._last_u.shape == raw.shape
+        assert np.all((copula._last_u > 0.0) & (copula._last_u < 1.0))
 
     def test_top_level_fit_zero_logL(self):
         cop = IndependentCopula()

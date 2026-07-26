@@ -24,7 +24,7 @@ from pyscarcopula.numerical._scar_ou_config import (
     AutoTMConfig,
     validate_cpp_config,
 )
-from pyscarcopula.numerical._arrays import as_float64_array
+from pyscarcopula.numerical._arrays import as_pseudo_observation_array
 from pyscarcopula.numerical._transition_methods import (
     normalize_ou_transition_method,
 )
@@ -1318,7 +1318,7 @@ class SCARTMStrategy:
             EquicorrPreparedData,
         )
         if not isinstance(u, EquicorrPreparedData):
-            u = as_float64_array(u)
+            u = as_pseudo_observation_array(u)
         corr_num_params = getattr(copula, "_corr_num_params", None)
         n_corr = int(corr_num_params()) if callable(corr_num_params) else 0
         if n_corr:

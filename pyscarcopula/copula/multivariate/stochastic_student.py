@@ -141,6 +141,17 @@ def _sampling_memory_budget(memory_budget_bytes, required, guidance):
             f"{guidance}")
 
 
+def _validated_student_sampling_parameters(r, n):
+    values = np.atleast_1d(np.asarray(r, dtype=np.float64)).ravel()
+    if values.size not in (1, int(n)):
+        raise ValueError(
+            f"r must be scalar or array of length {int(n)}, "
+            f"got {values.size}")
+    if np.any(~np.isfinite(values)) or np.any(values <= 2.0):
+        raise ValueError("r must be finite and greater than 2")
+    return values
+
+
 # ══════════════════════════════════════════════════════════════
 # Helper functions
 # ══════════════════════════════════════════════════════════════
@@ -1538,16 +1549,23 @@ class StochasticStudentCopula(MultivariateCopula):
                 "static MLE; GAS/SCAR require loading gradients through "
                 "their sequential filters")
 
-        self._last_u = u
-
-        self._ensure_corr_initialized(u)
-
+        optimizer_kwargs = {}
         if method.upper() == 'MLE':
             optimizer_kwargs = {
                 key: kwargs.pop(key)
                 for key in _LBFGSB_FIT_KEYS
                 if key in kwargs
             }
+            if kwargs:
+                unexpected = ", ".join(sorted(kwargs))
+                raise TypeError(
+                    f"unexpected MLE keyword argument(s): {unexpected}")
+
+        self._last_u = u
+
+        self._ensure_corr_initialized(u)
+
+        if method.upper() == 'MLE':
             return self._fit_mle(u, config=config, **optimizer_kwargs)
 
         # Step 2: SCAR / GAS — use strategy
@@ -1573,10 +1591,13 @@ class StochasticStudentCopula(MultivariateCopula):
 
     def _factor_sampling_peak_bytes(self, rows, *, conditional=False):
         rows = int(rows)
+        # Conservative peak: native draw buffers, pybind result ownership,
+        # latent arrays, CDF output, and conditional sufficient statistics can
+        # coexist briefly even though steady-state storage is smaller.
         multiplier = (
-            2 * self._d + 3 * self._factor_rank + 8
+            8 * self._d + 6 * self._factor_rank + 16
             if conditional
-            else 2 * self._d + self._factor_rank + 4
+            else 6 * self._d + 3 * self._factor_rank + 12
         )
         small = (
             3 * self._factor_rank * self._factor_rank * 8
@@ -1610,6 +1631,7 @@ class StochasticStudentCopula(MultivariateCopula):
         """
         n = _sampling_integer("n", n)
         n_threads = _sampling_n_threads(n_threads)
+        r_arr = _validated_student_sampling_parameters(r, n)
         if self._corr_mode == 'factor':
             if self._factor_operator is None:
                 raise ValueError(
@@ -1623,19 +1645,13 @@ class StochasticStudentCopula(MultivariateCopula):
             )
             if rng is None:
                 rng = np.random.default_rng()
-            df_path = np.atleast_1d(
-                np.asarray(r, dtype=np.float64)).ravel()
+            df_path = r_arr
             if df_path.size == 1:
                 df_path = np.full(n, df_path[0], dtype=np.float64)
             elif df_path.size != n:
                 raise ValueError(
                     f"r must be scalar or array of length {n}, "
                     f"got {df_path.size}")
-            if (
-                    not np.all(np.isfinite(df_path))
-                    or np.any(df_path <= 2.0)):
-                raise ValueError("r must be finite and greater than 2")
-
             latent = self._factor_operator.sample_normal(
                 n,
                 rng=rng,
@@ -1653,7 +1669,6 @@ class StochasticStudentCopula(MultivariateCopula):
         if rng is None:
             rng = np.random.default_rng()
 
-        r_arr = np.atleast_1d(np.asarray(r, dtype=np.float64))
         is_scalar = (r_arr.size == 1)
 
         d = self._d
@@ -1888,6 +1903,8 @@ class StochasticStudentCopula(MultivariateCopula):
                 memory_budget_bytes=memory_budget_bytes,
             )
         if len(given) == self._d:
+            if r is not None:
+                _validated_student_sampling_parameters(r, n)
             _sampling_memory_budget(
                 memory_budget_bytes,
                 n * self._d * 8,
@@ -1902,6 +1919,7 @@ class StochasticStudentCopula(MultivariateCopula):
             else:
                 r = self.transform(
                     np.array([self.fit_result.params.mu]))[0]
+        _validated_student_sampling_parameters(r, n)
         if self._corr_mode == "factor":
             if self._factor_operator is None:
                 raise ValueError(

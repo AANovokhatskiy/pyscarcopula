@@ -28,6 +28,7 @@ from time import perf_counter
 import numpy as np
 
 from pyscarcopula.copula.independent import IndependentCopula
+from pyscarcopula.numerical._arrays import as_pseudo_observation_array
 from pyscarcopula.vine._conditional_rvine import (
     find_rvine_peel_order_for_given_suffix,
 )
@@ -129,9 +130,12 @@ def select_rvine(
     diagnostics : dict, optional
         Returned only when ``return_diagnostics=True``.
     """
-    u = np.asarray(u, dtype=np.float64)
+    u = as_pseudo_observation_array(
+        u, name="u", allow_boundary=False)
     if u.ndim != 2:
         raise ValueError(f"select_rvine: u must be 2D, got shape {u.shape}")
+    if u.shape[0] == 0:
+        raise ValueError("select_rvine: u must contain at least one row")
     _, d = u.shape
     if d < 2:
         raise ValueError(f"select_rvine: need d >= 2, got d={d}")
@@ -664,7 +668,7 @@ def _fit_tree_level(
         ):
             selection_started = perf_counter()
             cop = IndependentCopula()
-            result = cop.fit(u_pair)
+            result = cop._fit_validated(u_pair)
             edge_fit_diagnostics['selection_ms'] = (
                 1e3 * (perf_counter() - selection_started)
             )
@@ -675,7 +679,7 @@ def _fit_tree_level(
             if copulas is not None:
                 cop = _make_fixed_copula(copulas[edge_idx], transform_type)
                 if isinstance(cop, IndependentCopula):
-                    selection_result = cop.fit(u_pair)
+                    selection_result = cop._fit_validated(u_pair)
                 else:
                     selection_result = _fit_with_strategy(
                         cop, u_pair, 'mle', config, fit_kwargs)
@@ -698,7 +702,7 @@ def _fit_tree_level(
                 and not isinstance(cop, IndependentCopula)
             ):
                 cop = IndependentCopula()
-                result = cop.fit(u_pair)
+                result = cop._fit_validated(u_pair)
             elif is_truncated or method.lower() == 'mle' or isinstance(cop, IndependentCopula):
                 result = selection_result
             else:

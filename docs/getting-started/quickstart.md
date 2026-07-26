@@ -6,16 +6,19 @@ pyscarcopula works with pseudo-observations: uniform marginals obtained from
 ranked data.
 
 ```python
-import pandas as pd
 import numpy as np
+from scipy.stats import norm
 
-prices = pd.read_csv("data/crypto_prices.csv", index_col=0, sep=";")
-returns = np.log(
-    prices[["BTC-USD", "ETH-USD"]]
-    / prices[["BTC-USD", "ETH-USD"]].shift(1)
-).dropna()
-u = returns.rank(method="average").div(len(returns) + 1).to_numpy()
+rng = np.random.default_rng(2026)
+d = 6
+rho = 0.45
+R = (1.0 - rho) * np.eye(d) + rho * np.ones((d, d))
+u_6d = norm.cdf(rng.multivariate_normal(np.zeros(d), R, size=400))
+u = u_6d[:, :2]
 ```
+
+For application data, replace this simulated array with column-wise ranks
+divided by `n + 1`, or pass raw continuous observations with `to_pobs=True`.
 
 ## Fit a bivariate copula
 
@@ -58,9 +61,9 @@ r_t = predictive_mean(copula, u, result_tm)
 # sample: reproduce the fitted model (for validation)
 v = copula.sample(2000, rng=np.random.default_rng(2024))
 copula_refit = GumbelCopula(rotate=180)
-result_refit = copula_refit.fit(v, method="scar-tm-ou", to_pobs=True)
-gof_v = gof_test(copula_refit, v, fit_result=result_refit, to_pobs=True)
-print(f"GoF on sample: p={gof_v.pvalue:.4f}")  # expected to pass
+result_refit = copula_refit.fit(v, method="scar-tm-ou")
+gof_v = gof_test(copula_refit, v, fit_result=result_refit, to_pobs=False)
+print(f"GoF on sample: p={gof_v.pvalue:.4f}")
 
 # predict: next-step forecast (for risk metrics)
 u_pred = copula.predict(100_000, rng=np.random.default_rng(2025))
@@ -78,19 +81,6 @@ u_cond = copula.predict(
 
 ```python
 from pyscarcopula import StochasticStudentCopula
-
-tickers_6d = [
-    "BTC-USD",
-    "ETH-USD",
-    "BNB-USD",
-    "ADA-USD",
-    "XRP-USD",
-    "DOGE-USD",
-]
-returns_6d = np.log(
-    prices[tickers_6d] / prices[tickers_6d].shift(1)
-).dropna().iloc[:250]
-u_6d = returns_6d.rank(method="average").div(len(returns_6d) + 1).to_numpy()
 
 student = StochasticStudentCopula(d=u_6d.shape[1], corr_mode="shrinkage")
 student_result = student.fit(u_6d, method="scar-tm-ou")
@@ -167,3 +157,6 @@ Multivariate models can be imported from `pyscarcopula` or from
 | SCAR-TM-OU | `'scar-tm-ou'` | Transfer matrix with OU latent process |
 | SCAR-TM-JACOBI | `'scar-tm-jacobi'` | Transfer matrix with Jacobi Kendall-tau dynamics |
 | GAS | `'gas'` | Observation-driven score model |
+
+For guidance on which family and estimation method to use, continue with
+[Choosing a Model](choosing-a-model.md).

@@ -1,10 +1,8 @@
 # Mathematical Contracts
 
 This page gives the compact mathematical contract behind the public fitting,
-prediction, and goodness-of-fit APIs. It is intentionally shorter than the
-full derivation notes in `mathematical_algorithm_description/`; the goal here
-is to explain what the package computes and which numerical approximations are
-part of each model.
+prediction, and goodness-of-fit APIs. Its goal is to explain what the package
+computes and which numerical approximations are part of each model.
 
 ## Common Notation
 
@@ -149,15 +147,18 @@ The likelihood integrates over the whole latent path:
 
 $$
 L =
-\int
-\prod_{t=1}^T c(u_t;\Psi(x_t))
-p(x_t \mid x_{t-1})
-\,dx_{1:T}.
+\int p_0(x_1)c(u_1;\Psi(x_1))
+\prod_{t=2}^T
+p(x_t \mid x_{t-1})c(u_t;\Psi(x_t))
+\,dx_{1:T},
 $$
 
 Because the latent process is one-dimensional Markov, the package evaluates
 this integral by deterministic filtering rather than by Monte Carlo
 trajectory averaging.
+
+Here $p_0$ is the stationary OU density,
+$N(\mu,\nu^2/(2\kappa))$.
 
 ### OU Backends
 
@@ -235,6 +236,10 @@ $$
 The copula parameter is recovered through the model's `tau_to_param` mapping.
 This method is therefore available only for copulas that expose both
 `tau_to_param` and `param_to_tau`.
+
+The implemented state space covers positive Kendall dependence only. For
+families such as Frank and bivariate Gaussian, `scar-tm-jacobi` therefore uses
+the positive-dependence part of the family.
 
 The stationary law is beta with shape parameters
 

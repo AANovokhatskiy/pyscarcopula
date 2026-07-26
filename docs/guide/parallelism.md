@@ -95,7 +95,7 @@ the sequential time recursions required by GAS and SCAR:
 | Gaussian and Student conditional sampling | generated rows | Reuses one conditional factorization when correlation is shared |
 | Factor Student unconditional/conditional sampling | generated rows | Uses fixed Python draws and a compact native factor transform |
 | Factor Gaussian likelihood and sampling | observation/generated rows | Reuses the immutable Woodbury operator; conditioning solves only `k*k` |
-| Historical SCAR Monte Carlo likelihood | trajectories | Uses caller-generated fixed draws |
+| SCAR Monte Carlo likelihood | trajectories | Uses caller-generated fixed draws |
 
 GAS state updates and SCAR forward/backward filtering remain sequential over
 time. Increasing `n_threads` therefore accelerates the independent emission,
@@ -224,7 +224,7 @@ Parallel threads do not change the asymptotic representation of a model.
   Supplied loadings or explicit two-stage initialization never build a dense
   covariance matrix. Static MLE, GAS, SCAR-TM-OU and SCAR-MC trajectory
   likelihood consume the same immutable operator. SCAR emission selects
-  independent cells or dimension tiles using the phase-9.3 kernel.
+  independent cells or dimension tiles according to the workload.
   Unconditional and conditional Student generation uses the same operator;
   conditioning builds only a `k*k` factor system. Row batches bound the
   `n*d` output, and fixed seeds give identical results across thread counts.
@@ -233,7 +233,8 @@ Parallel threads do not change the asymptotic representation of a model.
   fixed reduction blocks whose partition is independent of `n_threads`, so
   one- and multi-thread results are exact. The reduction workspace is a
   bounded constant multiple of `d*k`; no `d*d` gradient is formed.
-  Joint GAS/SCAR loadings remain unsupported.
+  Joint loading estimation is available only for static MLE; GAS and SCAR use
+  two-stage loadings.
 - `GaussianCopula(corr_mode="factor")` composes the same operator for native
   static likelihood, compact MLE, normal sampling, bounded batches, and exact
   conditioning. Tiled two-stage estimation, persistence, rolling workers, and
@@ -264,10 +265,9 @@ Parallel threads do not change the asymptotic representation of a model.
   batches when the requested output itself is large.
 
 Consequently, CPU threading alone does not make dense Student correlation
-modes suitable for `d >> 10^4`. The phase-9.4 factor model adapter removes
-the dense correlation and PPF-cache limits for initialization and row/grid
-evaluation, and phase 9.5 carries that representation through MLE, GAS and
-SCAR fitting. A large `n_threads` value by itself still does not change the
+modes suitable for `d >> 10^4`. Factor mode removes the dense correlation and
+PPF-cache limits for initialization, row/grid evaluation, MLE, GAS, and SCAR
+fitting. A large `n_threads` value by itself does not change the
 representation; `corr_mode="factor"` must be selected explicitly.
 
 The compact Equicorr prepared object is consumed directly by static MLE,
@@ -291,7 +291,3 @@ the explicit `n_threads` contract and avoids hidden BLAS oversubscription.
 For optimizer and approximation controls, see
 [Performance Tuning](performance.md). For process-level helper signatures, see
 the [Contrib API](../api/contrib.md).
-
-The cross-platform compiler, sanitizer, process-lifecycle, allocation, and
-binary-dependency acceptance matrix is tracked in
-[Parallel Release Validation](../validation/parallel-release-gates.md).

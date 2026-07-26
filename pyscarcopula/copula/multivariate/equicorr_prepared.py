@@ -70,6 +70,17 @@ class EquicorrPreparedData:
             raise ValueError("prepared statistics must contain finite values")
         if np.any(sum_z2 < 0.0):
             raise ValueError("sum_z2 must be non-negative")
+        abs_sum_z = np.abs(sum_z)
+        cauchy_bound = (
+            np.sqrt(float(self.dimension)) * np.sqrt(sum_z2))
+        tolerance = (
+            64.0 * np.finfo(np.float64).eps
+            * np.maximum(1.0, np.maximum(abs_sum_z, cauchy_bound))
+        )
+        if np.any(abs_sum_z > cauchy_bound + tolerance):
+            raise ValueError(
+                "prepared statistics violate sum_z**2 <= "
+                "dimension*sum_z2")
 
         sum_z.setflags(write=False)
         sum_z2.setflags(write=False)

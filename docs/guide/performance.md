@@ -503,35 +503,6 @@ the high-order spectral likelihood and the local likelihood at a fitted point
 is a good diagnostic; routine fitting should normally leave
 `transition_method='auto'`.
 
-### Historical SCAR-MC Strategies
-
-The Monte Carlo SCAR strategies, `scar-p-ou` and `scar-m-ou`, are stochastic
-likelihood estimators available for reproducing earlier experiments. Prefer
-`scar-tm-ou`, `scar-tm-jacobi`, or `gas` for routine model comparisons.
-
-| Parameter | Where | Default | Effect |
-|-----------|-------|---------|--------|
-| `n_tr` | strategy kwarg / `default_n_tr` | `500` | Number of Monte Carlo trajectories. |
-| `M_iterations` | strategy kwarg | `3` | EIS iterations for `scar-m-ou`. |
-| `stationary` | strategy kwarg | `True` | Initializes the OU process in stationarity. |
-| `seed` / `dwt` | fit kwarg | random | Controls Wiener increments for reproducibility. |
-| `gtol` | fit kwarg / `scar_optimizer.gtol` | `1e-3` | L-BFGS-B projected-gradient tolerance. |
-| `maxfun` | fit kwarg / `scar_optimizer.maxfun` | `300` | Maximum function evaluations. |
-| `maxiter` | fit kwarg / `scar_optimizer.maxiter` | `100` | Maximum optimizer iterations. |
-| `maxls` | fit kwarg / `scar_optimizer.maxls` | `20` | Maximum L-BFGS-B line-search steps per iteration. |
-| `eps` | fit kwarg / `scar_optimizer.eps` | `1e-4` | L-BFGS-B finite-difference step. |
-
-```python
-result = fit(
-    copula,
-    u,
-    method='scar-m-ou',
-    n_tr=1000,
-    M_iterations=5,
-    seed=123,
-)
-```
-
 ## Multivariate Native Paths
 
 Multivariate Gaussian, Student, stochastic Student, and equicorrelation models
@@ -558,40 +529,6 @@ Row-specific `(n,d,d)` correlation arrays cannot share one Cholesky factor and
 retain per-row factorization cost. Near-singular Student conditional covariance
 matrices also retain the per-row jitter path to preserve numerical semantics.
 
-## Dependency-Free Linear Algebra
-
-The compiled extension contains a small C++17 linear-algebra layer for dense
-row-major matrix-vector products, symmetric Cholesky factorization, SPD solves,
-and triangular products. It has no Eigen, BLAS, OpenMP, or other external
-runtime dependency.
-
-Two internal reduction backends are retained:
-
-- `scalar` preserves the original left-to-right summation order;
-- `portable` uses four independent accumulators, giving the compiler a
-  SIMD-friendly loop without architecture-specific intrinsics.
-
-The portable path falls back to scalar reductions below 32 elements, where
-unrolling does not repay its overhead. It is selected for dense SCAR matrix
-matvec and conditional Cholesky/solve/sampling. Multivariate Student emission
-keeps its original scalar loops because isolated triangular-kernel gains did
-not produce a stable end-to-end improvement once quantile evaluation and
-likelihood work were included.
-
-On the phase-7 Windows/MSVC benchmark, portable matvec speedups over scalar at
-dimensions `20, 80, 150, 300` were approximately `1.08x, 1.43x, 1.82x, 2.03x`.
-Cholesky plus a four-column SPD solve measured approximately
-`1.02x, 1.12x, 1.30x, 1.52x`. These are kernel measurements, not universal
-fit-level guarantees. The Gaussian conditional benchmark at `n=2000, d=40`
-improved its one-thread time from the phase-5 `0.720 ms` baseline to
-`0.654 ms` in the final phase-7 run in the same project environment.
-
-The scalar implementation remains compiled and covered by cross-backend tests
-at all four dimensions. This makes numerical fallback available without a
-second binary or a dynamically loaded math library. External multiprocessing
-therefore cannot create hidden BLAS thread pools or additional
-oversubscription.
-
 ## Independent Fit Parallelism
 
 Use process-level parallelism for independent datasets, bootstrap replicas,
@@ -614,10 +551,10 @@ print(batch.diagnostics)
 ```
 
 Every task reconstructs its own model from constructor-level structural
-parameters and creates its own prepared evaluator during fitting. Previous
-`fit_result`, latent state, and transient caches from the prototype are not
-copied. A list of model prototypes and a list of `fit_kwargs` can be supplied
-to run different models or initial points in the same batch.
+parameters and creates its own prepared evaluator during fitting. Fitted
+state and transient caches from the prototype are not copied. A list of model
+prototypes and a list of `fit_kwargs` can be supplied to run different models
+or initial points in the same batch.
 
 Avoid accidental CPU oversubscription. With `n_jobs > 1`, omitted `n_threads`
 means one native thread per worker. Passing `n_threads=2` or more explicitly
@@ -785,6 +722,12 @@ SCAR-TM-OU prediction against unchanged fitted history reuses
 pseudo-observations and terminal posterior state. A new `fit`, a changed
 explicit history, or an edge replacement invalidates the relevant transient
 cache. These optimizations do not parallelize edge or sample execution.
+
+Static R-vine sampling bounds temporary vectorized workspace by processing at
+most 8192 rows at a time. Use `sample(..., batch_rows=...)` to trade throughput
+against peak memory. `memory_budget_bytes=` checks the estimated output and
+workspace requirement before allocation. Dynamic edge trajectories are not
+split because their row order is part of the fitted time-series model.
 
 When benchmarking dynamic vines, report `vine.fit_result.actual_methods` and
 `vine.fit_result.fallback_count`: unsuccessful dynamic edge fits are retained

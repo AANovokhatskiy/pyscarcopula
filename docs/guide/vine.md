@@ -209,12 +209,3 @@ independent OU trajectories.
 
 For SCAR-TM predictive parameter sampling, `predictive_r_mode` may be `None`,
 `"grid"`, or `"histogram"`.
-
-## Results on 6-crypto data (T=250)
-
-| Model | logL | GoF p-value |
-|-------|------|-------------|
-| **R-vine SCAR-TM** | **885.19** | **0.9839** |
-| R-vine MLE | 836.96 | 0.0639 |
-| Student-t | 764.42 | 0.0001 |
-| Gaussian | 761.00 | 0.0000 |

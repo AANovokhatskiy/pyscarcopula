@@ -92,6 +92,15 @@ def sample_ou_trajectory(kappa, mu, nu, n, rng):
     Drawing all innovations before entering the Numba kernel preserves the
     scalar-draw random stream and removes Python overhead from the recurrence.
     """
+    if isinstance(n, (bool, np.bool_)) or not isinstance(
+            n, (int, np.integer)):
+        raise TypeError("n must be a non-negative integer")
+    n = int(n)
+    if n < 0:
+        raise ValueError("n must be non-negative")
+    if n == 0:
+        return np.empty(0, dtype=np.float64)
+
     dt = 1.0 / (n - 1) if n > 1 else 1.0
     rho = np.exp(-kappa * dt)
     sigma_cond = np.sqrt(

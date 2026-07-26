@@ -44,6 +44,11 @@ import numpy as np
 from scipy.optimize import OptimizeResult
 
 from pyscarcopula._utils import pobs
+from pyscarcopula.numerical._arrays import (
+    as_float64_array,
+    as_pseudo_observation_array,
+    validate_positive_int,
+)
 from pyscarcopula._types import (
     PredictConfig,
 )
@@ -103,6 +108,42 @@ from pyscarcopula.vine._rvine_suffix import (
 
 _normalize_predict_horizon = normalize_predict_horizon
 _predictive_state_cache_key = predictive_state_cache_key
+
+_DEFAULT_STATIC_SAMPLE_BATCH_ROWS = 8192
+
+
+def _as_rvine_observations(
+        data, *, operation, expected_dimension=None, to_pobs=False):
+    """Validate RVine observations before selection or numerical work."""
+    u = as_float64_array(data, name="data")
+    if u.ndim != 2:
+        raise ValueError(
+            f"RVineCopula.{operation}: data must be 2D, got shape {u.shape}")
+    if u.shape[0] == 0:
+        raise ValueError(
+            f"RVineCopula.{operation}: data must contain at least one row")
+    if expected_dimension is not None and u.shape[1] != expected_dimension:
+        raise ValueError(
+            f"RVineCopula.{operation}: data must be "
+            f"(T, {expected_dimension}), got {u.shape}")
+    if to_pobs:
+        if not np.all(np.isfinite(u)):
+            raise ValueError("data must contain only finite values")
+        return pobs(u)
+    return as_pseudo_observation_array(
+        u, name="data", allow_boundary=False)
+
+
+def _validated_memory_budget(memory_budget_bytes):
+    if memory_budget_bytes is None:
+        return None
+    if (
+            isinstance(memory_budget_bytes, (bool, np.bool_))
+            or not isinstance(memory_budget_bytes, (int, np.integer))):
+        raise TypeError("memory_budget_bytes must be an integer or None")
+    if int(memory_budget_bytes) < 0:
+        raise ValueError("memory_budget_bytes must be non-negative")
+    return int(memory_budget_bytes)
 
 
 class RVineCopula:
@@ -287,11 +328,8 @@ class RVineCopula:
         method = method.upper()
         self._suffix_state_cache = {}
         self._predict_history_cache = {}
-        u = np.asarray(data, dtype=np.float64)
-        if u.ndim != 2:
-            raise ValueError(f"RVineCopula.fit: data must be 2D, got shape {u.shape}")
-        if to_pobs:
-            u = pobs(u)
+        u = _as_rvine_observations(
+            data, operation="fit", to_pobs=to_pobs)
 
         T, d = u.shape
         if d < 2:
@@ -633,14 +671,12 @@ class RVineCopula:
         if data is None:
             return self._log_likelihood
 
-        u = np.asarray(data, dtype=np.float64)
-        if to_pobs:
-            u = pobs(u)
-        if u.ndim != 2 or u.shape[1] != self.d:
-            raise ValueError(
-                f"RVineCopula.log_likelihood: data must be (T, {self.d}), "
-                f"got {u.shape}"
-            )
+        u = _as_rvine_observations(
+            data,
+            operation="log_likelihood",
+            expected_dimension=self.d,
+            to_pobs=to_pobs,
+        )
 
         max_active_tree = self._max_non_independent_tree_level()
         if max_active_tree < 0:
@@ -845,24 +881,52 @@ class RVineCopula:
 
     # Sampling
 
-    def sample(self, n, u=None, rng=None):
+    def sample(
+            self, n, u=None, rng=None, *, batch_rows=None,
+            memory_budget_bytes=None):
         """Unconditional sampling from the fitted vine.
 
         Samples in natural-order matrix order: columns are processed from
         right to left, and each new anti-diagonal leaf is recovered by
         applying inverse h-functions from the top tree down to tree 0.
+
+        Static vines are evaluated in bounded row batches. ``batch_rows``
+        controls the temporary vectorized workspace; the default is 8192.
+        Dynamic edge trajectories retain their sequential full-path semantics
+        and therefore are not split across batches.
         """
         self._require_fit()
         if not isinstance(n, (int, np.integer)) or n <= 0:
-            raise ValueError(f"RVineCopula.sample: n must be positive int, got {n!r}")
+            raise ValueError(
+                f"RVineCopula.sample: n must be positive int, got {n!r}")
+        n = int(n)
+        if batch_rows is None:
+            batch_rows = min(n, _DEFAULT_STATIC_SAMPLE_BATCH_ROWS)
+        else:
+            batch_rows = min(n, validate_positive_int(
+                batch_rows, "batch_rows"))
+        memory_budget_bytes = _validated_memory_budget(memory_budget_bytes)
         if rng is None:
             rng = np.random.default_rng()
 
-        n = int(n)
         max_active_tree = self._max_non_independent_tree_level()
         active_keys = self._sample_active_edge_keys(max_active_tree)
-        if any(_edge_requires_stepwise_sample(self.pair_copulas[key])
-               for key in active_keys):
+        requires_stepwise = any(
+            _edge_requires_stepwise_sample(self.pair_copulas[key])
+            for key in active_keys
+        )
+        is_static = all(
+            not edge_has_dynamic_params(self.pair_copulas[key])
+            for key in active_keys
+        )
+        working_rows = batch_rows if is_static else n
+        self._check_sample_memory_budget(
+            n,
+            working_rows,
+            len(active_keys),
+            memory_budget_bytes,
+        )
+        if requires_stepwise:
             from pyscarcopula.numerical._cpp_gas_rvine import (
                 sample as native_gas_rvine_sample,
             )
@@ -879,12 +943,56 @@ class RVineCopula:
                 n, rng, active_keys=active_keys,
                 max_active_tree=max_active_tree)
 
+        if is_static:
+            r_all = {
+                key: np.asarray(
+                    _edge_r_for_sample(self.pair_copulas[key], 1, rng),
+                    dtype=np.float64,
+                )
+                for key in active_keys
+            }
+            if batch_rows < n:
+                out = np.empty((n, self.d), dtype=np.float64)
+                for start in range(0, n, batch_rows):
+                    stop = min(start + batch_rows, n)
+                    out[start:stop] = self._sample_with_r(
+                        stop - start,
+                        r_all,
+                        rng,
+                        max_active_tree=max_active_tree,
+                    )
+                return out
+            return self._sample_with_r(
+                n, r_all, rng, max_active_tree=max_active_tree)
+
         r_all = {
             key: _edge_r_for_sample(self.pair_copulas[key], n, rng)
             for key in active_keys
         }
         return self._sample_with_r(
             n, r_all, rng, max_active_tree=max_active_tree)
+
+    def _check_sample_memory_budget(
+            self, n, working_rows, active_edge_count, memory_budget_bytes):
+        if memory_budget_bytes is None:
+            return
+        itemsize = np.dtype(np.float64).itemsize
+        output_bytes = int(n) * int(self.d) * itemsize
+        # Conservative Python-workspace estimate: base uniforms and output
+        # plus conditional values and native point-operation temporaries for
+        # each active edge in the current row batch.
+        workspace_vectors = 4 * int(self.d) + 6 * int(active_edge_count)
+        required = (
+            output_bytes
+            + int(working_rows) * workspace_vectors * itemsize
+        )
+        if required > memory_budget_bytes:
+            raise MemoryError(
+                "RVineCopula.sample requires an estimated "
+                f"{required} bytes, exceeding memory_budget_bytes="
+                f"{memory_budget_bytes}; reduce n or batch_rows, or increase "
+                "memory_budget_bytes"
+            )
 
     def _sample_with_r(self, n, r_all, rng, return_pseudo=False,
                        max_active_tree=None):
@@ -1540,13 +1648,16 @@ class RVineCopula:
         )
 
         use_fitted_history_cache = u is None and self._last_u is not None
-        u_ref = self._last_u if u is None else np.asarray(
-            u, dtype=np.float64)
-        if u_ref is not None and (u_ref.ndim != 2 or u_ref.shape[1] != self.d):
-            raise ValueError(
-                f"RVineCopula.predict: u must be (T, {self.d}), "
-                f"got {u_ref.shape}"
+        u_ref = (
+            self._last_u
+            if u is None
+            else _as_rvine_observations(
+                u,
+                operation="predict",
+                expected_dimension=self.d,
+                to_pobs=False,
             )
+        )
 
         history_cache = (
             self._history_prediction_cache(

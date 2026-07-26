@@ -24,10 +24,10 @@ def validate_multivariate_given(given, d):
 
     out = {}
     for key, value in given.items():
-        try:
-            idx = int(key)
-        except Exception as exc:
-            raise TypeError("given keys must be integers") from exc
+        if isinstance(key, (bool, np.bool_)) or not isinstance(
+                key, (int, np.integer)):
+            raise TypeError("given keys must be integers")
+        idx = int(key)
         if idx < 0 or idx >= int(d):
             raise ValueError(
                 f"given key must be in [0, {int(d) - 1}], got {key!r}")
@@ -107,25 +107,42 @@ def sample_gaussian_conditional(
     given = validate_multivariate_given(given, d)
     if not given:
         raise ValueError("sample_gaussian_conditional requires non-empty given")
+    rho_path = as_path(rho, n, "rho")
+    lower = -1.0 / (d - 1.0)
+    if (
+            np.any(~np.isfinite(rho_path))
+            or np.any(rho_path <= lower)
+            or np.any(rho_path >= 1.0)):
+        raise ValueError(f"rho must be finite and in ({lower}, 1)")
     if len(given) == d:
         return fill_given(n, d, given)
-
-    rho_path = as_path(rho, n, "rho")
     given_idx, free_idx = _partition_indices(d, given)
     z_given = norm.ppf(_given_quantile_inputs(given, given_idx))
     normal_draws = rng.standard_normal((n, len(free_idx)))
 
-    rho_input = np.atleast_1d(np.asarray(rho, dtype=np.float64)).ravel()
-    correlations = (
-        equicorr_matrix(d, rho_path[0])
-        if rho_input.size == 1
-        else np.stack([
-            equicorr_matrix(d, rho_val) for rho_val in rho_path])
-    )
     from pyscarcopula.numerical import multivariate_native
-    z_free = multivariate_native.gaussian_conditional_latent(
-        correlations, given_idx, z_given, normal_draws,
-        n_threads=n_threads)
+    multivariate_native._validated_n_threads(n_threads)
+
+    # Equicorrelation is closed under conditioning.  Work in the span of the
+    # all-ones vector and its orthogonal complement, avoiding a dense R or
+    # Schur complement for arbitrarily large d.
+    n_given = len(given_idx)
+    n_free = len(free_idx)
+    denominator = 1.0 + (n_given - 1.0) * rho_path
+    conditional_mean = (
+        rho_path / denominator * float(np.sum(z_given)))
+    alpha = 1.0 - rho_path
+    parallel_eigenvalue = (
+        alpha * (1.0 + (d - 1.0) * rho_path) / denominator)
+    if np.any(parallel_eigenvalue <= 0.0):
+        raise ValueError(
+            "rho produces a non-positive conditional covariance")
+    row_means = normal_draws.mean(axis=1, keepdims=True)
+    z_free = (
+        np.sqrt(alpha)[:, None] * (normal_draws - row_means)
+        + np.sqrt(parallel_eigenvalue)[:, None] * row_means
+        + conditional_mean[:, None]
+    )
     out = np.empty((n, d), dtype=np.float64)
     out[:, free_idx] = norm.cdf(z_free)
 
@@ -192,10 +209,13 @@ def sample_student_conditional(
     given = validate_multivariate_given(given, d)
     if not given:
         raise ValueError("sample_student_conditional requires non-empty given")
+    df_path = as_path(df, n, "df")
+    if (
+            np.any(~np.isfinite(df_path))
+            or np.any(df_path <= 2.0)):
+        raise ValueError("df must be finite and greater than 2")
     if len(given) == d:
         return fill_given(n, d, given)
-
-    df_path = as_path(df, n, "df")
     given_idx, free_idx = _partition_indices(d, given)
     given_inputs = _given_quantile_inputs(given, given_idx)
     given_latent = np.empty((n, len(given_idx)), dtype=np.float64)

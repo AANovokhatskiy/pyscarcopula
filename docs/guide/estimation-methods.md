@@ -26,10 +26,6 @@ All dynamic methods return a `LatentResult` with `params`,
 strategy implements a path simulator; SCAR-TM-JACOBI supports prediction but
 not `sample`.
 
-The historical Monte Carlo SCAR strategies, `'scar-p-ou'` and `'scar-m-ou'`,
-remain available for reproducing earlier experiments. For routine dynamic
-fits, prefer deterministic TM or GAS methods.
-
 ## Gradient capability matrix
 
 The model score used inside a recursion and the optimizer gradient are

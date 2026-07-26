@@ -19,3 +19,4 @@ benchmarks/
 scripts/
 results/
 AGENTS.md
+.agents/

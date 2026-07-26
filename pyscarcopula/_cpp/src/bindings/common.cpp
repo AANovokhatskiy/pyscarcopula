@@ -49,6 +49,10 @@ scar::Observations observations_from_array(
             if (!std::isfinite(value)) {
                 throw std::invalid_argument("u must contain only finite values");
             }
+            if (value < 0.0 || value > 1.0) {
+                throw std::invalid_argument(
+                    "u must contain pseudo-observations in [0, 1]");
+            }
             row[static_cast<std::size_t>(j)] = value;
         }
         out[static_cast<std::size_t>(i)] = std::move(row);
@@ -84,6 +88,10 @@ scar::ObservationView observation_view_from_array(
     for (std::size_t i = 0; i < size; ++i) {
         if (!std::isfinite(data[i])) {
             throw std::invalid_argument("u must contain only finite values");
+        }
+        if (data[i] < 0.0 || data[i] > 1.0) {
+            throw std::invalid_argument(
+                "u must contain pseudo-observations in [0, 1]");
         }
     }
     return {data, n_obs, expected_dim};

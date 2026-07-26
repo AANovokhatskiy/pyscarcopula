@@ -18,7 +18,7 @@ from pyscarcopula.numerical._scar_ou_config import (
     select_auto_backend,
     validate_cpp_config,
 )
-from pyscarcopula.numerical._arrays import as_float64_array
+from pyscarcopula.numerical._arrays import as_pseudo_observation_array
 from pyscarcopula.numerical._transition_methods import (
     normalize_ou_transition_method,
 )
@@ -105,7 +105,7 @@ def _config(module, cfg: AutoTMConfig):
 def _inputs(kappa, mu, nu, u, copula, config):
     module = _cpp_extension.load()
     cfg = config or AutoTMConfig()
-    obs = as_float64_array(u)
+    obs = as_pseudo_observation_array(u)
     method = normalize_ou_transition_method(cfg.transition_method)
     validate_cpp_config(cfg, transition_method=method)
     if obs.ndim != 2:
@@ -144,7 +144,7 @@ def _prepared_inputs(u, copula, config):
                 "prepared dimension does not match copula dimension")
         obs = u
     else:
-        obs = as_float64_array(u)
+        obs = as_pseudo_observation_array(u)
     method = normalize_ou_transition_method(cfg.transition_method)
     validate_cpp_config(cfg, transition_method=method)
     if not prepared_input and obs.ndim != 2:

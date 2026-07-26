@@ -37,6 +37,7 @@ from pyscarcopula._types import (
 )
 from pyscarcopula.copula._protocol import CommonCopulaProtocol
 from pyscarcopula._utils import pobs as _pobs
+from pyscarcopula.numerical._arrays import as_float64_array
 from pyscarcopula.strategy._base import (
     ensure_strategy_supported,
     get_copula_capabilities,
@@ -51,9 +52,7 @@ PredictOutput: TypeAlias = FloatArray | tuple[FloatArray, dict[str, Any]]
 
 
 def _as_float64_array_no_copy(value: ArrayLike) -> FloatArray:
-    if type(value) is np.ndarray and value.dtype == np.float64:
-        return value
-    return np.asarray(value, dtype=np.float64)
+    return as_float64_array(value, name="data")
 
 
 def _reject_public_posterior_cache(kwargs: dict[str, Any]) -> None:
@@ -209,7 +208,7 @@ def log_likelihood(
 
     prepared = _prepared_equicorr_or_none(copula, data)
     if prepared is None:
-        u = np.asarray(data, dtype=np.float64)
+        u = _as_float64_array_no_copy(data)
         validate_copula_data(copula, u)
     else:
         u = prepared
@@ -249,7 +248,7 @@ def predictive_mean(
     """
     prepared = _prepared_equicorr_or_none(copula, data)
     if prepared is None:
-        u = np.asarray(data, dtype=np.float64)
+        u = _as_float64_array_no_copy(data)
         validate_copula_data(copula, u)
     else:
         u = prepared
@@ -294,7 +293,7 @@ def mixture_h(
     """
     prepared = _prepared_equicorr_or_none(copula, data)
     if prepared is None:
-        u = np.asarray(data, dtype=np.float64)
+        u = _as_float64_array_no_copy(data)
         validate_copula_data(copula, u)
     else:
         u = prepared
@@ -362,7 +361,7 @@ def sample(
 
     prepared = _prepared_equicorr_or_none(copula, data)
     if prepared is None:
-        u = np.asarray(data, dtype=np.float64)
+        u = _as_float64_array_no_copy(data)
         validate_copula_data(copula, u)
     else:
         u = prepared
@@ -486,7 +485,7 @@ def predict(
 
     prepared = _prepared_equicorr_or_none(copula, data)
     if prepared is None:
-        u = np.asarray(data, dtype=np.float64)
+        u = _as_float64_array_no_copy(data)
         validate_copula_data(copula, u)
     else:
         u = prepared

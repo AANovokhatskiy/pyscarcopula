@@ -56,6 +56,19 @@ Tests require the `data/` directory, which is included in the git repository
 but not in the PyPI package. Native tests require a successful extension
 build.
 
+## Run the notebooks
+
+Clone the repository so the example datasets are available, then install the
+optional notebook dependencies:
+
+```bash
+pip install -e ".[examples]"
+jupyter lab examples/
+```
+
+The comparison notebook also uses the optional `pyvinecopulib` package,
+included in the `examples` dependency group.
+
 For a source-tree C++ check, build the extension in place first:
 
 ```bash

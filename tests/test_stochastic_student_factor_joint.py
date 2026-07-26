@@ -15,6 +15,7 @@ from pyscarcopula import (
     NumericalConfig,
     StochasticStudentCopula,
 )
+from pyscarcopula.api import fit as api_fit
 from pyscarcopula.contrib.risk_metrics import _get_copula_constructor
 from pyscarcopula.copula.multivariate.factor_estimation import (
     FactorLoadingParameterization,
@@ -215,8 +216,11 @@ def test_optimizer_success_is_rejected_when_joint_gradient_is_large(
         result.diagnostics["joint_gradient_gate"])
 
 
-@pytest.mark.parametrize("method", ["gas", "scar-tm-ou", "scar-p-ou"])
-def test_dynamic_joint_factor_fit_is_rejected_before_state_mutation(method):
+@pytest.mark.parametrize(
+    "method", ["gas", "scar-tm-ou", "scar-p-ou", "scar-m-ou"])
+@pytest.mark.parametrize("entrypoint", ["model", "api"])
+def test_dynamic_joint_factor_fit_is_rejected_before_state_mutation(
+        method, entrypoint):
     observations, _ = _problem(rows=30, d=5, seed=9807)
     model = StochasticStudentCopula(
         5,
@@ -225,8 +229,13 @@ def test_dynamic_joint_factor_fit_is_rejected_before_state_mutation(method):
         factor_estimation="joint",
     )
 
-    with pytest.raises(NotImplementedError, match="static MLE"):
-        model.fit(observations, method=method)
+    with pytest.raises(
+            NotImplementedError,
+            match="factor_estimation='joint'.*static MLE"):
+        if entrypoint == "model":
+            model.fit(observations, method=method)
+        else:
+            api_fit(model, observations, method=method)
 
     assert model.fit_result is None
     assert model.factor_loadings_ is None

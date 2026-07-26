@@ -1,6 +1,6 @@
 # Multivariate Models API
 
-## Static MLE result
+## Static Gaussian and Student Copulas
 
 Static multivariate MLE returns `MultivariateMLEResult` for Gaussian, Student,
 equicorrelation Gaussian, and stochastic Student models. The returned object
@@ -41,6 +41,20 @@ conditional = cop.sample_conditional(
 The supplied columns remain fixed. Supplying every variable returns constant
 rows equal to `given`.
 
+### GaussianCopula
+
+::: pyscarcopula.copula.multivariate.gaussian.GaussianCopula
+    options:
+      show_bases: false
+      members: false
+
+### StudentCopula
+
+::: pyscarcopula.copula.multivariate.student.StudentCopula
+    options:
+      show_bases: false
+      members: false
+
 All multivariate APIs that expose `n_threads` use a literal default of `1`.
 No environment variable changes that default. Fit-level native parallelism is
 enabled with `NumericalConfig(n_threads=N)`.
@@ -56,7 +70,7 @@ from pyscarcopula import GaussianCopula, NumericalConfig
 gaussian = GaussianCopula(
     d=u.shape[1],
     corr_mode="factor",
-    factor_rank=8,
+    factor_rank=min(8, u.shape[1] - 1),
     factor_tile_size=16_384,
 )
 result = gaussian.fit(
@@ -82,6 +96,10 @@ Persistence and rolling-window worker reconstruction retain the compact
 constructor policy.
 
 ## Factor correlation operator
+
+For an end-to-end guide covering standalone operators, Gaussian and Student
+MLE, dynamic GAS/SCAR, sampling, and persistence, see
+[Factor Models](../guide/factor-models.md).
 
 `FactorCorrelation` is a reusable correlation representation independent of
 any copula family:
@@ -219,7 +237,7 @@ for block in student.evaluate_grid_batches(
 The budget accounts conservatively for native result vectors, their NumPy
 copies, active worker accumulators, and deterministic tile partials.
 
-The adapter is also available through the phase-9.4 model layer:
+The factor operator is available through `StochasticStudentCopula`:
 
 ```python
 from pyscarcopula import NumericalConfig, StochasticStudentCopula
@@ -227,7 +245,7 @@ from pyscarcopula import NumericalConfig, StochasticStudentCopula
 copula = StochasticStudentCopula(
     d=u.shape[1],
     corr_mode="factor",
-    factor_rank=8,
+    factor_rank=min(8, u.shape[1] - 1),
     factor_loadings=B,       # optional
     factor_tile_size=16_384,
 )
@@ -248,7 +266,7 @@ matrix. `R` never materializes implicitly in factor mode. Use
 Model persistence stores the compact loadings and rebuilds the native
 operator on load.
 
-Phase 9.5 connects the same compact operator to fitting:
+The same compact operator is used during fitting:
 
 ```python
 mle = copula.fit(u, method="mle", config=NumericalConfig(n_threads=4))
@@ -268,8 +286,8 @@ SCAR-P/M native trajectory density uses the same matrix-free Student kernel.
 Estimated factor parameters are included in effective parameter counts even
 though two-stage loadings remain fixed during the main optimizer.
 
-Phase 9.6 adds unconditional, fitted, predictive, batch, and conditional
-factor Student sampling:
+Factor Student models provide unconditional, fitted, predictive, batch, and
+conditional sampling:
 
 ```python
 draws = copula.sample_at_parameter(
@@ -305,7 +323,7 @@ and SCAR parameter-path semantics while bounding materialized rows.
 `memory_budget_bytes` is a conservative pre-allocation guard. Identical seeds
 produce identical tested results across thread counts.
 
-Phase 9.8 enables guarded joint loadings for static Student MLE:
+Static Student MLE can jointly estimate guarded factor loadings:
 
 ```python
 joint = StochasticStudentCopula(
@@ -356,14 +374,8 @@ sequential filters do not yet expose loading derivatives.
 
 ## Equicorrelation Gaussian Copula
 
-For $d$ assets, the standard Gaussian copula has $d(d-1)/2$ static
-correlation parameters. The equicorrelation model uses a single dynamic
-correlation:
-
-$$R(t) = (1-\rho(t)) \cdot I + \rho(t) \cdot \mathbf{1}\mathbf{1}^\top$$
-
-All pairwise correlations equal $\rho(t)$, which follows an OU process via
-SCAR. This gives 3 parameters instead of $d(d-1)/2$.
+The equicorrelation model, its parameter range, and selection guidance are
+described in the [Multivariate Models guide](../guide/multivariate_models.md).
 
 ### Usage
 
@@ -422,9 +434,10 @@ storage.
 This preparation API expects pseudo-observations and does not perform global
 ranking. MLE, GAS, and SCAR-TM-OU consume the prepared vectors directly;
 static row likelihood and emission-grid methods do the same. Existing ndarray
-inputs remain supported. A prepared MLE result represents correlation by its
-scalar `equicorrelation_rho` and leaves `correlation_matrix=None`, avoiding an
-otherwise prohibitive `d * d` result allocation.
+inputs remain supported. Every Equicorr MLE result represents correlation by
+its scalar `equicorrelation_rho` and leaves `correlation_matrix=None`, avoiding
+an otherwise prohibitive `d * d` result allocation for both dense and prepared
+inputs.
 
 Grid output can also be bounded explicitly. Both the density and gradient
 arrays count toward `memory_budget_bytes`:
@@ -484,16 +497,6 @@ unconditional sampling and one frozen posterior state for prediction.
 Monolithic `sample`, `predict`, `sample_conditional`, and
 `sample_at_parameter` also accept `memory_budget_bytes` and fail before
 allocating an oversized output.
-
-### When to use
-
-Equicorrelation SCAR is a good fit when:
-
-- All pairwise correlations move together, common in equity and crypto markets
-- You need fast estimation for large $d$, with $O(d)$ density evaluation
-- You want a compact, interpretable model with 3 parameters
-
-For heterogeneous dependence, use a C-vine or R-vine instead.
 
 ### API
 
