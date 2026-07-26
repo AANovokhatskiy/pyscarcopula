@@ -23,11 +23,8 @@ Structure selection is Dissmann-based; non-independent edges can be refit
 through the strategy registry after the MLE family-selection pass.
 """
 
-from time import perf_counter
-
 import numpy as np
 
-from pyscarcopula.copula.independent import IndependentCopula
 from pyscarcopula.numerical._arrays import as_pseudo_observation_array
 from pyscarcopula.vine._conditional_rvine import (
     find_rvine_peel_order_for_given_suffix,
@@ -38,19 +35,21 @@ from pyscarcopula.vine._reachability import (
     build_rvine_dag,
 )
 from pyscarcopula.vine._selection import (
-    select_best_copula,
     _default_candidates,
     validate_fixed_copula_specs,
 )
-from pyscarcopula.vine._pair_copula import PairCopula as _PairCopula
 from pyscarcopula.vine._structure import (
     _build_next_tree,
     _build_next_tree_conditional,
     _build_tree_0,
     _build_tree_0_conditional,
-    _kendall_tau_value,
 )
-from pyscarcopula.vine._helpers import _clip_unit
+from pyscarcopula.vine._vine_fit import (
+    _fit_tree_level as _fit_tree_level_core,
+    _fit_with_strategy,
+    _make_fixed_copula,
+    _pair_from_result,
+)
 
 
 def select_rvine(
@@ -628,172 +627,23 @@ def _fit_tree_level(
     transform_type,
     fit_kwargs,
 ):
-    """Fit all edges at one tree level; populate pseudo_obs for next tree."""
-    is_truncated = (truncation_level is not None and t >= truncation_level)
-
-    fitted_level = []
-    for edge_idx, (conditioned, conditioning) in enumerate(tree_repr):
-        fit_started = perf_counter()
-        edge_fit_diagnostics = {
-            'requested_method': str(method).upper(),
-            'dynamic_attempted': False,
-            'fallback_used': False,
-            'fallback_reason': None,
-            'attempted_method': None,
-            'attempted_success': None,
-            'attempted_nfev': 0,
-            'attempted_message': None,
-            'selection_nfev': 0,
-            'selection_ms': 0.0,
-            'dynamic_fit_ms': 0.0,
-        }
-        selection_result = None
-        v1, v2 = sorted(conditioned)
-
-        u1 = _clip_unit(pseudo_obs[(v1, conditioning)])
-        u2 = _clip_unit(pseudo_obs[(v2, conditioning)])
-        u_pair = np.column_stack((u1, u2))
-
-        force_independent = is_truncated and truncation_fill == 'independent'
-        if force_independent:
-            tau_val = 0.0
-        else:
-            tau_val = _kendall_tau_value(u1, u2)
-            if np.isnan(tau_val):
-                tau_val = 0.0
-
-        if (
-            force_independent
-            or threshold is not None and abs(tau_val) < threshold
-        ):
-            selection_started = perf_counter()
-            cop = IndependentCopula()
-            result = cop._fit_validated(u_pair)
-            edge_fit_diagnostics['selection_ms'] = (
-                1e3 * (perf_counter() - selection_started)
-            )
-            edge_fit_diagnostics['selection_nfev'] = int(
-                getattr(result, 'nfev', 0) or 0)
-        else:
-            selection_started = perf_counter()
-            if copulas is not None:
-                cop = _make_fixed_copula(copulas[edge_idx], transform_type)
-                if isinstance(cop, IndependentCopula):
-                    selection_result = cop._fit_validated(u_pair)
-                else:
-                    selection_result = _fit_with_strategy(
-                        cop, u_pair, 'mle', config, fit_kwargs)
-            else:
-                cop, selection_result = select_best_copula(
-                    u1, u2, candidates, allow_rotations, criterion,
-                    transform_type=transform_type,
-                    u_pair=u_pair,
-                    tau_value=tau_val,
-                )
-            edge_fit_diagnostics['selection_ms'] = (
-                1e3 * (perf_counter() - selection_started)
-            )
-            edge_fit_diagnostics['selection_nfev'] = int(
-                getattr(selection_result, 'nfev', 0) or 0)
-
-            if (
-                min_edge_logL is not None
-                and selection_result.log_likelihood < min_edge_logL
-                and not isinstance(cop, IndependentCopula)
-            ):
-                cop = IndependentCopula()
-                result = cop._fit_validated(u_pair)
-            elif is_truncated or method.lower() == 'mle' or isinstance(cop, IndependentCopula):
-                result = selection_result
-            else:
-                dynamic_fit_kwargs = dict(fit_kwargs)
-                dynamic_fit_kwargs['initial_mle_result'] = selection_result
-                dynamic_started = perf_counter()
-                dynamic_result = _fit_with_strategy(
-                    cop, u_pair, method, config, dynamic_fit_kwargs)
-                edge_fit_diagnostics['dynamic_fit_ms'] = (
-                    1e3 * (perf_counter() - dynamic_started)
-                )
-                edge_fit_diagnostics.update({
-                    'dynamic_attempted': True,
-                    'attempted_method': str(
-                        getattr(dynamic_result, 'method', method)).upper(),
-                    'attempted_success': bool(
-                        getattr(dynamic_result, 'success', True)),
-                    'attempted_nfev': int(
-                        getattr(dynamic_result, 'nfev', 0) or 0),
-                    'attempted_message': str(
-                        getattr(dynamic_result, 'message', '') or ''),
-                })
-                result = dynamic_result
-                if not edge_fit_diagnostics['attempted_success']:
-                    edge_fit_diagnostics['fallback_used'] = True
-                    edge_fit_diagnostics['fallback_reason'] = (
-                        'dynamic_fit_unsuccessful'
-                    )
-                    result = selection_result
-
-        edge_fit_diagnostics['actual_method'] = str(
-            getattr(result, 'method', None) or 'STATIC').upper()
-        edge_fit_diagnostics['actual_success'] = bool(
-            getattr(result, 'success', True))
-        edge_fit_diagnostics['fit_ms'] = 1e3 * (
-            perf_counter() - fit_started)
-        pc = _pair_from_result(
-            cop,
-            result,
-            tau_val,
-            fit_diagnostics=edge_fit_diagnostics,
-        )
-
-        fitted_level.append(pc)
-
-        # Propagate pseudo-observations for higher trees.
-        if t < d - 2:
-            u2_next, u1_next = pc.h_pair(u2, u1)
-            pseudo_obs[(v2, conditioning | {v1})] = _clip_unit(u2_next)
-            pseudo_obs[(v1, conditioning | {v2})] = _clip_unit(u1_next)
-
-    return fitted_level
-
-
-def _make_fixed_copula(spec, transform_type):
-    cop_class, rotation = spec
-    try:
-        return cop_class(rotate=rotation, transform_type=transform_type)
-    except TypeError:
-        return cop_class(rotate=rotation)
-
-
-def _fit_with_strategy(copula, u_pair, method, config, fit_kwargs):
-    from pyscarcopula.strategy._base import get_strategy
-    strategy_kwargs = {
-        key: value for key, value in fit_kwargs.items()
-        if key not in (
-            'alpha0', 'gamma0',
-            'gtol', 'ftol', 'maxfun', 'maxiter', 'maxls', 'eps',
-            'maxcor', 'finite_diff_rel_step',
-            'score_eps', 'gamma_bound', 'beta_bound',
-            'seed', 'dwt', 'verbose',
-        )
-    }
-    strategy = get_strategy(method, config=config, **strategy_kwargs)
-    return strategy.fit(copula, u_pair, **fit_kwargs)
-
-
-def _pair_from_result(
-        copula, result, tau_val, *, fit_diagnostics=None):
-    result_param = getattr(result, 'copula_param', None)
-    if result_param is None:
-        param = 0.0 if isinstance(copula, IndependentCopula) else None
-    else:
-        param = float(result_param)
-    return _PairCopula(
-        copula=copula,
-        param=param,
-        log_likelihood=float(result.log_likelihood),
-        nfev=int(getattr(result, 'nfev', 0) or 0),
-        tau=float(tau_val),
-        fit_result=result,
-        fit_diagnostics=dict(fit_diagnostics or {}),
+    """Compatibility adapter for sequential Dissmann construction."""
+    return _fit_tree_level_core(
+        t,
+        tree_repr,
+        pseudo_obs,
+        d,
+        candidates=candidates,
+        allow_rotations=allow_rotations,
+        criterion=criterion,
+        method=method,
+        copulas=copulas,
+        config=config,
+        truncation_level=truncation_level,
+        truncation_fill=truncation_fill,
+        threshold=threshold,
+        min_edge_logL=min_edge_logL,
+        transform_type=transform_type,
+        fit_kwargs=fit_kwargs,
+        fit_with_strategy=_fit_with_strategy,
     )

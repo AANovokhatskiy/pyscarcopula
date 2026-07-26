@@ -15,13 +15,19 @@ from pyscarcopula.vine.cvine import CVineCopula
 from pyscarcopula.vine.rvine import RVineCopula
 from pyscarcopula.vine._pair_copula import PairCopula
 from pyscarcopula.vine._selection import SelectedCopula, select_best_copula
-from pyscarcopula.vine._structure import RVineMatrix
+from pyscarcopula.vine._structure import (
+    RVineMatrix,
+    cvine_structure,
+    dvine_structure,
+)
 
 __all__ = [
     'CVineCopula',
     'RVineCopula',
     'PairCopula',
     'RVineMatrix',
+    'cvine_structure',
+    'dvine_structure',
     'SelectedCopula',
     'select_best_copula',
 ]
