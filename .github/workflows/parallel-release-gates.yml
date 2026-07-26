@@ -1,4 +1,4 @@
-name: Parallel release gates
+﻿name: Parallel release gates
 
 on:
   push:
@@ -85,10 +85,15 @@ jobs:
 
       - name: Run full non-benchmark suite against wheel
         working-directory: ${{ runner.temp }}
+        env:
+          PYTHONFAULTHANDLER: "1"
         run: >-
-          python -m pytest "${{ github.workspace }}/tests"
-          --import-mode=importlib -m "not benchmark"
+          python -X faulthandler -m pytest "${{ github.workspace }}/tests"
+          --import-mode=importlib
+          -m "not benchmark"
           -k "not test_documented_python_blocks_compile_import_and_bind_public_calls"
+          -vv -s --tb=long
+          -o faulthandler_timeout=120
 
       - name: Write platform metadata
         env:
