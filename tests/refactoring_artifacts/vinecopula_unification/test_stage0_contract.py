@@ -225,8 +225,10 @@ def test_current_rvine_format_v2_golden_fixture_is_loadable():
 
 
 def test_top_level_vine_dispatch_contract(monkeypatch):
-    assert api_module._vine_kind(CVineCopula()) == "cvine"
-    assert api_module._vine_kind(RVineCopula()) == "rvine"
+    assert api_module._is_legacy_cvine(CVineCopula())
+    assert not api_module._is_generic_vine(CVineCopula())
+    assert api_module._is_generic_vine(RVineCopula())
+    assert not api_module._is_legacy_cvine(RVineCopula())
 
     vine = RVineCopula()
     sentinel_result = OptimizeResult(
@@ -303,8 +305,10 @@ def test_top_level_vine_dispatch_contract(monkeypatch):
     gof_sentinel = object()
     gof_calls = []
 
-    def fake_rvine_gof(model, observed, to_pobs, K, grid_range):
-        gof_calls.append((model, observed, to_pobs, K, grid_range))
+    def fake_rvine_gof(
+            model, observed, to_pobs, K, grid_range, *, vine_type):
+        gof_calls.append(
+            (model, observed, to_pobs, K, grid_range, vine_type))
         return gof_sentinel
 
     monkeypatch.setattr(statt_module, "rvine_gof_test", fake_rvine_gof)
@@ -315,4 +319,4 @@ def test_top_level_vine_dispatch_contract(monkeypatch):
         K=17,
         grid_range=2.5,
     ) is gof_sentinel
-    assert gof_calls == [(vine, data, False, 17, 2.5)]
+    assert gof_calls == [(vine, data, False, 17, 2.5, "rvine")]

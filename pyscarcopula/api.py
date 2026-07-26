@@ -353,10 +353,9 @@ def sample(
     ndarray
         Simulated pseudo-observations of shape ``(n, n_dimensions)``.
     """
-    vine_kind = _vine_kind(copula)
-    if vine_kind == 'cvine':
+    if _is_generic_vine(copula):
         return copula.sample(n, **kwargs)
-    if vine_kind == 'rvine':
+    if _is_legacy_cvine(copula):
         return copula.sample(n, **kwargs)
 
     prepared = _prepared_equicorr_or_none(copula, data)
@@ -431,7 +430,7 @@ def predict(
 
     ``given`` is a conditional sampling argument in pseudo-observation
     space. For bivariate copulas it may fix coordinate 0 or 1; for vines it
-    fixes vine-level coordinates. For `RVineCopula`, exact conditional
+    fixes vine-level coordinates. For `VineCopula`, exact conditional
     generation requires the fixed variables to be representable at the end of
     the R-vine variable order, either in the fitted matrix itself or after
     rebuilding an equivalent natural-order matrix. If the model was fitted
@@ -469,8 +468,24 @@ def predict(
         samples together with a diagnostics mapping.
     """
     pcfg = _resolve_predict_config(predict_config, given, horizon, kwargs)
-    vine_kind = _vine_kind(copula)
-    if vine_kind == 'cvine':
+    if _is_generic_vine(copula):
+        return copula.predict(
+            n, u=data, predict_config=pcfg, **kwargs)
+    if _is_legacy_cvine(copula):
+        unsupported = []
+        if pcfg.dynamic_conditioning != 'ignore':
+            unsupported.append('dynamic_conditioning')
+        if pcfg.return_diagnostics:
+            unsupported.append('return_diagnostics')
+        if pcfg.mcmc_steps is not None:
+            unsupported.append('mcmc_steps')
+        if pcfg.mcmc_burnin is not None:
+            unsupported.append('mcmc_burnin')
+        if unsupported:
+            names = ', '.join(unsupported)
+            raise TypeError(
+                "legacy CVineCopula.predict does not support: "
+                f"{names}")
         return copula.predict(
             n,
             u=data,
@@ -479,9 +494,6 @@ def predict(
             predictive_r_mode=pcfg.predictive_r_mode,
             **kwargs,
         )
-    if vine_kind == 'rvine':
-        return copula.predict(
-            n, u=data, predict_config=pcfg, **kwargs)
 
     prepared = _prepared_equicorr_or_none(copula, data)
     if prepared is None:
@@ -503,18 +515,22 @@ def predict(
 
 
 def _is_vine_copula(obj: object) -> bool:
-    return _vine_kind(obj) is not None
+    return _is_generic_vine(obj) or _is_legacy_cvine(obj)
 
 
-def _vine_kind(obj: object) -> str | None:
+def _is_generic_vine(obj: object) -> bool:
+    try:
+        from pyscarcopula.vine.vine import VineCopula
+    except ImportError:
+        return False
+    return isinstance(obj, VineCopula)
+
+
+def _is_legacy_cvine(obj: object) -> bool:
     try:
         from pyscarcopula.vine.cvine import CVineCopula
-        from pyscarcopula.vine.rvine import RVineCopula
     except ImportError:
-        return None
-
+        return False
     if isinstance(obj, CVineCopula):
-        return 'cvine'
-    if isinstance(obj, RVineCopula):
-        return 'rvine'
-    return None
+        return True
+    return False

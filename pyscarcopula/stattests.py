@@ -157,13 +157,15 @@ def gof_test(model, data, to_pobs=True, K=300, grid_range=5.0,
 
     Dispatches based on model type:
       - BivariateCopula  -> bivariate Rosenblatt (MLE or SCAR mixture)
-      - CVineCopula      -> vine Rosenblatt (per-edge bivariate approach)
+      - VineCopula       -> generic regular-vine Rosenblatt
+      - CVineCopula      -> legacy C-vine Rosenblatt
       - GaussianCopula   -> Cholesky-based Rosenblatt
       - StudentCopula    -> conditional t-distribution Rosenblatt
 
     Parameters
     ----------
-    model : BivariateCopula, CVineCopula, GaussianCopula, or StudentCopula
+    model : BivariateCopula, VineCopula, CVineCopula, GaussianCopula,
+        or StudentCopula
     data : (T, d) array
     to_pobs : bool
     K : int — grid size (SCAR only)
@@ -190,7 +192,7 @@ def gof_test(model, data, to_pobs=True, K=300, grid_range=5.0,
     from pyscarcopula.copula.base import BivariateCopula
     from pyscarcopula.copula.multivariate import GaussianCopula, StudentCopula
     from pyscarcopula.vine.cvine import CVineCopula
-    from pyscarcopula.vine.rvine import RVineCopula
+    from pyscarcopula.vine.vine import VineCopula
     from pyscarcopula.copula.multivariate import (
         EquicorrGaussianCopula,
         StochasticStudentCopula,
@@ -217,18 +219,25 @@ def gof_test(model, data, to_pobs=True, K=300, grid_range=5.0,
                               bootstrap_refit=bootstrap_refit,
                               bootstrap_fit_kwargs=bootstrap_fit_kwargs,
                               rng=rng)
+    elif isinstance(model, VineCopula):
+        if bootstrap:
+            raise NotImplementedError(
+                "Bootstrap GoF is currently implemented for bivariate "
+                "copulas only.")
+        return rvine_gof_test(
+            model,
+            data,
+            to_pobs,
+            K,
+            grid_range,
+            vine_type=model.vine_type,
+        )
     elif isinstance(model, CVineCopula):
         if bootstrap:
             raise NotImplementedError(
                 "Bootstrap GoF is currently implemented for bivariate "
                 "copulas only.")
         return vine_gof_test(model, data, to_pobs, K, grid_range)
-    elif isinstance(model, RVineCopula):
-        if bootstrap:
-            raise NotImplementedError(
-                "Bootstrap GoF is currently implemented for bivariate "
-                "copulas only.")
-        return rvine_gof_test(model, data, to_pobs, K, grid_range)
     elif isinstance(model, GaussianCopula):
         if bootstrap:
             raise NotImplementedError(
@@ -553,15 +562,23 @@ def vine_gof_test(vine, data, to_pobs=True, K=500, grid_range=7.0):
     return cvm_test(e)
 
 
-def rvine_rosenblatt_transform(vine, u, K=300, grid_range=5.0):
+def rvine_rosenblatt_transform(
+        vine, u, K=300, grid_range=5.0, *, vine_type=None):
     """
     Rosenblatt transform for a fitted R-vine copula.
 
-    Mirrors ``RVineCopula.sample`` for the natural-order matrix:
+    Mirrors ``VineCopula.sample`` for the natural-order matrix:
     columns are traversed right-to-left, and each anti-diagonal leaf is
     transformed by h-functions from tree 0 up to the column's top tree.
     """
     from pyscarcopula.vine._rvine_edges import _edge_h
+
+    if vine_type is None:
+        vine_type = getattr(vine, "vine_type", "rvine")
+    if vine_type not in {"cvine", "dvine", "rvine"}:
+        raise ValueError(
+            "vine_type must be 'cvine', 'dvine' or 'rvine', "
+            f"got {vine_type!r}")
 
     if getattr(vine, 'matrix', None) is None:
         raise ValueError("Fit the vine first")
@@ -638,18 +655,22 @@ def rvine_rosenblatt_transform(vine, u, K=300, grid_range=5.0):
 
     return clip_rosenblatt_output(e)
 
-def rvine_gof_test(vine, data, to_pobs=True,
-                    K=500, grid_range=7.0):
+def rvine_gof_test(
+        vine, data, to_pobs=True, K=500, grid_range=7.0, *,
+        vine_type=None):
     """
     Goodness-of-fit test for a fitted R-vine copula.
 
     Parameters
     ----------
-    vine : RVineCopula (fitted)
+    vine : VineCopula (fitted)
     data : (T, d)
     to_pobs : bool
     K : int
     grid_range : float
+    vine_type : {'cvine', 'dvine', 'rvine'} or None
+        Structural mode forwarded by :func:`gof_test`. ``None`` derives it
+        from the fitted model.
 
     Returns
     -------
@@ -664,7 +685,15 @@ def rvine_gof_test(vine, data, to_pobs=True,
     if getattr(vine, 'matrix', None) is None:
         raise ValueError("Fit the vine first")
 
-    e = rvine_rosenblatt_transform(vine, u, K=K, grid_range=grid_range)
+    if vine_type is None:
+        vine_type = getattr(vine, "vine_type", "rvine")
+    e = rvine_rosenblatt_transform(
+        vine,
+        u,
+        K=K,
+        grid_range=grid_range,
+        vine_type=vine_type,
+    )
     return cvm_test(e)
 
 

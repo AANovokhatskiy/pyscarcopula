@@ -165,7 +165,7 @@ def _predict_copula(copula, uk, N_mc, rng=None, **kwargs):
         # GaussianCopula/StudentCopula: simple predict (no method param)
         return copula.predict(N_mc, rng=rng)
     else:
-        # BivariateCopula and CVineCopula: pass u explicitly
+        # Bivariate copulas and vine runtimes: pass u explicitly.
         return copula.predict(
             N_mc, u=uk, rng=rng, **_risk_predict_kwargs(copula, kwargs))
 
@@ -186,7 +186,7 @@ def _coerce_seed_sequence(rng=None):
 def _get_copula_constructor(copula):
     """Extract copula class and kwargs for reconstruction in workers."""
     from pyscarcopula.vine.cvine import CVineCopula
-    from pyscarcopula.vine.rvine import RVineCopula
+    from pyscarcopula.vine.vine import VineCopula
     from pyscarcopula.copula.multivariate import (
         EquicorrGaussianCopula,
         GaussianCopula,
@@ -199,8 +199,13 @@ def _get_copula_constructor(copula):
                 dict(candidates=copula.candidates,
                      allow_rotations=copula.allow_rotations,
                      criterion=copula.criterion))
-    elif isinstance(copula, RVineCopula):
-        return (RVineCopula,
+    elif isinstance(copula, VineCopula):
+        structure = (
+            copula.structure
+            if copula.structure_source == "fixed"
+            else None
+        )
+        return (VineCopula,
                 dict(candidates=copula.candidates,
                      allow_rotations=copula.allow_rotations,
                      criterion=copula.criterion,
@@ -208,7 +213,9 @@ def _get_copula_constructor(copula):
                      truncation_fill=copula.truncation_fill,
                      threshold=copula.threshold,
                      min_edge_logL=copula.min_edge_logL,
-                     transform_type=copula.transform_type))
+                     transform_type=copula.transform_type,
+                     structure=structure,
+                     vine_type=copula.vine_type))
     elif isinstance(copula, StochasticStudentCopula):
         constructor_R = getattr(copula, "_constructor_R", None)
         constructor_corr_base = getattr(
@@ -555,7 +562,8 @@ def risk_metrics(copula, data, window_len,
 
     Parameters
     ----------
-    copula : BivariateCopula, GaussianCopula, StudentCopula, or CVineCopula
+    copula : BivariateCopula, GaussianCopula, StudentCopula, VineCopula,
+        or legacy CVineCopula
     data : (T, dim) log-returns
     window_len : int
     gamma : float or list — confidence level(s)

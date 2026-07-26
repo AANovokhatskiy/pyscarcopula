@@ -182,6 +182,10 @@ class VineCopula:
     structure : RVineMatrix or None, default None
         Fixed regular-vine structure.  If omitted, the structure is selected
         automatically with the Dissmann procedure on every fit.
+    vine_type : {'cvine', 'dvine', 'rvine'} or None, default None
+        Explicit structural mode for integrations such as GoF. Factories set
+        this value automatically. With a direct fixed ``structure``, ``None``
+        derives the mode from the structure.
 
     Attributes (after ``fit``)
     --------------------------
@@ -212,6 +216,7 @@ class VineCopula:
         min_edge_logL=None,
         transform_type='softplus',
         structure=None,
+        vine_type=None,
     ):
         from pyscarcopula.vine._selection import validate_pair_candidates
         validate_pair_candidates(candidates)
@@ -219,6 +224,15 @@ class VineCopula:
             raise TypeError(
                 "structure must be an RVineMatrix or None, "
                 f"got {type(structure).__name__}")
+        if vine_type is not None:
+            vine_type = str(vine_type).lower()
+            if vine_type not in {"cvine", "dvine", "rvine"}:
+                raise ValueError(
+                    "vine_type must be 'cvine', 'dvine', 'rvine' or None, "
+                    f"got {vine_type!r}")
+            if structure is None and vine_type != "rvine":
+                raise ValueError(
+                    f"vine_type={vine_type!r} requires a fixed structure")
         if criterion not in ('aic', 'bic', 'loglik'):
             raise ValueError(
                 f"criterion must be 'aic', 'bic' or 'loglik', got {criterion!r}"
@@ -251,6 +265,7 @@ class VineCopula:
         self.transform_type = transform_type
         self._configured_structure = (
             None if structure is None else RVineMatrix(structure.matrix))
+        self._configured_vine_type = vine_type
         self._structure = None
 
         self.d = None
@@ -273,17 +288,25 @@ class VineCopula:
     @classmethod
     def cvine(cls, d, order=None, **kwargs):
         """Create a generic vine configured with a fixed C-vine structure."""
-        return cls(structure=cvine_structure(d, order), **kwargs)
+        return cls(
+            structure=cvine_structure(d, order),
+            vine_type="cvine",
+            **kwargs,
+        )
 
     @classmethod
     def dvine(cls, d, order=None, **kwargs):
         """Create a generic vine configured with a fixed D-vine structure."""
-        return cls(structure=dvine_structure(d, order), **kwargs)
+        return cls(
+            structure=dvine_structure(d, order),
+            vine_type="dvine",
+            **kwargs,
+        )
 
     @classmethod
     def rvine(cls, **kwargs):
         """Create a generic vine with automatic R-vine selection."""
-        return cls(**kwargs)
+        return cls(vine_type="rvine", **kwargs)
 
     def __getstate__(self):
         """Return persistent model state without transient prediction caches."""
@@ -298,6 +321,8 @@ class VineCopula:
             state['_natural_order_matrix'] = legacy_matrix
         if '_configured_structure' not in state:
             state['_configured_structure'] = None
+        if '_configured_vine_type' not in state:
+            state['_configured_vine_type'] = None
         if '_structure' not in state:
             d = state.get('d')
             trees = state.get('trees')
@@ -772,6 +797,19 @@ class VineCopula:
         if max(degrees.values(), default=0) <= 2:
             return "D-vine"
         return "regular vine"
+
+    @property
+    def vine_type(self):
+        """Structural mode passed to type-sensitive integrations such as GoF."""
+        if self._configured_vine_type is not None:
+            return self._configured_vine_type
+        if self.structure_source == "auto":
+            return "rvine"
+        return {
+            "C-vine": "cvine",
+            "D-vine": "dvine",
+            "regular vine": "rvine",
+        }[self.structure_label]
 
     @property
     def matrix(self):
