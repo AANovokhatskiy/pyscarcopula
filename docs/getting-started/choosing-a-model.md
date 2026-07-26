@@ -13,7 +13,7 @@ a baseline before adding GAS or latent SCAR dynamics.
 | One unrestricted static correlation matrix | `GaussianCopula` or `StudentCopula` | MLE |
 | One common correlation that changes over time | `EquicorrGaussianCopula` | GAS or SCAR-TM-OU |
 | Time-varying multivariate tail thickness | `StochasticStudentCopula` | GAS or SCAR-TM-OU |
-| Different pairwise families and dependence strengths | `CVineCopula` or `RVineCopula` | MLE, then dynamic edges if needed |
+| Different pairwise families and dependence strengths | `VineCopula` | Auto R-vine or fixed C/D structure; MLE, then dynamic edges if needed |
 | Very large dimension with low-rank correlation | Gaussian or stochastic Student model with `corr_mode="factor"` | Two-stage factor MLE |
 
 Use the [Bivariate Copulas](../guide/bivariate.md) guide for one pair. For

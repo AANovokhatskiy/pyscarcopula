@@ -611,7 +611,7 @@ cfg = NumericalConfig(
 )
 ```
 
-## C-Vines
+## Legacy C-Vines
 
 `CVineCopula.fit` selects a family for each edge using an MLE screening/refine
 step, then optionally refits selected edges with the requested dynamic method.
@@ -667,19 +667,24 @@ In C-vines, `config` is accepted through `**kwargs` and is passed to the
 dynamic edge refit. The initial MLE family-selection stage uses its own fast
 MLE path.
 
-## R-Vines
+This section documents the retained legacy implementation. New fixed C-vines
+should use `VineCopula.cvine(...)` and the generic controls below.
 
-`RVineCopula.fit` has an explicit `config` argument and forwards strategy
-options to edge fits through the Dissmann selector.
+## Generic VineCopula
+
+`VineCopula.fit` has an explicit `config` argument and forwards strategy
+options through the shared edge-fitting core. With `structure=None`, the
+Dissmann selector builds the structure; with a fixed `RVineMatrix`, fitting
+starts directly from decoded trees and skips MST selection.
 
 ```python
-from pyscarcopula import RVineCopula
+from pyscarcopula import VineCopula
 from pyscarcopula import LBFGSBConfig, NumericalConfig
 
 cfg = NumericalConfig(
     gas_optimizer=LBFGSBConfig(ftol=1e-12, maxfun=3000, maxiter=3000))
 
-vine = RVineCopula(
+vine = VineCopula(
     truncation_level=2,
     truncation_fill='independent',
     threshold=0.02,
@@ -695,7 +700,7 @@ vine.fit(
 )
 ```
 
-The same strategy options listed for C-vines are forwarded to every
+The same strategy options listed for legacy C-vines are forwarded to every
 non-independent, non-truncated edge selected for dynamic fitting. R-vine
 structure controls are:
 
@@ -715,7 +720,7 @@ after a family has been selected. If `method='gas'`, a too-loose `ftol` can make
 some edges stop early with `success=True`; set `ftol=1e-12` and increase
 `maxfun` for difficult edges.
 
-Fitted R-vines use sequential native hot paths where the model contract permits
+Fitted generic vines use sequential native hot paths where the model contract permits
 them. GAS unconditional sampling executes the row recursion and causal score
 updates in one native call while preserving RNG and edge-update order. Repeated
 SCAR-TM-OU prediction against unchanged fitted history reuses
@@ -723,7 +728,7 @@ pseudo-observations and terminal posterior state. A new `fit`, a changed
 explicit history, or an edge replacement invalidates the relevant transient
 cache. These optimizations do not parallelize edge or sample execution.
 
-Static R-vine sampling bounds temporary vectorized workspace by processing at
+Static `VineCopula` sampling bounds temporary vectorized workspace by processing at
 most 8192 rows at a time. Use `sample(..., batch_rows=...)` to trade throughput
 against peak memory. `memory_budget_bytes=` checks the estimated output and
 workspace requirement before allocation. Dynamic edge trajectories are not

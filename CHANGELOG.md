@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Introduces `VineCopula` as the generic auto/fixed regular-vine runtime while
+  retaining `RVineCopula` as a compatibility name and `CVineCopula` as a
+  supported legacy implementation. No runtime deprecation warning is emitted
+  for `CVineCopula`; new C-vine code should use `VineCopula.cvine(...)`.
+- Adds fixed C-vine/D-vine factories, arbitrary validated `RVineMatrix`
+  structures, shared fixed-edge fitting, type-aware GoF, and v3 persistence
+  with v2 `RVineCopula` migration. Documentation and notebooks now use
+  decoded tree edges for structure comparison instead of raw matrix
+  conventions.
 - Adds reusable, copula-independent `FactorCorrelation` and
   `PreparedFactorCorrelation` objects for correlations of the form
   `R = D + B B.T`, with unit diagonal and explicit uniqueness bounds.

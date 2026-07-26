@@ -50,7 +50,7 @@ Independent fit batches and rolling risk results additionally expose:
 - `worker_model_ownership='per_task'` and
   `prepared_evaluator_sharing=False`.
 
-For `RVineCopula`, `vine.fit_diagnostics["edge_fits"]` additionally separates
+For `VineCopula`, `vine.fit_diagnostics["edge_fits"]` additionally separates
 the requested vine method from the methods retained on individual edges. It
 contains actual method and family counts, dynamic attempt/success counts,
 fallback edges, selection and attempted-dynamic `nfev`, discarded fallback

@@ -10,7 +10,7 @@ Usage examples and conceptual details live in the user guide:
 
 ## Public Options
 
-`CVineCopula.predict(...)` and `RVineCopula.predict(...)` both support:
+`CVineCopula.predict(...)` and `VineCopula.predict(...)` both support:
 
 - `given={var_index: u_value}` for conditional generation in
   pseudo-observation space;
@@ -19,7 +19,7 @@ Usage examples and conceptual details live in the user guide:
   parameter sampling. No other string values are supported;
 - `rng=np.random.default_rng(seed)` for reproducible Monte Carlo output.
 
-`RVineCopula.predict(...)` additionally supports:
+`VineCopula.predict(...)` additionally supports:
 
 - `predict_config=PredictConfig(...)`;
 - `dynamic_conditioning='ignore'|'given_only'`;
@@ -27,7 +27,7 @@ Usage examples and conceptual details live in the user guide:
   approximate conditional prediction;
 - `return_diagnostics=True`.
 
-`RVineCopula.fit(...)` additionally supports fit-time conditional-structure
+`VineCopula.fit(...)` additionally supports fit-time conditional-structure
 targeting:
 
 - `given_vars=[...]`;
@@ -48,7 +48,45 @@ used for automatic selection. Pass `copulas=[[(CopulaClass, rotation), ...],
 Use `vine.to_rvine_matrix()` or `RVineMatrix.from_model(vine)` when you need
 the fitted R-vine structure as an `RVineMatrix`.
 
+For new code, construct all generic modes through one class:
+
+```python
+from pyscarcopula import VineCopula
+from pyscarcopula.vine import RVineMatrix
+
+auto = VineCopula()
+c_vine = VineCopula.cvine(d=5, order=[0, 1, 2, 3, 4])
+d_vine = VineCopula.dvine(d=5, order=[0, 1, 2, 3, 4])
+arbitrary = VineCopula(
+    structure=RVineMatrix.from_trees(d=5, trees=trees)
+)
+```
+
+`model.structure` is the canonical public structure.
+`model.natural_order_matrix` exposes the numerical matrix convention;
+`model.matrix` is retained as a compatibility property.
+
+## VineCopula
+
+::: pyscarcopula.vine.vine.VineCopula
+    options:
+      members:
+        - cvine
+        - dvine
+        - rvine
+        - fit
+        - log_likelihood
+        - sample
+        - predict
+        - summary
+        - to_rvine_matrix
+
 ## CVineCopula
+
+`CVineCopula` is the supported legacy implementation. Prefer
+`VineCopula.cvine(...)` for new code. It does not currently emit a runtime
+deprecation warning; its C-vine-specific conditional algorithms intentionally
+differ from the generic matrix-based conditional runtime.
 
 ::: pyscarcopula.vine.cvine.CVineCopula
     options:
@@ -59,16 +97,13 @@ the fitted R-vine structure as an `RVineMatrix`.
         - predict
         - summary
 
-## RVineCopula
+## RVineCopula compatibility name
 
-::: pyscarcopula.vine.rvine.RVineCopula
-    options:
-      members:
-        - fit
-        - log_likelihood
-        - sample
-        - predict
-        - summary
+`RVineCopula is VineCopula`. The old import remains supported, but it does not
+define a second runtime or a distinct R-vine model type.
+
+Its methods and signatures are therefore the same as the canonical
+[`VineCopula`](#vinecopula) API above.
 
 ## PredictConfig
 

@@ -29,7 +29,11 @@ pyscarcopula/
 |   |-- jacobi_tm.py         # Retained Python Jacobi orchestration
 |   `-- mc_samplers.py       # Retained Python SCAR-MC/EIS orchestration
 |-- vine/
-|   |-- cvine.py, rvine.py
+|   |-- vine.py               # Canonical generic VineCopula runtime
+|   |-- rvine.py              # RVineCopula compatibility module alias
+|   |-- cvine.py              # Legacy CVineCopula implementation
+|   |-- _structure.py         # RVineMatrix and C/D structure factories
+|   |-- _vine_fit.py          # Shared fixed-structure edge fitting
 |   `-- _rvine_*.py, _selection.py
 `-- contrib/                 # Marginals and risk analytics
 ```
@@ -80,7 +84,8 @@ The main dependency flow is:
 ```text
 api.py -> strategy/ -> numerical native adapters -> C++ extension
                     -> copula model metadata
-vine/ -> strategy/ + bivariate copula contract
+vine/vine.py -> structure selection or fixed RVineMatrix
+             -> _vine_fit.py + bivariate copula contract
 stattests/ -> fitted strategy outputs + retained GoF orchestration
 ```
 
@@ -160,9 +165,22 @@ samples = predict(copula, u, result, n=1000)
 Model methods are convenience wrappers that store `fit_result` and the last
 fitting data.
 
-Persistence uses versioned JSON. The loader migrates historical experimental
-class paths to the multivariate namespace and ignores removed legacy backend
-fields.
+Persistence uses versioned JSON. New files use v3; the loader retains v2
+migrations, including the historical
+`pyscarcopula.vine.rvine.RVineCopula` path and pre-`VineCopula` state layout.
+Removing v2 support requires a separate file-format migration policy.
+
+For generic vines, `RVineMatrix` is the canonical public structure. The model
+stores a separate natural-order matrix for numerical traversal:
+
+```text
+VineCopula(structure=None)          -> Dissmann auto selection
+VineCopula(structure=RVineMatrix)   -> fixed structure, no MST selection
+VineCopula.cvine(...) / .dvine(...) -> fixed RVineMatrix factories
+```
+
+`RVineCopula` is the same runtime type as `VineCopula`.
+`CVineCopula` remains a separate legacy implementation.
 
 ## BLAS Thread Policy
 

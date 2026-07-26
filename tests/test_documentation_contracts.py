@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import importlib
 import inspect
+import json
 from pathlib import Path
 import re
 
@@ -181,6 +182,48 @@ def test_notebooks_do_not_import_private_pyscarcopula_modules():
         assert "import pyscarcopula._" not in text
 
 
+def test_vinecopula_is_the_discoverable_canonical_vine_api():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    for public_surface in (
+            "VineCopula()",
+            "VineCopula.cvine(",
+            "VineCopula.dvine(",
+            "RVineMatrix.from_trees(",
+            "natural_order_matrix"):
+        assert public_surface in readme
+
+    api = (ROOT / "docs/api/vine.md").read_text(encoding="utf-8")
+    assert api.index("## VineCopula") < api.index("## RVineCopula")
+    assert "RVineCopula is VineCopula" in api
+    assert "legacy" in api.lower()
+
+
+def test_vine_notebooks_use_semantic_structure_comparisons():
+    for filename in (
+            "04_vine.ipynb",
+            "05_risk_metrics.ipynb",
+            "06_pyvinecopulib_comparison.ipynb"):
+        path = ROOT / "examples" / filename
+        notebook = json.loads(path.read_text(encoding="utf-8"))
+        for cell in notebook["cells"]:
+            if cell["cell_type"] == "code":
+                compile(
+                    "".join(cell["source"]),
+                    filename=f"{path}:{cell.get('execution_count')}",
+                    mode="exec",
+                )
+
+    comparison = (
+        ROOT / "examples/06_pyvinecopulib_comparison.ipynb"
+    ).read_text(encoding="utf-8")
+    assert "RVineMatrix.from_trees" in comparison
+    assert "same fixed structure" in comparison.lower()
+    assert "loglik_per_obs" in comparison
+    assert "decoded" in comparison.lower()
+    assert "tree >= vine.structure.trunc_lvl" in comparison
+    assert "shared_pv_structure = pv.DVineStructure" in comparison
+
+
 def test_complete_public_documentation_examples_execute():
     namespaces = {}
     for relative_path in (
@@ -254,9 +297,10 @@ def test_distribution_declares_pep561_typing_marker():
 
 
 def test_documented_vine_signatures_match_runtime():
-    from pyscarcopula import CVineCopula, RVineCopula
+    from pyscarcopula import CVineCopula, RVineCopula, VineCopula
 
-    for cls in (CVineCopula, RVineCopula):
+    assert RVineCopula is VineCopula
+    for cls in (CVineCopula, VineCopula):
         sample_parameters = inspect.signature(cls.sample).parameters
         assert "n" in sample_parameters
         assert "u" in sample_parameters
@@ -314,7 +358,7 @@ def test_representative_documented_workflows_execute():
     from pyscarcopula import (
         GumbelCopula,
         IndependentCopula,
-        RVineCopula,
+        VineCopula,
     )
     from pyscarcopula.api import fit
 
@@ -336,7 +380,7 @@ def test_representative_documented_workflows_execute():
 
     u_vine = np.random.default_rng(20260621).uniform(
         0.05, 0.95, size=(30, 3))
-    vine = RVineCopula(candidates=[IndependentCopula]).fit(u_vine)
+    vine = VineCopula(candidates=[IndependentCopula]).fit(u_vine)
     assert vine.sample(5, rng=np.random.default_rng(1)).shape == (5, 3)
     assert vine.predict(
         5, u=u_vine, rng=np.random.default_rng(2)).shape == (5, 3)

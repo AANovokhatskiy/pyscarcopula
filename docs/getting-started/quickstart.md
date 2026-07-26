@@ -90,12 +90,12 @@ df_t = student.predictive_mean()
 u_student_pred = student.predict(10_000, rng=np.random.default_rng(2027))
 ```
 
-## Fit a multivariate R-vine
+## Fit a multivariate vine
 
 ```python
-from pyscarcopula import RVineCopula
+from pyscarcopula import VineCopula
 
-vine = RVineCopula()
+vine = VineCopula()
 vine.fit(
     u_6d,
     method="scar-tm-ou",

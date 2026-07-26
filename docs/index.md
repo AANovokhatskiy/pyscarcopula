@@ -15,8 +15,9 @@ matrix method.
 - **Elliptical copulas**: Gaussian, Student-t
 - **Multivariate models**: Gaussian, Student-t, equicorrelation Gaussian,
   and stochastic Student-t
-- **C-vine copulas**: automatic family selection, truncation, mixed SCAR/MLE
-- **R-vine conditional sampling**: exact and approximate conditional
+- **Generic vine copulas**: auto R-vine selection and fixed C/D/arbitrary
+  `RVineMatrix` structures through `VineCopula`
+- **Vine conditional sampling**: exact suffix and approximate arbitrary
   prediction modes
 - **Explicit CPU parallelism**: native threads for eligible multivariate
   kernels and process workers for independent fits, with an absolute

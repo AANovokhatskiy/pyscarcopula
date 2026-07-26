@@ -76,9 +76,9 @@ The `transform_type` parameter propagates through the common constructor flow
 to all edge copulas in a vine:
 
 ```python
-from pyscarcopula import CVineCopula
+from pyscarcopula import VineCopula
 
-vine = CVineCopula()
+vine = VineCopula.cvine(d=u.shape[1])
 vine.fit(u, method='scar-tm-ou', transform_type='softplus')
 ```
 

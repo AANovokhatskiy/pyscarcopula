@@ -107,6 +107,34 @@ python -m pyscarcopula._native_smoke
 
 ## Features
 
+### VineCopula quick start
+
+`VineCopula` is the primary API for regular vines. Omitting `structure`
+selects an R-vine from data; C-vines and D-vines are fixed
+[`RVineMatrix`](docs/api/vine.md) structures:
+
+```python
+from pyscarcopula import VineCopula
+from pyscarcopula.vine import RVineMatrix, cvine_structure, dvine_structure
+
+# Data-driven regular vine
+auto = VineCopula().fit(u, method="mle")
+
+# Fixed standard structures
+c_vine = VineCopula.cvine(d=u.shape[1]).fit(u, method="mle")
+d_vine = VineCopula.dvine(d=u.shape[1]).fit(u, method="mle")
+
+# Any valid regular-vine tree sequence, without writing a raw matrix
+structure = RVineMatrix.from_trees(d=u.shape[1], trees=my_trees)
+fixed = VineCopula(structure=structure).fit(u, method="mle")
+```
+
+Use `vine.structure` for the canonical `RVineMatrix` and
+`vine.natural_order_matrix` when an integration specifically needs the
+natural-order runtime matrix. `vine.matrix` is a compatibility property.
+`RVineCopula` remains an alias for `VineCopula`; `CVineCopula` is the
+supported legacy C-vine implementation.
+
 **Copula families**
 
 * Archimedean: Gumbel, Frank, Clayton, Joe, including rotations where supported
@@ -117,8 +145,9 @@ python -m pyscarcopula._native_smoke
 
 **Vine copulas**
 
-* C-vine pair-copula construction with fixed star structure
-* R-vine pair-copula construction with Dissmann-style structure selection
+* One `VineCopula` runtime for auto-selected and fixed regular vines
+* Fixed C-vine and D-vine factories backed by `RVineMatrix`
+* Arbitrary valid structures built from decoded tree edges
 * Automatic family and rotation selection per edge using AIC/BIC
 * Tree-level and edge-level truncation
 * Mixed MLE, SCAR, GAS, and independence edges within one vine
@@ -208,9 +237,12 @@ experimental, numerically sensitive mode.
 See [`docs/guide/performance.md`](docs/guide/performance.md) for supported
 families and numerical options.
 
-Vine copulas decompose a `d`-dimensional dependence model into bivariate copulas
-arranged in a sequence of trees. R-vines choose the tree structure from data
-subject to the proximity condition; C-vines use a fixed star structure.
+Vine copulas decompose a `d`-dimensional dependence model into bivariate
+copulas arranged in a sequence of trees. `VineCopula()` selects a regular-vine
+structure from data subject to the proximity condition.
+`VineCopula.cvine(...)` and `VineCopula.dvine(...)` use fixed standard
+structures, while `VineCopula(structure=RVineMatrix.from_trees(...))` accepts
+an arbitrary valid decoded tree sequence.
 
 ## Examples and docs
 

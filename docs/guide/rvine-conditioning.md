@@ -2,7 +2,7 @@
 
 ## Overview
 
-`RVineCopula.predict(..., given=...)` supports conditional sampling in
+`VineCopula.predict(..., given=...)` supports conditional sampling in
 pseudo-observation space. The fixed variables are passed as
 `{var_index: u_value}` and the returned sample keeps those columns fixed.
 
@@ -26,19 +26,19 @@ R-vine order:
 
 ```python
 import numpy as np
-from pyscarcopula import RVineCopula
+from pyscarcopula import VineCopula
 
-vine = RVineCopula().fit(u, method="mle")
-
-variable_order = [
-    int(vine.matrix[vine.d - 1 - col, col])
-    for col in range(vine.d)
-]
+TARGET_VARIABLE = 0
+vine = VineCopula().fit(
+    u,
+    method="mle",
+    given_vars=[TARGET_VARIABLE],
+)
 
 samples = vine.predict(
     n=5000,
     u=u,
-    given={variable_order[-1]: 0.6},
+    given={TARGET_VARIABLE: 0.6},
     rng=np.random.default_rng(2026),
 )
 ```
@@ -58,7 +58,7 @@ approximate fallback that supports arbitrary conditioning sets:
 from pyscarcopula import PredictConfig
 
 cfg = PredictConfig(
-    given={variable_order[0]: 0.45},
+    given={2: 0.45},
     horizon="next",
     mcmc_steps=300,
     mcmc_burnin=100,
@@ -90,10 +90,10 @@ For strongly dependent or high-dimensional conditional targets, increase
 
 ## Fit-Time Targeting with `given_vars`
 
-If the conditioning set is known before fit, pass it into `RVineCopula.fit`:
+If the conditioning set is known before fit, pass it into `VineCopula.fit`:
 
 ```python
-vine = RVineCopula().fit(
+vine = VineCopula().fit(
     u,
     method="scar-tm-ou",
     given_vars=[0, 2],

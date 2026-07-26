@@ -510,7 +510,7 @@ are `GaussianCopula(corr_mode="factor")`,
 | Constant Student `df`, bounded joint refinement | Student factor + `joint` MLE |
 | Dynamic observation-driven tails | Student factor + GAS + `two-stage` |
 | Dynamic latent tails | Student factor + SCAR + `two-stage` |
-| Heterogeneous pair dependence in original dimensions | `RVineCopula`, fitted separately |
+| Heterogeneous pair dependence in original dimensions | `VineCopula`, fitted separately |
 
 For CPU threading, reproducibility, nested parallelism, and rolling-window
 guidance, see [CPU Parallelism](parallelism.md). For the broader multivariate
