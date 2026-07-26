@@ -154,10 +154,10 @@ def test_rvine_likelihood_seeded_sampling_summary_and_repr_contract():
 
     summary = vine.summary(as_string=True)
     assert str(vine) == summary
-    assert "RVineCopula" in summary
+    assert "VineCopula" in summary
     assert "log_likelihood" in summary
     assert "\nEdges" in summary
-    assert repr(vine).startswith("RVineCopula(d=2, T=160, logL=")
+    assert repr(vine).startswith("VineCopula(d=2, T=160, logL=")
     assert "n_params=1)" in repr(vine)
 
 
@@ -217,7 +217,7 @@ def test_current_rvine_format_v2_golden_fixture_is_loadable():
     assert vine.fit_diagnostics["edge_fits"]["family_counts"] == {
         "IndependentCopula": 1,
     }
-    assert repr(vine) == "RVineCopula(d=2, T=5, logL=0.000, n_params=0)"
+    assert repr(vine) == "VineCopula(d=2, T=5, logL=0.000, n_params=0)"
 
     first = vine.sample(8, rng=np.random.default_rng(10))
     second = vine.sample(8, rng=np.random.default_rng(10))

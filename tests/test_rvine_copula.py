@@ -483,7 +483,7 @@ class TestFitContract:
     def test_fit_chainable(self):
         u = _sample_dvine_gumbel(200, 3, 2.0, seed=0)
         s = RVineCopula().fit(u).summary(as_string=True)
-        assert "RVineCopula" in s
+        assert "VineCopula" in s
         assert "log_likelihood" in s
 
     def test_fixed_copulas_rejects_instances_with_helpful_message(self):
@@ -1475,7 +1475,7 @@ class TestSummary:
         result = v.summary()
         captured = capsys.readouterr()
         assert result is None
-        assert "RVineCopula" in captured.out
+        assert "VineCopula" in captured.out
         assert "log_likelihood" in captured.out
         assert "\nEdges" in captured.out
 
@@ -1599,7 +1599,7 @@ class TestSummary:
         u = _sample_dvine_gumbel(300, 4, 2.0, seed=0)
         v = RVineCopula().fit(u)
         r = repr(v)
-        assert r.startswith("RVineCopula(")
+        assert r.startswith("VineCopula(")
         assert "d=4" in r
 
 

@@ -7,11 +7,13 @@ Submodules:
     _selection  — copula family selection (itau + refinement)
     _helpers    — shared utility functions
     _structure  — R-vine matrix representation, Dissmann tree selection
-    cvine       — CVineCopula
-    rvine       — RVineCopula
+    cvine       — legacy CVineCopula
+    vine        — generic VineCopula runtime
+    rvine       — compatibility name for VineCopula
 """
 
 from pyscarcopula.vine.cvine import CVineCopula
+from pyscarcopula.vine.vine import VineCopula
 from pyscarcopula.vine.rvine import RVineCopula
 from pyscarcopula.vine._pair_copula import PairCopula
 from pyscarcopula.vine._selection import SelectedCopula, select_best_copula
@@ -23,6 +25,7 @@ from pyscarcopula.vine._structure import (
 
 __all__ = [
     'CVineCopula',
+    'VineCopula',
     'RVineCopula',
     'PairCopula',
     'RVineMatrix',

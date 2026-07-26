@@ -1,4 +1,4 @@
-"""Text formatting helpers for ``RVineCopula`` summaries."""
+"""Text formatting helpers for generic ``VineCopula`` summaries."""
 
 import numpy as np
 
@@ -45,14 +45,19 @@ def _scalar_param(pc):
 
 
 def format_rvine_summary(vine):
-    """Return a human-readable summary for a fitted or unfitted R-vine."""
-    if vine.matrix is None:
-        return "RVineCopula (unfitted)"
+    """Return a human-readable summary for a fitted or unfitted vine."""
+    matrix = getattr(vine, "_natural_order_matrix", None)
+    if matrix is None:
+        return (
+            "VineCopula (unfitted, "
+            f"structure_source={vine.structure_source!r})")
 
     lines = []
     lines.append(
-        f"RVineCopula(d={vine.d}, T={vine._T}, "
-        f"criterion={vine.criterion!r})"
+        f"VineCopula(d={vine.d}, T={vine._T}, "
+        f"criterion={vine.criterion!r}, "
+        f"structure_source={vine.structure_source!r}, "
+        f"structure_label={vine.structure_label!r})"
     )
     lines.append(f"  log_likelihood = {vine._log_likelihood:.4f}")
     lines.append(f"  n_parameters   = {vine.n_parameters}")
@@ -84,7 +89,7 @@ def format_rvine_summary(vine):
         "Structure matrix (natural order, Czado 2019 Alg. 5.4; "
         "anti-diagonal = leaf peeled at each column):"
     )
-    lines.append(np.array2string(vine.matrix, separator=" "))
+    lines.append(np.array2string(matrix, separator=" "))
 
     lines.append("")
     lines.append("Edges (tree t, column col):")
@@ -104,10 +109,10 @@ def format_rvine_summary(vine):
     for t in range(d - 1):
         for col in range(d - 1 - t):
             pc = vine.pair_copulas[(t, col)]
-            leaf = int(vine.matrix[d - 1 - col, col])
-            tail = int(vine.matrix[d - 2 - col - t, col])
+            leaf = int(matrix[d - 1 - col, col])
+            tail = int(matrix[d - 2 - col - t, col])
             cond = sorted(
-                int(vine.matrix[r, col])
+                int(matrix[r, col])
                 for r in range(d - 1 - col - t, d - 1 - col)
             )
             pair_str = f"({leaf},{tail})"
