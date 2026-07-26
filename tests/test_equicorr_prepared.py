@@ -288,7 +288,16 @@ def test_refit_clears_stale_dense_or_prepared_training_state():
     assert model._last_prepared is None
 
 
-@pytest.mark.parametrize("scaling", ["unit", "fisher"])
+@pytest.mark.parametrize(
+    "scaling",
+    [
+        "unit",
+        pytest.param(
+            "fisher",
+            marks=pytest.mark.sanitizer_numerical,
+        ),
+    ],
+)
 def test_gas_recursion_consumes_prepared_statistics_directly(scaling):
     rng = np.random.default_rng(31)
     u = rng.uniform(0.05, 0.95, size=(40, 6))

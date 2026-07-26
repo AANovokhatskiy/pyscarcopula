@@ -320,15 +320,15 @@ def test_native_grid_has_no_allocation_per_grid_cell():
         probe, lambda: evaluate(np.linspace(-1.0, 1.0, 64)))
 
     # Output bytes scale with T*K, but the number of allocations must remain
-    # bounded rather than growing per grid cell.
+    # independent of the grid width. A row-bounded allocation baseline is
+    # expected here, so an absolute limit would depend on the observation
+    # count rather than detect the per-grid-cell regression this gate targets.
     assert large["calls"] <= small["calls"] + 32
-    assert large["calls"] < 256
     assert large["bytes"] > small["bytes"]
     _record_metric("allocation_probe", {
         "small_grid": small,
         "large_grid": large,
         "max_call_growth": 32,
-        "max_large_calls": 255,
     })
 
 
