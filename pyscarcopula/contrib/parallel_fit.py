@@ -7,6 +7,7 @@ native evaluator.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from copy import deepcopy
 from dataclasses import dataclass, replace
 import multiprocessing as mp
@@ -35,10 +36,12 @@ class IndependentFitBatch:
 
     @property
     def models(self) -> tuple[Any, ...]:
+        """Return the fitted model from each task in submission order."""
         return tuple(item.model for item in self.fits)
 
     @property
     def results(self) -> tuple[Any, ...]:
+        """Return the fit result from each task in submission order."""
         return tuple(item.result for item in self.fits)
 
 
@@ -129,8 +132,8 @@ def _as_task_values(value, n_tasks: int, name: str):
 
 
 def fit_independent(
-        copulas,
-        datasets,
+        copulas: Any | Sequence[Any],
+        datasets: Iterable[Any],
         *,
         method: str = "mle",
         fit_kwargs: Mapping[str, Any] | Sequence[Mapping[str, Any]] | None = None,

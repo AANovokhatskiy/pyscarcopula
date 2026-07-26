@@ -36,7 +36,7 @@ def _offsets_are_valid(offsets, item_count, column_count):
 
 
 @dataclass(frozen=True)
-class RvineTraversalPlan:
+class RVineTraversalPlan:
     """Model-independent node and edge program for unconditional sampling."""
 
     dimension: int
@@ -296,7 +296,7 @@ def build_rvine_sampling_plan(
     for key, value in nodes.items():
         node_keys[value] = key
 
-    return RvineTraversalPlan(
+    return RVineTraversalPlan(
         dimension=d,
         active_keys=active_keys,
         node_keys=tuple(node_keys),
@@ -322,7 +322,7 @@ def build_rvine_sampling_plan(
 
 
 __all__ = [
-    "RvineTraversalPlan",
+    "RVineTraversalPlan",
     "build_rvine_sampling_plan",
     "rvine_sampling_edge_keys",
 ]

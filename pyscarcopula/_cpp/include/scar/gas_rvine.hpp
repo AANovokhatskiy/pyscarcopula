@@ -28,7 +28,7 @@ struct GasRvineSampleResult {
 
 GasRvineSampleResult gas_rvine_sample(
     const std::vector<GasRvineEdge>& edges,
-    const RvineTraversalPlan& plan,
+    const RVineTraversalPlan& plan,
     const double* uniforms,
     std::int64_t n_rows,
     std::int64_t uniform_columns,

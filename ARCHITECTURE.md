@@ -130,7 +130,7 @@ scores and the statistics across every latent-grid node.
 
 Unconditional generic R-vine sampling compiles the natural-order matrix,
 semantic trees, and edge map into one model-independent
-`RvineTraversalPlan`. The Python reference sampler and the native sequential
+`RVineTraversalPlan`. The Python reference sampler and the native sequential
 GAS sampler execute that same plan. Model-specific parameter generation and
 state updates remain in their strategy executors; the plan owns only topology,
 node dependencies, edge orientation, and operation order.

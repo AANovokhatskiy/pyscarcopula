@@ -24,7 +24,7 @@ from pyscarcopula.vine._rvine_sampling_plan import (
 
 def _native_plan(module, traversal_plan):
     """Serialize the canonical Python traversal plan for the C++ executor."""
-    plan = module.RvineTraversalPlan()
+    plan = module.RVineTraversalPlan()
     plan.dimension = traversal_plan.dimension
     plan.node_count = len(traversal_plan.node_keys)
     plan.last_uniform_column = traversal_plan.last_uniform_column

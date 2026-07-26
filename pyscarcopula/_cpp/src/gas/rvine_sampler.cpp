@@ -32,7 +32,7 @@ bool valid_offsets(const std::vector<int>& offsets, std::size_t item_count) {
     return true;
 }
 
-bool valid_plan(const RvineTraversalPlan& plan, std::size_t edge_count) {
+bool valid_plan(const RVineTraversalPlan& plan, std::size_t edge_count) {
     const std::size_t column_count = plan.column_uniforms.size();
     if (plan.dimension < 2 || plan.node_count < plan.dimension
         || !valid_index(plan.last_uniform_column, plan.dimension)
@@ -111,7 +111,7 @@ void fail(
 
 GasRvineSampleResult gas_rvine_sample(
     const std::vector<GasRvineEdge>& edges,
-    const RvineTraversalPlan& plan,
+    const RVineTraversalPlan& plan,
     const double* uniforms,
     std::int64_t n_rows,
     std::int64_t uniform_columns,

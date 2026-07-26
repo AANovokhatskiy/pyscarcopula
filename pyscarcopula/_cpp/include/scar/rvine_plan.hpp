@@ -5,7 +5,7 @@
 namespace scar {
 
 /// Model-independent execution plan for unconditional R-vine traversal.
-struct RvineTraversalPlan {
+struct RVineTraversalPlan {
     int dimension = 0;
     int node_count = 0;
     int last_uniform_column = -1;

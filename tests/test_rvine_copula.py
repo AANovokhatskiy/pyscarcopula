@@ -1346,7 +1346,7 @@ class TestSampling:
             self, monkeypatch):
         from pyscarcopula.numerical import _cpp_gas_rvine
         from pyscarcopula.vine._rvine_sampling_plan import (
-            RvineTraversalPlan,
+            RVineTraversalPlan,
         )
 
         vine = _manual_suffix_stateful_rvine()
@@ -1363,7 +1363,7 @@ class TestSampling:
 
         assert values.shape == (8, 3)
         assert len(captured) == 1
-        assert isinstance(captured[0], RvineTraversalPlan)
+        assert isinstance(captured[0], RVineTraversalPlan)
         assert captured[0].active_keys == vine._sample_active_edge_keys()
 
     def test_native_gas_sample_matches_legacy_for_transposed_rotated_edge(

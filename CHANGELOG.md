@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Removes temporary VineCopula refactoring guardrails after their permanent
+  contracts were absorbed by the regular vine API, structure, fitting,
+  persistence, and compatibility suites. Completes public type annotations
+  and docstrings for the new prepared equicorrelation, factor-correlation,
+  factor-Student, and independent-fit APIs, and aligns
+  `RVineTraversalPlan` with the project's R-vine acronym style.
 - Introduces `VineCopula` as the generic auto/fixed regular-vine runtime while
   retaining `RVineCopula` as a compatibility name and `CVineCopula` as a
   supported legacy implementation. No runtime deprecation warning is emitted

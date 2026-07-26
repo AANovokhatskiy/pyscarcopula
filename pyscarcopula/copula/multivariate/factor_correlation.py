@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import InitVar, dataclass, field
 import json
 from pathlib import Path
@@ -114,26 +115,30 @@ class FactorCorrelation:
 
     @property
     def dimension(self) -> int:
+        """Number of correlated variables."""
         return int(self.loadings.shape[0])
 
     @property
     def rank(self) -> int:
+        """Number of latent factors."""
         return int(self.loadings.shape[1])
 
     @property
     def uniqueness(self) -> np.ndarray:
+        """Read-only diagonal uniqueness vector ``diag(D)``."""
         return self._uniqueness
 
     @property
     def storage_bytes(self) -> int:
+        """Bytes occupied by the compact loading and uniqueness arrays."""
         return int(self.loadings.nbytes + self.uniqueness.nbytes)
 
     @classmethod
     def from_unconstrained(
             cls,
-            values,
+            values: Any,
             *,
-            uniqueness_min=1e-8) -> "FactorCorrelation":
+            uniqueness_min: float = 1e-8) -> "FactorCorrelation":
         """Map arbitrary finite rows into the valid factor-correlation set."""
         unconstrained = np.asarray(values, dtype=np.float64)
         if (
@@ -199,8 +204,8 @@ class FactorCorrelation:
     def to_dense(
             self,
             *,
-            max_dimension=2048,
-            memory_budget_bytes=None) -> np.ndarray:
+            max_dimension: int = 2048,
+            memory_budget_bytes: int | None = None) -> np.ndarray:
         """Explicitly materialize ``R`` for small diagnostic problems."""
         max_dimension = _positive_integer(
             "max_dimension", max_dimension)
@@ -218,7 +223,7 @@ class FactorCorrelation:
         dense.flat[::self.dimension + 1] += self.uniqueness
         return dense
 
-    def save_npz(self, path) -> Path:
+    def save_npz(self, path: str | Path) -> Path:
         """Write the compact factor representation."""
         target = Path(path)
         if target.suffix.lower() != ".npz":
@@ -232,12 +237,13 @@ class FactorCorrelation:
         return target
 
     @classmethod
-    def load_npz(cls, path) -> "FactorCorrelation":
+    def load_npz(cls, path: str | Path) -> "FactorCorrelation":
+        """Load a compact factor representation created by :meth:`save_npz`."""
         with np.load(Path(path), allow_pickle=False) as archive:
             metadata = json.loads(str(archive["metadata"].item()))
             return cls(loadings=archive["loadings"], **metadata)
 
-    def save_mmap(self, directory) -> Path:
+    def save_mmap(self, directory: str | Path) -> Path:
         """Write an mmap-friendly directory without overwriting it."""
         target = Path(directory)
         target.mkdir(parents=True, exist_ok=False)
@@ -250,7 +256,8 @@ class FactorCorrelation:
         return target
 
     @classmethod
-    def load_mmap(cls, directory) -> "FactorCorrelation":
+    def load_mmap(cls, directory: str | Path) -> "FactorCorrelation":
+        """Open an mmap-backed factor representation without copying it."""
         source = Path(directory)
         metadata = json.loads(
             (source / "metadata.json").read_text(encoding="utf-8"))
@@ -302,22 +309,27 @@ class PreparedFactorCorrelation:
 
     @property
     def dimension(self) -> int:
+        """Number of correlated variables."""
         return self.factor.dimension
 
     @property
     def rank(self) -> int:
+        """Number of latent factors."""
         return self.factor.rank
 
     @property
     def loadings(self) -> np.ndarray:
+        """Read-only factor loading matrix."""
         return self.factor.loadings
 
     @property
     def uniqueness(self) -> np.ndarray:
+        """Read-only diagonal uniqueness vector."""
         return self.factor.uniqueness
 
     @property
     def logdet(self) -> float:
+        """Log determinant of the represented correlation matrix."""
         return float(self._native.logdet)
 
     def _rows(self, values):
@@ -333,7 +345,8 @@ class PreparedFactorCorrelation:
             raise ValueError("values must contain only finite values")
         return np.ascontiguousarray(array), squeeze
 
-    def matvec(self, values, *, n_threads=1):
+    def matvec(self, values: Any, *, n_threads: int = 1) -> np.ndarray:
+        """Multiply one or more row vectors by the correlation matrix."""
         rows, squeeze = self._rows(values)
         output = np.asarray(
             self._native.matvec(
@@ -342,7 +355,8 @@ class PreparedFactorCorrelation:
         )
         return output[0] if squeeze else output
 
-    def solve(self, values, *, n_threads=1):
+    def solve(self, values: Any, *, n_threads: int = 1) -> np.ndarray:
+        """Solve against the correlation matrix for one or more row vectors."""
         rows, squeeze = self._rows(values)
         output = np.asarray(
             self._native.solve(
@@ -351,7 +365,9 @@ class PreparedFactorCorrelation:
         )
         return output[0] if squeeze else output
 
-    def quadratic_forms(self, values, *, n_threads=1) -> np.ndarray:
+    def quadratic_forms(
+            self, values: Any, *, n_threads: int = 1) -> np.ndarray:
+        """Evaluate ``x.T @ R**-1 @ x`` for one or more row vectors."""
         rows, _ = self._rows(values)
         return np.asarray(
             self._native.quadratic_forms(
@@ -359,7 +375,9 @@ class PreparedFactorCorrelation:
             dtype=np.float64,
         )
 
-    def quadratic_form(self, value, *, n_threads=1) -> float:
+    def quadratic_form(
+            self, value: Any, *, n_threads: int = 1) -> float:
+        """Evaluate ``x.T @ R**-1 @ x`` for one vector."""
         array = np.asarray(value)
         if array.ndim != 1:
             raise ValueError("quadratic_form expects one 1D vector")
@@ -369,8 +387,9 @@ class PreparedFactorCorrelation:
     def to_dense(
             self,
             *,
-            max_dimension=2048,
-            memory_budget_bytes=None) -> np.ndarray:
+            max_dimension: int = 2048,
+            memory_budget_bytes: int | None = None) -> np.ndarray:
+        """Explicitly materialize the correlation matrix."""
         return self.factor.to_dense(
             max_dimension=max_dimension,
             memory_budget_bytes=memory_budget_bytes,
@@ -378,11 +397,12 @@ class PreparedFactorCorrelation:
 
     def sample_normal(
             self,
-            n,
+            n: int,
             *,
-            rng=None,
-            n_threads=1,
-            memory_budget_bytes=None) -> np.ndarray:
+            rng: np.random.Generator | None = None,
+            n_threads: int = 1,
+            memory_budget_bytes: int | None = None) -> np.ndarray:
+        """Draw factor-normal rows using bounded, deterministic native work."""
         n = _positive_integer("n", n, allow_zero=True)
         required = n * (self.dimension + self.rank) * 8
         _validated_budget(
@@ -405,10 +425,10 @@ class PreparedFactorCorrelation:
 
     def transform_normal_draws(
             self,
-            factor_draws,
-            residual_draws,
+            factor_draws: Any,
+            residual_draws: Any,
             *,
-            n_threads=1) -> np.ndarray:
+            n_threads: int = 1) -> np.ndarray:
         """Transform fixed independent draws into factor-normal rows.
 
         The returned array is a copy of ``residual_draws``. Keeping random
@@ -447,12 +467,13 @@ class PreparedFactorCorrelation:
 
     def sample_normal_batches(
             self,
-            n,
+            n: int,
             *,
-            batch_rows=128,
-            rng=None,
-            n_threads=1,
-            memory_budget_bytes=None):
+            batch_rows: int = 128,
+            rng: np.random.Generator | None = None,
+            n_threads: int = 1,
+            memory_budget_bytes: int | None = None) -> Iterator[np.ndarray]:
+        """Yield bounded batches of factor-normal rows."""
         n = _positive_integer("n", n, allow_zero=True)
         batch_rows = _positive_integer("batch_rows", batch_rows)
         _validated_n_threads(n_threads)

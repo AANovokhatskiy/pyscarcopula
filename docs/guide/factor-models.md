@@ -460,43 +460,23 @@ For dynamic fitted models, `sample_batches` and `predict_batches` preserve the
 GAS or SCAR parameter-path semantics instead of replacing them with one
 constant `df`.
 
-## Reusing factor correlation in other models
+## Scope of the factor representation
 
-### Composition contract
+`FactorCorrelation` is a compact representation of a correlation in the
+original `d`-dimensional space. It is not a dimension-reduction model and
+does not map observed returns or pseudo-observations to `k`-dimensional
+returns or pseudo-observations.
 
-A new elliptical or latent-factor model should accept a
-`FactorCorrelation` or `PreparedFactorCorrelation` and compose it rather than
-inherit from it. The model remains responsible for marginal transforms and
-likelihood normalization:
+The decomposition can be given a latent-factor interpretation, but recovering
+factor scores from observations requires an additional, family-specific
+posterior estimator. Such scores depend on the marginal transform, are
+rotation-dependent, and are neither returns nor uniform pseudo-observations.
+Converting them to pseudo-observations would introduce another estimation
+step and a separate statistical contract. The package therefore does not
+present factor scores as output of this API.
 
-```python
-import numpy as np
-from scipy.stats import norm
-
-
-class CustomGaussianCopula:
-    def __init__(self, correlation):
-        self.correlation = correlation.prepare()
-
-    def log_pdf_rows(self, u, *, n_threads=1):
-        z = norm.ppf(np.clip(
-            u,
-            np.finfo(np.float64).eps,
-            1.0 - np.finfo(np.float64).eps,
-        ))
-        q = self.correlation.quadratic_forms(
-            z, n_threads=n_threads)
-        marginal_q = np.sum(z * z, axis=1)
-        return (
-            -0.5 * self.correlation.logdet
-            -0.5 * (q - marginal_q)
-        )
-```
-
-Production adapters should additionally validate pseudo-observations, expose
-literal `n_threads=1` defaults, enforce memory budgets, preserve compact
-persistence, and avoid mutable worker state. Existing first-party examples
-are `GaussianCopula(corr_mode="factor")`,
+The supported compositions are the first-party adapters
+`GaussianCopula(corr_mode="factor")`,
 `StochasticStudentCopula(corr_mode="factor")`, and
 `FactorStudentEvaluator`.
 
@@ -510,7 +490,6 @@ are `GaussianCopula(corr_mode="factor")`,
 | Constant Student `df`, bounded joint refinement | Student factor + `joint` MLE |
 | Dynamic observation-driven tails | Student factor + GAS + `two-stage` |
 | Dynamic latent tails | Student factor + SCAR + `two-stage` |
-| Heterogeneous pair dependence in original dimensions | `VineCopula`, fitted separately |
 
 For CPU threading, reproducibility, nested parallelism, and rolling-window
 guidance, see [CPU Parallelism](parallelism.md). For the broader multivariate

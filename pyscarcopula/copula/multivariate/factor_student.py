@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Mapping
@@ -28,10 +29,12 @@ class FactorStudentEvaluation:
 
     @property
     def log_likelihood(self) -> float:
+        """Sum the row log densities."""
         return float(np.sum(self.log_pdf))
 
     @property
     def dlog_likelihood_ddf(self) -> float:
+        """Sum df derivatives when the evaluation used one common df."""
         if not self.common_df:
             raise ValueError(
                 "one aggregate df derivative requires a common scalar df")
@@ -56,7 +59,7 @@ class FactorStudentGridEvaluation:
     dlog_ddf: np.ndarray
     diagnostics: Mapping[str, Any]
 
-    def pdf_and_gradient(self):
+    def pdf_and_gradient(self) -> tuple[np.ndarray, np.ndarray]:
         """Convert stable log values into density and ``d pdf / d df``."""
         density = np.exp(self.log_pdf)
         gradient = density * self.dlog_ddf
@@ -78,7 +81,10 @@ class FactorStudentEvaluator:
     model state and is safe for concurrent read-only evaluations.
     """
 
-    def __init__(self, correlation, observations) -> None:
+    def __init__(
+            self,
+            correlation: FactorCorrelation | PreparedFactorCorrelation,
+            observations: Any) -> None:
         if isinstance(correlation, FactorCorrelation):
             correlation = correlation.prepare()
         if not isinstance(correlation, PreparedFactorCorrelation):
@@ -103,22 +109,27 @@ class FactorStudentEvaluator:
 
     @property
     def correlation(self) -> PreparedFactorCorrelation:
+        """Prepared factor-correlation operator shared by this evaluator."""
         return self._correlation
 
     @property
     def observations(self) -> np.ndarray:
+        """Immutable pseudo-observations owned by this evaluator."""
         return self._observations
 
     @property
     def n_observations(self) -> int:
+        """Number of observation rows."""
         return int(self._observations.shape[0])
 
     @property
     def dimension(self) -> int:
+        """Number of variables per observation."""
         return self._correlation.dimension
 
     @property
     def rank(self) -> int:
+        """Rank of the factor correlation."""
         return self._correlation.rank
 
     def _df_values(self, df):
@@ -135,7 +146,9 @@ class FactorStudentEvaluator:
                 "df values must be finite and greater than 2")
         return np.ascontiguousarray(values), common
 
-    def evaluate(self, df, *, n_threads=1) -> FactorStudentEvaluation:
+    def evaluate(
+            self, df: Any, *, n_threads: int = 1
+    ) -> FactorStudentEvaluation:
         """Evaluate row log densities and analytical df derivatives."""
         from pyscarcopula.numerical import _cpp_extension
 
@@ -178,17 +191,26 @@ class FactorStudentEvaluator:
             common_df=common,
         )
 
-    def log_pdf_and_dlog_ddf_rows(self, df, *, n_threads=1):
+    def log_pdf_and_dlog_ddf_rows(
+            self, df: Any, *, n_threads: int = 1
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Return row log densities and their analytical df derivatives."""
         result = self.evaluate(df, n_threads=n_threads)
         return result.log_pdf, result.dlog_ddf
 
-    def log_pdf_rows(self, df, *, n_threads=1) -> np.ndarray:
+    def log_pdf_rows(
+            self, df: Any, *, n_threads: int = 1) -> np.ndarray:
+        """Return row log densities."""
         return self.evaluate(df, n_threads=n_threads).log_pdf
 
-    def dlog_pdf_ddf_rows(self, df, *, n_threads=1) -> np.ndarray:
+    def dlog_pdf_ddf_rows(
+            self, df: Any, *, n_threads: int = 1) -> np.ndarray:
+        """Return analytical row derivatives with respect to df."""
         return self.evaluate(df, n_threads=n_threads).dlog_ddf
 
-    def log_likelihood_and_gradient(self, df, *, n_threads=1):
+    def log_likelihood_and_gradient(
+            self, df: float, *, n_threads: int = 1
+    ) -> tuple[float, float]:
         """Return likelihood and derivative for one common scalar ``df``."""
         if np.asarray(df).ndim != 0:
             raise ValueError(
@@ -196,7 +218,9 @@ class FactorStudentEvaluator:
         result = self.evaluate(df, n_threads=n_threads)
         return result.log_likelihood, result.dlog_likelihood_ddf
 
-    def objective_and_gradient(self, df, *, n_threads=1):
+    def objective_and_gradient(
+            self, df: float, *, n_threads: int = 1
+    ) -> tuple[float, np.ndarray]:
         """Return negative likelihood and a one-element optimizer gradient."""
         log_likelihood, gradient = self.log_likelihood_and_gradient(
             df, n_threads=n_threads)
@@ -206,7 +230,8 @@ class FactorStudentEvaluator:
         )
 
     def joint_likelihood_and_gradient(
-            self, df, *, n_threads=1) -> FactorStudentJointEvaluation:
+            self, df: float, *, n_threads: int = 1
+    ) -> FactorStudentJointEvaluation:
         """Return aggregate analytical gradients for scalar ``df`` and B."""
         from pyscarcopula.numerical import _cpp_extension
 
@@ -364,11 +389,12 @@ class FactorStudentEvaluator:
 
     def evaluate_grid(
             self,
-            df_grid,
+            df_grid: Any,
             *,
-            dimension_tile=16384,
-            n_threads=1,
-            memory_budget_bytes=None) -> FactorStudentGridEvaluation:
+            dimension_tile: int = 16384,
+            n_threads: int = 1,
+            memory_budget_bytes: int | None = None
+    ) -> FactorStudentGridEvaluation:
         """Evaluate a tiled ``(observations, df_grid)`` log-density grid."""
         dimension_tile = _positive_integer(
             "dimension_tile", dimension_tile)
@@ -384,11 +410,13 @@ class FactorStudentEvaluator:
 
     def log_pdf_and_dlog_ddf_grid(
             self,
-            df_grid,
+            df_grid: Any,
             *,
-            dimension_tile=16384,
-            n_threads=1,
-            memory_budget_bytes=None):
+            dimension_tile: int = 16384,
+            n_threads: int = 1,
+            memory_budget_bytes: int | None = None
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Return tiled row/grid log densities and df derivatives."""
         result = self.evaluate_grid(
             df_grid,
             dimension_tile=dimension_tile,
@@ -399,11 +427,13 @@ class FactorStudentEvaluator:
 
     def pdf_and_grad_on_grid(
             self,
-            df_grid,
+            df_grid: Any,
             *,
-            dimension_tile=16384,
-            n_threads=1,
-            memory_budget_bytes=None):
+            dimension_tile: int = 16384,
+            n_threads: int = 1,
+            memory_budget_bytes: int | None = None
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Return tiled row/grid densities and df derivatives."""
         result = self.evaluate_grid(
             df_grid,
             dimension_tile=dimension_tile,
@@ -414,12 +444,13 @@ class FactorStudentEvaluator:
 
     def evaluate_grid_batches(
             self,
-            df_grid,
+            df_grid: Any,
             *,
-            batch_rows=128,
-            dimension_tile=16384,
-            n_threads=1,
-            memory_budget_bytes=None):
+            batch_rows: int = 128,
+            dimension_tile: int = 16384,
+            n_threads: int = 1,
+            memory_budget_bytes: int | None = None
+    ) -> Iterator[FactorStudentGridEvaluation]:
         """Yield bounded row batches of the tiled Student grid."""
         batch_rows = _positive_integer("batch_rows", batch_rows)
         dimension_tile = _positive_integer(
@@ -449,12 +480,14 @@ class FactorStudentEvaluator:
 
     def pdf_and_grad_on_grid_batches(
             self,
-            df_grid,
+            df_grid: Any,
             *,
-            batch_rows=128,
-            dimension_tile=16384,
-            n_threads=1,
-            memory_budget_bytes=None):
+            batch_rows: int = 128,
+            dimension_tile: int = 16384,
+            n_threads: int = 1,
+            memory_budget_bytes: int | None = None
+    ) -> Iterator[tuple[np.ndarray, np.ndarray]]:
+        """Yield bounded density/gradient grid batches."""
         for result in self.evaluate_grid_batches(
                 df_grid,
                 batch_rows=batch_rows,

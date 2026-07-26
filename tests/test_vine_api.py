@@ -169,15 +169,26 @@ def test_gof_forwards_generic_vine_type(
     ]
 
 
-def test_risk_worker_constructor_preserves_only_fixed_structure_mode():
-    fixed = VineCopula.dvine(4, candidates=[IndependentCopula])
-    fixed_class, fixed_kwargs = _get_copula_constructor(fixed)
-    rebuilt_fixed = fixed_class(**fixed_kwargs)
-    assert rebuilt_fixed.structure_source == "fixed"
-    assert rebuilt_fixed.structure == fixed.structure
+@pytest.mark.parametrize(
+    ("factory", "expected_type", "expected_source"),
+    (
+        (lambda: VineCopula.cvine(
+            4, candidates=[IndependentCopula]), "cvine", "fixed"),
+        (lambda: VineCopula.dvine(
+            4, candidates=[IndependentCopula]), "dvine", "fixed"),
+        (lambda: VineCopula.rvine(
+            candidates=[IndependentCopula]), "rvine", "auto"),
+    ),
+)
+def test_risk_worker_constructor_preserves_vine_mode(
+        factory, expected_type, expected_source):
+    source = factory()
+    model_class, model_kwargs = _get_copula_constructor(source)
+    rebuilt = model_class(**model_kwargs)
 
-    automatic = VineCopula(candidates=[IndependentCopula])
-    automatic_class, automatic_kwargs = _get_copula_constructor(automatic)
-    rebuilt_automatic = automatic_class(**automatic_kwargs)
-    assert rebuilt_automatic.structure_source == "auto"
-    assert rebuilt_automatic.structure is None
+    assert rebuilt.vine_type == expected_type
+    assert rebuilt.structure_source == expected_source
+    if expected_source == "fixed":
+        assert rebuilt.structure == source.structure
+    else:
+        assert rebuilt.structure is None

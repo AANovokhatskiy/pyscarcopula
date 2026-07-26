@@ -36,9 +36,13 @@ Usage
     new_ll = vine.log_likelihood(u_new)  # re-evaluate on new data
 """
 
+from __future__ import annotations
+
 from copy import deepcopy
 import hashlib
+from pathlib import Path
 import time
+from typing import Any, Mapping, Sequence
 
 import numpy as np
 from scipy.optimize import OptimizeResult
@@ -379,7 +383,11 @@ class VineCopula:
         self._predict_history_cache = {}
 
     @classmethod
-    def cvine(cls, d, order=None, **kwargs):
+    def cvine(
+            cls,
+            d: int,
+            order: Sequence[int] | None = None,
+            **kwargs: Any) -> VineCopula:
         """Create a generic vine configured with a fixed C-vine structure."""
         return cls(
             structure=cvine_structure(d, order),
@@ -388,7 +396,11 @@ class VineCopula:
         )
 
     @classmethod
-    def dvine(cls, d, order=None, **kwargs):
+    def dvine(
+            cls,
+            d: int,
+            order: Sequence[int] | None = None,
+            **kwargs: Any) -> VineCopula:
         """Create a generic vine configured with a fixed D-vine structure."""
         return cls(
             structure=dvine_structure(d, order),
@@ -397,7 +409,7 @@ class VineCopula:
         )
 
     @classmethod
-    def rvine(cls, **kwargs):
+    def rvine(cls, **kwargs: Any) -> VineCopula:
         """Create a generic vine with automatic R-vine selection."""
         return cls(vine_type="rvine", **kwargs)
 
@@ -570,9 +582,18 @@ class VineCopula:
 
     # Fit
 
-    def fit(self, data, method='mle', *, to_pobs=False, copulas=None,
-            config=None, given_vars=None, conditional_strict=True,
-            conditional_mode='suffix', **kwargs):
+    def fit(
+            self,
+            data: Any,
+            method: str = 'mle',
+            *,
+            to_pobs: bool = False,
+            copulas: Any = None,
+            config: Any = None,
+            given_vars: Sequence[int] | None = None,
+            conditional_strict: bool = True,
+            conditional_mode: str = 'suffix',
+            **kwargs: Any) -> VineCopula:
         """Fit the R-vine and its pair-copula edge models.
 
         The input must already be in pseudo-observation space unless
@@ -991,14 +1012,14 @@ class VineCopula:
             )
 
     @property
-    def fit_diagnostics(self):
+    def fit_diagnostics(self) -> dict[str, Any] | None:
         """Fit-time structure-selection diagnostics, if available."""
         if self._fit_diagnostics is None:
             return None
         return deepcopy(self._fit_diagnostics)
 
     @property
-    def structure(self):
+    def structure(self) -> RVineMatrix | None:
         """Configured or fitted structure as a defensive ``RVineMatrix``."""
         value = (
             self._structure
@@ -1008,17 +1029,17 @@ class VineCopula:
         return None if value is None else RVineMatrix(value.matrix)
 
     @property
-    def trees(self):
+    def trees(self) -> list[list[tuple[frozenset[int], frozenset[int]]]] | None:
         """Decoded semantic edges as a defensive nested-list copy."""
         return _copy_trees(self._trees)
 
     @property
-    def structure_source(self):
+    def structure_source(self) -> str:
         """Whether structure selection is automatic or fixed."""
         return "fixed" if self._configured_structure is not None else "auto"
 
     @property
-    def structure_label(self):
+    def structure_label(self) -> str:
         """Informational label derived from the current vine structure."""
         structure = self._structure or self._configured_structure
         if structure is None:
@@ -1031,7 +1052,7 @@ class VineCopula:
         return "regular vine"
 
     @property
-    def vine_type(self):
+    def vine_type(self) -> str:
         """Structural mode passed to type-sensitive integrations such as GoF."""
         if self._configured_vine_type is not None:
             return self._configured_vine_type
@@ -1044,25 +1065,25 @@ class VineCopula:
         }[self.structure_label]
 
     @property
-    def matrix(self):
+    def matrix(self) -> np.ndarray | None:
         """Compatibility copy of the fitted natural-order matrix."""
         if self._natural_order_matrix is None:
             return None
         return self._natural_order_matrix.copy()
 
     @matrix.setter
-    def matrix(self, value):
+    def matrix(self, value: Any) -> None:
         """Set legacy hand-built runtime state using an owned matrix copy."""
         self._natural_order_matrix = (
             None if value is None else np.asarray(value, dtype=int).copy())
 
     @property
-    def natural_order_matrix(self):
+    def natural_order_matrix(self) -> np.ndarray:
         """Copy of the fitted natural-order R-vine matrix."""
         self._require_fit()
         return self._natural_order_matrix.copy()
 
-    def to_rvine_matrix(self):
+    def to_rvine_matrix(self) -> RVineMatrix:
         """Return this fitted structure as lower-triangular ``RVineMatrix``."""
         self._require_fit()
         from pyscarcopula.vine._structure import RVineMatrix
@@ -1071,20 +1092,22 @@ class VineCopula:
 
     # Log-likelihood
 
-    def save(self, path, *, include_data=True):
+    def save(
+            self, path: str | Path, *, include_data: bool = True) -> None:
         """Save this fitted R-vine model to disk."""
         from pyscarcopula.io import save_model
 
         save_model(self, path, include_data=include_data)
 
     @classmethod
-    def load(cls, path):
+    def load(cls, path: str | Path) -> VineCopula:
         """Load a saved R-vine model from disk."""
         from pyscarcopula.io import load_model
 
         return load_model(path, expected_type=cls)
 
-    def log_likelihood(self, data=None, to_pobs=False):
+    def log_likelihood(
+            self, data: Any = None, to_pobs: bool = False) -> float:
         """Total log-likelihood.
 
         With no argument returns the cached fitted log-likelihood
@@ -1191,24 +1214,24 @@ class VineCopula:
     # Introspection
 
     @property
-    def n_parameters(self):
+    def n_parameters(self) -> int:
         """Total number of fitted parameters across all pair copulas."""
         self._require_fit()
         return sum(pc.n_params for pc in self.pair_copulas.values())
 
     @property
-    def aic(self):
+    def aic(self) -> float:
         """AIC = -2 logL + 2 k."""
         self._require_fit()
         return -2.0 * self._log_likelihood + 2.0 * self.n_parameters
 
     @property
-    def bic(self):
+    def bic(self) -> float:
         """BIC = -2 logL + k log T."""
         self._require_fit()
         return -2.0 * self._log_likelihood + self.n_parameters * np.log(self._T)
 
-    def family_matrix(self):
+    def family_matrix(self) -> np.ndarray:
         """(d, d) object array with copula family names at edge positions.
 
         In the natural-order convention, the edge at tree ``t``, column
@@ -1225,7 +1248,7 @@ class VineCopula:
             M[d - 2 - col - t, col] = type(edge_copula(pc)).__name__
         return M
 
-    def parameter_matrix(self):
+    def parameter_matrix(self) -> np.ndarray:
         """(d, d) float array with fitted copula parameters (NaN elsewhere).
 
         Position ``(d-2-col-t, col)`` carries the parameter of the
@@ -1238,7 +1261,7 @@ class VineCopula:
             M[d - 2 - col - t, col] = edge_param(pc, default=np.nan)
         return M
 
-    def rotation_matrix(self):
+    def rotation_matrix(self) -> np.ndarray:
         """(d, d) int array with copula rotations (-1 elsewhere).
 
         Position ``(d-2-col-t, col)`` carries the rotation of the
@@ -1252,7 +1275,7 @@ class VineCopula:
                 getattr(edge_copula(pc), 'rotate', 0))
         return M
 
-    def tau_matrix(self):
+    def tau_matrix(self) -> np.ndarray:
         """(d, d) float array with empirical Kendall's tau per edge.
 
         Position ``(d-2-col-t, col)`` carries tau of the tree-``t`` edge
@@ -1267,7 +1290,7 @@ class VineCopula:
 
     # Summary / repr
 
-    def summary(self, as_string=False):
+    def summary(self, as_string: bool = False) -> str | None:
         """Print R-vine structure summary.
 
         Matches ``CVineCopula.summary()`` behavior: by default the summary is
@@ -1299,8 +1322,13 @@ class VineCopula:
     # Sampling
 
     def sample(
-            self, n, u=None, rng=None, *, batch_rows=None,
-            memory_budget_bytes=None):
+            self,
+            n: int,
+            u: Any = None,
+            rng: np.random.Generator | None = None,
+            *,
+            batch_rows: int | None = None,
+            memory_budget_bytes: int | None = None) -> np.ndarray:
         """Unconditional sampling from the fitted vine.
 
         Samples in natural-order matrix order: columns are processed from
@@ -1944,10 +1972,20 @@ class VineCopula:
             burnin_steps=burnin_steps,
         )
 
-    def predict(self, n, u=None, rng=None, given=None, horizon='next',
-                predictive_r_mode=None, predict_config=None,
-                dynamic_conditioning='ignore', return_diagnostics=False,
-                mcmc_steps=None, mcmc_burnin=None):
+    def predict(
+            self,
+            n: int,
+            u: Any = None,
+            rng: np.random.Generator | None = None,
+            given: Mapping[int, float] | None = None,
+            horizon: str = 'next',
+            predictive_r_mode: str | None = None,
+            predict_config: PredictConfig | None = None,
+            dynamic_conditioning: str = 'ignore',
+            return_diagnostics: bool = False,
+            mcmc_steps: int | None = None,
+            mcmc_burnin: int | None = None,
+    ) -> np.ndarray | tuple[np.ndarray, dict[str, Any]]:
         """Draw predictive samples from the fitted R-vine.
 
         ``given`` fixes variables in pseudo-observation space. Conditional

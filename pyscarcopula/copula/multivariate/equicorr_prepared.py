@@ -95,7 +95,7 @@ class EquicorrPreparedData:
     def __len__(self) -> int:
         return self.n_obs
 
-    def save_npz(self, path) -> Path:
+    def save_npz(self, path: str | Path) -> Path:
         """Write one portable, compressed file."""
         target = Path(path)
         if target.suffix.lower() != ".npz":
@@ -111,7 +111,7 @@ class EquicorrPreparedData:
         return target
 
     @classmethod
-    def load_npz(cls, path) -> "EquicorrPreparedData":
+    def load_npz(cls, path: str | Path) -> "EquicorrPreparedData":
         """Load a file created by :meth:`save_npz`."""
         with np.load(Path(path), allow_pickle=False) as archive:
             metadata = json.loads(str(archive["metadata"].item()))
@@ -121,7 +121,7 @@ class EquicorrPreparedData:
                 **metadata,
             )
 
-    def save_mmap(self, directory) -> Path:
+    def save_mmap(self, directory: str | Path) -> Path:
         """Write an mmap-friendly directory without overwriting one."""
         target = Path(directory)
         target.mkdir(parents=True, exist_ok=False)
@@ -135,7 +135,7 @@ class EquicorrPreparedData:
         return target
 
     @classmethod
-    def load_mmap(cls, directory) -> "EquicorrPreparedData":
+    def load_mmap(cls, directory: str | Path) -> "EquicorrPreparedData":
         """Open mmap-friendly statistics read-only and without array copies."""
         source = Path(directory)
         metadata = json.loads(
