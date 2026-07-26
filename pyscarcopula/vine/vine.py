@@ -312,10 +312,21 @@ class VineCopula:
         """Return persistent model state without transient prediction caches."""
         state = self.__dict__.copy()
         state.pop('_predict_history_cache', None)
+        state.pop('_suffix_state_cache', None)
+        state['_structure_source'] = self.structure_source
         return state
 
     def __setstate__(self, state):
-        """Restore models saved before or after prediction caching existed."""
+        """Migrate and validate persisted generic or legacy R-vine state.
+
+        This method is also the v2-to-v3 migration boundary. Historical v2
+        payloads may contain ``matrix`` instead of ``_natural_order_matrix``,
+        omit canonical structures and edge maps, and resolve from the old
+        ``pyscarcopula.vine.rvine.RVineCopula`` class path. These branches are
+        required for persisted-file compatibility and must remain aligned
+        with the v2 golden fixture tests when the runtime state evolves.
+        """
+        state = dict(state)
         legacy_matrix = state.pop('matrix', None)
         if '_natural_order_matrix' not in state:
             state['_natural_order_matrix'] = legacy_matrix
@@ -323,14 +334,140 @@ class VineCopula:
             state['_configured_structure'] = None
         if '_configured_vine_type' not in state:
             state['_configured_vine_type'] = None
-        if '_structure' not in state:
-            d = state.get('d')
-            trees = state.get('trees')
-            state['_structure'] = (
-                RVineMatrix.from_trees(d, trees)
-                if d is not None and trees is not None
-                else None
+        persisted_source = state.pop('_structure_source', None)
+
+        configured_type = state['_configured_vine_type']
+        if configured_type not in {None, "cvine", "dvine", "rvine"}:
+            raise ValueError(
+                "Persisted VineCopula has invalid vine_type "
+                f"{configured_type!r}")
+
+        def normalized_structure(value, *, name):
+            if value is None:
+                return None
+            if not isinstance(value, RVineMatrix):
+                raise TypeError(
+                    f"Persisted VineCopula {name} must be an RVineMatrix")
+            matrix = value.matrix
+            if value.d != matrix.shape[0]:
+                raise ValueError(
+                    f"Persisted VineCopula {name} dimension is inconsistent")
+            try:
+                return RVineMatrix(matrix)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"Persisted VineCopula {name} is invalid") from exc
+
+        configured_structure = normalized_structure(
+            state['_configured_structure'],
+            name="configured structure",
+        )
+        state['_configured_structure'] = configured_structure
+        expected_source = (
+            "fixed" if configured_structure is not None else "auto")
+        if (
+                persisted_source is not None
+                and persisted_source != expected_source):
+            raise ValueError(
+                "Persisted VineCopula structure source does not match "
+                "configured structure")
+
+        d = state.get('d')
+        trees = state.get('trees')
+        natural_matrix = state.get('_natural_order_matrix')
+        serialized_structure = normalized_structure(
+            state.get('_structure'),
+            name="fitted structure",
+        )
+        if d is None and trees is None and natural_matrix is None:
+            if serialized_structure is not None:
+                raise ValueError(
+                    "Persisted unfitted VineCopula contains fitted structure")
+            state['_structure'] = None
+        elif d is None or trees is None or natural_matrix is None:
+            raise ValueError(
+                "Persisted VineCopula fitted structure state is incomplete")
+        else:
+            from pyscarcopula.vine._rvine_matrix_builder import (
+                build_rvine_matrix_with_edge_map,
             )
+
+            canonical_structure = RVineMatrix.from_trees(d, trees)
+            expected_matrix, expected_edge_map = (
+                build_rvine_matrix_with_edge_map(
+                    d, trees, validate=False))
+            try:
+                natural_structure = RVineMatrix.from_natural_order(
+                    natural_matrix)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    "Persisted VineCopula natural-order matrix is invalid"
+                ) from exc
+            if (
+                    not np.array_equal(natural_matrix, expected_matrix)
+                    or natural_structure != canonical_structure):
+                raise ValueError(
+                    "Persisted VineCopula natural-order matrix does not "
+                    "match trees")
+            if (
+                    serialized_structure is not None
+                    and serialized_structure != canonical_structure):
+                raise ValueError(
+                    "Persisted VineCopula fitted structure does not "
+                    "match trees")
+            if (
+                    configured_structure is not None
+                    and configured_structure != canonical_structure):
+                raise ValueError(
+                    "Persisted VineCopula fixed structure does not "
+                    "match fitted trees")
+
+            expected_edge_map = dict(expected_edge_map)
+            stored_edge_map = state.get('_edge_map')
+            if (
+                    stored_edge_map is not None
+                    and dict(stored_edge_map) != expected_edge_map):
+                raise ValueError(
+                    "Persisted VineCopula edge map does not match trees")
+            expected_orig_edge_key = {
+                (tree, orig_index): (tree, column)
+                for (tree, column), orig_index
+                in expected_edge_map.items()
+            }
+            stored_orig_edge_key = state.get('_orig_edge_key')
+            if (
+                    stored_orig_edge_key is not None
+                    and dict(stored_orig_edge_key)
+                    != expected_orig_edge_key):
+                raise ValueError(
+                    "Persisted VineCopula reverse edge map does not "
+                    "match trees")
+            pair_copulas = state.get('pair_copulas')
+            if (
+                    pair_copulas is None
+                    or set(pair_copulas) != set(expected_edge_map)):
+                raise ValueError(
+                    "Persisted VineCopula pair copulas do not match "
+                    "fitted structure")
+
+            state['_natural_order_matrix'] = expected_matrix.copy()
+            state['_structure'] = canonical_structure
+            state['_edge_map'] = expected_edge_map
+            state['_orig_edge_key'] = expected_orig_edge_key
+
+        last_u = state.get('_last_u')
+        if last_u is not None:
+            last_u = np.asarray(last_u, dtype=np.float64).copy()
+            if d is not None and (
+                    last_u.ndim != 2 or last_u.shape[1] != d):
+                raise ValueError(
+                    "Persisted VineCopula training data dimension does "
+                    "not match fitted structure")
+            last_u.flags.writeable = False
+            state['_last_u'] = last_u
+
+        state.pop('_suffix_state_cache', None)
+        state.pop('_predict_history_cache', None)
         self.__dict__.update(state)
         self._suffix_state_cache = {}
         self._predict_history_cache = {}

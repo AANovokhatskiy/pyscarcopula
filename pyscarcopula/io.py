@@ -1,4 +1,14 @@
-"""JSON model persistence helpers."""
+"""JSON model persistence helpers.
+
+Persistence compatibility
+-------------------------
+New files are written with :data:`MODEL_FORMAT_VERSION` (currently v3), but
+the loader intentionally continues to accept v2.  Version 2 contains
+historical class paths and the pre-``VineCopula`` R-vine state layout; it is a
+supported migration input, not dead code.  Do not remove v2 support without a
+separate file-format deprecation/migration policy and replacement coverage for
+the golden v2 fixtures under ``tests/fixtures/persistence``.
+"""
 
 from __future__ import annotations
 
@@ -16,9 +26,12 @@ from scipy.optimize import OptimizeResult
 
 
 MODEL_FORMAT = "pyscarcopula-model"
-MODEL_FORMAT_VERSION = 2
+MODEL_FORMAT_VERSION = 3
+SUPPORTED_MODEL_FORMAT_VERSIONS = frozenset({2, 3})
 _TYPE = "__pyscarcopula_type__"
 _CLASS_PATH_MIGRATIONS = {
+    "pyscarcopula.vine.rvine.RVineCopula":
+        "pyscarcopula.vine.vine.VineCopula",
     "pyscarcopula.copula.elliptical.GaussianCopula":
         "pyscarcopula.copula.multivariate.gaussian.GaussianCopula",
     "pyscarcopula.copula.elliptical.StudentCopula":
@@ -232,6 +245,11 @@ def _from_jsonable(payload: Any) -> Any:
 def save_model(model: object, path: str | Path, *, include_data: bool = False) -> None:
     """Persist a fitted model to ``path`` as JSON.
 
+    Files are always written using the current format version. Loading and
+    re-saving a historical v2 model therefore migrates it to v3. The write
+    version must not be used to narrow the versions accepted by
+    :func:`load_model`.
+
     Parameters
     ----------
     model : object
@@ -289,6 +307,14 @@ def load_model(
 ) -> ModelT | Any:
     """Load a model persisted by :func:`save_model`.
 
+    Compatibility note
+    ------------------
+    Both v2 and v3 are deliberately supported. In particular, v2
+    ``pyscarcopula.vine.rvine.RVineCopula`` payloads are migrated to the
+    canonical ``pyscarcopula.vine.vine.VineCopula`` type. Keep this migration
+    path while v2 model files are supported; do not replace the supported
+    version set with a check against only ``MODEL_FORMAT_VERSION``.
+
     Parameters
     ----------
     path : str or pathlib.Path
@@ -314,13 +340,22 @@ def load_model(
 
     if not isinstance(envelope, dict) or envelope.get("format") != MODEL_FORMAT:
         raise ValueError("Not a pyscarcopula model file")
-    if envelope.get("format_version") != MODEL_FORMAT_VERSION:
+    if envelope.get("format_version") not in SUPPORTED_MODEL_FORMAT_VERSIONS:
         raise ValueError(
             "Unsupported pyscarcopula model format version: "
             f"{envelope.get('format_version')!r}"
         )
 
     model = _from_jsonable(envelope.get("state"))
+    declared_path = envelope.get("class")
+    if not isinstance(declared_path, str):
+        raise ValueError("Persisted model class must be a qualified name")
+    declared_type = _resolve_class(declared_path)
+    if not isinstance(model, declared_type):
+        raise ValueError(
+            "Persisted model class does not match serialized state: "
+            f"declared {declared_type.__name__}, "
+            f"restored {type(model).__name__}")
     if expected_type is not None and not isinstance(model, expected_type):
         raise TypeError(
             f"Expected {expected_type.__name__}, got {type(model).__name__}"
