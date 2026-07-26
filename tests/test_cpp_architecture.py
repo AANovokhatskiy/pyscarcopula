@@ -47,6 +47,15 @@ def test_current_repository_satisfies_cpp_architecture_contract():
     assert check_repository(ROOT) == []
 
 
+def test_stateless_scar_bindings_release_gil_after_array_validation():
+    source = (
+        ROOT / "pyscarcopula/_cpp/src/bindings/scar_ou.cpp"
+    ).read_text(encoding="utf-8")
+
+    assert "with_observation_view_without_gil" in source
+    assert source.count("observation_view_from_array(copula, u)") == 2
+
+
 @pytest.mark.parametrize(
     ("relative", "content", "expected_rule"),
     [

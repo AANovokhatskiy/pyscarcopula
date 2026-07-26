@@ -7,6 +7,7 @@ Adding a method means adding a strategy module and registering it.
 from __future__ import annotations
 from typing import Protocol, runtime_checkable
 import numpy as np
+from pyscarcopula.numerical._arrays import as_pseudo_observation_array
 
 from pyscarcopula._types import (
     FitResult,
@@ -76,7 +77,7 @@ def copula_dimension(copula, u=None) -> int | None:
 
 def validate_copula_data(copula, u):
     """Validate 2D data against an explicit, known copula dimension."""
-    array = np.asarray(u)
+    array = as_pseudo_observation_array(u)
     if array.ndim != 2:
         raise ValueError(f"copula data must be 2D, got shape {array.shape}")
     capabilities = get_copula_capabilities(copula)
@@ -136,6 +137,22 @@ def ensure_strategy_supported(copula, method):
         "SCAR-P-OU",
         "SCAR-M-OU",
     }
+    joint_factor_dynamic_methods = {
+        "GAS",
+        "SCAR-TM-OU",
+        "SCAR-P-OU",
+        "SCAR-M-OU",
+    }
+    if (
+            normalized in joint_factor_dynamic_methods
+            and getattr(copula, "_corr_mode", None) == "factor"
+            and getattr(copula, "factor_estimation", None) == "joint"):
+        # Future work: analytical loading derivatives must be propagated
+        # through the sequential GAS/SCAR recursion and tiled emissions.
+        raise NotImplementedError(
+            "factor_estimation='joint' is currently supported only for "
+            "static MLE; dynamic GAS/SCAR joint loading estimation is "
+            "not implemented")
     if (
             normalized in dynamic_methods
             and not capabilities.has_dynamic_scalar_parameter):

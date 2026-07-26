@@ -7,6 +7,10 @@ from pyscarcopula.copula.gumbel import GumbelCopula
 from pyscarcopula.numerical.hermite_tm import standard_normal_hermite_rule
 from pyscarcopula.numerical.jacobi_tm import jacobi_rule
 from pyscarcopula.numerical.mc_samplers import p_sampler_loglik
+from pyscarcopula.numerical._arrays import (
+    as_float64_array,
+    as_pseudo_observation_array,
+)
 from pyscarcopula.numerical.ou_kernels import (
     calculate_dwt,
     ou_init_state,
@@ -23,6 +27,25 @@ def test_spectral_integer_options_reject_non_integer_types(value):
         standard_normal_hermite_rule(value, 2)
     with pytest.raises(TypeError, match="quad_order"):
         jacobi_rule(2.0, 3.0, value, 2)
+
+
+def test_array_normalization_rejects_complex_values_without_lossy_cast():
+    values = np.array([0.2 + 7.0j, 0.8 - 3.0j])
+
+    with pytest.raises(TypeError, match="real values"):
+        as_float64_array(values, name="observations")
+
+
+def test_pseudo_observation_validation_is_reusable_and_boundary_aware():
+    boundary = np.array([[0.0, 1.0]])
+    assert as_pseudo_observation_array(boundary) is boundary
+
+    with pytest.raises(ValueError, match=r"\[0, 1\]"):
+        as_pseudo_observation_array(np.array([[-0.01, 0.5]]))
+    with pytest.raises(ValueError, match=r"\[0, 1\]"):
+        as_pseudo_observation_array(np.array([[0.5, 1.01]]))
+    with pytest.raises(ValueError, match=r"\(0, 1\)"):
+        as_pseudo_observation_array(boundary, allow_boundary=False)
 
 
 def test_ou_sample_paths_zero_aux_matches_exact_kernel():
@@ -61,6 +84,27 @@ def test_sample_ou_trajectory_preserves_scalar_rng_contract(n):
 
     np.testing.assert_array_equal(actual, expected)
     np.testing.assert_array_equal(actual_rng.random(8), expected_rng.random(8))
+
+
+def test_sample_ou_trajectory_zero_is_empty_and_does_not_advance_rng():
+    actual_rng = np.random.default_rng(20260724)
+    expected_rng = np.random.default_rng(20260724)
+
+    actual = sample_ou_trajectory(1.4, 0.2, 0.9, 0, actual_rng)
+
+    assert actual.shape == (0,)
+    assert actual.dtype == np.float64
+    np.testing.assert_array_equal(actual_rng.random(8), expected_rng.random(8))
+
+
+@pytest.mark.parametrize(
+    ("n", "error"),
+    [(-1, ValueError), (True, TypeError), (1.5, TypeError)],
+)
+def test_sample_ou_trajectory_rejects_invalid_size(n, error):
+    with pytest.raises(error, match="n must"):
+        sample_ou_trajectory(
+            1.4, 0.2, 0.9, n, np.random.default_rng(20260724))
 
 
 def test_stationary_state_is_deterministic_from_dwt():

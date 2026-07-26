@@ -51,6 +51,26 @@ Native adapters own calls into the mandatory C++ extension.
 | Native evaluator | Density, likelihood, gradient, filtering, multivariate conditional linear algebra |
 | Python coordination | RNG and fixed draws, Jacobi, MC/EIS, GoF, persistence |
 
+## Native Thread Runtime
+
+Eligible multivariate kernels use one lazily created C++17 thread pool per
+process. Calls divide independent rows or trajectories into stable blocks;
+GAS and SCAR time recursions remain sequential. `n_threads=1` takes a direct
+fast path without creating or querying the pool.
+
+The pool records its owning process ID. A spawned or forked child creates its
+own runtime when it first performs explicitly parallel work and never reuses
+the parent's workers. Nested native dispatch from a worker falls back to a
+local sequential call, preventing starvation and deadlock.
+
+Model mutation is protected by a per-instance re-entrant lock. Prepared SCAR
+evaluators protect mutable workspace with a native mutex. Concurrent work
+should normally use independent models/evaluators; sharing one prepared
+evaluator is safe but serializes its objective calls.
+
+The default thread count is an absolute `1`. Environment variables are not
+consulted. See [CPU Parallelism](parallelism.md) for the public contract.
+
 Sequential unconditional sampling for R-vines with fitted GAS edges is also a
 native operation. Python builds the flat edge/topology plan and generates the
 same fixed draws as the generic path; the C++ kernel owns the row recursion and
@@ -70,6 +90,15 @@ degrees of freedom, normal draws, and chi-square draws are checked for finite
 values before native computation starts. The small integer `given_indices`
 array is still copied into an owning vector.
 
+## Native Linear Algebra
+
+Dense matrix-vector, Cholesky, SPD-solve, and triangular kernels are provided
+by an internal C++17 layer. The extension does not depend on Eigen, BLAS, or
+OpenMP and therefore does not introduce a second, hidden thread pool. Scalar
+and portable compiler-vectorizable reduction backends are retained for
+cross-backend correctness tests; production paths use the portable backend
+only where end-to-end measurements justify it.
+
 ## Numerical Safety Boundaries
 
 Numerical boundaries are named by purpose rather than represented by a
@@ -78,15 +107,16 @@ pair-copula values live in `scar/numerical_constants.hpp`.
 
 - `PSEUDO_OBS_EPS` protects pseudo-observations passed to quantiles and
   h-functions.
-- `H_FUNCTION_EPS` bounds numerical h/inverse-h outputs.
+- `H_FUNCTION_EPS` bounds internal numerical h/inverse-h outputs without
+  removing tail probabilities needed by deeper vine trees.
 - `ROSENBLATT_OUTPUT_EPS` protects final GoF normal quantiles.
 - `CONDITIONAL_SAMPLE_EPS` applies only to newly sampled free coordinates.
 - `PDF_FLOOR` protects density and logarithm arguments.
 
-The h-function and Rosenblatt boundaries use the same numeric value, but they
-are named separately because they protect different calculations. Vine code
-uses the shared pseudo-observation helper; it does not define local `_EPS`
-constants.
+The internal h-function and pseudo-observation boundaries are `1e-10`.
+The final Rosenblatt boundary remains `1e-6` because it protects GoF normal
+quantiles and must not be reused inside vine recursion. Vine code uses the
+shared pseudo-observation helper; it does not define local `_EPS` constants.
 
 ## Custom Python Copulas
 

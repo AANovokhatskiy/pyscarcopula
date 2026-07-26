@@ -22,7 +22,11 @@ const double* observation_data(const CopulaSpec& copula, ObservationView u) {
     if (u.dim != expected_dim) {
         throw std::invalid_argument("u dimension does not match CopulaSpec::dim");
     }
-    if (!u.empty() && u.data() == nullptr) {
+    const bool prepared_equicorr =
+        copula.family == CopulaFamily::EquicorrGaussian
+        && copula.equicorr_sum_cache.size() == u.size()
+        && copula.equicorr_sum_squares_cache.size() == u.size();
+    if (!u.empty() && u.data() == nullptr && !prepared_equicorr) {
         throw std::invalid_argument("u data pointer must not be null");
     }
     return u.data();
@@ -43,7 +47,9 @@ bool valid_ou_params(const OuParams& params) {
 bool finite_config_doubles(const OuNumericalConfig& config) {
     return std::isfinite(config.grid_range)
         && std::isfinite(config.r_gh)
-        && std::isfinite(config.auto_small_kdt);
+        && std::isfinite(config.auto_small_kdt)
+        && config.n_threads >= 1
+        && config.n_threads <= 256;
 }
 
 bool valid_grid_config(

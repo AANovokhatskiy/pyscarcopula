@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 #include <utility>
 
@@ -108,9 +109,55 @@ PreparedScarOuEvaluator::PreparedScarOuEvaluator(
     }
 }
 
+PreparedScarOuEvaluator::PreparedScarOuEvaluator(
+    CopulaSpec copula,
+    std::vector<double> equicorr_sums,
+    std::vector<double> equicorr_sum_squares,
+    OuNumericalConfig config,
+    std::string method)
+    : copula_(std::move(copula)),
+      n_obs_(0),
+      dim_(copula_.dim),
+      config_(config),
+      method_(std::move(method)) {
+
+    if (!valid_method(method_)) {
+        throw std::invalid_argument("unsupported transition_method");
+    }
+    if (copula_.family != CopulaFamily::EquicorrGaussian
+        || copula_.rotation != Rotation::R0
+        || copula_.transform != Transform::GaussianTanh
+        || dim_ < 2) {
+        throw std::invalid_argument(
+            "prepared statistics require an Equicorr Gaussian CopulaSpec");
+    }
+    if (equicorr_sums.empty()
+        || equicorr_sum_squares.size() != equicorr_sums.size()
+        || equicorr_sums.size()
+            > static_cast<std::size_t>(
+                std::numeric_limits<std::int64_t>::max())) {
+        throw std::invalid_argument(
+            "prepared statistics must be non-empty and equal-sized");
+    }
+    n_obs_ = static_cast<std::int64_t>(equicorr_sums.size());
+    for (std::size_t row = 0; row < equicorr_sums.size(); ++row) {
+        if (!std::isfinite(equicorr_sums[row])
+            || !std::isfinite(equicorr_sum_squares[row])
+            || equicorr_sum_squares[row] < 0.0) {
+            throw std::invalid_argument(
+                "prepared statistics must contain finite valid values");
+        }
+    }
+    copula_.equicorr_sum_cache = std::move(equicorr_sums);
+    copula_.equicorr_sum_squares_cache =
+        std::move(equicorr_sum_squares);
+}
+
 void PreparedScarOuEvaluator::update_student_factor(
     const std::vector<double>& l_inv,
     double log_det) {
+
+    const std::lock_guard<std::mutex> lock(call_mutex_);
 
     // Joint Student fits mutate only the static correlation factor; PPF cache
     // and observations stay prepared for the lifetime of this evaluator.
@@ -142,7 +189,7 @@ void PreparedScarOuEvaluator::update_student_factor(
 
 ObservationView PreparedScarOuEvaluator::view() const noexcept {
     return {
-        observations_.data(),
+        observations_.empty() ? nullptr : observations_.data(),
         static_cast<std::size_t>(n_obs_),
         dim_,
     };
@@ -150,16 +197,19 @@ ObservationView PreparedScarOuEvaluator::view() const noexcept {
 
 LogLikResult PreparedScarOuEvaluator::loglik(
     const OuParams& params) const {
+    const std::lock_guard<std::mutex> lock(call_mutex_);
     return call_loglik(params);
 }
 
 GradLogLikResult PreparedScarOuEvaluator::neg_loglik_with_grad(
     const OuParams& params) const {
+    const std::lock_guard<std::mutex> lock(call_mutex_);
     return call_no_corr(params);
 }
 
 GradLogLikResult PreparedScarOuEvaluator::neg_loglik_with_grad_and_corr(
     const OuParams& params) const {
+    const std::lock_guard<std::mutex> lock(call_mutex_);
     return call_full_corr(params);
 }
 
@@ -167,6 +217,7 @@ GradLogLikResult
 PreparedScarOuEvaluator::neg_loglik_with_grad_and_corr_directional(
     const OuParams& params,
     const std::vector<double>& corr_direction) const {
+    const std::lock_guard<std::mutex> lock(call_mutex_);
     return call_directional_corr(params, corr_direction);
 }
 
@@ -174,6 +225,7 @@ std::vector<double> PreparedScarOuEvaluator::predictive_mean(
     const OuParams& params,
     OuBackend& backend,
     int& status) const {
+    const std::lock_guard<std::mutex> lock(call_mutex_);
     return call_predictive_mean(params, backend, status);
 }
 
@@ -181,6 +233,11 @@ std::vector<double> PreparedScarOuEvaluator::mixture_h(
     const OuParams& params,
     OuBackend& backend,
     int& status) const {
+    const std::lock_guard<std::mutex> lock(call_mutex_);
+    if (observations_.empty()) {
+        status = SCAR_INVALID_FAMILY;
+        return {};
+    }
     return call_mixture_h(params, backend, status);
 }
 
@@ -188,12 +245,18 @@ std::vector<double> PreparedScarOuEvaluator::mixture_h_pair(
     const OuParams& params,
     OuBackend& backend,
     int& status) const {
+    const std::lock_guard<std::mutex> lock(call_mutex_);
+    if (observations_.empty()) {
+        status = SCAR_INVALID_FAMILY;
+        return {};
+    }
     return call_mixture_h_pair(params, backend, status);
 }
 
 StateDistribution PreparedScarOuEvaluator::state_distribution(
     const OuParams& params,
     bool horizon_next) const {
+    const std::lock_guard<std::mutex> lock(call_mutex_);
     return call_state_distribution(params, horizon_next);
 }
 

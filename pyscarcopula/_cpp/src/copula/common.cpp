@@ -8,6 +8,16 @@ bool is_valid_rotation(int rotation) {
     return rotation == 0 || rotation == 90 || rotation == 180 || rotation == 270;
 }
 
+scar::CopulaSpec transposed_copula_spec(const scar::CopulaSpec& spec) {
+    scar::CopulaSpec transposed = spec;
+    if (spec.rotation == scar::Rotation::R90) {
+        transposed.rotation = scar::Rotation::R270;
+    } else if (spec.rotation == scar::Rotation::R270) {
+        transposed.rotation = scar::Rotation::R90;
+    }
+    return transposed;
+}
+
 double softplus(double x) {
     if (x > 20.0) {
         return x;

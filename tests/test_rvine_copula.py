@@ -285,6 +285,25 @@ def _mle_gaussian_pair(rho):
     )
 
 
+def _mle_clayton_pair(parameter, rotation):
+    copula = ClaytonCopula(rotate=rotation)
+    result = MLEResult(
+        log_likelihood=0.0,
+        method='MLE',
+        copula_name=copula.name,
+        success=True,
+        copula_param=float(parameter),
+    )
+    return PairCopula(
+        copula=copula,
+        param=float(parameter),
+        log_likelihood=0.0,
+        nfev=0,
+        tau=0.0,
+        fit_result=result,
+    )
+
+
 def _gas_gaussian_pair(r_last=0.0, gamma=1.0):
     copula = BivariateGaussianCopula()
     result = GASResult(
@@ -336,7 +355,7 @@ def _manual_suffix_stateful_rvine():
         [1, 1, 0],
         [2, 0, 0],
     ], dtype=int)
-    vine.trees = [
+    vine._trees = tuple(tuple(level) for level in [
         [
             (frozenset({1, 2}), frozenset()),
             (frozenset({0, 1}), frozenset()),
@@ -344,7 +363,7 @@ def _manual_suffix_stateful_rvine():
         [
             (frozenset({0, 2}), frozenset({1})),
         ],
-    ]
+    ])
     vine._edge_map = {(0, 0): 0, (0, 1): 1, (1, 0): 0}
     vine.pair_copulas = {
         (0, 0): _independent_pair(),
@@ -389,7 +408,7 @@ def _manual_multi_edge_dynamic_rvine():
     vine = RVineCopula(candidates=[BivariateGaussianCopula])
     vine.d = 4
     vine.matrix = matrix
-    vine.trees = trees
+    vine._trees = tuple(tuple(level) for level in trees)
     vine._edge_map = dict(edge_map)
     vine.pair_copulas = {
         key: _independent_pair()
@@ -483,7 +502,7 @@ class TestFitContract:
     def test_fit_chainable(self):
         u = _sample_dvine_gumbel(200, 3, 2.0, seed=0)
         s = RVineCopula().fit(u).summary(as_string=True)
-        assert "RVineCopula" in s
+        assert "VineCopula" in s
         assert "log_likelihood" in s
 
     def test_fixed_copulas_rejects_instances_with_helpful_message(self):
@@ -1031,6 +1050,26 @@ class TestTruncationAndPrune:
             if t >= 2:
                 assert isinstance(pc.copula, IndependentCopula)
 
+    def test_full_independent_truncation_uses_validated_fast_path(
+            self, monkeypatch):
+        u = _sample_dvine_gumbel(500, 5, 3.0, seed=0)
+
+        def fail_public_fit(*args, **kwargs):
+            raise AssertionError(
+                "truncated R-vine rescanned an already validated edge")
+
+        monkeypatch.setattr(IndependentCopula, "fit", fail_public_fit)
+        vine = RVineCopula(
+            truncation_level=0,
+            truncation_fill="independent",
+        ).fit(u)
+
+        assert vine.n_parameters == 0
+        assert all(
+            isinstance(pc.copula, IndependentCopula)
+            for pc in vine.pair_copulas.values()
+        )
+
     def test_fit_truncation_kwargs_override_constructor_defaults(self):
         u = _sample_dvine_gumbel(500, 5, 3.0, seed=0)
         v = RVineCopula().fit(
@@ -1281,12 +1320,12 @@ class TestSampling:
         assert np.all(s > 0.0)
         assert np.all(s < 1.0)
 
-    def test_native_gas_sample_matches_legacy_stepwise_exactly(self):
+    def test_native_gas_sample_matches_legacy_stepwise_exactly(
+            self, monkeypatch):
         vine = _manual_suffix_stateful_rvine()
         max_active_tree = vine._max_non_independent_tree_level()
         active_keys = vine._sample_active_edge_keys(max_active_tree)
 
-        actual = vine.sample(128, rng=np.random.default_rng(20260720))
         expected = vine._sample_stepwise_stateful(
             128,
             np.random.default_rng(20260720),
@@ -1294,20 +1333,105 @@ class TestSampling:
             max_active_tree=max_active_tree,
         )
 
+        def fail_fallback(*args, **kwargs):
+            raise AssertionError("native GAS R-vine path was not used")
+
+        monkeypatch.setattr(
+            vine, "_sample_stepwise_stateful", fail_fallback)
+        actual = vine.sample(128, rng=np.random.default_rng(20260720))
+
         assert np.array_equal(actual, expected)
 
-    def test_native_gas_sample_matches_legacy_for_mixed_dynamic_edges(self):
-        vine = _manual_multi_edge_dynamic_rvine()
+    def test_gas_sample_passes_canonical_traversal_plan_to_native(
+            self, monkeypatch):
+        from pyscarcopula.numerical import _cpp_gas_rvine
+        from pyscarcopula.vine._rvine_sampling_plan import (
+            RVineTraversalPlan,
+        )
+
+        vine = _manual_suffix_stateful_rvine()
+        captured = []
+        original = _cpp_gas_rvine.sample
+
+        def record_plan(*args, traversal_plan=None, **kwargs):
+            captured.append(traversal_plan)
+            return original(
+                *args, traversal_plan=traversal_plan, **kwargs)
+
+        monkeypatch.setattr(_cpp_gas_rvine, "sample", record_plan)
+        values = vine.sample(8, rng=np.random.default_rng(20260724))
+
+        assert values.shape == (8, 3)
+        assert len(captured) == 1
+        assert isinstance(captured[0], RVineTraversalPlan)
+        assert captured[0].active_keys == vine._sample_active_edge_keys()
+
+    def test_native_gas_sample_matches_legacy_for_transposed_rotated_edge(
+            self, monkeypatch):
+        vine = _manual_suffix_stateful_rvine()
+        # Matrix column 0 uses leaf=2, partner=1, while this edge was fitted
+        # in ascending variable order (1, 2).
+        vine.pair_copulas[(0, 0)] = _mle_clayton_pair(0.8, 90)
         max_active_tree = vine._max_non_independent_tree_level()
         active_keys = vine._sample_active_edge_keys(max_active_tree)
 
-        actual = vine.sample(96, rng=np.random.default_rng(20260721))
+        expected = vine._sample_stepwise_stateful(
+            128,
+            np.random.default_rng(20260722),
+            active_keys=active_keys,
+            max_active_tree=max_active_tree,
+        )
+
+        def fail_fallback(*args, **kwargs):
+            raise AssertionError("native GAS R-vine path was not used")
+
+        monkeypatch.setattr(
+            vine, "_sample_stepwise_stateful", fail_fallback)
+        actual = vine.sample(128, rng=np.random.default_rng(20260722))
+
+        assert np.array_equal(actual, expected)
+
+    def test_native_gas_sample_matches_python_for_mixed_dynamic_edges(
+            self, monkeypatch):
+        vine = _manual_multi_edge_dynamic_rvine()
+        max_active_tree = vine._max_non_independent_tree_level()
+        active_keys = vine._sample_active_edge_keys(max_active_tree)
         expected = vine._sample_stepwise_stateful(
             96,
             np.random.default_rng(20260721),
             active_keys=active_keys,
             max_active_tree=max_active_tree,
         )
+
+        def fail_fallback(*args, **kwargs):
+            raise AssertionError("native GAS R-vine path was not used")
+
+        monkeypatch.setattr(
+            vine, "_sample_stepwise_stateful", fail_fallback)
+        actual = vine.sample(96, rng=np.random.default_rng(20260721))
+
+        assert np.array_equal(actual, expected)
+
+    def test_native_gas_sample_matches_python_for_multiple_gas_edges(
+            self, monkeypatch):
+        vine = _manual_multi_edge_dynamic_rvine()
+        vine.pair_copulas[(1, 1)] = _gas_gaussian_pair(
+            r_last=0.0, gamma=0.6)
+        max_active_tree = vine._max_non_independent_tree_level()
+        active_keys = vine._sample_active_edge_keys(max_active_tree)
+        expected = vine._sample_stepwise_stateful(
+            96,
+            np.random.default_rng(20260723),
+            active_keys=active_keys,
+            max_active_tree=max_active_tree,
+        )
+
+        def fail_fallback(*args, **kwargs):
+            raise AssertionError("native GAS R-vine path was not used")
+
+        monkeypatch.setattr(
+            vine, "_sample_stepwise_stateful", fail_fallback)
+        actual = vine.sample(96, rng=np.random.default_rng(20260723))
 
         assert np.array_equal(actual, expected)
 
@@ -1455,7 +1579,7 @@ class TestSummary:
         result = v.summary()
         captured = capsys.readouterr()
         assert result is None
-        assert "RVineCopula" in captured.out
+        assert "VineCopula" in captured.out
         assert "log_likelihood" in captured.out
         assert "\nEdges" in captured.out
 
@@ -1579,7 +1703,7 @@ class TestSummary:
         u = _sample_dvine_gumbel(300, 4, 2.0, seed=0)
         v = RVineCopula().fit(u)
         r = repr(v)
-        assert r.startswith("RVineCopula(")
+        assert r.startswith("VineCopula(")
         assert "d=4" in r
 
 

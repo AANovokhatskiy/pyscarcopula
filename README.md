@@ -107,6 +107,36 @@ python -m pyscarcopula._native_smoke
 
 ## Features
 
+### VineCopula quick start
+
+`VineCopula` is the primary API for regular vines. Omitting `structure`
+selects an R-vine from data; C-vines and D-vines are fixed
+[`RVineMatrix`](docs/api/vine.md) structures:
+
+```python
+from pyscarcopula import VineCopula
+from pyscarcopula.vine import RVineMatrix, cvine_structure, dvine_structure
+
+# Data-driven regular vine
+auto = VineCopula().fit(u, method="mle")
+
+# Fixed standard structures
+c_vine = VineCopula.cvine(d=u.shape[1]).fit(u, method="mle")
+d_vine = VineCopula.dvine(d=u.shape[1]).fit(u, method="mle")
+
+# Any valid regular-vine tree sequence, without writing a raw matrix
+structure = RVineMatrix.from_trees(d=u.shape[1], trees=my_trees)
+fixed = VineCopula(structure=structure).fit(u, method="mle")
+```
+
+Use `vine.structure` for the `RVineMatrix` and
+`vine.natural_order_matrix` when an integration specifically needs the
+natural-order runtime matrix. `vine.matrix` is a compatibility property.
+The raw `pyvinecopulib` matrix uses one-based labels and the opposite
+tree-level order above each anti-diagonal entry, so it is not obtained by
+simply adding one. See the
+[matrix-layout conversion](docs/api/vine.md#matrix-layout-and-pyvinecopulib).
+
 **Copula families**
 
 * Archimedean: Gumbel, Frank, Clayton, Joe, including rotations where supported
@@ -117,8 +147,9 @@ python -m pyscarcopula._native_smoke
 
 **Vine copulas**
 
-* C-vine pair-copula construction with fixed star structure
-* R-vine pair-copula construction with Dissmann-style structure selection
+* One `VineCopula` runtime for auto-selected and fixed regular vines
+* Fixed C-vine and D-vine factories backed by `RVineMatrix`
+* Arbitrary valid structures built from decoded tree edges
 * Automatic family and rotation selection per edge using AIC/BIC
 * Tree-level and edge-level truncation
 * Mixed MLE, SCAR, GAS, and independence edges within one vine
@@ -139,6 +170,15 @@ python -m pyscarcopula._native_smoke
 * Mixture Rosenblatt transform for stochastic models
 * Predictive time-varying copula parameter paths
 * VaR and CVaR utilities in `pyscarcopula.contrib`
+
+**CPU parallelism**
+
+* Explicit native threading for eligible multivariate row, emission,
+  conditional-sampling, static-likelihood, and Monte Carlo kernels
+* Process-level `fit_independent` and rolling `risk_metrics` execution
+* Absolute one-thread default: omitted `n_threads` always means `1`, regardless
+  of environment variables
+* Dependency-free C++17 linear algebra without hidden BLAS or OpenMP pools
 
 ## Mathematical background
 
@@ -199,9 +239,12 @@ experimental, numerically sensitive mode.
 See [`docs/guide/performance.md`](docs/guide/performance.md) for supported
 families and numerical options.
 
-Vine copulas decompose a `d`-dimensional dependence model into bivariate copulas
-arranged in a sequence of trees. R-vines choose the tree structure from data
-subject to the proximity condition; C-vines use a fixed star structure.
+Vine copulas decompose a `d`-dimensional dependence model into bivariate
+copulas arranged in a sequence of trees. `VineCopula()` selects a regular-vine
+structure from data subject to the proximity condition.
+`VineCopula.cvine(...)` and `VineCopula.dvine(...)` use fixed standard
+structures, while `VineCopula(structure=RVineMatrix.from_trees(...))` accepts
+an arbitrary valid decoded tree sequence.
 
 ## Examples and docs
 
@@ -217,9 +260,15 @@ Worked notebooks are available in [`examples/`](examples/):
 Additional documentation is in [`docs/`](docs/). Estimation methods are
 described in [`docs/guide/estimation-methods.md`](docs/guide/estimation-methods.md),
 and performance-related details are kept in
-[`docs/guide/performance.md`](docs/guide/performance.md). Release history is in
+[`docs/guide/performance.md`](docs/guide/performance.md). CPU threading,
+process workers, thread safety, and scaling limits are documented in
+[`docs/guide/parallelism.md`](docs/guide/parallelism.md). Release history is in
 [`CHANGELOG.md`](CHANGELOG.md).
 
 ## License
 
 MIT License. See [`LICENSE.txt`](LICENSE.txt).
+
+## Contacts
+
+Contact me for any questions or discussion aanovokhatskiy@gmail.com

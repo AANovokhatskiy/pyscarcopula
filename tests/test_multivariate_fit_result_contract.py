@@ -18,24 +18,26 @@ def _u(n=50, d=3):
 
 
 @pytest.mark.parametrize(
-    ("factory", "fit_kwargs", "expected_parameters"),
+    ("factory", "fit_kwargs", "expected_parameters", "dense_correlation"),
     [
-        (GaussianCopula, {}, 3),
-        (StudentCopula, {}, 4),
+        (GaussianCopula, {}, 3, True),
+        (StudentCopula, {}, 4, True),
         (
             lambda: EquicorrGaussianCopula(d=3),
             {"method": "mle", "maxiter": 5},
             1,
+            False,
         ),
         (
             lambda: StochasticStudentCopula(d=3),
             {"method": "mle", "maxiter": 5},
             4,
+            True,
         ),
     ],
 )
 def test_static_multivariate_fit_returns_one_typed_contract(
-        factory, fit_kwargs, expected_parameters):
+        factory, fit_kwargs, expected_parameters, dense_correlation):
     model = factory()
     observations = _u()
 
@@ -46,8 +48,15 @@ def test_static_multivariate_fit_returns_one_typed_contract(
     assert result.method == "MLE"
     assert result.n_observations == len(observations)
     assert result.parameter_count == expected_parameters
-    assert result.correlation_matrix.shape == (3, 3)
-    assert np.all(np.isfinite(result.correlation_matrix))
+    if dense_correlation:
+        assert result.correlation_matrix.shape == (3, 3)
+        assert np.all(np.isfinite(result.correlation_matrix))
+    else:
+        assert result.correlation_matrix is None
+        assert (
+            result.diagnostics["correlation_representation"]
+            == "equicorrelation_scalar"
+        )
     assert np.isfinite(result.log_likelihood)
     assert result.aic == pytest.approx(
         2.0 * result.n_params - 2.0 * result.log_likelihood)

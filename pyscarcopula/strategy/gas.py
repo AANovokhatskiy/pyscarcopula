@@ -11,6 +11,10 @@ from pyscarcopula._types import (
     gas_params,
 )
 from pyscarcopula.numerical import _cpp_gas
+from pyscarcopula.numerical._arrays import (
+    validate_float64_allocation,
+    validate_positive_int,
+)
 from pyscarcopula.numerical.gas_filter import (
     gas_filter,
     gas_loglik,
@@ -107,9 +111,10 @@ class GASStrategy:
         corr_alpha = getattr(copula, "corr_alpha", None)
         if callable(corr_alpha):
             diagnostics["corr_alpha"] = corr_alpha()
-        R = getattr(copula, "R", None)
-        if R is not None:
-            diagnostics["corr_matrix"] = R
+        if getattr(copula, "_corr_mode", None) != "factor":
+            R = getattr(copula, "R", None)
+            if R is not None:
+                diagnostics["corr_matrix"] = R
         return diagnostics
 
     def _build_result(
@@ -165,6 +170,7 @@ class GASStrategy:
             message = f"{message}; final native GAS validation failed: {exc}"
 
         result_diagnostics = {
+            "n_threads": self.config.n_threads,
             "model_score": "native",
             "optimizer_gradient": "numerical",
             "gradient_kind": "numerical_optimizer",
@@ -556,6 +562,7 @@ class GASStrategy:
 
     def sample(self, copula, u, result, n, rng=None, **kwargs):
         """Recursively sample using native GAS state updates."""
+        n = validate_positive_int(n, "n")
         if rng is None:
             rng = np.random.default_rng()
         given = kwargs.get("given")
@@ -564,6 +571,11 @@ class GASStrategy:
         d = copula_dimension(copula, u)
         if d is None:
             raise ValueError("copula dimension is unknown")
+        validate_float64_allocation(
+            (n, d),
+            name="GAS sample output",
+            memory_budget_bytes=kwargs.get("memory_budget_bytes"),
+        )
 
         state = _cpp_gas.initial_state(
             p.omega,
@@ -603,6 +615,15 @@ class GASStrategy:
         return samples
 
     def predict(self, copula, u, result, n, rng=None, **kwargs):
+        n = validate_positive_int(n, "n")
+        d = copula_dimension(copula, u)
+        if d is None:
+            raise ValueError("copula dimension is unknown")
+        validate_float64_allocation(
+            (n, d + 1),
+            name="GAS prediction output and parameter path",
+            memory_budget_bytes=kwargs.get("memory_budget_bytes"),
+        )
         return predict_from_strategy(
             self, copula, u, result, n, rng=rng, **kwargs)
 
@@ -671,6 +692,12 @@ class GASStrategy:
         )
 
     def sample_params(self, copula, state, n, rng=None, **kwargs):
+        n = validate_positive_int(n, "n")
+        validate_float64_allocation(
+            (n,),
+            name="GAS parameter path",
+            memory_budget_bytes=kwargs.get("memory_budget_bytes"),
+        )
         return np.full(n, float(np.asarray(state.r)[0]), dtype=np.float64)
 
     def model_sample_params(self, copula, result, n, rng=None, **kwargs):

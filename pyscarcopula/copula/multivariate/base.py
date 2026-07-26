@@ -2,9 +2,21 @@
 
 from __future__ import annotations
 
+from functools import wraps
+import threading
+
 import numpy as np
 
 from pyscarcopula.copula.base import CopulaBase, CopulaCapabilities
+
+
+def model_state_locked(method):
+    """Serialize operations that read or publish mutable fitted state."""
+    @wraps(method)
+    def wrapped(self, *args, **kwargs):
+        with self._state_lock:
+            return method(self, *args, **kwargs)
+    return wrapped
 
 
 class MultivariateCopula(CopulaBase):
@@ -14,7 +26,17 @@ class MultivariateCopula(CopulaBase):
 
     def __init__(self, dimension: int | None = None, *, name="Copula"):
         super().__init__(name=name)
+        self._state_lock = threading.RLock()
         self._dimension = self._validate_dimension_value(dimension)
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state.pop("_state_lock", None)
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self._state_lock = threading.RLock()
 
     @staticmethod
     def _validate_dimension_value(dimension):

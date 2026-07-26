@@ -3,10 +3,15 @@
 ## Overview
 
 Vine copulas decompose a $d$-dimensional copula into $d(d-1)/2$ bivariate
-copulas arranged in a tree structure. Two vine types are supported:
+copulas arranged in a tree structure. `VineCopula` is the primary runtime and
+supports three structural modes:
 
-- **C-vine**: fixed star structure (one "root" variable per tree)
-- **R-vine**: data-driven structure selected via Dissmann's MST algorithm
+- **auto R-vine**: data-driven structure selected by Dissmann's algorithm;
+- **fixed C-vine**: successive-root star trees;
+- **fixed D-vine**: path trees.
+
+Any other valid regular vine can be supplied as an `RVineMatrix`. C/D/R are
+structure modes of one model, not separate generic runtime classes.
 
 Each edge copula is selected automatically from the configured candidate
 families via AIC, and can use constant (MLE) or time-varying (SCAR, GAS)
@@ -31,9 +36,9 @@ A C-vine uses a star structure where the first variable is the root of tree 0,
 the second variable is the root of tree 1, and so on.
 
 ```python
-from pyscarcopula import CVineCopula
+from pyscarcopula import VineCopula
 
-vine = CVineCopula()
+vine = VineCopula.cvine(d=u.shape[1])
 vine.fit(u, method='scar-tm-ou',
          truncation_level=2,
          min_edge_logL=10,
@@ -41,16 +46,52 @@ vine.fit(u, method='scar-tm-ou',
 vine.summary()
 ```
 
-## R-vine
+### Legacy `CVineCopula`
+
+`CVineCopula` remains available for compatibility with existing code and
+persisted models. It is not removed, renamed, or accompanied by a runtime
+`DeprecationWarning`. New code should use the generic runtime:
+
+```python
+from pyscarcopula import CVineCopula, VineCopula
+from pyscarcopula.vine import cvine_structure
+
+# Existing supported API
+old = CVineCopula()
+
+# Preferred generic equivalents
+new = VineCopula.cvine(d=u.shape[1], order=range(u.shape[1]))
+new_explicit = VineCopula(
+    structure=cvine_structure(
+        d=u.shape[1],
+        order=range(u.shape[1]),
+    )
+)
+```
+
+Static MLE models fitted to the same C-vine structure and fixed edge families
+have equivalent edge semantics and likelihood. Internal edge ordering and
+seeded sampling trajectories are not an API parity guarantee.
+
+Conditional sampling intentionally follows different runtime paths:
+
+- legacy `CVineCopula` uses its C-vine-specific prefix/general algorithms;
+- generic `VineCopula` uses matrix-based suffix conditioning and a DAG+MCMC
+  fallback for arbitrary conditioning sets;
+- generic prediction supports `return_diagnostics`, MCMC controls, and
+  `dynamic_conditioning`; the legacy top-level adapter rejects these options
+  instead of silently ignoring them.
+
+## Auto-selected R-vine
 
 An R-vine selects the tree structure from data using Dissmann's algorithm: at
 each tree level, a maximum spanning tree is built on $|\text{Kendall's tau}|$,
 subject to the proximity condition.
 
 ```python
-from pyscarcopula import RVineCopula
+from pyscarcopula import VineCopula
 
-vine = RVineCopula()
+vine = VineCopula()
 vine.fit(u, method='scar-tm-ou',
          truncation_level=2,
          min_edge_logL=10,
@@ -67,7 +108,7 @@ toward an R-vine that supports the fast exact conditional sampler for that
 set, with the fixed variables placed at the end of the R-vine variable order:
 
 ```python
-vine = RVineCopula()
+vine = VineCopula()
 vine.fit(
     u,
     method='scar-tm-ou',
@@ -82,6 +123,99 @@ vine.fit(
 `conditional_strict=True`, `fit` raises `ValueError` if no suffix-compatible
 exact structure is constructed. With `conditional_strict=False`, prediction can
 use the approximate fallback when the exact path is not available.
+
+## Fixed D-vine
+
+Use a D-vine factory when the first-tree path order is part of the model:
+
+```python
+from pyscarcopula import VineCopula
+
+vine = VineCopula.dvine(
+    d=u.shape[1],
+    order=[0, 2, 1, 3],
+).fit(u, method="mle")
+```
+
+`VineCopula.cvine(...)` and `.dvine(...)` both configure a fixed
+`RVineMatrix`; fitting their pair copulas never runs structure selection.
+
+## Arbitrary fixed regular vine
+
+Prefer decoded tree edges over manually writing either matrix convention:
+
+```python
+from pyscarcopula import VineCopula
+from pyscarcopula.vine import RVineMatrix
+
+structure = RVineMatrix.from_trees(
+    d=4,
+    trees=[
+        [
+            (frozenset({0, 1}), frozenset()),
+            (frozenset({1, 2}), frozenset()),
+            (frozenset({1, 3}), frozenset()),
+        ],
+        [
+            (frozenset({0, 2}), frozenset({1})),
+            (frozenset({0, 3}), frozenset({1})),
+        ],
+        [
+            (frozenset({2, 3}), frozenset({0, 1})),
+        ],
+    ],
+)
+vine = VineCopula(structure=structure).fit(u, method="mle")
+```
+
+`RVineMatrix.from_trees` validates tree sizes, indices, and the proximity
+condition before any optimizer is called.
+
+## Candidate families versus fixed families
+
+Constructor `candidates=` defines the pool searched independently for every
+edge:
+
+```python
+from pyscarcopula import BivariateGaussianCopula, FrankCopula
+
+vine = VineCopula.dvine(
+    d=u.shape[1],
+    candidates=[BivariateGaussianCopula, FrankCopula],
+).fit(u, method="mle")
+```
+
+Fit argument `copulas=` instead fixes every `(family, rotation)` in the
+structure's decoded tree order:
+
+```python
+trees = vine.structure.to_trees()
+fixed_specs = [
+    [(BivariateGaussianCopula, 0) for _ in level]
+    for level in trees
+]
+fixed = VineCopula(structure=vine.structure).fit(
+    u,
+    method="mle",
+    copulas=fixed_specs,
+)
+```
+
+`copulas=` contains classes and rotations, not fitted copula instances.
+
+## Inspecting structure
+
+```python
+print(vine.structure)               # canonical RVineMatrix
+print(vine.structure.to_trees())    # decoded semantic edges
+print(vine.natural_order_matrix)    # numerical/integration convention
+```
+
+`vine.matrix` returns the same natural-order representation for compatibility
+with older code. Prefer `structure` for modelling and `natural_order_matrix`
+when an external integration explicitly needs that convention.
+
+`RVineCopula` is a compatibility name for the same `VineCopula` type.
 
 ## Truncation
 
@@ -133,28 +267,23 @@ Conditional generation is supported via `given={var_index: u_value}` in
 pseudo-observation space:
 
 ```python
-variable_order = [
-    int(vine.matrix[vine.d - 1 - col, col])
-    for col in range(vine.d)
-]
-
-# Fast exact path: fix the last variables in the R-vine order.
+# If this target matters in production, fit auto mode with given_vars=[0].
 pred_cond = vine.predict(
     n=5000,
     u=u,
-    given={variable_order[-1]: 0.6},
+    given={0: 0.6},
     horizon='current',
     rng=np.random.default_rng(2026),
 )
 pred_cond2 = vine.predict(
     n=5000,
     u=u,
-    given={variable_order[-2]: 0.35, variable_order[-1]: 0.75},
+    given={0: 0.35, 2: 0.75},
     rng=np.random.default_rng(2027),
 )
 ```
 
-For `RVineCopula`, the fast exact conditional sampler requires the fixed
+For `VineCopula`, the fast exact conditional sampler requires the fixed
 variables to be at the end of the fitted R-vine variable order. The fixed
 variables must already be last in the fitted structure, or the fitted structure
 must be rebuildable into an equivalent order where they are last.
@@ -165,15 +294,14 @@ To inspect the fitted structure as an `RVineMatrix`, use
 If exact conditioning is not possible, `predict` uses the approximate fallback.
 This is more general, but more expensive than exact suffix sampling.
 
-You can inspect the fitted variable order before choosing `given`:
+Use fit-time `given_vars` for production targets. For an ad hoc set, request
+diagnostics to see whether the fitted structure supports the exact path:
 
 ```python
-print(variable_order)
-
 samples, diagnostics = vine.predict(
     n=5000,
     u=u,
-    given={variable_order[0]: 0.45},
+    given={1: 0.45},
     mcmc_steps=300,
     mcmc_burnin=100,
     return_diagnostics=True,
@@ -209,12 +337,3 @@ independent OU trajectories.
 
 For SCAR-TM predictive parameter sampling, `predictive_r_mode` may be `None`,
 `"grid"`, or `"histogram"`.
-
-## Results on 6-crypto data (T=250)
-
-| Model | logL | GoF p-value |
-|-------|------|-------------|
-| **R-vine SCAR-TM** | **885.19** | **0.9839** |
-| R-vine MLE | 836.96 | 0.0639 |
-| Student-t | 764.42 | 0.0001 |
-| Gaussian | 761.00 | 0.0000 |

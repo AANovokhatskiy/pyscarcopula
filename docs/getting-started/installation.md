@@ -17,6 +17,11 @@ pip install -e ".[test]"
 Official wheels contain the compiled extension used for built-in copula
 families, static likelihoods, GAS, and SCAR-TM-OU evaluation.
 
+The extension's parallel runtime and portable linear-algebra kernels use only
+the C++17 standard library. Wheels do not require Eigen, BLAS, or OpenMP and do
+not create an additional third-party thread pool. Native threads remain
+disabled unless `n_threads` is passed explicitly.
+
 Source installs build this extension and fail if it cannot be compiled. You
 need a C++17 compiler: MSVC Build Tools or MinGW-w64 GCC on Windows, Xcode
 Command Line Tools on macOS, or GCC/Clang on Linux. MSVC remains the default
@@ -50,6 +55,19 @@ pytest tests/
 Tests require the `data/` directory, which is included in the git repository
 but not in the PyPI package. Native tests require a successful extension
 build.
+
+## Run the notebooks
+
+Clone the repository so the example datasets are available, then install the
+optional notebook dependencies:
+
+```bash
+pip install -e ".[examples]"
+jupyter lab examples/
+```
+
+The comparison notebook also uses the optional `pyvinecopulib` package,
+included in the `examples` dependency group.
 
 For a source-tree C++ check, build the extension in place first:
 

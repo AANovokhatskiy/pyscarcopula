@@ -85,6 +85,78 @@ def _kendall_tau_value(u1, u2):
 # R-vine matrix
 # ══════════════════════════════════════════════════════════════
 
+def _validated_dimension(d, *, operation):
+    if (
+            isinstance(d, (bool, np.bool_))
+            or not isinstance(d, (int, np.integer))):
+        raise TypeError(f"{operation}: d must be an integer, got {d!r}")
+    d = int(d)
+    if d < 2:
+        raise ValueError(f"{operation}: d must be >= 2, got {d}")
+    return d
+
+
+def _integer_square_matrix(matrix, *, operation):
+    array = np.asarray(matrix)
+    if array.ndim != 2 or array.shape[0] != array.shape[1]:
+        raise ValueError(
+            f"{operation}: matrix must be square, got {array.shape}")
+    if array.shape[0] < 2:
+        raise ValueError(
+            f"{operation}: matrix dimension must be >= 2, "
+            f"got {array.shape[0]}")
+    if (
+            np.issubdtype(array.dtype, np.bool_)
+            or not np.issubdtype(array.dtype, np.integer)):
+        raise TypeError(
+            f"{operation}: matrix entries must be integers without bool, "
+            f"got dtype {array.dtype}")
+    return np.array(array, dtype=np.int64, copy=True)
+
+
+def _validated_order(d, order, *, operation):
+    d = _validated_dimension(d, operation=operation)
+    if order is None:
+        return d, tuple(range(d))
+
+    try:
+        values = tuple(order)
+    except TypeError as exc:
+        raise TypeError(
+            f"{operation}: order must be an iterable of integers") from exc
+    if len(values) != d:
+        raise ValueError(
+            f"{operation}: order must contain {d} variables, "
+            f"got {len(values)}")
+    if any(
+            isinstance(value, (bool, np.bool_))
+            or not isinstance(value, (int, np.integer))
+            for value in values):
+        raise TypeError(
+            f"{operation}: order entries must be integers without bool")
+    normalized = tuple(int(value) for value in values)
+    if set(normalized) != set(range(d)):
+        raise ValueError(
+            f"{operation}: order must be a permutation of 0..{d - 1}, "
+            f"got {list(normalized)}")
+    return d, normalized
+
+
+def _validated_tree_variable(value, d, *, location):
+    if (
+            isinstance(value, (bool, np.bool_))
+            or not isinstance(value, (int, np.integer))):
+        raise TypeError(
+            f"RVineMatrix.from_trees: {location} must contain integer "
+            "indices without bool")
+    value = int(value)
+    if value < 0 or value >= d:
+        raise ValueError(
+            f"RVineMatrix.from_trees: {location} index {value} is outside "
+            f"0..{d - 1}")
+    return value
+
+
 class RVineMatrix:
     """
     R-vine structure encoded as a d x d lower-triangular matrix.
@@ -107,12 +179,9 @@ class RVineMatrix:
     """
 
     def __init__(self, matrix):
-        matrix = np.asarray(matrix, dtype=int)
-        d = matrix.shape[0]
-        if matrix.shape != (d, d):
-            raise ValueError(f"Matrix must be square, got {matrix.shape}")
-        self._matrix = matrix.copy()
-        self._d = d
+        self._matrix = _integer_square_matrix(
+            matrix, operation="RVineMatrix")
+        self._d = self._matrix.shape[0]
         self._validate()
 
     @classmethod
@@ -124,20 +193,101 @@ class RVineMatrix:
         converts that representation into the lower-triangular matrix
         convention used by :class:`RVineMatrix`.
         """
+        d = _validated_dimension(d, operation="RVineMatrix.from_trees")
+        try:
+            tree_levels = tuple(trees)
+        except TypeError as exc:
+            raise TypeError(
+                "RVineMatrix.from_trees: trees must be an iterable of "
+                "tree levels") from exc
+        if len(tree_levels) != d - 1:
+            raise ValueError(
+                f"RVineMatrix.from_trees: expected {d - 1} tree levels "
+                f"for d={d}, got {len(tree_levels)}")
+
         normalized = []
-        for tree_index, level in enumerate(trees):
+        for tree_index, level in enumerate(tree_levels):
+            try:
+                edges = tuple(level)
+            except TypeError as exc:
+                raise TypeError(
+                    "RVineMatrix.from_trees: each tree level must be "
+                    "iterable") from exc
+            expected_edges = d - 1 - tree_index
+            if len(edges) != expected_edges:
+                raise ValueError(
+                    f"RVineMatrix.from_trees: tree {tree_index} must have "
+                    f"{expected_edges} edges, got {len(edges)}")
             tree = []
-            for edge_index, (conditioned, conditioning) in enumerate(level):
-                pair = tuple(sorted(int(value) for value in conditioned))
+            for edge_index, edge in enumerate(edges):
+                try:
+                    conditioned, conditioning = edge
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        "RVineMatrix.from_trees: edge "
+                        f"({tree_index}, {edge_index}) must be a "
+                        "(conditioned, conditioning) pair") from exc
+                pair = tuple(sorted(
+                    _validated_tree_variable(
+                        value,
+                        d,
+                        location=(
+                            f"edge ({tree_index}, {edge_index}) conditioned"),
+                    )
+                    for value in conditioned
+                ))
                 if len(pair) != 2:
                     raise ValueError(
                         "RVineMatrix.from_trees: edge "
                         f"({tree_index}, {edge_index}) must have exactly "
                         f"two conditioned variables, got {pair}")
-                cond = tuple(sorted(int(value) for value in conditioning))
+                if pair[0] == pair[1]:
+                    raise ValueError(
+                        "RVineMatrix.from_trees: edge "
+                        f"({tree_index}, {edge_index}) conditioned variables "
+                        "must be distinct")
+                cond = tuple(sorted(
+                    _validated_tree_variable(
+                        value,
+                        d,
+                        location=(
+                            f"edge ({tree_index}, {edge_index}) conditioning"),
+                    )
+                    for value in conditioning
+                ))
+                if len(cond) != tree_index:
+                    raise ValueError(
+                        "RVineMatrix.from_trees: edge "
+                        f"({tree_index}, {edge_index}) must have exactly "
+                        f"{tree_index} conditioning variables, got {cond}")
+                if len(set(cond)) != len(cond):
+                    raise ValueError(
+                        "RVineMatrix.from_trees: edge "
+                        f"({tree_index}, {edge_index}) conditioning variables "
+                        "must be distinct")
+                if set(pair) & set(cond):
+                    raise ValueError(
+                        "RVineMatrix.from_trees: edge "
+                        f"({tree_index}, {edge_index}) conditioned and "
+                        "conditioning variables overlap")
                 tree.append((pair[0], pair[1], cond))
             normalized.append(tree)
-        return cls(_trees_to_matrix(int(d), normalized))
+        from pyscarcopula.vine._rvine_matrix_builder import (
+            build_rvine_matrix,
+        )
+
+        tree_sets = [
+            [
+                (
+                    frozenset((var1, var2)),
+                    frozenset(conditioning),
+                )
+                for var1, var2, conditioning in level
+            ]
+            for level in normalized
+        ]
+        natural_order = build_rvine_matrix(d, tree_sets)
+        return cls(np.flipud(natural_order))
 
     @classmethod
     def from_model(cls, model):
@@ -154,16 +304,16 @@ class RVineMatrix:
     def from_natural_order(cls, matrix):
         """Convert a natural-order R-vine matrix to ``RVineMatrix``."""
         from pyscarcopula.vine._rvine_matrix_builder import (
-            decode_matrix_to_trees,
             validate_natural_order_matrix,
         )
 
-        matrix = np.asarray(matrix, dtype=int)
+        matrix = _integer_square_matrix(
+            matrix, operation="RVineMatrix.from_natural_order")
         if not validate_natural_order_matrix(matrix):
             raise ValueError(
                 "RVineMatrix.from_natural_order: matrix is not a valid "
                 "natural-order R-vine matrix")
-        return cls.from_trees(matrix.shape[0], decode_matrix_to_trees(matrix))
+        return cls(np.flipud(matrix))
 
     @property
     def d(self):
@@ -172,6 +322,24 @@ class RVineMatrix:
     @property
     def matrix(self):
         return self._matrix.copy()
+
+    def to_trees(self):
+        """Return normalized tree-by-tree edge sets.
+
+        Each edge is ``(conditioned, conditioning)`` where both values are
+        ``frozenset`` instances. A fresh nested list is returned on every
+        call.
+        """
+        return [
+            [
+                (
+                    frozenset((var1, var2)),
+                    frozenset(conditioning),
+                )
+                for var1, var2, conditioning in self.edges_at_tree(tree)
+            ]
+            for tree in range(self.n_trees())
+        ]
 
     def _validate(self):
         """Validate R-vine matrix structure.
@@ -184,6 +352,9 @@ class RVineMatrix:
         """
         d = self._d
         M = self._matrix
+        # 0. Entries above the diagonal are structural padding.
+        if np.any(M[np.triu_indices(d, k=1)] != 0):
+            raise ValueError("Entries above the diagonal must be zero")
         # 1. Diagonal = permutation of 0..d-1
         diag = set(M[i, i] for i in range(d))
         if diag != set(range(d)):
@@ -227,6 +398,19 @@ class RVineMatrix:
             var1, var2 : int — conditioned variables
             cond_set : tuple of int — conditioning variables (empty for tree 0)
         """
+        if (
+                isinstance(tree, (bool, np.bool_))
+                or not isinstance(tree, (int, np.integer))):
+            raise TypeError("tree must be an integer without bool")
+        if (
+                isinstance(edge_idx, (bool, np.bool_))
+                or not isinstance(edge_idx, (int, np.integer))):
+            raise TypeError("edge_idx must be an integer without bool")
+        tree = int(tree)
+        edge_idx = int(edge_idx)
+        if tree < 0 or tree >= self.n_trees():
+            raise IndexError(
+                f"Tree index must be in 0..{self.n_trees() - 1}, got {tree}")
         t = tree + 1   # 1-indexed tree level in matrix
         i = edge_idx   # column index
         if i < 0 or i >= self._d - t:
@@ -234,9 +418,9 @@ class RVineMatrix:
                 f"Tree {tree} has {self._d - t} edges, got index {edge_idx}")
 
         M = self._matrix
-        var1 = M[i, i]
-        var2 = M[i + t, i]
-        cond_set = tuple(M[i + s, i] for s in range(1, t))
+        var1 = int(M[i, i])
+        var2 = int(M[i + t, i])
+        cond_set = tuple(int(M[i + s, i]) for s in range(1, t))
         return var1, var2, cond_set
 
     def edges_at_tree(self, tree):
@@ -248,19 +432,22 @@ class RVineMatrix:
     def __repr__(self):
         return f"RVineMatrix(d={self._d})\n{self._matrix}"
 
+    def __eq__(self, other):
+        if not isinstance(other, RVineMatrix):
+            return NotImplemented
+        return np.array_equal(self._matrix, other._matrix)
+
+    __hash__ = None
+
 
 def validate_rvine_matrix(M):
     """
     Check the proximity condition on an R-vine matrix (Joe 2014, Ch.6).
 
-    For every entry M[k, i] with k - i >= 2, the variable M[k, i]
-    must appear in column (i+1) at some row j with i+1 <= j <= k:
-
-        M[k, i] ∈ {M[i+1, i+1], M[i+2, i+1], ..., M[k, i+1]}
-
-    This ensures that the edge at tree level (k-i) in column i is
-    reachable from an edge at tree level (k-i-1) via the proximity
-    condition.
+    The lower-triangular Bedford/Joe layout is flipped vertically into the
+    natural-order convention and validated by decoding every tree level.
+    This checks column invariants as well as cross-tree proximity and works
+    for C-vines, D-vines, and arbitrary regular vines.
 
     Parameters
     ----------
@@ -274,13 +461,23 @@ def validate_rvine_matrix(M):
     """
     if isinstance(M, RVineMatrix):
         M = M.matrix
+    else:
+        M = np.asarray(M)
+    if M.ndim != 2 or M.shape[0] != M.shape[1] or M.shape[0] < 2:
+        return False
+    if (
+            np.issubdtype(M.dtype, np.bool_)
+            or not np.issubdtype(M.dtype, np.integer)):
+        return False
     d = M.shape[0]
-    for i in range(d - 2):
-        for k in range(i + 2, d):
-            target = M[k, i]
-            if not any(M[j, i + 1] == target for j in range(i + 1, k + 1)):
-                return False
-    return True
+    if np.any(M[np.triu_indices(d, k=1)] != 0):
+        return False
+
+    from pyscarcopula.vine._rvine_matrix_builder import (
+        validate_natural_order_matrix,
+    )
+
+    return validate_natural_order_matrix(np.flipud(M))
 
 
 class _DisjointSet:
@@ -997,21 +1194,42 @@ def cvine_structure(d, order=None):
     -------
     RVineMatrix
     """
-    if order is None:
-        order = list(range(d))
+    d, order = _validated_order(
+        d, order, operation="cvine_structure")
 
+    # Tree t is rooted at order[t]. The reverse diagonal stores the leaves
+    # that remain after the preceding roots enter the conditioning set;
+    # order[-1] closes every column and occupies the final diagonal.
     M = np.zeros((d, d), dtype=int)
-    for i in range(d):
-        M[i, i] = order[i]
-        for j in range(i):
-            M[i, j] = order[i]
+    for col in range(d - 1):
+        M[col, col] = order[d - 2 - col]
+        for row in range(col + 1, d - 1):
+            M[row, col] = order[row - col - 1]
+        M[d - 1, col] = order[-1]
+    M[d - 1, d - 1] = order[-1]
 
-    # Correct C-vine matrix: column j has order[j] on diagonal,
-    # and below it the remaining variables in order.
+    return RVineMatrix(M)
+
+
+def dvine_structure(d, order=None):
+    """Construct a D-vine whose first tree follows ``order`` as a path.
+
+    Parameters
+    ----------
+    d : int
+        Dimension, at least two.
+    order : iterable of int or None
+        Path order. The default is ``range(d)``.
+
+    Returns
+    -------
+    RVineMatrix
+        Lower-triangular Bedford/Joe structure.
+    """
+    d, order = _validated_order(
+        d, order, operation="dvine_structure")
     M = np.zeros((d, d), dtype=int)
-    for j in range(d):
-        M[j, j] = order[j]
-        for k in range(j + 1, d):
-            M[k, j] = order[k]
-
+    for col in range(d):
+        for row in range(col, d):
+            M[row, col] = order[row]
     return RVineMatrix(M)

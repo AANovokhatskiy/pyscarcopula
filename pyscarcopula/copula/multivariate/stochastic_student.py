@@ -1,8 +1,8 @@
 """
 Stochastic Student-t copula: d-dimensional t-copula with OU-driven df.
 
-The static correlation matrix R can be fixed, shrinkage-estimated, or fully
-estimated through a Cholesky-like parameterization.
+Static correlation can be fixed, shrinkage-estimated, fully estimated through
+a Cholesky-like parameterization, or represented by a compact factor operator.
 The degrees-of-freedom parameter nu(t) = Psi(x(t)) varies over time,
 where x(t) is a latent Ornstein-Uhlenbeck process.
 
@@ -25,16 +25,22 @@ Usage:
 """
 
 from dataclasses import replace
+import threading
 
 import numpy as np
-from scipy.stats import t as t_dist
+from scipy.stats import norm, t as t_dist
 from scipy.optimize import minimize
 
 from pyscarcopula.copula.base import CopulaCapabilities
-from pyscarcopula.copula.multivariate.base import MultivariateCopula
+from pyscarcopula.copula.multivariate.base import (
+    MultivariateCopula,
+    model_state_locked,
+)
 from pyscarcopula._types import DEFAULT_CONFIG, NumericalConfig
 from pyscarcopula._utils import pobs
 from pyscarcopula.copula.multivariate.conditional import (
+    fill_given,
+    sample_factor_student_conditional,
     sample_student_conditional,
     validate_multivariate_given,
 )
@@ -54,6 +60,16 @@ from pyscarcopula.copula.multivariate.student_ppf_cache import (
     StudentPPFTable as _PPFTable,
     prepare_student_ppf_cache,
 )
+from pyscarcopula.copula.multivariate.factor_correlation import (
+    FactorCorrelation,
+)
+from pyscarcopula.copula.multivariate.factor_estimation import (
+    FactorLoadingParameterization,
+    estimate_factor_loadings,
+)
+from pyscarcopula.copula.multivariate.factor_student import (
+    FactorStudentEvaluator,
+)
 
 
 _LBFGSB_FIT_KEYS = (
@@ -68,8 +84,6 @@ _LBFGSB_FIT_KEYS = (
 )
 
 _DF_OFFSET = 2.0 + 1e-6
-
-
 def _as_float64_array_no_copy(value):
     if type(value) is np.ndarray and value.dtype == np.float64:
         return value
@@ -83,6 +97,59 @@ def _validate_fit_data(u, d):
         raise ValueError("data must contain at least one observation")
     if not np.all(np.isfinite(u)):
         raise ValueError("data must contain only finite values")
+
+
+def _factor_integer(name, value, *, minimum=0):
+    if (
+            isinstance(value, (bool, np.bool_))
+            or not isinstance(value, (int, np.integer))):
+        raise TypeError(f"{name} must be an integer")
+    value = int(value)
+    if value < minimum:
+        qualifier = "positive" if minimum == 1 else "non-negative"
+        raise ValueError(f"{name} must be {qualifier}")
+    return value
+
+
+def _sampling_integer(name, value, *, minimum=0):
+    if (
+            isinstance(value, (bool, np.bool_))
+            or not isinstance(value, (int, np.integer))):
+        raise TypeError(f"{name} must be an integer")
+    value = int(value)
+    if value < minimum:
+        qualifier = "positive" if minimum == 1 else "non-negative"
+        raise ValueError(f"{name} must be {qualifier}")
+    return value
+
+
+def _sampling_n_threads(value):
+    value = _sampling_integer("n_threads", value, minimum=1)
+    if value > 256:
+        raise ValueError("n_threads must be an integer in [1, 256]")
+    return value
+
+
+def _sampling_memory_budget(memory_budget_bytes, required, guidance):
+    if memory_budget_bytes is None:
+        return
+    budget = _sampling_integer(
+        "memory_budget_bytes", memory_budget_bytes)
+    if budget < int(required):
+        raise MemoryError(
+            f"sampling requires approximately {int(required)} bytes; "
+            f"{guidance}")
+
+
+def _validated_student_sampling_parameters(r, n):
+    values = np.atleast_1d(np.asarray(r, dtype=np.float64)).ravel()
+    if values.size not in (1, int(n)):
+        raise ValueError(
+            f"r must be scalar or array of length {int(n)}, "
+            f"got {values.size}")
+    if np.any(~np.isfinite(values)) or np.any(values <= 2.0):
+        raise ValueError("r must be finite and greater than 2")
+    return values
 
 
 # ══════════════════════════════════════════════════════════════
@@ -144,12 +211,35 @@ class StochasticStudentCopula(MultivariateCopula):
     R : (d, d) ndarray or None
         Fixed correlation matrix or initialization matrix for an estimated
         correlation mode.
-    corr_mode : {'fixed', 'shrinkage', 'cholesky'}
+    corr_mode : {'fixed', 'shrinkage', 'cholesky', 'factor'}
         Static correlation parameterization.
     corr_base : (d, d) ndarray or None
         Explicit initialization/base matrix for an estimated correlation
         mode. Initialization priority is ``corr_base``, then ``R``, then a
         Kendall estimate from the fit data.
+    factor_rank : int or None
+        Required rank ``k`` for ``corr_mode='factor'``.
+    factor_loadings : (d, k) ndarray or None
+        Optional fixed loadings. If omitted, call :meth:`initialize_factor`
+        for deterministic two-stage initialization.
+    factor_estimation : {'two-stage', 'joint'}
+        Factor estimation policy. ``joint`` estimates identifiable loadings
+        together with constant ``df`` in static MLE; dynamic GAS/SCAR joint
+        estimation is not yet supported.
+    factor_tile_size : int
+        Dimension tile used by initialization and exact Student grid kernels.
+    factor_joint_penalty : float
+        L2 loading penalty used only by joint static MLE.
+    factor_joint_condition_max : float
+        Maximum accepted Woodbury core condition estimate in joint static MLE.
+
+    Notes
+    -----
+    SCAR-TM-OU accepts and returns physical ``(kappa, mu, nu)`` parameters,
+    but this model is optimized internally in
+    ``(log(kappa), mu, log(sigma_x))``, where
+    ``sigma_x = nu / sqrt(2 * kappa)``. The internal representation is
+    reported in the fit diagnostics.
     """
 
     _gas_optimizer_config = 'stochastic_student_gas_optimizer'
@@ -168,7 +258,15 @@ class StochasticStudentCopula(MultivariateCopula):
 
     def __init__(self, d, R=None, *, corr_mode='fixed',
                  corr_base=None, corr_shrinkage_init=0.8,
-                 cholesky_d_max=10, allow_large_cholesky=False):
+                 cholesky_d_max=10, allow_large_cholesky=False,
+                 factor_rank=None, factor_loadings=None,
+                 factor_estimation="two-stage",
+                 factor_tile_size=16384,
+                 factor_uniqueness_min=1e-8,
+                 factor_joint_max_params=100000,
+                 factor_joint_penalty=1e-6,
+                 factor_joint_condition_max=1e12,
+                 factor_seed=0, factor_oversampling=8):
         if isinstance(d, (bool, np.bool_)) or not isinstance(
                 d, (int, np.integer)):
             raise TypeError(f"d must be an integer >= 2, got {d!r}")
@@ -176,11 +274,19 @@ class StochasticStudentCopula(MultivariateCopula):
         if d < 2:
             raise ValueError(f"d must be >= 2, got {d}")
         corr_mode = str(corr_mode).lower()
-        if corr_mode not in {'fixed', 'shrinkage', 'cholesky'}:
+        if corr_mode not in {'fixed', 'shrinkage', 'cholesky', 'factor'}:
             raise ValueError(
-                "corr_mode must be 'fixed', 'shrinkage', or 'cholesky'")
+                "corr_mode must be 'fixed', 'shrinkage', 'cholesky', "
+                "or 'factor'")
         if corr_mode == 'fixed' and corr_base is not None:
             raise ValueError("corr_base is only valid for estimated corr modes")
+        if corr_mode == 'factor' and (R is not None or corr_base is not None):
+            raise ValueError(
+                "R and corr_base are forbidden when corr_mode='factor'")
+        if corr_mode != 'factor' and (
+                factor_rank is not None or factor_loadings is not None):
+            raise ValueError(
+                "factor_rank and factor_loadings require corr_mode='factor'")
         if not (0.0 < float(corr_shrinkage_init) < 1.0):
             raise ValueError("corr_shrinkage_init must be in (0, 1)")
         if (
@@ -210,6 +316,63 @@ class StochasticStudentCopula(MultivariateCopula):
         self._corr_alpha = None
         self._cholesky_d_max = int(cholesky_d_max)
         self._allow_large_cholesky = bool(allow_large_cholesky)
+        self._factor_rank = None
+        self._factor_loadings = None
+        self._factor_correlation = None
+        self._factor_operator = None
+        self._factor_initialization_diagnostics = {}
+        self._constructor_factor_loadings = None
+        self._factor_estimation = str(factor_estimation).lower()
+        self._factor_tile_size = _factor_integer(
+            "factor_tile_size", factor_tile_size, minimum=1)
+        self._factor_uniqueness_min = float(factor_uniqueness_min)
+        self._factor_joint_max_params = _factor_integer(
+            "factor_joint_max_params",
+            factor_joint_max_params,
+            minimum=1,
+        )
+        self._factor_joint_penalty = float(factor_joint_penalty)
+        if (
+                not np.isfinite(self._factor_joint_penalty)
+                or self._factor_joint_penalty < 0.0):
+            raise ValueError(
+                "factor_joint_penalty must be finite and non-negative")
+        self._factor_joint_condition_max = float(
+            factor_joint_condition_max)
+        if (
+                not np.isfinite(self._factor_joint_condition_max)
+                or self._factor_joint_condition_max <= 1.0):
+            raise ValueError(
+                "factor_joint_condition_max must be finite and greater "
+                "than 1")
+        self._factor_seed = _factor_integer(
+            "factor_seed", factor_seed)
+        self._factor_oversampling = _factor_integer(
+            "factor_oversampling", factor_oversampling)
+        if corr_mode == 'factor':
+            if (
+                    isinstance(factor_rank, (bool, np.bool_))
+                    or not isinstance(factor_rank, (int, np.integer))):
+                raise TypeError(
+                    "factor_rank must be an integer when corr_mode='factor'")
+            self._factor_rank = int(factor_rank)
+            if not 1 <= self._factor_rank < d:
+                raise ValueError("factor_rank must satisfy 1 <= k < d")
+            if self._factor_estimation not in {'two-stage', 'joint'}:
+                raise ValueError(
+                    "factor_estimation must be 'two-stage' or 'joint'")
+            if not (
+                    np.isfinite(self._factor_uniqueness_min)
+                    and 0.0 < self._factor_uniqueness_min < 1.0):
+                raise ValueError(
+                    "factor_uniqueness_min must be finite and in (0, 1)")
+            if (
+                    self._factor_estimation == 'joint'
+                    and d * self._factor_rank
+                    > self._factor_joint_max_params):
+                raise ValueError(
+                    "joint factor estimation exceeds "
+                    "factor_joint_max_params")
 
         # Correlation matrix — set during fit or at init
         self._R = None
@@ -218,11 +381,22 @@ class StochasticStudentCopula(MultivariateCopula):
         self._log_det = None
         self._corr_cache_version = 0
         self._last_latent_result = None
+        self._constructor_R = None
+        self._constructor_corr_base = (
+            None if self._corr_base is None else self._corr_base.copy())
         if R is not None:
             R = np.asarray(R, dtype=np.float64)
             if R.shape != (d, d):
                 raise ValueError(f"R must be ({d}, {d}), got {R.shape}")
             self._set_R(R, source="supplied")
+            self._constructor_R = self._R.copy()
+        if factor_loadings is not None:
+            self._set_factor_loadings(
+                factor_loadings,
+                diagnostics={"source": "supplied"},
+            )
+            self._constructor_factor_loadings = (
+                self._factor_loadings.copy())
 
         # Transient full-sample PPF cache.
         self._ppf_cache = None
@@ -233,6 +407,10 @@ class StochasticStudentCopula(MultivariateCopula):
 
     @property
     def R(self):
+        if self._corr_mode == 'factor':
+            raise RuntimeError(
+                "R is not materialized for corr_mode='factor'; use "
+                "correlation_operator_ or to_correlation_matrix()")
         if self._R is None:
             return None
         return self._R.copy()
@@ -241,14 +419,81 @@ class StochasticStudentCopula(MultivariateCopula):
     def corr_mode(self):
         return self._corr_mode
 
+    @property
+    def factor_rank(self):
+        return getattr(self, "_factor_rank", None)
+
+    @property
+    def factor_estimation(self):
+        return getattr(self, "_factor_estimation", "two-stage")
+
+    @property
+    def factor_tile_size(self):
+        return getattr(self, "_factor_tile_size", 16384)
+
+    @property
+    def factor_uniqueness_min(self):
+        return getattr(self, "_factor_uniqueness_min", 1e-8)
+
+    @property
+    def factor_joint_max_params(self):
+        return getattr(self, "_factor_joint_max_params", 100000)
+
+    @property
+    def factor_joint_penalty(self):
+        return getattr(self, "_factor_joint_penalty", 1e-6)
+
+    @property
+    def factor_joint_condition_max(self):
+        return getattr(self, "_factor_joint_condition_max", 1e12)
+
+    @property
+    def factor_loadings_(self):
+        if self._corr_mode != 'factor':
+            return None
+        if self._factor_loadings is None:
+            return None
+        return self._factor_loadings.copy()
+
+    @property
+    def factor_uniqueness_(self):
+        if self._factor_correlation is None:
+            return None
+        return self._factor_correlation.uniqueness.copy()
+
+    @property
+    def correlation_operator_(self):
+        if self._corr_mode != 'factor':
+            raise AttributeError(
+                "correlation_operator_ is only available in factor mode")
+        if self._factor_operator is None:
+            raise ValueError(
+                "factor correlation is not initialized; call "
+                "initialize_factor()")
+        return self._factor_operator
+
+    def to_correlation_matrix(
+            self, *, max_dimension=2048, memory_budget_bytes=None):
+        """Explicitly materialize a small factor correlation matrix."""
+        return self.correlation_operator_.to_dense(
+            max_dimension=max_dimension,
+            memory_budget_bytes=memory_budget_bytes,
+        )
+
     def __getstate__(self):
         state = self.__dict__.copy()
+        state.pop("_state_lock", None)
         state.pop("_emission_cache", None)
+        # Native factor workspaces and MappingProxy diagnostics are rebuilt
+        # from the compact O(d*k) loading array after deserialization.
+        state["_factor_correlation"] = None
+        state["_factor_operator"] = None
         state["_ppf_cache"] = None
         return state
 
     def __setstate__(self, state):
         self.__dict__.update(state)
+        self._state_lock = threading.RLock()
         self._corr_cache_version = int(
             getattr(self, "_corr_cache_version", 0))
         self._corr_preprocessing = getattr(
@@ -260,10 +505,114 @@ class StochasticStudentCopula(MultivariateCopula):
         self.__dict__.pop("_ppf_table_u_id", None)
         self.__dict__.pop("_emission_cache", None)
         self._ppf_cache = None
+        self._factor_correlation = None
+        self._factor_operator = None
+        factor_loadings = getattr(self, "_factor_loadings", None)
+        if (
+                getattr(self, "_corr_mode", None) == "factor"
+                and factor_loadings is not None):
+            self._set_factor_loadings(
+                factor_loadings,
+                diagnostics=getattr(
+                    self, "_factor_initialization_diagnostics",
+                    {"source": "restored"}),
+            )
         if "_L" not in self.__dict__:
             # States pickled before the Cholesky factor was cached.
             self._L = (
                 np.linalg.cholesky(self._R) if self._R is not None else None)
+
+    def _set_factor_loadings(self, loadings, *, diagnostics=None):
+        if self._corr_mode != 'factor':
+            raise ValueError(
+                "factor loadings require corr_mode='factor'")
+        loadings = np.asarray(loadings, dtype=np.float64)
+        expected = (self._d, self._factor_rank)
+        if loadings.shape != expected:
+            raise ValueError(
+                f"factor_loadings must have shape {expected}, "
+                f"got {loadings.shape}")
+        factor = FactorCorrelation(
+            loadings,
+            uniqueness_min=self._factor_uniqueness_min,
+            diagnostics={} if diagnostics is None else diagnostics,
+        )
+        operator = factor.prepare()
+        self._factor_loadings = factor.loadings
+        self._factor_correlation = factor
+        self._factor_operator = operator
+        self._factor_initialization_diagnostics = dict(
+            factor.diagnostics)
+        self._corr_cache_version += 1
+
+    @model_state_locked
+    def initialize_factor(self, data, *, to_pobs=False):
+        """Initialize fixed factor loadings without a dense covariance.
+
+        Supplied constructor loadings are retained. Otherwise a deterministic
+        randomized SVD over tiled normal scores supplies either fixed
+        two-stage loadings or the starting point for joint static MLE.
+        """
+        if self._corr_mode != 'factor':
+            raise ValueError(
+                "initialize_factor requires corr_mode='factor'")
+        u = _as_float64_array_no_copy(data)
+        _validate_fit_data(u, self._d)
+        if to_pobs:
+            u = pobs(u)
+            _validate_fit_data(u, self._d)
+        elif np.any((u < 0.0) | (u > 1.0)):
+            raise ValueError(
+                "two-stage factor initialization expects "
+                "pseudo-observations in [0, 1]; use to_pobs=True")
+        if self._factor_operator is not None:
+            return self._factor_operator
+        loadings, diagnostics = estimate_factor_loadings(
+            u,
+            self._factor_rank,
+            uniqueness_min=self._factor_uniqueness_min,
+            dimension_tile=self._factor_tile_size,
+            seed=self._factor_seed,
+            oversampling=self._factor_oversampling,
+        )
+        if self._factor_estimation == 'joint':
+            diagnostics = {
+                **diagnostics,
+                "source": "joint_randomized_svd_start",
+            }
+        self._set_factor_loadings(
+            loadings, diagnostics=diagnostics)
+        return self._factor_operator
+
+    def factor_diagnostics(self):
+        """Return compact factor representation and initialization metadata."""
+        if self._corr_mode != 'factor':
+            return {}
+        identifiable = (
+            self._d * self._factor_rank
+            - self._factor_rank * (self._factor_rank - 1) // 2
+        )
+        diagnostics = {
+            'factor_rank': self._factor_rank,
+            'factor_estimation': self._factor_estimation,
+            'factor_n_params': identifiable,
+            'factor_tile_size': self._factor_tile_size,
+            'factor_uniqueness_min': self._factor_uniqueness_min,
+            'factor_joint_max_params': self._factor_joint_max_params,
+            'factor_joint_penalty': self._factor_joint_penalty,
+            'factor_joint_condition_max':
+                self._factor_joint_condition_max,
+            'factor_initialized': self._factor_operator is not None,
+            'representation': 'factor_woodbury',
+        }
+        if self._factor_operator is not None:
+            diagnostics.update(dict(self._factor_operator.diagnostics))
+            diagnostics.update({
+                f"initialization_{key}": value
+                for key, value
+                in self._factor_correlation.diagnostics.items()
+            })
+        return diagnostics
 
     def _set_R(self, R, *, source="supplied"):
         """Set correlation matrix and precompute Cholesky."""
@@ -306,6 +655,13 @@ class StochasticStudentCopula(MultivariateCopula):
 
     def _ensure_corr_initialized(self, u=None):
         """Initialize correlation from corr_base, R, or data, in that order."""
+        if self._corr_mode == 'factor':
+            if self._factor_operator is None:
+                if u is None:
+                    raise ValueError(
+                        "factor correlation is not initialized")
+                self.initialize_factor(u)
+            return
         if self._R is None:
             if self._corr_base is not None:
                 self._set_generated_R(self._corr_base)
@@ -320,13 +676,18 @@ class StochasticStudentCopula(MultivariateCopula):
                 self._corr_base = self._R.copy()
 
     def _corr_num_params(self):
-        if self._corr_mode == 'fixed':
+        if self._corr_mode in {'fixed', 'factor'}:
             return 0
         if self._corr_mode == 'shrinkage':
             return 1
         return cholesky_corr_n_params(self._d)
 
     def _corr_plugin_num_params(self):
+        if self._corr_mode == 'factor':
+            return (
+                self._d * self._factor_rank
+                - self._factor_rank * (self._factor_rank - 1) // 2
+            )
         preprocessing = self._corr_preprocessing
         if (
                 self._corr_mode == 'fixed'
@@ -341,15 +702,18 @@ class StochasticStudentCopula(MultivariateCopula):
     def _corr_count_diagnostics(self):
         n_corr = self._corr_num_params()
         plugin_n = self._corr_plugin_num_params()
-        return {
+        diagnostics = {
             'corr_mode': self._corr_mode,
             'corr_n_params': n_corr,
             'corr_plugin_n_params': plugin_n,
             'corr_effective_n_params': n_corr + plugin_n,
         }
+        if self._corr_mode == 'factor':
+            diagnostics.update(self.factor_diagnostics())
+        return diagnostics
 
     def _default_corr_params(self):
-        if self._corr_mode == 'fixed':
+        if self._corr_mode in {'fixed', 'factor'}:
             return np.empty(0, dtype=np.float64)
         if self._corr_mode == 'shrinkage':
             return np.array(
@@ -383,7 +747,7 @@ class StochasticStudentCopula(MultivariateCopula):
             raise ValueError(
                 f"expected {expected} correlation parameters, "
                 f"got {params.size}")
-        if self._corr_mode == 'fixed':
+        if self._corr_mode in {'fixed', 'factor'}:
             self._corr_params_raw = np.empty(0, dtype=np.float64)
             self._corr_alpha = None
             return
@@ -457,8 +821,19 @@ class StochasticStudentCopula(MultivariateCopula):
     def dtransform_scalar(self, x):
         return float(self.dtransform(np.array([x], dtype=np.float64))[0])
 
+    @model_state_locked
     def prepare_emission_cache(self, u):
         """Return the reusable full-sample Student PPF cache."""
+        if self._corr_mode == 'factor':
+            if self._factor_operator is None:
+                raise ValueError("factor correlation is not initialized")
+            values = np.asarray(u)
+            if values.ndim != 2 or values.shape[1] != self._d:
+                raise ValueError(
+                    f"u must have shape (T, {self._d})")
+            # The factor grid evaluates exact PPFs in bounded tiles and
+            # intentionally has no O(T*K*d) full-sample cache.
+            return None
         if self._R is None:
             raise ValueError("R not set")
         source = u
@@ -473,14 +848,20 @@ class StochasticStudentCopula(MultivariateCopula):
 
     # ── Density ──────────────────────────────────────────────
 
-    def log_likelihood(self, u, r=None):
+    @model_state_locked
+    def log_likelihood(self, u, r=None, *, n_threads=1):
         """
         Log-likelihood for d-dimensional data.
 
         u : (T, d) pseudo-observations
         r : float (df) or None — if None, uses fitted df
         """
-        if self._R is None:
+        if (
+                self._corr_mode == 'factor'
+                and self._factor_operator is None):
+            raise ValueError(
+                "Factor correlation not set. Call initialize_factor() first.")
+        if self._corr_mode != 'factor' and self._R is None:
             raise ValueError("Correlation matrix R not set. Call fit() first.")
 
         u = np.asarray(u, dtype=np.float64)
@@ -493,38 +874,74 @@ class StochasticStudentCopula(MultivariateCopula):
                 r = float(self.transform(
                     np.array([self.fit_result.params.mu]))[0])
 
-        from pyscarcopula.numerical import static_likelihood
-        return static_likelihood.prepare(self, u).log_likelihood(float(r))
+        if self._corr_mode == 'factor':
+            return FactorStudentEvaluator(
+                self._factor_operator, u).evaluate(
+                    float(r), n_threads=n_threads).log_likelihood
 
-    def log_pdf_rows(self, u, r, t_index=None, cache=None):
+        from pyscarcopula.numerical import static_likelihood
+        return static_likelihood.prepare(
+            self, u, n_threads=n_threads).log_likelihood(float(r))
+
+    def log_pdf_rows(
+            self, u, r, t_index=None, cache=None, *, n_threads=1):
         """Return one log-density per row for scalar/row-wise df values."""
+        if self._corr_mode == 'factor':
+            if self._factor_operator is None:
+                raise ValueError(
+                    "Factor correlation not set. "
+                    "Call initialize_factor() first.")
+            return FactorStudentEvaluator(
+                self._factor_operator, u).log_pdf_rows(
+                    r, n_threads=n_threads)
         if self._R is None:
             raise ValueError("Correlation matrix R not set. Call fit() first.")
         from pyscarcopula.numerical import multivariate_native
         values, _ = multivariate_native.log_pdf_and_dlog_rows(
-            self, u, r, t_index=t_index, cache=cache)
+            self, u, r, t_index=t_index, cache=cache,
+            n_threads=n_threads)
         return values
 
-    def dlog_pdf_dr_rows(self, u, r, t_index=None, cache=None):
+    def dlog_pdf_dr_rows(
+            self, u, r, t_index=None, cache=None, *, n_threads=1):
         """Return d log c(u_t; df_t) / d df_t for each row."""
+        if self._corr_mode == 'factor':
+            if self._factor_operator is None:
+                raise ValueError(
+                    "Factor correlation not set. "
+                    "Call initialize_factor() first.")
+            return FactorStudentEvaluator(
+                self._factor_operator, u).dlog_pdf_ddf_rows(
+                    r, n_threads=n_threads)
         if self._R is None:
             raise ValueError("Correlation matrix R not set. Call fit() first.")
 
         from pyscarcopula.numerical import multivariate_native
         _, values = multivariate_native.log_pdf_and_dlog_rows(
-            self, u, r, t_index=t_index, cache=cache)
+            self, u, r, t_index=t_index, cache=cache,
+            n_threads=n_threads)
         return values
 
-    def log_pdf_and_dlog_dr_rows(self, u, r, t_index=None, cache=None):
+    def log_pdf_and_dlog_dr_rows(
+            self, u, r, t_index=None, cache=None, *, n_threads=1):
         """Return per-row log-density and d log c(u_t; df_t) / d df_t."""
+        if self._corr_mode == 'factor':
+            if self._factor_operator is None:
+                raise ValueError(
+                    "Factor correlation not set. "
+                    "Call initialize_factor() first.")
+            return FactorStudentEvaluator(
+                self._factor_operator, u).log_pdf_and_dlog_ddf_rows(
+                    r, n_threads=n_threads)
         if self._R is None:
             raise ValueError("Correlation matrix R not set. Call fit() first.")
 
         from pyscarcopula.numerical import multivariate_native
         return multivariate_native.log_pdf_and_dlog_rows(
-            self, u, r, t_index=t_index, cache=cache)
+            self, u, r, t_index=t_index, cache=cache,
+            n_threads=n_threads)
 
-    def pdf_on_grid(self, u_row, z_grid):
+    def pdf_on_grid(self, u_row, z_grid, *, n_threads=1):
         """Copula density on latent grid for one observation.
 
         u_row : (d,) single observation
@@ -532,15 +949,31 @@ class StochasticStudentCopula(MultivariateCopula):
 
         Returns: (K,) copula densities c(u_row; R, Psi(z_j))
         """
-        if self._R is None:
+        if (
+                self._corr_mode == 'factor'
+                and self._factor_operator is None):
+            raise ValueError("factor correlation is not initialized")
+        if self._corr_mode != 'factor' and self._R is None:
             raise ValueError("R not set")
+
+        if self._corr_mode == 'factor':
+            fi, _ = self.pdf_and_grad_on_grid_batch(
+                np.asarray(u_row, dtype=np.float64)[None, :],
+                z_grid,
+                n_threads=n_threads,
+            )
+            return fi[0]
 
         from pyscarcopula.numerical import multivariate_native
         fi, _ = multivariate_native.pdf_and_grad_grid(
-            self, np.asarray(u_row, dtype=np.float64)[None, :], z_grid)
+            self,
+            np.asarray(u_row, dtype=np.float64)[None, :],
+            z_grid,
+            n_threads=n_threads,
+        )
         return fi[0]
 
-    def pdf_and_grad_on_grid(self, u_row, z_grid):
+    def pdf_and_grad_on_grid(self, u_row, z_grid, *, n_threads=1):
         """
         Compute fi(z) and dfi/dz on the grid analytically.
 
@@ -550,44 +983,349 @@ class StochasticStudentCopula(MultivariateCopula):
         u_row : (d,), z_grid : (K,)
         Returns: (fi, dfi_dz) each of shape (K,)
         """
-        if self._R is None:
+        if (
+                self._corr_mode == 'factor'
+                and self._factor_operator is None):
+            raise ValueError("factor correlation is not initialized")
+        if self._corr_mode != 'factor' and self._R is None:
             raise ValueError("R not set")
+
+        if self._corr_mode == 'factor':
+            fi, dfi = self.pdf_and_grad_on_grid_batch(
+                np.asarray(u_row, dtype=np.float64)[None, :],
+                z_grid,
+                n_threads=n_threads,
+            )
+            return fi[0], dfi[0]
 
         from pyscarcopula.numerical import multivariate_native
         fi, dfi = multivariate_native.pdf_and_grad_grid(
-            self, np.asarray(u_row, dtype=np.float64)[None, :], z_grid)
+            self,
+            np.asarray(u_row, dtype=np.float64)[None, :],
+            z_grid,
+            n_threads=n_threads,
+        )
         return fi[0], dfi[0]
 
-    def pdf_and_grad_on_grid_batch(self, u, x_grid, t_index=0, cache=None):
+    def pdf_and_grad_on_grid_batch(
+            self, u, x_grid, t_index=0, cache=None, *, n_threads=1):
         """
         Batch evaluation for all T observations.
 
-        Optimized: uses precomputed PPF lookup table (~300× faster ppf calls),
-        inlined density computation, single table build per fit.
+        Uses a reusable PPF table when it fits the memory budget. Native
+        out-of-table evaluation uses analytical df derivatives and a
+        controlled normal-quantile asymptotic above the final df node.
 
         u : (T, d) pseudo-observations
         x_grid : (K,) latent grid values
+        n_threads : int, keyword-only
+            Maximum native worker count. ``1`` preserves the sequential
+            fast path; small batches stay sequential for any value.
 
         Returns: (fi, dfi) each (T, K)
         """
-        if self._R is None:
+        if (
+                self._corr_mode == 'factor'
+                and self._factor_operator is None):
+            raise ValueError("factor correlation is not initialized")
+        if self._corr_mode != 'factor' and self._R is None:
             raise ValueError("R not set")
+
+        if self._corr_mode == 'factor':
+            evaluator = FactorStudentEvaluator(
+                self._factor_operator, u)
+            density, df_gradient = evaluator.pdf_and_grad_on_grid(
+                self.transform(np.asarray(x_grid, dtype=np.float64)),
+                dimension_tile=self._factor_tile_size,
+                n_threads=n_threads,
+            )
+            return (
+                density,
+                df_gradient * self.dtransform(
+                    np.asarray(x_grid, dtype=np.float64))[None, :],
+            )
 
         from pyscarcopula.numerical import multivariate_native
         return multivariate_native.pdf_and_grad_grid(
-            self, u, x_grid, t_index=t_index, cache=cache)
+            self,
+            u,
+            x_grid,
+            t_index=t_index,
+            cache=cache,
+            n_threads=n_threads,
+        )
 
-    def copula_grid_batch(self, u, x_grid, t_index=0, cache=None):
+    def copula_grid_batch(
+            self, u, x_grid, t_index=0, cache=None, *, n_threads=1):
         """Batch version of pdf_on_grid (value only)."""
-        if self._R is None:
+        if (
+                self._corr_mode == 'factor'
+                and self._factor_operator is None):
+            raise ValueError("factor correlation is not initialized")
+        if self._corr_mode != 'factor' and self._R is None:
             raise ValueError("R not set")
+
+        if self._corr_mode == 'factor':
+            fi, _ = self.pdf_and_grad_on_grid_batch(
+                u,
+                x_grid,
+                t_index=t_index,
+                cache=cache,
+                n_threads=n_threads,
+            )
+            return fi
 
         from pyscarcopula.numerical import multivariate_native
         fi, _ = multivariate_native.pdf_and_grad_grid(
-            self, u, x_grid, t_index=t_index, cache=cache)
+            self,
+            u,
+            x_grid,
+            t_index=t_index,
+            cache=cache,
+            n_threads=n_threads,
+        )
         return fi
 
     # ── MLE fit ──────────────────────────────────────────────
+
+    def _fit_joint_factor_mle(
+            self, u, config, optimizer_options):
+        """Jointly estimate static df and identifiable factor loadings."""
+        from pyscarcopula._types import MultivariateMLEResult
+        from pyscarcopula.numerical._cpp_extension import CppError
+
+        parameterization, factor0 = (
+            FactorLoadingParameterization.from_loadings(
+                self._factor_loadings,
+                uniqueness_min=self._factor_uniqueness_min,
+            ))
+        expected = self._corr_plugin_num_params()
+        if parameterization.n_parameters != expected:
+            raise RuntimeError(
+                "joint factor parameterization has an invalid size")
+        if expected > self._factor_joint_max_params:
+            raise ValueError(
+                "joint factor estimation exceeds "
+                "factor_joint_max_params")
+
+        x0 = np.concatenate([
+            np.array([5.0], dtype=np.float64),
+            factor0,
+        ])
+        fail_value = float(getattr(config, "fail_value", 1e10))
+        penalty = self._factor_joint_penalty
+        condition_max = self._factor_joint_condition_max
+        best = {
+            "value": np.inf,
+            "x": x0.copy(),
+            "loadings": self._factor_loadings.copy(),
+            "evaluation": None,
+            "operator_diagnostics": {},
+        }
+        evaluations = 0
+
+        def failure(x):
+            direction = np.asarray(x, dtype=np.float64) - x0
+            norm = np.linalg.norm(direction)
+            if not np.isfinite(norm) or norm == 0.0:
+                direction = np.ones_like(x0)
+            else:
+                direction = direction / norm
+            return fail_value, direction * np.sqrt(fail_value)
+
+        def evaluate_valid(x):
+            nonlocal evaluations
+            evaluations += 1
+            x = np.asarray(x, dtype=np.float64)
+            if (
+                    x.shape != x0.shape
+                    or np.any(~np.isfinite(x))
+                    or x[0] <= _DF_OFFSET):
+                raise ValueError("invalid joint factor optimizer point")
+            loadings = parameterization.loadings(x[1:])
+            factor = FactorCorrelation(
+                loadings,
+                uniqueness_min=self._factor_uniqueness_min,
+                diagnostics={"source": "joint_static_mle_trial"},
+            )
+            operator = factor.prepare()
+            operator_diagnostics = dict(operator.diagnostics)
+            if (
+                    operator_diagnostics["condition_estimate_m"]
+                    > condition_max):
+                raise ValueError(
+                    "joint factor Woodbury core exceeds condition gate")
+            evaluation = FactorStudentEvaluator(
+                operator, u).joint_likelihood_and_gradient(
+                    float(x[0]),
+                    n_threads=config.n_threads,
+                )
+            value = (
+                -evaluation.log_likelihood
+                + penalty * float(np.sum(loadings * loadings))
+            )
+            loading_objective_gradient = (
+                -evaluation.dlog_likelihood_dloadings
+                + 2.0 * penalty * loadings
+            )
+            gradient = np.empty_like(x)
+            gradient[0] = -evaluation.dlog_likelihood_ddf
+            gradient[1:] = parameterization.pullback(
+                x[1:], loading_objective_gradient)
+            if (
+                    not np.isfinite(value)
+                    or value >= fail_value
+                    or np.any(~np.isfinite(gradient))):
+                raise FloatingPointError(
+                    "non-finite joint factor objective or gradient")
+            if value < best["value"]:
+                best.update({
+                    "value": float(value),
+                    "x": x.copy(),
+                    "loadings": loadings.copy(),
+                    "evaluation": evaluation,
+                    "operator_diagnostics": operator_diagnostics,
+                })
+            return float(value), gradient
+
+        def objective_and_gradient(x):
+            try:
+                return evaluate_valid(x)
+            except (
+                    FloatingPointError,
+                    OverflowError,
+                    ValueError,
+                    RuntimeError,
+                    np.linalg.LinAlgError,
+                    CppError):
+                return failure(x)
+
+        initial_objective, _ = objective_and_gradient(x0)
+        result = minimize(
+            objective_and_gradient,
+            x0,
+            jac=True,
+            method="L-BFGS-B",
+            bounds=[(_DF_OFFSET, None)]
+                + [(None, None)] * expected,
+            options=optimizer_options,
+        )
+
+        try:
+            final_objective, final_gradient = evaluate_valid(result.x)
+            final_x = np.asarray(result.x, dtype=np.float64).copy()
+            final_loadings = parameterization.loadings(final_x[1:])
+            final_factor = FactorCorrelation(
+                final_loadings,
+                uniqueness_min=self._factor_uniqueness_min,
+            ).prepare()
+            final_evaluation = FactorStudentEvaluator(
+                final_factor, u).joint_likelihood_and_gradient(
+                    float(final_x[0]),
+                    n_threads=config.n_threads,
+                )
+            final_operator_diagnostics = dict(
+                final_factor.diagnostics)
+        except (
+                FloatingPointError,
+                OverflowError,
+                ValueError,
+                RuntimeError,
+                np.linalg.LinAlgError,
+                CppError):
+            final_x = best["x"]
+            final_loadings = best["loadings"]
+            final_evaluation = best["evaluation"]
+            final_operator_diagnostics = best[
+                "operator_diagnostics"]
+            final_objective, final_gradient = (
+                objective_and_gradient(final_x))
+
+        if final_evaluation is None:
+            raise RuntimeError(
+                "joint factor MLE found no valid evaluation")
+        gradient_inf_norm = float(np.max(np.abs(final_gradient)))
+        gtol = float(optimizer_options.get("gtol", 1e-5))
+        gradient_gate = max(1e-4, 10.0 * gtol)
+        accepted = bool(
+            result.success
+            and np.isfinite(final_objective)
+            and gradient_inf_norm <= gradient_gate
+        )
+        message = str(getattr(result, "message", ""))
+        if result.success and not accepted:
+            message = (
+                f"{message}; rejected by joint factor gradient gate "
+                f"({gradient_inf_norm:.6g} > {gradient_gate:.6g})"
+            )
+
+        start_source = self._factor_initialization_diagnostics.get(
+            "source", "supplied")
+        self._set_factor_loadings(
+            final_loadings,
+            diagnostics={
+                "source": "joint_static_mle",
+                "joint_start_source": start_source,
+                "joint_anchor_rows":
+                    parameterization.anchors.tolist(),
+                "joint_penalty": penalty,
+                "joint_condition_max": condition_max,
+            },
+        )
+        df_hat = float(final_x[0])
+        diagnostics = {
+            "n_threads": config.n_threads,
+            "parameterization": "natural_df_and_triangular_factor",
+            "gradient_mode": "analytical_joint_factor",
+            "model_score": "not_applicable",
+            "optimizer_gradient": "analytical",
+            "gradient_kind": "analytical",
+            "df_gradient": "analytical",
+            "correlation_gradient": "analytical_factor",
+            "joint_static": True,
+            "joint_factor": True,
+            "joint_dynamic_supported": False,
+            "joint_identification":
+                "pivoted_lower_triangular_positive_diag",
+            "joint_anchor_rows": parameterization.anchors.copy(),
+            "joint_penalty": penalty,
+            "joint_condition_max": condition_max,
+            "joint_initial_objective": float(initial_objective),
+            "joint_final_objective": float(final_objective),
+            "joint_gradient_inf_norm": gradient_inf_norm,
+            "joint_gradient_gate": gradient_gate,
+            "joint_evaluations": evaluations,
+            "joint_native_diagnostics":
+                dict(final_evaluation.diagnostics),
+            "joint_operator_diagnostics":
+                final_operator_diagnostics,
+            **self._corr_count_diagnostics(),
+        }
+        result_object = MultivariateMLEResult(
+            log_likelihood=final_evaluation.log_likelihood,
+            method="MLE",
+            copula_name=self._name,
+            success=accepted,
+            nfev=int(getattr(result, "nfev", evaluations)),
+            message=message,
+            copula_param=df_hat,
+            parameter_count=1 + expected,
+            n_observations=len(u),
+            model_parameters={
+                "df": df_hat,
+                "corr_mode": "factor",
+                "factor_rank": self._factor_rank,
+                "factor_loadings": self.factor_loadings_,
+                "factor_uniqueness": self.factor_uniqueness_,
+                "factor_estimation": "joint",
+                "factor_anchor_rows":
+                    parameterization.anchors.copy(),
+            },
+            correlation_matrix=None,
+            diagnostics=diagnostics,
+        )
+        self.fit_result = result_object
+        return result_object
 
     def _fit_mle(self, u, config: NumericalConfig | None = None,
                  gtol=None, ftol=None, maxfun=None, maxiter=None,
@@ -615,13 +1353,24 @@ class StochasticStudentCopula(MultivariateCopula):
         )
 
         self._ensure_corr_initialized(u)
+        if (
+                self._corr_mode == "factor"
+                and self._factor_estimation == "joint"):
+            return self._fit_joint_factor_mle(
+                u, config, optimizer_options)
         corr0 = self._initial_corr_params(u)
         n_corr = self._corr_num_params()
         counted_corr = self._corr_effective_num_params()
         fail_value = float(getattr(config, 'fail_value', 1e10))
 
-        fixed_evaluator = (
-            static_likelihood.prepare(self, u) if n_corr == 0 else None)
+        if self._corr_mode == 'factor':
+            fixed_evaluator = FactorStudentEvaluator(
+                self._factor_operator, u)
+        else:
+            fixed_evaluator = (
+                static_likelihood.prepare(
+                    self, u, n_threads=config.n_threads)
+                if n_corr == 0 else None)
 
         def _failure_result(x):
             # Non-zero, large-magnitude gradient pointing back toward the
@@ -639,14 +1388,23 @@ class StochasticStudentCopula(MultivariateCopula):
             try:
                 if n_corr:
                     self._set_corr_from_params(x[1:])
-                    evaluator = static_likelihood.prepare(self, u)
+                    evaluator = static_likelihood.prepare(
+                        self, u, n_threads=config.n_threads)
                     value, df_gradient, corr_gradient = (
                         evaluator.objective_and_joint_gradient(
                             float(x[0]), fail_value=fail_value))
                 else:
                     evaluator = fixed_evaluator
-                    value, df_gradient = evaluator.objective_and_gradient(
-                        float(x[0]), fail_value=fail_value)
+                    if self._corr_mode == 'factor':
+                        value, df_gradient = (
+                            evaluator.objective_and_gradient(
+                                float(x[0]),
+                                n_threads=config.n_threads,
+                            ))
+                    else:
+                        value, df_gradient = (
+                            evaluator.objective_and_gradient(
+                                float(x[0]), fail_value=fail_value))
                 if not np.isfinite(value) or value >= fail_value:
                     # Evaluator-reported failure comes back as fail_value
                     # with a zero gradient, which L-BFGS-B would read as
@@ -686,6 +1444,7 @@ class StochasticStudentCopula(MultivariateCopula):
 
         df_hat = float(res.x[0])
         diagnostics = {
+            'n_threads': config.n_threads,
             'parameterization': 'natural_df',
             'gradient_mode': gradient_mode,
             'model_score': 'not_applicable',
@@ -699,11 +1458,28 @@ class StochasticStudentCopula(MultivariateCopula):
             **self._corr_count_diagnostics(),
             'corr_params_raw': self.corr_params(),
             'corr_alpha': self.corr_alpha(),
-            'corr_matrix': self._R.copy(),
             **self.correlation_preprocessing_diagnostics(),
         }
+        if self._corr_mode != 'factor':
+            diagnostics['corr_matrix'] = self._R.copy()
 
         from pyscarcopula._types import MultivariateMLEResult
+
+        model_parameters = {
+            'df': df_hat,
+            'corr_mode': self._corr_mode,
+            'corr_alpha': self.corr_alpha(),
+        }
+        if self._corr_mode == 'factor':
+            model_parameters.update({
+                'factor_rank': self._factor_rank,
+                'factor_loadings': self.factor_loadings_,
+                'factor_uniqueness': self.factor_uniqueness_,
+                'factor_estimation': self._factor_estimation,
+            })
+        else:
+            model_parameters[
+                'correlation_matrix'] = self._R.copy()
 
         result = MultivariateMLEResult(
             log_likelihood=-res.fun,
@@ -715,13 +1491,11 @@ class StochasticStudentCopula(MultivariateCopula):
             copula_param=df_hat,
             parameter_count=1 + counted_corr,
             n_observations=len(u),
-            model_parameters={
-                'df': df_hat,
-                'corr_mode': self._corr_mode,
-                'corr_alpha': self.corr_alpha(),
-                'correlation_matrix': self._R.copy(),
-            },
-            correlation_matrix=self._R.copy(),
+            model_parameters=model_parameters,
+            correlation_matrix=(
+                None
+                if self._corr_mode == 'factor'
+                else self._R.copy()),
             diagnostics=diagnostics,
         )
         self.fit_result = result
@@ -735,11 +1509,12 @@ class StochasticStudentCopula(MultivariateCopula):
 
     # ── Fit (MLE + SCAR) ────────────────────────────────────
 
+    @model_state_locked
     def fit(self, data, method='scar-tm-ou', to_pobs=False, **kwargs):
         """
         Fit the stochastic Student-t copula.
 
-        Step 1: Estimate R via Kendall tau (if not already set).
+        Step 1: Initialize dense R or compact factor loadings if needed.
         Step 2: Estimate OU params for df(t) via the chosen method.
 
         Parameters
@@ -765,17 +1540,32 @@ class StochasticStudentCopula(MultivariateCopula):
 
         from pyscarcopula.strategy._base import ensure_strategy_supported
         ensure_strategy_supported(self, method)
+        if (
+                self._corr_mode == "factor"
+                and self._factor_estimation == "joint"
+                and method.upper() != "MLE"):
+            raise NotImplementedError(
+                "joint factor estimation is currently supported only for "
+                "static MLE; GAS/SCAR require loading gradients through "
+                "their sequential filters")
 
-        self._last_u = u
-
-        self._ensure_corr_initialized(u)
-
+        optimizer_kwargs = {}
         if method.upper() == 'MLE':
             optimizer_kwargs = {
                 key: kwargs.pop(key)
                 for key in _LBFGSB_FIT_KEYS
                 if key in kwargs
             }
+            if kwargs:
+                unexpected = ", ".join(sorted(kwargs))
+                raise TypeError(
+                    f"unexpected MLE keyword argument(s): {unexpected}")
+
+        self._last_u = u
+
+        self._ensure_corr_initialized(u)
+
+        if method.upper() == 'MLE':
             return self._fit_mle(u, config=config, **optimizer_kwargs)
 
         # Step 2: SCAR / GAS — use strategy
@@ -799,7 +1589,31 @@ class StochasticStudentCopula(MultivariateCopula):
 
     # ── Sampling ─────────────────────────────────────────────
 
-    def sample_at_parameter(self, n, r, rng=None):
+    def _factor_sampling_peak_bytes(self, rows, *, conditional=False):
+        rows = int(rows)
+        # Conservative peak: native draw buffers, pybind result ownership,
+        # latent arrays, CDF output, and conditional sufficient statistics can
+        # coexist briefly even though steady-state storage is smaller.
+        multiplier = (
+            8 * self._d + 6 * self._factor_rank + 16
+            if conditional
+            else 6 * self._d + 3 * self._factor_rank + 12
+        )
+        small = (
+            3 * self._factor_rank * self._factor_rank * 8
+            if conditional
+            else 0
+        )
+        return rows * multiplier * 8 + small
+
+    def sample_at_parameter(
+            self,
+            n,
+            r,
+            rng=None,
+            *,
+            n_threads=1,
+            memory_budget_bytes=None):
         """
         Sample from d-dimensional Student-t copula.
 
@@ -815,12 +1629,46 @@ class StochasticStudentCopula(MultivariateCopula):
         -------
         (n, d) pseudo-observations in [0, 1]^d
         """
+        n = _sampling_integer("n", n)
+        n_threads = _sampling_n_threads(n_threads)
+        r_arr = _validated_student_sampling_parameters(r, n)
+        if self._corr_mode == 'factor':
+            if self._factor_operator is None:
+                raise ValueError(
+                    "factor correlation is not initialized; call fit() or "
+                    "initialize_factor() first")
+            _sampling_memory_budget(
+                memory_budget_bytes,
+                self._factor_sampling_peak_bytes(n),
+                "use sample_at_parameter_batches(), reduce batch_rows, "
+                "or increase memory_budget_bytes",
+            )
+            if rng is None:
+                rng = np.random.default_rng()
+            df_path = r_arr
+            if df_path.size == 1:
+                df_path = np.full(n, df_path[0], dtype=np.float64)
+            elif df_path.size != n:
+                raise ValueError(
+                    f"r must be scalar or array of length {n}, "
+                    f"got {df_path.size}")
+            latent = self._factor_operator.sample_normal(
+                n,
+                rng=rng,
+                n_threads=n_threads,
+            )
+            chi_square = np.empty(n, dtype=np.float64)
+            for df_value in np.unique(df_path):
+                rows = np.flatnonzero(df_path == df_value)
+                chi_square[rows] = rng.chisquare(
+                    float(df_value), size=len(rows))
+            latent *= np.sqrt(df_path / chi_square)[:, None]
+            return t_dist.cdf(latent, df=df_path[:, None])
         if self._R is None:
             raise ValueError("Correlation matrix R not set. Call fit() first.")
         if rng is None:
             rng = np.random.default_rng()
 
-        r_arr = np.atleast_1d(np.asarray(r, dtype=np.float64))
         is_scalar = (r_arr.size == 1)
 
         d = self._d
@@ -857,10 +1705,82 @@ class StochasticStudentCopula(MultivariateCopula):
 
         return u
 
-    def sample(self, n, u=None, rng=None):
+    def sample_at_parameter_batches(
+            self,
+            n,
+            r,
+            *,
+            batch_rows=128,
+            rng=None,
+            n_threads=1,
+            memory_budget_bytes=None):
+        """Yield Student samples in bounded row blocks."""
+        n = _sampling_integer("n", n)
+        batch_rows = _sampling_integer(
+            "batch_rows", batch_rows, minimum=1)
+        n_threads = _sampling_n_threads(n_threads)
+        parameters = np.atleast_1d(
+            np.asarray(r, dtype=np.float64)).ravel()
+        if parameters.size not in (1, n):
+            raise ValueError(
+                f"r must be scalar or array of length {n}, "
+                f"got {parameters.size}")
+        if (
+                not np.all(np.isfinite(parameters))
+                or np.any(parameters <= 2.0)):
+            raise ValueError("r must be finite and greater than 2")
+        if rng is None:
+            rng = np.random.default_rng()
+        if self._corr_mode == "factor":
+            _sampling_memory_budget(
+                memory_budget_bytes,
+                self._factor_sampling_peak_bytes(
+                    min(n, batch_rows)),
+                "reduce batch_rows or increase memory_budget_bytes",
+            )
+
+        for start in range(0, n, batch_rows):
+            stop = min(n, start + batch_rows)
+            block_parameters = (
+                parameters
+                if parameters.size == 1
+                else parameters[start:stop]
+            )
+            yield self.sample_at_parameter(
+                stop - start,
+                block_parameters,
+                rng=rng,
+                n_threads=n_threads,
+                memory_budget_bytes=memory_budget_bytes,
+            )
+
+    @model_state_locked
+    def sample(
+            self,
+            n,
+            u=None,
+            rng=None,
+            *,
+            n_threads=1,
+            memory_budget_bytes=None):
         """Generate observations reproducing the fitted model."""
         if self.fit_result is None:
             raise ValueError("Fit first")
+        n = _sampling_integer("n", n)
+        n_threads = _sampling_n_threads(n_threads)
+        if self._corr_mode == "factor":
+            blocks = self.sample_batches(
+                n,
+                u=u,
+                rng=rng,
+                batch_rows=max(1, n),
+                n_threads=n_threads,
+                memory_budget_bytes=memory_budget_bytes,
+            )
+            try:
+                return next(blocks)
+            except StopIteration:
+                return np.empty((0, self._d), dtype=np.float64)
         from pyscarcopula.api import sample as _api_sample
 
         u_data = u if u is not None else getattr(self, "_last_u", None)
@@ -870,19 +1790,128 @@ class StochasticStudentCopula(MultivariateCopula):
                 "Either call fit() first or pass u= explicitly.")
         return _api_sample(self, u_data, self.fit_result, n, rng=rng)
 
+    @model_state_locked
+    def sample_batches(
+            self,
+            n,
+            u=None,
+            rng=None,
+            *,
+            batch_rows=128,
+            given=None,
+            n_threads=1,
+            memory_budget_bytes=None):
+        """Yield fitted Student-model samples in bounded row blocks."""
+        if self.fit_result is None:
+            raise ValueError("Fit first")
+        n = _sampling_integer("n", n)
+        batch_rows = _sampling_integer(
+            "batch_rows", batch_rows, minimum=1)
+        n_threads = _sampling_n_threads(n_threads)
+        if rng is None:
+            rng = np.random.default_rng()
+        given = validate_multivariate_given(given, self._d)
+        if self._corr_mode == "factor":
+            _sampling_memory_budget(
+                memory_budget_bytes,
+                self._factor_sampling_peak_bytes(
+                    min(n, batch_rows),
+                    conditional=bool(given),
+                ),
+                "reduce batch_rows or increase memory_budget_bytes",
+            )
+
+        from pyscarcopula.strategy._base import get_strategy_for_result
+        result = self.fit_result
+        strategy = get_strategy_for_result(result)
+        state = strategy.model_sample_state(self, result)
+        if state is None:
+            parameters = strategy.model_sample_params(
+                self, result, n, rng=rng)
+
+            def independent_blocks():
+                for start in range(0, n, batch_rows):
+                    stop = min(n, start + batch_rows)
+                    yield self.sample_conditional(
+                        stop - start,
+                        r=parameters[start:stop],
+                        given=given,
+                        rng=rng,
+                        n_threads=n_threads,
+                        memory_budget_bytes=memory_budget_bytes,
+                    )
+
+            return independent_blocks()
+
+        def recursive_blocks():
+            current = state
+            for start in range(0, n, batch_rows):
+                stop = min(n, start + batch_rows)
+                block = np.empty(
+                    (stop - start, self._d), dtype=np.float64)
+                for row in range(stop - start):
+                    parameter = strategy.sample_params(
+                        self, current, 1, rng=rng)[0]
+                    observation = self.sample_conditional(
+                        1,
+                        r=parameter,
+                        given=given,
+                        rng=rng,
+                        n_threads=n_threads,
+                        memory_budget_bytes=memory_budget_bytes,
+                    )
+                    block[row] = observation[0]
+                    current = strategy.condition_state(
+                        self, current, observation, result)
+                yield block
+
+        return recursive_blocks()
+
     # ── Predict ──────────────────────────────────────────────
 
-    def sample_conditional(self, n, r=None, given=None, rng=None):
+    @model_state_locked
+    def sample_conditional(
+            self,
+            n,
+            r=None,
+            given=None,
+            rng=None,
+            *,
+            n_threads=1,
+            memory_budget_bytes=None):
         """Sample conditionally with ``given={var_index: u_value}``."""
-        if self._R is None:
+        n = _sampling_integer("n", n)
+        n_threads = _sampling_n_threads(n_threads)
+        if self._corr_mode != 'factor' and self._R is None:
             raise ValueError("Correlation matrix R not set. Call fit() first.")
         if rng is None:
             rng = np.random.default_rng()
         given = validate_multivariate_given(given, self._d)
         if not given:
             if r is None:
-                return self.sample(n, rng=rng)
-            return self.sample_at_parameter(n, r=r, rng=rng)
+                return self.sample(
+                    n,
+                    rng=rng,
+                    n_threads=n_threads,
+                    memory_budget_bytes=memory_budget_bytes,
+                )
+            return self.sample_at_parameter(
+                n,
+                r=r,
+                rng=rng,
+                n_threads=n_threads,
+                memory_budget_bytes=memory_budget_bytes,
+            )
+        if len(given) == self._d:
+            if r is not None:
+                _validated_student_sampling_parameters(r, n)
+            _sampling_memory_budget(
+                memory_budget_bytes,
+                n * self._d * 8,
+                "use sample_batches()/predict_batches(), reduce batch_rows, "
+                "or increase memory_budget_bytes",
+            )
+            return fill_given(n, self._d, given)
         if r is None:
             from pyscarcopula._types import MLEResult
             if isinstance(self.fit_result, MLEResult):
@@ -890,11 +1919,49 @@ class StochasticStudentCopula(MultivariateCopula):
             else:
                 r = self.transform(
                     np.array([self.fit_result.params.mu]))[0]
+        _validated_student_sampling_parameters(r, n)
+        if self._corr_mode == "factor":
+            if self._factor_operator is None:
+                raise ValueError(
+                    "factor correlation is not initialized; call fit() or "
+                    "initialize_factor() first")
+            _sampling_memory_budget(
+                memory_budget_bytes,
+                self._factor_sampling_peak_bytes(
+                    n, conditional=True),
+                "use sample_batches()/predict_batches(), reduce batch_rows, "
+                "or increase memory_budget_bytes",
+            )
+            return sample_factor_student_conditional(
+                n,
+                self._factor_operator,
+                r,
+                given=given,
+                rng=rng,
+                n_threads=n_threads,
+            )
         return sample_student_conditional(
-            n, self._R, r, given=given, rng=rng)
+            n,
+            self._R,
+            r,
+            given=given,
+            rng=rng,
+            n_threads=n_threads,
+        )
 
-    def predict(self, n, u=None, rng=None, given=None, horizon='next',
-                predictive_r_mode=None, predict_config=None):
+    @model_state_locked
+    def predict(
+            self,
+            n,
+            u=None,
+            rng=None,
+            given=None,
+            horizon='next',
+            predictive_r_mode=None,
+            predict_config=None,
+            *,
+            n_threads=1,
+            memory_budget_bytes=None):
         """
         Sample n observations for next-step prediction.
 
@@ -918,13 +1985,42 @@ class StochasticStudentCopula(MultivariateCopula):
             predictive_r_mode = config.predictive_r_mode
         if self.fit_result is None:
             raise ValueError("Fit first")
+        n = _sampling_integer("n", n)
+        n_threads = _sampling_n_threads(n_threads)
         if rng is None:
             rng = np.random.default_rng()
+        sampling_options = {}
+        if n_threads != 1:
+            sampling_options["n_threads"] = n_threads
+        if memory_budget_bytes is not None:
+            sampling_options["memory_budget_bytes"] = memory_budget_bytes
 
         from pyscarcopula._types import MLEResult
         if isinstance(self.fit_result, MLEResult):
             return self.sample_conditional(
-                n, r=self.fit_result.copula_param, given=given, rng=rng)
+                n,
+                r=self.fit_result.copula_param,
+                given=given,
+                rng=rng,
+                **sampling_options,
+            )
+
+        if self._corr_mode == "factor":
+            blocks = self.predict_batches(
+                n,
+                u=u,
+                rng=rng,
+                batch_rows=max(1, n),
+                given=given,
+                horizon=horizon,
+                predictive_r_mode=predictive_r_mode,
+                n_threads=n_threads,
+                memory_budget_bytes=memory_budget_bytes,
+            )
+            try:
+                return next(blocks)
+            except StopIteration:
+                return np.empty((0, self._d), dtype=np.float64)
 
         u_data = u if u is not None else getattr(self, '_last_u', None)
         if u_data is not None:
@@ -933,17 +2029,104 @@ class StochasticStudentCopula(MultivariateCopula):
             idx = rng.choice(len(z_grid), size=n, p=prob)
             df_samples = self.transform(z_grid[idx])  # (n,)
             return self.sample_conditional(
-                n, r=df_samples, given=given, rng=rng)
+                n,
+                r=df_samples,
+                given=given,
+                rng=rng,
+                **sampling_options,
+            )
         else:
             # Fallback: stationary OU sample
             kappa, mu, nu_ou = self.fit_result.params.values
             sigma2 = nu_ou ** 2 / (2.0 * kappa)
             x_T = rng.normal(mu, np.sqrt(sigma2), size=n)
             df_vals = self.transform(x_T)  # (n,)
-            return self.sample_conditional(n, r=df_vals, given=given, rng=rng)
+            return self.sample_conditional(
+                n,
+                r=df_vals,
+                given=given,
+                rng=rng,
+                **sampling_options,
+            )
+
+    @model_state_locked
+    def predict_batches(
+            self,
+            n,
+            u=None,
+            rng=None,
+            *,
+            batch_rows=128,
+            given=None,
+            horizon="next",
+            predictive_r_mode=None,
+            predict_config=None,
+            n_threads=1,
+            memory_budget_bytes=None):
+        """Yield fitted predictive samples from one frozen state."""
+        if self.fit_result is None:
+            raise ValueError("Fit first")
+        n = _sampling_integer("n", n)
+        batch_rows = _sampling_integer(
+            "batch_rows", batch_rows, minimum=1)
+        n_threads = _sampling_n_threads(n_threads)
+        if rng is None:
+            rng = np.random.default_rng()
+
+        from pyscarcopula.api import _resolve_predict_config
+        config = _resolve_predict_config(
+            predict_config,
+            given,
+            horizon,
+            {"predictive_r_mode": predictive_r_mode},
+        )
+        if self._corr_mode == "factor":
+            _sampling_memory_budget(
+                memory_budget_bytes,
+                self._factor_sampling_peak_bytes(
+                    min(n, batch_rows),
+                    conditional=bool(config.given),
+                ),
+                "reduce batch_rows or increase memory_budget_bytes",
+            )
+        observations = u if u is not None else getattr(
+            self, "_last_u", None)
+
+        from pyscarcopula.strategy._base import get_strategy_for_result
+        result = self.fit_result
+        strategy = get_strategy_for_result(result)
+        state = strategy.predictive_state(
+            self,
+            observations,
+            result,
+            horizon=config.horizon,
+            predictive_r_mode=config.predictive_r_mode,
+        )
+
+        def blocks():
+            for start in range(0, n, batch_rows):
+                count = min(batch_rows, n - start)
+                parameters = strategy.sample_params(
+                    self,
+                    state,
+                    count,
+                    rng=rng,
+                    predictive_r_mode=config.predictive_r_mode,
+                )
+                yield self.sample_conditional(
+                    count,
+                    r=parameters,
+                    given=config.given,
+                    rng=rng,
+                    n_threads=n_threads,
+                    memory_budget_bytes=memory_budget_bytes,
+                )
+
+        return blocks()
 
     # Predictive mean path
 
+    @model_state_locked
     def predictive_mean(self, u=None):
         """Return predictive mean df(t) from TM forward pass."""
         if self.fit_result is None:
@@ -957,6 +2140,7 @@ class StochasticStudentCopula(MultivariateCopula):
         return _cpp_scar_ou.predictive_mean(
             kappa, mu, nu_ou, u_data, self)
 
+    @model_state_locked
     def xT_distribution(self, u, K=300, grid_range=5.0):
         """Distribution of x_T on grid (for predict)."""
         if self.fit_result is None:
@@ -973,6 +2157,7 @@ class StochasticStudentCopula(MultivariateCopula):
             AutoTMConfig(K=K, grid_range=grid_range),
         )
 
+    @model_state_locked
     def posterior_state_weights(
             self, u, params=None, *, K=None, grid_range=None,
             grid_method=None, adaptive=None, pts_per_sigma=None,

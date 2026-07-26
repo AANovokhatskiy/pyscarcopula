@@ -134,7 +134,10 @@ class _SCARMCBase:
             nfev=result.nfev,
             params=params,
             n_tr=self.n_tr,
-            diagnostics={"initialization": initialization},
+            diagnostics={
+                "initialization": initialization,
+                "n_threads": self.config.n_threads,
+            },
             **extra,
         )
 
@@ -218,7 +221,8 @@ class SCARPStrategy(_SCARMCBase):
             method='SCAR-P-OU',
             objective_func=lambda alpha, u_data, dwt_data: p_sampler_loglik(
                 alpha[0], alpha[1], alpha[2],
-                u_data, dwt_data, copula, self.stationary),
+                u_data, dwt_data, copula, self.stationary,
+                n_threads=self.config.n_threads),
             verbose_message=lambda initial: (
                 f"Fitting SCAR-P-OU, alpha0={initial}, n_tr={self.n_tr}"),
         )
@@ -246,7 +250,8 @@ class SCARPStrategy(_SCARMCBase):
         try:
             return p_sampler_loglik(
                 alpha[0], alpha[1], alpha[2],
-                u, dwt_data, copula, self.stationary)
+                u, dwt_data, copula, self.stationary,
+                n_threads=self.config.n_threads)
         except Exception:
             return 1e10
 
@@ -287,10 +292,12 @@ class SCARMStrategy(_SCARMCBase):
         def objective_func(alpha, u_data, dwt_data):
             a1t, a2t = eis_find_auxiliary(
                 alpha, u_data, self.M_iterations,
-                dwt_data, copula, self.stationary)
+                dwt_data, copula, self.stationary,
+                n_threads=self.config.n_threads)
             return m_sampler_loglik(
                 alpha[0], alpha[1], alpha[2],
-                u_data, dwt_data, a1t, a2t, copula, self.stationary)
+                u_data, dwt_data, a1t, a2t, copula, self.stationary,
+                n_threads=self.config.n_threads)
 
         return self._fit_mc(
             copula,
@@ -331,9 +338,11 @@ class SCARMStrategy(_SCARMCBase):
         try:
             a1t, a2t = eis_find_auxiliary(
                 alpha, u, self.M_iterations,
-                dwt_data, copula, self.stationary)
+                dwt_data, copula, self.stationary,
+                n_threads=self.config.n_threads)
             return m_sampler_loglik(
                 alpha[0], alpha[1], alpha[2],
-                u, dwt_data, a1t, a2t, copula, self.stationary)
+                u, dwt_data, a1t, a2t, copula, self.stationary,
+                n_threads=self.config.n_threads)
         except Exception:
             return 1e10

@@ -33,10 +33,10 @@ class TestNumericalConfig:
         assert cfg.mle_optimizer.gtol == 1e-3
         assert cfg.mle_optimizer.maxls == 20
         assert cfg.gas_optimizer.gtol == 1e-3
-        assert cfg.gas_optimizer.ftol == 1e-12
-        assert cfg.gas_optimizer.maxfun == 1000
+        assert cfg.gas_optimizer.ftol == 1e-9
+        assert cfg.gas_optimizer.maxfun == 4000
         assert cfg.gas_optimizer.maxiter == 1000
-        assert cfg.gas_optimizer.maxls == 50
+        assert cfg.gas_optimizer.maxls == 100
         assert cfg.gas_optimizer.eps == 1e-5
         assert cfg.scar_optimizer.gtol == 1e-3
         assert cfg.scar_optimizer.maxfun == 300
@@ -71,7 +71,7 @@ class TestNumericalConfig:
         assert cfg.mle_optimizer.maxls == 20
         assert cfg.gas_optimizer.ftol == 1e-10
         assert cfg.gas_optimizer.maxfun == 250
-        assert cfg.gas_optimizer.maxls == 50
+        assert cfg.gas_optimizer.maxls == 100
         assert cfg.scar_optimizer.maxls == 50
         assert cfg.scar_optimizer.maxfun == 300
         assert cfg.equicorr_optimizer.gtol == 1e-4

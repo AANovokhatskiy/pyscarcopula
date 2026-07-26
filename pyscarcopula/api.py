@@ -37,6 +37,7 @@ from pyscarcopula._types import (
 )
 from pyscarcopula.copula._protocol import CommonCopulaProtocol
 from pyscarcopula._utils import pobs as _pobs
+from pyscarcopula.numerical._arrays import as_float64_array
 from pyscarcopula.strategy._base import (
     ensure_strategy_supported,
     get_copula_capabilities,
@@ -51,9 +52,7 @@ PredictOutput: TypeAlias = FloatArray | tuple[FloatArray, dict[str, Any]]
 
 
 def _as_float64_array_no_copy(value: ArrayLike) -> FloatArray:
-    if type(value) is np.ndarray and value.dtype == np.float64:
-        return value
-    return np.asarray(value, dtype=np.float64)
+    return as_float64_array(value, name="data")
 
 
 def _reject_public_posterior_cache(kwargs: dict[str, Any]) -> None:
@@ -61,6 +60,26 @@ def _reject_public_posterior_cache(kwargs: dict[str, Any]) -> None:
         raise TypeError(
             "posterior_cache is an internal runtime cache and is not "
             "accepted by the top-level API")
+
+
+def _prepared_equicorr_or_none(copula, data):
+    from pyscarcopula.copula.multivariate.equicorr import (
+        EquicorrGaussianCopula,
+    )
+    from pyscarcopula.copula.multivariate.equicorr_prepared import (
+        EquicorrPreparedData,
+    )
+
+    if not isinstance(data, EquicorrPreparedData):
+        return None
+    if not isinstance(copula, EquicorrGaussianCopula):
+        raise TypeError(
+            "EquicorrPreparedData is accepted only by "
+            "EquicorrGaussianCopula")
+    if copula.d != data.dimension:
+        raise ValueError(
+            "prepared dimension does not match copula dimension")
+    return data
 
 
 def fit(
@@ -117,11 +136,25 @@ def fit(
         )
         return fitted.fit_result
 
-    u = _as_float64_array_no_copy(data)
-    if to_pobs:
-        u = _pobs(u)
-
-    validate_copula_data(copula, u)
+    prepared = _prepared_equicorr_or_none(copula, data)
+    prepared_input = prepared is not None
+    if prepared_input:
+        if to_pobs:
+            raise ValueError(
+                "to_pobs=True is unavailable for prepared statistics")
+        if int(getattr(copula, "d", -1)) != data.dimension:
+            raise ValueError(
+                "prepared dimension does not match copula dimension")
+        if method.upper() not in {"MLE", "GAS", "SCAR-TM-OU"}:
+            raise ValueError(
+                "prepared Equicorr statistics currently support only "
+                "MLE, GAS, and SCAR-TM-OU strategies")
+        u = data
+    else:
+        u = _as_float64_array_no_copy(data)
+        if to_pobs:
+            u = _pobs(u)
+        validate_copula_data(copula, u)
     ensure_strategy_supported(copula, method)
     strategy = get_strategy(method, config=config, **kwargs)
     result = strategy.fit(copula, u, **kwargs)
@@ -129,7 +162,13 @@ def fit(
     # methods (predict/sample without explicit data or result) see the
     # strategy result rather than a stale intermediate (e.g. MLE) one.
     copula.fit_result = result
-    copula._last_u = u
+    if prepared_input:
+        copula._last_prepared = u
+        copula._last_u = None
+    else:
+        copula._last_u = u
+        if hasattr(copula, "_last_prepared"):
+            copula._last_prepared = None
     if (
             getattr(result, "params", None) is not None
             and hasattr(copula, "_last_latent_result")):
@@ -167,8 +206,12 @@ def log_likelihood(
     if _is_vine_copula(copula):
         return float(copula.log_likelihood(data, **kwargs))
 
-    u = np.asarray(data, dtype=np.float64)
-    validate_copula_data(copula, u)
+    prepared = _prepared_equicorr_or_none(copula, data)
+    if prepared is None:
+        u = _as_float64_array_no_copy(data)
+        validate_copula_data(copula, u)
+    else:
+        u = prepared
     strategy = get_strategy_for_result(result, config=config, **kwargs)
     return strategy.log_likelihood(copula, u, result)
 
@@ -203,8 +246,12 @@ def predictive_mean(
     ndarray
         Predictive parameter path of shape ``(n_observations,)``.
     """
-    u = np.asarray(data, dtype=np.float64)
-    validate_copula_data(copula, u)
+    prepared = _prepared_equicorr_or_none(copula, data)
+    if prepared is None:
+        u = _as_float64_array_no_copy(data)
+        validate_copula_data(copula, u)
+    else:
+        u = prepared
     _reject_public_posterior_cache(kwargs)
     strategy = get_strategy_for_result(result, config=config, **kwargs)
     return strategy.predictive_mean(copula, u, result)
@@ -244,8 +291,12 @@ def mixture_h(
     NotImplementedError
         If ``copula`` does not provide pair-copula h-functions.
     """
-    u = np.asarray(data, dtype=np.float64)
-    validate_copula_data(copula, u)
+    prepared = _prepared_equicorr_or_none(copula, data)
+    if prepared is None:
+        u = _as_float64_array_no_copy(data)
+        validate_copula_data(copula, u)
+    else:
+        u = prepared
     capabilities = get_copula_capabilities(copula)
     if capabilities is not None and not capabilities.supports_pair_ops:
         raise NotImplementedError(
@@ -302,14 +353,17 @@ def sample(
     ndarray
         Simulated pseudo-observations of shape ``(n, n_dimensions)``.
     """
-    vine_kind = _vine_kind(copula)
-    if vine_kind == 'cvine':
+    if _is_generic_vine(copula):
         return copula.sample(n, **kwargs)
-    if vine_kind == 'rvine':
+    if _is_legacy_cvine(copula):
         return copula.sample(n, **kwargs)
 
-    u = np.asarray(data, dtype=np.float64)
-    validate_copula_data(copula, u)
+    prepared = _prepared_equicorr_or_none(copula, data)
+    if prepared is None:
+        u = _as_float64_array_no_copy(data)
+        validate_copula_data(copula, u)
+    else:
+        u = prepared
     strategy = get_strategy_for_result(result, config=config, **kwargs)
     return strategy.sample(copula, u, result, n, **kwargs)
 
@@ -376,7 +430,7 @@ def predict(
 
     ``given`` is a conditional sampling argument in pseudo-observation
     space. For bivariate copulas it may fix coordinate 0 or 1; for vines it
-    fixes vine-level coordinates. For `RVineCopula`, exact conditional
+    fixes vine-level coordinates. For `VineCopula`, exact conditional
     generation requires the fixed variables to be representable at the end of
     the R-vine variable order, either in the fitted matrix itself or after
     rebuilding an equivalent natural-order matrix. If the model was fitted
@@ -414,8 +468,24 @@ def predict(
         samples together with a diagnostics mapping.
     """
     pcfg = _resolve_predict_config(predict_config, given, horizon, kwargs)
-    vine_kind = _vine_kind(copula)
-    if vine_kind == 'cvine':
+    if _is_generic_vine(copula):
+        return copula.predict(
+            n, u=data, predict_config=pcfg, **kwargs)
+    if _is_legacy_cvine(copula):
+        unsupported = []
+        if pcfg.dynamic_conditioning != 'ignore':
+            unsupported.append('dynamic_conditioning')
+        if pcfg.return_diagnostics:
+            unsupported.append('return_diagnostics')
+        if pcfg.mcmc_steps is not None:
+            unsupported.append('mcmc_steps')
+        if pcfg.mcmc_burnin is not None:
+            unsupported.append('mcmc_burnin')
+        if unsupported:
+            names = ', '.join(unsupported)
+            raise TypeError(
+                "legacy CVineCopula.predict does not support: "
+                f"{names}")
         return copula.predict(
             n,
             u=data,
@@ -424,12 +494,13 @@ def predict(
             predictive_r_mode=pcfg.predictive_r_mode,
             **kwargs,
         )
-    if vine_kind == 'rvine':
-        return copula.predict(
-            n, u=data, predict_config=pcfg, **kwargs)
 
-    u = np.asarray(data, dtype=np.float64)
-    validate_copula_data(copula, u)
+    prepared = _prepared_equicorr_or_none(copula, data)
+    if prepared is None:
+        u = _as_float64_array_no_copy(data)
+        validate_copula_data(copula, u)
+    else:
+        u = prepared
     strategy = get_strategy_for_result(result, config=config, **kwargs)
     return strategy.predict(
         copula,
@@ -444,18 +515,22 @@ def predict(
 
 
 def _is_vine_copula(obj: object) -> bool:
-    return _vine_kind(obj) is not None
+    return _is_generic_vine(obj) or _is_legacy_cvine(obj)
 
 
-def _vine_kind(obj: object) -> str | None:
+def _is_generic_vine(obj: object) -> bool:
+    try:
+        from pyscarcopula.vine.vine import VineCopula
+    except ImportError:
+        return False
+    return isinstance(obj, VineCopula)
+
+
+def _is_legacy_cvine(obj: object) -> bool:
     try:
         from pyscarcopula.vine.cvine import CVineCopula
-        from pyscarcopula.vine.rvine import RVineCopula
     except ImportError:
-        return None
-
+        return False
     if isinstance(obj, CVineCopula):
-        return 'cvine'
-    if isinstance(obj, RVineCopula):
-        return 'rvine'
-    return None
+        return True
+    return False

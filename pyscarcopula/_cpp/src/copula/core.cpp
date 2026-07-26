@@ -218,6 +218,8 @@ std::pair<std::vector<double>, std::vector<double>> copula_h_pair(
     const Observations& u,
     const std::vector<double>& r) {
 
+    const CopulaSpec transposed_spec =
+        scar_internal::transposed_copula_spec(spec);
     return {
         copula_h(spec, u, r),
         [&]() {
@@ -225,7 +227,7 @@ std::pair<std::vector<double>, std::vector<double>> copula_h_pair(
             for (std::vector<double>& row : reversed) {
                 std::swap(row[0], row[1]);
             }
-            return copula_h(spec, reversed, r);
+            return copula_h(transposed_spec, reversed, r);
         }(),
     };
 }
@@ -381,13 +383,15 @@ GridValues copula_h_parameter_grid(
                   std::numeric_limits<double>::quiet_NaN());
         return out;
     }
+    const CopulaSpec transposed_spec =
+        scar_internal::transposed_copula_spec(spec);
 
     for (std::int64_t t = 0; t < out.n_obs; ++t) {
         const std::size_t base =
             static_cast<std::size_t>(t) * r_grid.size();
         for (std::size_t j = 0; j < r_grid.size(); ++j) {
             out.values[base + j] = scar_internal::copula_h_rotated(
-                spec,
+                transposed_spec,
                 row_value(u, t, 1),
                 row_value(u, t, 0),
                 r_grid[j]);

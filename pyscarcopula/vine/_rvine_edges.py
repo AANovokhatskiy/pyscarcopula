@@ -1,5 +1,7 @@
 """Edge-level operations for the refactored RVineCopula."""
 
+from copy import copy
+
 import numpy as np
 
 from pyscarcopula.copula.independent import IndependentCopula
@@ -83,6 +85,40 @@ def _edge_h_pair(edge, u, v, config=None, **strategy_kwargs):
         copula, result, u_pair, config=config, **strategy_kwargs)
 
 
+def _edge_h_pair_for_variables(
+        edge, first_variable, first_values, second_variable, second_values,
+        config=None, **strategy_kwargs):
+    """Return both h-directions in the requested variable order.
+
+    Edge rotations are fitted in ascending conditioned-variable order.
+    """
+    if int(first_variable) < int(second_variable):
+        return _edge_h_pair(
+            edge,
+            first_values,
+            second_values,
+            config=config,
+            **strategy_kwargs,
+        )
+    second_given_first, first_given_second = _edge_h_pair(
+        edge,
+        second_values,
+        first_values,
+        config=config,
+        **strategy_kwargs,
+    )
+    return first_given_second, second_given_first
+
+
+def _transposed_copula(copula):
+    rotation = int(getattr(copula, 'rotate', 0))
+    if rotation not in (90, 270):
+        return copula
+    transposed = copy(copula)
+    transposed._rotate = 360 - rotation
+    return transposed
+
+
 def _edge_log_likelihood(edge, u_pair, config=None, **strategy_kwargs):
     """Compute log-likelihood for one pair edge using its fitted strategy."""
     copula = edge_copula(edge)
@@ -100,13 +136,17 @@ def _edge_log_likelihood(edge, u_pair, config=None, **strategy_kwargs):
         copula, result, u_pair, config=config, **strategy_kwargs)
 
 
-def _edge_h_inverse(edge, v, u_given, config=None):
+def _edge_h_inverse(edge, v, u_given, config=None, *, copula_override=None):
     """Compute inverse h for an RVine pair edge.
 
     ``config`` may contain a precomputed ``r`` array. If omitted, ``r`` is
     generated with the same model-reproduction rules used by CVine sampling.
     """
-    copula = edge_copula(edge)
+    copula = (
+        edge_copula(edge)
+        if copula_override is None
+        else copula_override
+    )
     if isinstance(copula, IndependentCopula):
         return np.asarray(v, dtype=np.float64).copy()
 
@@ -128,6 +168,21 @@ def _edge_h_inverse(edge, v, u_given, config=None):
         r = _edge_r_for_sample(edge, len(np.atleast_1d(v)), rng)
 
     return copula.h_inverse(v, u_given, r)
+
+
+def _edge_h_inverse_for_variables(
+        edge, target_variable, v, given_variable, u_given, config=None):
+    """Invert h(target | given) using the fitted edge orientation."""
+    copula = edge_copula(edge)
+    if int(target_variable) > int(given_variable):
+        copula = _transposed_copula(copula)
+    return _edge_h_inverse(
+        edge,
+        v,
+        u_given,
+        config=config,
+        copula_override=copula,
+    )
 
 
 def _edge_r_for_sample(edge, n, rng=None):

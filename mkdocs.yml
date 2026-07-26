@@ -21,7 +21,6 @@ theme:
         name: Switch to light mode
   features:
     - navigation.sections
-    - navigation.expand
     - content.code.copy
     - toc.follow
 
@@ -54,21 +53,30 @@ nav:
   - Home: index.md
   - Getting Started:
     - Installation: getting-started/installation.md
-    - Quick Start: getting-started/quickstart.md
+    - End-to-End Quick Start: getting-started/quickstart.md
+    - Choosing a Model: getting-started/choosing-a-model.md
   - User Guide:
-    - Bivariate Copulas: guide/bivariate.md
-    - Estimation Methods: guide/estimation-methods.md
-    - Mathematical Contracts: guide/mathematical-contracts.md
-    - Vine Copulas: guide/vine.md
-    - Prediction Semantics: guide/prediction-semantics.md
-    - R-vine Conditioning: guide/rvine-conditioning.md
-    - Multivariate Models: guide/multivariate_models.md
-    - Developer Architecture: guide/architecture.md
-    - Transform Functions: guide/transforms.md
+    - Models:
+      - Bivariate Copulas: guide/bivariate.md
+      - Multivariate Models: guide/multivariate_models.md
+      - Factor Models: guide/factor-models.md
+      - Vine Copulas: guide/vine.md
+    - Fitting and Prediction:
+      - Estimation Methods: guide/estimation-methods.md
+      - Prediction Semantics: guide/prediction-semantics.md
+      - R-vine Conditioning: guide/rvine-conditioning.md
+    - Mathematical Reference:
+      - Mathematical Contracts: guide/mathematical-contracts.md
+      - Parameter Transforms: guide/transforms.md
+  - Performance and Scaling:
     - Performance Tuning: guide/performance.md
+    - CPU Parallelism: guide/parallelism.md
+  - Developer Guide:
+    - Developer Architecture: guide/architecture.md
   - API Reference:
-    - Copulas: api/copulas.md
-    - Vine: api/vine.md
-    - Multivariate Models: api/multivariate_models.md
+    - Core Copulas and Fitting: api/copulas.md
+    - Multivariate and Factor Models: api/multivariate_models.md
+    - Vines and Prediction: api/vine.md
     - Diagnostics: api/diagnostics.md
-    - Contrib: api/contrib.md
+    - Persistence: api/persistence.md
+    - Contrib Extensions: api/contrib.md

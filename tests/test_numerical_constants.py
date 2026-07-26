@@ -23,9 +23,9 @@ from pyscarcopula.vine._helpers import _clip_unit, _open_unit_uniform
 
 
 def test_named_safety_boundaries_are_distinct_by_purpose():
-    assert PDF_FLOOR < CONDITIONAL_SAMPLE_EPS < PSEUDO_OBS_EPS
-    assert PSEUDO_OBS_EPS < H_FUNCTION_EPS
-    assert H_FUNCTION_EPS == ROSENBLATT_OUTPUT_EPS
+    assert PDF_FLOOR < CONDITIONAL_SAMPLE_EPS < H_FUNCTION_EPS
+    assert H_FUNCTION_EPS == PSEUDO_OBS_EPS
+    assert PSEUDO_OBS_EPS < ROSENBLATT_OUTPUT_EPS
 
 
 def test_pseudo_observation_clipping_has_one_python_contract():

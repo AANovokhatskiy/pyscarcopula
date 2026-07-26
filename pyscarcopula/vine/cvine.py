@@ -1,5 +1,11 @@
 """
-C-vine copula model.
+Legacy C-vine copula model.
+
+``CVineCopula`` remains a supported compatibility API, but new code should
+use ``VineCopula.cvine(...)`` or
+``VineCopula(structure=cvine_structure(...))``. The class intentionally emits
+no ``DeprecationWarning``; removal or runtime warning requires a separate
+release decision.
 
 Structure:
     Tree 0: pairs (1,2), (1,3), ..., (1,d)
@@ -65,7 +71,20 @@ def _edge_param_from_result(result):
 
 class CVineCopula:
     """
-    C-vine copula for d dimensions.
+    Legacy C-vine copula for d dimensions.
+
+    This class is retained for source, behavior, and persistence
+    compatibility. New generic-vine functionality is implemented first in
+    :class:`pyscarcopula.vine.vine.VineCopula`; prefer
+    ``VineCopula.cvine(d, order=...)`` for new code. ``CVineCopula`` is not a
+    base class of ``VineCopula`` and does not emit a runtime deprecation
+    warning.
+
+    Conditional semantics differ between the implementations. This legacy
+    runtime uses C-vine-specific prefix/general conditional algorithms. The
+    generic runtime uses its matrix-based suffix sampler and DAG+MCMC fallback
+    and additionally supports generic prediction diagnostics and dynamic
+    conditioning options.
 
     Decomposes d-dimensional dependence into d(d-1)/2 bivariate copulas
     arranged in a tree structure. Each edge copula can be from a different
@@ -169,7 +188,7 @@ class CVineCopula:
                         cop = cop_class(rotate=rotation)
                     from pyscarcopula.copula.independent import IndependentCopula
                     if isinstance(cop, IndependentCopula):
-                        result = cop.fit(u_pair)
+                        result = cop._fit_validated(u_pair)
                     else:
                         from pyscarcopula.api import fit as _api_fit
                         result = _api_fit(cop, u_pair, method='mle')

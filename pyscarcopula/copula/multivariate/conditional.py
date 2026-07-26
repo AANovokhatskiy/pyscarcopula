@@ -24,10 +24,10 @@ def validate_multivariate_given(given, d):
 
     out = {}
     for key, value in given.items():
-        try:
-            idx = int(key)
-        except Exception as exc:
-            raise TypeError("given keys must be integers") from exc
+        if isinstance(key, (bool, np.bool_)) or not isinstance(
+                key, (int, np.integer)):
+            raise TypeError("given keys must be integers")
+        idx = int(key)
         if idx < 0 or idx >= int(d):
             raise ValueError(
                 f"given key must be in [0, {int(d) - 1}], got {key!r}")
@@ -91,7 +91,8 @@ def _finalize_conditional_sample(out, free_idx, given):
     return out
 
 
-def sample_gaussian_conditional(n, d, rho, given, rng=None):
+def sample_gaussian_conditional(
+        n, d, rho, given, rng=None, *, n_threads=1):
     """Sample a Gaussian copula conditional on fixed pseudo-observations.
 
     Conditional Gaussian quantiles use the same ``PSEUDO_OBS_EPS`` clipping
@@ -106,31 +107,50 @@ def sample_gaussian_conditional(n, d, rho, given, rng=None):
     given = validate_multivariate_given(given, d)
     if not given:
         raise ValueError("sample_gaussian_conditional requires non-empty given")
+    rho_path = as_path(rho, n, "rho")
+    lower = -1.0 / (d - 1.0)
+    if (
+            np.any(~np.isfinite(rho_path))
+            or np.any(rho_path <= lower)
+            or np.any(rho_path >= 1.0)):
+        raise ValueError(f"rho must be finite and in ({lower}, 1)")
     if len(given) == d:
         return fill_given(n, d, given)
-
-    rho_path = as_path(rho, n, "rho")
     given_idx, free_idx = _partition_indices(d, given)
     z_given = norm.ppf(_given_quantile_inputs(given, given_idx))
     normal_draws = rng.standard_normal((n, len(free_idx)))
 
-    rho_input = np.atleast_1d(np.asarray(rho, dtype=np.float64)).ravel()
-    correlations = (
-        equicorr_matrix(d, rho_path[0])
-        if rho_input.size == 1
-        else np.stack([
-            equicorr_matrix(d, rho_val) for rho_val in rho_path])
-    )
     from pyscarcopula.numerical import multivariate_native
-    z_free = multivariate_native.gaussian_conditional_latent(
-        correlations, given_idx, z_given, normal_draws)
+    multivariate_native._validated_n_threads(n_threads)
+
+    # Equicorrelation is closed under conditioning.  Work in the span of the
+    # all-ones vector and its orthogonal complement, avoiding a dense R or
+    # Schur complement for arbitrarily large d.
+    n_given = len(given_idx)
+    n_free = len(free_idx)
+    denominator = 1.0 + (n_given - 1.0) * rho_path
+    conditional_mean = (
+        rho_path / denominator * float(np.sum(z_given)))
+    alpha = 1.0 - rho_path
+    parallel_eigenvalue = (
+        alpha * (1.0 + (d - 1.0) * rho_path) / denominator)
+    if np.any(parallel_eigenvalue <= 0.0):
+        raise ValueError(
+            "rho produces a non-positive conditional covariance")
+    row_means = normal_draws.mean(axis=1, keepdims=True)
+    z_free = (
+        np.sqrt(alpha)[:, None] * (normal_draws - row_means)
+        + np.sqrt(parallel_eigenvalue)[:, None] * row_means
+        + conditional_mean[:, None]
+    )
     out = np.empty((n, d), dtype=np.float64)
     out[:, free_idx] = norm.cdf(z_free)
 
     return _finalize_conditional_sample(out, free_idx, given)
 
 
-def sample_gaussian_copula_conditional(n, R, given, rng=None):
+def sample_gaussian_copula_conditional(
+        n, R, given, rng=None, *, n_threads=1):
     """Sample a Gaussian copula with an arbitrary correlation matrix
     conditionally on fixed pseudo-observations.
 
@@ -156,14 +176,15 @@ def sample_gaussian_copula_conditional(n, R, given, rng=None):
     normal_draws = rng.standard_normal((n, len(free_idx)))
     from pyscarcopula.numerical import multivariate_native
     z_free = multivariate_native.gaussian_conditional_latent(
-        R, given_idx, z_given, normal_draws)
+        R, given_idx, z_given, normal_draws, n_threads=n_threads)
     out = np.empty((n, d), dtype=np.float64)
     out[:, free_idx] = norm.cdf(z_free)
 
     return _finalize_conditional_sample(out, free_idx, given)
 
 
-def sample_student_conditional(n, R_path, df, given, rng=None):
+def sample_student_conditional(
+        n, R_path, df, given, rng=None, *, n_threads=1):
     """Sample a Student-t copula conditional on fixed pseudo-observations.
 
     Conditional Student quantiles use the same ``PSEUDO_OBS_EPS`` clipping
@@ -188,10 +209,13 @@ def sample_student_conditional(n, R_path, df, given, rng=None):
     given = validate_multivariate_given(given, d)
     if not given:
         raise ValueError("sample_student_conditional requires non-empty given")
+    df_path = as_path(df, n, "df")
+    if (
+            np.any(~np.isfinite(df_path))
+            or np.any(df_path <= 2.0)):
+        raise ValueError("df must be finite and greater than 2")
     if len(given) == d:
         return fill_given(n, d, given)
-
-    df_path = as_path(df, n, "df")
     given_idx, free_idx = _partition_indices(d, given)
     given_inputs = _given_quantile_inputs(given, given_idx)
     given_latent = np.empty((n, len(given_idx)), dtype=np.float64)
@@ -225,10 +249,194 @@ def sample_student_conditional(n, R_path, df, given, rng=None):
         df_path,
         normal_draws,
         chi_square_draws,
+        n_threads=n_threads,
     )
     out = np.empty((n, d), dtype=np.float64)
     out[:, free_idx] = t_dist.cdf(x_free, df=df_path[:, None])
 
+    return _finalize_conditional_sample(out, free_idx, given)
+
+
+def sample_factor_gaussian_conditional(
+        n,
+        correlation,
+        given,
+        rng=None,
+        *,
+        n_threads=1):
+    """Sample a factor Gaussian copula without a dense Schur complement."""
+    from pyscarcopula.copula.multivariate.factor_correlation import (
+        PreparedFactorCorrelation,
+    )
+
+    if not isinstance(correlation, PreparedFactorCorrelation):
+        raise TypeError(
+            "correlation must be a PreparedFactorCorrelation")
+    if isinstance(n, (bool, np.bool_)) or not isinstance(
+            n, (int, np.integer)):
+        raise TypeError("n must be an integer")
+    n = int(n)
+    if n < 0:
+        raise ValueError("n must be non-negative")
+    if rng is None:
+        rng = np.random.default_rng()
+
+    d = correlation.dimension
+    given = validate_multivariate_given(given, d)
+    if not given:
+        raise ValueError(
+            "sample_factor_gaussian_conditional requires non-empty given")
+    if len(given) == d:
+        return fill_given(n, d, given)
+
+    given_idx, free_idx = _partition_indices(d, given)
+    given_latent = norm.ppf(
+        _given_quantile_inputs(given, given_idx))
+    given_loadings = correlation.loadings[given_idx]
+    given_uniqueness = correlation.uniqueness[given_idx]
+    small_precision = (
+        np.eye(correlation.rank, dtype=np.float64)
+        + given_loadings.T
+        @ (given_loadings / given_uniqueness[:, None])
+    )
+    small_cholesky = np.linalg.cholesky(small_precision)
+    conditional_factor_root = np.linalg.solve(
+        small_cholesky.T,
+        np.eye(correlation.rank, dtype=np.float64),
+    )
+    projected = (
+        given_latent / given_uniqueness) @ given_loadings
+    conditional_factor_mean = np.linalg.solve(
+        small_precision, projected)
+
+    factor_draws = (
+        rng.standard_normal((n, correlation.rank))
+        @ conditional_factor_root.T
+        + conditional_factor_mean[None, :]
+    )
+    residual_draws = rng.standard_normal((n, d))
+    latent = correlation.transform_normal_draws(
+        factor_draws,
+        residual_draws,
+        n_threads=n_threads,
+    )
+    out = np.empty((n, d), dtype=np.float64)
+    out[:, free_idx] = norm.cdf(latent[:, free_idx])
+    return _finalize_conditional_sample(out, free_idx, given)
+
+
+def sample_factor_student_conditional(
+        n,
+        correlation,
+        df,
+        given,
+        rng=None,
+        *,
+        n_threads=1):
+    """Sample a factor Student copula without a dense Schur complement.
+
+    Conditioning only factorizes the ``(rank, rank)`` matrix associated with
+    the fixed coordinates. The native factor operator transforms the
+    row-wise innovations, so the full correlation and conditional covariance
+    are never materialized.
+    """
+    from pyscarcopula.copula.multivariate.factor_correlation import (
+        PreparedFactorCorrelation,
+    )
+
+    if not isinstance(correlation, PreparedFactorCorrelation):
+        raise TypeError(
+            "correlation must be a PreparedFactorCorrelation")
+    if isinstance(n, (bool, np.bool_)) or not isinstance(
+            n, (int, np.integer)):
+        raise TypeError("n must be an integer")
+    n = int(n)
+    if n < 0:
+        raise ValueError("n must be non-negative")
+    if rng is None:
+        rng = np.random.default_rng()
+
+    d = correlation.dimension
+    given = validate_multivariate_given(given, d)
+    if not given:
+        raise ValueError(
+            "sample_factor_student_conditional requires non-empty given")
+    if len(given) == d:
+        return fill_given(n, d, given)
+
+    df_path = as_path(df, n, "df")
+    if (
+            not np.all(np.isfinite(df_path))
+            or np.any(df_path <= 2.0)):
+        raise ValueError("df must be finite and greater than 2")
+    given_idx, free_idx = _partition_indices(d, given)
+    given_inputs = _given_quantile_inputs(given, given_idx)
+
+    loadings = correlation.loadings
+    uniqueness = correlation.uniqueness
+    given_loadings = loadings[given_idx]
+    given_uniqueness = uniqueness[given_idx]
+    weighted_given_loadings = (
+        given_loadings / given_uniqueness[:, None])
+    small_precision = (
+        np.eye(correlation.rank, dtype=np.float64)
+        + given_loadings.T @ weighted_given_loadings)
+    small_cholesky = np.linalg.cholesky(small_precision)
+    conditional_factor_root = np.linalg.solve(
+        small_cholesky.T,
+        np.eye(correlation.rank, dtype=np.float64),
+    )
+
+    given_latent = np.empty(
+        (n, len(given_idx)), dtype=np.float64)
+    chi_square_draws = np.empty(n, dtype=np.float64)
+    for df_value in np.unique(df_path):
+        rows = np.flatnonzero(df_path == df_value)
+        given_latent[rows] = t_dist.ppf(
+            given_inputs, df=float(df_value))
+        chi_square_draws[rows] = rng.chisquare(
+            float(df_value) + len(given_idx),
+            size=len(rows),
+        )
+
+    projected = (
+        given_latent / given_uniqueness[None, :]
+    ) @ given_loadings
+    conditional_factor_mean = np.linalg.solve(
+        small_precision, projected.T).T
+    delta = (
+        np.einsum(
+            "ij,ij,j->i",
+            given_latent,
+            given_latent,
+            1.0 / given_uniqueness,
+            optimize=False,
+        )
+        - np.einsum(
+            "ij,ij->i",
+            projected,
+            conditional_factor_mean,
+            optimize=False,
+        )
+    )
+    radial_scale = np.sqrt(
+        (df_path + np.maximum(delta, 0.0)) / chi_square_draws)
+
+    factor_draws = rng.standard_normal((n, correlation.rank))
+    factor_draws = (
+        factor_draws @ conditional_factor_root.T
+    ) * radial_scale[:, None] + conditional_factor_mean
+    residual_draws = rng.standard_normal((n, d))
+    residual_draws *= radial_scale[:, None]
+    latent = correlation.transform_normal_draws(
+        factor_draws,
+        residual_draws,
+        n_threads=n_threads,
+    )
+
+    out = np.empty((n, d), dtype=np.float64)
+    out[:, free_idx] = t_dist.cdf(
+        latent[:, free_idx], df=df_path[:, None])
     return _finalize_conditional_sample(out, free_idx, given)
 
 
@@ -238,6 +446,8 @@ __all__ = [
     "fill_given",
     "sample_gaussian_conditional",
     "sample_gaussian_copula_conditional",
+    "sample_factor_gaussian_conditional",
+    "sample_factor_student_conditional",
     "sample_student_conditional",
     "validate_multivariate_given",
 ]

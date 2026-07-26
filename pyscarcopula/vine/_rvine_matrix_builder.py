@@ -2,9 +2,11 @@
 vine._rvine_matrix_builder — natural-order R-vine matrix construction.
 
 Given a valid R-vine (a list of trees indexed by level), build the
-R-vine matrix in the **natural-order convention** of Czado (2019,
-Algorithm 5.4), which is the convention used by ``pyvinecopulib`` and
-described in Joe (2014, Ch. 5).
+R-vine matrix in the zero-based **natural-order runtime convention** derived
+from Czado (2019, Algorithm 5.4) and described in Joe (2014, Ch. 5).
+``pyvinecopulib`` represents the same structure with one-based labels and
+the opposite tree-level order above each anti-diagonal entry; conversion is
+documented in ``docs/api/vine.md``.
 
 Any regular vine has a natural-order matrix representation, and this
 representation is reached by iteratively peeling a leaf of the current

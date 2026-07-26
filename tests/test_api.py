@@ -71,6 +71,22 @@ class TestFitResultTypes:
         assert result.params.kappa > 0
         assert result.params.nu > 0
 
+    @pytest.mark.parametrize(
+        "invalid_data",
+        [
+            np.array([[-0.01, 0.5], [0.4, 0.6]]),
+            np.array([[0.01, 1.01], [0.4, 0.6]]),
+            np.array([[0.2 + 3.0j, 0.5], [0.4, 0.6]]),
+        ],
+    )
+    def test_fit_rejects_invalid_pseudo_observations_before_strategy(
+            self, invalid_data):
+        copula = GumbelCopula(rotate=180)
+        error = TypeError if np.iscomplexobj(invalid_data) else ValueError
+
+        with pytest.raises(error, match="real values|pseudo-observations"):
+            fit(copula, invalid_data, method="scar-tm-ou")
+
     def test_gas_returns_gas_result(self, random_u2):
         cop = GumbelCopula(rotate=180)
         result = fit(cop, random_u2, method='gas')
@@ -185,6 +201,39 @@ class TestIndependentCopula:
         cop = IndependentCopula()
         result = cop.fit(np.random.default_rng(101).random((100, 2)))
         assert result.log_likelihood == 0.0
+
+    @pytest.mark.parametrize(
+        "data",
+        [
+            np.empty((0, 2)),
+            np.array([[np.nan, 0.2]]),
+            np.array([[-0.1, 0.2]]),
+            np.ones((2, 3)),
+            np.array([0.2, 0.3]),
+        ],
+    )
+    def test_direct_fit_rejects_invalid_data(self, data):
+        with pytest.raises(ValueError):
+            IndependentCopula().fit(data)
+
+    def test_direct_fit_rejects_complex_data(self):
+        with pytest.raises(TypeError, match="real values"):
+            IndependentCopula().fit(
+                np.array([[0.2 + 1.0j, 0.3], [0.4, 0.5]]))
+
+    def test_direct_fit_rejects_non_mle_method(self, random_u2):
+        with pytest.raises(TypeError, match="does not support GAS"):
+            IndependentCopula().fit(random_u2, method="gas")
+
+    def test_direct_fit_honors_to_pobs(self):
+        raw = np.array([[10.0, -2.0], [30.0, 5.0], [20.0, 1.0]])
+        copula = IndependentCopula()
+
+        result = copula.fit(raw, to_pobs=True)
+
+        assert result.success
+        assert copula._last_u.shape == raw.shape
+        assert np.all((copula._last_u > 0.0) & (copula._last_u < 1.0))
 
     def test_top_level_fit_zero_logL(self):
         cop = IndependentCopula()
@@ -652,6 +701,104 @@ class TestConditionalPredict:
         assert np.all((samples > 0) & (samples < 1))
         assert np.allclose(samples[:, 0], 0.37)
 
+    @staticmethod
+    def _gas_sampling_result(cop):
+        return GASResult(
+            log_likelihood=0.0,
+            method='GAS',
+            copula_name=cop.name,
+            success=True,
+            nfev=0,
+            message='',
+            params=gas_params(0.0, 0.0, 0.5),
+            scaling='unit',
+            r_last=0.0,
+        )
+
+    @pytest.mark.parametrize("operation", [sample, predict])
+    @pytest.mark.parametrize("n", [0, -1])
+    def test_gas_sampling_rejects_nonpositive_size(
+            self, operation, n, random_u2):
+        cop = BivariateGaussianCopula()
+        result = self._gas_sampling_result(cop)
+
+        with pytest.raises(ValueError, match="n must be positive"):
+            operation(cop, random_u2, result, n)
+
+    @pytest.mark.parametrize("operation", [sample, predict])
+    @pytest.mark.parametrize("n", [True, 1.5, "2"])
+    def test_gas_sampling_rejects_noninteger_size(
+            self, operation, n, random_u2):
+        cop = BivariateGaussianCopula()
+        result = self._gas_sampling_result(cop)
+
+        with pytest.raises(TypeError, match="n must be a positive integer"):
+            operation(cop, random_u2, result, n)
+
+    def test_gas_sample_checks_memory_budget_before_allocation(
+            self, random_u2, monkeypatch):
+        cop = BivariateGaussianCopula()
+        result = self._gas_sampling_result(cop)
+        allocation_attempted = False
+
+        def fail_empty(*args, **kwargs):
+            nonlocal allocation_attempted
+            allocation_attempted = True
+            raise AssertionError("allocation must not be attempted")
+
+        monkeypatch.setattr("pyscarcopula.strategy.gas.np.empty", fail_empty)
+        with pytest.raises(MemoryError, match="memory_budget_bytes"):
+            sample(
+                cop,
+                random_u2,
+                result,
+                10,
+                memory_budget_bytes=10 * 2 * 8 - 1,
+            )
+        assert not allocation_attempted
+
+    def test_gas_predict_checks_memory_budget_before_allocation(
+            self, random_u2):
+        cop = BivariateGaussianCopula()
+        result = self._gas_sampling_result(cop)
+
+        with pytest.raises(MemoryError, match="memory_budget_bytes"):
+            predict(
+                cop,
+                random_u2,
+                result,
+                10,
+                memory_budget_bytes=10 * 3 * 8 - 1,
+            )
+
+    def test_gas_sample_rejects_overflow_size_before_allocation(
+            self, random_u2):
+        cop = BivariateGaussianCopula()
+        result = self._gas_sampling_result(cop)
+
+        with pytest.raises(MemoryError, match="too large to allocate"):
+            sample(cop, random_u2, result, np.iinfo(np.intp).max)
+
+    @pytest.mark.parametrize(
+        ("operation", "required"),
+        [(sample, 4 * 2 * 8), (predict, 4 * 3 * 8)],
+    )
+    def test_gas_sampling_accepts_sufficient_memory_budget(
+            self, operation, required, random_u2):
+        cop = BivariateGaussianCopula()
+        result = self._gas_sampling_result(cop)
+
+        values = operation(
+            cop,
+            random_u2,
+            result,
+            4,
+            memory_budget_bytes=required,
+            rng=np.random.default_rng(912),
+        )
+
+        assert values.shape == (4, 2)
+
     def test_bivariate_independent_honors_given(self, random_u2):
         cop = IndependentCopula()
         result = cop.fit(random_u2)
@@ -732,7 +879,7 @@ class TestConditionalPredict:
         assert captured['options']['gtol'] == pytest.approx(2e-4)
         assert captured['options']['maxls'] == 33
         assert captured['options']['ftol'] == pytest.approx(1e-11)
-        assert captured['options']['maxfun'] == 1000
+        assert captured['options']['maxfun'] == 4000
         assert captured['options']['eps'] == pytest.approx(1e-5)
         assert result.score_eps == pytest.approx(cfg.gas_score_eps)
 

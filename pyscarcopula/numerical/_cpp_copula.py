@@ -89,6 +89,14 @@ def ensure_supported_for_mc(copula) -> None:
     )
 
     if isinstance(copula, StochasticStudentCopula):
+        if copula.corr_mode == "factor":
+            try:
+                copula.correlation_operator_
+            except (AttributeError, ValueError) as exc:
+                raise CppUnsupported(
+                    "StochasticStudentCopula requires initialized "
+                    "factor correlation") from exc
+            return
         if copula.R is None:
             raise CppUnsupported(
                 "StochasticStudentCopula requires initialized R")
@@ -108,6 +116,14 @@ def ensure_supported_for_static_likelihood(copula) -> None:
     from pyscarcopula.copula.multivariate.student import StudentCopula
 
     if isinstance(copula, GaussianCopula):
+        if getattr(copula, "corr_mode", "dense") == "factor":
+            try:
+                copula.correlation_operator_
+            except (AttributeError, ValueError) as exc:
+                raise CppUnsupported(
+                    "GaussianCopula requires initialized "
+                    "factor correlation") from exc
+            return
         if copula.corr is None:
             raise CppUnsupported("GaussianCopula requires initialized corr")
         return
@@ -116,6 +132,16 @@ def ensure_supported_for_static_likelihood(copula) -> None:
             raise CppUnsupported("StudentCopula requires initialized shape")
         return
     if isinstance(copula, (EquicorrGaussianCopula, StochasticStudentCopula)):
+        if (
+                isinstance(copula, StochasticStudentCopula)
+                and copula.corr_mode == "factor"):
+            try:
+                copula.correlation_operator_
+            except (AttributeError, ValueError) as exc:
+                raise CppUnsupported(
+                    "StochasticStudentCopula requires initialized "
+                    "factor correlation") from exc
+            return
         if (
                 isinstance(copula, StochasticStudentCopula)
                 and getattr(copula, "R", None) is None):
@@ -155,6 +181,20 @@ def make_gaussian_static_spec(module, correlation):
     return spec
 
 
+def make_factor_gaussian_static_spec(module, operator):
+    """Build a multivariate Gaussian spec with compact factor correlation."""
+    spec = module.CopulaSpec()
+    spec.family = module.CopulaFamily.MultivariateGaussian
+    spec.rotation = module.Rotation.R0
+    spec.transform = module.Transform.GaussianTanh
+    spec.offset = 0.0
+    spec.dim = int(operator.dimension)
+    spec.correlation_kind = module.CorrelationKind.Factor
+    spec.factor_correlation = operator._native
+    spec.log_det = float(operator.logdet)
+    return spec
+
+
 def make_static_likelihood_spec(module, copula, u=None):
     """Build a C++ spec for static objective and likelihood reductions."""
     ensure_supported_for_static_likelihood(copula)
@@ -172,6 +212,9 @@ def make_static_likelihood_spec(module, copula, u=None):
     if isinstance(copula, StochasticStudentCopula):
         return make_spec(module, copula, u=None)
     if isinstance(copula, GaussianCopula):
+        if getattr(copula, "corr_mode", "dense") == "factor":
+            return make_factor_gaussian_static_spec(
+                module, copula.correlation_operator_)
         return make_gaussian_static_spec(module, copula.corr)
     if isinstance(copula, StudentCopula):
         return make_student_static_spec(module, copula.shape)
@@ -207,6 +250,14 @@ def ensure_supported_for_scar_ou(copula) -> None:
     if isinstance(copula, EquicorrGaussianCopula):
         return
     if isinstance(copula, StochasticStudentCopula):
+        if getattr(copula, "corr_mode", None) == "factor":
+            try:
+                copula.correlation_operator_
+            except (AttributeError, ValueError) as exc:
+                raise CppUnsupported(
+                    "StochasticStudentCopula requires initialized "
+                    "factor correlation") from exc
+            return
         if getattr(copula, "R", None) is None:
             raise CppUnsupported("StochasticStudentCopula requires initialized R")
         return
@@ -270,6 +321,14 @@ def ensure_supported_for_gas(copula) -> None:
     if isinstance(copula, EquicorrGaussianCopula):
         return
     if isinstance(copula, StochasticStudentCopula):
+        if getattr(copula, "corr_mode", None) == "factor":
+            try:
+                copula.correlation_operator_
+            except (AttributeError, ValueError) as exc:
+                raise CppUnsupported(
+                    "StochasticStudentCopula requires initialized "
+                    "factor correlation") from exc
+            return
         if getattr(copula, "R", None) is None:
             raise CppUnsupported(
                 "StochasticStudentCopula requires initialized R")
@@ -417,6 +476,14 @@ def make_multivariate_transform_spec(module, copula):
 
 def make_multivariate_spec(module, copula, cache=None):
     """Build a native dynamic multivariate spec with an optional PPF cache."""
+    state_lock = getattr(copula, "_state_lock", None)
+    if state_lock is None:
+        return _make_multivariate_spec_unlocked(module, copula, cache)
+    with state_lock:
+        return _make_multivariate_spec_unlocked(module, copula, cache)
+
+
+def _make_multivariate_spec_unlocked(module, copula, cache=None):
     from pyscarcopula.copula.multivariate.equicorr import (
         EquicorrGaussianCopula,
     )
@@ -429,6 +496,14 @@ def make_multivariate_spec(module, copula, cache=None):
     if not isinstance(copula, StochasticStudentCopula):
         raise CppUnsupported(
             f"Unsupported multivariate copula: {type(copula).__name__}")
+    if copula.corr_mode == "factor":
+        spec = make_multivariate_transform_spec(module, copula)
+        spec.correlation_kind = module.CorrelationKind.Factor
+        spec.factor_correlation = (
+            copula.correlation_operator_._native)
+        spec.factor_dimension_tile = int(copula.factor_tile_size)
+        spec.log_det = float(copula.correlation_operator_.logdet)
+        return spec
     if copula.R is None:
         raise CppUnsupported(
             "StochasticStudentCopula requires initialized R")
@@ -455,6 +530,14 @@ def make_multivariate_spec(module, copula, cache=None):
 
 def make_spec(module, copula, u=None):
     """Build a C++ ``CopulaSpec`` for SCAR-TM-OU kernels."""
+    state_lock = getattr(copula, "_state_lock", None)
+    if state_lock is None:
+        return _make_spec_unlocked(module, copula, u)
+    with state_lock:
+        return _make_spec_unlocked(module, copula, u)
+
+
+def _make_spec_unlocked(module, copula, u=None):
     ensure_supported_for_scar_ou(copula)
     spec = module.CopulaSpec()
     spec.rotation = {
@@ -519,6 +602,20 @@ def make_spec(module, copula, u=None):
         spec.offset = 0.0
         spec.dim = int(copula.d)
     elif isinstance(copula, StochasticStudentCopula):
+        if copula.corr_mode == "factor":
+            spec.family = module.CopulaFamily.Student
+            spec.rotation = module.Rotation.R0
+            spec.transform = module.Transform.Softplus
+            spec.offset = float(copula._df_offset)
+            spec.dim = int(copula.d)
+            spec.correlation_kind = module.CorrelationKind.Factor
+            spec.factor_correlation = (
+                copula.correlation_operator_._native)
+            spec.factor_dimension_tile = int(
+                copula.factor_tile_size)
+            spec.log_det = float(
+                copula.correlation_operator_.logdet)
+            return spec
         cache = None
         cached_spec = None
         corr_version = int(copula._corr_cache_version)

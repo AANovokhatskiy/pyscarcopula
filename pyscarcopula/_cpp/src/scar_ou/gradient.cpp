@@ -2,6 +2,7 @@
 
 #include "evaluator_internal.hpp"
 #include "scar/detail/copula.hpp"
+#include "scar/detail/linalg.hpp"
 #include "scar/detail/safety.hpp"
 #include "scar/detail/scar_ou/grid.hpp"
 #include "scar/detail/scar_ou/quadrature.hpp"
@@ -105,17 +106,12 @@ void dense_grid_matvec(
     const std::vector<double>& v,
     std::vector<double>& out) {
 
-    std::fill(out.begin(), out.end(), 0.0);
-    for (int row = 0; row < K; ++row) {
-        double acc = 0.0;
-        const std::size_t offset =
-            static_cast<std::size_t>(row) * static_cast<std::size_t>(K);
-        for (int col = 0; col < K; ++col) {
-            acc += matrix[offset + static_cast<std::size_t>(col)]
-                * v[static_cast<std::size_t>(col)];
-        }
-        out[static_cast<std::size_t>(row)] = acc;
-    }
+    scar_internal::linalg::row_major_matvec(
+        matrix.data(),
+        static_cast<std::size_t>(K),
+        static_cast<std::size_t>(K),
+        v.data(),
+        out.data());
 }
 
 void local_grid_matvec(
@@ -469,6 +465,7 @@ GradLogLikResult grid_neg_loglik_with_grad(
     dpsi_grid.clear();
     scar_internal::copula_prepare_grid_transform(
         copula, x_grid, r_grid, dpsi_grid);
+    double emission_log_scale = 0.0;
     scar_internal::copula_pdf_and_grad_grid_precomputed(
         copula,
         observation_values,
@@ -476,7 +473,9 @@ GradLogLikResult grid_neg_loglik_with_grad(
         r_grid,
         dpsi_grid,
         fi,
-        dfi_dx);
+        dfi_dx,
+        config.n_threads,
+        &emission_log_scale);
 
     std::vector<double>& beta = ws.beta;
     std::vector<double>& c_vals = ws.c_vals;
@@ -719,7 +718,8 @@ GradLogLikResult grid_neg_loglik_with_grad(
     }
 
     GradLogLikResult out;
-    out.neg_log_likelihood = -(std::log(Z0) + cumul_logc);
+    out.neg_log_likelihood =
+        -(std::log(Z0) + cumul_logc + emission_log_scale);
     out.neg_gradient = {-grad[0], -grad[1], -grad[2]};
     out.neg_corr_gradient.resize(corr_grad.size());
     for (std::size_t i = 0; i < corr_grad.size(); ++i) {
@@ -903,6 +903,7 @@ GradLogLikResult spectral_neg_loglik_with_grad(
     double dlog_scale[3] = {0.0, 0.0, 0.0};
 
     for (std::int64_t t = n_obs - 1; t >= 1; --t) {
+        double emission_log_scale = 0.0;
         if (use_gaussian_spectral_terms) {
             gaussian_spectral_pdf_and_grad_row(
                 copula,
@@ -920,8 +921,10 @@ GradLogLikResult spectral_neg_loglik_with_grad(
                 r_grid,
                 dpsi_grid,
                 fi_row.data(),
-                dfi_dx_row.data());
+                dfi_dx_row.data(),
+                &emission_log_scale);
         }
+        log_scale += emission_log_scale;
 
         scar_internal::project_multiply_with_grad(
             coeff,
@@ -1063,6 +1066,7 @@ GradLogLikResult spectral_neg_loglik_with_grad(
         }
     }
 
+    double emission_log_scale = 0.0;
     if (use_gaussian_spectral_terms) {
         gaussian_spectral_pdf_and_grad_row(
             copula,
@@ -1080,8 +1084,10 @@ GradLogLikResult spectral_neg_loglik_with_grad(
             r_grid,
             dpsi_grid,
             fi_row.data(),
-            dfi_dx_row.data());
+            dfi_dx_row.data(),
+            &emission_log_scale);
     }
+    log_scale += emission_log_scale;
     scar_internal::project_multiply_with_grad(
         coeff,
         dcoeff,

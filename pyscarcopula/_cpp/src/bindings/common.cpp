@@ -49,6 +49,10 @@ scar::Observations observations_from_array(
             if (!std::isfinite(value)) {
                 throw std::invalid_argument("u must contain only finite values");
             }
+            if (value < 0.0 || value > 1.0) {
+                throw std::invalid_argument(
+                    "u must contain pseudo-observations in [0, 1]");
+            }
             row[static_cast<std::size_t>(j)] = value;
         }
         out[static_cast<std::size_t>(i)] = std::move(row);
@@ -84,6 +88,10 @@ scar::ObservationView observation_view_from_array(
     for (std::size_t i = 0; i < size; ++i) {
         if (!std::isfinite(data[i])) {
             throw std::invalid_argument("u must contain only finite values");
+        }
+        if (data[i] < 0.0 || data[i] > 1.0) {
+            throw std::invalid_argument(
+                "u must contain pseudo-observations in [0, 1]");
         }
     }
     return {data, n_obs, expected_dim};
@@ -340,6 +348,8 @@ py::dict static_objective_result_to_dict(
         vector_to_array(result.negative_correlation_gradient);
     out["status"] = result.status;
     out["failure_index"] = result.failure_index;
+    out["n_threads_requested"] = result.n_threads_requested;
+    out["parallel_blocks"] = result.parallel_blocks;
     return out;
 }
 
@@ -351,6 +361,16 @@ py::dict multivariate_rows_result_to_dict(
     out["dlog_dr"] = vector_to_array(result.dlog_dr);
     out["status"] = result.status;
     out["failure_index"] = result.failure_index;
+    out["student_ppf_cache_values"] = result.student_ppf_cache_values;
+    out["student_ppf_exact_values"] = result.student_ppf_exact_values;
+    out["student_ppf_asymptotic_values"] =
+        result.student_ppf_asymptotic_values;
+    out["student_workspace_growth_events"] =
+        result.student_workspace_growth_events;
+    out["student_workspace_peak_bytes"] =
+        result.student_workspace_peak_bytes;
+    out["n_threads_requested"] = result.n_threads_requested;
+    out["row_parallel_blocks"] = result.row_parallel_blocks;
     return out;
 }
 
@@ -362,6 +382,35 @@ py::dict multivariate_grid_result_to_dict(
     out["d_pdf_dx"] = grid_values_to_array(result.d_pdf_dx);
     out["status"] = result.status;
     out["failure_index"] = result.failure_index;
+    out["student_ppf_cache_values"] = result.student_ppf_cache_values;
+    out["student_ppf_exact_values"] = result.student_ppf_exact_values;
+    out["student_ppf_asymptotic_values"] =
+        result.student_ppf_asymptotic_values;
+    out["student_workspace_growth_events"] =
+        result.student_workspace_growth_events;
+    out["student_workspace_peak_bytes"] =
+        result.student_workspace_peak_bytes;
+    out["n_threads_requested"] = result.n_threads_requested;
+    out["student_parallel_blocks"] = result.student_parallel_blocks;
+    out["equicorr_parallel_blocks"] = result.equicorr_parallel_blocks;
+    return out;
+}
+
+py::dict equicorr_preparation_result_to_dict(
+    const scar::EquicorrPreparationResult& result) {
+
+    py::dict out;
+    out["sum_z"] = vector_to_array(result.sum_z);
+    out["sum_z2"] = vector_to_array(result.sum_z2);
+    out["status"] = result.status;
+    out["failure_index"] = result.failure_index;
+    out["n_threads_requested"] = result.n_threads_requested;
+    out["parallel_blocks"] = result.parallel_blocks;
+    out["parallel_axis"] = result.parallel_axis;
+    out["dimension_tiles"] = result.dimension_tiles;
+    out["temporary_values"] = result.temporary_values;
+    out["clipping_events"] = result.clipping_events;
+    out["nonfinite_values"] = result.nonfinite_values;
     return out;
 }
 
@@ -379,6 +428,10 @@ py::dict conditional_sample_result_to_dict(
     out["values"] = std::move(values);
     out["status"] = result.status;
     out["failure_index"] = result.failure_index;
+    out["n_threads_requested"] = result.n_threads_requested;
+    out["parallel_blocks"] = result.parallel_blocks;
+    out["correlation_factorizations"] =
+        result.correlation_factorizations;
     return out;
 }
 
@@ -389,6 +442,8 @@ py::dict trajectory_log_pdf_result_to_dict(
     out["log_pdf"] = grid_values_to_array(result.log_pdf);
     out["status"] = result.status;
     out["failure_index"] = result.failure_index;
+    out["n_threads_requested"] = result.n_threads_requested;
+    out["parallel_blocks"] = result.parallel_blocks;
     return out;
 }
 
@@ -589,6 +644,12 @@ void bind_common(py::module_& m) {
         .value(
             "MultivariateGaussian",
             scar::CopulaFamily::MultivariateGaussian);
+    py::enum_<scar::CorrelationKind>(
+        m, "CorrelationKind", "Native correlation representation.")
+        .value(
+            "DenseCholesky",
+            scar::CorrelationKind::DenseCholesky)
+        .value("Factor", scar::CorrelationKind::Factor);
 
     py::enum_<scar::Rotation>(
         m, "Rotation", "Bivariate copula rotation in degrees.")

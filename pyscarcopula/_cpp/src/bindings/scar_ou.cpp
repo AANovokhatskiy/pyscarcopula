@@ -1,5 +1,6 @@
 #include "common.hpp"
 
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -8,7 +9,8 @@ namespace py = pybind11;
 namespace pyscarcopula::bindings {
 namespace {
 
-scar::PreparedScarOuEvaluator make_prepared_scar_ou_evaluator(
+std::unique_ptr<scar::PreparedScarOuEvaluator>
+make_prepared_scar_ou_evaluator(
     scar::CopulaSpec copula,
     py::array_t<double, py::array::c_style | py::array::forcecast> u,
     const scar::OuNumericalConfig& config,
@@ -21,8 +23,9 @@ scar::PreparedScarOuEvaluator make_prepared_scar_ou_evaluator(
     }
     const auto n_obs = static_cast<std::int64_t>(info.shape[0]);
     const auto dim = static_cast<int>(info.shape[1]);
+    observation_view_from_array(copula, u);
     std::vector<double> observations = flat_vector_from_array(u, "u");
-    return scar::PreparedScarOuEvaluator(
+    return std::make_unique<scar::PreparedScarOuEvaluator>(
         std::move(copula),
         std::move(observations),
         n_obs,
@@ -31,39 +34,82 @@ scar::PreparedScarOuEvaluator make_prepared_scar_ou_evaluator(
         method);
 }
 
+std::unique_ptr<scar::PreparedScarOuEvaluator>
+make_prepared_equicorr_scar_ou_evaluator(
+    scar::CopulaSpec copula,
+    py::array_t<double, py::array::c_style | py::array::forcecast> sum_z,
+    py::array_t<double, py::array::c_style | py::array::forcecast> sum_z2,
+    const scar::OuNumericalConfig& config,
+    const std::string& method) {
+
+    return std::make_unique<scar::PreparedScarOuEvaluator>(
+        std::move(copula),
+        vector_from_array(sum_z),
+        vector_from_array(sum_z2),
+        config,
+        method);
+}
+
+template <typename Callback>
+auto with_observation_view_without_gil(
+    const scar::CopulaSpec& copula,
+    py::array_t<double, py::array::c_style | py::array::forcecast>& u,
+    Callback&& callback) {
+
+    const scar::ObservationView obs =
+        observation_view_from_array(copula, u);
+    py::gil_scoped_release release;
+    return std::forward<Callback>(callback)(obs);
+}
+
 }  // namespace
 
 void bind_scar_ou(py::module_& m) {
     py::class_<scar::PreparedScarOuEvaluator>(m, "PreparedScarOuEvaluator")
         .def(py::init(&make_prepared_scar_ou_evaluator))
+        .def(py::init(&make_prepared_equicorr_scar_ou_evaluator))
         .def(
             "update_student_factor",
             [](scar::PreparedScarOuEvaluator& evaluator,
                py::array_t<double, py::array::c_style | py::array::forcecast>
                    l_inv,
                double log_det) {
-                evaluator.update_student_factor(
-                    vector_from_array(l_inv), log_det);
+                const std::vector<double> factor = vector_from_array(l_inv);
+                py::gil_scoped_release release;
+                evaluator.update_student_factor(factor, log_det);
             })
         .def(
             "loglik",
             [](const scar::PreparedScarOuEvaluator& evaluator,
                const scar::OuParams& params) {
-                return loglik_result_to_dict(evaluator.loglik(params));
+                scar::LogLikResult result;
+                {
+                    py::gil_scoped_release release;
+                    result = evaluator.loglik(params);
+                }
+                return loglik_result_to_dict(result);
             })
         .def(
             "neg_loglik_with_grad",
             [](const scar::PreparedScarOuEvaluator& evaluator,
                const scar::OuParams& params) {
-                return grad_loglik_result_to_dict(
-                    evaluator.neg_loglik_with_grad(params));
+                scar::GradLogLikResult result;
+                {
+                    py::gil_scoped_release release;
+                    result = evaluator.neg_loglik_with_grad(params);
+                }
+                return grad_loglik_result_to_dict(result);
             })
         .def(
             "neg_loglik_with_grad_and_corr",
             [](const scar::PreparedScarOuEvaluator& evaluator,
                const scar::OuParams& params) {
-                return grad_loglik_result_to_dict(
-                    evaluator.neg_loglik_with_grad_and_corr(params));
+                scar::GradLogLikResult result;
+                {
+                    py::gil_scoped_release release;
+                    result = evaluator.neg_loglik_with_grad_and_corr(params);
+                }
+                return grad_loglik_result_to_dict(result);
             })
         .def(
             "neg_loglik_with_grad_and_corr_directional",
@@ -71,9 +117,16 @@ void bind_scar_ou(py::module_& m) {
                const scar::OuParams& params,
                py::array_t<double, py::array::c_style | py::array::forcecast>
                    corr_direction) {
-                return grad_loglik_result_to_dict(
-                    evaluator.neg_loglik_with_grad_and_corr_directional(
-                        params, vector_from_array(corr_direction)));
+                const std::vector<double> direction =
+                    vector_from_array(corr_direction);
+                scar::GradLogLikResult result;
+                {
+                    py::gil_scoped_release release;
+                    result =
+                        evaluator.neg_loglik_with_grad_and_corr_directional(
+                            params, direction);
+                }
+                return grad_loglik_result_to_dict(result);
             })
         .def(
             "predictive_mean",
@@ -81,8 +134,11 @@ void bind_scar_ou(py::module_& m) {
                const scar::OuParams& params) {
                 int status = 0;
                 scar::OuBackend backend = scar::OuBackend::Matrix;
-                std::vector<double> values =
-                    evaluator.predictive_mean(params, backend, status);
+                std::vector<double> values;
+                {
+                    py::gil_scoped_release release;
+                    values = evaluator.predictive_mean(params, backend, status);
+                }
                 return vector_result_to_dict(
                     values, status, static_cast<int>(backend));
             })
@@ -92,8 +148,11 @@ void bind_scar_ou(py::module_& m) {
                const scar::OuParams& params) {
                 int status = 0;
                 scar::OuBackend backend = scar::OuBackend::Matrix;
-                std::vector<double> values =
-                    evaluator.mixture_h(params, backend, status);
+                std::vector<double> values;
+                {
+                    py::gil_scoped_release release;
+                    values = evaluator.mixture_h(params, backend, status);
+                }
                 return vector_result_to_dict(
                     values, status, static_cast<int>(backend));
             })
@@ -103,8 +162,11 @@ void bind_scar_ou(py::module_& m) {
                const scar::OuParams& params) {
                 int status = 0;
                 scar::OuBackend backend = scar::OuBackend::Matrix;
-                std::vector<double> values =
-                    evaluator.mixture_h_pair(params, backend, status);
+                std::vector<double> values;
+                {
+                    py::gil_scoped_release release;
+                    values = evaluator.mixture_h_pair(params, backend, status);
+                }
                 return vector_result_to_dict(
                     values, status, static_cast<int>(backend));
             })
@@ -113,8 +175,12 @@ void bind_scar_ou(py::module_& m) {
             [](const scar::PreparedScarOuEvaluator& evaluator,
                const scar::OuParams& params,
                bool horizon_next) {
-                return state_distribution_to_dict(
-                    evaluator.state_distribution(params, horizon_next));
+                scar::StateDistribution result;
+                {
+                    py::gil_scoped_release release;
+                    result = evaluator.state_distribution(params, horizon_next);
+                }
+                return state_distribution_to_dict(result);
             });
 
     py::class_<scar::ScarOuEvaluator>(m, "ScarOuEvaluator")
@@ -126,10 +192,13 @@ void bind_scar_ou(py::module_& m) {
                const scar::CopulaSpec& copula,
                py::array_t<double, py::array::c_style | py::array::forcecast> u,
                const scar::OuNumericalConfig& config) {
-                return loglik_result_to_dict(
-                    evaluator.loglik_spectral(
-                        params, copula, observation_view_from_array(copula, u),
-                        config));
+                const scar::LogLikResult result =
+                    with_observation_view_without_gil(
+                        copula, u, [&](scar::ObservationView obs) {
+                            return evaluator.loglik_spectral(
+                                params, copula, obs, config);
+                        });
+                return loglik_result_to_dict(result);
             })
         .def(
             "loglik_local_gh",
@@ -138,10 +207,13 @@ void bind_scar_ou(py::module_& m) {
                const scar::CopulaSpec& copula,
                py::array_t<double, py::array::c_style | py::array::forcecast> u,
                const scar::OuNumericalConfig& config) {
-                return loglik_result_to_dict(
-                    evaluator.loglik_local_gh(
-                        params, copula, observation_view_from_array(copula, u),
-                        config));
+                const scar::LogLikResult result =
+                    with_observation_view_without_gil(
+                        copula, u, [&](scar::ObservationView obs) {
+                            return evaluator.loglik_local_gh(
+                                params, copula, obs, config);
+                        });
+                return loglik_result_to_dict(result);
             })
         .def(
             "loglik_matrix",
@@ -150,10 +222,13 @@ void bind_scar_ou(py::module_& m) {
                const scar::CopulaSpec& copula,
                py::array_t<double, py::array::c_style | py::array::forcecast> u,
                const scar::OuNumericalConfig& config) {
-                return loglik_result_to_dict(
-                    evaluator.loglik_matrix(
-                        params, copula, observation_view_from_array(copula, u),
-                        config));
+                const scar::LogLikResult result =
+                    with_observation_view_without_gil(
+                        copula, u, [&](scar::ObservationView obs) {
+                            return evaluator.loglik_matrix(
+                                params, copula, obs, config);
+                        });
+                return loglik_result_to_dict(result);
             })
         .def(
             "loglik_auto",
@@ -162,10 +237,13 @@ void bind_scar_ou(py::module_& m) {
                const scar::CopulaSpec& copula,
                py::array_t<double, py::array::c_style | py::array::forcecast> u,
                const scar::OuNumericalConfig& config) {
-                return loglik_result_to_dict(
-                    evaluator.loglik_auto(
-                        params, copula, observation_view_from_array(copula, u),
-                        config));
+                const scar::LogLikResult result =
+                    with_observation_view_without_gil(
+                        copula, u, [&](scar::ObservationView obs) {
+                            return evaluator.loglik_auto(
+                                params, copula, obs, config);
+                        });
+                return loglik_result_to_dict(result);
             })
         .def(
             "neg_loglik_with_grad_spectral",
@@ -174,10 +252,13 @@ void bind_scar_ou(py::module_& m) {
                const scar::CopulaSpec& copula,
                py::array_t<double, py::array::c_style | py::array::forcecast> u,
                const scar::OuNumericalConfig& config) {
-                return grad_loglik_result_to_dict(
-                    evaluator.neg_loglik_with_grad_spectral(
-                        params, copula, observation_view_from_array(copula, u),
-                        config));
+                const scar::GradLogLikResult result =
+                    with_observation_view_without_gil(
+                        copula, u, [&](scar::ObservationView obs) {
+                            return evaluator.neg_loglik_with_grad_spectral(
+                                params, copula, obs, config);
+                        });
+                return grad_loglik_result_to_dict(result);
             })
         .def(
             "neg_loglik_with_grad_local_gh",
@@ -186,10 +267,13 @@ void bind_scar_ou(py::module_& m) {
                const scar::CopulaSpec& copula,
                py::array_t<double, py::array::c_style | py::array::forcecast> u,
                const scar::OuNumericalConfig& config) {
-                return grad_loglik_result_to_dict(
-                    evaluator.neg_loglik_with_grad_local_gh(
-                        params, copula, observation_view_from_array(copula, u),
-                        config));
+                const scar::GradLogLikResult result =
+                    with_observation_view_without_gil(
+                        copula, u, [&](scar::ObservationView obs) {
+                            return evaluator.neg_loglik_with_grad_local_gh(
+                                params, copula, obs, config);
+                        });
+                return grad_loglik_result_to_dict(result);
             })
         .def(
             "neg_loglik_with_grad_matrix",
@@ -198,10 +282,13 @@ void bind_scar_ou(py::module_& m) {
                const scar::CopulaSpec& copula,
                py::array_t<double, py::array::c_style | py::array::forcecast> u,
                const scar::OuNumericalConfig& config) {
-                return grad_loglik_result_to_dict(
-                    evaluator.neg_loglik_with_grad_matrix(
-                        params, copula, observation_view_from_array(copula, u),
-                        config));
+                const scar::GradLogLikResult result =
+                    with_observation_view_without_gil(
+                        copula, u, [&](scar::ObservationView obs) {
+                            return evaluator.neg_loglik_with_grad_matrix(
+                                params, copula, obs, config);
+                        });
+                return grad_loglik_result_to_dict(result);
             })
         .def(
             "neg_loglik_with_grad_and_corr_spectral",
@@ -210,10 +297,13 @@ void bind_scar_ou(py::module_& m) {
                const scar::CopulaSpec& copula,
                py::array_t<double, py::array::c_style | py::array::forcecast> u,
                const scar::OuNumericalConfig& config) {
-                return grad_loglik_result_to_dict(
-                    evaluator.neg_loglik_with_grad_and_corr_spectral(
-                        params, copula, observation_view_from_array(copula, u),
-                        config));
+                const scar::GradLogLikResult result =
+                    with_observation_view_without_gil(
+                        copula, u, [&](scar::ObservationView obs) {
+                            return evaluator.neg_loglik_with_grad_and_corr_spectral(
+                                params, copula, obs, config);
+                        });
+                return grad_loglik_result_to_dict(result);
             })
         .def(
             "neg_loglik_with_grad_and_corr_directional_spectral",
@@ -226,10 +316,14 @@ void bind_scar_ou(py::module_& m) {
                    corr_direction) {
                 const std::vector<double> direction =
                     vector_from_array(corr_direction);
-                return grad_loglik_result_to_dict(
-                    evaluator.neg_loglik_with_grad_and_corr_directional_spectral(
-                        params, copula, observation_view_from_array(copula, u),
-                        config, direction));
+                const scar::GradLogLikResult result =
+                    with_observation_view_without_gil(
+                        copula, u, [&](scar::ObservationView obs) {
+                            return evaluator
+                                .neg_loglik_with_grad_and_corr_directional_spectral(
+                                    params, copula, obs, config, direction);
+                        });
+                return grad_loglik_result_to_dict(result);
             })
         .def(
             "neg_loglik_with_grad_and_corr_local_gh",
@@ -238,10 +332,13 @@ void bind_scar_ou(py::module_& m) {
                const scar::CopulaSpec& copula,
                py::array_t<double, py::array::c_style | py::array::forcecast> u,
                const scar::OuNumericalConfig& config) {
-                return grad_loglik_result_to_dict(
-                    evaluator.neg_loglik_with_grad_and_corr_local_gh(
-                        params, copula, observation_view_from_array(copula, u),
-                        config));
+                const scar::GradLogLikResult result =
+                    with_observation_view_without_gil(
+                        copula, u, [&](scar::ObservationView obs) {
+                            return evaluator.neg_loglik_with_grad_and_corr_local_gh(
+                                params, copula, obs, config);
+                        });
+                return grad_loglik_result_to_dict(result);
             })
         .def(
             "neg_loglik_with_grad_and_corr_directional_local_gh",
@@ -254,10 +351,14 @@ void bind_scar_ou(py::module_& m) {
                    corr_direction) {
                 const std::vector<double> direction =
                     vector_from_array(corr_direction);
-                return grad_loglik_result_to_dict(
-                    evaluator.neg_loglik_with_grad_and_corr_directional_local_gh(
-                        params, copula, observation_view_from_array(copula, u),
-                        config, direction));
+                const scar::GradLogLikResult result =
+                    with_observation_view_without_gil(
+                        copula, u, [&](scar::ObservationView obs) {
+                            return evaluator
+                                .neg_loglik_with_grad_and_corr_directional_local_gh(
+                                    params, copula, obs, config, direction);
+                        });
+                return grad_loglik_result_to_dict(result);
             })
         .def(
             "neg_loglik_with_grad_and_corr_matrix",
@@ -266,10 +367,13 @@ void bind_scar_ou(py::module_& m) {
                const scar::CopulaSpec& copula,
                py::array_t<double, py::array::c_style | py::array::forcecast> u,
                const scar::OuNumericalConfig& config) {
-                return grad_loglik_result_to_dict(
-                    evaluator.neg_loglik_with_grad_and_corr_matrix(
-                        params, copula, observation_view_from_array(copula, u),
-                        config));
+                const scar::GradLogLikResult result =
+                    with_observation_view_without_gil(
+                        copula, u, [&](scar::ObservationView obs) {
+                            return evaluator.neg_loglik_with_grad_and_corr_matrix(
+                                params, copula, obs, config);
+                        });
+                return grad_loglik_result_to_dict(result);
             })
         .def(
             "neg_loglik_with_grad_and_corr_directional_matrix",
@@ -282,10 +386,14 @@ void bind_scar_ou(py::module_& m) {
                    corr_direction) {
                 const std::vector<double> direction =
                     vector_from_array(corr_direction);
-                return grad_loglik_result_to_dict(
-                    evaluator.neg_loglik_with_grad_and_corr_directional_matrix(
-                        params, copula, observation_view_from_array(copula, u),
-                        config, direction));
+                const scar::GradLogLikResult result =
+                    with_observation_view_without_gil(
+                        copula, u, [&](scar::ObservationView obs) {
+                            return evaluator
+                                .neg_loglik_with_grad_and_corr_directional_matrix(
+                                    params, copula, obs, config, direction);
+                        });
+                return grad_loglik_result_to_dict(result);
             })
         .def(
             "neg_loglik_with_grad_and_corr_auto",
@@ -294,10 +402,13 @@ void bind_scar_ou(py::module_& m) {
                const scar::CopulaSpec& copula,
                py::array_t<double, py::array::c_style | py::array::forcecast> u,
                const scar::OuNumericalConfig& config) {
-                return grad_loglik_result_to_dict(
-                    evaluator.neg_loglik_with_grad_and_corr_auto(
-                        params, copula, observation_view_from_array(copula, u),
-                        config));
+                const scar::GradLogLikResult result =
+                    with_observation_view_without_gil(
+                        copula, u, [&](scar::ObservationView obs) {
+                            return evaluator.neg_loglik_with_grad_and_corr_auto(
+                                params, copula, obs, config);
+                        });
+                return grad_loglik_result_to_dict(result);
             })
         .def(
             "neg_loglik_with_grad_and_corr_directional_auto",
@@ -310,10 +421,14 @@ void bind_scar_ou(py::module_& m) {
                    corr_direction) {
                 const std::vector<double> direction =
                     vector_from_array(corr_direction);
-                return grad_loglik_result_to_dict(
-                    evaluator.neg_loglik_with_grad_and_corr_directional_auto(
-                        params, copula, observation_view_from_array(copula, u),
-                        config, direction));
+                const scar::GradLogLikResult result =
+                    with_observation_view_without_gil(
+                        copula, u, [&](scar::ObservationView obs) {
+                            return evaluator
+                                .neg_loglik_with_grad_and_corr_directional_auto(
+                                    params, copula, obs, config, direction);
+                        });
+                return grad_loglik_result_to_dict(result);
             })
         .def(
             "neg_loglik_with_grad_auto",
@@ -322,10 +437,13 @@ void bind_scar_ou(py::module_& m) {
                const scar::CopulaSpec& copula,
                py::array_t<double, py::array::c_style | py::array::forcecast> u,
                const scar::OuNumericalConfig& config) {
-                return grad_loglik_result_to_dict(
-                    evaluator.neg_loglik_with_grad_auto(
-                        params, copula, observation_view_from_array(copula, u),
-                        config));
+                const scar::GradLogLikResult result =
+                    with_observation_view_without_gil(
+                        copula, u, [&](scar::ObservationView obs) {
+                            return evaluator.neg_loglik_with_grad_auto(
+                                params, copula, obs, config);
+                        });
+                return grad_loglik_result_to_dict(result);
             })
         .def(
             "predictive_mean_local_gh",
@@ -335,10 +453,12 @@ void bind_scar_ou(py::module_& m) {
                py::array_t<double, py::array::c_style | py::array::forcecast> u,
                const scar::OuNumericalConfig& config) {
                 int status = 0;
-                const scar::ObservationView obs =
-                    observation_view_from_array(copula, u);
-                std::vector<double> values = evaluator.predictive_mean_local_gh(
-                    params, copula, obs, config, status);
+                std::vector<double> values =
+                    with_observation_view_without_gil(
+                        copula, u, [&](scar::ObservationView obs) {
+                            return evaluator.predictive_mean_local_gh(
+                                params, copula, obs, config, status);
+                        });
                 return vector_result_to_dict(
                     values, status, static_cast<int>(scar::OuBackend::LocalGh));
             })
@@ -350,10 +470,12 @@ void bind_scar_ou(py::module_& m) {
                py::array_t<double, py::array::c_style | py::array::forcecast> u,
                const scar::OuNumericalConfig& config) {
                 int status = 0;
-                const scar::ObservationView obs =
-                    observation_view_from_array(copula, u);
-                std::vector<double> values = evaluator.predictive_mean_matrix(
-                    params, copula, obs, config, status);
+                std::vector<double> values =
+                    with_observation_view_without_gil(
+                        copula, u, [&](scar::ObservationView obs) {
+                            return evaluator.predictive_mean_matrix(
+                                params, copula, obs, config, status);
+                        });
                 return vector_result_to_dict(
                     values, status, static_cast<int>(scar::OuBackend::Matrix));
             })
@@ -366,10 +488,12 @@ void bind_scar_ou(py::module_& m) {
                const scar::OuNumericalConfig& config) {
                 int status = 0;
                 scar::OuBackend backend = scar::OuBackend::Matrix;
-                const scar::ObservationView obs =
-                    observation_view_from_array(copula, u);
-                std::vector<double> values = evaluator.predictive_mean_auto(
-                    params, copula, obs, config, backend, status);
+                std::vector<double> values =
+                    with_observation_view_without_gil(
+                        copula, u, [&](scar::ObservationView obs) {
+                            return evaluator.predictive_mean_auto(
+                                params, copula, obs, config, backend, status);
+                        });
                 return vector_result_to_dict(
                     values, status, static_cast<int>(backend));
             })
@@ -381,10 +505,12 @@ void bind_scar_ou(py::module_& m) {
                py::array_t<double, py::array::c_style | py::array::forcecast> u,
                const scar::OuNumericalConfig& config) {
                 int status = 0;
-                const scar::ObservationView obs =
-                    observation_view_from_array(copula, u);
-                std::vector<double> values = evaluator.mixture_h_local_gh(
-                    params, copula, obs, config, status);
+                std::vector<double> values =
+                    with_observation_view_without_gil(
+                        copula, u, [&](scar::ObservationView obs) {
+                            return evaluator.mixture_h_local_gh(
+                                params, copula, obs, config, status);
+                        });
                 return vector_result_to_dict(
                     values, status, static_cast<int>(scar::OuBackend::LocalGh));
             })
@@ -396,10 +522,12 @@ void bind_scar_ou(py::module_& m) {
                py::array_t<double, py::array::c_style | py::array::forcecast> u,
                const scar::OuNumericalConfig& config) {
                 int status = 0;
-                const scar::ObservationView obs =
-                    observation_view_from_array(copula, u);
-                std::vector<double> values = evaluator.mixture_h_matrix(
-                    params, copula, obs, config, status);
+                std::vector<double> values =
+                    with_observation_view_without_gil(
+                        copula, u, [&](scar::ObservationView obs) {
+                            return evaluator.mixture_h_matrix(
+                                params, copula, obs, config, status);
+                        });
                 return vector_result_to_dict(
                     values, status, static_cast<int>(scar::OuBackend::Matrix));
             })
@@ -412,10 +540,12 @@ void bind_scar_ou(py::module_& m) {
                const scar::OuNumericalConfig& config) {
                 int status = 0;
                 scar::OuBackend backend = scar::OuBackend::Matrix;
-                const scar::ObservationView obs =
-                    observation_view_from_array(copula, u);
-                std::vector<double> values = evaluator.mixture_h_auto(
-                    params, copula, obs, config, backend, status);
+                std::vector<double> values =
+                    with_observation_view_without_gil(
+                        copula, u, [&](scar::ObservationView obs) {
+                            return evaluator.mixture_h_auto(
+                                params, copula, obs, config, backend, status);
+                        });
                 return vector_result_to_dict(
                     values, status, static_cast<int>(backend));
             })
@@ -427,10 +557,12 @@ void bind_scar_ou(py::module_& m) {
                py::array_t<double, py::array::c_style | py::array::forcecast> u,
                const scar::OuNumericalConfig& config) {
                 int status = 0;
-                const scar::ObservationView obs =
-                    observation_view_from_array(copula, u);
-                std::vector<double> values = evaluator.mixture_h_pair_local_gh(
-                    params, copula, obs, config, status);
+                std::vector<double> values =
+                    with_observation_view_without_gil(
+                        copula, u, [&](scar::ObservationView obs) {
+                            return evaluator.mixture_h_pair_local_gh(
+                                params, copula, obs, config, status);
+                        });
                 return vector_result_to_dict(
                     values, status, static_cast<int>(scar::OuBackend::LocalGh));
             })
@@ -442,10 +574,12 @@ void bind_scar_ou(py::module_& m) {
                py::array_t<double, py::array::c_style | py::array::forcecast> u,
                const scar::OuNumericalConfig& config) {
                 int status = 0;
-                const scar::ObservationView obs =
-                    observation_view_from_array(copula, u);
-                std::vector<double> values = evaluator.mixture_h_pair_matrix(
-                    params, copula, obs, config, status);
+                std::vector<double> values =
+                    with_observation_view_without_gil(
+                        copula, u, [&](scar::ObservationView obs) {
+                            return evaluator.mixture_h_pair_matrix(
+                                params, copula, obs, config, status);
+                        });
                 return vector_result_to_dict(
                     values, status, static_cast<int>(scar::OuBackend::Matrix));
             })
@@ -458,10 +592,12 @@ void bind_scar_ou(py::module_& m) {
                const scar::OuNumericalConfig& config) {
                 int status = 0;
                 scar::OuBackend backend = scar::OuBackend::Matrix;
-                const scar::ObservationView obs =
-                    observation_view_from_array(copula, u);
-                std::vector<double> values = evaluator.mixture_h_pair_auto(
-                    params, copula, obs, config, backend, status);
+                std::vector<double> values =
+                    with_observation_view_without_gil(
+                        copula, u, [&](scar::ObservationView obs) {
+                            return evaluator.mixture_h_pair_auto(
+                                params, copula, obs, config, backend, status);
+                        });
                 return vector_result_to_dict(
                     values, status, static_cast<int>(backend));
             })
@@ -473,10 +609,13 @@ void bind_scar_ou(py::module_& m) {
                py::array_t<double, py::array::c_style | py::array::forcecast> u,
                const scar::OuNumericalConfig& config,
                bool horizon_next) {
-                return state_distribution_to_dict(
-                    evaluator.state_distribution_local_gh(
-                        params, copula, observation_view_from_array(copula, u),
-                        config, horizon_next));
+                const scar::StateDistribution result =
+                    with_observation_view_without_gil(
+                        copula, u, [&](scar::ObservationView obs) {
+                            return evaluator.state_distribution_local_gh(
+                                params, copula, obs, config, horizon_next);
+                        });
+                return state_distribution_to_dict(result);
             })
         .def(
             "state_distribution_matrix",
@@ -486,10 +625,13 @@ void bind_scar_ou(py::module_& m) {
                py::array_t<double, py::array::c_style | py::array::forcecast> u,
                const scar::OuNumericalConfig& config,
                bool horizon_next) {
-                return state_distribution_to_dict(
-                    evaluator.state_distribution_matrix(
-                        params, copula, observation_view_from_array(copula, u),
-                        config, horizon_next));
+                const scar::StateDistribution result =
+                    with_observation_view_without_gil(
+                        copula, u, [&](scar::ObservationView obs) {
+                            return evaluator.state_distribution_matrix(
+                                params, copula, obs, config, horizon_next);
+                        });
+                return state_distribution_to_dict(result);
             })
         .def(
             "state_distribution_auto",
@@ -499,10 +641,13 @@ void bind_scar_ou(py::module_& m) {
                py::array_t<double, py::array::c_style | py::array::forcecast> u,
                const scar::OuNumericalConfig& config,
                bool horizon_next) {
-                return state_distribution_to_dict(
-                    evaluator.state_distribution_auto(
-                        params, copula, observation_view_from_array(copula, u),
-                        config, horizon_next));
+                const scar::StateDistribution result =
+                    with_observation_view_without_gil(
+                        copula, u, [&](scar::ObservationView obs) {
+                            return evaluator.state_distribution_auto(
+                                params, copula, obs, config, horizon_next);
+                        });
+                return state_distribution_to_dict(result);
             });
 }
 

@@ -10,7 +10,7 @@ Usage examples and conceptual details live in the user guide:
 
 ## Public Options
 
-`CVineCopula.predict(...)` and `RVineCopula.predict(...)` both support:
+`CVineCopula.predict(...)` and `VineCopula.predict(...)` both support:
 
 - `given={var_index: u_value}` for conditional generation in
   pseudo-observation space;
@@ -19,7 +19,7 @@ Usage examples and conceptual details live in the user guide:
   parameter sampling. No other string values are supported;
 - `rng=np.random.default_rng(seed)` for reproducible Monte Carlo output.
 
-`RVineCopula.predict(...)` additionally supports:
+`VineCopula.predict(...)` additionally supports:
 
 - `predict_config=PredictConfig(...)`;
 - `dynamic_conditioning='ignore'|'given_only'`;
@@ -27,7 +27,7 @@ Usage examples and conceptual details live in the user guide:
   approximate conditional prediction;
 - `return_diagnostics=True`.
 
-`RVineCopula.fit(...)` additionally supports fit-time conditional-structure
+`VineCopula.fit(...)` additionally supports fit-time conditional-structure
 targeting:
 
 - `given_vars=[...]`;
@@ -48,7 +48,83 @@ used for automatic selection. Pass `copulas=[[(CopulaClass, rotation), ...],
 Use `vine.to_rvine_matrix()` or `RVineMatrix.from_model(vine)` when you need
 the fitted R-vine structure as an `RVineMatrix`.
 
+For new code, construct all generic modes through one class:
+
+```python
+from pyscarcopula import VineCopula
+from pyscarcopula.vine import RVineMatrix
+
+auto = VineCopula()
+c_vine = VineCopula.cvine(d=5, order=[0, 1, 2, 3, 4])
+d_vine = VineCopula.dvine(d=5, order=[0, 1, 2, 3, 4])
+arbitrary = VineCopula(
+    structure=RVineMatrix.from_trees(d=5, trees=trees)
+)
+```
+
+`model.structure` is the canonical public structure.
+`model.natural_order_matrix` exposes the numerical matrix convention;
+`model.matrix` is retained as a compatibility property.
+
+### Matrix layout and pyvinecopulib
+
+`pyscarcopula` and `pyvinecopulib` can encode the same valid R-vine with
+matrices that look different. In particular:
+
+- `model.structure.matrix` is the canonical zero-based, lower-triangular
+  `RVineMatrix`;
+- `model.natural_order_matrix` (and the compatibility property
+  `model.matrix`) is the zero-based, upper-left anti-triangular runtime
+  layout. Within each column, entries above the anti-diagonal run from the
+  highest tree down to tree 0;
+- the raw matrix accepted by `pyvinecopulib.RVineStructure.from_matrix()` is
+  one-based and stores tree 0 first within each column.
+
+Therefore, merely adding one to `model.matrix` is not a valid conversion. For
+column `c`, let `length = d - c`: reverse the first `length - 1` entries and
+add one, then copy the anti-diagonal entry at `length - 1` with one added.
+Zero padding remains zero.
+
+```python
+import numpy as np
+import pyvinecopulib as pv
+
+source = model.natural_order_matrix
+target = np.zeros_like(source, dtype=np.uint64)
+for column in range(model.d):
+    length = model.d - column
+    target[:length - 1, column] = (
+        source[:length - 1, column][::-1] + 1
+    )
+    target[length - 1, column] = source[length - 1, column] + 1
+
+pyvine_structure = pv.RVineStructure.from_matrix(target)
+```
+
+This is a representation conversion only; it does not change the underlying
+tree edge sets or the proximity condition.
+
+## VineCopula
+
+::: pyscarcopula.vine.vine.VineCopula
+    options:
+      members:
+        - cvine
+        - dvine
+        - rvine
+        - fit
+        - log_likelihood
+        - sample
+        - predict
+        - summary
+        - to_rvine_matrix
+
 ## CVineCopula
+
+`CVineCopula` is the supported legacy implementation. Prefer
+`VineCopula.cvine(...)` for new code. It does not currently emit a runtime
+deprecation warning; its C-vine-specific conditional algorithms intentionally
+differ from the generic matrix-based conditional runtime.
 
 ::: pyscarcopula.vine.cvine.CVineCopula
     options:
@@ -59,16 +135,13 @@ the fitted R-vine structure as an `RVineMatrix`.
         - predict
         - summary
 
-## RVineCopula
+## RVineCopula compatibility name
 
-::: pyscarcopula.vine.rvine.RVineCopula
-    options:
-      members:
-        - fit
-        - log_likelihood
-        - sample
-        - predict
-        - summary
+`RVineCopula is VineCopula`. The old import remains supported, but it does not
+define a second runtime or a distinct R-vine model type.
+
+Its methods and signatures are therefore the same as the canonical
+[`VineCopula`](#vinecopula) API above.
 
 ## PredictConfig
 

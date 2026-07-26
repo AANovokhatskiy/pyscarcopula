@@ -77,9 +77,19 @@ def test_rotated_h_uses_explicit_rotation_identity(
 
     h_uv, h_vu = rotated.h_pair(u, v, np.full(len(u), param))
     np.testing.assert_allclose(h_uv, actual, rtol=0.0, atol=0.0)
+    transposed_rotation = {
+        0: 0,
+        90: 270,
+        180: 180,
+        270: 90,
+    }[rotation]
     np.testing.assert_allclose(
         h_vu,
-        rotated.h(v, u, np.full(len(u), param)),
+        factory(rotate=transposed_rotation).h(
+            v,
+            u,
+            np.full(len(u), param),
+        ),
         rtol=0.0,
         atol=0.0,
     )
@@ -175,7 +185,13 @@ def test_direct_family_operations_use_shared_native_adapter(factory, param):
     assert copula.h(u, v, r).shape == (3,)
     h_uv, h_vu = copula.h_pair(u, v, r)
     np.testing.assert_allclose(h_uv, copula.h(u, v, r))
-    np.testing.assert_allclose(h_vu, copula.h(v, u, r))
+    rotation = int(getattr(copula, "rotate", 0))
+    transposed = (
+        type(copula)(rotate=360 - rotation)
+        if rotation in (90, 270)
+        else copula
+    )
+    np.testing.assert_allclose(h_vu, transposed.h(v, u, r))
     np.testing.assert_allclose(copula.h_inverse(h_uv, v, r), u, atol=2e-8)
 
     grid = copula.copula_grid_batch(observations, x)

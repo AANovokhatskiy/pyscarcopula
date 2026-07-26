@@ -29,7 +29,9 @@ def test_bivariate_save_load_roundtrip(tmp_path, random_u2):
 
     envelope = json.loads(path.read_text(encoding="utf-8"))
     assert envelope["format"] == "pyscarcopula-model"
-    assert envelope["format_version"] == 2
+    assert set(envelope) == {
+        "class", "format", "include_data", "state",
+    }
     assert envelope["class"] == "pyscarcopula.copula.gumbel.GumbelCopula"
 
     assert isinstance(loaded, GumbelCopula)

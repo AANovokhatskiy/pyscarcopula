@@ -183,6 +183,14 @@ def test_cpp_gas_wrapper_rejects_invalid_filter_observations(u):
         _cpp_gas.filter(*PARAMS, u, GumbelCopula())
 
 
+def test_cpp_gas_wrapper_rejects_complex_observations_without_coercion():
+    observations = np.array([[0.2 + 1.0j, 0.4]], dtype=np.complex128)
+
+    with pytest.raises(TypeError, match="real values, not complex"):
+        _cpp_gas.log_likelihood(
+            *PARAMS, observations, GumbelCopula())
+
+
 def test_cpp_gas_wrapper_update_requires_exactly_one_pair():
     with pytest.raises(ValueError, match="exactly one"):
         _cpp_gas.update_one(

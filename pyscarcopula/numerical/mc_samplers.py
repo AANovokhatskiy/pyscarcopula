@@ -19,9 +19,10 @@ from pyscarcopula.numerical.ou_kernels import (
 from pyscarcopula._utils import linear_least_squares
 
 
-def _copula_log_pdf_trajectory_grid(u, xt, copula):
+def _copula_log_pdf_trajectory_grid(u, xt, copula, *, n_threads=1):
     if mc_native.supported(copula):
-        return mc_native.log_pdf_trajectory_grid(copula, u, xt)
+        return mc_native.log_pdf_trajectory_grid(
+            copula, u, xt, n_threads=n_threads)
 
     u = np.asarray(u, dtype=np.float64)
     xt = np.asarray(xt, dtype=np.float64)
@@ -41,7 +42,8 @@ def _copula_log_pdf_trajectory_grid(u, xt, copula):
 # P-sampler (SCAR-P-OU) — no importance sampling
 # ══════════════════════════════════════════════════════════════════
 
-def p_sampler_loglik(kappa, mu, nu, u, dwt, copula, stationary):
+def p_sampler_loglik(
+        kappa, mu, nu, u, dwt, copula, stationary, *, n_threads=1):
     """
     P-sampler log-likelihood (exact OU discretization).
 
@@ -59,7 +61,8 @@ def p_sampler_loglik(kappa, mu, nu, u, dwt, copula, stationary):
     if np.isnan(np.sum(xt)):
         return 1e10
 
-    copula_grid = _copula_log_pdf_trajectory_grid(u, xt, copula)
+    copula_grid = _copula_log_pdf_trajectory_grid(
+        u, xt, copula, n_threads=n_threads)
     copula_log = np.zeros(n_tr)
     for t in range(T):
         copula_log += copula_grid[t]
@@ -71,7 +74,9 @@ def p_sampler_loglik(kappa, mu, nu, u, dwt, copula, stationary):
 # M-sampler (SCAR-M-OU) — with EIS
 # ══════════════════════════════════════════════════════════════════
 
-def m_sampler_loglik(kappa, mu, nu, u, dwt, a1t, a2t, copula, stationary):
+def m_sampler_loglik(
+        kappa, mu, nu, u, dwt, a1t, a2t, copula, stationary, *,
+        n_threads=1):
     """
     M-sampler log-likelihood with EIS auxiliary params.
 
@@ -100,7 +105,8 @@ def m_sampler_loglik(kappa, mu, nu, u, dwt, a1t, a2t, copula, stationary):
         return 1e10
 
     # Copula log-likelihood with IS correction
-    copula_grid = _copula_log_pdf_trajectory_grid(u, xt, copula)
+    copula_grid = _copula_log_pdf_trajectory_grid(
+        u, xt, copula, n_threads=n_threads)
     log_lik = np.zeros(n_tr)
     for t in range(T):
         # Clip xt to avoid overflow in x^2
@@ -118,7 +124,8 @@ def m_sampler_loglik(kappa, mu, nu, u, dwt, a1t, a2t, copula, stationary):
 # EIS auxiliary parameters
 # ══════════════════════════════════════════════════════════════════
 
-def eis_find_auxiliary(alpha, u, M_iterations, dwt, copula, stationary):
+def eis_find_auxiliary(
+        alpha, u, M_iterations, dwt, copula, stationary, *, n_threads=1):
     """Find EIS auxiliary params a1t, a2t via backward regression.
 
     Parameters
@@ -184,7 +191,8 @@ def eis_find_auxiliary(alpha, u, M_iterations, dwt, copula, stationary):
 
         a_data = np.zeros((T, 3))
         a_data[-1] = np.array([0.0, np.mean(a1t), min(np.mean(a2t), 0.0)])
-        copula_grid = _copula_log_pdf_trajectory_grid(u, xt, copula)
+        copula_grid = _copula_log_pdf_trajectory_grid(
+            u, xt, copula, n_threads=n_threads)
 
         for i in range(T - 1, 0, -1):
             norm_log_vals = log_norm_ou(
@@ -239,7 +247,8 @@ def eis_find_auxiliary(alpha, u, M_iterations, dwt, copula, stationary):
         # Track best EIS parameters by evaluating current loglik
         try:
             ll_val = -m_sampler_loglik(
-                kappa, mu, nu, u, dwt, a1t, a2t, copula, stationary)
+                kappa, mu, nu, u, dwt, a1t, a2t, copula, stationary,
+                n_threads=n_threads)
             if ll_val > best_loglik:
                 best_loglik = ll_val
                 best_a1t = a1t.copy()

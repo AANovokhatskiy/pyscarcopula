@@ -26,10 +26,6 @@ All dynamic methods return a `LatentResult` with `params`,
 strategy implements a path simulator; SCAR-TM-JACOBI supports prediction but
 not `sample`.
 
-The historical Monte Carlo SCAR strategies, `'scar-p-ou'` and `'scar-m-ou'`,
-remain available for reproducing earlier experiments. For routine dynamic
-fits, prefer deterministic TM or GAS methods.
-
 ## Gradient capability matrix
 
 The model score used inside a recursion and the optimizer gradient are
@@ -163,7 +159,21 @@ result = fit(
 )
 ```
 
-The fitted parameters are `kappa`, `mu`, and `nu`.
+The fitted parameters are `kappa`, `mu`, and `nu`. For
+`StochasticStudentCopula`, these remain the public input and result
+coordinates, but L-BFGS-B works internally with
+
+$$
+(\log\kappa,\ \mu,\ \log\sigma_x),
+\qquad \sigma_x=\frac{\nu}{\sqrt{2\kappa}}.
+$$
+
+The analytical gradient is transformed by the corresponding chain rule.
+This model-specific parameterization improves conditioning when mean
+reversion and stationary latent scale differ substantially; other SCAR-TM-OU
+copulas continue to use their existing optimizer coordinates. Diagnostics
+record the choice in `optimizer_parameterization`. User-supplied `alpha0`
+must still be `[kappa, mu, nu]`.
 
 The exact OU one-step transition is Gaussian, so all SCAR-TM-OU likelihood
 backends evaluate the same latent Markov model. They differ only in how the

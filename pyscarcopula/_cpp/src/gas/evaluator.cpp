@@ -100,8 +100,23 @@ int validate_inputs(
     if (u.dim != expected_dim || u.n_obs == 0) {
         return SCAR_INVALID_SIZE;
     }
-    if (u.values == nullptr) {
+    const bool prepared_equicorr =
+        copula.family == CopulaFamily::EquicorrGaussian
+        && copula.equicorr_sum_cache.size() == u.n_obs
+        && copula.equicorr_sum_squares_cache.size() == u.n_obs;
+    if (u.values == nullptr && !prepared_equicorr) {
         return SCAR_NULL_POINTER;
+    }
+    if (prepared_equicorr) {
+        for (std::size_t row = 0; row < u.n_obs; ++row) {
+            if (!std::isfinite(copula.equicorr_sum_cache[row])
+                || !std::isfinite(
+                    copula.equicorr_sum_squares_cache[row])
+                || copula.equicorr_sum_squares_cache[row] < 0.0) {
+                return SCAR_INVALID_PARAMETER;
+            }
+        }
+        return SCAR_OK;
     }
     std::size_t value_count = 0;
     if (!scar_internal::checked_size_mul(
@@ -188,11 +203,24 @@ RowEvaluation evaluate_row(
     }
 
     scar_internal::EquicorrStats equicorr_stats;
-    if (copula.family == CopulaFamily::EquicorrGaussian
-        && !scar_internal::equicorr_sufficient_statistics(
-            copula, row, equicorr_stats)) {
-        out.status = SCAR_NUMERICAL_FAILURE;
-        return out;
+    if (copula.family == CopulaFamily::EquicorrGaussian) {
+        const std::size_t index =
+            static_cast<std::size_t>(row_index);
+        const bool cache_available =
+            row_index >= 0
+            && copula.equicorr_sum_cache.size()
+                == copula.equicorr_sum_squares_cache.size()
+            && index < copula.equicorr_sum_cache.size();
+        if (cache_available) {
+            equicorr_stats.sum =
+                copula.equicorr_sum_cache[index];
+            equicorr_stats.sum_squares =
+                copula.equicorr_sum_squares_cache[index];
+        } else if (!scar_internal::equicorr_sufficient_statistics(
+                       copula, row, equicorr_stats)) {
+            out.status = SCAR_NUMERICAL_FAILURE;
+            return out;
+        }
     }
     double dlog_dr = std::numeric_limits<double>::quiet_NaN();
     if (copula.family == CopulaFamily::Student) {
@@ -315,13 +343,14 @@ GasLogLikResult run_log_likelihood(
     }
     scar_internal::StudentWorkspace student_workspace;
     if (copula.family == CopulaFamily::Student) {
-        student_workspace.x.reserve(static_cast<std::size_t>(copula.dim));
-        student_workspace.dx_ddf.reserve(
+        student_workspace.reserve_x(static_cast<std::size_t>(copula.dim));
+        student_workspace.reserve_dx_ddf(
             static_cast<std::size_t>(copula.dim));
     }
     for (std::size_t t = 0; t < u.n_obs; ++t) {
-        const double* row =
-            u.values + static_cast<std::size_t>(u.dim) * t;
+        const double* row = u.values == nullptr
+            ? nullptr
+            : u.values + static_cast<std::size_t>(u.dim) * t;
         const bool need_score = t + 1 < u.n_obs;
         const RowEvaluation evaluation = evaluate_row(
             copula,
@@ -404,14 +433,15 @@ GasFilterResult GasEvaluator::filter(
     }
     scar_internal::StudentWorkspace student_workspace;
     if (copula.family == CopulaFamily::Student) {
-        student_workspace.x.reserve(static_cast<std::size_t>(copula.dim));
-        student_workspace.dx_ddf.reserve(
+        student_workspace.reserve_x(static_cast<std::size_t>(copula.dim));
+        student_workspace.reserve_dx_ddf(
             static_cast<std::size_t>(copula.dim));
     }
     for (std::size_t t = 0; t < u.n_obs; ++t) {
         out.g_path[t] = g;
-        const double* row =
-            u.values + static_cast<std::size_t>(u.dim) * t;
+        const double* row = u.values == nullptr
+            ? nullptr
+            : u.values + static_cast<std::size_t>(u.dim) * t;
         const bool need_score = t + 1 < u.n_obs;
         const RowEvaluation evaluation = evaluate_row(
             copula,
@@ -557,8 +587,10 @@ GasPredictResult GasEvaluator::predict_parameter(
         return out;
     }
 
-    const double* row = u.values
-        + static_cast<std::size_t>(u.dim) * (u.n_obs - 1);
+    const double* row = u.values == nullptr
+        ? nullptr
+        : u.values
+            + static_cast<std::size_t>(u.dim) * (u.n_obs - 1);
     scar_internal::StudentWorkspace student_workspace;
     const RowEvaluation evaluation = evaluate_row(
         copula,

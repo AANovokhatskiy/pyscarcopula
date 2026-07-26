@@ -1,0 +1,350 @@
+name: Parallel release gates
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  platform:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-gcc-py310
+            os: ubuntu-latest
+            python: "3.10"
+            cc: gcc
+            cxx: g++
+          - name: linux-gcc-py314
+            os: ubuntu-latest
+            python: "3.14"
+            cc: gcc
+            cxx: g++
+          - name: linux-clang-py312
+            os: ubuntu-latest
+            python: "3.12"
+            cc: clang
+            cxx: clang++
+          - name: windows-msvc-py312
+            os: windows-latest
+            python: "3.12"
+            cc: ""
+            cxx: ""
+          - name: macos-arm64-clang-py312
+            os: macos-14
+            python: "3.12"
+            cc: clang
+            cxx: clang++
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install build and test dependencies
+        run: >-
+          python -m pip install --upgrade pip build wheel
+          ".[test]"
+
+      - name: Build strict wheel
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+          PYSCA_CPP_STRICT: "1"
+        run: >-
+          python -m pip wheel . --no-deps --no-build-isolation
+          --wheel-dir wheelhouse
+
+      - name: Install built wheel
+        shell: bash
+        run: |
+          python -m pip uninstall -y pyscarcopula
+          python -m pip install --force-reinstall wheelhouse/*.whl
+
+      - name: Smoke-test wheel outside source tree
+        working-directory: ${{ runner.temp }}
+        run: python -m pyscarcopula._native_smoke
+
+      - name: Audit binary dependencies
+        working-directory: ${{ runner.temp }}
+        run: >-
+          python "${{ github.workspace }}/tools/native_dependency_audit.py"
+          --output
+          "${{ github.workspace }}/build/release/${{ matrix.name }}-dependencies.json"
+
+      - name: Run full non-benchmark suite against wheel
+        working-directory: ${{ runner.temp }}
+        run: >-
+          python -m pytest "${{ github.workspace }}/tests"
+          --import-mode=importlib -m "not benchmark"
+
+      - name: Write platform metadata
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+        run: >-
+          python tools/write_release_metadata.py
+          --configuration "${{ matrix.name }}"
+          --wheel-dir wheelhouse
+          --output "build/release/${{ matrix.name }}.json"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: parallel-gate-${{ matrix.name }}
+          path: |
+            build/release/*.json
+            wheelhouse/*.whl
+
+  asan-ubsan:
+    name: Linux Clang ASan and UBSan
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install sanitizer build
+        env:
+          CC: clang
+          CXX: clang++
+          PYSCA_CPP_SANITIZE: "1"
+          PYSCA_CPP_STRICT: "1"
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[test]"
+      - name: Run native parallel sanitizer suite
+        env:
+          ASAN_OPTIONS: >-
+            detect_leaks=0:halt_on_error=1:abort_on_error=1:
+            strict_string_checks=1:symbolize=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+          PYTHONFAULTHANDLER: "1"
+        run: |
+          asan_path="$(clang++ -print-file-name=libclang_rt.asan-x86_64.so)"
+          export LD_PRELOAD="${asan_path}"
+          python -m pytest -vv -s --tb=long \
+            tests/test_parallel_runtime.py \
+            tests/test_multivariate_parallelization_baselines.py \
+            tests/test_static_parallelization.py \
+            tests/test_sampling_parallelization.py \
+            tests/test_external_parallel_fit.py \
+            tests/test_equicorr_prepared.py \
+            tests/test_linalg_backend.py \
+            -m "not benchmark and not sanitizer_numerical"
+      - name: Write sanitizer metadata
+        env:
+          CC: clang
+          CXX: clang++
+        run: >-
+          python tools/write_release_metadata.py
+          --configuration linux-clang-asan-ubsan
+          --output build/release/linux-clang-asan-ubsan.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: parallel-gate-asan-ubsan
+          path: build/release/*.json
+
+  tsan:
+    name: Linux GCC ThreadSanitizer
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install ThreadSanitizer build
+        env:
+          CC: gcc
+          CXX: g++
+          PYSCA_CPP_THREAD_SANITIZE: "1"
+          PYSCA_CPP_STRICT: "1"
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[test]"
+      - name: Run parallel race suite
+        env:
+          TSAN_OPTIONS: >-
+            halt_on_error=1:abort_on_error=1:
+            second_deadlock_stack=1:history_size=7
+          PYTHONFAULTHANDLER: "1"
+        run: |
+          tsan_path="$(g++ -print-file-name=libtsan.so)"
+          export LD_PRELOAD="${tsan_path}"
+          python -m pytest -vv -s --tb=long \
+            tests/test_parallel_runtime.py \
+            tests/test_multivariate_parallelization_baselines.py \
+            tests/test_static_parallelization.py \
+            tests/test_sampling_parallelization.py \
+            tests/test_external_parallel_fit.py \
+            tests/test_equicorr_prepared.py \
+            -m "not benchmark and not sanitizer_numerical"
+      - name: Write sanitizer metadata
+        env:
+          CC: gcc
+          CXX: g++
+        run: >-
+          python tools/write_release_metadata.py
+          --configuration linux-gcc-tsan
+          --output build/release/linux-gcc-tsan.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: parallel-gate-tsan
+          path: build/release/*.json
+
+  unix-lifecycle-memory:
+    name: Unix lifecycle and memory stress
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -e ".[test]"
+      - name: Build CI-only allocation probe
+        run: |
+          mkdir -p build/release
+          cc -shared -fPIC -O2 tools/allocation_probe.c \
+            -o build/libpysca_alloc_probe.so
+      - name: Run lifecycle, allocator and RSS gates
+        env:
+          PYSCA_RELEASE_STRESS_CYCLES: "100"
+          PYSCA_ALLOCATION_PROBE: ${{ github.workspace }}/build/libpysca_alloc_probe.so
+          PYSCA_RELEASE_METRICS_OUTPUT: ${{ github.workspace }}/build/release/linux-lifecycle-memory-metrics.json
+          LD_PRELOAD: ${{ github.workspace }}/build/libpysca_alloc_probe.so
+        run: |
+          python -m pytest -vv -s --tb=long --run-validation \
+            tests/test_parallel_release_gates.py \
+            tests/test_parallel_runtime.py
+      - name: Write lifecycle metadata
+        run: >-
+          python tools/write_release_metadata.py
+          --configuration linux-lifecycle-memory
+          --output build/release/linux-lifecycle-memory.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: parallel-gate-lifecycle-memory
+          path: build/release/*.json
+
+  subinterpreters:
+    name: Embedded subinterpreter rejection
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -e ".[test]"
+      - env:
+          PYSCA_RELEASE_METRICS_OUTPUT: ${{ github.workspace }}/build/release/subinterpreter-metrics.json
+        run: >-
+          python -m pytest -vv --run-validation
+          tests/test_parallel_release_gates.py::test_subinterpreter_contract_is_immediate_rejection
+      - name: Write subinterpreter metadata
+        run: >-
+          python tools/write_release_metadata.py
+          --configuration subinterpreter-rejection
+          --output build/release/subinterpreter-rejection.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: parallel-gate-subinterpreters
+          path: build/release/*.json
+
+  phase8-scaling:
+    name: Phase 8 Equicorr scaling
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -e ".[test]"
+      - name: Enforce Phase 8 CPU scaling target
+        env:
+          PYSCA_RUN_BENCHMARKS: "1"
+          PYSCA_RUN_LARGE_BENCHMARKS: "1"
+          PYSCA_ENFORCE_PERFORMANCE_GATES: "1"
+          PYSCA_PHASE8_BENCHMARK_OUTPUT: ${{ github.workspace }}/build/release/phase8-scaling-metrics.json
+        run: >-
+          python -m pytest -vv -s
+          tests/test_equicorr_prepared_performance.py
+          -m benchmark
+      - name: Write Phase 8 scaling metadata
+        run: >-
+          python tools/write_release_metadata.py
+          --configuration linux-phase8-equicorr-scaling
+          --output build/release/linux-phase8-equicorr-scaling.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: parallel-gate-phase8-scaling
+          path: build/release/*.json
+
+  report:
+    name: Aggregate validation report
+    if: always()
+    needs:
+      - platform
+      - asan-ubsan
+      - tsan
+      - unix-lifecycle-memory
+      - subinterpreters
+      - phase8-scaling
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: parallel-gate-*
+          path: build/release-artifacts
+      - name: Reject incomplete gate matrix
+        env:
+          PLATFORM_RESULT: ${{ needs.platform.result }}
+          ASAN_RESULT: ${{ needs['asan-ubsan'].result }}
+          TSAN_RESULT: ${{ needs.tsan.result }}
+          LIFECYCLE_RESULT: ${{ needs['unix-lifecycle-memory'].result }}
+          SUBINTERPRETER_RESULT: ${{ needs.subinterpreters.result }}
+          PHASE8_SCALING_RESULT: ${{ needs['phase8-scaling'].result }}
+        run: |
+          python - <<'PY'
+          import os
+          results = {
+              name: os.environ[name]
+              for name in (
+                  "PLATFORM_RESULT",
+                  "ASAN_RESULT",
+                  "TSAN_RESULT",
+                  "LIFECYCLE_RESULT",
+                  "SUBINTERPRETER_RESULT",
+                  "PHASE8_SCALING_RESULT",
+              )
+          }
+          print(results)
+          if set(results.values()) != {"success"}:
+              raise SystemExit("release-gate matrix is incomplete or failed")
+          PY
+      - name: Aggregate reports
+        run: >-
+          python tools/aggregate_release_validation.py
+          --artifacts build/release-artifacts
+          --json-output build/release-validation.json
+          --markdown-output build/release-validation.md
+      - uses: actions/upload-artifact@v7
+        with:
+          name: parallel-release-validation
+          path: |
+            build/release-validation.json
+            build/release-validation.md

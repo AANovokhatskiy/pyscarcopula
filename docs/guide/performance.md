@@ -8,6 +8,9 @@ For the statistical meaning of each method, see
 [Estimation Methods](estimation-methods.md). This page focuses on runtime,
 optimizer, and numerical-stability controls.
 
+For the complete native-thread, process-worker, determinism, thread-safety,
+and dimensional-scaling contract, see [CPU Parallelism](parallelism.md).
+
 ## Bivariate Models
 
 All bivariate fits go through the strategy registry:
@@ -76,10 +79,10 @@ $g_t = \omega + \beta g_{t-1} + \gamma\,score_{t-1}$.
 |-----------|-------|---------|--------|
 | `gamma0` | fit kwarg | MLE-based | Initial $[\omega, \gamma, \beta]$. |
 | `gtol` | fit kwarg / `gas_optimizer.gtol` | `1e-3` | L-BFGS-B projected-gradient tolerance. |
-| `ftol` | fit kwarg / `gas_optimizer.ftol` | `1e-12` | Relative objective decrease tolerance. Use a tight value to avoid premature FACTR convergence. |
-| `maxfun` | fit kwarg / `gas_optimizer.maxfun` | `1000` | Maximum function evaluations. |
+| `ftol` | fit kwarg / `gas_optimizer.ftol` | `1e-9` | Relative objective decrease tolerance. |
+| `maxfun` | fit kwarg / `gas_optimizer.maxfun` | `4000` | Maximum function evaluations. |
 | `maxiter` | fit kwarg / `gas_optimizer.maxiter` | `1000` | Maximum optimizer iterations. |
-| `maxls` | fit kwarg / `gas_optimizer.maxls` | `20` | Maximum L-BFGS-B line-search steps per iteration. |
+| `maxls` | fit kwarg / `gas_optimizer.maxls` | `100` | Maximum L-BFGS-B line-search steps per iteration. |
 | `eps` | fit kwarg / `gas_optimizer.eps` | `1e-5` | L-BFGS-B finite-difference step. |
 | `score_eps` | fit kwarg / `gas_score_eps` | `1e-4` | Finite-difference step for score calculations where needed. |
 | `gamma_bound` | fit kwarg / `gas_gamma_bound` | `20.0` | Bounds score sensitivity to $[-\texttt{gamma\_bound}, \texttt{gamma\_bound}]$. |
@@ -118,6 +121,11 @@ Together with the Fisher floor and score clipping, this can produce a
 piecewise, step-sensitive objective. Prefer `scaling='unit'` unless Fisher
 behavior is specifically under study.
 
+GAS `sample` and `predict` require a positive integer draw count. Both accept
+`memory_budget_bytes=` as a pre-allocation guard; `sample` accounts for its
+output and `predict` accounts for its output plus the predictive parameter
+path. The causal GAS sample recursion is not split into batches.
+
 ### SCAR-TM-OU
 
 SCAR-TM-OU uses a deterministic transfer-matrix likelihood for an OU latent
@@ -143,6 +151,14 @@ and predictive paths are needed.
 | `spectral_quad_order` | strategy kwarg | auto | Gauss-Hermite quadrature order for spectral multiplication. |
 | `analytical_grad` | strategy kwarg | `True` | Uses analytical gradient and parameter rescaling. Usually much faster. |
 | `smart_init` | strategy kwarg | `True` | Uses a heuristic initial point before falling back to MLE-based init. |
+
+For `StochasticStudentCopula`, `alpha0` is still supplied as
+`[kappa, mu, nu]`, but the optimizer internally uses
+`[log(kappa), mu, log(sigma_x)]`, where
+`sigma_x = nu / sqrt(2 * kappa)`. The result is converted back to
+`[kappa, mu, nu]`. This is a model-specific conditioning measure; it is not a
+global change to bivariate SCAR-TM-OU optimization. Inspect
+`result.diagnostics['optimizer_parameterization']` when auditing fits.
 
 ```python
 result = fit(
@@ -202,19 +218,27 @@ chosen numerical options.
 #### Student PPF table memory cap
 
 Multivariate Student models normally precompute a quantile (inverse-CDF) table
-of shape `(n_df_nodes, T, d)` (~200 df nodes) to speed up emission-density
-evaluations. The table costs `n_nodes × T × d × 8` bytes and is bounded by
-`DEFAULT_MAX_TABLE_BYTES` (256 MiB) from
-`pyscarcopula.copula.multivariate.student_ppf_cache`. When the estimated
-size exceeds the limit, the table is not built and every evaluation falls
-back to the exact `scipy.special.stdtrit` quantile; the compiled kernels
-apply the same exact-quantile fallback when a spec carries no table.
-Both paths target the same Student quantile, but they are not numerically
-identical: the normal cached path Hermite-interpolates between precomputed
-degrees-of-freedom nodes, whereas the fallback evaluates `stdtrit` directly.
-Small likelihood or gradient differences are therefore possible when a
-workload crosses the memory threshold, and the exact fallback is usually
-slower.
+of shape `(n_df_nodes, T, d)` (about 360 df nodes by default) to speed up
+emission-density evaluations. The table costs `n_nodes × T × d × 8` bytes and
+is bounded by `DEFAULT_MAX_TABLE_BYTES` (256 MiB) from
+`pyscarcopula.copula.multivariate.student_ppf_cache`. The default nodes include
+a dense geometric layer above `df = 2 + 1e-6`, where the quantile changes
+rapidly, and extend through `df = 1000`.
+
+When the estimated size exceeds the limit, the values table is not built.
+Python-level table calls then use exact `scipy.special.stdtrit` values. Native
+dynamic-emission specs retain the df nodes even without the values table:
+they use exact quantiles up to the final node and a third-order Cornish-Fisher
+normal-quantile expansion above it. Static Student likelihoods carry no
+dynamic node metadata and retain exact quantiles at all finite `df` values.
+
+The native exact path obtains the quantile's `df` derivative by implicit
+differentiation of the Student CDF. The large-`df` expansion has a matching
+analytical derivative. Consequently, an analytical SCAR gradient outside the
+cache no longer evaluates the full emission likelihood at perturbed `df`
+values. Cached interpolation, exact evaluation, and the controlled asymptotic
+are close but not bit-identical, so small likelihood or gradient differences
+are possible at their boundaries.
 
 `StudentPPFTable` accepts a `max_table_bytes` constructor argument for direct
 internal table construction. `StochasticStudentCopula` currently uses the
@@ -484,35 +508,6 @@ the high-order spectral likelihood and the local likelihood at a fitted point
 is a good diagnostic; routine fitting should normally leave
 `transition_method='auto'`.
 
-### Historical SCAR-MC Strategies
-
-The Monte Carlo SCAR strategies, `scar-p-ou` and `scar-m-ou`, are stochastic
-likelihood estimators available for reproducing earlier experiments. Prefer
-`scar-tm-ou`, `scar-tm-jacobi`, or `gas` for routine model comparisons.
-
-| Parameter | Where | Default | Effect |
-|-----------|-------|---------|--------|
-| `n_tr` | strategy kwarg / `default_n_tr` | `500` | Number of Monte Carlo trajectories. |
-| `M_iterations` | strategy kwarg | `3` | EIS iterations for `scar-m-ou`. |
-| `stationary` | strategy kwarg | `True` | Initializes the OU process in stationarity. |
-| `seed` / `dwt` | fit kwarg | random | Controls Wiener increments for reproducibility. |
-| `gtol` | fit kwarg / `scar_optimizer.gtol` | `1e-3` | L-BFGS-B projected-gradient tolerance. |
-| `maxfun` | fit kwarg / `scar_optimizer.maxfun` | `300` | Maximum function evaluations. |
-| `maxiter` | fit kwarg / `scar_optimizer.maxiter` | `100` | Maximum optimizer iterations. |
-| `maxls` | fit kwarg / `scar_optimizer.maxls` | `20` | Maximum L-BFGS-B line-search steps per iteration. |
-| `eps` | fit kwarg / `scar_optimizer.eps` | `1e-4` | L-BFGS-B finite-difference step. |
-
-```python
-result = fit(
-    copula,
-    u,
-    method='scar-m-ou',
-    n_tr=1000,
-    M_iterations=5,
-    seed=123,
-)
-```
-
 ## Multivariate Native Paths
 
 Multivariate Gaussian, Student, stochastic Student, and equicorrelation models
@@ -539,9 +534,55 @@ Row-specific `(n,d,d)` correlation arrays cannot share one Cholesky factor and
 retain per-row factorization cost. Near-singular Student conditional covariance
 matrices also retain the per-row jitter path to preserve numerical semantics.
 
+## Independent Fit Parallelism
+
+Use process-level parallelism for independent datasets, bootstrap replicas,
+starting points, hyperparameter variants, or different model prototypes:
+
+```python
+from pyscarcopula import StochasticStudentCopula
+from pyscarcopula.contrib import fit_independent
+
+batch = fit_independent(
+    StochasticStudentCopula(d=u_bootstrap[0].shape[1]),
+    u_bootstrap,
+    method="scar-tm-ou",
+    fit_kwargs={"maxiter": 100},
+    n_jobs=4,
+)
+
+models = batch.models
+print(batch.diagnostics)
+```
+
+Every task reconstructs its own model from constructor-level structural
+parameters and creates its own prepared evaluator during fitting. Fitted
+state and transient caches from the prototype are not copied. A list of model
+prototypes and a list of `fit_kwargs` can be supplied to run different models
+or initial points in the same batch.
+
+Avoid accidental CPU oversubscription. With `n_jobs > 1`, omitted `n_threads`
+means one native thread per worker. Passing `n_threads=2` or more explicitly
+enables nested process/thread parallelism; this affects performance, not task
+ownership or correctness. The same strict opt-in rule applies with one outer
+worker: if `n_threads` is omitted, exactly one native thread is used.
+
+The same policy applies to rolling `risk_metrics`. Each result leaf contains a
+`diagnostics` mapping with `n_jobs`, `n_threads`,
+`multiprocessing_start_method`, `nested_parallelism`, and the worker ownership
+contract. Per-window `SeedSequence` objects keep results independent of chunk
+partitioning. For `n_jobs=1`, sequential windows may reuse the caller's model,
+but each fit invalidates and rebuilds its transient prepared state before the
+next window.
+
 ## NumericalConfig
 
 Use `NumericalConfig` when a setting should apply to many fits:
+
+`NumericalConfig()` always uses `n_threads=1`, independently of process
+environment variables. Native parallelism is enabled only by explicitly
+passing `n_threads` to a method or by constructing
+`NumericalConfig(n_threads=N)`.
 
 ```python
 from pyscarcopula import LBFGSBConfig, NumericalConfig
@@ -575,7 +616,7 @@ cfg = NumericalConfig(
 )
 ```
 
-## C-Vines
+## Legacy C-Vines
 
 `CVineCopula.fit` selects a family for each edge using an MLE screening/refine
 step, then optionally refits selected edges with the requested dynamic method.
@@ -631,19 +672,24 @@ In C-vines, `config` is accepted through `**kwargs` and is passed to the
 dynamic edge refit. The initial MLE family-selection stage uses its own fast
 MLE path.
 
-## R-Vines
+This section documents the retained legacy implementation. New fixed C-vines
+should use `VineCopula.cvine(...)` and the generic controls below.
 
-`RVineCopula.fit` has an explicit `config` argument and forwards strategy
-options to edge fits through the Dissmann selector.
+## Generic VineCopula
+
+`VineCopula.fit` has an explicit `config` argument and forwards strategy
+options through the shared edge-fitting core. With `structure=None`, the
+Dissmann selector builds the structure; with a fixed `RVineMatrix`, fitting
+starts directly from decoded trees and skips MST selection.
 
 ```python
-from pyscarcopula import RVineCopula
+from pyscarcopula import VineCopula
 from pyscarcopula import LBFGSBConfig, NumericalConfig
 
 cfg = NumericalConfig(
     gas_optimizer=LBFGSBConfig(ftol=1e-12, maxfun=3000, maxiter=3000))
 
-vine = RVineCopula(
+vine = VineCopula(
     truncation_level=2,
     truncation_fill='independent',
     threshold=0.02,
@@ -659,7 +705,7 @@ vine.fit(
 )
 ```
 
-The same strategy options listed for C-vines are forwarded to every
+The same strategy options listed for legacy C-vines are forwarded to every
 non-independent, non-truncated edge selected for dynamic fitting. R-vine
 structure controls are:
 
@@ -679,13 +725,22 @@ after a family has been selected. If `method='gas'`, a too-loose `ftol` can make
 some edges stop early with `success=True`; set `ftol=1e-12` and increase
 `maxfun` for difficult edges.
 
-Fitted R-vines use sequential native hot paths where the model contract permits
+Fitted generic vines use sequential native hot paths where the model contract permits
 them. GAS unconditional sampling executes the row recursion and causal score
 updates in one native call while preserving RNG and edge-update order. Repeated
 SCAR-TM-OU prediction against unchanged fitted history reuses
 pseudo-observations and terminal posterior state. A new `fit`, a changed
 explicit history, or an edge replacement invalidates the relevant transient
 cache. These optimizations do not parallelize edge or sample execution.
+The Python reference sampler and native GAS executor consume the same
+model-independent R-vine traversal plan, so matrix order, conditioned nodes,
+and edge orientation have one authoritative representation.
+
+Static `VineCopula` sampling bounds temporary vectorized workspace by processing at
+most 8192 rows at a time. Use `sample(..., batch_rows=...)` to trade throughput
+against peak memory. `memory_budget_bytes=` checks the estimated output and
+workspace requirement before allocation. Dynamic edge trajectories are not
+split because their row order is part of the fitted time-series model.
 
 When benchmarking dynamic vines, report `vine.fit_result.actual_methods` and
 `vine.fit_result.fallback_count`: unsuccessful dynamic edge fits are retained

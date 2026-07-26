@@ -23,12 +23,20 @@ from pyscarcopula.copula.joe import JoeCopula
 from pyscarcopula.copula.clayton import ClaytonCopula
 from pyscarcopula.copula.independent import IndependentCopula
 from pyscarcopula.vine.cvine import CVineCopula
+from pyscarcopula.vine.vine import VineCopula
 from pyscarcopula.vine.rvine import RVineCopula
 
 from pyscarcopula.copula.elliptical import BivariateGaussianCopula
 from pyscarcopula.copula.multivariate import (
+    EquicorrPreparedData,
     EquicorrGaussianCopula,
+    FactorCorrelation,
+    FactorStudentEvaluation,
+    FactorStudentEvaluator,
+    FactorStudentGridEvaluation,
+    FactorStudentJointEvaluation,
     GaussianCopula,
+    PreparedFactorCorrelation,
     StochasticStudentCopula,
     StudentCopula,
 )
@@ -56,12 +64,20 @@ __all__ = (
     'GaussianCopula', 'StudentCopula', 'BivariateGaussianCopula',
     # Dynamic multivariate
     'EquicorrGaussianCopula',
+    'EquicorrPreparedData',
+    'FactorCorrelation',
+    'FactorStudentEvaluation',
+    'FactorStudentEvaluator',
+    'FactorStudentGridEvaluation',
+    'FactorStudentJointEvaluation',
+    'PreparedFactorCorrelation',
     'StochasticStudentCopula',
     # Base hierarchy and capability contract
     'CopulaBase', 'BivariateCopula', 'MultivariateCopula',
     'CopulaCapabilities',
     # Vine
     'CVineCopula',
+    'VineCopula',
     'RVineCopula',
     # Prediction options
     'PredictConfig',

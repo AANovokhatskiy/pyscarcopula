@@ -3,6 +3,7 @@
 #include "scar/copula.hpp"
 #include "scar/gas.hpp"
 #include "scar/gas_rvine.hpp"
+#include "scar/factor.hpp"
 #include "scar/ou.hpp"
 #include "scar/detail/copula.hpp"
 #include "scar/detail/safety.hpp"
@@ -76,6 +77,8 @@ pybind11::dict multivariate_rows_result_to_dict(
     const scar::MultivariateRowsResult& result);
 pybind11::dict multivariate_grid_result_to_dict(
     const scar::MultivariateGridResult& result);
+pybind11::dict equicorr_preparation_result_to_dict(
+    const scar::EquicorrPreparationResult& result);
 pybind11::dict conditional_sample_result_to_dict(
     const scar::ConditionalSampleResult& result);
 pybind11::dict trajectory_log_pdf_result_to_dict(
@@ -94,7 +97,9 @@ pybind11::dict hermite_rule_cache_info_to_dict(
     const scar_internal::HermiteRuleCacheInfo& info);
 
 void bind_common(pybind11::module_& module);
+void bind_parallel(pybind11::module_& module);
 void bind_copula(pybind11::module_& module);
+void bind_factor(pybind11::module_& module);
 void bind_multivariate(pybind11::module_& module);
 void bind_scar_ou_types(pybind11::module_& module);
 void bind_gas(pybind11::module_& module);

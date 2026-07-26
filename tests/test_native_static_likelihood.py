@@ -123,9 +123,9 @@ def test_mle_fit_uses_one_prepared_native_evaluator(monkeypatch):
     calls = {"prepare": 0, "objective": 0}
     real_prepare = static_likelihood.prepare
 
-    def counted_prepare(copula_arg, u_arg):
+    def counted_prepare(copula_arg, u_arg, **kwargs):
         calls["prepare"] += 1
-        evaluator = real_prepare(copula_arg, u_arg)
+        evaluator = real_prepare(copula_arg, u_arg, **kwargs)
         real_objective = evaluator.objective_and_gradient
 
         def counted_objective(*args, **kwargs):
@@ -173,7 +173,11 @@ def test_mle_explicit_alpha0_is_a_natural_parameter(monkeypatch):
             message="ok",
         )
 
-    monkeypatch.setattr(static_likelihood, "prepare", lambda *args: Evaluator())
+    monkeypatch.setattr(
+        static_likelihood,
+        "prepare",
+        lambda *args, **kwargs: Evaluator(),
+    )
     monkeypatch.setattr(mle_module, "minimize", fake_minimize)
     monkeypatch.setattr(
         copula,
@@ -186,6 +190,71 @@ def test_mle_explicit_alpha0_is_a_natural_parameter(monkeypatch):
 
     assert evaluated == [2.25]
     assert result.copula_param == 2.25
+
+
+@pytest.mark.parametrize(
+    "alpha0",
+    [
+        np.array([]),
+        np.array([np.nan]),
+        np.array([np.inf]),
+        np.array([0.2, 0.3]),
+        np.array([[0.2]]),
+        np.array([0.2 + 1.0j]),
+        np.array([1.0]),
+    ],
+)
+def test_mle_rejects_invalid_alpha0_before_native_prepare(monkeypatch, alpha0):
+    monkeypatch.setattr(
+        static_likelihood,
+        "prepare",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("invalid alpha0 reached native preparation")),
+    )
+
+    with pytest.raises((TypeError, ValueError), match="alpha0"):
+        MLEStrategy().fit(
+            BivariateGaussianCopula(), _observations(12), alpha0=alpha0)
+
+
+def test_mle_accepts_scalar_alpha0():
+    result = MLEStrategy().fit(
+        BivariateGaussianCopula(), _observations(30), alpha0=0.2)
+    assert np.isfinite(result.copula_param)
+
+
+@pytest.mark.parametrize(
+    ("optimizer_x", "optimizer_fun", "error", "message"),
+    [
+        (np.array([np.nan]), 0.0, ValueError, "MLE optimizer result"),
+        (np.array([0.2]), np.inf, RuntimeError, "objective value"),
+    ],
+)
+def test_mle_rejects_nonfinite_optimizer_output(
+        monkeypatch, optimizer_x, optimizer_fun, error, message):
+    class Evaluator:
+        def objective_and_gradient(self, parameter, **kwargs):
+            return 0.0, np.array([0.0])
+
+    monkeypatch.setattr(
+        static_likelihood,
+        "prepare",
+        lambda *args, **kwargs: Evaluator(),
+    )
+    monkeypatch.setattr(
+        mle_module,
+        "minimize",
+        lambda *args, **kwargs: SimpleNamespace(
+            x=optimizer_x,
+            fun=optimizer_fun,
+            success=True,
+            nfev=1,
+            message="invalid test result",
+        ),
+    )
+
+    with pytest.raises(error, match=message):
+        MLEStrategy().fit(BivariateGaussianCopula(), _observations(12))
 
 
 def test_static_student_mle_optimizes_natural_df(monkeypatch):
@@ -208,7 +277,11 @@ def test_static_student_mle_optimizes_natural_df(monkeypatch):
         np.testing.assert_array_equal(gradient, [0.0])
         return SimpleNamespace(x=trial, fun=0.0, success=True)
 
-    monkeypatch.setattr(static_likelihood, "prepare", lambda *args: Evaluator())
+    monkeypatch.setattr(
+        static_likelihood,
+        "prepare",
+        lambda *args, **kwargs: Evaluator(),
+    )
     monkeypatch.setattr(static_student, "minimize", fake_minimize)
     monkeypatch.setattr(copula, "_nll", lambda observations: 0.0)
 
@@ -264,7 +337,11 @@ def test_stochastic_student_mle_optimizes_natural_df(
             message="ok",
         )
 
-    monkeypatch.setattr(static_likelihood, "prepare", lambda *args: Evaluator())
+    monkeypatch.setattr(
+        static_likelihood,
+        "prepare",
+        lambda *args, **kwargs: Evaluator(),
+    )
     monkeypatch.setattr(stochastic_student, "minimize", fake_minimize)
     monkeypatch.setattr(
         copula,

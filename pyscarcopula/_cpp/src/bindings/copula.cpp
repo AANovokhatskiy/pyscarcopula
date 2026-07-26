@@ -15,7 +15,16 @@ void bind_copula(py::module_& m) {
         .def_readwrite("transform", &scar::CopulaSpec::transform)
         .def_readwrite("offset", &scar::CopulaSpec::offset)
         .def_readwrite("dim", &scar::CopulaSpec::dim)
+        .def_readwrite(
+            "correlation_kind",
+            &scar::CopulaSpec::correlation_kind)
         .def_readwrite("l_inv", &scar::CopulaSpec::l_inv)
+        .def_readwrite(
+            "factor_correlation",
+            &scar::CopulaSpec::factor_correlation)
+        .def_readwrite(
+            "factor_dimension_tile",
+            &scar::CopulaSpec::factor_dimension_tile)
         .def_readwrite("log_det", &scar::CopulaSpec::log_det)
         .def_readwrite("ppf_n_obs", &scar::CopulaSpec::ppf_n_obs)
         .def_readwrite("ppf_nodes", &scar::CopulaSpec::ppf_nodes)
@@ -35,12 +44,34 @@ void bind_copula(py::module_& m) {
                 const scar::CopulaSpec& copula,
                 py::array_t<
                     double,
-                    py::array::c_style | py::array::forcecast> u) {
+                    py::array::c_style | py::array::forcecast> u,
+                int n_threads) {
                 return scar::StaticCopulaEvaluator(
-                    copula, observations_from_array(u));
+                    copula, observations_from_array(u), n_threads);
             }),
             py::arg("copula"),
-            py::arg("u"))
+            py::arg("u"),
+            py::arg("n_threads") = 1)
+        .def(
+            py::init([](
+                const scar::CopulaSpec& copula,
+                py::array_t<
+                    double,
+                    py::array::c_style | py::array::forcecast> sum_z,
+                py::array_t<
+                    double,
+                    py::array::c_style | py::array::forcecast> sum_z2,
+                int n_threads) {
+                return scar::StaticCopulaEvaluator(
+                    copula,
+                    vector_from_array(sum_z),
+                    vector_from_array(sum_z2),
+                    n_threads);
+            }),
+            py::arg("copula"),
+            py::arg("sum_z"),
+            py::arg("sum_z2"),
+            py::arg("n_threads") = 1)
         .def(
             "objective",
             [](const scar::StaticCopulaEvaluator& evaluator,
@@ -294,7 +325,8 @@ void bind_copula(py::module_& m) {
         [](const scar::CopulaSpec& copula,
            py::array_t<double, py::array::c_style | py::array::forcecast> u,
            py::array_t<double, py::array::c_style | py::array::forcecast>
-               latent_paths) {
+               latent_paths,
+           int n_threads) {
             const scar::ObservationView observations =
                 observation_view_from_array(copula, u);
             const py::buffer_info paths_info = latent_paths.request();
@@ -314,13 +346,15 @@ void bind_copula(py::module_& m) {
                     copula,
                     observations,
                     paths,
-                    static_cast<std::size_t>(paths_info.shape[1]));
+                    static_cast<std::size_t>(paths_info.shape[1]),
+                    n_threads);
             }
             return trajectory_log_pdf_result_to_dict(result);
         },
         py::arg("copula"),
         py::arg("u"),
-        py::arg("latent_paths"));
+        py::arg("latent_paths"),
+        py::arg("n_threads") = 1);
 }
 
 }  // namespace pyscarcopula::bindings

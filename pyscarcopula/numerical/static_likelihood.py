@@ -11,27 +11,58 @@ from pyscarcopula.numerical._cpp_extension import CppError
 class StaticLikelihoodEvaluator:
     """Own one native evaluator and its reusable prepared observation state."""
 
-    def __init__(self, copula, u):
+    def __init__(self, copula, u, *, n_threads=1):
         module = _cpp_extension.load()
+        from pyscarcopula.copula.multivariate.equicorr_prepared import (
+            EquicorrPreparedData,
+        )
+        if isinstance(u, EquicorrPreparedData):
+            if int(getattr(copula, "d", -1)) != u.dimension:
+                raise ValueError(
+                    "prepared dimension does not match copula dimension")
+            spec = _cpp_copula.make_static_likelihood_spec(
+                module, copula, u=None)
+            self._initialize_prepared(
+                module, spec, u, n_threads)
+            return
         observations = np.ascontiguousarray(
             np.asarray(u, dtype=np.float64))
         spec = _cpp_copula.make_static_likelihood_spec(
             module, copula, u=observations)
-        self._initialize(module, spec, observations)
+        self._initialize(module, spec, observations, n_threads)
 
-    def _initialize(self, module, spec, observations):
-        self._native = module.StaticCopulaEvaluator(spec, observations)
+    def _initialize(self, module, spec, observations, n_threads):
+        from pyscarcopula.numerical.multivariate_native import (
+            _validated_n_threads,
+        )
+        self._native = module.StaticCopulaEvaluator(
+            spec, observations, _validated_n_threads(n_threads))
         if self._native.status != module.SCAR_OK:
             raise CppError(
                 "C++ static likelihood evaluator rejected its inputs "
                 f"with status={self._native.status}")
 
+    def _initialize_prepared(self, module, spec, prepared, n_threads):
+        from pyscarcopula.numerical.multivariate_native import (
+            _validated_n_threads,
+        )
+        self._native = module.StaticCopulaEvaluator(
+            spec,
+            prepared.sum_z,
+            prepared.sum_z2,
+            _validated_n_threads(n_threads),
+        )
+        if self._native.status != module.SCAR_OK:
+            raise CppError(
+                "C++ static likelihood evaluator rejected prepared "
+                f"statistics with status={self._native.status}")
+
     @classmethod
-    def from_spec(cls, module, spec, u):
+    def from_spec(cls, module, spec, u, *, n_threads=1):
         instance = cls.__new__(cls)
         observations = np.ascontiguousarray(
             np.asarray(u, dtype=np.float64))
-        instance._initialize(module, spec, observations)
+        instance._initialize(module, spec, observations, n_threads)
         return instance
 
     def result(self, parameter: float) -> dict:
@@ -112,17 +143,19 @@ def supported(copula) -> bool:
     return _cpp_copula.supported_for_static_likelihood(copula)
 
 
-def prepare(copula, u) -> StaticLikelihoodEvaluator:
-    return StaticLikelihoodEvaluator(copula, u)
+def prepare(copula, u, *, n_threads=1) -> StaticLikelihoodEvaluator:
+    return StaticLikelihoodEvaluator(copula, u, n_threads=n_threads)
 
 
-def prepare_student(correlation, u) -> StaticLikelihoodEvaluator:
+def prepare_student(correlation, u, *, n_threads=1) -> StaticLikelihoodEvaluator:
     module = _cpp_extension.load()
     spec = _cpp_copula.make_student_static_spec(module, correlation)
-    return StaticLikelihoodEvaluator.from_spec(module, spec, u)
+    return StaticLikelihoodEvaluator.from_spec(
+        module, spec, u, n_threads=n_threads)
 
 
-def prepare_gaussian(correlation, u) -> StaticLikelihoodEvaluator:
+def prepare_gaussian(correlation, u, *, n_threads=1) -> StaticLikelihoodEvaluator:
     module = _cpp_extension.load()
     spec = _cpp_copula.make_gaussian_static_spec(module, correlation)
-    return StaticLikelihoodEvaluator.from_spec(module, spec, u)
+    return StaticLikelihoodEvaluator.from_spec(
+        module, spec, u, n_threads=n_threads)

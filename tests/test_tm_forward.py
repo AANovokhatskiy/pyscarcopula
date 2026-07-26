@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 from pyscarcopula import GumbelCopula
+from pyscarcopula._constants import H_FUNCTION_EPS
 from pyscarcopula._types import LatentResult, ou_params
 from pyscarcopula.api import fit
 from pyscarcopula.numerical.tm_functions import (
@@ -110,13 +111,12 @@ def _materialized_forward_mixture_h(kappa, mu, nu, u, copula, **kwargs):
 
     h_mix = np.empty(len(u))
     for k, row in enumerate(u):
-        h_vals = copula.h(
-            np.full(grid.K, row[1]),
+        _, h_vals = copula.h_pair(
             np.full(grid.K, row[0]),
-            r_grid,
-        )
+            np.full(grid.K, row[1]),
+            r_grid)
         h_mix[k] = np.sum(h_vals * weights[k])
-    return np.clip(h_mix, 1e-6, 1.0 - 1e-6)
+    return np.clip(h_mix, H_FUNCTION_EPS, 1.0 - H_FUNCTION_EPS)
 
 
 def _materialized_forward_mixture_h_pair(
@@ -129,16 +129,15 @@ def _materialized_forward_mixture_h_pair(
     first = np.empty(len(u))
     second = np.empty(len(u))
     for k, row in enumerate(u):
-        h_first, h_second = copula.h_pair(
-            np.full(grid.K, row[1]),
+        first_given_second, second_given_first = copula.h_pair(
             np.full(grid.K, row[0]),
-            r_grid,
-        )
-        first[k] = np.sum(h_first * weights[k])
-        second[k] = np.sum(h_second * weights[k])
+            np.full(grid.K, row[1]),
+            r_grid)
+        first[k] = np.sum(second_given_first * weights[k])
+        second[k] = np.sum(first_given_second * weights[k])
     return (
-        np.clip(first, 1e-6, 1.0 - 1e-6),
-        np.clip(second, 1e-6, 1.0 - 1e-6),
+        np.clip(first, H_FUNCTION_EPS, 1.0 - H_FUNCTION_EPS),
+        np.clip(second, H_FUNCTION_EPS, 1.0 - H_FUNCTION_EPS),
     )
 
 

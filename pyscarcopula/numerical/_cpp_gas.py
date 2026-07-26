@@ -12,6 +12,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from pyscarcopula.numerical import _cpp_copula, _cpp_extension
+from pyscarcopula.numerical._arrays import as_float64_array
 from pyscarcopula.numerical._cpp_extension import (
     CppError,
     CppUnavailable,
@@ -79,10 +80,7 @@ def _observations(
     *,
     allow_single_row: bool = False,
 ) -> np.ndarray:
-    try:
-        obs = np.asarray(u, dtype=np.float64)
-    except (TypeError, ValueError, OverflowError) as exc:
-        raise ValueError("u must be convertible to a float64 array") from exc
+    obs = as_float64_array(u, name="u")
     expected_dim = int(getattr(copula, "d", 2))
     if allow_single_row and obs.ndim == 1 and obs.shape == (expected_dim,):
         obs = obs.reshape(1, expected_dim)
@@ -149,12 +147,21 @@ def _config(
 
 def _inputs(omega, gamma, beta, u, copula, scaling, score_eps):
     module = _cpp_extension.load()
-    obs = _observations(u, copula)
+    from pyscarcopula.copula.multivariate.equicorr_prepared import (
+        EquicorrPreparedData,
+    )
+    if isinstance(u, EquicorrPreparedData):
+        if int(getattr(copula, "d", -1)) != u.dimension:
+            raise ValueError(
+                "prepared dimension does not match copula dimension")
+        obs = u
+    else:
+        obs = _observations(u, copula)
     scaling = _scaling_name(scaling)
     spec = _cpp_copula.make_gas_spec(
         module,
         copula,
-        u=obs,
+        u=None if isinstance(obs, EquicorrPreparedData) else obs,
         use_student_cache=scaling == "unit",
     )
     return (
@@ -199,7 +206,9 @@ def filter_result(
     module, params, spec, obs, config = _inputs(
         omega, gamma, beta, u, copula, scaling, score_eps)
     result = module.GasEvaluator().filter(
-        params, spec, obs, config)
+        params, spec, obs, config) if isinstance(obs, np.ndarray) else (
+            module.GasEvaluator().filter_equicorr_prepared(
+                params, spec, obs.sum_z, obs.sum_z2, config))
     _raise_status(result, "filter")
     output = GasFilterOutput(
         g_path=np.asarray(result["g_path"], dtype=np.float64),
@@ -272,7 +281,9 @@ def log_likelihood(
     module, params, spec, obs, config = _inputs(
         omega, gamma, beta, u, copula, scaling, score_eps)
     result = module.GasEvaluator().log_likelihood(
-        params, spec, obs, config)
+        params, spec, obs, config) if isinstance(obs, np.ndarray) else (
+            module.GasEvaluator().log_likelihood_equicorr_prepared(
+                params, spec, obs.sum_z, obs.sum_z2, config))
     _raise_status(result, "log_likelihood")
     value = float(result["log_likelihood"])
     if not np.isfinite(value):
@@ -294,7 +305,9 @@ def negative_log_likelihood(
     module, params, spec, obs, config = _inputs(
         omega, gamma, beta, u, copula, scaling, score_eps)
     result = module.GasEvaluator().negative_log_likelihood(
-        params, spec, obs, config)
+        params, spec, obs, config) if isinstance(obs, np.ndarray) else (
+            module.GasEvaluator().negative_log_likelihood_equicorr_prepared(
+                params, spec, obs.sum_z, obs.sum_z2, config))
     _raise_status(result, "negative_log_likelihood")
     value = float(result["log_likelihood"])
     if not np.isfinite(value):
@@ -377,7 +390,16 @@ def predict_parameter(
     if horizon not in {"current", "next"}:
         raise ValueError("horizon must be 'current' or 'next'")
     result = module.GasEvaluator().predict_parameter(
-        params, spec, obs, config, horizon == "next")
+        params, spec, obs, config, horizon == "next"
+    ) if isinstance(obs, np.ndarray) else (
+        module.GasEvaluator().predict_parameter_equicorr_prepared(
+            params,
+            spec,
+            obs.sum_z,
+            obs.sum_z2,
+            config,
+            horizon == "next",
+        ))
     _raise_status(result, "predict_parameter")
     value = float(result["parameter"])
     if not np.isfinite(value):

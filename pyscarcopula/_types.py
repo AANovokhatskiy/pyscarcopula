@@ -101,10 +101,10 @@ DEFAULT_MLE_OPTIMIZER = LBFGSBConfig(
 )
 DEFAULT_GAS_OPTIMIZER = LBFGSBConfig(
     gtol=1e-3,
-    ftol=1e-12,
-    maxfun=1000,
+    ftol=1e-9,
+    maxfun=4000,
     maxiter=1000,
-    maxls=50,
+    maxls=100,
     eps=1e-5,
 )
 DEFAULT_SCAR_OPTIMIZER = LBFGSBConfig(
@@ -144,6 +144,10 @@ class NumericalConfig:
     # Numerical failure policy
     fail_value: float = 1e10
 
+    # Per-call native parallelism. Parallel execution is strictly opt-in:
+    # process environment variables never change this default.
+    n_threads: int = 1
+
     # Transfer matrix defaults
     default_K: int = 300
     default_grid_range: float = 5.0
@@ -181,6 +185,15 @@ class NumericalConfig:
     default_M_iterations: int = 3
 
     def __post_init__(self) -> None:
+        n_threads = self.n_threads
+        if isinstance(n_threads, (bool, np.bool_)) or not isinstance(
+                n_threads, (int, np.integer)):
+            raise ValueError("n_threads must be an integer in [1, 256]")
+        resolved_threads = int(n_threads)
+        if resolved_threads < 1 or resolved_threads > 256:
+            raise ValueError(
+                f"n_threads must be in [1, 256], got {resolved_threads}")
+        object.__setattr__(self, 'n_threads', resolved_threads)
         object.__setattr__(
             self, 'mle_optimizer',
             DEFAULT_MLE_OPTIMIZER.merged(self.mle_optimizer))

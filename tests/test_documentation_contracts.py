@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import importlib
 import inspect
+import json
 from pathlib import Path
 import re
 
@@ -150,6 +151,101 @@ def test_removed_experimental_namespace_is_physically_absent():
     assert not (ROOT / "pyscarcopula/copula/experimental").exists()
 
 
+def test_public_docs_exclude_development_plans_and_phase_reports():
+    forbidden = (
+        "phase-8",
+        "phase 8",
+        "phase-9",
+        "release gate",
+        "release-gate",
+        "future work",
+        "not implemented",
+        "proposed api",
+    )
+    for path in DOC_FILES:
+        text = path.read_text(encoding="utf-8").lower()
+        for phrase in forbidden:
+            assert phrase not in text, (
+                f"{path.relative_to(ROOT)} contains development artifact "
+                f"{phrase!r}"
+            )
+
+    assert not (ROOT / "docs/validation").exists()
+    nav = (ROOT / "mkdocs.yml").read_text(encoding="utf-8")
+    assert "validation/" not in nav
+
+
+def test_notebooks_do_not_import_private_pyscarcopula_modules():
+    for path in sorted((ROOT / "examples").glob("*.ipynb")):
+        text = path.read_text(encoding="utf-8")
+        assert "from pyscarcopula._" not in text
+        assert "import pyscarcopula._" not in text
+
+
+def test_vinecopula_is_the_discoverable_canonical_vine_api():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    for public_surface in (
+            "VineCopula()",
+            "VineCopula.cvine(",
+            "VineCopula.dvine(",
+            "RVineMatrix.from_trees(",
+            "natural_order_matrix"):
+        assert public_surface in readme
+
+    api = (ROOT / "docs/api/vine.md").read_text(encoding="utf-8")
+    assert api.index("## VineCopula") < api.index("## RVineCopula")
+    assert "RVineCopula is VineCopula" in api
+    assert "legacy" in api.lower()
+
+
+def test_vine_notebooks_use_semantic_structure_comparisons():
+    for filename in (
+            "04_vine.ipynb",
+            "05_risk_metrics.ipynb",
+            "06_pyvinecopulib_comparison.ipynb"):
+        path = ROOT / "examples" / filename
+        notebook = json.loads(path.read_text(encoding="utf-8"))
+        for cell in notebook["cells"]:
+            if cell["cell_type"] == "code":
+                compile(
+                    "".join(cell["source"]),
+                    filename=f"{path}:{cell.get('execution_count')}",
+                    mode="exec",
+                )
+
+    comparison = (
+        ROOT / "examples/06_pyvinecopulib_comparison.ipynb"
+    ).read_text(encoding="utf-8")
+    assert "RVineMatrix.from_trees" in comparison
+    assert "same fixed structure" in comparison.lower()
+    assert "loglik_per_obs" in comparison
+    assert "decoded" in comparison.lower()
+    assert "tree >= vine.structure.trunc_lvl" in comparison
+    assert "shared_pv_structure = pv.DVineStructure" in comparison
+
+
+def test_complete_public_documentation_examples_execute():
+    namespaces = {}
+    for relative_path in (
+            "docs/index.md",
+            "docs/api/copulas.md",
+            "docs/api/persistence.md"):
+        path = ROOT / relative_path
+        namespace = {"__name__": "__documentation_example__"}
+        for source in _python_blocks(path):
+            exec(compile(source, filename=str(path), mode="exec"), namespace)
+        namespaces[relative_path] = namespace
+
+    assert namespaces["docs/index.md"]["u"].shape == (400, 2)
+    assert np.isfinite(
+        namespaces["docs/api/copulas.md"]["fitted_log_likelihood"])
+    assert (
+        namespaces["docs/api/copulas.md"]["conditional_cdf"].shape
+        == (200,)
+    )
+    assert namespaces["docs/api/persistence.md"]["samples"].shape == (20, 2)
+
+
 def test_documented_public_imports():
     from pyscarcopula import (
         BivariateCopula,
@@ -201,9 +297,10 @@ def test_distribution_declares_pep561_typing_marker():
 
 
 def test_documented_vine_signatures_match_runtime():
-    from pyscarcopula import CVineCopula, RVineCopula
+    from pyscarcopula import CVineCopula, RVineCopula, VineCopula
 
-    for cls in (CVineCopula, RVineCopula):
+    assert RVineCopula is VineCopula
+    for cls in (CVineCopula, VineCopula):
         sample_parameters = inspect.signature(cls.sample).parameters
         assert "n" in sample_parameters
         assert "u" in sample_parameters
@@ -261,7 +358,7 @@ def test_representative_documented_workflows_execute():
     from pyscarcopula import (
         GumbelCopula,
         IndependentCopula,
-        RVineCopula,
+        VineCopula,
     )
     from pyscarcopula.api import fit
 
@@ -283,7 +380,7 @@ def test_representative_documented_workflows_execute():
 
     u_vine = np.random.default_rng(20260621).uniform(
         0.05, 0.95, size=(30, 3))
-    vine = RVineCopula(candidates=[IndependentCopula]).fit(u_vine)
+    vine = VineCopula(candidates=[IndependentCopula]).fit(u_vine)
     assert vine.sample(5, rng=np.random.default_rng(1)).shape == (5, 3)
     assert vine.predict(
         5, u=u_vine, rng=np.random.default_rng(2)).shape == (5, 3)

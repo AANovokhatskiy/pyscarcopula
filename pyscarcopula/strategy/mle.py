@@ -28,6 +28,26 @@ from pyscarcopula.strategy.predict_helpers import (
     sample_predictive,
 )
 from pyscarcopula.numerical import static_likelihood
+from pyscarcopula.numerical._arrays import as_float64_array
+
+
+def _validate_scalar_mle_parameter(copula, value, *, name):
+    """Return one finite natural-space parameter inside model bounds."""
+    array = np.atleast_1d(as_float64_array(value, name=name))
+    if array.ndim != 1 or array.size != 1:
+        raise ValueError(f"{name} must contain exactly one value")
+    parameter = float(array[0])
+    if not np.isfinite(parameter):
+        raise ValueError(f"{name} must contain one finite value")
+
+    lower, upper = copula.bounds[0]
+    if (
+            (lower is not None and parameter < lower)
+            or (upper is not None and parameter > upper)):
+        raise ValueError(
+            f"{name}={parameter} is outside copula bounds "
+            f"[{lower}, {upper}]")
+    return np.array([parameter], dtype=np.float64)
 
 
 @register_strategy('MLE')
@@ -91,7 +111,8 @@ class MLEStrategy:
                 and not capabilities.has_dynamic_scalar_parameter):
             direct_fit = getattr(copula, 'fit', None)
             if direct_fit is not None:
-                result = direct_fit(u, to_pobs=False)
+                result = direct_fit(
+                    u, to_pobs=False, config=self.config)
                 if getattr(result, 'method', '').upper() == 'MLE':
                     return result
 
@@ -102,7 +123,8 @@ class MLEStrategy:
                     u, config=self.config, **optimizer_overrides)
             direct_fit = getattr(copula, 'fit', None)
             if direct_fit is not None:
-                result = direct_fit(u, to_pobs=False)
+                result = direct_fit(
+                    u, to_pobs=False, config=self.config)
                 if getattr(result, 'method', '').upper() == 'MLE':
                     return result
 
@@ -112,14 +134,17 @@ class MLEStrategy:
         )
 
         if alpha0 is not None:
-            x0 = np.atleast_1d(np.asarray(alpha0, dtype=np.float64))[:1]
+            x0 = _validate_scalar_mle_parameter(
+                copula, alpha0, name="alpha0")
         else:
             x0_val = copula.transform(np.array([1.5]))[0]
-            x0 = np.array([x0_val])
+            x0 = _validate_scalar_mle_parameter(
+                copula, x0_val, name="default MLE initial point")
 
         evaluator = _prepared_evaluator
         if evaluator is None:
-            evaluator = static_likelihood.prepare(copula, u)
+            evaluator = static_likelihood.prepare(
+                copula, u, n_threads=self.config.n_threads)
 
         def objective_and_gradient(x):
             return evaluator.objective_and_gradient(
@@ -132,15 +157,21 @@ class MLEStrategy:
             bounds=copula.bounds,
             options=optimizer_options,
         )
+        fitted_parameter = _validate_scalar_mle_parameter(
+            copula, result.x, name="MLE optimizer result")
+        objective_value = float(result.fun)
+        if not np.isfinite(objective_value):
+            raise RuntimeError(
+                "MLE optimizer returned a non-finite objective value")
 
         return MLEResult(
-            log_likelihood=-result.fun,
+            log_likelihood=-objective_value,
             method='MLE',
             copula_name=copula.name,
             success=result.success,
             nfev=result.nfev,
             message=str(result.message),
-            copula_param=result.x[0],
+            copula_param=fitted_parameter[0],
             diagnostics={
                 'model_score': 'not_applicable',
                 'optimizer_gradient': 'analytical',
@@ -159,7 +190,8 @@ class MLEStrategy:
                 return float(copula.log_likelihood(u, result.copula_param))
             except TypeError:
                 return float(copula.log_likelihood(u))
-        evaluator = static_likelihood.prepare(copula, u)
+        evaluator = static_likelihood.prepare(
+            copula, u, n_threads=self.config.n_threads)
         return evaluator.log_likelihood(result.copula_param)
 
     def predictive_mean(self, copula, u: np.ndarray,
@@ -183,7 +215,9 @@ class MLEStrategy:
                        **kwargs) -> tuple[np.ndarray, np.ndarray]:
         """Both conditional directions at the constant MLE parameter."""
         r = np.full(len(u), result.copula_param)
-        return copula.h_pair(u[:, 1], u[:, 0], r)
+        first_given_second, second_given_first = copula.h_pair(
+            u[:, 0], u[:, 1], r)
+        return second_given_first, first_given_second
 
     def objective(self, copula, u: np.ndarray,
                   alpha: np.ndarray, **kwargs) -> float:
@@ -194,7 +228,8 @@ class MLEStrategy:
                     return -float(copula.log_likelihood(u, float(alpha[0])))
                 except TypeError:
                     return -float(copula.log_likelihood(u))
-            evaluator = static_likelihood.prepare(copula, u)
+            evaluator = static_likelihood.prepare(
+                copula, u, n_threads=self.config.n_threads)
             value, _ = evaluator.objective_and_gradient(
                 float(alpha[0]), fail_value=self.config.fail_value)
             return value

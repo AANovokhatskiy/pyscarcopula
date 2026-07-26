@@ -24,7 +24,7 @@ from pyscarcopula.numerical._scar_ou_config import (
     AutoTMConfig,
     validate_cpp_config,
 )
-from pyscarcopula.numerical._arrays import as_float64_array
+from pyscarcopula.numerical._arrays import as_pseudo_observation_array
 from pyscarcopula.numerical._transition_methods import (
     normalize_ou_transition_method,
 )
@@ -577,6 +577,7 @@ class SCARTMStrategy:
                     max_K=self.max_K,
                     gh_order=self.gh_order,
                     r_gh=self.r_gh,
+                    n_threads=self.config.n_threads,
             )
         )
 
@@ -646,6 +647,7 @@ class SCARTMStrategy:
             max_K=self.max_K,
             gh_order=self.gh_order,
             r_gh=self.r_gh,
+            n_threads=self.config.n_threads,
         )
 
     def _uses_cpp(self, copula):
@@ -939,6 +941,7 @@ class SCARTMStrategy:
                 else values / scale)
 
         diagnostics = _new_backend_diagnostics()
+        diagnostics["n_threads"] = self.config.n_threads
         diagnostics.update({
             "initialization": initialization,
             "optimizer_parameterization": (
@@ -1311,7 +1314,11 @@ class SCARTMStrategy:
                 finite_diff_rel_step=finite_diff_rel_step,
             ),
         )
-        u = as_float64_array(u)
+        from pyscarcopula.copula.multivariate.equicorr_prepared import (
+            EquicorrPreparedData,
+        )
+        if not isinstance(u, EquicorrPreparedData):
+            u = as_pseudo_observation_array(u)
         corr_num_params = getattr(copula, "_corr_num_params", None)
         n_corr = int(corr_num_params()) if callable(corr_num_params) else 0
         if n_corr:
@@ -1333,6 +1340,7 @@ class SCARTMStrategy:
         self._uses_cpp(copula)
         selected_engine = "cpp"
         diagnostics = _new_backend_diagnostics()
+        diagnostics["n_threads"] = self.config.n_threads
         diagnostics["adaptive_spectral_basis_order"] = (
             self.spectral_basis_order == "auto")
         diagnostics["auto_spectral_basis_order"] = (

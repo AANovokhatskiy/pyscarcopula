@@ -86,11 +86,11 @@ def test_native_parameter_grids_match_point_operations(copula):
         for row in _U
     ])
     expected_h = np.vstack([
-        copula.h(
-            np.full(len(theta), row[1]),
+        copula.h_pair(
             np.full(len(theta), row[0]),
+            np.full(len(theta), row[1]),
             theta,
-        )
+        )[1]
         for row in _U
     ])
 

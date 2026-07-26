@@ -1,5 +1,126 @@
 # Changelog
 
+## Unreleased
+
+- Removes temporary VineCopula refactoring guardrails after their permanent
+  contracts were absorbed by the regular vine API, structure, fitting,
+  persistence, and compatibility suites. Completes public type annotations
+  and docstrings for the new prepared equicorrelation, factor-correlation,
+  factor-Student, and independent-fit APIs, and aligns
+  `RVineTraversalPlan` with the project's R-vine acronym style.
+- Introduces `VineCopula` as the generic auto/fixed regular-vine runtime while
+  retaining `RVineCopula` as a compatibility name and `CVineCopula` as a
+  supported legacy implementation. No runtime deprecation warning is emitted
+  for `CVineCopula`; new C-vine code should use `VineCopula.cvine(...)`.
+- Adds fixed C-vine/D-vine factories, arbitrary validated `RVineMatrix`
+  structures, shared fixed-edge fitting, type-aware GoF, and canonical JSON
+  persistence. Documentation and notebooks now use
+  decoded tree edges for structure comparison instead of raw matrix
+  conventions.
+- Adds reusable, copula-independent `FactorCorrelation` and
+  `PreparedFactorCorrelation` objects for correlations of the form
+  `R = D + B B.T`, with unit diagonal and explicit uniqueness bounds.
+- Adds a dependency-free native Woodbury backend for factor-correlation
+  matrix products, solves, quadratic forms, log determinants, and normal
+  sampling. Row kernels are deterministic across thread counts, default to
+  one thread, and a prepared operator is safe for concurrent read-only calls.
+- Adds the independent `FactorStudentEvaluator` adapter with static Student
+  copula row log densities, analytical degrees-of-freedom derivatives,
+  scalar or row-specific `df`, optimizer-ready likelihood reduction, and
+  deterministic native row parallelism. Dense and factor paths share the
+  same Student normalization and derivative implementation.
+- Adds tiled factor-Student emission over a degrees-of-freedom grid without
+  an `O(T*K*d)` quantile cache. Fixed dimension tiles are reduced in a
+  deterministic order, parallel work selects either independent grid cells
+  or dimension tiles, and row-batch APIs enforce a peak-memory budget.
+- Adds bounded factor-normal sampling, explicit guarded dense
+  materialization, compact `.npz` persistence, and read-only mmap
+  persistence. Storage remains `O(d*k + k^2)`.
+- Adds the phase-9.4 `StochasticStudentCopula(corr_mode="factor")` model
+  adapter with supplied or deterministic two-stage randomized-SVD loadings,
+  compact diagnostics and model persistence, guarded explicit dense
+  materialization, static row likelihood, and tiled latent-grid evaluation.
+- Integrates factor Student correlation with static MLE, native GAS,
+  SCAR-TM-OU matrix/local/spectral objectives and gradients, and native
+  SCAR-MC trajectory likelihood. A shared immutable operator in `CopulaSpec`
+  avoids copying loadings or constructing dense Cholesky factors; SCAR
+  emission directly reuses the tiled factor grid kernel.
+- Adds unconditional, bounded-batch, fitted-model, predictive, and exact
+  conditional sampling for factor Student models. Conditional generation
+  factorizes only a `k*k` system and never constructs a dense Schur
+  complement. Fixed-seed results are exact across native thread counts,
+  sampling defaults literally to `n_threads=1`, and memory budgets can reject
+  oversized monolithic or batch requests before their main allocations.
+- Reuses the independent factor-correlation operator in
+  `GaussianCopula(corr_mode="factor")`. Supplied or tiled two-stage loadings
+  feed native matrix-free likelihood, compact MLE results, deterministic
+  sampling, bounded batches, exact conditional generation, rolling-window
+  reconstruction, persistence, and an `O(T*k + k^2)` Rosenblatt transform.
+  No Gaussian factor path constructs a dense correlation or Schur complement.
+- Adds guarded joint factor estimation for static Student MLE. A native
+  matrix-free kernel returns analytical gradients for common `df` and every
+  loading, while pivoted lower-triangular positive-diagonal coordinates remove
+  rotational degrees of freedom. Fixed reduction blocks make gradients exact
+  across thread counts. The optimizer enforces parameter-count, uniqueness,
+  Woodbury-condition, regularization, and terminal-gradient convergence
+  gates. Dynamic GAS/SCAR joint loading estimation remains explicitly
+  unsupported pending derivatives through their sequential filters.
+- Adds deterministic, tiled CPU preparation of equicorrelation Gaussian
+  sufficient statistics from ndarray, memmap, or streamed observation blocks.
+- Adds immutable `EquicorrPreparedData` with compact `.npz` and read-only
+  memory-mapped persistence. The prepared representation stores two `O(T)`
+  vectors and never retains the original `T * d` observation matrix.
+- Lets static MLE, row/grid evaluation, GAS, and SCAR-TM-OU consume prepared
+  Equicorr statistics directly. Prepared MLE avoids materializing a dense
+  correlation matrix in its result.
+- Adds bounded row-batch grid output with a pre-allocation memory budget and
+  structural `O(n*d)` Equicorr sampling over the full admissible correlation
+  interval, including negative correlation.
+- Adds fitted `sample_batches` and `predict_batches` for Equicorr MLE, GAS,
+  and SCAR-TM-OU while preserving per-row GAS recursion and SCAR path or
+  posterior semantics. Monolithic sampling APIs can reject oversized output
+  before allocation.
+- Adds opt-in `d=10^4`, `10^5`, and `10^6` preparation benchmark gates with
+  exact cross-thread result checks and an enforceable four-thread efficiency
+  target.
+
+## 0.19.0 - 2026-07-21
+
+Version: `0.18.0` -> `0.19.0`
+
+- Adds opt-in native CPU threading for stochastic Student and
+  equicorrelation emission/gradient grids, static multivariate row
+  likelihoods and MLE, Gaussian/Student conditional sampling, and historical
+  SCAR Monte Carlo trajectory evaluation.
+- Introduces a reusable process-local C++17 thread runtime with deterministic
+  block partitioning, sequential nested-call fallback, exception propagation,
+  process ownership checks, and a no-pool `n_threads=1` fast path.
+- Makes parallelism strictly explicit: omitted `n_threads` always means one
+  native thread, `NumericalConfig()` defaults to `1`, and environment variables
+  cannot enable threads implicitly.
+- Preserves fixed-input/fixed-draw results across supported thread counts and
+  reports the same smallest failure index in sequential and parallel kernels.
+- Serializes mutable operations on one model instance and protects prepared
+  evaluator workspace, while allowing independent models to execute
+  concurrently and safely in rolling-window workflows.
+- Adds prepared static likelihood evaluators, reusable Student workspaces and
+  inverse-CDF caches, and equicorrelation sufficient-statistic reuse across
+  optimizer calls.
+- Adds `fit_independent` for process-level batches and extends rolling
+  `risk_metrics` with explicit `n_jobs`, `n_threads`, multiprocessing method,
+  per-window seed ownership, and nested-parallelism diagnostics.
+- Adds a dependency-free native linear-algebra layer with scalar and portable
+  compiler-vectorizable backends; no Eigen, BLAS, OpenMP, or other external
+  runtime dependency is introduced.
+- Adds the parallel release-gate matrix: strict GCC/Clang/MSVC wheels,
+  Linux/macOS/Windows dependency audits, ASan/UBSan, ThreadSanitizer, Unix
+  process-lifecycle stress, allocation/RSS instrumentation, explicit
+  subinterpreter rejection, and aggregate validation artifacts.
+- Documents CPU configuration, thread safety, deterministic sampling,
+  oversubscription, diagnostics, and current large-dimension limits. Dense
+  correlation modes remain `O(d^2)`; factor Student and Gaussian modes are
+  available only when `corr_mode="factor"` is selected explicitly.
+
 ## 0.18.0 - 2026-07-21
 
 Version: `0.17.5` -> `0.18.0`

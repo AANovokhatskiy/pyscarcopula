@@ -1,11 +1,16 @@
 #pragma once
 
+#include "scar/observation.hpp"
+
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <utility>
 #include <vector>
 
 namespace scar {
+
+class FactorCorrelationOperator;
 
 /// Copula kernels supported by the native dispatch layer.
 enum class CopulaFamily : int {
@@ -35,6 +40,11 @@ enum class Transform : int {
     GaussianTanh = 3,
 };
 
+enum class CorrelationKind : int {
+    DenseCholesky = 0,
+    Factor = 1,
+};
+
 /// Complete, immutable-by-convention input specification for copula kernels.
 ///
 /// Multivariate Student and Gaussian families may populate the factor and
@@ -46,7 +56,11 @@ struct CopulaSpec {
     Transform transform = Transform::Softplus;    ///< Parameter transform.
     double offset = 0.0001;                       ///< Transform offset.
     int dim = 2;                                  ///< Copula dimension.
+    CorrelationKind correlation_kind =
+        CorrelationKind::DenseCholesky;
     std::vector<double> l_inv;  ///< Row-major inverse Cholesky factor.
+    std::shared_ptr<const FactorCorrelationOperator> factor_correlation;
+    std::size_t factor_dimension_tile = 16384;
     double log_det = 0.0;       ///< Log determinant of correlation factor.
     std::int64_t ppf_n_obs = 0;  ///< Rows represented by the PPF cache.
     std::vector<double> ppf_nodes;  ///< Student degrees-of-freedom nodes.
@@ -96,6 +110,13 @@ struct MultivariateRowsResult {
     std::vector<double> dlog_dr;
     int status = 0;
     std::int64_t failure_index = -1;
+    std::uint64_t student_ppf_cache_values = 0;
+    std::uint64_t student_ppf_exact_values = 0;
+    std::uint64_t student_ppf_asymptotic_values = 0;
+    std::uint64_t student_workspace_growth_events = 0;
+    std::size_t student_workspace_peak_bytes = 0;
+    int n_threads_requested = 1;
+    int row_parallel_blocks = 0;
 };
 
 struct MultivariateGridResult {
@@ -103,6 +124,32 @@ struct MultivariateGridResult {
     GridValues d_pdf_dx;
     int status = 0;
     std::int64_t failure_index = -1;
+    std::uint64_t student_ppf_cache_values = 0;
+    std::uint64_t student_ppf_exact_values = 0;
+    std::uint64_t student_ppf_asymptotic_values = 0;
+    std::uint64_t student_workspace_growth_events = 0;
+    std::size_t student_workspace_peak_bytes = 0;
+    int n_threads_requested = 1;
+    int student_parallel_blocks = 0;
+    int equicorr_parallel_blocks = 0;
+};
+
+/// Per-row sufficient statistics for an equicorrelation Gaussian copula.
+///
+/// The result owns only O(n_obs) output plus bounded tile-reduction
+/// diagnostics; it never materializes a dense dimension-by-dimension matrix.
+struct EquicorrPreparationResult {
+    std::vector<double> sum_z;
+    std::vector<double> sum_z2;
+    int status = 0;
+    std::int64_t failure_index = -1;
+    int n_threads_requested = 1;
+    int parallel_blocks = 0;
+    int parallel_axis = 0;  ///< 0 sequential, 1 rows, 2 dimension tiles.
+    std::size_t dimension_tiles = 0;
+    std::size_t temporary_values = 0;
+    std::uint64_t clipping_events = 0;
+    std::uint64_t nonfinite_values = 0;
 };
 
 /// Conditional latent samples for coordinates not supplied by the caller.
@@ -112,6 +159,9 @@ struct ConditionalSampleResult {
     std::int64_t n_free = 0;
     int status = 0;
     std::int64_t failure_index = -1;
+    int n_threads_requested = 1;
+    int parallel_blocks = 0;
+    std::uint64_t correlation_factorizations = 0;
 };
 
 /// Static negative log-likelihood objective and requested gradients.
@@ -121,6 +171,8 @@ struct StaticObjectiveResult {
     std::vector<double> negative_correlation_gradient;
     int status = 0;
     std::int64_t failure_index = -1;
+    int n_threads_requested = 1;
+    int parallel_blocks = 0;
 };
 
 /// Reusable evaluator for a fixed copula specification and observation set.
@@ -130,7 +182,12 @@ struct StaticObjectiveResult {
 /// rebuilding those caches.
 class StaticCopulaEvaluator {
 public:
-    StaticCopulaEvaluator(CopulaSpec spec, Observations u);
+    StaticCopulaEvaluator(CopulaSpec spec, Observations u, int n_threads = 1);
+    StaticCopulaEvaluator(
+        CopulaSpec spec,
+        std::vector<double> equicorr_sums,
+        std::vector<double> equicorr_sum_squares,
+        int n_threads = 1);
 
     StaticObjectiveResult objective(
         double parameter,
@@ -149,6 +206,8 @@ private:
     std::vector<double> gaussian_scores_;
     std::vector<double> equicorr_sums_;
     std::vector<double> equicorr_sum_squares_;
+    std::size_t n_obs_ = 0;
+    int n_threads_ = 1;
     int status_ = 0;
 };
 
@@ -228,13 +287,34 @@ MultivariateRowsResult multivariate_log_pdf_and_grad(
     const CopulaSpec& spec,
     const Observations& u,
     const std::vector<double>& r,
-    std::int64_t row_offset = 0);
+    std::int64_t row_offset = 0,
+    int n_threads = 1);
+
+MultivariateRowsResult equicorr_log_pdf_and_grad_from_stats(
+    const CopulaSpec& spec,
+    DoubleView sum_z,
+    DoubleView sum_z2,
+    const std::vector<double>& r,
+    int n_threads = 1);
 
 MultivariateGridResult multivariate_pdf_and_grad_grid(
     const CopulaSpec& spec,
     const Observations& u,
     const std::vector<double>& x_grid,
-    std::int64_t row_offset = 0);
+    std::int64_t row_offset = 0,
+    int n_threads = 1);
+
+MultivariateGridResult equicorr_pdf_and_grad_grid_from_stats(
+    const CopulaSpec& spec,
+    DoubleView sum_z,
+    DoubleView sum_z2,
+    const std::vector<double>& x_grid,
+    int n_threads = 1);
+
+EquicorrPreparationResult prepare_equicorr_sufficient_statistics(
+    ObservationView u,
+    std::size_t dimension_tile = 16384,
+    int n_threads = 1);
 
 ConditionalSampleResult multivariate_gaussian_conditional(
     const std::vector<double>& correlations,
@@ -243,7 +323,8 @@ ConditionalSampleResult multivariate_gaussian_conditional(
     const std::vector<int>& given_indices,
     const std::vector<double>& given_latent,
     const std::vector<double>& normal_draws,
-    std::int64_t n_rows);
+    std::int64_t n_rows,
+    int n_threads = 1);
 
 ConditionalSampleResult multivariate_gaussian_conditional(
     DoubleView correlations,
@@ -252,7 +333,8 @@ ConditionalSampleResult multivariate_gaussian_conditional(
     const std::vector<int>& given_indices,
     DoubleView given_latent,
     DoubleView normal_draws,
-    std::int64_t n_rows);
+    std::int64_t n_rows,
+    int n_threads = 1);
 
 ConditionalSampleResult multivariate_student_conditional(
     const std::vector<double>& correlations,
@@ -263,7 +345,8 @@ ConditionalSampleResult multivariate_student_conditional(
     const std::vector<double>& df,
     const std::vector<double>& normal_draws,
     const std::vector<double>& chi_square_draws,
-    std::int64_t n_rows);
+    std::int64_t n_rows,
+    int n_threads = 1);
 
 ConditionalSampleResult multivariate_student_conditional(
     DoubleView correlations,
@@ -274,6 +357,7 @@ ConditionalSampleResult multivariate_student_conditional(
     DoubleView df,
     DoubleView normal_draws,
     DoubleView chi_square_draws,
-    std::int64_t n_rows);
+    std::int64_t n_rows,
+    int n_threads = 1);
 
 }  // namespace scar

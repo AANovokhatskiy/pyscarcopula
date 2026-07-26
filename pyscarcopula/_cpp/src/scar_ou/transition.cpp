@@ -1,4 +1,5 @@
 #include "scar/detail/safety.hpp"
+#include "scar/detail/linalg.hpp"
 #include "scar/detail/scar_ou/quadrature.hpp"
 #include "scar/detail/scar_ou/transition.hpp"
 
@@ -49,17 +50,12 @@ void dense_matvec(
     const std::vector<double>& v,
     std::vector<double>& out) {
 
-    std::fill(out.begin(), out.end(), 0.0);
-    for (int row = 0; row < K; ++row) {
-        double acc = 0.0;
-        const std::size_t row_offset =
-            static_cast<std::size_t>(row) * static_cast<std::size_t>(K);
-        for (int col = 0; col < K; ++col) {
-            acc += matrix[row_offset + static_cast<std::size_t>(col)]
-                * v[static_cast<std::size_t>(col)];
-        }
-        out[static_cast<std::size_t>(row)] = acc;
-    }
+    scar_internal::linalg::row_major_matvec(
+        matrix.data(),
+        static_cast<std::size_t>(K),
+        static_cast<std::size_t>(K),
+        v.data(),
+        out.data());
 }
 
 void dense_predict_matvec(
@@ -103,12 +99,15 @@ bool matrix_backward_loglik(
 
     double log_scale = 0.0;
     for (std::int64_t t = n_obs - 1; t >= 1; --t) {
+        double emission_log_scale = 0.0;
         copula_pdf_row_precomputed_flat(
             copula,
             u,
             t,
             r_grid,
-            fi_row.data());
+            fi_row.data(),
+            &emission_log_scale);
+        log_scale += emission_log_scale;
         for (int j = 0; j < grid.K; ++j) {
             const std::size_t idx = static_cast<std::size_t>(j);
             v[idx] = fi_row[idx] * msg[idx];
@@ -130,12 +129,15 @@ bool matrix_backward_loglik(
         log_scale += std::log(scale);
     }
 
+    double emission_log_scale = 0.0;
     copula_pdf_row_precomputed_flat(
         copula,
         u,
         0,
         r_grid,
-        fi_row.data());
+        fi_row.data(),
+        &emission_log_scale);
+    log_scale += emission_log_scale;
     double result = 0.0;
     for (int j = 0; j < grid.K; ++j) {
         const std::size_t idx = static_cast<std::size_t>(j);
@@ -225,6 +227,8 @@ bool matrix_forward_mixture_h(
         && copula.rotation == scar::Rotation::R0
         && copula.gaussian_z1_cache.size() == n_obs_size
         && copula.gaussian_z2_cache.size() == n_obs_size;
+    const scar::CopulaSpec transposed_copula =
+        transposed_copula_spec(copula);
 
     auto advance_matrix = [&](const std::vector<double>& phi,
                               const std::vector<double>& fi_row,
@@ -272,7 +276,8 @@ bool matrix_forward_mixture_h(
             for (int j = 0; j < grid.K; ++j) {
                 const std::size_t idx = static_cast<std::size_t>(j);
                 h_mix += weights[idx]
-                    * copula_h_rotated(copula, u2, u1, r_grid[idx]);
+                    * copula_h_rotated(
+                        transposed_copula, u2, u1, r_grid[idx]);
                 if (out_reverse != nullptr) {
                     h_mix_reverse += weights[idx]
                         * copula_h_rotated(copula, u1, u2, r_grid[idx]);
@@ -375,6 +380,8 @@ bool local_forward_mixture_h(
         && copula.rotation == scar::Rotation::R0
         && copula.gaussian_z1_cache.size() == n_obs_size
         && copula.gaussian_z2_cache.size() == n_obs_size;
+    const scar::CopulaSpec transposed_copula =
+        transposed_copula_spec(copula);
 
     auto advance_local = [&](const std::vector<double>& phi,
                              const std::vector<double>& fi_row,
@@ -430,7 +437,8 @@ bool local_forward_mixture_h(
             for (int j = 0; j < grid.K; ++j) {
                 const std::size_t idx = static_cast<std::size_t>(j);
                 h_mix += weights[idx]
-                    * copula_h_rotated(copula, u2, u1, r_grid[idx]);
+                    * copula_h_rotated(
+                        transposed_copula, u2, u1, r_grid[idx]);
                 if (out_reverse != nullptr) {
                     h_mix_reverse += weights[idx]
                         * copula_h_rotated(copula, u1, u2, r_grid[idx]);

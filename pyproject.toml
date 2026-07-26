@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyscarcopula"
-version = "0.18.0"
+version = "0.19.0"
 description = "Python library for bivariate, multivariate, vine, and stochastic copula models"
 readme = "README.md"
 license = "MIT"
@@ -42,6 +42,8 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest>=7.0", "pandas>=1.5"]
+validation = ["pyvinecopulib"]
+examples = ["pandas>=1.5", "matplotlib", "jupyter", "pyvinecopulib"]
 
 [project.urls]
 Homepage = "https://github.com/AANovokhatskiy/pyscarcopula"

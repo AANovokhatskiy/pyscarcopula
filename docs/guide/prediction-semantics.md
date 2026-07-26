@@ -121,10 +121,11 @@ fitted or predictive parameter path before sampling the free coordinates.
 For every multivariate model, fixing all variables returns constant rows equal
 to the supplied values.
 
-For C-vines, prediction uses C-vine-specific prefix and general conditional
-paths.
+Legacy `CVineCopula` prediction uses C-vine-specific prefix and general
+conditional paths.
 
-For R-vines, `predict` uses two paths:
+For generic `VineCopula` models, including fixed C-vine, fixed D-vine, and
+auto-selected R-vine structures, `predict` uses two paths:
 
 - **suffix exact path**: used when the fixed variables can be placed at the end
   of the R-vine variable order, either directly or after rebuilding an
@@ -140,10 +141,12 @@ supplied values.
 
 ## `given_vars`
 
-`given_vars` is a fit-time structure-selection hint for `RVineCopula.fit`:
+`given_vars` is a fit-time structure-selection hint for `VineCopula.fit`:
 
 ```python
-vine = RVineCopula().fit(
+from pyscarcopula import VineCopula
+
+vine = VineCopula().fit(
     u_train,
     method="scar-tm-ou",
     given_vars=[0, 2],
@@ -223,7 +226,7 @@ updates after and before burn-in. They do not affect suffix exact sampling.
 
 ## Diagnostics
 
-For `RVineCopula.predict(..., return_diagnostics=True)`, the result is
+For `VineCopula.predict(..., return_diagnostics=True)`, the result is
 `(samples, diagnostics)`.
 
 Useful diagnostic fields include:

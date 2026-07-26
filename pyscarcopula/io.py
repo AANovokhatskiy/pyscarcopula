@@ -7,7 +7,6 @@ import importlib
 import json
 import math
 from dataclasses import fields, is_dataclass
-from importlib import metadata
 from pathlib import Path
 from typing import Any, TypeVar, overload
 
@@ -16,32 +15,9 @@ from scipy.optimize import OptimizeResult
 
 
 MODEL_FORMAT = "pyscarcopula-model"
-MODEL_FORMAT_VERSION = 2
 _TYPE = "__pyscarcopula_type__"
-_CLASS_PATH_MIGRATIONS = {
-    "pyscarcopula.copula.elliptical.GaussianCopula":
-        "pyscarcopula.copula.multivariate.gaussian.GaussianCopula",
-    "pyscarcopula.copula.elliptical.StudentCopula":
-        "pyscarcopula.copula.multivariate.student.StudentCopula",
-    "pyscarcopula.copula.experimental.equicorr.EquicorrGaussianCopula":
-        "pyscarcopula.copula.multivariate.equicorr.EquicorrGaussianCopula",
-    (
-        "pyscarcopula.copula.experimental.stochastic_student."
-        "StochasticStudentCopula"
-    ): (
-        "pyscarcopula.copula.multivariate.stochastic_student."
-        "StochasticStudentCopula"
-    ),
-}
 
 ModelT = TypeVar("ModelT")
-
-
-def _package_version() -> str | None:
-    try:
-        return metadata.version("pyscarcopula")
-    except metadata.PackageNotFoundError:
-        return None
 
 
 def _class_path(cls: type) -> str:
@@ -53,7 +29,6 @@ def _qualified_name(obj: object) -> str:
 
 
 def _resolve_class(path: str) -> type:
-    path = _CLASS_PATH_MIGRATIONS.get(path, path)
     module_name, _, qualname = path.rpartition(".")
     if not module_name or not qualname:
         raise ValueError(f"Invalid class path: {path!r}")
@@ -248,8 +223,6 @@ def save_model(model: object, path: str | Path, *, include_data: bool = False) -
     payload_model = model if include_data else _without_training_data(model)
     envelope = {
         "format": MODEL_FORMAT,
-        "format_version": MODEL_FORMAT_VERSION,
-        "package_version": _package_version(),
         "class": _qualified_name(payload_model),
         "include_data": bool(include_data),
         "state": _to_jsonable(payload_model),
@@ -314,13 +287,17 @@ def load_model(
 
     if not isinstance(envelope, dict) or envelope.get("format") != MODEL_FORMAT:
         raise ValueError("Not a pyscarcopula model file")
-    if envelope.get("format_version") != MODEL_FORMAT_VERSION:
-        raise ValueError(
-            "Unsupported pyscarcopula model format version: "
-            f"{envelope.get('format_version')!r}"
-        )
 
     model = _from_jsonable(envelope.get("state"))
+    declared_path = envelope.get("class")
+    if not isinstance(declared_path, str):
+        raise ValueError("Persisted model class must be a qualified name")
+    declared_type = _resolve_class(declared_path)
+    if not isinstance(model, declared_type):
+        raise ValueError(
+            "Persisted model class does not match serialized state: "
+            f"declared {declared_type.__name__}, "
+            f"restored {type(model).__name__}")
     if expected_type is not None and not isinstance(model, expected_type):
         raise TypeError(
             f"Expected {expected_type.__name__}, got {type(model).__name__}"

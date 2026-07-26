@@ -33,6 +33,10 @@ The shared formulas for scalar dynamic states, parameter links, SCAR filters,
 and dynamic Rosenblatt GoF are summarized in
 [Mathematical Contracts](mathematical-contracts.md).
 
+Factor correlation, static and joint MLE, dynamic GAS/SCAR examples, and
+standalone operator usage are covered on the dedicated
+[Factor Models](factor-models.md) page.
+
 ## Equicorrelation Gaussian Copula
 
 For $d$ assets, the standard Gaussian copula has $d(d-1)/2$ static
@@ -74,6 +78,22 @@ cop.fit(u, method='gas')
 cop.fit(u, method='scar-tm-ou')
 ```
 
+Native row and emission work can be parallelized explicitly for a large fit:
+
+```python
+from pyscarcopula import NumericalConfig
+
+result = cop.fit(
+    u,
+    method="scar-tm-ou",
+    config=NumericalConfig(n_threads=4),
+)
+```
+
+If `NumericalConfig` is omitted, the fit always uses one native thread. See
+[CPU Parallelism](parallelism.md) for deterministic execution, thread-safety,
+and nested process/thread guidance.
+
 ### When to use
 
 Equicorrelation SCAR is a good fit when:
@@ -83,6 +103,14 @@ Equicorrelation SCAR is a good fit when:
 - You want a compact, interpretable model with 3 parameters
 
 For heterogeneous dependence, use C-vine or R-vine instead.
+
+The equicorrelation density hot path is linear in `d` and does not construct a
+dense correlation matrix. Conditional sampling uses the closed-form
+equicorrelation conditional mean and covariance decomposition and likewise
+does not construct `R` or a dense Schur complement. Static MLE results retain
+only scalar `rho`, with `correlation_matrix=None`. Output arrays and input
+storage still determine the end-to-end memory footprint, so large sampling
+jobs should be batched.
 
 ## Stochastic Student-t Copula
 
@@ -105,6 +133,28 @@ The latent/dynamic part of the model controls only tail thickness. Smaller
 $\nu_t$ means heavier joint tails; larger $\nu_t$ moves the copula toward the
 Gaussian copula.
 
+For `method='scar-tm-ou'`, the public OU parameters remain
+`(kappa, mu, nu)`, where `nu` is the diffusion coefficient. Internally,
+`StochasticStudentCopula` is optimized in
+`(log(kappa), mu, log(sigma_x))`, with stationary latent standard deviation
+
+$$\sigma_x=\frac{\nu}{\sqrt{2\kappa}}.$$
+
+This parameterization keeps the two positive scale parameters unconstrained
+and avoids the poorly conditioned combination of very small mean reversion
+and very large stationary variance. `alpha0` and the fitted result still use
+the public `(kappa, mu, nu)` representation; no conversion is required in
+user code. The fit diagnostics expose the internal choice as
+`optimizer_parameterization='log_kappa_mu_log_stationary_sigma'`.
+
+Dynamic emission evaluation uses a Student inverse-CDF table from the model
+boundary at `df = 2 + 1e-6` through `df = 1000`. Outside the table, the native
+gradient obtains the quantile derivative analytically from the Student CDF;
+it does not finite-difference the complete emission likelihood. Above the
+final table node, dynamic fits use a third-order Cornish-Fisher expansion
+toward the normal quantile, together with its analytical `df` derivative.
+Static Student likelihoods retain exact quantiles.
+
 ### Stochastic Student copula with estimated static correlation
 
 Static correlation can be handled in three modes:
@@ -118,14 +168,23 @@ cop = StochasticStudentCopula(d=5, corr_mode="shrinkage")
 
 # full static correlation for small dimensions
 cop = StochasticStudentCopula(d=5, corr_mode="cholesky")
+
+# compact fixed factor correlation for large dimensions
+cop = StochasticStudentCopula(
+    d=u.shape[1],
+    corr_mode="factor",
+    factor_rank=3,
+)
+cop.initialize_factor(u)
 ```
 
 `shrinkage` and `cholesky` estimate static correlation jointly with constant-df
 MLE or with the three OU parameters in SCAR-TM-OU. `cholesky` mode estimates
 `d(d-1)/2` additional static parameters and is intended for low-dimensional
 problems. Their initialization/base matrix uses `corr_base` when supplied,
-otherwise `R`, and otherwise a Kendall estimate from the fit data. GAS keeps
-fixed-correlation semantics.
+otherwise `R`, and otherwise a Kendall estimate from the fit data. GAS
+supports `fixed`, `shrinkage`, and `factor` correlation modes; `cholesky` is
+restricted to MLE and SCAR-TM-OU.
 
 Static and stochastic Student models share the same Kendall preprocessing.
 Each pair uses
@@ -172,6 +231,56 @@ gof = gof_test(cop, returns, to_pobs=True)
 - When the correlation structure is relatively stable but tail thickness changes
 - As an alternative to vine copulas for moderate dimensions
 
+The `fixed`, `shrinkage`, and `cholesky` modes retain a dense `O(d^2)`
+correlation representation. The `factor` mode instead stores
+`O(d*k + k^2)` state, accepts validated loadings or estimates them with a
+deterministic tiled randomized SVD, and never creates dense `R` implicitly.
+It supports static MLE, GAS, SCAR-TM-OU, row/grid evaluation, bounded batch
+generation, and exact conditional sampling without a dense Schur complement.
+
+Static MLE can also refine `df` and the factor loadings jointly when the
+identifiable parameter count is deliberately bounded:
+
+```python
+joint = StochasticStudentCopula(
+    d=u.shape[1],
+    corr_mode="factor",
+    factor_rank=4,
+    factor_estimation="joint",
+    factor_joint_max_params=100_000,
+)
+joint_result = joint.fit(
+    u, method="mle", config=NumericalConfig(n_threads=4))
+```
+
+The joint path uses analytical matrix-free gradients and an identified
+pivoted lower-triangular loading convention. Diagnostics report the anchor
+rows, initial/final penalized objective, terminal gradient and acceptance
+threshold, condition estimate, and native reduction workspace. `success=True`
+requires both optimizer success and the terminal-gradient gate. Joint
+loadings for GAS and SCAR are rejected: those methods require additional
+derivatives through their sequential recursions. Use the production
+`two-stage` policy for dynamic models and large `d`.
+
+```python
+factor_samples = cop.sample_at_parameter(
+    50_000, r=6.0, rng=np.random.default_rng(2026), n_threads=4)
+
+factor_conditional = cop.sample_conditional(
+    50_000,
+    r=6.0,
+    given={0: 0.25, 3: 0.8},
+    rng=np.random.default_rng(2027),
+    n_threads=4,
+)
+```
+
+For fixed coordinates `G`, conditioning factorizes only
+`I + B_G.T @ D_G^-1 @ B_G`, a `k*k` matrix. Free coordinates retain a
+diagonal-plus-low-rank covariance, so memory remains linear in `d*k` plus
+the requested output. Use the batch APIs and `memory_budget_bytes` when
+`n*d` itself is large.
+
 ## Common API
 
 Static Gaussian, static Student, equicorrelation Gaussian MLE, and stochastic
@@ -191,6 +300,9 @@ print(result.log_likelihood, result.n_params, result.aic, result.bic)
 
 The result stores model parameters, observation count, an explicit correlation
 matrix, optimizer status, diagnostics, and the parameter count used by AIC/BIC.
+For `GaussianCopula(corr_mode="factor")` and factor Student models, the result
+intentionally stores `correlation_matrix=None` and keeps compact loadings and
+uniqueness in `model_parameters`.
 
 All multivariate models support the following core operations where applicable:
 
@@ -223,14 +335,16 @@ gaussian_conditional = gaussian.sample_conditional(
     n=10_000,
     given={0: 0.25, 2: 0.8},
     rng=np.random.default_rng(2026),
+    n_threads=4,
 )
 
 student = StudentCopula()
 student.fit(u, method='mle')
-student_conditional = student.predict(
+student_conditional = student.sample_conditional(
     n=10_000,
     given={1: 0.6},
     rng=np.random.default_rng(2026),
+    n_threads=4,
 )
 ```
 
@@ -239,3 +353,41 @@ The supplied columns remain fixed and the remaining coordinates are drawn from
 the fitted conditional copula. If every variable is supplied, both APIs return
 constant rows. Static `GaussianCopula` and `StudentCopula` accept only
 `method='mle'`.
+
+The conditional kernels generate random draws in Python before entering the
+native implementation. Reusing the same seed produces the same tested output
+for `n_threads=1` and parallel thread counts.
+
+For a static Gaussian model with large `d`, select factor correlation
+explicitly:
+
+```python
+from pyscarcopula import NumericalConfig
+
+factor_gaussian = GaussianCopula(
+    d=u.shape[1],
+    corr_mode="factor",
+    factor_rank=8,
+    factor_tile_size=16_384,
+)
+factor_result = factor_gaussian.fit(
+    u,
+    method="mle",
+    config=NumericalConfig(n_threads=4),
+)
+
+for block in factor_gaussian.sample_batches(
+    1_000_000,
+    batch_rows=128,
+    given={0: 0.25},
+    n_threads=4,
+):
+    consume(block)
+```
+
+The Gaussian adapter reuses `FactorCorrelation` for likelihood, sampling,
+conditioning, persistence, and rolling-window reconstruction. Two-stage
+normal-score estimation is tiled and does not build a `d*d` covariance.
+Likelihood and sampling remain `O(d*k)` per row; conditional generation uses
+only a `k*k` factor system. The factor Rosenblatt transform used by
+`gof_test` keeps `O(T*k + k^2)` workspace.

@@ -153,7 +153,7 @@ class StudentCopula(MultivariateCopula):
         )
         return t_dist.cdf(x, df=df)
 
-    def sample_conditional(self, n, given, rng=None):
+    def sample_conditional(self, n, given, rng=None, *, n_threads=1):
         """Sample conditionally with ``given={var_index: u_value}``."""
         correlation, df = self._fitted_parameters()
         if correlation is None or df is None:
@@ -162,7 +162,8 @@ class StudentCopula(MultivariateCopula):
             sample_student_conditional,
         )
         return sample_student_conditional(
-            n, correlation, df, given=given, rng=rng)
+            n, correlation, df, given=given, rng=rng,
+            n_threads=n_threads)
 
     def predict(self, n, u=None, rng=None, given=None, horizon='next',
                 predictive_r_mode=None, predict_config=None):

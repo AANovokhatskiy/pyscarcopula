@@ -98,6 +98,25 @@ class IndependentCopula(BivariateCopula):
         Always instant: logL = 0, no parameters.
         Returns an IndependentResult.
         """
+        normalized_method = str(method).upper()
+        if normalized_method != "MLE":
+            raise TypeError(
+                f"{type(self).__name__} does not support {normalized_method}")
+
+        from pyscarcopula._utils import pobs
+        from pyscarcopula.numerical._arrays import as_float64_array
+        from pyscarcopula.strategy._base import validate_copula_data
+
+        u = as_float64_array(data, name="data")
+        if to_pobs:
+            u = pobs(u)
+        u = validate_copula_data(self, u)
+        if u.shape[0] == 0:
+            raise ValueError("copula data must contain at least one observation")
+        return self._fit_validated(u)
+
+    def _fit_validated(self, u):
+        """Fit already validated pair data without rescanning vine edges."""
         from pyscarcopula._types import IndependentResult
         result = IndependentResult(
             log_likelihood=0.0,
@@ -106,7 +125,7 @@ class IndependentCopula(BivariateCopula):
             success=True,
         )
         self.fit_result = result
-        self._last_u = np.asarray(data, dtype=np.float64)
+        self._last_u = u
         return result
     _capabilities = CopulaCapabilities(
         dimension=2,

@@ -18,7 +18,7 @@ from pyscarcopula.numerical._scar_ou_config import (
     select_auto_backend,
     validate_cpp_config,
 )
-from pyscarcopula.numerical._arrays import as_float64_array
+from pyscarcopula.numerical._arrays import as_pseudo_observation_array
 from pyscarcopula.numerical._transition_methods import (
     normalize_ou_transition_method,
 )
@@ -98,13 +98,14 @@ def _config(module, cfg: AutoTMConfig):
     out.auto_small_kdt = float(cfg.small_kdt)
     out.spectral_basis_order = int(cfg.basis_order)
     out.spectral_quad_order = 0 if cfg.quad_order is None else int(cfg.quad_order)
+    out.n_threads = int(cfg.n_threads)
     return out
 
 
 def _inputs(kappa, mu, nu, u, copula, config):
     module = _cpp_extension.load()
     cfg = config or AutoTMConfig()
-    obs = as_float64_array(u)
+    obs = as_pseudo_observation_array(u)
     method = normalize_ou_transition_method(cfg.transition_method)
     validate_cpp_config(cfg, transition_method=method)
     if obs.ndim != 2:
@@ -133,10 +134,20 @@ def _inputs(kappa, mu, nu, u, copula, config):
 def _prepared_inputs(u, copula, config):
     module = _cpp_extension.load()
     cfg = config or AutoTMConfig()
-    obs = as_float64_array(u)
+    from pyscarcopula.copula.multivariate.equicorr_prepared import (
+        EquicorrPreparedData,
+    )
+    prepared_input = isinstance(u, EquicorrPreparedData)
+    if prepared_input:
+        if int(getattr(copula, "d", -1)) != u.dimension:
+            raise ValueError(
+                "prepared dimension does not match copula dimension")
+        obs = u
+    else:
+        obs = as_pseudo_observation_array(u)
     method = normalize_ou_transition_method(cfg.transition_method)
     validate_cpp_config(cfg, transition_method=method)
-    if obs.ndim != 2:
+    if not prepared_input and obs.ndim != 2:
         raise ValueError("u must have 2D shape (n_obs, dimension)")
 
     student_dim = getattr(copula, "d", None)
@@ -151,7 +162,8 @@ def _prepared_inputs(u, copula, config):
 
     return (
         module,
-        _cpp_copula.make_spec(module, copula, obs),
+        _cpp_copula.make_spec(
+            module, copula, None if prepared_input else obs),
         obs,
         _config(module, cfg),
         method,
@@ -177,8 +189,17 @@ class PreparedScarOuObjective:
             self.method,
             self.cfg_py,
         ) = _prepared_inputs(u, copula, config)
-        self._native = self.module.PreparedScarOuEvaluator(
-            self.spec, self.obs, self.config, self.method)
+        if hasattr(self.obs, "sum_z") and hasattr(self.obs, "sum_z2"):
+            self._native = self.module.PreparedScarOuEvaluator(
+                self.spec,
+                self.obs.sum_z,
+                self.obs.sum_z2,
+                self.config,
+                self.method,
+            )
+        else:
+            self._native = self.module.PreparedScarOuEvaluator(
+                self.spec, self.obs, self.config, self.method)
         self._student_corr_version = getattr(
             copula, "_corr_cache_version", None)
 

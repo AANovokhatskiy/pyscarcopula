@@ -6,28 +6,32 @@ pyscarcopula works with pseudo-observations: uniform marginals obtained from
 ranked data.
 
 ```python
-import pandas as pd
 import numpy as np
+from scipy.stats import norm
 
-prices = pd.read_csv("data/crypto_prices.csv", index_col=0, sep=';')
-returns = np.log(prices[['BTC-USD', 'ETH-USD']] /
-                 prices[['BTC-USD', 'ETH-USD']].shift(1)).dropna()
-u = returns.rank(method="average").div(len(returns) + 1).to_numpy()
+rng = np.random.default_rng(2026)
+d = 6
+rho = 0.45
+R = (1.0 - rho) * np.eye(d) + rho * np.ones((d, d))
+u_6d = norm.cdf(rng.multivariate_normal(np.zeros(d), R, size=400))
+u = u_6d[:, :2]
 ```
+
+For application data, replace this simulated array with column-wise ranks
+divided by `n + 1`, or pass raw continuous observations with `to_pobs=True`.
 
 ## Fit a bivariate copula
 
 ```python
 from pyscarcopula import GumbelCopula
-from pyscarcopula.api import fit, predictive_mean
 
 copula = GumbelCopula(rotate=180)
 
 # Constant parameter (MLE)
-result_mle = fit(copula, u, method='mle')
+result_mle = copula.fit(u, method="mle")
 
 # Time-varying parameter (SCAR)
-result_tm = fit(copula, u, method='scar-tm-ou')
+result_tm = copula.fit(u, method="scar-tm-ou")
 
 print(f"MLE:  logL = {result_mle.log_likelihood:.2f}")
 print(f"SCAR: logL = {result_tm.log_likelihood:.2f}")
@@ -45,6 +49,8 @@ print(f"p-value = {gof.pvalue:.4f}")
 ## Predictive mean copula parameter
 
 ```python
+from pyscarcopula.api import predictive_mean
+
 r_t = predictive_mean(copula, u, result_tm)
 # r_t[k] = E[Psi(x_k) | u_{1:k-1}]
 ```
@@ -52,64 +58,62 @@ r_t = predictive_mean(copula, u, result_tm)
 ## Sample and predict
 
 ```python
-from pyscarcopula.api import sample, predict
-
 # sample: reproduce the fitted model (for validation)
-v = sample(copula, u, result_tm, n=2000, rng=np.random.default_rng(2024))
-result_refit = fit(copula, v, method='scar-tm-ou', to_pobs=True)
-gof_v = gof_test(copula, v, fit_result=result_refit, to_pobs=True)
-print(f"GoF on sample: p={gof_v.pvalue:.4f}")  # expected to pass
+v = copula.sample(2000, rng=np.random.default_rng(2024))
+copula_refit = GumbelCopula(rotate=180)
+result_refit = copula_refit.fit(v, method="scar-tm-ou")
+gof_v = gof_test(copula_refit, v, fit_result=result_refit, to_pobs=False)
+print(f"GoF on sample: p={gof_v.pvalue:.4f}")
 
 # predict: next-step forecast (for risk metrics)
-u_pred = predict(copula, u, result_tm, n=100_000,
-                 rng=np.random.default_rng(2025))
+u_pred = copula.predict(100_000, rng=np.random.default_rng(2025))
 
 # conditional forecast in pseudo-observation space
-u_cond = predict(copula, u, result_tm, n=20_000, given={0: 0.35},
-                 horizon='current', rng=np.random.default_rng(2026))
+u_cond = copula.predict(
+    20_000,
+    given={0: 0.35},
+    horizon="current",
+    rng=np.random.default_rng(2026),
+)
 ```
 
-## Fit a multivariate C-vine
+## Fit a stochastic Student-t copula
 
 ```python
-from pyscarcopula import CVineCopula
+from pyscarcopula import StochasticStudentCopula
 
-tickers_6d = ['BTC-USD', 'ETH-USD', 'BNB-USD', 'ADA-USD', 'XRP-USD', 'DOGE-USD']
-returns_6d = np.log(prices[tickers_6d] / prices[tickers_6d].shift(1)).dropna().iloc[:250]
-u_6d = returns_6d.rank(method="average").div(len(returns_6d) + 1).to_numpy()
+student = StochasticStudentCopula(d=u_6d.shape[1], corr_mode="shrinkage")
+student_result = student.fit(u_6d, method="scar-tm-ou")
 
-vine = CVineCopula()
-vine.fit(u_6d, method='scar-tm-ou',
-         truncation_level=2, min_edge_logL=10)
+# The dynamic parameter is the Student-t degrees of freedom.
+df_t = student.predictive_mean()
+u_student_pred = student.predict(10_000, rng=np.random.default_rng(2027))
+```
+
+## Fit a multivariate vine
+
+```python
+from pyscarcopula import VineCopula
+
+vine = VineCopula()
+vine.fit(
+    u_6d,
+    method="scar-tm-ou",
+    truncation_level=2,
+    min_edge_logL=10,
+    given_vars=[2],
+)
 vine.summary()
 
 # Vine sampling and prediction
-v6 = vine.sample(2000, rng=np.random.default_rng(2027))
-u_pred_6d = vine.predict(100_000, u=u_6d,
-                         rng=np.random.default_rng(2028))
+v6 = vine.sample(2_000, rng=np.random.default_rng(2028))
+u_pred_6d = vine.predict(100_000, rng=np.random.default_rng(2029))
 
 # Conditional vine forecast: fix one variable
-u_pred_6d_cond = vine.predict(20_000, u=u_6d, given={2: 0.6},
-                              rng=np.random.default_rng(2029))
-```
-
-If you know the target conditioning set before fitting an `RVineCopula`, pass
-it to `fit`:
-
-```python
-from pyscarcopula import RVineCopula
-
-rvine = RVineCopula().fit(
-    u_6d,
-    method='scar-tm-ou',
-    given_vars=[2],
-)
-
-u_pred_6d_cond = rvine.predict(
+u_pred_6d_cond = vine.predict(
     20_000,
-    u=u_6d,
     given={2: 0.6},
-    horizon='next',
+    horizon="next",
     rng=np.random.default_rng(2030),
 )
 ```
@@ -153,3 +157,6 @@ Multivariate models can be imported from `pyscarcopula` or from
 | SCAR-TM-OU | `'scar-tm-ou'` | Transfer matrix with OU latent process |
 | SCAR-TM-JACOBI | `'scar-tm-jacobi'` | Transfer matrix with Jacobi Kendall-tau dynamics |
 | GAS | `'gas'` | Observation-driven score model |
+
+For guidance on which family and estimation method to use, continue with
+[Choosing a Model](choosing-a-model.md).

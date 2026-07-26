@@ -4,6 +4,10 @@ include README.md
 include ARCHITECTURE.md
 include pyproject.toml
 include tools/check_cpp_architecture.py
+include tools/aggregate_release_validation.py
+include tools/allocation_probe.c
+include tools/native_dependency_audit.py
+include tools/write_release_metadata.py
 recursive-include tests *.py
 recursive-include tests/fixtures *.json
 recursive-include docs *.md

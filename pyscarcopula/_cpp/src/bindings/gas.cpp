@@ -3,6 +3,29 @@
 namespace py = pybind11;
 
 namespace pyscarcopula::bindings {
+namespace {
+
+scar::ObservationView set_equicorr_prepared(
+    scar::CopulaSpec& copula,
+    py::array_t<double, py::array::c_style | py::array::forcecast> sum_z,
+    py::array_t<double, py::array::c_style | py::array::forcecast> sum_z2) {
+
+    copula.equicorr_sum_cache = vector_from_array(sum_z);
+    copula.equicorr_sum_squares_cache = vector_from_array(sum_z2);
+    if (copula.equicorr_sum_cache.empty()
+        || copula.equicorr_sum_squares_cache.size()
+            != copula.equicorr_sum_cache.size()) {
+        throw std::invalid_argument(
+            "prepared Equicorr statistics must be non-empty and equal-sized");
+    }
+    return {
+        nullptr,
+        copula.equicorr_sum_cache.size(),
+        copula.dim,
+    };
+}
+
+}  // namespace
 
 void bind_gas(py::module_& m) {
     py::class_<scar::GasParams>(
@@ -32,52 +55,67 @@ void bind_gas(py::module_& m) {
         .def_readwrite("gas_config", &scar::GasRvineEdge::gas_config)
         .def_readwrite("dynamic", &scar::GasRvineEdge::dynamic);
 
-    py::class_<scar::GasRvinePlan>(
-        m, "GasRvinePlan", "Flattened execution plan for R-vine sampling.")
+    py::class_<scar::RVineTraversalPlan>(
+        m,
+        "RVineTraversalPlan",
+        "Model-independent execution plan for R-vine sampling.")
         .def(py::init<>())
-        .def_readwrite("dimension", &scar::GasRvinePlan::dimension)
-        .def_readwrite("node_count", &scar::GasRvinePlan::node_count)
+        .def_readwrite("dimension", &scar::RVineTraversalPlan::dimension)
+        .def_readwrite("node_count", &scar::RVineTraversalPlan::node_count)
         .def_readwrite(
             "last_uniform_column",
-            &scar::GasRvinePlan::last_uniform_column)
+            &scar::RVineTraversalPlan::last_uniform_column)
         .def_readwrite(
             "last_output_node",
-            &scar::GasRvinePlan::last_output_node)
-        .def_readwrite("output_nodes", &scar::GasRvinePlan::output_nodes)
-        .def_readwrite("column_uniforms", &scar::GasRvinePlan::column_uniforms)
-        .def_readwrite("inverse_offsets", &scar::GasRvinePlan::inverse_offsets)
-        .def_readwrite("inverse_edges", &scar::GasRvinePlan::inverse_edges)
+            &scar::RVineTraversalPlan::last_output_node)
+        .def_readwrite(
+            "output_nodes", &scar::RVineTraversalPlan::output_nodes)
+        .def_readwrite(
+            "column_uniforms", &scar::RVineTraversalPlan::column_uniforms)
+        .def_readwrite(
+            "inverse_offsets", &scar::RVineTraversalPlan::inverse_offsets)
+        .def_readwrite(
+            "inverse_edges", &scar::RVineTraversalPlan::inverse_edges)
         .def_readwrite(
             "inverse_partner_nodes",
-            &scar::GasRvinePlan::inverse_partner_nodes)
+            &scar::RVineTraversalPlan::inverse_partner_nodes)
         .def_readwrite(
             "inverse_output_nodes",
-            &scar::GasRvinePlan::inverse_output_nodes)
-        .def_readwrite("forward_offsets", &scar::GasRvinePlan::forward_offsets)
-        .def_readwrite("forward_edges", &scar::GasRvinePlan::forward_edges)
+            &scar::RVineTraversalPlan::inverse_output_nodes)
+        .def_readwrite(
+            "inverse_transposed",
+            &scar::RVineTraversalPlan::inverse_transposed)
+        .def_readwrite(
+            "forward_offsets", &scar::RVineTraversalPlan::forward_offsets)
+        .def_readwrite(
+            "forward_edges", &scar::RVineTraversalPlan::forward_edges)
         .def_readwrite(
             "forward_leaf_nodes",
-            &scar::GasRvinePlan::forward_leaf_nodes)
+            &scar::RVineTraversalPlan::forward_leaf_nodes)
         .def_readwrite(
             "forward_partner_nodes",
-            &scar::GasRvinePlan::forward_partner_nodes)
+            &scar::RVineTraversalPlan::forward_partner_nodes)
         .def_readwrite(
             "forward_leaf_output_nodes",
-            &scar::GasRvinePlan::forward_leaf_output_nodes)
+            &scar::RVineTraversalPlan::forward_leaf_output_nodes)
         .def_readwrite(
             "forward_partner_output_nodes",
-            &scar::GasRvinePlan::forward_partner_output_nodes)
+            &scar::RVineTraversalPlan::forward_partner_output_nodes)
+        .def_readwrite(
+            "forward_transposed",
+            &scar::RVineTraversalPlan::forward_transposed)
         .def_readwrite(
             "update_u1_nodes",
-            &scar::GasRvinePlan::update_u1_nodes)
+            &scar::RVineTraversalPlan::update_u1_nodes)
         .def_readwrite(
             "update_u2_nodes",
-            &scar::GasRvinePlan::update_u2_nodes);
+            &scar::RVineTraversalPlan::update_u2_nodes);
+    m.attr("GasRvinePlan") = m.attr("RVineTraversalPlan");
 
     m.def(
         "gas_rvine_sample",
         [](const std::vector<scar::GasRvineEdge>& edges,
-           const scar::GasRvinePlan& plan,
+           const scar::RVineTraversalPlan& plan,
            py::array_t<
                double,
                py::array::c_style | py::array::forcecast> uniforms,
@@ -154,6 +192,33 @@ void bind_gas(py::module_& m) {
             py::arg("u"),
             py::arg("config"))
         .def(
+            "filter_equicorr_prepared",
+            [](const scar::GasEvaluator& evaluator,
+               const scar::GasParams& params,
+               scar::CopulaSpec copula,
+               py::array_t<
+                   double,
+                   py::array::c_style | py::array::forcecast> sum_z,
+               py::array_t<
+                   double,
+                   py::array::c_style | py::array::forcecast> sum_z2,
+               const scar::GasConfig& config) {
+                const auto obs = set_equicorr_prepared(
+                    copula, sum_z, sum_z2);
+                scar::GasFilterResult result;
+                {
+                    py::gil_scoped_release release;
+                    result = evaluator.filter(
+                        params, copula, obs, config);
+                }
+                return gas_filter_result_to_dict(result);
+            },
+            py::arg("params"),
+            py::arg("copula"),
+            py::arg("sum_z"),
+            py::arg("sum_z2"),
+            py::arg("config"))
+        .def(
             "log_likelihood",
             [](const scar::GasEvaluator& evaluator,
                const scar::GasParams& params,
@@ -175,6 +240,33 @@ void bind_gas(py::module_& m) {
             py::arg("u"),
             py::arg("config"))
         .def(
+            "log_likelihood_equicorr_prepared",
+            [](const scar::GasEvaluator& evaluator,
+               const scar::GasParams& params,
+               scar::CopulaSpec copula,
+               py::array_t<
+                   double,
+                   py::array::c_style | py::array::forcecast> sum_z,
+               py::array_t<
+                   double,
+                   py::array::c_style | py::array::forcecast> sum_z2,
+               const scar::GasConfig& config) {
+                const auto obs = set_equicorr_prepared(
+                    copula, sum_z, sum_z2);
+                scar::GasLogLikResult result;
+                {
+                    py::gil_scoped_release release;
+                    result = evaluator.log_likelihood(
+                        params, copula, obs, config);
+                }
+                return gas_loglik_result_to_dict(result);
+            },
+            py::arg("params"),
+            py::arg("copula"),
+            py::arg("sum_z"),
+            py::arg("sum_z2"),
+            py::arg("config"))
+        .def(
             "negative_log_likelihood",
             [](const scar::GasEvaluator& evaluator,
                const scar::GasParams& params,
@@ -194,6 +286,33 @@ void bind_gas(py::module_& m) {
             py::arg("params"),
             py::arg("copula"),
             py::arg("u"),
+            py::arg("config"))
+        .def(
+            "negative_log_likelihood_equicorr_prepared",
+            [](const scar::GasEvaluator& evaluator,
+               const scar::GasParams& params,
+               scar::CopulaSpec copula,
+               py::array_t<
+                   double,
+                   py::array::c_style | py::array::forcecast> sum_z,
+               py::array_t<
+                   double,
+                   py::array::c_style | py::array::forcecast> sum_z2,
+               const scar::GasConfig& config) {
+                const auto obs = set_equicorr_prepared(
+                    copula, sum_z, sum_z2);
+                scar::GasLogLikResult result;
+                {
+                    py::gil_scoped_release release;
+                    result = evaluator.negative_log_likelihood(
+                        params, copula, obs, config);
+                }
+                return gas_loglik_result_to_dict(result);
+            },
+            py::arg("params"),
+            py::arg("copula"),
+            py::arg("sum_z"),
+            py::arg("sum_z2"),
             py::arg("config"))
         .def(
             "update_one",
@@ -264,6 +383,35 @@ void bind_gas(py::module_& m) {
             py::arg("params"),
             py::arg("copula"),
             py::arg("u"),
+            py::arg("config"),
+            py::arg("horizon_next"))
+        .def(
+            "predict_parameter_equicorr_prepared",
+            [](const scar::GasEvaluator& evaluator,
+               const scar::GasParams& params,
+               scar::CopulaSpec copula,
+               py::array_t<
+                   double,
+                   py::array::c_style | py::array::forcecast> sum_z,
+               py::array_t<
+                   double,
+                   py::array::c_style | py::array::forcecast> sum_z2,
+               const scar::GasConfig& config,
+               bool horizon_next) {
+                const auto obs = set_equicorr_prepared(
+                    copula, sum_z, sum_z2);
+                scar::GasPredictResult result;
+                {
+                    py::gil_scoped_release release;
+                    result = evaluator.predict_parameter(
+                        params, copula, obs, config, horizon_next);
+                }
+                return gas_predict_result_to_dict(result);
+            },
+            py::arg("params"),
+            py::arg("copula"),
+            py::arg("sum_z"),
+            py::arg("sum_z2"),
             py::arg("config"),
             py::arg("horizon_next"))
         .def(
