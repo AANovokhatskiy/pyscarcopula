@@ -285,6 +285,25 @@ def _mle_gaussian_pair(rho):
     )
 
 
+def _mle_clayton_pair(parameter, rotation):
+    copula = ClaytonCopula(rotate=rotation)
+    result = MLEResult(
+        log_likelihood=0.0,
+        method='MLE',
+        copula_name=copula.name,
+        success=True,
+        copula_param=float(parameter),
+    )
+    return PairCopula(
+        copula=copula,
+        param=float(parameter),
+        log_likelihood=0.0,
+        nfev=0,
+        tau=0.0,
+        fit_result=result,
+    )
+
+
 def _gas_gaussian_pair(r_last=0.0, gamma=1.0):
     copula = BivariateGaussianCopula()
     result = GASResult(
@@ -1310,6 +1329,24 @@ class TestSampling:
         expected = vine._sample_stepwise_stateful(
             128,
             np.random.default_rng(20260720),
+            active_keys=active_keys,
+            max_active_tree=max_active_tree,
+        )
+
+        assert np.array_equal(actual, expected)
+
+    def test_native_gas_sample_matches_legacy_for_transposed_rotated_edge(self):
+        vine = _manual_suffix_stateful_rvine()
+        # Matrix column 0 uses leaf=2, partner=1, while this edge was fitted
+        # in ascending variable order (1, 2).
+        vine.pair_copulas[(0, 0)] = _mle_clayton_pair(0.8, 90)
+        max_active_tree = vine._max_non_independent_tree_level()
+        active_keys = vine._sample_active_edge_keys(max_active_tree)
+
+        actual = vine.sample(128, rng=np.random.default_rng(20260722))
+        expected = vine._sample_stepwise_stateful(
+            128,
+            np.random.default_rng(20260722),
             active_keys=active_keys,
             max_active_tree=max_active_tree,
         )

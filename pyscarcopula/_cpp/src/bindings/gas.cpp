@@ -76,6 +76,9 @@ void bind_gas(py::module_& m) {
         .def_readwrite(
             "inverse_output_nodes",
             &scar::GasRvinePlan::inverse_output_nodes)
+        .def_readwrite(
+            "inverse_transposed",
+            &scar::GasRvinePlan::inverse_transposed)
         .def_readwrite("forward_offsets", &scar::GasRvinePlan::forward_offsets)
         .def_readwrite("forward_edges", &scar::GasRvinePlan::forward_edges)
         .def_readwrite(
@@ -90,6 +93,9 @@ void bind_gas(py::module_& m) {
         .def_readwrite(
             "forward_partner_output_nodes",
             &scar::GasRvinePlan::forward_partner_output_nodes)
+        .def_readwrite(
+            "forward_transposed",
+            &scar::GasRvinePlan::forward_transposed)
         .def_readwrite(
             "update_u1_nodes",
             &scar::GasRvinePlan::update_u1_nodes)

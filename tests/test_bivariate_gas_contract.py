@@ -491,8 +491,9 @@ def test_gas_mixture_h_pair_uses_one_filter_path(monkeypatch):
         *PARAMS, OBSERVATIONS, copula, "unit", SCORE_EPS)
     _, r_path, _ = original(
         *PARAMS, OBSERVATIONS, copula, "unit", SCORE_EPS)
-    expected = copula.h_pair(
-        OBSERVATIONS[:, 1], OBSERVATIONS[:, 0], r_path)
+    first_given_second, second_given_first = copula.h_pair(
+        OBSERVATIONS[:, 0], OBSERVATIONS[:, 1], r_path)
+    expected = second_given_first, first_given_second
 
     assert calls == 1
     np.testing.assert_allclose(first, expected[0])

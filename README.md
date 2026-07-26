@@ -129,11 +129,13 @@ structure = RVineMatrix.from_trees(d=u.shape[1], trees=my_trees)
 fixed = VineCopula(structure=structure).fit(u, method="mle")
 ```
 
-Use `vine.structure` for the canonical `RVineMatrix` and
+Use `vine.structure` for the `RVineMatrix` and
 `vine.natural_order_matrix` when an integration specifically needs the
 natural-order runtime matrix. `vine.matrix` is a compatibility property.
-`RVineCopula` remains an alias for `VineCopula`; `CVineCopula` is the
-supported legacy C-vine implementation.
+The raw `pyvinecopulib` matrix uses one-based labels and the opposite
+tree-level order above each anti-diagonal entry, so it is not obtained by
+simply adding one. See the
+[matrix-layout conversion](docs/api/vine.md#matrix-layout-and-pyvinecopulib).
 
 **Copula families**
 

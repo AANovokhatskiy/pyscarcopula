@@ -654,9 +654,17 @@ def _h_grid_on_theta(copula, u, theta):
 
 def _h_pair_grids_on_theta(copula, u, theta):
     """Return h(u2 | u1) and h(u1 | u2) grids for one orientation."""
-    first = _h_grid_on_theta(copula, u, theta)
-    second = _h_grid_on_theta(copula, np.asarray(u)[:, ::-1], theta)
-    return first, second
+    n_grid = len(theta)
+    first = []
+    second = []
+    for row in np.asarray(u, dtype=np.float64):
+        u1_grid = np.full(n_grid, row[0], dtype=np.float64)
+        u2_grid = np.full(n_grid, row[1], dtype=np.float64)
+        first_given_second, second_given_first = copula.h_pair(
+            u1_grid, u2_grid, theta)
+        first.append(_finite_unit_grid_values(second_given_first))
+        second.append(_finite_unit_grid_values(first_given_second))
+    return np.vstack(first), np.vstack(second)
 
 
 def _matrix_setup(

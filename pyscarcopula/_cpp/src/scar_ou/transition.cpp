@@ -227,6 +227,8 @@ bool matrix_forward_mixture_h(
         && copula.rotation == scar::Rotation::R0
         && copula.gaussian_z1_cache.size() == n_obs_size
         && copula.gaussian_z2_cache.size() == n_obs_size;
+    const scar::CopulaSpec transposed_copula =
+        transposed_copula_spec(copula);
 
     auto advance_matrix = [&](const std::vector<double>& phi,
                               const std::vector<double>& fi_row,
@@ -274,7 +276,8 @@ bool matrix_forward_mixture_h(
             for (int j = 0; j < grid.K; ++j) {
                 const std::size_t idx = static_cast<std::size_t>(j);
                 h_mix += weights[idx]
-                    * copula_h_rotated(copula, u2, u1, r_grid[idx]);
+                    * copula_h_rotated(
+                        transposed_copula, u2, u1, r_grid[idx]);
                 if (out_reverse != nullptr) {
                     h_mix_reverse += weights[idx]
                         * copula_h_rotated(copula, u1, u2, r_grid[idx]);
@@ -377,6 +380,8 @@ bool local_forward_mixture_h(
         && copula.rotation == scar::Rotation::R0
         && copula.gaussian_z1_cache.size() == n_obs_size
         && copula.gaussian_z2_cache.size() == n_obs_size;
+    const scar::CopulaSpec transposed_copula =
+        transposed_copula_spec(copula);
 
     auto advance_local = [&](const std::vector<double>& phi,
                              const std::vector<double>& fi_row,
@@ -432,7 +437,8 @@ bool local_forward_mixture_h(
             for (int j = 0; j < grid.K; ++j) {
                 const std::size_t idx = static_cast<std::size_t>(j);
                 h_mix += weights[idx]
-                    * copula_h_rotated(copula, u2, u1, r_grid[idx]);
+                    * copula_h_rotated(
+                        transposed_copula, u2, u1, r_grid[idx]);
                 if (out_reverse != nullptr) {
                     h_mix_reverse += weights[idx]
                         * copula_h_rotated(copula, u1, u2, r_grid[idx]);

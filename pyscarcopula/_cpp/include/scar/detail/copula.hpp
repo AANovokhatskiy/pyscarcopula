@@ -11,6 +11,7 @@
 namespace scar_internal {
 
 bool is_valid_rotation(int rotation);
+scar::CopulaSpec transposed_copula_spec(const scar::CopulaSpec& spec);
 using ConditionalKernel = double (*)(double, double, double);
 double softplus(double x);
 double d_softplus(double x);

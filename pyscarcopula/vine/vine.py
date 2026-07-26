@@ -14,8 +14,8 @@ Build path:
 
 The R-vine *matrix* is the single source of truth for structure; pair
 copulas are stored in a dict keyed by matrix position ``(tree, col)``.
-The matrix follows the natural-order convention (Czado 2019, Alg. 5.4;
-pyvinecopulib); non-zero entries fill the upper-left anti-triangle,
+The matrix follows the zero-based natural-order runtime convention derived
+from Czado (2019, Alg. 5.4); non-zero entries fill the upper-left anti-triangle,
 the anti-diagonal ``M[d-1-col, col]`` holds the leaf peeled at column
 ``col``, and tree-``t`` edges at column ``col`` have their "other"
 endpoint at row ``d-2-col-t``.
@@ -69,7 +69,9 @@ from pyscarcopula.vine._structure import (
 from pyscarcopula.vine._rvine_edges import (
     _edge_h,
     _edge_h_pair,
+    _edge_h_pair_for_variables,
     _edge_h_inverse,
+    _edge_h_inverse_for_variables,
     _edge_initial_model_state,
     _edge_requires_stepwise_sample,
     _edge_r_for_sample,
@@ -268,8 +270,10 @@ class VineCopula:
     d : int
         Number of variables.
     matrix : (d, d) int ndarray
-        Natural-order R-vine matrix (Czado 2019 Alg. 5.4; matches
-        ``pyvinecopulib``). Non-zero entries occupy the upper-left
+        Zero-based natural-order runtime R-vine matrix derived from Czado
+        (2019 Alg. 5.4). ``pyvinecopulib`` uses the opposite tree-level order
+        above the anti-diagonal and one-based labels. Non-zero entries occupy
+        the upper-left
         anti-triangle; the anti-diagonal ``M[d-1-col, col]`` is the
         leaf peeled at column ``col``.
     trees : list of ``(d - 1)`` lists
@@ -1139,13 +1143,13 @@ class VineCopula:
                 if t < max_active_tree:
                     if r_const is not None:
                         r = np.full(len(u1), r_const, dtype=np.float64)
-                        u2_next, u1_next = copula.h_pair(u2, u1, r)
+                        u1_next, u2_next = copula.h_pair(u1, u2, r)
                         pseudo_obs[(v2, conditioning | {v1})] = _clip_unit(
                             u2_next)
                         pseudo_obs[(v1, conditioning | {v2})] = _clip_unit(
                             u1_next)
                     else:
-                        u2_next, u1_next = _edge_h_pair(pc, u2, u1)
+                        u1_next, u2_next = _edge_h_pair(pc, u1, u2)
                         pseudo_obs[(v2, conditioning | {v1})] = _clip_unit(
                             u2_next)
                         pseudo_obs[(v1, conditioning | {v2})] = _clip_unit(
@@ -1457,9 +1461,11 @@ class VineCopula:
                 partner_val = pseudo_obs[(partner, conditioning)]
                 edge = self.pair_copulas[(t, col)]
                 r = r_all[(t, col)]
-                current = _clip_unit(_edge_h_inverse(
+                current = _clip_unit(_edge_h_inverse_for_variables(
                     edge,
+                    leaf,
                     current,
+                    partner,
                     partner_val,
                     config={'r': r},
                 ))
@@ -1479,8 +1485,14 @@ class VineCopula:
 
                 leaf_val = pseudo_obs[(leaf, conditioning)]
                 partner_val = pseudo_obs[(partner, conditioning)]
-                leaf_next, partner_next = edge.copula.h_pair(
-                    leaf_val, partner_val, r)
+                leaf_next, partner_next = _edge_h_pair_for_variables(
+                    edge,
+                    leaf,
+                    leaf_val,
+                    partner,
+                    partner_val,
+                    config={'r': r},
+                )
                 pseudo_obs[(leaf, next_leaf_cond)] = _clip_unit(leaf_next)
                 pseudo_obs[(partner, next_partner_cond)] = _clip_unit(
                     partner_next)
@@ -1689,8 +1701,14 @@ class VineCopula:
                             'skipped', reason=reason))
 
                 r = updated[key]
-                leaf_next, partner_next = edge_copula(edge).h_pair(
-                    leaf_val, partner_val, r)
+                leaf_next, partner_next = _edge_h_pair_for_variables(
+                    edge,
+                    leaf,
+                    leaf_val,
+                    partner,
+                    partner_val,
+                    config={'r': r},
+                )
                 pseudo_obs[(leaf, next_leaf_cond)] = _clip_unit(leaf_next)
                 pseudo_obs[(partner, next_partner_cond)] = _clip_unit(partner_next)
 
@@ -1760,7 +1778,7 @@ class VineCopula:
                 u1 = _clip_unit(pseudo_obs[(v1, conditioning)])
                 u2 = _clip_unit(pseudo_obs[(v2, conditioning)])
                 if t < self.d - 2:
-                    u2_next, u1_next = _edge_h_pair(pc, u2, u1)
+                    u1_next, u2_next = _edge_h_pair(pc, u1, u2)
                     pseudo_obs[(v2, conditioning | {v1})] = _clip_unit(
                         u2_next)
                     pseudo_obs[(v1, conditioning | {v2})] = _clip_unit(
@@ -1867,7 +1885,7 @@ class VineCopula:
                 if not edge_is_independent(pc):
                     logp += edge_copula(pc).log_pdf(u1, u2, r)
                 if t < self.d - 2:
-                    u2_next, u1_next = edge_copula(pc).h_pair(u2, u1, r)
+                    u1_next, u2_next = edge_copula(pc).h_pair(u1, u2, r)
                     pseudo_obs[(v2, conditioning | {v1})] = _clip_unit(u2_next)
                     pseudo_obs[(v1, conditioning | {v2})] = _clip_unit(u1_next)
         return logp

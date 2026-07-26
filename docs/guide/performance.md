@@ -79,10 +79,10 @@ $g_t = \omega + \beta g_{t-1} + \gamma\,score_{t-1}$.
 |-----------|-------|---------|--------|
 | `gamma0` | fit kwarg | MLE-based | Initial $[\omega, \gamma, \beta]$. |
 | `gtol` | fit kwarg / `gas_optimizer.gtol` | `1e-3` | L-BFGS-B projected-gradient tolerance. |
-| `ftol` | fit kwarg / `gas_optimizer.ftol` | `1e-12` | Relative objective decrease tolerance. Use a tight value to avoid premature FACTR convergence. |
-| `maxfun` | fit kwarg / `gas_optimizer.maxfun` | `1000` | Maximum function evaluations. |
+| `ftol` | fit kwarg / `gas_optimizer.ftol` | `1e-9` | Relative objective decrease tolerance. |
+| `maxfun` | fit kwarg / `gas_optimizer.maxfun` | `4000` | Maximum function evaluations. |
 | `maxiter` | fit kwarg / `gas_optimizer.maxiter` | `1000` | Maximum optimizer iterations. |
-| `maxls` | fit kwarg / `gas_optimizer.maxls` | `20` | Maximum L-BFGS-B line-search steps per iteration. |
+| `maxls` | fit kwarg / `gas_optimizer.maxls` | `100` | Maximum L-BFGS-B line-search steps per iteration. |
 | `eps` | fit kwarg / `gas_optimizer.eps` | `1e-5` | L-BFGS-B finite-difference step. |
 | `score_eps` | fit kwarg / `gas_score_eps` | `1e-4` | Finite-difference step for score calculations where needed. |
 | `gamma_bound` | fit kwarg / `gas_gamma_bound` | `20.0` | Bounds score sensitivity to $[-\texttt{gamma\_bound}, \texttt{gamma\_bound}]$. |

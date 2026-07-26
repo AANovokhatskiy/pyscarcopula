@@ -8,9 +8,9 @@ PDF_FLOOR = 1e-300
 # clipping, correlation regularization, Cholesky jitter, and log floors.
 PSEUDO_OBS_EPS = 1e-10
 
-# Boundary for bivariate h/inverse-h numerical outputs. It intentionally
-# matches the native pair-copula guard and is not a pseudo-observation policy.
-H_FUNCTION_EPS = 1e-6
+# Boundary for bivariate h/inverse-h numerical outputs. Internal vine
+# recursion retains probabilities below the final Rosenblatt/GoF boundary.
+H_FUNCTION_EPS = 1e-10
 
 # Boundary for the final bivariate/vine Rosenblatt transform. This is larger
 # than ``PSEUDO_OBS_EPS`` because it protects the subsequent normal quantile

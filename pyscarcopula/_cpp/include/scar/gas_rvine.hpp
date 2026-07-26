@@ -29,6 +29,7 @@ struct GasRvinePlan {
     std::vector<int> inverse_edges;
     std::vector<int> inverse_partner_nodes;
     std::vector<int> inverse_output_nodes;
+    std::vector<int> inverse_transposed;
 
     std::vector<int> forward_offsets;
     std::vector<int> forward_edges;
@@ -36,6 +37,7 @@ struct GasRvinePlan {
     std::vector<int> forward_partner_nodes;
     std::vector<int> forward_leaf_output_nodes;
     std::vector<int> forward_partner_output_nodes;
+    std::vector<int> forward_transposed;
 
     std::vector<int> update_u1_nodes;
     std::vector<int> update_u2_nodes;

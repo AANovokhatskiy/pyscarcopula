@@ -107,15 +107,16 @@ pair-copula values live in `scar/numerical_constants.hpp`.
 
 - `PSEUDO_OBS_EPS` protects pseudo-observations passed to quantiles and
   h-functions.
-- `H_FUNCTION_EPS` bounds numerical h/inverse-h outputs.
+- `H_FUNCTION_EPS` bounds internal numerical h/inverse-h outputs without
+  removing tail probabilities needed by deeper vine trees.
 - `ROSENBLATT_OUTPUT_EPS` protects final GoF normal quantiles.
 - `CONDITIONAL_SAMPLE_EPS` applies only to newly sampled free coordinates.
 - `PDF_FLOOR` protects density and logarithm arguments.
 
-The h-function and Rosenblatt boundaries use the same numeric value, but they
-are named separately because they protect different calculations. Vine code
-uses the shared pseudo-observation helper; it does not define local `_EPS`
-constants.
+The internal h-function and pseudo-observation boundaries are `1e-10`.
+The final Rosenblatt boundary remains `1e-6` because it protects GoF normal
+quantiles and must not be reused inside vine recursion. Vine code uses the
+shared pseudo-observation helper; it does not define local `_EPS` constants.
 
 ## Custom Python Copulas
 

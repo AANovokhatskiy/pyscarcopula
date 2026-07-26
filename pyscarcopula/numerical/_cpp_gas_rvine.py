@@ -43,12 +43,14 @@ def _build_plan(module, vine, active_keys, max_active_tree):
     inverse_edges = []
     inverse_partner_nodes = []
     inverse_output_nodes = []
+    inverse_transposed = []
     forward_offsets = [0]
     forward_edges = []
     forward_leaf_nodes = []
     forward_partner_nodes = []
     forward_leaf_output_nodes = []
     forward_partner_output_nodes = []
+    forward_transposed = []
 
     d = vine.d
     M = vine.matrix
@@ -69,6 +71,7 @@ def _build_plan(module, vine, active_keys, max_active_tree):
                 _node_id(nodes, partner, conditioning))
             inverse_output_nodes.append(
                 _node_id(nodes, leaf, conditioning))
+            inverse_transposed.append(int(leaf > partner))
         inverse_offsets.append(len(inverse_edges))
 
         for t in range(active_top + 1):
@@ -86,6 +89,7 @@ def _build_plan(module, vine, active_keys, max_active_tree):
                 _node_id(nodes, leaf, conditioning | {partner}))
             forward_partner_output_nodes.append(
                 _node_id(nodes, partner, conditioning | {leaf}))
+            forward_transposed.append(int(leaf > partner))
         forward_offsets.append(len(forward_edges))
 
     update_u1_nodes = []
@@ -103,12 +107,14 @@ def _build_plan(module, vine, active_keys, max_active_tree):
     plan.inverse_edges = inverse_edges
     plan.inverse_partner_nodes = inverse_partner_nodes
     plan.inverse_output_nodes = inverse_output_nodes
+    plan.inverse_transposed = inverse_transposed
     plan.forward_offsets = forward_offsets
     plan.forward_edges = forward_edges
     plan.forward_leaf_nodes = forward_leaf_nodes
     plan.forward_partner_nodes = forward_partner_nodes
     plan.forward_leaf_output_nodes = forward_leaf_output_nodes
     plan.forward_partner_output_nodes = forward_partner_output_nodes
+    plan.forward_transposed = forward_transposed
     plan.update_u1_nodes = update_u1_nodes
     plan.update_u2_nodes = update_u2_nodes
     # output_nodes can introduce base nodes only if the matrix plan is invalid.

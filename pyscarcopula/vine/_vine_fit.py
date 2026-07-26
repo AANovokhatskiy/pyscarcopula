@@ -321,7 +321,7 @@ def _fit_tree_level(
         fitted_level.append(pair)
 
         if t < d - 2:
-            u2_next, u1_next = pair.h_pair(u2, u1)
+            u1_next, u2_next = pair.h_pair(u1, u2)
             pseudo_obs[(v2, conditioning | {v1})] = _clip_unit(u2_next)
             pseudo_obs[(v1, conditioning | {v2})] = _clip_unit(u1_next)
 

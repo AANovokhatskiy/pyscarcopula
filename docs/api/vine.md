@@ -66,6 +66,44 @@ arbitrary = VineCopula(
 `model.natural_order_matrix` exposes the numerical matrix convention;
 `model.matrix` is retained as a compatibility property.
 
+### Matrix layout and pyvinecopulib
+
+`pyscarcopula` and `pyvinecopulib` can encode the same valid R-vine with
+matrices that look different. In particular:
+
+- `model.structure.matrix` is the canonical zero-based, lower-triangular
+  `RVineMatrix`;
+- `model.natural_order_matrix` (and the compatibility property
+  `model.matrix`) is the zero-based, upper-left anti-triangular runtime
+  layout. Within each column, entries above the anti-diagonal run from the
+  highest tree down to tree 0;
+- the raw matrix accepted by `pyvinecopulib.RVineStructure.from_matrix()` is
+  one-based and stores tree 0 first within each column.
+
+Therefore, merely adding one to `model.matrix` is not a valid conversion. For
+column `c`, let `length = d - c`: reverse the first `length - 1` entries and
+add one, then copy the anti-diagonal entry at `length - 1` with one added.
+Zero padding remains zero.
+
+```python
+import numpy as np
+import pyvinecopulib as pv
+
+source = model.natural_order_matrix
+target = np.zeros_like(source, dtype=np.uint64)
+for column in range(model.d):
+    length = model.d - column
+    target[:length - 1, column] = (
+        source[:length - 1, column][::-1] + 1
+    )
+    target[length - 1, column] = source[length - 1, column] + 1
+
+pyvine_structure = pv.RVineStructure.from_matrix(target)
+```
+
+This is a representation conversion only; it does not change the underlying
+tree edge sets or the proximity condition.
+
 ## VineCopula
 
 ::: pyscarcopula.vine.vine.VineCopula

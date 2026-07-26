@@ -215,7 +215,9 @@ class MLEStrategy:
                        **kwargs) -> tuple[np.ndarray, np.ndarray]:
         """Both conditional directions at the constant MLE parameter."""
         r = np.full(len(u), result.copula_param)
-        return copula.h_pair(u[:, 1], u[:, 0], r)
+        first_given_second, second_given_first = copula.h_pair(
+            u[:, 0], u[:, 1], r)
+        return second_given_first, first_given_second
 
     def objective(self, copula, u: np.ndarray,
                   alpha: np.ndarray, **kwargs) -> float:

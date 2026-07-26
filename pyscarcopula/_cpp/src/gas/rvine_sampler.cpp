@@ -44,10 +44,12 @@ bool valid_plan(const GasRvinePlan& plan, std::size_t edge_count) {
         || !valid_offsets(plan.forward_offsets, plan.forward_edges.size())
         || !same_size(plan.inverse_edges, plan.inverse_partner_nodes)
         || !same_size(plan.inverse_edges, plan.inverse_output_nodes)
+        || !same_size(plan.inverse_edges, plan.inverse_transposed)
         || !same_size(plan.forward_edges, plan.forward_leaf_nodes)
         || !same_size(plan.forward_edges, plan.forward_partner_nodes)
         || !same_size(plan.forward_edges, plan.forward_leaf_output_nodes)
         || !same_size(plan.forward_edges, plan.forward_partner_output_nodes)
+        || !same_size(plan.forward_edges, plan.forward_transposed)
         || plan.update_u1_nodes.size() != edge_count
         || plan.update_u2_nodes.size() != edge_count) {
         return false;
@@ -65,7 +67,9 @@ bool valid_plan(const GasRvinePlan& plan, std::size_t edge_count) {
     for (std::size_t i = 0; i < plan.inverse_edges.size(); ++i) {
         if (!valid_index(plan.inverse_edges[i], static_cast<int>(edge_count))
             || !valid_index(plan.inverse_partner_nodes[i], plan.node_count)
-            || !valid_index(plan.inverse_output_nodes[i], plan.node_count)) {
+            || !valid_index(plan.inverse_output_nodes[i], plan.node_count)
+            || (plan.inverse_transposed[i] != 0
+                && plan.inverse_transposed[i] != 1)) {
             return false;
         }
     }
@@ -74,7 +78,9 @@ bool valid_plan(const GasRvinePlan& plan, std::size_t edge_count) {
             || !valid_index(plan.forward_leaf_nodes[i], plan.node_count)
             || !valid_index(plan.forward_partner_nodes[i], plan.node_count)
             || !valid_index(plan.forward_leaf_output_nodes[i], plan.node_count)
-            || !valid_index(plan.forward_partner_output_nodes[i], plan.node_count)) {
+            || !valid_index(plan.forward_partner_output_nodes[i], plan.node_count)
+            || (plan.forward_transposed[i] != 0
+                && plan.forward_transposed[i] != 1)) {
             return false;
         }
     }
@@ -133,11 +139,15 @@ GasRvineSampleResult gas_rvine_sample(
         fail(out, SCAR_INVALID_SIZE, -1, -1);
         return out;
     }
+    std::vector<CopulaSpec> transposed_copulas;
+    transposed_copulas.reserve(edge_count);
     for (const GasRvineEdge& edge : edges) {
         if (!is_supported(edge.copula) || edge.copula.dim != 2) {
             fail(out, SCAR_INVALID_FAMILY, -1, -1);
             return out;
         }
+        transposed_copulas.push_back(
+            scar_internal::transposed_copula_spec(edge.copula));
     }
 
     GasEvaluator evaluator;
@@ -193,8 +203,14 @@ GasRvineSampleResult gas_rvine_sample(
                 const double partner = nodes[static_cast<std::size_t>(
                     plan.inverse_partner_nodes[index])];
                 const double parameter = edge_parameter(row, edge_index);
+                const std::size_t edge_position =
+                    static_cast<std::size_t>(edge_index);
+                const CopulaSpec& inverse_copula =
+                    plan.inverse_transposed[index] != 0
+                    ? transposed_copulas[edge_position]
+                    : edges[edge_position].copula;
                 current = scar_internal::copula_h_inverse_rotated(
-                    edges[static_cast<std::size_t>(edge_index)].copula,
+                    inverse_copula,
                     current,
                     partner,
                     parameter);
@@ -217,10 +233,25 @@ GasRvineSampleResult gas_rvine_sample(
                 const double partner = nodes[static_cast<std::size_t>(
                     plan.forward_partner_nodes[index])];
                 const double parameter = edge_parameter(row, edge_index);
+                const std::size_t edge_position =
+                    static_cast<std::size_t>(edge_index);
+                const bool leaf_is_transposed =
+                    plan.forward_transposed[index] != 0;
+                const CopulaSpec& leaf_copula =
+                    leaf_is_transposed
+                    ? transposed_copulas[edge_position]
+                    : edge.copula;
+                const CopulaSpec& partner_copula =
+                    leaf_is_transposed
+                    ? edge.copula
+                    : transposed_copulas[edge_position];
                 const double leaf_next = scar_internal::copula_h_rotated(
-                    edge.copula, leaf, partner, parameter);
+                    leaf_copula, leaf, partner, parameter);
                 const double partner_next = scar_internal::copula_h_rotated(
-                    edge.copula, partner, leaf, parameter);
+                    partner_copula,
+                    partner,
+                    leaf,
+                    parameter);
                 if (!std::isfinite(leaf_next) || !std::isfinite(partner_next)) {
                     fail(out, SCAR_NUMERICAL_FAILURE, row, edge_index);
                     return out;

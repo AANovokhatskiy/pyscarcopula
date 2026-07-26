@@ -101,10 +101,10 @@ DEFAULT_MLE_OPTIMIZER = LBFGSBConfig(
 )
 DEFAULT_GAS_OPTIMIZER = LBFGSBConfig(
     gtol=1e-3,
-    ftol=1e-12,
-    maxfun=1000,
+    ftol=1e-9,
+    maxfun=4000,
     maxiter=1000,
-    maxls=50,
+    maxls=100,
     eps=1e-5,
 )
 DEFAULT_SCAR_OPTIMIZER = LBFGSBConfig(

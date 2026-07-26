@@ -781,7 +781,7 @@ class TestConditionalPredict:
         assert captured['options']['gtol'] == pytest.approx(2e-4)
         assert captured['options']['maxls'] == 33
         assert captured['options']['ftol'] == pytest.approx(1e-11)
-        assert captured['options']['maxfun'] == 1000
+        assert captured['options']['maxfun'] == 4000
         assert captured['options']['eps'] == pytest.approx(1e-5)
         assert result.score_eps == pytest.approx(cfg.gas_score_eps)
 

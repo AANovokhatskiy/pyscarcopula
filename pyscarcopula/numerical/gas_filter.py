@@ -171,8 +171,9 @@ def gas_mixture_h_pair(
     observations = as_float64_array(u)
     _, r_path, _ = gas_filter(
         omega, gamma, beta, observations, copula, scaling, score_eps)
-    return copula.h_pair(
-        observations[:, 1], observations[:, 0], r_path)
+    first_given_second, second_given_first = copula.h_pair(
+        observations[:, 0], observations[:, 1], r_path)
+    return second_given_first, first_given_second
 
 
 __all__ = [
