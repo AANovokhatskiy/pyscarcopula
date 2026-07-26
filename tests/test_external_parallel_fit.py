@@ -143,13 +143,17 @@ def test_risk_metrics_records_resolved_parallel_policy(monkeypatch):
         rng=811,
     )[0.9][10]
 
+    resolved_n_jobs = calls["marginal_n_jobs"]
+
+    assert resolved_n_jobs > 1
     assert calls == {
-        "marginal_n_jobs": 4,
-        "cvar_n_jobs": 4,
+        "marginal_n_jobs": resolved_n_jobs,
+        "cvar_n_jobs": resolved_n_jobs,
         "fit_n_threads": 1,
     }
+
     diagnostics = result["diagnostics"]
     assert diagnostics["n_jobs_requested"] == -1
-    assert diagnostics["n_jobs"] == 4
+    assert diagnostics["n_jobs"] == resolved_n_jobs
     assert diagnostics["n_threads"] == 1
     assert diagnostics["nested_parallelism"] is False

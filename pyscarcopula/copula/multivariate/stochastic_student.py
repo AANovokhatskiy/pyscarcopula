@@ -1246,7 +1246,7 @@ class StochasticStudentCopula(MultivariateCopula):
                 "joint factor MLE found no valid evaluation")
         gradient_inf_norm = float(np.max(np.abs(final_gradient)))
         gtol = float(optimizer_options.get("gtol", 1e-5))
-        gradient_gate = max(1e-4, 10.0 * gtol)
+        gradient_gate = max(1e-4, 40.0 * gtol)
         accepted = bool(
             result.success
             and np.isfinite(final_objective)

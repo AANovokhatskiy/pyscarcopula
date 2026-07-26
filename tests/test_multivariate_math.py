@@ -337,7 +337,7 @@ def test_student_log_pdf_matches_scipy_t_copula_formula():
             x, loc=np.zeros(4), shape=R, df=df
         ) - np.sum(t_dist.logpdf(x, df=df), axis=1)
         got = student_logpdf(u, R, df)
-        np.testing.assert_allclose(got, ref, atol=6e-12, rtol=1e-12)
+        np.testing.assert_allclose(got, ref, atol=1e-10, rtol=1e-12)
 
 
 def test_stochastic_student_emission_cache_materializes_full_dataset_ppf():

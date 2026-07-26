@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.19.0 - 2026-07-26
+
+Version: `0.18.0` -> `0.19.0`
 
 - Removes temporary VineCopula refactoring guardrails after their permanent
   contracts were absorbed by the regular vine API, structure, fitting,
@@ -36,7 +38,7 @@
 - Adds bounded factor-normal sampling, explicit guarded dense
   materialization, compact `.npz` persistence, and read-only mmap
   persistence. Storage remains `O(d*k + k^2)`.
-- Adds the phase-9.4 `StochasticStudentCopula(corr_mode="factor")` model
+- Adds the `StochasticStudentCopula(corr_mode="factor")` model
   adapter with supplied or deterministic two-stage randomized-SVD loadings,
   compact diagnostics and model persistence, guarded explicit dense
   materialization, static row likelihood, and tiled latent-grid evaluation.
@@ -83,11 +85,6 @@
 - Adds opt-in `d=10^4`, `10^5`, and `10^6` preparation benchmark gates with
   exact cross-thread result checks and an enforceable four-thread efficiency
   target.
-
-## 0.19.0 - 2026-07-21
-
-Version: `0.18.0` -> `0.19.0`
-
 - Adds opt-in native CPU threading for stochastic Student and
   equicorrelation emission/gradient grids, static multivariate row
   likelihoods and MLE, Gaussian/Student conditional sampling, and historical

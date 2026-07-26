@@ -2,14 +2,25 @@
 
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
+import sys
 
 import pytest
 
-from tools.check_cpp_architecture import check_repository
-
-
 ROOT = Path(__file__).resolve().parents[1]
+CHECKER_PATH = ROOT / "tools" / "check_cpp_architecture.py"
+CHECKER_MODULE_NAME = "_pyscarcopula_check_cpp_architecture"
+CHECKER_SPEC = importlib.util.spec_from_file_location(
+    CHECKER_MODULE_NAME,
+    CHECKER_PATH,
+)
+if CHECKER_SPEC is None or CHECKER_SPEC.loader is None:
+    raise ImportError(f"cannot load architecture checker from {CHECKER_PATH}")
+CHECKER_MODULE = importlib.util.module_from_spec(CHECKER_SPEC)
+sys.modules[CHECKER_MODULE_NAME] = CHECKER_MODULE
+CHECKER_SPEC.loader.exec_module(CHECKER_MODULE)
+check_repository = CHECKER_MODULE.check_repository
 
 
 def _write(root: Path, relative: str, text: str = "") -> Path:

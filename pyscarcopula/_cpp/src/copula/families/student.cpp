@@ -69,6 +69,15 @@ struct DualValue {
 
 constexpr double kStudentNormalAsymptoticDf = 1000.0;
 
+double thread_safe_lgamma(double value) {
+#if defined(__GLIBC__)
+    int sign = 0;
+    return ::lgamma_r(value, &sign);
+#else
+    return std::lgamma(value);
+#endif
+}
+
 DualValue operator+(DualValue lhs, DualValue rhs) {
     return {
         lhs.value + rhs.value,
@@ -222,7 +231,9 @@ double regularized_beta(double x, double a, double b) {
         return 1.0;
     }
     const double bt = std::exp(
-        std::lgamma(a + b) - std::lgamma(a) - std::lgamma(b)
+        thread_safe_lgamma(a + b)
+        - thread_safe_lgamma(a)
+        - thread_safe_lgamma(b)
         + a * std::log(x) + b * std::log1p(-x));
     if (x < (a + 1.0) / (a + b + 2.0)) {
         return bt * betacf(a, b, x) / a;
@@ -242,9 +253,9 @@ DualValue regularized_beta_dual(
         return dual(1.0);
     }
     const double log_bt =
-        std::lgamma(a.value + b.value)
-        - std::lgamma(a.value)
-        - std::lgamma(b.value)
+        thread_safe_lgamma(a.value + b.value)
+        - thread_safe_lgamma(a.value)
+        - thread_safe_lgamma(b.value)
         + a.value * std::log(x.value)
         + b.value * std::log1p(-x.value);
     const double log_bt_derivative =
@@ -268,8 +279,8 @@ DualValue regularized_beta_dual(
 
 double student_pdf(double t, double df) {
     const double log_pdf =
-        std::lgamma(0.5 * (df + 1.0))
-        - std::lgamma(0.5 * df)
+        thread_safe_lgamma(0.5 * (df + 1.0))
+        - thread_safe_lgamma(0.5 * df)
         - 0.5 * std::log(df * kPi)
         - 0.5 * (df + 1.0) * std::log1p((t * t) / df);
     return std::exp(log_pdf);
@@ -992,8 +1003,8 @@ bool student_marginal_log_pdf_constants(
         return false;
     }
     marginal_constant =
-        std::lgamma(0.5 * (df + 1.0))
-        - std::lgamma(0.5 * df)
+        thread_safe_lgamma(0.5 * (df + 1.0))
+        - thread_safe_lgamma(0.5 * df)
         - 0.5 * std::log(df * kPi);
     marginal_constant_derivative =
         0.5 * digamma_positive(0.5 * (df + 1.0))
@@ -1030,8 +1041,8 @@ bool student_log_pdf_from_summaries(
     const double dimension_value = static_cast<double>(dimension);
     const double joint_shape = std::log1p(quadratic_form / df);
     const double joint_log =
-        std::lgamma(0.5 * (df + dimension_value))
-        - std::lgamma(0.5 * df)
+        thread_safe_lgamma(0.5 * (df + dimension_value))
+        - thread_safe_lgamma(0.5 * df)
         - 0.5 * dimension_value * std::log(df * kPi)
         - 0.5 * logdet
         - 0.5 * (df + dimension_value) * joint_shape;
@@ -1331,13 +1342,13 @@ bool student_fill_grid_bivariate(
         const double half_df = 0.5 * df;
         const double log_df_pi = std::log(df * kPi);
         const double joint_const =
-            std::lgamma(half_df + 1.0)
-            - std::lgamma(half_df)
+            thread_safe_lgamma(half_df + 1.0)
+            - thread_safe_lgamma(half_df)
             - log_df_pi
             - 0.5 * spec.log_det;
         const double marginal_const =
-            std::lgamma(half_df + 0.5)
-            - std::lgamma(half_df)
+            thread_safe_lgamma(half_df + 0.5)
+            - thread_safe_lgamma(half_df)
             - 0.5 * log_df_pi;
         const double copula_const = joint_const - 2.0 * marginal_const;
 

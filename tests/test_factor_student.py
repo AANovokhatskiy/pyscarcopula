@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 import json
-from pathlib import Path
 import subprocess
 import sys
 
@@ -203,7 +202,6 @@ def test_invalid_correlation_type_is_rejected():
 
 
 def test_default_evaluation_does_not_initialize_parallel_runtime():
-    root = Path(__file__).resolve().parents[1]
     code = (
         "import json, numpy as np\n"
         "from pyscarcopula import FactorCorrelation, FactorStudentEvaluator\n"
@@ -219,7 +217,6 @@ def test_default_evaluation_does_not_initialize_parallel_runtime():
     )
     completed = subprocess.run(
         [sys.executable, "-c", code],
-        cwd=root,
         check=True,
         capture_output=True,
         text=True,

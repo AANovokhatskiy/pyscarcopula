@@ -251,10 +251,9 @@ def test_mc_parallel_failure_index_matches_sequential():
     rng = np.random.default_rng(809)
     copula, _ = _student_model(d)
     u = rng.uniform(0.02, 0.98, (T, d))
-    u[:5] = 0.5
     paths = np.full((T, n_trajectories), 1.0)
+    paths[5] = np.nan
     spec = _cpp_copula.make_mc_spec(module, copula, u=u)
-    spec.l_inv = (np.eye(d) * 1e200).reshape(-1).tolist()
 
     sequential = dict(module.copula_log_pdf_trajectory_grid(
         spec, u, paths, 1))

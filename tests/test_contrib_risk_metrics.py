@@ -1,10 +1,7 @@
+import multiprocessing as mp
+import sys
+
 import numpy as np
-
-
-class _IdentityRollingMarginal:
-    def ppf(self, values, params):
-        del params
-        return 0.01 * (np.asarray(values) - 0.5)
 
 
 def test_predict_copula_handles_standalone_independent():
@@ -177,13 +174,18 @@ def test_risk_metrics_forwards_n_jobs_to_marginal_fit(monkeypatch):
 
 def test_rolling_multiprocessing_matches_sequential_with_n_threads_one():
     from pyscarcopula import EquicorrGaussianCopula, NumericalConfig
+    from pyscarcopula.contrib.marginal import MarginalModel
     from pyscarcopula.contrib.risk_metrics import _calculate_cvar_fixed
 
     data = np.random.default_rng(701).normal(0.0, 0.01, (6, 2))
     window_len = 3
     n_windows = len(data) - window_len + 1
-    marginal = _IdentityRollingMarginal()
-    marginal_params = np.zeros((len(data), 2, 1))
+    marginal = MarginalModel.create("normal")
+    marginal_params = marginal.fit_rolling(
+        data,
+        window_len,
+        n_jobs=1,
+    )
     weights = np.array([0.5, 0.5])
     seeds = np.random.SeedSequence(702).spawn(n_windows)
     kwargs = {
@@ -218,6 +220,12 @@ def test_rolling_multiprocessing_matches_sequential_with_n_threads_one():
         weights,
         n_jobs=2,
         window_seed_sequences=seeds,
+        mp_start_method=(
+            "forkserver"
+            if sys.platform.startswith("linux")
+            and "forkserver" in mp.get_all_start_methods()
+            else "spawn"
+        ),
         **kwargs,
     )
 

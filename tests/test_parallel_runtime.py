@@ -19,14 +19,9 @@ from pyscarcopula import (
     StochasticStudentCopula,
     StudentCopula,
 )
+from pyscarcopula._native_smoke import parallel_runtime_child_probe
 from pyscarcopula.numerical import _cpp_extension, _cpp_scar_ou
 from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
-
-
-def _runtime_child_probe(queue, n_threads):
-    module = _cpp_extension.load()
-    module._parallel_for_blocks_probe(16, 1, n_threads)
-    queue.put(dict(module._parallel_runtime_info()))
 
 
 def _run_clean_interpreter(source):
@@ -493,6 +488,7 @@ def test_forked_child_n_threads_one_ignores_inherited_pool():
 
 
 @pytest.mark.skipif(os.name == "nt", reason="fork is unavailable on Windows")
+@pytest.mark.tsan_incompatible
 def test_forked_child_recreates_pool_for_parallel_work():
     payload = _run_clean_interpreter(
         "import json, os\n"
@@ -534,7 +530,7 @@ def test_forkserver_child_uses_process_local_runtime(n_threads):
     context = multiprocessing.get_context("forkserver")
     queue = context.Queue()
     process = context.Process(
-        target=_runtime_child_probe, args=(queue, n_threads))
+        target=parallel_runtime_child_probe, args=(queue, n_threads))
     process.start()
     process.join(timeout=20)
     assert process.exitcode == 0

@@ -66,8 +66,7 @@ pip install -e ".[examples]"
 jupyter lab examples/
 ```
 
-The comparison notebook also uses the optional `pyvinecopulib` package,
-included in the `examples` dependency group.
+The comparison notebook also uses the optional `pyvinecopulib` package. The `pyscarcopula` often refers to `pyvinecopulib` in docs, but do not use it as a dependence. So install it manually if you need to run the comparision between the libraries.
 
 For a source-tree C++ check, build the extension in place first:
 
