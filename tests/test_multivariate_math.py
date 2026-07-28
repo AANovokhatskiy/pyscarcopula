@@ -11,7 +11,12 @@ from scipy.stats import t as t_dist
 from pyscarcopula._constants import PSEUDO_OBS_EPS
 from pyscarcopula.io import load_model, save_model
 from pyscarcopula._utils import pobs
-from pyscarcopula._types import LatentResult, ou_params
+from pyscarcopula._types import (
+    GASResult,
+    LatentResult,
+    gas_params,
+    ou_params,
+)
 from pyscarcopula.api import (
     fit,
     log_likelihood,
@@ -931,6 +936,67 @@ def test_multivariate_direct_predict_honors_all_given_coordinates():
 
         expected = np.array([given[i] for i in range(4)], dtype=np.float64)
         np.testing.assert_allclose(samples, np.tile(expected, (7, 1)))
+
+
+@pytest.mark.parametrize("horizon", ["current", "next"])
+@pytest.mark.parametrize(
+    "method",
+    ["scar-tm-ou", "gas", "scar-p-ou", "scar-m-ou"],
+)
+@pytest.mark.parametrize("corr_mode", ["fixed", "factor"])
+def test_stochastic_student_direct_dynamic_predict_matches_api(
+        corr_mode, method, horizon):
+    u = _u()
+    if corr_mode == "fixed":
+        copula = StochasticStudentCopula(d=4, R=_R())
+    else:
+        copula = StochasticStudentCopula(
+            d=4, corr_mode="factor", factor_rank=2)
+        copula.initialize_factor(u)
+    if method == "scar-tm-ou":
+        result = _scar_result(K=12, grid_range=3.0)
+    elif method == "gas":
+        result = GASResult(
+            log_likelihood=0.0,
+            method="GAS",
+            copula_name=copula.name,
+            success=True,
+            params=gas_params(0.1, 0.2, 0.7),
+            scaling="unit",
+            r_last=5.0,
+        )
+    else:
+        result = LatentResult(
+            log_likelihood=0.0,
+            method=method.upper(),
+            copula_name=copula.name,
+            success=True,
+            params=ou_params(0.8, 0.0, 1.0),
+            n_tr=10,
+            M_iterations=1 if method == "scar-m-ou" else None,
+        )
+    copula.fit_result = result
+    copula._last_u = u
+    given = {0: 0.25, 2: 0.75}
+    seed = 20260728
+
+    direct = copula.predict(
+        16,
+        horizon=horizon,
+        given=given,
+        rng=np.random.default_rng(seed),
+    )
+    through_api = predict(
+        copula,
+        u,
+        result,
+        16,
+        horizon=horizon,
+        given=given,
+        rng=np.random.default_rng(seed),
+    )
+
+    np.testing.assert_array_equal(direct, through_api)
 
 
 @pytest.mark.parametrize(

@@ -4,6 +4,9 @@
 
 Version: `0.18.0` -> `0.19.0`
 
+Commit: `966758b`  
+Merge PR: #43 (`2d6ebfc`, 2026-07-26)
+
 - Removes temporary VineCopula refactoring guardrails after their permanent
   contracts were absorbed by the regular vine API, structure, fitting,
   persistence, and compatibility suites. Completes public type annotations
@@ -122,6 +125,9 @@ Version: `0.18.0` -> `0.19.0`
 
 Version: `0.17.5` -> `0.18.0`
 
+Commit: `9b99d59`  
+Merge PR: #41 (`cd87208`, 2026-07-21)
+
 - Adds conditional sampling and prediction for static multivariate Gaussian
   and Student copulas, with fitted-correlation and analytical-moment coverage.
 - Fixes top-level `fit()` state synchronization so subsequent stateful
@@ -176,6 +182,9 @@ Version: `0.17.5` -> `0.18.0`
 ## 0.17.5 - 2026-07-06
 
 Version: `0.17.4` -> `0.17.5`
+
+Commit: `ce8068e`  
+Merge PR: #40 (`09181f3`, 2026-07-06)
 
 - Adds GAS fitting support for `StochasticStudentCopula`, including fixed-correlation parameter accounting and joint static shrinkage-correlation estimation.
 - Fails unsupported stochastic Student GAS correlation modes explicitly before mutating fitted model state.
