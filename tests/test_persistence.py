@@ -15,7 +15,14 @@ from pyscarcopula import (
     load_model,
 )
 from pyscarcopula._utils import pobs
-from pyscarcopula._types import GASResult, LatentResult, gas_params, ou_params
+from pyscarcopula._types import (
+    GASResult,
+    LatentResult,
+    gas_params,
+    jacobi_params,
+    ou_params,
+)
+from pyscarcopula.api import log_likelihood, predict, predictive_mean
 from pyscarcopula.io import _from_jsonable, _to_jsonable
 
 
@@ -112,6 +119,97 @@ def test_initialization_diagnostics_json_roundtrip():
     loaded = _from_jsonable(_to_jsonable(result))
 
     assert loaded.diagnostics["initialization"] == diagnostics
+
+
+def test_legacy_jacobi_result_without_semantic_options_uses_defaults():
+    result = LatentResult(
+        log_likelihood=1.25,
+        method="SCAR-TM-JACOBI",
+        copula_name="Gumbel",
+        success=True,
+        params=jacobi_params(1.2, 0.4, 0.3),
+        transition_method="auto",
+        spectral_basis_order=8,
+        spectral_quad_order=32,
+    )
+    payload = _to_jsonable(result)
+    for name in (
+            "tau_eps",
+            "theta_cap",
+            "clip_negative",
+            "negative_mass_tol",
+            "stationary_shape_max"):
+        payload["fields"].pop(name)
+
+    loaded = _from_jsonable(payload)
+
+    assert loaded.tau_eps == pytest.approx(1e-6)
+    assert loaded.theta_cap is None
+    assert not loaded.clip_negative
+    assert loaded.negative_mass_tol == pytest.approx(1e-5)
+    assert loaded.stationary_shape_max == pytest.approx(500.0)
+
+
+def test_jacobi_semantic_options_model_roundtrip(tmp_path):
+    u = np.random.default_rng(123).uniform(size=(30, 2))
+    copula = GumbelCopula()
+    result = copula.fit(
+        u,
+        method="scar-tm-jacobi",
+        transition_method="local_fixed",
+        basis_order=8,
+        quad_order=32,
+        gh_order=7,
+        tau_eps=2e-5,
+        theta_cap=1.25,
+        clip_negative=True,
+        negative_mass_tol=2e-7,
+        stationary_shape_max=None,
+        smart_init=False,
+        maxiter=2,
+        maxfun=20,
+    )
+    path = tmp_path / "gumbel-jacobi-options.json"
+    copula.save(path, include_data=True)
+
+    loaded = GumbelCopula.load(path)
+    loaded_result = loaded.fit_result
+
+    assert loaded_result.transition_method == "local_fixed"
+    assert loaded_result.gh_order == 7
+    assert loaded_result.spectral_basis_order == 8
+    assert loaded_result.spectral_quad_order == 32
+    assert loaded_result.tau_eps == pytest.approx(2e-5)
+    assert loaded_result.theta_cap == pytest.approx(1.25)
+    assert loaded_result.clip_negative
+    assert loaded_result.negative_mass_tol == pytest.approx(2e-7)
+    assert loaded_result.stationary_shape_max is None
+    assert log_likelihood(loaded, u, loaded_result) == pytest.approx(
+        result.log_likelihood, rel=1e-12, abs=1e-12)
+    np.testing.assert_allclose(
+        predictive_mean(loaded, u, loaded_result),
+        predictive_mean(copula, u, result),
+        rtol=1e-12,
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        predict(
+            loaded,
+            u,
+            loaded_result,
+            25,
+            rng=np.random.default_rng(77),
+        ),
+        predict(
+            copula,
+            u,
+            result,
+            25,
+            rng=np.random.default_rng(77),
+        ),
+        rtol=0.0,
+        atol=0.0,
+    )
 
 
 def test_include_data_false_drops_cached_training_data(tmp_path, random_u2):

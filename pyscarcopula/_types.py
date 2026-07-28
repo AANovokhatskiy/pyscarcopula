@@ -597,6 +597,13 @@ class LatentResult(FitResultBase):
     n_tr: int | None = None                  # MC trajectory count
     M_iterations: int | None = None          # EIS iterations
     parameter_count: int | None = None        # latent plus fitted static params
+    # Jacobi options that change likelihood, prediction, or admissibility.
+    # Appended to preserve positional compatibility of older result fields.
+    tau_eps: float = 1e-6
+    theta_cap: float | None = None
+    clip_negative: bool = False
+    negative_mass_tol: float = 1e-5
+    stationary_shape_max: float | None = 500.0
 
     def __post_init__(self):
         parameter_count = self.parameter_count

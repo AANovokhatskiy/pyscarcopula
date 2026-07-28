@@ -14,6 +14,10 @@ from pyscarcopula._types import (
     jacobi_params,
 )
 from pyscarcopula.numerical.jacobi_tm import (
+    DEFAULT_JACOBI_MEMORY_BUDGET_BYTES,
+    MAX_JACOBI_ORDER,
+    _validate_jacobi_workspace,
+    default_quad_order,
     _jacobi_stationary_shape,
     jacobi_forward_mixture_h,
     jacobi_forward_mixture_h_pair,
@@ -30,6 +34,7 @@ from pyscarcopula.numerical.jacobi_tm import (
     jacobi_state_distribution,
     jacobi_transition_matrix,
 )
+from pyscarcopula.numerical._arrays import validate_positive_int
 from pyscarcopula.numerical._transition_methods import (
     normalize_jacobi_strategy_transition_method,
 )
@@ -39,6 +44,7 @@ from pyscarcopula.strategy._base import (
     lbfgsb_overrides,
     register_strategy,
     reject_legacy_tol,
+    validate_copula_data,
 )
 from pyscarcopula.strategy.predict_helpers import predict_from_strategy
 from pyscarcopula.strategy.initial_point import (
@@ -83,11 +89,52 @@ def _validate_positive_bounds(bounds, name):
     if len(bounds) != 2:
         raise ValueError(f"{name} must be a (lower, upper) pair")
     lower, upper = bounds
-    lower = 1e-300 if lower is None else float(lower)
-    upper = np.inf if upper is None else float(upper)
+    lower = 1e-300 if lower is None else _finite_float(
+        lower, f"{name} lower")
+    upper = np.inf if upper is None else _finite_float(
+        upper, f"{name} upper")
     if lower <= 0.0 or upper <= 0.0 or lower >= upper:
         raise ValueError(f"{name} must satisfy 0 < lower < upper")
     return lower, upper
+
+
+def _finite_float(value, name):
+    if isinstance(value, (bool, np.bool_)):
+        raise TypeError(f"{name} must be a finite real number")
+    try:
+        result = float(value)
+    except (TypeError, ValueError) as exc:
+        raise TypeError(f"{name} must be a finite real number") from exc
+    if not np.isfinite(result):
+        raise ValueError(f"{name} must be finite")
+    return result
+
+
+def _validate_optional_memory_budget(value):
+    if value is None:
+        return None
+    if isinstance(value, (bool, np.bool_)) or not isinstance(
+            value, (int, np.integer)):
+        raise TypeError("memory_budget_bytes must be an integer or None")
+    value = int(value)
+    if value < 0:
+        raise ValueError("memory_budget_bytes must be non-negative")
+    return value
+
+
+def _validate_alpha0(alpha0):
+    try:
+        alpha = np.asarray(alpha0, dtype=np.float64)
+    except (TypeError, ValueError) as exc:
+        raise TypeError("alpha0 must contain three real values") from exc
+    if alpha.shape != (3,):
+        raise ValueError(f"alpha0 must have shape (3,), got {alpha.shape}")
+    if np.any(~np.isfinite(alpha)):
+        raise ValueError("alpha0 must contain only finite values")
+    if alpha[0] <= 0.0 or not (0.0 < alpha[1] < 1.0) or alpha[2] <= 0.0:
+        raise ValueError(
+            "alpha0 must satisfy kappa > 0, 0 < m < 1, and xi > 0")
+    return alpha
 
 
 def _objective_is_invalid(value):
@@ -121,36 +168,51 @@ class SCARJacobiStrategy:
                  kappa_bounds: tuple[float | None, float | None] | None = _DEFAULT_KAPPA_BOUNDS,
                  xi_bounds: tuple[float | None, float | None] | None = _DEFAULT_XI_BOUNDS,
                  stationary_shape_max: float | None = 500.0,
+                 memory_budget_bytes: int | None = (
+                     DEFAULT_JACOBI_MEMORY_BUDGET_BYTES),
                  analytical_grad: bool = False,
                  smart_init: bool = True,
                  **kwargs):
         self.config = config or DEFAULT_CONFIG
         basis_order = kwargs.pop('spectral_basis_order', basis_order)
         quad_order = kwargs.pop('spectral_quad_order', quad_order)
-        self.basis_order = int(basis_order)
-        self.quad_order = None if quad_order is None else int(quad_order)
+        self.basis_order = validate_positive_int(basis_order, "basis_order")
+        self.quad_order = (
+            None if quad_order is None
+            else validate_positive_int(quad_order, "quad_order"))
+        if self.basis_order > MAX_JACOBI_ORDER:
+            raise ValueError(f"basis_order must be <= {MAX_JACOBI_ORDER}")
+        if self.quad_order is not None and self.quad_order > MAX_JACOBI_ORDER:
+            raise ValueError(f"quad_order must be <= {MAX_JACOBI_ORDER}")
         self.transition_method = normalize_jacobi_strategy_transition_method(
             transition_method)
-        self.tau_eps = float(tau_eps)
-        self.theta_cap = theta_cap
+        self.tau_eps = _finite_float(tau_eps, "tau_eps")
+        self.theta_cap = (
+            None if theta_cap is None
+            else _finite_float(theta_cap, "theta_cap"))
         self.clip_negative = bool(clip_negative)
-        self.negative_mass_tol = float(negative_mass_tol)
-        self.gh_order = int(gh_order)
+        self.negative_mass_tol = _finite_float(
+            negative_mass_tol, "negative_mass_tol")
+        self.gh_order = validate_positive_int(gh_order, "gh_order")
+        if self.gh_order > MAX_JACOBI_ORDER:
+            raise ValueError(f"gh_order must be <= {MAX_JACOBI_ORDER}")
         self.kappa_bounds = _validate_positive_bounds(
             kappa_bounds, "kappa_bounds")
         self.xi_bounds = _validate_positive_bounds(xi_bounds, "xi_bounds")
         self.stationary_shape_max = (
             None if stationary_shape_max is None
-            else float(stationary_shape_max)
+            else _finite_float(stationary_shape_max, "stationary_shape_max")
         )
+        self.memory_budget_bytes = _validate_optional_memory_budget(
+            memory_budget_bytes)
         self.analytical_grad = bool(analytical_grad)
         self.smart_init = bool(smart_init)
         if not (0.0 < self.tau_eps < 0.5):
             raise ValueError("tau_eps must be in (0, 0.5)")
         if self.negative_mass_tol < 0.0:
             raise ValueError("negative_mass_tol must be non-negative")
-        if self.gh_order <= 0:
-            raise ValueError("gh_order must be positive")
+        if self.theta_cap is not None and self.theta_cap <= 0.0:
+            raise ValueError("theta_cap must be positive or None")
         if (self.stationary_shape_max is not None
                 and self.stationary_shape_max <= 0.0):
             raise ValueError("stationary_shape_max must be positive or None")
@@ -191,6 +253,7 @@ class SCARJacobiStrategy:
             'basis_order': self.basis_order,
             'quad_order': self.quad_order,
             'theta_cap': self.theta_cap,
+            'memory_budget_bytes': self.memory_budget_bytes,
         }
 
     def _matrix_backend_kwargs(self):
@@ -202,6 +265,7 @@ class SCARJacobiStrategy:
             'clip_negative': self.clip_negative,
             'negative_mass_tol': self.negative_mass_tol,
             'gh_order': self.gh_order,
+            'memory_budget_bytes': self.memory_budget_bytes,
         }
 
     def _likelihood_kwargs(self):
@@ -241,6 +305,7 @@ class SCARJacobiStrategy:
                 clip_negative=self.clip_negative,
                 negative_mass_tol=self.negative_mass_tol,
                 gh_order=self.gh_order,
+                memory_budget_bytes=self.memory_budget_bytes,
                 return_diagnostics=True,
             )
         except Exception:
@@ -421,13 +486,24 @@ class SCARJacobiStrategy:
                     "spectral_coeff Jacobi backend")
 
         self._check_kendall_mapping(copula)
-        u = np.asarray(u, dtype=np.float64)
+        u = validate_copula_data(copula, u)
+        resolved_quad_order = (
+            default_quad_order(self.basis_order)
+            if self.quad_order is None else self.quad_order)
+        _validate_jacobi_workspace(
+            quad_order=resolved_quad_order,
+            basis_order=self.basis_order,
+            n_obs=len(u),
+            matrix=self._uses_matrix_backend(),
+            gradient=self.analytical_grad,
+            memory_budget_bytes=self.memory_budget_bytes,
+        )
         if alpha0 is None:
             alpha0, initialization = self._initial_point(
                 copula, u, initial_mle_result)
         else:
             initialization = _explicit_initialization_diagnostics(alpha0)
-        alpha0 = np.asarray(alpha0, dtype=np.float64)
+        alpha0 = _validate_alpha0(alpha0)
         raw0 = _physical_to_raw(alpha0, self.tau_eps)
         bounds = self._raw_bounds()
         raw0 = np.clip(raw0, bounds.lb, bounds.ub)
@@ -491,10 +567,31 @@ class SCARJacobiStrategy:
             )
 
         alpha = _raw_to_physical(result.x)
+        gradient_final_fun = None
         if self.analytical_grad:
-            final_fun, _ = objective_raw_with_grad(result.x)
-        else:
-            final_fun = objective_raw(result.x)
+            gradient_final_fun, _ = objective_raw_with_grad(result.x)
+        final_fun = objective_raw(result.x)
+
+        final_objective_consistent = True
+        if self.analytical_grad:
+            final_objective_consistent = (
+                not _objective_is_invalid(gradient_final_fun)
+                and not _objective_is_invalid(final_fun)
+                and np.isclose(
+                    gradient_final_fun,
+                    final_fun,
+                    rtol=1e-8,
+                    atol=1e-10,
+                )
+            )
+            if not final_objective_consistent:
+                result.success = False
+                result.message = (
+                    f"{result.message}; inconsistent gradient objective: "
+                    f"gradient={float(gradient_final_fun):.6g}, "
+                    f"plain={float(final_fun):.6g}"
+                )
+
         if _objective_is_invalid(final_fun):
             result.success = False
             result.message = (
@@ -508,6 +605,14 @@ class SCARJacobiStrategy:
             alpha[0], alpha[1], alpha[2], len(u))
         diagnostics = self._gradient_diagnostics(selected_backend)
         diagnostics["initialization"] = initialization
+        diagnostics["final_objective_value"] = float(final_fun)
+        diagnostics["final_gradient_objective_value"] = (
+            None
+            if gradient_final_fun is None
+            else float(gradient_final_fun)
+        )
+        diagnostics["final_objective_consistent"] = bool(
+            final_objective_consistent)
 
         return LatentResult(
             log_likelihood=-float(final_fun),
@@ -521,6 +626,11 @@ class SCARJacobiStrategy:
             gh_order=self.gh_order if self._uses_matrix_backend() else None,
             spectral_basis_order=self.basis_order,
             spectral_quad_order=self.quad_order,
+            tau_eps=self.tau_eps,
+            theta_cap=self.theta_cap,
+            clip_negative=self.clip_negative,
+            negative_mass_tol=self.negative_mass_tol,
+            stationary_shape_max=self.stationary_shape_max,
             diagnostics=diagnostics,
         )
 

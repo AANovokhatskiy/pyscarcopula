@@ -30,7 +30,9 @@ Common fit diagnostics to inspect before interpreting GoF results include:
   `matrix_failures`, and `matrix_capped`;
 - SCAR-TM-JACOBI fields such as `transition_method`, `gradient_kind`,
   `setup_derivative`, `filter_derivative`, and spectral negative-mass
-  indicators;
+  indicators. Options that determine later Jacobi likelihood and prediction
+  semantics are stored as typed `LatentResult` fields rather than only in
+  diagnostics, so they survive stateless dispatch and JSON persistence;
 - Stochastic Student correlation preprocessing fields such as
   `corr_initialization_source`, `corr_projection_applied`,
   `corr_min_eigenvalue_before`, `corr_min_eigenvalue_after`, and

@@ -261,12 +261,26 @@ and maps local Gauss-Hermite nodes back to tau space. For high-frequency data,
 `dt = 1 / (T - 1)`, so one-step transitions can be close to a point mass. In
 that regime, truncated global Jacobi expansions can create negative entries
 or invalid row sums; `transition_method='auto'` therefore falls back to the
-local backend when the spectral matrix is not acceptable.
+local backend when the spectral matrix is not acceptable. Negative spectral
+mass within `negative_mass_tol` is clipped and row-normalized as numerical
+truncation noise. Material negative mass is never passed to the probability
+filter: `auto` falls back, while an explicit spectral backend fails unless
+clipping was explicitly requested.
 
 Jacobi gradients are fully analytical for `local_fixed`. For `local`,
 `spectral_matrix`, and `auto`, setup-level arrays are differentiated
 numerically while the filtering recursion is differentiated analytically; the
-reported gradient kind is therefore `semi_analytical`.
+reported gradient kind is therefore `semi_analytical`. The backend selected at
+the central point is held fixed across setup finite differences, and the
+ordinary likelihood is independently recomputed at the final optimizer point
+before a fit can be reported as successful.
+
+The numerical boundary validates non-empty bivariate observations, finite
+physical initialization (`kappa > 0`, `0 < m < 1`, `xi > 0`), and strict
+integer quadrature orders. Jacobi workspaces are preflighted before root
+construction and matrix allocation. A hard order cap prevents accidental
+multi-gigabyte quadratic requests; `memory_budget_bytes` can impose a smaller
+application-specific limit.
 
 ## Multivariate Scalar-State Models
 

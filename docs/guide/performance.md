@@ -444,13 +444,14 @@ latent coordinate.
 | `spectral_basis_order` / `basis_order` | strategy kwarg | `32` | Number of Jacobi basis functions. |
 | `spectral_quad_order` / `quad_order` | strategy kwarg | auto | Jacobi quadrature order; default is `max(2 * basis_order + 16, 48)`. |
 | `analytical_grad` | strategy kwarg | `False` | Passes the Jacobi matrix-filter Jacobian to the optimizer. Fully analytical for `local_fixed`; semi-analytical for `local`, `spectral_matrix`, and `auto`. Not available with `spectral_coeff`. |
-| `negative_mass_tol` | strategy kwarg | `1e-5` | Maximum accepted negative mass from the truncated spectral transition in `auto`. |
+| `negative_mass_tol` | strategy kwarg | `1e-5` | Maximum spectral truncation noise that may be clipped and renormalized into a probability transition. Larger negative mass makes `auto` fall back and makes explicit `spectral_matrix` fail unless `clip_negative=True`. |
 | `gh_order` | strategy kwarg | `5` | Gauss-Hermite order for the local Lamperti transition. |
 | `theta_cap` | strategy kwarg | `None` | Optional cap on the copula parameter after mapping from tau. Useful for very high positive dependence. |
 | `clip_negative` | strategy kwarg | `False` | Clips negative entries in the truncated spectral matrix before row normalization. Use mainly for diagnostics. |
 | `kappa_bounds` | strategy kwarg | `(1e-3, 100.0)` | Bounds for mean-reversion speed. |
 | `xi_bounds` | strategy kwarg | `(1e-3, 5.0)` | Bounds for Jacobi volatility. |
 | `stationary_shape_max` | strategy kwarg | `500.0` | Rejects extremely concentrated stationary beta shapes. |
+| `memory_budget_bytes` | strategy kwarg | `1 GiB` | Conservative pre-allocation limit for basis, transition, gradient, and `T x K` emission workspaces. |
 | `tau_eps` | strategy kwarg | `1e-6` | Keeps tau away from the endpoints. |
 | `smart_init` | strategy kwarg | `True` | Uses an MLE-based tau initial point when possible. |
 
@@ -464,20 +465,39 @@ result = fit(
 )
 ```
 
+Jacobi orders are strict positive integers: booleans and fractional values
+are rejected instead of being silently converted. Empty data, non-finite
+options, non-positive `theta_cap`, and invalid physical
+`alpha0=[kappa, m, xi]` are rejected before optimization. All Jacobi orders
+have a safety cap of `2048`; typical production orders `48` through `384`
+remain well inside it. Before `roots_jacobi` or quadratic transition arrays
+are allocated, the implementation estimates the simultaneous float64
+workspace. If `memory_budget_bytes` is too small, it raises `MemoryError` with
+the required-byte estimate and guidance to reduce the grid/basis order. The
+same 1 GiB default guard applies to direct numerical Jacobi entry points.
+
 #### Jacobi transfer methods
 
 `transition_method='auto'` first tries `spectral_matrix`. If the truncated
 spectral matrix has negative mass above `negative_mass_tol`, or if spectral
 matrix construction raises a floating-point error, `auto` uses `local`.
 Forcing `transition_method='spectral_matrix'` keeps those numerical failures
-visible and does not fall back.
+visible and does not fall back. Spectral negative mass within the configured
+tolerance is treated as truncation noise: it is clipped, rows are renormalized,
+and the cleanup magnitude is reported in transition diagnostics. A material
+negative mass in an explicitly requested spectral matrix raises
+`FloatingPointError` unless `clip_negative=True`.
 
 `transition_method='local_fixed'` uses a parameter-independent tau grid and is
 the fully analytical backend for `analytical_grad=True`. The `local` and
 `spectral_matrix` backends use finite differences for setup-level arrays and
 analytical differentiation for the filtering recursion, so their reported
 `gradient_kind` is `semi_analytical`. For `auto`, diagnostics record the
-backend selected at the fitted parameters.
+backend selected at the fitted parameters. Finite-difference setup
+perturbations use that same selected backend, so a single gradient evaluation
+cannot mix spectral and local objectives. Analytical-gradient fits also
+recompute the ordinary objective at the final point and report
+`final_objective_consistent` in result diagnostics.
 `transition_method='spectral_coeff'` uses coefficient-space filtering instead
 of a transition matrix. It is available for diagnostic comparisons and does
 not support the analytical-gradient option.

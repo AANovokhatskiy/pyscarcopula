@@ -248,6 +248,14 @@ backend and explicitly rejects `analytical_grad=True`.
 `gradient_kind`, `setup_derivative`, `filter_derivative`, and the transition
 backend actually selected at the fitted parameters.
 
+The fitted result also retains every Jacobi option that changes subsequent
+likelihood or prediction semantics: `transition_method`, `gh_order`,
+`spectral_basis_order`, `spectral_quad_order`, `tau_eps`, `theta_cap`,
+`clip_negative`, `negative_mass_tol`, and `stationary_shape_max`. Stateless
+API calls and models restored from JSON reconstruct the strategy from these
+fields. Explicit kwargs passed to a later API call still override the stored
+values.
+
 For high-frequency data, the code uses `dt = 1 / (T - 1)`. Large `T` therefore
 produces very narrow one-step Jacobi transitions. In this regime the local
 transition is often the stable and accurate default; increasing

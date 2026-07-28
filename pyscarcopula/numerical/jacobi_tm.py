@@ -6,7 +6,10 @@ import numpy as np
 from scipy.special import betaln, digamma, eval_jacobi, roots_jacobi
 
 from pyscarcopula._utils import clip_h_function_values
-from pyscarcopula.numerical._arrays import validate_positive_int
+from pyscarcopula.numerical._arrays import (
+    validate_float64_allocation,
+    validate_positive_int,
+)
 from pyscarcopula.numerical import copula_native
 from pyscarcopula.numerical._transition_methods import (
     normalize_jacobi_matrix_transition_method,
@@ -14,13 +17,69 @@ from pyscarcopula.numerical._transition_methods import (
 
 
 _validate_positive_int = validate_positive_int
+MAX_JACOBI_ORDER = 2048
+DEFAULT_JACOBI_MEMORY_BUDGET_BYTES = 1024 ** 3
+
+
+def _validate_jacobi_order(value, name):
+    value = _validate_positive_int(value, name)
+    if value > MAX_JACOBI_ORDER:
+        raise ValueError(
+            f"{name} must be <= {MAX_JACOBI_ORDER}; larger Jacobi grids "
+            "are disabled to prevent unsafe quadratic allocations")
+    return value
+
+
+def _validate_jacobi_workspace(
+        *, quad_order, basis_order=1, n_obs=0, gradient=False,
+        matrix=True, memory_budget_bytes=None):
+    """Preflight a conservative upper bound for simultaneous float64 arrays."""
+    quad_order = _validate_jacobi_order(quad_order, "quad_order")
+    basis_order = _validate_jacobi_order(basis_order, "basis_order")
+    if basis_order > quad_order:
+        raise ValueError("quad_order must be >= basis_order")
+    if isinstance(n_obs, (bool, np.bool_)) or not isinstance(
+            n_obs, (int, np.integer)):
+        raise TypeError("n_obs must be a non-negative integer")
+    n_obs = int(n_obs)
+    if n_obs < 0:
+        raise ValueError("n_obs must be non-negative")
+
+    k = quad_order
+    b = basis_order
+    if memory_budget_bytes is None:
+        memory_budget_bytes = DEFAULT_JACOBI_MEMORY_BUDGET_BYTES
+
+    rule_elements = 2 * k * b + b * b + 12 * k + 4 * b
+    if matrix:
+        # Covers the spectral kernel plus transition and retained emissions.
+        elements = rule_elements + 3 * k * k + 5 * n_obs * k
+        if gradient:
+            # Base, three derivatives and a temporary perturbed setup.
+            elements += 4 * k * k + 4 * n_obs * k
+    else:
+        elements = rule_elements + 5 * n_obs * k
+    try:
+        return validate_float64_allocation(
+            (elements,),
+            name="Jacobi numerical workspace",
+            memory_budget_bytes=memory_budget_bytes,
+        )
+    except MemoryError as exc:
+        raise MemoryError(
+            f"{exc}; reduce quad_order, basis_order, or the observation "
+            "count, or increase memory_budget_bytes") from exc
 
 
 def _jacobi_stationary_shape(kappa, m, xi):
     kappa = float(kappa)
     m = float(m)
     xi = float(xi)
-    if kappa <= 0.0 or xi <= 0.0 or not (0.0 < m < 1.0):
+    if (
+            not np.all(np.isfinite([kappa, m, xi]))
+            or kappa <= 0.0
+            or xi <= 0.0
+            or not (0.0 < m < 1.0)):
         return None
     alpha = 2.0 * kappa * m / (xi * xi)
     beta = 2.0 * kappa * (1.0 - m) / (xi * xi)
@@ -31,19 +90,20 @@ def _jacobi_stationary_shape(kappa, m, xi):
 
 def default_quad_order(basis_order: int) -> int:
     """Conservative quadrature order for Jacobi projected multiplication."""
-    basis_order = _validate_positive_int(basis_order, "basis_order")
-    return max(2 * basis_order + 16, 48)
+    basis_order = _validate_jacobi_order(basis_order, "basis_order")
+    quad_order = max(2 * basis_order + 16, 48)
+    return _validate_jacobi_order(quad_order, "quad_order")
 
 
 def _normal_hermite_rule(order):
-    order = _validate_positive_int(order, "gh_order")
+    order = _validate_jacobi_order(order, "gh_order")
     nodes, weights = np.polynomial.hermite.hermgauss(order)
     return nodes.astype(np.float64), (weights / np.sqrt(np.pi)).astype(np.float64)
 
 
 def _fixed_tau_rule(alpha, beta, quad_order):
     """Return a parameter-independent tau grid and beta stationary masses."""
-    quad_order = _validate_positive_int(quad_order, "quad_order")
+    quad_order = _validate_jacobi_order(quad_order, "quad_order")
     if quad_order < 2:
         raise ValueError("quad_order must be >= 2")
     eps = 0.5 / (quad_order + 1.0)
@@ -90,7 +150,8 @@ def _fixed_tau_weight_derivatives(kappa, m, xi, tau, weights):
     return dweights
 
 
-def jacobi_rule(alpha, beta, quad_order, basis_order):
+def jacobi_rule(
+        alpha, beta, quad_order, basis_order, memory_budget_bytes=None):
     """Return tau nodes, probability weights, and orthonormal Jacobi basis.
 
     Parameters
@@ -110,13 +171,21 @@ def jacobi_rule(alpha, beta, quad_order, basis_order):
     """
     alpha = float(alpha)
     beta = float(beta)
+    if not np.isfinite(alpha) or not np.isfinite(beta):
+        raise ValueError("alpha and beta must be finite")
     if alpha <= 0.0 or beta <= 0.0:
         raise ValueError("alpha and beta must be positive")
 
-    quad_order = _validate_positive_int(quad_order, "quad_order")
-    basis_order = _validate_positive_int(basis_order, "basis_order")
+    quad_order = _validate_jacobi_order(quad_order, "quad_order")
+    basis_order = _validate_jacobi_order(basis_order, "basis_order")
     if quad_order < basis_order:
         raise ValueError("quad_order must be >= basis_order")
+    _validate_jacobi_workspace(
+        quad_order=quad_order,
+        basis_order=basis_order,
+        matrix=False,
+        memory_budget_bytes=memory_budget_bytes,
+    )
 
     # scipy's roots_jacobi(a, b) uses weight (1-x)**a * (1+x)**b.
     # For tau=(x+1)/2 and Beta(alpha, beta), this is a=beta-1,
@@ -143,8 +212,8 @@ def _jacobi_powers(kappa, xi, n_obs, basis_order):
 
 def _jacobi_transition_powers(kappa, xi, dt, basis_order):
     dt = float(dt)
-    if dt <= 0.0:
-        raise ValueError("dt must be positive")
+    if not np.isfinite(dt) or dt <= 0.0:
+        raise ValueError("dt must be finite and positive")
     n = np.arange(basis_order, dtype=np.float64)
     eig = n * float(kappa) + 0.5 * float(xi) ** 2 * n * (n - 1.0)
     return np.exp(-eig * dt)
@@ -172,6 +241,7 @@ def jacobi_spectral_transition_matrix(
         basis_order=32,
         quad_order=None,
         clip_negative=False,
+        memory_budget_bytes=None,
         return_diagnostics=False):
     """Build a node-space transition matrix from the Jacobi spectral density.
 
@@ -194,14 +264,22 @@ def jacobi_spectral_transition_matrix(
         raise ValueError("invalid Jacobi parameters")
     alpha, beta = shapes
 
-    basis_order = _validate_positive_int(basis_order, "basis_order")
+    basis_order = _validate_jacobi_order(basis_order, "basis_order")
     if quad_order is None:
         quad_order = default_quad_order(basis_order)
-    quad_order = _validate_positive_int(quad_order, "quad_order")
+    quad_order = _validate_jacobi_order(quad_order, "quad_order")
+    _validate_jacobi_workspace(
+        quad_order=quad_order,
+        basis_order=basis_order,
+        matrix=True,
+        memory_budget_bytes=memory_budget_bytes,
+    )
 
     dt = _resolve_dt(dt, n_obs)
 
-    tau, weights, basis = jacobi_rule(alpha, beta, quad_order, basis_order)
+    tau, weights, basis = jacobi_rule(
+        alpha, beta, quad_order, basis_order,
+        memory_budget_bytes=memory_budget_bytes)
     powers = _jacobi_transition_powers(kappa, xi, dt, basis_order)
 
     kernel = (basis * powers[np.newaxis, :]) @ basis.T
@@ -315,6 +393,7 @@ def jacobi_fixed_grid_transition_matrix(
         quad_order=128,
         gh_order=5,
         return_grad=False,
+        memory_budget_bytes=None,
         return_diagnostics=False):
     """Build local-GH Jacobi transition on a fixed tau grid.
 
@@ -328,8 +407,14 @@ def jacobi_fixed_grid_transition_matrix(
         raise ValueError("invalid Jacobi parameters")
     alpha, beta = shapes
     dt = _resolve_dt(dt, n_obs)
-    quad_order = _validate_positive_int(quad_order, "quad_order")
-    gh_order = _validate_positive_int(gh_order, "gh_order")
+    quad_order = _validate_jacobi_order(quad_order, "quad_order")
+    gh_order = _validate_jacobi_order(gh_order, "gh_order")
+    _validate_jacobi_workspace(
+        quad_order=quad_order,
+        matrix=True,
+        gradient=return_grad,
+        memory_budget_bytes=memory_budget_bytes,
+    )
 
     tau, weights = _fixed_tau_rule(alpha, beta, quad_order)
     gh_nodes, gh_weights = _normal_hermite_rule(gh_order)
@@ -419,6 +504,7 @@ def jacobi_local_transition_matrix(
         quad_order=128,
         basis_order=1,
         gh_order=5,
+        memory_budget_bytes=None,
         return_diagnostics=False):
     """Build a local transition matrix for Jacobi diffusion.
 
@@ -436,15 +522,23 @@ def jacobi_local_transition_matrix(
         raise ValueError("invalid Jacobi parameters")
     alpha, beta = shapes
 
-    quad_order = _validate_positive_int(quad_order, "quad_order")
+    quad_order = _validate_jacobi_order(quad_order, "quad_order")
     # ``basis_order`` is accepted so callers can use the same constructor
     # signature as the spectral matrix path; only the grid order matters here.
-    _validate_positive_int(basis_order, "basis_order")
-    gh_order = _validate_positive_int(gh_order, "gh_order")
+    basis_order = _validate_jacobi_order(basis_order, "basis_order")
+    gh_order = _validate_jacobi_order(gh_order, "gh_order")
+    _validate_jacobi_workspace(
+        quad_order=quad_order,
+        basis_order=basis_order,
+        matrix=True,
+        memory_budget_bytes=memory_budget_bytes,
+    )
 
     dt = _resolve_dt(dt, n_obs)
 
-    tau, weights, _ = jacobi_rule(alpha, beta, quad_order, basis_order=1)
+    tau, weights, _ = jacobi_rule(
+        alpha, beta, quad_order, basis_order=1,
+        memory_budget_bytes=memory_budget_bytes)
     y_grid = _jacobi_lamperti(tau, xi)
     drift = _jacobi_lamperti_drift_from_tau(tau, kappa, m, xi)
     gh_nodes, gh_weights = _normal_hermite_rule(gh_order)
@@ -482,6 +576,41 @@ def jacobi_local_transition_matrix(
     return tau, weights, transition
 
 
+def _probability_transition_matrix(transition, negative_mass_tol):
+    """Return a finite row-stochastic matrix with no signed probability mass."""
+    transition = np.asarray(transition, dtype=np.float64)
+    negative_mass_tol = float(negative_mass_tol)
+    if not np.isfinite(negative_mass_tol) or negative_mass_tol < 0.0:
+        raise ValueError("negative_mass_tol must be finite and non-negative")
+    if transition.ndim != 2 or transition.shape[0] != transition.shape[1]:
+        raise ValueError("transition must be a square matrix")
+    if np.any(~np.isfinite(transition)):
+        raise FloatingPointError("transition contains non-finite values")
+
+    negative = transition < 0.0
+    negative_mass = float(-np.sum(transition[negative]))
+    min_entry = float(np.min(transition))
+    if (
+            min_entry < -negative_mass_tol
+            or negative_mass > negative_mass_tol):
+        raise FloatingPointError(
+            "spectral transition contains material negative probability mass")
+
+    cleaned = bool(np.any(negative))
+    if cleaned:
+        transition = np.where(transition > 0.0, transition, 0.0)
+
+    row_sums = np.sum(transition, axis=1)
+    if np.any(~np.isfinite(row_sums)) or np.any(row_sums <= 0.0):
+        raise FloatingPointError("invalid transition row normalization")
+    transition = transition / row_sums[:, np.newaxis]
+    return transition, {
+        "probability_cleanup_applied": cleaned,
+        "probability_cleanup_negative_mass": negative_mass,
+        "probability_min_entry_before_cleanup": min_entry,
+    }
+
+
 def jacobi_transition_matrix(
         kappa,
         m,
@@ -495,6 +624,7 @@ def jacobi_transition_matrix(
         clip_negative=False,
         negative_mass_tol=1e-5,
         gh_order=5,
+        memory_budget_bytes=None,
         return_diagnostics=False):
     """Build a Jacobi transition matrix using the requested backend.
 
@@ -508,6 +638,15 @@ def jacobi_transition_matrix(
     dt = _resolve_dt(dt, n_obs)
     if quad_order is None:
         quad_order = default_quad_order(basis_order)
+    basis_order = _validate_jacobi_order(basis_order, "basis_order")
+    quad_order = _validate_jacobi_order(quad_order, "quad_order")
+    gh_order = _validate_jacobi_order(gh_order, "gh_order")
+    _validate_jacobi_workspace(
+        quad_order=quad_order,
+        basis_order=basis_order,
+        matrix=True,
+        memory_budget_bytes=memory_budget_bytes,
+    )
 
     if method_requested == "local_fixed":
         tau, weights, transition, diagnostics = (
@@ -518,6 +657,7 @@ def jacobi_transition_matrix(
                 dt=dt,
                 quad_order=quad_order,
                 gh_order=gh_order,
+                memory_budget_bytes=memory_budget_bytes,
                 return_diagnostics=True,
             )
         )
@@ -539,6 +679,7 @@ def jacobi_transition_matrix(
                     basis_order=basis_order,
                     quad_order=quad_order,
                     clip_negative=clip_negative,
+                    memory_budget_bytes=memory_budget_bytes,
                     return_diagnostics=True,
                 )
             )
@@ -554,7 +695,23 @@ def jacobi_transition_matrix(
                 diagnostics["raw_min_entry"] < -float(negative_mass_tol)
                 or diagnostics["raw_negative_mass"] > float(negative_mass_tol)
             )
+            if (
+                    method_requested == "spectral_matrix"
+                    and has_bad_negative_mass
+                    and not clip_negative):
+                raise FloatingPointError(
+                    "spectral transition contains material negative "
+                    "probability mass")
             if method_requested != "auto" or not has_bad_negative_mass:
+                transition, probability_diagnostics = (
+                    _probability_transition_matrix(
+                        transition,
+                        0.0 if clip_negative else negative_mass_tol,
+                    )
+                )
+                diagnostics.update(probability_diagnostics)
+                diagnostics["stationary_error"] = float(
+                    np.max(np.abs(weights @ transition - weights)))
                 if return_diagnostics:
                     return tau, weights, transition, diagnostics
                 return tau, weights, transition
@@ -566,8 +723,9 @@ def jacobi_transition_matrix(
         dt=dt,
         quad_order=quad_order,
         basis_order=basis_order,
-        gh_order=gh_order,
-        return_diagnostics=True,
+            gh_order=gh_order,
+            memory_budget_bytes=memory_budget_bytes,
+            return_diagnostics=True,
     )
     diagnostics = dict(diagnostics)
     diagnostics["transition_method_requested"] = method_requested
@@ -679,12 +837,25 @@ def _matrix_setup(
         transition_method,
         clip_negative,
         negative_mass_tol,
-        gh_order):
+        gh_order,
+        memory_budget_bytes=None,
+        return_transition_diagnostics=False):
     u = np.asarray(u, dtype=np.float64)
     if u.ndim != 2 or u.shape[1] != 2 or len(u) < 1:
         return None
+    basis_order = _validate_jacobi_order(basis_order, "basis_order")
+    if quad_order is None:
+        quad_order = default_quad_order(basis_order)
+    quad_order = _validate_jacobi_order(quad_order, "quad_order")
+    _validate_jacobi_workspace(
+        quad_order=quad_order,
+        basis_order=basis_order,
+        n_obs=len(u),
+        matrix=True,
+        memory_budget_bytes=memory_budget_bytes,
+    )
 
-    tau, weights, transition = jacobi_transition_matrix(
+    transition_result = jacobi_transition_matrix(
         kappa,
         m,
         xi,
@@ -695,9 +866,18 @@ def _matrix_setup(
         clip_negative=clip_negative,
         negative_mass_tol=negative_mass_tol,
         gh_order=gh_order,
+        memory_budget_bytes=memory_budget_bytes,
+        return_diagnostics=return_transition_diagnostics,
     )
+    if return_transition_diagnostics:
+        tau, weights, transition, transition_diagnostics = transition_result
+    else:
+        tau, weights, transition = transition_result
     fi_grid, theta = _emission_grid(u, copula, tau, theta_cap=theta_cap)
-    return u, tau, weights, transition, fi_grid, theta
+    setup = u, tau, weights, transition, fi_grid, theta
+    if return_transition_diagnostics:
+        return setup + (transition_diagnostics,)
+    return setup
 
 
 def _normalize_prob_mass(prob, *, negative_tol=1e-12):
@@ -711,6 +891,35 @@ def _normalize_prob_mass(prob, *, negative_tol=1e-12):
     if not np.isfinite(total) or total <= 0.0:
         return None
     return prob / total
+
+
+def _normalize_prob_mass_with_derivatives(prob, dprob):
+    """Normalize probability mass and propagate its parameter derivatives."""
+    prob = np.asarray(prob, dtype=np.float64)
+    dprob = np.asarray(dprob, dtype=np.float64)
+    if (
+            prob.ndim != 1
+            or dprob.ndim != 2
+            or dprob.shape[1] != prob.size
+            or np.any(~np.isfinite(prob))
+            or np.any(~np.isfinite(dprob))
+            or np.any(prob < 0.0)):
+        return None
+
+    total = float(np.sum(prob))
+    if not np.isfinite(total) or total <= 0.0:
+        return None
+    dtotal = np.sum(dprob, axis=1)
+    normalized = prob / total
+    dnormalized = (
+        dprob * total
+        - prob[np.newaxis, :] * dtotal[:, np.newaxis]
+    ) / (total * total)
+    if (
+            np.any(~np.isfinite(normalized))
+            or np.any(~np.isfinite(dnormalized))):
+        return None
+    return normalized, dnormalized, total, dtotal
 
 
 def _advance_matrix_posterior(predicted, fi_row):
@@ -757,8 +966,19 @@ def jacobi_matrix_loglik(
         transition_method="auto",
         clip_negative=False,
         negative_mass_tol=1e-5,
-        gh_order=5):
+        gh_order=5,
+        memory_budget_bytes=None):
     """Evaluate log-likelihood by filtering probability masses on tau nodes."""
+    resolved_quad_order = (
+        default_quad_order(basis_order)
+        if quad_order is None else quad_order)
+    _validate_jacobi_workspace(
+        quad_order=resolved_quad_order,
+        basis_order=basis_order,
+        n_obs=len(u),
+        matrix=True,
+        memory_budget_bytes=memory_budget_bytes,
+    )
     setup = _matrix_filter_setup(
         kappa,
         m,
@@ -772,6 +992,7 @@ def jacobi_matrix_loglik(
         clip_negative,
         negative_mass_tol,
         gh_order,
+        memory_budget_bytes,
     )
     if setup is None:
         return -np.inf
@@ -811,37 +1032,31 @@ def _matrix_neg_loglik_from_derivatives(
     for t in range(fi_grid.shape[0]):
         fi_row = fi_grid[t]
         weighted = predicted * fi_row
-        scale = float(np.sum(weighted))
-        if not np.isfinite(scale) or scale <= 0.0:
-            return 1e10, np.zeros(3, dtype=np.float64)
-
         dweighted = (
             dpredicted * fi_row[np.newaxis, :]
             + predicted[np.newaxis, :] * dfi_grid[:, t, :]
         )
-        dscale = np.sum(dweighted, axis=1)
+        normalized = _normalize_prob_mass_with_derivatives(
+            weighted, dweighted)
+        if normalized is None:
+            return 1e10, np.zeros(3, dtype=np.float64)
+        posterior, dposterior, scale, dscale = normalized
         log_likelihood += np.log(scale)
         grad += dscale / scale
 
-        posterior = weighted / scale
-        dposterior = (
-            dweighted * scale
-            - weighted[np.newaxis, :] * dscale[:, np.newaxis]
-        ) / (scale * scale)
-
         if t < fi_grid.shape[0] - 1:
-            next_predicted = posterior @ transition
-            next_dpredicted = np.empty_like(dpredicted)
+            raw_next_predicted = posterior @ transition
+            raw_next_dpredicted = np.empty_like(dpredicted)
             for p in range(3):
-                next_dpredicted[p] = (
+                raw_next_dpredicted[p] = (
                     dposterior[p] @ transition
                     + posterior @ dtransition[p]
                 )
-            if (np.any(~np.isfinite(next_predicted))
-                    or np.any(~np.isfinite(next_dpredicted))):
+            normalized = _normalize_prob_mass_with_derivatives(
+                raw_next_predicted, raw_next_dpredicted)
+            if normalized is None:
                 return 1e10, np.zeros(3, dtype=np.float64)
-            predicted = next_predicted
-            dpredicted = next_dpredicted
+            predicted, dpredicted, _, _ = normalized
 
     if not np.isfinite(log_likelihood) or np.any(~np.isfinite(grad)):
         return 1e10, np.zeros(3, dtype=np.float64)
@@ -861,14 +1076,30 @@ def _matrix_setup_fd_derivatives(
         clip_negative,
         negative_mass_tol,
         gh_order,
-        fd_rel_step):
+        fd_rel_step,
+        memory_budget_bytes=None):
+    resolved_quad_order = (
+        default_quad_order(basis_order)
+        if quad_order is None else quad_order)
+    _validate_jacobi_workspace(
+        quad_order=resolved_quad_order,
+        basis_order=basis_order,
+        n_obs=len(u),
+        matrix=True,
+        gradient=True,
+        memory_budget_bytes=memory_budget_bytes,
+    )
     base = _matrix_setup(
         kappa, m, xi, u, copula, basis_order, quad_order, theta_cap,
-        transition_method, clip_negative, negative_mass_tol, gh_order)
+        transition_method, clip_negative, negative_mass_tol, gh_order,
+        memory_budget_bytes,
+        return_transition_diagnostics=True)
     if base is None:
         return None
 
-    _, tau, weights, transition, fi_grid, _ = base
+    _, tau, weights, transition, fi_grid, _, transition_diagnostics = base
+    derivative_transition_method = str(
+        transition_diagnostics.get("transition_method", transition_method))
     params = np.array([kappa, m, xi], dtype=np.float64)
     dweights = np.empty((3, len(weights)), dtype=np.float64)
     dtransition = np.empty((3,) + transition.shape, dtype=np.float64)
@@ -889,12 +1120,12 @@ def _matrix_setup_fd_derivatives(
         minus[p] -= step
         plus_setup = _matrix_setup(
             plus[0], plus[1], plus[2], u, copula, basis_order, quad_order,
-            theta_cap, transition_method, clip_negative, negative_mass_tol,
-            gh_order)
+            theta_cap, derivative_transition_method, clip_negative,
+            negative_mass_tol, gh_order, memory_budget_bytes)
         minus_setup = _matrix_setup(
             minus[0], minus[1], minus[2], u, copula, basis_order, quad_order,
-            theta_cap, transition_method, clip_negative, negative_mass_tol,
-            gh_order)
+            theta_cap, derivative_transition_method, clip_negative,
+            negative_mass_tol, gh_order, memory_budget_bytes)
         if plus_setup is None or minus_setup is None:
             return None
 
@@ -928,7 +1159,8 @@ def jacobi_matrix_neg_loglik_with_grad(
         clip_negative=False,
         negative_mass_tol=1e-5,
         gh_order=5,
-        fd_rel_step=1e-5):
+        fd_rel_step=1e-5,
+        memory_budget_bytes=None):
     """Evaluate Jacobi matrix negative log-likelihood and gradient.
 
     Returns ``(neg_log_likelihood, neg_gradient)`` with derivatives with
@@ -952,10 +1184,18 @@ def jacobi_matrix_neg_loglik_with_grad(
     if u.ndim != 2 or u.shape[1] != 2 or len(u) < 1:
         return fail
 
-    basis_order = _validate_positive_int(basis_order, "basis_order")
+    basis_order = _validate_jacobi_order(basis_order, "basis_order")
     if quad_order is None:
         quad_order = default_quad_order(basis_order)
-    quad_order = _validate_positive_int(quad_order, "quad_order")
+    quad_order = _validate_jacobi_order(quad_order, "quad_order")
+    _validate_jacobi_workspace(
+        quad_order=quad_order,
+        basis_order=basis_order,
+        n_obs=len(u),
+        matrix=True,
+        gradient=True,
+        memory_budget_bytes=memory_budget_bytes,
+    )
 
     if method == "local_fixed":
         try:
@@ -968,6 +1208,7 @@ def jacobi_matrix_neg_loglik_with_grad(
                     quad_order=quad_order,
                     gh_order=gh_order,
                     return_grad=True,
+                    memory_budget_bytes=memory_budget_bytes,
                 )
             )
             dweights = _fixed_tau_weight_derivatives(
@@ -992,6 +1233,7 @@ def jacobi_matrix_neg_loglik_with_grad(
                 negative_mass_tol,
                 gh_order,
                 fd_rel_step,
+                memory_budget_bytes,
             )
         except Exception:
             return fail
@@ -1015,11 +1257,13 @@ def jacobi_matrix_forward_predictive_mean(
         transition_method="auto",
         clip_negative=False,
         negative_mass_tol=1e-5,
-        gh_order=5):
+        gh_order=5,
+        memory_budget_bytes=None):
     """Return node-space E[theta(tau_k) | u_{1:k-1}]."""
     setup = _matrix_setup(
         kappa, m, xi, u, copula, basis_order, quad_order, theta_cap,
-        transition_method, clip_negative, negative_mass_tol, gh_order)
+        transition_method, clip_negative, negative_mass_tol, gh_order,
+        memory_budget_bytes)
     if setup is None:
         raise ValueError("invalid Jacobi parameters or observations")
     _, _, weights, transition, fi_grid, theta = setup
@@ -1043,11 +1287,13 @@ def jacobi_matrix_forward_mixture_h(
         transition_method="auto",
         clip_negative=False,
         negative_mass_tol=1e-5,
-        gh_order=5):
+        gh_order=5,
+        memory_budget_bytes=None):
     """Return node-space E[h(u2 | u1; theta(tau_k)) | u_{1:k-1}]."""
     setup = _matrix_setup(
         kappa, m, xi, u, copula, basis_order, quad_order, theta_cap,
-        transition_method, clip_negative, negative_mass_tol, gh_order)
+        transition_method, clip_negative, negative_mass_tol, gh_order,
+        memory_budget_bytes)
     if setup is None:
         raise ValueError("invalid Jacobi parameters or observations")
     u, _, weights, transition, fi_grid, theta = setup
@@ -1073,11 +1319,13 @@ def jacobi_matrix_forward_mixture_h_pair(
         transition_method="auto",
         clip_negative=False,
         negative_mass_tol=1e-5,
-        gh_order=5):
+        gh_order=5,
+        memory_budget_bytes=None):
     """Return both h-directions from one Jacobi matrix filter pass."""
     setup = _matrix_setup(
         kappa, m, xi, u, copula, basis_order, quad_order, theta_cap,
-        transition_method, clip_negative, negative_mass_tol, gh_order)
+        transition_method, clip_negative, negative_mass_tol, gh_order,
+        memory_budget_bytes)
     if setup is None:
         raise ValueError("invalid Jacobi parameters or observations")
     u, _, weights, transition, fi_grid, theta = setup
@@ -1105,6 +1353,7 @@ def jacobi_matrix_state_distribution(
         clip_negative=False,
         negative_mass_tol=1e-5,
         gh_order=5,
+        memory_budget_bytes=None,
         horizon="current"):
     """Return a node-space tau distribution at current or next horizon."""
     horizon = str(horizon).lower()
@@ -1113,7 +1362,8 @@ def jacobi_matrix_state_distribution(
 
     setup = _matrix_setup(
         kappa, m, xi, u, copula, basis_order, quad_order, theta_cap,
-        transition_method, clip_negative, negative_mass_tol, gh_order)
+        transition_method, clip_negative, negative_mass_tol, gh_order,
+        memory_budget_bytes)
     if setup is None:
         raise ValueError("invalid Jacobi parameters or observations")
     _, tau, weights, transition, fi_grid, _ = setup
@@ -1132,7 +1382,9 @@ def jacobi_matrix_state_distribution(
     return tau.copy(), prob
 
 
-def _setup(kappa, m, xi, u, copula, basis_order, quad_order, theta_cap):
+def _setup(
+        kappa, m, xi, u, copula, basis_order, quad_order, theta_cap,
+        memory_budget_bytes=None):
     shapes = _jacobi_stationary_shape(kappa, m, xi)
     if shapes is None:
         return None
@@ -1142,12 +1394,21 @@ def _setup(kappa, m, xi, u, copula, basis_order, quad_order, theta_cap):
     if u.ndim != 2 or u.shape[1] != 2 or len(u) < 1:
         return None
 
-    basis_order = _validate_positive_int(basis_order, "basis_order")
+    basis_order = _validate_jacobi_order(basis_order, "basis_order")
     if quad_order is None:
         quad_order = default_quad_order(basis_order)
-    quad_order = _validate_positive_int(quad_order, "quad_order")
+    quad_order = _validate_jacobi_order(quad_order, "quad_order")
+    _validate_jacobi_workspace(
+        quad_order=quad_order,
+        basis_order=basis_order,
+        n_obs=len(u),
+        matrix=False,
+        memory_budget_bytes=memory_budget_bytes,
+    )
 
-    tau, weights, basis = jacobi_rule(alpha, beta, quad_order, basis_order)
+    tau, weights, basis = jacobi_rule(
+        alpha, beta, quad_order, basis_order,
+        memory_budget_bytes=memory_budget_bytes)
     powers = _jacobi_powers(kappa, xi, len(u), basis_order)
     fi_grid, theta = _emission_grid(u, copula, tau, theta_cap=theta_cap)
     return u, tau, weights, basis, powers, fi_grid, theta
@@ -1182,15 +1443,27 @@ def jacobi_loglik(
         copula,
         basis_order=32,
         quad_order=None,
-        theta_cap=None):
+        theta_cap=None,
+        memory_budget_bytes=None):
     """Evaluate the Jacobi-diffusion copula log-likelihood.
 
     The latent state is Kendall's tau on ``(0, 1)``.  Observation emissions are
     evaluated at ``copula.tau_to_param(tau)``.
     """
+    resolved_quad_order = (
+        default_quad_order(basis_order)
+        if quad_order is None else quad_order)
+    _validate_jacobi_workspace(
+        quad_order=resolved_quad_order,
+        basis_order=basis_order,
+        n_obs=len(u),
+        matrix=False,
+        memory_budget_bytes=memory_budget_bytes,
+    )
     try:
         setup = _setup(
-            kappa, m, xi, u, copula, basis_order, quad_order, theta_cap)
+            kappa, m, xi, u, copula, basis_order, quad_order, theta_cap,
+            memory_budget_bytes)
     except Exception:
         return -np.inf
     if setup is None:
@@ -1225,9 +1498,12 @@ def jacobi_forward_predictive_mean(
         copula,
         basis_order=32,
         quad_order=None,
-        theta_cap=None):
+        theta_cap=None,
+        memory_budget_bytes=None):
     """Return E[theta(tau_k) | u_{1:k-1}] for each observation."""
-    setup = _setup(kappa, m, xi, u, copula, basis_order, quad_order, theta_cap)
+    setup = _setup(
+        kappa, m, xi, u, copula, basis_order, quad_order, theta_cap,
+        memory_budget_bytes)
     if setup is None:
         raise ValueError("invalid Jacobi parameters or observations")
     _, _, weights, basis, powers, fi_grid, theta = setup
@@ -1248,9 +1524,12 @@ def jacobi_forward_mixture_h(
         copula,
         basis_order=32,
         quad_order=None,
-        theta_cap=None):
+        theta_cap=None,
+        memory_budget_bytes=None):
     """Return E[h(u2 | u1; theta(tau_k)) | u_{1:k-1}]."""
-    setup = _setup(kappa, m, xi, u, copula, basis_order, quad_order, theta_cap)
+    setup = _setup(
+        kappa, m, xi, u, copula, basis_order, quad_order, theta_cap,
+        memory_budget_bytes)
     if setup is None:
         raise ValueError("invalid Jacobi parameters or observations")
     u, _, weights, basis, powers, fi_grid, theta = setup
@@ -1273,9 +1552,12 @@ def jacobi_forward_mixture_h_pair(
         copula,
         basis_order=32,
         quad_order=None,
-        theta_cap=None):
+        theta_cap=None,
+        memory_budget_bytes=None):
     """Return both h-directions from one Jacobi coefficient filter pass."""
-    setup = _setup(kappa, m, xi, u, copula, basis_order, quad_order, theta_cap)
+    setup = _setup(
+        kappa, m, xi, u, copula, basis_order, quad_order, theta_cap,
+        memory_budget_bytes)
     if setup is None:
         raise ValueError("invalid Jacobi parameters or observations")
     u, _, weights, basis, powers, fi_grid, theta = setup
@@ -1310,13 +1592,16 @@ def jacobi_state_distribution(
         basis_order=32,
         quad_order=None,
         theta_cap=None,
+        memory_budget_bytes=None,
         horizon="current"):
     """Return a discrete tau distribution at the current or next horizon."""
     horizon = str(horizon).lower()
     if horizon not in ("current", "next"):
         raise ValueError("horizon must be 'current' or 'next'")
 
-    setup = _setup(kappa, m, xi, u, copula, basis_order, quad_order, theta_cap)
+    setup = _setup(
+        kappa, m, xi, u, copula, basis_order, quad_order, theta_cap,
+        memory_budget_bytes)
     if setup is None:
         raise ValueError("invalid Jacobi parameters or observations")
     _, tau, weights, basis, powers, fi_grid, _ = setup

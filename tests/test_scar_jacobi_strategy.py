@@ -81,6 +81,96 @@ def test_scar_jacobi_validates_optimizer_bounds():
         get_strategy('scar-tm-jacobi', stationary_shape_max=0.0)
 
 
+@pytest.mark.parametrize(
+    ("option", "value"),
+    [
+        ("basis_order", True),
+        ("basis_order", 3.5),
+        ("quad_order", np.nan),
+        ("gh_order", False),
+    ],
+)
+def test_scar_jacobi_rejects_non_integer_orders(option, value):
+    with pytest.raises(TypeError, match=option):
+        get_strategy('scar-tm-jacobi', **{option: value})
+
+
+@pytest.mark.parametrize(
+    ("option", "value"),
+    [
+        ("tau_eps", np.nan),
+        ("theta_cap", 0.0),
+        ("theta_cap", np.inf),
+        ("negative_mass_tol", np.nan),
+        ("negative_mass_tol", -1e-6),
+        ("stationary_shape_max", np.inf),
+        ("memory_budget_bytes", 1.5),
+    ],
+)
+def test_scar_jacobi_rejects_invalid_finite_options(option, value):
+    with pytest.raises((TypeError, ValueError), match=option):
+        get_strategy('scar-tm-jacobi', **{option: value})
+
+
+def test_scar_jacobi_rejects_nan_optimizer_bound():
+    with pytest.raises(ValueError, match="kappa_bounds lower"):
+        get_strategy('scar-tm-jacobi', kappa_bounds=(np.nan, 1.0))
+
+
+def test_scar_jacobi_rejects_empty_data():
+    with pytest.raises(ValueError, match="at least one observation"):
+        fit(
+            GumbelCopula(),
+            np.empty((0, 2), dtype=np.float64),
+            method='scar-tm-jacobi',
+            smart_init=False,
+        )
+
+
+@pytest.mark.parametrize(
+    "alpha0",
+    [
+        np.array([1.0, 0.5]),
+        np.array([[1.0, 0.5, 0.2]]),
+        np.array([np.nan, 0.5, 0.2]),
+        np.array([0.0, 0.5, 0.2]),
+        np.array([1.0, 1.0, 0.2]),
+        np.array([1.0, 0.5, -0.2]),
+    ],
+)
+def test_scar_jacobi_rejects_invalid_alpha0_before_optimizer(
+        monkeypatch, alpha0):
+    monkeypatch.setattr(
+        scar_jacobi,
+        "minimize",
+        lambda *args, **kwargs: pytest.fail("optimizer must not be called"),
+    )
+    strategy = scar_jacobi.SCARJacobiStrategy(
+        basis_order=3, quad_order=16, smart_init=False)
+    with pytest.raises((TypeError, ValueError), match="alpha0"):
+        strategy.fit(GumbelCopula(), _u_sample(), alpha0=alpha0)
+
+
+def test_scar_jacobi_memory_budget_fails_before_optimizer(monkeypatch):
+    monkeypatch.setattr(
+        scar_jacobi,
+        "minimize",
+        lambda *args, **kwargs: pytest.fail("optimizer must not be called"),
+    )
+    strategy = scar_jacobi.SCARJacobiStrategy(
+        basis_order=3,
+        quad_order=16,
+        memory_budget_bytes=1,
+        smart_init=False,
+    )
+    with pytest.raises(MemoryError, match="memory_budget_bytes"):
+        strategy.fit(
+            GumbelCopula(),
+            _u_sample(),
+            alpha0=np.array([1.0, 0.5, 0.2]),
+        )
+
+
 def test_scar_jacobi_fit_returns_latent_result():
     copula = GumbelCopula()
     u = _u_sample()
@@ -197,6 +287,46 @@ def test_scar_jacobi_fit_accepts_spectral_matrix_analytical_gradient():
     assert np.isfinite(result.log_likelihood)
     assert result.diagnostics["gradient_kind"] == "semi_analytical"
     assert result.diagnostics["transition_backend"] == "spectral_matrix"
+
+
+def test_scar_jacobi_final_validation_uses_plain_objective(monkeypatch):
+    def inconsistent_gradient(*args, **kwargs):
+        return 123.0, np.zeros(3, dtype=np.float64)
+
+    monkeypatch.setattr(
+        scar_jacobi,
+        "jacobi_matrix_neg_loglik_with_grad",
+        inconsistent_gradient,
+    )
+    copula = GumbelCopula()
+    u = _u_sample()
+    result = fit(
+        copula,
+        u,
+        method="scar-tm-jacobi",
+        analytical_grad=True,
+        transition_method="local_fixed",
+        basis_order=3,
+        quad_order=18,
+        alpha0=np.array([1.0, 0.35, 0.5]),
+        maxiter=2,
+        maxfun=12,
+    )
+
+    expected = scar_jacobi.jacobi_matrix_loglik(
+        result.params.kappa,
+        result.params.m,
+        result.params.xi,
+        u,
+        copula,
+        basis_order=3,
+        quad_order=18,
+        transition_method="local_fixed",
+    )
+    assert result.log_likelihood == pytest.approx(expected)
+    assert not result.success
+    assert not result.diagnostics["final_objective_consistent"]
+    assert "inconsistent gradient objective" in result.message
 
 
 def test_scar_jacobi_local_fixed_reports_fully_analytical_gradient():
@@ -493,17 +623,52 @@ def test_scar_jacobi_get_strategy_for_result_restores_options():
         gh_order=7,
         spectral_basis_order=7,
         spectral_quad_order=31,
+        tau_eps=2e-5,
+        theta_cap=3.5,
+        clip_negative=True,
+        negative_mass_tol=2e-7,
+        stationary_shape_max=None,
     )
 
     strategy = get_strategy_for_result(result)
-    overridden = get_strategy_for_result(result, basis_order=5)
+    overridden = get_strategy_for_result(
+        result, basis_order=5, theta_cap=2.5)
 
     assert strategy.basis_order == 7
     assert strategy.quad_order == 31
     assert strategy.transition_method == 'local'
     assert strategy.gh_order == 7
+    assert strategy.tau_eps == pytest.approx(2e-5)
+    assert strategy.theta_cap == pytest.approx(3.5)
+    assert strategy.clip_negative
+    assert strategy.negative_mass_tol == pytest.approx(2e-7)
+    assert strategy.stationary_shape_max is None
     assert overridden.basis_order == 5
     assert overridden.quad_order == 31
+    assert overridden.theta_cap == pytest.approx(2.5)
+
+
+def test_scar_jacobi_nondefault_theta_cap_recomputes_fitted_likelihood():
+    u = np.random.default_rng(123).uniform(size=(30, 2))
+    copula = GumbelCopula()
+    result = fit(
+        copula,
+        u,
+        method="scar-tm-jacobi",
+        transition_method="local_fixed",
+        basis_order=8,
+        quad_order=32,
+        theta_cap=1.25,
+        stationary_shape_max=None,
+        smart_init=False,
+        maxiter=2,
+        maxfun=20,
+    )
+
+    assert result.theta_cap == pytest.approx(1.25)
+    assert result.stationary_shape_max is None
+    assert log_likelihood(copula, u, result) == pytest.approx(
+        result.log_likelihood, rel=1e-12, abs=1e-12)
 
 
 def test_scar_jacobi_objective_uses_physical_parameters():

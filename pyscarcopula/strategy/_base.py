@@ -80,6 +80,8 @@ def validate_copula_data(copula, u):
     array = as_pseudo_observation_array(u)
     if array.ndim != 2:
         raise ValueError(f"copula data must be 2D, got shape {array.shape}")
+    if array.shape[0] == 0:
+        raise ValueError("copula data must contain at least one observation")
     capabilities = get_copula_capabilities(copula)
     dimension = None if capabilities is None else capabilities.dimension
     if dimension is not None and array.shape[1] != dimension:
@@ -484,6 +486,15 @@ def get_strategy_for_result(result: FitResult,
         quad_order = getattr(result, 'spectral_quad_order', None)
         if quad_order is not None:
             result_kwargs['quad_order'] = quad_order
+        result_kwargs.update({
+            'tau_eps': getattr(result, 'tau_eps', 1e-6),
+            'theta_cap': getattr(result, 'theta_cap', None),
+            'clip_negative': getattr(result, 'clip_negative', False),
+            'negative_mass_tol': getattr(
+                result, 'negative_mass_tol', 1e-5),
+            'stationary_shape_max': getattr(
+                result, 'stationary_shape_max', 500.0),
+        })
 
     result_kwargs.update(kwargs)
     return get_strategy(result.method, config=config, **result_kwargs)
