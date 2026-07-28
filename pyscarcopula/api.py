@@ -330,6 +330,7 @@ def sample(
     Simulates a path of length n with time-varying parameter:
       MLE:     r = const for all t
       SCAR-TM: r(t) = Psi(x(t)), x(t) simulated from OU process
+      SCAR-TM-JACOBI: r(t) from the fitted discrete Jacobi Markov model
       GAS:     r(t) = Psi(g(t)), g(t) via score-driven recursion
 
     fit(copula, sample(...)) should recover similar parameters.

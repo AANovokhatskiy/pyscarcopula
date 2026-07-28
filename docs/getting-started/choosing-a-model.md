@@ -1,8 +1,9 @@
 # Choosing a Model
 
 Choose the dependence structure first, then decide whether it needs to vary
-over time. A constant MLE fit is usually the best starting point: it provides
-a baseline before adding GAS or latent SCAR dynamics.
+over time. Fit a constant MLE baseline before adding GAS or latent SCAR
+dynamics so that the dynamic model can be compared against a simpler nested
+question.
 
 ## Model Selection
 
@@ -46,8 +47,8 @@ R-vine conditioning sets, continue with
 
 ## Recommended Reading Path
 
-1. Run the [Quick Start](quickstart.md).
-2. Select a model family using the table above.
+1. Select a model family using the table above.
+2. Run the [Quick Start](quickstart.md).
 3. Fit an MLE baseline and inspect goodness of fit.
 4. Add GAS or SCAR only when time variation is part of the modeling question.
 5. Read [Performance Tuning](../guide/performance.md) after the statistical

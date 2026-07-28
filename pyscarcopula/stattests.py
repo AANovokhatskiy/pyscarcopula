@@ -35,6 +35,8 @@ from pyscarcopula._utils import (
 from pyscarcopula.numerical._arrays import (
     as_float64_array,
     as_pseudo_observation_array,
+    validate_float64_allocation,
+    validate_positive_int,
 )
 
 
@@ -69,13 +71,15 @@ def cvm_test(e):
     CramerVonMisesResult
         Has .statistic and .pvalue
     """
-    e = np.asarray(e, dtype=np.float64)
+    e = as_pseudo_observation_array(e, name="e")
     if e.ndim != 2:
         raise ValueError(f"e must have shape (T, d), got {e.shape}")
 
     T, d = e.shape
-    if T == 0:
-        raise ValueError("e must contain at least one observation")
+    if T < 2:
+        raise ValueError("e must contain at least two observations")
+    if d == 0:
+        raise ValueError("e must contain at least one dimension")
 
     # Avoid inf in norm.ppf at exactly 0 or 1
     e = clip_pseudo_observations(e)
@@ -87,15 +91,37 @@ def cvm_test(e):
     return cramervonmises(y, "uniform")
 
 
-def _as_float64_array_no_copy(value):
-    """Return a float64 array while preserving an already compatible input."""
-    return as_float64_array(value, name="data")
-
-
 def _grid_transition_method(transition_method):
     if str(transition_method).lower() == 'spectral':
         return 'auto'
     return transition_method
+
+
+def _prepare_gof_data(data, *, expected_dim, to_pobs):
+    """Validate and normalize observations at the public GoF boundary."""
+    from pyscarcopula._utils import pobs as compute_pobs
+
+    if not isinstance(to_pobs, (bool, np.bool_)):
+        raise TypeError("to_pobs must be a boolean")
+
+    u = as_float64_array(data, name="data")
+    if u.ndim != 2:
+        expected = (
+            "(T, d)" if expected_dim is None else f"(T, {expected_dim})")
+        raise ValueError(f"data must have shape {expected}, got {u.shape}")
+    if len(u) < 2:
+        raise ValueError("data must contain at least two observations")
+    if u.shape[1] == 0:
+        raise ValueError("data must contain at least one dimension")
+    if expected_dim is not None and u.shape[1] != expected_dim:
+        raise ValueError(
+            f"data must have shape (T, {expected_dim}), got {u.shape}")
+    if not np.all(np.isfinite(u)):
+        raise ValueError("data must contain only finite values")
+
+    if to_pobs:
+        u = compute_pobs(u)
+    return as_pseudo_observation_array(u, name="data")
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -278,18 +304,15 @@ def _gof_bivariate(copula, data, to_pobs=True, K=300, grid_range=5.0,
     fit_result : FitResult or None
         If None, uses copula.fit_result (set by copula.fit()).
     """
-    from pyscarcopula._utils import pobs as compute_pobs
-
-    u = _as_float64_array_no_copy(data)
-    if to_pobs:
-        u = compute_pobs(u)
-    u = as_pseudo_observation_array(u)
+    u = _prepare_gof_data(data, expected_dim=2, to_pobs=to_pobs)
 
     fr = fit_result if fit_result is not None else getattr(copula, 'fit_result', None)
     if fr is None:
         raise ValueError("No fit_result provided and copula has no fit_result. "
                          "Call copula.fit() first or pass fit_result=.")
 
+    if bootstrap:
+        n_bootstrap = validate_positive_int(n_bootstrap, "n_bootstrap")
     e = _bivariate_rosenblatt_from_result(copula, u, fr, K, grid_range)
     result = cvm_test(e)
 
@@ -382,8 +405,9 @@ def _bootstrap_gof_bivariate(copula, u, fit_result, observed_statistic,
     """Parametric bootstrap calibration for bivariate GoF."""
     from pyscarcopula.strategy._base import get_strategy_for_result
 
-    if n_bootstrap <= 0:
-        raise ValueError("n_bootstrap must be positive")
+    n_bootstrap = validate_positive_int(n_bootstrap, "n_bootstrap")
+    validate_float64_allocation(
+        (n_bootstrap,), name="bootstrap_statistics")
 
     rng = _as_rng(rng)
     fit_kwargs = {} if bootstrap_fit_kwargs is None else dict(bootstrap_fit_kwargs)
@@ -393,9 +417,9 @@ def _bootstrap_gof_bivariate(copula, u, fit_result, observed_statistic,
         strategy = get_strategy_for_result(
             fit_result, K=K, grid_range=grid_range)
 
-    boot_stats = np.empty(int(n_bootstrap), dtype=np.float64)
+    boot_stats = np.empty(n_bootstrap, dtype=np.float64)
     diagnostics = []
-    for b in range(int(n_bootstrap)):
+    for b in range(n_bootstrap):
         iter_start = time.perf_counter()
         if strategy is None:
             u_boot = copula.sample(len(u), rng=rng)
@@ -549,11 +573,8 @@ def vine_gof_test(vine, data, to_pobs=True, K=500, grid_range=7.0):
     -------
     CramérVonMisesResult with .statistic and .pvalue
     """
-    from pyscarcopula._utils import pobs as compute_pobs
-
-    u = np.asarray(data, dtype=np.float64)
-    if to_pobs:
-        u = compute_pobs(u)
+    u = _prepare_gof_data(
+        data, expected_dim=getattr(vine, "d", None), to_pobs=to_pobs)
 
     if vine.edges is None:
         raise ValueError("Fit the vine first")
@@ -676,11 +697,8 @@ def rvine_gof_test(
     -------
     CramérVonMisesResult
     """
-    from pyscarcopula._utils import pobs as compute_pobs
-
-    u = np.asarray(data, dtype=np.float64)
-    if to_pobs:
-        u = compute_pobs(u)
+    u = _prepare_gof_data(
+        data, expected_dim=getattr(vine, "d", None), to_pobs=to_pobs)
 
     if getattr(vine, 'matrix', None) is None:
         raise ValueError("Fit the vine first")
@@ -787,11 +805,8 @@ def gaussian_gof_test(copula, data, to_pobs=True):
     -------
     CramérVonMisesResult
     """
-    from pyscarcopula._utils import pobs as compute_pobs
-
-    u = np.asarray(data, dtype=np.float64)
-    if to_pobs:
-        u = compute_pobs(u)
+    u = _prepare_gof_data(
+        data, expected_dim=copula.dimension, to_pobs=to_pobs)
 
     if getattr(copula, "corr_mode", "dense") == "factor":
         try:
@@ -896,11 +911,8 @@ def student_gof_test(copula, data, to_pobs=True):
     -------
     CramérVonMisesResult
     """
-    from pyscarcopula._utils import pobs as compute_pobs
-
-    u = np.asarray(data, dtype=np.float64)
-    if to_pobs:
-        u = compute_pobs(u)
+    u = _prepare_gof_data(
+        data, expected_dim=copula.dimension, to_pobs=to_pobs)
 
     if copula.shape is None:
         raise ValueError("Fit the copula first")
@@ -1085,11 +1097,8 @@ def equicorr_gof_test(copula, data, to_pobs=True,
     -------
     CramérVonMisesResult
     """
-    from pyscarcopula._utils import pobs as compute_pobs
-
-    u = np.asarray(data, dtype=np.float64)
-    if to_pobs:
-        u = compute_pobs(u)
+    u = _prepare_gof_data(
+        data, expected_dim=copula.dimension, to_pobs=to_pobs)
 
     fr = fit_result if fit_result is not None else getattr(copula, 'fit_result', None)
     if fr is None:
@@ -1242,12 +1251,8 @@ def stochastic_student_gof_test(copula, data, to_pobs=True,
     -------
     CramérVonMisesResult
     """
-    from pyscarcopula._utils import pobs as compute_pobs
-
-    u = _as_float64_array_no_copy(data)
-    if to_pobs:
-        u = compute_pobs(u)
-    u = as_pseudo_observation_array(u)
+    u = _prepare_gof_data(
+        data, expected_dim=copula.dimension, to_pobs=to_pobs)
 
     fr = fit_result if fit_result is not None else getattr(copula, 'fit_result', None)
     if fr is None:

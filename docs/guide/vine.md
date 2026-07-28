@@ -99,9 +99,10 @@ vine.fit(u, method='scar-tm-ou',
 vine.summary()
 ```
 
-The R-vine typically achieves higher log-likelihood than C-vine because it can
-capture the strongest pairwise dependencies at each tree level, rather than
-being constrained to a star structure.
+An auto-selected R-vine can place the strongest available pairwise
+dependencies at each tree level instead of being constrained to a C-vine star
+structure. Compare fitted structures with the same likelihood and information
+criterion.
 
 If the conditioning set is known in advance, you can bias structure selection
 toward an R-vine that supports the fast exact conditional sampler for that
@@ -267,7 +268,7 @@ Conditional generation is supported via `given={var_index: u_value}` in
 pseudo-observation space:
 
 ```python
-# If this target matters in production, fit auto mode with given_vars=[0].
+# Fit with given_vars=[0] when this exact conditioning target is known.
 pred_cond = vine.predict(
     n=5000,
     u=u,
@@ -275,60 +276,20 @@ pred_cond = vine.predict(
     horizon='current',
     rng=np.random.default_rng(2026),
 )
-pred_cond2 = vine.predict(
-    n=5000,
-    u=u,
-    given={0: 0.35, 2: 0.75},
-    rng=np.random.default_rng(2027),
-)
-```
-
-For `VineCopula`, the fast exact conditional sampler requires the fixed
-variables to be at the end of the fitted R-vine variable order. The fixed
-variables must already be last in the fitted structure, or the fitted structure
-must be rebuildable into an equivalent order where they are last.
-
-To inspect the fitted structure as an `RVineMatrix`, use
-`vine.to_rvine_matrix()` or `RVineMatrix.from_model(vine)`.
-
-If exact conditioning is not possible, `predict` uses the approximate fallback.
-This is more general, but more expensive than exact suffix sampling.
-
-Use fit-time `given_vars` for production targets. For an ad hoc set, request
-diagnostics to see whether the fitted structure supports the exact path:
-
-```python
-samples, diagnostics = vine.predict(
-    n=5000,
-    u=u,
-    given={1: 0.45},
-    mcmc_steps=300,
-    mcmc_burnin=100,
-    return_diagnostics=True,
-    rng=np.random.default_rng(2028),
-)
-print(diagnostics["conditional_method"])  # "suffix" or "dag_mcmc"
-if diagnostics["conditional_method"] == "dag_mcmc":
-    print(diagnostics["mcmc"]["acceptance_mean"])
 ```
 
 Use a fresh `np.random.default_rng(seed)` for each call when exact
 reproducibility is required. Reusing the same generator object advances its
 random stream.
 
-Supported behavior and limits:
-
-- R-vine `fit(..., conditional_mode=...)` accepts
-  `conditional_mode='suffix'`.
-- R-vine `predict` does not accept `conditional_method` or `quad_order`.
-- Arbitrary R-vine conditioning uses an approximate fallback, not an exact
-  closed-form posterior sampler.
-- C-vine conditional sampling is separate and supports its own prefix/general
-  paths.
-
-For a focused description of prediction semantics, see
-[Prediction Semantics](prediction-semantics.md). For R-vine-specific details,
-see [R-vine Conditioning](rvine-conditioning.md).
+`VineCopula` automatically selects exact suffix conditioning when the fitted
+structure supports it and otherwise uses an approximate DAG+MCMC fallback.
+`VineCopula.predict` does not accept `conditional_method`; that name is
+reported only in diagnostics. See
+[Prediction Semantics](prediction-semantics.md) for the shared
+meaning of `predict`, `sample`, and `horizon`, and
+[R-vine Conditioning](rvine-conditioning.md) for exact-path requirements,
+MCMC controls, and diagnostic fields.
 
 For SCAR-TM edges, `predict(..., horizon='current')` uses the posterior latent
 state after the fitted history and `predict(..., horizon='next')` uses the

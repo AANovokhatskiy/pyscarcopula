@@ -53,8 +53,8 @@ SCAR filters.
 
 ## Parameter Links
 
-The dynamic state is usually unconstrained, while copula parameters are not.
-The public models therefore use smooth links:
+The public dynamic models use an unconstrained state and map it into the
+copula parameter domain with smooth links:
 
 - positive-parameter families use a shifted softplus link,
   $\Psi(x)=a+\log(1+\exp(x))$;
@@ -105,10 +105,10 @@ s_t =
 \frac{\partial \log c(u_t;\Psi(g_t))}{\partial g_t}.
 $$
 
-Fisher scaling rescales this score by a curvature estimate. It is available
-for experimentation, but it combines finite-difference curvature, clipping,
-and floors inside the recursion, so `scaling='unit'` is the recommended
-production choice.
+Fisher scaling rescales this score by a curvature estimate. It combines
+finite-difference curvature, clipping, and floors inside the recursion.
+`scaling='unit'` avoids those nested numerical operations and is the baseline
+used by the fitting guide.
 
 The compiled GAS evaluator handles likelihood, score recursion, filtering,
 state updates, prediction state, and the bivariate Rosenblatt path for
@@ -189,8 +189,8 @@ $$
 
 `transition_method='local'` avoids a full transition matrix. For each previous
 grid point, it applies a local Gauss-Hermite rule to the conditional Gaussian
-transition and interpolates off-grid values. This is usually safer when the
-one-step OU kernel is very narrow.
+transition and interpolates off-grid values. This avoids representing a
+one-step OU kernel narrower than the spacing of a fixed global grid.
 
 `transition_method='auto'` chooses spectral outside the narrow-kernel regime,
 uses local for small $\kappa dt$, and treats matrix then local as numerical
@@ -261,12 +261,105 @@ and maps local Gauss-Hermite nodes back to tau space. For high-frequency data,
 `dt = 1 / (T - 1)`, so one-step transitions can be close to a point mass. In
 that regime, truncated global Jacobi expansions can create negative entries
 or invalid row sums; `transition_method='auto'` therefore falls back to the
-local backend when the spectral matrix is not acceptable.
+local backend when the spectral matrix is not acceptable. Negative spectral
+mass within `negative_mass_tol` is clipped and row-normalized as numerical
+truncation noise. Material negative mass is never passed to the probability
+filter: `auto` falls back, while an explicit spectral backend fails unless
+clipping was explicitly requested.
 
 Jacobi gradients are fully analytical for `local_fixed`. For `local`,
 `spectral_matrix`, and `auto`, setup-level arrays are differentiated
 numerically while the filtering recursion is differentiated analytically; the
-reported gradient kind is therefore `semi_analytical`.
+reported gradient kind is therefore `semi_analytical`. The backend selected at
+the central point is held fixed across setup finite differences, and the
+ordinary likelihood is independently recomputed at the final optimizer point
+before a fit can be reported as successful.
+
+The numerical boundary validates non-empty bivariate observations, finite
+physical initialization (`kappa > 0`, `0 < m < 1`, `xi > 0`), and strict
+integer quadrature orders. Jacobi workspaces are preflighted before root
+construction and matrix allocation. A hard order cap prevents accidental
+multi-gigabyte quadratic requests; `memory_budget_bytes` can impose a smaller
+application-specific limit.
+
+Unconditional simulation is defined on this same quadrature state space:
+
+$$
+I_0 \sim w,\qquad
+I_t \mid I_{t-1}=i \sim P_{i,\cdot},\qquad
+\tau_t=\tau_{I_t}.
+$$
+
+Thus sampled latent states are grid atoms, not jittered continuous values,
+and the transition used for likelihood and simulation has the same
+probability contract. With `dt=1/(n-1)`, the spectral first moment satisfies
+
+$$
+\mathbb{E}[\tau_{t+1}\mid\tau_t]
+=m+(\tau_t-m)e^{-\kappa\,dt}.
+$$
+
+The coefficient-only legacy representation uses the probability-safe `auto`
+matrix for unconditional sampling because coefficient recursion does not
+define categorical transition rows.
+
+For sparse local transitions, an experimental MH correction replaces
+off-diagonal proposal mass by
+
+$$
+P_{ij}=q_{ij}\min\left(
+1,\frac{w_jq_{ji}}{w_iq_{ij}}
+\right),\qquad i\ne j,
+$$
+
+and puts rejected mass on the diagonal. This satisfies detailed balance with
+the discrete stationary weights but may distort conditional moments.
+
+The experimental IPFP alternative balances the stationary joint flux
+$Q_{ij}=w_iq_{ij}$ on its existing sparse support until both marginals equal
+$w$. No new edges are introduced. Therefore the operation fails explicitly
+when the original support cannot represent both stationary marginals; the
+implementation does not conceal infeasibility by adding artificial diagonal
+mass. Either correction, when selected, is shared by likelihood, filtering,
+prediction, and grid sampling.
+
+The optional experimental Lamperti--Euler sampler uses
+
+$$
+y=\frac{2}{\xi}\arcsin\sqrt{\tau},
+\qquad
+\tau=\sin^2\left(\frac{\xi y}{2}\right)
+$$
+
+and the unit-diffusion drift
+
+$$
+b_y(\tau)=
+\frac{\kappa(m-\tau)}{\xi\sqrt{\tau(1-\tau)}}
+-\frac{\xi(1-2\tau)}{4\sqrt{\tau(1-\tau)}}.
+$$
+
+With `S` substeps, $h=1/((n-1)S)$ and
+$y_{j+1}=y_j+b_y(\tau_j)h+\sqrt{h}Z_j$. Drift evaluation uses an explicit
+interior epsilon because the formula is singular at the endpoints. Overshoots
+are handled by the configured reflection or clipping policy and counted in
+sampling diagnostics. The initial value still follows the exact stationary
+beta law. This path is an approximate sampling oracle only: likelihood,
+gradient, filtering, and prediction continue to use their configured
+transition backend.
+
+The optimized implementation keeps this recursion in a strictly sequential
+Numba kernel. `parallel=True` is forbidden because it would violate the causal
+state update. The kernel never owns an RNG: Python draws stationary beta and
+Gaussian values from the supplied `numpy.random.Generator`, passes Gaussian
+values in complete-interval chunks, and carries the final transformed state
+between chunks. Python and Numba executions must agree pathwise on identical
+innovations, including intervention counts.
+
+Stationary shapes below one are reported by
+`stationary_boundary_singular=True`. This is a diagnostic, not an accuracy
+guarantee: extreme asymmetric boundary-singular laws can retain material
+reflection bias as the number of substeps grows.
 
 ## Multivariate Scalar-State Models
 

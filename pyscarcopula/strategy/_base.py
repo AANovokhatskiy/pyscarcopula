@@ -80,6 +80,8 @@ def validate_copula_data(copula, u):
     array = as_pseudo_observation_array(u)
     if array.ndim != 2:
         raise ValueError(f"copula data must be 2D, got shape {array.shape}")
+    if array.shape[0] == 0:
+        raise ValueError("copula data must contain at least one observation")
     capabilities = get_copula_capabilities(copula)
     dimension = None if capabilities is None else capabilities.dimension
     if dimension is not None and array.shape[1] != dimension:
@@ -297,6 +299,7 @@ class FitStrategy(Protocol):
         Simulates a path of length n with time-varying parameter:
           MLE:     r = const for all t
           SCAR-TM: r(t) = Psi(x(t)), x(t) simulated from OU process
+          SCAR-TM-JACOBI: fitted quadrature-grid Jacobi Markov trajectory
           GAS:     r(t) = Psi(g(t)), g(t) via score-driven recursion
                    on the generated observations
 
@@ -484,6 +487,35 @@ def get_strategy_for_result(result: FitResult,
         quad_order = getattr(result, 'spectral_quad_order', None)
         if quad_order is not None:
             result_kwargs['quad_order'] = quad_order
+        result_kwargs.update({
+            'tau_eps': getattr(result, 'tau_eps', 1e-6),
+            'theta_cap': getattr(result, 'theta_cap', None),
+            'clip_negative': getattr(result, 'clip_negative', False),
+            'negative_mass_tol': getattr(
+                result, 'negative_mass_tol', 1e-5),
+            'stationary_shape_max': getattr(
+                result, 'stationary_shape_max', 500.0),
+            'transition_storage': getattr(
+                result, 'transition_storage', 'dense'),
+            'stationarity_correction': getattr(
+                result, 'stationarity_correction', 'none'),
+            'sampling_method': getattr(
+                result, 'sampling_method', 'tm_grid'),
+            'lamperti_substeps': getattr(
+                result, 'lamperti_substeps', 8),
+            'lamperti_boundary': getattr(
+                result, 'lamperti_boundary', 'reflect'),
+            'lamperti_eps': getattr(
+                result, 'lamperti_eps', 1e-10),
+            'lamperti_engine': getattr(
+                result, 'lamperti_engine', 'numba'),
+            'lamperti_chunk_observations': getattr(
+                result, 'lamperti_chunk_observations', 4096),
+        })
+        memory_budget_bytes = getattr(
+            result, 'memory_budget_bytes', None)
+        if memory_budget_bytes is not None:
+            result_kwargs['memory_budget_bytes'] = memory_budget_bytes
 
     result_kwargs.update(kwargs)
     return get_strategy(result.method, config=config, **result_kwargs)

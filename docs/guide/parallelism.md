@@ -283,9 +283,9 @@ matrix-vector products, Cholesky factorization, SPD solves, and triangular
 products. It does not create Eigen, BLAS, OpenMP, or other external thread
 pools.
 
-The production backend uses portable compiler-vectorizable reductions where
-end-to-end benchmarks showed a benefit and retains the scalar backend for
-small kernels and regression comparisons. This keeps native threading under
+The runtime uses portable compiler-vectorizable reductions only for kernels
+whose end-to-end benchmarks pass the performance gate and retains the scalar
+backend for small kernels and regression comparisons. This keeps native threading under
 the explicit `n_threads` contract and avoids hidden BLAS oversubscription.
 
 For optimizer and approximation controls, see

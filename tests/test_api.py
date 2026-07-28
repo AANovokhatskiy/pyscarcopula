@@ -13,7 +13,7 @@ from pyscarcopula import (
 from pyscarcopula.api import (
     fit, log_likelihood, mixture_h, predict, predictive_mean, sample,
 )
-from pyscarcopula.stattests import gof_test
+from pyscarcopula.stattests import cvm_test, gof_test
 from pyscarcopula._utils import pobs
 from pyscarcopula._types import (
     MLEResult, LatentResult, GASResult, gas_params, NumericalConfig,
@@ -172,6 +172,92 @@ class TestGoFWithFitResult:
         assert 0 <= gof.pvalue <= 1
         assert gof.n_bootstrap == 3
         assert gof.bootstrap_statistics.shape == (3,)
+
+    @pytest.mark.parametrize("invalid_value", [np.nan, np.inf, -np.inf])
+    def test_to_pobs_rejects_nonfinite_raw_data(
+            self, random_u2, invalid_value):
+        cop = GumbelCopula(rotate=180)
+        result = fit(cop, random_u2, method='mle')
+        raw = np.random.default_rng(2026).standard_normal((20, 2))
+        raw[3, 0] = invalid_value
+
+        with pytest.raises(ValueError, match="finite"):
+            gof_test(cop, raw, fit_result=result, to_pobs=True)
+
+    @pytest.mark.parametrize(
+        "invalid_data",
+        [
+            np.full(20, 0.5),
+            np.full((20, 1), 0.5),
+            np.full((20, 3), 0.5),
+        ],
+    )
+    def test_bivariate_gof_requires_exact_data_shape(
+            self, random_u2, invalid_data):
+        cop = GumbelCopula(rotate=180)
+        result = fit(cop, random_u2, method='mle')
+
+        with pytest.raises(ValueError, match=r"shape \(T, 2\)"):
+            gof_test(cop, invalid_data, fit_result=result, to_pobs=False)
+
+    def test_bivariate_gof_rejects_single_observation(self, random_u2):
+        cop = GumbelCopula(rotate=180)
+        result = fit(cop, random_u2, method='mle')
+
+        with pytest.raises(ValueError, match="at least two observations"):
+            gof_test(
+                cop,
+                np.full((1, 2), 0.5),
+                fit_result=result,
+                to_pobs=False,
+            )
+
+    def test_cvm_rejects_single_observation(self):
+        with pytest.raises(ValueError, match="at least two observations"):
+            cvm_test(np.full((1, 2), 0.5))
+
+    @pytest.mark.parametrize("invalid_count", [True, 0.5, 1.5])
+    def test_bootstrap_count_rejects_non_integer(
+            self, random_u2, invalid_count):
+        cop = GumbelCopula(rotate=180)
+        result = fit(cop, random_u2, method='mle')
+
+        with pytest.raises(TypeError, match="positive integer"):
+            gof_test(
+                cop,
+                random_u2,
+                fit_result=result,
+                to_pobs=False,
+                bootstrap=True,
+                n_bootstrap=invalid_count,
+            )
+
+    @pytest.mark.parametrize("invalid_count", [0, -1])
+    def test_bootstrap_count_rejects_nonpositive_integer(
+            self, random_u2, invalid_count):
+        cop = GumbelCopula(rotate=180)
+        result = fit(cop, random_u2, method='mle')
+
+        with pytest.raises(ValueError, match="positive"):
+            gof_test(
+                cop,
+                random_u2,
+                fit_result=result,
+                to_pobs=False,
+                bootstrap=True,
+                n_bootstrap=invalid_count,
+            )
+
+    @pytest.mark.parametrize("invalid_value", [np.nan, 2.0, -0.1])
+    def test_gaussian_gof_rejects_invalid_pseudo_observations(
+            self, invalid_value):
+        copula = GaussianCopula(2)
+        copula.corr = np.eye(2)
+        data = np.full((20, 2), 0.5)
+        data[0, 0] = invalid_value
+
+        with pytest.raises(ValueError, match="finite|pseudo-observations"):
+            gof_test(copula, data, to_pobs=False)
 
     def test_unfitted_raises(self, random_u2):
         cop = GumbelCopula(rotate=180)

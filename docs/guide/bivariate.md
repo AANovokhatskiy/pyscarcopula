@@ -23,10 +23,14 @@ from pyscarcopula import GumbelCopula
 from pyscarcopula.api import fit
 
 copula = GumbelCopula(rotate=180)
-result = fit(copula, u, method='scar-tm-ou')
+scar_result = fit(copula, u, method='scar-tm-ou')
 
-print(result.params.kappa, result.params.mu, result.params.nu)
-print(result.log_likelihood)
+print(
+    scar_result.params.kappa,
+    scar_result.params.mu,
+    scar_result.params.nu,
+)
+print(scar_result.log_likelihood)
 ```
 
 For Kendall-tau dynamics, use `method='scar-tm-jacobi'`:
@@ -41,18 +45,11 @@ such as Gumbel, Clayton, Frank, Joe, and bivariate Gaussian. It models tau
 directly with a bounded Jacobi diffusion and maps tau back to the copula
 parameter.
 
-For SCAR-TM-OU, `transition_method='auto'` uses the Hermite spectral
-likelihood except in the narrow-kernel regime, where it uses local
-Gauss-Hermite. If spectral evaluation fails numerically, `auto` first tries
-the matrix grid path and then the local path when the matrix path is invalid or
-capped. Use `transition_method='spectral'` to force the spectral likelihood,
-or `transition_method='matrix'` / `'local'` for grid-only comparisons.
-
-For SCAR-TM-JACOBI, `transition_method='auto'` tries the Jacobi spectral
-transition matrix and falls back to the local Lamperti/Gauss-Hermite transition
-when the spectral matrix has material negative mass or invalid row sums. See
+The default `transition_method='auto'` selects among the supported numerical
+backends and records the selected path in fit diagnostics. See
 [Estimation Methods](estimation-methods.md) for model semantics and
-[Performance](performance.md) for numerical details.
+[Numerical Backends](numerical-backends.md) for backend selection, fallback
+conditions, and configuration.
 
 ## Rotations
 
@@ -65,22 +62,31 @@ Rotations capture different tail dependence patterns:
 | 180 deg | Opposite tail |
 | 270 deg | Mixed |
 
-For financial data (joint crashes), `GumbelCopula(rotate=180)` or `ClaytonCopula(rotate=0)` are common choices.
+For lower-tail dependence, compare `GumbelCopula(rotate=180)` and
+`ClaytonCopula(rotate=0)` with an MLE baseline and goodness-of-fit test.
 
 ## Sampling and prediction
 
 Two functions serve different purposes:
 
-**`sample`** generates synthetic data from the fitted model. For SCAR, it
-simulates an OU trajectory with the fitted parameters and samples from the
-copula with the time-varying parameter. This is useful for model validation:
+**`sample`** generates synthetic data from the fitted model. SCAR-TM-OU
+simulates an OU trajectory. SCAR-TM-JACOBI simulates Kendall's tau with the
+likelihood-consistent `tm_grid` sampler by default, or with the experimental
+opt-in `lamperti_euler` sampler, and maps tau to the time-varying copula
+parameter. This is useful for model validation:
 `fit(copula, sample(...))` should recover similar parameters.
 
 ```python
 import numpy as np
 from pyscarcopula.api import sample, predict
 
-v = sample(copula, u, result, n=2000, rng=np.random.default_rng(2024))
+v = sample(
+    copula,
+    u,
+    scar_result,
+    n=2000,
+    rng=np.random.default_rng(2024),
+)
 result_refit = fit(copula, v, method='scar-tm-ou')
 ```
 
@@ -111,32 +117,32 @@ GAS uses the compiled numerical evaluator:
 ```python
 from pyscarcopula.api import fit
 
-result = fit(copula, u, method='gas', scaling='unit')
+gas_result = fit(copula, u, method='gas', scaling='unit')
 ```
 
-Use `scaling='unit'` for routine fits. Fisher scaling is numerically sensitive
-because its finite-difference curvature, floor, and clipping make optimization
-sensitive to numerical step sizes.
+The example uses `scaling='unit'`. See
+[Estimation Methods](estimation-methods.md#gas) for the scaling contract and
+[Numerical Backends](numerical-backends.md#gas) for optimizer controls.
 
 ```python
-u_pred = predict(copula, u, result, n=100_000,
-                 rng=np.random.default_rng(2025))
+u_pred = predict(copula, u, gas_result, n=100_000,
+                  rng=np.random.default_rng(2025))
 
 # Conditional forecast: sample U2 | U1 = 0.4
-u_cond = predict(copula, u, result, n=20_000, given={0: 0.4},
-                 rng=np.random.default_rng(2026))
+u_cond = predict(copula, u, gas_result, n=20_000, given={0: 0.4},
+                  rng=np.random.default_rng(2026))
 
 # SCAR-TM: choose current-step or one-step-ahead latent mixture
-u_current = predict(copula, u, result, n=20_000, horizon='current',
-                    rng=np.random.default_rng(2027))
+u_current = predict(copula, u, scar_result, n=20_000, horizon='current',
+                     rng=np.random.default_rng(2027))
 ```
 
 | Method | `sample` | `predict` |
 |--------|----------|-----------|
 | MLE | constant r | constant r |
 | SCAR-TM-OU | OU trajectory | current/posterior or one-step-ahead mixture |
-| SCAR-TM-JACOBI | not available | current/posterior or one-step-ahead mixture |
-| GAS | recursive score-driven simulation | last filtered value $g_T$ |
+| SCAR-TM-JACOBI | `tm_grid` trajectory by default; experimental Lamperti--Euler opt-in | current/posterior or one-step-ahead mixture |
+| GAS | recursive score-driven simulation | `current`: last filtered state; `next`: one score-recursion step |
 
 ## Diagnostics
 
@@ -145,7 +151,7 @@ u_current = predict(copula, u, result, n=20_000, horizon='current',
 ```python
 from pyscarcopula.api import predictive_mean
 
-r_t = predictive_mean(copula, u, result)
+r_t = predictive_mean(copula, u, scar_result)
 ```
 
 Returns the predictive mean copula parameter at each time step, before the
@@ -156,7 +162,7 @@ current observation is absorbed.
 ```python
 from pyscarcopula.stattests import gof_test
 
-gof = gof_test(copula, u, fit_result=result, to_pobs=False)
+gof = gof_test(copula, u, fit_result=scar_result, to_pobs=False)
 ```
 
 The GoF test uses the Rosenblatt transform with the Cramer-von Mises

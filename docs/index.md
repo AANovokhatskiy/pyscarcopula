@@ -59,10 +59,10 @@ r_t = predictive_mean(copula, u, result)
 
 ## Where to Go Next
 
-- [Install pyscarcopula](getting-started/installation.md) and run the
-  [end-to-end quick start](getting-started/quickstart.md).
+- [Install pyscarcopula](getting-started/installation.md).
 - Use [Choosing a Model](getting-started/choosing-a-model.md) to select between
-  bivariate, multivariate, factor, and vine models.
+  bivariate, multivariate, factor, and vine models, then run the
+  [Quick Start](getting-started/quickstart.md).
 - Read [Estimation Methods](guide/estimation-methods.md) before comparing MLE,
   GAS, and SCAR fits.
 - Read [Prediction Semantics](guide/prediction-semantics.md) before using

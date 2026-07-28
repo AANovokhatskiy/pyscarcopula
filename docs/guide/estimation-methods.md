@@ -23,8 +23,11 @@ combinations fail before optimization starts.
 All dynamic methods return a `LatentResult` with `params`,
 `log_likelihood`, optimizer status, and enough metadata for `predict`,
 `predictive_mean`, and GoF utilities. Model sampling is available where the
-strategy implements a path simulator; SCAR-TM-JACOBI supports prediction but
-not `sample`.
+strategy implements a path simulator. SCAR-TM-JACOBI supports both
+unconditional `sample` and conditional or unconditional `predict`.
+Its default unconditional sampler is the likelihood-consistent
+`sampling_method='tm_grid'`; experimental `sampling_method='lamperti_euler'`
+is available as an opt-in continuous-path approximation.
 
 ## Gradient capability matrix
 
@@ -101,8 +104,8 @@ $$
 
 The score $s_t$ is the scaled derivative of the current copula log-density
 with respect to the recursion state. Conditional on past data, GAS has a point
-state rather than a latent-state distribution. It is usually faster than SCAR
-because there is no latent-state integral.
+state rather than a latent-state distribution, so its likelihood avoids the
+latent-state integration required by SCAR.
 
 ```python
 result = fit(
@@ -119,7 +122,7 @@ GAS uses the compiled evaluator for likelihood, score recursion, state
 updates, prediction, and the bivariate Rosenblatt path for supported built-in
 copulas. Unsupported copulas and missing compiled support fail immediately.
 
-`scaling='unit'` is the recommended production mode. `scaling='fisher'` uses
+Use `scaling='unit'` as the numerical baseline. `scaling='fisher'` uses
 nested finite differences and clipping/floor thresholds; its fitted optimum
 can be sensitive to optimizer finite-difference steps.
 
@@ -146,8 +149,8 @@ Gauss-Hermite. If spectral evaluation fails numerically, `auto` tries the
 matrix grid likelihood first and then the local method when the matrix path is
 not accepted.
 
-SCAR-TM-OU uses the package C++ extension as its only production numerical
-engine.
+SCAR-TM-OU requires the package C++ extension; no Python fallback implements
+this public fitting path.
 
 ```python
 result = fit(
@@ -248,11 +251,52 @@ backend and explicitly rejects `analytical_grad=True`.
 `gradient_kind`, `setup_derivative`, `filter_derivative`, and the transition
 backend actually selected at the fitted parameters.
 
+The fitted result also retains every Jacobi option that changes subsequent
+likelihood or prediction semantics: `transition_method`, `gh_order`,
+`spectral_basis_order`, `spectral_quad_order`, `tau_eps`, `theta_cap`,
+`clip_negative`, `negative_mass_tol`, `stationary_shape_max`,
+`transition_storage`, `stationarity_correction`,
+`sampling_method`, `lamperti_substeps`, `lamperti_boundary`, `lamperti_eps`,
+`lamperti_engine`, `lamperti_chunk_observations`, and a configured
+`memory_budget_bytes`. Stateless API calls and models restored from JSON
+reconstruct the strategy from these fields. Explicit kwargs passed to a later
+API call still override the stored values.
+
+Unconditional sampling defaults to the transition-matrix grid used by the
+likelihood. An experimental `sampling_method='lamperti_euler'` instead
+simulates a continuous tau path with substepped Euler--Maruyama in the
+Lamperti coordinate. It is useful as an independent discretization comparison
+but does not change the fitting backend and is not an exact diffusion sampler.
+Its Numba kernel is strictly sequential and consumes Gaussian innovations
+created by the caller's NumPy generator in bounded chunks. The Python engine
+remains available as a pathwise reference implementation.
+
+For an explicit moving-grid local transition,
+`transition_storage='sparse'` selects the `O(K * gh_order)` sparse filtering
+and prediction backend. The default is `'dense'`; sparse storage is not
+currently available for `auto` or spectral transitions. Explicit
+`local_fixed` supports sparse analytical-gradient filtering with shared
+transition/derivative indices.
+`stationarity_correction='mh'` and `stationarity_correction='ipfp'` are
+experimental sparse-only options applied consistently to likelihood,
+prediction, state filtering, and `tm_grid` sampling for the moving-grid
+`local` backend. IPFP preserves the original sparse support and therefore
+fails explicitly if that support cannot be balanced to both stationary
+marginals. Neither correction is available for `local_fixed`; uncorrected
+sparse `local_fixed` supports `analytical_grad=True`.
+
+`adaptive_quad_order=True` is an experimental option for the uncorrected
+sparse moving-grid `local` backend. It selects a quadrature order once, from
+`adaptive_quad_orders`, using deterministic full-horizon gates before
+optimization. The chosen order remains fixed for likelihood, prediction, and
+sampling and is persisted in the fitted result. The final-parameter gate is
+diagnostic only and never changes the fitted order.
+
 For high-frequency data, the code uses `dt = 1 / (T - 1)`. Large `T` therefore
 produces very narrow one-step Jacobi transitions. In this regime the local
-transition is often the stable and accurate default; increasing
-`basis_order` can be useful as a diagnostic but is not usually needed for
-routine fitting.
+transition produces a nonnegative row-normalized matrix. Change
+`basis_order` only when comparing the spectral approximation against the local
+backend; otherwise leave backend selection to `transition_method='auto'`.
 
 ## Sampling, Prediction, and Diagnostics
 

@@ -162,8 +162,9 @@ the target set through the exact suffix sampler. With
 prediction uses the approximate fallback when the exact suffix path is not
 available.
 
-Use `given_vars` when the production conditioning set is known before fitting.
-Use `given` when calling `predict`.
+Use `given_vars` when the conditioning indices are known before fitting and
+the exact suffix path is required. Use `given` to supply their values when
+calling `predict`.
 
 ## `dynamic_conditioning`
 
@@ -220,36 +221,18 @@ samples, diagnostics = vine.predict(
 Explicit kwargs override the corresponding fields in `PredictConfig`, so
 call-site options and reusable configuration objects can be mixed deliberately.
 
-`mcmc_steps` and `mcmc_burnin` apply only to approximate R-vine conditioning
-when `conditional_method='dag_mcmc'`. They control the number of refinement
-updates after and before burn-in. They do not affect suffix exact sampling.
+`mcmc_steps` and `mcmc_burnin` apply only when `VineCopula.predict`
+automatically selects the approximate DAG+MCMC fallback. They control the
+number of refinement updates and discarded burn-in updates. They do not affect
+exact suffix sampling. `conditional_method` is an output diagnostics field,
+not an argument accepted by `predict`.
 
 ## Diagnostics
 
 For `VineCopula.predict(..., return_diagnostics=True)`, the result is
 `(samples, diagnostics)`.
 
-Useful diagnostic fields include:
-
-- `conditional_method`: `unconditional`, `suffix`, or `dag_mcmc`;
-- `given`: normalized fixed values;
-- `dynamic_conditioning`: active dynamic-conditioning mode;
-- `updated_edges` and `skipped_edges`: dynamic-conditioning edge records;
-- `dag_steps`, `dag_edges_used`, and `mcmc`: advanced details when the
-  approximate fallback is used.
-
-The `mcmc` block includes per-variable acceptance rates, summary acceptance
-statistics, burn-in count, total update count, and a `low_acceptance_warning`
-flag. Low acceptance means the fallback may need more steps or a stronger
-proposal strategy.
-
-Common dynamic-conditioning skip reasons include:
-
-- `next_horizon_would_advance_filter`: `given_only` was requested with
-  `horizon='next'` for a stateful edge;
-- `no_training_history`: the edge needs fitted history to build a predictive
-  state;
-- `unsupported_or_noop`: the edge has no supported update or the update leaves
-  the state unchanged;
-- `dag_mcmc_not_suffix_supported`: `given_only` was requested for the
-  approximate fallback path.
+The `conditional_method` field reports `unconditional`, `suffix`, or
+`dag_mcmc`. The complete diagnostics schema, MCMC acceptance fields, and
+dynamic-conditioning skip reasons are documented in
+[R-vine Conditioning](rvine-conditioning.md#diagnostics).

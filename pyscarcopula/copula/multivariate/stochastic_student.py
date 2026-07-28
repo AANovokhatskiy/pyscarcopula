@@ -1094,6 +1094,9 @@ class StochasticStudentCopula(MultivariateCopula):
         from pyscarcopula._types import MultivariateMLEResult
         from pyscarcopula.numerical._cpp_extension import CppError
 
+        optimizer_options = dict(optimizer_options)
+        optimizer_options.setdefault("ftol", 1e-10)
+
         parameterization, factor0 = (
             FactorLoadingParameterization.from_loadings(
                 self._factor_loadings,
@@ -1965,8 +1968,9 @@ class StochasticStudentCopula(MultivariateCopula):
         """
         Sample n observations for next-step prediction.
 
-        For MLE: constant df.
-        For SCAR-TM: mixture sampling from posterior p(x_T | data).
+        For MLE, use the fitted constant degrees of freedom. Dynamic
+        strategies delegate predictive parameter generation to their common
+        strategy implementation, including ``current``/``next`` timing.
 
         Parameters
         ----------
@@ -1974,15 +1978,14 @@ class StochasticStudentCopula(MultivariateCopula):
         u : (T, d) or None — conditioning data.
         rng : np.random.Generator or None
         """
-        if predict_config is not None:
-            from pyscarcopula.api import _resolve_predict_config
-            config = _resolve_predict_config(
-                predict_config, given, horizon, {
-                    "predictive_r_mode": predictive_r_mode,
-                })
-            given = config.given
-            horizon = config.horizon
-            predictive_r_mode = config.predictive_r_mode
+        from pyscarcopula.api import _resolve_predict_config
+        config = _resolve_predict_config(
+            predict_config, given, horizon, {
+                "predictive_r_mode": predictive_r_mode,
+            })
+        given = config.given
+        horizon = config.horizon
+        predictive_r_mode = config.predictive_r_mode
         if self.fit_result is None:
             raise ValueError("Fit first")
         n = _sampling_integer("n", n)
@@ -2005,49 +2008,30 @@ class StochasticStudentCopula(MultivariateCopula):
                 **sampling_options,
             )
 
-        if self._corr_mode == "factor":
-            blocks = self.predict_batches(
-                n,
-                u=u,
-                rng=rng,
-                batch_rows=max(1, n),
-                given=given,
-                horizon=horizon,
-                predictive_r_mode=predictive_r_mode,
-                n_threads=n_threads,
-                memory_budget_bytes=memory_budget_bytes,
-            )
-            try:
-                return next(blocks)
-            except StopIteration:
-                return np.empty((0, self._d), dtype=np.float64)
+        if n == 0:
+            validate_multivariate_given(given, self._d)
+            return np.empty((0, self._d), dtype=np.float64)
 
-        u_data = u if u is not None else getattr(self, '_last_u', None)
-        if u_data is not None:
-            # Mixture sampling from posterior
-            z_grid, prob = self.xT_distribution(u_data)
-            idx = rng.choice(len(z_grid), size=n, p=prob)
-            df_samples = self.transform(z_grid[idx])  # (n,)
-            return self.sample_conditional(
-                n,
-                r=df_samples,
-                given=given,
-                rng=rng,
-                **sampling_options,
-            )
-        else:
-            # Fallback: stationary OU sample
-            kappa, mu, nu_ou = self.fit_result.params.values
-            sigma2 = nu_ou ** 2 / (2.0 * kappa)
-            x_T = rng.normal(mu, np.sqrt(sigma2), size=n)
-            df_vals = self.transform(x_T)  # (n,)
-            return self.sample_conditional(
-                n,
-                r=df_vals,
-                given=given,
-                rng=rng,
-                **sampling_options,
-            )
+        observations = u if u is not None else getattr(self, '_last_u', None)
+        from pyscarcopula.strategy._base import get_strategy_for_result
+        strategy = get_strategy_for_result(self.fit_result)
+        parameters = strategy.predictive_params(
+            self,
+            observations,
+            self.fit_result,
+            n,
+            rng=rng,
+            horizon=horizon,
+            predictive_r_mode=predictive_r_mode,
+            memory_budget_bytes=memory_budget_bytes,
+        )
+        return self.sample_conditional(
+            n,
+            r=parameters,
+            given=given,
+            rng=rng,
+            **sampling_options,
+        )
 
     @model_state_locked
     def predict_batches(
@@ -2128,17 +2112,16 @@ class StochasticStudentCopula(MultivariateCopula):
 
     @model_state_locked
     def predictive_mean(self, u=None):
-        """Return predictive mean df(t) from TM forward pass."""
+        """Return the predictive df path for the fitted strategy."""
         if self.fit_result is None:
-            raise ValueError("Fit with SCAR first")
+            raise ValueError("Fit the model before calling predictive_mean")
         u_data = u if u is not None else getattr(self, '_last_u', None)
         if u_data is None:
             raise ValueError("No data. Pass u= or call fit() first.")
 
-        kappa, mu, nu_ou = self.fit_result.params.values
-        from pyscarcopula.numerical import _cpp_scar_ou
-        return _cpp_scar_ou.predictive_mean(
-            kappa, mu, nu_ou, u_data, self)
+        from pyscarcopula.api import predictive_mean as _predictive_mean
+
+        return _predictive_mean(self, u_data, self.fit_result)
 
     @model_state_locked
     def xT_distribution(self, u, K=300, grid_range=5.0):

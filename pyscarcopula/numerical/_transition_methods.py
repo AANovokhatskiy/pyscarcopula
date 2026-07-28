@@ -7,6 +7,8 @@ JACOBI_MATRIX_TRANSITION_METHODS = frozenset(
 JACOBI_STRATEGY_TRANSITION_METHODS = frozenset(
     ("auto", "spectral_matrix", "local", "local_fixed", "spectral_coeff")
 )
+JACOBI_TRANSITION_STORAGES = frozenset(("dense", "sparse"))
+JACOBI_STATIONARITY_CORRECTIONS = frozenset(("none", "mh", "ipfp"))
 
 
 def normalize_ou_transition_method(value):
@@ -44,3 +46,22 @@ def normalize_jacobi_strategy_transition_method(value):
             "'spectral_matrix', 'local', 'local_fixed', "
             "or 'spectral_coeff'")
     return method
+
+
+def normalize_jacobi_transition_storage(value):
+    if not isinstance(value, str):
+        raise TypeError("transition_storage must be a string")
+    storage = value.lower()
+    if storage not in JACOBI_TRANSITION_STORAGES:
+        raise ValueError("transition_storage must be 'dense' or 'sparse'")
+    return storage
+
+
+def normalize_jacobi_stationarity_correction(value):
+    if not isinstance(value, str):
+        raise TypeError("stationarity_correction must be a string")
+    correction = value.lower()
+    if correction not in JACOBI_STATIONARITY_CORRECTIONS:
+        raise ValueError(
+            "stationarity_correction must be 'none', 'mh', or 'ipfp'")
+    return correction

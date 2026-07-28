@@ -60,15 +60,14 @@ result = fit(copula, u, method='scar-tm-ou')
 
 The softplus transform has a natural floor: the copula parameter cannot go
 below a minimum value. For Gumbel, $\theta = 1$ corresponds to independence.
-This is useful for financial data where correlations may have a lower bound
-but can spike sharply.
+Unlike `xtanh`, softplus is not symmetric around zero and grows linearly only
+on its positive branch.
 
 ### xtanh advantages
 
-This transform is symmetric and treats upward and downward movements equally.
-It may be preferable when the copula parameter can meaningfully decrease below
-the long-run mean. Its `inv_transform` follows the approximation described
-above and should not be used where an exact latent round trip is required.
+This transform is even: latent values `x` and `-x` produce the same copula
+parameter. Its `inv_transform` follows the approximation described above and
+must not be used when an exact latent round trip is required.
 
 ## Using with vine
 
