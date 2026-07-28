@@ -14,6 +14,7 @@ from pyscarcopula.numerical import copula_native
 from pyscarcopula.numerical._transition_methods import (
     normalize_jacobi_stationarity_correction,
     normalize_jacobi_matrix_transition_method,
+    normalize_jacobi_transition_storage,
 )
 
 
@@ -798,6 +799,7 @@ def sample_jacobi_grid_trajectory(
         clip_negative=False,
         negative_mass_tol=1e-5,
         gh_order=5,
+        transition_storage="dense",
         stationarity_correction="none",
         memory_budget_bytes=None,
         return_diagnostics=False):
@@ -810,6 +812,8 @@ def sample_jacobi_grid_trajectory(
     n = _validate_nonnegative_int(n, "n")
     stationarity_correction = normalize_jacobi_stationarity_correction(
         stationarity_correction)
+    transition_storage = normalize_jacobi_transition_storage(
+        transition_storage)
     if n == 0:
         empty = np.empty(0, dtype=np.float64)
         if return_diagnostics:
@@ -838,14 +842,35 @@ def sample_jacobi_grid_trajectory(
         raise ValueError(
             "stationarity_correction currently requires "
             "transition_method='local'")
-    if n > 1 and sampling_method == "local":
+    use_sparse_sampling = (
+        n > 1
+        and (
+            sampling_method == "local"
+            or (
+                sampling_method == "local_fixed"
+                and transition_storage == "sparse")
+        )
+    )
+    if use_sparse_sampling:
         from pyscarcopula.numerical.jacobi_sparse import (
+            jacobi_sparse_fixed_grid_transition,
             jacobi_sparse_local_transition,
             sample_sparse_jacobi_trajectory,
         )
 
-        tau_grid, stationary_prob, sparse_transition, diagnostics = (
-            jacobi_sparse_local_transition(
+        if sampling_method == "local_fixed":
+            result = jacobi_sparse_fixed_grid_transition(
+                kappa,
+                m,
+                xi,
+                n_obs=n,
+                quad_order=quad_order,
+                gh_order=gh_order,
+                memory_budget_bytes=memory_budget_bytes,
+                return_diagnostics=True,
+            )
+        else:
+            result = jacobi_sparse_local_transition(
                 kappa,
                 m,
                 xi,
@@ -857,7 +882,7 @@ def sample_jacobi_grid_trajectory(
                 memory_budget_bytes=memory_budget_bytes,
                 return_diagnostics=True,
             )
-        )
+        tau_grid, stationary_prob, sparse_transition, diagnostics = result
         budget = (
             DEFAULT_JACOBI_MEMORY_BUDGET_BYTES
             if memory_budget_bytes is None
@@ -886,7 +911,7 @@ def sample_jacobi_grid_trajectory(
                 "transition_method_requested": requested_method,
                 "sampling_transition_method_requested": sampling_method,
                 "model_transition_method_requested": requested_method,
-                "transition_method": "local",
+                "transition_method": sampling_method,
                 "transition_storage": "sparse",
                 "n": n,
             })

@@ -48,7 +48,9 @@ from pyscarcopula.numerical.jacobi_sparse import (
     jacobi_sparse_matrix_forward_mixture_h_pair,
     jacobi_sparse_matrix_forward_predictive_mean,
     jacobi_sparse_matrix_loglik,
+    jacobi_sparse_matrix_neg_loglik_with_grad,
     jacobi_sparse_matrix_state_distribution,
+    select_sparse_jacobi_order,
 )
 from pyscarcopula.numerical._arrays import (
     validate_float64_allocation,
@@ -187,6 +189,13 @@ class SCARJacobiStrategy:
                  transition_method: str = "auto",
                  transition_storage: str = "dense",
                  stationarity_correction: str = "none",
+                 adaptive_quad_order: bool = False,
+                 adaptive_quad_orders=(48, 80, 128, 192, 384, 768),
+                 adaptive_max_full_horizon_tv: float = 0.02,
+                 adaptive_max_relative_variance_error: float = 0.10,
+                 adaptive_max_conditional_mean_rmse: float = 1e-3,
+                 adaptive_max_lag_one_correlation_error: float = 1e-2,
+                 adaptive_require_pass: bool = False,
                  tau_eps: float = 1e-6,
                  theta_cap: float | None = None,
                  clip_negative: bool = False,
@@ -225,6 +234,38 @@ class SCARJacobiStrategy:
         self.stationarity_correction = (
             normalize_jacobi_stationarity_correction(
                 stationarity_correction))
+        self.adaptive_quad_order = bool(adaptive_quad_order)
+        if isinstance(adaptive_quad_orders, (str, bytes)):
+            raise TypeError(
+                "adaptive_quad_orders must be an iterable of integers")
+        self.adaptive_quad_orders = tuple(
+            validate_positive_int(order, "adaptive_quad_orders")
+            for order in adaptive_quad_orders)
+        if not self.adaptive_quad_orders:
+            raise ValueError("adaptive_quad_orders must not be empty")
+        if any(
+                right <= left
+                for left, right in zip(
+                    self.adaptive_quad_orders,
+                    self.adaptive_quad_orders[1:])):
+            raise ValueError(
+                "adaptive_quad_orders must be strictly increasing")
+        if self.adaptive_quad_orders[-1] > MAX_JACOBI_ORDER:
+            raise ValueError(
+                f"adaptive_quad_orders must be <= {MAX_JACOBI_ORDER}")
+        self.adaptive_max_full_horizon_tv = _finite_float(
+            adaptive_max_full_horizon_tv,
+            "adaptive_max_full_horizon_tv")
+        self.adaptive_max_relative_variance_error = _finite_float(
+            adaptive_max_relative_variance_error,
+            "adaptive_max_relative_variance_error")
+        self.adaptive_max_conditional_mean_rmse = _finite_float(
+            adaptive_max_conditional_mean_rmse,
+            "adaptive_max_conditional_mean_rmse")
+        self.adaptive_max_lag_one_correlation_error = _finite_float(
+            adaptive_max_lag_one_correlation_error,
+            "adaptive_max_lag_one_correlation_error")
+        self.adaptive_require_pass = bool(adaptive_require_pass)
         self.tau_eps = _finite_float(tau_eps, "tau_eps")
         self.theta_cap = (
             None if theta_cap is None
@@ -260,20 +301,42 @@ class SCARJacobiStrategy:
         self.smart_init = bool(smart_init)
         if (
                 self.transition_storage == "sparse"
-                and self.transition_method != "local"):
+                and self.transition_method not in {"local", "local_fixed"}):
             raise ValueError(
                 "transition_storage='sparse' currently requires "
-                "transition_method='local'")
+                "transition_method='local' or 'local_fixed'")
         if (
                 self.stationarity_correction != "none"
-                and self.transition_storage != "sparse"):
+                and (
+                    self.transition_storage != "sparse"
+                    or self.transition_method != "local")):
             raise ValueError(
-                "stationarity_correction requires "
-                "transition_storage='sparse'")
-        if self.transition_storage == "sparse" and self.analytical_grad:
+                "stationarity_correction requires sparse "
+                "transition_method='local'")
+        if (
+                self.transition_storage == "sparse"
+                and self.analytical_grad
+                and self.transition_method != "local_fixed"):
             raise ValueError(
-                "analytical_grad is not supported with "
-                "transition_storage='sparse'")
+                "sparse analytical_grad requires "
+                "transition_method='local_fixed'")
+        if self.adaptive_quad_order and (
+                self.transition_storage != "sparse"
+                or self.transition_method != "local"
+                or self.stationarity_correction != "none"):
+            raise ValueError(
+                "adaptive_quad_order requires an uncorrected sparse "
+                "transition_method='local'")
+        if self.adaptive_quad_order and self.quad_order is not None:
+            raise ValueError(
+                "adaptive_quad_order cannot be combined with quad_order")
+        for name in (
+                "adaptive_max_full_horizon_tv",
+                "adaptive_max_relative_variance_error",
+                "adaptive_max_conditional_mean_rmse",
+                "adaptive_max_lag_one_correlation_error"):
+            if getattr(self, name) < 0.0:
+                raise ValueError(f"{name} must be non-negative")
         if not (0.0 < self.tau_eps < 0.5):
             raise ValueError("tau_eps must be in (0, 0.5)")
         if self.negative_mass_tol < 0.0:
@@ -343,6 +406,7 @@ class SCARJacobiStrategy:
             'basis_order': self.basis_order,
             'quad_order': self.quad_order,
             'theta_cap': self.theta_cap,
+            'transition_method': self.transition_method,
             'gh_order': self.gh_order,
             'correction': self.stationarity_correction,
             'memory_budget_bytes': self.memory_budget_bytes,
@@ -371,6 +435,9 @@ class SCARJacobiStrategy:
             return 1e10, np.zeros(3, dtype=np.float64)
         if not self._uses_matrix_backend():
             return 1e10, np.zeros(3, dtype=np.float64)
+        if self._uses_sparse_backend():
+            return jacobi_sparse_matrix_neg_loglik_with_grad(
+                kappa, m, xi, u, copula, **self._sparse_backend_kwargs())
         return jacobi_matrix_neg_loglik_with_grad(
             kappa, m, xi, u, copula, **self._matrix_backend_kwargs())
 
@@ -379,8 +446,9 @@ class SCARJacobiStrategy:
             return "spectral_coeff"
         if self._uses_sparse_backend():
             suffix = (
-                "_mh" if self.stationarity_correction == "mh" else "")
-            return f"local_sparse{suffix}"
+                f"_{self.stationarity_correction}"
+                if self.stationarity_correction != "none" else "")
+            return f"{self.transition_method}_sparse{suffix}"
         try:
             _, _, _, diagnostics = jacobi_transition_matrix(
                 kappa,
@@ -418,7 +486,8 @@ class SCARJacobiStrategy:
                 "transition_backend": selected_backend,
             }
 
-        fully_analytical = selected_backend == "local_fixed"
+        fully_analytical = selected_backend in {
+            "local_fixed", "local_fixed_sparse"}
         return {
             "gradient_requested": True,
             "gradient_used": True,
@@ -593,6 +662,35 @@ class SCARJacobiStrategy:
 
         self._check_kendall_mapping(copula)
         u = validate_copula_data(copula, u)
+        if alpha0 is None:
+            alpha0, initialization = self._initial_point(
+                copula, u, initial_mle_result)
+        else:
+            initialization = _explicit_initialization_diagnostics(alpha0)
+        alpha0 = _validate_alpha0(alpha0)
+        adaptive_initial = None
+        if self.adaptive_quad_order:
+            _, _, _, adaptive_initial = select_sparse_jacobi_order(
+                alpha0[0],
+                alpha0[1],
+                alpha0[2],
+                n_obs=len(u),
+                quad_orders=self.adaptive_quad_orders,
+                basis_order=self.basis_order,
+                gh_order=self.gh_order,
+                max_full_horizon_tv=(
+                    self.adaptive_max_full_horizon_tv),
+                max_relative_variance_error=(
+                    self.adaptive_max_relative_variance_error),
+                max_conditional_mean_rmse=(
+                    self.adaptive_max_conditional_mean_rmse),
+                max_lag_one_correlation_error=(
+                    self.adaptive_max_lag_one_correlation_error),
+                memory_budget_bytes=self.memory_budget_bytes,
+                require_pass=self.adaptive_require_pass,
+            )
+            self.quad_order = int(
+                adaptive_initial["selected_quad_order"])
         resolved_quad_order = (
             default_quad_order(self.basis_order)
             if self.quad_order is None else self.quad_order)
@@ -604,12 +702,6 @@ class SCARJacobiStrategy:
             gradient=self.analytical_grad,
             memory_budget_bytes=self.memory_budget_bytes,
         )
-        if alpha0 is None:
-            alpha0, initialization = self._initial_point(
-                copula, u, initial_mle_result)
-        else:
-            initialization = _explicit_initialization_diagnostics(alpha0)
-        alpha0 = _validate_alpha0(alpha0)
         raw0 = _physical_to_raw(alpha0, self.tau_eps)
         bounds = self._raw_bounds()
         raw0 = np.clip(raw0, bounds.lb, bounds.ub)
@@ -722,6 +814,28 @@ class SCARJacobiStrategy:
         diagnostics["transition_storage"] = self.transition_storage
         diagnostics["stationarity_correction"] = (
             self.stationarity_correction)
+        if adaptive_initial is not None:
+            diagnostics["adaptive_quad_order_initial"] = adaptive_initial
+            _, _, _, adaptive_final = select_sparse_jacobi_order(
+                alpha[0],
+                alpha[1],
+                alpha[2],
+                n_obs=len(u),
+                quad_orders=(self.quad_order,),
+                basis_order=self.basis_order,
+                gh_order=self.gh_order,
+                max_full_horizon_tv=(
+                    self.adaptive_max_full_horizon_tv),
+                max_relative_variance_error=(
+                    self.adaptive_max_relative_variance_error),
+                max_conditional_mean_rmse=(
+                    self.adaptive_max_conditional_mean_rmse),
+                max_lag_one_correlation_error=(
+                    self.adaptive_max_lag_one_correlation_error),
+                memory_budget_bytes=self.memory_budget_bytes,
+                require_pass=False,
+            )
+            diagnostics["adaptive_quad_order_final"] = adaptive_final
 
         return LatentResult(
             log_likelihood=-float(final_fun),
@@ -993,6 +1107,7 @@ class SCARJacobiStrategy:
                 clip_negative=self.clip_negative,
                 negative_mass_tol=self.negative_mass_tol,
                 gh_order=self.gh_order,
+                transition_storage=self.transition_storage,
                 stationarity_correction=self.stationarity_correction,
                 memory_budget_bytes=self.memory_budget_bytes,
                 return_diagnostics=True,

@@ -8,7 +8,7 @@ JACOBI_STRATEGY_TRANSITION_METHODS = frozenset(
     ("auto", "spectral_matrix", "local", "local_fixed", "spectral_coeff")
 )
 JACOBI_TRANSITION_STORAGES = frozenset(("dense", "sparse"))
-JACOBI_STATIONARITY_CORRECTIONS = frozenset(("none", "mh"))
+JACOBI_STATIONARITY_CORRECTIONS = frozenset(("none", "mh", "ipfp"))
 
 
 def normalize_ou_transition_method(value):
@@ -62,5 +62,6 @@ def normalize_jacobi_stationarity_correction(value):
         raise TypeError("stationarity_correction must be a string")
     correction = value.lower()
     if correction not in JACOBI_STATIONARITY_CORRECTIONS:
-        raise ValueError("stationarity_correction must be 'none' or 'mh'")
+        raise ValueError(
+            "stationarity_correction must be 'none', 'mh', or 'ipfp'")
     return correction

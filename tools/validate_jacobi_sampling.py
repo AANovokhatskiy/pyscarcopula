@@ -27,11 +27,17 @@ from pyscarcopula.numerical.jacobi_sampling import (
 from pyscarcopula.numerical.jacobi_tm import jacobi_transition_matrix
 from pyscarcopula import GumbelCopula
 from pyscarcopula.numerical.jacobi_sparse import (
+    compare_sparse_jacobi_corrections,
+    jacobi_sparse_fixed_grid_transition,
     jacobi_sparse_local_transition,
     jacobi_sparse_matrix_loglik,
-    sparse_jacobi_full_horizon_diagnostics,
+    jacobi_sparse_matrix_neg_loglik_with_grad,
+    select_sparse_jacobi_order,
 )
-from pyscarcopula.numerical.jacobi_tm import jacobi_matrix_loglik
+from pyscarcopula.numerical.jacobi_tm import (
+    jacobi_matrix_loglik,
+    jacobi_matrix_neg_loglik_with_grad,
+)
 
 
 def _parser():
@@ -73,6 +79,17 @@ def _parser():
         help="benchmark dense versus sparse local filtering when positive",
     )
     parser.add_argument("--sparse-benchmark-repeats", type=int, default=5)
+    parser.add_argument(
+        "--adaptive-calibration",
+        action="store_true",
+        help="run the predefined parameter/horizon adaptive-K matrix",
+    )
+    parser.add_argument(
+        "--calibration-n",
+        type=int,
+        nargs="+",
+        default=[17, 33, 100, 400],
+    )
     parser.add_argument("--output", type=Path)
     return parser
 
@@ -110,6 +127,8 @@ def _conditional_mean_rmse(starts, endpoints, *, kappa, m, dt, bins):
         empirical = float(np.mean(endpoints[selected]))
         expected = m + (start_mean - m) * np.exp(-kappa * dt)
         errors.append(empirical - expected)
+    if not errors:
+        return float("nan")
     return float(np.sqrt(np.mean(np.square(errors))))
 
 
@@ -288,35 +307,57 @@ def _benchmark_lamperti_crossover(args):
 
 
 def _sparse_transition_diagnostics(args):
+    return compare_sparse_jacobi_corrections(
+        args.kappa,
+        args.m,
+        args.xi,
+        n_obs=args.n,
+        quad_orders=args.tm_orders,
+        basis_order=args.basis_order,
+    )
+
+
+def _adaptive_calibration_matrix(args):
+    if not args.adaptive_calibration:
+        return []
+    cases = (
+        ("baseline", 1.2, 0.4, 0.25),
+        ("high_kappa", 5.0, 0.4, 0.25),
+        ("boundary_symmetric", 0.1, 0.5, 0.5),
+        ("boundary_asymmetric", 0.025, 0.2, 0.5),
+    )
     records = []
-    for order in args.tm_orders:
-        for correction in ("none", "mh"):
-            tau, weights, transition, construction = (
-                jacobi_sparse_local_transition(
-                    args.kappa,
-                    args.m,
-                    args.xi,
-                    n_obs=args.n,
-                    basis_order=min(args.basis_order, order),
-                    quad_order=order,
-                    correction=correction,
-                    return_diagnostics=True,
+    for name, kappa, m, xi in cases:
+        for n_obs in args.calibration_n:
+            try:
+                _, _, _, report = select_sparse_jacobi_order(
+                    kappa,
+                    m,
+                    xi,
+                    n_obs=n_obs,
+                    quad_orders=args.tm_orders,
+                    basis_order=args.basis_order,
                 )
-            )
-            horizon = sparse_jacobi_full_horizon_diagnostics(
-                tau,
-                weights,
-                transition,
-                steps=args.n - 1,
-                kappa=args.kappa,
-                m=args.m,
-            )
-            records.append({
-                "quad_order": order,
-                "correction": correction,
-                **construction,
-                **horizon,
-            })
+                records.append({
+                    "case": name,
+                    "kappa": kappa,
+                    "m": m,
+                    "xi": xi,
+                    "n_obs": n_obs,
+                    "status": "ok",
+                    **report,
+                })
+            except (FloatingPointError, MemoryError, RuntimeError) as exc:
+                records.append({
+                    "case": name,
+                    "kappa": kappa,
+                    "m": m,
+                    "xi": xi,
+                    "n_obs": n_obs,
+                    "status": "failed",
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                })
     return records
 
 
@@ -382,6 +423,68 @@ def _benchmark_sparse_filter(args):
     return records
 
 
+def _benchmark_sparse_fixed_gradient(args):
+    n_obs = args.sparse_benchmark_observations
+    if n_obs <= 0:
+        return []
+    u = np.random.default_rng(args.seed + 1).uniform(
+        0.05, 0.95, size=(n_obs, 2))
+    copula = GumbelCopula()
+    records = []
+    for order in args.tm_orders:
+        common = {
+            "basis_order": min(args.basis_order, order),
+            "quad_order": order,
+            "transition_method": "local_fixed",
+            "gh_order": 5,
+        }
+        dense = jacobi_matrix_neg_loglik_with_grad(
+            args.kappa, args.m, args.xi, u, copula, **common)
+        sparse = jacobi_sparse_matrix_neg_loglik_with_grad(
+            args.kappa, args.m, args.xi, u, copula, **common)
+        timings = {"dense": [], "sparse": []}
+        for _ in range(args.sparse_benchmark_repeats):
+            started = perf_counter()
+            jacobi_matrix_neg_loglik_with_grad(
+                args.kappa, args.m, args.xi, u, copula, **common)
+            timings["dense"].append(perf_counter() - started)
+            started = perf_counter()
+            jacobi_sparse_matrix_neg_loglik_with_grad(
+                args.kappa, args.m, args.xi, u, copula, **common)
+            timings["sparse"].append(perf_counter() - started)
+        _, _, _, _, diagnostics = (
+            jacobi_sparse_fixed_grid_transition(
+                args.kappa,
+                args.m,
+                args.xi,
+                n_obs=n_obs,
+                quad_order=order,
+                gh_order=5,
+                return_grad=True,
+                return_diagnostics=True,
+            )
+        )
+        dense_seconds = float(np.median(timings["dense"]))
+        sparse_seconds = float(np.median(timings["sparse"]))
+        records.append({
+            "quad_order": order,
+            "n_obs": n_obs,
+            "dense_median_seconds": dense_seconds,
+            "sparse_median_seconds": sparse_seconds,
+            "speedup": dense_seconds / sparse_seconds,
+            "objective_absolute_difference": abs(dense[0] - sparse[0]),
+            "gradient_max_absolute_difference": float(
+                np.max(np.abs(dense[1] - sparse[1]))),
+            "dense_transition_gradient_bytes": diagnostics["dense_bytes"],
+            "sparse_transition_gradient_bytes": diagnostics[
+                "retained_bytes"],
+            "transition_gradient_memory_reduction": (
+                diagnostics["dense_bytes"]
+                / diagnostics["retained_bytes"]),
+        })
+    return records
+
+
 def run_validation(args):
     if args.n < 2:
         raise ValueError("--n must be at least 2")
@@ -408,6 +511,9 @@ def run_validation(args):
         "crossover_benchmark": _benchmark_lamperti_crossover(args),
         "sparse_transition": _sparse_transition_diagnostics(args),
         "sparse_filter_benchmark": _benchmark_sparse_filter(args),
+        "sparse_fixed_gradient_benchmark": (
+            _benchmark_sparse_fixed_gradient(args)),
+        "adaptive_order_calibration": _adaptive_calibration_matrix(args),
     }
     for order in args.tm_orders:
         started = perf_counter()

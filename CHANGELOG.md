@@ -7,6 +7,18 @@
   sampling equivalence. Add deterministic full-horizon diagnostics and an
   experimental end-to-end MH stationarity correction; dense/auto defaults
   remain unchanged.
+- Extend sparse Jacobi transitions to `local_fixed`, including shared sparse
+  derivative support, sequential analytical-gradient filtering, and
+  fixed-seed sampling equivalence with the dense backend.
+- Add an experimental deterministic adaptive-order selector for uncorrected
+  sparse local Jacobi transitions. Strategy integration freezes the selected
+  order before optimization, persists it, and reports initial and fitted
+  full-horizon gates without changing sampling semantics.
+- Add an experimental sparse IPFP stationarity correction and deterministic
+  none/MH/IPFP/higher-order comparison. Infeasible sparse support is reported
+  explicitly without hidden diagonal regularization.
+- Extend the Jacobi validation tool with a predefined adaptive-order
+  parameter/horizon calibration matrix.
 - Add an experimental `lamperti_euler` unconditional sampler for
   SCAR-TM-JACOBI with strict options, substeps, constant-time reflection,
   boundary-intervention diagnostics, memory preflight, persistence, and vine

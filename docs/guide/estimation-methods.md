@@ -271,10 +271,23 @@ remains available as a pathwise reference implementation.
 For an explicit moving-grid local transition,
 `transition_storage='sparse'` selects the `O(K * gh_order)` sparse filtering
 and prediction backend. The default is `'dense'`; sparse storage is not
-currently available for `auto`, spectral, or `local_fixed` transitions.
-`stationarity_correction='mh'` is an experimental sparse-only option applied
-consistently to likelihood, prediction, state filtering, and `tm_grid`
-sampling. It is incompatible with `analytical_grad=True`.
+currently available for `auto` or spectral transitions. Explicit
+`local_fixed` supports sparse analytical-gradient filtering with shared
+transition/derivative indices.
+`stationarity_correction='mh'` and `stationarity_correction='ipfp'` are
+experimental sparse-only options applied consistently to likelihood,
+prediction, state filtering, and `tm_grid` sampling for the moving-grid
+`local` backend. IPFP preserves the original sparse support and therefore
+fails explicitly if that support cannot be balanced to both stationary
+marginals. Neither correction is available for `local_fixed`; uncorrected
+sparse `local_fixed` supports `analytical_grad=True`.
+
+`adaptive_quad_order=True` is an experimental option for the uncorrected
+sparse moving-grid `local` backend. It selects a quadrature order once, from
+`adaptive_quad_orders`, using deterministic full-horizon gates before
+optimization. The chosen order remains fixed for likelihood, prediction, and
+sampling and is persisted in the fitted result. The final-parameter gate is
+diagnostic only and never changes the fitted order.
 
 For high-frequency data, the code uses `dt = 1 / (T - 1)`. Large `T` therefore
 produces very narrow one-step Jacobi transitions. In this regime the local

@@ -145,6 +145,93 @@ def test_scar_jacobi_sparse_backend_routes_all_forward_operations():
             sparse_state[1], dense_state[1], rtol=0.0, atol=3e-14)
 
 
+def test_scar_jacobi_sparse_fixed_routes_analytical_gradient():
+    u = np.random.default_rng(22).uniform(0.05, 0.95, size=(25, 2))
+    copula = GumbelCopula()
+    common = {
+        "transition_method": "local_fixed",
+        "basis_order": 8,
+        "quad_order": 32,
+        "gh_order": 5,
+        "analytical_grad": True,
+        "smart_init": False,
+    }
+    dense = get_strategy(
+        "scar-tm-jacobi", transition_storage="dense", **common)
+    sparse = get_strategy(
+        "scar-tm-jacobi", transition_storage="sparse", **common)
+    args = (1.2, 0.4, 0.25, u, copula)
+
+    dense_value, dense_gradient = dense._neg_loglik_with_grad(*args)
+    sparse_value, sparse_gradient = sparse._neg_loglik_with_grad(*args)
+
+    assert sparse_value == pytest.approx(
+        dense_value, rel=0.0, abs=2e-13)
+    np.testing.assert_allclose(
+        sparse_gradient, dense_gradient, rtol=0.0, atol=2e-11)
+    assert sparse._selected_transition_backend(
+        1.2, 0.4, 0.25, len(u)) == "local_fixed_sparse"
+    assert sparse._gradient_diagnostics(
+        "local_fixed_sparse")["gradient_kind"] == "analytical"
+
+
+def test_scar_jacobi_adaptive_sparse_order_is_frozen_and_persisted():
+    copula = GumbelCopula()
+    result = fit(
+        copula,
+        _u_sample(),
+        method="scar-tm-jacobi",
+        transition_method="local",
+        transition_storage="sparse",
+        adaptive_quad_order=True,
+        adaptive_quad_orders=(24, 32),
+        adaptive_max_full_horizon_tv=1.0,
+        adaptive_max_relative_variance_error=10.0,
+        adaptive_max_conditional_mean_rmse=1.0,
+        adaptive_max_lag_one_correlation_error=1.0,
+        basis_order=4,
+        alpha0=np.array([1.2, 0.4, 0.25]),
+        smart_init=False,
+        maxiter=1,
+        maxfun=8,
+    )
+    restored = get_strategy_for_result(result)
+
+    assert result.spectral_quad_order == 24
+    initial = result.diagnostics["adaptive_quad_order_initial"]
+    final = result.diagnostics["adaptive_quad_order_final"]
+    assert initial["selected_quad_order"] == 24
+    assert final["selected_quad_order"] == 24
+    assert restored.quad_order == 24
+    assert not restored.adaptive_quad_order
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {
+            "transition_method": "local",
+            "transition_storage": "dense",
+            "adaptive_quad_order": True,
+        },
+        {
+            "transition_method": "local_fixed",
+            "transition_storage": "sparse",
+            "adaptive_quad_order": True,
+        },
+        {
+            "transition_method": "local",
+            "transition_storage": "sparse",
+            "adaptive_quad_order": True,
+            "quad_order": 48,
+        },
+    ],
+)
+def test_scar_jacobi_rejects_inconsistent_adaptive_order_options(kwargs):
+    with pytest.raises(ValueError, match="adaptive_quad_order"):
+        get_strategy("scar-tm-jacobi", **kwargs)
+
+
 def test_scar_jacobi_validates_optimizer_bounds():
     with pytest.raises(ValueError):
         get_strategy('scar-tm-jacobi', kappa_bounds=(1.0, 1.0))

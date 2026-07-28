@@ -590,11 +590,13 @@ result = copula.fit(
 This backend stores and applies the local transition in `O(K * gh_order)`
 space and time per filtering step. It does not materialize a dense `K x K`
 matrix. The default remains `transition_storage="dense"`, and sparse storage
-currently requires the explicit moving-grid `transition_method="local"`.
-`local_fixed`, spectral transitions, and analytical gradients continue to
-use their existing dense paths.
+currently requires an explicit `transition_method="local"` or
+`transition_method="local_fixed"`. The fixed-grid sparse backend also stores
+the three transition derivative arrays in `O(K * gh_order)` space and
+supports the existing fully analytical gradient. Spectral transitions
+continue to use their dense representation.
 
-An experimental stationarity correction is available only on the same
+Experimental stationarity corrections are available only on the same
 end-to-end sparse path:
 
 ```python
@@ -607,12 +609,55 @@ result = copula.fit(
 )
 ```
 
-The MH correction enforces the quadrature stationary weights and detailed
+The MH correction is available only with the moving-grid `local` backend. It
+enforces the quadrature stationary weights and detailed
 balance, but may materially increase stay probabilities and distort
 short-horizon dynamics. It is therefore opt-in and is not selected by
 `auto`. Use `tools/validate_jacobi_sampling.py` to compare transition memory,
 filter timings, full-horizon stationarity, conditional moments, and lag-one
 correlation.
+
+`stationarity_correction="ipfp"` instead balances the stationary joint flux
+on the existing sparse support. It does not silently add diagonal edges or
+regularization. Consequently, IPFP fails explicitly when the proposal
+support cannot deliver incoming mass to every stationary node. Even when it
+is feasible, its conditional-moment and autocorrelation distortion must be
+checked. Current validation does not support either MH or IPFP as a default;
+increasing `K` preserved short-horizon dynamics better in the tested matrix.
+
+### Experimental adaptive Jacobi order
+
+For an uncorrected sparse moving-grid `local` backend,
+`adaptive_quad_order=True` evaluates a strictly increasing candidate ladder
+before optimization. It selects the first order satisfying deterministic
+full-horizon stationarity, variance, conditional-mean, and lag-one
+correlation gates:
+
+```python
+result = copula.fit(
+    u,
+    method="scar-tm-jacobi",
+    transition_method="local",
+    transition_storage="sparse",
+    adaptive_quad_order=True,
+    adaptive_quad_orders=(48, 80, 128, 192, 384),
+)
+```
+
+The selected order is frozen for every fitting evaluation and persisted as
+`spectral_quad_order`. A second diagnostic evaluates the same frozen order at
+the fitted parameters; it does not silently increase the sampling grid.
+Candidate records and both initial/final gate results are stored in
+`LatentResult.diagnostics`. This mode remains experimental while its default
+thresholds are calibrated over a wider parameter and data matrix.
+The validation tool's `--adaptive-calibration` option runs predefined
+baseline, high-kappa, symmetric-boundary, and asymmetric-boundary cases over
+multiple observation counts.
+The current matrix shows strongly non-monotone requirements across parameter
+and observation-count regimes: some boundary cases do not pass through
+`K=384`, while the baseline may select `K=80` for shorter series but require
+`K=384` at `n=400`. Consequently, no stationary-shape-only order heuristic is
+used.
 
 The local method applies a Gaussian step in the Lamperti coordinate
 

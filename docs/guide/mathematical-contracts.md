@@ -303,6 +303,26 @@ The coefficient-only legacy representation uses the probability-safe `auto`
 matrix for unconditional sampling because coefficient recursion does not
 define categorical transition rows.
 
+For sparse local transitions, an experimental MH correction replaces
+off-diagonal proposal mass by
+
+$$
+P_{ij}=q_{ij}\min\left(
+1,\frac{w_jq_{ji}}{w_iq_{ij}}
+\right),\qquad i\ne j,
+$$
+
+and puts rejected mass on the diagonal. This satisfies detailed balance with
+the discrete stationary weights but may distort conditional moments.
+
+The experimental IPFP alternative balances the stationary joint flux
+$Q_{ij}=w_iq_{ij}$ on its existing sparse support until both marginals equal
+$w$. No new edges are introduced. Therefore the operation fails explicitly
+when the original support cannot represent both stationary marginals; the
+implementation does not conceal infeasibility by adding artificial diagonal
+mass. Either correction, when selected, is shared by likelihood, filtering,
+prediction, and grid sampling.
+
 The optional experimental Lamperti--Euler sampler uses
 
 $$
