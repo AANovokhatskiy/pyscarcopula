@@ -303,6 +303,44 @@ The coefficient-only legacy representation uses the probability-safe `auto`
 matrix for unconditional sampling because coefficient recursion does not
 define categorical transition rows.
 
+The optional experimental Lamperti--Euler sampler uses
+
+$$
+y=\frac{2}{\xi}\arcsin\sqrt{\tau},
+\qquad
+\tau=\sin^2\left(\frac{\xi y}{2}\right)
+$$
+
+and the unit-diffusion drift
+
+$$
+b_y(\tau)=
+\frac{\kappa(m-\tau)}{\xi\sqrt{\tau(1-\tau)}}
+-\frac{\xi(1-2\tau)}{4\sqrt{\tau(1-\tau)}}.
+$$
+
+With `S` substeps, $h=1/((n-1)S)$ and
+$y_{j+1}=y_j+b_y(\tau_j)h+\sqrt{h}Z_j$. Drift evaluation uses an explicit
+interior epsilon because the formula is singular at the endpoints. Overshoots
+are handled by the configured reflection or clipping policy and counted in
+sampling diagnostics. The initial value still follows the exact stationary
+beta law. This path is an approximate sampling oracle only: likelihood,
+gradient, filtering, and prediction continue to use their configured
+transition backend.
+
+The optimized implementation keeps this recursion in a strictly sequential
+Numba kernel. `parallel=True` is forbidden because it would violate the causal
+state update. The kernel never owns an RNG: Python draws stationary beta and
+Gaussian values from the supplied `numpy.random.Generator`, passes Gaussian
+values in complete-interval chunks, and carries the final transformed state
+between chunks. Python and Numba executions must agree pathwise on identical
+innovations, including intervention counts.
+
+Stationary shapes below one are reported by
+`stationary_boundary_singular=True`. This is a diagnostic, not an accuracy
+guarantee: extreme asymmetric boundary-singular laws can retain material
+reflection bias as the number of substeps grows.
+
 ## Multivariate Scalar-State Models
 
 The multivariate dynamic models use the same scalar-state strategy contract:

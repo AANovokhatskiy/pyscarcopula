@@ -251,10 +251,30 @@ backend actually selected at the fitted parameters.
 The fitted result also retains every Jacobi option that changes subsequent
 likelihood or prediction semantics: `transition_method`, `gh_order`,
 `spectral_basis_order`, `spectral_quad_order`, `tau_eps`, `theta_cap`,
-`clip_negative`, `negative_mass_tol`, and `stationary_shape_max`. Stateless
-API calls and models restored from JSON reconstruct the strategy from these
-fields. Explicit kwargs passed to a later API call still override the stored
-values.
+`clip_negative`, `negative_mass_tol`, `stationary_shape_max`,
+`transition_storage`, `stationarity_correction`,
+`sampling_method`, `lamperti_substeps`, `lamperti_boundary`, `lamperti_eps`,
+`lamperti_engine`, `lamperti_chunk_observations`, and a configured
+`memory_budget_bytes`. Stateless API calls and models restored from JSON
+reconstruct the strategy from these fields. Explicit kwargs passed to a later
+API call still override the stored values.
+
+Unconditional sampling defaults to the transition-matrix grid used by the
+likelihood. An experimental `sampling_method='lamperti_euler'` instead
+simulates a continuous tau path with substepped Euler--Maruyama in the
+Lamperti coordinate. It is useful as an independent discretization comparison
+but does not change the fitting backend and is not an exact diffusion sampler.
+Its Numba kernel is strictly sequential and consumes Gaussian innovations
+created by the caller's NumPy generator in bounded chunks. The Python engine
+remains available as a pathwise reference implementation.
+
+For an explicit moving-grid local transition,
+`transition_storage='sparse'` selects the `O(K * gh_order)` sparse filtering
+and prediction backend. The default is `'dense'`; sparse storage is not
+currently available for `auto`, spectral, or `local_fixed` transitions.
+`stationarity_correction='mh'` is an experimental sparse-only option applied
+consistently to likelihood, prediction, state filtering, and `tm_grid`
+sampling. It is incompatible with `analytical_grad=True`.
 
 For high-frequency data, the code uses `dt = 1 / (T - 1)`. Large `T` therefore
 produces very narrow one-step Jacobi transitions. In this regime the local

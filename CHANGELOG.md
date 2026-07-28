@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+- Add an opt-in sparse moving-grid Jacobi transition backend for likelihood,
+  filtering, prediction, state distributions, and exact fixed-seed grid
+  sampling equivalence. Add deterministic full-horizon diagnostics and an
+  experimental end-to-end MH stationarity correction; dense/auto defaults
+  remain unchanged.
+- Add an experimental `lamperti_euler` unconditional sampler for
+  SCAR-TM-JACOBI with strict options, substeps, constant-time reflection,
+  boundary-intervention diagnostics, memory preflight, persistence, and vine
+  adapter support. The likelihood-consistent `tm_grid` sampler remains the
+  default.
+- Add a strictly sequential Numba Lamperti kernel with chunked NumPy
+  innovations, a Python reference engine, pathwise/chunk-size equivalence
+  checks, boundary-singular diagnostics, and an opt-in million-update
+  performance gate. `parallel=True` is permanently forbidden for trajectory
+  kernels.
+- Add an ensemble comparison tool for Jacobi stationary Beta error,
+  conditional first moments, KS/TV distance, boundary interventions, and
+  runtime. Exact Wright--Fisher sampling remains out of scope.
+- Prevent a vector Jacobi `alpha0` from being forwarded to the scalar MLE used
+  for fixed-family C-/R-vine edge selection.
+
 ## 0.19.0 - 2026-07-26
 
 Version: `0.18.0` -> `0.19.0`

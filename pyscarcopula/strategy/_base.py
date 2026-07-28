@@ -495,7 +495,27 @@ def get_strategy_for_result(result: FitResult,
                 result, 'negative_mass_tol', 1e-5),
             'stationary_shape_max': getattr(
                 result, 'stationary_shape_max', 500.0),
+            'transition_storage': getattr(
+                result, 'transition_storage', 'dense'),
+            'stationarity_correction': getattr(
+                result, 'stationarity_correction', 'none'),
+            'sampling_method': getattr(
+                result, 'sampling_method', 'tm_grid'),
+            'lamperti_substeps': getattr(
+                result, 'lamperti_substeps', 8),
+            'lamperti_boundary': getattr(
+                result, 'lamperti_boundary', 'reflect'),
+            'lamperti_eps': getattr(
+                result, 'lamperti_eps', 1e-10),
+            'lamperti_engine': getattr(
+                result, 'lamperti_engine', 'numba'),
+            'lamperti_chunk_observations': getattr(
+                result, 'lamperti_chunk_observations', 4096),
         })
+        memory_budget_bytes = getattr(
+            result, 'memory_budget_bytes', None)
+        if memory_budget_bytes is not None:
+            result_kwargs['memory_budget_bytes'] = memory_budget_bytes
 
     result_kwargs.update(kwargs)
     return get_strategy(result.method, config=config, **result_kwargs)

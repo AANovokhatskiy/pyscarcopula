@@ -138,7 +138,16 @@ def test_legacy_jacobi_result_without_semantic_options_uses_defaults():
             "theta_cap",
             "clip_negative",
             "negative_mass_tol",
-            "stationary_shape_max"):
+            "stationary_shape_max",
+            "transition_storage",
+            "stationarity_correction",
+            "sampling_method",
+            "lamperti_substeps",
+            "lamperti_boundary",
+            "lamperti_eps",
+            "lamperti_engine",
+            "lamperti_chunk_observations",
+            "memory_budget_bytes"):
         payload["fields"].pop(name)
 
     loaded = _from_jsonable(payload)
@@ -148,6 +157,15 @@ def test_legacy_jacobi_result_without_semantic_options_uses_defaults():
     assert not loaded.clip_negative
     assert loaded.negative_mass_tol == pytest.approx(1e-5)
     assert loaded.stationary_shape_max == pytest.approx(500.0)
+    assert loaded.transition_storage == "dense"
+    assert loaded.stationarity_correction == "none"
+    assert loaded.sampling_method == "tm_grid"
+    assert loaded.lamperti_substeps == 8
+    assert loaded.lamperti_boundary == "reflect"
+    assert loaded.lamperti_eps == pytest.approx(1e-10)
+    assert loaded.lamperti_engine == "numba"
+    assert loaded.lamperti_chunk_observations == 4096
+    assert loaded.memory_budget_bytes is None
 
 
 def test_jacobi_semantic_options_model_roundtrip(tmp_path):
@@ -165,6 +183,13 @@ def test_jacobi_semantic_options_model_roundtrip(tmp_path):
         clip_negative=True,
         negative_mass_tol=2e-7,
         stationary_shape_max=None,
+        sampling_method="lamperti_euler",
+        lamperti_substeps=4,
+        lamperti_boundary="clip",
+        lamperti_eps=2e-9,
+        lamperti_engine="python",
+        lamperti_chunk_observations=3,
+        memory_budget_bytes=2_000_000,
         smart_init=False,
         maxiter=2,
         maxfun=20,
@@ -184,6 +209,13 @@ def test_jacobi_semantic_options_model_roundtrip(tmp_path):
     assert loaded_result.clip_negative
     assert loaded_result.negative_mass_tol == pytest.approx(2e-7)
     assert loaded_result.stationary_shape_max is None
+    assert loaded_result.sampling_method == "lamperti_euler"
+    assert loaded_result.lamperti_substeps == 4
+    assert loaded_result.lamperti_boundary == "clip"
+    assert loaded_result.lamperti_eps == pytest.approx(2e-9)
+    assert loaded_result.lamperti_engine == "python"
+    assert loaded_result.lamperti_chunk_observations == 3
+    assert loaded_result.memory_budget_bytes == 2_000_000
     assert log_likelihood(loaded, u, loaded_result) == pytest.approx(
         result.log_likelihood, rel=1e-12, abs=1e-12)
     np.testing.assert_allclose(

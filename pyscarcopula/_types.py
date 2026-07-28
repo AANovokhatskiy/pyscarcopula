@@ -604,6 +604,16 @@ class LatentResult(FitResultBase):
     clip_negative: bool = False
     negative_mass_tol: float = 1e-5
     stationary_shape_max: float | None = 500.0
+    # Unconditional Jacobi sampling configuration.
+    sampling_method: str = "tm_grid"
+    lamperti_substeps: int = 8
+    lamperti_boundary: str = "reflect"
+    lamperti_eps: float = 1e-10
+    lamperti_engine: str = "numba"
+    lamperti_chunk_observations: int = 4096
+    memory_budget_bytes: int | None = None
+    transition_storage: str = "dense"
+    stationarity_correction: str = "none"
 
     def __post_init__(self):
         parameter_count = self.parameter_count
@@ -635,6 +645,11 @@ class LatentResult(FitResultBase):
             lines.append(f"     grid_range: {self.grid_range}")
         if self.transition_method is not None:
             lines.append(f"transition_method: {self.transition_method}")
+        if self.transition_storage != "dense":
+            lines.append(f"transition_storage: {self.transition_storage}")
+        if self.stationarity_correction != "none":
+            lines.append(
+                f"stationarity_correction: {self.stationarity_correction}")
         if self.max_K is not None:
             lines.append(f"          max_K: {self.max_K}")
         if self.gh_order is not None:

@@ -340,9 +340,14 @@ def _make_fixed_copula(spec, transform_type):
 def _fit_with_strategy(copula, u_pair, method, config, fit_kwargs):
     from pyscarcopula.strategy._base import get_strategy
 
+    fit_call_kwargs = dict(fit_kwargs)
+    if str(method).lower() == "mle" and "alpha0" in fit_call_kwargs:
+        alpha0 = np.asarray(fit_call_kwargs["alpha0"])
+        if alpha0.size != 1:
+            fit_call_kwargs.pop("alpha0")
     strategy_kwargs = {
         key: value
-        for key, value in fit_kwargs.items()
+        for key, value in fit_call_kwargs.items()
         if key not in (
             "alpha0",
             "gamma0",
@@ -363,7 +368,7 @@ def _fit_with_strategy(copula, u_pair, method, config, fit_kwargs):
         )
     }
     strategy = get_strategy(method, config=config, **strategy_kwargs)
-    return strategy.fit(copula, u_pair, **fit_kwargs)
+    return strategy.fit(copula, u_pair, **fit_call_kwargs)
 
 
 def _pair_from_result(

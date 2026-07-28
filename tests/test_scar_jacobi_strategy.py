@@ -50,6 +50,8 @@ def test_scar_jacobi_strategy_is_registered():
     )
     assert strategy.basis_order == 3
     assert strategy.transition_method == 'auto'
+    assert strategy.transition_storage == 'dense'
+    assert strategy.stationarity_correction == 'none'
     assert strategy.negative_mass_tol == pytest.approx(1e-5)
 
 
@@ -70,6 +72,77 @@ def test_scar_jacobi_transition_method_legacy_aliases_are_rejected():
                    'local_fixed_grid', 'coeff', 'coefficient'):
         with pytest.raises(ValueError, match='transition_method'):
             get_strategy('scar-tm-jacobi', transition_method=legacy)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"transition_storage": "invalid"},
+        {"stationarity_correction": "invalid"},
+        {
+            "transition_method": "auto",
+            "transition_storage": "sparse",
+        },
+        {
+            "transition_method": "local",
+            "stationarity_correction": "mh",
+        },
+        {
+            "transition_method": "local",
+            "transition_storage": "sparse",
+            "analytical_grad": True,
+        },
+    ],
+)
+def test_scar_jacobi_rejects_invalid_sparse_backend_combinations(kwargs):
+    with pytest.raises((TypeError, ValueError)):
+        get_strategy("scar-tm-jacobi", **kwargs)
+
+
+def test_scar_jacobi_sparse_backend_routes_all_forward_operations():
+    u = np.random.default_rng(21).uniform(0.05, 0.95, size=(25, 2))
+    copula = GumbelCopula()
+    common = {
+        "transition_method": "local",
+        "basis_order": 8,
+        "quad_order": 32,
+        "gh_order": 5,
+        "smart_init": False,
+    }
+    dense = get_strategy(
+        "scar-tm-jacobi", transition_storage="dense", **common)
+    sparse = get_strategy(
+        "scar-tm-jacobi", transition_storage="sparse", **common)
+    args = (1.2, 0.4, 0.25, u, copula)
+
+    assert sparse._loglik(*args) == pytest.approx(
+        dense._loglik(*args), abs=2e-13)
+    np.testing.assert_allclose(
+        sparse._predictive_mean(*args),
+        dense._predictive_mean(*args),
+        rtol=0.0,
+        atol=3e-14,
+    )
+    np.testing.assert_allclose(
+        sparse._mixture_h(*args),
+        dense._mixture_h(*args),
+        rtol=0.0,
+        atol=3e-14,
+    )
+    sparse_pair = sparse._mixture_h_pair(*args)
+    dense_pair = dense._mixture_h_pair(*args)
+    np.testing.assert_allclose(
+        sparse_pair[0], dense_pair[0], rtol=0.0, atol=3e-14)
+    np.testing.assert_allclose(
+        sparse_pair[1], dense_pair[1], rtol=0.0, atol=3e-14)
+    for horizon in ("current", "next"):
+        sparse_state = sparse._state_distribution(
+            *args, horizon=horizon)
+        dense_state = dense._state_distribution(
+            *args, horizon=horizon)
+        np.testing.assert_array_equal(sparse_state[0], dense_state[0])
+        np.testing.assert_allclose(
+            sparse_state[1], dense_state[1], rtol=0.0, atol=3e-14)
 
 
 def test_scar_jacobi_validates_optimizer_bounds():
@@ -620,6 +693,8 @@ def test_scar_jacobi_get_strategy_for_result_restores_options():
         success=True,
         params=jacobi_params(1.2, 0.35, 0.25),
         transition_method='local',
+        transition_storage='sparse',
+        stationarity_correction='mh',
         gh_order=7,
         spectral_basis_order=7,
         spectral_quad_order=31,
@@ -637,6 +712,8 @@ def test_scar_jacobi_get_strategy_for_result_restores_options():
     assert strategy.basis_order == 7
     assert strategy.quad_order == 31
     assert strategy.transition_method == 'local'
+    assert strategy.transition_storage == 'sparse'
+    assert strategy.stationarity_correction == 'mh'
     assert strategy.gh_order == 7
     assert strategy.tau_eps == pytest.approx(2e-5)
     assert strategy.theta_cap == pytest.approx(3.5)

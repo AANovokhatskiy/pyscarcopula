@@ -15,6 +15,7 @@ tools/*
 !tools/allocation_probe.c
 !tools/native_dependency_audit.py
 !tools/write_release_metadata.py
+!tools/validate_jacobi_sampling.py
 benchmarks/
 scripts/
 results/

@@ -12,6 +12,7 @@ from pyscarcopula.numerical._arrays import (
 )
 from pyscarcopula.numerical import copula_native
 from pyscarcopula.numerical._transition_methods import (
+    normalize_jacobi_stationarity_correction,
     normalize_jacobi_matrix_transition_method,
 )
 
@@ -797,6 +798,7 @@ def sample_jacobi_grid_trajectory(
         clip_negative=False,
         negative_mass_tol=1e-5,
         gh_order=5,
+        stationarity_correction="none",
         memory_budget_bytes=None,
         return_diagnostics=False):
     """Sample the discrete Jacobi Markov model used by matrix likelihoods.
@@ -806,6 +808,8 @@ def sample_jacobi_grid_trajectory(
     ``K x K`` array.
     """
     n = _validate_nonnegative_int(n, "n")
+    stationarity_correction = normalize_jacobi_stationarity_correction(
+        stationarity_correction)
     if n == 0:
         empty = np.empty(0, dtype=np.float64)
         if return_diagnostics:
@@ -825,6 +829,70 @@ def sample_jacobi_grid_trajectory(
         quad_order = default_quad_order(basis_order)
     quad_order = _validate_jacobi_order(quad_order, "quad_order")
     gh_order = _validate_jacobi_order(gh_order, "gh_order")
+
+    requested_method = str(transition_method).lower()
+    sampling_method = (
+        "auto" if requested_method == "spectral_coeff"
+        else requested_method)
+    if stationarity_correction != "none" and sampling_method != "local":
+        raise ValueError(
+            "stationarity_correction currently requires "
+            "transition_method='local'")
+    if n > 1 and sampling_method == "local":
+        from pyscarcopula.numerical.jacobi_sparse import (
+            jacobi_sparse_local_transition,
+            sample_sparse_jacobi_trajectory,
+        )
+
+        tau_grid, stationary_prob, sparse_transition, diagnostics = (
+            jacobi_sparse_local_transition(
+                kappa,
+                m,
+                xi,
+                n_obs=n,
+                quad_order=quad_order,
+                basis_order=basis_order,
+                gh_order=gh_order,
+                correction=stationarity_correction,
+                memory_budget_bytes=memory_budget_bytes,
+                return_diagnostics=True,
+            )
+        )
+        budget = (
+            DEFAULT_JACOBI_MEMORY_BUDGET_BYTES
+            if memory_budget_bytes is None
+            else memory_budget_bytes)
+        retained_bytes = (
+            sparse_transition.retained_bytes
+            + tau_grid.nbytes
+            + stationary_prob.nbytes
+            + n * np.dtype(np.float64).itemsize)
+        validate_float64_allocation(
+            ((retained_bytes + 7) // 8,),
+            name="sparse Jacobi sampling workspace",
+            memory_budget_bytes=budget,
+        )
+        path = sample_sparse_jacobi_trajectory(
+            tau_grid,
+            stationary_prob,
+            sparse_transition,
+            n,
+            rng=rng,
+            memory_budget_bytes=budget,
+        )
+        if return_diagnostics:
+            diagnostics = dict(diagnostics)
+            diagnostics.update({
+                "transition_method_requested": requested_method,
+                "sampling_transition_method_requested": sampling_method,
+                "model_transition_method_requested": requested_method,
+                "transition_method": "local",
+                "transition_storage": "sparse",
+                "n": n,
+            })
+            return path, diagnostics
+        return path
+
     _validate_jacobi_sampling_workspace(
         n=n,
         quad_order=quad_order,
@@ -833,11 +901,6 @@ def sample_jacobi_grid_trajectory(
     )
     if rng is None:
         rng = np.random.default_rng()
-
-    requested_method = str(transition_method).lower()
-    sampling_method = (
-        "auto" if requested_method == "spectral_coeff"
-        else requested_method)
 
     if n == 1:
         if sampling_method == "local_fixed":
