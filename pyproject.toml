@@ -43,6 +43,10 @@ dependencies = [
 [project.optional-dependencies]
 test = ["pytest>=7.0", "pandas>=1.5"]
 examples = ["pandas>=1.5", "matplotlib", "jupyter"]
+docs = [
+    "mkdocs-material>=9.5",
+    "mkdocstrings[python]>=0.25",
+]
 
 [project.urls]
 Homepage = "https://github.com/AANovokhatskiy/pyscarcopula"

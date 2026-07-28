@@ -208,7 +208,8 @@ def test_complete_public_documentation_examples_execute():
     for relative_path in (
             "docs/index.md",
             "docs/api/copulas.md",
-            "docs/api/persistence.md"):
+            "docs/api/persistence.md",
+            "docs/guide/performance.md"):
         path = ROOT / relative_path
         namespace = {"__name__": "__documentation_example__"}
         for source in _python_blocks(path):
@@ -223,6 +224,162 @@ def test_complete_public_documentation_examples_execute():
         == (200,)
     )
     assert namespaces["docs/api/persistence.md"]["samples"].shape == (20, 2)
+    assert np.isfinite(
+        namespaces["docs/guide/performance.md"]["result"].log_likelihood)
+
+
+def test_quick_start_executes_as_one_workflow():
+    path = ROOT / "docs/getting-started/quickstart.md"
+    namespace = {"__name__": "__documentation_example__"}
+    for source in _python_blocks(path):
+        exec(compile(source, filename=str(path), mode="exec"), namespace)
+
+    assert namespace["u"].shape == (400, 2)
+    assert namespace["u_pred"].shape == (100_000, 2)
+    assert namespace["u_cond"].shape == (20_000, 2)
+    assert namespace["v"].shape == (2_000, 2)
+
+
+def test_bivariate_guide_executes_as_one_workflow():
+    from pyscarcopula import GumbelCopula
+
+    path = ROOT / "docs/guide/bivariate.md"
+    u = GumbelCopula(rotate=180).sample_at_parameter(
+        80,
+        np.full(80, 1.5),
+        rng=np.random.default_rng(9),
+    )
+    namespace = {
+        "__name__": "__documentation_example__",
+        "u": u,
+    }
+    for source in _python_blocks(path):
+        exec(compile(source, filename=str(path), mode="exec"), namespace)
+
+    assert namespace["u_pred"].shape == (100_000, 2)
+    assert namespace["u_cond"].shape == (20_000, 2)
+    assert namespace["u_current"].shape == (20_000, 2)
+    assert namespace["r_t"].shape == (80,)
+
+
+def test_factor_api_intro_example_executes():
+    path = ROOT / "docs/api/multivariate_models.md"
+    source = next(
+        block for block in _python_blocks(path)
+        if "FactorStudentEvaluator(operator, u).evaluate" in block
+    )
+    namespace = {"__name__": "__documentation_example__"}
+    exec(compile(source, filename=str(path), mode="exec"), namespace)
+
+    evaluation = namespace["evaluation"]
+    assert evaluation.log_pdf.shape == (50,)
+    assert np.isfinite(evaluation.log_likelihood)
+
+
+def test_static_multivariate_docs_do_not_claim_predictive_mean():
+    path = ROOT / "docs/guide/multivariate_models.md"
+    text = path.read_text(encoding="utf-8")
+    common_api = text.split("## Common API", 1)[1]
+    static_example = common_api.split(
+        "Dynamic scalar-parameter models", 1)[0]
+
+    assert "cop = GaussianCopula()" in static_example
+    assert "cop.predictive_mean(" not in static_example
+
+
+def test_documented_dynamic_predictive_mean_examples_execute():
+    path = ROOT / "docs/guide/multivariate_models.md"
+    blocks = _python_blocks(path)
+
+    student_source = next(
+        block for block in blocks
+        if "# GAS is also supported" in block
+    )
+    student_namespace = {
+        "__name__": "__documentation_example__",
+        "returns": np.random.default_rng(20260728).standard_normal((60, 6)),
+    }
+    exec(
+        compile(student_source, filename=str(path), mode="exec"),
+        student_namespace,
+    )
+    assert student_namespace["df_t"].shape == (60,)
+
+    setup_source = next(
+        block for block in blocks
+        if "np.fill_diagonal(R, 1.0)" in block
+    )
+    dynamic_source = next(
+        block for block in blocks
+        if "dynamic.predictive_mean(u)" in block
+    )
+    equicorr_namespace = {"__name__": "__documentation_example__"}
+    exec(
+        compile(setup_source, filename=str(path), mode="exec"),
+        equicorr_namespace,
+    )
+    exec(
+        compile(dynamic_source, filename=str(path), mode="exec"),
+        equicorr_namespace,
+    )
+    assert equicorr_namespace["rho_t"].shape == (200,)
+
+
+def test_documented_prediction_defaults_match_runtime():
+    from pyscarcopula import CVineCopula, VineCopula
+    from pyscarcopula.api import predict
+
+    for callable_ in (predict, CVineCopula.predict, VineCopula.predict):
+        parameters = inspect.signature(callable_).parameters
+        assert parameters["horizon"].default == "next"
+
+    for callable_ in (CVineCopula.predict, VineCopula.predict):
+        parameters = inspect.signature(callable_).parameters
+        assert parameters["predictive_r_mode"].default is None
+
+    vine_parameters = inspect.signature(VineCopula.predict).parameters
+    assert "conditional_method" not in vine_parameters
+    assert vine_parameters["dynamic_conditioning"].default == "ignore"
+    assert vine_parameters["return_diagnostics"].default is False
+
+
+def test_relative_markdown_links_resolve():
+    pattern = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
+    for path in sorted((ROOT / "docs").rglob("*.md")):
+        for raw_target in pattern.findall(
+                path.read_text(encoding="utf-8")):
+            target = raw_target.split("#", 1)[0]
+            if not target or re.match(r"^[a-z]+://", target):
+                continue
+            resolved = (path.parent / target).resolve()
+            assert resolved.exists(), (
+                f"{path.relative_to(ROOT)} links to missing {target}")
+
+
+def test_conditional_method_is_documented_as_diagnostics_only():
+    prediction_guide = (
+        ROOT / "docs/guide/prediction-semantics.md"
+    ).read_text(encoding="utf-8")
+    vine_guide = (
+        ROOT / "docs/guide/vine.md"
+    ).read_text(encoding="utf-8")
+
+    assert "an output diagnostics field" in prediction_guide
+    assert "does not accept `conditional_method`" in vine_guide
+
+    for path in DOC_FILES:
+        for source in _python_blocks(path):
+            tree = ast.parse(source, filename=str(path))
+            for call in (
+                    node for node in ast.walk(tree)
+                    if isinstance(node, ast.Call)):
+                assert all(
+                    keyword.arg != "conditional_method"
+                    for keyword in call.keywords
+                ), (
+                    f"{path.relative_to(ROOT)} passes diagnostics-only "
+                    "conditional_method as an argument"
+                )
 
 
 def test_documented_public_imports():

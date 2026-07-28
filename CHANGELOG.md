@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.19.1 - 2026-07-26
 
 - Add an opt-in sparse moving-grid Jacobi transition backend for likelihood,
   filtering, prediction, state distributions, and exact fixed-seed grid

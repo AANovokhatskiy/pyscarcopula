@@ -23,8 +23,11 @@ combinations fail before optimization starts.
 All dynamic methods return a `LatentResult` with `params`,
 `log_likelihood`, optimizer status, and enough metadata for `predict`,
 `predictive_mean`, and GoF utilities. Model sampling is available where the
-strategy implements a path simulator; SCAR-TM-JACOBI supports prediction but
-not `sample`.
+strategy implements a path simulator. SCAR-TM-JACOBI supports both
+unconditional `sample` and conditional or unconditional `predict`.
+Its default unconditional sampler is the likelihood-consistent
+`sampling_method='tm_grid'`; experimental `sampling_method='lamperti_euler'`
+is available as an opt-in continuous-path approximation.
 
 ## Gradient capability matrix
 
@@ -101,8 +104,8 @@ $$
 
 The score $s_t$ is the scaled derivative of the current copula log-density
 with respect to the recursion state. Conditional on past data, GAS has a point
-state rather than a latent-state distribution. It is usually faster than SCAR
-because there is no latent-state integral.
+state rather than a latent-state distribution, so its likelihood avoids the
+latent-state integration required by SCAR.
 
 ```python
 result = fit(
@@ -119,7 +122,7 @@ GAS uses the compiled evaluator for likelihood, score recursion, state
 updates, prediction, and the bivariate Rosenblatt path for supported built-in
 copulas. Unsupported copulas and missing compiled support fail immediately.
 
-`scaling='unit'` is the recommended production mode. `scaling='fisher'` uses
+Use `scaling='unit'` as the numerical baseline. `scaling='fisher'` uses
 nested finite differences and clipping/floor thresholds; its fitted optimum
 can be sensitive to optimizer finite-difference steps.
 
@@ -146,8 +149,8 @@ Gauss-Hermite. If spectral evaluation fails numerically, `auto` tries the
 matrix grid likelihood first and then the local method when the matrix path is
 not accepted.
 
-SCAR-TM-OU uses the package C++ extension as its only production numerical
-engine.
+SCAR-TM-OU requires the package C++ extension; no Python fallback implements
+this public fitting path.
 
 ```python
 result = fit(
@@ -291,9 +294,9 @@ diagnostic only and never changes the fitted order.
 
 For high-frequency data, the code uses `dt = 1 / (T - 1)`. Large `T` therefore
 produces very narrow one-step Jacobi transitions. In this regime the local
-transition is often the stable and accurate default; increasing
-`basis_order` can be useful as a diagnostic but is not usually needed for
-routine fitting.
+transition produces a nonnegative row-normalized matrix. Change
+`basis_order` only when comparing the spectral approximation against the local
+backend; otherwise leave backend selection to `transition_method='auto'`.
 
 ## Sampling, Prediction, and Diagnostics
 

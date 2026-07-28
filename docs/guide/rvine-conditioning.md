@@ -81,9 +81,9 @@ When `conditional_method == "dag_mcmc"`, diagnostics include advanced details:
 - `dag_edges_used`: fitted R-vine edges used by the initializer;
 - `mcmc`: proposed moves, accepted moves, acceptance rate, and step count.
 
-This fallback supports arbitrary conditioning, but it is more expensive than
-suffix sampling. Prefer suffix-compatible structures for high-volume
-production paths when possible.
+This fallback supports arbitrary conditioning but performs MCMC refinement.
+For repeated predictions with the same conditioning variables, fit with
+`given_vars` so the exact suffix path can avoid that per-call refinement.
 
 For strongly dependent or high-dimensional conditional targets, increase
 `mcmc_steps` and inspect `diagnostics["mcmc"]["low_acceptance_warning"]`.
@@ -209,8 +209,9 @@ Common skip reasons:
 
 ## Practical Guidance
 
-Use `given_vars` during fit when the production conditioning set is known and
-must be fast. Use direct `given` at prediction time for ad hoc conditioning.
+Use `given_vars` during fit when the conditioning indices are known in advance
+and prediction must avoid MCMC refinement. Use direct `given` at prediction
+time for ad hoc conditioning.
 
 Use `return_diagnostics=True` when validating a new conditional workflow. It
 shows whether prediction used the exact suffix path or the approximate

@@ -96,8 +96,9 @@ Dense matrix-vector, Cholesky, SPD-solve, and triangular kernels are provided
 by an internal C++17 layer. The extension does not depend on Eigen, BLAS, or
 OpenMP and therefore does not introduce a second, hidden thread pool. Scalar
 and portable compiler-vectorizable reduction backends are retained for
-cross-backend correctness tests; production paths use the portable backend
-only where end-to-end measurements justify it.
+cross-backend correctness tests. Runtime paths use the portable reduction
+only for kernels whose end-to-end benchmarks pass the recorded performance
+gate.
 
 ## Numerical Safety Boundaries
 

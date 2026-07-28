@@ -10,11 +10,10 @@ import numpy as np
 from scipy.stats import norm
 
 rng = np.random.default_rng(2026)
-d = 6
+d = 2
 rho = 0.45
 R = (1.0 - rho) * np.eye(d) + rho * np.ones((d, d))
-u_6d = norm.cdf(rng.multivariate_normal(np.zeros(d), R, size=400))
-u = u_6d[:, :2]
+u = norm.cdf(rng.multivariate_normal(np.zeros(d), R, size=400))
 ```
 
 For application data, replace this simulated array with column-wise ranks
@@ -77,86 +76,16 @@ u_cond = copula.predict(
 )
 ```
 
-## Fit a stochastic Student-t copula
-
-```python
-from pyscarcopula import StochasticStudentCopula
-
-student = StochasticStudentCopula(d=u_6d.shape[1], corr_mode="shrinkage")
-student_result = student.fit(u_6d, method="scar-tm-ou")
-
-# The dynamic parameter is the Student-t degrees of freedom.
-df_t = student.predictive_mean()
-u_student_pred = student.predict(10_000, rng=np.random.default_rng(2027))
-```
-
-## Fit a multivariate vine
-
-```python
-from pyscarcopula import VineCopula
-
-vine = VineCopula()
-vine.fit(
-    u_6d,
-    method="scar-tm-ou",
-    truncation_level=2,
-    min_edge_logL=10,
-    given_vars=[2],
-)
-vine.summary()
-
-# Vine sampling and prediction
-v6 = vine.sample(2_000, rng=np.random.default_rng(2028))
-u_pred_6d = vine.predict(100_000, rng=np.random.default_rng(2029))
-
-# Conditional vine forecast: fix one variable
-u_pred_6d_cond = vine.predict(
-    20_000,
-    given={2: 0.6},
-    horizon="next",
-    rng=np.random.default_rng(2030),
-)
-```
-
-This lets the R-vine fit choose a structure suited to the variables you expect
-to condition on later.
-
 Use a fresh `np.random.default_rng(seed)` when you need exactly reproducible
 Monte Carlo output.
 
-For more conditional prediction controls, see
+For multivariate dynamic models, continue with
+[Multivariate Models](../guide/multivariate_models.md) or
+[Factor Models](../guide/factor-models.md). For vine construction and
+conditional sampling, see [Vine Copulas](../guide/vine.md),
 [Prediction Semantics](../guide/prediction-semantics.md) and
 [R-vine Conditioning](../guide/rvine-conditioning.md).
 
-## Available copula families
-
-| Family | Class | Rotations | SCAR-OU | SCAR-Jacobi |
-|--------|-------|-----------|---------|--------------|
-| Gumbel | `GumbelCopula` | 0, 90, 180, 270 | Yes | Yes |
-| Clayton | `ClaytonCopula` | 0, 90, 180, 270 | Yes | Yes |
-| Frank | `FrankCopula` | 0 | Yes | Yes |
-| Joe | `JoeCopula` | 0, 90, 180, 270 | Yes | Yes |
-| Independence | `IndependentCopula` | - | - | - |
-| Gaussian | `BivariateGaussianCopula` | - | Yes | Yes |
-| Equicorrelation | `EquicorrGaussianCopula` | - | Yes | No |
-| Stochastic Student-t | `StochasticStudentCopula` | - | Yes | No |
-| Gaussian (d-dim) | `GaussianCopula` | - | MLE only | No |
-| Student-t (d-dim) | `StudentCopula` | - | MLE only | No |
-
-`scar-tm-jacobi` additionally requires a Kendall-tau parameter mapping; this is
-implemented for Gumbel, Clayton, Frank, Joe, and bivariate Gaussian copulas.
-
-Multivariate models can be imported from `pyscarcopula` or from
-`pyscarcopula.copula.multivariate`.
-
-## Available estimation methods
-
-| Method | Key | Description |
-|--------|-----|-------------|
-| MLE | `'mle'` | Constant copula parameter |
-| SCAR-TM-OU | `'scar-tm-ou'` | Transfer matrix with OU latent process |
-| SCAR-TM-JACOBI | `'scar-tm-jacobi'` | Transfer matrix with Jacobi Kendall-tau dynamics |
-| GAS | `'gas'` | Observation-driven score model |
-
 For guidance on which family and estimation method to use, continue with
-[Choosing a Model](choosing-a-model.md).
+[Choosing a Model](choosing-a-model.md) and
+[Estimation Methods](../guide/estimation-methods.md).

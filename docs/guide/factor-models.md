@@ -24,8 +24,8 @@ The implementation has three separate layers:
 | Model adapter | `GaussianCopula`, `StochasticStudentCopula`, `FactorStudentEvaluator` | Marginal transforms, likelihood, fitting, dynamics, and sampling |
 
 `FactorCorrelation` is independent of Student, Gaussian, GAS, SCAR, and
-optimizer state. This is what allows one prepared operator to be composed
-with different model adapters.
+optimizer state. The same read-only prepared operator can therefore be
+composed with different model adapters.
 
 ### Complexity
 
@@ -222,7 +222,8 @@ can be constant or dynamic:
 
 ### Static MLE with two-stage loadings
 
-This is the production default and the recommended large-dimension path:
+This is the default factor policy. It keeps the main optimizer independent of
+the `d*k` loading coordinates:
 
 ```python
 from pyscarcopula import NumericalConfig, StochasticStudentCopula

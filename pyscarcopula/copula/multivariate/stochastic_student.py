@@ -2109,17 +2109,16 @@ class StochasticStudentCopula(MultivariateCopula):
 
     @model_state_locked
     def predictive_mean(self, u=None):
-        """Return predictive mean df(t) from TM forward pass."""
+        """Return the predictive df path for the fitted strategy."""
         if self.fit_result is None:
-            raise ValueError("Fit with SCAR first")
+            raise ValueError("Fit the model before calling predictive_mean")
         u_data = u if u is not None else getattr(self, '_last_u', None)
         if u_data is None:
             raise ValueError("No data. Pass u= or call fit() first.")
 
-        kappa, mu, nu_ou = self.fit_result.params.values
-        from pyscarcopula.numerical import _cpp_scar_ou
-        return _cpp_scar_ou.predictive_mean(
-            kappa, mu, nu_ou, u_data, self)
+        from pyscarcopula.api import predictive_mean as _predictive_mean
+
+        return _predictive_mean(self, u_data, self.fit_result)
 
     @model_state_locked
     def xT_distribution(self, u, K=300, grid_range=5.0):

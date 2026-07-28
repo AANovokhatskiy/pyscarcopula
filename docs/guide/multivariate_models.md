@@ -160,22 +160,29 @@ Static Student likelihoods retain exact quantiles.
 Static correlation can be handled in three modes:
 
 ```python
+import numpy as np
+from pyscarcopula import StochasticStudentCopula
+
+u = np.random.default_rng(2026).uniform(0.01, 0.99, size=(200, 5))
+R = np.full((5, 5), 0.25)
+np.fill_diagonal(R, 1.0)
+
 # fixed correlation
-cop = StochasticStudentCopula(d=5, R=R, corr_mode="fixed")
+fixed = StochasticStudentCopula(d=5, R=R, corr_mode="fixed")
 
 # one-parameter shrinkage toward identity
-cop = StochasticStudentCopula(d=5, corr_mode="shrinkage")
+shrinkage = StochasticStudentCopula(d=5, corr_mode="shrinkage")
 
 # full static correlation for small dimensions
-cop = StochasticStudentCopula(d=5, corr_mode="cholesky")
+cholesky = StochasticStudentCopula(d=5, corr_mode="cholesky")
 
 # compact fixed factor correlation for large dimensions
-cop = StochasticStudentCopula(
-    d=u.shape[1],
+factor = StochasticStudentCopula(
+    d=5,
     corr_mode="factor",
     factor_rank=3,
 )
-cop.initialize_factor(u)
+factor.initialize_factor(u)
 ```
 
 `shrinkage` and `cholesky` estimate static correlation jointly with constant-df
@@ -258,9 +265,9 @@ pivoted lower-triangular loading convention. Diagnostics report the anchor
 rows, initial/final penalized objective, terminal gradient and acceptance
 threshold, condition estimate, and native reduction workspace. `success=True`
 requires both optimizer success and the terminal-gradient gate. Joint
-loadings for GAS and SCAR are rejected: those methods require additional
-derivatives through their sequential recursions. Use the production
-`two-stage` policy for dynamic models and large `d`.
+loadings for GAS and SCAR are rejected because those methods require loading
+derivatives through their sequential recursions. Dynamic factor models
+therefore require `factor_estimation="two-stage"`.
 
 ```python
 factor_samples = cop.sample_at_parameter(
@@ -304,7 +311,16 @@ For `GaussianCopula(corr_mode="factor")` and factor Student models, the result
 intentionally stores `correlation_matrix=None` and keeps compact loadings and
 uniqueness in `model_parameters`.
 
-All multivariate models support the following core operations where applicable:
+Static `GaussianCopula` and `StudentCopula` expose fitting, likelihood,
+sampling, prediction, conditional sampling, and GoF. They do not expose a
+time-varying parameter path:
+
+| Model | Fit methods | Conditional sampling | `predictive_mean` |
+|---|---|---|---|
+| `GaussianCopula` | MLE | Exact | No |
+| `StudentCopula` | MLE | Exact | No |
+| `EquicorrGaussianCopula` | MLE, GAS, SCAR-TM-OU | Exact | Yes |
+| `StochasticStudentCopula` | MLE, GAS, SCAR-TM-OU | Exact | Yes |
 
 ```python
 # Goodness of fit
@@ -316,9 +332,17 @@ samples = cop.sample(n=10000)
 
 # Prediction (conditional on data)
 pred = cop.predict(n=10000)
+```
 
-# Predictive mean parameter path
-params_t = cop.predictive_mean()
+Dynamic scalar-parameter models additionally expose `predictive_mean`. For
+example, after fitting an `EquicorrGaussianCopula`:
+
+```python
+from pyscarcopula import EquicorrGaussianCopula
+
+dynamic = EquicorrGaussianCopula(d=u.shape[1])
+dynamic.fit(u, method="gas")
+rho_t = dynamic.predictive_mean(u)
 ```
 
 Static Gaussian and Student models also support exact conditional generation

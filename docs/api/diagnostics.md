@@ -28,11 +28,18 @@ Common fit diagnostics to inspect before interpreting GoF results include:
 - SCAR-TM-OU transition attempts and fallback counters such as
   `fallback_spectral_to_matrix`, `fallback_matrix_to_local`,
   `matrix_failures`, and `matrix_capped`;
-- SCAR-TM-JACOBI fields such as `transition_method`, `gradient_kind`,
-  `setup_derivative`, `filter_derivative`, and spectral negative-mass
-  indicators. Options that determine later Jacobi likelihood and prediction
-  semantics are stored as typed `LatentResult` fields rather than only in
-  diagnostics, so they survive stateless dispatch and JSON persistence;
+- SCAR-TM-JACOBI fields such as `transition_method`, `transition_storage`,
+  `stationarity_correction`, `gradient_kind`, `setup_derivative`,
+  `filter_derivative`, and spectral negative-mass indicators. Sparse
+  numerical and validation diagnostics additionally expose `nnz`, `max_width`,
+  `retained_bytes`, `dense_bytes`, and `stationary_error`, together with
+  MH/IPFP-specific correction fields when those experimental corrections are
+  evaluated. Adaptive-order fit diagnostics store the complete initial and
+  fitted-parameter reports as `adaptive_quad_order_initial` and
+  `adaptive_quad_order_final`. Options that determine later Jacobi likelihood,
+  sampling, and prediction semantics are stored as typed `LatentResult` fields
+  rather than only in diagnostics, so they survive stateless dispatch and JSON
+  persistence;
 - Stochastic Student correlation preprocessing fields such as
   `corr_initialization_source`, `corr_projection_applied`,
   `corr_min_eigenvalue_before`, `corr_min_eigenvalue_after`, and

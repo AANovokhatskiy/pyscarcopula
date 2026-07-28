@@ -53,8 +53,8 @@ SCAR filters.
 
 ## Parameter Links
 
-The dynamic state is usually unconstrained, while copula parameters are not.
-The public models therefore use smooth links:
+The public dynamic models use an unconstrained state and map it into the
+copula parameter domain with smooth links:
 
 - positive-parameter families use a shifted softplus link,
   $\Psi(x)=a+\log(1+\exp(x))$;
@@ -105,10 +105,10 @@ s_t =
 \frac{\partial \log c(u_t;\Psi(g_t))}{\partial g_t}.
 $$
 
-Fisher scaling rescales this score by a curvature estimate. It is available
-for experimentation, but it combines finite-difference curvature, clipping,
-and floors inside the recursion, so `scaling='unit'` is the recommended
-production choice.
+Fisher scaling rescales this score by a curvature estimate. It combines
+finite-difference curvature, clipping, and floors inside the recursion.
+`scaling='unit'` avoids those nested numerical operations and is the baseline
+used by the fitting guide.
 
 The compiled GAS evaluator handles likelihood, score recursion, filtering,
 state updates, prediction state, and the bivariate Rosenblatt path for
@@ -189,8 +189,8 @@ $$
 
 `transition_method='local'` avoids a full transition matrix. For each previous
 grid point, it applies a local Gauss-Hermite rule to the conditional Gaussian
-transition and interpolates off-grid values. This is usually safer when the
-one-step OU kernel is very narrow.
+transition and interpolates off-grid values. This avoids representing a
+one-step OU kernel narrower than the spacing of a fixed global grid.
 
 `transition_method='auto'` chooses spectral outside the narrow-kernel regime,
 uses local for small $\kappa dt$, and treats matrix then local as numerical

@@ -19,6 +19,40 @@ from pyscarcopula._utils import pobs
 from pyscarcopula.copula.elliptical import BivariateGaussianCopula
 
 
+@pytest.mark.parametrize(
+    "copula",
+    [
+        EquicorrGaussianCopula(d=3),
+        StochasticStudentCopula(d=3, R=np.eye(3)),
+    ],
+    ids=["equicorr", "stochastic-student"],
+)
+def test_dynamic_predictive_mean_delegates_to_fitted_strategy(
+        monkeypatch, copula):
+    u = np.full((8, 3), 0.5)
+    fit_result = object()
+    copula.fit_result = fit_result
+    copula._last_u = u
+    calls = []
+
+    def fake_predictive_mean(model, data, result):
+        calls.append((model, data, result))
+        return np.arange(len(data), dtype=np.float64)
+
+    monkeypatch.setattr(
+        "pyscarcopula.api.predictive_mean",
+        fake_predictive_mean,
+    )
+
+    if isinstance(copula, StochasticStudentCopula):
+        actual = copula.predictive_mean()
+    else:
+        actual = copula.predictive_mean(u)
+
+    np.testing.assert_array_equal(actual, np.arange(len(u)))
+    assert calls == [(copula, u, fit_result)]
+
+
 def test_gaussian_fit_return_and_state_contract():
     u = pobs(np.random.default_rng(20260620).standard_normal((60, 3)))
     copula = GaussianCopula()

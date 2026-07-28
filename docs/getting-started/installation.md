@@ -66,7 +66,21 @@ pip install -e ".[examples]"
 jupyter lab examples/
 ```
 
-The comparison notebook also uses the optional `pyvinecopulib` package. The `pyscarcopula` often refers to `pyvinecopulib` in docs, but do not use it as a dependence. So install it manually if you need to run the comparision between the libraries.
+The comparison notebook requires the optional `pyvinecopulib` dependency,
+which is not installed with pyscarcopula. Install it separately before running
+`06_pyvinecopulib_comparison.ipynb`.
+
+## Build the documentation
+
+Install the documentation dependencies and run a strict build:
+
+```bash
+pip install -e ".[docs]"
+mkdocs build --strict
+```
+
+The strict build treats unresolved references, invalid navigation entries, and
+other MkDocs warnings as errors.
 
 For a source-tree C++ check, build the extension in place first:
 

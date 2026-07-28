@@ -841,17 +841,12 @@ class EquicorrGaussianCopula(MultivariateCopula):
 
     @model_state_locked
     def predictive_mean(self, u):
+        """Return the predictive parameter path for the fitted strategy."""
         if self.fit_result is None:
-            raise ValueError("Fit with SCAR first")
-        kappa, mu, nu = self.fit_result.params.values
-        from pyscarcopula.numerical import _cpp_scar_ou
-        from pyscarcopula.copula.multivariate.equicorr_prepared import (
-            EquicorrPreparedData,
-        )
-        if isinstance(u, EquicorrPreparedData):
-            return _cpp_scar_ou.prepare_objective(
-                u, self).predictive_mean(kappa, mu, nu)
-        return _cpp_scar_ou.predictive_mean(kappa, mu, nu, u, self)
+            raise ValueError("Fit the model before calling predictive_mean")
+        from pyscarcopula.api import predictive_mean as _predictive_mean
+
+        return _predictive_mean(self, u, self.fit_result)
 
     @model_state_locked
     def xT_distribution(self, u, K=300, grid_range=5.0):
