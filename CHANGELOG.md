@@ -1,7 +1,18 @@
 # Changelog
 
-## 0.19.1 - 2026-07-26
+## 0.19.1 - 2026-07-28
 
+Version: `0.19.0` -> `0.19.1`
+
+- Route stochastic Student prediction through the fitted strategy so MLE,
+  GAS, and SCAR models share the documented `current`/`next` timing,
+  prediction configuration, conditioning, and memory-budget behavior.
+- Correct the SCAR-TM-JACOBI analytical-gradient contract and persist every
+  numerical option that affects likelihood, prediction, sampling, or
+  admissibility when reconstructing a strategy from a fit result.
+- Add likelihood-consistent unconditional SCAR-TM-JACOBI grid-path sampling,
+  including deterministic seeded behavior, bounded allocation checks,
+  persistence, and vine integration.
 - Add an opt-in sparse moving-grid Jacobi transition backend for likelihood,
   filtering, prediction, state distributions, and exact fixed-seed grid
   sampling equivalence. Add deterministic full-horizon diagnostics and an
@@ -34,6 +45,13 @@
   runtime. Exact Wright--Fisher sampling remains out of scope.
 - Prevent a vector Jacobi `alpha0` from being forwarded to the scalar MLE used
   for fixed-family C-/R-vine edge selection.
+- Validate GoF inputs consistently across bivariate, Gaussian, Student,
+  equicorrelation, stochastic Student, C-vine, and R-vine entry points.
+  Reject non-finite, malformed, undersized, or out-of-domain data and invalid
+  bootstrap counts before transforms, refits, or large allocations.
+- Reorganize the numerical-backend documentation, tighten public API and
+  mathematical-contract examples, and validate documented imports,
+  signatures, persistence behavior, and model-selection guidance.
 
 ## 0.19.0 - 2026-07-26
 
@@ -160,7 +178,7 @@ Merge PR: #43 (`2d6ebfc`, 2026-07-26)
 
 Version: `0.17.5` -> `0.18.0`
 
-Commit: `9b99d59`  
+Commit: `9b99d59`<br>
 Merge PR: #41 (`cd87208`, 2026-07-21)
 
 - Adds conditional sampling and prediction for static multivariate Gaussian
@@ -218,7 +236,7 @@ Merge PR: #41 (`cd87208`, 2026-07-21)
 
 Version: `0.17.4` -> `0.17.5`
 
-Commit: `ce8068e`  
+Commit: `ce8068e`<br>
 Merge PR: #40 (`09181f3`, 2026-07-06)
 
 - Adds GAS fitting support for `StochasticStudentCopula`, including fixed-correlation parameter accounting and joint static shrinkage-correlation estimation.
