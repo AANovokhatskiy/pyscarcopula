@@ -1094,6 +1094,9 @@ class StochasticStudentCopula(MultivariateCopula):
         from pyscarcopula._types import MultivariateMLEResult
         from pyscarcopula.numerical._cpp_extension import CppError
 
+        optimizer_options = dict(optimizer_options)
+        optimizer_options.setdefault("ftol", 1e-10)
+
         parameterization, factor0 = (
             FactorLoadingParameterization.from_loadings(
                 self._factor_loadings,

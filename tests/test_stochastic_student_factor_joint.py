@@ -179,9 +179,17 @@ def test_joint_fit_without_supplied_loadings_uses_tiled_start():
     assert model._R is None
 
 
+@pytest.mark.parametrize(
+    ("fit_kwargs", "expected_ftol"),
+    [
+        ({}, 1e-10),
+        ({"ftol": 1e-8}, 1e-8),
+    ],
+)
 def test_optimizer_success_is_rejected_when_joint_gradient_is_large(
-        monkeypatch):
+        monkeypatch, fit_kwargs, expected_ftol):
     observations, loadings = _problem(rows=60, d=5, seed=9810)
+    captured_options = {}
 
     class DummyResult:
         success = True
@@ -189,7 +197,7 @@ def test_optimizer_success_is_rejected_when_joint_gradient_is_large(
         nfev = 1
 
     def fake_minimize(fun, x0, **kwargs):
-        del kwargs
+        captured_options.update(kwargs["options"])
         fun(x0)
         result = DummyResult()
         result.x = np.asarray(x0).copy()
@@ -207,8 +215,9 @@ def test_optimizer_success_is_rejected_when_joint_gradient_is_large(
         factor_estimation="joint",
     )
 
-    result = model.fit(observations, method="mle")
+    result = model.fit(observations, method="mle", **fit_kwargs)
 
+    assert captured_options["ftol"] == pytest.approx(expected_ftol)
     assert not result.success
     assert "rejected by joint factor gradient gate" in result.message
     assert result.diagnostics["joint_gradient_inf_norm"] > (
