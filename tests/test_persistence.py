@@ -22,7 +22,7 @@ from pyscarcopula._types import (
     jacobi_params,
     ou_params,
 )
-from pyscarcopula.api import log_likelihood, predict, predictive_mean
+from pyscarcopula.api import log_likelihood, predict, predictive_mean, sample
 from pyscarcopula.io import _from_jsonable, _to_jsonable
 
 
@@ -209,6 +209,22 @@ def test_jacobi_semantic_options_model_roundtrip(tmp_path):
         ),
         rtol=0.0,
         atol=0.0,
+    )
+    np.testing.assert_array_equal(
+        sample(
+            loaded,
+            u,
+            loaded_result,
+            50,
+            rng=np.random.default_rng(78),
+        ),
+        sample(
+            copula,
+            u,
+            result,
+            50,
+            rng=np.random.default_rng(78),
+        ),
     )
 
 

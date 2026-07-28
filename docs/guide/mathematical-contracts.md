@@ -282,6 +282,27 @@ construction and matrix allocation. A hard order cap prevents accidental
 multi-gigabyte quadratic requests; `memory_budget_bytes` can impose a smaller
 application-specific limit.
 
+Unconditional simulation is defined on this same quadrature state space:
+
+$$
+I_0 \sim w,\qquad
+I_t \mid I_{t-1}=i \sim P_{i,\cdot},\qquad
+\tau_t=\tau_{I_t}.
+$$
+
+Thus sampled latent states are grid atoms, not jittered continuous values,
+and the transition used for likelihood and simulation has the same
+probability contract. With `dt=1/(n-1)`, the spectral first moment satisfies
+
+$$
+\mathbb{E}[\tau_{t+1}\mid\tau_t]
+=m+(\tau_t-m)e^{-\kappa\,dt}.
+$$
+
+The coefficient-only legacy representation uses the probability-safe `auto`
+matrix for unconditional sampling because coefficient recursion does not
+define categorical transition rows.
+
 ## Multivariate Scalar-State Models
 
 The multivariate dynamic models use the same scalar-state strategy contract:

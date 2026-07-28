@@ -33,20 +33,28 @@ from pyscarcopula.numerical.jacobi_tm import (
     jacobi_neg_loglik,
     jacobi_state_distribution,
     jacobi_transition_matrix,
+    sample_jacobi_grid_trajectory,
 )
-from pyscarcopula.numerical._arrays import validate_positive_int
+from pyscarcopula.numerical._arrays import (
+    validate_float64_allocation,
+    validate_positive_int,
+)
 from pyscarcopula.numerical._transition_methods import (
     normalize_jacobi_strategy_transition_method,
 )
 from pyscarcopula.numerical import copula_native
 from pyscarcopula.strategy._base import (
+    copula_dimension,
     lbfgsb_options,
     lbfgsb_overrides,
     register_strategy,
     reject_legacy_tol,
     validate_copula_data,
 )
-from pyscarcopula.strategy.predict_helpers import predict_from_strategy
+from pyscarcopula.strategy.predict_helpers import (
+    predict_from_strategy,
+    sample_predictive,
+)
 from pyscarcopula.strategy.initial_point import (
     _explicit_initialization_diagnostics,
     _initialization_attempt,
@@ -807,12 +815,65 @@ class SCARJacobiStrategy:
         return theta
 
     def sample(self, copula, u, result, n, rng=None, **kwargs):
-        raise NotImplementedError(
-            "Unconditional Jacobi model simulation is not implemented yet")
+        """Sample the fitted discrete Jacobi Markov model unconditionally."""
+        if isinstance(n, (bool, np.bool_)) or not isinstance(
+                n, (int, np.integer)):
+            raise TypeError("n must be a non-negative integer")
+        n = int(n)
+        if n < 0:
+            raise ValueError("n must be non-negative")
+        d = copula_dimension(copula, u)
+        if d is None:
+            raise ValueError("copula dimension is unknown")
+        validate_float64_allocation(
+            (n, int(d) + 1),
+            name="Jacobi sample output and parameter path",
+            memory_budget_bytes=self.memory_budget_bytes,
+        )
+        if n == 0:
+            return np.empty((0, int(d)), dtype=np.float64)
+        if rng is None:
+            rng = np.random.default_rng()
+        theta = self.model_sample_params(
+            copula, result, n, rng=rng, **kwargs)
+        return sample_predictive(
+            copula,
+            n,
+            theta,
+            given=kwargs.get("given"),
+            rng=rng,
+            d=d,
+        )
 
     def model_sample_params(self, copula, result, n, rng=None, **kwargs):
-        raise NotImplementedError(
-            "Unconditional Jacobi parameter-path simulation is not implemented yet")
+        """Return a TM-consistent Jacobi copula-parameter trajectory."""
+        p = result.params
+        tau = sample_jacobi_grid_trajectory(
+            p.kappa,
+            p.m,
+            p.xi,
+            n,
+            rng=rng,
+            basis_order=self.basis_order,
+            quad_order=self.quad_order,
+            transition_method=self.transition_method,
+            clip_negative=self.clip_negative,
+            negative_mass_tol=self.negative_mass_tol,
+            gh_order=self.gh_order,
+            memory_budget_bytes=self.memory_budget_bytes,
+        )
+        if tau.size == 0:
+            return np.empty(0, dtype=np.float64)
+        if copula_native.supported(copula):
+            theta = copula_native.tau_to_param(copula, tau)
+        else:
+            theta = np.asarray(copula.tau_to_param(tau), dtype=np.float64)
+        if self.theta_cap is not None:
+            theta = np.minimum(theta, float(self.theta_cap))
+        if np.any(~np.isfinite(theta)):
+            raise FloatingPointError(
+                "tau_to_param produced non-finite sampling parameters")
+        return np.asarray(theta, dtype=np.float64)
 
     def model_sample_state(self, copula, result, **kwargs):
         return None

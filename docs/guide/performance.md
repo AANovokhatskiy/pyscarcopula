@@ -502,6 +502,29 @@ recompute the ordinary objective at the final point and report
 of a transition matrix. It is available for diagnostic comparisons and does
 not support the analytical-gradient option.
 
+#### Unconditional Jacobi sampling
+
+`sample()` reproduces the same discrete Markov model used by the matrix
+likelihood. It draws the first state from the stationary quadrature masses,
+builds the transition with `dt = 1 / (n - 1)`, converts the probability-safe
+transition to row-wise CDFs in place, and advances quadrature-grid indices.
+The resulting tau atoms are mapped through `tau_to_param`, including the
+fitted `theta_cap`, before the existing copula sampler generates observations.
+
+The selected sampling backend follows the fitted backend. For
+`spectral_coeff`, which has no probability transition matrix, sampling
+explicitly uses `auto` with the fitted basis and quadrature orders. Explicit
+`spectral_matrix` sampling fails if its transition contains material negative
+mass; signed rows are never converted with absolute values.
+
+`n` must be a non-negative integer. `n=0` returns an empty sample without
+advancing the supplied generator, and `n=1` performs only a stationary grid
+draw. Transition construction is `O(K^2 B)` for the spectral backend or
+`O(KG)` for local construction, the in-place CDF is `O(K^2)`, and path
+generation is `O(n log K)`. Peak memory is conservatively checked before
+transition or output allocation. The same parameter-path implementation is
+used by dynamic edges during C-vine and R-vine sampling.
+
 The local method applies a Gaussian step in the Lamperti coordinate
 
 $$

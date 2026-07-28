@@ -299,6 +299,7 @@ class FitStrategy(Protocol):
         Simulates a path of length n with time-varying parameter:
           MLE:     r = const for all t
           SCAR-TM: r(t) = Psi(x(t)), x(t) simulated from OU process
+          SCAR-TM-JACOBI: fitted quadrature-grid Jacobi Markov trajectory
           GAS:     r(t) = Psi(g(t)), g(t) via score-driven recursion
                    on the generated observations
 

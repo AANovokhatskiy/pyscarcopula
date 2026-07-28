@@ -30,6 +30,22 @@ def _validate_jacobi_order(value, name):
     return value
 
 
+def _validate_nonnegative_int(value, name):
+    if isinstance(value, (bool, np.bool_)) or not isinstance(
+            value, (int, np.integer)):
+        raise TypeError(f"{name} must be a non-negative integer")
+    value = int(value)
+    if value < 0:
+        raise ValueError(f"{name} must be non-negative")
+    return value
+
+
+def _raise_jacobi_memory_error(exc):
+    raise MemoryError(
+        f"{exc}; reduce quad_order, basis_order, or the observation "
+        "count, or increase memory_budget_bytes") from exc
+
+
 def _validate_jacobi_workspace(
         *, quad_order, basis_order=1, n_obs=0, gradient=False,
         matrix=True, memory_budget_bytes=None):
@@ -66,9 +82,38 @@ def _validate_jacobi_workspace(
             memory_budget_bytes=memory_budget_bytes,
         )
     except MemoryError as exc:
-        raise MemoryError(
-            f"{exc}; reduce quad_order, basis_order, or the observation "
-            "count, or increase memory_budget_bytes") from exc
+        _raise_jacobi_memory_error(exc)
+
+
+def _validate_jacobi_sampling_workspace(
+        *, n, quad_order, basis_order, memory_budget_bytes=None):
+    """Preflight transition construction, in-place CDF, and the tau path."""
+    n = _validate_nonnegative_int(n, "n")
+    quad_order = _validate_jacobi_order(quad_order, "quad_order")
+    basis_order = _validate_jacobi_order(basis_order, "basis_order")
+    if basis_order > quad_order:
+        raise ValueError("quad_order must be >= basis_order")
+    if memory_budget_bytes is None:
+        memory_budget_bytes = DEFAULT_JACOBI_MEMORY_BUDGET_BYTES
+    k = quad_order
+    b = basis_order
+    transition_elements = 3 * k * k if n > 1 else 0
+    elements = (
+        transition_elements
+        + 2 * k * b
+        + b * b
+        + 12 * k
+        + 4 * b
+        + n
+    )
+    try:
+        return validate_float64_allocation(
+            (elements,),
+            name="Jacobi sampling workspace",
+            memory_budget_bytes=memory_budget_bytes,
+        )
+    except MemoryError as exc:
+        _raise_jacobi_memory_error(exc)
 
 
 def _jacobi_stationary_shape(kappa, m, xi):
@@ -737,6 +782,127 @@ def jacobi_transition_matrix(
     if return_diagnostics:
         return tau, weights, transition, diagnostics
     return tau, weights, transition
+
+
+def sample_jacobi_grid_trajectory(
+        kappa,
+        m,
+        xi,
+        n,
+        *,
+        rng=None,
+        basis_order=32,
+        quad_order=None,
+        transition_method="auto",
+        clip_negative=False,
+        negative_mass_tol=1e-5,
+        gh_order=5,
+        memory_budget_bytes=None,
+        return_diagnostics=False):
+    """Sample the discrete Jacobi Markov model used by matrix likelihoods.
+
+    The returned values are quadrature-grid atoms. The transition matrix is
+    converted to row-wise CDFs in place, so sampling does not retain a second
+    ``K x K`` array.
+    """
+    n = _validate_nonnegative_int(n, "n")
+    if n == 0:
+        empty = np.empty(0, dtype=np.float64)
+        if return_diagnostics:
+            return empty, {
+                "transition_method_requested": str(transition_method),
+                "transition_method": "not_built",
+                "n": 0,
+            }
+        return empty
+
+    shapes = _jacobi_stationary_shape(kappa, m, xi)
+    if shapes is None:
+        raise ValueError("invalid Jacobi parameters")
+    alpha, beta = shapes
+    basis_order = _validate_jacobi_order(basis_order, "basis_order")
+    if quad_order is None:
+        quad_order = default_quad_order(basis_order)
+    quad_order = _validate_jacobi_order(quad_order, "quad_order")
+    gh_order = _validate_jacobi_order(gh_order, "gh_order")
+    _validate_jacobi_sampling_workspace(
+        n=n,
+        quad_order=quad_order,
+        basis_order=basis_order,
+        memory_budget_bytes=memory_budget_bytes,
+    )
+    if rng is None:
+        rng = np.random.default_rng()
+
+    requested_method = str(transition_method).lower()
+    sampling_method = (
+        "auto" if requested_method == "spectral_coeff"
+        else requested_method)
+
+    if n == 1:
+        if sampling_method == "local_fixed":
+            tau_grid, stationary_prob = _fixed_tau_rule(
+                alpha, beta, quad_order)
+        else:
+            tau_grid, stationary_prob, _ = jacobi_rule(
+                alpha,
+                beta,
+                quad_order,
+                basis_order=1,
+                memory_budget_bytes=memory_budget_bytes,
+            )
+        stationary_cdf = np.cumsum(stationary_prob)
+        stationary_cdf[-1] = 1.0
+        index = int(np.searchsorted(
+            stationary_cdf, rng.random(), side="right"))
+        path = np.array([tau_grid[index]], dtype=np.float64)
+        if return_diagnostics:
+            return path, {
+                "transition_method_requested": requested_method,
+                "sampling_transition_method_requested": sampling_method,
+                "transition_method": "stationary_only",
+                "n": 1,
+            }
+        return path
+
+    tau_grid, stationary_prob, transition, diagnostics = (
+        jacobi_transition_matrix(
+            kappa,
+            m,
+            xi,
+            n_obs=n,
+            basis_order=basis_order,
+            quad_order=quad_order,
+            transition_method=sampling_method,
+            clip_negative=clip_negative,
+            negative_mass_tol=negative_mass_tol,
+            gh_order=gh_order,
+            memory_budget_bytes=memory_budget_bytes,
+            return_diagnostics=True,
+        )
+    )
+    stationary_cdf = np.cumsum(stationary_prob)
+    stationary_cdf[-1] = 1.0
+    np.cumsum(transition, axis=1, out=transition)
+    transition[:, -1] = 1.0
+
+    # Reuse the uniform buffer as the returned tau path.
+    path = np.asarray(rng.random(n), dtype=np.float64)
+    index = int(np.searchsorted(
+        stationary_cdf, path[0], side="right"))
+    path[0] = tau_grid[index]
+    for t in range(1, n):
+        index = int(np.searchsorted(
+            transition[index], path[t], side="right"))
+        path[t] = tau_grid[index]
+
+    if return_diagnostics:
+        diagnostics = dict(diagnostics)
+        diagnostics["sampling_transition_method_requested"] = sampling_method
+        diagnostics["model_transition_method_requested"] = requested_method
+        diagnostics["n"] = n
+        return path, diagnostics
+    return path
 
 
 def _theta_grid(copula, tau, theta_cap=None):

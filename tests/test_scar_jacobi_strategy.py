@@ -791,7 +791,7 @@ def test_scar_jacobi_object_methods_dispatch():
     assert np.all((samples > 0.0) & (samples < 1.0))
 
 
-def test_scar_jacobi_fitted_sampling_is_explicitly_unimplemented():
+def test_scar_jacobi_fitted_sampling_reproduces_discrete_model():
     copula = GumbelCopula()
     u = _u_sample()
     result = LatentResult(
@@ -802,10 +802,233 @@ def test_scar_jacobi_fitted_sampling_is_explicitly_unimplemented():
         params=jacobi_params(1.2, 0.35, 0.25),
         spectral_basis_order=4,
         spectral_quad_order=20,
+        transition_method="local_fixed",
     )
 
-    with pytest.raises(NotImplementedError):
-        sample(copula, u, result, n=5, rng=np.random.default_rng(1))
+    first = sample(copula, u, result, n=50, rng=np.random.default_rng(1))
+    second = sample(copula, u, result, n=50, rng=np.random.default_rng(1))
+
+    assert first.shape == (50, 2)
+    assert np.all((first >= 0.0) & (first <= 1.0))
+    np.testing.assert_array_equal(first, second)
+
+
+@pytest.mark.parametrize("n", [True, 1.5])
+def test_scar_jacobi_sampling_rejects_non_integer_n(n):
+    copula = GumbelCopula()
+    result = LatentResult(
+        log_likelihood=0.0,
+        method='SCAR-TM-JACOBI',
+        copula_name=copula.name,
+        success=True,
+        params=jacobi_params(1.2, 0.35, 0.25),
+        transition_method="local_fixed",
+        spectral_basis_order=4,
+        spectral_quad_order=20,
+    )
+    with pytest.raises(TypeError, match="n"):
+        sample(copula, _u_sample(), result, n=n)
+
+
+def test_scar_jacobi_sampling_rejects_negative_n():
+    copula = GumbelCopula()
+    result = LatentResult(
+        log_likelihood=0.0,
+        method='SCAR-TM-JACOBI',
+        copula_name=copula.name,
+        success=True,
+        params=jacobi_params(1.2, 0.35, 0.25),
+        transition_method="local_fixed",
+        spectral_basis_order=4,
+        spectral_quad_order=20,
+    )
+    with pytest.raises(ValueError, match="non-negative"):
+        sample(copula, _u_sample(), result, n=-1)
+
+
+def test_scar_jacobi_sampling_rejects_overflow_before_rng_draw():
+    copula = GumbelCopula()
+    result = LatentResult(
+        log_likelihood=0.0,
+        method='SCAR-TM-JACOBI',
+        copula_name=copula.name,
+        success=True,
+        params=jacobi_params(1.2, 0.35, 0.25),
+        transition_method="local_fixed",
+        spectral_basis_order=4,
+        spectral_quad_order=20,
+    )
+    rng = np.random.default_rng(20)
+    with pytest.raises(MemoryError, match="too large|memory_budget_bytes"):
+        sample(
+            copula,
+            _u_sample(),
+            result,
+            n=np.iinfo(np.intp).max,
+            rng=rng,
+        )
+    np.testing.assert_array_equal(
+        rng.random(8),
+        np.random.default_rng(20).random(8),
+    )
+
+
+def test_scar_jacobi_sampling_zero_does_not_advance_rng():
+    copula = GumbelCopula()
+    result = LatentResult(
+        log_likelihood=0.0,
+        method='SCAR-TM-JACOBI',
+        copula_name=copula.name,
+        success=True,
+        params=jacobi_params(1.2, 0.35, 0.25),
+        transition_method="local_fixed",
+        spectral_basis_order=4,
+        spectral_quad_order=20,
+    )
+    rng = np.random.default_rng(21)
+    sampled = sample(copula, _u_sample(), result, n=0, rng=rng)
+
+    assert sampled.shape == (0, 2)
+    np.testing.assert_array_equal(
+        rng.random(8),
+        np.random.default_rng(21).random(8),
+    )
+
+
+def test_scar_jacobi_sampling_memory_guard_precedes_rng_draw():
+    copula = GumbelCopula()
+    result = LatentResult(
+        log_likelihood=0.0,
+        method='SCAR-TM-JACOBI',
+        copula_name=copula.name,
+        success=True,
+        params=jacobi_params(1.2, 0.35, 0.25),
+        transition_method="local_fixed",
+        spectral_basis_order=4,
+        spectral_quad_order=20,
+    )
+    rng = np.random.default_rng(22)
+    with pytest.raises(MemoryError, match="memory_budget_bytes"):
+        sample(
+            copula,
+            _u_sample(),
+            result,
+            n=10,
+            rng=rng,
+            memory_budget_bytes=1,
+        )
+    np.testing.assert_array_equal(
+        rng.random(8),
+        np.random.default_rng(22).random(8),
+    )
+
+
+def test_scar_jacobi_sampling_given_uses_predictive_sampler():
+    copula = GumbelCopula()
+    result = LatentResult(
+        log_likelihood=0.0,
+        method='SCAR-TM-JACOBI',
+        copula_name=copula.name,
+        success=True,
+        params=jacobi_params(1.2, 0.35, 0.25),
+        transition_method="local_fixed",
+        spectral_basis_order=4,
+        spectral_quad_order=20,
+    )
+    sampled = sample(
+        copula,
+        _u_sample(),
+        result,
+        n=40,
+        rng=np.random.default_rng(23),
+        given={0: 0.7},
+    )
+
+    np.testing.assert_array_equal(sampled[:, 0], np.full(40, 0.7))
+    assert np.all((sampled[:, 1] >= 0.0) & (sampled[:, 1] <= 1.0))
+
+
+@pytest.mark.parametrize(
+    "copula",
+    [
+        ClaytonCopula(),
+        ClaytonCopula(rotate=90),
+        FrankCopula(),
+        GumbelCopula(rotate=180),
+        JoeCopula(rotate=270),
+        BivariateGaussianCopula(),
+    ],
+)
+def test_scar_jacobi_sampling_supported_families_and_rotations(copula):
+    result = LatentResult(
+        log_likelihood=0.0,
+        method='SCAR-TM-JACOBI',
+        copula_name=copula.name,
+        success=True,
+        params=jacobi_params(1.2, 0.35, 0.25),
+        transition_method="local_fixed",
+        spectral_basis_order=4,
+        spectral_quad_order=20,
+    )
+    sampled = sample(
+        copula,
+        _u_sample(),
+        result,
+        n=32,
+        rng=np.random.default_rng(24),
+    )
+
+    assert sampled.shape == (32, 2)
+    assert np.all(np.isfinite(sampled))
+    assert np.all((sampled >= 0.0) & (sampled <= 1.0))
+
+
+def test_scar_jacobi_sampling_rejects_signed_spectral_transition():
+    copula = GumbelCopula()
+    result = LatentResult(
+        log_likelihood=0.0,
+        method='SCAR-TM-JACOBI',
+        copula_name=copula.name,
+        success=True,
+        params=jacobi_params(0.08, 0.15, 0.3),
+        transition_method="spectral_matrix",
+        spectral_basis_order=8,
+        spectral_quad_order=48,
+        clip_negative=False,
+    )
+
+    with pytest.raises(
+            FloatingPointError, match="negative probability mass"):
+        sample(
+            copula,
+            _u_sample(),
+            result,
+            n=5,
+            rng=np.random.default_rng(25),
+        )
+
+
+def test_scar_jacobi_model_parameter_path_works_through_vine_adapter():
+    from pyscarcopula.vine._edge_adapter import sample_r_path
+
+    copula = GumbelCopula()
+    result = LatentResult(
+        log_likelihood=0.0,
+        method='SCAR-TM-JACOBI',
+        copula_name=copula.name,
+        success=True,
+        params=jacobi_params(1.2, 0.35, 0.25),
+        transition_method="local_fixed",
+        spectral_basis_order=4,
+        spectral_quad_order=20,
+    )
+    parameter_path = sample_r_path(
+        copula, result, 40, rng=np.random.default_rng(26))
+
+    assert parameter_path.shape == (40,)
+    assert np.all(np.isfinite(parameter_path))
+    tau_path = copula.param_to_tau(parameter_path)
+    assert np.all((tau_path > 0.0) & (tau_path < 1.0))
 
 
 @pytest.mark.parametrize("copula", [FrankCopula(), JoeCopula()])

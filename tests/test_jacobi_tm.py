@@ -23,6 +23,7 @@ from pyscarcopula.numerical.jacobi_tm import (
     jacobi_spectral_transition_matrix,
     jacobi_state_distribution,
     jacobi_transition_matrix,
+    sample_jacobi_grid_trajectory,
 )
 
 
@@ -93,6 +94,168 @@ def test_jacobi_default_budget_rejects_multi_gigabyte_workspace():
         )
 
 
+@pytest.mark.parametrize("n", [True, 1.5])
+def test_jacobi_grid_sampler_rejects_non_integer_n(n):
+    with pytest.raises(TypeError, match="n"):
+        sample_jacobi_grid_trajectory(1.2, 0.4, 0.25, n)
+
+
+def test_jacobi_grid_sampler_rejects_negative_n():
+    with pytest.raises(ValueError, match="non-negative"):
+        sample_jacobi_grid_trajectory(1.2, 0.4, 0.25, -1)
+
+
+def test_jacobi_grid_sampler_zero_does_not_advance_rng():
+    rng = np.random.default_rng(20260728)
+    path = sample_jacobi_grid_trajectory(
+        1.2, 0.4, 0.25, 0, rng=rng)
+
+    assert path.shape == (0,)
+    np.testing.assert_array_equal(
+        rng.random(8),
+        np.random.default_rng(20260728).random(8),
+    )
+
+
+def test_jacobi_grid_sampler_one_draw_is_stationary_grid_atom():
+    path, diagnostics = sample_jacobi_grid_trajectory(
+        1.2,
+        0.4,
+        0.25,
+        1,
+        rng=np.random.default_rng(11),
+        basis_order=4,
+        quad_order=24,
+        transition_method="local_fixed",
+        return_diagnostics=True,
+    )
+    tau, _, _ = jacobi_transition_matrix(
+        1.2,
+        0.4,
+        0.25,
+        n_obs=1,
+        basis_order=4,
+        quad_order=24,
+        transition_method="local_fixed",
+    )
+
+    assert path.shape == (1,)
+    assert path[0] in tau
+    assert diagnostics["transition_method"] == "stationary_only"
+
+
+def test_jacobi_grid_sampler_stationary_mean_and_variance():
+    kappa, m, xi = 1.2, 0.4, 0.25
+    rng = np.random.default_rng(111)
+    draws = np.array([
+        sample_jacobi_grid_trajectory(
+            kappa,
+            m,
+            xi,
+            1,
+            rng=rng,
+            basis_order=1,
+            quad_order=32,
+            transition_method="local_fixed",
+        )[0]
+        for _ in range(5_000)
+    ])
+    shape_sum = 2.0 * kappa / (xi * xi)
+    expected_variance = m * (1.0 - m) / (shape_sum + 1.0)
+
+    assert np.mean(draws) == pytest.approx(m, abs=0.005)
+    assert np.var(draws) == pytest.approx(expected_variance, abs=0.001)
+
+
+def test_jacobi_grid_sampler_is_seed_reproducible_and_uses_grid_atoms():
+    kwargs = {
+        "basis_order": 6,
+        "quad_order": 32,
+        "transition_method": "local_fixed",
+    }
+    first = sample_jacobi_grid_trajectory(
+        1.2, 0.4, 0.25, 200, rng=np.random.default_rng(12), **kwargs)
+    second = sample_jacobi_grid_trajectory(
+        1.2, 0.4, 0.25, 200, rng=np.random.default_rng(12), **kwargs)
+    different = sample_jacobi_grid_trajectory(
+        1.2, 0.4, 0.25, 200, rng=np.random.default_rng(13), **kwargs)
+    tau, _, _ = jacobi_transition_matrix(
+        1.2, 0.4, 0.25, n_obs=200, **kwargs)
+
+    np.testing.assert_array_equal(first, second)
+    assert not np.array_equal(first, different)
+    assert np.all(np.isin(first, tau))
+    assert np.all((first > 0.0) & (first < 1.0))
+
+
+def test_jacobi_grid_sampler_matches_row_probabilities(monkeypatch):
+    tau = np.array([0.2, 0.8], dtype=np.float64)
+    stationary = np.array([1.0, 0.0], dtype=np.float64)
+    target = np.array([0.25, 0.75], dtype=np.float64)
+    transition = np.vstack([target, target])
+
+    def fixed_transition(*args, **kwargs):
+        diagnostics = {"transition_method": "local_fixed"}
+        return tau.copy(), stationary.copy(), transition.copy(), diagnostics
+
+    monkeypatch.setattr(
+        jacobi_tm, "jacobi_transition_matrix", fixed_transition)
+    path = sample_jacobi_grid_trajectory(
+        1.2,
+        0.4,
+        0.25,
+        40_000,
+        rng=np.random.default_rng(14),
+        basis_order=1,
+        quad_order=2,
+        transition_method="local_fixed",
+    )
+    observed = np.array([
+        np.mean(path[1:] == tau[0]),
+        np.mean(path[1:] == tau[1]),
+    ])
+
+    np.testing.assert_allclose(observed, target, atol=0.01)
+
+
+def test_jacobi_grid_sampler_spectral_coeff_uses_safe_auto_matrix():
+    path, diagnostics = sample_jacobi_grid_trajectory(
+        1.2,
+        0.4,
+        0.25,
+        12,
+        rng=np.random.default_rng(15),
+        basis_order=4,
+        quad_order=24,
+        transition_method="spectral_coeff",
+        return_diagnostics=True,
+    )
+
+    assert path.shape == (12,)
+    assert diagnostics["model_transition_method_requested"] == "spectral_coeff"
+    assert diagnostics["sampling_transition_method_requested"] == "auto"
+    assert diagnostics["transition_method"] in {"local", "spectral_matrix"}
+
+
+def test_jacobi_grid_sampler_memory_guard_precedes_rng_draw():
+    rng = np.random.default_rng(16)
+    with pytest.raises(MemoryError, match="memory_budget_bytes"):
+        sample_jacobi_grid_trajectory(
+            1.2,
+            0.4,
+            0.25,
+            10,
+            rng=rng,
+            basis_order=4,
+            quad_order=24,
+            memory_budget_bytes=1,
+        )
+    np.testing.assert_array_equal(
+        rng.random(8),
+        np.random.default_rng(16).random(8),
+    )
+
+
 def test_jacobi_spectral_transition_matrix_is_row_stochastic():
     tau, weights, transition, diagnostics = jacobi_spectral_transition_matrix(
         kappa=1.5,
@@ -110,6 +273,23 @@ def test_jacobi_spectral_transition_matrix_is_row_stochastic():
     np.testing.assert_allclose(
         weights @ transition, weights, rtol=1e-10, atol=1e-10)
     assert diagnostics["stationary_error"] < 1e-10
+
+
+def test_jacobi_spectral_transition_preserves_conditional_first_moment():
+    kappa, m, dt = 1.2, 0.4, 1.0
+    tau, _, transition = jacobi_transition_matrix(
+        kappa=kappa,
+        m=m,
+        xi=0.25,
+        dt=dt,
+        basis_order=24,
+        quad_order=64,
+        transition_method="spectral_matrix",
+    )
+    expected = m + (tau - m) * np.exp(-kappa * dt)
+
+    np.testing.assert_allclose(
+        transition @ tau, expected, rtol=1e-12, atol=1e-12)
 
 
 def test_jacobi_spectral_transition_order_one_is_stationary_kernel():
