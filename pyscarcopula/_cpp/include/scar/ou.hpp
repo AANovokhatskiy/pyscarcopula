@@ -18,6 +18,13 @@ enum class OuBackend : int {
     Matrix = 2,
 };
 
+/// Storage used by the Gaussian grid transition in the matrix backend.
+enum class OuGridMethod : int {
+    Auto = 0,
+    Dense = 1,
+    Sparse = 2,
+};
+
 /// Ornstein-Uhlenbeck parameters `(kappa, mu, nu)`.
 struct OuParams {
     double kappa = 1.0;
@@ -38,6 +45,7 @@ struct OuNumericalConfig {
     int spectral_basis_order = 32;
     int spectral_quad_order = 0;
     int n_threads = 1;
+    OuGridMethod grid_method = OuGridMethod::Auto;
 };
 
 /// Likelihood value together with backend and fallback diagnostics.
@@ -89,9 +97,11 @@ struct ScarOuGridGradientOperators {
     int K = 0;
     int width = 0;
     bool local = false;
+    bool sparse = false;
     std::vector<double> dense;
     std::vector<double> dense_grad;
     std::vector<int> cols;
+    std::vector<int> indptr;
     std::vector<double> vals;
     std::vector<double> grad_vals;
 };

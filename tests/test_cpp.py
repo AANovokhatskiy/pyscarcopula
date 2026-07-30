@@ -1214,6 +1214,108 @@ def test_cpp_loglik_matches_python_matrix_for_supported_families(copula):
     np.testing.assert_allclose(got, ref, rtol=2e-7, atol=2e-7)
 
 
+def test_cpp_sparse_matrix_backend_covers_filtering_and_gradient():
+    u = _data(seed=20260730, n=30)
+    copula = ClaytonCopula(rotate=0, transform_type="softplus")
+    alpha = np.array([0.9, 0.1, 1.0], dtype=np.float64)
+    common = dict(
+        transition_method="matrix",
+        K=80,
+        grid_range=5.0,
+        adaptive=False,
+        max_K=80,
+    )
+    sparse = AutoTMConfig(grid_method="sparse", **common)
+    dense = AutoTMConfig(grid_method="dense", **common)
+    automatic = AutoTMConfig(grid_method="auto", **common)
+
+    module = _cpp_scar_ou._cpp_extension.load()
+    assert (
+        _cpp_scar_ou._config(module, sparse).grid_method
+        == module.OuGridMethod.Sparse
+    )
+
+    sparse_loglik, info = _cpp_scar_ou.loglik(
+        *alpha, u, copula, sparse)
+    dense_loglik, _ = _cpp_scar_ou.loglik(
+        *alpha, u, copula, dense)
+    automatic_loglik, _ = _cpp_scar_ou.loglik(
+        *alpha, u, copula, automatic)
+    assert info["backend"] == "matrix"
+    assert automatic_loglik == sparse_loglik
+    np.testing.assert_allclose(
+        sparse_loglik, dense_loglik, rtol=0.0, atol=1e-6)
+
+    np.testing.assert_allclose(
+        _cpp_scar_ou.predictive_mean(*alpha, u, copula, sparse),
+        _cpp_scar_ou.predictive_mean(*alpha, u, copula, dense),
+        rtol=0.0,
+        atol=2e-7,
+    )
+    sparse_pair = _cpp_scar_ou.mixture_h_pair(
+        *alpha, u, copula, sparse)
+    dense_pair = _cpp_scar_ou.mixture_h_pair(
+        *alpha, u, copula, dense)
+    np.testing.assert_allclose(
+        sparse_pair, dense_pair, rtol=0.0, atol=2e-7)
+    for horizon in ("current", "next"):
+        sparse_grid, sparse_prob = _cpp_scar_ou.state_distribution(
+            *alpha, u, copula, sparse, horizon=horizon)
+        dense_grid, dense_prob = _cpp_scar_ou.state_distribution(
+            *alpha, u, copula, dense, horizon=horizon)
+        np.testing.assert_allclose(
+            sparse_grid, dense_grid, rtol=0.0, atol=0.0)
+        np.testing.assert_allclose(
+            sparse_prob, dense_prob, rtol=0.0, atol=2e-7)
+
+    _, gradient = _cpp_scar_ou.neg_loglik_with_grad(
+        *alpha, u, copula, sparse)
+    finite_difference = np.empty(3, dtype=np.float64)
+    for index in range(3):
+        plus = alpha.copy()
+        minus = alpha.copy()
+        plus[index] += 1e-5
+        minus[index] -= 1e-5
+        finite_difference[index] = (
+            _cpp_scar_ou.neg_loglik(*plus, u, copula, sparse)
+            - _cpp_scar_ou.neg_loglik(*minus, u, copula, sparse)
+        ) / 2e-5
+    np.testing.assert_allclose(
+        gradient, finite_difference, rtol=0.0, atol=1e-6)
+
+
+def test_cpp_sparse_gradient_is_invariant_to_grid_scale_rounding():
+    u = np.random.default_rng(9182).uniform(0.07, 0.93, size=(50, 2))
+    copula = FrankCopula(transform_type="softplus")
+    alpha = np.array(
+        [1.40874333, -0.06881356, 1.45776703],
+        dtype=np.float64,
+    )
+    config = AutoTMConfig(
+        transition_method="matrix",
+        grid_method="sparse",
+        K=103,
+        grid_range=3.604805267249307,
+        adaptive=False,
+        max_K=103,
+    )
+
+    _, gradient = _cpp_scar_ou.neg_loglik_with_grad(
+        *alpha, u, copula, config)
+    step = 1e-5 * alpha[2]
+    plus = alpha.copy()
+    minus = alpha.copy()
+    plus[2] += step
+    minus[2] -= step
+    finite_difference = (
+        _cpp_scar_ou.neg_loglik(*plus, u, copula, config)
+        - _cpp_scar_ou.neg_loglik(*minus, u, copula, config)
+    ) / (2.0 * step)
+
+    np.testing.assert_allclose(
+        gradient[2], finite_difference, rtol=0.0, atol=1e-7)
+
+
 def test_cpp_strategy_forward_functions_match_python_matrix():
     u = _data(seed=20260612, n=30)
     copula = ClaytonCopula(rotate=180, transform_type="softplus")
@@ -1759,7 +1861,7 @@ def test_cpp_resource_limits_match_extension_constants():
     ("field", "value", "message"),
     [
         ("K", True, "K"),
-        ("K", 10_001, "K"),
+        ("K", 100_001, "K"),
         ("basis_order", 1_025, "basis_order"),
         ("basis_order", 505, "quad_order derived"),
         ("quad_order", 1_025, "quad_order"),
@@ -1783,7 +1885,7 @@ def test_cpp_strategy_rejects_unsafe_config_at_construction():
     with pytest.raises(ValueError, match="K"):
         SCARTMStrategy(
             transition_method="matrix",
-            K=10_001,
+            K=100_001,
             max_K=None,
         )
 
@@ -1797,6 +1899,21 @@ def test_cpp_strategy_accepts_matrix_grid_above_old_limit():
 
     assert strategy.K == 4_097
     assert strategy.max_K == 4_097
+
+
+def test_cpp_dense_matrix_storage_keeps_dense_grid_limit():
+    u = _data(seed=20260730, n=8)
+    copula = ClaytonCopula(rotate=0, transform_type="softplus")
+    cfg = AutoTMConfig(
+        transition_method="matrix",
+        grid_method="dense",
+        K=10_001,
+        adaptive=False,
+        max_K=None,
+    )
+
+    with pytest.raises(ValueError, match="K"):
+        _cpp_scar_ou.loglik(1.0, 0.0, 1.0, u, copula, cfg)
 
 
 def test_direct_cpp_accepts_student_dimension_above_old_limit():
@@ -1831,7 +1948,7 @@ def test_direct_cpp_accepts_student_dimension_above_old_limit():
 @pytest.mark.parametrize(
     ("method", "field", "value"),
     [
-        ("matrix", "K", 10_001),
+        ("matrix", "K", 100_001),
         ("spectral", "spectral_basis_order", 1_025),
         ("local", "gh_order", 1_025),
     ],

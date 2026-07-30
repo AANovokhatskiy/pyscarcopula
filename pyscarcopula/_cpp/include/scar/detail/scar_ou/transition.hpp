@@ -5,7 +5,24 @@
 
 #include <vector>
 
+namespace scar {
+enum class OuGridMethod : int;
+}
+
 namespace scar_internal {
+
+struct SparseTransitionMatrix {
+    std::vector<double> data;
+    std::vector<int> indices;
+    std::vector<int> indptr;
+};
+
+struct MatrixTransitionOperator {
+    int K = 0;
+    bool sparse = false;
+    std::vector<double> dense;
+    SparseTransitionMatrix csr;
+};
 
 int select_grid_transition_backend(const OuGrid& grid, double r_gh);
 
@@ -42,6 +59,43 @@ bool forward_filter_grid(
 }
 
 bool build_dense_transition_matrix(const OuGrid& grid, std::vector<double>& matrix);
+bool build_sparse_transition_matrix(
+    const std::vector<double>& z,
+    double rho,
+    double sigma_cond,
+    const std::vector<double>& trap_w,
+    int K,
+    int band,
+    SparseTransitionMatrix& matrix,
+    const std::vector<double>* i_centers = nullptr);
+void sparse_matvec(
+    const SparseTransitionMatrix& matrix,
+    int K,
+    const std::vector<double>& v,
+    std::vector<double>& out);
+void sparse_transpose_matvec(
+    const SparseTransitionMatrix& matrix,
+    int K,
+    const std::vector<double>& v,
+    std::vector<double>& out);
+int matrix_transition_band(const OuGrid& grid);
+bool build_matrix_transition_operator(
+    const OuGrid& grid,
+    scar::OuGridMethod method,
+    MatrixTransitionOperator& op);
+void matrix_matvec(
+    const MatrixTransitionOperator& op,
+    const std::vector<double>& v,
+    std::vector<double>& out);
+void matrix_transpose_matvec(
+    const MatrixTransitionOperator& op,
+    const std::vector<double>& v,
+    std::vector<double>& out);
+void matrix_predict_matvec(
+    const MatrixTransitionOperator& op,
+    const OuGrid& grid,
+    const std::vector<double>& source,
+    std::vector<double>& out_density);
 void dense_matvec(
     const std::vector<double>& matrix,
     int K,
@@ -55,21 +109,21 @@ void dense_predict_matvec(
 bool matrix_backward_loglik(
     const scar::CopulaSpec& copula,
     const OuGrid& grid,
-    const std::vector<double>& matrix,
+    const MatrixTransitionOperator& op,
     const double* u,
     std::int64_t n_obs,
     double& loglik);
 bool matrix_forward_predictive_mean(
     const scar::CopulaSpec& copula,
     const OuGrid& grid,
-    const std::vector<double>& matrix,
+    const MatrixTransitionOperator& op,
     const double* u,
     std::int64_t n_obs,
     double* out);
 bool matrix_forward_mixture_h(
     const scar::CopulaSpec& copula,
     const OuGrid& grid,
-    const std::vector<double>& matrix,
+    const MatrixTransitionOperator& op,
     const double* u,
     std::int64_t n_obs,
     double* out,

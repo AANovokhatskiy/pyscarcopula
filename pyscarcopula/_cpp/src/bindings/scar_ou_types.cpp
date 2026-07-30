@@ -5,6 +5,12 @@ namespace py = pybind11;
 namespace pyscarcopula::bindings {
 
 void bind_scar_ou_types(py::module_& m) {
+    py::enum_<scar::OuGridMethod>(
+        m, "OuGridMethod", "Native matrix-transition storage.")
+        .value("Auto", scar::OuGridMethod::Auto)
+        .value("Dense", scar::OuGridMethod::Dense)
+        .value("Sparse", scar::OuGridMethod::Sparse);
+
     py::class_<scar::OuParams>(
         m,
         "OuParams",
@@ -34,7 +40,9 @@ void bind_scar_ou_types(py::module_& m) {
         .def_readwrite(
             "spectral_quad_order",
             &scar::OuNumericalConfig::spectral_quad_order)
-        .def_readwrite("n_threads", &scar::OuNumericalConfig::n_threads);
+        .def_readwrite("n_threads", &scar::OuNumericalConfig::n_threads)
+        .def_readwrite(
+            "grid_method", &scar::OuNumericalConfig::grid_method);
 }
 
 }  // namespace pyscarcopula::bindings

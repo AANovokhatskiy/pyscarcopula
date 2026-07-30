@@ -15,6 +15,7 @@ import numpy as np
 from pyscarcopula._utils import clip_h_function_values
 from pyscarcopula.numerical._scar_ou_config import (
     AutoTMConfig,
+    normalize_grid_method,
     select_auto_backend,
     validate_cpp_config,
 )
@@ -99,6 +100,12 @@ def _config(module, cfg: AutoTMConfig):
     out.spectral_basis_order = int(cfg.basis_order)
     out.spectral_quad_order = 0 if cfg.quad_order is None else int(cfg.quad_order)
     out.n_threads = int(cfg.n_threads)
+    grid_method = normalize_grid_method(cfg.grid_method)
+    out.grid_method = {
+        "auto": module.OuGridMethod.Auto,
+        "dense": module.OuGridMethod.Dense,
+        "sparse": module.OuGridMethod.Sparse,
+    }[grid_method]
     return out
 
 

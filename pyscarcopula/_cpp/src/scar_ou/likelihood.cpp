@@ -319,8 +319,9 @@ LogLikResult ScarOuEvaluator::loglik_matrix(
         return invalid_loglik(SCAR_NUMERICAL_FAILURE, OuBackend::Matrix);
     }
 
-    std::vector<double> matrix;
-    if (!scar_internal::build_dense_transition_matrix(grid, matrix)) {
+    scar_internal::MatrixTransitionOperator transition;
+    if (!scar_internal::build_matrix_transition_operator(
+            grid, config.grid_method, transition)) {
         return invalid_loglik(SCAR_INVALID_SIZE, OuBackend::Matrix);
     }
     double value = -std::numeric_limits<double>::infinity();
@@ -328,7 +329,7 @@ LogLikResult ScarOuEvaluator::loglik_matrix(
     if (!scar_internal::matrix_backward_loglik(
             copula,
             grid,
-            matrix,
+            transition,
             observation_values,
             n_obs,
             value)) {

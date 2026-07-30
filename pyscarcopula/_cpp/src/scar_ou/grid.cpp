@@ -88,7 +88,10 @@ bool build_ou_grid(
     const double z_max = grid_range * sigma;
     const double dz = (z_max - z_min) / static_cast<double>(K_eff - 1);
     grid.dz = dz;
-    grid.r_kernel_grid = sigma_cond / dz;
+    grid.r_kernel_grid =
+        std::sqrt(conditional_variance)
+        * static_cast<double>(K_eff - 1)
+        / (2.0 * grid_range);
 
     for (int j = 0; j < K_eff; ++j) {
         const double zj = z_min + dz * static_cast<double>(j);

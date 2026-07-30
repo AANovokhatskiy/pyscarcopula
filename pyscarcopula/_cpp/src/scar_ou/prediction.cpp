@@ -81,14 +81,15 @@ std::vector<double> ScarOuEvaluator::predictive_mean_matrix(
         status = SCAR_INVALID_SIZE;
         return out;
     }
-    std::vector<double> matrix;
-    if (!scar_internal::build_dense_transition_matrix(grid, matrix)) {
+    scar_internal::MatrixTransitionOperator transition;
+    if (!scar_internal::build_matrix_transition_operator(
+            grid, config.grid_method, transition)) {
         status = SCAR_INVALID_SIZE;
         return out;
     }
     const double* observation_values = observation_data(copula, u);
     if (!scar_internal::matrix_forward_predictive_mean(
-            copula, grid, matrix, observation_values,
+            copula, grid, transition, observation_values,
             static_cast<std::int64_t>(u.size()),
             out.data())) {
         status = SCAR_NUMERICAL_FAILURE;
@@ -165,14 +166,15 @@ std::vector<double> ScarOuEvaluator::mixture_h_matrix(
         status = SCAR_INVALID_SIZE;
         return out;
     }
-    std::vector<double> matrix;
-    if (!scar_internal::build_dense_transition_matrix(grid, matrix)) {
+    scar_internal::MatrixTransitionOperator transition;
+    if (!scar_internal::build_matrix_transition_operator(
+            grid, config.grid_method, transition)) {
         status = SCAR_INVALID_SIZE;
         return out;
     }
     const double* observation_values = observation_data(copula, u);
     if (!scar_internal::matrix_forward_mixture_h(
-            copula, grid, matrix, observation_values,
+            copula, grid, transition, observation_values,
             static_cast<std::int64_t>(u.size()),
             out.data())) {
         status = SCAR_NUMERICAL_FAILURE;
@@ -250,14 +252,15 @@ std::vector<double> ScarOuEvaluator::mixture_h_pair_matrix(
         status = SCAR_INVALID_SIZE;
         return out;
     }
-    std::vector<double> matrix;
-    if (!scar_internal::build_dense_transition_matrix(grid, matrix)) {
+    scar_internal::MatrixTransitionOperator transition;
+    if (!scar_internal::build_matrix_transition_operator(
+            grid, config.grid_method, transition)) {
         status = SCAR_INVALID_SIZE;
         return out;
     }
     const double* observation_values = observation_data(copula, u);
     if (!scar_internal::matrix_forward_mixture_h(
-            copula, grid, matrix, observation_values,
+            copula, grid, transition, observation_values,
             static_cast<std::int64_t>(u.size()), out.data(),
             out.data() + u.size())) {
         status = SCAR_NUMERICAL_FAILURE;

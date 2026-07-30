@@ -134,6 +134,26 @@ void local_grid_matvec(
     }
 }
 
+void sparse_grid_matvec(
+    const GridGradientOperators& op,
+    const std::vector<double>& values,
+    const std::vector<double>& v,
+    std::vector<double>& out) {
+
+    std::fill(out.begin(), out.end(), 0.0);
+    for (int row = 0; row < op.K; ++row) {
+        double acc = 0.0;
+        const int begin = op.indptr[static_cast<std::size_t>(row)];
+        const int end = op.indptr[static_cast<std::size_t>(row) + 1];
+        for (int offset = begin; offset < end; ++offset) {
+            const std::size_t idx = static_cast<std::size_t>(offset);
+            acc += values[idx]
+                * v[static_cast<std::size_t>(op.cols[idx])];
+        }
+        out[static_cast<std::size_t>(row)] = acc;
+    }
+}
+
 void operator_matvec(
     const GridGradientOperators& op,
     bool gradient,
@@ -142,6 +162,8 @@ void operator_matvec(
 
     if (op.local) {
         local_grid_matvec(op, gradient ? op.grad_vals : op.vals, v, out);
+    } else if (op.sparse) {
+        sparse_grid_matvec(op, gradient ? op.grad_vals : op.vals, v, out);
     } else {
         dense_grid_matvec(gradient ? op.dense_grad : op.dense, op.K, v, out);
     }
@@ -153,14 +175,17 @@ void operator_transpose_matvec(
     std::vector<double>& out) {
 
     std::fill(out.begin(), out.end(), 0.0);
-    if (op.local) {
+    if (op.local || op.sparse) {
         for (int row = 0; row < op.K; ++row) {
             const double source = v[static_cast<std::size_t>(row)];
-            const std::size_t offset =
-                static_cast<std::size_t>(row)
-                * static_cast<std::size_t>(op.width);
-            for (int j = 0; j < op.width; ++j) {
-                const std::size_t idx = offset + static_cast<std::size_t>(j);
+            const int begin = op.sparse
+                ? op.indptr[static_cast<std::size_t>(row)]
+                : row * op.width;
+            const int end = op.sparse
+                ? op.indptr[static_cast<std::size_t>(row) + 1]
+                : begin + op.width;
+            for (int offset = begin; offset < end; ++offset) {
+                const std::size_t idx = static_cast<std::size_t>(offset);
                 out[static_cast<std::size_t>(op.cols[idx])] +=
                     op.vals[idx] * source;
             }
@@ -221,6 +246,96 @@ bool build_dense_grid_gradient_operator(
                 row_offset + static_cast<std::size_t>(col);
             op.dense[idx] = tw;
             op.dense_grad[idx] = dlog * tw;
+        }
+    }
+    return true;
+}
+
+bool build_sparse_grid_gradient_operator(
+    const std::vector<double>& xi,
+    const std::vector<double>& base_w,
+    double rho,
+    int band,
+    GridGradientOperators& op) {
+
+    const int K = static_cast<int>(xi.size());
+    const double omr2 = 1.0 - rho * rho;
+    if (K < 2 || omr2 <= 0.0 || base_w.size() != xi.size()) {
+        return false;
+    }
+    const double dxi = xi[1] - xi[0];
+    if (!std::isfinite(dxi)
+        || dxi <= 0.0
+        || band < 0) {
+        return false;
+    }
+    op = GridGradientOperators{};
+    op.K = K;
+    op.sparse = true;
+    op.indptr.assign(static_cast<std::size_t>(K) + 1, 0);
+
+    std::size_t nnz = 0;
+    const double midpoint = 0.5 * static_cast<double>(K - 1);
+    for (int row = 0; row < K; ++row) {
+        const double i_center =
+            rho * static_cast<double>(row)
+            + (1.0 - rho) * midpoint;
+        const double lo_value = std::floor(i_center) - band;
+        const double hi_value = std::ceil(i_center) + band + 1.0;
+        const int lo = lo_value <= 0.0
+            ? 0
+            : (lo_value >= static_cast<double>(K)
+                ? K
+                : static_cast<int>(lo_value));
+        const int hi = hi_value <= 0.0
+            ? 0
+            : (hi_value >= static_cast<double>(K)
+                ? K
+                : static_cast<int>(hi_value));
+        const std::size_t width = hi > lo
+            ? static_cast<std::size_t>(hi - lo)
+            : 0;
+        if (!scar_internal::checked_size_add(nnz, width, nnz)
+            || nnz > static_cast<std::size_t>(INT_MAX)) {
+            return false;
+        }
+        op.indptr[static_cast<std::size_t>(row) + 1] =
+            static_cast<int>(nnz);
+    }
+
+    op.cols.resize(nnz);
+    op.vals.resize(nnz);
+    op.grad_vals.resize(nnz);
+    const double coeff =
+        1.0 / (std::sqrt(omr2) * std::sqrt(2.0 * scar_internal::kPi));
+    for (int row = 0; row < K; ++row) {
+        const double xi_row = xi[static_cast<std::size_t>(row)];
+        const double center = rho * xi_row;
+        const double i_center =
+            rho * static_cast<double>(row)
+            + (1.0 - rho) * midpoint;
+        const double lo_value = std::floor(i_center) - band;
+        const int lo = lo_value <= 0.0
+            ? 0
+            : (lo_value >= static_cast<double>(K)
+                ? K
+                : static_cast<int>(lo_value));
+        const int begin = op.indptr[static_cast<std::size_t>(row)];
+        const int end = op.indptr[static_cast<std::size_t>(row) + 1];
+        for (int offset = begin; offset < end; ++offset) {
+            const int col = lo + offset - begin;
+            const double q =
+                xi[static_cast<std::size_t>(col)] - center;
+            const double tw = coeff
+                * std::exp(-0.5 * q * q / omr2)
+                * base_w[static_cast<std::size_t>(col)];
+            const double dlog = rho / omr2
+                + q * xi_row / omr2
+                - rho * q * q / (omr2 * omr2);
+            const std::size_t idx = static_cast<std::size_t>(offset);
+            op.cols[idx] = col;
+            op.vals[idx] = tw;
+            op.grad_vals[idx] = dlog * tw;
         }
     }
     return true;
@@ -363,7 +478,9 @@ GradLogLikResult grid_neg_loglik_with_grad(
     const double dt = 1.0 / static_cast<double>(n_obs - 1);
     const double rho = std::exp(-params.kappa * dt);
     const double sigma = std::sqrt(0.5 * params.nu * params.nu / params.kappa);
-    const double sigma_cond = sigma * std::sqrt(1.0 - rho * rho);
+    const double conditional_variance =
+        -std::expm1(-2.0 * params.kappa * dt);
+    const double sigma_cond = sigma * std::sqrt(conditional_variance);
     if (!std::isfinite(sigma) || !std::isfinite(sigma_cond)
         || sigma <= 0.0 || sigma_cond <= 0.0) {
         return invalid_grad(SCAR_NUMERICAL_FAILURE, backend);
@@ -401,6 +518,7 @@ GradLogLikResult grid_neg_loglik_with_grad(
     const std::size_t K_eff_size = static_cast<std::size_t>(K_eff);
     if (K_eff_size > scar_internal::kMaxGridSize
         || (backend == OuBackend::Matrix
+            && config.grid_method == OuGridMethod::Dense
             && K_eff_size > scar_internal::kMaxDenseGridSize)
         || !valid_observation_grid_size(u.size(), K_eff)) {
         return invalid_grad(SCAR_INVALID_SIZE, backend);
@@ -408,7 +526,7 @@ GradLogLikResult grid_neg_loglik_with_grad(
 
     const double dxi =
         2.0 * config.grid_range / static_cast<double>(K_eff - 1);
-    const double r_kernel_grid = std::sqrt(1.0 - rho * rho) / dxi;
+    const double r_kernel_grid = std::sqrt(conditional_variance) / dxi;
     const bool adaptive_was_capped = K_eff < K_adaptive;
     if (backend == OuBackend::Matrix
         && (adaptive_was_capped || r_kernel_grid <= config.r_gh)) {
@@ -442,9 +560,29 @@ GradLogLikResult grid_neg_loglik_with_grad(
     }
 
     GridGradientOperators& op = ws.op;
-    const bool built = backend == OuBackend::LocalGh
-        ? build_local_grid_gradient_operator(xi, rho, config.gh_order, op)
-        : build_dense_grid_gradient_operator(xi, base_w, rho, op);
+    bool built = false;
+    if (backend == OuBackend::LocalGh) {
+        built = build_local_grid_gradient_operator(
+            xi, rho, config.gh_order, op);
+    } else {
+        const double band_value =
+            std::ceil(5.0 * r_kernel_grid);
+        if (!std::isfinite(band_value)
+            || band_value < 0.0
+            || band_value > static_cast<double>(INT_MAX)) {
+            return invalid_grad(SCAR_INVALID_SIZE, backend);
+        }
+        const int band = static_cast<int>(band_value);
+        const bool sparse =
+            config.grid_method == OuGridMethod::Sparse
+            || (config.grid_method == OuGridMethod::Auto
+                && (K_eff_size > scar_internal::kMaxDenseGridSize
+                    || band_value < static_cast<double>(K_eff / 4)));
+        built = sparse
+            ? build_sparse_grid_gradient_operator(
+                xi, base_w, rho, band, op)
+            : build_dense_grid_gradient_operator(xi, base_w, rho, op);
+    }
     if (!built) {
         return invalid_grad(SCAR_NUMERICAL_FAILURE, backend);
     }

@@ -1,5 +1,8 @@
 #include "common.hpp"
 
+#include "scar/detail/scar_ou/transition.hpp"
+
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <utility>
@@ -62,9 +65,117 @@ auto with_observation_view_without_gil(
     return std::forward<Callback>(callback)(obs);
 }
 
+struct NativeSparseTransition {
+    int K = 0;
+    scar_internal::SparseTransitionMatrix matrix;
+};
+
+std::unique_ptr<NativeSparseTransition> make_sparse_transition(
+    py::array_t<
+        double,
+        py::array::c_style | py::array::forcecast> z,
+    double rho,
+    double sigma_cond,
+    py::array_t<
+        double,
+        py::array::c_style | py::array::forcecast> trap_w,
+    int K,
+    int band) {
+
+    const std::vector<double> z_values = vector_from_array(std::move(z));
+    const std::vector<double> weights =
+        vector_from_array(std::move(trap_w));
+    auto transition = std::make_unique<NativeSparseTransition>();
+    transition->K = K;
+    bool ok = false;
+    {
+        py::gil_scoped_release release;
+        ok = scar_internal::build_sparse_transition_matrix(
+            z_values,
+            rho,
+            sigma_cond,
+            weights,
+            K,
+            band,
+            transition->matrix);
+    }
+    if (!ok) {
+        throw std::invalid_argument(
+            "invalid sparse transition matrix parameters");
+    }
+    return transition;
+}
+
 }  // namespace
 
 void bind_scar_ou(py::module_& m) {
+    py::class_<NativeSparseTransition>(
+        m,
+        "_SparseTransitionOperator",
+        "Native CSR Gaussian-grid transition operator.")
+        .def(py::init(&make_sparse_transition),
+        py::arg("z"),
+        py::arg("rho"),
+        py::arg("sigma_cond"),
+        py::arg("trap_w"),
+        py::arg("K"),
+        py::arg("band"))
+        .def(
+            "matvec",
+            [](const NativeSparseTransition& transition,
+               py::array_t<
+                   double,
+                   py::array::c_style | py::array::forcecast> values) {
+                const std::vector<double> input =
+                    vector_from_array(std::move(values));
+                if (input.size()
+                    != static_cast<std::size_t>(transition.K)) {
+                    throw std::invalid_argument(
+                        "values length must equal sparse transition K");
+                }
+                std::vector<double> output(input.size(), 0.0);
+                {
+                    py::gil_scoped_release release;
+                    scar_internal::sparse_matvec(
+                        transition.matrix,
+                        transition.K,
+                        input,
+                        output);
+                }
+                return vector_to_array(output);
+            },
+            py::arg("values"))
+        .def(
+            "rmatvec",
+            [](const NativeSparseTransition& transition,
+               py::array_t<
+                   double,
+                   py::array::c_style | py::array::forcecast> values) {
+                const std::vector<double> input =
+                    vector_from_array(std::move(values));
+                if (input.size()
+                    != static_cast<std::size_t>(transition.K)) {
+                    throw std::invalid_argument(
+                        "values length must equal sparse transition K");
+                }
+                std::vector<double> output(input.size(), 0.0);
+                {
+                    py::gil_scoped_release release;
+                    scar_internal::sparse_transpose_matvec(
+                        transition.matrix,
+                        transition.K,
+                        input,
+                        output);
+                }
+                return vector_to_array(output);
+            },
+            py::arg("values"))
+        .def_property_readonly(
+            "nnz",
+            [](const NativeSparseTransition& transition) {
+                return transition.matrix.data.size();
+            });
+
     py::class_<scar::PreparedScarOuEvaluator>(m, "PreparedScarOuEvaluator")
         .def(py::init(&make_prepared_scar_ou_evaluator))
         .def(py::init(&make_prepared_equicorr_scar_ou_evaluator))

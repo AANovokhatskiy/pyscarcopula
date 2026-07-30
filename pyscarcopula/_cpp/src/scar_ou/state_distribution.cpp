@@ -186,15 +186,17 @@ StateDistribution ScarOuEvaluator::state_distribution_matrix(
         return invalid_state_distribution(SCAR_INVALID_SIZE, OuBackend::Matrix);
     }
 
-    std::vector<double> matrix;
-    if (!scar_internal::build_dense_transition_matrix(grid, matrix)) {
+    scar_internal::MatrixTransitionOperator transition;
+    if (!scar_internal::build_matrix_transition_operator(
+            grid, config.grid_method, transition)) {
         return invalid_state_distribution(
             SCAR_INVALID_SIZE, OuBackend::Matrix);
     }
     const double* observation_values = observation_data(copula, u);
     auto advance = [&](const std::vector<double>& source,
                        std::vector<double>& next_phi) {
-        scar_internal::dense_predict_matvec(matrix, grid, source, next_phi);
+        scar_internal::matrix_predict_matvec(
+            transition, grid, source, next_phi);
     };
     return state_distribution_impl(
         copula, grid, observation_values, n_obs, horizon_next,

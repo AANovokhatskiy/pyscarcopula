@@ -1,3 +1,4 @@
+#include "scar/ou.hpp"
 #include "scar/detail/safety.hpp"
 #include "scar/detail/linalg.hpp"
 #include "scar/detail/scar_ou/quadrature.hpp"
@@ -44,6 +45,262 @@ bool build_dense_transition_matrix(const OuGrid& grid, std::vector<double>& matr
     return true;
 }
 
+bool build_sparse_transition_matrix(
+    const std::vector<double>& z,
+    double rho,
+    double sigma_cond,
+    const std::vector<double>& trap_w,
+    int K,
+    int band,
+    SparseTransitionMatrix& matrix,
+    const std::vector<double>* i_centers) {
+
+    matrix = {};
+    std::size_t grid_size = 0;
+    if (!checked_positive_int_size(K, kMaxGridSize, grid_size)
+        || K < 2
+        || band < 0
+        || z.size() != grid_size
+        || trap_w.size() != grid_size
+        || (i_centers != nullptr && i_centers->size() != grid_size)
+        || !std::isfinite(rho)
+        || !std::isfinite(sigma_cond)
+        || sigma_cond <= 0.0) {
+        return false;
+    }
+
+    const double z0 = z.front();
+    const double dz = z[1] - z[0];
+    if (!std::isfinite(z0) || !std::isfinite(dz) || dz <= 0.0) {
+        return false;
+    }
+    for (std::size_t i = 0; i < grid_size; ++i) {
+        if (!std::isfinite(z[i])
+            || !std::isfinite(trap_w[i])
+            || trap_w[i] < 0.0) {
+            return false;
+        }
+    }
+
+    matrix.indptr.resize(grid_size + 1, 0);
+    const double inv_dz = 1.0 / dz;
+    const double coeff = 1.0 / (sigma_cond * std::sqrt(2.0 * kPi));
+
+    std::size_t nnz = 0;
+    for (int row = 0; row < K; ++row) {
+        const double center = rho * z[static_cast<std::size_t>(row)];
+        const double i_center = i_centers == nullptr
+            ? (center - z0) * inv_dz
+            : (*i_centers)[static_cast<std::size_t>(row)];
+        if (!std::isfinite(i_center)) {
+            matrix = {};
+            return false;
+        }
+
+        const double lo_value = std::floor(i_center) - band;
+        const double hi_value = std::ceil(i_center) + band + 1.0;
+        const int lo = lo_value <= 0.0
+            ? 0
+            : (lo_value >= static_cast<double>(K)
+                ? K
+                : static_cast<int>(lo_value));
+        const int hi = hi_value <= 0.0
+            ? 0
+            : (hi_value >= static_cast<double>(K)
+                ? K
+                : static_cast<int>(hi_value));
+
+        const std::size_t width = hi > lo
+            ? static_cast<std::size_t>(hi - lo)
+            : 0;
+        if (!checked_size_add(nnz, width, nnz)
+            || nnz > static_cast<std::size_t>(
+                std::numeric_limits<int>::max())) {
+            matrix = {};
+            return false;
+        }
+        matrix.indptr[static_cast<std::size_t>(row) + 1] =
+            static_cast<int>(nnz);
+    }
+
+    matrix.data.resize(nnz);
+    matrix.indices.resize(nnz);
+    for (int row = 0; row < K; ++row) {
+        const double center = rho * z[static_cast<std::size_t>(row)];
+        const double i_center = i_centers == nullptr
+            ? (center - z0) * inv_dz
+            : (*i_centers)[static_cast<std::size_t>(row)];
+        const double lo_value = std::floor(i_center) - band;
+        const int lo = lo_value <= 0.0
+            ? 0
+            : (lo_value >= static_cast<double>(K)
+                ? K
+                : static_cast<int>(lo_value));
+        const int begin =
+            matrix.indptr[static_cast<std::size_t>(row)];
+        const int end =
+            matrix.indptr[static_cast<std::size_t>(row) + 1];
+
+        for (int offset = begin; offset < end; ++offset) {
+            const int col = lo + offset - begin;
+            const std::size_t idx = static_cast<std::size_t>(col);
+            const double scaled_diff = (z[idx] - center) / sigma_cond;
+            matrix.indices[static_cast<std::size_t>(offset)] = col;
+            matrix.data[static_cast<std::size_t>(offset)] =
+                coeff * std::exp(-0.5 * scaled_diff * scaled_diff)
+                * trap_w[idx];
+        }
+    }
+    return true;
+}
+
+void sparse_matvec(
+    const SparseTransitionMatrix& matrix,
+    int K,
+    const std::vector<double>& v,
+    std::vector<double>& out) {
+
+    std::fill(out.begin(), out.end(), 0.0);
+    for (int row = 0; row < K; ++row) {
+        double value = 0.0;
+        const int begin = matrix.indptr[static_cast<std::size_t>(row)];
+        const int end = matrix.indptr[static_cast<std::size_t>(row) + 1];
+        for (int offset = begin; offset < end; ++offset) {
+            const std::size_t idx = static_cast<std::size_t>(offset);
+            value += matrix.data[idx]
+                * v[static_cast<std::size_t>(matrix.indices[idx])];
+        }
+        out[static_cast<std::size_t>(row)] = value;
+    }
+}
+
+void sparse_transpose_matvec(
+    const SparseTransitionMatrix& matrix,
+    int K,
+    const std::vector<double>& v,
+    std::vector<double>& out) {
+
+    std::fill(out.begin(), out.end(), 0.0);
+    for (int row = 0; row < K; ++row) {
+        const double source = v[static_cast<std::size_t>(row)];
+        const int begin = matrix.indptr[static_cast<std::size_t>(row)];
+        const int end = matrix.indptr[static_cast<std::size_t>(row) + 1];
+        for (int offset = begin; offset < end; ++offset) {
+            const std::size_t idx = static_cast<std::size_t>(offset);
+            out[static_cast<std::size_t>(matrix.indices[idx])] +=
+                matrix.data[idx] * source;
+        }
+    }
+}
+
+int matrix_transition_band(const OuGrid& grid) {
+    if (grid.K < 2
+        || !std::isfinite(grid.r_kernel_grid)
+        || grid.r_kernel_grid <= 0.0) {
+        return -1;
+    }
+    const double band_value = std::ceil(5.0 * grid.r_kernel_grid);
+    if (!std::isfinite(band_value)
+        || band_value < 0.0
+        || band_value > static_cast<double>(std::numeric_limits<int>::max())) {
+        return -1;
+    }
+    return static_cast<int>(band_value);
+}
+
+bool build_matrix_transition_operator(
+    const OuGrid& grid,
+    scar::OuGridMethod method,
+    MatrixTransitionOperator& op) {
+
+    op = {};
+    const int band = matrix_transition_band(grid);
+    if (band < 0) {
+        return false;
+    }
+    const bool sparse =
+        method == scar::OuGridMethod::Sparse
+        || (method == scar::OuGridMethod::Auto
+            && (static_cast<std::size_t>(grid.K) > kMaxDenseGridSize
+                || band < grid.K / 4));
+    if (method == scar::OuGridMethod::Dense
+        && static_cast<std::size_t>(grid.K) > kMaxDenseGridSize) {
+        return false;
+    }
+
+    op.K = grid.K;
+    op.sparse = sparse;
+    if (sparse) {
+        std::vector<double> i_centers(
+            static_cast<std::size_t>(grid.K), 0.0);
+        const double midpoint =
+            0.5 * static_cast<double>(grid.K - 1);
+        for (int row = 0; row < grid.K; ++row) {
+            i_centers[static_cast<std::size_t>(row)] =
+                grid.rho * static_cast<double>(row)
+                + (1.0 - grid.rho) * midpoint;
+        }
+        return build_sparse_transition_matrix(
+            grid.z,
+            grid.rho,
+            grid.sigma_cond,
+            grid.trap_w,
+            grid.K,
+            band,
+            op.csr,
+            &i_centers);
+    }
+    return build_dense_transition_matrix(grid, op.dense);
+}
+
+void matrix_matvec(
+    const MatrixTransitionOperator& op,
+    const std::vector<double>& v,
+    std::vector<double>& out) {
+
+    if (!op.sparse) {
+        dense_matvec(op.dense, op.K, v, out);
+        return;
+    }
+    sparse_matvec(op.csr, op.K, v, out);
+}
+
+void matrix_transpose_matvec(
+    const MatrixTransitionOperator& op,
+    const std::vector<double>& v,
+    std::vector<double>& out) {
+
+    std::fill(out.begin(), out.end(), 0.0);
+    if (op.sparse) {
+        sparse_transpose_matvec(op.csr, op.K, v, out);
+        return;
+    }
+    for (int row = 0; row < op.K; ++row) {
+        const double source = v[static_cast<std::size_t>(row)];
+        const std::size_t row_offset =
+            static_cast<std::size_t>(row)
+            * static_cast<std::size_t>(op.K);
+        for (int col = 0; col < op.K; ++col) {
+            out[static_cast<std::size_t>(col)] +=
+                op.dense[row_offset + static_cast<std::size_t>(col)]
+                * source;
+        }
+    }
+}
+
+void matrix_predict_matvec(
+    const MatrixTransitionOperator& op,
+    const OuGrid& grid,
+    const std::vector<double>& source,
+    std::vector<double>& out_density) {
+
+    matrix_transpose_matvec(op, source, out_density);
+    for (int col = 0; col < grid.K; ++col) {
+        out_density[static_cast<std::size_t>(col)] /=
+            grid.trap_w[static_cast<std::size_t>(col)];
+    }
+}
+
 void dense_matvec(
     const std::vector<double>& matrix,
     int K,
@@ -84,7 +341,7 @@ void dense_predict_matvec(
 bool matrix_backward_loglik(
     const scar::CopulaSpec& copula,
     const OuGrid& grid,
-    const std::vector<double>& matrix,
+    const MatrixTransitionOperator& op,
     const double* u,
     std::int64_t n_obs,
     double& loglik) {
@@ -113,7 +370,7 @@ bool matrix_backward_loglik(
             v[idx] = fi_row[idx] * msg[idx];
         }
 
-        dense_matvec(matrix, grid.K, v, next_msg);
+        matrix_matvec(op, v, next_msg);
 
         double scale = 0.0;
         for (double value : next_msg) {
@@ -154,7 +411,7 @@ bool matrix_backward_loglik(
 bool matrix_forward_predictive_mean(
     const scar::CopulaSpec& copula,
     const OuGrid& grid,
-    const std::vector<double>& matrix,
+    const MatrixTransitionOperator& op,
     const double* u,
     std::int64_t n_obs,
     double* out) {
@@ -173,7 +430,7 @@ bool matrix_forward_predictive_mean(
             const std::size_t idx = static_cast<std::size_t>(j);
             source[idx] = fi_row[idx] * phi[idx] * grid.trap_w[idx];
         }
-        dense_predict_matvec(matrix, grid, source, phi_next);
+        matrix_predict_matvec(op, grid, source, phi_next);
 
         double scale = 0.0;
         for (double value : phi_next) {
@@ -205,7 +462,7 @@ bool matrix_forward_predictive_mean(
 bool matrix_forward_mixture_h(
     const scar::CopulaSpec& copula,
     const OuGrid& grid,
-    const std::vector<double>& matrix,
+    const MatrixTransitionOperator& op,
     const double* u,
     std::int64_t n_obs,
     double* out,
@@ -237,7 +494,7 @@ bool matrix_forward_mixture_h(
             const std::size_t idx = static_cast<std::size_t>(j);
             source[idx] = fi_row[idx] * phi[idx] * grid.trap_w[idx];
         }
-        dense_predict_matvec(matrix, grid, source, phi_next);
+        matrix_predict_matvec(op, grid, source, phi_next);
 
         double scale = 0.0;
         for (double value : phi_next) {

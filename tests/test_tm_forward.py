@@ -328,6 +328,59 @@ def test_matrix_transition_keeps_sparse_dense_backend_selection():
     assert dense_grid.diagnostics()["transition_method"] == "matrix"
 
 
+def test_sparse_matrix_native_backend_matches_dense_transition():
+    sparse_grid = TMGrid(
+        kappa=0.8,
+        mu=0.0,
+        nu=0.7,
+        n=40,
+        K=35,
+        grid_range=4.0,
+        grid_method="sparse",
+        adaptive=False,
+        transition_method="matrix",
+    )
+    dense_grid = TMGrid(
+        kappa=0.8,
+        mu=0.0,
+        nu=0.7,
+        n=40,
+        K=35,
+        grid_range=4.0,
+        grid_method="dense",
+        adaptive=False,
+        transition_method="matrix",
+    )
+
+    expected = dense_grid._T_op.copy()
+    band = sparse_grid.diagnostics()["band"]
+    rows, cols = np.indices(expected.shape)
+    centers = sparse_grid.rho * sparse_grid.z
+    i_centers = (
+        (centers - sparse_grid.z[0]) / sparse_grid.dz
+    )
+    included = (
+        (cols >= np.floor(i_centers).astype(np.intp)[:, None] - band)
+        & (cols < np.ceil(i_centers).astype(np.intp)[:, None] + band + 1)
+    )
+    expected[~included] = 0.0
+
+    values = np.linspace(0.2, 1.3, sparse_grid.K)
+    np.testing.assert_allclose(
+        sparse_grid.matvec(values),
+        expected @ values,
+        rtol=2e-15,
+        atol=0.0,
+    )
+    np.testing.assert_allclose(
+        sparse_grid.rmatvec(values),
+        expected.T @ values,
+        rtol=2e-15,
+        atol=0.0,
+    )
+    assert sparse_grid._T_op.nnz == int(np.count_nonzero(expected))
+
+
 def test_local_transition_loglik_is_finite():
     rng = np.random.default_rng(0)
     u = rng.uniform(0.05, 0.95, size=(40, 2))
