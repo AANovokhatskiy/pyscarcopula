@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.20.0 - Unreleased
+
+Version: `0.19.1` -> `0.20.0`
+
+- Centralize process-count validation, native-thread policy, independent
+  random streams, and worker model reconstruction in a shared internal
+  parallel runtime used by independent fitting and rolling risk metrics.
+- Add an adapter-based, process-parallel parametric-bootstrap GoF runner for
+  bivariate copulas, static `GaussianCopula`/`StudentCopula`, and dynamic
+  `EquicorrGaussianCopula`/`StochasticStudentCopula` MLE, GAS, and SCAR-TM-OU
+  fits. Dense, shrinkage, Cholesky, and supported factor correlation policies
+  are preserved. The `n_jobs` API keeps a sequential default and uses
+  per-replication `SeedSequence` streams, deterministic results across worker
+  counts, isolated model ownership, and protection against nested
+  native-thread oversubscription.
+- Reject non-boolean bootstrap switches, preserve fitted SCAR grid settings
+  during bootstrap simulation and refitting, and evaluate factor stochastic
+  Student Rosenblatt transforms without materializing a dense correlation
+  matrix.
+
 ## 0.19.1 - 2026-07-28
 
 Version: `0.19.0` -> `0.19.1`

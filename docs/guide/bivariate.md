@@ -170,3 +170,27 @@ statistic. GAS evaluates the transform at the filtered point state. SCAR
 models integrate the h-function over the predictive latent-state distribution
 before the current observation is absorbed, which is the mixture Rosenblatt
 contract described in [Mathematical Contracts](mathematical-contracts.md).
+
+Use parametric bootstrap calibration when an asymptotic p-value is
+insufficient:
+
+```python
+gof = gof_test(
+    copula,
+    u,
+    fit_result=scar_result,
+    to_pobs=False,
+    bootstrap=True,
+    n_bootstrap=499,
+    n_jobs=-1,
+    rng=20260730,
+)
+```
+
+Bootstrap replicas run in independent worker processes. Each replica owns its
+model and random stream, so a fixed seed produces the same bootstrap
+statistics for `n_jobs=1` and `n_jobs>1`. Native computations use one thread
+per worker to avoid nested process/thread oversubscription. Bootstrap
+calibration is also available for static Gaussian and Student copulas and for
+dynamic equicorrelation Gaussian and stochastic Student copulas. Vine
+bootstrap remains out of scope.

@@ -24,8 +24,16 @@ Usage:
 import numpy as np
 import time
 from dataclasses import dataclass
+from typing import Callable
 from scipy.stats import chi2, norm, cramervonmises
 
+from pyscarcopula._parallel import (
+    create_worker_model,
+    get_copula_constructor,
+    resolve_parallelism,
+    spawn_seed_sequences,
+    with_n_threads,
+)
 from pyscarcopula._utils import (
     clip_pseudo_observations,
     clip_pseudo_observations_no_copy,
@@ -49,6 +57,12 @@ class BootstrapGoFResult:
     n_bootstrap: int
     calibration: str = 'parametric_bootstrap'
     bootstrap_diagnostics: tuple[dict, ...] = ()
+    n_jobs_requested: int = 1
+    n_jobs: int = 1
+    n_threads: int = 1
+    backend: str = 'sequential'
+    rng_policy: str = 'seed_sequence_per_replication'
+    worker_model_ownership: str = 'per_task'
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -123,6 +137,12 @@ def _prepare_gof_data(data, *, expected_dim, to_pobs):
     return as_pseudo_observation_array(u, name="data")
 
 
+def _validated_boolean(name, value):
+    if not isinstance(value, (bool, np.bool_)):
+        raise TypeError(f"{name} must be a boolean")
+    return bool(value)
+
+
 # ══════════════════════════════════════════════════════════════════
 # Bivariate Rosenblatt
 # ══════════════════════════════════════════════════════════════════
@@ -176,7 +196,8 @@ def rosenblatt_transform_gas(copula, u, gas_params, scaling='unit'):
 
 def gof_test(model, data, to_pobs=True, K=300, grid_range=5.0,
              fit_result=None, bootstrap=False, n_bootstrap=199,
-             bootstrap_refit=True, bootstrap_fit_kwargs=None, rng=None):
+             bootstrap_refit=True, bootstrap_fit_kwargs=None, rng=None,
+             n_jobs=1):
     """
     Unified goodness-of-fit test for any copula model.
 
@@ -199,20 +220,26 @@ def gof_test(model, data, to_pobs=True, K=300, grid_range=5.0,
         If provided, use this instead of model.fit_result.
         Enables the stateless API: gof_test(copula, u, fit_result=result)
     bootstrap : bool
-        If True, calibrate the bivariate CvM statistic by parametric
-        bootstrap instead of using the one-sample asymptotic p-value.
+        If True, calibrate a supported bivariate, static multivariate, or
+        dynamic multivariate CvM statistic by parametric bootstrap instead of
+        using the one-sample asymptotic p-value.
     n_bootstrap : int
         Number of bootstrap replications.
     bootstrap_refit : bool
         If True, re-estimate the model on each bootstrap sample.
     bootstrap_fit_kwargs : dict or None
         Extra keyword arguments for each bootstrap fit.
-    rng : int, Generator, or None
+    rng : int, Generator, SeedSequence, or None
         Random seed/source for bootstrap simulation.
+    n_jobs : int
+        Bootstrap worker processes. ``1`` executes sequentially; ``-1`` uses
+        all available CPUs. Ignored when ``bootstrap=False``.
 
     Returns
     -------
-    CramérVonMisesResult with .statistic and .pvalue
+    CramérVonMisesResult or BootstrapGoFResult
+        The bootstrap result additionally contains calibration samples,
+        per-replication diagnostics, and resolved parallelism metadata.
     """
     from pyscarcopula.copula.base import BivariateCopula
     from pyscarcopula.copula.multivariate import GaussianCopula, StudentCopula
@@ -223,18 +250,44 @@ def gof_test(model, data, to_pobs=True, K=300, grid_range=5.0,
         StochasticStudentCopula,
     )
 
+    bootstrap = _validated_boolean("bootstrap", bootstrap)
+    bootstrap_refit = _validated_boolean(
+        "bootstrap_refit", bootstrap_refit)
+
     if isinstance(model, StochasticStudentCopula):
         if bootstrap:
-            raise NotImplementedError(
-                "Bootstrap GoF is currently implemented for bivariate "
-                "copulas only.")
+            return _gof_dynamic_multivariate(
+                'stochastic_student',
+                model,
+                data,
+                to_pobs,
+                K,
+                grid_range,
+                fit_result,
+                n_bootstrap,
+                bootstrap_refit,
+                bootstrap_fit_kwargs,
+                rng,
+                n_jobs,
+            )
         return stochastic_student_gof_test(model, data, to_pobs, K,
                                            grid_range, fit_result=fit_result)
     elif isinstance(model, EquicorrGaussianCopula):
         if bootstrap:
-            raise NotImplementedError(
-                "Bootstrap GoF is currently implemented for bivariate "
-                "copulas only.")
+            return _gof_dynamic_multivariate(
+                'equicorr',
+                model,
+                data,
+                to_pobs,
+                K,
+                grid_range,
+                fit_result,
+                n_bootstrap,
+                bootstrap_refit,
+                bootstrap_fit_kwargs,
+                rng,
+                n_jobs,
+            )
         return equicorr_gof_test(model, data, to_pobs, K, grid_range,
                                  fit_result=fit_result)
     elif isinstance(model, BivariateCopula):
@@ -243,12 +296,11 @@ def gof_test(model, data, to_pobs=True, K=300, grid_range=5.0,
                               n_bootstrap=n_bootstrap,
                               bootstrap_refit=bootstrap_refit,
                               bootstrap_fit_kwargs=bootstrap_fit_kwargs,
-                              rng=rng)
+                              rng=rng, n_jobs=n_jobs)
     elif isinstance(model, VineCopula):
         if bootstrap:
             raise NotImplementedError(
-                "Bootstrap GoF is currently implemented for bivariate "
-                "copulas only.")
+                "Bootstrap GoF is not implemented for VineCopula.")
         return rvine_gof_test(
             model,
             data,
@@ -260,20 +312,37 @@ def gof_test(model, data, to_pobs=True, K=300, grid_range=5.0,
     elif isinstance(model, CVineCopula):
         if bootstrap:
             raise NotImplementedError(
-                "Bootstrap GoF is currently implemented for bivariate "
-                "copulas only.")
+                "Bootstrap GoF is not implemented for CVineCopula.")
         return vine_gof_test(model, data, to_pobs, K, grid_range)
     elif isinstance(model, GaussianCopula):
         if bootstrap:
-            raise NotImplementedError(
-                "Bootstrap GoF is currently implemented for bivariate "
-                "copulas only.")
+            return _gof_static_multivariate(
+                'gaussian',
+                model,
+                data,
+                to_pobs,
+                fit_result,
+                n_bootstrap,
+                bootstrap_refit,
+                bootstrap_fit_kwargs,
+                rng,
+                n_jobs,
+            )
         return gaussian_gof_test(model, data, to_pobs)
     elif isinstance(model, StudentCopula):
         if bootstrap:
-            raise NotImplementedError(
-                "Bootstrap GoF is currently implemented for bivariate "
-                "copulas only.")
+            return _gof_static_multivariate(
+                'student',
+                model,
+                data,
+                to_pobs,
+                fit_result,
+                n_bootstrap,
+                bootstrap_refit,
+                bootstrap_fit_kwargs,
+                rng,
+                n_jobs,
+            )
         return student_gof_test(model, data, to_pobs)
     else:
         raise TypeError(f"Unsupported model type: {type(model).__name__}")
@@ -285,7 +354,7 @@ def gof_test(model, data, to_pobs=True, K=300, grid_range=5.0,
 def _gof_bivariate(copula, data, to_pobs=True, K=300, grid_range=5.0,
                    fit_result=None, bootstrap=False, n_bootstrap=199,
                    bootstrap_refit=True, bootstrap_fit_kwargs=None,
-                   rng=None):
+                   rng=None, n_jobs=1):
     """
     Goodness-of-fit for a fitted BivariateCopula.
 
@@ -321,7 +390,7 @@ def _gof_bivariate(copula, data, to_pobs=True, K=300, grid_range=5.0,
     return _bootstrap_gof_bivariate(
         copula, u, fr, float(result.statistic), K, grid_range,
         n_bootstrap=n_bootstrap, bootstrap_refit=bootstrap_refit,
-        bootstrap_fit_kwargs=bootstrap_fit_kwargs, rng=rng)
+        bootstrap_fit_kwargs=bootstrap_fit_kwargs, rng=rng, n_jobs=n_jobs)
 
 
 def _bivariate_rosenblatt_from_result(copula, u, fit_result,
@@ -350,12 +419,6 @@ def _bivariate_rosenblatt_from_result(copula, u, fit_result,
     return clip_rosenblatt_output(e)
 
 
-def _as_rng(rng):
-    if isinstance(rng, np.random.Generator):
-        return rng
-    return np.random.default_rng(rng)
-
-
 def _bootstrap_fit_kwargs(fit_result, fit_kwargs):
     """Warm-start bootstrap refits from the original fitted parameters."""
     out = dict(fit_kwargs)
@@ -382,8 +445,9 @@ def _fit_result_diagnostics(result):
         'bootstrap_fit_nfev': int(getattr(result, 'nfev', 0)),
         'bootstrap_fit_message': str(getattr(result, 'message', '')),
     }
-    if hasattr(result, 'copula_param'):
-        row['bootstrap_param_theta'] = float(result.copula_param)
+    copula_param = getattr(result, 'copula_param', None)
+    if copula_param is not None:
+        row['bootstrap_param_theta'] = float(copula_param)
 
     params = getattr(result, 'params', None)
     if params is not None:
@@ -397,66 +461,467 @@ def _fit_result_diagnostics(result):
     return row
 
 
-def _bootstrap_gof_bivariate(copula, u, fit_result, observed_statistic,
-                             K=300, grid_range=5.0, n_bootstrap=199,
-                             bootstrap_refit=True,
-                             bootstrap_fit_kwargs=None, rng=None):
-    """Parametric bootstrap calibration for bivariate GoF."""
+def _bootstrap_strategy(fit_result, config):
+    if (
+            fit_result.method.upper() == 'MLE'
+            and not hasattr(fit_result, 'copula_param')):
+        return None
+
     from pyscarcopula.strategy._base import get_strategy_for_result
 
-    n_bootstrap = validate_positive_int(n_bootstrap, "n_bootstrap")
-    validate_float64_allocation(
-        (n_bootstrap,), name="bootstrap_statistics")
+    return get_strategy_for_result(fit_result, config=config)
 
-    rng = _as_rng(rng)
-    fit_kwargs = {} if bootstrap_fit_kwargs is None else dict(bootstrap_fit_kwargs)
-    strategy = None
-    if not (fit_result.method.upper() == 'MLE'
-            and not hasattr(fit_result, 'copula_param')):
-        strategy = get_strategy_for_result(
-            fit_result, K=K, grid_range=grid_range)
 
-    boot_stats = np.empty(n_bootstrap, dtype=np.float64)
-    diagnostics = []
-    for b in range(n_bootstrap):
+def _bootstrap_capture_none(copula, fit_result):
+    return None
+
+
+def _bootstrap_prepare_bivariate(
+        copula_class, constructor_kwargs, fit_result, fitted_snapshot):
+    return create_worker_model(copula_class, constructor_kwargs)
+
+
+def _bootstrap_simulate_bivariate(
+        copula, u, fit_result, rng, K, grid_range, n_threads, config):
+    strategy = _bootstrap_strategy(fit_result, config)
+    if strategy is None:
+        return copula.sample_at_parameter(len(u), rng=rng)
+    return strategy.sample(copula, u, fit_result, len(u), rng=rng)
+
+
+def _bootstrap_refit_bivariate(
+        copula_class, constructor_kwargs, u_boot, fit_result, fit_kwargs,
+        K, grid_range, n_threads, config):
+    copula = create_worker_model(copula_class, constructor_kwargs)
+    strategy = _bootstrap_strategy(fit_result, config)
+    if strategy is None:
+        result = copula.fit(
+            u_boot, method='mle', to_pobs=False, **fit_kwargs)
+    else:
+        result = strategy.fit(
+            copula,
+            u_boot,
+            **_bootstrap_fit_kwargs(fit_result, fit_kwargs),
+        )
+    return copula, result
+
+
+def _bootstrap_statistic_bivariate(
+        copula, u_boot, fit_result, K, grid_range):
+    e_boot = _bivariate_rosenblatt_from_result(
+        copula, u_boot, fit_result, K, grid_range)
+    return float(cvm_test(e_boot).statistic)
+
+
+def _bootstrap_prepare_gaussian(
+        copula_class, constructor_kwargs, fit_result, fitted_snapshot):
+    copula = create_worker_model(copula_class, constructor_kwargs)
+    if getattr(copula, 'corr_mode', 'dense') == 'factor':
+        loadings = fit_result.model_parameters.get('factor_loadings')
+        if loadings is None:
+            raise ValueError(
+                "factor Gaussian fit result does not contain factor_loadings")
+        copula._set_factor_loadings(
+            np.asarray(loadings, dtype=np.float64),
+            diagnostics={'source': 'bootstrap_fitted_result'},
+        )
+    else:
+        correlation = getattr(fit_result, 'correlation_matrix', None)
+        if correlation is None:
+            raise ValueError(
+                "Gaussian fit result does not contain a correlation matrix")
+        correlation = np.asarray(correlation, dtype=np.float64)
+        copula._set_dimension(correlation.shape[0], allow_change=True)
+        copula.corr = correlation.copy()
+    copula.fit_result = fit_result
+    return copula
+
+
+def _bootstrap_simulate_gaussian(
+        copula, u, fit_result, rng, K, grid_range, n_threads, config):
+    return copula.sample(len(u), rng=rng, n_threads=n_threads)
+
+
+def _bootstrap_refit_gaussian(
+        copula_class, constructor_kwargs, u_boot, fit_result, fit_kwargs,
+        K, grid_range, n_threads, config):
+    copula = create_worker_model(copula_class, constructor_kwargs)
+    result = copula.fit(
+        u_boot,
+        method='mle',
+        to_pobs=False,
+        config=config,
+        **fit_kwargs,
+    )
+    return copula, result
+
+
+def _bootstrap_statistic_gaussian(
+        copula, u_boot, fit_result, K, grid_range):
+    if getattr(copula, 'corr_mode', 'dense') == 'factor':
+        e_boot = factor_gaussian_rosenblatt_transform(
+            copula.correlation_operator_, u_boot)
+    else:
+        correlation = getattr(fit_result, 'correlation_matrix', None)
+        if correlation is None:
+            correlation = copula.corr
+        e_boot = gaussian_rosenblatt_transform(correlation, u_boot)
+    return float(cvm_test(e_boot).statistic)
+
+
+def _bootstrap_prepare_student(
+        copula_class, constructor_kwargs, fit_result, fitted_snapshot):
+    copula = create_worker_model(copula_class, constructor_kwargs)
+    correlation = getattr(fit_result, 'correlation_matrix', None)
+    df = getattr(fit_result, 'copula_param', None)
+    if correlation is None or df is None:
+        raise ValueError(
+            "Student fit result does not contain correlation and df")
+    correlation = np.asarray(correlation, dtype=np.float64)
+    copula._set_dimension(correlation.shape[0], allow_change=True)
+    copula.shape = correlation.copy()
+    copula.df = float(df)
+    copula.fit_result = fit_result
+    return copula
+
+
+def _bootstrap_simulate_student(
+        copula, u, fit_result, rng, K, grid_range, n_threads, config):
+    return copula.sample(len(u), rng=rng)
+
+
+def _bootstrap_refit_student(
+        copula_class, constructor_kwargs, u_boot, fit_result, fit_kwargs,
+        K, grid_range, n_threads, config):
+    copula = create_worker_model(copula_class, constructor_kwargs)
+    result = copula.fit(
+        u_boot,
+        method='mle',
+        to_pobs=False,
+        config=config,
+        **fit_kwargs,
+    )
+    return copula, result
+
+
+def _bootstrap_statistic_student(
+        copula, u_boot, fit_result, K, grid_range):
+    correlation = getattr(fit_result, 'correlation_matrix', None)
+    df = getattr(fit_result, 'copula_param', None)
+    e_boot = student_rosenblatt_transform(
+        correlation, float(df), u_boot)
+    return float(cvm_test(e_boot).statistic)
+
+
+def _bootstrap_prepare_equicorr(
+        copula_class, constructor_kwargs, fit_result, fitted_snapshot):
+    copula = create_worker_model(copula_class, constructor_kwargs)
+    copula.fit_result = fit_result
+    return copula
+
+
+def _bootstrap_simulate_equicorr(
+        copula, u, fit_result, rng, K, grid_range, n_threads, config):
+    return copula.sample(len(u), u=u, rng=rng)
+
+
+def _bootstrap_refit_dynamic(
+        copula_class, constructor_kwargs, u_boot, fit_result, fit_kwargs,
+        K, grid_range, n_threads, config):
+    copula = create_worker_model(copula_class, constructor_kwargs)
+    method = fit_result.method.upper()
+    if method == 'MLE':
+        result = copula.fit(
+            u_boot,
+            method='mle',
+            to_pobs=False,
+            config=config,
+            **fit_kwargs,
+        )
+        return copula, result
+
+    if hasattr(copula, '_ensure_corr_initialized'):
+        copula._ensure_corr_initialized(u_boot)
+
+    from pyscarcopula.strategy._base import get_strategy_for_result
+
+    strategy = get_strategy_for_result(
+        fit_result,
+        config=config,
+    )
+    result = strategy.fit(
+        copula,
+        u_boot,
+        **_bootstrap_fit_kwargs(fit_result, fit_kwargs),
+    )
+    copula.fit_result = result
+    copula._last_u = u_boot
+    return copula, result
+
+
+def _bootstrap_statistic_equicorr(
+        copula, u_boot, fit_result, K, grid_range):
+    e_boot = equicorr_rosenblatt_transform(
+        copula, u_boot, fit_result, K, grid_range)
+    return float(cvm_test(e_boot).statistic)
+
+
+def _bootstrap_capture_stochastic_student(copula, fit_result):
+    corr_mode = copula.corr_mode
+    model_parameters = getattr(fit_result, 'model_parameters', {})
+    owns_fit_result = getattr(copula, 'fit_result', None) is fit_result
+    if corr_mode == 'factor':
+        loadings = model_parameters.get('factor_loadings')
+        if loadings is None and (
+                owns_fit_result
+                or getattr(copula, '_constructor_factor_loadings', None)
+                is not None):
+            loadings = copula.factor_loadings_
+        if loadings is None:
+            raise ValueError(
+                "fitted factor loadings are required for bootstrap GoF")
+        return {
+            'corr_mode': corr_mode,
+            'factor_loadings': np.asarray(
+                loadings, dtype=np.float64).copy(),
+        }
+
+    correlation = getattr(fit_result, 'correlation_matrix', None)
+    if correlation is None:
+        correlation = model_parameters.get('correlation_matrix')
+    if correlation is None and (
+            corr_mode == 'fixed' or owns_fit_result):
+        correlation = copula.R
+    if correlation is None:
+        raise ValueError(
+            "fitted correlation state is required for bootstrap GoF; "
+            "pass the fitted StochasticStudentCopula instance")
+    return {
+        'corr_mode': corr_mode,
+        'correlation_matrix': np.asarray(
+            correlation, dtype=np.float64).copy(),
+    }
+
+
+def _bootstrap_prepare_stochastic_student(
+        copula_class, constructor_kwargs, fit_result, fitted_snapshot):
+    copula = create_worker_model(copula_class, constructor_kwargs)
+    if fitted_snapshot['corr_mode'] == 'factor':
+        copula._set_factor_loadings(
+            fitted_snapshot['factor_loadings'],
+            diagnostics={'source': 'bootstrap_fitted_snapshot'},
+        )
+    else:
+        copula._set_R(
+            fitted_snapshot['correlation_matrix'],
+            source='bootstrap_fitted_snapshot',
+        )
+    copula.fit_result = fit_result
+    return copula
+
+
+def _bootstrap_simulate_stochastic_student(
+        copula, u, fit_result, rng, K, grid_range, n_threads, config):
+    return copula.sample(
+        len(u), u=u, rng=rng, n_threads=n_threads)
+
+
+def _bootstrap_statistic_stochastic_student(
+        copula, u_boot, fit_result, K, grid_range):
+    e_boot = stochastic_student_rosenblatt_transform(
+        copula, u_boot, fit_result, K, grid_range)
+    return float(cvm_test(e_boot).statistic)
+
+
+@dataclass(frozen=True)
+class _BootstrapAdapter:
+    capture: Callable
+    prepare: Callable
+    simulate: Callable
+    refit: Callable
+    statistic: Callable
+
+
+_BOOTSTRAP_ADAPTERS = {
+    'bivariate': _BootstrapAdapter(
+        capture=_bootstrap_capture_none,
+        prepare=_bootstrap_prepare_bivariate,
+        simulate=_bootstrap_simulate_bivariate,
+        refit=_bootstrap_refit_bivariate,
+        statistic=_bootstrap_statistic_bivariate,
+    ),
+    'gaussian': _BootstrapAdapter(
+        capture=_bootstrap_capture_none,
+        prepare=_bootstrap_prepare_gaussian,
+        simulate=_bootstrap_simulate_gaussian,
+        refit=_bootstrap_refit_gaussian,
+        statistic=_bootstrap_statistic_gaussian,
+    ),
+    'student': _BootstrapAdapter(
+        capture=_bootstrap_capture_none,
+        prepare=_bootstrap_prepare_student,
+        simulate=_bootstrap_simulate_student,
+        refit=_bootstrap_refit_student,
+        statistic=_bootstrap_statistic_student,
+    ),
+    'equicorr': _BootstrapAdapter(
+        capture=_bootstrap_capture_none,
+        prepare=_bootstrap_prepare_equicorr,
+        simulate=_bootstrap_simulate_equicorr,
+        refit=_bootstrap_refit_dynamic,
+        statistic=_bootstrap_statistic_equicorr,
+    ),
+    'stochastic_student': _BootstrapAdapter(
+        capture=_bootstrap_capture_stochastic_student,
+        prepare=_bootstrap_prepare_stochastic_student,
+        simulate=_bootstrap_simulate_stochastic_student,
+        refit=_bootstrap_refit_dynamic,
+        statistic=_bootstrap_statistic_stochastic_student,
+    ),
+}
+
+
+def _bootstrap_gof_worker(task):
+    """Run one independently seeded parametric-bootstrap replication."""
+    (
+        iteration,
+        adapter_name,
+        copula_class,
+        constructor_kwargs,
+        u,
+        fit_result,
+        fitted_snapshot,
+        observed_statistic,
+        K,
+        grid_range,
+        bootstrap_refit,
+        fit_kwargs,
+        seed_sequence,
+        n_threads,
+    ) = task
+
+    try:
+        adapter = _BOOTSTRAP_ADAPTERS[adapter_name]
         iter_start = time.perf_counter()
-        if strategy is None:
-            u_boot = copula.sample(len(u), rng=rng)
-        else:
-            u_boot = strategy.sample(copula, u, fit_result, len(u), rng=rng)
+        rng = np.random.default_rng(seed_sequence)
+        config = fit_kwargs['config']
+        refit_kwargs = dict(fit_kwargs)
+        refit_kwargs.pop('config')
+        copula = adapter.prepare(
+            copula_class, constructor_kwargs, fit_result, fitted_snapshot)
+        u_boot = adapter.simulate(
+            copula,
+            u,
+            fit_result,
+            rng,
+            K,
+            grid_range,
+            n_threads,
+            config,
+        )
 
         fit_start = time.perf_counter()
         if bootstrap_refit:
-            if strategy is None:
-                boot_result = fit_result
-            else:
-                boot_strategy = get_strategy_for_result(
-                    fit_result, K=K, grid_range=grid_range)
-                boot_result = boot_strategy.fit(
-                    copula, u_boot,
-                    **_bootstrap_fit_kwargs(fit_result, fit_kwargs))
+            copula, boot_result = adapter.refit(
+                copula_class,
+                constructor_kwargs,
+                u_boot,
+                fit_result,
+                refit_kwargs,
+                K,
+                grid_range,
+                n_threads,
+                config,
+            )
         else:
             boot_result = fit_result
         fit_elapsed = time.perf_counter() - fit_start
 
         stat_start = time.perf_counter()
-        e_boot = _bivariate_rosenblatt_from_result(
+        statistic = adapter.statistic(
             copula, u_boot, boot_result, K, grid_range)
-        boot_stats[b] = float(cvm_test(e_boot).statistic)
         stat_elapsed = time.perf_counter() - stat_start
 
         row = {
-            'bootstrap_iteration': int(b + 1),
-            'bootstrap_statistic': float(boot_stats[b]),
+            'bootstrap_iteration': int(iteration + 1),
+            'bootstrap_statistic': statistic,
             'bootstrap_exceeds_observed': bool(
-                boot_stats[b] >= float(observed_statistic)),
+                statistic >= float(observed_statistic)),
             'bootstrap_fit_time_sec': float(fit_elapsed),
             'bootstrap_stat_time_sec': float(stat_elapsed),
             'bootstrap_total_time_sec': float(
                 time.perf_counter() - iter_start),
+            'bootstrap_refit': bool(bootstrap_refit),
         }
         row.update(_fit_result_diagnostics(boot_result))
-        diagnostics.append(row)
+        return statistic, row
+    except Exception as exc:
+        raise RuntimeError(
+            f"bootstrap iteration {iteration + 1} failed") from exc
+
+
+def _bootstrap_gof(
+        adapter_name, copula, u, fit_result, observed_statistic,
+        K=300, grid_range=5.0, n_bootstrap=199,
+        bootstrap_refit=True, bootstrap_fit_kwargs=None, rng=None,
+        n_jobs=1):
+    """Run calibrated GoF through a model-specific bootstrap adapter."""
+    n_bootstrap = validate_positive_int(n_bootstrap, "n_bootstrap")
+    validate_float64_allocation(
+        (n_bootstrap,), name="bootstrap_statistics")
+
+    fit_kwargs = (
+        {} if bootstrap_fit_kwargs is None
+        else dict(bootstrap_fit_kwargs)
+    )
+    n_threads, parallel_diagnostics = resolve_parallelism(
+        n_jobs, n_bootstrap, None, (fit_kwargs,))
+    fit_kwargs = with_n_threads(fit_kwargs, n_threads)
+    requested_jobs = parallel_diagnostics['n_jobs_requested']
+    resolved_jobs = parallel_diagnostics['n_jobs']
+    seed_sequences = spawn_seed_sequences(rng, n_bootstrap)
+    copula_class, constructor_kwargs = get_copula_constructor(copula)
+    fitted_snapshot = _BOOTSTRAP_ADAPTERS[adapter_name].capture(
+        copula, fit_result)
+    tasks = [
+        (
+            iteration,
+            adapter_name,
+            copula_class,
+            constructor_kwargs,
+            u,
+            fit_result,
+            fitted_snapshot,
+            observed_statistic,
+            K,
+            grid_range,
+            bootstrap_refit,
+            fit_kwargs,
+            seed_sequences[iteration],
+            n_threads,
+        )
+        for iteration in range(n_bootstrap)
+    ]
+
+    if resolved_jobs == 1:
+        worker_results = [
+            _bootstrap_gof_worker(task) for task in tasks
+        ]
+        backend = 'sequential'
+    else:
+        from joblib import Parallel, delayed, parallel_config
+
+        with parallel_config(
+                backend='loky', inner_max_num_threads=n_threads):
+            worker_results = Parallel(n_jobs=resolved_jobs)(
+                delayed(_bootstrap_gof_worker)(task)
+                for task in tasks
+            )
+        backend = 'loky'
+
+    boot_stats = np.asarray(
+        [item[0] for item in worker_results], dtype=np.float64)
+    diagnostics = tuple(item[1] for item in worker_results)
 
     pvalue = (
         1.0 + np.sum(boot_stats >= float(observed_statistic))
@@ -466,7 +931,114 @@ def _bootstrap_gof_bivariate(copula, u, fit_result, observed_statistic,
         pvalue=float(pvalue),
         bootstrap_statistics=boot_stats,
         n_bootstrap=len(boot_stats),
-        bootstrap_diagnostics=tuple(diagnostics),
+        bootstrap_diagnostics=diagnostics,
+        n_jobs_requested=requested_jobs,
+        n_jobs=resolved_jobs,
+        n_threads=n_threads,
+        backend=backend,
+    )
+
+
+def _bootstrap_gof_bivariate(copula, u, fit_result, observed_statistic,
+                             K=300, grid_range=5.0, n_bootstrap=199,
+                             bootstrap_refit=True,
+                             bootstrap_fit_kwargs=None, rng=None,
+                             n_jobs=1):
+    """Parametric bootstrap calibration for bivariate GoF."""
+    return _bootstrap_gof(
+        'bivariate',
+        copula,
+        u,
+        fit_result,
+        observed_statistic,
+        K=K,
+        grid_range=grid_range,
+        n_bootstrap=n_bootstrap,
+        bootstrap_refit=bootstrap_refit,
+        bootstrap_fit_kwargs=bootstrap_fit_kwargs,
+        rng=rng,
+        n_jobs=n_jobs,
+    )
+
+
+def _gof_static_multivariate(
+        adapter_name, copula, data, to_pobs, fit_result,
+        n_bootstrap, bootstrap_refit, bootstrap_fit_kwargs, rng, n_jobs):
+    """GoF with optional bootstrap for static multivariate copulas."""
+    n_bootstrap = validate_positive_int(n_bootstrap, "n_bootstrap")
+    validate_float64_allocation(
+        (n_bootstrap,), name="bootstrap_statistics")
+    u = _prepare_gof_data(
+        data, expected_dim=copula.dimension, to_pobs=to_pobs)
+    fr = (
+        fit_result
+        if fit_result is not None
+        else getattr(copula, 'fit_result', None)
+    )
+    if fr is None:
+        raise ValueError(
+            "No fit_result provided and copula has no fit_result. "
+            "Call copula.fit() first or pass fit_result=.")
+
+    copula_class, constructor_kwargs = get_copula_constructor(copula)
+    adapter = _BOOTSTRAP_ADAPTERS[adapter_name]
+    fitted_copula = adapter.prepare(
+        copula_class, constructor_kwargs, fr, adapter.capture(copula, fr))
+    observed_statistic = adapter.statistic(
+        fitted_copula, u, fr, 300, 5.0)
+
+    return _bootstrap_gof(
+        adapter_name,
+        copula,
+        u,
+        fr,
+        observed_statistic,
+        n_bootstrap=n_bootstrap,
+        bootstrap_refit=bootstrap_refit,
+        bootstrap_fit_kwargs=bootstrap_fit_kwargs,
+        rng=rng,
+        n_jobs=n_jobs,
+    )
+
+
+def _gof_dynamic_multivariate(
+        adapter_name, copula, data, to_pobs, K, grid_range, fit_result,
+        n_bootstrap, bootstrap_refit, bootstrap_fit_kwargs, rng, n_jobs):
+    """GoF bootstrap for dynamic multivariate copulas."""
+    n_bootstrap = validate_positive_int(n_bootstrap, "n_bootstrap")
+    validate_float64_allocation(
+        (n_bootstrap,), name="bootstrap_statistics")
+    u = _prepare_gof_data(
+        data, expected_dim=copula.dimension, to_pobs=to_pobs)
+    fr = (
+        fit_result
+        if fit_result is not None
+        else getattr(copula, 'fit_result', None)
+    )
+    if fr is None:
+        raise ValueError(
+            "No fit_result provided and copula has no fit_result. "
+            "Call copula.fit() first or pass fit_result=.")
+
+    copula_class, constructor_kwargs = get_copula_constructor(copula)
+    adapter = _BOOTSTRAP_ADAPTERS[adapter_name]
+    fitted_copula = adapter.prepare(
+        copula_class, constructor_kwargs, fr, adapter.capture(copula, fr))
+    observed_statistic = adapter.statistic(
+        fitted_copula, u, fr, K, grid_range)
+    return _bootstrap_gof(
+        adapter_name,
+        copula,
+        u,
+        fr,
+        observed_statistic,
+        K=K,
+        grid_range=grid_range,
+        n_bootstrap=n_bootstrap,
+        bootstrap_refit=bootstrap_refit,
+        bootstrap_fit_kwargs=bootstrap_fit_kwargs,
+        rng=rng,
+        n_jobs=n_jobs,
     )
 
 
@@ -896,6 +1468,85 @@ def student_rosenblatt_transform(R, df, u):
     return clip_pseudo_observations(e)
 
 
+def factor_student_rosenblatt_transform(correlation, df, u):
+    """Rosenblatt transform for a Student factor correlation.
+
+    Sequential conditioning uses the rank-dimensional Woodbury posterior.
+    Storage is ``O(T*k + k*k)`` and no dense correlation matrix is formed.
+    ``df`` may be scalar or contain one value per observation.
+    """
+    from scipy.stats import t as t_dist
+
+    u_c = clip_pseudo_observations_no_copy(u)
+    if u_c.ndim != 2 or u_c.shape[1] != correlation.dimension:
+        raise ValueError(
+            "data width must match factor correlation dimension")
+    rows, dimension = u_c.shape
+    df_path = np.asarray(df, dtype=np.float64)
+    if df_path.ndim == 0:
+        df_path = np.full(rows, float(df_path), dtype=np.float64)
+    else:
+        df_path = np.ravel(df_path)
+        if len(df_path) != rows:
+            raise ValueError("df must be scalar or have one value per row")
+    if (
+            not np.all(np.isfinite(df_path))
+            or np.any(df_path <= 2.0)):
+        raise ValueError("df must be finite and greater than 2")
+
+    x = t_dist.ppf(u_c, df=df_path[:, None])
+    loadings = correlation.loadings
+    uniqueness = correlation.uniqueness
+    rank = correlation.rank
+    factor_covariance = np.eye(rank, dtype=np.float64)
+    projected = np.zeros((rows, rank), dtype=np.float64)
+    diagonal_quadratic = np.zeros(rows, dtype=np.float64)
+    transformed = np.empty_like(x)
+    transformed[:, 0] = u_c[:, 0]
+
+    for index in range(dimension):
+        loading = loadings[index]
+        covariance_loading = factor_covariance @ loading
+        conditional_variance = float(
+            uniqueness[index] + loading @ covariance_loading)
+        if not np.isfinite(conditional_variance) or (
+                conditional_variance <= 0.0):
+            raise ValueError(
+                "factor correlation produced non-positive "
+                "conditional variance")
+
+        if index > 0:
+            solved_projection = projected @ factor_covariance
+            conditional_mean = solved_projection @ loading
+            quadratic = diagonal_quadratic - np.einsum(
+                "ij,ij->i",
+                projected,
+                solved_projection,
+                optimize=False,
+            )
+            quadratic = np.maximum(quadratic, 0.0)
+            conditional_df = df_path + index
+            scale = (df_path + quadratic) / conditional_df
+            standardized = (
+                (x[:, index] - conditional_mean)
+                / np.sqrt(conditional_variance * scale)
+            )
+            transformed[:, index] = t_dist.cdf(
+                standardized, df=conditional_df)
+
+        projected += (
+            x[:, index] / uniqueness[index]
+        )[:, None] * loading[None, :]
+        diagonal_quadratic += (
+            x[:, index] * x[:, index] / uniqueness[index])
+        factor_covariance -= np.outer(
+            covariance_loading,
+            covariance_loading,
+        ) / conditional_variance
+
+    return clip_pseudo_observations(transformed)
+
+
 def student_gof_test(copula, data, to_pobs=True):
     """
     Goodness-of-fit test for a fitted StudentCopula.
@@ -996,7 +1647,6 @@ def equicorr_rosenblatt_transform(copula, u, fit_result, K=300, grid_range=5.0):
     """
     T, d = u.shape
     method = fit_result.method.upper()
-
     if method not in ('MLE', 'GAS'):
         from pyscarcopula.numerical import _cpp_scar_ou
 
@@ -1124,18 +1774,25 @@ def stochastic_student_rosenblatt_transform(copula, u, fit_result,
                 fit_result, K, grid_range),
         )
 
-    R = copula.R
     if method == 'MLE':
         df = fit_result.copula_param
-        e = student_rosenblatt_transform(R, df, u)
+        if getattr(copula, 'corr_mode', None) == 'factor':
+            e = factor_student_rosenblatt_transform(
+                copula.correlation_operator_, df, u)
+        else:
+            e = student_rosenblatt_transform(copula.R, df, u)
         return clip_pseudo_observations(e)
 
     if method == 'GAS':
         df_path = _gas_parameter_path(copula, u, fit_result)
-        e = np.empty((T, d))
-        for t_idx, df_t in enumerate(df_path):
-            e[t_idx] = student_rosenblatt_transform(
-                R, float(df_t), u[t_idx:t_idx + 1])[0]
+        if getattr(copula, 'corr_mode', None) == 'factor':
+            e = factor_student_rosenblatt_transform(
+                copula.correlation_operator_, df_path, u)
+        else:
+            e = np.empty((T, d))
+            for t_idx, df_t in enumerate(df_path):
+                e[t_idx] = student_rosenblatt_transform(
+                    copula.R, float(df_t), u[t_idx:t_idx + 1])[0]
         return clip_pseudo_observations(e)
 
     raise AssertionError(f"unsupported Student estimation method: {method}")

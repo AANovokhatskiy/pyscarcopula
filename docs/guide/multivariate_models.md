@@ -327,12 +327,37 @@ time-varying parameter path:
 from pyscarcopula.stattests import gof_test
 gof = gof_test(cop, u, to_pobs=False)
 
+# Parametric-bootstrap calibration
+gof_bootstrap = gof_test(
+    cop,
+    u,
+    to_pobs=False,
+    bootstrap=True,
+    n_bootstrap=499,
+    n_jobs=-1,
+    rng=20260730,
+)
+
 # Sampling (fixed parameter)
 samples = cop.sample(n=10000)
 
 # Prediction (conditional on data)
 pred = cop.predict(n=10000)
 ```
+
+Parametric-bootstrap calibration supports static Gaussian and Student models,
+plus `EquicorrGaussianCopula` and `StochasticStudentCopula` fitted by MLE, GAS,
+or SCAR-TM-OU. Stochastic Student correlation policy is retained for fixed,
+shrinkage, Cholesky, and supported two-stage factor modes. Factor Rosenblatt
+statistics use rank-dimensional conditioning with `O(T*k + k^2)` workspace
+and do not materialize a dense correlation matrix for MLE, GAS, or
+SCAR-TM-OU. Replicas use independent process-owned models and random streams.
+With a fixed seed, bootstrap
+statistics are invariant to `n_jobs`; parallel workers default to one native
+thread each. For dynamic stochastic Student fits with an estimated
+correlation, call `gof_test` on the fitted model: a standalone GAS/SCAR result
+does not contain enough correlation state to reconstruct an unfitted
+prototype.
 
 Dynamic scalar-parameter models additionally expose `predictive_mean`. For
 example, after fitting an `EquicorrGaussianCopula`:

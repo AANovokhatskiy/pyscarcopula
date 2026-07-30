@@ -61,7 +61,8 @@ def _materialize_trees(trees):
 
 
 def _validate_fit_policy(
-        truncation_level, truncation_fill, threshold):
+        truncation_level, truncation_fill, threshold,
+        dynamic_failure_policy="fallback"):
     if (
             truncation_level is not None
             and (
@@ -77,6 +78,10 @@ def _validate_fit_policy(
             f"got {truncation_fill!r}")
     if threshold is not None and threshold < 0:
         raise ValueError(f"threshold must be >= 0 or None, got {threshold}")
+    if dynamic_failure_policy not in ("fallback", "keep", "raise"):
+        raise ValueError(
+            "dynamic_failure_policy must be 'fallback', 'keep', or 'raise', "
+            f"got {dynamic_failure_policy!r}")
 
 
 def fit_vine_edges(
@@ -91,6 +96,7 @@ def fit_vine_edges(
     truncation_level=None,
     truncation_fill="independent",
     threshold=0.0,
+    dynamic_failure_policy="fallback",
     min_edge_logL=None,
     transform_type="xtanh",
     config=None,
@@ -116,7 +122,11 @@ def fit_vine_edges(
     tree_levels = _materialize_trees(trees)
     RVineMatrix.from_trees(d, tree_levels)
     _validate_fit_policy(
-        truncation_level, truncation_fill, threshold)
+        truncation_level,
+        truncation_fill,
+        threshold,
+        dynamic_failure_policy,
+    )
 
     candidates = (
         candidates if candidates is not None else _default_candidates())
@@ -162,6 +172,7 @@ def fit_vine_edges(
             truncation_level=truncation_level,
             truncation_fill=truncation_fill,
             threshold=threshold,
+            dynamic_failure_policy=dynamic_failure_policy,
             min_edge_logL=min_edge_logL,
             transform_type=transform_type,
             fit_kwargs=fit_kwargs,
@@ -185,6 +196,7 @@ def _fit_tree_level(
     truncation_level,
     truncation_fill,
     threshold,
+    dynamic_failure_policy="fallback",
     min_edge_logL,
     transform_type,
     fit_kwargs,
@@ -204,6 +216,8 @@ def _fit_tree_level(
             "dynamic_attempted": False,
             "fallback_used": False,
             "fallback_reason": None,
+            "dynamic_failure_policy": dynamic_failure_policy,
+            "unsuccessful_dynamic_kept": False,
             "attempted_method": None,
             "attempted_success": None,
             "attempted_nfev": 0,
@@ -301,10 +315,19 @@ def _fit_tree_level(
                 })
                 result = dynamic_result
                 if not edge_fit_diagnostics["attempted_success"]:
-                    edge_fit_diagnostics["fallback_used"] = True
-                    edge_fit_diagnostics["fallback_reason"] = (
-                        "dynamic_fit_unsuccessful")
-                    result = selection_result
+                    if dynamic_failure_policy == "fallback":
+                        edge_fit_diagnostics["fallback_used"] = True
+                        edge_fit_diagnostics["fallback_reason"] = (
+                            "dynamic_fit_unsuccessful")
+                        result = selection_result
+                    elif dynamic_failure_policy == "keep":
+                        edge_fit_diagnostics[
+                            "unsuccessful_dynamic_kept"] = True
+                    else:
+                        raise RuntimeError(
+                            f"dynamic fit failed at tree {t}, "
+                            f"edge {edge_idx}: "
+                            f"{edge_fit_diagnostics['attempted_message']}")
 
         edge_fit_diagnostics["actual_method"] = str(
             getattr(result, "method", None) or "STATIC").upper()

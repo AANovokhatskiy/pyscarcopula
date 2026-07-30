@@ -2,9 +2,11 @@
 
 #include "evaluator_internal.hpp"
 #include "scar/detail/copula.hpp"
+#include "scar/detail/linalg.hpp"
 #include "scar/detail/safety.hpp"
 #include "scar/detail/scar_ou/grid.hpp"
 #include "scar/detail/scar_ou/transition.hpp"
+#include "scar/factor.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -34,10 +36,18 @@ std::size_t rosenblatt_output_size(
     return output_size;
 }
 
-bool valid_dense_student_spec(const CopulaSpec& copula) {
+bool valid_student_spec(const CopulaSpec& copula) {
     std::size_t matrix_size = 0;
-    return copula.family == CopulaFamily::Student
-        && copula.correlation_kind == CorrelationKind::DenseCholesky
+    if (copula.family != CopulaFamily::Student || copula.dim < 2) {
+        return false;
+    }
+    if (copula.correlation_kind == CorrelationKind::Factor) {
+        return copula.factor_correlation != nullptr
+            && copula.factor_correlation->dimension()
+                == static_cast<std::size_t>(copula.dim)
+            && std::isfinite(copula.factor_correlation->logdet());
+    }
+    return copula.correlation_kind == CorrelationKind::DenseCholesky
         && scar_internal::checked_size_mul(
             static_cast<std::size_t>(copula.dim),
             static_cast<std::size_t>(copula.dim),
@@ -79,7 +89,7 @@ bool student_rosenblatt_impl(
     if (output_size == 0
         || u.size() < 2
         || u.data() == nullptr
-        || !valid_dense_student_spec(copula)) {
+        || !valid_student_spec(copula)) {
         return false;
     }
 
@@ -100,22 +110,128 @@ bool student_rosenblatt_impl(
         }
     }
 
+    const bool factor_correlation =
+        copula.correlation_kind == CorrelationKind::Factor;
     std::vector<double> prefix_log_determinant(dimension, 0.0);
-    for (std::size_t prefix = 1; prefix < dimension; ++prefix) {
-        const double diagonal =
-            copula.l_inv[(prefix - 1) * dimension + prefix - 1];
-        if (!std::isfinite(diagonal) || diagonal <= 0.0) {
+    std::vector<double> prefix_core_inverse;
+    std::vector<double> factor_conditional_variance;
+    const FactorCorrelationOperator* factor = nullptr;
+    std::size_t factor_rank = 0;
+    if (factor_correlation) {
+        factor = copula.factor_correlation.get();
+        factor_rank = factor->rank();
+        std::size_t prefix_inverse_size = 0;
+        if (!scar_internal::checked_size_mul(
+                dimension, factor_rank, prefix_inverse_size)
+            || !scar_internal::checked_size_mul(
+                prefix_inverse_size,
+                factor_rank,
+                prefix_inverse_size)) {
             return false;
         }
-        prefix_log_determinant[prefix] =
-            prefix_log_determinant[prefix - 1]
-            - 2.0 * std::log(diagonal);
+        prefix_core_inverse.assign(prefix_inverse_size, 0.0);
+        factor_conditional_variance.assign(dimension, 0.0);
+        std::vector<double> core(factor_rank * factor_rank, 0.0);
+        std::vector<double> identity(factor_rank * factor_rank, 0.0);
+        for (std::size_t diagonal = 0;
+             diagonal < factor_rank;
+             ++diagonal) {
+            core[diagonal * factor_rank + diagonal] = 1.0;
+            identity[diagonal * factor_rank + diagonal] = 1.0;
+        }
+        double diagonal_log_determinant = 0.0;
+        const auto& loadings = factor->loadings();
+        const auto& uniqueness = factor->uniqueness();
+        for (std::size_t column = 1;
+             column < dimension;
+             ++column) {
+            const std::size_t previous = column - 1;
+            const double previous_uniqueness = uniqueness[previous];
+            diagonal_log_determinant += std::log(previous_uniqueness);
+            for (std::size_t left = 0; left < factor_rank; ++left) {
+                for (std::size_t right = 0;
+                     right < factor_rank;
+                     ++right) {
+                    core[left * factor_rank + right] +=
+                        loadings[previous * factor_rank + left]
+                        * loadings[previous * factor_rank + right]
+                        / previous_uniqueness;
+                }
+            }
+            std::vector<double> lower;
+            double applied_jitter = 0.0;
+            if (!scar_internal::linalg::cholesky_symmetric_with_jitter(
+                    core.data(),
+                    factor_rank,
+                    lower,
+                    &applied_jitter)
+                || applied_jitter != 0.0) {
+                return false;
+            }
+            std::vector<double> inverse;
+            if (!scar_internal::linalg::solve_spd(
+                    lower.data(),
+                    factor_rank,
+                    identity.data(),
+                    factor_rank,
+                    inverse)) {
+                return false;
+            }
+            std::copy(
+                inverse.begin(),
+                inverse.end(),
+                prefix_core_inverse.begin()
+                    + column * factor_rank * factor_rank);
+            double core_log_determinant = 0.0;
+            for (std::size_t diagonal = 0;
+                 diagonal < factor_rank;
+                 ++diagonal) {
+                core_log_determinant += 2.0 * std::log(
+                    lower[diagonal * factor_rank + diagonal]);
+            }
+            prefix_log_determinant[column] =
+                diagonal_log_determinant + core_log_determinant;
+
+            const double* loading =
+                loadings.data() + column * factor_rank;
+            double loading_quadratic = 0.0;
+            for (std::size_t left = 0; left < factor_rank; ++left) {
+                for (std::size_t right = 0;
+                     right < factor_rank;
+                     ++right) {
+                    loading_quadratic +=
+                        loading[left]
+                        * inverse[left * factor_rank + right]
+                        * loading[right];
+                }
+            }
+            factor_conditional_variance[column] =
+                uniqueness[column] + loading_quadratic;
+            if (!std::isfinite(factor_conditional_variance[column])
+                || factor_conditional_variance[column] <= 0.0) {
+                return false;
+            }
+        }
+    } else {
+        for (std::size_t prefix = 1; prefix < dimension; ++prefix) {
+            const double diagonal =
+                copula.l_inv[(prefix - 1) * dimension + prefix - 1];
+            if (!std::isfinite(diagonal) || diagonal <= 0.0) {
+                return false;
+            }
+            prefix_log_determinant[prefix] =
+                prefix_log_determinant[prefix - 1]
+                - 2.0 * std::log(diagonal);
+        }
     }
 
     std::vector<double> quantiles(quantile_size, 0.0);
     std::vector<double> conditional_cdf(K, 0.0);
     std::vector<double> log_weights(K, 0.0);
     std::vector<double> source(K, 0.0);
+    std::vector<double> factor_projection(K * factor_rank, 0.0);
+    std::vector<double> factor_diagonal_quadratic(K, 0.0);
+    std::vector<double> factor_solved(factor_rank, 0.0);
     bool valid = true;
 
     auto advance = [&](
@@ -168,6 +284,21 @@ bool student_rosenblatt_impl(
         }
 
         out[row] = scar_internal::clip_pseudo_observation(u.data()[row]);
+        if (factor_correlation) {
+            const auto& weighted_loadings = factor->weighted_loadings();
+            const auto& uniqueness = factor->uniqueness();
+            for (std::size_t state = 0; state < K; ++state) {
+                const double first = quantiles[state * dimension];
+                factor_diagonal_quadratic[state] =
+                    first * first / uniqueness[0];
+                for (std::size_t component = 0;
+                     component < factor_rank;
+                     ++component) {
+                    factor_projection[state * factor_rank + component] =
+                        first * weighted_loadings[component];
+                }
+            }
+        }
         for (std::size_t column = 1; column < dimension; ++column) {
             double maximum_log_weight =
                 -std::numeric_limits<double>::infinity();
@@ -176,35 +307,69 @@ bool student_rosenblatt_impl(
                 const double df = df_grid[state];
 
                 double conditional_mean = 0.0;
-                const double diagonal =
-                    copula.l_inv[column * dimension + column];
-                if (!std::isfinite(diagonal) || diagonal <= 0.0) {
-                    valid = false;
-                    return;
-                }
-                for (std::size_t prefix = 0;
-                     prefix < column;
-                     ++prefix) {
-                    conditional_mean -=
-                        copula.l_inv[column * dimension + prefix]
-                        * quantiles[state_offset + prefix]
-                        / diagonal;
-                }
-
                 double quadratic_form = 0.0;
-                for (std::size_t factor_row = 0;
-                     factor_row < column;
-                     ++factor_row) {
-                    double whitened = 0.0;
-                    for (std::size_t prefix = 0;
-                         prefix <= factor_row;
-                         ++prefix) {
-                        whitened +=
-                            copula.l_inv[
-                                factor_row * dimension + prefix]
-                            * quantiles[state_offset + prefix];
+                double conditional_standard_deviation = 0.0;
+                if (factor_correlation) {
+                    const double* inverse =
+                        prefix_core_inverse.data()
+                        + column * factor_rank * factor_rank;
+                    const double* projection =
+                        factor_projection.data()
+                        + state * factor_rank;
+                    const double* loading =
+                        factor->loadings().data()
+                        + column * factor_rank;
+                    for (std::size_t left = 0;
+                         left < factor_rank;
+                         ++left) {
+                        double value = 0.0;
+                        for (std::size_t right = 0;
+                             right < factor_rank;
+                             ++right) {
+                            value +=
+                                inverse[left * factor_rank + right]
+                                * projection[right];
+                        }
+                        factor_solved[left] = value;
+                        conditional_mean += loading[left] * value;
+                        quadratic_form += projection[left] * value;
                     }
-                    quadratic_form += whitened * whitened;
+                    quadratic_form =
+                        factor_diagonal_quadratic[state]
+                        - quadratic_form;
+                    quadratic_form = std::max(quadratic_form, 0.0);
+                    conditional_standard_deviation = std::sqrt(
+                        factor_conditional_variance[column]);
+                } else {
+                    const double diagonal =
+                        copula.l_inv[column * dimension + column];
+                    if (!std::isfinite(diagonal) || diagonal <= 0.0) {
+                        valid = false;
+                        return;
+                    }
+                    for (std::size_t prefix = 0;
+                         prefix < column;
+                         ++prefix) {
+                        conditional_mean -=
+                            copula.l_inv[column * dimension + prefix]
+                            * quantiles[state_offset + prefix]
+                            / diagonal;
+                    }
+                    for (std::size_t factor_row = 0;
+                         factor_row < column;
+                         ++factor_row) {
+                        double whitened = 0.0;
+                        for (std::size_t prefix = 0;
+                             prefix <= factor_row;
+                             ++prefix) {
+                            whitened +=
+                                copula.l_inv[
+                                    factor_row * dimension + prefix]
+                                * quantiles[state_offset + prefix];
+                        }
+                        quadratic_form += whitened * whitened;
+                    }
+                    conditional_standard_deviation = 1.0 / diagonal;
                 }
 
                 const double scale = std::max(
@@ -213,7 +378,9 @@ bool student_rosenblatt_impl(
                     1e-12);
                 const double standardized =
                     (quantiles[state_offset + column] - conditional_mean)
-                    * diagonal / std::sqrt(scale);
+                    / (
+                        conditional_standard_deviation
+                        * std::sqrt(scale));
                 conditional_cdf[state] =
                     scar_internal::student_cdf_value(
                         standardized,
@@ -269,6 +436,26 @@ bool student_rosenblatt_impl(
             }
             out[row + column] =
                 scar_internal::clip_pseudo_observation(mixture);
+            if (factor_correlation) {
+                const auto& weighted_loadings =
+                    factor->weighted_loadings();
+                const auto& uniqueness = factor->uniqueness();
+                const double* weighted =
+                    weighted_loadings.data() + column * factor_rank;
+                for (std::size_t state = 0; state < K; ++state) {
+                    const double value =
+                        quantiles[state * dimension + column];
+                    factor_diagonal_quadratic[state] +=
+                        value * value / uniqueness[column];
+                    for (std::size_t component = 0;
+                         component < factor_rank;
+                         ++component) {
+                        factor_projection[
+                            state * factor_rank + component]
+                            += value * weighted[component];
+                    }
+                }
+            }
         }
     };
 
@@ -306,7 +493,7 @@ std::vector<double> student_rosenblatt_backend(
     int& status) {
 
     status = SCAR_OK;
-    if (!valid_dense_student_spec(copula)) {
+    if (!valid_student_spec(copula)) {
         return invalid_student_rosenblatt(
             u, copula, SCAR_INVALID_TRANSFORM, status);
     }
@@ -384,7 +571,7 @@ std::vector<double> ScarOuEvaluator::student_rosenblatt_auto(
     int& status) const {
 
     status = SCAR_OK;
-    if (!valid_dense_student_spec(copula)) {
+    if (!valid_student_spec(copula)) {
         return invalid_student_rosenblatt(
             u, copula, SCAR_INVALID_TRANSFORM, status);
     }

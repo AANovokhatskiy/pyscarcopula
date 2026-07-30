@@ -223,7 +223,29 @@ for pdf_block, grad_block in cop.pdf_and_grad_on_grid_batches(
 ```python
 from pyscarcopula.stattests import gof_test
 gof = gof_test(cop, u, to_pobs=False)
+
+gof_bootstrap = gof_test(
+    cop,
+    u,
+    to_pobs=False,
+    bootstrap=True,
+    n_bootstrap=499,
+    n_jobs=-1,
+    rng=20260730,
+)
 ```
+
+Parametric-bootstrap calibration is supported for static `GaussianCopula`
+(dense and factor correlation modes), `StudentCopula`,
+`EquicorrGaussianCopula`, and `StochasticStudentCopula`. Dynamic models retain
+their fitted MLE/GAS/SCAR-TM-OU strategy settings and correlation policy.
+Stochastic Student supports fixed, shrinkage, Cholesky, and two-stage factor
+correlation. Its factor Rosenblatt transform uses compact rank-dimensional
+conditioning for MLE, GAS, and SCAR-TM-OU without materializing a dense
+correlation matrix. Replicas use independent process-owned models and
+deterministic per-replication random streams. GAS/SCAR stochastic Student
+results with estimated correlation must be paired with their fitted model,
+because the result object alone does not store the full fitted correlation.
 
 ### Sampling
 

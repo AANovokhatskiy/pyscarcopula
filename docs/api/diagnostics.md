@@ -21,6 +21,12 @@ recomputes the statistic on generated samples. For stochastic latent-state
 models this means resampling both the latent path and the copula observations,
 not only perturbing the observed pseudo-observations.
 
+The returned `BootstrapGoFResult` exposes `statistic`, the calibrated
+`pvalue`, `bootstrap_statistics`, `n_bootstrap`, and
+`bootstrap_diagnostics`. Parallel execution metadata is available as
+`n_jobs_requested`, resolved `n_jobs`, `n_threads`, and `backend`; reproducible
+execution policy is recorded in `rng_policy` and `worker_model_ownership`.
+
 Common fit diagnostics to inspect before interpreting GoF results include:
 
 - optimizer fields such as `success`, `message`, objective evaluations, and

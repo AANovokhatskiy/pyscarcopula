@@ -6,9 +6,15 @@ import numpy as np
 import pytest
 
 from pyscarcopula import FactorStudentEvaluator, StochasticStudentCopula
+from pyscarcopula._types import MLEResult
 from pyscarcopula.contrib.risk_metrics import _get_copula_constructor
 from pyscarcopula.numerical import _cpp_scar_ou
 from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
+from pyscarcopula.stattests import (
+    factor_student_rosenblatt_transform,
+    stochastic_student_rosenblatt_transform,
+    student_rosenblatt_transform,
+)
 
 
 def _loadings(d=6, k=2):
@@ -175,6 +181,93 @@ def test_factor_model_native_smoothed_weights_match_dense_reference():
     np.testing.assert_array_equal(factor_grid, dense_grid)
     np.testing.assert_allclose(
         factor_weights, dense_weights, rtol=2e-6, atol=2e-8)
+
+
+@pytest.mark.parametrize(
+    "df",
+    [
+        5.5,
+        np.linspace(4.5, 7.5, 5),
+    ],
+)
+def test_factor_student_rosenblatt_matches_dense_reference(df):
+    observations = _observations()
+    factor = StochasticStudentCopula(
+        6,
+        corr_mode="factor",
+        factor_rank=2,
+        factor_loadings=_loadings(),
+    )
+
+    actual = factor_student_rosenblatt_transform(
+        factor.correlation_operator_, df, observations)
+    if np.ndim(df) == 0:
+        expected = student_rosenblatt_transform(
+            factor.to_correlation_matrix(), df, observations)
+    else:
+        expected = np.vstack([
+            student_rosenblatt_transform(
+                factor.to_correlation_matrix(),
+                float(row_df),
+                observations[index:index + 1],
+            )
+            for index, row_df in enumerate(df)
+        ])
+
+    np.testing.assert_allclose(actual, expected, rtol=2e-13, atol=2e-13)
+    assert factor._R is None
+
+
+def test_factor_student_native_scar_rosenblatt_matches_dense_reference():
+    observations = _observations(rows=8)
+    factor = StochasticStudentCopula(
+        6,
+        corr_mode="factor",
+        factor_rank=2,
+        factor_loadings=_loadings(),
+    )
+    dense = StochasticStudentCopula(
+        6, R=factor.to_correlation_matrix())
+    config = AutoTMConfig(
+        K=9,
+        grid_range=3.0,
+        adaptive=False,
+        transition_method="matrix",
+        max_K=None,
+    )
+
+    actual = _cpp_scar_ou.student_rosenblatt(
+        0.8, 0.1, 0.7, observations, factor, config)
+    expected = _cpp_scar_ou.student_rosenblatt(
+        0.8, 0.1, 0.7, observations, dense, config)
+
+    np.testing.assert_allclose(actual, expected, rtol=0.0, atol=3e-10)
+    assert factor._R is None
+
+
+def test_factor_student_gof_supports_dimension_above_dense_limit():
+    dimension = 2049
+    factor = StochasticStudentCopula(
+        dimension,
+        corr_mode="factor",
+        factor_rank=1,
+        factor_loadings=np.zeros((dimension, 1)),
+    )
+    observations = np.full((2, dimension), 0.5)
+    result = MLEResult(
+        log_likelihood=0.0,
+        method="MLE",
+        copula_name=factor.name,
+        success=True,
+        copula_param=5.5,
+    )
+
+    transformed = stochastic_student_rosenblatt_transform(
+        factor, observations, result)
+
+    assert transformed.shape == observations.shape
+    assert np.all(np.isfinite(transformed))
+    assert factor._R is None
 
 
 def test_two_stage_initialization_is_deterministic_and_matrix_free():
