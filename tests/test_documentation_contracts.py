@@ -156,6 +156,41 @@ def test_removed_experimental_namespace_is_physically_absent():
     assert not (ROOT / "pyscarcopula/copula/experimental").exists()
 
 
+def test_tmgrid_remains_an_independent_manual_reference_api():
+    from pyscarcopula.numerical import TMGrid
+    from pyscarcopula.numerical.tm_grid import TMGrid as DirectTMGrid
+
+    assert TMGrid is DirectTMGrid
+
+    source = (
+        ROOT / "pyscarcopula/numerical/tm_grid.py"
+    ).read_text(encoding="utf-8")
+    assert "_cpp_extension" not in source
+    assert "_cpp_scar_ou" not in source
+    assert "deprecated" not in source.lower()
+
+    forbidden_import = "pyscarcopula.numerical.tm_grid import TMGrid"
+    numerical_root = ROOT / "pyscarcopula"
+    for path in numerical_root.rglob("*.py"):
+        relative = path.relative_to(ROOT).as_posix()
+        if relative in {
+                "pyscarcopula/numerical/tm_grid.py",
+                "pyscarcopula/numerical/__init__.py"}:
+            continue
+        assert forbidden_import not in path.read_text(encoding="utf-8"), (
+            f"production module imports TMGrid: {relative}"
+        )
+
+    docs = (
+        ROOT / "docs/guide/numerical-backends.md"
+    ).read_text(encoding="utf-8")
+    assert "Manual Python reference grid" in docs
+    assert (
+        "not a wrapper around the compiled SCAR evaluator"
+        in " ".join(docs.split())
+    )
+
+
 def test_public_docs_exclude_development_plans_and_phase_reports():
     forbidden = (
         "phase-8",

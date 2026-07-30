@@ -78,6 +78,16 @@ struct StateDistribution {
     int status = 0;
 };
 
+/// Full posterior state distribution for every observation on one OU grid.
+struct SmoothedStateDistribution {
+    std::vector<double> z_grid;
+    std::vector<double> weights;  ///< Row-major `(n_obs, K)` probabilities.
+    std::int64_t n_obs = 0;
+    int K = 0;
+    OuBackend backend = OuBackend::Matrix;
+    int status = 0;
+};
+
 struct TrajectoryLogPdfResult {
     GridValues log_pdf;
     int status = SCAR_OK;
@@ -296,6 +306,72 @@ public:
         OuBackend& backend,
         int& status) const;
 
+    std::vector<double> forward_rosenblatt_local_gh(
+        const OuParams& params,
+        const CopulaSpec& copula,
+        ObservationView u,
+        const OuNumericalConfig& config,
+        int& status) const;
+
+    std::vector<double> forward_rosenblatt_matrix(
+        const OuParams& params,
+        const CopulaSpec& copula,
+        ObservationView u,
+        const OuNumericalConfig& config,
+        int& status) const;
+
+    std::vector<double> forward_rosenblatt_auto(
+        const OuParams& params,
+        const CopulaSpec& copula,
+        ObservationView u,
+        const OuNumericalConfig& config,
+        OuBackend& backend,
+        int& status) const;
+
+    std::vector<double> gaussian_rosenblatt_local_gh(
+        const OuParams& params,
+        const CopulaSpec& copula,
+        ObservationView u,
+        const OuNumericalConfig& config,
+        int& status) const;
+
+    std::vector<double> gaussian_rosenblatt_matrix(
+        const OuParams& params,
+        const CopulaSpec& copula,
+        ObservationView u,
+        const OuNumericalConfig& config,
+        int& status) const;
+
+    std::vector<double> gaussian_rosenblatt_auto(
+        const OuParams& params,
+        const CopulaSpec& copula,
+        ObservationView u,
+        const OuNumericalConfig& config,
+        OuBackend& backend,
+        int& status) const;
+
+    std::vector<double> student_rosenblatt_local_gh(
+        const OuParams& params,
+        const CopulaSpec& copula,
+        ObservationView u,
+        const OuNumericalConfig& config,
+        int& status) const;
+
+    std::vector<double> student_rosenblatt_matrix(
+        const OuParams& params,
+        const CopulaSpec& copula,
+        ObservationView u,
+        const OuNumericalConfig& config,
+        int& status) const;
+
+    std::vector<double> student_rosenblatt_auto(
+        const OuParams& params,
+        const CopulaSpec& copula,
+        ObservationView u,
+        const OuNumericalConfig& config,
+        OuBackend& backend,
+        int& status) const;
+
     std::vector<double> mixture_h_local_gh(
         const OuParams& params,
         const CopulaSpec& copula,
@@ -360,6 +436,24 @@ public:
         ObservationView u,
         const OuNumericalConfig& config,
         bool horizon_next) const;
+
+    SmoothedStateDistribution smoothed_state_distribution_local_gh(
+        const OuParams& params,
+        const CopulaSpec& copula,
+        ObservationView u,
+        const OuNumericalConfig& config) const;
+
+    SmoothedStateDistribution smoothed_state_distribution_matrix(
+        const OuParams& params,
+        const CopulaSpec& copula,
+        ObservationView u,
+        const OuNumericalConfig& config) const;
+
+    SmoothedStateDistribution smoothed_state_distribution_auto(
+        const OuParams& params,
+        const CopulaSpec& copula,
+        ObservationView u,
+        const OuNumericalConfig& config) const;
 
 private:
     // Reused by prepared evaluators during one fit/objective loop. These

@@ -51,6 +51,12 @@ Native adapters own calls into the mandatory C++ extension.
 | Native evaluator | Density, likelihood, gradient, filtering, multivariate conditional linear algebra |
 | Python coordination | RNG and fixed draws, Jacobi, MC/EIS, GoF, persistence |
 
+The retained `pyscarcopula.numerical.TMGrid` class is a manual low-level
+NumPy/SciPy reference implementation. Production OU likelihood, prediction,
+smoothing, and GoF paths do not call it. Keeping the reference grid independent
+from the native evaluator provides an implementation oracle for parity tests;
+it is not a compatibility wrapper or a deprecated alias.
+
 ## Native Thread Runtime
 
 Eligible multivariate kernels use one lazily created C++17 thread pool per

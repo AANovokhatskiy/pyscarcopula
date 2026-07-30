@@ -26,6 +26,7 @@ from pyscarcopula.copula.multivariate.stochastic_student import (
 from pyscarcopula.copula.multivariate import stochastic_student
 from pyscarcopula.numerical import _cpp_scar_ou
 from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
+from pyscarcopula.numerical.tm_grid import TMGrid
 from pyscarcopula.numerical.tm_functions import tm_loglik
 from pyscarcopula.strategy import scar_tm
 from pyscarcopula.strategy.gas import GASStrategy
@@ -40,6 +41,50 @@ def _R(d=3, rho=0.35):
     R = np.full((d, d), rho, dtype=np.float64)
     np.fill_diagonal(R, 1.0)
     return R
+
+
+def _posterior_state_weights_tm_oracle(
+        model, u, latent_params, config):
+    grid = TMGrid(
+        *latent_params,
+        len(u),
+        K=config.K,
+        grid_range=config.grid_range,
+        grid_method=config.grid_method,
+        adaptive=config.adaptive,
+        pts_per_sigma=config.pts_per_sigma,
+        transition_method=config.transition_method,
+        max_K=config.max_K,
+        r_gh=config.r_gh,
+        gh_order=config.gh_order,
+    )
+    emissions = grid.copula_grid(u, model)
+    backward = np.ones((len(u), grid.K), dtype=np.float64)
+    for t in range(len(u) - 2, -1, -1):
+        backward[t] = grid.matvec(
+            emissions[t + 1] * backward[t + 1])
+        scale = np.max(np.abs(backward[t]))
+        if scale > 0.0:
+            backward[t] /= scale
+
+    weights = np.empty((len(u), grid.K), dtype=np.float64)
+    predictive = grid.p0.copy()
+    for t in range(len(u)):
+        raw = predictive * emissions[t] * backward[t] * grid.trap_w
+        raw = np.where(
+            np.isfinite(raw) & (raw > 0.0), raw, 0.0)
+        total = np.sum(raw)
+        weights[t] = (
+            raw / total
+            if total > 0.0
+            else np.full(grid.K, 1.0 / grid.K)
+        )
+        if t < len(u) - 1:
+            predictive = grid.advance_forward_phi(
+                predictive, emissions[t])
+            if predictive is None:
+                predictive = np.ones(grid.K, dtype=np.float64)
+    return grid.z + grid.mu, weights
 
 
 @pytest.mark.parametrize("corr_mode", ["shrinkage", "cholesky"])
@@ -643,6 +688,68 @@ def test_posterior_state_weights_are_normalized(corr_mode, corr_params):
     if corr_mode == "shrinkage":
         # M3 regression: passing joint params must not mutate model state.
         assert model.corr_alpha() is None
+
+
+@pytest.mark.parametrize(
+    ("transition_method", "grid_method", "atol"),
+    [
+        ("matrix", "dense", 2e-13),
+        ("matrix", "sparse", 2e-8),
+        ("local", "auto", 2e-13),
+    ],
+)
+def test_native_smoothed_state_distribution_matches_tmgrid_oracle(
+        transition_method, grid_method, atol):
+    u = _u(T=21)
+    model = StochasticStudentCopula(d=3, R=_R())
+    latent_params = (1.2, 0.5, 0.8)
+    config = AutoTMConfig(
+        K=37,
+        grid_range=3.5,
+        grid_method=grid_method,
+        adaptive=False,
+        transition_method=transition_method,
+        max_K=None,
+        gh_order=7,
+    )
+
+    expected_grid, expected_weights = _posterior_state_weights_tm_oracle(
+        model, u, latent_params, config)
+    actual_grid, actual_weights = (
+        _cpp_scar_ou.smoothed_state_distribution(
+            *latent_params, u, model, config)
+    )
+
+    np.testing.assert_allclose(
+        actual_grid, expected_grid, rtol=0.0, atol=2e-15)
+    np.testing.assert_allclose(
+        actual_weights, expected_weights, rtol=0.0, atol=atol)
+    np.testing.assert_allclose(
+        actual_weights.sum(axis=1), 1.0, rtol=0.0, atol=2e-15)
+
+
+def test_posterior_state_weights_native_path_does_not_construct_tmgrid(
+        monkeypatch):
+    u = _u(T=18)
+    model = StochasticStudentCopula(d=3, R=_R())
+
+    def fail_tmgrid(*args, **kwargs):
+        raise AssertionError("production smoothing must not construct TMGrid")
+
+    monkeypatch.setattr(TMGrid, "__init__", fail_tmgrid)
+    weights = model.posterior_state_weights(
+        u,
+        params=np.array([0.01, 0.5, 0.8]),
+        K=31,
+        adaptive=True,
+        max_K=35,
+        transition_method="auto",
+    )
+
+    assert weights.shape == (len(u), 35)
+    assert np.all(np.isfinite(weights))
+    np.testing.assert_allclose(
+        weights.sum(axis=1), 1.0, rtol=0.0, atol=2e-15)
 
 
 def test_posterior_state_weights_validates_inputs_and_param_length():

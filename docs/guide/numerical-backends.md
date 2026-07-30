@@ -216,6 +216,32 @@ artificially capped, with one exception: the multivariate Student PPF table
 (see below). Their memory and runtime cost depend on the data size and
 chosen numerical options.
 
+#### Manual Python reference grid
+
+`TMGrid` remains a supported low-level API for manual diagnostics,
+experiments, and numerical comparisons:
+
+```python
+from pyscarcopula.numerical import TMGrid
+
+grid = TMGrid(
+    kappa=0.8,
+    mu=0.0,
+    nu=1.0,
+    n=250,
+    K=300,
+    grid_method="sparse",
+    transition_method="matrix",
+)
+diagnostics = grid.diagnostics()
+```
+
+It is an independent NumPy/SciPy implementation, not a wrapper around the
+compiled SCAR evaluator. Built-in likelihood, prediction, smoothing, and
+goodness-of-fit operations use the C++ backend directly and do not construct
+`TMGrid`. The class is intended for explicit manual use and as a reference
+oracle; it is not deprecated.
+
 #### Student PPF table memory cap
 
 Multivariate Student models normally precompute a quantile (inverse-CDF) table

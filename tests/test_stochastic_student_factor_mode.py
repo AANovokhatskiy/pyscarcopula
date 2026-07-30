@@ -7,6 +7,8 @@ import pytest
 
 from pyscarcopula import FactorStudentEvaluator, StochasticStudentCopula
 from pyscarcopula.contrib.risk_metrics import _get_copula_constructor
+from pyscarcopula.numerical import _cpp_scar_ou
+from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
 
 
 def _loadings(d=6, k=2):
@@ -139,6 +141,40 @@ def test_factor_model_row_and_grid_paths_match_dense_reference():
         factor_grid[0], dense_grid[0], rtol=2e-6, atol=2e-8)
     np.testing.assert_allclose(
         factor_grid[1], dense_grid[1], rtol=1e-3, atol=5e-6)
+
+
+def test_factor_model_native_smoothed_weights_match_dense_reference():
+    observations = _observations(rows=17)
+    factor = StochasticStudentCopula(
+        6,
+        corr_mode="factor",
+        factor_rank=2,
+        factor_loadings=_loadings(),
+        factor_tile_size=3,
+    )
+    dense = StochasticStudentCopula(
+        6, R=factor.to_correlation_matrix())
+    config = AutoTMConfig(
+        K=29,
+        grid_range=3.0,
+        adaptive=False,
+        transition_method="matrix",
+        grid_method="dense",
+        max_K=None,
+    )
+
+    factor_grid, factor_weights = (
+        _cpp_scar_ou.smoothed_state_distribution(
+            1.1, 0.4, 0.7, observations, factor, config)
+    )
+    dense_grid, dense_weights = (
+        _cpp_scar_ou.smoothed_state_distribution(
+            1.1, 0.4, 0.7, observations, dense, config)
+    )
+
+    np.testing.assert_array_equal(factor_grid, dense_grid)
+    np.testing.assert_allclose(
+        factor_weights, dense_weights, rtol=2e-6, atol=2e-8)
 
 
 def test_two_stage_initialization_is_deterministic_and_matrix_free():

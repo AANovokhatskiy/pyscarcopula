@@ -24,7 +24,6 @@ Usage:
 import numpy as np
 import time
 from dataclasses import dataclass
-from scipy.special import stdtr
 from scipy.stats import chi2, norm, cramervonmises
 
 from pyscarcopula._utils import (
@@ -942,7 +941,8 @@ def _tm_grid_kwargs_from_result(fit_result):
     """SCAR-TM numerical options stored on a fitted result."""
     out = {}
     for name in (
-            'pts_per_sigma', 'transition_method', 'max_K',
+            'grid_method', 'adaptive', 'pts_per_sigma',
+            'transition_method', 'max_K',
             'r_gh', 'gh_order'):
         value = getattr(fit_result, name, None)
         if value is not None:
@@ -951,6 +951,24 @@ def _tm_grid_kwargs_from_result(fit_result):
         out['transition_method'] = _grid_transition_method(
             out['transition_method'])
     return out
+
+
+def _native_grid_config_from_result(fit_result, K, grid_range):
+    """Build the native grid config with legacy TMGrid default semantics."""
+    from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
+
+    options = _tm_grid_kwargs_from_result(fit_result)
+    return AutoTMConfig(
+        K=K,
+        grid_range=grid_range,
+        grid_method=options.get('grid_method', 'auto'),
+        adaptive=options.get('adaptive', True),
+        pts_per_sigma=options.get('pts_per_sigma', 4),
+        transition_method=options.get('transition_method', 'matrix'),
+        max_K=options.get('max_K', None),
+        r_gh=options.get('r_gh', 3.0),
+        gh_order=options.get('gh_order', 5),
+    )
 
 
 def equicorr_rosenblatt_transform(copula, u, fit_result, K=300, grid_range=5.0):
@@ -976,11 +994,25 @@ def equicorr_rosenblatt_transform(copula, u, fit_result, K=300, grid_range=5.0):
     -------
     e : (T, d) — should be iid U[0,1]^d under correct model
     """
+    T, d = u.shape
+    method = fit_result.method.upper()
+
+    if method not in ('MLE', 'GAS'):
+        from pyscarcopula.numerical import _cpp_scar_ou
+
+        kappa, mu, nu = fit_result.params.values
+        return _cpp_scar_ou.gaussian_rosenblatt(
+            kappa,
+            mu,
+            nu,
+            u,
+            copula,
+            _native_grid_config_from_result(
+                fit_result, K, grid_range),
+        )
+
     u_c = clip_pseudo_observations(u)
     x_norm = norm.ppf(u_c)
-    T, d = u.shape
-
-    method = fit_result.method.upper()
 
     if method == 'MLE':
         rho = fit_result.copula_param
@@ -1009,73 +1041,8 @@ def equicorr_rosenblatt_transform(copula, u, fit_result, K=300, grid_range=5.0):
             e[:, i] = norm.cdf(z_i)
         return clip_pseudo_observations(e)
 
-    # SCAR: mixture Rosenblatt via TM forward pass
-    from pyscarcopula.numerical.tm_grid import TMGrid as _TMGrid
-    from pyscarcopula.numerical.gof_blocks import iter_forward_weight_blocks
-
-    kappa, mu, nu = fit_result.params.values
-    grid = _TMGrid(
-        kappa, mu, nu, T, K, grid_range,
-        **_tm_grid_kwargs_from_result(fit_result))
-    x_grid = grid.z + grid.mu
-    rho_grid = copula.transform(x_grid)
-
-    e = np.empty((T, d))
-    e[:, 0] = u[:, 0]
-
-    def leading_equicorr_density(x_prefix, prefix_dim):
-        if prefix_dim <= 1:
-            return np.ones((len(x_prefix), grid.K), dtype=np.float64)
-        rho = rho_grid[np.newaxis, :]
-        a = 1.0 - rho
-        b = 1.0 + (prefix_dim - 1) * rho
-        s2 = np.sum(x_prefix * x_prefix, axis=1)[:, np.newaxis]
-        s1 = np.sum(x_prefix, axis=1)[:, np.newaxis] ** 2
-        log_det = (prefix_dim - 1) * np.log(a) + np.log(b)
-        log_density = (
-            -0.5 * log_det
-            -0.5 * ((rho / a) * s2 - (rho / (a * b)) * s1)
-        )
-        return np.exp(log_density)
-
-    cdf_blocks = None
-    prefix_density_blocks = None
-    for k, local, weights, fi_block in iter_forward_weight_blocks(
-            grid, u, copula, x_grid=x_grid, element_width=max(1, d)):
-        if local == 0:
-            start = k
-            stop = start + fi_block.shape[0]
-            x_block = x_norm[start:stop]
-            cdf_blocks = []
-            prefix_density_blocks = []
-            for i in range(1, d):
-                sx = np.sum(x_block[:, :i], axis=1)[:, np.newaxis]
-                denom = 1.0 + (i - 1) * rho_grid[np.newaxis, :]
-                cond_mean = rho_grid[np.newaxis, :] * sx / denom
-                cond_var = (
-                    1.0
-                    - i * rho_grid[np.newaxis, :] ** 2 / denom
-                )
-                cond_var = np.maximum(cond_var, 1e-10)
-                z_i = (
-                    x_block[:, i, np.newaxis] - cond_mean
-                ) / np.sqrt(cond_var)
-                cdf_blocks.append(norm.cdf(z_i))
-                prefix_density_blocks.append(
-                    leading_equicorr_density(x_block[:, :i], i))
-
-        for i in range(1, d):
-            prefix_density = prefix_density_blocks[i - 1][local]
-            reweighted = weights * prefix_density
-            total = np.sum(reweighted)
-            if total > 0.0 and np.isfinite(total):
-                reweighted = reweighted / total
-            else:
-                reweighted = weights
-            e[k, i] = np.sum(reweighted * cdf_blocks[i - 1][local])
-
-    e = clip_pseudo_observations(e)
-    return e
+    raise ValueError(
+        f"Unsupported EquicorrGaussianCopula fit method: {fit_result.method}")
 
 
 def equicorr_gof_test(copula, data, to_pobs=True,
@@ -1141,9 +1108,23 @@ def stochastic_student_rosenblatt_transform(copula, u, fit_result,
     e : (T, d) — should be iid U[0,1]^d under correct model
     """
     T, d = u.shape
-    R = copula.R
     method = fit_result.method.upper()
 
+    if method not in ('MLE', 'GAS'):
+        from pyscarcopula.numerical import _cpp_scar_ou
+
+        kappa, mu, nu_ou = fit_result.params.values
+        return _cpp_scar_ou.student_rosenblatt(
+            kappa,
+            mu,
+            nu_ou,
+            u,
+            copula,
+            _native_grid_config_from_result(
+                fit_result, K, grid_range),
+        )
+
+    R = copula.R
     if method == 'MLE':
         df = fit_result.copula_param
         e = student_rosenblatt_transform(R, df, u)
@@ -1157,80 +1138,7 @@ def stochastic_student_rosenblatt_transform(copula, u, fit_result,
                 R, float(df_t), u[t_idx:t_idx + 1])[0]
         return clip_pseudo_observations(e)
 
-    # SCAR: mixture Rosenblatt via TM forward pass
-    from pyscarcopula.numerical.tm_grid import TMGrid as _TMGrid
-    from pyscarcopula.numerical.gof_blocks import iter_forward_weight_block_arrays
-    from pyscarcopula.numerical.student_gof import (
-        student_conditional_z_block,
-        student_weighted_cdf_block,
-    )
-
-    kappa, mu, nu_ou = fit_result.params.values
-    grid = _TMGrid(
-        kappa, mu, nu_ou, T, K, grid_range,
-        **_tm_grid_kwargs_from_result(fit_result))
-    x_grid = grid.z + grid.mu
-    df_grid = copula.transform(x_grid)  # (K_eff,)
-
-    # Precompute padded fixed-R conditional terms for the Numba block kernel.
-    beta_padded = np.zeros((d - 1, d), dtype=np.float64)
-    sigma_cond = np.empty(d - 1, dtype=np.float64)
-    r_inv_padded = np.zeros((d - 1, d, d), dtype=np.float64)
-    log_det_prefix = np.zeros(d - 1, dtype=np.float64)
-    for i in range(1, d):
-        R_11 = R[:i, :i]
-        R_21 = R[i, :i]
-        R_22 = R[i, i]
-        R_11_inv = np.linalg.inv(R_11)
-        beta_padded[i - 1, :i] = R_21 @ R_11_inv
-        sigma2 = R_22 - R_21 @ R_11_inv @ R_21
-        sigma_cond[i - 1] = np.sqrt(max(sigma2, 1e-12))
-        r_inv_padded[i - 1, :i, :i] = R_11_inv
-        if i > 1:
-            sign, log_det = np.linalg.slogdet(R_11)
-            if sign <= 0:
-                raise ValueError("leading Student correlation block is not SPD")
-            log_det_prefix[i - 1] = log_det
-
-    u_c = clip_pseudo_observations_no_copy(u)
-    emission_cache = copula.prepare_emission_cache(u_c)
-
-    e = np.empty((T, d))
-    e[:, 0] = u[:, 0]
-
-    def emission_block(u_block, x_grid, start, stop):
-        return copula.copula_grid_batch(
-            u_block, x_grid, t_index=start, cache=emission_cache)
-
-    for start, stop, weights_block, _fi_block, _u_block in (
-            iter_forward_weight_block_arrays(
-                grid,
-                u_c,
-                copula,
-                x_grid=x_grid,
-                emission_block=emission_block,
-                element_width=max(2, 2 * d),
-            )):
-        n_block = stop - start
-        x_all = np.empty((n_block, grid.K, d), dtype=np.float64)
-        for j, df_j in enumerate(df_grid):
-            x_all[:, j, :] = emission_cache.ppf_rows(df_j, start, stop)
-
-        z_blocks = student_conditional_z_block(
-            x_all, df_grid, beta_padded, r_inv_padded, sigma_cond)
-        cdf_blocks = np.empty_like(z_blocks)
-        for cond_idx in range(d - 1):
-            dim = cond_idx + 1
-            cdf_blocks[cond_idx] = stdtr(
-                df_grid[np.newaxis, :] + dim,
-                z_blocks[cond_idx],
-            )
-        e[start:stop, 1:] = student_weighted_cdf_block(
-            cdf_blocks, weights_block, x_all, df_grid, r_inv_padded,
-            log_det_prefix)
-
-    e = clip_pseudo_observations(e)
-    return e
+    raise AssertionError(f"unsupported Student estimation method: {method}")
 
 
 def stochastic_student_gof_test(copula, data, to_pobs=True,

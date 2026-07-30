@@ -1,5 +1,5 @@
 """
-pyscarcopula.numerical.tm_grid — Transfer matrix grid infrastructure.
+pyscarcopula.numerical.tm_grid — manual Python transfer-grid reference.
 
 Contents:
   - TMGrid: precomputed grid, stationary density, transfer operator
@@ -7,19 +7,23 @@ Contents:
   - _build_sparse_T_vectorized: sparse banded CSR transfer matrix
   - _build_local_interpolation_T: local interpolation transition
 
+``TMGrid`` is a supported low-level API for manual diagnostics, experiments,
+and comparisons with the production native backend. Built-in likelihood,
+prediction, smoothing, and goodness-of-fit paths do not call it. It remains an
+independent NumPy/SciPy implementation rather than a compatibility wrapper.
+
 The TMGrid encapsulates:
   - Adaptive grid refinement (K_eff from pts_per_sigma)
   - Dense/sparse selection (auto based on bandwidth ratio b/K)
   - Forward and backward passes (unified callback interface)
   - Copula density evaluation on grid
 
-All TM-based functions share this infrastructure.
+Only explicit callers of ``TMGrid`` use this implementation.
 """
 
 import numpy as np
 from scipy.sparse import csr_matrix
 
-from pyscarcopula.numerical._cpp_extension import load as _load_cpp
 from pyscarcopula.numerical._transition_methods import (
     normalize_ou_grid_transition_method,
 )
@@ -124,15 +128,13 @@ class TMGrid:
         Use adaptive grid refinement (default True).
         Guarantees at least pts_per_sigma points per sigma_cond.
     pts_per_sigma : int
-        Points per conditional standard deviation for adaptive rule (default 2).
-        The paper uses n_pts=4 in formula (20), but the code default is 2
-        which provides adequate resolution for most cases.
+        Points per conditional standard deviation for the adaptive rule
+        (default 4).
     transition_method : str
-        Prototype transition operator selector. 'matrix' preserves the current
-        Gaussian matrix path. 'auto' chooses between that path, deterministic
-        interpolation, and local interpolation. The Gaussian matrix path still
-        uses grid_method to choose sparse or dense storage. 'local' forces the
-        local operator.
+        Transition operator selector. 'matrix' uses the Gaussian matrix path.
+        'auto' chooses between that path and local interpolation. The matrix
+        path still uses grid_method to choose sparse or dense storage.
+        'local' forces the local operator.
     max_K : int or None
         Optional cap for the adaptive effective grid size. If the adaptive
         rule requests more than max_K points, K_eff is capped and the
@@ -261,14 +263,10 @@ class TMGrid:
 
     def matvec(self, v):
         """Transition operator applied to a value vector."""
-        if self._grid_method == 'sparse':
-            return self._T_op.matvec(v)
         return self._T_op @ v
 
     def rmatvec(self, v):
         """Transpose transition operator applied to a vector."""
-        if self._grid_method == 'sparse':
-            return self._T_op.rmatvec(v)
         return self._T_op.T @ v
 
     def predict_matvec(self, v):
@@ -489,14 +487,34 @@ def _build_dense_T(z, rho, sigma_cond, trap_w, K):
 
 def _build_sparse_T_vectorized(z, rho, sigma_cond, trap_w, K, band):
     """
-    Build the sparse banded transfer matrix with the native C++ backend.
+    Build the sparse banded transfer matrix as a SciPy CSR matrix.
 
     For each row j, only columns within [i_lo, i_hi) around the
     kernel center rho*z[j] are stored. When b < K/4, this gives
     O(K*b) matvec cost instead of O(K^2).
     """
-    return _load_cpp()._SparseTransitionOperator(
-        z, rho, sigma_cond, trap_w, K, band)
+    centers = rho * z
+    i_centers = (centers - z[0]) / (z[1] - z[0])
+    lo = np.clip(
+        np.floor(i_centers).astype(np.int64) - band, 0, K)
+    hi = np.clip(
+        np.ceil(i_centers).astype(np.int64) + band + 1, 0, K)
+    widths = np.maximum(hi - lo, 0)
+
+    indptr = np.empty(K + 1, dtype=np.int64)
+    indptr[0] = 0
+    np.cumsum(widths, out=indptr[1:])
+    rows = np.repeat(np.arange(K, dtype=np.int64), widths)
+    offsets = np.arange(indptr[-1], dtype=np.int64) - indptr[rows]
+    indices = lo[rows] + offsets
+
+    scaled_diff = (z[indices] - centers[rows]) / sigma_cond
+    data = (
+        np.exp(-0.5 * scaled_diff * scaled_diff)
+        / (sigma_cond * np.sqrt(2.0 * np.pi))
+        * trap_w[indices]
+    )
+    return csr_matrix((data, indices, indptr), shape=(K, K))
 
 
 def _build_local_interpolation_T(z, rho, sigma_cond, K, transition_method,

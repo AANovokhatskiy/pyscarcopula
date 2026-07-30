@@ -614,6 +614,9 @@ class LatentResult(FitResultBase):
     memory_budget_bytes: int | None = None
     transition_storage: str = "dense"
     stationarity_correction: str = "none"
+    # Appended to preserve positional compatibility of existing result fields.
+    grid_method: str | None = None
+    adaptive: bool | None = None
 
     def __post_init__(self):
         parameter_count = self.parameter_count

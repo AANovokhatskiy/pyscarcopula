@@ -16,6 +16,7 @@ tools/*
 !tools/native_dependency_audit.py
 !tools/write_release_metadata.py
 !tools/validate_jacobi_sampling.py
+!tools/benchmark_tm_cpp_migration.py
 benchmarks/
 scripts/
 results/

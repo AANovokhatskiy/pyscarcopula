@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from pyscarcopula import GumbelCopula
+from pyscarcopula import FrankCopula, GumbelCopula, JoeCopula
 from pyscarcopula._constants import H_FUNCTION_EPS
 from pyscarcopula._types import LatentResult, ou_params
 from pyscarcopula.api import fit
@@ -328,7 +328,7 @@ def test_matrix_transition_keeps_sparse_dense_backend_selection():
     assert dense_grid.diagnostics()["transition_method"] == "matrix"
 
 
-def test_sparse_matrix_native_backend_matches_dense_transition():
+def test_sparse_matrix_python_reference_matches_dense_transition():
     sparse_grid = TMGrid(
         kappa=0.8,
         mu=0.0,
@@ -605,6 +605,8 @@ def test_scar_tm_strategy_recovered_from_result_preserves_explicit_no_cap():
         params=ou_params(0.8, 0.1, 1.0),
         K=41,
         grid_range=3.0,
+        grid_method="sparse",
+        adaptive=False,
         pts_per_sigma=2,
         transition_method="auto",
         max_K=None,
@@ -618,6 +620,8 @@ def test_scar_tm_strategy_recovered_from_result_preserves_explicit_no_cap():
 
     assert strategy.transition_method == "auto"
     assert strategy.max_K is None
+    assert strategy.grid_method == "sparse"
+    assert strategy.adaptive is False
     assert strategy._tm_kwargs()["max_K"] is None
     assert overridden.transition_method == "auto"
     assert overridden.max_K is None
@@ -947,7 +951,98 @@ def test_streaming_forward_gof_matches_materialized_path(transition_method):
     )
 
 
-def test_streaming_forward_gof_does_not_materialize_forward_weights(monkeypatch):
+@pytest.mark.parametrize(
+    "copula",
+    [
+        ClaytonCopula(rotate=0, transform_type="softplus"),
+        ClaytonCopula(rotate=90, transform_type="xtanh"),
+        GumbelCopula(rotate=180, transform_type="softplus"),
+        FrankCopula(transform_type="softplus"),
+        JoeCopula(rotate=270, transform_type="softplus"),
+        BivariateGaussianCopula(),
+    ],
+)
+@pytest.mark.parametrize(
+    ("transition_method", "grid_method"),
+    [
+        ("matrix", "dense"),
+        ("matrix", "sparse"),
+        ("local", "auto"),
+    ],
+)
+def test_native_forward_rosenblatt_matches_tmgrid_oracle(
+        copula, transition_method, grid_method):
+    u = np.random.default_rng(20260801).uniform(
+        0.03, 0.97, size=(14, 2))
+    kwargs = {
+        "K": 37,
+        "grid_range": 3.2,
+        "grid_method": grid_method,
+        "adaptive": False,
+        "transition_method": transition_method,
+        "gh_order": 7,
+    }
+    params = (0.82, -0.15, 1.08, u, copula)
+
+    expected = _materialized_forward_rosenblatt(*params, **kwargs)
+    actual = tm_forward_rosenblatt(*params, **kwargs)
+
+    tolerance = 2e-8 if grid_method == "sparse" else 2e-12
+    np.testing.assert_allclose(
+        actual, expected, rtol=0.0, atol=tolerance)
+
+
+@pytest.mark.parametrize("transition_method", ["auto", "spectral"])
+def test_native_forward_rosenblatt_grid_fallback_matches_auto(
+        transition_method):
+    u = np.random.default_rng(20260802).uniform(
+        0.05, 0.95, size=(10, 2))
+    copula = BivariateGaussianCopula()
+    kwargs = {
+        "K": 31,
+        "grid_range": 3.0,
+        "grid_method": "dense",
+        "adaptive": False,
+        "transition_method": transition_method,
+        "gh_order": 5,
+    }
+    expected = tm_forward_rosenblatt(
+        0.9, 0.1, 1.0, u, copula,
+        **{**kwargs, "transition_method": "auto"})
+
+    np.testing.assert_allclose(
+        tm_forward_rosenblatt(0.9, 0.1, 1.0, u, copula, **kwargs),
+        expected,
+        rtol=0.0,
+        atol=0.0,
+    )
+
+
+def test_native_forward_rosenblatt_applies_final_gof_clipping():
+    u = np.array(
+        [[1e-10, 0.2], [0.5, 0.8], [1.0 - 1e-10, 0.4]],
+        dtype=np.float64,
+    )
+    result = tm_forward_rosenblatt(
+        0.8,
+        0.0,
+        1.0,
+        u,
+        BivariateGaussianCopula(),
+        K=21,
+        grid_range=3.0,
+        adaptive=False,
+        transition_method="matrix",
+    )
+
+    module = _cpp_scar_ou._cpp_extension.load()
+    assert result[0, 0] == module.ROSENBLATT_OUTPUT_EPS
+    assert result[-1, 0] == 1.0 - module.ROSENBLATT_OUTPUT_EPS
+    assert np.all(result >= module.ROSENBLATT_OUTPUT_EPS)
+    assert np.all(result <= 1.0 - module.ROSENBLATT_OUTPUT_EPS)
+
+
+def test_native_forward_paths_do_not_construct_tmgrid(monkeypatch):
     rng = np.random.default_rng(5)
     u = rng.uniform(0.05, 0.95, size=(8, 2))
     copula = BivariateGaussianCopula()
@@ -959,10 +1054,10 @@ def test_streaming_forward_gof_does_not_materialize_forward_weights(monkeypatch)
         "transition_method": "matrix",
     }
 
-    def fail_forward_weights(self, fi_grid):
-        raise AssertionError("forward_weights should not be called")
+    def fail_init(self, *args, **kwargs):
+        raise AssertionError("TMGrid should not be constructed")
 
-    monkeypatch.setattr(TMGrid, "forward_weights", fail_forward_weights)
+    monkeypatch.setattr(TMGrid, "__init__", fail_init)
 
     tm_forward_predictive_mean(0.8, 0.1, 1.0, u, copula, **kwargs)
     tm_forward_rosenblatt(0.8, 0.1, 1.0, u, copula, **kwargs)
@@ -1023,6 +1118,8 @@ def test_top_level_api_uses_stored_scar_tm_options(monkeypatch):
         params=ou_params(0.8, 0.1, 1.0),
         K=37,
         grid_range=2.5,
+        grid_method="sparse",
+        adaptive=False,
         pts_per_sigma=6,
         transition_method="auto",
         max_K=None,
@@ -1053,6 +1150,8 @@ def test_top_level_api_uses_stored_scar_tm_options(monkeypatch):
     np.testing.assert_allclose(out, 0.0)
     assert captured["K"] == 37
     assert captured["grid_range"] == 2.5
+    assert captured["grid_method"] == "sparse"
+    assert captured["adaptive"] is False
     assert captured["pts_per_sigma"] == 6
     assert captured["transition_method"] == "auto"
     assert captured["max_K"] is None

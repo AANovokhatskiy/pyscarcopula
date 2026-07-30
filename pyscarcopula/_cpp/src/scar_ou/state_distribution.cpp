@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <vector>
 
 namespace scar {
@@ -15,78 +16,67 @@ using namespace evaluator_detail;
 
 namespace {
 
-bool normalize_by_max(std::vector<double>& values) {
-    double scale = 0.0;
-    for (double value : values) {
-        if (!std::isfinite(value)) {
-            return false;
-        }
-        scale = std::max(scale, value);
-    }
-    if (scale <= 0.0) {
-        return false;
-    }
-    const double negative_tolerance = 1e-12 * scale;
-    for (double& value : values) {
-        if (value < -negative_tolerance) {
-            return false;
-        }
-        value = std::max(value, 0.0) / scale;
-        if (!std::isfinite(value)) {
-            return false;
-        }
-    }
-    return true;
+SmoothedStateDistribution invalid_smoothed_state_distribution(
+    int status,
+    OuBackend backend) {
+
+    SmoothedStateDistribution out;
+    out.backend = backend;
+    out.status = status;
+    return out;
 }
 
-bool normalize_state_prob(
+SmoothedStateDistribution smoothed_state_distribution_impl(
+    const CopulaSpec& copula,
+    ObservationView u,
     const scar_internal::OuGrid& grid,
-    const std::vector<double>& phi,
-    std::vector<double>& prob) {
+    const scar_internal::GridTransitionOperator& transition,
+    OuBackend backend) {
 
-    if (grid.K <= 0
-        || phi.size() != static_cast<std::size_t>(grid.K)
-        || grid.trap_w.size() != static_cast<std::size_t>(grid.K)) {
-        prob.clear();
-        return false;
+    const std::int64_t n_obs = static_cast<std::int64_t>(u.size());
+    const std::size_t K = static_cast<std::size_t>(grid.K);
+    if (n_obs < 2
+        || K < 2
+        || static_cast<std::uint64_t>(n_obs)
+            > std::numeric_limits<std::size_t>::max() / K) {
+        return invalid_smoothed_state_distribution(
+            SCAR_INVALID_SIZE, backend);
     }
-    double scale = 0.0;
-    for (double value : phi) {
-        if (!std::isfinite(value)) {
-            prob.clear();
-            return false;
-        }
-        scale = std::max(scale, value);
+
+    std::vector<double> emissions(
+        static_cast<std::size_t>(n_obs) * K, 0.0);
+    const double* observation_values = observation_data(copula, u);
+    std::vector<double> row(K, 0.0);
+    for (std::int64_t t = 0; t < n_obs; ++t) {
+        scar_internal::copula_fi_row_on_grid(
+            copula, observation_values, t, grid.x_grid, row);
+        std::copy(
+            row.begin(),
+            row.end(),
+            emissions.begin()
+                + static_cast<std::ptrdiff_t>(
+                    static_cast<std::size_t>(t) * K));
     }
-    if (scale <= 0.0) {
-        prob.clear();
-        return false;
+
+    scar_internal::SmoothedStateResult smoothed;
+    if (!scar_internal::smooth_state_emissions(
+            grid,
+            transition,
+            emissions.data(),
+            n_obs,
+            smoothed)) {
+        return invalid_smoothed_state_distribution(
+            SCAR_NUMERICAL_FAILURE, backend);
     }
-    const double negative_tolerance = 1e-12 * scale;
-    prob.assign(static_cast<std::size_t>(grid.K), 0.0);
-    double total = 0.0;
-    for (int j = 0; j < grid.K; ++j) {
-        const std::size_t idx = static_cast<std::size_t>(j);
-        if (!std::isfinite(grid.trap_w[idx]) || grid.trap_w[idx] <= 0.0
-            || phi[idx] < -negative_tolerance) {
-            prob.clear();
-            return false;
-        }
-        prob[idx] = std::max(phi[idx], 0.0) * grid.trap_w[idx];
-        total += prob[idx];
-    }
-    if (!std::isfinite(total) || total <= 0.0) {
-        prob.clear();
-        return false;
-    }
-    for (double& value : prob) {
-        value /= total;
-        if (!std::isfinite(value)) {
-            prob.clear();
-            return false;
-        }
-    }
-    return true;
+
+    SmoothedStateDistribution out;
+    out.z_grid = grid.x_grid;
+    out.weights = std::move(smoothed.weights);
+    out.n_obs = n_obs;
+    out.K = grid.K;
+    out.backend = backend;
+    out.status = SCAR_OK;
+    return out;
 }
 
 template <typename AdvanceDensity>
@@ -111,7 +101,7 @@ StateDistribution state_distribution_impl(
         }
         advance_density(source, next_phi);
         phi.swap(next_phi);
-        return normalize_by_max(phi);
+        return scar_internal::normalize_density_by_max(phi);
     };
 
     for (std::int64_t t = 0; t < n_obs; ++t) {
@@ -127,7 +117,7 @@ StateDistribution state_distribution_impl(
                     SCAR_NUMERICAL_FAILURE, backend);
             }
         }
-        if (!normalize_by_max(phi)) {
+        if (!scar_internal::normalize_density_by_max(phi)) {
             return invalid_state_distribution(
                 SCAR_NUMERICAL_FAILURE, backend);
         }
@@ -140,7 +130,8 @@ StateDistribution state_distribution_impl(
 
     StateDistribution out;
     out.z_grid = grid.x_grid;
-    if (!normalize_state_prob(grid, phi, out.prob)) {
+    if (!scar_internal::predictive_weights_from_phi(
+            grid, phi, out.prob)) {
         return invalid_state_distribution(
             SCAR_NUMERICAL_FAILURE, backend);
     }
@@ -260,6 +251,102 @@ StateDistribution ScarOuEvaluator::state_distribution_local_gh(
     return state_distribution_impl(
         copula, grid, observation_values, n_obs, horizon_next,
         OuBackend::LocalGh, advance);
+}
+
+SmoothedStateDistribution
+ScarOuEvaluator::smoothed_state_distribution_matrix(
+    const OuParams& params,
+    const CopulaSpec& copula,
+    ObservationView u,
+    const OuNumericalConfig& config) const {
+
+    const std::int64_t n_obs = static_cast<std::int64_t>(u.size());
+    if (!supported_ou_copula(copula)) {
+        return invalid_smoothed_state_distribution(
+            SCAR_INVALID_TRANSFORM, OuBackend::Matrix);
+    }
+    if (!valid_ou_params(params) || !finite_config_doubles(config)) {
+        return invalid_smoothed_state_distribution(
+            SCAR_INVALID_PARAMETER, OuBackend::Matrix);
+    }
+    if (n_obs < 2) {
+        return invalid_smoothed_state_distribution(
+            SCAR_INVALID_SIZE, OuBackend::Matrix);
+    }
+
+    scar_internal::OuGrid grid;
+    scar_internal::GridTransitionOperator transition;
+    if (!valid_grid_config(config, OuBackend::Matrix)
+        || !scar_internal::build_ou_grid(
+            params.kappa,
+            params.mu,
+            params.nu,
+            n_obs,
+            config.K,
+            config.grid_range,
+            config.adaptive,
+            config.pts_per_sigma,
+            config.max_K,
+            grid)
+        || !scar_internal::build_grid_transition_operator(
+            grid,
+            OuBackend::Matrix,
+            config.grid_method,
+            config.gh_order,
+            transition)) {
+        return invalid_smoothed_state_distribution(
+            SCAR_INVALID_SIZE, OuBackend::Matrix);
+    }
+    return smoothed_state_distribution_impl(
+        copula, u, grid, transition, OuBackend::Matrix);
+}
+
+SmoothedStateDistribution
+ScarOuEvaluator::smoothed_state_distribution_local_gh(
+    const OuParams& params,
+    const CopulaSpec& copula,
+    ObservationView u,
+    const OuNumericalConfig& config) const {
+
+    const std::int64_t n_obs = static_cast<std::int64_t>(u.size());
+    if (!supported_ou_copula(copula)) {
+        return invalid_smoothed_state_distribution(
+            SCAR_INVALID_TRANSFORM, OuBackend::LocalGh);
+    }
+    if (!valid_ou_params(params) || !finite_config_doubles(config)) {
+        return invalid_smoothed_state_distribution(
+            SCAR_INVALID_PARAMETER, OuBackend::LocalGh);
+    }
+    if (n_obs < 2) {
+        return invalid_smoothed_state_distribution(
+            SCAR_INVALID_SIZE, OuBackend::LocalGh);
+    }
+
+    scar_internal::OuGrid grid;
+    scar_internal::GridTransitionOperator transition;
+    if (!valid_grid_config(config, OuBackend::LocalGh)
+        || !scar_internal::build_ou_grid(
+            params.kappa,
+            params.mu,
+            params.nu,
+            n_obs,
+            config.K,
+            config.grid_range,
+            config.adaptive,
+            config.pts_per_sigma,
+            config.max_K,
+            grid)
+        || !scar_internal::build_grid_transition_operator(
+            grid,
+            OuBackend::LocalGh,
+            config.grid_method,
+            config.gh_order,
+            transition)) {
+        return invalid_smoothed_state_distribution(
+            SCAR_INVALID_SIZE, OuBackend::LocalGh);
+    }
+    return smoothed_state_distribution_impl(
+        copula, u, grid, transition, OuBackend::LocalGh);
 }
 
 }  // namespace scar

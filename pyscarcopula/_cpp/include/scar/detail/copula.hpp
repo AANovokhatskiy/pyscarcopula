@@ -237,6 +237,13 @@ bool student_log_pdf_from_summaries(
     double& log_pdf,
     double* dlog_ddf);
 double student_quantile_value(double p, double df);
+double student_quantile_for_observation(
+    const scar::CopulaSpec& spec,
+    double p,
+    double df,
+    std::int64_t row_index,
+    int column);
+double student_cdf_value(double value, double df);
 void student_quantile_value_and_derivative(
     double p, double df, double& value, double& derivative);
 void student_quantile_large_df_value_and_derivative(

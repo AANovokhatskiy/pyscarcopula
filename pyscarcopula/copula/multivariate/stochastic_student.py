@@ -2205,7 +2205,7 @@ class StochasticStudentCopula(MultivariateCopula):
             self, u, latent_params, *, K, grid_range, grid_method,
             adaptive, pts_per_sigma, transition_method, max_K,
             r_gh, gh_order):
-        """TM forward-backward sweep for ``posterior_state_weights``."""
+        """Native C++ forward-backward sweep for posterior state weights."""
 
         config = DEFAULT_CONFIG
         K = config.default_K if K is None else int(K)
@@ -2222,34 +2222,24 @@ class StochasticStudentCopula(MultivariateCopula):
             config.default_pts_per_sigma if pts_per_sigma is None
             else int(pts_per_sigma))
 
-        from pyscarcopula.numerical.tm_grid import TMGrid
-        grid = TMGrid(
-            latent_params[0], latent_params[1], latent_params[2],
-            len(u), K, grid_range, grid_method, adaptive, pts_per_sigma,
-            transition_method=transition_method, max_K=max_K,
-            r_gh=r_gh, gh_order=gh_order)
-        fi_grid = grid.copula_grid(u, self)
-
-        beta = np.ones((len(u), grid.K), dtype=np.float64)
-        for t in range(len(u) - 2, -1, -1):
-            beta[t] = grid.matvec(fi_grid[t + 1] * beta[t + 1])
-            mx = np.max(np.abs(beta[t]))
-            if mx > 0.0:
-                beta[t] /= mx
-
-        weights = np.empty((len(u), grid.K), dtype=np.float64)
-        phi = grid.p0.copy()
-        for t in range(len(u)):
-            raw = phi * fi_grid[t] * beta[t] * grid.trap_w
-            raw = np.where(np.isfinite(raw) & (raw > 0.0), raw, 0.0)
-            total = np.sum(raw)
-            if total > 0.0:
-                weights[t] = raw / total
-            else:
-                weights[t] = np.full(grid.K, 1.0 / grid.K)
-            if t < len(u) - 1:
-                phi = grid.advance_forward_phi(phi, fi_grid[t])
-                if phi is None:
-                    phi = np.full(grid.K, 1.0)
-
+        from pyscarcopula.numerical import _cpp_scar_ou
+        from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
+        _, weights = _cpp_scar_ou.smoothed_state_distribution(
+            latent_params[0],
+            latent_params[1],
+            latent_params[2],
+            u,
+            self,
+            AutoTMConfig(
+                K=K,
+                grid_range=grid_range,
+                grid_method=grid_method,
+                adaptive=adaptive,
+                pts_per_sigma=pts_per_sigma,
+                transition_method=transition_method,
+                max_K=max_K,
+                r_gh=r_gh,
+                gh_order=gh_order,
+            ),
+        )
         return weights

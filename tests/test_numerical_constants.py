@@ -83,6 +83,7 @@ def test_python_and_cpp_safety_constants_match():
     assert module.PSEUDO_OBS_EPS == PSEUDO_OBS_EPS
     assert module.H_FUNCTION_EPS == H_FUNCTION_EPS
     assert module.PDF_FLOOR == PDF_FLOOR
+    assert module.ROSENBLATT_OUTPUT_EPS == ROSENBLATT_OUTPUT_EPS
 
 
 def test_vine_runtime_has_no_local_generic_eps_constants():
