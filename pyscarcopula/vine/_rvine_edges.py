@@ -78,11 +78,14 @@ def _edge_h_pair(edge, u, v, config=None, **strategy_kwargs):
     if r is not None:
         return copula.h_pair(u, v, r)
 
-    # The strategy contract consumes canonical (given, conditioned) columns
-    # and returns h(conditioned | given), h(given | conditioned).
-    u_pair = np.column_stack((v, u))
-    return edge_mixture_h_pair(
+    # Dynamic strategies must always filter the observations in the same
+    # canonical variable order used during fitting.  Their pair contract
+    # returns h(second | first), h(first | second), while this helper exposes
+    # h(u | v), h(v | u).
+    u_pair = np.column_stack((u, v))
+    second_given_first, first_given_second = edge_mixture_h_pair(
         copula, result, u_pair, config=config, **strategy_kwargs)
+    return first_given_second, second_given_first
 
 
 def _edge_h_pair_for_variables(

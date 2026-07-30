@@ -500,6 +500,19 @@ def test_gas_mixture_h_pair_uses_one_filter_path(monkeypatch):
     np.testing.assert_allclose(second, expected[1])
 
 
+@pytest.mark.parametrize("rotation", [90, 270])
+def test_rotated_h_pair_matches_directional_h(rotation):
+    copula = ClaytonCopula(rotate=rotation)
+    u = OBSERVATIONS[:, 0]
+    v = OBSERVATIONS[:, 1]
+    r = np.full(len(OBSERVATIONS), 0.8)
+
+    first, second = copula.h_pair(u, v, r)
+
+    np.testing.assert_allclose(first, copula.h(u, v, r))
+    np.testing.assert_allclose(second, copula.h(v, u, r))
+
+
 @pytest.mark.parametrize(
     "copula",
     [

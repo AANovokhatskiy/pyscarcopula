@@ -547,6 +547,12 @@ class BivariateCopula(CopulaBase):
 
     def h_pair(self, u, v, r):
         """Evaluate both conditional directions in one native call."""
+        if int(getattr(self, "rotate", 0)) in (90, 270):
+            # The native paired kernel uses the unrotated exchange symmetry,
+            # which does not hold for the asymmetric 90/270-degree copulas.
+            # Preserve the public order h(u | v), h(v | u) via the validated
+            # one-directional kernel.
+            return self.h(u, v, r), self.h(v, u, r)
         return self._native_adapter().h_pair(self, u, v, r)
 
     def h_inverse(self, u, v, r):

@@ -1163,7 +1163,10 @@ def rvine_rosenblatt_transform(
     columns are traversed right-to-left, and each anti-diagonal leaf is
     transformed by h-functions from tree 0 up to the column's top tree.
     """
-    from pyscarcopula.vine._rvine_edges import _edge_h
+    from pyscarcopula.vine._rvine_edges import (
+        _edge_h,
+        _edge_h_pair_for_variables,
+    )
 
     if vine_type is None:
         vine_type = getattr(vine, "vine_type", "rvine")
@@ -1235,13 +1238,19 @@ def rvine_rosenblatt_transform(
                     f"column={col}, tree={t}"
                 )
 
-            cur = clip_pseudo_observations(
-                _edge_h(edge, leaf_val, partner_val, K=K,
-                        grid_range=grid_range))
+            leaf_next, partner_next = _edge_h_pair_for_variables(
+                edge,
+                leaf,
+                leaf_val,
+                partner,
+                partner_val,
+                K=K,
+                grid_range=grid_range,
+            )
+            cur = clip_pseudo_observations(leaf_next)
             pseudo[(leaf, next_leaf_cond)] = cur
-            pseudo[(partner, next_partner_cond)] = clip_pseudo_observations(
-                _edge_h(edge, partner_val, leaf_val, K=K,
-                        grid_range=grid_range))
+            pseudo[(partner, next_partner_cond)] = (
+                clip_pseudo_observations(partner_next))
 
         e[:, col] = cur
 

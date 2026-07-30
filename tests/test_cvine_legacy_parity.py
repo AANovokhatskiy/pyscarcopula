@@ -10,7 +10,9 @@ from pyscarcopula import (
     BivariateGaussianCopula,
     CVineCopula,
     FrankCopula,
+    GumbelCopula,
     IndependentCopula,
+    JoeCopula,
     VineCopula,
 )
 
@@ -196,4 +198,62 @@ def test_static_gaussian_cvine_sampling_moments_match():
         np.corrcoef(generic_scores, rowvar=False),
         atol=0.04,
         rtol=0.0,
+    )
+
+
+def test_dynamic_gas_rotated_edges_match_legacy_cvine_factorization():
+    data = _data(rows=90, dimension=4)
+    legacy_trees = _legacy_cvine_trees(data.shape[1])
+    family_specs = {
+        ((0, 1), ()): (GumbelCopula, 180),
+        ((0, 2), ()): (JoeCopula, 270),
+        ((0, 3), ()): (FrankCopula, 0),
+        ((1, 2), (0,)): (GumbelCopula, 180),
+        ((1, 3), (0,)): (FrankCopula, 0),
+        ((2, 3), (0, 1)): (JoeCopula, 90),
+    }
+
+    def specs(trees):
+        return [
+            [family_specs[_edge_id(edge)] for edge in level]
+            for level in trees
+        ]
+
+    legacy = CVineCopula(
+        candidates=[GumbelCopula, JoeCopula, FrankCopula],
+    ).fit(
+        data,
+        method="gas",
+        copulas=specs(legacy_trees),
+        ftol=1e-9,
+    )
+    generic = VineCopula.cvine(
+        data.shape[1],
+        candidates=[GumbelCopula, JoeCopula, FrankCopula],
+    )
+    generic.fit(
+        data,
+        method="gas",
+        copulas=specs(generic.structure.to_trees()),
+        ftol=1e-9,
+    )
+
+    legacy_edges = _legacy_semantic_edges(legacy)
+    generic_edges = _generic_semantic_edges(generic)
+    for edge_id in legacy_edges:
+        old = legacy_edges[edge_id]
+        new = generic_edges[edge_id]
+        np.testing.assert_allclose(
+            old.fit_result.params.values,
+            new.fit_result.params.values,
+            rtol=1e-9,
+            atol=1e-10,
+        )
+        assert old.log_likelihood == pytest.approx(
+            new.log_likelihood, rel=1e-10, abs=1e-9)
+
+    assert legacy.log_likelihood(data) == pytest.approx(
+        generic.log_likelihood(data),
+        rel=1e-10,
+        abs=1e-8,
     )
