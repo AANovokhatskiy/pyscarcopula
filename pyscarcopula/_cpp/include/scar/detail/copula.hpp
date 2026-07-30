@@ -58,7 +58,8 @@ double clayton_dlog_pdf_dr_unrotated(double u1, double u2, double r);
 void clayton_pdf_and_grad_x_unrotated(
     double u1,
     double u2,
-    double x,
+    double r,
+    double d_r_dx,
     double& pdf,
     double& d_pdf_dx);
 double clayton_h_rotated(double u, double v, double r, int rotation);
@@ -68,8 +69,8 @@ double gumbel_dlog_pdf_dr_unrotated(double u1, double u2, double r);
 void gumbel_pdf_and_grad_x_unrotated(
     double u1,
     double u2,
-    double x,
-    double offset,
+    double r,
+    double d_r_dx,
     double& pdf,
     double& d_pdf_dx);
 double gumbel_h_rotated(double u, double v, double r, int rotation);
@@ -79,8 +80,8 @@ double frank_dlog_pdf_dr_unrotated(double u1, double u2, double r);
 void frank_pdf_and_grad_x_unrotated(
     double u1,
     double u2,
-    double x,
-    double offset,
+    double r,
+    double d_r_dx,
     double& pdf,
     double& d_pdf_dx);
 double frank_h_rotated(double u, double v, double r, int rotation);
@@ -90,8 +91,8 @@ double joe_dlog_pdf_dr_unrotated(double u1, double u2, double r);
 void joe_pdf_and_grad_x_unrotated(
     double u1,
     double u2,
-    double x,
-    double offset,
+    double r,
+    double d_r_dx,
     double& pdf,
     double& d_pdf_dx);
 double joe_h_rotated(double u, double v, double r, int rotation);

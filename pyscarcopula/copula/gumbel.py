@@ -40,13 +40,15 @@ class GumbelCopula(BivariateCopula):
     def __init__(self, rotate: int = 0, transform_type: str = "softplus"):
         super().__init__(rotate)
         self._name = "Gumbel copula"
-        self._bounds = [(1.0001, np.inf)]
-        if transform_type not in ("xtanh", "softplus"):
+        if transform_type not in ("xtanh", "softplus", "exp", "logistic"):
             raise ValueError(
-                "transform_type must be 'xtanh' or 'softplus', "
+                "transform_type must be one of "
+                "'xtanh', 'softplus', 'exp', or 'logistic', "
                 f"got '{transform_type}'"
             )
         self._transform_type = transform_type
+        upper = 21.0001 if transform_type == "logistic" else np.inf
+        self._bounds = [(1.0001, upper)]
 
     def tau_to_param(self, tau):
         tau = np.atleast_1d(np.asarray(tau, dtype=np.float64))

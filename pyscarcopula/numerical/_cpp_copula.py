@@ -16,6 +16,9 @@ from pyscarcopula.numerical._cpp_extension import CppUnsupported
 
 
 _STUDENT_SPEC_CACHE = weakref.WeakKeyDictionary()
+_ARCHIMEDEAN_TRANSFORMS = frozenset(
+    {"softplus", "xtanh", "exp", "logistic"}
+)
 
 
 def _set_student_ppf_cache(spec, cache) -> None:
@@ -35,6 +38,21 @@ def _set_student_ppf_cache(spec, cache) -> None:
 
 def _transform_name(copula) -> str:
     return str(getattr(copula, "_transform_type", "")).lower()
+
+
+def _native_archimedean_transform(module, transform_name):
+    mapping = {
+        "softplus": module.Transform.Softplus,
+        "xtanh": module.Transform.XTanh,
+        "exp": module.Transform.Exponential,
+        "logistic": module.Transform.Logistic,
+    }
+    try:
+        return mapping[transform_name]
+    except KeyError as exc:
+        raise CppUnsupported(
+            f"Unsupported Archimedean transform: {transform_name!r}"
+        ) from exc
 
 
 def supported_for_scar_ou(copula) -> bool:
@@ -238,7 +256,7 @@ def ensure_supported_for_scar_ou(copula) -> None:
     archimedean_types = (ClaytonCopula, GumbelCopula, FrankCopula, JoeCopula)
     if (
             isinstance(copula, archimedean_types)
-            and _transform_name(copula) in {"softplus", "xtanh"}):
+            and _transform_name(copula) in _ARCHIMEDEAN_TRANSFORMS):
         if isinstance(copula, FrankCopula) and int(getattr(copula, "rotate", 0)) != 0:
             pass
         else:
@@ -266,7 +284,8 @@ def ensure_supported_for_scar_ou(copula) -> None:
     transform = _transform_name(copula) or "<unknown>"
     raise CppUnsupported(
         "C++ SCAR-OU kernels currently support only "
-        f"Clayton, Gumbel, Frank, Joe with softplus/xtanh transforms, "
+        f"Clayton, Gumbel, Frank, Joe with "
+        f"softplus/xtanh/exp/logistic transforms, "
         f"IndependentCopula, BivariateGaussianCopula, "
         f"EquicorrGaussianCopula, and StochasticStudentCopula; got {name} "
         f"with transform={transform}"
@@ -288,10 +307,13 @@ def ensure_supported_for_copula_ops(copula) -> None:
     if isinstance(copula, IndependentCopula):
         return
     if isinstance(copula, FrankCopula):
-        if int(getattr(copula, "rotate", 0)) == 0:
+        if (
+                int(getattr(copula, "rotate", 0)) == 0
+                and _transform_name(copula) in _ARCHIMEDEAN_TRANSFORMS):
             return
     elif isinstance(copula, (ClaytonCopula, GumbelCopula, JoeCopula)):
-        return
+        if _transform_name(copula) in _ARCHIMEDEAN_TRANSFORMS:
+            return
     elif isinstance(copula, BivariateGaussianCopula):
         if int(getattr(copula, "rotate", 0)) == 0:
             return
@@ -372,31 +394,19 @@ def make_copula_ops_spec(module, copula):
         spec.offset = 0.0
     elif isinstance(copula, ClaytonCopula):
         spec.family = module.CopulaFamily.Clayton
-        spec.transform = (
-            module.Transform.XTanh if transform == "xtanh"
-            else module.Transform.Softplus
-        )
+        spec.transform = _native_archimedean_transform(module, transform)
         spec.offset = 0.0001
     elif isinstance(copula, GumbelCopula):
         spec.family = module.CopulaFamily.Gumbel
-        spec.transform = (
-            module.Transform.XTanh if transform == "xtanh"
-            else module.Transform.Softplus
-        )
+        spec.transform = _native_archimedean_transform(module, transform)
         spec.offset = 1.0001
     elif isinstance(copula, FrankCopula):
         spec.family = module.CopulaFamily.Frank
-        spec.transform = (
-            module.Transform.XTanh if transform == "xtanh"
-            else module.Transform.Softplus
-        )
+        spec.transform = _native_archimedean_transform(module, transform)
         spec.offset = 0.0001
     elif isinstance(copula, JoeCopula):
         spec.family = module.CopulaFamily.Joe
-        spec.transform = (
-            module.Transform.XTanh if transform == "xtanh"
-            else module.Transform.Softplus
-        )
+        spec.transform = _native_archimedean_transform(module, transform)
         spec.offset = 1.0001
     elif isinstance(copula, BivariateGaussianCopula):
         spec.family = module.CopulaFamily.Gaussian
@@ -564,31 +574,19 @@ def _make_spec_unlocked(module, copula, u=None):
         spec.offset = 0.0
     elif isinstance(copula, ClaytonCopula):
         spec.family = module.CopulaFamily.Clayton
-        spec.transform = (
-            module.Transform.XTanh
-            if transform == "xtanh"
-            else module.Transform.Softplus)
+        spec.transform = _native_archimedean_transform(module, transform)
         spec.offset = 0.0001
     elif isinstance(copula, GumbelCopula):
         spec.family = module.CopulaFamily.Gumbel
-        spec.transform = (
-            module.Transform.XTanh
-            if transform == "xtanh"
-            else module.Transform.Softplus)
+        spec.transform = _native_archimedean_transform(module, transform)
         spec.offset = 1.0001
     elif isinstance(copula, FrankCopula):
         spec.family = module.CopulaFamily.Frank
-        spec.transform = (
-            module.Transform.XTanh
-            if transform == "xtanh"
-            else module.Transform.Softplus)
+        spec.transform = _native_archimedean_transform(module, transform)
         spec.offset = 0.0001
     elif isinstance(copula, JoeCopula):
         spec.family = module.CopulaFamily.Joe
-        spec.transform = (
-            module.Transform.XTanh
-            if transform == "xtanh"
-            else module.Transform.Softplus)
+        spec.transform = _native_archimedean_transform(module, transform)
         spec.offset = 1.0001
     elif isinstance(copula, BivariateGaussianCopula):
         spec.family = module.CopulaFamily.Gaussian

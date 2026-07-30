@@ -38,6 +38,8 @@ enum class Transform : int {
     Softplus = 1,
     XTanh = 2,
     GaussianTanh = 3,
+    Exponential = 4,
+    Logistic = 5,
 };
 
 enum class CorrelationKind : int {

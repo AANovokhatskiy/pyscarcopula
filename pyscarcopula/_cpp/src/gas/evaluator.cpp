@@ -66,7 +66,9 @@ int validate_copula(const CopulaSpec& copula) {
     if (copula.family != CopulaFamily::Independent
         && copula.family != CopulaFamily::Gaussian
         && copula.transform != Transform::Softplus
-        && copula.transform != Transform::XTanh) {
+        && copula.transform != Transform::XTanh
+        && copula.transform != Transform::Exponential
+        && copula.transform != Transform::Logistic) {
         return SCAR_INVALID_TRANSFORM;
     }
     if (!scar_internal::copula_is_supported(copula)) {

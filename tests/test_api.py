@@ -384,7 +384,8 @@ class TestTransformType:
         (GumbelCopula, 180), (ClaytonCopula, 0),
         (FrankCopula, 0), (JoeCopula, 180),
     ])
-    @pytest.mark.parametrize("transform_type", ['softplus', 'xtanh'])
+    @pytest.mark.parametrize(
+        "transform_type", ['softplus', 'xtanh', 'exp', 'logistic'])
     def test_dtransform_matches_numerical_derivative(
             self, cls, rot, transform_type):
         cop = cls(rotate=rot, transform_type=transform_type)

@@ -4,6 +4,22 @@
 
 namespace scar_internal {
 
+namespace {
+
+constexpr double kLogisticCap = 20.0;
+constexpr double kLogisticScale = 2.0;
+
+double logistic_unit(double x) {
+    if (x >= 0.0) {
+        const double exp_neg = std::exp(-x);
+        return 1.0 / (1.0 + exp_neg);
+    }
+    const double exp_pos = std::exp(x);
+    return exp_pos / (1.0 + exp_pos);
+}
+
+}  // namespace
+
 bool is_valid_rotation(int rotation) {
     return rotation == 0 || rotation == 90 || rotation == 180 || rotation == 270;
 }
@@ -227,6 +243,13 @@ double copula_transform(const scar::CopulaSpec& spec, double x) {
     if (spec.transform == scar::Transform::XTanh) {
         return x * std::tanh(x) + spec.offset;
     }
+    if (spec.transform == scar::Transform::Exponential) {
+        return std::exp(x) + spec.offset;
+    }
+    if (spec.transform == scar::Transform::Logistic) {
+        return spec.offset
+            + kLogisticCap * logistic_unit(x / kLogisticScale);
+    }
     if (spec.transform == scar::Transform::GaussianTanh) {
         return 0.9999 * std::tanh(x / 4.0);
     }
@@ -262,6 +285,17 @@ double copula_inverse_transform(const scar::CopulaSpec& spec, double r) {
         // inverse of copula_transform().
         return std::abs(r) + spec.offset;
     }
+    if (spec.transform == scar::Transform::Exponential) {
+        return std::log(std::max(r - spec.offset, 1e-300));
+    }
+    if (spec.transform == scar::Transform::Logistic) {
+        const double probability = std::clamp(
+            (r - spec.offset) / kLogisticCap,
+            1e-15,
+            1.0 - 1e-15);
+        return kLogisticScale
+            * (std::log(probability) - std::log1p(-probability));
+    }
     if (spec.transform == scar::Transform::GaussianTanh) {
         const double scaled = std::clamp(r / 0.9999, -0.9999, 0.9999);
         return 4.0 * std::atanh(scaled);
@@ -282,6 +316,14 @@ double copula_dtransform(const scar::CopulaSpec& spec, double x) {
     if (spec.transform == scar::Transform::XTanh) {
         const double th = std::tanh(x);
         return th + x * (1.0 - th * th);
+    }
+    if (spec.transform == scar::Transform::Exponential) {
+        return std::exp(x);
+    }
+    if (spec.transform == scar::Transform::Logistic) {
+        const double probability = logistic_unit(x / kLogisticScale);
+        return (kLogisticCap / kLogisticScale)
+            * probability * (1.0 - probability);
     }
     if (spec.transform == scar::Transform::GaussianTanh) {
         const double th = std::tanh(x / 4.0);

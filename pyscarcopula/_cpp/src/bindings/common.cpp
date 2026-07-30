@@ -685,7 +685,9 @@ void bind_common(py::module_& m) {
         m, "Transform", "Latent-state to copula-parameter transform.")
         .value("Softplus", scar::Transform::Softplus)
         .value("XTanh", scar::Transform::XTanh)
-        .value("GaussianTanh", scar::Transform::GaussianTanh);
+        .value("GaussianTanh", scar::Transform::GaussianTanh)
+        .value("Exponential", scar::Transform::Exponential)
+        .value("Logistic", scar::Transform::Logistic);
 
     py::enum_<scar::OuBackend>(
         m, "OuBackend", "Numerical SCAR-OU propagation backend.")

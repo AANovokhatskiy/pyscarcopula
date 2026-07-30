@@ -66,8 +66,8 @@ double joe_dlog_pdf_dr_unrotated(double u1, double u2, double r) {
 void joe_pdf_and_grad_x_unrotated(
     double u1,
     double u2,
-    double x,
-    double offset,
+    double r,
+    double d_r_dx,
     double& pdf,
     double& d_pdf_dx) {
 
@@ -75,7 +75,6 @@ void joe_pdf_and_grad_x_unrotated(
     const double v2 = std::min(std::max(u2, kPdfEps), 1.0 - kPdfEps);
     const double q1 = std::min(std::max(1.0 - v1, kPdfEps), 1.0 - kPdfEps);
     const double q2 = std::min(std::max(1.0 - v2, kPdfEps), 1.0 - kPdfEps);
-    const double r = softplus(x) + offset;
     const double log_q1 = std::log(q1);
     const double log_q2 = std::log(q2);
     const double log_t1 = r * log_q1 + log1mexp(-r * log_q2);
@@ -107,7 +106,7 @@ void joe_pdf_and_grad_x_unrotated(
         + (1.0 + dB) / (r - 1.0 + B)
         - std::log(B) / (r * r)
         - (2.0 - 1.0 / r) * dB / B;
-    d_pdf_dx = pdf * dlog_dr * d_softplus(x);
+    d_pdf_dx = pdf * dlog_dr * d_r_dx;
 }
 
 double joe_h_unrotated(double u, double v, double r) {

@@ -34,10 +34,10 @@ _MATRIX_CONFIG = AutoTMConfig(
 @pytest.mark.parametrize(
     "copula",
     [
-        ClaytonCopula(transform_type="xtanh"),
-        FrankCopula(transform_type="xtanh"),
-        GumbelCopula(transform_type="xtanh"),
-        JoeCopula(transform_type="xtanh"),
+        family(transform_type=transform)
+        for transform in ("softplus", "xtanh", "exp", "logistic")
+        for family in (ClaytonCopula, FrankCopula, GumbelCopula, JoeCopula)
+    ] + [
         IndependentCopula(),
     ],
 )
@@ -51,6 +51,36 @@ def test_native_ou_support_covers_bivariate_family_and_transform_combinations(co
     assert np.isfinite(value)
     assert np.all(np.isfinite(gradient))
     assert info["engine"] == "cpp"
+
+
+@pytest.mark.parametrize(
+    "factory",
+    [ClaytonCopula, FrankCopula, GumbelCopula, JoeCopula],
+)
+@pytest.mark.parametrize("transform_type", ["exp", "logistic"])
+def test_new_transform_ou_gradient_matches_finite_difference(
+        factory, transform_type):
+    copula = factory(transform_type=transform_type)
+    u = np.random.default_rng(20260730).uniform(0.08, 0.92, size=(12, 2))
+    params = np.array([1.2, 0.1, 0.7])
+    value, gradient = _cpp_scar_ou.neg_loglik_with_grad(
+        *params, u, copula, _MATRIX_CONFIG)
+    finite_difference = np.empty(3)
+
+    for index in range(3):
+        step = 1e-5 * max(1.0, abs(params[index]))
+        plus = params.copy()
+        minus = params.copy()
+        plus[index] += step
+        minus[index] -= step
+        finite_difference[index] = (
+            _cpp_scar_ou.neg_loglik(*plus, u, copula, _MATRIX_CONFIG)
+            - _cpp_scar_ou.neg_loglik(*minus, u, copula, _MATRIX_CONFIG)
+        ) / (2.0 * step)
+
+    assert np.isfinite(value)
+    np.testing.assert_allclose(
+        gradient, finite_difference, rtol=2e-5, atol=2e-6)
 
 
 def test_native_ou_supports_equicorr_forward_and_state():
