@@ -6,14 +6,17 @@ from typing import Any
 
 import numpy as np
 from numpy.typing import ArrayLike
-from scipy.optimize import minimize
 from scipy.stats import (
     multivariate_t,
     t as t_dist,
 )
 
 from pyscarcopula._utils import pobs
-from pyscarcopula._types import MultivariateMLEResult
+from pyscarcopula._types import (
+    DEFAULT_CONFIG,
+    MultivariateMLEResult,
+    NumericalConfig,
+)
 from pyscarcopula.copula.base import CopulaCapabilities
 from pyscarcopula.copula.multivariate.base import MultivariateCopula
 from pyscarcopula.copula.multivariate.corr_param import (
@@ -25,6 +28,23 @@ from pyscarcopula.copula.multivariate.correlation_policy import (
     CorrelationPolicy,
     FactorEstimation,
     normalize_correlation_mode,
+)
+from pyscarcopula.strategy.multivariate_mle import (
+    StaticMLEEvaluation,
+    StaticMLEProblem,
+    run_static_multivariate_mle,
+)
+
+
+_LBFGSB_FIT_KEYS = (
+    "gtol",
+    "ftol",
+    "maxfun",
+    "maxiter",
+    "maxls",
+    "eps",
+    "maxcor",
+    "finite_diff_rel_step",
 )
 
 
@@ -101,46 +121,84 @@ class StudentCopula(MultivariateCopula):
         if to_pobs:
             u = pobs(u)
             _validate_student_fit_data(u)
+        config = kwargs.pop("config", None)
+        if "tol" in kwargs:
+            raise TypeError("tol is not supported; use gtol")
+        optimizer_kwargs = {
+            key: kwargs.pop(key)
+            for key in _LBFGSB_FIT_KEYS
+            if key in kwargs
+        }
+        if kwargs:
+            unexpected = ", ".join(sorted(kwargs))
+            raise TypeError(
+                f"unexpected MLE keyword argument(s): {unexpected}")
+        return self._fit_mle(u, config=config, **optimizer_kwargs)
 
-        d = u.shape[1]
-        self._set_dimension(d, allow_change=True)
-        self.correlation_preprocessing = estimate_kendall_correlation(u)
-        self.shape = self.correlation_preprocessing.correlation
+    def _fit_mle(
+            self,
+            u: np.ndarray,
+            config: NumericalConfig | None = None,
+            **optimizer_overrides: float | int | None,
+            ) -> MultivariateMLEResult:
+        """Fit static df through the shared, atomic MLE workflow."""
         from pyscarcopula.numerical import static_likelihood
-        evaluator = static_likelihood.prepare(self, u)
 
-        def nll_profile(df_arr):
-            return evaluator.objective_and_gradient(
-                float(np.atleast_1d(df_arr)[0]))
-
-        result = minimize(
-            nll_profile,
-            np.array([max(float(d), 5.0)]),
-            jac=True,
-            method="L-BFGS-B",
-            bounds=[(2.001, np.inf)],
-            options={"gtol": 1e-2, "eps": 1e-4},
+        config = config or DEFAULT_CONFIG
+        options = config.static_student_optimizer.options(
+            **optimizer_overrides)
+        d = u.shape[1]
+        preprocessing = estimate_kendall_correlation(u)
+        correlation = preprocessing.correlation.copy()
+        policy = CorrelationPolicy.create(
+            mode="fixed",
+            estimator="kendall_plugin",
+            dimension=d,
+            preprocessing=preprocessing,
         )
+        evaluator = static_likelihood.prepare_student(
+            correlation, u, n_threads=config.n_threads)
 
-        self.df = float(result.x[0])
+        def evaluate(parameters: np.ndarray) -> StaticMLEEvaluation:
+            value, gradient = evaluator.objective_and_gradient(
+                float(parameters[0]), fail_value=config.fail_value)
+            return StaticMLEEvaluation(
+                objective=value,
+                gradient=gradient,
+                correlation=correlation,
+                state={"df": float(parameters[0])},
+            )
+
+        outcome = run_static_multivariate_mle(
+            StaticMLEProblem(
+                family="student",
+                initial_parameters=np.array(
+                    [max(float(d), 5.0)], dtype=np.float64),
+                bounds=((2.001, None),),
+                evaluate=evaluate,
+            ),
+            optimizer_options=options,
+            fail_value=config.fail_value,
+        )
+        df_hat = float(outcome.parameters[0])
         parameter_count = d * (d - 1) // 2 + 1
         fit_result = MultivariateMLEResult(
-            log_likelihood=-float(result.fun),
+            log_likelihood=-float(outcome.final_objective),
             method="MLE",
             copula_name=self.name,
-            success=bool(result.success),
-            nfev=int(getattr(result, "nfev", 0)),
-            message=str(getattr(result, "message", "")),
-            copula_param=self.df,
+            success=outcome.accepted,
+            nfev=outcome.nfev,
+            message=outcome.message,
+            copula_param=df_hat,
             parameter_count=parameter_count,
             n_observations=len(u),
             model_parameters={
-                "df": self.df,
+                "df": df_hat,
                 "corr_mode": self._corr_mode,
                 "corr_estimator": self.corr_estimator_,
-                "correlation_matrix": self.shape.copy(),
+                "correlation_matrix": correlation.copy(),
             },
-            correlation_matrix=self.shape.copy(),
+            correlation_matrix=correlation.copy(),
             diagnostics={
                 "model_score": "not_applicable",
                 "optimizer_gradient": "analytical",
@@ -148,13 +206,19 @@ class StudentCopula(MultivariateCopula):
                 "setup_derivative": "not_applicable",
                 "filter_derivative": "not_applicable",
                 "df_gradient": "analytical",
-                "corr_matrix": self.shape.copy(),
-                **self.correlation_policy_.diagnostics(),
-                **self.correlation_preprocessing.diagnostics(),
+                "corr_matrix": correlation.copy(),
+                "n_threads": config.n_threads,
+                **policy.diagnostics(),
+                **outcome.diagnostics(),
             },
         )
-        self.fit_result = fit_result
-        self._last_u = u
+        if outcome.accepted:
+            self._set_dimension(d, allow_change=True)
+            self.correlation_preprocessing = preprocessing
+            self.shape = correlation.copy()
+            self.df = df_hat
+            self.fit_result = fit_result
+            self._last_u = u
         return fit_result
 
     def _nll_with_params(self, u, R, df):

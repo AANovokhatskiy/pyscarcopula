@@ -120,6 +120,10 @@ DEFAULT_EQUICORR_OPTIMIZER = LBFGSBConfig(
 DEFAULT_STOCHASTIC_STUDENT_OPTIMIZER = LBFGSBConfig(
     gtol=1e-4,
 )
+DEFAULT_STATIC_STUDENT_OPTIMIZER = LBFGSBConfig(
+    gtol=1e-2,
+    eps=1e-4,
+)
 DEFAULT_STOCHASTIC_STUDENT_GAS_OPTIMIZER = LBFGSBConfig(
     gtol=1e-3,
     ftol=1e-9,
@@ -168,6 +172,8 @@ class NumericalConfig:
         default_factory=lambda: DEFAULT_EQUICORR_OPTIMIZER)
     stochastic_student_optimizer: LBFGSBConfig = field(
         default_factory=lambda: DEFAULT_STOCHASTIC_STUDENT_OPTIMIZER)
+    static_student_optimizer: LBFGSBConfig = field(
+        default_factory=lambda: DEFAULT_STATIC_STUDENT_OPTIMIZER)
     stochastic_student_gas_optimizer: LBFGSBConfig = field(
         default_factory=lambda: DEFAULT_STOCHASTIC_STUDENT_GAS_OPTIMIZER)
 
@@ -210,6 +216,10 @@ class NumericalConfig:
             self, 'stochastic_student_optimizer',
             DEFAULT_STOCHASTIC_STUDENT_OPTIMIZER.merged(
                 self.stochastic_student_optimizer))
+        object.__setattr__(
+            self, 'static_student_optimizer',
+            DEFAULT_STATIC_STUDENT_OPTIMIZER.merged(
+                self.static_student_optimizer))
         object.__setattr__(
             self, 'stochastic_student_gas_optimizer',
             DEFAULT_STOCHASTIC_STUDENT_GAS_OPTIMIZER.merged(

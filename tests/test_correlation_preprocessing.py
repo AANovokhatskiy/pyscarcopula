@@ -119,8 +119,10 @@ def test_stochastic_mle_exposes_kendall_projection_diagnostics():
     u[:, 1] = 0.5
     model = StochasticStudentCopula(d=3)
 
-    result = model.fit(u, method="mle", maxiter=3, maxfun=12)
+    result = model.fit(
+        u, method="mle", gtol=1e-2, maxiter=100, maxfun=500)
 
+    assert result.success
     diagnostics = result.diagnostics
     assert diagnostics["corr_initialization_source"] == "kendall"
     assert diagnostics["corr_nonfinite_kendall_pairs"] == ((0, 1), (1, 2))

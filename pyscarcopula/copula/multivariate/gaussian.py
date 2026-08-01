@@ -29,6 +29,11 @@ from pyscarcopula.copula.multivariate.factor_correlation import (
 from pyscarcopula.copula.multivariate.factor_estimation import (
     estimate_factor_loadings,
 )
+from pyscarcopula.strategy.multivariate_mle import (
+    StaticMLEEvaluation,
+    StaticMLEProblem,
+    run_static_multivariate_mle,
+)
 
 
 def _validate_gaussian_fit_data(u):
@@ -405,80 +410,133 @@ class GaussianCopula(MultivariateCopula):
                 candidate._factor_initialization_diagnostics = dict(
                     self._factor_initialization_diagnostics)
 
-            log_likelihood = candidate.log_likelihood(
-                u, n_threads=n_threads)
-            self._set_dimension(u.shape[1], allow_change=False)
-            self._set_factor_loadings(
-                candidate._factor_loadings,
-                diagnostics=candidate._factor_initialization_diagnostics,
+            policy = candidate.correlation_policy_
+
+            def evaluate_factor(
+                    parameters: np.ndarray) -> StaticMLEEvaluation:
+                return StaticMLEEvaluation(
+                    objective=-candidate.log_likelihood(
+                        u, n_threads=n_threads),
+                    gradient=np.empty(0, dtype=np.float64),
+                    state={"factor_loadings": candidate.factor_loadings_},
+                )
+
+            outcome = run_static_multivariate_mle(
+                StaticMLEProblem(
+                    family="gaussian",
+                    initial_parameters=np.empty(0, dtype=np.float64),
+                    bounds=(),
+                    evaluate=evaluate_factor,
+                    require_not_worse=False,
+                ),
+                optimizer_options={},
+                fail_value=float(
+                    getattr(config, "fail_value", 1e10)),
             )
-            self.corr = None
             parameter_count = (
-                self.dimension * self._factor_rank
+                u.shape[1] * self._factor_rank
                 - self._factor_rank * (self._factor_rank - 1) // 2
             )
             diagnostics = {
                 "estimator": "factor_gaussian_score_correlation",
                 "corr_matrix": None,
                 "n_threads": n_threads,
-                **self.correlation_policy_.diagnostics(),
-                **self.factor_diagnostics(),
+                **policy.diagnostics(),
+                **candidate.factor_diagnostics(),
+                **outcome.diagnostics(),
             }
             result = MultivariateMLEResult(
-                log_likelihood=log_likelihood,
+                log_likelihood=-outcome.final_objective,
                 method="MLE",
                 copula_name=self.name,
-                success=True,
-                message="two-stage factor Gaussian score correlation",
+                success=outcome.accepted,
+                nfev=outcome.nfev,
+                message=outcome.message,
                 copula_param=None,
                 parameter_count=parameter_count,
                 n_observations=len(u),
                 model_parameters={
                     "corr_mode": "factor",
                     "corr_estimator": self.corr_estimator_,
-                    "factor_loadings": self.factor_loadings_,
-                    "factor_uniqueness": self.factor_uniqueness_,
+                    "factor_loadings": candidate.factor_loadings_,
+                    "factor_uniqueness": candidate.factor_uniqueness_,
                     "factor_rank": self._factor_rank,
                 },
                 correlation_matrix=None,
                 diagnostics=diagnostics,
             )
-            self.fit_result = result
-            self._last_u = u
+            if outcome.accepted:
+                self._set_dimension(u.shape[1], allow_change=False)
+                self._set_factor_loadings(
+                    candidate._factor_loadings,
+                    diagnostics=(
+                        candidate._factor_initialization_diagnostics),
+                )
+                self.corr = None
+                self.fit_result = result
+                self._last_u = u
             return result
 
         corr = _gaussian_score_correlation(u)
-        candidate = GaussianCopula()
-        candidate._set_dimension(u.shape[1], allow_change=True)
-        candidate.corr = corr
-        log_likelihood = -candidate._nll(u)
+        policy = CorrelationPolicy.create(
+            mode="fixed",
+            estimator="gaussian_score",
+            dimension=u.shape[1],
+            base_correlation=corr,
+        )
+        from pyscarcopula.numerical import static_likelihood
+        evaluator = static_likelihood.prepare_gaussian(
+            corr, u, n_threads=n_threads)
 
-        self._set_dimension(u.shape[1], allow_change=True)
-        self.corr = corr.copy()
-        parameter_count = self.dimension * (self.dimension - 1) // 2
+        def evaluate_fixed(
+                parameters: np.ndarray) -> StaticMLEEvaluation:
+            return StaticMLEEvaluation(
+                objective=-evaluator.log_likelihood(0.0),
+                gradient=np.empty(0, dtype=np.float64),
+                correlation=corr,
+            )
+
+        outcome = run_static_multivariate_mle(
+            StaticMLEProblem(
+                family="gaussian",
+                initial_parameters=np.empty(0, dtype=np.float64),
+                bounds=(),
+                evaluate=evaluate_fixed,
+                require_not_worse=False,
+            ),
+            optimizer_options={},
+            fail_value=float(getattr(config, "fail_value", 1e10)),
+        )
+        parameter_count = u.shape[1] * (u.shape[1] - 1) // 2
         result = MultivariateMLEResult(
-            log_likelihood=log_likelihood,
+            log_likelihood=-outcome.final_objective,
             method="MLE",
             copula_name=self.name,
-            success=True,
-            message="closed-form Gaussian score correlation",
+            success=outcome.accepted,
+            nfev=outcome.nfev,
+            message=outcome.message,
             copula_param=None,
             parameter_count=parameter_count,
             n_observations=len(u),
             model_parameters={
                 "corr_mode": self._corr_mode,
                 "corr_estimator": self.corr_estimator_,
-                "correlation_matrix": self.corr.copy(),
+                "correlation_matrix": corr.copy(),
             },
-            correlation_matrix=self.corr.copy(),
+            correlation_matrix=corr.copy(),
             diagnostics={
                 "estimator": "gaussian_score_correlation",
-                "corr_matrix": self.corr.copy(),
-                **self.correlation_policy_.diagnostics(),
+                "corr_matrix": corr.copy(),
+                "n_threads": n_threads,
+                **policy.diagnostics(),
+                **outcome.diagnostics(),
             },
         )
-        self.fit_result = result
-        self._last_u = u
+        if outcome.accepted:
+            self._set_dimension(u.shape[1], allow_change=True)
+            self.corr = corr.copy()
+            self.fit_result = result
+            self._last_u = u
         return result
 
     def log_likelihood(self, u, *, n_threads=1):

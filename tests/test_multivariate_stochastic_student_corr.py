@@ -559,7 +559,7 @@ def test_mle_shrinkage_fit_smoke_model_and_api():
     u = _u(T=50)
 
     model = StochasticStudentCopula(d=3, corr_mode="shrinkage")
-    result = model.fit(u, method="mle", maxiter=3)
+    result = model.fit(u, method="mle", maxiter=100)
 
     assert np.isfinite(result.log_likelihood)
     assert result.n_params == 2
@@ -578,7 +578,7 @@ def test_mle_shrinkage_fit_smoke_model_and_api():
         result.diagnostics["corr_matrix"], model.R)
 
     api_model = StochasticStudentCopula(d=3, corr_mode="shrinkage")
-    api_result = fit(api_model, u, method="mle", maxiter=3)
+    api_result = fit(api_model, u, method="mle", maxiter=100)
     assert np.isfinite(api_result.log_likelihood)
     assert api_result.n_params == 2
     validate_corr_matrix(api_model.R)
@@ -588,7 +588,7 @@ def test_mle_cholesky_reports_all_static_parameters():
     u = _u(T=40)
     model = StochasticStudentCopula(d=3, corr_mode="cholesky")
 
-    result = model.fit(u, method="mle", maxiter=3)
+    result = model.fit(u, method="mle", maxiter=100)
 
     assert np.isfinite(result.log_likelihood)
     assert result.n_params == 4
@@ -605,7 +605,7 @@ def test_mle_cholesky_reports_all_static_parameters():
     validate_corr_matrix(model.R)
 
     api_model = StochasticStudentCopula(d=3, corr_mode="cholesky")
-    api_result = fit(api_model, u, method="mle", maxiter=3)
+    api_result = fit(api_model, u, method="mle", maxiter=100)
     assert np.isfinite(api_result.log_likelihood)
     assert api_result.n_params == 4
     validate_corr_matrix(api_model.R)
@@ -614,7 +614,7 @@ def test_mle_cholesky_reports_all_static_parameters():
 def test_mle_correlation_metadata_persistence_roundtrip(tmp_path):
     u = _u(T=30)
     model = StochasticStudentCopula(d=3, corr_mode="shrinkage")
-    result = model.fit(u, method="mle", maxiter=2)
+    result = model.fit(u, method="mle", maxiter=100)
     path = tmp_path / "stochastic-student-mle.json"
 
     model.save(path)

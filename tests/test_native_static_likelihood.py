@@ -24,8 +24,6 @@ from pyscarcopula import (
 )
 from pyscarcopula._constants import PSEUDO_OBS_EPS
 from pyscarcopula.numerical import _cpp_extension, static_likelihood
-from pyscarcopula.copula.multivariate import stochastic_student
-from pyscarcopula.copula.multivariate import student as static_student
 from pyscarcopula.strategy import mle as mle_module
 from pyscarcopula.strategy.mle import MLEStrategy
 
@@ -270,7 +268,7 @@ def test_static_student_mle_optimizes_natural_df(monkeypatch):
     def fake_minimize(fun, x0, *, jac, method, bounds, options):
         assert jac is True
         assert x0[0] == 5.0
-        assert bounds == [(2.001, np.inf)]
+        assert bounds == ((2.001, None),)
         trial = np.array([7.25])
         value, gradient = fun(trial)
         assert value == 0.0
@@ -279,15 +277,18 @@ def test_static_student_mle_optimizes_natural_df(monkeypatch):
 
     monkeypatch.setattr(
         static_likelihood,
-        "prepare",
+        "prepare_student",
         lambda *args, **kwargs: Evaluator(),
     )
-    monkeypatch.setattr(static_student, "minimize", fake_minimize)
+    monkeypatch.setattr(
+        "pyscarcopula.strategy.multivariate_mle.minimize",
+        fake_minimize,
+    )
     monkeypatch.setattr(copula, "_nll", lambda observations: 0.0)
 
     copula.fit(u)
 
-    assert evaluated == [7.25]
+    assert evaluated == [5.0, 7.25, 7.25]
     assert copula.df == 7.25
 
 
@@ -339,10 +340,13 @@ def test_stochastic_student_mle_optimizes_natural_df(
 
     monkeypatch.setattr(
         static_likelihood,
-        "prepare",
+        "prepare_student",
         lambda *args, **kwargs: Evaluator(),
     )
-    monkeypatch.setattr(stochastic_student, "minimize", fake_minimize)
+    monkeypatch.setattr(
+        "pyscarcopula.strategy.multivariate_mle.minimize",
+        fake_minimize,
+    )
     monkeypatch.setattr(
         copula,
         "transform",
@@ -358,7 +362,7 @@ def test_stochastic_student_mle_optimizes_natural_df(
 
     result = copula._fit_mle(u)
 
-    assert evaluated == [6.75]
+    assert evaluated == [5.0, 6.75, 6.75]
     assert result.copula_param == 6.75
     assert result.diagnostics["parameterization"] == "natural_df"
     assert result.diagnostics["gradient_mode"] == (

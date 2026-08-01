@@ -1,5 +1,6 @@
 """Test API consistency across copula types."""
 from importlib import metadata
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -608,23 +609,23 @@ class TestEquicorrGaussian:
             self, monkeypatch):
         captured = {}
 
-        class DummyResult:
-            x = np.array([5.0])
-            fun = 0.0
-            success = True
-            nfev = 1
-            message = 'ok'
-
         def fake_minimize(
                 fun, x0, jac=None, method=None, bounds=None, options=None):
             captured['options'] = options
             captured['x0'] = np.asarray(x0)
             captured['bounds'] = bounds
             captured['jac'] = jac
-            return DummyResult()
+            value, _ = fun(x0)
+            return SimpleNamespace(
+                x=np.asarray(x0).copy(),
+                fun=value,
+                success=True,
+                nfev=1,
+                message='ok',
+            )
 
         monkeypatch.setattr(
-            'pyscarcopula.copula.multivariate.stochastic_student.minimize',
+            'pyscarcopula.strategy.multivariate_mle.minimize',
             fake_minimize)
 
         u = pobs(np.random.default_rng(47).standard_normal((40, 3)))

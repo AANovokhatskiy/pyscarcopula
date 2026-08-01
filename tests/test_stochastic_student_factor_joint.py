@@ -204,7 +204,7 @@ def test_optimizer_success_is_rejected_when_joint_gradient_is_large(
         return result
 
     monkeypatch.setattr(
-        "pyscarcopula.copula.multivariate.stochastic_student.minimize",
+        "pyscarcopula.strategy.multivariate_mle.minimize",
         fake_minimize,
     )
     model = StochasticStudentCopula(
@@ -303,7 +303,8 @@ def test_joint_fit_persistence_remains_compact(tmp_path):
         factor_loadings=loadings,
         factor_estimation="joint",
     )
-    result = model.fit(observations, method="mle", maxiter=100)
+    result = model.fit(observations, method="mle", maxiter=180)
+    assert result.success
     target = tmp_path / "joint-factor.json"
 
     model.save(target)
