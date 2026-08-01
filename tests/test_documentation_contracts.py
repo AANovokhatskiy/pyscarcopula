@@ -322,6 +322,29 @@ def test_static_multivariate_docs_do_not_claim_predictive_mean():
     assert "cop.predictive_mean(" not in static_example
 
 
+def test_static_correlation_policy_is_documented_consistently():
+    targets = (
+        ROOT / "ARCHITECTURE.md",
+        ROOT / "docs/guide/mathematical-contracts.md",
+        ROOT / "docs/guide/multivariate_models.md",
+        ROOT / "docs/guide/estimation-methods.md",
+        ROOT / "docs/guide/numerical-backends.md",
+        ROOT / "docs/guide/performance.md",
+        ROOT / "docs/api/multivariate_models.md",
+    )
+    combined = "\n".join(
+        path.read_text(encoding="utf-8") for path in targets)
+
+    for term in (
+            "corr_mode", "corr_estimator", "fixed", "shrinkage",
+            "cholesky", "factor", "plug-in"):
+        assert term in combined
+    assert "MLE is the label for a static model" in combined
+    assert "MLE estimates one constant copula parameter." not in combined
+    assert "corr_mode=\"fixed\"" in combined
+    assert "corr_mode=\"dense\"" not in combined
+
+
 def test_documented_dynamic_predictive_mean_examples_execute():
     path = ROOT / "docs/guide/multivariate_models.md"
     blocks = _python_blocks(path)

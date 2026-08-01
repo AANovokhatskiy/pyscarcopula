@@ -46,7 +46,10 @@ result = copula.fit(u, method='scar-tm-ou', K=500, gtol=5e-3)
 
 ### MLE
 
-MLE estimates one constant copula parameter.
+MLE labels a static model. For scalar bivariate families it estimates one
+constant copula parameter; the table in this subsection applies to that
+optimizer. Static multivariate Gaussian and Student correlation controls are
+described under [Multivariate Native Paths](#multivariate-native-paths).
 
 | Parameter | Where | Default | Effect |
 |-----------|-------|---------|--------|
@@ -62,7 +65,7 @@ result = fit(copula, u, method='mle', config=cfg)
 ```
 
 MLE evaluates the likelihood directly in the natural copula parameter. For
-example, `alpha0=[2.0]` means a Gumbel parameter of `2.0`, while a Student
+example, `alpha0=[2.0]` means a Gumbel parameter of `2.0`, while a stochastic Student
 initial value of `5.0` means five degrees of freedom. Parameter transforms are
 used by dynamic latent-state methods, not by the MLE objective.
 
@@ -728,6 +731,22 @@ Multivariate Gaussian, Student, stochastic Student, and equicorrelation models
 use compiled row, grid, and conditional kernels. Several optimizations are
 automatic and do not require strategy options:
 
+Static Gaussian and Student fitting uses the shared multivariate MLE
+orchestrator with independent final-point objective and gradient validation.
+The public `method="mle"` label means a static model; `corr_mode` determines
+whether correlation is supplied/plug-in or enters the joint native objective.
+`shrinkage` maps one analytical correlation score to a raw logit parameter,
+while `cholesky` pulls the native lower-triangle score back through the full
+SPD parameterization. The Cholesky mode is guarded at `d <= 10` by default.
+
+`fixed` retains the fast path: Gaussian prepares normal scores once and uses
+their sample correlation, while Student uses Kendall preprocessing and then
+optimizes only `df`. Factor mode uses Woodbury operators with `O(d*k + k^2)`
+stored state. Gaussian and two-stage Student estimate loadings outside the
+joint optimizer; joint static Student uses the native loading score and an
+identified loading parameterization. None of the compact likelihood,
+sampling, bootstrap, or persistence paths needs a dense `d*d` correlation.
+
 - conditional Gaussian/Student sampling reuses the Schur-complement Cholesky
   factor when one correlation matrix is shared by all output rows;
 - Student density workspaces are reused inside GAS, static likelihood, Monte
@@ -774,6 +793,13 @@ parameters and creates its own prepared evaluator during fitting. Fitted
 state and transient caches from the prototype are not copied. A list of model
 prototypes and a list of `fit_kwargs` can be supplied to run different models
 or initial points in the same batch.
+
+For static Gaussian and Student prototypes, reconstruction preserves
+`corr_mode`, constructor `R`/`corr_base`, shrinkage initialization, Cholesky
+guard settings, and factor identification settings. JSON persistence also
+retains the fitted estimator, raw correlation parameters, and compact
+loadings. Parametric-bootstrap refits therefore use the same correlation
+policy as the source model.
 
 Avoid accidental CPU oversubscription. With `n_jobs > 1`, omitted `n_threads`
 means one native thread per worker. Passing `n_threads=2` or more explicitly

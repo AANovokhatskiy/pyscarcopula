@@ -90,6 +90,31 @@ vine/vine.py -> structure selection or fixed RVineMatrix
 stattests/ -> fitted strategy outputs + retained GoF orchestration
 ```
 
+## Static Multivariate Correlation Policy
+
+`GaussianCopula` and `StudentCopula` use `method="mle"` as the public label
+for a static fit. The label does not imply that every correlation parameter
+is part of one joint optimizer vector. `CorrelationPolicy` records the actual
+procedure independently through canonical `corr_mode` and `corr_estimator`
+values.
+
+- `fixed` retains the fast compatibility path. A constructor-supplied `R` is
+  held fixed; without `R`, Gaussian uses normal-score correlation and Student
+  uses a Kendall plug-in correlation.
+- `shrinkage` jointly optimizes one correlation weight.
+- `cholesky` jointly optimizes all `d*(d-1)/2` dense correlation parameters
+  and is guarded for small dimensions.
+- `factor` stores compact loadings. Gaussian and two-stage Student fits use a
+  plug-in loading estimate; static Student additionally supports identified
+  joint loading optimization.
+
+`corr_estimator` distinguishes `supplied`, `gaussian_score`,
+`kendall_plugin`, `joint_mle`, `factor_two_stage`, and `factor_joint`.
+`corr_plugin_n_params` and `corr_n_params` remain separate, while
+`corr_effective_n_params` is the count consumed by AIC/BIC. Worker
+reconstruction copies constructor policy rather than fitted mutable state;
+JSON persistence retains fitted raw parameters and compact factor state.
+
 ## Native Boundary
 
 The pybind11 C++ extension is mandatory. Built-in point operations, static

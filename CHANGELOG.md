@@ -4,6 +4,22 @@
 
 Version: `0.19.1` -> `0.20.0`
 
+- Define `method="mle"` for `GaussianCopula` and `StudentCopula` as the
+  static-model label and add canonical `fixed`, `shrinkage`, `cholesky`, and
+  `factor` correlation policies. The default `fixed` mode preserves the fast
+  Gaussian-score/Kendall plug-in behaviour; supplied fixed `R` remains fixed.
+  `shrinkage` and `cholesky` use analytical joint correlation gradients, and
+  static Student factor mode supports both two-stage and identified joint
+  loading estimation.
+- Add typed correlation provenance and parameter accounting through
+  `corr_estimator`, optimizer/plugin/effective counts, initialization source,
+  raw parameters, gradient route, and final acceptance diagnostics. AIC/BIC
+  include data-derived plug-in correlation parameters, while a supplied fixed
+  Gaussian correctly reports zero fitted parameters.
+- Preserve static Gaussian/Student correlation policy across JSON,
+  independent-fit, rolling, and bootstrap reconstruction. Restore compact
+  factor operators without dense materialization and persist canonical mode,
+  estimator, initialization, and fitted raw-parameter metadata.
 - Add a native sparse matrix-transition operator for SCAR-TM-OU with bounded
   band storage, forward and transpose matvecs, dense-parity coverage, and
   `grid_method='auto'/'dense'/'sparse'` validation up to the supported sparse

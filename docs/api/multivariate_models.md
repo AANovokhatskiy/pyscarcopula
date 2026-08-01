@@ -41,6 +41,39 @@ conditional = cop.sample_conditional(
 The supplied columns remain fixed. Supplying every variable returns constant
 rows equal to `given`.
 
+Here `MLE` is the static model label. Correlation estimation is controlled by
+`corr_mode`, and only modes marked joint below put correlation parameters in
+the likelihood optimizer vector:
+
+| `corr_mode` | Correlation procedure | Gaussian count | Student count |
+|---|---|---:|---:|
+| `fixed`, supplied `R` | held fixed | `0` | `1` for `df` |
+| `fixed`, no `R` | Gaussian-score/Kendall plug-in | `d*(d-1)/2` | `1 + d*(d-1)/2` |
+| `shrinkage` | joint one-parameter shrinkage | `1` | `2` |
+| `cholesky` | joint full correlation | `d*(d-1)/2` | `1 + d*(d-1)/2` |
+| `factor`, two-stage | compact plug-in loadings | identifiable loading count | `1 +` that count |
+| `factor`, joint | Student only | unavailable | `1 +` identifiable loading count |
+
+The default is `fixed`, preserving the previous fast behaviour. Use
+`result.diagnostics["corr_estimator"]` to distinguish `supplied`,
+`gaussian_score`, `kendall_plugin`, `joint_mle`, `factor_two_stage`, and
+`factor_joint`. Plug-in counts are included in AIC/BIC. A supplied fixed
+Gaussian has zero fitted parameters, which is valid for
+`MultivariateMLEResult`.
+
+```python
+from pyscarcopula import GaussianCopula, StudentCopula
+
+gaussian_fast = GaussianCopula(corr_mode="fixed")
+gaussian_joint = GaussianCopula(corr_mode="cholesky")
+student_fast = StudentCopula(corr_mode="fixed")
+student_joint = StudentCopula(corr_mode="shrinkage")
+```
+
+Full Cholesky is guarded by `cholesky_d_max=10` by default and is intended for
+small dimensions. Factor mode is the scalable choice when the low-rank
+assumption is appropriate.
+
 ### GaussianCopula
 
 ::: pyscarcopula.copula.multivariate.gaussian.GaussianCopula
@@ -94,6 +127,29 @@ also be supplied to the constructor. The fitted result keeps
 sequential rank-dimensional factor update with `O(T*k + k^2)` workspace.
 Persistence and rolling-window worker reconstruction retain the compact
 constructor policy.
+
+### Static Student factor correlation
+
+`StudentCopula` exposes the same compact representation and adds optional
+joint static loading estimation:
+
+```python
+from pyscarcopula import StudentCopula
+
+student_factor = StudentCopula(
+    d=u.shape[1],
+    corr_mode="factor",
+    factor_rank=min(8, u.shape[1] - 1),
+    factor_estimation="two-stage",  # use "joint" for joint df/loadings MLE
+)
+student_result = student_factor.fit(u, method="mle")
+```
+
+Two-stage loadings are counted as plug-in parameters. Joint mode uses an
+identified loading parameterization and analytical matrix-free gradients.
+Sampling, conditional sampling, GoF, bootstrap, persistence, and worker
+reconstruction retain the factor operator without implicit dense
+materialization.
 
 ## Factor correlation operator
 
@@ -236,7 +292,7 @@ gof_bootstrap = gof_test(
 ```
 
 Parametric-bootstrap calibration is supported for static `GaussianCopula`
-(dense and factor correlation modes), `StudentCopula`,
+and `StudentCopula` (dense and factor correlation representations),
 `EquicorrGaussianCopula`, and `StochasticStudentCopula`. Dynamic models retain
 their fitted MLE/GAS/SCAR-TM-OU strategy settings and correlation policy.
 Stochastic Student supports fixed, shrinkage, Cholesky, and two-stage factor
