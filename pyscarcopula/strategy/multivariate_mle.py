@@ -268,15 +268,22 @@ def run_static_multivariate_mle(
         and (
             final_parameters.size == 0
             or gradient_inf_norm <= gradient_gate))
+    improved_after_optimizer_failure = bool(
+        not optimizer_success
+        and final_evaluation is not None
+        and final_objective < (
+            initial_objective - float(problem.initial_worse_tolerance)))
+    optimizer_status_ok = bool(
+        optimizer_success or improved_after_optimizer_failure)
     accepted = bool(
-        optimizer_success
+        optimizer_status_ok
         and final_evaluation is not None
         and objective_match
         and not_worse
         and gradient_ok)
 
     rejection_reasons = []
-    if not optimizer_success:
+    if not optimizer_status_ok:
         rejection_reasons.append("optimizer status")
     if final_evaluation is None:
         rejection_reasons.append("invalid final evaluation")
@@ -292,6 +299,8 @@ def run_static_multivariate_mle(
         suffix = "; rejected by final validation: " + ", ".join(
             rejection_reasons)
         message = f"{message}{suffix}"
+    elif not optimizer_success:
+        message = f"{message}; accepted by independent final validation"
 
     final_parameters = final_parameters.copy()
     final_parameters.setflags(write=False)

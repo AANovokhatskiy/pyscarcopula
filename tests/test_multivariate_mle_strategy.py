@@ -91,6 +91,40 @@ def test_final_objective_is_recomputed_and_mismatch_is_rejected(monkeypatch):
     assert outcome.accepted is False
 
 
+def test_abnormal_status_accepts_an_independently_valid_improved_point(
+        monkeypatch):
+    def evaluate(parameters):
+        return StaticMLEEvaluation(
+            objective=float(parameters[0] ** 2),
+            gradient=np.array([2.0 * parameters[0]]),
+        )
+
+    def fake_minimize(fun, x0, **kwargs):
+        final = np.array([0.0])
+        value, _ = fun(final)
+        return SimpleNamespace(
+            x=final,
+            fun=value,
+            success=False,
+            nfev=1,
+            message="ABNORMAL: line search",
+        )
+
+    monkeypatch.setattr(multivariate_mle, "minimize", fake_minimize)
+    problem = StaticMLEProblem(
+        family="test",
+        initial_parameters=np.array([1.0]),
+        bounds=((None, None),),
+        evaluate=evaluate,
+    )
+    outcome = run_static_multivariate_mle(
+        problem, optimizer_options={"gtol": 1e-4}, fail_value=1e10)
+
+    assert outcome.accepted is True
+    assert outcome.optimizer_success is False
+    assert "accepted by independent final validation" in outcome.message
+
+
 @pytest.mark.parametrize("factory", [StudentCopula, lambda: StochasticStudentCopula(3)])
 def test_failed_static_fit_does_not_publish_partial_state(monkeypatch, factory):
     rng = np.random.default_rng(7201)

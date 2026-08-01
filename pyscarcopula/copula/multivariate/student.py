@@ -50,6 +50,9 @@ from pyscarcopula.strategy.multivariate_mle import (
 
 
 _DF_MIN = 2.001
+# Above this value the fitted Student copula is numerically indistinguishable
+# from its Gaussian limit, while natural-df optimization becomes ill-scaled.
+_DF_FIT_MAX = 10_000.0
 _LBFGSB_FIT_KEYS = (
     "gtol", "ftol", "maxfun", "maxiter", "maxls", "eps", "maxcor",
     "finite_diff_rel_step",
@@ -532,7 +535,8 @@ class StudentCopula(MultivariateCopula):
                 family="student",
                 initial_parameters=np.concatenate((
                     np.array([max(float(d), 5.0)]), corr0)),
-                bounds=((_DF_MIN, None),) + ((None, None),) * n_corr,
+                bounds=((_DF_MIN, _DF_FIT_MAX),)
+                + ((None, None),) * n_corr,
                 evaluate=evaluate,
             ),
             optimizer_options=options,
@@ -585,7 +589,7 @@ class StudentCopula(MultivariateCopula):
             StaticMLEProblem(
                 family="student_factor",
                 initial_parameters=np.array([max(float(u.shape[1]), 5.0)]),
-                bounds=((_DF_MIN, None),), evaluate=evaluate),
+                bounds=((_DF_MIN, _DF_FIT_MAX),), evaluate=evaluate),
             optimizer_options=options, fail_value=config.fail_value)
         return self._make_result_and_commit(
             u=u, config=config, outcome=outcome, policy=policy,
@@ -643,7 +647,8 @@ class StudentCopula(MultivariateCopula):
                 family="student_factor",
                 initial_parameters=np.concatenate((
                     np.array([max(float(u.shape[1]), 5.0)]), factor0)),
-                bounds=((_DF_MIN, None),) + ((None, None),) * parameterization.n_parameters,
+                bounds=((_DF_MIN, _DF_FIT_MAX),)
+                + ((None, None),) * parameterization.n_parameters,
                 evaluate=evaluate),
             optimizer_options=joint_options, fail_value=config.fail_value)
         final_loadings = (

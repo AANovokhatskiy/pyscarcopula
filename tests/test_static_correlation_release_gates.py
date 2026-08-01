@@ -198,6 +198,17 @@ def test_joint_fit_multi_seed_acceptance_spd_and_gradient_gate(
         result.diagnostics["gradient_gate"])
 
 
+def test_student_cholesky_gaussian_limit_stays_numerically_conditioned():
+    observations = _dependent_sample(StudentCopula, 60, 1511)
+    result = StudentCopula(corr_mode="cholesky").fit(
+        observations, gtol=1e-5, maxiter=500)
+
+    assert result.success, result.message
+    assert result.model_parameters["df"] <= 10_000.0
+    assert result.diagnostics["final_gradient_inf_norm"] <= (
+        result.diagnostics["gradient_gate"])
+
+
 def test_gaussian_and_student_independence_limits():
     observations = _valid_observations(rows=45, seed=1513)
     identity = np.eye(3)

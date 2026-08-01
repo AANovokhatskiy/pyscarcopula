@@ -246,6 +246,7 @@ def test_optimizer_success_is_rejected_when_joint_gradient_is_large(
     result = model.fit(observations, method="mle", **fit_kwargs)
 
     assert captured_options["ftol"] == pytest.approx(expected_ftol)
+    assert captured_options["maxls"] >= 100
     assert not result.success
     assert "rejected by joint factor gradient gate" in result.message
     assert result.diagnostics["joint_gradient_inf_norm"] > (

@@ -268,7 +268,7 @@ def test_static_student_mle_optimizes_natural_df(monkeypatch):
     def fake_minimize(fun, x0, *, jac, method, bounds, options):
         assert jac is True
         assert x0[0] == 5.0
-        assert bounds == ((2.001, None),)
+        assert bounds == ((2.001, 10_000.0),)
         trial = np.array([7.25])
         value, gradient = fun(trial)
         assert value == 0.0

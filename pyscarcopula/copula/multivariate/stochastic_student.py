@@ -1155,6 +1155,11 @@ class StochasticStudentCopula(MultivariateCopula):
 
         optimizer_options = dict(optimizer_options)
         optimizer_options.setdefault("ftol", 1e-10)
+        # The loading pullback can be steep near the uniqueness boundary.
+        # A longer line search prevents platform-dependent ABNORMAL
+        # terminations without overriding a larger caller-supplied value.
+        optimizer_options["maxls"] = max(
+            int(optimizer_options.get("maxls", 20)), 100)
         parameterization, factor0 = (
             FactorLoadingParameterization.from_loadings(
                 loadings,
