@@ -698,7 +698,11 @@ class TestVineSamplePredict:
                    for j in range(d - 1)]
         vine = CVineCopula(candidates=[IndependentCopula])
         vine.fit(u, method='mle', copulas=copulas)
-        samples = vine.predict(150, given={2: 0.65})
+        samples = vine.predict(
+            150,
+            given={2: 0.65},
+            rng=np.random.default_rng(12),
+        )
         np.testing.assert_allclose(samples[:, 2], 0.65)
         assert abs(np.mean(samples[:, 0]) - 0.5) < 0.08
         assert abs(np.mean(samples[:, 1]) - 0.5) < 0.08

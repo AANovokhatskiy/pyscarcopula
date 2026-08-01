@@ -573,7 +573,10 @@ EquicorrPreparationResult prepare_equicorr_sufficient_statistics(
         sum = next;
     };
     const auto evaluate_tile =
-        [&](std::size_t row, std::size_t tile) {
+        [&](std::size_t row,
+            std::size_t tile,
+            std::uint64_t& block_clipping,
+            std::uint64_t& block_nonfinite) {
             const std::size_t begin = tile * dimension_tile;
             const std::size_t end =
                 std::min(begin + dimension_tile, dimension);
@@ -605,10 +608,20 @@ EquicorrPreparationResult prepare_equicorr_sufficient_statistics(
                 row * dimension_tiles + tile;
             partial_sum[partial_index] = sum + carry;
             partial_sum2[partial_index] = sum2 + carry2;
-            clipping_events.fetch_add(
-                local_clipping, std::memory_order_relaxed);
-            nonfinite_values.fetch_add(
-                local_nonfinite, std::memory_order_relaxed);
+            block_clipping += local_clipping;
+            block_nonfinite += local_nonfinite;
+        };
+    const auto commit_counts =
+        [&](std::uint64_t block_clipping,
+            std::uint64_t block_nonfinite) {
+            if (block_clipping != 0) {
+                clipping_events.fetch_add(
+                    block_clipping, std::memory_order_relaxed);
+            }
+            if (block_nonfinite != 0) {
+                nonfinite_values.fetch_add(
+                    block_nonfinite, std::memory_order_relaxed);
+            }
         };
 
     const bool enough_work =
@@ -629,14 +642,20 @@ EquicorrPreparationResult prepare_equicorr_sufficient_statistics(
             1,
             n_threads,
             [&](std::int64_t begin, std::int64_t end, std::size_t) {
+                std::uint64_t block_clipping = 0;
+                std::uint64_t block_nonfinite = 0;
                 for (std::int64_t row = begin; row < end; ++row) {
                     for (std::size_t tile = 0;
                          tile < dimension_tiles;
                          ++tile) {
                         evaluate_tile(
-                            static_cast<std::size_t>(row), tile);
+                            static_cast<std::size_t>(row),
+                            tile,
+                            block_clipping,
+                            block_nonfinite);
                     }
                 }
+                commit_counts(block_clipping, block_nonfinite);
             });
     } else if (tile_parallel) {
         out.parallel_axis = 2;
@@ -648,22 +667,34 @@ EquicorrPreparationResult prepare_equicorr_sufficient_statistics(
             1,
             n_threads,
             [&](std::int64_t begin, std::int64_t end, std::size_t) {
+                std::uint64_t block_clipping = 0;
+                std::uint64_t block_nonfinite = 0;
                 for (std::int64_t index = begin; index < end; ++index) {
                     const std::size_t flat =
                         static_cast<std::size_t>(index);
                     evaluate_tile(
                         flat / dimension_tiles,
-                        flat % dimension_tiles);
+                        flat % dimension_tiles,
+                        block_clipping,
+                        block_nonfinite);
                 }
+                commit_counts(block_clipping, block_nonfinite);
             });
     } else {
+        std::uint64_t block_clipping = 0;
+        std::uint64_t block_nonfinite = 0;
         for (std::size_t row = 0; row < u.n_obs; ++row) {
             for (std::size_t tile = 0;
                  tile < dimension_tiles;
                  ++tile) {
-                evaluate_tile(row, tile);
+                evaluate_tile(
+                    row,
+                    tile,
+                    block_clipping,
+                    block_nonfinite);
             }
         }
+        commit_counts(block_clipping, block_nonfinite);
     }
 
     out.clipping_events =
