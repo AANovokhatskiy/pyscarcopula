@@ -533,7 +533,13 @@ class MultivariateMLEResult(MLEResult):
     correlation_matrix: np.ndarray | None = None
 
     def __post_init__(self):
-        super().__post_init__()
+        if isinstance(self.parameter_count, (bool, np.bool_)) or not isinstance(
+                self.parameter_count, (int, np.integer)):
+            raise TypeError(
+                "parameter_count must be a non-negative integer")
+        if int(self.parameter_count) < 0:
+            raise ValueError("parameter_count must be non-negative")
+        object.__setattr__(self, "parameter_count", int(self.parameter_count))
         if (
                 isinstance(self.n_observations, (bool, np.bool_))
                 or not isinstance(self.n_observations, (int, np.integer))):

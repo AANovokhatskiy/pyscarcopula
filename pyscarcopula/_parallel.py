@@ -214,6 +214,9 @@ def get_copula_constructor(copula):
     if isinstance(copula, EquicorrGaussianCopula):
         return EquicorrGaussianCopula, dict(d=copula.d)
     if isinstance(copula, GaussianCopula):
+        constructor_R = getattr(copula, "_constructor_R", None)
+        constructor_corr_base = getattr(
+            copula, "_constructor_corr_base", None)
         if getattr(copula, "corr_mode", "dense") == "factor":
             constructor_loadings = getattr(
                 copula, "_constructor_factor_loadings", None)
@@ -227,6 +230,7 @@ def get_copula_constructor(copula):
                     "d": copula.d,
                     "corr_mode": "factor",
                     "factor_rank": copula.factor_rank,
+                    "factor_estimation": copula.factor_estimation,
                     "factor_loadings": (
                         None
                         if constructor_loadings is None
@@ -240,7 +244,22 @@ def get_copula_constructor(copula):
                         copula._factor_oversampling,
                 },
             )
-        return GaussianCopula, {}
+        return (
+            GaussianCopula,
+            {
+                "d": copula.d,
+                "R": (
+                    None if constructor_R is None
+                    else np.array(constructor_R, copy=True)),
+                "corr_mode": copula.corr_mode,
+                "corr_base": (
+                    None if constructor_corr_base is None
+                    else np.array(constructor_corr_base, copy=True)),
+                "corr_shrinkage_init": copula._corr_shrinkage_init,
+                "cholesky_d_max": copula._cholesky_d_max,
+                "allow_large_cholesky": copula._allow_large_cholesky,
+            },
+        )
     if isinstance(copula, StudentCopula):
         return StudentCopula, {}
 

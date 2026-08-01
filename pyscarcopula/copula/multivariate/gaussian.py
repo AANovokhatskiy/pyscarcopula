@@ -6,10 +6,15 @@ from typing import Any, Literal
 
 import numpy as np
 from numpy.typing import ArrayLike
+from scipy.special import expit
 from scipy.stats import multivariate_normal, norm
 
 from pyscarcopula._utils import clip_pseudo_observations, pobs
-from pyscarcopula._types import MultivariateMLEResult
+from pyscarcopula._types import (
+    DEFAULT_CONFIG,
+    MultivariateMLEResult,
+    NumericalConfig,
+)
 from pyscarcopula.copula.base import CopulaCapabilities
 from pyscarcopula.copula.multivariate.base import (
     MultivariateCopula,
@@ -22,6 +27,13 @@ from pyscarcopula.copula.multivariate.correlation_policy import (
     CorrelationPolicy,
     FactorEstimation,
     normalize_correlation_mode,
+    normalize_factor_estimation,
+)
+
+
+_LBFGSB_FIT_KEYS = (
+    "gtol", "ftol", "maxfun", "maxiter", "maxls", "eps", "maxcor",
+    "finite_diff_rel_step",
 )
 from pyscarcopula.copula.multivariate.factor_correlation import (
     FactorCorrelation,
@@ -45,6 +57,30 @@ def _validate_gaussian_fit_data(u):
         raise ValueError("data must contain at least two variables")
     if not np.all(np.isfinite(u)):
         raise ValueError("data must contain only finite values")
+    if np.any((u < 0.0) | (u > 1.0)):
+        raise ValueError(
+            "MLE expects pseudo-observations in [0, 1]; use to_pobs=True")
+
+
+def _as_real_array(data):
+    raw = np.asarray(data)
+    if np.iscomplexobj(raw):
+        raise ValueError("data must be real-valued")
+    return np.asarray(raw, dtype=np.float64)
+
+
+def _validated_correlation(value, *, name, dimension=None):
+    raw = np.asarray(value)
+    if np.iscomplexobj(raw):
+        raise ValueError(f"{name} must be real-valued")
+    correlation = np.array(raw, dtype=np.float64, copy=True)
+    if correlation.ndim != 2 or correlation.shape[0] != correlation.shape[1]:
+        raise ValueError(f"{name} must be a square matrix")
+    if dimension is not None and correlation.shape != (dimension, dimension):
+        raise ValueError(
+            f"{name} must have shape ({dimension}, {dimension})")
+    validate_corr_matrix(correlation)
+    return correlation
 
 
 def _gaussian_score_correlation(u):
@@ -105,21 +141,52 @@ class GaussianCopula(MultivariateCopula):
     def __init__(
             self,
             d: int | None = None,
+            R: ArrayLike | None = None,
             *,
             corr_mode: CorrelationMode | Literal["dense"] = "fixed",
+            corr_base: ArrayLike | None = None,
+            corr_shrinkage_init: float = 0.8,
+            cholesky_d_max: int = 10,
+            allow_large_cholesky: bool = False,
             factor_rank: int | None = None,
             factor_loadings: ArrayLike | None = None,
+            factor_estimation: FactorEstimation = "two-stage",
             factor_tile_size: int = 16384,
             factor_uniqueness_min: float = 1e-8,
             factor_seed: int = 0,
             factor_oversampling: int = 8) -> None:
         corr_mode = normalize_correlation_mode(
             corr_mode, allow_dense_alias=True)
-        if corr_mode in {"shrinkage", "cholesky"}:
-            raise NotImplementedError(
-                f"GaussianCopula corr_mode={corr_mode!r} will be enabled "
-                "by the shared static MLE fitter")
+        factor_estimation = normalize_factor_estimation(factor_estimation)
+        if R is not None and d is None:
+            raw_R = np.asarray(R)
+            if raw_R.ndim == 2 and raw_R.shape[0] == raw_R.shape[1]:
+                d = int(raw_R.shape[0])
+        if corr_base is not None and d is None:
+            raw_base = np.asarray(corr_base)
+            if raw_base.ndim == 2 and raw_base.shape[0] == raw_base.shape[1]:
+                d = int(raw_base.shape[0])
+        if corr_mode == "fixed" and corr_base is not None:
+            raise ValueError("corr_base is only valid for estimated corr modes")
+        if corr_mode == "factor" and (R is not None or corr_base is not None):
+            raise ValueError("R and corr_base are forbidden in factor mode")
+        if corr_mode != "factor" and factor_estimation != "two-stage":
+            raise ValueError(
+                "factor_estimation is only configurable in factor mode")
+        if not 0.0 < float(corr_shrinkage_init) < 1.0:
+            raise ValueError("corr_shrinkage_init must be in (0, 1)")
+        cholesky_d_max = _positive_integer("cholesky_d_max", cholesky_d_max)
+        if (
+                corr_mode == "cholesky" and d is not None
+                and d > cholesky_d_max and not allow_large_cholesky):
+            raise ValueError(
+                f"corr_mode='cholesky' is limited to d <= "
+                f"{cholesky_d_max} by default")
         if corr_mode == "factor":
+            if factor_estimation == "joint":
+                raise NotImplementedError(
+                    "Gaussian factor_estimation='joint' requires a native "
+                    "factor-loading score and is not implemented")
             if (
                     isinstance(factor_rank, (bool, np.bool_))
                     or not isinstance(factor_rank, (int, np.integer))):
@@ -141,6 +208,24 @@ class GaussianCopula(MultivariateCopula):
         super().__init__(dimension=d, name="Gaussian copula")
         self.corr = None
         self._corr_mode = corr_mode
+        self._corr_estimator = None
+        self._supplied_correlation = (
+            None if R is None else _validated_correlation(
+                R, name="R", dimension=self.dimension))
+        self._corr_base = (
+            None if corr_base is None else _validated_correlation(
+                corr_base, name="corr_base", dimension=self.dimension))
+        self._constructor_R = (
+            None if self._supplied_correlation is None
+            else self._supplied_correlation.copy())
+        self._constructor_corr_base = (
+            None if self._corr_base is None else self._corr_base.copy())
+        self._corr_shrinkage_init = float(corr_shrinkage_init)
+        self._corr_params_raw = np.empty(0, dtype=np.float64)
+        self._corr_alpha = None
+        self._cholesky_d_max = cholesky_d_max
+        self._allow_large_cholesky = bool(allow_large_cholesky)
+        self._factor_estimation = factor_estimation
         self._factor_rank = factor_rank
         self._factor_loadings = None
         self._factor_correlation = None
@@ -172,14 +257,20 @@ class GaussianCopula(MultivariateCopula):
     @property
     def corr_estimator_(self) -> CorrelationEstimator:
         """Correlation estimation procedure used by the static model."""
+        if self._corr_estimator is not None:
+            return self._corr_estimator
         if self._corr_mode == "factor":
             return "factor_two_stage"
+        if self._corr_mode in {"shrinkage", "cholesky"}:
+            return "joint_mle"
+        if self._supplied_correlation is not None:
+            return "supplied"
         return "gaussian_score"
 
     @property
     def factor_estimation(self) -> FactorEstimation | None:
         if self._corr_mode == "factor":
-            return "two-stage"
+            return self._factor_estimation
         return None
 
     @property
@@ -191,8 +282,13 @@ class GaussianCopula(MultivariateCopula):
             mode=self._corr_mode,
             estimator=self.corr_estimator_,
             dimension=self.dimension,
+            supplied_correlation=(
+                self.corr if self.corr_estimator_ == "supplied" else None),
             base_correlation=(
-                self.corr if self._corr_mode == "fixed" else None),
+                self.corr
+                if self._corr_mode == "fixed"
+                else self._corr_base),
+            shrinkage_initial=self._corr_shrinkage_init,
             factor_rank=self._factor_rank,
             factor_estimation=self.factor_estimation,
         )
@@ -252,6 +348,23 @@ class GaussianCopula(MultivariateCopula):
             allow_dense_alias=True,
             warn_on_dense=False,
         )
+        self._corr_estimator = getattr(self, "_corr_estimator", None)
+        self._supplied_correlation = getattr(
+            self, "_supplied_correlation", None)
+        self._corr_base = getattr(self, "_corr_base", None)
+        self._constructor_R = getattr(self, "_constructor_R", None)
+        self._constructor_corr_base = getattr(
+            self, "_constructor_corr_base", None)
+        self._corr_shrinkage_init = getattr(
+            self, "_corr_shrinkage_init", 0.8)
+        self._corr_params_raw = getattr(
+            self, "_corr_params_raw", np.empty(0, dtype=np.float64))
+        self._corr_alpha = getattr(self, "_corr_alpha", None)
+        self._cholesky_d_max = getattr(self, "_cholesky_d_max", 10)
+        self._allow_large_cholesky = getattr(
+            self, "_allow_large_cholesky", False)
+        self._factor_estimation = getattr(
+            self, "_factor_estimation", "two-stage")
         self._factor_correlation = None
         self._factor_operator = None
         loadings = getattr(self, "_factor_loadings", None)
@@ -346,7 +459,7 @@ class GaussianCopula(MultivariateCopula):
             data: ArrayLike,
             to_pobs: bool = False,
             method: str = 'mle',
-            config: Any | None = None,
+            config: NumericalConfig | None = None,
             **kwargs: Any) -> MultivariateMLEResult:
         """Fit the correlation matrix in Gaussian score space.
 
@@ -357,17 +470,42 @@ class GaussianCopula(MultivariateCopula):
             raise ValueError(
                 f"GaussianCopula supports only method='mle', "
                 f"got {method!r}")
-        u = np.asarray(data, dtype=np.float64)
-        _validate_gaussian_fit_data(u)
+        u = _as_real_array(data)
         if to_pobs:
+            if (
+                    u.ndim != 2 or u.shape[0] == 0 or u.shape[1] < 2
+                    or not np.all(np.isfinite(u))):
+                raise ValueError("data must be a finite non-empty 2D array")
             u = pobs(u)
-            _validate_gaussian_fit_data(u)
+        _validate_gaussian_fit_data(u)
         if self.dimension is not None and u.shape[1] != self.dimension:
             raise ValueError(
                 f"data must have {self.dimension} columns")
 
+        if (
+                self._corr_mode == "cholesky"
+                and u.shape[1] > self._cholesky_d_max
+                and not self._allow_large_cholesky):
+            raise ValueError(
+                f"corr_mode='cholesky' is limited to d <= "
+                f"{self._cholesky_d_max} by default")
+        if "tol" in kwargs:
+            raise TypeError("tol is not supported; use gtol")
+        optimizer_overrides = {
+            key: kwargs.pop(key) for key in _LBFGSB_FIT_KEYS if key in kwargs}
+        if kwargs:
+            unexpected = ", ".join(sorted(kwargs))
+            raise TypeError(f"unexpected MLE keyword argument(s): {unexpected}")
+        if optimizer_overrides and self._corr_mode not in {
+                "shrinkage", "cholesky"}:
+            names = ", ".join(sorted(optimizer_overrides))
+            raise TypeError(
+                f"optimizer option(s) {names} require corr_mode="
+                "'shrinkage' or 'cholesky'")
+
+        config = config or DEFAULT_CONFIG
         n_threads = _validated_n_threads(
-            1 if config is None else config.n_threads)
+            config.n_threads)
         if self._corr_mode == "factor":
             if self._factor_operator is None:
                 loadings, initialization = estimate_factor_loadings(
@@ -431,7 +569,7 @@ class GaussianCopula(MultivariateCopula):
                 ),
                 optimizer_options={},
                 fail_value=float(
-                    getattr(config, "fail_value", 1e10)),
+                    config.fail_value),
             )
             parameter_count = (
                 u.shape[1] * self._factor_rank
@@ -461,6 +599,7 @@ class GaussianCopula(MultivariateCopula):
                     "factor_loadings": candidate.factor_loadings_,
                     "factor_uniqueness": candidate.factor_uniqueness_,
                     "factor_rank": self._factor_rank,
+                    "factor_estimation": "two-stage",
                 },
                 correlation_matrix=None,
                 diagnostics=diagnostics,
@@ -474,40 +613,100 @@ class GaussianCopula(MultivariateCopula):
                 )
                 self.corr = None
                 self.fit_result = result
-                self._last_u = u
+                self._last_u = u.copy()
             return result
 
-        corr = _gaussian_score_correlation(u)
+        if self._corr_base is not None:
+            initial_correlation = self._corr_base.copy()
+        elif self._supplied_correlation is not None:
+            initial_correlation = self._supplied_correlation.copy()
+        else:
+            initial_correlation = _gaussian_score_correlation(u)
+        estimator: CorrelationEstimator = (
+            "joint_mle"
+            if self._corr_mode in {"shrinkage", "cholesky"}
+            else (
+                "supplied"
+                if self._supplied_correlation is not None
+                else "gaussian_score"))
         policy = CorrelationPolicy.create(
-            mode="fixed",
-            estimator="gaussian_score",
+            mode=self._corr_mode,
+            estimator=estimator,
             dimension=u.shape[1],
-            base_correlation=corr,
+            supplied_correlation=(
+                initial_correlation if estimator == "supplied" else None),
+            base_correlation=(
+                initial_correlation
+                if self._corr_mode in {"shrinkage", "cholesky"}
+                or estimator == "gaussian_score"
+                else None),
+            shrinkage_initial=self._corr_shrinkage_init,
         )
         from pyscarcopula.numerical import static_likelihood
         evaluator = static_likelihood.prepare_gaussian(
-            corr, u, n_threads=n_threads)
+            initial_correlation, u, n_threads=n_threads)
 
-        def evaluate_fixed(
-                parameters: np.ndarray) -> StaticMLEEvaluation:
-            return StaticMLEEvaluation(
-                objective=-evaluator.log_likelihood(0.0),
-                gradient=np.empty(0, dtype=np.float64),
-                correlation=corr,
+        if self._corr_mode in {"shrinkage", "cholesky"}:
+            corr0 = policy.initial_raw_parameters()
+
+            def evaluate_joint(
+                    parameters: np.ndarray) -> StaticMLEEvaluation:
+                correlation = policy.trial_correlation(parameters)
+                value, correlation_gradient = (
+                    evaluator.gaussian_objective_and_gradient(
+                        correlation, fail_value=config.fail_value))
+                return StaticMLEEvaluation(
+                    objective=value,
+                    gradient=policy.raw_gradient(
+                        parameters, correlation, correlation_gradient),
+                    correlation=correlation,
+                )
+
+            outcome = run_static_multivariate_mle(
+                StaticMLEProblem(
+                    family="gaussian",
+                    initial_parameters=corr0,
+                    bounds=((None, None),) * policy.optimized_n_params,
+                    evaluate=evaluate_joint,
+                ),
+                optimizer_options=config.mle_optimizer.options(
+                    **optimizer_overrides),
+                fail_value=config.fail_value,
+            )
+            correlation = (
+                initial_correlation.copy()
+                if outcome.evaluation is None
+                else np.asarray(outcome.evaluation.correlation).copy())
+            corr_raw = outcome.parameters.copy()
+            corr_alpha = (
+                float(expit(corr_raw[0]))
+                if self._corr_mode == "shrinkage" and corr_raw.size
+                else None)
+        else:
+            correlation = initial_correlation.copy()
+            corr_raw = np.empty(0, dtype=np.float64)
+            corr_alpha = None
+
+            def evaluate_fixed(
+                    parameters: np.ndarray) -> StaticMLEEvaluation:
+                return StaticMLEEvaluation(
+                    objective=-evaluator.log_likelihood(0.0),
+                    gradient=np.empty(0, dtype=np.float64),
+                    correlation=correlation,
+                )
+
+            outcome = run_static_multivariate_mle(
+                StaticMLEProblem(
+                    family="gaussian",
+                    initial_parameters=np.empty(0, dtype=np.float64),
+                    bounds=(),
+                    evaluate=evaluate_fixed,
+                    require_not_worse=False,
+                ),
+                optimizer_options={},
+                fail_value=config.fail_value,
             )
 
-        outcome = run_static_multivariate_mle(
-            StaticMLEProblem(
-                family="gaussian",
-                initial_parameters=np.empty(0, dtype=np.float64),
-                bounds=(),
-                evaluate=evaluate_fixed,
-                require_not_worse=False,
-            ),
-            optimizer_options={},
-            fail_value=float(getattr(config, "fail_value", 1e10)),
-        )
-        parameter_count = u.shape[1] * (u.shape[1] - 1) // 2
         result = MultivariateMLEResult(
             log_likelihood=-outcome.final_objective,
             method="MLE",
@@ -516,27 +715,40 @@ class GaussianCopula(MultivariateCopula):
             nfev=outcome.nfev,
             message=outcome.message,
             copula_param=None,
-            parameter_count=parameter_count,
+            parameter_count=policy.effective_n_params,
             n_observations=len(u),
             model_parameters={
                 "corr_mode": self._corr_mode,
-                "corr_estimator": self.corr_estimator_,
-                "correlation_matrix": corr.copy(),
+                "corr_estimator": estimator,
+                "corr_alpha": corr_alpha,
+                "correlation_matrix": correlation.copy(),
             },
-            correlation_matrix=corr.copy(),
+            correlation_matrix=correlation.copy(),
             diagnostics={
-                "estimator": "gaussian_score_correlation",
-                "corr_matrix": corr.copy(),
+                "estimator": (
+                    "gaussian_score_correlation"
+                    if estimator == "gaussian_score" else estimator),
+                "corr_matrix": correlation.copy(),
                 "n_threads": n_threads,
+                "correlation_gradient": (
+                    "analytical"
+                    if policy.optimized_n_params else "not_applicable"),
+                "corr_params_raw": corr_raw.copy(),
+                "corr_alpha": corr_alpha,
                 **policy.diagnostics(),
                 **outcome.diagnostics(),
             },
         )
         if outcome.accepted:
-            self._set_dimension(u.shape[1], allow_change=True)
-            self.corr = corr.copy()
+            self._set_dimension(u.shape[1], allow_change=False)
+            self.corr = correlation.copy()
+            self._corr_estimator = estimator
+            self._corr_params_raw = corr_raw.copy()
+            self._corr_alpha = corr_alpha
+            if self._corr_mode in {"shrinkage", "cholesky"}:
+                self._corr_base = initial_correlation.copy()
             self.fit_result = result
-            self._last_u = u
+            self._last_u = u.copy()
         return result
 
     def log_likelihood(self, u, *, n_threads=1):
