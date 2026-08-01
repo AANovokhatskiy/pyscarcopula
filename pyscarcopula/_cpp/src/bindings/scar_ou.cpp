@@ -114,12 +114,14 @@ py::array_t<double> filter_matrix_to_array(
 
     if (values.empty()) {
         return py::array_t<double>(
-            {static_cast<py::ssize_t>(0),
-             static_cast<py::ssize_t>(columns)});
+            py::array::ShapeContainer{
+                static_cast<py::ssize_t>(0),
+                static_cast<py::ssize_t>(columns)});
     }
     py::array_t<double> out(
-        {static_cast<py::ssize_t>(rows),
-         static_cast<py::ssize_t>(columns)});
+        py::array::ShapeContainer{
+            static_cast<py::ssize_t>(rows),
+            static_cast<py::ssize_t>(columns)});
     std::memcpy(
         out.mutable_data(),
         values.data(),
