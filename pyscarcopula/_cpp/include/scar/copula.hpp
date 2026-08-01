@@ -194,6 +194,9 @@ public:
     StaticObjectiveResult objective(
         double parameter,
         bool correlation_gradient = false) const;
+    StaticObjectiveResult gaussian_objective(
+        const CopulaSpec& spec,
+        bool correlation_gradient = true) const;
     StaticObjectiveResult objective_value(double parameter) const;
     std::vector<double> log_pdf_rows(double parameter) const;
     int status() const noexcept;
@@ -202,6 +205,9 @@ private:
     StaticObjectiveResult evaluate_objective(
         double parameter,
         bool parameter_gradient_requested,
+        bool correlation_gradient_requested) const;
+    StaticObjectiveResult evaluate_gaussian_objective(
+        const CopulaSpec& spec,
         bool correlation_gradient_requested) const;
     CopulaSpec spec_;
     Observations u_;

@@ -35,6 +35,7 @@ class StaticLikelihoodEvaluator:
         from pyscarcopula.numerical.multivariate_native import (
             _validated_n_threads,
         )
+        self._module = module
         self._native = module.StaticCopulaEvaluator(
             spec, observations, _validated_n_threads(n_threads))
         if self._native.status != module.SCAR_OK:
@@ -46,6 +47,7 @@ class StaticLikelihoodEvaluator:
         from pyscarcopula.numerical.multivariate_native import (
             _validated_n_threads,
         )
+        self._module = module
         self._native = module.StaticCopulaEvaluator(
             spec,
             prepared.sum_z,
@@ -118,6 +120,23 @@ class StaticLikelihoodEvaluator:
             np.array([parameter_gradient], dtype=np.float64),
             correlation_gradient,
         )
+
+    def gaussian_objective_and_gradient(
+            self, correlation, *, fail_value: float = 1e10):
+        """Evaluate a dense Gaussian trial using owned cached normal scores."""
+        spec = _cpp_copula.make_gaussian_static_spec(
+            self._module, correlation)
+        result = dict(
+            self._native.gaussian_objective_with_correlation_gradient(spec))
+        gradient = np.asarray(
+            result["negative_correlation_gradient"], dtype=np.float64)
+        value = float(result["negative_log_likelihood"])
+        if (
+                result["status"] != 0
+                or not np.isfinite(value)
+                or np.any(~np.isfinite(gradient))):
+            return float(fail_value), np.zeros_like(gradient)
+        return value, gradient
 
     def log_pdf_rows(self, parameter: float) -> np.ndarray:
         values = np.asarray(
