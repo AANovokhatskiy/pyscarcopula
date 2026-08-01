@@ -31,6 +31,11 @@ def test_fixed_supplied_correlation_is_not_counted_as_fitted():
     assert result.model_parameters["corr_estimator"] == "supplied"
     assert result.diagnostics["corr_n_params"] == 0
     assert result.diagnostics["corr_plugin_n_params"] == 0
+    assert result.diagnostics["corr_effective_n_params"] == 0
+    assert result.diagnostics["corr_initialization_source"] == "supplied"
+    assert result.diagnostics["optimizer_gradient"] == "not_applicable"
+    assert result.diagnostics["gradient_mode"] == "not_applicable"
+    assert result.diagnostics["joint_static"] is False
     assert result.diagnostics["n_threads"] == 2
     np.testing.assert_array_equal(result.correlation_matrix, supplied)
     assert result.aic == pytest.approx(-2.0 * result.log_likelihood)
@@ -49,6 +54,9 @@ def test_joint_modes_fit_with_native_score_and_acceptance_gate(
     assert result.parameter_count == expected_count
     assert result.model_parameters["corr_estimator"] == "joint_mle"
     assert result.diagnostics["correlation_gradient"] == "analytical"
+    assert result.diagnostics["optimizer_gradient"] == "analytical"
+    assert result.diagnostics["gradient_mode"] == "analytical_joint"
+    assert result.diagnostics["joint_static"] is True
     assert result.diagnostics["not_worse_than_initial"]
     np.linalg.cholesky(result.correlation_matrix)
     np.testing.assert_allclose(np.diag(result.correlation_matrix), 1.0)

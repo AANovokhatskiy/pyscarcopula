@@ -291,6 +291,10 @@ class GaussianCopula(MultivariateCopula):
             shrinkage_initial=self._corr_shrinkage_init,
             factor_rank=self._factor_rank,
             factor_estimation=self.factor_estimation,
+            initialization_source=(
+                self._factor_initialization_diagnostics.get("source")
+                if self._corr_mode == "factor"
+                else None),
         )
 
     @property
@@ -571,14 +575,16 @@ class GaussianCopula(MultivariateCopula):
                 fail_value=float(
                     config.fail_value),
             )
-            parameter_count = (
-                u.shape[1] * self._factor_rank
-                - self._factor_rank * (self._factor_rank - 1) // 2
-            )
             diagnostics = {
                 "estimator": "factor_gaussian_score_correlation",
                 "corr_matrix": None,
                 "n_threads": n_threads,
+                "optimizer_gradient": "not_applicable",
+                "correlation_gradient": "not_applicable",
+                "gradient_mode": "not_applicable",
+                "joint_static": False,
+                "corr_params_raw": np.empty(0, dtype=np.float64),
+                "corr_alpha": None,
                 **policy.diagnostics(),
                 **candidate.factor_diagnostics(),
                 **outcome.diagnostics(),
@@ -591,11 +597,13 @@ class GaussianCopula(MultivariateCopula):
                 nfev=outcome.nfev,
                 message=outcome.message,
                 copula_param=None,
-                parameter_count=parameter_count,
+                parameter_count=policy.effective_n_params,
                 n_observations=len(u),
                 model_parameters={
                     "corr_mode": "factor",
                     "corr_estimator": self.corr_estimator_,
+                    "corr_params_raw": np.empty(0, dtype=np.float64),
+                    "corr_alpha": None,
                     "factor_loadings": candidate.factor_loadings_,
                     "factor_uniqueness": candidate.factor_uniqueness_,
                     "factor_rank": self._factor_rank,
@@ -622,6 +630,10 @@ class GaussianCopula(MultivariateCopula):
             initial_correlation = self._supplied_correlation.copy()
         else:
             initial_correlation = _gaussian_score_correlation(u)
+        initialization_source = (
+            "corr_base" if self._corr_base is not None
+            else "supplied" if self._supplied_correlation is not None
+            else "gaussian_score")
         estimator: CorrelationEstimator = (
             "joint_mle"
             if self._corr_mode in {"shrinkage", "cholesky"}
@@ -641,6 +653,7 @@ class GaussianCopula(MultivariateCopula):
                 or estimator == "gaussian_score"
                 else None),
             shrinkage_initial=self._corr_shrinkage_init,
+            initialization_source=initialization_source,
         )
         from pyscarcopula.numerical import static_likelihood
         evaluator = static_likelihood.prepare_gaussian(
@@ -721,6 +734,7 @@ class GaussianCopula(MultivariateCopula):
                 "corr_mode": self._corr_mode,
                 "corr_estimator": estimator,
                 "corr_alpha": corr_alpha,
+                "corr_params_raw": corr_raw.copy(),
                 "correlation_matrix": correlation.copy(),
             },
             correlation_matrix=correlation.copy(),
@@ -730,9 +744,16 @@ class GaussianCopula(MultivariateCopula):
                     if estimator == "gaussian_score" else estimator),
                 "corr_matrix": correlation.copy(),
                 "n_threads": n_threads,
+                "optimizer_gradient": (
+                    "analytical"
+                    if policy.optimized_n_params else "not_applicable"),
                 "correlation_gradient": (
                     "analytical"
                     if policy.optimized_n_params else "not_applicable"),
+                "gradient_mode": (
+                    "analytical_joint"
+                    if policy.optimized_n_params else "not_applicable"),
+                "joint_static": bool(policy.optimized_n_params),
                 "corr_params_raw": corr_raw.copy(),
                 "corr_alpha": corr_alpha,
                 **policy.diagnostics(),

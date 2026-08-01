@@ -327,6 +327,10 @@ class StudentCopula(MultivariateCopula):
             factor_rank=self._factor_rank,
             factor_estimation=self.factor_estimation,
             shrinkage_initial=self._corr_shrinkage_init,
+            initialization_source=(
+                self._factor_initialization_diagnostics.get("source")
+                if self._corr_mode == "factor"
+                else None),
         )
 
     @model_state_locked
@@ -471,7 +475,9 @@ class StudentCopula(MultivariateCopula):
         evaluator = FactorStudentEvaluator(factor.prepare(), u)
         policy = CorrelationPolicy.create(
             mode="factor", estimator="factor_two_stage", dimension=u.shape[1],
-            factor_rank=self._factor_rank, factor_estimation="two-stage")
+            factor_rank=self._factor_rank, factor_estimation="two-stage",
+            initialization_source=str(
+                initialization.get("source", "factor_loadings")))
 
         def evaluate(parameters):
             value, gradient = evaluator.objective_and_gradient(
@@ -499,7 +505,9 @@ class StudentCopula(MultivariateCopula):
             raise ValueError("joint factor estimation exceeds factor_joint_max_params")
         policy = CorrelationPolicy.create(
             mode="factor", estimator="factor_joint", dimension=u.shape[1],
-            factor_rank=self._factor_rank, factor_estimation="joint")
+            factor_rank=self._factor_rank, factor_estimation="joint",
+            initialization_source=str(
+                initialization.get("source", "factor_loadings")))
 
         def evaluate(parameters):
             candidate_loadings = parameterization.loadings(parameters[1:])
@@ -573,13 +581,24 @@ class StudentCopula(MultivariateCopula):
             raw, alpha, factor, initialization,
             actual_log_likelihood=None, extra_diagnostics=None):
         df_hat = float(outcome.parameters[0])
+        joint_static = bool(policy.optimized_n_params)
+        gradient_mode = (
+            "analytical_joint_factor"
+            if policy.mode == "factor" and joint_static
+            else "analytical_joint"
+            if joint_static
+            else "analytical_df")
         diagnostics = {
             "n_threads": config.n_threads,
             "parameterization": "natural_df",
             "optimizer_gradient": "analytical",
             "df_gradient": "analytical",
             "correlation_gradient": (
-                "analytical" if policy.optimized_n_params else "not_applicable"),
+                "analytical_factor"
+                if policy.mode == "factor" and joint_static
+                else "analytical" if joint_static else "not_applicable"),
+            "gradient_mode": gradient_mode,
+            "joint_static": joint_static,
             "corr_params_raw": np.asarray(raw).copy(),
             "corr_alpha": alpha,
             **policy.diagnostics(),
@@ -591,6 +610,7 @@ class StudentCopula(MultivariateCopula):
             "corr_mode": self._corr_mode,
             "corr_estimator": policy.estimator,
             "corr_alpha": alpha,
+            "corr_params_raw": np.asarray(raw).copy(),
         }
         if factor is None:
             diagnostics["corr_matrix"] = correlation.copy()

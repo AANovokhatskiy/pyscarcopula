@@ -35,6 +35,10 @@ def test_fixed_supplied_and_kendall_plugin_have_distinct_contracts():
     assert plugin_result.model_parameters["corr_estimator"] == "kendall_plugin"
     assert supplied_result.parameter_count == 1
     assert plugin_result.parameter_count == 4
+    assert supplied_result.diagnostics["corr_initialization_source"] == (
+        "supplied")
+    assert plugin_result.diagnostics["corr_initialization_source"] == (
+        "kendall")
     np.testing.assert_allclose(
         supplied_result.correlation_matrix, supplied, atol=1e-12)
 
@@ -49,6 +53,8 @@ def test_dense_joint_modes_fit_and_do_not_lose_initial_likelihood(corr_mode):
     assert result.model_parameters["corr_estimator"] == "joint_mle"
     assert result.diagnostics["not_worse_than_initial"]
     assert result.diagnostics["correlation_gradient"] == "analytical"
+    assert result.diagnostics["gradient_mode"] == "analytical_joint"
+    assert result.diagnostics["joint_static"] is True
     np.linalg.cholesky(result.correlation_matrix)
     assert np.allclose(np.diag(result.correlation_matrix), 1.0)
 
@@ -144,6 +150,14 @@ def test_factor_modes_return_compact_results(estimation):
     assert result.model_parameters["factor_estimation"] == estimation
     assert result.model_parameters["factor_loadings"].shape == (3, 1)
     assert result.model_parameters["factor_uniqueness"].shape == (3,)
+    assert result.parameter_count == 4
+    assert result.diagnostics["corr_effective_n_params"] == 3
+    assert result.diagnostics["corr_plugin_n_params"] == (
+        3 if estimation == "two-stage" else 0)
+    assert result.diagnostics["gradient_mode"] == (
+        "analytical_df"
+        if estimation == "two-stage" else "analytical_joint_factor")
+    assert result.diagnostics["joint_static"] is (estimation == "joint")
     assert model.to_correlation_matrix().shape == (3, 3)
 
 

@@ -124,6 +124,12 @@ def test_two_stage_fit_is_compact_and_top_level_config_is_forwarded():
     assert result.parameter_count == 12 * 3 - 3
     assert result.diagnostics["n_threads"] == 2
     assert result.diagnostics["corr_mode"] == "factor"
+    assert result.diagnostics["corr_plugin_n_params"] == 12 * 3 - 3
+    assert result.diagnostics["corr_effective_n_params"] == 12 * 3 - 3
+    assert result.diagnostics["corr_initialization_source"] == (
+        "two_stage_randomized_svd")
+    assert result.diagnostics["gradient_mode"] == "not_applicable"
+    assert result.diagnostics["joint_static"] is False
     assert result.model_parameters["factor_loadings"].shape == (12, 3)
     assert model.corr is None
     assert model._factor_operator is not None

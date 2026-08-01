@@ -155,6 +155,10 @@ def test_static_models_publish_canonical_policy_metadata():
     assert gaussian.corr_estimator_ == "gaussian_score"
     assert gaussian_result.model_parameters["corr_mode"] == "fixed"
     assert gaussian_result.diagnostics["corr_effective_n_params"] == 3
+    assert gaussian_result.diagnostics["corr_initialization_source"] == (
+        "gaussian_score")
+    assert gaussian_result.diagnostics["gradient_mode"] == "not_applicable"
+    assert gaussian_result.diagnostics["joint_static"] is False
 
     student = StudentCopula(corr_mode="FIXED")
     student_result = student.fit(observations)
@@ -162,6 +166,22 @@ def test_static_models_publish_canonical_policy_metadata():
     assert student_result.model_parameters["corr_estimator"] == (
         "kendall_plugin")
     assert student_result.diagnostics["corr_plugin_n_params"] == 3
+    assert student_result.diagnostics["corr_initialization_source"] == (
+        "kendall")
+    assert student_result.diagnostics["gradient_mode"] == "analytical_df"
+    assert student_result.diagnostics["joint_static"] is False
+
+    required = {
+        "corr_mode", "corr_estimator", "corr_n_params",
+        "corr_plugin_n_params", "corr_effective_n_params",
+        "corr_initialization_source", "corr_params_raw", "corr_alpha",
+        "optimizer_gradient", "correlation_gradient", "gradient_mode",
+        "joint_static", "n_threads", "final_objective",
+        "final_gradient_inf_norm", "gradient_gate",
+        "final_validation_passed",
+    }
+    assert required <= gaussian_result.diagnostics.keys()
+    assert required <= student_result.diagnostics.keys()
 
 
 def test_static_gaussian_accepts_joint_correlation_modes():

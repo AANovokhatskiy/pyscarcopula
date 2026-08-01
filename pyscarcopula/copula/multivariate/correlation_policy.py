@@ -111,6 +111,7 @@ class CorrelationPolicy:
     supplied_correlation: FloatArray | None = None
     base_correlation: FloatArray | None = None
     preprocessing: CorrelationPreprocessingResult | None = None
+    initialization_source: str | None = None
     raw_parameters: FloatArray = field(
         default_factory=lambda: np.empty(0, dtype=np.float64))
     optimized_n_params: int = field(init=False)
@@ -129,6 +130,22 @@ class CorrelationPolicy:
             raise ValueError("dimension must be at least 2")
         object.__setattr__(self, "mode", mode)
         object.__setattr__(self, "dimension", dimension)
+
+        source = self.initialization_source
+        if source is None:
+            if self.preprocessing is not None:
+                source = self.preprocessing.source
+            elif self.estimator == "gaussian_score":
+                source = "gaussian_score"
+            elif self.estimator == "supplied":
+                source = "supplied"
+            elif self.estimator == "joint_mle":
+                source = "corr_base"
+            else:
+                source = "factor_loadings"
+        if not isinstance(source, str) or not source.strip():
+            raise ValueError("initialization_source must be a non-empty string")
+        object.__setattr__(self, "initialization_source", source)
 
         for name in ("supplied_correlation", "base_correlation"):
             value = getattr(self, name)
@@ -251,6 +268,7 @@ class CorrelationPolicy:
         supplied_correlation: ArrayLike | None = None,
         base_correlation: ArrayLike | None = None,
         preprocessing: CorrelationPreprocessingResult | None = None,
+        initialization_source: str | None = None,
         raw_parameters: ArrayLike | None = None,
         factor_rank: int | None = None,
         factor_estimation: FactorEstimation | None = None,
@@ -273,6 +291,7 @@ class CorrelationPolicy:
             supplied_correlation=supplied_correlation,
             base_correlation=base_correlation,
             preprocessing=preprocessing,
+            initialization_source=initialization_source,
             raw_parameters=(
                 np.empty(0, dtype=np.float64)
                 if raw_parameters is None else raw_parameters),
@@ -354,6 +373,7 @@ class CorrelationPolicy:
             "corr_n_params": self.optimized_n_params,
             "corr_plugin_n_params": self.plugin_n_params,
             "corr_effective_n_params": self.effective_n_params,
+            "corr_initialization_source": self.initialization_source,
         }
         if self.preprocessing is not None:
             diagnostics.update(self.preprocessing.diagnostics())
