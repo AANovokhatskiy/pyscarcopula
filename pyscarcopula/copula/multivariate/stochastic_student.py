@@ -24,10 +24,14 @@ Usage:
     gof_test(cop, returns, to_pobs=True)
 """
 
+from __future__ import annotations
+
 from dataclasses import replace
 import threading
+from typing import Any
 
 import numpy as np
+from numpy.typing import ArrayLike
 from scipy.stats import norm, t as t_dist
 from scipy.optimize import minimize
 
@@ -36,7 +40,7 @@ from pyscarcopula.copula.multivariate.base import (
     MultivariateCopula,
     model_state_locked,
 )
-from pyscarcopula._types import DEFAULT_CONFIG, NumericalConfig
+from pyscarcopula._types import DEFAULT_CONFIG, FitResultBase, NumericalConfig
 from pyscarcopula._utils import pobs
 from pyscarcopula.copula.multivariate.conditional import (
     fill_given,
@@ -55,6 +59,14 @@ from pyscarcopula.copula.multivariate.corr_param import (
     project_to_corr,
     preprocess_correlation_matrix,
     sigmoid,
+)
+from pyscarcopula.copula.multivariate.correlation_policy import (
+    CorrelationEstimator,
+    CorrelationMode,
+    CorrelationPolicy,
+    FactorEstimation,
+    normalize_correlation_mode,
+    normalize_factor_estimation,
 )
 from pyscarcopula.copula.multivariate.student_ppf_cache import (
     StudentPPFTable as _PPFTable,
@@ -256,28 +268,34 @@ class StochasticStudentCopula(MultivariateCopula):
         has_dynamic_scalar_parameter=True,
     )
 
-    def __init__(self, d, R=None, *, corr_mode='fixed',
-                 corr_base=None, corr_shrinkage_init=0.8,
-                 cholesky_d_max=10, allow_large_cholesky=False,
-                 factor_rank=None, factor_loadings=None,
-                 factor_estimation="two-stage",
-                 factor_tile_size=16384,
-                 factor_uniqueness_min=1e-8,
-                 factor_joint_max_params=100000,
-                 factor_joint_penalty=1e-6,
-                 factor_joint_condition_max=1e12,
-                 factor_seed=0, factor_oversampling=8):
+    def __init__(
+            self,
+            d: int,
+            R: ArrayLike | None = None,
+            *,
+            corr_mode: CorrelationMode = 'fixed',
+            corr_base: ArrayLike | None = None,
+            corr_shrinkage_init: float = 0.8,
+            cholesky_d_max: int = 10,
+            allow_large_cholesky: bool = False,
+            factor_rank: int | None = None,
+            factor_loadings: ArrayLike | None = None,
+            factor_estimation: FactorEstimation = "two-stage",
+            factor_tile_size: int = 16384,
+            factor_uniqueness_min: float = 1e-8,
+            factor_joint_max_params: int = 100000,
+            factor_joint_penalty: float = 1e-6,
+            factor_joint_condition_max: float = 1e12,
+            factor_seed: int = 0,
+            factor_oversampling: int = 8) -> None:
         if isinstance(d, (bool, np.bool_)) or not isinstance(
                 d, (int, np.integer)):
             raise TypeError(f"d must be an integer >= 2, got {d!r}")
         d = int(d)
         if d < 2:
             raise ValueError(f"d must be >= 2, got {d}")
-        corr_mode = str(corr_mode).lower()
-        if corr_mode not in {'fixed', 'shrinkage', 'cholesky', 'factor'}:
-            raise ValueError(
-                "corr_mode must be 'fixed', 'shrinkage', 'cholesky', "
-                "or 'factor'")
+        corr_mode = normalize_correlation_mode(corr_mode)
+        factor_estimation = normalize_factor_estimation(factor_estimation)
         if corr_mode == 'fixed' and corr_base is not None:
             raise ValueError("corr_base is only valid for estimated corr modes")
         if corr_mode == 'factor' and (R is not None or corr_base is not None):
@@ -322,7 +340,7 @@ class StochasticStudentCopula(MultivariateCopula):
         self._factor_operator = None
         self._factor_initialization_diagnostics = {}
         self._constructor_factor_loadings = None
-        self._factor_estimation = str(factor_estimation).lower()
+        self._factor_estimation = factor_estimation
         self._factor_tile_size = _factor_integer(
             "factor_tile_size", factor_tile_size, minimum=1)
         self._factor_uniqueness_min = float(factor_uniqueness_min)
@@ -358,9 +376,6 @@ class StochasticStudentCopula(MultivariateCopula):
             self._factor_rank = int(factor_rank)
             if not 1 <= self._factor_rank < d:
                 raise ValueError("factor_rank must satisfy 1 <= k < d")
-            if self._factor_estimation not in {'two-stage', 'joint'}:
-                raise ValueError(
-                    "factor_estimation must be 'two-stage' or 'joint'")
             if not (
                     np.isfinite(self._factor_uniqueness_min)
                     and 0.0 < self._factor_uniqueness_min < 1.0):
@@ -416,15 +431,50 @@ class StochasticStudentCopula(MultivariateCopula):
         return self._R.copy()
 
     @property
-    def corr_mode(self):
+    def corr_mode(self) -> CorrelationMode:
         return self._corr_mode
+
+    @property
+    def corr_estimator_(self) -> CorrelationEstimator:
+        if self._corr_mode == "factor":
+            if self._factor_estimation == "joint":
+                return "factor_joint"
+            return "factor_two_stage"
+        if self._corr_mode in {"shrinkage", "cholesky"}:
+            return "joint_mle"
+        preprocessing = self._corr_preprocessing
+        if preprocessing is not None and preprocessing.source == "supplied":
+            return "supplied"
+        return "kendall_plugin"
+
+    @property
+    def correlation_policy_(self) -> CorrelationPolicy:
+        """Return an immutable view of the active correlation policy."""
+        preprocessing = self._corr_preprocessing
+        supplied = None
+        if preprocessing is not None and preprocessing.source == "supplied":
+            supplied = self._R
+        return CorrelationPolicy.create(
+            mode=self._corr_mode,
+            estimator=self.corr_estimator_,
+            dimension=self._d,
+            supplied_correlation=supplied,
+            base_correlation=self._corr_base,
+            preprocessing=preprocessing,
+            raw_parameters=self._corr_params_raw,
+            factor_rank=self._factor_rank,
+            factor_estimation=(
+                self._factor_estimation
+                if self._corr_mode == "factor" else None),
+            shrinkage_initial=self._corr_shrinkage_init,
+        )
 
     @property
     def factor_rank(self):
         return getattr(self, "_factor_rank", None)
 
     @property
-    def factor_estimation(self):
+    def factor_estimation(self) -> FactorEstimation:
         return getattr(self, "_factor_estimation", "two-stage")
 
     @property
@@ -704,6 +754,7 @@ class StochasticStudentCopula(MultivariateCopula):
         plugin_n = self._corr_plugin_num_params()
         diagnostics = {
             'corr_mode': self._corr_mode,
+            'corr_estimator': self.corr_estimator_,
             'corr_n_params': n_corr,
             'corr_plugin_n_params': plugin_n,
             'corr_effective_n_params': n_corr + plugin_n,
@@ -1513,7 +1564,12 @@ class StochasticStudentCopula(MultivariateCopula):
     # ── Fit (MLE + SCAR) ────────────────────────────────────
 
     @model_state_locked
-    def fit(self, data, method='scar-tm-ou', to_pobs=False, **kwargs):
+    def fit(
+            self,
+            data: ArrayLike,
+            method: str = 'scar-tm-ou',
+            to_pobs: bool = False,
+            **kwargs: Any) -> FitResultBase:
         """
         Fit the stochastic Student-t copula.
 

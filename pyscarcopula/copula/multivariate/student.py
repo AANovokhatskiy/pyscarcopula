@@ -1,6 +1,11 @@
 """Static multivariate Student-t copula."""
 
+from __future__ import annotations
+
+from typing import Any
+
 import numpy as np
+from numpy.typing import ArrayLike
 from scipy.optimize import minimize
 from scipy.stats import (
     multivariate_t,
@@ -13,6 +18,13 @@ from pyscarcopula.copula.base import CopulaCapabilities
 from pyscarcopula.copula.multivariate.base import MultivariateCopula
 from pyscarcopula.copula.multivariate.corr_param import (
     estimate_kendall_correlation,
+)
+from pyscarcopula.copula.multivariate.correlation_policy import (
+    CorrelationEstimator,
+    CorrelationMode,
+    CorrelationPolicy,
+    FactorEstimation,
+    normalize_correlation_mode,
 )
 
 
@@ -38,13 +50,48 @@ class StudentCopula(MultivariateCopula):
         supports_conditional_sampling=True,
     )
 
-    def __init__(self):
+    def __init__(self, *, corr_mode: CorrelationMode = "fixed") -> None:
+        corr_mode = normalize_correlation_mode(corr_mode)
+        if corr_mode != "fixed":
+            raise NotImplementedError(
+                f"StudentCopula corr_mode={corr_mode!r} will be enabled "
+                "by the shared static MLE fitter")
         super().__init__(name="Student-t copula")
+        self._corr_mode = corr_mode
         self.shape = None
         self.df = None
         self.correlation_preprocessing = None
 
-    def fit(self, data, to_pobs=False, method='mle', **kwargs):
+    @property
+    def corr_mode(self) -> CorrelationMode:
+        return self._corr_mode
+
+    @property
+    def corr_estimator_(self) -> CorrelationEstimator:
+        return "kendall_plugin"
+
+    @property
+    def factor_estimation(self) -> FactorEstimation | None:
+        return None
+
+    @property
+    def correlation_policy_(self) -> CorrelationPolicy:
+        """Return the immutable policy represented by current model state."""
+        if self.dimension is None or self.correlation_preprocessing is None:
+            raise ValueError("correlation policy requires a fitted model")
+        return CorrelationPolicy.create(
+            mode=self._corr_mode,
+            estimator=self.corr_estimator_,
+            dimension=self.dimension,
+            preprocessing=self.correlation_preprocessing,
+        )
+
+    def fit(
+            self,
+            data: ArrayLike,
+            to_pobs: bool = False,
+            method: str = 'mle',
+            **kwargs: Any) -> MultivariateMLEResult:
         if str(method).upper() != 'MLE':
             raise ValueError(
                 f"StudentCopula supports only method='mle', "
@@ -89,6 +136,8 @@ class StudentCopula(MultivariateCopula):
             n_observations=len(u),
             model_parameters={
                 "df": self.df,
+                "corr_mode": self._corr_mode,
+                "corr_estimator": self.corr_estimator_,
                 "correlation_matrix": self.shape.copy(),
             },
             correlation_matrix=self.shape.copy(),
@@ -100,6 +149,7 @@ class StudentCopula(MultivariateCopula):
                 "filter_derivative": "not_applicable",
                 "df_gradient": "analytical",
                 "corr_matrix": self.shape.copy(),
+                **self.correlation_policy_.diagnostics(),
                 **self.correlation_preprocessing.diagnostics(),
             },
         )

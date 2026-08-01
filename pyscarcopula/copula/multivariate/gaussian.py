@@ -1,6 +1,11 @@
 """Static multivariate Gaussian copula."""
 
+from __future__ import annotations
+
+from typing import Any, Literal
+
 import numpy as np
+from numpy.typing import ArrayLike
 from scipy.stats import multivariate_normal, norm
 
 from pyscarcopula._utils import clip_pseudo_observations, pobs
@@ -11,6 +16,13 @@ from pyscarcopula.copula.multivariate.base import (
     model_state_locked,
 )
 from pyscarcopula.copula.multivariate.corr_param import validate_corr_matrix
+from pyscarcopula.copula.multivariate.correlation_policy import (
+    CorrelationEstimator,
+    CorrelationMode,
+    CorrelationPolicy,
+    FactorEstimation,
+    normalize_correlation_mode,
+)
 from pyscarcopula.copula.multivariate.factor_correlation import (
     FactorCorrelation,
 )
@@ -87,18 +99,21 @@ class GaussianCopula(MultivariateCopula):
 
     def __init__(
             self,
-            d=None,
+            d: int | None = None,
             *,
-            corr_mode="dense",
-            factor_rank=None,
-            factor_loadings=None,
-            factor_tile_size=16384,
-            factor_uniqueness_min=1e-8,
-            factor_seed=0,
-            factor_oversampling=8):
-        corr_mode = str(corr_mode).lower()
-        if corr_mode not in {"dense", "factor"}:
-            raise ValueError("corr_mode must be 'dense' or 'factor'")
+            corr_mode: CorrelationMode | Literal["dense"] = "fixed",
+            factor_rank: int | None = None,
+            factor_loadings: ArrayLike | None = None,
+            factor_tile_size: int = 16384,
+            factor_uniqueness_min: float = 1e-8,
+            factor_seed: int = 0,
+            factor_oversampling: int = 8) -> None:
+        corr_mode = normalize_correlation_mode(
+            corr_mode, allow_dense_alias=True)
+        if corr_mode in {"shrinkage", "cholesky"}:
+            raise NotImplementedError(
+                f"GaussianCopula corr_mode={corr_mode!r} will be enabled "
+                "by the shared static MLE fitter")
         if corr_mode == "factor":
             if (
                     isinstance(factor_rank, (bool, np.bool_))
@@ -146,8 +161,36 @@ class GaussianCopula(MultivariateCopula):
                 self._factor_loadings.copy())
 
     @property
-    def corr_mode(self):
+    def corr_mode(self) -> CorrelationMode:
         return self._corr_mode
+
+    @property
+    def corr_estimator_(self) -> CorrelationEstimator:
+        """Correlation estimation procedure used by the static model."""
+        if self._corr_mode == "factor":
+            return "factor_two_stage"
+        return "gaussian_score"
+
+    @property
+    def factor_estimation(self) -> FactorEstimation | None:
+        if self._corr_mode == "factor":
+            return "two-stage"
+        return None
+
+    @property
+    def correlation_policy_(self) -> CorrelationPolicy:
+        """Return the immutable policy represented by current model state."""
+        if self.dimension is None:
+            raise ValueError("correlation policy requires a known dimension")
+        return CorrelationPolicy.create(
+            mode=self._corr_mode,
+            estimator=self.corr_estimator_,
+            dimension=self.dimension,
+            base_correlation=(
+                self.corr if self._corr_mode == "fixed" else None),
+            factor_rank=self._factor_rank,
+            factor_estimation=self.factor_estimation,
+        )
 
     @property
     def factor_rank(self):
@@ -199,7 +242,11 @@ class GaussianCopula(MultivariateCopula):
 
     def __setstate__(self, state):
         super().__setstate__(state)
-        self._corr_mode = getattr(self, "_corr_mode", "dense")
+        self._corr_mode = normalize_correlation_mode(
+            getattr(self, "_corr_mode", "fixed"),
+            allow_dense_alias=True,
+            warn_on_dense=False,
+        )
         self._factor_correlation = None
         self._factor_operator = None
         loadings = getattr(self, "_factor_loadings", None)
@@ -291,11 +338,11 @@ class GaussianCopula(MultivariateCopula):
     @model_state_locked
     def fit(
             self,
-            data,
-            to_pobs=False,
-            method='mle',
-            config=None,
-            **kwargs):
+            data: ArrayLike,
+            to_pobs: bool = False,
+            method: str = 'mle',
+            config: Any | None = None,
+            **kwargs: Any) -> MultivariateMLEResult:
         """Fit the correlation matrix in Gaussian score space.
 
         Only ``method='mle'`` is supported: this is a static model without
@@ -374,6 +421,7 @@ class GaussianCopula(MultivariateCopula):
                 "estimator": "factor_gaussian_score_correlation",
                 "corr_matrix": None,
                 "n_threads": n_threads,
+                **self.correlation_policy_.diagnostics(),
                 **self.factor_diagnostics(),
             }
             result = MultivariateMLEResult(
@@ -387,6 +435,7 @@ class GaussianCopula(MultivariateCopula):
                 n_observations=len(u),
                 model_parameters={
                     "corr_mode": "factor",
+                    "corr_estimator": self.corr_estimator_,
                     "factor_loadings": self.factor_loadings_,
                     "factor_uniqueness": self.factor_uniqueness_,
                     "factor_rank": self._factor_rank,
@@ -417,12 +466,15 @@ class GaussianCopula(MultivariateCopula):
             parameter_count=parameter_count,
             n_observations=len(u),
             model_parameters={
+                "corr_mode": self._corr_mode,
+                "corr_estimator": self.corr_estimator_,
                 "correlation_matrix": self.corr.copy(),
             },
             correlation_matrix=self.corr.copy(),
             diagnostics={
                 "estimator": "gaussian_score_correlation",
                 "corr_matrix": self.corr.copy(),
+                **self.correlation_policy_.diagnostics(),
             },
         )
         self.fit_result = result
