@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from pyscarcopula.copula.multivariate import (
     StochasticStudentCopula,
@@ -61,19 +62,18 @@ def test_static_and_stochastic_student_share_kendall_initialization():
     )
 
 
-def test_constant_column_maps_unavailable_kendall_pair_to_independence():
+def test_constant_column_preprocessing_is_available_but_static_fit_rejects_it():
     u = _ordinary_u()
     u[:, 1] = 0.5
 
     result = estimate_kendall_correlation(u)
     static = StudentCopula()
-    static.fit(u)
+    with pytest.raises(ValueError, match="not identifiable"):
+        static.fit(u)
     stochastic = StochasticStudentCopula(d=3)
     stochastic_initial = stochastic._initial_corr(u)
 
     _assert_valid_correlation(result)
-    np.testing.assert_allclose(
-        static.shape, result.correlation, rtol=0.0, atol=0.0)
     np.testing.assert_allclose(
         stochastic_initial, result.correlation, rtol=0.0, atol=0.0)
     assert result.nonfinite_kendall_pairs == ((0, 1), (1, 2))

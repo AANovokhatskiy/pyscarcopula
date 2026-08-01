@@ -164,11 +164,14 @@ def test_static_models_publish_canonical_policy_metadata():
     assert student_result.diagnostics["corr_plugin_n_params"] == 3
 
 
-def test_unimplemented_static_modes_are_rejected_explicitly():
+def test_unimplemented_gaussian_modes_are_rejected_explicitly():
     with pytest.raises(NotImplementedError, match="shared static MLE fitter"):
         GaussianCopula(corr_mode="shrinkage")
-    with pytest.raises(NotImplementedError, match="shared static MLE fitter"):
-        StudentCopula(corr_mode="cholesky")
+
+
+def test_static_student_accepts_joint_correlation_modes():
+    assert StudentCopula(corr_mode="shrinkage").corr_mode == "shrinkage"
+    assert StudentCopula(corr_mode="cholesky").corr_mode == "cholesky"
 
 
 def test_stochastic_student_exposes_shared_typed_terminology():
