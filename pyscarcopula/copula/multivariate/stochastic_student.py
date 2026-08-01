@@ -842,6 +842,11 @@ class StochasticStudentCopula(MultivariateCopula):
         return params[:-n_corr], params[-n_corr:]
 
     def corr_params(self):
+        if (
+                self._corr_mode == "factor"
+                and self._factor_estimation == "joint"):
+            return np.asarray(
+                self._corr_params_raw, dtype=np.float64).reshape(-1).copy()
         return self._pack_corr_params()
 
     def corr_alpha(self):
@@ -1228,6 +1233,7 @@ class StochasticStudentCopula(MultivariateCopula):
             if state is None
             else np.asarray(state["loadings"], dtype=np.float64).copy())
         df_hat = float(outcome.parameters[0])
+        corr_raw = outcome.parameters[1:].copy()
         log_likelihood = (
             -outcome.final_objective
             if state is None else float(state["log_likelihood"]))
@@ -1247,6 +1253,8 @@ class StochasticStudentCopula(MultivariateCopula):
             "df_gradient": "analytical",
             "correlation_gradient": "analytical_factor",
             "joint_static": True,
+            "corr_params_raw": corr_raw.copy(),
+            "corr_alpha": None,
             "joint_factor": True,
             "joint_dynamic_supported": False,
             "joint_identification": (
@@ -1291,6 +1299,8 @@ class StochasticStudentCopula(MultivariateCopula):
                 "df": df_hat,
                 "corr_mode": "factor",
                 "corr_estimator": "factor_joint",
+                "corr_params_raw": corr_raw.copy(),
+                "corr_alpha": None,
                 "factor_rank": self._factor_rank,
                 "factor_loadings": final_loadings.copy(),
                 "factor_uniqueness": FactorCorrelation(
@@ -1315,244 +1325,11 @@ class StochasticStudentCopula(MultivariateCopula):
                     "joint_condition_max": condition_max,
                 },
             )
+            self._corr_params_raw = corr_raw.copy()
+            self._corr_alpha = None
             self.fit_result = result
-            self._last_u = u
+            self._last_u = u.copy()
         return result
-
-    def _fit_joint_factor_mle(
-            self, u, config, optimizer_options):
-        """Jointly estimate static df and identifiable factor loadings."""
-        from pyscarcopula._types import MultivariateMLEResult
-        from pyscarcopula.numerical._cpp_extension import CppError
-
-        optimizer_options = dict(optimizer_options)
-        optimizer_options.setdefault("ftol", 1e-10)
-
-        parameterization, factor0 = (
-            FactorLoadingParameterization.from_loadings(
-                self._factor_loadings,
-                uniqueness_min=self._factor_uniqueness_min,
-            ))
-        expected = self._corr_plugin_num_params()
-        if parameterization.n_parameters != expected:
-            raise RuntimeError(
-                "joint factor parameterization has an invalid size")
-        if expected > self._factor_joint_max_params:
-            raise ValueError(
-                "joint factor estimation exceeds "
-                "factor_joint_max_params")
-
-        x0 = np.concatenate([
-            np.array([5.0], dtype=np.float64),
-            factor0,
-        ])
-        fail_value = float(getattr(config, "fail_value", 1e10))
-        penalty = self._factor_joint_penalty
-        condition_max = self._factor_joint_condition_max
-        best = {
-            "value": np.inf,
-            "x": x0.copy(),
-            "loadings": self._factor_loadings.copy(),
-            "evaluation": None,
-            "operator_diagnostics": {},
-        }
-        evaluations = 0
-
-        def failure(x):
-            direction = np.asarray(x, dtype=np.float64) - x0
-            norm = np.linalg.norm(direction)
-            if not np.isfinite(norm) or norm == 0.0:
-                direction = np.ones_like(x0)
-            else:
-                direction = direction / norm
-            return fail_value, direction * np.sqrt(fail_value)
-
-        def evaluate_valid(x):
-            nonlocal evaluations
-            evaluations += 1
-            x = np.asarray(x, dtype=np.float64)
-            if (
-                    x.shape != x0.shape
-                    or np.any(~np.isfinite(x))
-                    or x[0] <= _DF_OFFSET):
-                raise ValueError("invalid joint factor optimizer point")
-            loadings = parameterization.loadings(x[1:])
-            factor = FactorCorrelation(
-                loadings,
-                uniqueness_min=self._factor_uniqueness_min,
-                diagnostics={"source": "joint_static_mle_trial"},
-            )
-            operator = factor.prepare()
-            operator_diagnostics = dict(operator.diagnostics)
-            if (
-                    operator_diagnostics["condition_estimate_m"]
-                    > condition_max):
-                raise ValueError(
-                    "joint factor Woodbury core exceeds condition gate")
-            evaluation = FactorStudentEvaluator(
-                operator, u).joint_likelihood_and_gradient(
-                    float(x[0]),
-                    n_threads=config.n_threads,
-                )
-            value = (
-                -evaluation.log_likelihood
-                + penalty * float(np.sum(loadings * loadings))
-            )
-            loading_objective_gradient = (
-                -evaluation.dlog_likelihood_dloadings
-                + 2.0 * penalty * loadings
-            )
-            gradient = np.empty_like(x)
-            gradient[0] = -evaluation.dlog_likelihood_ddf
-            gradient[1:] = parameterization.pullback(
-                x[1:], loading_objective_gradient)
-            if (
-                    not np.isfinite(value)
-                    or value >= fail_value
-                    or np.any(~np.isfinite(gradient))):
-                raise FloatingPointError(
-                    "non-finite joint factor objective or gradient")
-            if value < best["value"]:
-                best.update({
-                    "value": float(value),
-                    "x": x.copy(),
-                    "loadings": loadings.copy(),
-                    "evaluation": evaluation,
-                    "operator_diagnostics": operator_diagnostics,
-                })
-            return float(value), gradient
-
-        def objective_and_gradient(x):
-            try:
-                return evaluate_valid(x)
-            except (
-                    FloatingPointError,
-                    OverflowError,
-                    ValueError,
-                    RuntimeError,
-                    np.linalg.LinAlgError,
-                    CppError):
-                return failure(x)
-
-        initial_objective, _ = objective_and_gradient(x0)
-        raise RuntimeError(
-            "legacy joint-factor optimizer path is disabled")
-
-        try:
-            final_objective, final_gradient = evaluate_valid(result.x)
-            final_x = np.asarray(result.x, dtype=np.float64).copy()
-            final_loadings = parameterization.loadings(final_x[1:])
-            final_factor = FactorCorrelation(
-                final_loadings,
-                uniqueness_min=self._factor_uniqueness_min,
-            ).prepare()
-            final_evaluation = FactorStudentEvaluator(
-                final_factor, u).joint_likelihood_and_gradient(
-                    float(final_x[0]),
-                    n_threads=config.n_threads,
-                )
-            final_operator_diagnostics = dict(
-                final_factor.diagnostics)
-        except (
-                FloatingPointError,
-                OverflowError,
-                ValueError,
-                RuntimeError,
-                np.linalg.LinAlgError,
-                CppError):
-            final_x = best["x"]
-            final_loadings = best["loadings"]
-            final_evaluation = best["evaluation"]
-            final_operator_diagnostics = best[
-                "operator_diagnostics"]
-            final_objective, final_gradient = (
-                objective_and_gradient(final_x))
-
-        if final_evaluation is None:
-            raise RuntimeError(
-                "joint factor MLE found no valid evaluation")
-        gradient_inf_norm = float(np.max(np.abs(final_gradient)))
-        gtol = float(optimizer_options.get("gtol", 1e-5))
-        gradient_gate = max(1e-4, 40.0 * gtol)
-        accepted = bool(
-            result.success
-            and np.isfinite(final_objective)
-            and gradient_inf_norm <= gradient_gate
-        )
-        message = str(getattr(result, "message", ""))
-        if result.success and not accepted:
-            message = (
-                f"{message}; rejected by joint factor gradient gate "
-                f"({gradient_inf_norm:.6g} > {gradient_gate:.6g})"
-            )
-
-        start_source = self._factor_initialization_diagnostics.get(
-            "source", "supplied")
-        self._set_factor_loadings(
-            final_loadings,
-            diagnostics={
-                "source": "joint_static_mle",
-                "joint_start_source": start_source,
-                "joint_anchor_rows":
-                    parameterization.anchors.tolist(),
-                "joint_penalty": penalty,
-                "joint_condition_max": condition_max,
-            },
-        )
-        df_hat = float(final_x[0])
-        diagnostics = {
-            "n_threads": config.n_threads,
-            "parameterization": "natural_df_and_triangular_factor",
-            "gradient_mode": "analytical_joint_factor",
-            "model_score": "not_applicable",
-            "optimizer_gradient": "analytical",
-            "gradient_kind": "analytical",
-            "df_gradient": "analytical",
-            "correlation_gradient": "analytical_factor",
-            "joint_static": True,
-            "joint_factor": True,
-            "joint_dynamic_supported": False,
-            "joint_identification":
-                "pivoted_lower_triangular_positive_diag",
-            "joint_anchor_rows": parameterization.anchors.copy(),
-            "joint_penalty": penalty,
-            "joint_condition_max": condition_max,
-            "joint_initial_objective": float(initial_objective),
-            "joint_final_objective": float(final_objective),
-            "joint_gradient_inf_norm": gradient_inf_norm,
-            "joint_gradient_gate": gradient_gate,
-            "joint_evaluations": evaluations,
-            "joint_native_diagnostics":
-                dict(final_evaluation.diagnostics),
-            "joint_operator_diagnostics":
-                final_operator_diagnostics,
-            **self._corr_count_diagnostics(),
-        }
-        result_object = MultivariateMLEResult(
-            log_likelihood=final_evaluation.log_likelihood,
-            method="MLE",
-            copula_name=self._name,
-            success=accepted,
-            nfev=int(getattr(result, "nfev", evaluations)),
-            message=message,
-            copula_param=df_hat,
-            parameter_count=1 + expected,
-            n_observations=len(u),
-            model_parameters={
-                "df": df_hat,
-                "corr_mode": "factor",
-                "factor_rank": self._factor_rank,
-                "factor_loadings": self.factor_loadings_,
-                "factor_uniqueness": self.factor_uniqueness_,
-                "factor_estimation": "joint",
-                "factor_anchor_rows":
-                    parameterization.anchors.copy(),
-            },
-            correlation_matrix=None,
-            diagnostics=diagnostics,
-        )
-        self.fit_result = result_object
-        return result_object
 
     def _fit_mle_shared(
             self, u, config: NumericalConfig, optimizer_options):
@@ -1771,6 +1548,7 @@ class StochasticStudentCopula(MultivariateCopula):
             "df": df_hat,
             "corr_mode": self._corr_mode,
             "corr_estimator": policy.estimator,
+            "corr_params_raw": corr_raw.copy(),
             "corr_alpha": corr_alpha,
         }
         if candidate_factor is not None:
@@ -1818,7 +1596,7 @@ class StochasticStudentCopula(MultivariateCopula):
                 self._corr_params_raw = corr_raw.copy()
                 self._corr_alpha = corr_alpha
             self.fit_result = result
-            self._last_u = u
+            self._last_u = u.copy()
         return result
 
     def _fit_mle(self, u, config: NumericalConfig | None = None,
@@ -1830,10 +1608,6 @@ class StochasticStudentCopula(MultivariateCopula):
         Unlike dynamic SCAR/GAS fitting, static MLE has no latent state and
         therefore optimizes degrees of freedom directly without ``transform``.
         """
-        from pyscarcopula._types import MLEResult
-        from pyscarcopula.numerical import static_likelihood
-        from pyscarcopula.numerical._cpp_extension import CppError
-
         config = config or DEFAULT_CONFIG
         optimizer_options = config.stochastic_student_optimizer.options(
             gtol=gtol,
@@ -1847,149 +1621,6 @@ class StochasticStudentCopula(MultivariateCopula):
         )
 
         return self._fit_mle_shared(u, config, optimizer_options)
-
-        self._ensure_corr_initialized(u)
-        if (
-                self._corr_mode == "factor"
-                and self._factor_estimation == "joint"):
-            return self._fit_joint_factor_mle(
-                u, config, optimizer_options)
-        corr0 = self._initial_corr_params(u)
-        n_corr = self._corr_num_params()
-        counted_corr = self._corr_effective_num_params()
-        fail_value = float(getattr(config, 'fail_value', 1e10))
-
-        if self._corr_mode == 'factor':
-            fixed_evaluator = FactorStudentEvaluator(
-                self._factor_operator, u)
-        else:
-            fixed_evaluator = (
-                static_likelihood.prepare(
-                    self, u, n_threads=config.n_threads)
-                if n_corr == 0 else None)
-
-        def _failure_result(x):
-            # Non-zero, large-magnitude gradient pointing back toward the
-            # starting point: a zero gradient would make L-BFGS-B report
-            # convergence at a point where evaluation actually failed.
-            direction = x - x0
-            norm = np.linalg.norm(direction)
-            if not np.isfinite(norm) or norm == 0.0:
-                direction = np.ones_like(x)
-            else:
-                direction = direction / norm
-            return fail_value, direction * np.sqrt(fail_value)
-
-        def objective_and_gradient(x):
-            try:
-                if n_corr:
-                    self._set_corr_from_params(x[1:])
-                    evaluator = static_likelihood.prepare(
-                        self, u, n_threads=config.n_threads)
-                    value, df_gradient, corr_gradient = (
-                        evaluator.objective_and_joint_gradient(
-                            float(x[0]), fail_value=fail_value))
-                else:
-                    evaluator = fixed_evaluator
-                    if self._corr_mode == 'factor':
-                        value, df_gradient = (
-                            evaluator.objective_and_gradient(
-                                float(x[0]),
-                                n_threads=config.n_threads,
-                            ))
-                    else:
-                        value, df_gradient = (
-                            evaluator.objective_and_gradient(
-                                float(x[0]), fail_value=fail_value))
-                if not np.isfinite(value) or value >= fail_value:
-                    # Evaluator-reported failure comes back as fail_value
-                    # with a zero gradient, which L-BFGS-B would read as
-                    # convergence — replace with a large non-zero gradient.
-                    return _failure_result(x)
-                gradient = np.empty_like(x)
-                gradient[0] = df_gradient[0]
-                if n_corr:
-                    gradient[1:] = _corr_gradient_to_raw_params(
-                        self._corr_mode,
-                        x[1:],
-                        self.R,
-                        corr_gradient,
-                        self._corr_base,
-                    )
-                return value, gradient
-            except (FloatingPointError, OverflowError, ValueError,
-                    np.linalg.LinAlgError, CppError):
-                return _failure_result(x)
-
-        # Static MLE starts and remains in natural degrees-of-freedom units.
-        x0 = np.concatenate([np.array([5.0]), corr0])
-        bounds = [(_DF_OFFSET, None)] + [(None, None)] * n_corr
-        raise RuntimeError("legacy static optimizer path is disabled")
-        gradient_mode = (
-            'analytical_df' if n_corr == 0 else 'analytical_joint')
-
-        if n_corr:
-            self._set_corr_from_params(res.x[1:])
-
-        df_hat = float(res.x[0])
-        diagnostics = {
-            'n_threads': config.n_threads,
-            'parameterization': 'natural_df',
-            'gradient_mode': gradient_mode,
-            'model_score': 'not_applicable',
-            'optimizer_gradient': 'analytical',
-            'gradient_kind': 'analytical',
-            'setup_derivative': 'not_applicable',
-            'filter_derivative': 'not_applicable',
-            'df_gradient': 'analytical',
-            'correlation_gradient': (
-                'not_applicable' if n_corr == 0 else 'analytical'),
-            **self._corr_count_diagnostics(),
-            'corr_params_raw': self.corr_params(),
-            'corr_alpha': self.corr_alpha(),
-            **self.correlation_preprocessing_diagnostics(),
-        }
-        if self._corr_mode != 'factor':
-            diagnostics['corr_matrix'] = self._R.copy()
-
-        from pyscarcopula._types import MultivariateMLEResult
-
-        model_parameters = {
-            'df': df_hat,
-            'corr_mode': self._corr_mode,
-            'corr_alpha': self.corr_alpha(),
-        }
-        if self._corr_mode == 'factor':
-            model_parameters.update({
-                'factor_rank': self._factor_rank,
-                'factor_loadings': self.factor_loadings_,
-                'factor_uniqueness': self.factor_uniqueness_,
-                'factor_estimation': self._factor_estimation,
-            })
-        else:
-            model_parameters[
-                'correlation_matrix'] = self._R.copy()
-
-        result = MultivariateMLEResult(
-            log_likelihood=-res.fun,
-            method='MLE',
-            copula_name=self._name,
-            success=res.success,
-            nfev=res.nfev,
-            message=str(getattr(res, 'message', '')),
-            copula_param=df_hat,
-            parameter_count=1 + counted_corr,
-            n_observations=len(u),
-            model_parameters=model_parameters,
-            correlation_matrix=(
-                None
-                if self._corr_mode == 'factor'
-                else self._R.copy()),
-            diagnostics=diagnostics,
-        )
-        self.fit_result = result
-        return result
-
     def correlation_preprocessing_diagnostics(self):
         """Return diagnostics for the correlation used to initialize fitting."""
         if self._corr_preprocessing is None:

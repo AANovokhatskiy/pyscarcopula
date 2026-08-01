@@ -611,6 +611,19 @@ def test_mle_cholesky_reports_all_static_parameters():
     validate_corr_matrix(api_model.R)
 
 
+def test_dense_static_mle_owns_training_observations():
+    observations = _u(T=50)
+    expected = observations.copy()
+    model = StochasticStudentCopula(d=3, corr_mode="shrinkage")
+
+    result = model.fit(observations, method="mle", maxiter=100)
+    observations[0, 0] = 0.999
+
+    assert result.success
+    assert model._last_u is not observations
+    np.testing.assert_array_equal(model._last_u, expected)
+
+
 def test_mle_correlation_metadata_persistence_roundtrip(tmp_path):
     u = _u(T=30)
     model = StochasticStudentCopula(d=3, corr_mode="shrinkage")

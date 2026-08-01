@@ -293,4 +293,3 @@ def test_student_kendall_plugin_point_has_nonzero_correlation_score():
     assert abs(plugin_score) > 40.0
     assert plugin_score == pytest.approx(
         -43.94064162838163, rel=0.0, abs=2e-5)
-
