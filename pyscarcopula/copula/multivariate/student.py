@@ -70,6 +70,8 @@ def _as_real_array(data: ArrayLike) -> np.ndarray:
     raw = np.asarray(data)
     if np.iscomplexobj(raw):
         raise ValueError("data must be real-valued")
+    if raw.dtype.kind in {"O", "S", "U", "V", "b"}:
+        raise TypeError("data must have a real numeric dtype")
     return np.asarray(raw, dtype=np.float64)
 
 
@@ -88,6 +90,13 @@ def _validate_student_fit_data(u: np.ndarray) -> None:
     if np.any(np.ptp(u, axis=0) == 0.0):
         raise ValueError(
             "Student copula correlation is not identifiable for constant "
+            "data columns")
+    if any(
+            np.array_equal(u[:, left], u[:, right])
+            for right in range(1, u.shape[1])
+            for left in range(right)):
+        raise ValueError(
+            "Student copula correlation is not identifiable for duplicate "
             "data columns")
 
 

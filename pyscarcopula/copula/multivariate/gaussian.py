@@ -61,12 +61,25 @@ def _validate_gaussian_fit_data(u):
     if np.any((u < 0.0) | (u > 1.0)):
         raise ValueError(
             "MLE expects pseudo-observations in [0, 1]; use to_pobs=True")
+    if np.any(np.ptp(u, axis=0) == 0.0):
+        raise ValueError(
+            "Gaussian copula correlation is not identifiable for constant "
+            "data columns")
+    if any(
+            np.array_equal(u[:, left], u[:, right])
+            for right in range(1, u.shape[1])
+            for left in range(right)):
+        raise ValueError(
+            "Gaussian copula correlation is not identifiable for duplicate "
+            "data columns")
 
 
 def _as_real_array(data):
     raw = np.asarray(data)
     if np.iscomplexobj(raw):
         raise ValueError("data must be real-valued")
+    if raw.dtype.kind in {"O", "S", "U", "V", "b"}:
+        raise TypeError("data must have a real numeric dtype")
     return np.asarray(raw, dtype=np.float64)
 
 
