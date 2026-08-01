@@ -572,9 +572,25 @@ def _bootstrap_statistic_gaussian(
 def _bootstrap_prepare_student(
         copula_class, constructor_kwargs, fit_result, fitted_snapshot):
     copula = create_worker_model(copula_class, constructor_kwargs)
-    correlation = getattr(fit_result, 'correlation_matrix', None)
     df = getattr(fit_result, 'copula_param', None)
-    if correlation is None or df is None:
+    if df is None:
+        raise ValueError("Student fit result does not contain df")
+    if getattr(copula, 'corr_mode', 'fixed') == 'factor':
+        loadings = getattr(
+            fit_result, 'model_parameters', {}).get('factor_loadings')
+        if loadings is None:
+            raise ValueError(
+                "factor Student fit result does not contain factor_loadings")
+        copula._set_factor_loadings(
+            np.asarray(loadings, dtype=np.float64),
+            diagnostics={'source': 'bootstrap_fitted_result'},
+        )
+        copula.df = float(df)
+        copula.fit_result = fit_result
+        return copula
+
+    correlation = getattr(fit_result, 'correlation_matrix', None)
+    if correlation is None:
         raise ValueError(
             "Student fit result does not contain correlation and df")
     correlation = np.asarray(correlation, dtype=np.float64)
@@ -606,8 +622,12 @@ def _bootstrap_refit_student(
 
 def _bootstrap_statistic_student(
         copula, u_boot, fit_result, K, grid_range):
-    correlation = getattr(fit_result, 'correlation_matrix', None)
     df = getattr(fit_result, 'copula_param', None)
+    if getattr(copula, 'corr_mode', 'fixed') == 'factor':
+        e_boot = factor_student_rosenblatt_transform(
+            copula.correlation_operator_, float(df), u_boot)
+        return float(cvm_test(e_boot).statistic)
+    correlation = getattr(fit_result, 'correlation_matrix', None)
     e_boot = student_rosenblatt_transform(
         correlation, float(df), u_boot)
     return float(cvm_test(e_boot).statistic)
@@ -1573,10 +1593,19 @@ def student_gof_test(copula, data, to_pobs=True):
     u = _prepare_gof_data(
         data, expected_dim=copula.dimension, to_pobs=to_pobs)
 
-    if copula.shape is None:
-        raise ValueError("Fit the copula first")
-
-    e = student_rosenblatt_transform(copula.shape, copula.df, u)
+    if getattr(copula, "corr_mode", "fixed") == "factor":
+        try:
+            correlation = copula.correlation_operator_
+        except (AttributeError, ValueError) as exc:
+            raise ValueError("Fit the copula first") from exc
+        if copula.df is None:
+            raise ValueError("Fit the copula first")
+        e = factor_student_rosenblatt_transform(
+            correlation, copula.df, u)
+    else:
+        if copula.shape is None or copula.df is None:
+            raise ValueError("Fit the copula first")
+        e = student_rosenblatt_transform(copula.shape, copula.df, u)
     return cvm_test(e)
 
 

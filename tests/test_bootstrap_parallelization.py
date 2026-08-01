@@ -405,6 +405,36 @@ def test_student_bootstrap_is_partition_invariant(bootstrap_refit):
     assert prototype.df is None
 
 
+@pytest.mark.parametrize("bootstrap_refit", [False, True])
+def test_factor_student_bootstrap_is_partition_invariant(bootstrap_refit):
+    from pyscarcopula import StudentCopula
+
+    loadings = np.array([[0.48], [0.30], [-0.22], [0.37]])
+    source = StudentCopula(
+        4, corr_mode="factor", factor_rank=1,
+        factor_loadings=loadings)
+    source.df = 6.0
+    u = source.sample(36, rng=np.random.default_rng(923))
+    fitted = StudentCopula(
+        4, corr_mode="factor", factor_rank=1, factor_seed=14)
+    fit_result = fitted.fit(u, maxiter=250)
+    original_loadings = fitted.factor_loadings_
+
+    prototype = StudentCopula(
+        4, corr_mode="factor", factor_rank=1, factor_seed=14)
+    _assert_static_bootstrap_parallel_parity(
+        prototype,
+        u,
+        fit_result,
+        bootstrap_refit=bootstrap_refit,
+    )
+
+    np.testing.assert_array_equal(
+        fitted.factor_loadings_, original_loadings)
+    assert prototype.fit_result is None
+    assert prototype.factor_loadings_ is None
+
+
 @pytest.mark.parametrize("method", ["mle", "gas", "scar-tm-ou"])
 @pytest.mark.parametrize("bootstrap_refit", [False, True])
 def test_equicorr_bootstrap_is_partition_invariant(

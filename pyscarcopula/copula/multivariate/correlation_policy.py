@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal, TypeAlias, cast
+from typing import Any, Literal, TypeAlias, cast
 import warnings
 
 import numpy as np
@@ -383,3 +383,55 @@ class CorrelationPolicy:
                 "factor_estimation": self.factor_estimation,
             })
         return diagnostics
+
+
+def restore_correlation_result_metadata(
+        result: object,
+        policy: CorrelationPolicy,
+        *,
+        raw_parameters: ArrayLike | None = None,
+        alpha: float | None = None,
+        n_threads: int = 1) -> None:
+    """Backfill safe correlation metadata on legacy persisted results.
+
+    Result dataclasses are frozen, but their compatibility dictionaries are
+    intentionally mutable. New writers already contain these keys; using
+    ``setdefault`` therefore only affects older payloads.
+    """
+    diagnostics = getattr(result, "diagnostics", None)
+    if not isinstance(diagnostics, dict):
+        return
+    for key, value in policy.diagnostics().items():
+        diagnostics.setdefault(key, value)
+    raw = np.asarray(
+        np.empty(0, dtype=np.float64)
+        if raw_parameters is None else raw_parameters,
+        dtype=np.float64,
+    ).reshape(-1).copy()
+    optimized = bool(policy.optimized_n_params)
+    diagnostics.setdefault("corr_params_raw", raw)
+    diagnostics.setdefault("corr_alpha", alpha)
+    diagnostics.setdefault("optimizer_gradient", "legacy_unknown")
+    diagnostics.setdefault(
+        "correlation_gradient",
+        "legacy_unknown" if optimized else "not_applicable",
+    )
+    diagnostics.setdefault(
+        "gradient_mode",
+        "legacy_unknown" if optimized else "not_applicable",
+    )
+    diagnostics.setdefault("joint_static", optimized)
+    diagnostics.setdefault("n_threads", int(n_threads))
+    diagnostics.setdefault(
+        "final_objective", -float(getattr(result, "log_likelihood", 0.0)))
+    diagnostics.setdefault("final_gradient_inf_norm", float("nan"))
+    diagnostics.setdefault("gradient_gate", float("nan"))
+    diagnostics.setdefault(
+        "final_validation_passed", bool(getattr(result, "success", False)))
+
+    model_parameters: Any = getattr(result, "model_parameters", None)
+    if isinstance(model_parameters, dict):
+        model_parameters.setdefault("corr_mode", policy.mode)
+        model_parameters.setdefault("corr_estimator", policy.estimator)
+        model_parameters.setdefault("corr_params_raw", raw.copy())
+        model_parameters.setdefault("corr_alpha", alpha)

@@ -31,6 +31,7 @@ from pyscarcopula.copula.multivariate.correlation_policy import (
     FactorEstimation,
     normalize_correlation_mode,
     normalize_factor_estimation,
+    restore_correlation_result_metadata,
 )
 from pyscarcopula.copula.multivariate.factor_correlation import (
     FactorCorrelation,
@@ -164,6 +165,11 @@ class StudentCopula(MultivariateCopula):
         self._corr_base = (
             None if self._base_preprocessing is None
             else self._base_preprocessing.correlation.copy())
+        self._constructor_R = (
+            None if self._supplied_correlation is None
+            else self._supplied_correlation.copy())
+        self._constructor_corr_base = (
+            None if self._corr_base is None else self._corr_base.copy())
         for matrix, name in (
                 (self._supplied_correlation, "R"),
                 (self._corr_base, "corr_base")):
@@ -178,6 +184,7 @@ class StudentCopula(MultivariateCopula):
         self._factor_correlation: FactorCorrelation | None = None
         self._factor_operator = None
         self._factor_initialization_diagnostics: dict[str, object] = {}
+        self._constructor_factor_loadings: np.ndarray | None = None
         self._factor_tile_size = _integer(
             "factor_tile_size", factor_tile_size, minimum=1)
         self._factor_uniqueness_min = float(factor_uniqueness_min)
@@ -209,10 +216,14 @@ class StudentCopula(MultivariateCopula):
             if factor_loadings is not None:
                 self._set_factor_loadings(
                     factor_loadings, diagnostics={"source": "supplied"})
+                self._constructor_factor_loadings = (
+                    self._factor_loadings.copy())
 
         self.df: float | None = None
         self.correlation_preprocessing = None
         self._corr_estimator: CorrelationEstimator | None = None
+        self._corr_params_raw = np.empty(0, dtype=np.float64)
+        self._corr_alpha: float | None = None
 
     @property
     def shape(self) -> np.ndarray | None:
@@ -274,6 +285,67 @@ class StudentCopula(MultivariateCopula):
 
     def __setstate__(self, state: dict[str, object]) -> None:
         super().__setstate__(state)
+        legacy_state = "_corr_mode" not in state
+        self._corr_mode = normalize_correlation_mode(
+            str(getattr(self, "_corr_mode", "fixed")),
+            allow_dense_alias=True,
+            warn_on_dense=False,
+        )
+        self._factor_estimation = normalize_factor_estimation(
+            str(getattr(self, "_factor_estimation", "two-stage")))
+        self._correlation = getattr(self, "_correlation", None)
+        if self._correlation is None:
+            legacy_shape = state.get("shape", state.get("_shape"))
+            if legacy_shape is not None:
+                self._correlation = np.asarray(
+                    legacy_shape, dtype=np.float64).copy()
+        self.__dict__.pop("shape", None)
+        self.__dict__.pop("_shape", None)
+        self._supplied_correlation = getattr(
+            self, "_supplied_correlation", None)
+        self._corr_base = getattr(self, "_corr_base", None)
+        self._constructor_R = getattr(self, "_constructor_R", None)
+        self._constructor_corr_base = getattr(
+            self, "_constructor_corr_base", None)
+        self._supplied_preprocessing = getattr(
+            self, "_supplied_preprocessing", None)
+        self._base_preprocessing = getattr(
+            self, "_base_preprocessing", None)
+        self._corr_shrinkage_init = float(getattr(
+            self, "_corr_shrinkage_init", 0.8))
+        self._corr_params_raw = np.asarray(getattr(
+            self, "_corr_params_raw", np.empty(0)),
+            dtype=np.float64).reshape(-1).copy()
+        self._corr_alpha = getattr(self, "_corr_alpha", None)
+        self._cholesky_d_max = int(getattr(
+            self, "_cholesky_d_max", 10))
+        self._allow_large_cholesky = bool(getattr(
+            self, "_allow_large_cholesky", False))
+        self._factor_rank = getattr(self, "_factor_rank", None)
+        self._factor_tile_size = int(getattr(
+            self, "_factor_tile_size", 16384))
+        self._factor_uniqueness_min = float(getattr(
+            self, "_factor_uniqueness_min", 1e-8))
+        self._factor_joint_max_params = int(getattr(
+            self, "_factor_joint_max_params", 100000))
+        self._factor_joint_penalty = float(getattr(
+            self, "_factor_joint_penalty", 1e-6))
+        self._factor_joint_condition_max = float(getattr(
+            self, "_factor_joint_condition_max", 1e12))
+        self._factor_seed = int(getattr(self, "_factor_seed", 0))
+        self._factor_oversampling = int(getattr(
+            self, "_factor_oversampling", 8))
+        self._factor_loadings = getattr(self, "_factor_loadings", None)
+        self._constructor_factor_loadings = getattr(
+            self, "_constructor_factor_loadings", None)
+        self._factor_initialization_diagnostics = dict(getattr(
+            self, "_factor_initialization_diagnostics", {}))
+        self.correlation_preprocessing = getattr(
+            self, "correlation_preprocessing", None)
+        self.df = getattr(self, "df", None)
+        self._corr_estimator = getattr(self, "_corr_estimator", None)
+        if legacy_state and self._correlation is not None:
+            self._corr_estimator = "kendall_plugin"
         self._factor_correlation = None
         self._factor_operator = None
         if (
@@ -284,6 +356,20 @@ class StudentCopula(MultivariateCopula):
                 diagnostics=getattr(
                     self, "_factor_initialization_diagnostics", {}),
             )
+        result = getattr(self, "fit_result", None)
+        if result is not None and self.dimension is not None:
+            restore_correlation_result_metadata(
+                result,
+                self.correlation_policy_,
+                raw_parameters=self._corr_params_raw,
+                alpha=self._corr_alpha,
+            )
+            result_diagnostics = getattr(result, "diagnostics", None)
+            if legacy_state and isinstance(result_diagnostics, dict):
+                result_diagnostics.setdefault(
+                    "corr_policy_migration",
+                    "legacy_fixed_kendall_plugin",
+                )
 
     def to_correlation_matrix(
             self, *, max_dimension: int = 2048,
@@ -648,6 +734,8 @@ class StudentCopula(MultivariateCopula):
             self._set_dimension(u.shape[1], allow_change=False)
             self.df = df_hat
             self._corr_estimator = policy.estimator
+            self._corr_params_raw = np.asarray(raw).copy()
+            self._corr_alpha = alpha
             self.correlation_preprocessing = preprocessing
             if factor is None:
                 self._correlation = correlation.copy()
@@ -702,9 +790,16 @@ class StudentCopula(MultivariateCopula):
 
     @model_state_locked
     def sample(self, n, u=None, rng=None):
-        correlation, df = self._fitted_parameters()
         if rng is None:
             rng = np.random.default_rng()
+        if self._corr_mode == "factor":
+            if self.df is None:
+                raise ValueError("Fit first")
+            latent = self.correlation_operator_.sample_normal(n, rng=rng)
+            chi_square = rng.chisquare(self.df, size=n)
+            latent *= np.sqrt(self.df / chi_square)[:, None]
+            return t_dist.cdf(latent, df=self.df)
+        correlation, df = self._fitted_parameters()
         x = multivariate_t.rvs(
             loc=np.zeros(correlation.shape[0]), shape=correlation, df=df,
             size=n, random_state=rng)

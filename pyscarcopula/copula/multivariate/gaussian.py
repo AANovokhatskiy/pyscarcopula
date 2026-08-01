@@ -28,6 +28,7 @@ from pyscarcopula.copula.multivariate.correlation_policy import (
     FactorEstimation,
     normalize_correlation_mode,
     normalize_factor_estimation,
+    restore_correlation_result_metadata,
 )
 
 
@@ -346,6 +347,7 @@ class GaussianCopula(MultivariateCopula):
         return state
 
     def __setstate__(self, state):
+        stored_mode = state.get("_corr_mode")
         super().__setstate__(state)
         self._corr_mode = normalize_correlation_mode(
             getattr(self, "_corr_mode", "fixed"),
@@ -369,9 +371,22 @@ class GaussianCopula(MultivariateCopula):
             self, "_allow_large_cholesky", False)
         self._factor_estimation = getattr(
             self, "_factor_estimation", "two-stage")
+        self._factor_rank = getattr(self, "_factor_rank", None)
+        self._factor_loadings = getattr(self, "_factor_loadings", None)
+        self._constructor_factor_loadings = getattr(
+            self, "_constructor_factor_loadings", None)
+        self._factor_initialization_diagnostics = dict(getattr(
+            self, "_factor_initialization_diagnostics", {}))
+        self._factor_tile_size = int(getattr(
+            self, "_factor_tile_size", 16384))
+        self._factor_uniqueness_min = float(getattr(
+            self, "_factor_uniqueness_min", 1e-8))
+        self._factor_seed = int(getattr(self, "_factor_seed", 0))
+        self._factor_oversampling = int(getattr(
+            self, "_factor_oversampling", 8))
         self._factor_correlation = None
         self._factor_operator = None
-        loadings = getattr(self, "_factor_loadings", None)
+        loadings = self._factor_loadings
         if self._corr_mode == "factor" and loadings is not None:
             self._set_factor_loadings(
                 loadings,
@@ -381,6 +396,22 @@ class GaussianCopula(MultivariateCopula):
                     {"source": "restored"},
                 ),
             )
+        result = getattr(self, "fit_result", None)
+        if result is not None and self.dimension is not None:
+            restore_correlation_result_metadata(
+                result,
+                self.correlation_policy_,
+                raw_parameters=self._corr_params_raw,
+                alpha=self._corr_alpha,
+            )
+            result_diagnostics = getattr(result, "diagnostics", None)
+            if isinstance(result_diagnostics, dict):
+                if stored_mode == "dense":
+                    result_diagnostics.setdefault(
+                        "corr_mode_migrated_from", "dense")
+                elif stored_mode is None:
+                    result_diagnostics.setdefault(
+                        "corr_policy_migration", "legacy_fixed_default")
 
     def _set_factor_loadings(self, loadings, *, diagnostics=None):
         if self._corr_mode != "factor":

@@ -261,7 +261,50 @@ def get_copula_constructor(copula):
             },
         )
     if isinstance(copula, StudentCopula):
-        return StudentCopula, {}
+        constructor_R = getattr(copula, "_constructor_R", None)
+        constructor_corr_base = getattr(
+            copula, "_constructor_corr_base", None)
+        if not hasattr(copula, "_constructor_R"):
+            constructor_R = getattr(copula, "_supplied_correlation", None)
+        if not hasattr(copula, "_constructor_corr_base"):
+            constructor_corr_base = getattr(copula, "_corr_base", None)
+        if copula.corr_mode == "factor":
+            constructor_loadings = getattr(
+                copula, "_constructor_factor_loadings", None)
+            if (
+                    constructor_loadings is None
+                    and copula.fit_result is None):
+                constructor_loadings = copula.factor_loadings_
+            return StudentCopula, {
+                "d": copula.d,
+                "corr_mode": "factor",
+                "factor_rank": copula.factor_rank,
+                "factor_loadings": (
+                    None if constructor_loadings is None
+                    else np.array(constructor_loadings, copy=True)),
+                "factor_estimation": copula.factor_estimation,
+                "factor_tile_size": copula._factor_tile_size,
+                "factor_uniqueness_min": copula._factor_uniqueness_min,
+                "factor_joint_max_params": copula._factor_joint_max_params,
+                "factor_joint_penalty": copula._factor_joint_penalty,
+                "factor_joint_condition_max": (
+                    copula._factor_joint_condition_max),
+                "factor_seed": copula._factor_seed,
+                "factor_oversampling": copula._factor_oversampling,
+            }
+        return StudentCopula, {
+            "d": copula.d,
+            "R": (
+                None if constructor_R is None
+                else np.array(constructor_R, copy=True)),
+            "corr_mode": copula.corr_mode,
+            "corr_base": (
+                None if constructor_corr_base is None
+                else np.array(constructor_corr_base, copy=True)),
+            "corr_shrinkage_init": copula._corr_shrinkage_init,
+            "cholesky_d_max": copula._cholesky_d_max,
+            "allow_large_cholesky": copula._allow_large_cholesky,
+        }
 
     kwargs = dict(rotate=copula._rotate)
     transform_type = getattr(copula, "_transform_type", None)
