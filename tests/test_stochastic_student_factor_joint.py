@@ -151,10 +151,38 @@ def test_joint_static_mle_improves_objective_and_stays_compact(n_threads):
     assert result.diagnostics["joint_gradient_inf_norm"] <= (
         result.diagnostics["joint_gradient_gate"])
     assert result.diagnostics["n_threads"] == n_threads
+    assert result.diagnostics["corr_alpha"] is None
+    assert result.model_parameters["corr_alpha"] is None
+    np.testing.assert_array_equal(
+        result.diagnostics["corr_params_raw"],
+        result.model_parameters["corr_params_raw"],
+    )
+    np.testing.assert_array_equal(
+        result.diagnostics["corr_params_raw"], model.corr_params())
+    assert result.diagnostics["corr_params_raw"].shape == (6 * 2 - 1,)
     assert model._R is None
     assert model._L is None
     assert model._L_inv is None
     assert np.all(model.factor_uniqueness_ >= 1e-8)
+
+
+def test_static_mle_owns_training_observations():
+    observations, loadings = _problem(rows=80, d=5, rank=2, seed=9811)
+    expected = observations.copy()
+    model = StochasticStudentCopula(
+        5,
+        corr_mode="factor",
+        factor_rank=2,
+        factor_loadings=loadings,
+        factor_estimation="joint",
+    )
+
+    result = model.fit(observations, method="mle", maxiter=120)
+    observations[0, 0] = 0.999
+
+    assert result.success
+    assert model._last_u is not observations
+    np.testing.assert_array_equal(model._last_u, expected)
 
 
 def test_joint_fit_without_supplied_loadings_uses_tiled_start():
@@ -204,7 +232,7 @@ def test_optimizer_success_is_rejected_when_joint_gradient_is_large(
         return result
 
     monkeypatch.setattr(
-        "pyscarcopula.copula.multivariate.stochastic_student.minimize",
+        "pyscarcopula.strategy.multivariate_mle.minimize",
         fake_minimize,
     )
     model = StochasticStudentCopula(
@@ -218,6 +246,7 @@ def test_optimizer_success_is_rejected_when_joint_gradient_is_large(
     result = model.fit(observations, method="mle", **fit_kwargs)
 
     assert captured_options["ftol"] == pytest.approx(expected_ftol)
+    assert captured_options["maxls"] >= 100
     assert not result.success
     assert "rejected by joint factor gradient gate" in result.message
     assert result.diagnostics["joint_gradient_inf_norm"] > (
@@ -303,7 +332,8 @@ def test_joint_fit_persistence_remains_compact(tmp_path):
         factor_loadings=loadings,
         factor_estimation="joint",
     )
-    result = model.fit(observations, method="mle", maxiter=100)
+    result = model.fit(observations, method="mle", maxiter=180)
+    assert result.success
     target = tmp_path / "joint-factor.json"
 
     model.save(target)
@@ -312,6 +342,15 @@ def test_joint_fit_persistence_remains_compact(tmp_path):
     assert restored.fit_result.correlation_matrix is None
     assert restored.factor_estimation == "joint"
     assert restored._R is None
+    np.testing.assert_array_equal(restored.corr_params(), model.corr_params())
+    np.testing.assert_array_equal(
+        restored.fit_result.diagnostics["corr_params_raw"],
+        result.diagnostics["corr_params_raw"],
+    )
+    np.testing.assert_array_equal(
+        restored.fit_result.model_parameters["corr_params_raw"],
+        result.model_parameters["corr_params_raw"],
+    )
     assert restored.log_likelihood(
         observations, restored.fit_result.copula_param
     ) == pytest.approx(result.log_likelihood, rel=0.0, abs=1e-13)

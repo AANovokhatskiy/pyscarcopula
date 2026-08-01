@@ -451,7 +451,9 @@ def get_strategy_for_result(result: FitResult,
     result_kwargs = {}
     method = result.method.upper()
 
-    for name in ('K', 'grid_range', 'pts_per_sigma', 'scaling'):
+    for name in (
+            'K', 'grid_range', 'grid_method', 'adaptive',
+            'pts_per_sigma', 'scaling'):
         value = getattr(result, name, None)
         if value is not None:
             result_kwargs[name] = value

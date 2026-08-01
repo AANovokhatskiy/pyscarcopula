@@ -110,6 +110,18 @@ void bind_copula(py::module_& m) {
             },
             py::arg("parameter"))
         .def(
+            "gaussian_objective_with_correlation_gradient",
+            [](const scar::StaticCopulaEvaluator& evaluator,
+               const scar::CopulaSpec& copula) {
+                scar::StaticObjectiveResult result;
+                {
+                    py::gil_scoped_release release;
+                    result = evaluator.gaussian_objective(copula, true);
+                }
+                return static_objective_result_to_dict(result);
+            },
+            py::arg("copula"))
+        .def(
             "log_pdf_rows",
             [](const scar::StaticCopulaEvaluator& evaluator,
                double parameter) {

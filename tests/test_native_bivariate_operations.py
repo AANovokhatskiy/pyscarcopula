@@ -210,7 +210,8 @@ def test_direct_family_operations_use_shared_native_adapter(factory, param):
         (JoeCopula, 1.0001),
     ],
 )
-@pytest.mark.parametrize("transform_type", ["softplus", "xtanh"])
+@pytest.mark.parametrize(
+    "transform_type", ["softplus", "xtanh", "exp", "logistic"])
 def test_native_transforms_preserve_python_contract(
         factory, offset, transform_type):
     copula = factory(transform_type=transform_type)
@@ -219,14 +220,119 @@ def test_native_transforms_preserve_python_contract(
         expected_r = _softplus_transform(x, offset)
         expected_d = _softplus_dtransform(x)
         expected_x = _softplus_inv_transform(expected_r, offset)
-    else:
+    elif transform_type == "xtanh":
         expected_r = _xtanh_transform(x, offset)
         expected_d = _xtanh_dtransform(x)
         expected_x = _inv_xtanh_transform(expected_r, offset)
+    elif transform_type == "exp":
+        expected_r = np.exp(x) + offset
+        expected_d = np.exp(x)
+        expected_x = np.log(expected_r - offset)
+    else:
+        probability = 1.0 / (1.0 + np.exp(-x / 2.0))
+        expected_r = offset + 20.0 * probability
+        expected_d = 10.0 * probability * (1.0 - probability)
+        expected_x = 2.0 * (
+            np.log(probability) - np.log1p(-probability))
 
     np.testing.assert_allclose(copula.transform(x), expected_r)
     np.testing.assert_allclose(copula.dtransform(x), expected_d)
     np.testing.assert_allclose(copula.inv_transform(expected_r), expected_x)
+
+
+@pytest.mark.parametrize(
+    "factory,offset",
+    [
+        (ClaytonCopula, 0.0001),
+        (FrankCopula, 0.0001),
+        (GumbelCopula, 1.0001),
+        (JoeCopula, 1.0001),
+    ],
+)
+@pytest.mark.parametrize("transform_type", ["exp", "logistic"])
+def test_bounded_inverse_transforms_reject_parameters_outside_domain(
+        factory, offset, transform_type):
+    copula = factory(transform_type=transform_type)
+    upper = offset + 20.0 if transform_type == "logistic" else None
+
+    with pytest.raises(ValueError, match="inverse-transform parameter"):
+        copula.inv_transform([offset - 1e-12])
+    if upper is not None:
+        with pytest.raises(ValueError, match="inverse-transform parameter"):
+            copula.inv_transform([upper + 1e-12])
+
+
+@pytest.mark.parametrize(
+    "factory,offset",
+    [
+        (ClaytonCopula, 0.0001),
+        (FrankCopula, 0.0001),
+        (GumbelCopula, 1.0001),
+        (JoeCopula, 1.0001),
+    ],
+)
+@pytest.mark.parametrize("transform_type", ["exp", "logistic"])
+def test_bounded_inverse_transforms_define_finite_boundary_initializers(
+        factory, offset, transform_type):
+    copula = factory(transform_type=transform_type)
+    parameters = [offset]
+    if transform_type == "logistic":
+        parameters.append(offset + 20.0)
+
+    latent = copula.inv_transform(parameters)
+    assert np.all(np.isfinite(latent))
+
+
+@pytest.mark.parametrize(
+    "factory",
+    [ClaytonCopula, FrankCopula, GumbelCopula, JoeCopula],
+)
+def test_archimedean_default_transform_remains_softplus(factory):
+    copula = factory()
+    module = _cpp_extension.load()
+    spec = _cpp_copula.make_copula_ops_spec(module, copula)
+
+    assert copula._transform_type == "softplus"
+    assert spec.transform == module.Transform.Softplus
+
+
+@pytest.mark.parametrize(
+    "factory",
+    [ClaytonCopula, FrankCopula, GumbelCopula, JoeCopula],
+)
+@pytest.mark.parametrize(
+    "transform_type", ["softplus", "xtanh", "exp", "logistic"])
+def test_archimedean_fast_path_gradient_uses_selected_transform(
+        factory, transform_type):
+    copula = factory(transform_type=transform_type)
+    observations = np.array([[0.23, 0.71], [0.64, 0.38]])
+    x = np.array([-1.2, 0.4, 1.3])
+    step = 1e-6
+
+    pdf, gradient = copula.pdf_and_grad_on_grid_batch(observations, x)
+    plus = copula.copula_grid_batch(observations, x + step)
+    minus = copula.copula_grid_batch(observations, x - step)
+    finite_difference = (plus - minus) / (2.0 * step)
+
+    assert np.all(np.isfinite(pdf))
+    assert np.all(np.isfinite(gradient))
+    np.testing.assert_allclose(
+        gradient, finite_difference, rtol=2e-5, atol=2e-7)
+
+
+@pytest.mark.parametrize(
+    "factory,expected_upper",
+    [
+        (ClaytonCopula, 20.0001),
+        (FrankCopula, 20.0001),
+        (GumbelCopula, 21.0001),
+        (JoeCopula, 21.0001),
+    ],
+)
+def test_logistic_transform_exposes_bounded_parameter_domain(
+        factory, expected_upper):
+    copula = factory(transform_type="logistic")
+    assert copula.bounds[0][1] == pytest.approx(expected_upper)
 
 
 @pytest.mark.parametrize(

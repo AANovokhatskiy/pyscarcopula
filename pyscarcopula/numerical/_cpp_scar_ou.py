@@ -15,6 +15,7 @@ import numpy as np
 from pyscarcopula._utils import clip_h_function_values
 from pyscarcopula.numerical._scar_ou_config import (
     AutoTMConfig,
+    normalize_grid_method,
     select_auto_backend,
     validate_cpp_config,
 )
@@ -99,6 +100,12 @@ def _config(module, cfg: AutoTMConfig):
     out.spectral_basis_order = int(cfg.basis_order)
     out.spectral_quad_order = 0 if cfg.quad_order is None else int(cfg.quad_order)
     out.n_threads = int(cfg.n_threads)
+    grid_method = normalize_grid_method(cfg.grid_method)
+    out.grid_method = {
+        "auto": module.OuGridMethod.Auto,
+        "dense": module.OuGridMethod.Dense,
+        "sparse": module.OuGridMethod.Sparse,
+    }[grid_method]
     return out
 
 
@@ -615,6 +622,75 @@ def predictive_mean(kappa, mu, nu, u, copula,
     return _vector_result(result)
 
 
+def forward_rosenblatt(kappa, mu, nu, u, copula,
+                       config: AutoTMConfig | None = None) -> np.ndarray:
+    """Return the fully native bivariate SCAR-OU Rosenblatt transform.
+
+    Grid construction, emission evaluation, filtering, h-function mixing,
+    and final Rosenblatt clipping are performed inside C++.
+    """
+    module, params, spec, obs, cfg, method = _inputs(
+        kappa, mu, nu, u, copula, _grid_config(config))
+    if obs.shape[1] != 2:
+        raise ValueError(
+            "SCAR-OU bivariate Rosenblatt transform requires u.shape[1] == 2")
+    result = _call_vector(
+        module.ScarOuEvaluator(), "forward_rosenblatt",
+        method, params, spec, obs, cfg)
+    values = _vector_result(result)
+    expected_size = 2 * len(obs)
+    if values.size != expected_size:
+        raise CppError(
+            "C++ SCAR-OU Rosenblatt result has invalid size: "
+            f"expected {expected_size}, got {values.size}")
+    return values.reshape(len(obs), 2)
+
+
+def gaussian_rosenblatt(kappa, mu, nu, u, copula,
+                        config: AutoTMConfig | None = None) -> np.ndarray:
+    """Return the native dynamic equicorrelation Gaussian Rosenblatt path.
+
+    C++ performs OU grid construction, streaming predictive filtering,
+    prefix-density reweighting, conditional Gaussian CDF evaluation, and
+    final output clipping. No ``T x K`` state-weight matrix crosses the
+    binding.
+    """
+    module, params, spec, obs, cfg, method = _inputs(
+        kappa, mu, nu, u, copula, _grid_config(config))
+    result = _call_vector(
+        module.ScarOuEvaluator(), "gaussian_rosenblatt",
+        method, params, spec, obs, cfg)
+    values = _vector_result(result)
+    expected_size = int(obs.shape[0]) * int(obs.shape[1])
+    if values.size != expected_size:
+        raise CppError(
+            "C++ SCAR-OU Gaussian Rosenblatt result has invalid size: "
+            f"expected {expected_size}, got {values.size}")
+    return values.reshape(obs.shape)
+
+
+def student_rosenblatt(kappa, mu, nu, u, copula,
+                       config: AutoTMConfig | None = None) -> np.ndarray:
+    """Return the native dynamic multivariate Student Rosenblatt path.
+
+    C++ performs Student PPF-cache interpolation, OU filtering,
+    prefix-density reweighting, conditional Student CDF evaluation, and
+    final output clipping without materializing a ``T x K`` weight matrix.
+    """
+    module, params, spec, obs, cfg, method = _inputs(
+        kappa, mu, nu, u, copula, _grid_config(config))
+    result = _call_vector(
+        module.ScarOuEvaluator(), "student_rosenblatt",
+        method, params, spec, obs, cfg)
+    values = _vector_result(result)
+    expected_size = int(obs.shape[0]) * int(obs.shape[1])
+    if values.size != expected_size:
+        raise CppError(
+            "C++ SCAR-OU Student Rosenblatt result has invalid size: "
+            f"expected {expected_size}, got {values.size}")
+    return values.reshape(obs.shape)
+
+
 def mixture_h(kappa, mu, nu, u, copula,
               config: AutoTMConfig | None = None) -> np.ndarray:
     """Return the SCAR-TM mixture h-function from C++ grid filtering.
@@ -688,6 +764,46 @@ def state_distribution(kappa, mu, nu, u, copula,
         np.asarray(result["z_grid"], dtype=np.float64),
         np.asarray(result["prob"], dtype=np.float64),
     )
+
+
+def smoothed_state_distribution(
+        kappa, mu, nu, u, copula,
+        config: AutoTMConfig | None = None
+        ) -> tuple[np.ndarray, np.ndarray]:
+    """Return the native forward-backward posterior on every grid state.
+
+    The returned pair is ``(z_grid, weights)`` with ``weights.shape == (T, K)``.
+    Grid construction, Student emissions, both filtering passes, and posterior
+    normalization are performed in C++.
+    """
+    module, params, spec, obs, cfg, method = _inputs(
+        kappa, mu, nu, u, copula, _grid_config(config))
+    evaluator = module.ScarOuEvaluator()
+    if method == "auto":
+        result = evaluator.smoothed_state_distribution_auto(
+            params, spec, obs, cfg)
+    elif method == "local":
+        result = evaluator.smoothed_state_distribution_local_gh(
+            params, spec, obs, cfg)
+    elif method == "matrix":
+        result = evaluator.smoothed_state_distribution_matrix(
+            params, spec, obs, cfg)
+    else:
+        raise ValueError(f"Unsupported transition_method: {method}")
+
+    status = int(result["status"])
+    if status != 0:
+        raise CppError(
+            "C++ SCAR-OU state smoothing failed: "
+            f"status={status} ({_status_name(status)})"
+        )
+    z_grid = np.asarray(result["z_grid"], dtype=np.float64)
+    weights = np.asarray(result["weights"], dtype=np.float64)
+    if z_grid.ndim != 1 or weights.shape != (len(obs), len(z_grid)):
+        raise CppError(
+            "C++ SCAR-OU state smoothing returned inconsistent dimensions"
+        )
+    return z_grid, weights
 
 
 def _backend_name(value: int) -> str:

@@ -37,6 +37,10 @@ from pyscarcopula.strategy.predict_helpers import (
 )
 
 
+_DEFAULT_REFINEMENT_FTOL = 1e-12
+_DEFAULT_REFINEMENT_MIN_LOGL_GAIN = 1e-3
+
+
 def _automatic_gas_start(copula, u, config, initial_mle_result=None):
     """Build the standard GAS start, reusing a static fit when available."""
     mle_result = initial_mle_result
@@ -433,11 +437,78 @@ class GASStrategy:
             bounds=bounds,
             options=optimizer_options,
         )
+        refinement_diagnostics = None
+        if (
+                ftol is None
+                and float(optimizer_options["ftol"])
+                > _DEFAULT_REFINEMENT_FTOL):
+            refined_options = dict(optimizer_options)
+            refined_options["ftol"] = _DEFAULT_REFINEMENT_FTOL
+            refined = minimize(
+                objective,
+                np.asarray(result.x, dtype=np.float64),
+                method="L-BFGS-B",
+                bounds=bounds,
+                options=refined_options,
+            )
+            first_fun = float(result.fun)
+            refined_fun = float(refined.fun)
+            loglik_gain = first_fun - refined_fun
+            first_success = bool(result.success)
+            accept_refined = bool(
+                np.isfinite(refined_fun)
+                and bool(refined.success)
+                and (
+                    not first_success
+                    or loglik_gain
+                    > _DEFAULT_REFINEMENT_MIN_LOGL_GAIN
+                )
+            )
+            first_nfev = int(getattr(result, "nfev", 0) or 0)
+            refined_nfev = int(getattr(refined, "nfev", 0) or 0)
+            first_message = str(getattr(result, "message", "") or "")
+            refined_message = str(
+                getattr(refined, "message", "") or "")
+            selected = refined if accept_refined else result
+            selected.nfev = first_nfev + refined_nfev
+            selected.message = (
+                f"two-stage selected "
+                f"{'refined' if accept_refined else 'first'}; "
+                f"first: {first_message}; refined: {refined_message}"
+            )
+            result = selected
+            refinement_diagnostics = {
+                "enabled": True,
+                "first_ftol": float(optimizer_options["ftol"]),
+                "refinement_ftol": _DEFAULT_REFINEMENT_FTOL,
+                "minimum_loglik_gain": (
+                    _DEFAULT_REFINEMENT_MIN_LOGL_GAIN),
+                "first_objective": first_fun,
+                "refined_objective": refined_fun,
+                "loglik_gain": loglik_gain,
+                "first_success": first_success,
+                "refined_success": bool(refined.success),
+                "first_nfev": first_nfev,
+                "refined_nfev": refined_nfev,
+                "selected_stage": (
+                    "refined" if accept_refined else "first"),
+            }
         parameter_count = None
         corr_effective_num_params = getattr(
             copula, "_corr_effective_num_params", None)
         if callable(corr_effective_num_params):
             parameter_count = 3 + int(corr_effective_num_params())
+        diagnostics = (
+            {"initialization": {
+                "mle_source": (
+                    "selection_result"
+                    if initial_mle_result is not None
+                    else "strategy_fit")
+            }}
+            if automatic_initialization else {}
+        )
+        if refinement_diagnostics is not None:
+            diagnostics["optimizer_refinement"] = refinement_diagnostics
         return self._build_result(
             copula,
             u,
@@ -447,15 +518,7 @@ class GASStrategy:
             gamma_bound,
             beta_bound,
             parameter_count=parameter_count,
-            diagnostics=(
-                {"initialization": {
-                    "mle_source": (
-                        "selection_result"
-                        if initial_mle_result is not None
-                        else "strategy_fit")
-                }}
-                if automatic_initialization else None
-            ),
+            diagnostics=diagnostics or None,
         )
 
     def log_likelihood(self, copula, u: np.ndarray, result: GASResult) -> float:

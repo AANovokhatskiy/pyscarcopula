@@ -378,6 +378,53 @@ def test_dynamic_failure_falls_back_to_mle_and_is_aggregated(monkeypatch):
     assert len(fitted.fallback_edges) == 1
 
 
+def test_dynamic_failure_policy_keep_retains_unsuccessful_result(monkeypatch):
+    original = vine_fit_module._fit_with_strategy
+
+    def failed_dynamic(copula, u_pair, method, config, fit_kwargs):
+        if str(method).lower() == "gas":
+            return GASResult(
+                log_likelihood=-123.0,
+                method="GAS",
+                copula_name=copula.name,
+                success=False,
+                nfev=17,
+                message="forced failure",
+                params=gas_params(0.0, 0.0, 0.95),
+            )
+        return original(copula, u_pair, method, config, fit_kwargs)
+
+    monkeypatch.setattr(
+        vine_fit_module, "_fit_with_strategy", failed_dynamic)
+    trees = dvine_structure(2).to_trees()
+    fitted = fit_vine_edges(
+        _gaussian_data(rows=100, dimension=2),
+        trees,
+        copulas=_fixed_specs(trees),
+        method="gas",
+        dynamic_failure_policy="keep",
+    )
+
+    pair = fitted.pair_copulas[(0, 0)]
+    assert pair.fit_result.method == "GAS"
+    assert pair.fit_result.success is False
+    assert pair.log_likelihood == -123.0
+    assert pair.fit_diagnostics["fallback_used"] is False
+    assert pair.fit_diagnostics["unsuccessful_dynamic_kept"] is True
+    assert fitted.actual_methods == {"GAS": 1}
+    assert fitted.fallback_count == 0
+
+
+def test_invalid_dynamic_failure_policy_is_rejected():
+    trees = dvine_structure(2).to_trees()
+    with pytest.raises(ValueError, match="dynamic_failure_policy"):
+        fit_vine_edges(
+            _gaussian_data(rows=20, dimension=2),
+            trees,
+            dynamic_failure_policy="invalid",
+        )
+
+
 @pytest.mark.parametrize(
     ("method", "fit_kwargs"),
     [

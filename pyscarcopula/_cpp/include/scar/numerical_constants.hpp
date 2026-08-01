@@ -15,5 +15,9 @@ inline constexpr double kHFunctionEps = 1e-10;
 // Rosenblatt clipping, matrix regularization, and log floors are separate.
 inline constexpr double kPseudoObservationEps = 1e-10;
 
+// Boundary applied to the completed Rosenblatt transform before GoF normal
+// quantiles. This is intentionally wider than the internal h-function guard.
+inline constexpr double kRosenblattOutputEps = 1e-6;
+
 }  // namespace numerical
 }  // namespace scar

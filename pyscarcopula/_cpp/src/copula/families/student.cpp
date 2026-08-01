@@ -1121,6 +1121,41 @@ double student_quantile_value(double p, double df) {
     return student_quantile(p, df);
 }
 
+double student_quantile_for_observation(
+    const scar::CopulaSpec& spec,
+    double p,
+    double df,
+    std::int64_t row_index,
+    int column) {
+
+    const bool use_cache =
+        column >= 0
+        && column < spec.dim
+        && student_ppf_cache_available(spec, row_index)
+        && df >= spec.ppf_nodes.front()
+        && df <= spec.ppf_nodes.back();
+    if (use_cache) {
+        const PpfInterpolation interpolation =
+            make_ppf_interpolation(spec.ppf_nodes, df);
+        return interpolate_ppf_value(
+            spec, interpolation, row_index, column, nullptr);
+    }
+
+    double value = std::numeric_limits<double>::quiet_NaN();
+    student_quantile_for_emission(spec, p, df, value, nullptr);
+    return value;
+}
+
+double student_cdf_value(double value, double df) {
+    if (!std::isfinite(value) || !std::isfinite(df) || df <= 0.0) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    const double cdf = value >= 0.0
+        ? 1.0 - student_survival_positive(value, df)
+        : student_survival_positive(-value, df);
+    return std::clamp(cdf, 0.0, 1.0);
+}
+
 void student_quantile_value_and_derivative(
     double p,
     double df,

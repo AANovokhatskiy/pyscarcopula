@@ -18,6 +18,13 @@ enum class OuBackend : int {
     Matrix = 2,
 };
 
+/// Storage used by the Gaussian grid transition in the matrix backend.
+enum class OuGridMethod : int {
+    Auto = 0,
+    Dense = 1,
+    Sparse = 2,
+};
+
 /// Ornstein-Uhlenbeck parameters `(kappa, mu, nu)`.
 struct OuParams {
     double kappa = 1.0;
@@ -38,6 +45,7 @@ struct OuNumericalConfig {
     int spectral_basis_order = 32;
     int spectral_quad_order = 0;
     int n_threads = 1;
+    OuGridMethod grid_method = OuGridMethod::Auto;
 };
 
 /// Likelihood value together with backend and fallback diagnostics.
@@ -70,6 +78,16 @@ struct StateDistribution {
     int status = 0;
 };
 
+/// Full posterior state distribution for every observation on one OU grid.
+struct SmoothedStateDistribution {
+    std::vector<double> z_grid;
+    std::vector<double> weights;  ///< Row-major `(n_obs, K)` probabilities.
+    std::int64_t n_obs = 0;
+    int K = 0;
+    OuBackend backend = OuBackend::Matrix;
+    int status = 0;
+};
+
 struct TrajectoryLogPdfResult {
     GridValues log_pdf;
     int status = SCAR_OK;
@@ -89,9 +107,11 @@ struct ScarOuGridGradientOperators {
     int K = 0;
     int width = 0;
     bool local = false;
+    bool sparse = false;
     std::vector<double> dense;
     std::vector<double> dense_grad;
     std::vector<int> cols;
+    std::vector<int> indptr;
     std::vector<double> vals;
     std::vector<double> grad_vals;
 };
@@ -286,6 +306,72 @@ public:
         OuBackend& backend,
         int& status) const;
 
+    std::vector<double> forward_rosenblatt_local_gh(
+        const OuParams& params,
+        const CopulaSpec& copula,
+        ObservationView u,
+        const OuNumericalConfig& config,
+        int& status) const;
+
+    std::vector<double> forward_rosenblatt_matrix(
+        const OuParams& params,
+        const CopulaSpec& copula,
+        ObservationView u,
+        const OuNumericalConfig& config,
+        int& status) const;
+
+    std::vector<double> forward_rosenblatt_auto(
+        const OuParams& params,
+        const CopulaSpec& copula,
+        ObservationView u,
+        const OuNumericalConfig& config,
+        OuBackend& backend,
+        int& status) const;
+
+    std::vector<double> gaussian_rosenblatt_local_gh(
+        const OuParams& params,
+        const CopulaSpec& copula,
+        ObservationView u,
+        const OuNumericalConfig& config,
+        int& status) const;
+
+    std::vector<double> gaussian_rosenblatt_matrix(
+        const OuParams& params,
+        const CopulaSpec& copula,
+        ObservationView u,
+        const OuNumericalConfig& config,
+        int& status) const;
+
+    std::vector<double> gaussian_rosenblatt_auto(
+        const OuParams& params,
+        const CopulaSpec& copula,
+        ObservationView u,
+        const OuNumericalConfig& config,
+        OuBackend& backend,
+        int& status) const;
+
+    std::vector<double> student_rosenblatt_local_gh(
+        const OuParams& params,
+        const CopulaSpec& copula,
+        ObservationView u,
+        const OuNumericalConfig& config,
+        int& status) const;
+
+    std::vector<double> student_rosenblatt_matrix(
+        const OuParams& params,
+        const CopulaSpec& copula,
+        ObservationView u,
+        const OuNumericalConfig& config,
+        int& status) const;
+
+    std::vector<double> student_rosenblatt_auto(
+        const OuParams& params,
+        const CopulaSpec& copula,
+        ObservationView u,
+        const OuNumericalConfig& config,
+        OuBackend& backend,
+        int& status) const;
+
     std::vector<double> mixture_h_local_gh(
         const OuParams& params,
         const CopulaSpec& copula,
@@ -350,6 +436,24 @@ public:
         ObservationView u,
         const OuNumericalConfig& config,
         bool horizon_next) const;
+
+    SmoothedStateDistribution smoothed_state_distribution_local_gh(
+        const OuParams& params,
+        const CopulaSpec& copula,
+        ObservationView u,
+        const OuNumericalConfig& config) const;
+
+    SmoothedStateDistribution smoothed_state_distribution_matrix(
+        const OuParams& params,
+        const CopulaSpec& copula,
+        ObservationView u,
+        const OuNumericalConfig& config) const;
+
+    SmoothedStateDistribution smoothed_state_distribution_auto(
+        const OuParams& params,
+        const CopulaSpec& copula,
+        ObservationView u,
+        const OuNumericalConfig& config) const;
 
 private:
     // Reused by prepared evaluators during one fit/objective loop. These

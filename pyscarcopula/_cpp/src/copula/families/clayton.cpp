@@ -56,14 +56,13 @@ double clayton_dlog_pdf_dr_unrotated(double u1, double u2, double r) {
 void clayton_pdf_and_grad_x_unrotated(
     double u1,
     double u2,
-    double x,
+    double r,
+    double d_r_dx,
     double& pdf,
     double& d_pdf_dx) {
 
     const double v1 = std::min(std::max(u1, kPdfEps), 1.0 - kPdfEps);
     const double v2 = std::min(std::max(u2, kPdfEps), 1.0 - kPdfEps);
-    const double r = softplus(x) + kOffset;
-
     const double log_v1 = std::log(v1);
     const double log_v2 = std::log(v2);
     const double a = -r * log_v1;
@@ -94,7 +93,7 @@ void clayton_pdf_and_grad_x_unrotated(
         - log_v2
         + log_s / (r * r)
         + (-2.0 - 1.0 / r) * ds_over_s;
-    d_pdf_dx = pdf * dlog_dr * d_softplus(x);
+    d_pdf_dx = pdf * dlog_dr * d_r_dx;
 }
 
 double clayton_h_unrotated(double u, double v, double r) {

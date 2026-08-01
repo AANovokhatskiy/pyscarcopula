@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyscarcopula"
-version = "0.19.1"
+version = "0.20.0"
 description = "Python library for bivariate, multivariate, vine, and stochastic copula models"
 readme = "README.md"
 license = "MIT"
@@ -41,7 +41,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=7.0", "pandas>=1.5"]
+test = ["pytest>=7.0", "pandas>=1.5", "mypy>=1.10"]
 examples = ["pandas>=1.5", "matplotlib", "jupyter"]
 docs = [
     "mkdocs-material>=9.5",
@@ -72,3 +72,13 @@ markers = [
     "tsan_incompatible: fork-after-threads checks unsupported by ThreadSanitizer",
     "validation: optional distributional validation checks",
 ]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_unused_ignores = true
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["pyscarcopula", "pyscarcopula.*"]
+ignore_errors = true

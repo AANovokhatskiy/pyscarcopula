@@ -25,13 +25,15 @@ class FrankCopula(BivariateCopula):
             raise ValueError("Rotation not supported for Frank copula")
         super().__init__(0)
         self._name = "Frank copula"
-        self._bounds = [(0.0001, np.inf)]
-        if transform_type not in ("xtanh", "softplus"):
+        if transform_type not in ("xtanh", "softplus", "exp", "logistic"):
             raise ValueError(
-                "transform_type must be 'xtanh' or 'softplus', "
+                "transform_type must be one of "
+                "'xtanh', 'softplus', 'exp', or 'logistic', "
                 f"got '{transform_type}'"
             )
         self._transform_type = transform_type
+        upper = 20.0001 if transform_type == "logistic" else np.inf
+        self._bounds = [(0.0001, upper)]
 
     def tau_to_param(self, tau):
         tau = np.atleast_1d(np.asarray(tau, dtype=np.float64))

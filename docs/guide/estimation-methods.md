@@ -1,7 +1,7 @@
 # Estimation Methods
 
-This page describes the bivariate fitting methods exposed by
-`pyscarcopula.api.fit`. Performance controls for these methods are covered in
+This page describes fitting methods exposed by `pyscarcopula.api.fit`,
+including the static multivariate model contract. Performance controls are covered in
 [Performance Tuning](performance.md).
 
 For the compact formulas behind each dynamic model, including the transfer
@@ -15,7 +15,7 @@ combinations fail before optimization starts.
 
 | Method | Key | State | Main use |
 |--------|-----|-------|----------|
-| MLE | `'mle'` | Constant copula parameter | Baseline fit and family selection |
+| MLE | `'mle'` | Static/constant model parameters | Baseline fit, family selection, and static multivariate fitting |
 | GAS | `'gas'` | Observation-driven score recursion | Fast dynamic dependence without latent integration |
 | SCAR-TM-OU | `'scar-tm-ou'` | OU latent state mapped to the copula parameter | Deterministic stochastic-latent likelihood |
 | SCAR-TM-JACOBI | `'scar-tm-jacobi'` | Jacobi diffusion for Kendall's tau | Bounded tau dynamics with deterministic filtering |
@@ -61,8 +61,12 @@ are not stored. A user-provided `alpha0` is reported as `user_provided`.
 
 ## MLE
 
-MLE estimates one constant copula parameter. It is the default baseline for
-family screening and for initializing dynamic methods.
+MLE is the label for a static model. For bivariate scalar families it
+estimates one constant copula parameter and remains the default baseline for
+family screening and dynamic initialization. For multivariate Gaussian and
+Student models, the correlation procedure is an independent policy choice:
+an MLE-labelled result can use supplied, plug-in, or jointly optimized
+correlation.
 
 The optimizer works directly in the natural copula parameter. An explicit
 `alpha0` therefore uses natural units:
@@ -81,7 +85,22 @@ finite-variance threshold. No latent softplus transform is applied inside the
 MLE objective. The softplus transform remains part of dynamic SCAR/GAS models,
 where a latent state drives time-varying degrees of freedom.
 
-For `StochasticStudentCopula(corr_mode='fixed')`, the analytical `df`
+For static `GaussianCopula` and `StudentCopula`:
+
+| `corr_mode` | Optimizer treatment | Intended use |
+|---|---|---|
+| `fixed` | No correlation optimizer coordinates; supplied `R` is fixed, otherwise correlation is a counted plug-in estimate | Default compatibility and fast baseline |
+| `shrinkage` | Joint analytical correlation score for one raw weight | Parsimonious joint static fit |
+| `cholesky` | Joint analytical score for `d*(d-1)/2` raw coordinates | Small dimensions |
+| `factor` | Two-stage compact loadings; static Student also supports joint identified loadings | Large dimensions under a factor assumption |
+
+The result fields `corr_n_params`, `corr_plugin_n_params`, and
+`corr_effective_n_params` separate optimizer coordinates from data-derived
+plug-in parameters. `corr_estimator` records the actual procedure. Thus
+`fixed` alone is not enough to tell whether correlation was supplied or
+estimated.
+
+For static and stochastic Student models with `corr_mode='fixed'`, the analytical `df`
 derivative is passed to L-BFGS-B. Joint `df` and estimated-correlation MLE
 combines that derivative with the Student correlation score, then maps it into
 the

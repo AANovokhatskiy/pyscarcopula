@@ -248,8 +248,13 @@ StaticCopulaEvaluator::StaticCopulaEvaluator(
         return;
     }
     const int dim = expected_dimension(spec_);
-    gaussian_scores_.resize(
-        u_.size() * static_cast<std::size_t>(dim), 0.0);
+    std::size_t score_count = 0;
+    if (!scar_internal::checked_size_mul(
+            u_.size(), static_cast<std::size_t>(dim), score_count)) {
+        status_ = SCAR_INVALID_SIZE;
+        return;
+    }
+    gaussian_scores_.resize(score_count, 0.0);
     for (std::size_t i = 0; i < u_.size(); ++i) {
         for (int j = 0; j < dim; ++j) {
             gaussian_scores_[
@@ -314,10 +319,173 @@ StaticObjectiveResult StaticCopulaEvaluator::objective_value(
     return evaluate_objective(parameter, false, false);
 }
 
+StaticObjectiveResult StaticCopulaEvaluator::gaussian_objective(
+    const CopulaSpec& spec,
+    bool correlation_gradient) const {
+
+    return evaluate_gaussian_objective(spec, correlation_gradient);
+}
+
+StaticObjectiveResult StaticCopulaEvaluator::evaluate_gaussian_objective(
+    const CopulaSpec& spec,
+    bool correlation_gradient_requested) const {
+
+    StaticObjectiveResult out;
+    out.status = status_;
+    out.n_threads_requested = n_threads_;
+    const std::size_t dim = static_cast<std::size_t>(spec.dim);
+    std::size_t square = 0;
+    std::size_t n_corr = 0;
+    std::size_t score_count = 0;
+    if (out.status != SCAR_OK
+        || spec_.family != CopulaFamily::MultivariateGaussian
+        || spec.family != CopulaFamily::MultivariateGaussian
+        || spec.dim != spec_.dim
+        || !scar_internal::valid_student_dimension(spec.dim, square)
+        || !scar_internal::checked_size_mul(n_obs_, dim, score_count)
+        || gaussian_scores_.size() != score_count
+        || !valid_multivariate_gaussian_correlation(spec)
+        || (correlation_gradient_requested
+            && spec.correlation_kind == CorrelationKind::Factor)
+        || (correlation_gradient_requested
+            && !scar_internal::valid_student_correlation_count(
+                spec.dim, n_corr))) {
+        out.status = out.status == SCAR_OK
+            ? SCAR_INVALID_PARAMETER : out.status;
+        out.negative_log_likelihood =
+            std::numeric_limits<double>::infinity();
+        return out;
+    }
+
+    std::vector<double> precision;
+    if (correlation_gradient_requested
+        && !scar_internal::student_precision_matrix(spec, precision)) {
+        out.status = SCAR_INVALID_SIZE;
+        out.negative_log_likelihood =
+            std::numeric_limits<double>::infinity();
+        return out;
+    }
+
+    const bool use_threads = static_parallel_worthwhile(
+        spec, n_obs_, n_threads_);
+    std::vector<StaticObjectiveBlockResult> block_results(
+        static_cast<std::size_t>(use_threads ? n_threads_ : 1));
+    scar_internal::parallel_for_blocks(
+        0,
+        static_cast<std::int64_t>(n_obs_),
+        static_min_rows(spec),
+        use_threads ? n_threads_ : 1,
+        [&](std::int64_t begin,
+            std::int64_t end,
+            std::size_t block) {
+            StaticObjectiveBlockResult& block_result = block_results[block];
+            block_result.ran = true;
+            block_result.correlation_gradient.assign(n_corr, 0.0);
+            std::vector<double> factor_projection;
+            std::vector<double> factor_solved;
+            std::vector<double> whitened(dim, 0.0);
+            std::vector<double> precision_score(dim, 0.0);
+            for (std::int64_t row_index = begin;
+                 row_index < end;
+                 ++row_index) {
+                const double* scores = gaussian_scores_.data()
+                    + static_cast<std::size_t>(row_index) * dim;
+                const double log_pdf = multivariate_gaussian_log_pdf(
+                    spec, scores, factor_projection, factor_solved);
+                if (!std::isfinite(log_pdf)) {
+                    block_result.failure_index = row_index;
+                    return;
+                }
+                block_result.log_likelihood += log_pdf;
+                if (!correlation_gradient_requested) {
+                    continue;
+                }
+                for (int i = 0; i < spec.dim; ++i) {
+                    double value = 0.0;
+                    for (int j = 0; j <= i; ++j) {
+                        value += spec.l_inv[
+                            static_cast<std::size_t>(i) * dim
+                            + static_cast<std::size_t>(j)]
+                            * scores[static_cast<std::size_t>(j)];
+                    }
+                    whitened[static_cast<std::size_t>(i)] = value;
+                }
+                for (int i = 0; i < spec.dim; ++i) {
+                    double value = 0.0;
+                    for (int j = i; j < spec.dim; ++j) {
+                        value += spec.l_inv[
+                            static_cast<std::size_t>(j) * dim
+                            + static_cast<std::size_t>(i)]
+                            * whitened[static_cast<std::size_t>(j)];
+                    }
+                    precision_score[static_cast<std::size_t>(i)] = value;
+                }
+                std::size_t corr_index = 0;
+                for (int i = 1; i < spec.dim; ++i) {
+                    for (int j = 0; j < i; ++j) {
+                        block_result.correlation_gradient[corr_index] +=
+                            precision_score[static_cast<std::size_t>(i)]
+                            * precision_score[static_cast<std::size_t>(j)]
+                            - precision[
+                                static_cast<std::size_t>(i) * dim
+                                + static_cast<std::size_t>(j)];
+                        ++corr_index;
+                    }
+                }
+            }
+        });
+
+    double log_likelihood = 0.0;
+    std::vector<double> correlation_gradient(n_corr, 0.0);
+    for (const StaticObjectiveBlockResult& block : block_results) {
+        if (!block.ran) {
+            continue;
+        }
+        ++out.parallel_blocks;
+        if (block.failure_index >= 0
+            && (out.failure_index < 0
+                || block.failure_index < out.failure_index)) {
+            out.failure_index = block.failure_index;
+        }
+        log_likelihood += block.log_likelihood;
+        for (std::size_t index = 0; index < n_corr; ++index) {
+            correlation_gradient[index] +=
+                block.correlation_gradient[index];
+        }
+    }
+    if (out.failure_index >= 0) {
+        out.status = SCAR_NUMERICAL_FAILURE;
+        out.negative_log_likelihood =
+            std::numeric_limits<double>::infinity();
+        return out;
+    }
+    out.negative_log_likelihood = -log_likelihood;
+    out.negative_gradient = 0.0;
+    out.negative_correlation_gradient.resize(n_corr);
+    for (std::size_t index = 0; index < n_corr; ++index) {
+        out.negative_correlation_gradient[index] =
+            -correlation_gradient[index];
+    }
+    return out;
+}
+
 StaticObjectiveResult StaticCopulaEvaluator::evaluate_objective(
     double parameter,
     bool parameter_gradient_requested,
     bool correlation_gradient_requested) const {
+
+    if (spec_.family == CopulaFamily::MultivariateGaussian) {
+        if (!std::isfinite(parameter)) {
+            StaticObjectiveResult invalid;
+            invalid.status = SCAR_INVALID_PARAMETER;
+            invalid.n_threads_requested = n_threads_;
+            invalid.negative_log_likelihood =
+                std::numeric_limits<double>::infinity();
+            return invalid;
+        }
+        return evaluate_gaussian_objective(
+            spec_, correlation_gradient_requested);
+    }
 
     StaticObjectiveResult out;
     out.status = status_;

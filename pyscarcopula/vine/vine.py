@@ -638,7 +638,9 @@ class VineCopula:
         **kwargs
             Supported structure options include ``truncation_level``,
             ``truncation_fill``, ``threshold``, ``min_edge_logL``,
-            ``transform_type``, ``structure_search`` and ``beam_width``.
+            ``transform_type``, ``structure_search``, ``beam_width`` and
+            ``dynamic_failure_policy`` (``'fallback'``, ``'keep'`` or
+            ``'raise'``).
             Remaining keyword arguments are forwarded to the selected
             pair-copula strategy. Common strategy options include ``alpha0``,
             ``gtol``, ``ftol``, ``maxfun``, ``maxiter``, ``maxls``, ``eps``,
@@ -670,6 +672,8 @@ class VineCopula:
         truncation_level = kwargs.pop('truncation_level', self.truncation_level)
         truncation_fill = kwargs.pop('truncation_fill', self.truncation_fill)
         threshold = kwargs.pop('threshold', self.threshold)
+        dynamic_failure_policy = kwargs.pop(
+            'dynamic_failure_policy', 'fallback')
         min_edge_logL = kwargs.pop('min_edge_logL', self.min_edge_logL)
         transform_type = kwargs.pop('transform_type', self.transform_type)
         structure_search_supplied = 'structure_search' in kwargs
@@ -746,6 +750,7 @@ class VineCopula:
             truncation_level=truncation_level,
             truncation_fill=truncation_fill,
             threshold=threshold,
+            dynamic_failure_policy=dynamic_failure_policy,
             min_edge_logL=min_edge_logL,
             transform_type=transform_type,
             config=config,

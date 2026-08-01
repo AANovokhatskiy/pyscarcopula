@@ -11,6 +11,13 @@ namespace {
 constexpr std::int64_t kEquicorrGridMinRowsPerBlock = 64;
 constexpr std::size_t kEquicorrGridMinCells = 262144;
 
+bool is_archimedean_transform(scar::Transform transform) {
+    return transform == scar::Transform::Softplus
+        || transform == scar::Transform::XTanh
+        || transform == scar::Transform::Exponential
+        || transform == scar::Transform::Logistic;
+}
+
 void clayton_fill_row(
     double u1,
     double u2,
@@ -323,13 +330,11 @@ bool copula_is_supported(const scar::CopulaSpec& spec) {
     if (spec.family == scar::CopulaFamily::Clayton
         || spec.family == scar::CopulaFamily::Gumbel
         || spec.family == scar::CopulaFamily::Joe) {
-        return spec.transform == scar::Transform::Softplus
-            || spec.transform == scar::Transform::XTanh;
+        return is_archimedean_transform(spec.transform);
     }
     if (spec.family == scar::CopulaFamily::Frank) {
         return spec.rotation == scar::Rotation::R0
-            && (spec.transform == scar::Transform::Softplus
-                || spec.transform == scar::Transform::XTanh);
+            && is_archimedean_transform(spec.transform);
     }
     if (spec.family == scar::CopulaFamily::Gaussian) {
         return spec.rotation == scar::Rotation::R0
@@ -389,10 +394,7 @@ bool copula_is_supported(const scar::CopulaSpec& spec) {
 }
 
 bool copula_is_supported_for_ou(const scar::CopulaSpec& spec) {
-    return copula_is_supported(spec)
-        && (spec.transform == scar::Transform::Softplus
-            || spec.transform == scar::Transform::XTanh
-            || spec.transform == scar::Transform::GaussianTanh);
+    return copula_is_supported(spec);
 }
 
 double copula_log_pdf_unrotated(
@@ -467,25 +469,27 @@ void copula_pdf_and_grad_x(
     double& pdf,
     double& d_pdf_dx) {
 
-    if (spec.family == scar::CopulaFamily::Clayton
-        && spec.transform == scar::Transform::Softplus
-        && spec.offset == kOffset) {
-        clayton_pdf_and_grad_x_unrotated(u1, u2, x, pdf, d_pdf_dx);
+    const double r = copula_transform(spec, x);
+    const double d_r_dx = copula_dtransform(spec, x);
+
+    if (spec.family == scar::CopulaFamily::Clayton) {
+        clayton_pdf_and_grad_x_unrotated(
+            u1, u2, r, d_r_dx, pdf, d_pdf_dx);
         return;
     }
-    if (spec.family == scar::CopulaFamily::Gumbel
-        && spec.transform == scar::Transform::Softplus) {
-        gumbel_pdf_and_grad_x_unrotated(u1, u2, x, spec.offset, pdf, d_pdf_dx);
+    if (spec.family == scar::CopulaFamily::Gumbel) {
+        gumbel_pdf_and_grad_x_unrotated(
+            u1, u2, r, d_r_dx, pdf, d_pdf_dx);
         return;
     }
-    if (spec.family == scar::CopulaFamily::Frank
-        && spec.transform == scar::Transform::Softplus) {
-        frank_pdf_and_grad_x_unrotated(u1, u2, x, spec.offset, pdf, d_pdf_dx);
+    if (spec.family == scar::CopulaFamily::Frank) {
+        frank_pdf_and_grad_x_unrotated(
+            u1, u2, r, d_r_dx, pdf, d_pdf_dx);
         return;
     }
-    if (spec.family == scar::CopulaFamily::Joe
-        && spec.transform == scar::Transform::Softplus) {
-        joe_pdf_and_grad_x_unrotated(u1, u2, x, spec.offset, pdf, d_pdf_dx);
+    if (spec.family == scar::CopulaFamily::Joe) {
+        joe_pdf_and_grad_x_unrotated(
+            u1, u2, r, d_r_dx, pdf, d_pdf_dx);
         return;
     }
     if (spec.family == scar::CopulaFamily::Gaussian
@@ -494,12 +498,11 @@ void copula_pdf_and_grad_x(
         return;
     }
 
-    const double r = copula_transform(spec, x);
     const double log_pdf = copula_log_pdf_unrotated(spec, u1, u2, r);
     pdf = std::exp(log_pdf);
     d_pdf_dx = pdf
         * copula_dlog_pdf_dr_unrotated(spec, u1, u2, r)
-        * copula_dtransform(spec, x);
+        * d_r_dx;
 }
 
 void copula_prepare_grid_transform(

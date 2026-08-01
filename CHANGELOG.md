@@ -1,8 +1,79 @@
 # Changelog
 
+## 0.20.0 - 2026-08-01
+
+Version: `0.19.1` -> `0.20.0`
+
+- Define `method="mle"` for `GaussianCopula` and `StudentCopula` as the
+  static-model label and add canonical `fixed`, `shrinkage`, `cholesky`, and
+  `factor` correlation policies. The default `fixed` mode preserves the fast
+  Gaussian-score/Kendall plug-in behaviour; supplied fixed `R` remains fixed.
+  `shrinkage` and `cholesky` use analytical joint correlation gradients, and
+  static Student factor mode supports both two-stage and identified joint
+  loading estimation.
+- Add typed correlation provenance and parameter accounting through
+  `corr_estimator`, optimizer/plugin/effective counts, initialization source,
+  raw parameters, gradient route, and final acceptance diagnostics. AIC/BIC
+  include data-derived plug-in correlation parameters, while a supplied fixed
+  Gaussian correctly reports zero fitted parameters.
+- Preserve static Gaussian/Student correlation policy across JSON,
+  independent-fit, rolling, and bootstrap reconstruction. Restore compact
+  factor operators without dense materialization and persist canonical mode,
+  estimator, initialization, and fitted raw-parameter metadata.
+- Add a native sparse matrix-transition operator for SCAR-TM-OU with bounded
+  band storage, forward and transpose matvecs, dense-parity coverage, and
+  `grid_method='auto'/'dense'/'sparse'` validation up to the supported sparse
+  grid limit.
+- Move production SCAR-TM-OU grid construction, matrix/local filtering,
+  prediction, forward-backward smoothing, and bivariate mixture Rosenblatt
+  evaluation into the mandatory C++ backend. Add fully native dynamic
+  equicorrelation Gaussian and stochastic Student Rosenblatt paths without
+  transferring intermediate `T x K` state weights through Python.
+- Retain `pyscarcopula.numerical.TMGrid` as an independent NumPy/SciPy manual
+  reference API for diagnostics and parity experiments; built-in likelihood,
+  prediction, smoothing, and GoF paths no longer construct it.
+- Add `exp` and bounded `logistic` dynamic parameter links for Clayton,
+  Frank, Gumbel, and Joe copulas across public point operations, GAS, and
+  SCAR-TM-OU, including native transform derivatives and fast-path gradients.
+- Centralize process-count validation, native-thread policy, independent
+  random streams, and worker model reconstruction in a shared internal
+  parallel runtime used by independent fitting and rolling risk metrics.
+- Add an adapter-based, process-parallel parametric-bootstrap GoF runner for
+  bivariate copulas, static `GaussianCopula`/`StudentCopula`, and dynamic
+  `EquicorrGaussianCopula`/`StochasticStudentCopula` MLE, GAS, and SCAR-TM-OU
+  fits. Dense, shrinkage, Cholesky, and supported factor correlation policies
+  are preserved. The `n_jobs` API keeps a sequential default and uses
+  per-replication `SeedSequence` streams, deterministic results across worker
+  counts, isolated model ownership, and protection against nested
+  native-thread oversubscription.
+- Reject non-boolean bootstrap switches, preserve fitted SCAR grid settings
+  during bootstrap simulation and refitting, and evaluate factor stochastic
+  Student Rosenblatt transforms without materializing a dense correlation
+  matrix.
+- Add an automatic second-stage GAS optimization pass when the configured
+  default `ftol` is looser than `1e-12`. A successful refinement can replace
+  a failed first stage; otherwise it requires a material likelihood gain.
+  Preserve explicit per-fit `ftol` and report both stages in fit diagnostics
+  and total evaluations.
+- Preserve canonical fitted variable order when dynamic vine edges filter
+  observations and expose both conditional directions. Generic and legacy
+  C-vine fits now consume the same GAS parameter path for rotated edges.
+- Correct conditional-direction semantics for asymmetric 90/270-degree pair
+  rotations. Public `h_pair`, native GAS directional paths, C-/R-vine
+  recursion, Jacobi parameter grids, and SCAR Rosenblatt paths now evaluate
+  the reverse direction through the transposed rotation (`90 <-> 270`).
+- Add explicit domain validation for the new Archimedean `exp` and `logistic`
+  inverse links while retaining finite initialization values at exact
+  optimizer bounds. Document their formulas, ranges, inverse semantics, and
+  numerical tradeoffs in the mathematical and transform contracts.
+
 ## 0.19.1 - 2026-07-28
 
 Version: `0.19.0` -> `0.19.1`
+
+Commit: `b92f2b7`
+
+Merge PR: #44 (`f619353`, 2026-07-28)
 
 - Route stochastic Student prediction through the fitted strategy so MLE,
   GAS, and SCAR models share the documented `current`/`next` timing,

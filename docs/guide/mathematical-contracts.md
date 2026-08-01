@@ -56,8 +56,10 @@ SCAR filters.
 The public dynamic models use an unconstrained state and map it into the
 copula parameter domain with smooth links:
 
-- positive-parameter families use a shifted softplus link,
-  $\Psi(x)=a+\log(1+\exp(x))$;
+- positive-parameter families use a selectable shifted link. The default is
+  softplus, $\Psi(x)=a+\log(1+\exp(x))$; `exp` uses
+  $\Psi(x)=a+\exp(x)$; and `logistic` uses
+  $\Psi(x)=a+20\,\sigma(x/2)$ with range $(a,a+20)$;
 - bivariate Gaussian dependence uses a bounded tanh link;
 - equicorrelation Gaussian dependence uses a dimension-aware bounded link
   into $(-1/(d-1),1)$;
@@ -68,6 +70,9 @@ copula parameter domain with smooth links:
 Some bivariate copulas can also use the `xtanh` transform. It is a valid
 forward transform for fitting, but its positive-branch inverse is only an
 initialization convention because the map is not globally one-to-one.
+For the `exp` and `logistic` links, inverse transforms reject parameters
+outside their mathematical ranges. Exact range endpoints use finite capped
+latent values solely as an optimizer-initialization convention.
 
 Pseudo-observations are clipped away from 0 and 1 before Gaussian or Student
 quantiles are evaluated. That is a numerical safety operation, not a change in
@@ -360,6 +365,51 @@ Stationary shapes below one are reported by
 `stationary_boundary_singular=True`. This is a diagnostic, not an accuracy
 guarantee: extreme asymmetric boundary-singular laws can retain material
 reflection bias as the number of substeps grows.
+
+## Static Elliptical Correlation Estimation
+
+For static `GaussianCopula` and `StudentCopula`, `method="mle"` identifies the
+static model/result contract. Correlation treatment is selected separately by
+`corr_mode`; therefore an MLE-labelled result may contain a supplied or
+plug-in correlation that was not optimized jointly with the other model
+parameters.
+
+In `fixed` mode, a supplied $R$ is evaluated unchanged. If $R$ is omitted,
+Gaussian estimates $R$ from normal scores, while Student maps pairwise Kendall
+statistics by
+
+$$R_{ij}=\sin\left(\frac{\pi\tau_{ij}}{2}\right)$$
+
+and projects to a valid SPD correlation when necessary. These plug-in
+correlations are counted in AIC/BIC because they are estimated from the same
+sample, even though they are absent from the optimizer vector.
+
+`shrinkage` uses
+
+$$R(\alpha)=\alpha R_0 + (1-\alpha)I,\qquad 0<\alpha<1,$$
+
+and jointly optimizes one raw logit parameter. `cholesky` maps
+$d(d-1)/2$ unconstrained raw values to a full SPD correlation and jointly
+optimizes them. The latter is intended for small $d$. Factor mode represents
+
+$$R=D+BB^\top,\qquad D_{ii}=1-\lVert B_{i\cdot}\rVert^2,$$
+
+with identifiable count $dk-k(k-1)/2$. Two-stage factor fits count the
+estimated loadings as plug-in parameters. Joint static Student factor fitting
+optimizes `df` and identified loadings together; Gaussian factor fitting is
+two-stage.
+
+Consequently, with $q=d(d-1)/2$ and
+$f=dk-k(k-1)/2$, the effective counts are:
+
+| Correlation policy | Gaussian | Student |
+|---|---:|---:|
+| supplied `fixed` | $0$ | $1$ |
+| plug-in `fixed` | $q$ | $1+q$ |
+| `shrinkage` | $1$ | $2$ |
+| `cholesky` | $q$ | $1+q$ |
+| factor two-stage | $f$ | $1+f$ |
+| factor joint | unavailable | $1+f$ |
 
 ## Multivariate Scalar-State Models
 

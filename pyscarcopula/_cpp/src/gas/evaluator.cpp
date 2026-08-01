@@ -66,7 +66,9 @@ int validate_copula(const CopulaSpec& copula) {
     if (copula.family != CopulaFamily::Independent
         && copula.family != CopulaFamily::Gaussian
         && copula.transform != Transform::Softplus
-        && copula.transform != Transform::XTanh) {
+        && copula.transform != Transform::XTanh
+        && copula.transform != Transform::Exponential
+        && copula.transform != Transform::Logistic) {
         return SCAR_INVALID_TRANSFORM;
     }
     if (!scar_internal::copula_is_supported(copula)) {
@@ -637,10 +639,12 @@ GasPathResult GasEvaluator::h_path(
     }
 
     out.values.resize(u.n_obs);
+    const CopulaSpec transposed_copula =
+        scar_internal::transposed_copula_spec(copula);
     for (std::size_t t = 0; t < u.n_obs; ++t) {
         const double* row = u.values + 2 * t;
         const double value = scar_internal::copula_h_rotated(
-            copula, row[1], row[0], filtered.r_path[t]);
+            transposed_copula, row[1], row[0], filtered.r_path[t]);
         if (!std::isfinite(value)) {
             set_failure(
                 out, SCAR_NUMERICAL_FAILURE,

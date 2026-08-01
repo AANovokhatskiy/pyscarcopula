@@ -43,15 +43,13 @@ double frank_dlog_pdf_dr_unrotated(double u1, double u2, double r) {
 void frank_pdf_and_grad_x_unrotated(
     double u1,
     double u2,
-    double x,
-    double offset,
+    double r,
+    double d_r_dx,
     double& pdf,
     double& d_pdf_dx) {
 
     const double v1 = std::min(std::max(u1, kPdfEps), 1.0 - kPdfEps);
     const double v2 = std::min(std::max(u2, kPdfEps), 1.0 - kPdfEps);
-    const double r = softplus(x) + offset;
-
     const double a = r * v1;
     const double b = r * v2;
     const double log_num = std::log(r) + log1mexp(r) - a - b;
@@ -73,7 +71,7 @@ void frank_pdf_and_grad_x_unrotated(
         + emr / (1.0 - emr)
         - (v1 + v2)
         - 2.0 * (dA + dB) / D;
-    d_pdf_dx = pdf * dlog_dr * d_softplus(x);
+    d_pdf_dx = pdf * dlog_dr * d_r_dx;
 }
 
 double frank_h_unrotated(double u, double v, double r) {

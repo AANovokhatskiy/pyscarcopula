@@ -9,10 +9,65 @@ infrastructure works unchanged.
 
 | Model | Class | Latent parameter | Description |
 |-------|-------|-----------------|-------------|
+| Static Gaussian | `GaussianCopula` | None | Static Gaussian dependence with configurable correlation policy |
+| Static Student-t | `StudentCopula` | None | Static Student dependence with fitted `df` and configurable correlation policy |
 | Equicorrelation Gaussian | `EquicorrGaussianCopula` | $\rho(t)$ | Single dynamic correlation for d assets |
 | Stochastic Student-t | `StochasticStudentCopula` | $\nu(t)$ | Fixed correlation, OU-driven degrees of freedom |
 
-## Mathematical Contract
+## Static Gaussian and Student Models
+
+For `GaussianCopula` and `StudentCopula`, `method="mle"` denotes a static
+model. It is not a promise that correlation was optimized jointly. Select the
+correlation procedure with `corr_mode` and inspect `corr_estimator` in the fit
+result for the procedure that actually ran.
+
+```python
+from pyscarcopula import GaussianCopula, StudentCopula
+
+# Fast compatibility path: estimate a plug-in correlation from u.
+gaussian = GaussianCopula(corr_mode="fixed")
+student = StudentCopula(corr_mode="fixed")
+
+gaussian_result = gaussian.fit(u, method="mle")
+student_result = student.fit(u, method="mle")
+
+# Joint static correlation optimization.
+gaussian_joint = GaussianCopula(corr_mode="cholesky")
+student_joint = StudentCopula(corr_mode="shrinkage")
+```
+
+The canonical modes are:
+
+| Mode | Meaning |
+|---|---|
+| `fixed` | Keep supplied `R`, or estimate a Gaussian-score/Kendall plug-in correlation when `R` is absent |
+| `shrinkage` | Jointly estimate one shrinkage weight around `corr_base`, supplied `R`, or a plug-in start |
+| `cholesky` | Jointly estimate a full SPD correlation; intended for small `d` |
+| `factor` | Store `O(d*k + k^2)` compact state; two-stage by default, with joint loadings available for static Student |
+
+The default `fixed` mode preserves the previous quick behaviour. A plug-in
+correlation is counted in AIC/BIC even though it is absent from the optimizer
+vector. Conversely, constructor-supplied fixed `R` is not counted: a Gaussian
+result then has `n_params == 0`, while Student still estimates one `df`
+parameter.
+
+Full Cholesky uses `d*(d-1)/2` correlation parameters and is guarded by
+`cholesky_d_max=10` unless `allow_large_cholesky=True` is chosen explicitly.
+For large dimensions, use factor mode when a low-rank correlation is a valid
+model assumption:
+
+```python
+factor_student = StudentCopula(
+    d=u.shape[1],
+    corr_mode="factor",
+    factor_rank=min(8, u.shape[1] - 1),
+    factor_estimation="two-stage",  # or "joint" for static Student
+)
+factor_result = factor_student.fit(u, method="mle")
+assert factor_result.correlation_matrix is None
+```
+
+## Dynamic Multivariate Mathematical Contract
 
 The dynamic multivariate models are copula emission models with one
 time-varying scalar parameter. For pseudo-observations
@@ -305,8 +360,8 @@ parameters = result.model_parameters
 print(result.log_likelihood, result.n_params, result.aic, result.bic)
 ```
 
-The result stores model parameters, observation count, an explicit correlation
-matrix, optimizer status, diagnostics, and the parameter count used by AIC/BIC.
+The result stores model parameters, observation count, correlation state,
+optimizer status, diagnostics, and the parameter count used by AIC/BIC.
 For `GaussianCopula(corr_mode="factor")` and factor Student models, the result
 intentionally stores `correlation_matrix=None` and keeps compact loadings and
 uniqueness in `model_parameters`.
@@ -327,12 +382,38 @@ time-varying parameter path:
 from pyscarcopula.stattests import gof_test
 gof = gof_test(cop, u, to_pobs=False)
 
+# Parametric-bootstrap calibration
+gof_bootstrap = gof_test(
+    cop,
+    u,
+    to_pobs=False,
+    bootstrap=True,
+    n_bootstrap=499,
+    n_jobs=-1,
+    rng=20260730,
+)
+
 # Sampling (fixed parameter)
 samples = cop.sample(n=10000)
 
 # Prediction (conditional on data)
 pred = cop.predict(n=10000)
 ```
+
+Parametric-bootstrap calibration supports static Gaussian and Student models
+in dense and compact factor modes,
+plus `EquicorrGaussianCopula` and `StochasticStudentCopula` fitted by MLE, GAS,
+or SCAR-TM-OU. Stochastic Student correlation policy is retained for fixed,
+shrinkage, Cholesky, and supported two-stage factor modes. Factor Rosenblatt
+statistics use rank-dimensional conditioning with `O(T*k + k^2)` workspace
+and do not materialize a dense correlation matrix for MLE, GAS, or
+SCAR-TM-OU. Replicas use independent process-owned models and random streams.
+With a fixed seed, bootstrap
+statistics are invariant to `n_jobs`; parallel workers default to one native
+thread each. For dynamic stochastic Student fits with an estimated
+correlation, call `gof_test` on the fitted model: a standalone GAS/SCAR result
+does not contain enough correlation state to reconstruct an unfitted
+prototype.
 
 Dynamic scalar-parameter models additionally expose `predictive_mean`. For
 example, after fitting an `EquicorrGaussianCopula`:
@@ -415,3 +496,9 @@ normal-score estimation is tiled and does not build a `d*d` covariance.
 Likelihood and sampling remain `O(d*k)` per row; conditional generation uses
 only a `k*k` factor system. The factor Rosenblatt transform used by
 `gof_test` keeps `O(T*k + k^2)` workspace.
+
+Static factor Student uses the same compact persistence, worker
+reconstruction, sampling, conditional sampling, and Rosenblatt contracts.
+`factor_estimation="joint"` additionally optimizes `df` and identified
+loadings together; the two-stage mode counts its data-derived loadings as
+plug-in parameters.

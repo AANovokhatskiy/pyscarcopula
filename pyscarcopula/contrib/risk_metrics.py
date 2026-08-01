@@ -26,11 +26,14 @@ from scipy.optimize import minimize, Bounds
 from tqdm import tqdm
 from typing import Literal
 
-from pyscarcopula._utils import pobs
-from pyscarcopula.contrib.parallel_fit import (
-    _resolve_parallelism,
-    _with_n_threads,
+from pyscarcopula._parallel import (
+    coerce_seed_sequence as _coerce_seed_sequence,
+    get_copula_constructor as _get_copula_constructor,
+    resolve_parallelism as _resolve_parallelism,
+    spawn_seed_sequences as _spawn_seed_sequences,
+    with_n_threads as _with_n_threads,
 )
+from pyscarcopula._utils import pobs
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -170,149 +173,6 @@ def _predict_copula(copula, uk, N_mc, rng=None, **kwargs):
         # Bivariate copulas and vine runtimes: pass u explicitly.
         return copula.predict(
             N_mc, u=uk, rng=rng, **_risk_predict_kwargs(copula, kwargs))
-
-
-def _coerce_seed_sequence(rng=None):
-    """Create a SeedSequence root for independent per-window RNGs."""
-    if isinstance(rng, np.random.SeedSequence):
-        return rng
-    if isinstance(rng, np.random.Generator):
-        return np.random.SeedSequence(rng.bit_generator.random_raw(4))
-    return np.random.SeedSequence(rng)
-
-
-# ══════════════════════════════════════════════════════════════════
-# Copula constructor for multiprocessing
-# ══════════════════════════════════════════════════════════════════
-
-def _get_copula_constructor(copula):
-    """Extract copula class and kwargs for reconstruction in workers."""
-    from pyscarcopula.vine.cvine import CVineCopula
-    from pyscarcopula.vine.vine import VineCopula
-    from pyscarcopula.copula.multivariate import (
-        EquicorrGaussianCopula,
-        GaussianCopula,
-        StochasticStudentCopula,
-        StudentCopula,
-    )
-
-    if isinstance(copula, CVineCopula):
-        return (CVineCopula,
-                dict(candidates=copula.candidates,
-                     allow_rotations=copula.allow_rotations,
-                     criterion=copula.criterion))
-    elif isinstance(copula, VineCopula):
-        structure = (
-            copula.structure
-            if copula.structure_source == "fixed"
-            else None
-        )
-        return (VineCopula,
-                dict(candidates=copula.candidates,
-                     allow_rotations=copula.allow_rotations,
-                     criterion=copula.criterion,
-                     truncation_level=copula.truncation_level,
-                     truncation_fill=copula.truncation_fill,
-                     threshold=copula.threshold,
-                     min_edge_logL=copula.min_edge_logL,
-                     transform_type=copula.transform_type,
-                     structure=structure,
-                     vine_type=copula.vine_type))
-    elif isinstance(copula, StochasticStudentCopula):
-        constructor_R = getattr(copula, "_constructor_R", None)
-        constructor_corr_base = getattr(
-            copula, "_constructor_corr_base", None)
-        if not hasattr(copula, "_constructor_R"):
-            if copula.corr_mode == "fixed" or copula.fit_result is None:
-                constructor_R = copula.R
-        if not hasattr(copula, "_constructor_corr_base"):
-            preprocessing = getattr(
-                copula, "_corr_base_preprocessing", None)
-            if (
-                    copula.fit_result is None
-                    or getattr(preprocessing, "source", None) == "corr_base"):
-                constructor_corr_base = getattr(copula, "_corr_base", None)
-        kwargs = dict(
-            d=copula.d,
-            R=(
-                None if constructor_R is None
-                else np.array(constructor_R, copy=True)),
-            corr_mode=copula.corr_mode,
-            corr_base=(
-                None if constructor_corr_base is None
-                else np.array(constructor_corr_base, copy=True)),
-            corr_shrinkage_init=copula._corr_shrinkage_init,
-            cholesky_d_max=copula._cholesky_d_max,
-            allow_large_cholesky=copula._allow_large_cholesky,
-        )
-        # Keep the worker constructor ready for the compact factor mode.  The
-        # branch is unreachable until that mode is enabled by the model, but
-        # prevents future rolling workers from silently losing its structural
-        # policy when it is introduced.
-        if copula.corr_mode == "factor":
-            constructor_loadings = getattr(
-                copula, "_constructor_factor_loadings", None)
-            if (
-                    constructor_loadings is None
-                    and copula.fit_result is None):
-                constructor_loadings = copula.factor_loadings_
-            kwargs.pop("R", None)
-            kwargs.pop("corr_base", None)
-            kwargs.update(
-                factor_rank=copula.factor_rank,
-                factor_loadings=(
-                    None
-                    if constructor_loadings is None
-                    else np.array(constructor_loadings, copy=True)),
-                factor_estimation=copula.factor_estimation,
-                factor_tile_size=copula.factor_tile_size,
-                factor_uniqueness_min=copula.factor_uniqueness_min,
-                factor_joint_max_params=copula.factor_joint_max_params,
-                factor_joint_penalty=copula.factor_joint_penalty,
-                factor_joint_condition_max=
-                    copula.factor_joint_condition_max,
-                factor_seed=copula._factor_seed,
-                factor_oversampling=copula._factor_oversampling,
-            )
-        return (StochasticStudentCopula, kwargs)
-    elif isinstance(copula, EquicorrGaussianCopula):
-        return (EquicorrGaussianCopula, dict(d=copula.d))
-    elif isinstance(copula, GaussianCopula):
-        if getattr(copula, "corr_mode", "dense") == "factor":
-            constructor_loadings = getattr(
-                copula, "_constructor_factor_loadings", None)
-            if (
-                    constructor_loadings is None
-                    and copula.fit_result is None):
-                constructor_loadings = copula.factor_loadings_
-            return (
-                GaussianCopula,
-                {
-                    "d": copula.d,
-                    "corr_mode": "factor",
-                    "factor_rank": copula.factor_rank,
-                    "factor_loadings": (
-                        None
-                        if constructor_loadings is None
-                        else np.array(
-                            constructor_loadings, copy=True)),
-                    "factor_tile_size": copula.factor_tile_size,
-                    "factor_uniqueness_min":
-                        copula._factor_uniqueness_min,
-                    "factor_seed": copula._factor_seed,
-                    "factor_oversampling":
-                        copula._factor_oversampling,
-                },
-            )
-        return (GaussianCopula, {})
-    elif isinstance(copula, StudentCopula):
-        return (StudentCopula, {})
-    else:
-        kwargs = dict(rotate=copula._rotate)
-        transform_type = getattr(copula, "_transform_type", None)
-        if transform_type is not None:
-            kwargs["transform_type"] = transform_type
-        return (type(copula), kwargs)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -685,7 +545,8 @@ def risk_metrics(copula, data, window_len,
             print(
                 f"gamma={g}, N_mc={n}, method={method}, "
                 f"n_jobs={resolved_jobs}, n_threads={resolved_threads}")
-            window_seed_sequences = root_seed_seq.spawn(n_windows)
+            window_seed_sequences = _spawn_seed_sequences(
+                root_seed_seq, n_windows)
             if optimize_portfolio:
                 var, cvar, w = _calculate_cvar_optimal(
                     copula, data, method, marginal_model,

@@ -20,7 +20,7 @@ DOC_FILES = (
 )
 MIGRATION_NOTES = ROOT / "docs/release-notes/native-core-migration.md"
 WORKFLOW_FILES = sorted((ROOT / ".github/workflows").glob("*.yml"))
-# OPTIONAL_DOCUMENTATION_MODULES = {"pyvinecopulib"}
+OPTIONAL_DOCUMENTATION_MODULES = {"pyvinecopulib"}
 
 
 def _python_blocks(path):
@@ -63,8 +63,8 @@ def test_documented_python_blocks_compile_import_and_bind_public_calls():
                     mode="exec",
                 ), namespace)
             except ModuleNotFoundError as exc:
-                # if exc.name in OPTIONAL_DOCUMENTATION_MODULES:
-                #     continue
+                if exc.name in OPTIONAL_DOCUMENTATION_MODULES:
+                    continue
                 raise
 
             for call in (
@@ -154,6 +154,41 @@ def test_workflows_reference_existing_test_files():
 
 def test_removed_experimental_namespace_is_physically_absent():
     assert not (ROOT / "pyscarcopula/copula/experimental").exists()
+
+
+def test_tmgrid_remains_an_independent_manual_reference_api():
+    from pyscarcopula.numerical import TMGrid
+    from pyscarcopula.numerical.tm_grid import TMGrid as DirectTMGrid
+
+    assert TMGrid is DirectTMGrid
+
+    source = (
+        ROOT / "pyscarcopula/numerical/tm_grid.py"
+    ).read_text(encoding="utf-8")
+    assert "_cpp_extension" not in source
+    assert "_cpp_scar_ou" not in source
+    assert "deprecated" not in source.lower()
+
+    forbidden_import = "pyscarcopula.numerical.tm_grid import TMGrid"
+    numerical_root = ROOT / "pyscarcopula"
+    for path in numerical_root.rglob("*.py"):
+        relative = path.relative_to(ROOT).as_posix()
+        if relative in {
+                "pyscarcopula/numerical/tm_grid.py",
+                "pyscarcopula/numerical/__init__.py"}:
+            continue
+        assert forbidden_import not in path.read_text(encoding="utf-8"), (
+            f"production module imports TMGrid: {relative}"
+        )
+
+    docs = (
+        ROOT / "docs/guide/numerical-backends.md"
+    ).read_text(encoding="utf-8")
+    assert "Manual Python reference grid" in docs
+    assert (
+        "not a wrapper around the compiled SCAR evaluator"
+        in " ".join(docs.split())
+    )
 
 
 def test_public_docs_exclude_development_plans_and_phase_reports():
@@ -285,6 +320,29 @@ def test_static_multivariate_docs_do_not_claim_predictive_mean():
 
     assert "cop = GaussianCopula()" in static_example
     assert "cop.predictive_mean(" not in static_example
+
+
+def test_static_correlation_policy_is_documented_consistently():
+    targets = (
+        ROOT / "ARCHITECTURE.md",
+        ROOT / "docs/guide/mathematical-contracts.md",
+        ROOT / "docs/guide/multivariate_models.md",
+        ROOT / "docs/guide/estimation-methods.md",
+        ROOT / "docs/guide/numerical-backends.md",
+        ROOT / "docs/guide/performance.md",
+        ROOT / "docs/api/multivariate_models.md",
+    )
+    combined = "\n".join(
+        path.read_text(encoding="utf-8") for path in targets)
+
+    for term in (
+            "corr_mode", "corr_estimator", "fixed", "shrinkage",
+            "cholesky", "factor", "plug-in"):
+        assert term in combined
+    assert "MLE is the label for a static model" in combined
+    assert "MLE estimates one constant copula parameter." not in combined
+    assert "corr_mode=\"fixed\"" in combined
+    assert "corr_mode=\"dense\"" not in combined
 
 
 def test_documented_dynamic_predictive_mean_examples_execute():

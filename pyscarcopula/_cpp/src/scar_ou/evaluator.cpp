@@ -345,4 +345,49 @@ StateDistribution ScarOuEvaluator::state_distribution_auto(
     return state_distribution_local_gh(params, copula, u, config, horizon_next);
 }
 
+SmoothedStateDistribution
+ScarOuEvaluator::smoothed_state_distribution_auto(
+    const OuParams& params,
+    const CopulaSpec& copula,
+    ObservationView u,
+    const OuNumericalConfig& config) const {
+
+    auto invalid = [](int status) {
+        SmoothedStateDistribution out;
+        out.backend = OuBackend::Matrix;
+        out.status = status;
+        return out;
+    };
+
+    scar_internal::OuGrid grid;
+    if (!supported_ou_copula(copula)) {
+        return invalid(SCAR_INVALID_TRANSFORM);
+    }
+    if (!valid_ou_params(params) || !finite_config_doubles(config)) {
+        return invalid(SCAR_INVALID_PARAMETER);
+    }
+    if (u.size() < 2
+        || !scar_internal::build_ou_grid(
+            params.kappa,
+            params.mu,
+            params.nu,
+            static_cast<std::int64_t>(u.size()),
+            config.K,
+            config.grid_range,
+            config.adaptive,
+            config.pts_per_sigma,
+            config.max_K,
+            grid)) {
+        return invalid(SCAR_INVALID_SIZE);
+    }
+    const int selected = scar_internal::select_grid_transition_backend(
+        grid, config.r_gh);
+    if (selected == 0) {
+        return smoothed_state_distribution_matrix(
+            params, copula, u, config);
+    }
+    return smoothed_state_distribution_local_gh(
+        params, copula, u, config);
+}
+
 }  // namespace scar

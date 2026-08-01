@@ -26,5 +26,20 @@ from pyscarcopula.strategy._base import (
     register_strategy,
     list_methods,
 )
+from pyscarcopula.strategy.multivariate_mle import (
+    StaticMLEEvaluation,
+    StaticMLEOutcome,
+    StaticMLEProblem,
+    run_static_multivariate_mle,
+)
 
-__all__ = ['FitStrategy', 'get_strategy', 'register_strategy', 'list_methods']
+__all__ = [
+    'FitStrategy',
+    'get_strategy',
+    'register_strategy',
+    'list_methods',
+    'StaticMLEEvaluation',
+    'StaticMLEOutcome',
+    'StaticMLEProblem',
+    'run_static_multivariate_mle',
+]

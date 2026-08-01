@@ -28,6 +28,9 @@ from pyscarcopula.vine.rvine import RVineCopula
 
 from pyscarcopula.copula.elliptical import BivariateGaussianCopula
 from pyscarcopula.copula.multivariate import (
+    CorrelationEstimator,
+    CorrelationMode,
+    CorrelationPolicy,
     EquicorrPreparedData,
     EquicorrGaussianCopula,
     FactorCorrelation,
@@ -35,6 +38,8 @@ from pyscarcopula.copula.multivariate import (
     FactorStudentEvaluator,
     FactorStudentGridEvaluation,
     FactorStudentJointEvaluation,
+    FactorEstimation,
+    FloatArray,
     GaussianCopula,
     PreparedFactorCorrelation,
     StochasticStudentCopula,
@@ -72,6 +77,11 @@ __all__ = (
     'FactorStudentJointEvaluation',
     'PreparedFactorCorrelation',
     'StochasticStudentCopula',
+    'CorrelationMode',
+    'CorrelationEstimator',
+    'CorrelationPolicy',
+    'FactorEstimation',
+    'FloatArray',
     # Base hierarchy and capability contract
     'CopulaBase', 'BivariateCopula', 'MultivariateCopula',
     'CopulaCapabilities',

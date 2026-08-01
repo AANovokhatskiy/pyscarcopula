@@ -45,11 +45,16 @@ bool valid_ou_params(const OuParams& params) {
 }
 
 bool finite_config_doubles(const OuNumericalConfig& config) {
+    const bool valid_grid_method =
+        config.grid_method == OuGridMethod::Auto
+        || config.grid_method == OuGridMethod::Dense
+        || config.grid_method == OuGridMethod::Sparse;
     return std::isfinite(config.grid_range)
         && std::isfinite(config.r_gh)
         && std::isfinite(config.auto_small_kdt)
         && config.n_threads >= 1
-        && config.n_threads <= 256;
+        && config.n_threads <= 256
+        && valid_grid_method;
 }
 
 bool valid_grid_config(
@@ -62,6 +67,7 @@ bool valid_grid_config(
         return false;
     }
     if (backend == OuBackend::Matrix
+        && config.grid_method == OuGridMethod::Dense
         && K > scar_internal::kMaxDenseGridSize) {
         return false;
     }
@@ -72,6 +78,7 @@ bool valid_grid_config(
             return false;
         }
         if (backend == OuBackend::Matrix
+            && config.grid_method == OuGridMethod::Dense
             && max_K > scar_internal::kMaxDenseGridSize) {
             return false;
         }

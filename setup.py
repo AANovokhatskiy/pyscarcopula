@@ -89,6 +89,8 @@ SCAR_CORE_SOURCES = [
     "scar_ou/likelihood.cpp",
     "scar_ou/gradient.cpp",
     "scar_ou/prediction.cpp",
+    "scar_ou/gaussian_rosenblatt.cpp",
+    "scar_ou/student_rosenblatt.cpp",
     "scar_ou/state_distribution.cpp",
     "scar_ou/evaluator.cpp",
     "scar_ou/prepared.cpp",

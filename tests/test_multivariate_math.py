@@ -41,7 +41,8 @@ from pyscarcopula.copula.multivariate.stochastic_student import (
     StochasticStudentCopula,
 )
 from pyscarcopula.numerical.tm_grid import TMGrid
-from pyscarcopula.numerical import _cpp_gas
+from pyscarcopula.numerical import _cpp_gas, _cpp_scar_ou
+from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
 from pyscarcopula.numerical.gas_filter import gas_filter
 from pyscarcopula.stattests import (
     equicorr_rosenblatt_transform,
@@ -84,13 +85,26 @@ def _R():
     )
 
 
-def _materialized_equicorr_scar_rosenblatt(copula, u, fit_result, K, grid_range):
+def _materialized_equicorr_scar_rosenblatt(
+        copula, u, fit_result, K, grid_range, config=None):
     eps = 1e-10
     u_c = np.clip(u, eps, 1.0 - eps)
     x_norm = norm.ppf(u_c)
     T, d = u.shape
     kappa, mu, nu = fit_result.params.values
-    grid = TMGrid(kappa, mu, nu, T, K, grid_range)
+    grid_kwargs = {}
+    if config is not None:
+        grid_kwargs = {
+            "grid_method": config.grid_method,
+            "adaptive": config.adaptive,
+            "pts_per_sigma": config.pts_per_sigma,
+            "transition_method": config.transition_method,
+            "max_K": config.max_K,
+            "r_gh": config.r_gh,
+            "gh_order": config.gh_order,
+        }
+    grid = TMGrid(
+        kappa, mu, nu, T, K, grid_range, **grid_kwargs)
     x_grid = grid.z + grid.mu
     rho_grid = copula.transform(x_grid)
     fi_grid = grid.copula_grid(u, copula)
@@ -183,11 +197,24 @@ def _student_leading_density(x_prefix_grid, df_grid, R_inv, log_det):
     return out
 
 
-def _materialized_student_scar_rosenblatt(copula, u, fit_result, K, grid_range):
+def _materialized_student_scar_rosenblatt(
+        copula, u, fit_result, K, grid_range, config=None):
     eps = 1e-10
     T, d = u.shape
     kappa, mu, nu = fit_result.params.values
-    grid = TMGrid(kappa, mu, nu, T, K, grid_range)
+    grid_kwargs = {}
+    if config is not None:
+        grid_kwargs = {
+            "grid_method": config.grid_method,
+            "adaptive": config.adaptive,
+            "pts_per_sigma": config.pts_per_sigma,
+            "transition_method": config.transition_method,
+            "max_K": config.max_K,
+            "r_gh": config.r_gh,
+            "gh_order": config.gh_order,
+        }
+    grid = TMGrid(
+        kappa, mu, nu, T, K, grid_range, **grid_kwargs)
     x_grid = grid.z + grid.mu
     df_grid = copula.transform(x_grid)
     fi_grid = grid.copula_grid(u, copula)
@@ -729,6 +756,144 @@ def test_multivariate_scar_gof_matches_materialized_reference():
     np.testing.assert_allclose(st_got, st_ref, atol=8e-4, rtol=8e-4)
 
 
+@pytest.mark.parametrize(
+    ("transition_method", "grid_method", "atol"),
+    [
+        ("matrix", "dense", 2e-13),
+        ("matrix", "sparse", 2e-8),
+        ("local", "auto", 2e-13),
+    ],
+)
+def test_native_equicorr_gaussian_rosenblatt_matches_tmgrid_oracle(
+        transition_method, grid_method, atol):
+    u = pobs(np.random.default_rng(20260730).standard_normal((19, 4)))
+    copula = EquicorrGaussianCopula(d=4)
+    result = _scar_result(K=35, grid_range=3.25)
+    config = AutoTMConfig(
+        K=35,
+        grid_range=3.25,
+        grid_method=grid_method,
+        adaptive=False,
+        transition_method=transition_method,
+        max_K=None,
+        gh_order=7,
+    )
+
+    expected = _materialized_equicorr_scar_rosenblatt(
+        copula,
+        u,
+        result,
+        K=35,
+        grid_range=3.25,
+        config=config,
+    )
+    actual = _cpp_scar_ou.gaussian_rosenblatt(
+        *result.params.values, u, copula, config)
+
+    np.testing.assert_allclose(
+        actual, expected, rtol=0.0, atol=atol)
+
+
+@pytest.mark.parametrize(
+    ("transition_method", "grid_method", "atol"),
+    [
+        ("matrix", "dense", 5e-8),
+        ("matrix", "sparse", 5e-8),
+        ("local", "auto", 5e-8),
+    ],
+)
+def test_native_student_rosenblatt_matches_tmgrid_oracle(
+        transition_method, grid_method, atol):
+    u = pobs(np.random.default_rng(20260730).standard_normal((19, 4)))
+    copula = StochasticStudentCopula(d=4, R=_R())
+    result = _scar_result(K=35, grid_range=3.25)
+    config = AutoTMConfig(
+        K=35,
+        grid_range=3.25,
+        grid_method=grid_method,
+        adaptive=False,
+        transition_method=transition_method,
+        max_K=None,
+        gh_order=7,
+    )
+
+    expected = _materialized_student_scar_rosenblatt(
+        copula,
+        u,
+        result,
+        K=35,
+        grid_range=3.25,
+        config=config,
+    )
+    actual = _cpp_scar_ou.student_rosenblatt(
+        *result.params.values, u, copula, config)
+
+    np.testing.assert_allclose(
+        actual, expected, rtol=0.0, atol=atol)
+
+
+@pytest.mark.parametrize(
+    ("copula", "native_name", "transform"),
+    [
+        (
+            EquicorrGaussianCopula(d=4),
+            "gaussian_rosenblatt",
+            equicorr_rosenblatt_transform,
+        ),
+        (
+            StochasticStudentCopula(d=4, R=_R()),
+            "student_rosenblatt",
+            stochastic_student_rosenblatt_transform,
+        ),
+    ],
+)
+def test_multivariate_scar_gof_preserves_stored_grid_options(
+        monkeypatch, copula, native_name, transform):
+    u = _u()[:8]
+    result = LatentResult(
+        log_likelihood=0.0,
+        method="SCAR-TM-OU",
+        copula_name=copula.name,
+        success=True,
+        params=ou_params(0.8, 0.0, 1.0),
+        K=43,
+        grid_range=2.75,
+        grid_method="sparse",
+        adaptive=False,
+        pts_per_sigma=6,
+        transition_method="matrix",
+        max_K=None,
+        r_gh=2.25,
+        gh_order=7,
+    )
+    captured = {}
+
+    def fake_native(kappa, mu, nu, u_arg, copula_arg, config):
+        captured.update(vars(config))
+        return np.asarray(u_arg, dtype=np.float64)
+
+    monkeypatch.setattr(_cpp_scar_ou, native_name, fake_native)
+    transformed = transform(
+        copula, u, result, K=result.K, grid_range=result.grid_range)
+
+    np.testing.assert_array_equal(transformed, u)
+    assert captured == {
+        "transition_method": "matrix",
+        "small_kdt": 0.01,
+        "basis_order": 32,
+        "quad_order": None,
+        "K": 43,
+        "grid_range": 2.75,
+        "grid_method": "sparse",
+        "adaptive": False,
+        "pts_per_sigma": 6,
+        "max_K": None,
+        "gh_order": 7,
+        "r_gh": 2.25,
+        "n_threads": 1,
+    }
+
+
 def test_multivariate_scar_gof_reweights_state_by_observed_prefix():
     u = pobs(np.random.default_rng(20260625).standard_normal((12, 3)))
     R = np.array(
@@ -783,6 +948,24 @@ def test_equicorr_scar_gof_uses_block_batch_emissions(monkeypatch):
     assert np.all((e > 0.0) & (e < 1.0))
 
 
+def test_equicorr_scar_gof_native_path_does_not_construct_tmgrid(
+        monkeypatch):
+    u = pobs(np.random.default_rng(20260731).standard_normal((18, 4)))
+    copula = EquicorrGaussianCopula(d=4)
+    result = _scar_result(K=31, grid_range=3.0)
+
+    def fail_tmgrid(*args, **kwargs):
+        raise AssertionError(
+            "equicorrelation Gaussian GoF must not construct TMGrid")
+
+    monkeypatch.setattr(TMGrid, "__init__", fail_tmgrid)
+    transformed = equicorr_rosenblatt_transform(
+        copula, u, result, K=31, grid_range=3.0)
+
+    assert transformed.shape == u.shape
+    assert np.all(np.isfinite(transformed))
+
+
 def test_stochastic_student_scar_gof_uses_block_batch_emissions(monkeypatch):
     u = pobs(np.random.default_rng(20260520).standard_normal((18, 3)))
     R = np.array(
@@ -806,6 +989,23 @@ def test_stochastic_student_scar_gof_uses_block_batch_emissions(monkeypatch):
     assert e.shape == u.shape
     assert np.all(np.isfinite(e))
     assert np.all((e > 0.0) & (e < 1.0))
+
+
+def test_student_scar_gof_native_path_does_not_construct_tmgrid(
+        monkeypatch):
+    u = pobs(np.random.default_rng(20260801).standard_normal((18, 4)))
+    copula = StochasticStudentCopula(d=4, R=_R())
+    result = _scar_result(K=31, grid_range=3.0)
+
+    def fail_tmgrid(*args, **kwargs):
+        raise AssertionError("Student GoF must not construct TMGrid")
+
+    monkeypatch.setattr(TMGrid, "__init__", fail_tmgrid)
+    transformed = stochastic_student_rosenblatt_transform(
+        copula, u, result, K=31, grid_range=3.0)
+
+    assert transformed.shape == u.shape
+    assert np.all(np.isfinite(transformed))
 
 
 def test_forward_weight_block_arrays_match_row_iterator():
@@ -838,7 +1038,7 @@ def test_forward_weight_block_arrays_match_row_iterator():
     np.testing.assert_allclose(block_fi, row_fi, atol=0.0, rtol=0.0)
 
 
-def test_multivariate_scar_gof_block_size_accounts_for_dimension(monkeypatch):
+def test_student_scar_gof_bypasses_python_block_sizing(monkeypatch):
     from pyscarcopula.numerical import gof_blocks
 
     rng = np.random.default_rng(20260521)
@@ -854,14 +1054,11 @@ def test_multivariate_scar_gof_block_size_accounts_for_dimension(monkeypatch):
 
     monkeypatch.setattr(gof_blocks, "forward_block_size", capture_block_size)
 
-    equicorr = EquicorrGaussianCopula(d=4)
-    equicorr_rosenblatt_transform(equicorr, u, result, K=8, grid_range=3.0)
-
     student = StochasticStudentCopula(d=4, R=R)
     stochastic_student_rosenblatt_transform(
         student, u, result, K=8, grid_range=3.0)
 
-    assert calls == [4, 8]
+    assert calls == []
 
 
 def test_multivariate_models_support_top_level_api_except_pair_h():

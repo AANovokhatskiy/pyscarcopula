@@ -69,6 +69,8 @@ pybind11::dict vector_result_to_dict(
     int backend);
 pybind11::dict state_distribution_to_dict(
     const scar::StateDistribution& result);
+pybind11::dict smoothed_state_distribution_to_dict(
+    const scar::SmoothedStateDistribution& result);
 pybind11::dict gas_loglik_result_to_dict(
     const scar::GasLogLikResult& result);
 pybind11::dict static_objective_result_to_dict(

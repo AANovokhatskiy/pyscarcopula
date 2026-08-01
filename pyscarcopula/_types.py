@@ -120,6 +120,10 @@ DEFAULT_EQUICORR_OPTIMIZER = LBFGSBConfig(
 DEFAULT_STOCHASTIC_STUDENT_OPTIMIZER = LBFGSBConfig(
     gtol=1e-4,
 )
+DEFAULT_STATIC_STUDENT_OPTIMIZER = LBFGSBConfig(
+    gtol=1e-2,
+    eps=1e-4,
+)
 DEFAULT_STOCHASTIC_STUDENT_GAS_OPTIMIZER = LBFGSBConfig(
     gtol=1e-3,
     ftol=1e-9,
@@ -168,6 +172,8 @@ class NumericalConfig:
         default_factory=lambda: DEFAULT_EQUICORR_OPTIMIZER)
     stochastic_student_optimizer: LBFGSBConfig = field(
         default_factory=lambda: DEFAULT_STOCHASTIC_STUDENT_OPTIMIZER)
+    static_student_optimizer: LBFGSBConfig = field(
+        default_factory=lambda: DEFAULT_STATIC_STUDENT_OPTIMIZER)
     stochastic_student_gas_optimizer: LBFGSBConfig = field(
         default_factory=lambda: DEFAULT_STOCHASTIC_STUDENT_GAS_OPTIMIZER)
 
@@ -210,6 +216,10 @@ class NumericalConfig:
             self, 'stochastic_student_optimizer',
             DEFAULT_STOCHASTIC_STUDENT_OPTIMIZER.merged(
                 self.stochastic_student_optimizer))
+        object.__setattr__(
+            self, 'static_student_optimizer',
+            DEFAULT_STATIC_STUDENT_OPTIMIZER.merged(
+                self.static_student_optimizer))
         object.__setattr__(
             self, 'stochastic_student_gas_optimizer',
             DEFAULT_STOCHASTIC_STUDENT_GAS_OPTIMIZER.merged(
@@ -523,7 +533,13 @@ class MultivariateMLEResult(MLEResult):
     correlation_matrix: np.ndarray | None = None
 
     def __post_init__(self):
-        super().__post_init__()
+        if isinstance(self.parameter_count, (bool, np.bool_)) or not isinstance(
+                self.parameter_count, (int, np.integer)):
+            raise TypeError(
+                "parameter_count must be a non-negative integer")
+        if int(self.parameter_count) < 0:
+            raise ValueError("parameter_count must be non-negative")
+        object.__setattr__(self, "parameter_count", int(self.parameter_count))
         if (
                 isinstance(self.n_observations, (bool, np.bool_))
                 or not isinstance(self.n_observations, (int, np.integer))):
@@ -614,6 +630,9 @@ class LatentResult(FitResultBase):
     memory_budget_bytes: int | None = None
     transition_storage: str = "dense"
     stationarity_correction: str = "none"
+    # Appended to preserve positional compatibility of existing result fields.
+    grid_method: str | None = None
+    adaptive: bool | None = None
 
     def __post_init__(self):
         parameter_count = self.parameter_count

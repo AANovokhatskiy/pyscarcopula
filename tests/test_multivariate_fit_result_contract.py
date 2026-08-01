@@ -85,6 +85,30 @@ def test_static_multivariate_result_persistence_roundtrip(factory, tmp_path):
     )
 
 
+def test_zero_parameter_gaussian_persistence_and_information_criteria(
+        tmp_path):
+    correlation = np.array([
+        [1.0, 0.35, -0.1],
+        [0.35, 1.0, 0.2],
+        [-0.1, 0.2, 1.0],
+    ])
+    model = GaussianCopula(R=correlation)
+    result = model.fit(_u())
+    path = tmp_path / "zero-parameter-gaussian.json"
+
+    model.save(path)
+    loaded = GaussianCopula.load(path)
+    loaded_result = loaded.fit_result
+
+    assert loaded_result.parameter_count == 0
+    assert loaded_result.aic == pytest.approx(-2.0 * result.log_likelihood)
+    assert loaded_result.bic == pytest.approx(-2.0 * result.log_likelihood)
+    assert loaded_result.diagnostics["corr_effective_n_params"] == 0
+    assert loaded_result.diagnostics["corr_initialization_source"] == (
+        "supplied")
+    assert loaded_result.diagnostics["final_validation_passed"] is True
+
+
 @pytest.mark.parametrize("factory", [GaussianCopula, StudentCopula])
 def test_static_sampling_reads_parameters_from_typed_result(factory):
     model = factory()

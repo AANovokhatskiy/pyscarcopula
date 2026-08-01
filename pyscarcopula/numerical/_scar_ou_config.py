@@ -33,6 +33,16 @@ class AutoTMConfig:
 CPP_MAX_GRID_SIZE = 100_000
 CPP_MAX_DENSE_GRID_SIZE = 10_000
 CPP_MAX_SPECTRAL_ORDER = 1_024
+_GRID_METHODS = frozenset(("auto", "dense", "sparse"))
+
+
+def normalize_grid_method(value) -> str:
+    method = str(value).lower()
+    if method not in _GRID_METHODS:
+        raise ValueError(
+            "grid_method must be one of 'auto', 'dense', or 'sparse', "
+            f"got {value!r}")
+    return method
 
 
 def _cpp_integer_option(name: str, value, minimum: int, maximum: int) -> int:
@@ -67,11 +77,11 @@ def validate_cpp_config(
     """Validate dimensions accepted by the C++ SCAR-OU implementation."""
     method = normalize_ou_transition_method(
         transition_method or config.transition_method)
+    grid_method = normalize_grid_method(config.grid_method)
     grid_limit = (
         CPP_MAX_DENSE_GRID_SIZE
-        if method == "matrix"
-        else CPP_MAX_GRID_SIZE
-    )
+        if method == "matrix" and grid_method == "dense"
+        else CPP_MAX_GRID_SIZE)
     _cpp_integer_option("K", config.K, 2, grid_limit)
     if config.max_K is not None:
         _cpp_integer_option("max_K", config.max_K, 2, grid_limit)
@@ -114,4 +124,9 @@ def select_auto_backend(
     return "local" if kappa_dt < cfg.small_kdt else "spectral"
 
 
-__all__ = ["AutoTMConfig", "select_auto_backend", "validate_cpp_config"]
+__all__ = [
+    "AutoTMConfig",
+    "normalize_grid_method",
+    "select_auto_backend",
+    "validate_cpp_config",
+]

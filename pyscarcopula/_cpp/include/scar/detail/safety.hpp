@@ -14,6 +14,8 @@ inline constexpr double kPdfEps = scar::numerical::kPdfFloor;
 inline constexpr double kHEps = scar::numerical::kHFunctionEps;
 inline constexpr double kPseudoObsEps =
     scar::numerical::kPseudoObservationEps;
+inline constexpr double kRosenblattEps =
+    scar::numerical::kRosenblattOutputEps;
 inline constexpr double kPi = 3.141592653589793238462643383279502884;
 inline constexpr std::size_t kMaxGridSize = 100000;
 inline constexpr std::size_t kMaxDenseGridSize = 10000;

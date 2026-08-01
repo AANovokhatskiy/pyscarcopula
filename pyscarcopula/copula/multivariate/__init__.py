@@ -6,6 +6,13 @@ from pyscarcopula.copula.multivariate.equicorr_prepared import (
     EquicorrPreparedData,
 )
 from pyscarcopula.copula.multivariate.gaussian import GaussianCopula
+from pyscarcopula.copula.multivariate.correlation_policy import (
+    CorrelationEstimator,
+    CorrelationMode,
+    CorrelationPolicy,
+    FactorEstimation,
+    FloatArray,
+)
 from pyscarcopula.copula.multivariate.factor_correlation import (
     FactorCorrelation,
     PreparedFactorCorrelation,
@@ -25,6 +32,11 @@ __all__ = (
     "MultivariateCopula",
     "GaussianCopula",
     "StudentCopula",
+    "CorrelationMode",
+    "CorrelationEstimator",
+    "CorrelationPolicy",
+    "FactorEstimation",
+    "FloatArray",
     "EquicorrGaussianCopula",
     "EquicorrPreparedData",
     "FactorCorrelation",

@@ -345,6 +345,21 @@ class TestFitResults:
                 n_observations=0,
             )
 
+    def test_multivariate_mle_result_allows_zero_parameters(self):
+        result = MultivariateMLEResult(
+            log_likelihood=7.5,
+            method="MLE",
+            copula_name="Gaussian copula",
+            success=True,
+            parameter_count=0,
+            n_observations=40,
+            correlation_matrix=np.eye(2),
+        )
+
+        assert result.n_params == 0
+        assert result.aic == pytest.approx(-15.0)
+        assert result.bic == pytest.approx(-15.0)
+
     def test_latent_result_ou(self):
         r = LatentResult(
             log_likelihood=1042.47,

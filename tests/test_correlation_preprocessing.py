@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from pyscarcopula.copula.multivariate import (
     StochasticStudentCopula,
@@ -61,19 +62,18 @@ def test_static_and_stochastic_student_share_kendall_initialization():
     )
 
 
-def test_constant_column_maps_unavailable_kendall_pair_to_independence():
+def test_constant_column_preprocessing_is_available_but_static_fit_rejects_it():
     u = _ordinary_u()
     u[:, 1] = 0.5
 
     result = estimate_kendall_correlation(u)
     static = StudentCopula()
-    static.fit(u)
+    with pytest.raises(ValueError, match="not identifiable"):
+        static.fit(u)
     stochastic = StochasticStudentCopula(d=3)
     stochastic_initial = stochastic._initial_corr(u)
 
     _assert_valid_correlation(result)
-    np.testing.assert_allclose(
-        static.shape, result.correlation, rtol=0.0, atol=0.0)
     np.testing.assert_allclose(
         stochastic_initial, result.correlation, rtol=0.0, atol=0.0)
     assert result.nonfinite_kendall_pairs == ((0, 1), (1, 2))
@@ -119,8 +119,10 @@ def test_stochastic_mle_exposes_kendall_projection_diagnostics():
     u[:, 1] = 0.5
     model = StochasticStudentCopula(d=3)
 
-    result = model.fit(u, method="mle", maxiter=3, maxfun=12)
+    result = model.fit(
+        u, method="mle", gtol=1e-2, maxiter=100, maxfun=500)
 
+    assert result.success
     diagnostics = result.diagnostics
     assert diagnostics["corr_initialization_source"] == "kendall"
     assert diagnostics["corr_nonfinite_kendall_pairs"] == ((0, 1), (1, 2))

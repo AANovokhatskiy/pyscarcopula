@@ -11,7 +11,7 @@ question.
 |---|---|---|
 | Dependence between two variables | `GumbelCopula`, `ClaytonCopula`, `FrankCopula`, `JoeCopula`, or `BivariateGaussianCopula` | MLE |
 | Time-varying dependence between two variables | The same bivariate families | GAS or SCAR-TM |
-| One unrestricted static correlation matrix | `GaussianCopula` or `StudentCopula` | MLE |
+| Static Gaussian/Student dependence with supplied, plug-in, shrinkage, full, or factor correlation | `GaussianCopula` or `StudentCopula` | MLE plus an explicit `corr_mode` when the default `fixed` policy is not desired |
 | One common correlation that changes over time | `EquicorrGaussianCopula` | GAS or SCAR-TM-OU |
 | Time-varying multivariate tail thickness | `StochasticStudentCopula` | GAS or SCAR-TM-OU |
 | Different pairwise families and dependence strengths | `VineCopula` | Auto R-vine or fixed C/D structure; MLE, then dynamic edges if needed |

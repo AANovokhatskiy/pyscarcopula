@@ -56,14 +56,13 @@ double gumbel_dlog_pdf_dr_unrotated(double u1, double u2, double r) {
 void gumbel_pdf_and_grad_x_unrotated(
     double u1,
     double u2,
-    double x,
-    double offset,
+    double r,
+    double d_r_dx,
     double& pdf,
     double& d_pdf_dx) {
 
     const double v1 = std::min(std::max(u1, kPdfEps), 1.0 - kPdfEps);
     const double v2 = std::min(std::max(u2, kPdfEps), 1.0 - kPdfEps);
-    const double r = softplus(x) + offset;
     const double log_v1 = std::log(v1);
     const double log_v2 = std::log(v2);
     const double log_p1 = std::log(std::max(-log_v1, kPdfEps));
@@ -95,7 +94,7 @@ void gumbel_pdf_and_grad_x_unrotated(
         + (1.0 / r - 2.0) * dS_dr
         + (1.0 + dA_dr) / (r - 1.0 + A)
         - dA_dr;
-    d_pdf_dx = pdf * dlog_dr * d_softplus(x);
+    d_pdf_dx = pdf * dlog_dr * d_r_dx;
 }
 
 double gumbel_h_unrotated(double u, double v, double r) {

@@ -6,13 +6,15 @@ The transform function $\Psi(x)$ maps the latent OU process $x(t)$ to the
 copula parameter domain. For example, Gumbel requires $\theta \ge 1$, so
 $\Psi: \mathbb{R} \to [1, \infty)$.
 
-For Archimedean copulas, pyscarcopula provides two selectable transforms. The
+For Archimedean copulas, pyscarcopula provides four selectable transforms. The
 default is `softplus`.
 
 | Name | Formula | Properties |
 |------|---------|------------|
 | `softplus` | $\log(1 + \exp(x)) + \texttt{offset}$ | Default; asymmetric, floor at `offset` |
 | `xtanh` | $x \tanh(x) + \texttt{offset}$ | Symmetric, linear growth at large $|x|$ |
+| `exp` | $\exp(x) + \texttt{offset}$ | Positive, asymmetric, exponential growth |
+| `logistic` | $\texttt{offset} + 20\,\sigma(x/2)$ | Bounded to `(offset, offset + 20)` |
 
 Gaussian copulas are different: their correlation parameter always uses the
 bounded Gaussian tanh mapping. Although `BivariateGaussianCopula` accepts
@@ -22,8 +24,12 @@ It does not change Gaussian mathematics and emits no warning.
 
 ## Inverse-transform semantics
 
-For `softplus` and the fixed Gaussian tanh transform, `inv_transform` is a numerical
-inverse of the forward transform.
+For `softplus`, `exp`, `logistic`, and the fixed Gaussian tanh transform,
+`inv_transform` is a numerical inverse in the interior of the transform range.
+The `exp` and `logistic` links reject finite parameters outside their declared
+ranges. At an exact range endpoint, `inv_transform` returns a finite capped
+latent value for optimizer initialization rather than an infinity; transforming
+that capped value approaches the endpoint to floating-point precision.
 
 `xtanh` is deliberately different. The forward function
 $x\tanh(x)+\texttt{offset}$ is even, so positive and negative latent values
@@ -54,6 +60,9 @@ copula = GumbelCopula(rotate=180)
 # Explicit softplus
 copula = GumbelCopula(rotate=180, transform_type='softplus')
 result = fit(copula, u, method='scar-tm-ou')
+
+# Bounded dependence parameter in (1.0001, 21.0001)
+bounded = GumbelCopula(rotate=180, transform_type='logistic')
 ```
 
 ### softplus advantages
@@ -68,6 +77,21 @@ on its positive branch.
 This transform is even: latent values `x` and `-x` produce the same copula
 parameter. Its `inv_transform` follows the approximation described above and
 must not be used when an exact latent round trip is required.
+
+### exp advantages
+
+The exponential link is one-to-one and has the same lower limit as softplus,
+but grows exponentially instead of approximately linearly for large positive
+states. It is useful only when that stronger response is intended; extreme
+positive states can overflow and are rejected by the finite-output boundary.
+
+### logistic advantages
+
+The logistic link is one-to-one and caps the distance from `offset` at `20`.
+It can prevent extreme latent states from producing arbitrarily large
+Archimedean parameters. The bounded range is part of the fitted model and
+should therefore be selected deliberately rather than treated as a numerical
+optimization option.
 
 ## Using with vine
 

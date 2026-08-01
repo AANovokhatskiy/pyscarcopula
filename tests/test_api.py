@@ -1,5 +1,6 @@
 """Test API consistency across copula types."""
 from importlib import metadata
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -384,7 +385,8 @@ class TestTransformType:
         (GumbelCopula, 180), (ClaytonCopula, 0),
         (FrankCopula, 0), (JoeCopula, 180),
     ])
-    @pytest.mark.parametrize("transform_type", ['softplus', 'xtanh'])
+    @pytest.mark.parametrize(
+        "transform_type", ['softplus', 'xtanh', 'exp', 'logistic'])
     def test_dtransform_matches_numerical_derivative(
             self, cls, rot, transform_type):
         cop = cls(rotate=rot, transform_type=transform_type)
@@ -607,23 +609,23 @@ class TestEquicorrGaussian:
             self, monkeypatch):
         captured = {}
 
-        class DummyResult:
-            x = np.array([5.0])
-            fun = 0.0
-            success = True
-            nfev = 1
-            message = 'ok'
-
         def fake_minimize(
                 fun, x0, jac=None, method=None, bounds=None, options=None):
             captured['options'] = options
             captured['x0'] = np.asarray(x0)
             captured['bounds'] = bounds
             captured['jac'] = jac
-            return DummyResult()
+            value, _ = fun(x0)
+            return SimpleNamespace(
+                x=np.asarray(x0).copy(),
+                fun=value,
+                success=True,
+                nfev=1,
+                message='ok',
+            )
 
         monkeypatch.setattr(
-            'pyscarcopula.copula.multivariate.stochastic_student.minimize',
+            'pyscarcopula.strategy.multivariate_mle.minimize',
             fake_minimize)
 
         u = pobs(np.random.default_rng(47).standard_normal((40, 3)))
@@ -938,7 +940,7 @@ class TestConditionalPredict:
             gas_predict_param(omega, gamma, beta, u, cop, horizon='current')
 
     def test_gas_fit_forwards_optimizer_options(self, monkeypatch):
-        captured = {}
+        captured = []
 
         class DummyResult:
             x = np.array([0.0, 0.0, 0.0])
@@ -948,7 +950,7 @@ class TestConditionalPredict:
             message = 'ok'
 
         def fake_minimize(fun, x0, method=None, bounds=None, options=None):
-            captured['options'] = options
+            captured.append(options)
             return DummyResult()
 
         monkeypatch.setattr('pyscarcopula.strategy.gas.minimize',
@@ -962,20 +964,21 @@ class TestConditionalPredict:
 
         result = GASStrategy(config=cfg).fit(
             cop, u, gamma0=np.array([0.0, 0.0, 0.0]))
-        assert captured['options']['gtol'] == pytest.approx(2e-4)
-        assert captured['options']['maxls'] == 33
-        assert captured['options']['ftol'] == pytest.approx(1e-11)
-        assert captured['options']['maxfun'] == 4000
-        assert captured['options']['eps'] == pytest.approx(1e-5)
+        assert captured[0]['gtol'] == pytest.approx(2e-4)
+        assert captured[0]['maxls'] == 33
+        assert captured[0]['ftol'] == pytest.approx(1e-11)
+        assert captured[0]['maxfun'] == 4000
+        assert captured[0]['eps'] == pytest.approx(1e-5)
+        assert captured[1]['ftol'] == pytest.approx(1e-12)
         assert result.score_eps == pytest.approx(cfg.gas_score_eps)
 
         result = GASStrategy().fit(
             cop, u, gamma0=np.array([0.0, 0.0, 0.0]), gtol=3e-5,
             ftol=1e-9, maxls=44,
             score_eps=2e-5)
-        assert captured['options']['gtol'] == pytest.approx(3e-5)
-        assert captured['options']['maxls'] == 44
-        assert captured['options']['ftol'] == pytest.approx(1e-9)
+        assert captured[2]['gtol'] == pytest.approx(3e-5)
+        assert captured[2]['maxls'] == 44
+        assert captured[2]['ftol'] == pytest.approx(1e-9)
         assert result.score_eps == pytest.approx(2e-5)
 
     def test_gas_fit_uses_multivariate_student_optimizer_config(self, monkeypatch):
@@ -1019,7 +1022,9 @@ class TestConditionalPredict:
         assert captured[0]['ftol'] == pytest.approx(1e-9)
         assert captured[0]['maxfun'] == 222
         assert captured[1]['ftol'] == pytest.approx(1e-12)
-        assert captured[1]['maxfun'] == 111
+        assert captured[1]['maxfun'] == 222
+        assert captured[2]['ftol'] == pytest.approx(1e-12)
+        assert captured[2]['maxfun'] == 111
 
     def test_gas_post_fit_uses_result_score_eps(self, monkeypatch):
         captured = {}

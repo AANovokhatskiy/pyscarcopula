@@ -4,8 +4,11 @@ import numpy as np
 import pytest
 
 from pyscarcopula.api import fit
+from pyscarcopula.copula.clayton import ClaytonCopula
 from pyscarcopula.copula.elliptical import BivariateGaussianCopula
+from pyscarcopula.copula.frank import FrankCopula
 from pyscarcopula.copula.gumbel import GumbelCopula
+from pyscarcopula.copula.joe import JoeCopula
 from pyscarcopula.numerical import _cpp_gas
 from pyscarcopula.stattests import gof_test
 from pyscarcopula.strategy.gas import GASStrategy
@@ -24,6 +27,26 @@ def _native_parameter_path(params, copula, scaling, observations):
         g_t = update.g_next
         r_t = update.r_next
     return np.asarray(path)
+
+
+@pytest.mark.parametrize(
+    "factory",
+    [ClaytonCopula, FrankCopula, GumbelCopula, JoeCopula],
+)
+@pytest.mark.parametrize("transform_type", ["exp", "logistic"])
+def test_native_gas_accepts_new_archimedean_transforms(
+        factory, transform_type):
+    copula = factory(transform_type=transform_type)
+    params = (0.03, 0.02, 0.65)
+    state = _cpp_gas.initial_state(*params, copula, "unit")
+    update = _cpp_gas.update_one(
+        *params, state.g, np.array([0.31, 0.72]),
+        copula, "unit", 1e-4)
+
+    assert np.isfinite(state.g)
+    assert np.isfinite(state.parameter)
+    assert np.isfinite(update.g_next)
+    assert np.isfinite(update.r_next)
 
 
 @pytest.mark.parametrize("scaling", ["unit", "fisher"])

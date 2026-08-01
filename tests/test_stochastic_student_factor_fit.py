@@ -104,8 +104,9 @@ def test_factor_static_mle_performs_two_stage_initialization():
         factor_oversampling=3,
     )
 
-    result = model.fit(observations, method="mle", maxiter=30)
+    result = model.fit(observations, method="mle", maxiter=100)
 
+    assert result.success
     assert np.isfinite(result.log_likelihood)
     assert model.factor_loadings_ is not None
     assert model._R is None

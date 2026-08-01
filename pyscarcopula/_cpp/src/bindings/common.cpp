@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <cstdint>
 #include <new>
 #include <stdexcept>
@@ -330,6 +331,26 @@ py::dict state_distribution_to_dict(const scar::StateDistribution& result) {
     return out;
 }
 
+py::dict smoothed_state_distribution_to_dict(
+    const scar::SmoothedStateDistribution& result) {
+
+    py::dict out;
+    out["z_grid"] = vector_to_array(result.z_grid);
+    py::array_t<double> weights(
+        {static_cast<py::ssize_t>(result.n_obs),
+         static_cast<py::ssize_t>(result.K)});
+    if (!result.weights.empty()) {
+        std::memcpy(
+            weights.mutable_data(),
+            result.weights.data(),
+            result.weights.size() * sizeof(double));
+    }
+    out["weights"] = std::move(weights);
+    out["status"] = result.status;
+    out["backend"] = static_cast<int>(result.backend);
+    return out;
+}
+
 py::dict gas_loglik_result_to_dict(const scar::GasLogLikResult& result) {
     py::dict out;
     out["log_likelihood"] = result.log_likelihood;
@@ -540,6 +561,8 @@ void bind_common(py::module_& m) {
         py::float_(scar_internal::kHEps);
     m.attr("PDF_FLOOR") =
         py::float_(scar_internal::kPdfEps);
+    m.attr("ROSENBLATT_OUTPUT_EPS") =
+        py::float_(scar_internal::kRosenblattEps);
     m.attr("HERMITE_RULE_CACHE_MAX_ENTRIES") =
         py::int_(scar_internal::kHermiteRuleCacheMaxEntries);
     m.attr("HERMITE_RULE_CACHE_MAX_BYTES") =
@@ -662,7 +685,9 @@ void bind_common(py::module_& m) {
         m, "Transform", "Latent-state to copula-parameter transform.")
         .value("Softplus", scar::Transform::Softplus)
         .value("XTanh", scar::Transform::XTanh)
-        .value("GaussianTanh", scar::Transform::GaussianTanh);
+        .value("GaussianTanh", scar::Transform::GaussianTanh)
+        .value("Exponential", scar::Transform::Exponential)
+        .value("Logistic", scar::Transform::Logistic);
 
     py::enum_<scar::OuBackend>(
         m, "OuBackend", "Numerical SCAR-OU propagation backend.")
