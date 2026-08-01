@@ -20,7 +20,7 @@ DOC_FILES = (
 )
 MIGRATION_NOTES = ROOT / "docs/release-notes/native-core-migration.md"
 WORKFLOW_FILES = sorted((ROOT / ".github/workflows").glob("*.yml"))
-# OPTIONAL_DOCUMENTATION_MODULES = {"pyvinecopulib"}
+OPTIONAL_DOCUMENTATION_MODULES = {"pyvinecopulib"}
 
 
 def _python_blocks(path):
@@ -63,8 +63,8 @@ def test_documented_python_blocks_compile_import_and_bind_public_calls():
                     mode="exec",
                 ), namespace)
             except ModuleNotFoundError as exc:
-                # if exc.name in OPTIONAL_DOCUMENTATION_MODULES:
-                #     continue
+                if exc.name in OPTIONAL_DOCUMENTATION_MODULES:
+                    continue
                 raise
 
             for call in (

@@ -62,6 +62,7 @@ def test_cpp_gas_wrapper_filter_and_likelihood_are_internally_consistent(
 @pytest.mark.parametrize("scaling", ["unit", "fisher"])
 def test_cpp_gas_wrapper_update_prediction_and_h_are_consistent(scaling):
     copula = GumbelCopula(rotate=90)
+    transposed = GumbelCopula(rotate=270)
     initial = _cpp_gas.initial_state(
         *PARAMS, copula, scaling=scaling)
     filtered = _cpp_gas.filter_result(
@@ -100,7 +101,7 @@ def test_cpp_gas_wrapper_update_prediction_and_h_are_consistent(scaling):
     np.testing.assert_allclose(
         _cpp_gas.h_path(
             *PARAMS, OBSERVATIONS, copula, scaling=scaling),
-        copula.h(
+        transposed.h(
             OBSERVATIONS[:, 1],
             OBSERVATIONS[:, 0],
             filtered.r_path,

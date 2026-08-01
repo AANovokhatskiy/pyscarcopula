@@ -1,6 +1,7 @@
 #include "scar/detail/copula.hpp"
 
 #include <cmath>
+#include <stdexcept>
 
 namespace scar_internal {
 
@@ -286,9 +287,21 @@ double copula_inverse_transform(const scar::CopulaSpec& spec, double r) {
         return std::abs(r) + spec.offset;
     }
     if (spec.transform == scar::Transform::Exponential) {
+        if (!std::isfinite(r) || r < spec.offset) {
+            throw std::invalid_argument(
+                "exponential inverse-transform parameter must be finite "
+                "and greater than or equal to the transform offset");
+        }
         return std::log(std::max(r - spec.offset, 1e-300));
     }
     if (spec.transform == scar::Transform::Logistic) {
+        if (!std::isfinite(r)
+            || r < spec.offset
+            || r > spec.offset + kLogisticCap) {
+            throw std::invalid_argument(
+                "logistic inverse-transform parameter must be finite and "
+                "within [offset, offset + 20]");
+        }
         const double probability = std::clamp(
             (r - spec.offset) / kLogisticCap,
             1e-15,

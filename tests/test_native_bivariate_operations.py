@@ -241,6 +241,49 @@ def test_native_transforms_preserve_python_contract(
 
 
 @pytest.mark.parametrize(
+    "factory,offset",
+    [
+        (ClaytonCopula, 0.0001),
+        (FrankCopula, 0.0001),
+        (GumbelCopula, 1.0001),
+        (JoeCopula, 1.0001),
+    ],
+)
+@pytest.mark.parametrize("transform_type", ["exp", "logistic"])
+def test_bounded_inverse_transforms_reject_parameters_outside_domain(
+        factory, offset, transform_type):
+    copula = factory(transform_type=transform_type)
+    upper = offset + 20.0 if transform_type == "logistic" else None
+
+    with pytest.raises(ValueError, match="inverse-transform parameter"):
+        copula.inv_transform([offset - 1e-12])
+    if upper is not None:
+        with pytest.raises(ValueError, match="inverse-transform parameter"):
+            copula.inv_transform([upper + 1e-12])
+
+
+@pytest.mark.parametrize(
+    "factory,offset",
+    [
+        (ClaytonCopula, 0.0001),
+        (FrankCopula, 0.0001),
+        (GumbelCopula, 1.0001),
+        (JoeCopula, 1.0001),
+    ],
+)
+@pytest.mark.parametrize("transform_type", ["exp", "logistic"])
+def test_bounded_inverse_transforms_define_finite_boundary_initializers(
+        factory, offset, transform_type):
+    copula = factory(transform_type=transform_type)
+    parameters = [offset]
+    if transform_type == "logistic":
+        parameters.append(offset + 20.0)
+
+    latent = copula.inv_transform(parameters)
+    assert np.all(np.isfinite(latent))
+
+
+@pytest.mark.parametrize(
     "factory",
     [ClaytonCopula, FrankCopula, GumbelCopula, JoeCopula],
 )

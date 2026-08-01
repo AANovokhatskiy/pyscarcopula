@@ -56,8 +56,10 @@ SCAR filters.
 The public dynamic models use an unconstrained state and map it into the
 copula parameter domain with smooth links:
 
-- positive-parameter families use a shifted softplus link,
-  $\Psi(x)=a+\log(1+\exp(x))$;
+- positive-parameter families use a selectable shifted link. The default is
+  softplus, $\Psi(x)=a+\log(1+\exp(x))$; `exp` uses
+  $\Psi(x)=a+\exp(x)$; and `logistic` uses
+  $\Psi(x)=a+20\,\sigma(x/2)$ with range $(a,a+20)$;
 - bivariate Gaussian dependence uses a bounded tanh link;
 - equicorrelation Gaussian dependence uses a dimension-aware bounded link
   into $(-1/(d-1),1)$;
@@ -68,6 +70,9 @@ copula parameter domain with smooth links:
 Some bivariate copulas can also use the `xtanh` transform. It is a valid
 forward transform for fitting, but its positive-branch inverse is only an
 initialization convention because the map is not globally one-to-one.
+For the `exp` and `logistic` links, inverse transforms reject parameters
+outside their mathematical ranges. Exact range endpoints use finite capped
+latent values solely as an optimizer-initialization convention.
 
 Pseudo-observations are clipped away from 0 and 1 before Gaussian or Student
 quantiles are evaluated. That is a numerical safety operation, not a change in
