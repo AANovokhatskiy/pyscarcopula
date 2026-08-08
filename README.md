@@ -5,6 +5,7 @@ stochastic copula models for financial time series and risk analytics.
 
 * [About](#about)
 * [Install](#install)
+* [Quick start](#quick-start)
 * [Features](#features)
 * [Mathematical background](#mathematical-background)
 * [Examples and docs](#examples-and-docs)
@@ -105,29 +106,81 @@ Verify the compiled extension with:
 python -m pyscarcopula._native_smoke
 ```
 
+## Quick start
+
+pyscarcopula expects a two-dimensional array with observations in rows and
+variables in columns. Copula fitting uses pseudo-observations in the open unit
+interval. Pass existing pseudo-observations directly, as below, or use
+`to_pobs=True` to rank-transform raw continuous observations during fitting.
+
+```python
+import numpy as np
+
+from pyscarcopula import GumbelCopula
+
+rng = np.random.default_rng(2026)
+source = GumbelCopula(rotate=180)
+u = source.sample_at_parameter(
+    400,
+    r=np.full(400, 1.8),
+    rng=rng,
+)
+
+model = GumbelCopula(rotate=180)
+result = model.fit(u, method="mle")
+forecast = model.predict(1_000, rng=np.random.default_rng(2027))
+
+print(result.log_likelihood)
+print(forecast.shape)  # (1000, 2)
+```
+
+The fitted result is returned by `fit` and also stored as
+`model.fit_result`. `sample(...)` reproduces the fitted model, while
+`predict(...)` draws from its predictive distribution; this distinction
+matters for dynamic models. See the complete
+[Quick Start](docs/getting-started/quickstart.md) and
+[Prediction Semantics](docs/guide/prediction-semantics.md).
+
+Choose the model surface before tuning an estimation method:
+
+| Task | Start with |
+| --- | --- |
+| Two-variable dependence | `GumbelCopula`, `ClaytonCopula`, `FrankCopula`, `JoeCopula`, or `BivariateGaussianCopula` |
+| Static unrestricted multivariate dependence | `GaussianCopula` or `StudentCopula` |
+| Scalar dynamic multivariate dependence | `EquicorrGaussianCopula` or `StochasticStudentCopula` |
+| Flexible high-dimensional pair decomposition | `VineCopula` |
+
+See [Choosing a Model](docs/getting-started/choosing-a-model.md) for the
+corresponding correlation modes, estimation methods, and limitations.
+
 ## Features
 
-### VineCopula quick start
+### Vine copulas
 
 `VineCopula` is the primary API for regular vines. Omitting `structure`
 selects an R-vine from data; C-vines and D-vines are fixed
 [`RVineMatrix`](docs/api/vine.md) structures:
 
 ```python
+import numpy as np
+
 from pyscarcopula import VineCopula
-from pyscarcopula.vine import RVineMatrix, cvine_structure, dvine_structure
+
+rng = np.random.default_rng(2028)
+vine_data = rng.random((400, 4))
 
 # Data-driven regular vine
-auto = VineCopula().fit(u, method="mle")
+auto = VineCopula().fit(vine_data, method="mle")
 
 # Fixed standard structures
-c_vine = VineCopula.cvine(d=u.shape[1]).fit(u, method="mle")
-d_vine = VineCopula.dvine(d=u.shape[1]).fit(u, method="mle")
-
-# Any valid regular-vine tree sequence, without writing a raw matrix
-structure = RVineMatrix.from_trees(d=u.shape[1], trees=my_trees)
-fixed = VineCopula(structure=structure).fit(u, method="mle")
+c_vine = VineCopula.cvine(d=4).fit(vine_data, method="mle")
+d_vine = VineCopula.dvine(d=4).fit(vine_data, method="mle")
 ```
+
+For an arbitrary valid regular-vine tree sequence, construct
+`RVineMatrix.from_trees(...)` and pass it as `VineCopula(structure=...)`.
+The [Vine guide](docs/guide/vine.md) defines the decoded tree format and
+explains family selection, truncation, and conditional sampling.
 
 Use `vine.structure` for the `RVineMatrix` and
 `vine.natural_order_matrix` when an integration specifically needs the

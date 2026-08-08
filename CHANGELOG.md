@@ -1,8 +1,24 @@
 # Changelog
 
+## 0.20.1 - 2026-08-08
+
+Version: `0.20.0` -> `0.20.1`
+
+- Make final projected-gradient rejection opt-in through
+  `strict_gradient_policy`, while retaining objective, backend-consistency,
+  finiteness, boundary, growth, and correlation validation by default.
+- Evaluate recoverable L-BFGS-B `ABNORMAL` termination in physical OU
+  parameter units, correctly reversing both ordinary scaling and the
+  log-stationary parameterization before applying the projected-gradient gate.
+- Add a concise README quick start, clarify fitted sampling versus predictive
+  sampling, and improve model-selection and regular-vine guidance.
+
 ## 0.20.0 - 2026-08-01
 
 Version: `0.19.1` -> `0.20.0`
+
+Commit: `c378bf6`
+Merge PR: #45 (`89bd85f`, 2026-08-02)
 
 - Define `method="mle"` for `GaussianCopula` and `StudentCopula` as the
   static-model label and add canonical `fixed`, `shrinkage`, `cholesky`, and
