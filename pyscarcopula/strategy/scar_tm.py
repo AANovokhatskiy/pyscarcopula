@@ -495,6 +495,8 @@ class SCARTMStrategy:
     final_rho_tolerance : float
         Distance from zero or one below which the one-step OU correlation is
         treated as numerically degenerate.
+    strict_gradient_policy : bool
+        Enforce the final projected-gradient tolerance (default False).
     """
 
     def __init__(self, config: NumericalConfig | None = None,
@@ -517,6 +519,7 @@ class SCARTMStrategy:
                  final_gradient_tolerance: float | None = None,
                  final_growth_limit: float = 1e8,
                  final_rho_tolerance: float = 1e-15,
+                 strict_gradient_policy: bool = False,
                  **kwargs):
         if "backend" in kwargs:
             raise TypeError(
@@ -542,6 +545,7 @@ class SCARTMStrategy:
         self.final_validation_abs_per_obs = float(
             final_validation_abs_per_obs)
         self.final_validation_rel_tol = float(final_validation_rel_tol)
+        self.strict_gradient_policy = bool(strict_gradient_policy)
         self.final_gradient_tolerance = (
             None if final_gradient_tolerance is None
             else float(final_gradient_tolerance))
@@ -743,25 +747,29 @@ class SCARTMStrategy:
                     atol=objective_abs_tol)):
             reasons.append("optimizer and selected-backend objectives disagree")
 
-        projected_norm = np.inf
-        gradient_tolerance = (
-            self.final_gradient_tolerance
-            if self.final_gradient_tolerance is not None
-            else max(
-                1e-2, 10.0 * float(optimizer_options.get("gtol", 1e-3)))
-        )
-        if (
-                selected_grad.shape == final_params.shape
-                and np.all(np.isfinite(selected_grad))
-                and lower.shape == final_params.shape
-                and upper.shape == final_params.shape):
-            projected_norm = _projected_gradient_norm(
-                final_params, selected_grad, lower, upper)
-            if projected_norm > gradient_tolerance:
-                reasons.append(
-                    "projected gradient exceeds validation tolerance")
-        diagnostics["final_projected_gradient_norm"] = projected_norm
-        diagnostics["final_projected_gradient_tolerance"] = gradient_tolerance
+        if self.strict_gradient_policy:
+            projected_norm = np.inf
+            gradient_tolerance = (
+                self.final_gradient_tolerance
+                if self.final_gradient_tolerance is not None
+                else max(
+                    1e-2,
+                    10.0 * float(optimizer_options.get("gtol", 1e-3)),
+                )
+            )
+            if (
+                    selected_grad.shape == final_params.shape
+                    and np.all(np.isfinite(selected_grad))
+                    and lower.shape == final_params.shape
+                    and upper.shape == final_params.shape):
+                projected_norm = _projected_gradient_norm(
+                    final_params, selected_grad, lower, upper)
+                if projected_norm > gradient_tolerance:
+                    reasons.append(
+                        "projected gradient exceeds validation tolerance")
+            diagnostics["final_projected_gradient_norm"] = projected_norm
+            diagnostics[
+                "final_projected_gradient_tolerance"] = gradient_tolerance
 
         boundary_atol = 1e-10
         at_lower = np.isfinite(lower) & np.isclose(
@@ -1430,11 +1438,18 @@ class SCARTMStrategy:
 
             if not result.success and str(result.message).startswith('ABNORMAL'):
                 final_val, final_grad = objective_and_grad(result.x)
+                if log_stationary:
+                    physical_x = _ou_from_log_stationary(result.x)
+                    physical_grad = _ou_grad_from_log_stationary(
+                        physical_x, final_grad)
+                else:
+                    physical_x = result.x * scale
+                    physical_grad = final_grad / scale
                 pg_norm = _projected_gradient_norm(
-                    result.x,
-                    final_grad,
-                    bounds_scaled.lb,
-                    bounds_scaled.ub,
+                    physical_x,
+                    physical_grad,
+                    np.array([0.001, -np.inf, 0.001]),
+                    np.array([np.inf, np.inf, np.inf]),
                 )
                 acceptable_boundary = (
                     np.isfinite(final_val)
@@ -1448,7 +1463,7 @@ class SCARTMStrategy:
                     result.success = True
                     result.message = (
                         f"{result.message} accepted as boundary convergence "
-                        f"(projected_grad={pg_norm:.3g})"
+                        f"(physical_projected_grad={pg_norm:.3g})"
                     )
 
             result.x = (

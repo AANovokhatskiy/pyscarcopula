@@ -30,6 +30,7 @@ from pyscarcopula.numerical.gof_blocks import (
 from pyscarcopula.copula.elliptical import BivariateGaussianCopula
 from pyscarcopula.copula.clayton import ClaytonCopula
 from pyscarcopula.copula.multivariate import StochasticStudentCopula
+from pyscarcopula.strategy import scar_tm
 from pyscarcopula.strategy._base import get_strategy_for_result
 from pyscarcopula.strategy.scar_tm import SCARTMStrategy
 from pyscarcopula.numerical import _cpp_scar_ou
@@ -737,8 +738,12 @@ def _validate_candidate(
         selected_grad=None,
         validation_value=12.0,
         initial_params=None,
-        optimizer_value=None):
-    strategy = SCARTMStrategy(smart_init=False)
+        optimizer_value=None,
+        strict_gradient_policy=False):
+    strategy = SCARTMStrategy(
+        smart_init=False,
+        strict_gradient_policy=strict_gradient_policy,
+    )
     final_params = np.asarray(final_params, dtype=np.float64)
     if initial_params is None:
         initial_params = np.array([1.0, 0.0, 1.0])
@@ -832,12 +837,81 @@ def test_scar_tm_final_validation_accepts_projected_boundary_solution():
         selected_grad=[1.0, 0.0, 1.0],
         validation_value=None,
         initial_params=[1.0, 0.0, 1.0],
+        strict_gradient_policy=True,
     )
 
     assert result.success
     assert diagnostics["final_validation_passed"]
     assert diagnostics["final_projected_gradient_norm"] == pytest.approx(0.0)
     assert diagnostics["final_boundary_flags"] == (True, False, True)
+
+
+def test_scar_tm_gradient_policy_is_disabled_by_default():
+    result, diagnostics = _validate_candidate(
+        [1.0, 0.0, 1.0],
+        selected_grad=[1.0, 0.0, 0.0],
+        validation_value=None,
+    )
+
+    assert SCARTMStrategy().strict_gradient_policy is False
+    assert result.success
+    assert "final_projected_gradient_norm" not in diagnostics
+
+
+def test_scar_tm_strict_gradient_policy_rejects_large_gradient():
+    result, diagnostics = _validate_candidate(
+        [1.0, 0.0, 1.0],
+        selected_grad=[1.0, 0.0, 0.0],
+        validation_value=None,
+        strict_gradient_policy=True,
+    )
+
+    assert not result.success
+    assert diagnostics["final_projected_gradient_norm"] == pytest.approx(1.0)
+    assert "projected gradient exceeds" in result.message
+
+
+def test_scar_tm_abnormal_recovery_uses_physical_gradient(monkeypatch):
+    physical_gradient = np.array([1e-3, 2e-3, 3e-3])
+    optimizer_gradient = {}
+
+    def fake_evaluate(self, kappa, mu, nu, auto_config):
+        return 12.0, physical_gradient.copy(), {}
+
+    def fake_minimize(fun, x0, *, method, jac, bounds, options):
+        value, gradient = fun(x0)
+        optimizer_gradient["value"] = np.asarray(gradient)
+        return SimpleNamespace(
+            x=np.asarray(x0),
+            fun=value,
+            jac=np.asarray(gradient),
+            success=False,
+            message="ABNORMAL: test line search",
+            nfev=1,
+        )
+
+    monkeypatch.setattr(
+        scar_tm._PreparedScarOuFitCache,
+        "neg_loglik_with_grad_info",
+        fake_evaluate,
+    )
+    monkeypatch.setattr(scar_tm, "minimize", fake_minimize)
+
+    strategy = SCARTMStrategy(
+        smart_init=False,
+        strict_gradient_policy=True,
+    )
+    result = strategy.fit(
+        BivariateGaussianCopula(),
+        np.random.default_rng(42).uniform(0.01, 0.99, size=(20, 2)),
+        alpha0=np.array([100.0, 2.0, 20.0]),
+    )
+
+    assert np.max(np.abs(optimizer_gradient["value"])) == pytest.approx(0.1)
+    assert result.success
+    assert "physical_projected_grad=0.003" in result.message
+    assert result.diagnostics[
+        "final_projected_gradient_norm"] == pytest.approx(0.003)
 
 
 def test_multivariate_ppf_cache_uses_source_identity():
@@ -865,6 +939,7 @@ def test_scar_tm_accepts_flat_boundary_convergence():
         maxiter=80,
         maxfun=160,
         gtol=1e-5,
+        strict_gradient_policy=True,
     )
 
     assert result.success

@@ -1214,6 +1214,7 @@ def test_joint_hybrid_jacobian_uses_one_plus_n_corr_evaluations(
     result = scar_tm.SCARTMStrategy(
         analytical_grad=True,
         smart_init=False,
+        strict_gradient_policy=True,
     ).fit(
         model,
         u,
