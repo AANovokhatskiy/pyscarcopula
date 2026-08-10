@@ -11,7 +11,8 @@ include tools/write_release_metadata.py
 recursive-include tests *.py
 recursive-include tests/fixtures *.json
 recursive-include docs *.md
-recursive-include data *.csv
+recursive-exclude data *.csv
+include data/crypto_prices.csv
 recursive-include pyscarcopula/_cpp *.cpp *.hpp
 
 # Exclude generated/cache files

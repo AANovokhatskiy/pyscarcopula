@@ -10,6 +10,9 @@ from pyscarcopula.numerical.mc_samplers import p_sampler_loglik
 from pyscarcopula.numerical._arrays import (
     as_float64_array,
     as_pseudo_observation_array,
+    validate_integer,
+    validate_sampling_memory_budget,
+    validate_sampling_n_threads,
 )
 from pyscarcopula.numerical.ou_kernels import (
     calculate_dwt,
@@ -46,6 +49,34 @@ def test_pseudo_observation_validation_is_reusable_and_boundary_aware():
         as_pseudo_observation_array(np.array([[0.5, 1.01]]))
     with pytest.raises(ValueError, match=r"\(0, 1\)"):
         as_pseudo_observation_array(boundary, allow_boundary=False)
+
+
+@pytest.mark.parametrize("value", [False, np.bool_(True), 1.5, "1"])
+def test_integer_validation_rejects_non_integer_types(value):
+    with pytest.raises(TypeError, match="count must be an integer"):
+        validate_integer(value, "count")
+
+
+def test_integer_validation_preserves_inclusive_minimum_contract():
+    assert validate_integer(np.int64(0), "count") == 0
+    assert validate_integer(1, "count", minimum=1) == 1
+    with pytest.raises(ValueError, match="count must be non-negative"):
+        validate_integer(-1, "count")
+    with pytest.raises(ValueError, match="count must be positive"):
+        validate_integer(0, "count", minimum=1)
+
+
+@pytest.mark.parametrize("value", [0, 257, True, 1.5])
+def test_sampling_thread_validation_preserves_public_contract(value):
+    with pytest.raises((TypeError, ValueError), match="n_threads"):
+        validate_sampling_n_threads(value)
+
+
+def test_sampling_memory_budget_preserves_error_message_and_boundaries():
+    assert validate_sampling_memory_budget(None, 64, "reduce n") is None
+    assert validate_sampling_memory_budget(64, 64, "reduce n") is None
+    with pytest.raises(MemoryError, match=r"approximately 64 bytes; reduce n"):
+        validate_sampling_memory_budget(63, 64, "reduce n")
 
 
 def test_ou_sample_paths_zero_aux_matches_exact_kernel():

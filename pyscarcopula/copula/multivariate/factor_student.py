@@ -12,10 +12,10 @@ import numpy as np
 from pyscarcopula.copula.multivariate.factor_correlation import (
     FactorCorrelation,
     PreparedFactorCorrelation,
-    _positive_integer,
     _validated_budget,
     _validated_n_threads,
 )
+from pyscarcopula.numerical._arrays import validate_integer
 
 
 @dataclass(frozen=True)
@@ -396,8 +396,8 @@ class FactorStudentEvaluator:
             memory_budget_bytes: int | None = None
     ) -> FactorStudentGridEvaluation:
         """Evaluate a tiled ``(observations, df_grid)`` log-density grid."""
-        dimension_tile = _positive_integer(
-            "dimension_tile", dimension_tile)
+        dimension_tile = validate_integer(
+            dimension_tile, "dimension_tile", minimum=1)
         n_threads = _validated_n_threads(n_threads)
         grid = self._grid_values(df_grid)
         return self._evaluate_grid_block(
@@ -452,9 +452,9 @@ class FactorStudentEvaluator:
             memory_budget_bytes: int | None = None
     ) -> Iterator[FactorStudentGridEvaluation]:
         """Yield bounded row batches of the tiled Student grid."""
-        batch_rows = _positive_integer("batch_rows", batch_rows)
-        dimension_tile = _positive_integer(
-            "dimension_tile", dimension_tile)
+        batch_rows = validate_integer(batch_rows, "batch_rows", minimum=1)
+        dimension_tile = validate_integer(
+            dimension_tile, "dimension_tile", minimum=1)
         n_threads = _validated_n_threads(n_threads)
         grid = self._grid_values(df_grid)
         required = self._grid_peak_bytes(

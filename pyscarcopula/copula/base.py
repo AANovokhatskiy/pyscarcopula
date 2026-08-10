@@ -14,7 +14,6 @@ from typing import Any, TypeVar
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
-from pyscarcopula._constants import PSEUDO_OBS_EPS
 from pyscarcopula._types import FitResult, PredictConfig
 from pyscarcopula._utils import pobs, broadcast as _broadcast  # noqa: F401
 
@@ -341,6 +340,9 @@ class BivariateCopula(CopulaBase):
         Copula rotation: 0, 90, 180, or 270 degrees.
     """
 
+    _scar_optimizer_config = 'bivariate_scar_optimizer'
+    _scar_log_optimizer_config = 'bivariate_log_scar_optimizer'
+    _scar_stationary_scale_bounds = (0.001, 10_000.0)
     _scar_static_df_mle_initialization = False
     _supports_scar_mixture_h = True
     _capabilities = CopulaCapabilities(
@@ -511,36 +513,6 @@ class BivariateCopula(CopulaBase):
     def h_inverse_unrotated(self, u, v, r):
         return self._native_adapter().h_inverse(
             self, u, v, r, unrotated=True)
-
-    def _h_inverse_bisection(self, u, v, r, tol=1e-10, maxiter=60):
-        """
-        Numerical inversion: find t such that h(t, v, r) = u.
-        Uses bisection on [eps, 1-eps].
-        """
-        u = np.atleast_1d(np.asarray(u, dtype=np.float64))
-        v = np.atleast_1d(np.asarray(v, dtype=np.float64))
-        r = np.atleast_1d(np.asarray(r, dtype=np.float64))
-        n = max(len(u), len(v), len(r))
-        if len(u) == 1 and n > 1:
-            u = np.full(n, u[0])
-        if len(v) == 1 and n > 1:
-            v = np.full(n, v[0])
-        if len(r) == 1 and n > 1:
-            r = np.full(n, r[0])
-
-        lo = np.full(n, PSEUDO_OBS_EPS)
-        hi = np.full(n, 1.0 - PSEUDO_OBS_EPS)
-
-        for _ in range(maxiter):
-            mid = 0.5 * (lo + hi)
-            h_mid = self.h_unrotated(mid, v, r)
-            mask = h_mid < u
-            lo = np.where(mask, mid, lo)
-            hi = np.where(mask, hi, mid)
-            if np.max(hi - lo) < tol:
-                break
-
-        return 0.5 * (lo + hi)
 
     def h(self, u, v, r):
         return self._native_adapter().h(self, u, v, r)

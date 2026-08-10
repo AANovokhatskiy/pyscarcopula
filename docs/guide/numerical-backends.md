@@ -155,14 +155,49 @@ does not introduce simulation noise.
 | `spectral_quad_order` | strategy kwarg | auto | Gauss-Hermite quadrature order for spectral multiplication. |
 | `analytical_grad` | strategy kwarg | `True` | Uses the analytical gradient and avoids optimizer finite differences. |
 | `smart_init` | strategy kwarg | `True` | Uses a heuristic initial point before falling back to MLE-based init. |
+| `log_stationary_scale_optimization` | strategy kwarg | `None` | For bivariate models, `True` enables `[log(kappa), mu, log(sigma_x)]` with `kappa, sigma_x >= 0.001`; `False` forces scaled physical coordinates; `None` keeps the model default. |
+| `stationary_scale_bounds` | strategy kwarg | `None` | Overrides model bounds for `sigma_x` in log-stationary coordinates. `StochasticStudentCopula` and bivariate models use separate policies, both defaulting to `(0.001, 10000.0)`. |
 
 For `StochasticStudentCopula`, `alpha0` is still supplied as
 `[kappa, mu, nu]`, but the optimizer internally uses
 `[log(kappa), mu, log(sigma_x)]`, where
 `sigma_x = nu / sqrt(2 * kappa)`. The result is converted back to
-`[kappa, mu, nu]`. This is a model-specific conditioning measure; it is not a
-global change to bivariate SCAR-TM-OU optimization. Inspect
+`[kappa, mu, nu]`. For a bivariate SCAR-TM-OU model this conditioning measure
+is opt-in via `log_stationary_scale_optimization=True`. The log-coordinate
+fit guarantees positive `nu` after conversion but does not apply the legacy
+`nu >= 0.001` bound. `StochasticStudentCopula` uses
+`0.001 <= sigma_x <= 10000`, while retaining final validation against the
+physical `nu >= 0.001` bound and the other OU acceptance checks. Its
+model-specific SCAR optimizer defaults are `maxiter=1000` and `maxls=200`;
+they come from `stochastic_student_scar_optimizer`. Ordinary bivariate
+SCAR-TM-OU fits use `bivariate_scar_optimizer`; when it is omitted, that field
+resolves from `scar_optimizer` for backward compatibility. The
+optional bivariate log-coordinate mode instead uses the independent
+`bivariate_log_scar_optimizer`, whose defaults are `maxiter=1000` and
+`maxls=200`. Other SCAR models retain their existing `scar_optimizer`
+configuration. Inspect
 `result.diagnostics['optimizer_parameterization']` when auditing fits.
+
+```python
+from pyscarcopula import LBFGSBConfig, NumericalConfig
+
+config = NumericalConfig(
+    scar_optimizer=LBFGSBConfig(maxiter=200),
+    # Optional explicit override; otherwise this inherits scar_optimizer.
+    bivariate_scar_optimizer=LBFGSBConfig(maxiter=300),
+    bivariate_log_scar_optimizer=LBFGSBConfig(maxiter=1200),
+    stochastic_student_scar_optimizer=LBFGSBConfig(maxiter=1500),
+)
+
+# Optional only for bivariate models; the default remains scaled [kappa, mu, nu].
+result = fit(
+    copula,
+    u,
+    method="scar-tm-ou",
+    config=config,
+    log_stationary_scale_optimization=True,
+)
+```
 
 ```python
 result = fit(

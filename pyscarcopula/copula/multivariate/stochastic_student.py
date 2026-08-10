@@ -32,7 +32,7 @@ from typing import Any
 
 import numpy as np
 from numpy.typing import ArrayLike
-from scipy.stats import norm, t as t_dist
+from scipy.stats import t as t_dist
 
 from pyscarcopula.copula.base import CopulaCapabilities
 from pyscarcopula.copula.multivariate.base import (
@@ -78,6 +78,11 @@ from pyscarcopula.copula.multivariate.factor_estimation import (
     FactorLoadingParameterization,
     estimate_factor_loadings,
 )
+from pyscarcopula.numerical._arrays import (
+    validate_integer,
+    validate_sampling_memory_budget as _sampling_memory_budget,
+    validate_sampling_n_threads as _sampling_n_threads,
+)
 from pyscarcopula.copula.multivariate.factor_student import (
     FactorStudentEvaluator,
 )
@@ -110,48 +115,6 @@ def _validate_fit_data(u, d):
         raise ValueError("data must contain only finite values")
 
 
-def _factor_integer(name, value, *, minimum=0):
-    if (
-            isinstance(value, (bool, np.bool_))
-            or not isinstance(value, (int, np.integer))):
-        raise TypeError(f"{name} must be an integer")
-    value = int(value)
-    if value < minimum:
-        qualifier = "positive" if minimum == 1 else "non-negative"
-        raise ValueError(f"{name} must be {qualifier}")
-    return value
-
-
-def _sampling_integer(name, value, *, minimum=0):
-    if (
-            isinstance(value, (bool, np.bool_))
-            or not isinstance(value, (int, np.integer))):
-        raise TypeError(f"{name} must be an integer")
-    value = int(value)
-    if value < minimum:
-        qualifier = "positive" if minimum == 1 else "non-negative"
-        raise ValueError(f"{name} must be {qualifier}")
-    return value
-
-
-def _sampling_n_threads(value):
-    value = _sampling_integer("n_threads", value, minimum=1)
-    if value > 256:
-        raise ValueError("n_threads must be an integer in [1, 256]")
-    return value
-
-
-def _sampling_memory_budget(memory_budget_bytes, required, guidance):
-    if memory_budget_bytes is None:
-        return
-    budget = _sampling_integer(
-        "memory_budget_bytes", memory_budget_bytes)
-    if budget < int(required):
-        raise MemoryError(
-            f"sampling requires approximately {int(required)} bytes; "
-            f"{guidance}")
-
-
 def _validated_student_sampling_parameters(r, n):
     values = np.atleast_1d(np.asarray(r, dtype=np.float64)).ravel()
     if values.size not in (1, int(n)):
@@ -166,39 +129,6 @@ def _validated_student_sampling_parameters(r, n):
 # ══════════════════════════════════════════════════════════════
 # Helper functions
 # ══════════════════════════════════════════════════════════════
-
-def _softplus(x):
-    """Numerically stable softplus: log(1 + exp(x))."""
-    return np.logaddexp(0.0, x)
-
-
-def _softplus_scalar(x):
-    return float(np.logaddexp(0.0, float(x)))
-
-
-def _softplus_deriv(x):
-    """d softplus / dx = sigmoid(x) = 1 / (1 + exp(-x))."""
-    out = np.empty_like(x, dtype=np.float64)
-    positive = x >= 0.0
-    out[positive] = 1.0 / (1.0 + np.exp(-x[positive]))
-    exp_x = np.exp(x[~positive])
-    out[~positive] = exp_x / (1.0 + exp_x)
-    return out
-
-
-def _softplus_deriv_scalar(x):
-    x = float(x)
-    if x >= 0.0:
-        return float(1.0 / (1.0 + np.exp(-x)))
-    exp_x = np.exp(x)
-    return float(exp_x / (1.0 + exp_x))
-
-
-def _inv_softplus(y):
-    """Inverse of softplus: x = log(exp(y) - 1)."""
-    y = np.asarray(y, dtype=np.float64)
-    return np.where(y > 30, y, np.log(np.expm1(np.clip(y, 1e-15, 500))))
-
 
 # ══════════════════════════════════════════════════════════════
 # Class
@@ -254,9 +184,11 @@ class StochasticStudentCopula(MultivariateCopula):
     """
 
     _gas_optimizer_config = 'stochastic_student_gas_optimizer'
+    _scar_optimizer_config = 'stochastic_student_scar_optimizer'
     _df_offset = _DF_OFFSET
     _scar_static_df_mle_initialization = True
     _scar_log_stationary_scale_optimization = True
+    _scar_stationary_scale_bounds = (0.001, 10_000.0)
     _supports_scar_mixture_h = False
     _capabilities = CopulaCapabilities(
         supports_gas=True,
@@ -340,14 +272,11 @@ class StochasticStudentCopula(MultivariateCopula):
         self._factor_initialization_diagnostics = {}
         self._constructor_factor_loadings = None
         self._factor_estimation = factor_estimation
-        self._factor_tile_size = _factor_integer(
-            "factor_tile_size", factor_tile_size, minimum=1)
+        self._factor_tile_size = validate_integer(
+            factor_tile_size, "factor_tile_size", minimum=1)
         self._factor_uniqueness_min = float(factor_uniqueness_min)
-        self._factor_joint_max_params = _factor_integer(
-            "factor_joint_max_params",
-            factor_joint_max_params,
-            minimum=1,
-        )
+        self._factor_joint_max_params = validate_integer(
+            factor_joint_max_params, "factor_joint_max_params", minimum=1)
         self._factor_joint_penalty = float(factor_joint_penalty)
         if (
                 not np.isfinite(self._factor_joint_penalty)
@@ -362,10 +291,9 @@ class StochasticStudentCopula(MultivariateCopula):
             raise ValueError(
                 "factor_joint_condition_max must be finite and greater "
                 "than 1")
-        self._factor_seed = _factor_integer(
-            "factor_seed", factor_seed)
-        self._factor_oversampling = _factor_integer(
-            "factor_oversampling", factor_oversampling)
+        self._factor_seed = validate_integer(factor_seed, "factor_seed")
+        self._factor_oversampling = validate_integer(
+            factor_oversampling, "factor_oversampling")
         if corr_mode == 'factor':
             if (
                     isinstance(factor_rank, (bool, np.bool_))
@@ -1758,7 +1686,7 @@ class StochasticStudentCopula(MultivariateCopula):
         -------
         (n, d) pseudo-observations in [0, 1]^d
         """
-        n = _sampling_integer("n", n)
+        n = validate_integer(n, "n")
         n_threads = _sampling_n_threads(n_threads)
         r_arr = _validated_student_sampling_parameters(r, n)
         if self._corr_mode == 'factor':
@@ -1844,9 +1772,8 @@ class StochasticStudentCopula(MultivariateCopula):
             n_threads=1,
             memory_budget_bytes=None):
         """Yield Student samples in bounded row blocks."""
-        n = _sampling_integer("n", n)
-        batch_rows = _sampling_integer(
-            "batch_rows", batch_rows, minimum=1)
+        n = validate_integer(n, "n")
+        batch_rows = validate_integer(batch_rows, "batch_rows", minimum=1)
         n_threads = _sampling_n_threads(n_threads)
         parameters = np.atleast_1d(
             np.asarray(r, dtype=np.float64)).ravel()
@@ -1895,7 +1822,7 @@ class StochasticStudentCopula(MultivariateCopula):
         """Generate observations reproducing the fitted model."""
         if self.fit_result is None:
             raise ValueError("Fit first")
-        n = _sampling_integer("n", n)
+        n = validate_integer(n, "n")
         n_threads = _sampling_n_threads(n_threads)
         if self._corr_mode == "factor":
             blocks = self.sample_batches(
@@ -1933,9 +1860,8 @@ class StochasticStudentCopula(MultivariateCopula):
         """Yield fitted Student-model samples in bounded row blocks."""
         if self.fit_result is None:
             raise ValueError("Fit first")
-        n = _sampling_integer("n", n)
-        batch_rows = _sampling_integer(
-            "batch_rows", batch_rows, minimum=1)
+        n = validate_integer(n, "n")
+        batch_rows = validate_integer(batch_rows, "batch_rows", minimum=1)
         n_threads = _sampling_n_threads(n_threads)
         if rng is None:
             rng = np.random.default_rng()
@@ -2009,7 +1935,7 @@ class StochasticStudentCopula(MultivariateCopula):
             n_threads=1,
             memory_budget_bytes=None):
         """Sample conditionally with ``given={var_index: u_value}``."""
-        n = _sampling_integer("n", n)
+        n = validate_integer(n, "n")
         n_threads = _sampling_n_threads(n_threads)
         if self._corr_mode != 'factor' and self._R is None:
             raise ValueError("Correlation matrix R not set. Call fit() first.")
@@ -2114,7 +2040,7 @@ class StochasticStudentCopula(MultivariateCopula):
         predictive_r_mode = config.predictive_r_mode
         if self.fit_result is None:
             raise ValueError("Fit first")
-        n = _sampling_integer("n", n)
+        n = validate_integer(n, "n")
         n_threads = _sampling_n_threads(n_threads)
         if rng is None:
             rng = np.random.default_rng()
@@ -2176,9 +2102,8 @@ class StochasticStudentCopula(MultivariateCopula):
         """Yield fitted predictive samples from one frozen state."""
         if self.fit_result is None:
             raise ValueError("Fit first")
-        n = _sampling_integer("n", n)
-        batch_rows = _sampling_integer(
-            "batch_rows", batch_rows, minimum=1)
+        n = validate_integer(n, "n")
+        batch_rows = validate_integer(batch_rows, "batch_rows", minimum=1)
         n_threads = _sampling_n_threads(n_threads)
         if rng is None:
             rng = np.random.default_rng()

@@ -14,8 +14,11 @@ C-Vine (d dimensions):
     MLE:  constant r per edge
     SCAR: predictive E[Psi(x_k) | u_{1:k-1}] per edge
 
-Under correct model: e ~ iid U[0,1]^d.
-Test: Phi^{-1}(e) -> chi2(d) CDF -> CvM against U[0,1].
+Under the correctly specified model: e ~ iid U[0,1]^d.
+The implemented diagnostic maps each row to a scalar radial summary,
+Phi^{-1}(e) -> chi2(d) CDF, and applies a one-sample CvM test against
+U[0,1].  It is not a separate omnibus test of componentwise or serial
+independence.
 
 Usage:
     from pyscarcopula.stattests import gof_test, vine_gof_test
@@ -71,7 +74,7 @@ class BootstrapGoFResult:
 
 def cvm_test(e):
     """
-    One-sample Cramér-von Mises test.
+    One-sample Cramér-von Mises test of the radial Rosenblatt summary.
 
     Parameters
     ----------
@@ -82,7 +85,13 @@ def cvm_test(e):
     Returns
     -------
     CramerVonMisesResult
-        Has .statistic and .pvalue
+        Has .statistic and .pvalue.  SciPy uses the conventional
+        sample-size-scaled statistic
+
+            W^2 = T * integral_0^1 (F_T(y) - y)^2 dy.
+
+        The scalar reduction is a diagnostic consequence of the joint null;
+        it does not separately test componentwise or serial independence.
     """
     e = as_pseudo_observation_array(e, name="e")
     if e.ndim != 2:
@@ -542,7 +551,7 @@ def _bootstrap_simulate_gaussian(
     return copula.sample(len(u), rng=rng, n_threads=n_threads)
 
 
-def _bootstrap_refit_gaussian(
+def _bootstrap_refit_static_multivariate(
         copula_class, constructor_kwargs, u_boot, fit_result, fit_kwargs,
         K, grid_range, n_threads, config):
     copula = create_worker_model(copula_class, constructor_kwargs)
@@ -604,20 +613,6 @@ def _bootstrap_prepare_student(
 def _bootstrap_simulate_student(
         copula, u, fit_result, rng, K, grid_range, n_threads, config):
     return copula.sample(len(u), rng=rng)
-
-
-def _bootstrap_refit_student(
-        copula_class, constructor_kwargs, u_boot, fit_result, fit_kwargs,
-        K, grid_range, n_threads, config):
-    copula = create_worker_model(copula_class, constructor_kwargs)
-    result = copula.fit(
-        u_boot,
-        method='mle',
-        to_pobs=False,
-        config=config,
-        **fit_kwargs,
-    )
-    return copula, result
 
 
 def _bootstrap_statistic_student(
@@ -774,14 +769,14 @@ _BOOTSTRAP_ADAPTERS = {
         capture=_bootstrap_capture_none,
         prepare=_bootstrap_prepare_gaussian,
         simulate=_bootstrap_simulate_gaussian,
-        refit=_bootstrap_refit_gaussian,
+        refit=_bootstrap_refit_static_multivariate,
         statistic=_bootstrap_statistic_gaussian,
     ),
     'student': _BootstrapAdapter(
         capture=_bootstrap_capture_none,
         prepare=_bootstrap_prepare_student,
         simulate=_bootstrap_simulate_student,
-        refit=_bootstrap_refit_student,
+        refit=_bootstrap_refit_static_multivariate,
         statistic=_bootstrap_statistic_student,
     ),
     'equicorr': _BootstrapAdapter(

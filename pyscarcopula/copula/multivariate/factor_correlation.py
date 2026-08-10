@@ -11,20 +11,10 @@ from typing import Any, Mapping
 
 import numpy as np
 
+from pyscarcopula.numerical._arrays import validate_integer
+
 
 FACTOR_CORRELATION_FORMAT_VERSION = 1
-
-
-def _positive_integer(name, value, *, allow_zero=False):
-    if isinstance(value, (bool, np.bool_)) or not isinstance(
-            value, (int, np.integer)):
-        raise TypeError(f"{name} must be an integer")
-    value = int(value)
-    minimum = 0 if allow_zero else 1
-    if value < minimum:
-        qualifier = "non-negative" if allow_zero else "positive"
-        raise ValueError(f"{name} must be {qualifier}")
-    return value
 
 
 def _validated_n_threads(value):
@@ -207,8 +197,8 @@ class FactorCorrelation:
             max_dimension: int = 2048,
             memory_budget_bytes: int | None = None) -> np.ndarray:
         """Explicitly materialize ``R`` for small diagnostic problems."""
-        max_dimension = _positive_integer(
-            "max_dimension", max_dimension)
+        max_dimension = validate_integer(
+            max_dimension, "max_dimension", minimum=1)
         required = self.dimension * self.dimension * 8
         if self.dimension > max_dimension:
             raise MemoryError(
@@ -403,7 +393,7 @@ class PreparedFactorCorrelation:
             n_threads: int = 1,
             memory_budget_bytes: int | None = None) -> np.ndarray:
         """Draw factor-normal rows using bounded, deterministic native work."""
-        n = _positive_integer("n", n, allow_zero=True)
+        n = validate_integer(n, "n")
         required = n * (self.dimension + self.rank) * 8
         _validated_budget(
             memory_budget_bytes,
@@ -474,8 +464,8 @@ class PreparedFactorCorrelation:
             n_threads: int = 1,
             memory_budget_bytes: int | None = None) -> Iterator[np.ndarray]:
         """Yield bounded batches of factor-normal rows."""
-        n = _positive_integer("n", n, allow_zero=True)
-        batch_rows = _positive_integer("batch_rows", batch_rows)
+        n = validate_integer(n, "n")
+        batch_rows = validate_integer(batch_rows, "batch_rows", minimum=1)
         _validated_n_threads(n_threads)
         required = min(n, batch_rows) * (
             self.dimension + self.rank) * 8

@@ -209,8 +209,11 @@ normalized filtering recursion. For joint Stochastic Student fits, the
 compiled engine supplies OU and static-correlation derivatives, and Python
 applies the configured correlation-parameter chain rule.
 
-`StochasticStudentCopula` additionally reparameterizes the OU block during
-optimization. If $\sigma_x=\nu/\sqrt{2\kappa}$ and
+`StochasticStudentCopula` uses a reparameterized OU block during optimization
+by default. Bivariate SCAR-TM-OU keeps scaled physical coordinates by default,
+but can opt in to the same stationary-scale coordinates with the explicit
+strategy parameter `log_stationary_scale_optimization=True`. If
+$\sigma_x=\nu/\sqrt{2\kappa}$ and
 $y=(\log\kappa,\mu,\log\sigma_x)$, the public likelihood remains a function
 of $\alpha=(\kappa,\mu,\nu)$, while the optimizer receives
 

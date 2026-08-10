@@ -42,6 +42,42 @@ def validate_positive_int(value, name):
     return result
 
 
+def validate_integer(value, name, *, minimum=0):
+    """Validate an integer option with an inclusive lower bound."""
+    if isinstance(value, (bool, np.bool_)) or not isinstance(
+            value, (int, np.integer)):
+        raise TypeError(f"{name} must be an integer")
+    result = int(value)
+    if result < minimum:
+        if minimum == 0:
+            qualifier = "non-negative"
+        elif minimum == 1:
+            qualifier = "positive"
+        else:
+            qualifier = f"at least {minimum}"
+        raise ValueError(f"{name} must be {qualifier}")
+    return result
+
+
+def validate_sampling_n_threads(value):
+    """Validate the public sampling thread-count contract."""
+    result = validate_integer(value, "n_threads", minimum=1)
+    if result > 256:
+        raise ValueError("n_threads must be an integer in [1, 256]")
+    return result
+
+
+def validate_sampling_memory_budget(memory_budget_bytes, required, guidance):
+    """Reject a sampling allocation that exceeds an optional byte budget."""
+    if memory_budget_bytes is None:
+        return
+    budget = validate_integer(memory_budget_bytes, "memory_budget_bytes")
+    if budget < int(required):
+        raise MemoryError(
+            f"sampling requires approximately {int(required)} bytes; "
+            f"{guidance}")
+
+
 def validate_float64_allocation(
         shape, *, name="array", memory_budget_bytes=None):
     """Validate a float64 allocation and return its required byte count."""

@@ -43,10 +43,17 @@ class TestNumericalConfig:
         assert cfg.scar_optimizer.maxiter == 100
         assert cfg.scar_optimizer.maxls == 20
         assert cfg.scar_optimizer.eps == 1e-4
+        assert cfg.bivariate_scar_optimizer == cfg.scar_optimizer
+        assert cfg.bivariate_log_scar_optimizer.maxfun == 300
+        assert cfg.bivariate_log_scar_optimizer.maxiter == 1000
+        assert cfg.bivariate_log_scar_optimizer.maxls == 200
         assert cfg.equicorr_optimizer.gtol == 1e-4
         assert cfg.stochastic_student_optimizer.gtol == 1e-4
         assert cfg.stochastic_student_gas_optimizer.ftol == 1e-9
         assert cfg.stochastic_student_gas_optimizer.maxls == 50
+        assert cfg.stochastic_student_scar_optimizer.maxfun == 300
+        assert cfg.stochastic_student_scar_optimizer.maxiter == 1000
+        assert cfg.stochastic_student_scar_optimizer.maxls == 200
         assert cfg.gas_score_eps == 1e-4
         assert cfg.gas_gamma_bound == 20.0
         assert cfg.gas_beta_bound == 0.999
@@ -59,9 +66,12 @@ class TestNumericalConfig:
             mle_optimizer=LBFGSBConfig(gtol=1e-5),
             gas_optimizer=LBFGSBConfig(ftol=1e-10, maxfun=250),
             scar_optimizer=LBFGSBConfig(maxls=50),
+            bivariate_scar_optimizer=LBFGSBConfig(maxiter=700),
+            bivariate_log_scar_optimizer=LBFGSBConfig(maxfun=500),
             equicorr_optimizer=LBFGSBConfig(maxls=35),
             stochastic_student_optimizer=LBFGSBConfig(maxiter=40),
             stochastic_student_gas_optimizer=LBFGSBConfig(ftol=1e-8),
+            stochastic_student_scar_optimizer=LBFGSBConfig(maxfun=600),
             gas_score_eps=1e-6,
             gas_gamma_bound=12.0,
             gas_beta_bound=0.95,
@@ -74,12 +84,20 @@ class TestNumericalConfig:
         assert cfg.gas_optimizer.maxls == 100
         assert cfg.scar_optimizer.maxls == 50
         assert cfg.scar_optimizer.maxfun == 300
+        assert cfg.bivariate_scar_optimizer.maxiter == 700
+        assert cfg.bivariate_scar_optimizer.maxls == 20
+        assert cfg.bivariate_log_scar_optimizer.maxfun == 500
+        assert cfg.bivariate_log_scar_optimizer.maxiter == 1000
+        assert cfg.bivariate_log_scar_optimizer.maxls == 200
         assert cfg.equicorr_optimizer.gtol == 1e-4
         assert cfg.equicorr_optimizer.maxls == 35
         assert cfg.stochastic_student_optimizer.gtol == 1e-4
         assert cfg.stochastic_student_optimizer.maxiter == 40
         assert cfg.stochastic_student_gas_optimizer.ftol == 1e-8
         assert cfg.stochastic_student_gas_optimizer.maxfun == 1000
+        assert cfg.stochastic_student_scar_optimizer.maxfun == 600
+        assert cfg.stochastic_student_scar_optimizer.maxiter == 1000
+        assert cfg.stochastic_student_scar_optimizer.maxls == 200
         assert cfg.gas_score_eps == 1e-6
         assert cfg.gas_gamma_bound == 12.0
         assert cfg.gas_beta_bound == 0.95

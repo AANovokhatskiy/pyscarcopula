@@ -114,6 +114,13 @@ DEFAULT_SCAR_OPTIMIZER = LBFGSBConfig(
     maxls=20,
     eps=1e-4,
 )
+DEFAULT_BIVARIATE_LOG_SCAR_OPTIMIZER = LBFGSBConfig(
+    gtol=1e-3,
+    maxfun=300,
+    maxiter=1000,
+    maxls=200,
+    eps=1e-4,
+)
 DEFAULT_EQUICORR_OPTIMIZER = LBFGSBConfig(
     gtol=1e-4,
 )
@@ -131,6 +138,13 @@ DEFAULT_STOCHASTIC_STUDENT_GAS_OPTIMIZER = LBFGSBConfig(
     maxiter=1000,
     maxls=50,
     eps=1e-5,
+)
+DEFAULT_STOCHASTIC_STUDENT_SCAR_OPTIMIZER = LBFGSBConfig(
+    gtol=1e-3,
+    maxfun=300,
+    maxiter=1000,
+    maxls=200,
+    eps=1e-4,
 )
 @dataclass(frozen=True)
 class NumericalConfig:
@@ -166,6 +180,9 @@ class NumericalConfig:
         default_factory=lambda: DEFAULT_GAS_OPTIMIZER)
     scar_optimizer: LBFGSBConfig = field(
         default_factory=lambda: DEFAULT_SCAR_OPTIMIZER)
+    bivariate_scar_optimizer: LBFGSBConfig | None = None
+    bivariate_log_scar_optimizer: LBFGSBConfig = field(
+        default_factory=lambda: DEFAULT_BIVARIATE_LOG_SCAR_OPTIMIZER)
 
     # Multivariate copula optimizer defaults
     equicorr_optimizer: LBFGSBConfig = field(
@@ -176,6 +193,8 @@ class NumericalConfig:
         default_factory=lambda: DEFAULT_STATIC_STUDENT_OPTIMIZER)
     stochastic_student_gas_optimizer: LBFGSBConfig = field(
         default_factory=lambda: DEFAULT_STOCHASTIC_STUDENT_GAS_OPTIMIZER)
+    stochastic_student_scar_optimizer: LBFGSBConfig = field(
+        default_factory=lambda: DEFAULT_STOCHASTIC_STUDENT_SCAR_OPTIMIZER)
 
     # Bisection (h-function inversion)
     bisection_tol: float = 1e-10
@@ -209,6 +228,17 @@ class NumericalConfig:
         object.__setattr__(
             self, 'scar_optimizer',
             DEFAULT_SCAR_OPTIMIZER.merged(self.scar_optimizer))
+        bivariate_scar_optimizer = self.bivariate_scar_optimizer
+        object.__setattr__(
+            self, 'bivariate_scar_optimizer',
+            self.scar_optimizer
+            if bivariate_scar_optimizer is None
+            else DEFAULT_SCAR_OPTIMIZER.merged(
+                bivariate_scar_optimizer))
+        object.__setattr__(
+            self, 'bivariate_log_scar_optimizer',
+            DEFAULT_BIVARIATE_LOG_SCAR_OPTIMIZER.merged(
+                self.bivariate_log_scar_optimizer))
         object.__setattr__(
             self, 'equicorr_optimizer',
             DEFAULT_EQUICORR_OPTIMIZER.merged(self.equicorr_optimizer))
@@ -224,6 +254,10 @@ class NumericalConfig:
             self, 'stochastic_student_gas_optimizer',
             DEFAULT_STOCHASTIC_STUDENT_GAS_OPTIMIZER.merged(
                 self.stochastic_student_gas_optimizer))
+        object.__setattr__(
+            self, 'stochastic_student_scar_optimizer',
+            DEFAULT_STOCHASTIC_STUDENT_SCAR_OPTIMIZER.merged(
+                self.stochastic_student_scar_optimizer))
 
 
 DEFAULT_CONFIG = NumericalConfig()

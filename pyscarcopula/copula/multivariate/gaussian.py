@@ -7,7 +7,7 @@ from typing import Any, Literal
 import numpy as np
 from numpy.typing import ArrayLike
 from scipy.special import expit
-from scipy.stats import multivariate_normal, norm
+from scipy.stats import norm
 
 from pyscarcopula._utils import clip_pseudo_observations, pobs
 from pyscarcopula._types import (
@@ -29,6 +29,11 @@ from pyscarcopula.copula.multivariate.correlation_policy import (
     normalize_correlation_mode,
     normalize_factor_estimation,
     restore_correlation_result_metadata,
+)
+from pyscarcopula.numerical._arrays import (
+    validate_integer,
+    validate_sampling_memory_budget as _validated_budget,
+    validate_sampling_n_threads as _validated_n_threads,
 )
 
 
@@ -115,36 +120,6 @@ def _gaussian_score_correlation(u):
     return corr
 
 
-def _positive_integer(name, value, *, allow_zero=False):
-    if isinstance(value, (bool, np.bool_)) or not isinstance(
-            value, (int, np.integer)):
-        raise TypeError(f"{name} must be an integer")
-    value = int(value)
-    minimum = 0 if allow_zero else 1
-    if value < minimum:
-        qualifier = "non-negative" if allow_zero else "positive"
-        raise ValueError(f"{name} must be {qualifier}")
-    return value
-
-
-def _validated_n_threads(value):
-    value = _positive_integer("n_threads", value)
-    if value > 256:
-        raise ValueError("n_threads must be an integer in [1, 256]")
-    return value
-
-
-def _validated_budget(memory_budget_bytes, required, guidance):
-    if memory_budget_bytes is None:
-        return
-    budget = _positive_integer(
-        "memory_budget_bytes", memory_budget_bytes, allow_zero=True)
-    if budget < int(required):
-        raise MemoryError(
-            f"sampling requires approximately {int(required)} bytes; "
-            f"{guidance}")
-
-
 class GaussianCopula(MultivariateCopula):
     """Static Gaussian copula with dense or compact factor correlation."""
 
@@ -189,7 +164,8 @@ class GaussianCopula(MultivariateCopula):
                 "factor_estimation is only configurable in factor mode")
         if not 0.0 < float(corr_shrinkage_init) < 1.0:
             raise ValueError("corr_shrinkage_init must be in (0, 1)")
-        cholesky_d_max = _positive_integer("cholesky_d_max", cholesky_d_max)
+        cholesky_d_max = validate_integer(
+            cholesky_d_max, "cholesky_d_max", minimum=1)
         if (
                 corr_mode == "cholesky" and d is not None
                 and d > cholesky_d_max and not allow_large_cholesky):
@@ -246,18 +222,17 @@ class GaussianCopula(MultivariateCopula):
         self._factor_operator = None
         self._factor_initialization_diagnostics = {}
         self._constructor_factor_loadings = None
-        self._factor_tile_size = _positive_integer(
-            "factor_tile_size", factor_tile_size)
+        self._factor_tile_size = validate_integer(
+            factor_tile_size, "factor_tile_size", minimum=1)
         self._factor_uniqueness_min = float(factor_uniqueness_min)
         if not (
                 np.isfinite(self._factor_uniqueness_min)
                 and 0.0 < self._factor_uniqueness_min < 1.0):
             raise ValueError(
                 "factor_uniqueness_min must be finite and in (0, 1)")
-        self._factor_seed = _positive_integer(
-            "factor_seed", factor_seed, allow_zero=True)
-        self._factor_oversampling = _positive_integer(
-            "factor_oversampling", factor_oversampling, allow_zero=True)
+        self._factor_seed = validate_integer(factor_seed, "factor_seed")
+        self._factor_oversampling = validate_integer(
+            factor_oversampling, "factor_oversampling")
         if factor_loadings is not None:
             self._set_factor_loadings(
                 factor_loadings, diagnostics={"source": "supplied"})
@@ -852,7 +827,7 @@ class GaussianCopula(MultivariateCopula):
             *,
             n_threads=1,
             memory_budget_bytes=None):
-        n = _positive_integer("n", n, allow_zero=True)
+        n = validate_integer(n, "n")
         n_threads = _validated_n_threads(n_threads)
         if self._corr_mode == "factor":
             operator = self.correlation_operator_
@@ -887,8 +862,8 @@ class GaussianCopula(MultivariateCopula):
             given=None,
             n_threads=1,
             memory_budget_bytes=None):
-        n = _positive_integer("n", n, allow_zero=True)
-        batch_rows = _positive_integer("batch_rows", batch_rows)
+        n = validate_integer(n, "n")
+        batch_rows = validate_integer(batch_rows, "batch_rows", minimum=1)
         n_threads = _validated_n_threads(n_threads)
         if rng is None:
             rng = np.random.default_rng()
@@ -936,7 +911,7 @@ class GaussianCopula(MultivariateCopula):
             n_threads=1,
             memory_budget_bytes=None):
         """Sample conditionally with ``given={var_index: u_value}``."""
-        n = _positive_integer("n", n, allow_zero=True)
+        n = validate_integer(n, "n")
         n_threads = _validated_n_threads(n_threads)
         if self._corr_mode == "factor":
             from pyscarcopula.copula.multivariate.conditional import (

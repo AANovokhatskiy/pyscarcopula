@@ -119,7 +119,6 @@ from pyscarcopula.vine._rvine_summary import format_rvine_summary
 from pyscarcopula.vine._helpers import _clip_unit, _open_unit_uniform
 from pyscarcopula.vine._rvine_suffix import (
     edge_pair_from_pseudo_map,
-    given_suffix_edge_observations_with_r,
     given_suffix_start_col,
     sample_suffix_given_with_r,
     suffix_sampling_state,
@@ -1579,38 +1578,12 @@ class VineCopula:
         cache[cache_key] = state
         return state
 
-    def _find_peel_order_for_given_suffix(self, given_vars):
-        from pyscarcopula.vine._conditional_rvine import (
-            find_rvine_peel_order_for_given_suffix,
-        )
-        return find_rvine_peel_order_for_given_suffix(
-            self._trees, self.d, given_vars)
-
     def _sample_suffix_given_with_r(self, n, r_all, rng, given, start_col,
                                     matrix=None, pair_copulas=None):
         M = self._natural_order_matrix if matrix is None else matrix
         pair_copulas = self.pair_copulas if pair_copulas is None else pair_copulas
         return sample_suffix_given_with_r(
             self.d, n, r_all, rng, given, start_col, M, pair_copulas)
-
-    def _given_suffix_edge_observations_with_r(
-            self, n, r_all, given, start_col, matrix=None, pair_copulas=None,
-            edge_map=None):
-        """Return edge observations fully determined by fixed suffix values."""
-        M = self._natural_order_matrix if matrix is None else matrix
-        pair_copulas = self.pair_copulas if pair_copulas is None else pair_copulas
-        edge_map = self._edge_map if edge_map is None else edge_map
-        return given_suffix_edge_observations_with_r(
-            self.d,
-            self._trees,
-            n,
-            r_all,
-            given,
-            start_col,
-            M,
-            pair_copulas,
-            edge_map,
-        )
 
     # Dynamic conditioning contract is documented in
     # docs/rvine-conditional-notes.md. Keep these helpers strategy-generic:

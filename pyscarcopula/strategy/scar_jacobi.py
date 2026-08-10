@@ -412,11 +412,6 @@ class SCARJacobiStrategy:
             'memory_budget_bytes': self.memory_budget_bytes,
         }
 
-    def _likelihood_kwargs(self):
-        if self._uses_matrix_backend():
-            return self._matrix_backend_kwargs()
-        return self._backend_kwargs()
-
     def _neg_loglik(self, kappa, m, xi, u, copula):
         if not self._shape_is_supported(kappa, m, xi):
             return 1e10
