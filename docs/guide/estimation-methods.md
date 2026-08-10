@@ -17,7 +17,7 @@ combinations fail before optimization starts.
 |--------|-----|-------|----------|
 | MLE | `'mle'` | Static/constant model parameters | Baseline fit, family selection, and static multivariate fitting |
 | GAS | `'gas'` | Observation-driven score recursion | Fast dynamic dependence without latent integration |
-| SCAR-TM-OU | `'scar-tm-ou'` | OU latent state mapped to the copula parameter | Deterministic stochastic-latent likelihood |
+| SCAR-TM-OU | `'scar-tm-ou'` | OU latent state mapped to bivariate dependence or Student degrees of freedom | Deterministic stochastic-latent likelihood |
 | SCAR-TM-JACOBI | `'scar-tm-jacobi'` | Jacobi diffusion for Kendall's tau | Bounded tau dynamics with deterministic filtering |
 
 All dynamic methods return a `LatentResult` with `params`,
@@ -154,19 +154,20 @@ diagnostics distinguish these concepts with `model_score='native'` and
 
 ## SCAR-TM-OU
 
-SCAR-TM-OU uses an Ornstein-Uhlenbeck latent state,
+SCAR-TM-OU uses a one-dimensional Ornstein-Uhlenbeck latent state,
 
 $$
-r_t = \Psi(x_t), \qquad
 dx_t = \kappa(\mu - x_t)\,dt + \nu\,dW_t.
 $$
 
-The transfer-matrix likelihood integrates the latent Markov path
-deterministically. By default, `transition_method='auto'` uses a Hermite
-spectral likelihood except in narrow-kernel regimes, where it uses local
-Gauss-Hermite. If spectral evaluation fails numerically, `auto` tries the
-matrix grid likelihood first and then the local method when the matrix path is
-not accepted.
+What the state controls depends on the model. For a bivariate copula it is
+mapped to that family's scalar dependence parameter. For
+`StochasticStudentCopula` it is mapped to the time-varying degrees of freedom;
+the multivariate correlation structure remains a separate static component.
+
+The likelihood integrates the latent Markov path deterministically. The
+bivariate and Stochastic Student models use the same OU transition backends,
+but they do not use the same optimizer coordinates by default.
 
 SCAR-TM-OU requires the package C++ extension; no Python fallback implements
 this public fitting path.
@@ -181,27 +182,54 @@ result = fit(
 )
 ```
 
-The fitted parameters are `kappa`, `mu`, and `nu`. For
-`StochasticStudentCopula`, these remain the public input and result
-coordinates, but L-BFGS-B works internally with
+The public OU parameters are always `kappa`, `mu`, and `nu`. A user-supplied
+`alpha0` must use these physical coordinates in that order.
+
+### Bivariate copulas
+
+For a bivariate family $C$, the dynamic copula parameter is
+
+$$
+\theta_t = \Psi_C(x_t).
+$$
+
+Thus SCAR-TM-OU describes stochastic dependence: examples include a dynamic
+Gumbel parameter and a dynamic Gaussian correlation. The transform
+$\Psi_C$ and its admissible range are family-specific.
+
+By default, the bivariate optimizer uses scaled physical
+`[kappa, mu, nu]` coordinates. Set
+`log_stationary_scale_optimization=True` to optimize instead in
 
 $$
 (\log\kappa,\ \mu,\ \log\sigma_x),
 \qquad \sigma_x=\frac{\nu}{\sqrt{2\kappa}}.
 $$
 
-The analytical gradient is transformed by the corresponding chain rule.
-This model-specific parameterization improves conditioning when mean
-reversion and stationary latent scale differ substantially; other SCAR-TM-OU
-copulas continue to use their existing optimizer coordinates. Diagnostics
-record the choice in `optimizer_parameterization`. User-supplied `alpha0`
-must still be `[kappa, mu, nu]`.
+### Stochastic Student copula
+
+For `StochasticStudentCopula`, the OU state instead controls tail thickness:
+
+$$
+\operatorname{df}_t = 2 + 10^{-6} + \operatorname{softplus}(x_t).
+$$
+
+The correlation structure remains static. This model uses the log coordinates
+above by default. Set `log_stationary_scale_optimization=False` to use scaled
+physical `[kappa, mu, nu]` coordinates instead.
+
+### Shared transition likelihood
 
 The exact OU one-step transition is Gaussian, so all SCAR-TM-OU likelihood
 backends evaluate the same latent Markov model. They differ only in how the
 one-dimensional transition integral is approximated: Hermite spectral
 projection, a finite-grid transition matrix, or local Gauss-Hermite
 quadrature.
+
+By default, `transition_method='auto'` uses a Hermite spectral likelihood
+except in narrow-kernel regimes, where it uses local Gauss-Hermite. If spectral
+evaluation fails numerically, `auto` tries the matrix grid likelihood first
+and then the local method when the matrix path is not accepted.
 
 `LatentResult.diagnostics` records objective evaluations,
 spectral/matrix/local attempts, and transition fallback counters such as

@@ -45,6 +45,15 @@ from pyscarcopula.copula.multivariate.corr_param import (
 
 
 _INVALID_OBJECTIVE_THRESHOLD = 1e9
+_OU_PHYSICAL_LOWER = np.array([0.001, -np.inf, 0.001])
+_OU_PHYSICAL_UPPER = np.array([np.inf, np.inf, np.inf])
+_OU_LEGACY_LOG_STATIONARY_LOWER = np.array([
+    np.log(0.001), -np.inf, -np.inf,
+])
+_OU_LOG_STATIONARY_UPPER = np.array([np.inf, np.inf, np.inf])
+_OU_BOUNDED_LOG_STATIONARY_RESULT_LOWER = np.array([
+    0.001, -np.inf, 0.0,
+])
 
 _DIAGNOSTIC_COUNTERS = (
     "objective_evaluations",
@@ -89,10 +98,74 @@ def _objective_is_invalid(value):
     return (not np.isfinite(value)) or float(value) >= _INVALID_OBJECTIVE_THRESHOLD
 
 
-def _uses_log_stationary_scale(copula):
+def _uses_log_stationary_scale(copula, override=None):
     """Whether SCAR optimization uses (log kappa, mu, log sigma_x)."""
+    if override is not None:
+        return bool(override)
     return bool(getattr(
         copula, "_scar_log_stationary_scale_optimization", False))
+
+
+def _uses_bounded_log_stationary_scale(copula, override=None):
+    """Whether the explicit bivariate log-scale bounds are active."""
+    model_default = bool(getattr(
+        copula, "_scar_log_stationary_scale_optimization", False))
+    return bool(override) and not model_default
+
+
+def _normalize_stationary_scale_bounds(value):
+    """Validate optional positive bounds for stationary OU scale."""
+    if value is None:
+        return None
+    if not isinstance(value, (tuple, list)) or len(value) != 2:
+        raise TypeError(
+            "stationary_scale_bounds must be a (lower, upper) pair or None")
+    normalized = []
+    for bound in value:
+        if bound is None:
+            normalized.append(None)
+            continue
+        bound = float(bound)
+        if not np.isfinite(bound) or bound <= 0.0:
+            raise ValueError(
+                "stationary_scale_bounds values must be positive and finite")
+        normalized.append(bound)
+    lower, upper = normalized
+    if lower is not None and upper is not None and lower >= upper:
+        raise ValueError(
+            "stationary_scale_bounds lower must be less than upper")
+    return lower, upper
+
+
+def _resolved_stationary_scale_bounds(copula, override, explicit_bounds):
+    """Resolve explicit, model-specific, or bivariate opt-in scale bounds."""
+    if explicit_bounds is not None:
+        return explicit_bounds
+    model_bounds = getattr(copula, "_scar_stationary_scale_bounds", None)
+    if model_bounds is not None:
+        return _normalize_stationary_scale_bounds(model_bounds)
+    if _uses_bounded_log_stationary_scale(copula, override):
+        return 0.001, None
+    return None, None
+
+
+def _log_stationary_optimizer_bounds(copula, override, explicit_bounds):
+    lower = _OU_LEGACY_LOG_STATIONARY_LOWER.copy()
+    upper = _OU_LOG_STATIONARY_UPPER.copy()
+    scale_lower, scale_upper = _resolved_stationary_scale_bounds(
+        copula, override, explicit_bounds)
+    if scale_lower is not None:
+        lower[2] = np.log(scale_lower)
+    if scale_upper is not None:
+        upper[2] = np.log(scale_upper)
+    return lower, upper, (scale_lower, scale_upper)
+
+
+def _project_log_stationary_initial_point(values, lower, upper):
+    """Project the OU block onto the log-kappa/log-sigma box bounds."""
+    projected = np.asarray(values, dtype=np.float64).copy()
+    projected[:3] = np.clip(projected[:3], lower, upper)
+    return projected
 
 
 def _ou_to_log_stationary(alpha):
@@ -483,6 +556,18 @@ class SCARTMStrategy:
         StochasticStudentCopula keeps the public ``(kappa, mu, nu)``
         parameters but optimizes internally in
         ``(log(kappa), mu, log(nu / sqrt(2*kappa)))`` coordinates.
+    log_stationary_scale_optimization : bool or None
+        Select the optimizer coordinates for the OU block. ``True`` uses
+        ``(log(kappa), mu, log(nu / sqrt(2*kappa)))`` with lower bounds of
+        ``0.001`` on ``kappa`` and the stationary scale for bivariate
+        models. ``False`` uses the scaled ``(kappa, mu, nu)`` coordinates.
+        ``None`` (default) uses the copula model preference; currently only
+        StochasticStudentCopula opts in.
+    stationary_scale_bounds : (float or None, float or None) or None
+        Optional lower and upper bounds for ``sigma_x`` in log-stationary
+        coordinates. ``None`` uses the model policy. StochasticStudentCopula
+        and the independent bivariate log-coordinate policy each default to
+        ``(0.001, 10000.0)``.
     final_validation_abs_per_obs : float
         Absolute cross-backend objective tolerance per observation.
     final_validation_rel_tol : float
@@ -514,6 +599,9 @@ class SCARTMStrategy:
                  spectral_quad_order: int | None = None,
                  analytical_grad: bool = True,
                  smart_init: bool = True,
+                 log_stationary_scale_optimization: bool | None = None,
+                 stationary_scale_bounds: tuple[
+                     float | None, float | None] | None = None,
                  final_validation_abs_per_obs: float = 5e-5,
                  final_validation_rel_tol: float = 1e-5,
                  final_gradient_tolerance: float | None = None,
@@ -542,6 +630,18 @@ class SCARTMStrategy:
         self.spectral_quad_order = spectral_quad_order
         self.analytical_grad = analytical_grad
         self.smart_init = smart_init
+        if (
+                log_stationary_scale_optimization is not None
+                and not isinstance(
+                    log_stationary_scale_optimization, (bool, np.bool_))):
+            raise TypeError(
+                "log_stationary_scale_optimization must be bool or None")
+        self.log_stationary_scale_optimization = (
+            None if log_stationary_scale_optimization is None
+            else bool(log_stationary_scale_optimization)
+        )
+        self.stationary_scale_bounds = _normalize_stationary_scale_bounds(
+            stationary_scale_bounds)
         self.final_validation_abs_per_obs = float(
             final_validation_abs_per_obs)
         self.final_validation_rel_tol = float(final_validation_rel_tol)
@@ -585,13 +685,21 @@ class SCARTMStrategy:
             )
         )
 
+    def _optimizer_config(self, copula, *, log_stationary):
+        if log_stationary:
+            config_name = getattr(
+                copula, "_scar_log_optimizer_config", None)
+            if config_name is not None:
+                return getattr(self.config, config_name)
+        config_name = getattr(copula, "_scar_optimizer_config", None)
+        if config_name is None:
+            return self.config.scar_optimizer
+        return getattr(self.config, config_name)
+
     def _grid_transition_method(self):
         if self.transition_method == 'spectral':
             return 'auto'
         return self.transition_method
-
-    def _uses_local_transition(self):
-        return self._grid_transition_method() != 'matrix' or self.max_K is not None
 
     def _tm_kwargs(self):
         if self.transition_method == 'matrix' and self.max_K is None:
@@ -920,20 +1028,33 @@ class SCARTMStrategy:
         initialization["alpha0"] = [
             float(value) for value in joint0]
 
-        log_stationary = _uses_log_stationary_scale(copula)
+        log_stationary = _uses_log_stationary_scale(
+            copula, self.log_stationary_scale_optimization)
+        bounded_log_stationary = _uses_bounded_log_stationary_scale(
+            copula, self.log_stationary_scale_optimization)
         if log_stationary:
             scale = np.ones_like(joint0)
+            log_lower, log_upper, resolved_scale_bounds = (
+                _log_stationary_optimizer_bounds(
+                    copula,
+                    self.log_stationary_scale_optimization,
+                    self.stationary_scale_bounds,
+                ))
             x0_scaled = _ou_to_log_stationary(joint0)
+            x0_scaled[:3] = _project_log_stationary_initial_point(
+                x0_scaled[:3], log_lower, log_upper)
         else:
             scale = np.maximum(np.abs(joint0), 1.0)
             x0_scaled = joint0 / scale
+            resolved_scale_bounds = (None, None)
         lower = np.full(3 + n_corr, -np.inf, dtype=np.float64)
         upper = np.full(3 + n_corr, np.inf, dtype=np.float64)
         if log_stationary:
-            lower[0] = np.log(0.001)
+            lower[:3] = log_lower
+            upper[:3] = log_upper
         else:
-            lower[0] = 0.001 / scale[0]
-            lower[2] = 0.001 / scale[2]
+            lower[0] = _OU_PHYSICAL_LOWER[0] / scale[0]
+            lower[2] = _OU_PHYSICAL_LOWER[2] / scale[2]
         bounds_scaled = Bounds(lower, upper)
 
         def optimizer_to_joint(values):
@@ -955,6 +1076,7 @@ class SCARTMStrategy:
             "optimizer_parameterization": (
                 "log_kappa_mu_log_stationary_sigma"
                 if log_stationary else "scaled_kappa_mu_nu"),
+            "optimizer_stationary_scale_bounds": resolved_scale_bounds,
             "joint_static": True,
             "joint_optimizer": "python-lbfgsb",
             "correlation_parameterization_engine": "python",
@@ -1223,7 +1345,8 @@ class SCARTMStrategy:
             final_params=joint,
             initial_params=joint0,
             lower=np.concatenate((
-                np.array([0.001, -np.inf, 0.001]),
+                (_OU_BOUNDED_LOG_STATIONARY_RESULT_LOWER
+                 if bounded_log_stationary else _OU_PHYSICAL_LOWER),
                 np.full(n_corr, -np.inf),
             )),
             upper=np.full(3 + n_corr, np.inf),
@@ -1311,8 +1434,11 @@ class SCARTMStrategy:
         LatentResult
         """
         reject_legacy_tol(kwargs)
+        log_stationary = _uses_log_stationary_scale(
+            copula, self.log_stationary_scale_optimization)
         optimizer_options = lbfgsb_options(
-            self.config.scar_optimizer,
+            self._optimizer_config(
+                copula, log_stationary=log_stationary),
             **lbfgsb_overrides(
                 gtol=gtol,
                 ftol=ftol,
@@ -1346,6 +1472,18 @@ class SCARTMStrategy:
             initial_mle_result,
         )
         alpha0 = np.asarray(alpha0, dtype=np.float64)
+        bounded_log_stationary = _uses_bounded_log_stationary_scale(
+            copula, self.log_stationary_scale_optimization)
+        if log_stationary:
+            log_lower, log_upper, resolved_scale_bounds = (
+                _log_stationary_optimizer_bounds(
+                    copula,
+                    self.log_stationary_scale_optimization,
+                    self.stationary_scale_bounds,
+                ))
+        else:
+            log_lower = log_upper = None
+            resolved_scale_bounds = (None, None)
 
         self._uses_cpp(copula)
         selected_engine = "cpp"
@@ -1359,8 +1497,9 @@ class SCARTMStrategy:
             "initialization": initialization,
             "optimizer_parameterization": (
                 "log_kappa_mu_log_stationary_sigma"
-                if _uses_log_stationary_scale(copula)
+                if log_stationary
                 else "scaled_kappa_mu_nu"),
+            "optimizer_stationary_scale_bounds": resolved_scale_bounds,
             "model_score": "not_applicable",
             "optimizer_gradient": (
                 "analytical" if self.analytical_grad else "numerical"),
@@ -1381,14 +1520,12 @@ class SCARTMStrategy:
 
         # ── Fit with analytical gradient ──────────────────────────
         if self.analytical_grad:
-            log_stationary = _uses_log_stationary_scale(copula)
             if log_stationary:
                 scale = np.ones(3, dtype=np.float64)
                 x0_scaled = _ou_to_log_stationary(alpha0)
-                bounds_scaled = Bounds(
-                    [np.log(0.001), -np.inf, -np.inf],
-                    [np.inf, np.inf, np.inf],
-                )
+                x0_scaled = _project_log_stationary_initial_point(
+                    x0_scaled, log_lower, log_upper)
+                bounds_scaled = Bounds(log_lower, log_upper)
             else:
                 # Rescale parameters so all three are O(1) at start.
                 # This helps L-BFGS-B estimate the initial Hessian.
@@ -1399,7 +1536,8 @@ class SCARTMStrategy:
                 ])
                 x0_scaled = alpha0 / scale
                 bounds_scaled = Bounds(
-                    [0.001 / scale[0], -np.inf, 0.001 / scale[2]],
+                    [_OU_PHYSICAL_LOWER[0] / scale[0], -np.inf,
+                     _OU_PHYSICAL_LOWER[2] / scale[2]],
                     [np.inf, np.inf, np.inf]
                 )
 
@@ -1448,8 +1586,9 @@ class SCARTMStrategy:
                 pg_norm = _projected_gradient_norm(
                     physical_x,
                     physical_grad,
-                    np.array([0.001, -np.inf, 0.001]),
-                    np.array([np.inf, np.inf, np.inf]),
+                    (_OU_BOUNDED_LOG_STATIONARY_RESULT_LOWER
+                     if bounded_log_stationary else _OU_PHYSICAL_LOWER),
+                    _OU_PHYSICAL_UPPER,
                 )
                 acceptable_boundary = (
                     np.isfinite(final_val)
@@ -1473,14 +1612,12 @@ class SCARTMStrategy:
 
         # ── Fit with numerical gradient ───────────────────────────
         else:
-            log_stationary = _uses_log_stationary_scale(copula)
             if log_stationary:
                 scale = np.ones(3, dtype=np.float64)
                 x0_scaled = _ou_to_log_stationary(alpha0)
-                bounds_scaled = Bounds(
-                    [np.log(0.001), -np.inf, -np.inf],
-                    [np.inf, np.inf, np.inf],
-                )
+                x0_scaled = _project_log_stationary_initial_point(
+                    x0_scaled, log_lower, log_upper)
+                bounds_scaled = Bounds(log_lower, log_upper)
             else:
                 scale = np.array([
                     max(abs(alpha0[0]), 1.0),
@@ -1489,7 +1626,8 @@ class SCARTMStrategy:
                 ])
                 x0_scaled = alpha0 / scale
                 bounds_scaled = Bounds(
-                    [0.001 / scale[0], -np.inf, 0.001 / scale[2]],
+                    [_OU_PHYSICAL_LOWER[0] / scale[0], -np.inf,
+                     _OU_PHYSICAL_LOWER[2] / scale[2]],
                     [np.inf, np.inf, np.inf]
                 )
 
@@ -1552,8 +1690,10 @@ class SCARTMStrategy:
             result=result,
             final_params=alpha,
             initial_params=alpha0,
-            lower=np.array([0.001, -np.inf, 0.001]),
-            upper=np.array([np.inf, np.inf, np.inf]),
+            lower=(
+                _OU_BOUNDED_LOG_STATIONARY_RESULT_LOWER
+                if bounded_log_stationary else _OU_PHYSICAL_LOWER),
+            upper=_OU_PHYSICAL_UPPER,
             selected_evaluator=lambda values: evaluate_final(
                 values, True, record=True),
             validation_evaluator=None,

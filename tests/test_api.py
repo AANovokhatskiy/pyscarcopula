@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 import pyscarcopula
+from scipy.stats import chi2, norm
 from pyscarcopula import (
     BivariateGaussianCopula,
     GumbelCopula, ClaytonCopula, FrankCopula, JoeCopula,
@@ -216,6 +217,21 @@ class TestGoFWithFitResult:
     def test_cvm_rejects_single_observation(self):
         with pytest.raises(ValueError, match="at least two observations"):
             cvm_test(np.full((1, 2), 0.5))
+
+    def test_cvm_uses_sample_size_scaled_statistic(self):
+        e = np.array([
+            [0.15, 0.25],
+            [0.40, 0.55],
+            [0.70, 0.80],
+            [0.90, 0.65],
+        ])
+        y = np.sort(chi2.cdf(np.sum(norm.ppf(e) ** 2, axis=1), df=2))
+        n = len(y)
+        expected = 1.0 / (12.0 * n) + np.sum(
+            (y - (2.0 * np.arange(1, n + 1) - 1.0) / (2.0 * n)) ** 2
+        )
+
+        assert cvm_test(e).statistic == pytest.approx(expected)
 
     @pytest.mark.parametrize("invalid_count", [True, 0.5, 1.5])
     def test_bootstrap_count_rejects_non_integer(

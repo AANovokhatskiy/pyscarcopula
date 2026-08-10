@@ -6,7 +6,12 @@ import pytest
 
 from pyscarcopula import FrankCopula, GumbelCopula, JoeCopula
 from pyscarcopula._constants import H_FUNCTION_EPS
-from pyscarcopula._types import LatentResult, ou_params
+from pyscarcopula._types import (
+    LBFGSBConfig,
+    LatentResult,
+    NumericalConfig,
+    ou_params,
+)
 from pyscarcopula.api import fit
 from pyscarcopula.numerical.tm_functions import (
     tm_forward_mixture_h,
@@ -425,6 +430,215 @@ def test_scar_tm_local_transition_keeps_analytical_gradient_enabled():
     assert SCARTMStrategy().analytical_grad is True
     assert SCARTMStrategy(transition_method="auto").analytical_grad is True
     assert SCARTMStrategy(max_K=100).analytical_grad is True
+
+
+def test_log_stationary_optimizer_selection_is_optional_for_bivariate_model():
+    bivariate = BivariateGaussianCopula()
+    stochastic_student = StochasticStudentCopula(d=2, R=np.eye(2))
+
+    assert bivariate._scar_log_optimizer_config == (
+        "bivariate_log_scar_optimizer")
+    assert bivariate._scar_optimizer_config == "bivariate_scar_optimizer"
+    assert stochastic_student._scar_optimizer_config == (
+        "stochastic_student_scar_optimizer")
+    assert bivariate._scar_log_optimizer_config != (
+        stochastic_student._scar_optimizer_config)
+    assert bivariate._scar_stationary_scale_bounds == (0.001, 10_000.0)
+    assert stochastic_student._scar_stationary_scale_bounds == (
+        0.001, 10_000.0)
+    assert not scar_tm._uses_log_stationary_scale(bivariate)
+    assert scar_tm._uses_log_stationary_scale(bivariate, True)
+    assert not scar_tm._uses_bounded_log_stationary_scale(bivariate)
+    assert scar_tm._uses_bounded_log_stationary_scale(bivariate, True)
+    assert scar_tm._uses_log_stationary_scale(stochastic_student)
+    assert not scar_tm._uses_bounded_log_stationary_scale(
+        stochastic_student)
+    assert not scar_tm._uses_bounded_log_stationary_scale(
+        stochastic_student, True)
+    assert not scar_tm._uses_log_stationary_scale(
+        stochastic_student, False)
+    with pytest.raises(
+            TypeError, match="log_stationary_scale_optimization"):
+        SCARTMStrategy(log_stationary_scale_optimization="yes")
+
+
+def test_scar_optimizer_config_selection_preserves_legacy_bivariate_policy():
+    config = NumericalConfig(
+        scar_optimizer=LBFGSBConfig(maxiter=7, maxls=9),
+        bivariate_log_scar_optimizer=LBFGSBConfig(maxiter=11, maxls=13),
+        stochastic_student_scar_optimizer=LBFGSBConfig(
+            maxiter=17, maxls=19),
+    )
+    strategy = SCARTMStrategy(config=config)
+    bivariate = BivariateGaussianCopula()
+    stochastic_student = StochasticStudentCopula(d=2, R=np.eye(2))
+
+    base = strategy._optimizer_config(
+        bivariate, log_stationary=False)
+    logged = strategy._optimizer_config(
+        bivariate, log_stationary=True)
+    student = strategy._optimizer_config(
+        stochastic_student, log_stationary=True)
+
+    assert (base.maxiter, base.maxls) == (7, 9)
+    assert (logged.maxiter, logged.maxls) == (11, 13)
+    assert (student.maxiter, student.maxls) == (17, 19)
+
+
+def test_explicit_bivariate_scar_optimizer_can_override_legacy_fallback():
+    config = NumericalConfig(
+        scar_optimizer=LBFGSBConfig(maxiter=7),
+        bivariate_scar_optimizer=LBFGSBConfig(maxiter=23),
+    )
+    strategy = SCARTMStrategy(config=config)
+
+    selected = strategy._optimizer_config(
+        BivariateGaussianCopula(), log_stationary=False)
+
+    assert selected.maxiter == 23
+    assert config.scar_optimizer.maxiter == 7
+
+
+def test_bivariate_log_stationary_objective_wraps_gradient_and_uses_log_bounds(
+        monkeypatch):
+    alpha0 = np.array([2.0, 0.3, 1.4])
+    physical_gradient = np.array([0.2, -0.4, 0.6])
+    captured = {}
+
+    def fake_evaluate(self, kappa, mu, nu, auto_config):
+        captured.setdefault("physical_calls", []).append(
+            np.array([kappa, mu, nu]))
+        return 7.0, physical_gradient.copy(), {
+            "backend": "spectral",
+            "transition_method": "auto",
+        }
+
+    def fake_minimize(fun, x0, *, method, jac, bounds, options):
+        value, gradient = fun(x0)
+        captured.update({
+            "x0": np.asarray(x0).copy(),
+            "gradient": np.asarray(gradient).copy(),
+            "bounds": bounds,
+            "options": dict(options),
+        })
+
+        lower_point = np.asarray(bounds.lb).copy()
+        lower_point[1] = x0[1]
+        lower_value, _ = fun(lower_point)
+        assert lower_value == pytest.approx(7.0)
+        captured["lower_physical"] = captured["physical_calls"][-1]
+
+        return SimpleNamespace(
+            x=np.asarray(x0).copy(),
+            fun=value,
+            jac=np.asarray(gradient).copy(),
+            success=True,
+            message="test convergence",
+            nfev=1,
+        )
+
+    monkeypatch.setattr(
+        scar_tm._PreparedScarOuFitCache,
+        "neg_loglik_with_grad_info",
+        fake_evaluate,
+    )
+    monkeypatch.setattr(scar_tm, "minimize", fake_minimize)
+
+    result = fit(
+        BivariateGaussianCopula(),
+        np.random.default_rng(20260809).uniform(0.01, 0.99, size=(20, 2)),
+        method="scar-tm-ou",
+        alpha0=alpha0,
+        smart_init=False,
+        log_stationary_scale_optimization=True,
+    )
+
+    expected_x0 = scar_tm._ou_to_log_stationary(alpha0)
+    expected_gradient = scar_tm._ou_grad_to_log_stationary(
+        alpha0, physical_gradient)
+    np.testing.assert_allclose(captured["x0"], expected_x0)
+    np.testing.assert_allclose(captured["gradient"], expected_gradient)
+    np.testing.assert_allclose(captured["physical_calls"][0], alpha0)
+    np.testing.assert_allclose(
+        captured["bounds"].lb[[0, 2]], np.log([0.001, 0.001]))
+    assert np.isneginf(captured["bounds"].lb[1])
+    assert captured["bounds"].ub[2] == pytest.approx(np.log(10_000.0))
+    assert captured["options"]["maxiter"] == 1000
+    assert captured["options"]["maxls"] == 200
+    assert captured["lower_physical"][0] == pytest.approx(0.001)
+    assert 0.0 < captured["lower_physical"][2] < 0.001
+    assert result.diagnostics["optimizer_parameterization"] == (
+        "log_kappa_mu_log_stationary_sigma")
+    assert result.diagnostics["optimizer_stationary_scale_bounds"] == (
+        0.001, 10_000.0)
+    np.testing.assert_allclose(result.params.values, alpha0)
+
+
+def test_stochastic_student_uses_model_log_scale_bounds_by_default(monkeypatch):
+    alpha0 = np.array([2.0, 0.3, 1.4])
+    physical_gradient = np.array([0.2, -0.4, 0.6])
+    captured = {}
+
+    def fake_evaluate(self, kappa, mu, nu, auto_config):
+        return 7.0, physical_gradient.copy(), {
+            "backend": "spectral",
+            "transition_method": "auto",
+        }
+
+    def fake_minimize(fun, x0, *, method, jac, bounds, options):
+        value, gradient = fun(x0)
+        captured.update({
+            "x0": np.asarray(x0).copy(),
+            "bounds": bounds,
+            "options": dict(options),
+        })
+        return SimpleNamespace(
+            x=np.asarray(x0).copy(),
+            fun=value,
+            jac=np.asarray(gradient).copy(),
+            success=True,
+            message="test convergence",
+            nfev=1,
+        )
+
+    original_validate = SCARTMStrategy._validate_final_fit
+
+    def capture_validate(self, *args, **kwargs):
+        captured["final_lower"] = np.asarray(kwargs["lower"]).copy()
+        return original_validate(self, *args, **kwargs)
+
+    monkeypatch.setattr(
+        scar_tm._PreparedScarOuFitCache,
+        "neg_loglik_with_grad_info",
+        fake_evaluate,
+    )
+    monkeypatch.setattr(scar_tm, "minimize", fake_minimize)
+    monkeypatch.setattr(
+        SCARTMStrategy, "_validate_final_fit", capture_validate)
+
+    result = fit(
+        StochasticStudentCopula(d=2, R=np.eye(2)),
+        np.random.default_rng(20260810).uniform(0.01, 0.99, size=(20, 2)),
+        method="scar-tm-ou",
+        alpha0=alpha0,
+        smart_init=False,
+    )
+
+    np.testing.assert_allclose(
+        captured["x0"], scar_tm._ou_to_log_stationary(alpha0))
+    assert captured["bounds"].lb[0] == pytest.approx(np.log(0.001))
+    assert np.isneginf(captured["bounds"].lb[1])
+    assert captured["bounds"].lb[2] == pytest.approx(np.log(0.001))
+    assert captured["bounds"].ub[2] == pytest.approx(np.log(10_000.0))
+    assert captured["options"]["maxiter"] == 1000
+    assert captured["options"]["maxls"] == 200
+    np.testing.assert_allclose(
+        captured["final_lower"][[0, 2]], [0.001, 0.001])
+    assert np.isneginf(captured["final_lower"][1])
+    assert result.diagnostics["optimizer_parameterization"] == (
+        "log_kappa_mu_log_stationary_sigma")
+    assert result.diagnostics["optimizer_stationary_scale_bounds"] == (
+        0.001, 10_000.0)
 
 
 def test_scar_tm_auto_selects_spectral_except_narrow_local_fallback():

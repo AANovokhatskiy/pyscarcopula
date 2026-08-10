@@ -1,8 +1,26 @@
 # Changelog
 
+## 0.20.2 - 2026-08-10
+
+Version: `0.20.1` -> `0.20.2`
+
+- Add an optional bivariate SCAR-TM-OU optimizer parameterization in
+  `(log(kappa), mu, log(sigma_x))` coordinates, enabled explicitly with
+  `log_stationary_scale_optimization=True`.
+- Preserve `NumericalConfig.scar_optimizer` as the fallback for ordinary
+  bivariate SCAR-TM-OU fits, while providing explicit
+  `bivariate_scar_optimizer`, independent `bivariate_log_scar_optimizer`, and
+  `stochastic_student_scar_optimizer` configurations.
+- Consolidate integer and sampling validation, remove unused compatibility
+  helpers, and narrow source-distribution CSV data to the test fixture used by
+  repository validation.
+
 ## 0.20.1 - 2026-08-08
 
 Version: `0.20.0` -> `0.20.1`
+
+Commit: `160fd53`
+Merge PR: #46 (`5122e8c`, 2026-08-08)
 
 - Make final projected-gradient rejection opt-in through
   `strict_gradient_policy`, while retaining objective, backend-consistency,
