@@ -73,6 +73,7 @@ markers = [
     "tsan_incompatible: fork-after-threads checks unsupported by ThreadSanitizer",
     "validation: optional distributional validation checks",
     "external: optional checks against external reference libraries",
+    "high_dimensional: d=50 conditional-sampling validation and benchmark cases",
 ]
 
 [tool.mypy]
