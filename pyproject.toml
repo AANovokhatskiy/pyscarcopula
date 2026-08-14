@@ -42,6 +42,7 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest>=7.0", "pandas>=1.5", "mypy>=1.10"]
+external = ["pyvinecopulib==0.7.5"]
 examples = ["pandas>=1.5", "matplotlib", "jupyter"]
 docs = [
     "mkdocs-material>=9.5",
@@ -71,6 +72,7 @@ markers = [
     "sanitizer_numerical: exact floating-point golden checks excluded from sanitizer builds",
     "tsan_incompatible: fork-after-threads checks unsupported by ThreadSanitizer",
     "validation: optional distributional validation checks",
+    "external: optional checks against external reference libraries",
 ]
 
 [tool.mypy]

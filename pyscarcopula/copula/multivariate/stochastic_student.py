@@ -1937,6 +1937,12 @@ class StochasticStudentCopula(MultivariateCopula):
         """Sample conditionally with ``given={var_index: u_value}``."""
         n = validate_integer(n, "n")
         n_threads = _sampling_n_threads(n_threads)
+        _sampling_memory_budget(
+            memory_budget_bytes,
+            n * self._d * 8,
+            "use sample_batches()/predict_batches(), reduce batch_rows, "
+            "or increase memory_budget_bytes",
+        )
         if self._corr_mode != 'factor' and self._R is None:
             raise ValueError("Correlation matrix R not set. Call fit() first.")
         if rng is None:
@@ -1960,12 +1966,6 @@ class StochasticStudentCopula(MultivariateCopula):
         if len(given) == self._d:
             if r is not None:
                 _validated_student_sampling_parameters(r, n)
-            _sampling_memory_budget(
-                memory_budget_bytes,
-                n * self._d * 8,
-                "use sample_batches()/predict_batches(), reduce batch_rows, "
-                "or increase memory_budget_bytes",
-            )
             return fill_given(n, self._d, given)
         if r is None:
             from pyscarcopula._types import MLEResult

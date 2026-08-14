@@ -21,7 +21,10 @@ def validate_rvine_given(given, d):
         idx = int(key)
         if idx < 0 or idx >= d:
             raise ValueError(f"given key must be in [0, {d - 1}], got {key!r}")
-        if isinstance(value, (bool, np.bool_)) or not np.isscalar(value):
+        if (
+                isinstance(value, (bool, np.bool_, str, bytes, complex,
+                                   np.complexfloating))
+                or not np.isscalar(value)):
             raise TypeError("given values must be numeric scalars")
         val = float(value)
         if not (0.0 < val < 1.0):

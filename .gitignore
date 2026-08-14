@@ -13,6 +13,7 @@ tools/*
 !tools/check_cpp_architecture.py
 !tools/aggregate_release_validation.py
 !tools/allocation_probe.c
+!tools/conditional_sampling_audit.py
 !tools/native_dependency_audit.py
 !tools/write_release_metadata.py
 !tools/validate_jacobi_sampling.py
@@ -22,4 +23,4 @@ scripts/
 results/
 AGENTS.md
 .agents/
-benchmark_artifacts/
+benchmark_artifacts/*

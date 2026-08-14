@@ -1,9 +1,8 @@
 """Edge-level operations for the refactored RVineCopula."""
 
-from copy import copy
-
 import numpy as np
 
+from pyscarcopula.copula._rotation import transposed_bivariate_copula
 from pyscarcopula.copula.independent import IndependentCopula
 from pyscarcopula.vine._edge_adapter import (
     edge_condition_sample_state,
@@ -113,15 +112,6 @@ def _edge_h_pair_for_variables(
     return first_given_second, second_given_first
 
 
-def _transposed_copula(copula):
-    rotation = int(getattr(copula, 'rotate', 0))
-    if rotation not in (90, 270):
-        return copula
-    transposed = copy(copula)
-    transposed._rotate = 360 - rotation
-    return transposed
-
-
 def _edge_log_likelihood(edge, u_pair, config=None, **strategy_kwargs):
     """Compute log-likelihood for one pair edge using its fitted strategy."""
     copula = edge_copula(edge)
@@ -178,7 +168,7 @@ def _edge_h_inverse_for_variables(
     """Invert h(target | given) using the fitted edge orientation."""
     copula = edge_copula(edge)
     if int(target_variable) > int(given_variable):
-        copula = _transposed_copula(copula)
+        copula = transposed_bivariate_copula(copula)
     return _edge_h_inverse(
         edge,
         v,

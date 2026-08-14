@@ -1,0 +1,541 @@
+{
+  "schema_version": 1,
+  "scope": "public conditional-sampling runtimes",
+  "model_cases": [
+    {
+      "id": "bivariate-independent",
+      "class_module": "pyscarcopula",
+      "class_name": "IndependentCopula",
+      "category": "bivariate",
+      "dimension": 2,
+      "conditional_entrypoints": ["predict", "api.predict"],
+      "exactness": "exact",
+      "methods": ["MLE"],
+      "rotations": [0],
+      "correlation_modes": [],
+      "factor_estimation_modes": [],
+      "structures": [],
+      "oracles": ["uniform"],
+      "capability_flags": {
+        "supports_pair_ops": true,
+        "supports_native_point_ops": true,
+        "supports_gas": false,
+        "supports_scar_ou": false,
+        "supports_scar_mc": false,
+        "supports_latent_grid": false,
+        "supports_conditional_sampling": true,
+        "has_dynamic_scalar_parameter": false
+      },
+      "signatures": {
+        "predict": [
+          "n", "u", "rng", "given", "horizon",
+          "predictive_r_mode", "predict_config"
+        ]
+      },
+      "notes": "Rotation is accepted by the constructor but is semantically irrelevant; only rotation 0 is a distinct test cell."
+    },
+    {
+      "id": "bivariate-gaussian",
+      "class_module": "pyscarcopula",
+      "class_name": "BivariateGaussianCopula",
+      "category": "bivariate",
+      "dimension": 2,
+      "conditional_entrypoints": ["predict", "api.predict"],
+      "exactness": "exact_given_predictive_state",
+      "methods": [
+        "MLE", "GAS", "SCAR-TM-OU", "SCAR-TM-JACOBI",
+        "SCAR-P-OU", "SCAR-M-OU"
+      ],
+      "rotations": [0],
+      "correlation_modes": [],
+      "factor_estimation_modes": [],
+      "structures": [],
+      "oracles": ["conditional_normal", "h_pit", "pyvinecopulib_bicop"],
+      "capability_flags": {
+        "supports_pair_ops": true,
+        "supports_native_point_ops": true,
+        "supports_gas": true,
+        "supports_scar_ou": true,
+        "supports_scar_mc": true,
+        "supports_latent_grid": true,
+        "supports_conditional_sampling": true,
+        "has_dynamic_scalar_parameter": true
+      },
+      "signatures": {
+        "predict": [
+          "n", "u", "rng", "given", "horizon",
+          "predictive_r_mode", "predict_config"
+        ]
+      },
+      "notes": "Gaussian rotations other than 0 are rejected. SCAR-TM-OU requires a full-history filtering oracle for end-to-end prediction."
+    },
+    {
+      "id": "bivariate-clayton",
+      "class_module": "pyscarcopula",
+      "class_name": "ClaytonCopula",
+      "category": "bivariate",
+      "dimension": 2,
+      "conditional_entrypoints": ["predict", "api.predict"],
+      "exactness": "exact_given_predictive_state",
+      "methods": [
+        "MLE", "GAS", "SCAR-TM-OU", "SCAR-TM-JACOBI",
+        "SCAR-P-OU", "SCAR-M-OU"
+      ],
+      "rotations": [0, 90, 180, 270],
+      "correlation_modes": [],
+      "factor_estimation_modes": [],
+      "structures": [],
+      "oracles": ["h_pit", "pyvinecopulib_bicop"],
+      "capability_flags": {
+        "supports_pair_ops": true,
+        "supports_native_point_ops": true,
+        "supports_gas": true,
+        "supports_scar_ou": true,
+        "supports_scar_mc": true,
+        "supports_latent_grid": true,
+        "supports_conditional_sampling": true,
+        "has_dynamic_scalar_parameter": true
+      },
+      "signatures": {
+        "predict": [
+          "n", "u", "rng", "given", "horizon",
+          "predictive_r_mode", "predict_config"
+        ]
+      },
+      "notes": "All four rotations use the shared native h/h-inverse adapter."
+    },
+    {
+      "id": "bivariate-gumbel",
+      "class_module": "pyscarcopula",
+      "class_name": "GumbelCopula",
+      "category": "bivariate",
+      "dimension": 2,
+      "conditional_entrypoints": ["predict", "api.predict"],
+      "exactness": "exact_given_predictive_state",
+      "methods": [
+        "MLE", "GAS", "SCAR-TM-OU", "SCAR-TM-JACOBI",
+        "SCAR-P-OU", "SCAR-M-OU"
+      ],
+      "rotations": [0, 90, 180, 270],
+      "correlation_modes": [],
+      "factor_estimation_modes": [],
+      "structures": [],
+      "oracles": ["h_pit", "pyvinecopulib_bicop"],
+      "capability_flags": {
+        "supports_pair_ops": true,
+        "supports_native_point_ops": true,
+        "supports_gas": true,
+        "supports_scar_ou": true,
+        "supports_scar_mc": true,
+        "supports_latent_grid": true,
+        "supports_conditional_sampling": true,
+        "has_dynamic_scalar_parameter": true
+      },
+      "signatures": {
+        "predict": [
+          "n", "u", "rng", "given", "horizon",
+          "predictive_r_mode", "predict_config"
+        ]
+      },
+      "notes": "All four rotations are public conditional-sampling cells."
+    },
+    {
+      "id": "bivariate-frank",
+      "class_module": "pyscarcopula",
+      "class_name": "FrankCopula",
+      "category": "bivariate",
+      "dimension": 2,
+      "conditional_entrypoints": ["predict", "api.predict"],
+      "exactness": "exact_given_predictive_state",
+      "methods": [
+        "MLE", "GAS", "SCAR-TM-OU", "SCAR-TM-JACOBI",
+        "SCAR-P-OU", "SCAR-M-OU"
+      ],
+      "rotations": [0],
+      "correlation_modes": [],
+      "factor_estimation_modes": [],
+      "structures": [],
+      "oracles": ["h_pit", "pyvinecopulib_bicop"],
+      "capability_flags": {
+        "supports_pair_ops": true,
+        "supports_native_point_ops": true,
+        "supports_gas": true,
+        "supports_scar_ou": true,
+        "supports_scar_mc": true,
+        "supports_latent_grid": true,
+        "supports_conditional_sampling": true,
+        "has_dynamic_scalar_parameter": true
+      },
+      "signatures": {
+        "predict": [
+          "n", "u", "rng", "given", "horizon",
+          "predictive_r_mode", "predict_config"
+        ]
+      },
+      "notes": "The current implementation supports positive dependence and rejects rotations."
+    },
+    {
+      "id": "bivariate-joe",
+      "class_module": "pyscarcopula",
+      "class_name": "JoeCopula",
+      "category": "bivariate",
+      "dimension": 2,
+      "conditional_entrypoints": ["predict", "api.predict"],
+      "exactness": "exact_given_predictive_state",
+      "methods": [
+        "MLE", "GAS", "SCAR-TM-OU", "SCAR-TM-JACOBI",
+        "SCAR-P-OU", "SCAR-M-OU"
+      ],
+      "rotations": [0, 90, 180, 270],
+      "correlation_modes": [],
+      "factor_estimation_modes": [],
+      "structures": [],
+      "oracles": ["h_pit", "pyvinecopulib_bicop"],
+      "capability_flags": {
+        "supports_pair_ops": true,
+        "supports_native_point_ops": true,
+        "supports_gas": true,
+        "supports_scar_ou": true,
+        "supports_scar_mc": true,
+        "supports_latent_grid": true,
+        "supports_conditional_sampling": true,
+        "has_dynamic_scalar_parameter": true
+      },
+      "signatures": {
+        "predict": [
+          "n", "u", "rng", "given", "horizon",
+          "predictive_r_mode", "predict_config"
+        ]
+      },
+      "notes": "All four rotations are public conditional-sampling cells."
+    },
+    {
+      "id": "multivariate-gaussian",
+      "class_module": "pyscarcopula",
+      "class_name": "GaussianCopula",
+      "category": "multivariate_static",
+      "dimension": "d>=2",
+      "conditional_entrypoints": [
+        "sample_conditional", "predict", "api.predict"
+      ],
+      "exactness": "exact",
+      "methods": ["MLE"],
+      "rotations": [],
+      "correlation_modes": ["fixed", "shrinkage", "cholesky", "factor"],
+      "factor_estimation_modes": ["two-stage"],
+      "structures": [],
+      "oracles": ["conditional_mvn", "dense_factor_parity"],
+      "capability_flags": {
+        "supports_pair_ops": false,
+        "supports_native_point_ops": false,
+        "supports_gas": false,
+        "supports_scar_ou": false,
+        "supports_scar_mc": false,
+        "supports_latent_grid": false,
+        "supports_conditional_sampling": true,
+        "has_dynamic_scalar_parameter": false
+      },
+      "signatures": {
+        "sample_conditional": [
+          "n", "given", "rng", "n_threads", "memory_budget_bytes"
+        ],
+        "predict": [
+          "n", "u", "rng", "given", "horizon", "predictive_r_mode",
+          "predict_config", "n_threads", "memory_budget_bytes"
+        ]
+      },
+      "notes": "Cholesky is guarded above the configured dimension limit; factor mode remains compact."
+    },
+    {
+      "id": "multivariate-student",
+      "class_module": "pyscarcopula",
+      "class_name": "StudentCopula",
+      "category": "multivariate_static",
+      "dimension": "d>=2",
+      "conditional_entrypoints": [
+        "sample_conditional", "predict", "api.predict"
+      ],
+      "exactness": "exact",
+      "methods": ["MLE"],
+      "rotations": [],
+      "correlation_modes": ["fixed", "shrinkage", "cholesky", "factor"],
+      "factor_estimation_modes": ["two-stage", "joint"],
+      "structures": [],
+      "oracles": ["conditional_multivariate_t", "dense_factor_parity"],
+      "capability_flags": {
+        "supports_pair_ops": false,
+        "supports_native_point_ops": false,
+        "supports_gas": false,
+        "supports_scar_ou": false,
+        "supports_scar_mc": false,
+        "supports_latent_grid": false,
+        "supports_conditional_sampling": true,
+        "has_dynamic_scalar_parameter": false
+      },
+      "signatures": {
+        "sample_conditional": ["n", "given", "rng", "n_threads"],
+        "predict": [
+          "n", "u", "rng", "given", "horizon",
+          "predictive_r_mode", "predict_config"
+        ]
+      },
+      "notes": "The output uses the original-df marginal CDF after drawing from the conditional t law."
+    },
+    {
+      "id": "multivariate-equicorr-gaussian",
+      "class_module": "pyscarcopula",
+      "class_name": "EquicorrGaussianCopula",
+      "category": "multivariate_dynamic",
+      "dimension": "d>=2",
+      "conditional_entrypoints": [
+        "sample_conditional", "predict", "api.predict"
+      ],
+      "exactness": "exact_given_parameter_mixture",
+      "methods": ["MLE", "GAS", "SCAR-TM-OU"],
+      "rotations": [],
+      "correlation_modes": ["equicorr"],
+      "factor_estimation_modes": [],
+      "structures": [],
+      "oracles": ["conditional_mvn", "predictive_mixture"],
+      "capability_flags": {
+        "supports_pair_ops": false,
+        "supports_native_point_ops": false,
+        "supports_gas": true,
+        "supports_scar_ou": true,
+        "supports_scar_mc": false,
+        "supports_latent_grid": true,
+        "supports_conditional_sampling": true,
+        "has_dynamic_scalar_parameter": true
+      },
+      "signatures": {
+        "sample_conditional": [
+          "n", "r", "given", "rng", "n_threads", "memory_budget_bytes"
+        ],
+        "predict": [
+          "n", "u", "rng", "given", "horizon", "predictive_r_mode",
+          "predict_config", "memory_budget_bytes"
+        ]
+      },
+      "notes": "SCAR-TM prediction needs an independent full-history filtering and mixture-CDF oracle."
+    },
+    {
+      "id": "multivariate-stochastic-student",
+      "class_module": "pyscarcopula",
+      "class_name": "StochasticStudentCopula",
+      "category": "multivariate_dynamic",
+      "dimension": "d>=2",
+      "conditional_entrypoints": [
+        "sample_conditional", "predict", "api.predict"
+      ],
+      "exactness": "exact_given_parameter_mixture",
+      "methods": ["MLE", "GAS", "SCAR-TM-OU", "SCAR-P-OU", "SCAR-M-OU"],
+      "rotations": [],
+      "correlation_modes": ["fixed", "shrinkage", "cholesky", "factor"],
+      "factor_estimation_modes": ["two-stage", "joint_mle_only"],
+      "structures": [],
+      "oracles": ["conditional_multivariate_t", "predictive_mixture"],
+      "capability_flags": {
+        "supports_pair_ops": false,
+        "supports_native_point_ops": false,
+        "supports_gas": true,
+        "supports_scar_ou": true,
+        "supports_scar_mc": true,
+        "supports_latent_grid": true,
+        "supports_conditional_sampling": true,
+        "has_dynamic_scalar_parameter": true
+      },
+      "signatures": {
+        "sample_conditional": [
+          "n", "r", "given", "rng", "n_threads", "memory_budget_bytes"
+        ],
+        "predict": [
+          "n", "u", "rng", "given", "horizon", "predictive_r_mode",
+          "predict_config", "n_threads", "memory_budget_bytes"
+        ]
+      },
+      "notes": "Joint factor estimation is static-MLE-only; dynamic methods use fixed or two-stage factor correlation."
+    },
+    {
+      "id": "vine-generic",
+      "class_module": "pyscarcopula",
+      "class_name": "VineCopula",
+      "category": "vine",
+      "dimension": "d>=2",
+      "conditional_entrypoints": ["predict", "api.predict"],
+      "exactness": "exact_suffix_and_approximate_arbitrary",
+      "methods": [
+        "MLE", "GAS", "SCAR-TM-OU", "SCAR-TM-JACOBI",
+        "SCAR-P-OU", "SCAR-M-OU"
+      ],
+      "rotations": [],
+      "correlation_modes": [],
+      "factor_estimation_modes": [],
+      "structures": ["cvine", "dvine", "rvine"],
+      "oracles": [
+        "conditional_mvn", "independent", "pyvinecopulib_suffix",
+        "density_based_mcmc"
+      ],
+      "capability_flags": {},
+      "signatures": {
+        "predict": [
+          "n", "u", "rng", "given", "horizon", "predictive_r_mode",
+          "predict_config", "dynamic_conditioning", "return_diagnostics",
+          "mcmc_steps", "mcmc_burnin"
+        ]
+      },
+      "notes": "RVineCopula is an alias of this runtime. Diagnostics distinguish suffix from dag_mcmc."
+    },
+    {
+      "id": "vine-legacy-cvine",
+      "class_module": "pyscarcopula",
+      "class_name": "CVineCopula",
+      "category": "vine_legacy",
+      "dimension": "d>=2_after_fit",
+      "conditional_entrypoints": ["predict", "api.predict"],
+      "exactness": "cvine_specific_prefix_and_general",
+      "methods": [
+        "MLE", "GAS", "SCAR-TM-OU", "SCAR-TM-JACOBI",
+        "SCAR-P-OU", "SCAR-M-OU"
+      ],
+      "rotations": [],
+      "correlation_modes": [],
+      "factor_estimation_modes": [],
+      "structures": ["cvine"],
+      "oracles": ["conditional_mvn", "independent", "reference_cvine"],
+      "capability_flags": {},
+      "signatures": {
+        "predict": [
+          "n", "u", "rng", "given", "horizon",
+          "predictive_r_mode", "predict_config", "kwargs"
+        ]
+      },
+      "notes": "Legacy runtime intentionally has different conditional algorithms and diagnostics from VineCopula.cvine."
+    }
+  ],
+  "unsupported_cases": [
+    {
+      "id": "bivariate-gaussian-rotation-90",
+      "model_id": "bivariate-gaussian",
+      "probe": "bivariate_gaussian_rotation_90",
+      "configuration": {"rotate": 90},
+      "expected_exception": "ValueError",
+      "reason": "Bivariate Gaussian supports only rotation 0."
+    },
+    {
+      "id": "bivariate-frank-rotation-90",
+      "model_id": "bivariate-frank",
+      "probe": "bivariate_frank_rotation_90",
+      "configuration": {"rotate": 90},
+      "expected_exception": "ValueError",
+      "reason": "Frank rotations are not supported."
+    },
+    {
+      "id": "independent-gas",
+      "model_id": "bivariate-independent",
+      "probe": "independent_gas",
+      "configuration": {"method": "GAS"},
+      "expected_exception": "TypeError",
+      "reason": "The zero-parameter independence model has no dynamic state."
+    },
+    {
+      "id": "static-gaussian-gas",
+      "model_id": "multivariate-gaussian",
+      "probe": "static_gaussian_gas",
+      "configuration": {"method": "GAS"},
+      "expected_exception": "TypeError",
+      "reason": "GaussianCopula is static MLE only."
+    },
+    {
+      "id": "static-gaussian-joint-factor",
+      "model_id": "multivariate-gaussian",
+      "probe": "static_gaussian_joint_factor",
+      "configuration": {"corr_mode": "factor", "factor_estimation": "joint"},
+      "expected_exception": "NotImplementedError",
+      "reason": "Gaussian joint factor estimation has no native loading score and is not implemented."
+    },
+    {
+      "id": "static-student-scar-tm-ou",
+      "model_id": "multivariate-student",
+      "probe": "static_student_scar_tm_ou",
+      "configuration": {"method": "SCAR-TM-OU"},
+      "expected_exception": "TypeError",
+      "reason": "StudentCopula is static MLE only."
+    },
+    {
+      "id": "equicorr-scar-p-ou",
+      "model_id": "multivariate-equicorr-gaussian",
+      "probe": "equicorr_scar_p_ou",
+      "configuration": {"method": "SCAR-P-OU"},
+      "expected_exception": "TypeError",
+      "reason": "EquicorrGaussianCopula does not expose SCAR-MC fitting."
+    },
+    {
+      "id": "equicorr-scar-tm-jacobi",
+      "model_id": "multivariate-equicorr-gaussian",
+      "probe": "equicorr_scar_tm_jacobi",
+      "configuration": {"method": "SCAR-TM-JACOBI"},
+      "expected_exception": "TypeError",
+      "reason": "Jacobi dynamics is a pair-copula strategy."
+    },
+    {
+      "id": "stochastic-student-scar-tm-jacobi",
+      "model_id": "multivariate-stochastic-student",
+      "probe": "stochastic_student_scar_tm_jacobi",
+      "configuration": {"method": "SCAR-TM-JACOBI"},
+      "expected_exception": "TypeError",
+      "reason": "Jacobi dynamics is a pair-copula strategy."
+    },
+    {
+      "id": "stochastic-student-joint-factor-gas",
+      "model_id": "multivariate-stochastic-student",
+      "probe": "stochastic_student_joint_factor_gas",
+      "configuration": {
+        "corr_mode": "factor",
+        "factor_estimation": "joint",
+        "method": "GAS"
+      },
+      "expected_exception": "NotImplementedError",
+      "reason": "Joint factor estimation is currently static-MLE-only."
+    },
+    {
+      "id": "gaussian-cholesky-d50-default",
+      "model_id": "multivariate-gaussian",
+      "probe": "gaussian_cholesky_d50_default",
+      "configuration": {"d": 50, "corr_mode": "cholesky"},
+      "expected_exception": "ValueError",
+      "reason": "Large Cholesky requires explicit opt-in."
+    },
+    {
+      "id": "student-cholesky-d50-default",
+      "model_id": "multivariate-student",
+      "probe": "student_cholesky_d50_default",
+      "configuration": {"d": 50, "corr_mode": "cholesky"},
+      "expected_exception": "ValueError",
+      "reason": "Large Cholesky requires explicit opt-in."
+    },
+    {
+      "id": "stochastic-student-cholesky-d50-default",
+      "model_id": "multivariate-stochastic-student",
+      "probe": "stochastic_student_cholesky_d50_default",
+      "configuration": {"d": 50, "corr_mode": "cholesky"},
+      "expected_exception": "ValueError",
+      "reason": "Large Cholesky requires explicit opt-in."
+    },
+    {
+      "id": "stochastic-student-estimated-cholesky-gas",
+      "model_id": "multivariate-stochastic-student",
+      "probe": "stochastic_student_estimated_cholesky_gas",
+      "configuration": {"corr_mode": "cholesky", "method": "GAS"},
+      "expected_exception": "NotImplementedError",
+      "reason": "GAS joint static correlation supports shrinkage, not Cholesky."
+    },
+    {
+      "id": "stochastic-student-shrinkage-scar-p-ou",
+      "model_id": "multivariate-stochastic-student",
+      "probe": "stochastic_student_shrinkage_scar_p_ou",
+      "configuration": {"corr_mode": "shrinkage", "method": "SCAR-P-OU"},
+      "expected_exception": "NotImplementedError",
+      "reason": "SCAR-MC does not jointly estimate data-derived static correlation."
+    }
+  ]
+}

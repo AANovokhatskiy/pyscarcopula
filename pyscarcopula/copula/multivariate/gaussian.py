@@ -913,20 +913,28 @@ class GaussianCopula(MultivariateCopula):
         """Sample conditionally with ``given={var_index: u_value}``."""
         n = validate_integer(n, "n")
         n_threads = _validated_n_threads(n_threads)
+        if self.dimension is not None:
+            _validated_budget(
+                memory_budget_bytes,
+                n * self.dimension * 8,
+                "use sample_batches(), reduce batch_rows, or increase "
+                "memory_budget_bytes",
+            )
+        from pyscarcopula.copula.multivariate.conditional import (
+            validate_multivariate_given,
+        )
+        normalized = validate_multivariate_given(given, self.dimension)
+        if not normalized:
+            return self.sample(
+                n,
+                rng=rng,
+                n_threads=n_threads,
+                memory_budget_bytes=memory_budget_bytes,
+            )
         if self._corr_mode == "factor":
             from pyscarcopula.copula.multivariate.conditional import (
                 sample_factor_gaussian_conditional,
-                validate_multivariate_given,
             )
-            normalized = validate_multivariate_given(
-                given, self.dimension)
-            if not normalized:
-                return self.sample(
-                    n,
-                    rng=rng,
-                    n_threads=n_threads,
-                    memory_budget_bytes=memory_budget_bytes,
-                )
             _validated_budget(
                 memory_budget_bytes,
                 self._factor_sampling_peak_bytes(
@@ -949,7 +957,7 @@ class GaussianCopula(MultivariateCopula):
             sample_gaussian_copula_conditional,
         )
         return sample_gaussian_copula_conditional(
-            n, correlation, given=given, rng=rng,
+            n, correlation, given=normalized, rng=rng,
             n_threads=n_threads)
 
     @model_state_locked
@@ -977,7 +985,7 @@ class GaussianCopula(MultivariateCopula):
             sampling_options["n_threads"] = n_threads
         if memory_budget_bytes is not None:
             sampling_options["memory_budget_bytes"] = memory_budget_bytes
-        if given:
+        if given is not None:
             return self.sample_conditional(
                 n,
                 given=given,

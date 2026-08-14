@@ -823,18 +823,24 @@ class StudentCopula(MultivariateCopula):
     def sample_conditional(self, n, given, rng=None, *, n_threads=1):
         if self.df is None:
             raise ValueError("Fit first")
+        from pyscarcopula.copula.multivariate.conditional import (
+            validate_multivariate_given,
+        )
+        normalized = validate_multivariate_given(given, self.dimension)
+        if not normalized:
+            return self.sample(n, rng=rng)
         if self._corr_mode == "factor":
             from pyscarcopula.copula.multivariate.conditional import (
                 sample_factor_student_conditional,
             )
             return sample_factor_student_conditional(
-                n, self.correlation_operator_, self.df, given,
+                n, self.correlation_operator_, self.df, normalized,
                 rng=rng, n_threads=n_threads)
         from pyscarcopula.copula.multivariate.conditional import (
             sample_student_conditional,
         )
         return sample_student_conditional(
-            n, self._correlation, self.df, given=given, rng=rng,
+            n, self._correlation, self.df, given=normalized, rng=rng,
             n_threads=n_threads)
 
     def predict(self, n, u=None, rng=None, given=None, horizon="next",
@@ -845,6 +851,6 @@ class StudentCopula(MultivariateCopula):
                 predict_config, given, horizon,
                 {"predictive_r_mode": predictive_r_mode})
             given = config.given
-        if given:
+        if given is not None:
             return self.sample_conditional(n, given=given, rng=rng)
         return self.sample(n, u=u, rng=rng)

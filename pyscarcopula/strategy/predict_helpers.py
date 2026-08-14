@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from pyscarcopula.copula._rotation import transposed_bivariate_copula
 from pyscarcopula.strategy._base import (
     copula_dimension,
     get_copula_capabilities,
@@ -20,13 +21,18 @@ def validate_given(given):
 
     out = {}
     for key, value in given.items():
-        try:
-            idx = int(key)
-        except Exception as exc:
-            raise TypeError("given keys must be integers 0 or 1") from exc
+        if isinstance(key, (bool, np.bool_)) or not isinstance(
+                key, (int, np.integer)):
+            raise TypeError("given keys must be integers 0 or 1")
+        idx = int(key)
         if idx not in (0, 1):
             raise ValueError(f"given key must be 0 or 1, got {key!r}")
 
+        if (
+                isinstance(value, (bool, np.bool_, str, bytes, complex,
+                                   np.complexfloating))
+                or not np.isscalar(value)):
+            raise TypeError("given values must be numeric scalars")
         val = float(value)
         if not (0.0 < val < 1.0):
             raise ValueError(
@@ -64,7 +70,10 @@ def conditional_sample_bivariate(copula, n, r, given=None, rng=None):
     z = rng.uniform(0.0, 1.0, size=n)
 
     if 0 in given:
-        samples[:, 1] = copula.h_inverse(z, samples[:, 0], r_arr)
+        directional_copula = transposed_bivariate_copula(copula)
+        samples[:, 1] = directional_copula.h_inverse(
+            z, samples[:, 0], r_arr
+        )
         return samples
 
     samples[:, 0] = copula.h_inverse(z, samples[:, 1], r_arr)

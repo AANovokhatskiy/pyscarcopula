@@ -19,12 +19,17 @@ def validate_cvine_given(given, d):
 
     out = {}
     for key, value in given.items():
-        try:
-            idx = int(key)
-        except Exception as exc:
-            raise TypeError("given keys must be integers") from exc
+        if isinstance(key, (bool, np.bool_)) or not isinstance(
+                key, (int, np.integer)):
+            raise TypeError("given keys must be integers")
+        idx = int(key)
         if idx < 0 or idx >= d:
             raise ValueError(f"given key must be in [0, {d - 1}], got {key!r}")
+        if (
+                isinstance(value, (bool, np.bool_, str, bytes, complex,
+                                   np.complexfloating))
+                or not np.isscalar(value)):
+            raise TypeError("given values must be numeric scalars")
         val = float(value)
         if not (0.0 < val < 1.0):
             raise ValueError(
