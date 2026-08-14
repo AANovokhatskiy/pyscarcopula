@@ -23,4 +23,4 @@ scripts/
 results/
 AGENTS.md
 .agents/
-benchmark_artifacts/*
+benchmark_artifacts/

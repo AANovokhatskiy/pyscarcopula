@@ -2130,6 +2130,8 @@ class VineCopula:
                     'given': dict(given),
                     'dynamic_conditioning': dynamic_conditioning,
                     'suffix_start_col': 0,
+                    'matrix_rebuilt': False,
+                    'conditional_method': 'suffix',
                     'updated_edges': [],
                     'skipped_edges': [],
                     'all_variables_given': True,

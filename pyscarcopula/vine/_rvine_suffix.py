@@ -6,8 +6,8 @@ from pyscarcopula.vine._conditional_rvine import (
     find_rvine_peel_order_for_given_suffix,
 )
 from pyscarcopula.vine._rvine_edges import (
-    _edge_h_inverse,
-    _edge_h_pair_with_r,
+    _edge_h_inverse_for_variables,
+    _edge_h_pair_for_variables,
 )
 from pyscarcopula.vine._rvine_matrix_builder import build_rvine_matrix_with_edge_map
 from pyscarcopula.vine._helpers import _clip_unit, _open_unit_uniform
@@ -115,8 +115,14 @@ def sample_suffix_given_with_r(d, n, r_all, rng, given, start_col, matrix,
 
             leaf_val = pseudo_obs[(leaf, conditioning)]
             partner_val = pseudo_obs[(partner, conditioning)]
-            leaf_next, partner_next = _edge_h_pair_with_r(
-                edge, leaf_val, partner_val, r)
+            leaf_next, partner_next = _edge_h_pair_for_variables(
+                edge,
+                leaf,
+                leaf_val,
+                partner,
+                partner_val,
+                config={'r': r},
+            )
             pseudo_obs[(leaf, next_leaf_cond)] = _clip_unit(leaf_next)
             pseudo_obs[(partner, next_partner_cond)] = _clip_unit(partner_next)
 
@@ -134,9 +140,11 @@ def sample_suffix_given_with_r(d, n, r_all, rng, given, start_col, matrix,
             )
             partner_val = pseudo_obs[(partner, conditioning)]
             edge = pair_copulas[(t, col)]
-            current = _clip_unit(_edge_h_inverse(
+            current = _clip_unit(_edge_h_inverse_for_variables(
                 edge,
+                leaf,
                 current,
+                partner,
                 partner_val,
                 config={'r': r_all[(t, col)]},
             ))
@@ -156,8 +164,14 @@ def sample_suffix_given_with_r(d, n, r_all, rng, given, start_col, matrix,
 
             leaf_val = pseudo_obs[(leaf, conditioning)]
             partner_val = pseudo_obs[(partner, conditioning)]
-            leaf_next, partner_next = _edge_h_pair_with_r(
-                edge, leaf_val, partner_val, r)
+            leaf_next, partner_next = _edge_h_pair_for_variables(
+                edge,
+                leaf,
+                leaf_val,
+                partner,
+                partner_val,
+                config={'r': r},
+            )
             pseudo_obs[(leaf, next_leaf_cond)] = _clip_unit(leaf_next)
             pseudo_obs[(partner, next_partner_cond)] = _clip_unit(partner_next)
 
@@ -202,8 +216,14 @@ def given_suffix_edge_observations_with_r(
             partner_val = pseudo_obs[(partner, conditioning)]
             observed[(t, col)] = edge_pair_from_pseudo_map(
                 trees, (t, col), pseudo_obs, edge_map)
-            leaf_next, partner_next = _edge_h_pair_with_r(
-                edge, leaf_val, partner_val, r)
+            leaf_next, partner_next = _edge_h_pair_for_variables(
+                edge,
+                leaf,
+                leaf_val,
+                partner,
+                partner_val,
+                config={'r': r},
+            )
             pseudo_obs[(leaf, next_leaf_cond)] = _clip_unit(leaf_next)
             pseudo_obs[(partner, next_partner_cond)] = _clip_unit(partner_next)
 
