@@ -48,6 +48,7 @@ from pyscarcopula.numerical._arrays import (
     validate_float64_allocation,
     validate_positive_int,
 )
+from pyscarcopula.numerical._rvine_backend import dispatch_rvine_backend
 
 
 @dataclass(frozen=True)
@@ -1169,7 +1170,7 @@ def vine_gof_test(vine, data, to_pobs=True, K=500, grid_range=7.0):
     return cvm_test(e)
 
 
-def rvine_rosenblatt_transform(
+def _rvine_rosenblatt_transform_python(
         vine, u, K=300, grid_range=5.0, *, vine_type=None):
     """
     Rosenblatt transform for a fitted R-vine copula.
@@ -1270,6 +1271,22 @@ def rvine_rosenblatt_transform(
         e[:, col] = cur
 
     return clip_rosenblatt_output(e)
+
+
+def rvine_rosenblatt_transform(
+        vine, u, K=300, grid_range=5.0, *, vine_type=None):
+    """Dispatch the R-vine transform while preserving the Python oracle."""
+    return dispatch_rvine_backend(
+        capability="rosenblatt_transform",
+        native_symbol="rvine_rosenblatt_transform",
+        python_executor=lambda: _rvine_rosenblatt_transform_python(
+            vine,
+            u,
+            K=K,
+            grid_range=grid_range,
+            vine_type=vine_type,
+        ),
+    )
 
 def rvine_gof_test(
         vine, data, to_pobs=True, K=500, grid_range=7.0, *,
@@ -1420,7 +1437,7 @@ def gaussian_gof_test(copula, data, to_pobs=True):
 # Student-t copula Rosenblatt
 # ══════════════════════════════════════════════════════════════════
 
-def student_rosenblatt_transform(R, df, u):
+def _student_rosenblatt_transform_python(R, df, u):
     """
     Rosenblatt transform for d-dimensional Student-t copula.
 
@@ -1490,6 +1507,15 @@ def student_rosenblatt_transform(R, df, u):
         e[:, i] = t_dist.cdf(z, df=df_cond)
 
     return clip_pseudo_observations(e)
+
+
+def student_rosenblatt_transform(R, df, u):
+    """Dispatch dense Student Rosenblatt while preserving the SciPy oracle."""
+    return dispatch_rvine_backend(
+        capability="dense_student_rosenblatt",
+        native_symbol="dense_student_rosenblatt_transform",
+        python_executor=lambda: _student_rosenblatt_transform_python(R, df, u),
+    )
 
 
 def factor_student_rosenblatt_transform(correlation, df, u):

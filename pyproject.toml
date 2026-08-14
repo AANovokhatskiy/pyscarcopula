@@ -74,6 +74,7 @@ markers = [
     "validation: optional distributional validation checks",
     "external: optional checks against external reference libraries",
     "high_dimensional: d=50 conditional-sampling validation and benchmark cases",
+    "rvine_native: existing GAS R-vine tests that require the native sampler",
 ]
 
 [tool.mypy]

@@ -1,0 +1,139 @@
+name: R-vine runtime validation
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/rvine-runtime-validation.yml"
+      - "pyscarcopula/vine/**"
+      - "pyscarcopula/stattests.py"
+      - "pyscarcopula/numerical/_rvine_backend.py"
+      - "tests/test_rvine_runtime_contracts.py"
+      - "tests/rvine_runtime_cases.py"
+      - "tests/test_rvine_copula.py"
+      - "tests/fixtures/rvine_runtime_oracle_v1.json"
+      - "conftest.py"
+      - "tests/conftest.py"
+      - "benchmark_artifacts/rvine_runtime_python_baseline.json"
+      - "benchmark_artifacts/rvine_runtime_test_inventory.json"
+      - "RVINE_CPP_MIGRATION_GATE0_REPORT.md"
+      - "tools/benchmark_rvine_runtime.py"
+      - "tools/write_rvine_test_inventory.py"
+      - "pyproject.toml"
+      - "setup.py"
+  push:
+    branches: [master]
+    paths:
+      - ".github/workflows/rvine-runtime-validation.yml"
+      - "pyscarcopula/vine/**"
+      - "pyscarcopula/stattests.py"
+      - "pyscarcopula/numerical/_rvine_backend.py"
+      - "tests/test_rvine_runtime_contracts.py"
+      - "tests/rvine_runtime_cases.py"
+      - "tests/test_rvine_copula.py"
+      - "tests/fixtures/rvine_runtime_oracle_v1.json"
+      - "conftest.py"
+      - "tests/conftest.py"
+      - "benchmark_artifacts/rvine_runtime_python_baseline.json"
+      - "benchmark_artifacts/rvine_runtime_test_inventory.json"
+      - "RVINE_CPP_MIGRATION_GATE0_REPORT.md"
+      - "tools/benchmark_rvine_runtime.py"
+      - "tools/write_rvine_test_inventory.py"
+      - "pyproject.toml"
+      - "setup.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  PYTHONFAULTHANDLER: "1"
+
+jobs:
+  python-oracle:
+    name: Python traversal oracle and baseline contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PYSCARCOPULA_TEST_RVINE_BACKEND: python_executor
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      NUMEXPR_NUM_THREADS: "1"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Build mandatory extension and install tests
+        run: python -m pip install -e ".[test]"
+      - name: Verify base extension and runtime contracts
+        run: >-
+          python -m pytest -q tests/test_rvine_runtime_contracts.py
+          --strict-markers
+          --junitxml=build/rvine-runtime-validation/characterization.xml
+      - name: Run full non-benchmark suite through Python traversal oracles
+        run: >-
+          python -m pytest -q tests
+          --strict-markers
+          -m "not benchmark"
+          --basetemp=build/rvine-runtime-validation/pytest-tmp
+          --junitxml=build/rvine-runtime-validation/python-oracle-suite.xml
+      - name: Record environment and existing skips
+        run: >-
+          python tools/write_rvine_test_inventory.py
+          --junit build/rvine-runtime-validation/python-oracle-suite.xml
+          --command 'python -m pytest -q tests --strict-markers -m "not benchmark" --basetemp=build/rvine-runtime-validation/pytest-tmp'
+          --output build/rvine-runtime-validation/suite-inventory.json
+      - name: Reproduce smoke baseline
+        run: >-
+          python tools/benchmark_rvine_runtime.py
+          --profile smoke --backend python_executor
+          --repeats 3 --warmups 1 --include-mcmc
+          --output build/rvine-runtime-validation/baseline.json
+      - name: Check native source architecture
+        run: python tools/check_cpp_architecture.py
+      - name: Upload Python oracle evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: rvine-runtime-python-oracle
+          path: build/rvine-runtime-validation/*
+          if-no-files-found: warn
+          retention-days: 30
+
+  existing-native-parity:
+    name: Existing GAS native parity and strict 2D Rosenblatt
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PYSCARCOPULA_TEST_RVINE_BACKEND: auto
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Build mandatory extension and install tests
+        run: python -m pip install -e ".[test]"
+      - name: Run existing exact GAS R-vine parity
+        run: >-
+          python -m pytest -q
+          tests/test_rvine_copula.py tests/test_rvine_runtime_contracts.py
+          --strict-markers -m rvine_native
+          --junitxml=build/rvine-runtime-validation/gas-native-parity.xml
+      - name: Run strict two-dimensional Rosenblatt comparison
+        run: >-
+          python -m pytest -q tests/test_rvine_copula.py
+          --strict-markers
+          -k two_dimensional_rvine_gof_matches_cvine_order
+          --junitxml=build/rvine-runtime-validation/rosenblatt-2d.xml
+      - name: Upload parity evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: rvine-runtime-existing-native
+          path: build/rvine-runtime-validation/*
+          if-no-files-found: warn
+          retention-days: 30

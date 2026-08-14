@@ -56,6 +56,7 @@ from pyscarcopula.numerical._arrays import (
 from pyscarcopula._types import (
     PredictConfig,
 )
+from pyscarcopula.numerical._rvine_backend import dispatch_rvine_backend
 from pyscarcopula.vine._conditional_rvine import (
     validate_rvine_given_vars,
     validate_rvine_given,
@@ -112,15 +113,19 @@ from pyscarcopula.vine._dynamic_conditioning import (
     predictive_state_cache_key,
 )
 from pyscarcopula.vine._rvine_conditional_runtime import (
-    sample_arbitrary_given_mcmc,
+    _sample_arbitrary_given_mcmc_python,
     sample_dag_given_with_r,
 )
 from pyscarcopula.vine._rvine_summary import format_rvine_summary
-from pyscarcopula.vine._helpers import _clip_unit, _open_unit_uniform
+from pyscarcopula.vine._helpers import (
+    _clip_unit,
+    _open_unit_uniform,
+    _prepared_open_unit_draws,
+)
 from pyscarcopula.vine._rvine_suffix import (
+    _sample_suffix_given_with_r_python,
     edge_pair_from_pseudo_map,
     given_suffix_start_col,
-    sample_suffix_given_with_r,
     suffix_sampling_state,
 )
 
@@ -1391,20 +1396,25 @@ class VineCopula:
             from pyscarcopula.numerical._cpp_gas_rvine import (
                 sample as native_gas_rvine_sample,
             )
-            native = native_gas_rvine_sample(
-                self,
-                n,
-                rng,
-                active_keys,
-                max_active_tree,
-                traversal_plan=traversal_plan,
+            return dispatch_rvine_backend(
+                capability="gas_unconditional_sampling",
+                native_symbol="gas_rvine_sample",
+                python_executor=lambda: self._sample_stepwise_stateful(
+                    n,
+                    rng,
+                    active_keys=active_keys,
+                    max_active_tree=max_active_tree,
+                    traversal_plan=traversal_plan,
+                ),
+                native_executor=lambda _module: native_gas_rvine_sample(
+                    self,
+                    n,
+                    rng,
+                    active_keys,
+                    max_active_tree,
+                    traversal_plan=traversal_plan,
+                ),
             )
-            if native is not None:
-                return native
-            return self._sample_stepwise_stateful(
-                n, rng, active_keys=active_keys,
-                max_active_tree=max_active_tree,
-                traversal_plan=traversal_plan)
 
         if is_static:
             r_all = {
@@ -1468,10 +1478,16 @@ class VineCopula:
                 "memory_budget_bytes"
             )
 
-    def _sample_with_r(self, n, r_all, rng, return_pseudo=False,
-                       max_active_tree=None, traversal_plan=None):
+    def _sample_with_r_python(
+            self, n, r_all, rng, return_pseudo=False,
+            max_active_tree=None, traversal_plan=None, *, uniforms=None):
+        """Preserved Python oracle for canonical R-vine traversal."""
         d = self.d
-        w = _open_unit_uniform(rng, size=(n, d))
+        if uniforms is None:
+            w = _open_unit_uniform(rng, size=(n, d))
+        else:
+            w = _prepared_open_unit_draws(
+                uniforms, (n, d), name="R-vine sampling uniforms")
         if max_active_tree is None:
             max_active_tree = self._max_non_independent_tree_level()
         if max_active_tree < 0:
@@ -1554,6 +1570,23 @@ class VineCopula:
             return out, pseudo_obs
         return out
 
+    def _sample_with_r(self, n, r_all, rng, return_pseudo=False,
+                       max_active_tree=None, traversal_plan=None, *,
+                       uniforms=None):
+        return dispatch_rvine_backend(
+            capability="unconditional_sampling",
+            native_symbol="rvine_sample",
+            python_executor=lambda: self._sample_with_r_python(
+                n,
+                r_all,
+                rng,
+                return_pseudo=return_pseudo,
+                max_active_tree=max_active_tree,
+                traversal_plan=traversal_plan,
+                uniforms=uniforms,
+            ),
+        )
+
     def _given_suffix_start_col(self, given, matrix=None):
         matrix = self._natural_order_matrix if matrix is None else matrix
         return given_suffix_start_col(self.d, given, matrix)
@@ -1578,12 +1611,40 @@ class VineCopula:
         cache[cache_key] = state
         return state
 
-    def _sample_suffix_given_with_r(self, n, r_all, rng, given, start_col,
-                                    matrix=None, pair_copulas=None):
+    def _sample_suffix_given_with_r_python(
+            self, n, r_all, rng, given, start_col, matrix=None,
+            pair_copulas=None, *, uniforms=None):
         M = self._natural_order_matrix if matrix is None else matrix
         pair_copulas = self.pair_copulas if pair_copulas is None else pair_copulas
-        return sample_suffix_given_with_r(
-            self.d, n, r_all, rng, given, start_col, M, pair_copulas)
+        return _sample_suffix_given_with_r_python(
+            self.d,
+            n,
+            r_all,
+            rng,
+            given,
+            start_col,
+            M,
+            pair_copulas,
+            uniforms=uniforms,
+        )
+
+    def _sample_suffix_given_with_r(
+            self, n, r_all, rng, given, start_col, matrix=None,
+            pair_copulas=None, *, uniforms=None):
+        return dispatch_rvine_backend(
+            capability="suffix_conditional_sampling",
+            native_symbol="rvine_conditional_sample",
+            python_executor=lambda: self._sample_suffix_given_with_r_python(
+                n,
+                r_all,
+                rng,
+                given,
+                start_col,
+                matrix=matrix,
+                pair_copulas=pair_copulas,
+                uniforms=uniforms,
+            ),
+        )
 
     # Dynamic conditioning contract is documented in
     # docs/rvine-conditional-notes.md. Keep these helpers strategy-generic:
@@ -1784,7 +1845,7 @@ class VineCopula:
                 else:
                     r_i[key] = vectorized_r[key][i:i + 1]
 
-            row, pseudo_obs = self._sample_with_r(
+            row, pseudo_obs = self._sample_with_r_python(
                 1, r_i, rng, return_pseudo=True,
                 max_active_tree=max_active_tree,
                 traversal_plan=traversal_plan)
@@ -1891,11 +1952,39 @@ class VineCopula:
             )
         return r_all
 
-    def _sample_dag_given_with_r(self, n, r_all, rng, given, plan, pair_copulas):
+    def _sample_dag_given_with_r_python(
+            self, n, r_all, rng, given, plan, pair_copulas, *,
+            uniforms=None):
         return sample_dag_given_with_r(
-            n, r_all, rng, given, plan, pair_copulas)
+            n,
+            r_all,
+            rng,
+            given,
+            plan,
+            pair_copulas,
+            uniforms=uniforms,
+        )
 
-    def _log_pdf_rows_with_r(self, u, r_all, pair_copulas=None, edge_map=None):
+    def _sample_dag_given_with_r(
+            self, n, r_all, rng, given, plan, pair_copulas, *,
+            uniforms=None):
+        return dispatch_rvine_backend(
+            capability="dag_conditional_sampling",
+            native_symbol="rvine_conditional_sample",
+            python_executor=lambda: self._sample_dag_given_with_r_python(
+                n,
+                r_all,
+                rng,
+                given,
+                plan,
+                pair_copulas,
+                uniforms=uniforms,
+            ),
+        )
+
+    def _log_pdf_rows_with_r_python(
+            self, u, r_all, pair_copulas=None, edge_map=None):
+        """Preserved Python oracle for row-wise R-vine log-density."""
         pair_copulas = self.pair_copulas if pair_copulas is None else pair_copulas
         edge_map = self._edge_map if edge_map is None else edge_map
         pseudo_obs = {
@@ -1929,25 +2018,63 @@ class VineCopula:
                     pseudo_obs[(v1, conditioning | {v2})] = _clip_unit(u1_next)
         return logp
 
+    def _log_pdf_rows_with_r(
+            self, u, r_all, pair_copulas=None, edge_map=None):
+        return dispatch_rvine_backend(
+            capability="log_pdf_rows",
+            native_symbol="rvine_log_pdf_rows",
+            python_executor=lambda: self._log_pdf_rows_with_r_python(
+                u,
+                r_all,
+                pair_copulas=pair_copulas,
+                edge_map=edge_map,
+            ),
+        )
+
     def _matrix_key_from_map(self, tree_level, orig_idx, edge_map):
         for key, mapped_idx in edge_map.items():
             if key[0] == tree_level and mapped_idx == orig_idx:
                 return key
         raise KeyError((tree_level, orig_idx))
 
-    def _sample_arbitrary_given_mcmc(
+    def _sample_arbitrary_given_mcmc_python(
             self, n, r_all, rng, given, initial=None, n_steps=None,
-            burnin_steps=None):
-        return sample_arbitrary_given_mcmc(
+            burnin_steps=None, *, initial_uniforms=None, random_draws=None,
+            step_offset=0):
+        return _sample_arbitrary_given_mcmc_python(
             self.d,
             n,
             r_all,
             rng,
             given,
-            self._log_pdf_rows_with_r,
+            self._log_pdf_rows_with_r_python,
             initial=initial,
             n_steps=n_steps,
             burnin_steps=burnin_steps,
+            initial_uniforms=initial_uniforms,
+            random_draws=random_draws,
+            step_offset=step_offset,
+        )
+
+    def _sample_arbitrary_given_mcmc(
+            self, n, r_all, rng, given, initial=None, n_steps=None,
+            burnin_steps=None, *, initial_uniforms=None, random_draws=None,
+            step_offset=0):
+        return dispatch_rvine_backend(
+            capability="conditional_mcmc",
+            native_symbol="rvine_mcmc",
+            python_executor=lambda: self._sample_arbitrary_given_mcmc_python(
+                n,
+                r_all,
+                rng,
+                given,
+                initial=initial,
+                n_steps=n_steps,
+                burnin_steps=burnin_steps,
+                initial_uniforms=initial_uniforms,
+                random_draws=random_draws,
+                step_offset=step_offset,
+            ),
         )
 
     def predict(

@@ -10,7 +10,11 @@ from pyscarcopula.vine._rvine_edges import (
     _edge_h_pair_for_variables,
 )
 from pyscarcopula.vine._rvine_matrix_builder import build_rvine_matrix_with_edge_map
-from pyscarcopula.vine._helpers import _clip_unit, _open_unit_uniform
+from pyscarcopula.vine._helpers import (
+    _clip_unit,
+    _open_unit_uniform,
+    _prepared_open_unit_draws,
+)
 
 
 def given_suffix_start_col(d, given, matrix):
@@ -82,11 +86,17 @@ def suffix_sampling_state(d, trees, matrix, edge_map, pair_copulas,
     return start_col, rebuilt_matrix, rebuilt_edge_map, rebuilt_pair_copulas
 
 
-def sample_suffix_given_with_r(d, n, r_all, rng, given, start_col, matrix,
-                               pair_copulas):
-    """Sample from an exact suffix-conditioned R-vine with fixed r paths."""
+def _sample_suffix_given_with_r_python(
+        d, n, r_all, rng, given, start_col, matrix, pair_copulas, *,
+        uniforms=None):
+    """Python traversal oracle for exact suffix-conditioned sampling."""
     M = matrix
-    w = _open_unit_uniform(rng, size=(n, d))
+    w = (
+        _open_unit_uniform(rng, size=(n, d))
+        if uniforms is None else
+        _prepared_open_unit_draws(
+            uniforms, (n, d), name="suffix sampling uniforms")
+    )
     pseudo_obs = {}
 
     last_var = int(M[0, d - 1])
@@ -179,6 +189,23 @@ def sample_suffix_given_with_r(d, n, r_all, rng, given, start_col, matrix,
     for var in range(d):
         out[:, var] = pseudo_obs[(var, frozenset())]
     return out
+
+
+def sample_suffix_given_with_r(
+        d, n, r_all, rng, given, start_col, matrix, pair_copulas, *,
+        uniforms=None):
+    """Compatibility name for the preserved Python traversal oracle."""
+    return _sample_suffix_given_with_r_python(
+        d,
+        n,
+        r_all,
+        rng,
+        given,
+        start_col,
+        matrix,
+        pair_copulas,
+        uniforms=uniforms,
+    )
 
 
 def given_suffix_edge_observations_with_r(

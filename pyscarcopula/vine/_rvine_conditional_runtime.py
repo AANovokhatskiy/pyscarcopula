@@ -4,11 +4,15 @@ import numpy as np
 
 from pyscarcopula._constants import PSEUDO_OBS_EPS
 from pyscarcopula._utils import clip_pseudo_observations
-from pyscarcopula.vine._helpers import _open_unit_uniform
-from pyscarcopula.vine._rvine_dag import execute_conditional_plan
+from pyscarcopula.vine._helpers import (
+    _open_unit_uniform,
+    _prepared_open_unit_draws,
+)
+from pyscarcopula.vine._rvine_dag import _execute_conditional_plan_python
 
 
-def sample_dag_given_with_r(n, r_all, rng, given, plan, pair_copulas):
+def sample_dag_given_with_r(
+        n, r_all, rng, given, plan, pair_copulas, *, uniforms=None):
     """Execute a DAG conditional sampling plan with precomputed parameters."""
     missing = sorted(set(plan.edges_used) - set(r_all))
     if missing:
@@ -23,13 +27,15 @@ def sample_dag_given_with_r(n, r_all, rng, given, plan, pair_copulas):
         }
         for key in plan.edges_used
     }
-    return execute_conditional_plan(plan, r_payload, given, n, rng)
+    return _execute_conditional_plan_python(
+        plan, r_payload, given, n, rng, uniforms=uniforms)
 
 
-def sample_arbitrary_given_mcmc(
+def _sample_arbitrary_given_mcmc_python(
         d, n, r_all, rng, given, log_pdf_rows, initial=None,
-        n_steps=None, burnin_steps=None):
-    """Metropolis-within-Gibbs fallback for arbitrary conditional patterns.
+        n_steps=None, burnin_steps=None, *, initial_uniforms=None,
+        random_draws=None, step_offset=0):
+    """Python Metropolis-within-Gibbs oracle for arbitrary conditioning.
 
     One step is one coordinate update across all ``n`` parallel chains.  It
     is deliberately not called a sweep: a full sweep consists of
@@ -44,10 +50,21 @@ def sample_arbitrary_given_mcmc(
         return out, _empty_mcmc_diagnostics()
 
     if initial is None:
-        current = _open_unit_uniform(rng, size=(n, d))
+        current = (
+            _open_unit_uniform(rng, size=(n, d))
+            if initial_uniforms is None else
+            _prepared_open_unit_draws(
+                initial_uniforms,
+                (n, d),
+                name="MCMC initial uniforms",
+            ).copy()
+        )
         for var, value in given.items():
             current[:, var] = value
     else:
+        if initial_uniforms is not None:
+            raise ValueError(
+                "MCMC initial_uniforms cannot be supplied with initial")
         current = np.asarray(initial, dtype=np.float64).copy()
         for var, value in given.items():
             current[:, var] = value
@@ -62,17 +79,33 @@ def sample_arbitrary_given_mcmc(
         if burnin_steps is None else int(burnin_steps)
     )
     total_steps = burnin_steps + n_steps
+    step_offset = int(step_offset)
+    if step_offset < 0:
+        raise ValueError("MCMC step_offset must be non-negative")
+    replay_draws = None
+    if random_draws is not None:
+        replay_draws = _prepared_open_unit_draws(
+            random_draws,
+            (total_steps, n, 2),
+            name="MCMC interleaved random draws",
+        )
     accepted = {int(var): 0 for var in free_vars}
     proposed = {int(var): 0 for var in free_vars}
 
     for step_idx in range(total_steps):
-        var = free_vars[step_idx % len(free_vars)]
+        var = free_vars[(step_offset + step_idx) % len(free_vars)]
         proposal = current.copy()
-        proposal[:, var] = _open_unit_uniform(rng, size=n)
+        proposal[:, var] = (
+            _open_unit_uniform(rng, size=n)
+            if replay_draws is None else replay_draws[step_idx, :, 0]
+        )
         proposal_logp = log_pdf_rows(proposal, r_all)
         log_alpha = proposal_logp - current_logp
-        accept = np.log(
-            rng.uniform(PSEUDO_OBS_EPS, 1.0, size=n)) < log_alpha
+        acceptance_uniforms = (
+            rng.uniform(PSEUDO_OBS_EPS, 1.0, size=n)
+            if replay_draws is None else replay_draws[step_idx, :, 1]
+        )
+        accept = np.log(acceptance_uniforms) < log_alpha
         if np.any(accept):
             current[accept, var] = proposal[accept, var]
             current_logp[accept] = proposal_logp[accept]
@@ -137,6 +170,27 @@ def sample_arbitrary_given_mcmc(
         'completed_sweeps': total_steps // len(free_vars),
         'partial_sweep_steps': total_steps % len(free_vars),
     }
+
+
+def sample_arbitrary_given_mcmc(
+        d, n, r_all, rng, given, log_pdf_rows, initial=None,
+        n_steps=None, burnin_steps=None, *, initial_uniforms=None,
+        random_draws=None, step_offset=0):
+    """Compatibility name for the preserved Python MCMC oracle."""
+    return _sample_arbitrary_given_mcmc_python(
+        d,
+        n,
+        r_all,
+        rng,
+        given,
+        log_pdf_rows,
+        initial=initial,
+        n_steps=n_steps,
+        burnin_steps=burnin_steps,
+        initial_uniforms=initial_uniforms,
+        random_draws=random_draws,
+        step_offset=step_offset,
+    )
 
 
 def _empty_mcmc_diagnostics():

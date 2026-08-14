@@ -13,7 +13,11 @@ from collections import defaultdict
 import numpy as np
 
 from pyscarcopula.vine._rvine_edges import _edge_h, _edge_h_inverse
-from pyscarcopula.vine._helpers import _clip_unit, _open_unit_uniform
+from pyscarcopula.vine._helpers import (
+    _clip_unit,
+    _open_unit_uniform,
+    _prepared_open_unit_draws,
+)
 
 
 class ConditionalSamplePlan(list):
@@ -269,9 +273,39 @@ def _edge_payload(step, r_all):
     return edge, np.asarray(r, dtype=np.float64)
 
 
-def execute_conditional_plan(plan, r_all, given, n, rng):
-    """Execute a conditional DAG plan and return an ``(n, d)`` array."""
+def _execute_conditional_plan_python(
+        plan, r_all, given, n, rng, *, uniforms=None):
+    """Python traversal oracle for a conditional DAG execution plan."""
     n = int(n)
+    replay_uniforms = None
+    replay_by_variable = False
+    if uniforms is not None:
+        uniform_count = sum(
+            step.get('action') == 'sample_uniform' for step in plan)
+        supplied = np.asarray(uniforms)
+        if supplied.shape == (n, uniform_count):
+            replay_uniforms = _prepared_open_unit_draws(
+                supplied,
+                (n, uniform_count),
+                name="conditional DAG uniforms",
+            )
+        elif supplied.shape == (n, int(plan.d)):
+            # Kept for fixtures created before compact DAG replay was
+            # introduced. New differential tests use one column per draw op.
+            replay_uniforms = _prepared_open_unit_draws(
+                supplied,
+                (n, int(plan.d)),
+                name="conditional DAG uniforms",
+            )
+            replay_by_variable = True
+        else:
+            raise ValueError(
+                "conditional DAG uniforms must have shape "
+                f"{(n, uniform_count)} (draw order) or "
+                f"{(n, int(plan.d))} (variable columns), got "
+                f"{supplied.shape}"
+            )
+    replay_index = 0
     pseudo_obs = {}
     for var, value in given.items():
         pseudo_obs[_node_key(var)] = np.full(
@@ -281,7 +315,14 @@ def execute_conditional_plan(plan, r_all, given, n, rng):
         action = step['action']
 
         if action == 'sample_uniform':
-            pseudo_obs[step['node']] = _open_unit_uniform(rng, size=n)
+            if replay_uniforms is None:
+                values = _open_unit_uniform(rng, size=n)
+            elif replay_by_variable:
+                values = replay_uniforms[:, int(step['var'])].copy()
+            else:
+                values = replay_uniforms[:, replay_index].copy()
+                replay_index += 1
+            pseudo_obs[step['node']] = values
             continue
 
         edge, r = _edge_payload(step, r_all)
@@ -320,3 +361,9 @@ def execute_conditional_plan(plan, r_all, given, n, rng):
             f"execute_conditional_plan: plan did not produce base variables {missing}"
         )
     return out
+
+
+def execute_conditional_plan(plan, r_all, given, n, rng, *, uniforms=None):
+    """Compatibility name for the preserved Python DAG traversal oracle."""
+    return _execute_conditional_plan_python(
+        plan, r_all, given, n, rng, uniforms=uniforms)

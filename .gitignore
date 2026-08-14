@@ -19,10 +19,12 @@ tools/*
 !tools/validate_jacobi_sampling.py
 !tools/compare_copulae_crypto6.py
 !tools/benchmark_conditional_sampling.py
+!tools/benchmark_rvine_runtime.py
+!tools/write_rvine_test_inventory.py
 !tools/calibrate_conditional_statistical_gates.py
 benchmarks/
 scripts/
 results/
 AGENTS.md
 .agents/
-benchmark_artifacts/
+benchmark_artifacts/*

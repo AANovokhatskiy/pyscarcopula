@@ -1344,6 +1344,7 @@ class TestSampling:
         assert np.all(s > 0.0)
         assert np.all(s < 1.0)
 
+    @pytest.mark.rvine_native
     def test_native_gas_sample_matches_legacy_stepwise_exactly(
             self, monkeypatch):
         vine = _manual_suffix_stateful_rvine()
@@ -1366,6 +1367,7 @@ class TestSampling:
 
         assert np.array_equal(actual, expected)
 
+    @pytest.mark.rvine_native
     def test_gas_sample_passes_canonical_traversal_plan_to_native(
             self, monkeypatch):
         from pyscarcopula.numerical import _cpp_gas_rvine
@@ -1391,6 +1393,7 @@ class TestSampling:
         assert captured[0].active_keys == vine._sample_active_edge_keys()
 
     @pytest.mark.parametrize('rotation', [90, 270])
+    @pytest.mark.rvine_native
     def test_native_gas_sample_matches_python_for_transposed_rotated_mle_edge(
             self, monkeypatch, rotation):
         vine = _manual_suffix_stateful_rvine()
@@ -1417,6 +1420,7 @@ class TestSampling:
         assert np.array_equal(actual, expected)
 
     @pytest.mark.parametrize('rotation', [90, 270])
+    @pytest.mark.rvine_native
     def test_native_gas_sample_matches_python_for_transposed_rotated_gas_edge(
             self, monkeypatch, rotation):
         vine = _manual_suffix_stateful_rvine()
@@ -1443,6 +1447,7 @@ class TestSampling:
 
         assert np.array_equal(actual, expected)
 
+    @pytest.mark.rvine_native
     def test_native_gas_sample_matches_python_for_truncated_mixed_edges(
             self, monkeypatch):
         vine = _manual_multi_edge_dynamic_rvine()
@@ -1483,6 +1488,7 @@ class TestSampling:
 
         assert np.array_equal(actual, expected)
 
+    @pytest.mark.rvine_native
     def test_native_gas_sample_matches_python_for_mixed_dynamic_edges(
             self, monkeypatch):
         vine = _manual_multi_edge_dynamic_rvine()
@@ -1504,6 +1510,7 @@ class TestSampling:
 
         assert np.array_equal(actual, expected)
 
+    @pytest.mark.rvine_native
     def test_native_gas_sample_matches_python_for_multiple_gas_edges(
             self, monkeypatch):
         vine = _manual_multi_edge_dynamic_rvine()
