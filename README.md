@@ -98,6 +98,12 @@ $env:PYSCA_RUN_VINE_BENCHMARKS = "1"
 pytest tests --run-validation
 ```
 
+Conditional sampling has separate PR, distributional, nightly external/d=50,
+and manual benchmark layers.  See the
+[conditional sampling validation guide](docs/guide/conditional-sampling-validation.md)
+for exact marker selections, oracle-only calibration, artifacts, and failure
+triage.
+
 Core dependencies: `numpy`, `numba`, `scipy`, `joblib`, `tqdm`.
 
 Verify the compiled extension with:

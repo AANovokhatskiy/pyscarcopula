@@ -36,6 +36,11 @@ def main() -> int:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--configuration", required=True)
     parser.add_argument("--wheel-dir", type=Path)
+    parser.add_argument(
+        "--status",
+        default="passed",
+        help="status recorded in the artifact (default: passed)",
+    )
     arguments = parser.parse_args()
 
     wheels = []
@@ -45,7 +50,7 @@ def main() -> int:
             for path in sorted(arguments.wheel_dir.glob("*.whl"))
         ]
     report = {
-        "status": "passed",
+        "status": arguments.status,
         "configuration": arguments.configuration,
         "platform": platform.platform(),
         "machine": platform.machine(),
