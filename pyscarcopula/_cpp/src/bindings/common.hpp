@@ -5,6 +5,7 @@
 #include "scar/gas_rvine.hpp"
 #include "scar/factor.hpp"
 #include "scar/ou.hpp"
+#include "scar/rvine.hpp"
 #include "scar/detail/copula.hpp"
 #include "scar/detail/safety.hpp"
 #include "scar/detail/scar_ou/quadrature.hpp"
@@ -104,6 +105,7 @@ void bind_copula(pybind11::module_& module);
 void bind_factor(pybind11::module_& module);
 void bind_multivariate(pybind11::module_& module);
 void bind_scar_ou_types(pybind11::module_& module);
+void bind_rvine(pybind11::module_& module);
 void bind_gas(pybind11::module_& module);
 void bind_scar_ou(pybind11::module_& module);
 

@@ -86,6 +86,104 @@ def suffix_sampling_state(d, trees, matrix, edge_map, pair_copulas,
     return start_col, rebuilt_matrix, rebuilt_edge_map, rebuilt_pair_copulas
 
 
+class SuffixConditionalPlan(list):
+    """Executor-neutral suffix program with the output dimension attached."""
+
+    def __init__(self, steps, d):
+        super().__init__(steps)
+        self.d = int(d)
+
+
+def build_suffix_conditional_plan(d, start_col, matrix, given):
+    """Compile suffix topology into the common conditional action format."""
+    d = int(d)
+    start_col = int(start_col)
+    M = np.asarray(matrix)
+    if d < 2 or M.shape != (d, d) or not 0 <= start_col <= d:
+        raise ValueError("invalid suffix conditional-plan dimensions")
+    expected_given = {
+        int(M[d - 1 - col, col])
+        for col in range(start_col, d)
+    }
+    if set(int(variable) for variable in given) != expected_given:
+        raise ValueError(
+            "suffix conditional plan does not match the given variables")
+
+    steps = []
+    last_var = int(M[0, d - 1])
+    if d - 1 < start_col:
+        uniform_node = ("w", d - 1)
+        steps.append({
+            "action": "sample_uniform",
+            "var": last_var,
+            "column": d - 1,
+            "node": uniform_node,
+        })
+        steps.append({
+            "action": "copy",
+            "from": uniform_node,
+            "to": (last_var, frozenset()),
+        })
+
+    def append_h_pair(col, tree):
+        leaf = int(M[d - 1 - col, col])
+        row = d - 2 - col - tree
+        partner = int(M[row, col])
+        conditioning = frozenset(
+            int(M[source_row, col])
+            for source_row in range(row + 1, d - 1 - col)
+        )
+        steps.append({
+            "action": "h_pair",
+            "edge": (tree, col),
+            "leaf": leaf,
+            "partner": partner,
+            "first": (leaf, conditioning),
+            "second": (partner, conditioning),
+            "first_to": (leaf, conditioning | {partner}),
+            "second_to": (partner, conditioning | {leaf}),
+        })
+
+    for col in range(d - 2, start_col - 1, -1):
+        top_tree = d - 2 - col
+        for tree in range(top_tree + 1):
+            append_h_pair(col, tree)
+
+    for col in range(min(start_col - 1, d - 2), -1, -1):
+        leaf = int(M[d - 1 - col, col])
+        top_tree = d - 2 - col
+        uniform_node = ("w", col)
+        steps.append({
+            "action": "sample_uniform",
+            "var": leaf,
+            "column": col,
+            "node": uniform_node,
+        })
+        current_node = uniform_node
+        for tree in range(top_tree, -1, -1):
+            row = d - 2 - col - tree
+            partner = int(M[row, col])
+            conditioning = frozenset(
+                int(M[source_row, col])
+                for source_row in range(row + 1, d - 1 - col)
+            )
+            output_node = (leaf, conditioning)
+            steps.append({
+                "action": "h_inv",
+                "edge": (tree, col),
+                "leaf": leaf,
+                "partner": partner,
+                "from": current_node,
+                "known": (partner, conditioning),
+                "to": output_node,
+            })
+            current_node = output_node
+        for tree in range(top_tree + 1):
+            append_h_pair(col, tree)
+
+    return SuffixConditionalPlan(steps, d)
+
+
 def _sample_suffix_given_with_r_python(
         d, n, r_all, rng, given, start_col, matrix, pair_copulas, *,
         uniforms=None):

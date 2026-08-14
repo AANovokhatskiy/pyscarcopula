@@ -86,6 +86,11 @@ def test_stateless_scar_bindings_release_gil_after_array_validation():
             "families-independent-of-ou",
         ),
         (
+            "pyscarcopula/_cpp/src/vine/bad.cpp",
+            '#include "scar/gas_rvine.hpp"\n',
+            "rvine-independent-of-dynamic-models",
+        ),
+        (
             "pyscarcopula/_cpp/include/scar/detail/internal.hpp",
             "#pragma once\n",
             "removed-internal-header",

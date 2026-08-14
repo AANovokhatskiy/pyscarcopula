@@ -103,6 +103,19 @@ def check_include_boundaries(root: Path) -> list[Violation]:
         or value.startswith("detail/scar_ou/"),
         "copula family implementations must not depend on SCAR-OU",
     ))
+    rvine_files = [
+        *list(_source_files(src / "vine")),
+        include / "rvine.hpp",
+        include / "rvine_plan.hpp",
+    ]
+    violations.extend(_forbid_includes(
+        root,
+        (path for path in rvine_files if path.is_file()),
+        "rvine-independent-of-dynamic-models",
+        lambda value: value in {"gas.hpp", "gas_rvine.hpp", "ou.hpp"}
+        or value.startswith("detail/scar_ou/"),
+        "the common R-vine runtime must not depend on GAS or SCAR-OU",
+    ))
     return violations
 
 
