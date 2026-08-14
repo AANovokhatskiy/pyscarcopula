@@ -2021,12 +2021,14 @@ class VineCopula:
             If True, return ``(samples, diagnostics)`` instead of only
             samples.
         mcmc_steps : int or None, default None
-            Number of Metropolis-within-Gibbs sampling sweeps used after the
-            DAG initializer for arbitrary non-suffix ``given`` patterns. If
-            ``None``, a dimension-based default is used.
-        mcmc_burnin : int or None, default None
-            Number of burn-in sweeps for the arbitrary-``given`` MCMC fallback.
+            Number of Metropolis-within-Gibbs single-coordinate updates used
+            after the DAG initializer for arbitrary non-suffix ``given``
+            patterns. One full sweep contains one update per free variable.
             If ``None``, a dimension-based default is used.
+        mcmc_burnin : int or None, default None
+            Number of burn-in single-coordinate updates for the arbitrary-
+            ``given`` MCMC fallback. If ``None``, a dimension-based default is
+            used.
 
         Returns
         -------
@@ -2035,7 +2037,11 @@ class VineCopula:
         samples, diagnostics : tuple
             Returned when ``return_diagnostics=True``. Diagnostics include the
             conditioning method, suffix position, dynamic edge updates and
-            MCMC acceptance information when applicable.
+            MCMC acceptance, completed-sweep and convergence-warning
+            information when applicable. ``convergence_warning`` is a
+            conservative heuristic: it is set when a free coordinate accepts
+            fewer than 2 percent of proposals or fewer than five moves per
+            parallel chain. It is not a proof of convergence.
         """
         self._require_fit()
         if not isinstance(n, (int, np.integer)) or n <= 0:

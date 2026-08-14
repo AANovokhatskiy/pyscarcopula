@@ -161,6 +161,18 @@ def pyvine_model_from_exact_state(vine, state, pv):
     )
 
 
+def pyvine_model_from_fitted_vine(vine, pv):
+    """Build a pyvine model from the fitted matrix without suffix rebuilding."""
+
+    state = (
+        None,
+        vine.natural_order_matrix,
+        vine._edge_map,
+        vine.pair_copulas,
+    )
+    return pyvine_model_from_exact_state(vine, state, pv)
+
+
 def pyvine_exact_suffix_sample(vine, n: int, given, seed: int, pv):
     """Independent exact suffix draw through pyvine's Rosenblatt API."""
 
@@ -207,4 +219,5 @@ __all__ = [
     "pyvine_exact_suffix_sample",
     "pyvine_matrix",
     "pyvine_model_from_exact_state",
+    "pyvine_model_from_fitted_vine",
 ]

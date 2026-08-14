@@ -7,6 +7,7 @@ unchanged.  Public fit-time contracts are tested separately.
 
 from __future__ import annotations
 
+import itertools
 from dataclasses import dataclass
 from typing import Callable
 
@@ -223,9 +224,34 @@ def exact_given(vine: VineCopula, path: str) -> dict[int, float]:
     }
 
 
+def arbitrary_given(
+    vine: VineCopula,
+    levels: tuple[float, ...] = (0.23, 0.77),
+) -> dict[int, float]:
+    """Return a deterministic non-suffix conditioning pattern.
+
+    The search uses the public runtime's exact-path predicate only to select
+    the route under test.  It does not participate in either the production
+    MCMC target or the statistical oracle.
+    """
+
+    n_given = len(levels)
+    for variables in itertools.combinations(range(vine.d), n_given):
+        given = {
+            int(variable): float(level)
+            for variable, level in zip(variables, levels)
+        }
+        if vine._suffix_sampling_state(given) is None:
+            return given
+    raise ValueError(
+        f"no arbitrary given pattern of size {n_given} for d={vine.d}"
+    )
+
+
 __all__ = [
     "EdgeSpec",
     "FAMILY_PARAMETERS",
+    "arbitrary_given",
     "exact_given",
     "exact_structure_cases",
     "fitted_static_vine",

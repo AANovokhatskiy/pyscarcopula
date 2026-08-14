@@ -281,7 +281,8 @@ class PredictConfig:
     return_diagnostics : bool
         Request prediction diagnostics from models that support them.
     mcmc_steps, mcmc_burnin : int or None
-        Optional non-negative controls for conditional MCMC sampling.
+        Optional non-negative counts of single-coordinate updates for
+        conditional MCMC sampling. A full sweep updates every free variable.
 
     Notes
     -----

@@ -29,7 +29,13 @@ def sample_dag_given_with_r(n, r_all, rng, given, plan, pair_copulas):
 def sample_arbitrary_given_mcmc(
         d, n, r_all, rng, given, log_pdf_rows, initial=None,
         n_steps=None, burnin_steps=None):
-    """Metropolis-within-Gibbs fallback for arbitrary conditional patterns."""
+    """Metropolis-within-Gibbs fallback for arbitrary conditional patterns.
+
+    One step is one coordinate update across all ``n`` parallel chains.  It
+    is deliberately not called a sweep: a full sweep consists of
+    ``len(free_vars)`` steps.  Keeping that unit explicit prevents callers
+    from under-budgeting higher-dimensional conditional draws.
+    """
     free_vars = [var for var in range(d) if var not in given]
     if not free_vars:
         out = np.empty((n, d), dtype=np.float64)
@@ -77,6 +83,14 @@ def sample_arbitrary_given_mcmc(
         var: accepted[var] / proposed[var] if proposed[var] else 0.0
         for var in free_vars
     }
+    proposals_per_chain = {
+        var: proposed[var] / n
+        for var in free_vars
+    }
+    accepted_per_chain = {
+        var: accepted[var] / n
+        for var in free_vars
+    }
     rate_values = np.array(list(rates.values()), dtype=np.float64)
     has_proposals = any(proposed[var] > 0 for var in free_vars)
     acceptance_min = float(np.min(rate_values)) if has_proposals else None
@@ -87,17 +101,41 @@ def sample_arbitrary_given_mcmc(
         and acceptance_min is not None
         and acceptance_min < 0.02
     )
+    minimum_accepted_moves_per_chain = (
+        float(min(accepted_per_chain.values()))
+        if has_proposals else None
+    )
+    insufficient_moves_warning = (
+        minimum_accepted_moves_per_chain is not None
+        and minimum_accepted_moves_per_chain < 5.0
+    )
+    warning_codes = []
+    if low_acceptance_warning:
+        warning_codes.append('low_acceptance')
+    if insufficient_moves_warning:
+        warning_codes.append('insufficient_accepted_moves')
+    convergence_warning = bool(warning_codes)
     return clip_pseudo_observations(current), {
         'accepted': accepted,
         'proposed': proposed,
         'acceptance_rate': rates,
+        'accepted_per_chain': accepted_per_chain,
+        'proposals_per_chain': proposals_per_chain,
         'acceptance_min': acceptance_min,
         'acceptance_mean': acceptance_mean,
         'acceptance_max': acceptance_max,
         'low_acceptance_warning': low_acceptance_warning,
+        'insufficient_moves_warning': insufficient_moves_warning,
+        'minimum_accepted_moves_per_chain': minimum_accepted_moves_per_chain,
+        'convergence_warning': convergence_warning,
+        'warning_codes': tuple(warning_codes),
+        'step_unit': 'single_coordinate_update',
+        'n_free': len(free_vars),
         'n_steps': n_steps,
         'burnin_steps': burnin_steps,
         'total_steps': total_steps,
+        'completed_sweeps': total_steps // len(free_vars),
+        'partial_sweep_steps': total_steps % len(free_vars),
     }
 
 
@@ -106,11 +144,21 @@ def _empty_mcmc_diagnostics():
         'accepted': {},
         'proposed': {},
         'acceptance_rate': {},
+        'accepted_per_chain': {},
+        'proposals_per_chain': {},
         'acceptance_min': None,
         'acceptance_mean': None,
         'acceptance_max': None,
         'low_acceptance_warning': False,
+        'insufficient_moves_warning': False,
+        'minimum_accepted_moves_per_chain': None,
+        'convergence_warning': False,
+        'warning_codes': (),
+        'step_unit': 'single_coordinate_update',
+        'n_free': 0,
         'n_steps': 0,
         'burnin_steps': 0,
         'total_steps': 0,
+        'completed_sweeps': 0,
+        'partial_sweep_steps': 0,
     }
