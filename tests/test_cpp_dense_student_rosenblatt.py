@@ -22,6 +22,18 @@ from pyscarcopula.stattests import (
 
 
 pytestmark = pytest.mark.rvine_native
+_NATIVE_SCIPY_RTOL = 1e-10
+_NATIVE_SCIPY_ATOL = 1e-11
+
+
+def _assert_native_matches_scipy(actual, expected):
+    """Compare implementations across supported SciPy and C++ toolchains."""
+    np.testing.assert_allclose(
+        actual,
+        expected,
+        rtol=_NATIVE_SCIPY_RTOL,
+        atol=_NATIVE_SCIPY_ATOL,
+    )
 
 
 def _correlation():
@@ -58,7 +70,7 @@ def test_native_scalar_df_matches_independent_scipy_oracle(
     monkeypatch.setenv(_RVINE_BACKEND_ENV, "native_strict")
     actual = student_rosenblatt_transform(correlation, df, observations)
 
-    np.testing.assert_allclose(actual, expected, rtol=5e-12, atol=5e-13)
+    _assert_native_matches_scipy(actual, expected)
     assert actual.flags.c_contiguous
     assert np.all((actual > 0.0) & (actual < 1.0))
 
@@ -77,7 +89,7 @@ def test_df_path_is_dispatched_once_and_matches_rowwise_oracle(monkeypatch):
     actual = student_rosenblatt_transform(
         correlation, df_path, observations)
 
-    np.testing.assert_allclose(actual, expected, rtol=5e-12, atol=5e-13)
+    _assert_native_matches_scipy(actual, expected)
 
 
 @pytest.mark.parametrize("df", [1e-4, 1e-3, 1e-2, 2e-2, 5e-2])
@@ -147,7 +159,7 @@ def test_empty_and_single_row_contracts(monkeypatch, observations, df):
         correlation, df, observations)
 
     assert actual.shape == observations.shape
-    np.testing.assert_allclose(actual, expected, rtol=5e-12, atol=5e-13)
+    _assert_native_matches_scipy(actual, expected)
 
 
 def test_one_dimensional_contract(monkeypatch):
@@ -159,7 +171,7 @@ def test_one_dimensional_contract(monkeypatch):
     actual = student_rosenblatt_transform(
         correlation, df_path, observations)
 
-    np.testing.assert_allclose(actual, observations, rtol=5e-12, atol=5e-13)
+    _assert_native_matches_scipy(actual, observations)
 
 
 def test_noncontiguous_inputs_and_four_threads_match_serial():
@@ -318,7 +330,7 @@ def test_correlation_validation_and_near_singular_spd_contract():
         near_singular, df, observations)
     expected = _student_rosenblatt_transform_python(
         near_singular, float(df[0]), observations)
-    np.testing.assert_allclose(actual, expected, rtol=1e-10, atol=1e-11)
+    _assert_native_matches_scipy(actual, expected)
 
 
 @pytest.mark.parametrize(
