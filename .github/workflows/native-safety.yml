@@ -18,6 +18,7 @@ on:
       - "tests/test_cpp_gas_wrapper.py"
       - "tests/test_cpp_rvine_layer.py"
       - "tests/test_cpp_rvine_conditional.py"
+      - "tests/test_cpp_rvine_density_mcmc.py"
       - "tests/test_cpp_rvine_runtime.py"
       - "tests/test_rvine_runtime_contracts.py"
       - "tests/rvine_runtime_cases.py"
@@ -46,6 +47,7 @@ on:
       - "tests/test_cpp_gas_wrapper.py"
       - "tests/test_cpp_rvine_layer.py"
       - "tests/test_cpp_rvine_conditional.py"
+      - "tests/test_cpp_rvine_density_mcmc.py"
       - "tests/test_cpp_rvine_runtime.py"
       - "tests/test_rvine_runtime_contracts.py"
       - "tests/rvine_runtime_cases.py"
@@ -104,6 +106,7 @@ jobs:
             tests/test_cpp_gas_wrapper.py \
             tests/test_cpp_rvine_layer.py \
             tests/test_cpp_rvine_conditional.py \
+            tests/test_cpp_rvine_density_mcmc.py \
             tests/test_cpp_rvine_runtime.py \
             tests/test_rvine_runtime_contracts.py \
             tests/test_bivariate_gas_contract.py \

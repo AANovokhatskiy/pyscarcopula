@@ -26,9 +26,12 @@ from pyscarcopula.vine._helpers import (
     _open_unit_uniform,
     _prepared_open_unit_draws,
 )
+from pyscarcopula._constants import PSEUDO_OBS_EPS
+from pyscarcopula._utils import clip_pseudo_observations
 
 
 _NATIVE_EQUIVALENT_ATTR = "__pyscarcopula_native_rvine__"
+_DEFAULT_MCMC_DRAW_MEMORY_BUDGET_BYTES = 64 * 1024 * 1024
 
 
 def _builtin_copula_types():
@@ -252,6 +255,25 @@ def conditional_active_keys(plan):
     }))
 
 
+def density_active_keys(trees, edge_map):
+    """Return matrix-edge keys in the Python density oracle's tree order."""
+    reverse_edge_map = {
+        (int(tree), int(original)): (int(tree), int(column))
+        for (tree, column), original in edge_map.items()
+    }
+    keys = []
+    for tree, level in enumerate(trees):
+        for original, _edge in enumerate(level):
+            try:
+                keys.append(reverse_edge_map[(tree, original)])
+            except KeyError as exc:
+                raise ValueError(
+                    "density_active_keys: cannot resolve tree edge "
+                    f"{(tree, original)}"
+                ) from exc
+    return tuple(keys)
+
+
 def compile_density_plan(
         module,
         dimension,
@@ -379,6 +401,41 @@ def _parameter_path(value, n_rows, edge_key):
             f"R-vine parameter path for edge {edge_key} must be finite"
         )
     return path
+
+
+def _validate_parameter_domain(copula, path, edge_key):
+    """Validate the mathematical domain of a native pair-copula parameter."""
+    if not native_copula_supported(copula):
+        # Custom Python semantics remain owned by the fallback implementation.
+        return
+
+    from pyscarcopula.copula.clayton import ClaytonCopula
+    from pyscarcopula.copula.elliptical import BivariateGaussianCopula
+    from pyscarcopula.copula.frank import FrankCopula
+    from pyscarcopula.copula.gumbel import GumbelCopula
+    from pyscarcopula.copula.independent import IndependentCopula
+    from pyscarcopula.copula.joe import JoeCopula
+
+    values = np.asarray(path, dtype=np.float64)
+    if isinstance(copula, IndependentCopula):
+        return
+    if isinstance(copula, (ClaytonCopula, FrankCopula)):
+        valid = values > 0.0
+        domain = "(0, +inf)"
+    elif isinstance(copula, (GumbelCopula, JoeCopula)):
+        valid = values >= 1.0
+        domain = "[1, +inf)"
+    elif isinstance(copula, BivariateGaussianCopula):
+        valid = (values > -1.0) & (values < 1.0)
+        domain = "(-1, 1)"
+    else:  # pragma: no cover - guarded by native_copula_supported
+        return
+    if not np.all(valid):
+        invalid = float(values[np.flatnonzero(~valid)[0]])
+        raise ValueError(
+            f"R-vine parameter path for edge {edge_key} must lie in "
+            f"{domain}; got {invalid!r}"
+        )
 
 
 def compile_edge_specs(
@@ -517,6 +574,7 @@ def conditional_parameter_layout(
             raise KeyError(f"missing R-vine parameter path for edge {key}")
         raw = parameter_paths[key]
         path = _parameter_path(raw, n_rows, key)
+        _validate_parameter_domain(edge_copula(edge), path, key)
         dynamic = edge_has_dynamic_params(edge)
         if dynamic:
             if len(path) != n_rows:
@@ -533,6 +591,16 @@ def conditional_parameter_layout(
             sources[key] = "row_path"
             normalized[key] = path
     return normalized, sources
+
+
+def density_parameter_layout(
+        pair_copulas, active_keys, parameter_paths, n_rows):
+    """Validate every oracle edge and classify native parameter storage."""
+    missing = [key for key in active_keys if key not in parameter_paths]
+    if missing:
+        raise KeyError(f"missing R-vine parameter path for edge {missing[0]}")
+    return conditional_parameter_layout(
+        pair_copulas, active_keys, parameter_paths, n_rows)
 
 
 def _conditional_given_values(dimension, given, expected_variables):
@@ -820,6 +888,359 @@ def sample(
     if values.size != n * int(vine.d):
         raise CppError("C++ R-vine sample returned an invalid value count")
     return np.ascontiguousarray(values.reshape(n, int(vine.d)))
+
+
+def _density_observations(values, dimension):
+    raw = np.asarray(values)
+    if np.iscomplexobj(raw):
+        raise TypeError("R-vine density observations must contain real values")
+    observations = np.asarray(raw, dtype=np.float64)
+    if observations.ndim != 2 or observations.shape[1] != int(dimension):
+        raise ValueError(
+            "R-vine density observations must have shape "
+            f"(n, {int(dimension)}), got {observations.shape}"
+        )
+    if not np.all(np.isfinite(observations)):
+        raise ValueError("R-vine density observations must be finite")
+    return np.ascontiguousarray(observations)
+
+
+def _mcmc_draw_chunk_capacity(n, chunk_steps, memory_budget_bytes):
+    """Bound generated proposal/acceptance buffers by a byte budget."""
+    if (
+            isinstance(memory_budget_bytes, (bool, np.bool_))
+            or not isinstance(memory_budget_bytes, (int, np.integer))):
+        raise TypeError("R-vine MCMC memory_budget_bytes must be an integer")
+    budget = int(memory_budget_bytes)
+    if budget < 0:
+        raise ValueError(
+            "R-vine MCMC memory_budget_bytes must be non-negative")
+    rows = int(n)
+    if rows == 0:
+        return int(chunk_steps)
+    bytes_per_step = 2 * rows * np.dtype(np.float64).itemsize
+    capacity = budget // bytes_per_step
+    if capacity < 1:
+        raise MemoryError(
+            "R-vine MCMC requires at least "
+            f"{bytes_per_step} bytes for one proposal/acceptance step, "
+            f"exceeding memory_budget_bytes={budget}"
+        )
+    return min(int(chunk_steps), int(capacity))
+
+
+def _execute_log_pdf_rows(
+        module, native_plan, native_edges, parameters, observations,
+        n_threads):
+    result = module.rvine_log_pdf_rows(
+        native_plan,
+        list(native_edges),
+        parameters.scalar_parameters,
+        parameters.row_parameters,
+        observations,
+        int(n_threads),
+    )
+    raise_for_status(result, "R-vine row log-density")
+    n_rows, dimension = observations.shape
+    if (
+            int(result["n_rows"]) != n_rows
+            or int(result["dimension"]) != dimension):
+        raise CppError(
+            "C++ R-vine row log-density returned inconsistent dimensions")
+    values = np.asarray(result["log_pdf"], dtype=np.float64)
+    if values.shape != (n_rows,) or not np.all(np.isfinite(values)):
+        raise CppError(
+            "C++ R-vine row log-density returned invalid values")
+    return np.ascontiguousarray(values)
+
+
+def log_pdf_rows(
+        module,
+        pair_copulas,
+        dimension,
+        trees,
+        edge_map,
+        parameter_paths,
+        observations,
+        *,
+        active_keys=None,
+        normalized_parameter_paths=None,
+        parameter_sources=None,
+        native_plan=None,
+        native_edges=None,
+        parameter_pack=None,
+        n_threads=1):
+    """Execute one fused row-wise R-vine density traversal."""
+    if not isinstance(n_threads, (int, np.integer)) or int(n_threads) <= 0:
+        raise ValueError(
+            "R-vine row log-density n_threads must be a positive integer")
+    dimension = int(dimension)
+    prepared_observations = _density_observations(observations, dimension)
+    n_rows = len(prepared_observations)
+    active_keys = (
+        density_active_keys(trees, edge_map)
+        if active_keys is None else
+        tuple(tuple(int(value) for value in key) for key in active_keys)
+    )
+    if not native_edges_supported(pair_copulas, active_keys):
+        return None
+    if normalized_parameter_paths is None or parameter_sources is None:
+        normalized_parameter_paths, parameter_sources = (
+            density_parameter_layout(
+                pair_copulas, active_keys, parameter_paths, n_rows)
+        )
+    if parameter_pack is None:
+        try:
+            edges, parameters = compile_edge_specs(
+                module,
+                pair_copulas,
+                active_keys,
+                normalized_parameter_paths,
+                n_rows,
+                parameter_sources=parameter_sources,
+                native_edges=native_edges,
+            )
+        except CppUnsupported:
+            return None
+    else:
+        if native_edges is None:
+            raise ValueError(
+                "precompiled density parameter pack requires native edges")
+        if not isinstance(parameter_pack, RVineParameterPack):
+            raise TypeError("parameter_pack must be an RVineParameterPack")
+        if int(parameter_pack.n_rows) != n_rows:
+            raise ValueError(
+                "precompiled density parameter pack row count mismatch")
+        edges = list(native_edges)
+        parameters = parameter_pack
+    plan = (
+        compile_density_plan(
+            module, dimension, trees, edge_map, active_keys)
+        if native_plan is None else native_plan
+    )
+    return _execute_log_pdf_rows(
+        module,
+        plan,
+        edges,
+        parameters,
+        prepared_observations,
+        int(n_threads),
+    )
+
+
+def mcmc(
+        module,
+        pair_copulas,
+        dimension,
+        trees,
+        edge_map,
+        parameter_paths,
+        n,
+        rng,
+        given,
+        *,
+        initial=None,
+        n_steps=None,
+        burnin_steps=None,
+        initial_uniforms=None,
+        random_draws=None,
+        step_offset=0,
+        active_keys=None,
+        normalized_parameter_paths=None,
+        parameter_sources=None,
+        native_plan=None,
+        native_edges=None,
+        parameter_pack=None,
+        n_threads=1,
+        chunk_steps=256,
+        memory_budget_bytes=_DEFAULT_MCMC_DRAW_MEMORY_BUDGET_BYTES):
+    """Run coordinate-wise MCMC in bounded native chunks with Python RNG."""
+    from pyscarcopula.vine._rvine_conditional_runtime import (
+        _empty_mcmc_diagnostics,
+        _mcmc_diagnostics,
+    )
+
+    dimension = int(dimension)
+    n = int(n)
+    if n < 0:
+        raise ValueError("R-vine MCMC row count must be non-negative")
+    if not isinstance(n_threads, (int, np.integer)) or int(n_threads) <= 0:
+        raise ValueError("R-vine MCMC n_threads must be a positive integer")
+    if not isinstance(chunk_steps, (int, np.integer)) or int(chunk_steps) <= 0:
+        raise ValueError("R-vine MCMC chunk_steps must be a positive integer")
+    effective_chunk_steps = _mcmc_draw_chunk_capacity(
+        n, chunk_steps, memory_budget_bytes)
+    active_keys = (
+        density_active_keys(trees, edge_map)
+        if active_keys is None else
+        tuple(tuple(int(value) for value in key) for key in active_keys)
+    )
+    if not native_edges_supported(pair_copulas, active_keys):
+        return None
+    if normalized_parameter_paths is None or parameter_sources is None:
+        normalized_parameter_paths, parameter_sources = (
+            density_parameter_layout(
+                pair_copulas, active_keys, parameter_paths, n)
+        )
+    if parameter_pack is None:
+        try:
+            edges, parameters = compile_edge_specs(
+                module,
+                pair_copulas,
+                active_keys,
+                normalized_parameter_paths,
+                n,
+                parameter_sources=parameter_sources,
+                native_edges=native_edges,
+            )
+        except CppUnsupported:
+            return None
+    else:
+        if native_edges is None:
+            raise ValueError(
+                "precompiled MCMC parameter pack requires native edges")
+        if not isinstance(parameter_pack, RVineParameterPack):
+            raise TypeError("parameter_pack must be an RVineParameterPack")
+        if int(parameter_pack.n_rows) != n:
+            raise ValueError("precompiled MCMC parameter pack row mismatch")
+        edges = list(native_edges)
+        parameters = parameter_pack
+    plan = (
+        compile_density_plan(
+            module, dimension, trees, edge_map, active_keys)
+        if native_plan is None else native_plan
+    )
+
+    free_vars = [var for var in range(dimension) if var not in given]
+    if not free_vars:
+        out = np.empty((n, dimension), dtype=np.float64)
+        for variable in range(dimension):
+            out[:, variable] = given[variable]
+        return out, _empty_mcmc_diagnostics()
+
+    if initial is None:
+        current = (
+            _open_unit_uniform(rng, size=(n, dimension))
+            if initial_uniforms is None else
+            _prepared_open_unit_draws(
+                initial_uniforms,
+                (n, dimension),
+                name="MCMC initial uniforms",
+            ).copy()
+        )
+        for variable, value in given.items():
+            current[:, variable] = value
+    else:
+        if initial_uniforms is not None:
+            raise ValueError(
+                "MCMC initial_uniforms cannot be supplied with initial")
+        current = np.asarray(initial, dtype=np.float64).copy()
+        if current.shape != (n, dimension):
+            raise ValueError(
+                f"MCMC initial state must have shape {(n, dimension)}, "
+                f"got {current.shape}")
+        if not np.all(np.isfinite(current)):
+            raise ValueError("MCMC initial state must be finite")
+        for variable, value in given.items():
+            current[:, variable] = value
+    current = np.ascontiguousarray(current, dtype=np.float64)
+    current_log_pdf = _execute_log_pdf_rows(
+        module, plan, edges, parameters, current, int(n_threads))
+
+    n_steps = (
+        max(80, 30 * len(free_vars))
+        if n_steps is None else int(n_steps)
+    )
+    burnin_steps = (
+        max(40, 10 * len(free_vars))
+        if burnin_steps is None else int(burnin_steps)
+    )
+    total_steps = burnin_steps + n_steps
+    step_offset = int(step_offset)
+    if step_offset < 0:
+        raise ValueError("MCMC step_offset must be non-negative")
+    replay_draws = None
+    if random_draws is not None:
+        replay_draws = _prepared_open_unit_draws(
+            random_draws,
+            (total_steps, n, 2),
+            name="MCMC interleaved random draws",
+        )
+
+    given_indices = sorted(int(variable) for variable in given)
+    full_given_values = _conditional_given_values(
+        dimension, given, given_indices)
+    given_values = np.ascontiguousarray(
+        full_given_values[given_indices], dtype=np.float64)
+    accepted = {int(variable): 0 for variable in free_vars}
+    proposed = {int(variable): 0 for variable in free_vars}
+    offset = 0
+    chunk_steps = effective_chunk_steps
+    while offset < total_steps:
+        count = min(chunk_steps, total_steps - offset)
+        if replay_draws is None:
+            proposal_uniforms = np.empty((count, n), dtype=np.float64)
+            acceptance_uniforms = np.empty((count, n), dtype=np.float64)
+            for local_step in range(count):
+                proposal_uniforms[local_step] = rng.uniform(
+                    PSEUDO_OBS_EPS,
+                    1.0 - PSEUDO_OBS_EPS,
+                    size=n,
+                )
+                acceptance_uniforms[local_step] = rng.uniform(
+                    PSEUDO_OBS_EPS, 1.0, size=n)
+        else:
+            chunk = replay_draws[offset:offset + count]
+            proposal_uniforms = np.ascontiguousarray(chunk[:, :, 0])
+            acceptance_uniforms = np.ascontiguousarray(chunk[:, :, 1])
+        result = module.rvine_mcmc(
+            plan,
+            edges,
+            parameters.scalar_parameters,
+            parameters.row_parameters,
+            given_indices,
+            given_values,
+            free_vars,
+            current,
+            current_log_pdf,
+            step_offset + offset,
+            proposal_uniforms,
+            acceptance_uniforms,
+            int(n_threads),
+        )
+        raise_for_status(result, "R-vine conditional MCMC chunk")
+        if (
+                int(result["n_rows"]) != n
+                or int(result["dimension"]) != dimension
+                or int(result["coordinate_steps"]) != count):
+            raise CppError(
+                "C++ R-vine MCMC returned inconsistent dimensions")
+        state = np.asarray(result["state"], dtype=np.float64)
+        log_pdf = np.asarray(result["log_pdf"], dtype=np.float64)
+        if state.size != n * dimension or log_pdf.shape != (n,):
+            raise CppError("C++ R-vine MCMC returned invalid buffers")
+        current = np.ascontiguousarray(state.reshape(n, dimension))
+        current_log_pdf = np.ascontiguousarray(log_pdf)
+        raw = dict(result["diagnostics"])
+        chunk_proposed = list(raw["proposed"])
+        chunk_accepted = list(raw["accepted"])
+        if (
+                len(chunk_proposed) != len(free_vars)
+                or len(chunk_accepted) != len(free_vars)):
+            raise CppError("C++ R-vine MCMC returned invalid counters")
+        for index, variable in enumerate(free_vars):
+            proposed[variable] += int(chunk_proposed[index])
+            accepted[variable] += int(chunk_accepted[index])
+        offset += count
+
+    return clip_pseudo_observations(current), _mcmc_diagnostics(
+        free_vars,
+        accepted,
+        proposed,
+        n,
+        n_steps,
+        burnin_steps,
+    )
 
 
 def raise_for_status(result, operation):

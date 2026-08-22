@@ -112,6 +112,22 @@ def _sample_arbitrary_given_mcmc_python(
         accepted[int(var)] += int(np.sum(accept))
         proposed[int(var)] += int(n)
 
+    return clip_pseudo_observations(current), _mcmc_diagnostics(
+        free_vars,
+        accepted,
+        proposed,
+        n,
+        n_steps,
+        burnin_steps,
+    )
+
+
+def _mcmc_diagnostics(
+        free_vars, accepted, proposed, n, n_steps, burnin_steps):
+    """Build the stable public diagnostics from raw coordinate counters."""
+    free_vars = [int(var) for var in free_vars]
+    accepted = {int(var): int(accepted[var]) for var in free_vars}
+    proposed = {int(var): int(proposed[var]) for var in free_vars}
     rates = {
         var: accepted[var] / proposed[var] if proposed[var] else 0.0
         for var in free_vars
@@ -148,7 +164,8 @@ def _sample_arbitrary_given_mcmc_python(
     if insufficient_moves_warning:
         warning_codes.append('insufficient_accepted_moves')
     convergence_warning = bool(warning_codes)
-    return clip_pseudo_observations(current), {
+    total_steps = int(burnin_steps) + int(n_steps)
+    return {
         'accepted': accepted,
         'proposed': proposed,
         'acceptance_rate': rates,
@@ -164,8 +181,8 @@ def _sample_arbitrary_given_mcmc_python(
         'warning_codes': tuple(warning_codes),
         'step_unit': 'single_coordinate_update',
         'n_free': len(free_vars),
-        'n_steps': n_steps,
-        'burnin_steps': burnin_steps,
+        'n_steps': int(n_steps),
+        'burnin_steps': int(burnin_steps),
         'total_steps': total_steps,
         'completed_sweeps': total_steps // len(free_vars),
         'partial_sweep_steps': total_steps % len(free_vars),

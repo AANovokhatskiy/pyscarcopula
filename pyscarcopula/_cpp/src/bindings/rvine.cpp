@@ -330,6 +330,237 @@ void bind_rvine(py::module_& m) {
         py::arg("given_values"),
         py::arg("uniforms"),
         py::arg("n_threads") = 1);
+
+    m.def(
+        "rvine_log_pdf_rows",
+        [](const scar::RVineDensityPlan& plan,
+           const std::vector<scar::rvine::EdgeSpec>& edges,
+           py::array_t<
+               double,
+               py::array::c_style | py::array::forcecast> scalar_parameters,
+           py::array_t<
+               double,
+               py::array::c_style | py::array::forcecast> row_parameters,
+           py::array_t<
+               double,
+               py::array::c_style | py::array::forcecast> observations,
+           int n_threads) {
+            const py::buffer_info scalar_info = scalar_parameters.request();
+            const py::buffer_info row_info = row_parameters.request();
+            const py::buffer_info observation_info = observations.request();
+            if (scalar_info.ndim != 1 || row_info.ndim != 2
+                || observation_info.ndim != 2) {
+                throw std::invalid_argument(
+                    "scalar_parameters must be 1D and row_parameters and "
+                    "observations must be 2D arrays");
+            }
+            scar::rvine::ParameterPack parameters;
+            parameters.scalar_parameters = {
+                static_cast<const double*>(scalar_info.ptr),
+                static_cast<std::size_t>(scalar_info.shape[0]),
+            };
+            parameters.row_parameters = {
+                static_cast<const double*>(row_info.ptr),
+                static_cast<std::size_t>(row_info.size),
+            };
+            parameters.n_rows = static_cast<std::int64_t>(row_info.shape[0]);
+            parameters.row_parameter_columns =
+                static_cast<std::int64_t>(row_info.shape[1]);
+            const scar::DoubleView observation_view = {
+                static_cast<const double*>(observation_info.ptr),
+                static_cast<std::size_t>(observation_info.size),
+            };
+            scar::rvine::DensityResult result;
+            {
+                py::gil_scoped_release release;
+                result = scar::rvine::log_pdf_rows(
+                    plan,
+                    edges,
+                    parameters,
+                    observation_view,
+                    static_cast<std::int64_t>(observation_info.shape[0]),
+                    static_cast<std::int64_t>(observation_info.shape[1]),
+                    n_threads);
+            }
+            py::dict diagnostics;
+            diagnostics["n_threads_requested"] = result.n_threads_requested;
+            diagnostics["n_threads_used"] = result.n_threads_used;
+            diagnostics["density_operations"] =
+                result.diagnostics.density_operations;
+            diagnostics["h_pair_operations"] =
+                result.diagnostics.h_pair_operations;
+            diagnostics["independence_fast_paths"] =
+                result.diagnostics.independence_fast_paths;
+
+            py::dict out;
+            out["log_pdf"] = vector_to_array(result.log_pdf);
+            out["n_rows"] = result.n_rows;
+            out["dimension"] = result.dimension;
+            out["status"] = result.status;
+            out["failure_row"] = result.failure_row;
+            out["failure_edge"] = result.failure_edge;
+            out["failure_operation"] = result.failure_operation;
+            out["diagnostics"] = std::move(diagnostics);
+            return out;
+        },
+        py::arg("plan"),
+        py::arg("edges"),
+        py::arg("scalar_parameters"),
+        py::arg("row_parameters"),
+        py::arg("observations"),
+        py::arg("n_threads") = 1);
+
+    const auto mcmc_binding = [](
+        const scar::RVineDensityPlan& plan,
+        const std::vector<scar::rvine::EdgeSpec>& edges,
+        py::array_t<
+            double,
+            py::array::c_style | py::array::forcecast> scalar_parameters,
+        py::array_t<
+            double,
+            py::array::c_style | py::array::forcecast> row_parameters,
+        const std::vector<int>& given_indices,
+        py::array_t<
+            double,
+            py::array::c_style | py::array::forcecast> given_values,
+        const std::vector<int>& free_indices,
+        py::array_t<
+            double,
+            py::array::c_style | py::array::forcecast> current_state,
+        py::array_t<
+            double,
+            py::array::c_style | py::array::forcecast> current_log_pdf,
+        std::int64_t global_step_offset,
+        py::array_t<
+            double,
+            py::array::c_style | py::array::forcecast> proposal_uniforms,
+        py::array_t<
+            double,
+            py::array::c_style | py::array::forcecast> acceptance_uniforms,
+        int n_threads) {
+        const py::buffer_info scalar_info = scalar_parameters.request();
+        const py::buffer_info row_info = row_parameters.request();
+        const py::buffer_info given_info = given_values.request();
+        const py::buffer_info state_info = current_state.request();
+        const py::buffer_info log_pdf_info = current_log_pdf.request();
+        const py::buffer_info proposal_info = proposal_uniforms.request();
+        const py::buffer_info acceptance_info = acceptance_uniforms.request();
+        if (scalar_info.ndim != 1 || row_info.ndim != 2
+            || given_info.ndim != 1 || state_info.ndim != 2
+            || log_pdf_info.ndim != 1 || proposal_info.ndim != 2
+            || acceptance_info.ndim != 2) {
+            throw std::invalid_argument(
+                "R-vine MCMC scalar/given/log-density buffers must be 1D "
+                "and row/state/draw buffers must be 2D arrays");
+        }
+        scar::rvine::ParameterPack parameters;
+        parameters.scalar_parameters = {
+            static_cast<const double*>(scalar_info.ptr),
+            static_cast<std::size_t>(scalar_info.shape[0]),
+        };
+        parameters.row_parameters = {
+            static_cast<const double*>(row_info.ptr),
+            static_cast<std::size_t>(row_info.size),
+        };
+        parameters.n_rows = static_cast<std::int64_t>(row_info.shape[0]);
+        parameters.row_parameter_columns =
+            static_cast<std::int64_t>(row_info.shape[1]);
+        const scar::DoubleView given_view = {
+            static_cast<const double*>(given_info.ptr),
+            static_cast<std::size_t>(given_info.size),
+        };
+        const scar::DoubleView state_view = {
+            static_cast<const double*>(state_info.ptr),
+            static_cast<std::size_t>(state_info.size),
+        };
+        const scar::DoubleView log_pdf_view = {
+            static_cast<const double*>(log_pdf_info.ptr),
+            static_cast<std::size_t>(log_pdf_info.size),
+        };
+        const scar::DoubleView proposal_view = {
+            static_cast<const double*>(proposal_info.ptr),
+            static_cast<std::size_t>(proposal_info.size),
+        };
+        const scar::DoubleView acceptance_view = {
+            static_cast<const double*>(acceptance_info.ptr),
+            static_cast<std::size_t>(acceptance_info.size),
+        };
+        scar::rvine::MCMCResult result;
+        {
+            py::gil_scoped_release release;
+            result = scar::rvine::mcmc_chunk(
+                plan,
+                edges,
+                parameters,
+                given_indices,
+                given_view,
+                free_indices,
+                state_view,
+                static_cast<std::int64_t>(state_info.shape[0]),
+                static_cast<std::int64_t>(state_info.shape[1]),
+                log_pdf_view,
+                global_step_offset,
+                proposal_view,
+                static_cast<std::int64_t>(proposal_info.shape[0]),
+                static_cast<std::int64_t>(proposal_info.shape[1]),
+                acceptance_view,
+                static_cast<std::int64_t>(acceptance_info.shape[0]),
+                static_cast<std::int64_t>(acceptance_info.shape[1]),
+                n_threads);
+        }
+        py::dict diagnostics;
+        diagnostics["n_threads_requested"] = result.n_threads_requested;
+        diagnostics["n_threads_used"] = result.n_threads_used;
+        diagnostics["proposed"] = result.proposed;
+        diagnostics["accepted"] = result.accepted;
+        diagnostics["non_finite_proposals"] =
+            result.non_finite_proposals;
+
+        py::dict out;
+        out["state"] = vector_to_array(result.state);
+        out["log_pdf"] = vector_to_array(result.log_pdf);
+        out["n_rows"] = result.n_rows;
+        out["dimension"] = result.dimension;
+        out["coordinate_steps"] = result.coordinate_steps;
+        out["status"] = result.status;
+        out["failure_row"] = result.failure_row;
+        out["failure_edge"] = result.failure_edge;
+        out["failure_operation"] = result.failure_operation;
+        out["diagnostics"] = std::move(diagnostics);
+        return out;
+    };
+    m.def(
+        "rvine_mcmc",
+        mcmc_binding,
+        py::arg("plan"),
+        py::arg("edges"),
+        py::arg("scalar_parameters"),
+        py::arg("row_parameters"),
+        py::arg("given_indices"),
+        py::arg("given_values"),
+        py::arg("free_indices"),
+        py::arg("current_state"),
+        py::arg("current_log_pdf"),
+        py::arg("global_step_offset"),
+        py::arg("proposal_uniforms"),
+        py::arg("acceptance_uniforms"),
+        py::arg("n_threads") = 1);
+    m.def(
+        "rvine_mcmc_chunk",
+        mcmc_binding,
+        py::arg("plan"),
+        py::arg("edges"),
+        py::arg("scalar_parameters"),
+        py::arg("row_parameters"),
+        py::arg("given_indices"),
+        py::arg("given_values"),
+        py::arg("free_indices"),
+        py::arg("current_state"),
+        py::arg("current_log_pdf"),
+        py::arg("global_step_offset"),
+        py::arg("proposal_uniforms"),
+        py::arg("acceptance_uniforms"),
+        py::arg("n_threads") = 1);
 }
 
 }  // namespace pyscarcopula::bindings

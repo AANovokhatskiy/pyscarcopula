@@ -88,6 +88,39 @@ bool bounded_conditional_node_count(
     return static_cast<std::size_t>(plan.node_count) <= bound;
 }
 
+bool bounded_density_node_count(const RVineDensityPlan& plan) noexcept {
+    if (plan.dimension < 0 || plan.node_count < 0) {
+        return false;
+    }
+    const std::size_t maximum = std::numeric_limits<std::size_t>::max();
+    std::size_t bound = static_cast<std::size_t>(plan.dimension);
+    if (plan.edge_indices.size() > (maximum - bound) / 2U) {
+        return false;
+    }
+    bound += 2U * plan.edge_indices.size();
+    return static_cast<std::size_t>(plan.node_count) <= bound;
+}
+
+bool valid_parameter_for_family(
+    const EdgeSpec& edge,
+    double parameter) noexcept {
+    if (edge.copula.family == CopulaFamily::Independent) {
+        return true;
+    }
+    switch (edge.copula.family) {
+    case CopulaFamily::Clayton:
+    case CopulaFamily::Gumbel:
+    case CopulaFamily::Frank:
+    case CopulaFamily::Joe:
+    case CopulaFamily::Gaussian:
+        return std::isfinite(scar_internal::copula_param_to_tau(
+            edge.copula, parameter));
+    default:
+        // Unsupported families are reported by prepare_edges as such.
+        return true;
+    }
+}
+
 }  // namespace
 
 bool valid_index(int value, int limit) noexcept {
@@ -369,6 +402,7 @@ bool validate_density_plan(
     std::size_t edge_count) {
     const std::size_t operation_count = plan.edge_indices.size();
     if (plan.dimension < 2 || plan.node_count < plan.dimension
+        || !bounded_density_node_count(plan)
         || plan.input_nodes.size()
             != static_cast<std::size_t>(plan.dimension)
         || !same_operation_size(operation_count, plan.input1_nodes)
@@ -392,6 +426,8 @@ bool validate_density_plan(
         const int input2 = plan.input2_nodes[index];
         const int output1 = plan.output1_nodes[index];
         const int output2 = plan.output2_nodes[index];
+        const bool has_first_output = output1 != -1;
+        const bool has_second_output = output2 != -1;
         if (!valid_index(plan.edge_indices[index], static_cast<int>(edge_count))
             || !valid_index(input1, plan.node_count)
             || !valid_index(input2, plan.node_count)
@@ -399,13 +435,17 @@ bool validate_density_plan(
             || initialized[static_cast<std::size_t>(input2)] == 0
             || !valid_optional_node(output1, plan.node_count)
             || !valid_optional_node(output2, plan.node_count)
+            || has_first_output != has_second_output
             || !valid_orientation(plan.transposed[index])) {
             return false;
         }
         if (output1 != -1) {
+            if (initialized[static_cast<std::size_t>(output1)] != 0
+                || initialized[static_cast<std::size_t>(output2)] != 0
+                || output1 == output2) {
+                return false;
+            }
             initialized[static_cast<std::size_t>(output1)] = 1;
-        }
-        if (output2 != -1) {
             initialized[static_cast<std::size_t>(output2)] = 1;
         }
     }
@@ -470,6 +510,13 @@ int validate_parameter_pack(
         }
     }
     for (const EdgeSpec& edge : edges) {
+        // A fitted IndependentResult is authoritative even when the retained
+        // Python copula object belongs to another family.  The reverse is not
+        // valid: an Independent family must never request a parameter.
+        if (edge.copula.family == CopulaFamily::Independent
+            && !edge.parameter_free) {
+            return SCAR_INVALID_PARAMETER;
+        }
         switch (edge.parameter_source) {
         case ParameterSource::None:
             if (!edge.parameter_free || edge.parameter_index != -1) {
@@ -480,7 +527,11 @@ int validate_parameter_pack(
             if (edge.parameter_free
                 || !valid_index(
                     edge.parameter_index,
-                    static_cast<int>(parameters.scalar_parameters.size()))) {
+                    static_cast<int>(parameters.scalar_parameters.size()))
+                || !valid_parameter_for_family(
+                    edge,
+                    parameters.scalar_parameters[static_cast<std::size_t>(
+                        edge.parameter_index)])) {
                 return SCAR_INVALID_PARAMETER;
             }
             break;
@@ -490,6 +541,14 @@ int validate_parameter_pack(
                     edge.parameter_index,
                     static_cast<int>(columns))) {
                 return SCAR_INVALID_PARAMETER;
+            }
+            for (std::size_t row = 0; row < rows; ++row) {
+                const double parameter = parameters.row_parameters[
+                    row * columns
+                    + static_cast<std::size_t>(edge.parameter_index)];
+                if (!valid_parameter_for_family(edge, parameter)) {
+                    return SCAR_INVALID_PARAMETER;
+                }
             }
             break;
         default:

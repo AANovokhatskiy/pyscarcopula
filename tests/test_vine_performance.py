@@ -553,6 +553,213 @@ def test_rvine_native_conditional_relative_benchmark(monkeypatch, kind):
 
 
 @pytest.mark.benchmark
+def test_rvine_native_density_relative_benchmark(monkeypatch):
+    """Gate the fused density traversal against the Python node dictionary."""
+    _skip_unless_vine_enabled()
+    d = 15
+    n = 1000
+    vine = configured_static_dvine(d)
+    vine.pair_copulas = {
+        key: fitted_pair(BivariateGaussianCopula(), 0.05)
+        for key in vine.pair_copulas
+    }
+    parameters = scalar_parameters(vine)
+    observations = np.random.default_rng(2026082250).uniform(
+        1e-10, 1.0 - 1e-10, size=(n, d))
+
+    def execute():
+        return vine._log_pdf_rows_with_r(observations, parameters)
+
+    calls = {
+        mode: lambda mode=mode: _execute_backend(
+            monkeypatch, mode, execute)
+        for mode in ("python_executor", "native_strict")
+    }
+    for call in calls.values():
+        call()
+    measured = interleaved_timings(calls, repeats=7)
+    elapsed = measured.medians
+    outputs = measured.results
+    np.testing.assert_array_equal(
+        outputs["native_strict"], outputs["python_executor"])
+    speedup = measured.median_ratio("python_executor", "native_strict")
+    _print_benchmark(
+        "rvine_native_density",
+        d=d,
+        n=n,
+        python_ms=f"{1e3 * elapsed['python_executor']:.3f}",
+        native_ms=f"{1e3 * elapsed['native_strict']:.3f}",
+        speedup=f"{speedup:.3f}",
+    )
+    assert speedup >= 3.0
+
+
+@pytest.mark.benchmark
+def test_rvine_native_mcmc_relative_benchmark(monkeypatch):
+    """Gate full-recompute coordinate MCMC with an identical draw replay."""
+    _skip_unless_vine_enabled()
+    d = 10
+    n = 200
+    coordinate_steps = 50
+    vine = configured_static_dvine(d)
+    vine.pair_copulas = {
+        key: fitted_pair(BivariateGaussianCopula(), 0.05)
+        for key in vine.pair_copulas
+    }
+    parameters = scalar_parameters(vine)
+    given = {0: 0.35, 2: 0.65}
+    initial = np.random.default_rng(2026082251).uniform(
+        0.02, 0.98, size=(n, d))
+    draws = np.random.default_rng(2026082252).uniform(
+        0.01, 0.99, size=(coordinate_steps, n, 2))
+
+    def execute():
+        return vine._sample_arbitrary_given_mcmc(
+            n,
+            parameters,
+            np.random.default_rng(1),
+            given,
+            initial=initial,
+            n_steps=40,
+            burnin_steps=10,
+            random_draws=draws,
+        )
+
+    calls = {
+        mode: lambda mode=mode: _execute_backend(
+            monkeypatch, mode, execute)
+        for mode in ("python_executor", "native_strict")
+    }
+    for call in calls.values():
+        call()
+    measured = interleaved_timings(calls, repeats=5)
+    elapsed = measured.medians
+    outputs = measured.results
+    np.testing.assert_array_equal(
+        outputs["native_strict"][0], outputs["python_executor"][0])
+    assert outputs["native_strict"][1] == outputs["python_executor"][1]
+    speedup = measured.median_ratio("python_executor", "native_strict")
+    _print_benchmark(
+        "rvine_native_mcmc",
+        d=d,
+        n=n,
+        coordinate_steps=coordinate_steps,
+        python_ms=f"{1e3 * elapsed['python_executor']:.3f}",
+        native_ms=f"{1e3 * elapsed['native_strict']:.3f}",
+        speedup=f"{speedup:.3f}",
+    )
+    assert speedup >= 5.0
+
+
+@pytest.mark.benchmark
+@pytest.mark.parametrize(("n", "repetitions"), [(1, 100), (32, 30)])
+def test_rvine_native_density_small_input_adapter_overhead(
+        monkeypatch, n, repetitions):
+    """Guard fused-density dispatch overhead for small row counts."""
+    _skip_unless_vine_enabled()
+    d = 10
+    vine = configured_static_dvine(d)
+    vine.pair_copulas = {
+        key: fitted_pair(BivariateGaussianCopula(), 0.05)
+        for key in vine.pair_copulas
+    }
+    parameters = scalar_parameters(vine)
+    observations = np.random.default_rng(2026082255 + n).uniform(
+        1e-10, 1.0 - 1e-10, size=(n, d))
+
+    def execute():
+        return vine._log_pdf_rows_with_r(observations, parameters)
+
+    calls = {
+        mode: lambda mode=mode: _execute_backend(
+            monkeypatch, mode, execute, repetitions)
+        for mode in ("python_executor", "native_strict")
+    }
+    for call in calls.values():
+        call()
+    measured = interleaved_timings(calls, repeats=7)
+    elapsed = {
+        mode: value / repetitions
+        for mode, value in measured.medians.items()
+    }
+    outputs = measured.results
+    np.testing.assert_array_equal(
+        outputs["native_strict"], outputs["python_executor"])
+    ratio = measured.median_ratio("native_strict", "python_executor")
+    _print_benchmark(
+        "rvine_native_density_small_input",
+        d=d,
+        n=n,
+        python_us=f"{1e6 * elapsed['python_executor']:.3f}",
+        native_us=f"{1e6 * elapsed['native_strict']:.3f}",
+        native_to_python=f"{ratio:.3f}",
+    )
+    assert ratio <= 1.5
+
+
+@pytest.mark.benchmark
+@pytest.mark.parametrize(("n", "repetitions"), [(1, 30), (32, 10)])
+def test_rvine_native_mcmc_small_input_adapter_overhead(
+        monkeypatch, n, repetitions):
+    """Guard coordinate-MCMC dispatch overhead for small chain counts."""
+    _skip_unless_vine_enabled()
+    d = 10
+    coordinate_steps = 6
+    vine = configured_static_dvine(d)
+    vine.pair_copulas = {
+        key: fitted_pair(BivariateGaussianCopula(), 0.05)
+        for key in vine.pair_copulas
+    }
+    parameters = scalar_parameters(vine)
+    given = {0: 0.35, 2: 0.65}
+    initial = np.random.default_rng(2026082257 + n).uniform(
+        0.02, 0.98, size=(n, d))
+    initial[:, [0, 2]] = [0.35, 0.65]
+    draws = np.random.default_rng(2026082259 + n).uniform(
+        0.01, 0.99, size=(coordinate_steps, n, 2))
+
+    def execute():
+        return vine._sample_arbitrary_given_mcmc(
+            n,
+            parameters,
+            np.random.default_rng(1),
+            given,
+            initial=initial,
+            n_steps=4,
+            burnin_steps=2,
+            random_draws=draws,
+        )
+
+    calls = {
+        mode: lambda mode=mode: _execute_backend(
+            monkeypatch, mode, execute, repetitions)
+        for mode in ("python_executor", "native_strict")
+    }
+    for call in calls.values():
+        call()
+    measured = interleaved_timings(calls, repeats=7)
+    elapsed = {
+        mode: value / repetitions
+        for mode, value in measured.medians.items()
+    }
+    outputs = measured.results
+    np.testing.assert_array_equal(
+        outputs["native_strict"][0], outputs["python_executor"][0])
+    assert outputs["native_strict"][1] == outputs["python_executor"][1]
+    ratio = measured.median_ratio("native_strict", "python_executor")
+    _print_benchmark(
+        "rvine_native_mcmc_small_input",
+        d=d,
+        n=n,
+        coordinate_steps=coordinate_steps,
+        python_us=f"{1e6 * elapsed['python_executor']:.3f}",
+        native_us=f"{1e6 * elapsed['native_strict']:.3f}",
+        native_to_python=f"{ratio:.3f}",
+    )
+    assert ratio <= 1.5
+
+
+@pytest.mark.benchmark
 @pytest.mark.parametrize("kind", ["suffix", "dag"])
 @pytest.mark.parametrize(("n", "repetitions"), [(1, 100), (32, 30)])
 def test_rvine_native_conditional_small_input_adapter_overhead(

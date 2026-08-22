@@ -99,6 +99,42 @@ def test_rvine_conditional_binding_keeps_arrays_alive_and_releases_gil():
         assert name in source[request:release]
 
 
+def test_rvine_density_binding_keeps_arrays_alive_and_releases_gil():
+    source = (
+        ROOT / "pyscarcopula/_cpp/src/bindings/rvine.cpp"
+    ).read_text(encoding="utf-8")
+
+    request = source.index('"rvine_log_pdf_rows"')
+    release = source.index("py::gil_scoped_release release", request)
+    native_call = source.index("scar::rvine::log_pdf_rows(", release)
+    result_dict = source.index("py::dict diagnostics", native_call)
+    assert request < release < native_call < result_dict
+    for name in (
+            "scalar_parameters", "row_parameters", "observations"):
+        assert name in source[request:release]
+
+
+def test_rvine_mcmc_binding_keeps_arrays_alive_and_releases_gil():
+    source = (
+        ROOT / "pyscarcopula/_cpp/src/bindings/rvine.cpp"
+    ).read_text(encoding="utf-8")
+
+    request = source.index("const auto mcmc_binding")
+    release = source.index("py::gil_scoped_release release", request)
+    native_call = source.index("scar::rvine::mcmc_chunk(", release)
+    result_dict = source.index("py::dict diagnostics", native_call)
+    assert request < release < native_call < result_dict
+    for name in (
+            "scalar_parameters",
+            "row_parameters",
+            "given_values",
+            "current_state",
+            "current_log_pdf",
+            "proposal_uniforms",
+            "acceptance_uniforms"):
+        assert name in source[request:release]
+
+
 @pytest.mark.parametrize(
     ("relative", "content", "expected_rule"),
     [

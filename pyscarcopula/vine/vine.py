@@ -1614,6 +1614,122 @@ class VineCopula:
         conditional_cache[cache_key] = context
         return context, parameters
 
+    def _native_density_fingerprint(
+            self, module, pair_copulas, edge_map, active_keys,
+            parameter_sources):
+        """Return a semantic key for the fused density/MCMC program."""
+        edge_fingerprint = []
+        for key in active_keys:
+            edge = pair_copulas[key]
+            copula = edge_copula(edge)
+            result = edge_result(edge)
+            edge_fingerprint.append((
+                tuple(key),
+                type(edge),
+                id(edge),
+                type(copula),
+                id(copula),
+                int(getattr(copula, 'rotate', 0)),
+                str(getattr(copula, '_transform_type', '')),
+                bool(edge_is_independent(edge)),
+                type(result),
+                id(result),
+            ))
+        tree_fingerprint = tuple(
+            tuple((
+                tuple(sorted(int(value) for value in conditioned)),
+                tuple(sorted(int(value) for value in conditioning)),
+            ) for conditioned, conditioning in level)
+            for level in self._trees
+        )
+        return (
+            id(module),
+            int(getattr(self, '_native_rvine_generation', 0)),
+            int(self.d),
+            id(pair_copulas),
+            tree_fingerprint,
+            tuple(sorted(
+                (tuple(int(value) for value in key), int(original))
+                for key, original in edge_map.items()
+            )),
+            tuple(active_keys),
+            tuple(edge_fingerprint),
+            tuple(sorted(parameter_sources.items())),
+        )
+
+    def _native_density_context(
+            self, module, pair_copulas, edge_map, r_all, n, *,
+            active_keys=None, normalized_paths=None,
+            parameter_sources=None):
+        """Compile/cache the shared density plan and immutable edge specs."""
+        from pyscarcopula.numerical import _cpp_rvine
+        from pyscarcopula.numerical._cpp_extension import CppUnsupported
+
+        active_keys = (
+            _cpp_rvine.density_active_keys(self._trees, edge_map)
+            if active_keys is None else tuple(active_keys)
+        )
+        if not _cpp_rvine.native_edges_supported(pair_copulas, active_keys):
+            return None, None
+        if normalized_paths is None or parameter_sources is None:
+            normalized_paths, parameter_sources = (
+                _cpp_rvine.density_parameter_layout(
+                    pair_copulas, active_keys, r_all, int(n))
+            )
+        fingerprint = self._native_density_fingerprint(
+            module,
+            pair_copulas,
+            edge_map,
+            active_keys,
+            parameter_sources,
+        )
+        cache = getattr(self, '_native_rvine_cache', None)
+        if cache is None:
+            cache = {}
+            self._native_rvine_cache = cache
+        cached = cache.get('density')
+        if cached is not None and cached['fingerprint'] == fingerprint:
+            try:
+                _edges, parameters = _cpp_rvine.compile_edge_specs(
+                    module,
+                    pair_copulas,
+                    active_keys,
+                    normalized_paths,
+                    int(n),
+                    parameter_sources=parameter_sources,
+                    native_edges=cached['edges'],
+                )
+            except CppUnsupported:
+                return None, None
+            return cached, parameters
+
+        try:
+            edges, parameters = _cpp_rvine.compile_edge_specs(
+                module,
+                pair_copulas,
+                active_keys,
+                normalized_paths,
+                int(n),
+                parameter_sources=parameter_sources,
+            )
+        except CppUnsupported:
+            return None, None
+        context = {
+            'fingerprint': fingerprint,
+            'active_keys': active_keys,
+            'parameter_sources': parameter_sources,
+            'plan': _cpp_rvine.compile_density_plan(
+                module,
+                self.d,
+                self._trees,
+                edge_map,
+                active_keys,
+            ),
+            'edges': tuple(edges),
+        }
+        cache['density'] = context
+        return context, parameters
+
     # Sampling
 
     def sample(
@@ -2445,15 +2561,61 @@ class VineCopula:
 
     def _log_pdf_rows_with_r(
             self, u, r_all, pair_copulas=None, edge_map=None):
+        from pyscarcopula.numerical import _cpp_rvine
+
+        pair_copulas = (
+            self.pair_copulas if pair_copulas is None else pair_copulas)
+        edge_map = self._edge_map if edge_map is None else edge_map
+        observations = _cpp_rvine._density_observations(u, self.d)
+        active_keys = _cpp_rvine.density_active_keys(
+            self._trees, edge_map)
+        normalized_paths, parameter_sources = (
+            _cpp_rvine.density_parameter_layout(
+                pair_copulas, active_keys, r_all, len(observations))
+        )
+
+        def native_executor(module):
+            if not _cpp_rvine.native_edges_supported(
+                    pair_copulas, active_keys):
+                return None
+            context, parameters = self._native_density_context(
+                module,
+                pair_copulas,
+                edge_map,
+                r_all,
+                len(observations),
+                active_keys=active_keys,
+                normalized_paths=normalized_paths,
+                parameter_sources=parameter_sources,
+            )
+            if context is None:
+                return None
+            return _cpp_rvine.log_pdf_rows(
+                module,
+                pair_copulas,
+                self.d,
+                self._trees,
+                edge_map,
+                r_all,
+                observations,
+                active_keys=context['active_keys'],
+                normalized_parameter_paths=normalized_paths,
+                parameter_sources=context['parameter_sources'],
+                native_plan=context['plan'],
+                native_edges=context['edges'],
+                parameter_pack=parameters,
+            )
+
         return dispatch_rvine_backend(
             capability="log_pdf_rows",
             native_symbol="rvine_log_pdf_rows",
             python_executor=lambda: self._log_pdf_rows_with_r_python(
-                u,
+                observations,
                 r_all,
                 pair_copulas=pair_copulas,
                 edge_map=edge_map,
             ),
+            native_executor=native_executor,
         )
 
     def _matrix_key_from_map(self, tree_level, orig_idx, edge_map):
@@ -2485,6 +2647,55 @@ class VineCopula:
             self, n, r_all, rng, given, initial=None, n_steps=None,
             burnin_steps=None, *, initial_uniforms=None, random_draws=None,
             step_offset=0):
+        from pyscarcopula.numerical import _cpp_rvine
+
+        active_keys = _cpp_rvine.density_active_keys(
+            self._trees, self._edge_map)
+        normalized_paths, parameter_sources = (
+            _cpp_rvine.density_parameter_layout(
+                self.pair_copulas, active_keys, r_all, int(n))
+        )
+
+        def native_executor(module):
+            if not _cpp_rvine.native_edges_supported(
+                    self.pair_copulas, active_keys):
+                return None
+            context, parameters = self._native_density_context(
+                module,
+                self.pair_copulas,
+                self._edge_map,
+                r_all,
+                n,
+                active_keys=active_keys,
+                normalized_paths=normalized_paths,
+                parameter_sources=parameter_sources,
+            )
+            if context is None:
+                return None
+            return _cpp_rvine.mcmc(
+                module,
+                self.pair_copulas,
+                self.d,
+                self._trees,
+                self._edge_map,
+                r_all,
+                n,
+                rng,
+                given,
+                initial=initial,
+                n_steps=n_steps,
+                burnin_steps=burnin_steps,
+                initial_uniforms=initial_uniforms,
+                random_draws=random_draws,
+                step_offset=step_offset,
+                active_keys=context['active_keys'],
+                normalized_parameter_paths=normalized_paths,
+                parameter_sources=context['parameter_sources'],
+                native_plan=context['plan'],
+                native_edges=context['edges'],
+                parameter_pack=parameters,
+            )
+
         return dispatch_rvine_backend(
             capability="conditional_mcmc",
             native_symbol="rvine_mcmc",
@@ -2500,6 +2711,7 @@ class VineCopula:
                 random_draws=random_draws,
                 step_offset=step_offset,
             ),
+            native_executor=native_executor,
         )
 
     def predict(

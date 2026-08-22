@@ -84,6 +84,8 @@ SCAR_CORE_SOURCES = [
     "likelihood/static.cpp",
     "gas/evaluator.cpp",
     "vine/executor.cpp",
+    "vine/density.cpp",
+    "vine/mcmc.cpp",
     "gas/rvine_sampler.cpp",
     "scar_ou/monte_carlo.cpp",
     "scar_ou/validation.cpp",

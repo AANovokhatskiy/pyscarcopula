@@ -76,6 +76,45 @@ struct ConditionalSampleResult {
     std::uint64_t peak_workspace_bytes = 0;
 };
 
+/// Diagnostics shared by standalone and MCMC density evaluation.
+struct DensityDiagnostics {
+    std::uint64_t density_operations = 0;
+    std::uint64_t h_pair_operations = 0;
+    std::uint64_t independence_fast_paths = 0;
+};
+
+/// Result of one fused row-wise R-vine density request.
+struct DensityResult {
+    std::vector<double> log_pdf;
+    std::int64_t n_rows = 0;
+    int dimension = 0;
+    int status = SCAR_OK;
+    std::int64_t failure_row = -1;
+    int failure_edge = -1;
+    int failure_operation = -1;
+    int n_threads_requested = 1;
+    int n_threads_used = 1;
+    DensityDiagnostics diagnostics;
+};
+
+/// Result of one stateful coordinate-wise conditional-MCMC chunk.
+struct MCMCResult {
+    std::vector<double> state;
+    std::vector<double> log_pdf;
+    std::vector<std::uint64_t> proposed;
+    std::vector<std::uint64_t> accepted;
+    std::int64_t n_rows = 0;
+    int dimension = 0;
+    std::int64_t coordinate_steps = 0;
+    int status = SCAR_OK;
+    std::int64_t failure_row = -1;
+    int failure_edge = -1;
+    int failure_operation = -1;
+    int n_threads_requested = 1;
+    int n_threads_used = 1;
+    std::uint64_t non_finite_proposals = 0;
+};
+
 bool valid_index(int value, int limit) noexcept;
 bool validate_traversal_plan(
     const RVineTraversalPlan& plan,
@@ -137,5 +176,55 @@ ConditionalSampleResult conditional_sample(
     std::int64_t uniform_rows,
     std::int64_t uniform_columns,
     int n_threads = 1);
+
+DensityResult log_pdf_rows(
+    const RVineDensityPlan& plan,
+    const std::vector<EdgeSpec>& edges,
+    const ParameterPack& parameters,
+    DoubleView observations,
+    std::int64_t observation_rows,
+    std::int64_t observation_columns,
+    int n_threads = 1);
+
+MCMCResult mcmc_chunk(
+    const RVineDensityPlan& plan,
+    const std::vector<EdgeSpec>& edges,
+    const ParameterPack& parameters,
+    const std::vector<int>& given_indices,
+    DoubleView given_values,
+    const std::vector<int>& free_indices,
+    DoubleView current_state,
+    std::int64_t state_rows,
+    std::int64_t state_columns,
+    DoubleView current_log_pdf,
+    std::int64_t global_step_offset,
+    DoubleView proposal_uniforms,
+    std::int64_t proposal_steps,
+    std::int64_t proposal_rows,
+    DoubleView acceptance_uniforms,
+    std::int64_t acceptance_steps,
+    std::int64_t acceptance_rows,
+    int n_threads = 1);
+
+namespace detail {
+
+/// Internal prepared evaluator shared by density.cpp and mcmc.cpp.
+int evaluate_log_pdf_rows(
+    const RVineDensityPlan& plan,
+    const std::vector<PreparedEdge>& edges,
+    const ParameterPack& parameters,
+    DoubleView observations,
+    std::int64_t observation_rows,
+    std::int64_t observation_columns,
+    double* log_pdf,
+    bool tolerate_non_finite,
+    std::vector<double>& node_workspace,
+    std::int64_t& failure_row,
+    int& failure_edge,
+    int& failure_operation,
+    std::uint64_t& non_finite_rows,
+    DensityDiagnostics& diagnostics);
+
+}  // namespace detail
 
 }  // namespace scar::rvine
