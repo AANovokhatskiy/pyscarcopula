@@ -267,6 +267,9 @@ def test_oracle_fixture_has_immutable_provenance(golden):
     assert golden["provenance"]["automatic_regeneration"] is False
     assert len(golden["provenance"]["source_commit"]) == 40
     assert "Python traversal" in golden["provenance"]["oracle"]
+    assert len(golden["provenance"]["extension_source_commit"]) == 40
+    assert "_student_rosenblatt_transform_python" in (
+        golden["provenance"]["extension_oracle"])
 
 
 def test_python_oracles_match_runtime_golden_exactly(monkeypatch, golden):
@@ -331,6 +334,22 @@ def test_python_oracles_match_runtime_golden_exactly(monkeypatch, golden):
     np.testing.assert_allclose(
         student, expected["student_rosenblatt"], rtol=2e-15, atol=2e-15)
 
+    student_df_path = student_rosenblatt_transform(
+        np.asarray(inputs["student_correlation"], dtype=np.float64),
+        np.asarray(inputs["student_df_path"], dtype=np.float64),
+        observations,
+    )
+    np.testing.assert_array_equal(
+        student_df_path, expected["student_rosenblatt_df_path"])
+
+    student_low_df = student_rosenblatt_transform(
+        np.asarray(inputs["student_correlation"], dtype=np.float64),
+        float(inputs["student_low_df"]),
+        np.asarray(inputs["student_low_df_observations"], dtype=np.float64),
+    )
+    np.testing.assert_array_equal(
+        student_low_df, expected["student_rosenblatt_low_df"])
+
     mcmc, diagnostics = vine._sample_arbitrary_given_mcmc(
         len(uniforms),
         r_all,
@@ -344,6 +363,32 @@ def test_python_oracles_match_runtime_golden_exactly(monkeypatch, golden):
     )
     np.testing.assert_array_equal(mcmc, expected["mcmc_sample"])
     assert json.loads(json.dumps(diagnostics)) == expected["mcmc_diagnostics"]
+
+
+@pytest.mark.rvine_native
+def test_auto_dense_student_capability_fallback_matches_gate_zero_golden(
+        monkeypatch, golden):
+    monkeypatch.setenv(_RVINE_BACKEND_ENV, "auto")
+    inputs = golden["inputs"]
+    expected = golden["expected"]
+    correlation = np.asarray(
+        inputs["student_correlation"], dtype=np.float64)
+
+    path_result = student_rosenblatt_transform(
+        correlation,
+        np.asarray(inputs["student_df_path"], dtype=np.float64),
+        np.asarray(inputs["observations"], dtype=np.float64),
+    )
+    low_df_result = student_rosenblatt_transform(
+        correlation,
+        float(inputs["student_low_df"]),
+        np.asarray(inputs["student_low_df_observations"], dtype=np.float64),
+    )
+
+    np.testing.assert_array_equal(
+        path_result, expected["student_rosenblatt_df_path"])
+    np.testing.assert_array_equal(
+        low_df_result, expected["student_rosenblatt_low_df"])
 
 
 def test_replay_inputs_are_owned_contiguous_and_do_not_mutate_or_consume_rng(
@@ -758,4 +803,8 @@ def test_native_strict_differential_harness_reserved_for_future_entry_points(
     expected = deepcopy(run())
     monkeypatch.setenv(_RVINE_BACKEND_ENV, "native_strict")
     actual = run()
-    np.testing.assert_array_equal(actual, expected)
+    if native_symbol == "dense_student_rosenblatt_transform":
+        np.testing.assert_allclose(
+            actual, expected, rtol=5e-12, atol=5e-13)
+    else:
+        np.testing.assert_array_equal(actual, expected)

@@ -21,6 +21,8 @@ from pyscarcopula.vine._edge_adapter import (
     edge_copula,
     edge_has_dynamic_params,
     edge_is_independent,
+    edge_param,
+    edge_result,
 )
 from pyscarcopula.vine._helpers import (
     _open_unit_uniform,
@@ -285,6 +287,8 @@ def compile_density_plan(
     """Compile the canonical tree-order density traversal into flat arrays."""
     dimension = int(dimension)
     active_keys = tuple(tuple(int(value) for value in key) for key in active_keys)
+    residual_node_keys = tuple(
+        _node_key(key[0], key[1]) for key in residual_node_keys)
     edge_indices = {key: index for index, key in enumerate(active_keys)}
     reverse_edge_map = {
         (int(tree), int(original)): (int(tree), int(column))
@@ -321,8 +325,13 @@ def compile_density_plan(
             operation_edges.append(edge_index)
             input1_nodes.append(node_id(_node_key(first, conditioning)))
             input2_nodes.append(node_id(_node_key(second, conditioning)))
-            transposed.append(0)
-            if tree < dimension - 2:
+            # The public d=2 oracle calls the original rotated copula as
+            # h(u1 | u0), rather than requesting the variable-aware second
+            # direction from h_pair. Swapping h_pair orientation preserves
+            # that historical 90/270-degree rotation behavior.
+            transposed.append(int(dimension == 2 and bool(
+                residual_node_keys)))
+            if tree < dimension - 2 or residual_node_keys:
                 output1_nodes.append(node_id(
                     _node_key(first, conditioning | {second})))
                 output2_nodes.append(node_id(
@@ -347,6 +356,34 @@ def compile_density_plan(
     if not module.validate_rvine_density_plan(native, len(active_keys)):
         raise ValueError("compile_density_plan: native plan validation failed")
     return native
+
+
+def rosenblatt_residual_node_keys(matrix):
+    """Return residual nodes in the preserved R-vine output-column order."""
+    normalized = np.asarray(matrix, dtype=int)
+    if (
+            normalized.ndim != 2
+            or normalized.shape[0] != normalized.shape[1]
+            or normalized.shape[0] < 2):
+        raise ValueError(
+            "R-vine Rosenblatt matrix must be square with dimension >= 2")
+    dimension = int(normalized.shape[0])
+    if dimension == 2:
+        # The preserved public oracle intentionally follows the legacy
+        # C-vine order in two dimensions, independently of matrix peel order.
+        return (
+            _node_key(0),
+            _node_key(1, (0,)),
+        )
+    keys = []
+    for column in range(dimension - 1):
+        leaf_row = dimension - 1 - column
+        leaf = int(normalized[leaf_row, column])
+        conditioning = frozenset(
+            int(normalized[row, column]) for row in range(leaf_row))
+        keys.append(_node_key(leaf, conditioning))
+    keys.append(_node_key(int(normalized[0, dimension - 1])))
+    return tuple(keys)
 
 
 @dataclass(frozen=True)
@@ -601,6 +638,35 @@ def density_parameter_layout(
         raise KeyError(f"missing R-vine parameter path for edge {missing[0]}")
     return conditional_parameter_layout(
         pair_copulas, active_keys, parameter_paths, n_rows)
+
+
+def static_rosenblatt_parameter_layout(pair_copulas, active_keys):
+    """Return scalar parameters or ``None`` for a Stage 5 fallback model."""
+    from pyscarcopula._types import IndependentResult, MLEResult
+
+    parameters = {}
+    sources = {}
+    for raw_key in active_keys:
+        key = tuple(int(value) for value in raw_key)
+        edge = pair_copulas[key]
+        if edge_is_independent(edge):
+            continue
+        result = edge_result(edge)
+        if result is None:
+            parameter = edge_param(edge)
+        elif type(result) is MLEResult:
+            parameter = result.copula_param
+        elif type(result) is IndependentResult:
+            continue
+        else:
+            return None
+        if parameter is None:
+            return None
+        path = np.asarray([parameter], dtype=np.float64)
+        _validate_parameter_domain(edge_copula(edge), path, key)
+        parameters[key] = float(path[0])
+        sources[key] = "scalar"
+    return parameters, sources
 
 
 def _conditional_given_values(dimension, given, expected_variables):
@@ -903,6 +969,150 @@ def _density_observations(values, dimension):
     if not np.all(np.isfinite(observations)):
         raise ValueError("R-vine density observations must be finite")
     return np.ascontiguousarray(observations)
+
+
+def _rosenblatt_observations(values, dimension):
+    raw = np.asarray(values)
+    if np.iscomplexobj(raw):
+        raise TypeError(
+            "R-vine Rosenblatt observations must contain real values")
+    observations = np.asarray(raw, dtype=np.float64)
+    if observations.ndim != 2 or observations.shape[1] != int(dimension):
+        raise ValueError(
+            "R-vine Rosenblatt observations must have shape "
+            f"(n, {int(dimension)}), got {observations.shape}"
+        )
+    if not np.all(np.isfinite(observations)):
+        raise ValueError("R-vine Rosenblatt observations must be finite")
+    return np.ascontiguousarray(observations)
+
+
+def _execute_rosenblatt(
+        module, native_plan, native_edges, parameters, observations,
+        n_threads):
+    result = module.rvine_rosenblatt_transform(
+        native_plan,
+        list(native_edges),
+        parameters.scalar_parameters,
+        parameters.row_parameters,
+        observations,
+        int(n_threads),
+    )
+    raise_for_status(result, "R-vine Rosenblatt transform")
+    n_rows, dimension = observations.shape
+    if (
+            int(result["n_rows"]) != n_rows
+            or int(result["dimension"]) != dimension):
+        raise CppError(
+            "C++ R-vine Rosenblatt transform returned inconsistent "
+            "dimensions")
+    residuals = np.asarray(result["residuals"], dtype=np.float64)
+    if residuals.size != n_rows * dimension:
+        raise CppError(
+            "C++ R-vine Rosenblatt transform returned an invalid buffer")
+    residuals = residuals.reshape(n_rows, dimension)
+    if not np.all(np.isfinite(residuals)):
+        raise CppError(
+            "C++ R-vine Rosenblatt transform returned invalid values")
+    return np.ascontiguousarray(residuals)
+
+
+def rosenblatt(
+        module,
+        pair_copulas,
+        dimension,
+        trees,
+        edge_map,
+        matrix,
+        observations,
+        *,
+        active_keys=None,
+        parameter_paths=None,
+        parameter_sources=None,
+        residual_node_keys=None,
+        native_plan=None,
+        native_edges=None,
+        parameter_pack=None,
+        n_threads=1):
+    """Execute the scalar-only static R-vine Rosenblatt traversal."""
+    if not isinstance(n_threads, (int, np.integer)) or int(n_threads) <= 0:
+        raise ValueError(
+            "R-vine Rosenblatt n_threads must be a positive integer")
+    dimension = int(dimension)
+    active_keys = (
+        density_active_keys(trees, edge_map)
+        if active_keys is None else
+        tuple(tuple(int(value) for value in key) for key in active_keys)
+    )
+    if not native_edges_supported(pair_copulas, active_keys):
+        return None
+    if parameter_paths is None or parameter_sources is None:
+        layout = static_rosenblatt_parameter_layout(
+            pair_copulas, active_keys)
+        if layout is None:
+            return None
+        parameter_paths, parameter_sources = layout
+    scalar_sources = {
+        "scalar",
+        "SCALAR",
+        module.RVineParameterSource.SCALAR,
+    }
+    if any(
+            source not in scalar_sources
+            for source in parameter_sources.values()):
+        return None
+
+    prepared_observations = _rosenblatt_observations(
+        observations, dimension)
+    n_rows = len(prepared_observations)
+    if parameter_pack is None:
+        try:
+            edges, parameters = compile_edge_specs(
+                module,
+                pair_copulas,
+                active_keys,
+                parameter_paths,
+                n_rows,
+                parameter_sources=parameter_sources,
+                native_edges=native_edges,
+            )
+        except CppUnsupported:
+            return None
+    else:
+        if native_edges is None:
+            raise ValueError(
+                "precompiled Rosenblatt parameter pack requires native "
+                "edges")
+        if not isinstance(parameter_pack, RVineParameterPack):
+            raise TypeError("parameter_pack must be an RVineParameterPack")
+        if int(parameter_pack.n_rows) != n_rows:
+            raise ValueError(
+                "precompiled Rosenblatt parameter pack row count mismatch")
+        edges = list(native_edges)
+        parameters = parameter_pack
+    residual_node_keys = (
+        rosenblatt_residual_node_keys(matrix)
+        if residual_node_keys is None else tuple(residual_node_keys)
+    )
+    plan = (
+        compile_density_plan(
+            module,
+            dimension,
+            trees,
+            edge_map,
+            active_keys,
+            residual_node_keys=residual_node_keys,
+        )
+        if native_plan is None else native_plan
+    )
+    return _execute_rosenblatt(
+        module,
+        plan,
+        edges,
+        parameters,
+        prepared_observations,
+        int(n_threads),
+    )
 
 
 def _mcmc_draw_chunk_capacity(n, chunk_steps, memory_budget_bytes):

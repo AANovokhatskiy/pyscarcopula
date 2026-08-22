@@ -1616,7 +1616,7 @@ class VineCopula:
 
     def _native_density_fingerprint(
             self, module, pair_copulas, edge_map, active_keys,
-            parameter_sources):
+            parameter_sources, residual_node_keys=()):
         """Return a semantic key for the fused density/MCMC program."""
         edge_fingerprint = []
         for key in active_keys:
@@ -1655,12 +1655,17 @@ class VineCopula:
             tuple(active_keys),
             tuple(edge_fingerprint),
             tuple(sorted(parameter_sources.items())),
+            tuple(
+                (int(variable), tuple(sorted(int(value) for value in cond)))
+                for variable, cond in residual_node_keys
+            ),
         )
 
     def _native_density_context(
             self, module, pair_copulas, edge_map, r_all, n, *,
             active_keys=None, normalized_paths=None,
-            parameter_sources=None):
+            parameter_sources=None, residual_node_keys=(),
+            cache_slot='density'):
         """Compile/cache the shared density plan and immutable edge specs."""
         from pyscarcopula.numerical import _cpp_rvine
         from pyscarcopula.numerical._cpp_extension import CppUnsupported
@@ -1682,12 +1687,13 @@ class VineCopula:
             edge_map,
             active_keys,
             parameter_sources,
+            residual_node_keys,
         )
         cache = getattr(self, '_native_rvine_cache', None)
         if cache is None:
             cache = {}
             self._native_rvine_cache = cache
-        cached = cache.get('density')
+        cached = cache.get(cache_slot)
         if cached is not None and cached['fingerprint'] == fingerprint:
             try:
                 _edges, parameters = _cpp_rvine.compile_edge_specs(
@@ -1724,10 +1730,11 @@ class VineCopula:
                 self._trees,
                 edge_map,
                 active_keys,
+                residual_node_keys=residual_node_keys,
             ),
             'edges': tuple(edges),
         }
-        cache['density'] = context
+        cache[cache_slot] = context
         return context, parameters
 
     # Sampling

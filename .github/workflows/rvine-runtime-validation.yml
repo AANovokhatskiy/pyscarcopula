@@ -7,12 +7,16 @@ on:
       - "pyscarcopula/vine/**"
       - "pyscarcopula/_cpp/**"
       - "pyscarcopula/numerical/_cpp_rvine.py"
+      - "pyscarcopula/numerical/multivariate_native.py"
       - "pyscarcopula/stattests.py"
       - "pyscarcopula/numerical/_rvine_backend.py"
       - "tests/test_rvine_runtime_contracts.py"
       - "tests/test_cpp_rvine_density_mcmc.py"
+      - "tests/test_cpp_rvine_rosenblatt.py"
+      - "tests/test_cpp_dense_student_rosenblatt.py"
       - "tests/rvine_runtime_cases.py"
       - "tests/test_rvine_copula.py"
+      - "tests/test_vine_performance.py"
       - "tests/fixtures/rvine_runtime_oracle_v1.json"
       - "conftest.py"
       - "tests/conftest.py"
@@ -29,12 +33,16 @@ on:
       - "pyscarcopula/vine/**"
       - "pyscarcopula/_cpp/**"
       - "pyscarcopula/numerical/_cpp_rvine.py"
+      - "pyscarcopula/numerical/multivariate_native.py"
       - "pyscarcopula/stattests.py"
       - "pyscarcopula/numerical/_rvine_backend.py"
       - "tests/test_rvine_runtime_contracts.py"
       - "tests/test_cpp_rvine_density_mcmc.py"
+      - "tests/test_cpp_rvine_rosenblatt.py"
+      - "tests/test_cpp_dense_student_rosenblatt.py"
       - "tests/rvine_runtime_cases.py"
       - "tests/test_rvine_copula.py"
+      - "tests/test_vine_performance.py"
       - "tests/fixtures/rvine_runtime_oracle_v1.json"
       - "conftest.py"
       - "tests/conftest.py"
@@ -108,7 +116,7 @@ jobs:
           retention-days: 30
 
   existing-native-parity:
-    name: Existing GAS native parity and strict 2D Rosenblatt
+    name: Native R-vine and dense Student Rosenblatt parity
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -130,8 +138,10 @@ jobs:
       - name: Run strict two-dimensional Rosenblatt comparison
         run: >-
           python -m pytest -q tests/test_rvine_copula.py
+          tests/test_cpp_rvine_rosenblatt.py
+          tests/test_cpp_dense_student_rosenblatt.py
           --strict-markers
-          -k two_dimensional_rvine_gof_matches_cvine_order
+          -k "rosenblatt or two_dimensional_rvine_gof_matches_cvine_order"
           --junitxml=build/rvine-runtime-validation/rosenblatt-2d.xml
       - name: Upload parity evidence
         if: always()

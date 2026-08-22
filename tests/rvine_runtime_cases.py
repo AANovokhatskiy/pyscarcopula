@@ -10,7 +10,14 @@ from pyscarcopula import (
     IndependentCopula,
     RVineCopula,
 )
-from pyscarcopula._types import GASResult, IndependentResult, MLEResult, gas_params
+from pyscarcopula._types import (
+    GASResult,
+    IndependentResult,
+    LatentResult,
+    MLEResult,
+    gas_params,
+    ou_params,
+)
 from pyscarcopula.vine._pair_copula import PairCopula
 from pyscarcopula.vine._rvine_matrix_builder import (
     build_rvine_matrix_with_edge_map,
@@ -127,6 +134,31 @@ def configured_mixed_gas_vine() -> RVineCopula:
         params=gas_params(0.0, 0.6, 0.0),
         scaling="unit",
         r_last=0.0,
+    )
+    vine.pair_copulas[(0, 1)] = PairCopula(
+        copula=copula,
+        param=0.0,
+        log_likelihood=0.0,
+        nfev=0,
+        tau=0.0,
+        fit_result=result,
+    )
+    vine.method = "MIXED"
+    return vine
+
+
+def configured_mixed_scar_vine() -> RVineCopula:
+    """Return a mixed static/SCAR model for backend capability tests."""
+    vine = configured_mixed_family_vine()
+    copula = BivariateGaussianCopula()
+    result = LatentResult(
+        log_likelihood=0.0,
+        method="SCAR-TM-OU",
+        copula_name=copula.name,
+        success=True,
+        params=ou_params(1.0, 0.0, 0.4),
+        K=20,
+        grid_range=3.0,
     )
     vine.pair_copulas[(0, 1)] = PairCopula(
         copula=copula,

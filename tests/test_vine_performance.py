@@ -15,6 +15,10 @@ from pyscarcopula.copula.elliptical import BivariateGaussianCopula
 from pyscarcopula.copula.independent import IndependentCopula
 from pyscarcopula.strategy.scar_tm import SCARTMStrategy
 from pyscarcopula.numerical._rvine_backend import _RVINE_BACKEND_ENV
+from pyscarcopula.stattests import (
+    rvine_rosenblatt_transform,
+    student_rosenblatt_transform,
+)
 from pyscarcopula.vine._rvine_dag import (
     build_runtime_rvine_dag,
     plan_conditional_sample,
@@ -595,6 +599,92 @@ def test_rvine_native_density_relative_benchmark(monkeypatch):
 
 
 @pytest.mark.benchmark
+def test_rvine_native_rosenblatt_relative_benchmark(monkeypatch):
+    """Gate static residual extraction against the Python node dictionary."""
+    _skip_unless_vine_enabled()
+    d = 15
+    n = 1000
+    vine = configured_static_dvine(d)
+    vine.pair_copulas = {
+        key: fitted_pair(BivariateGaussianCopula(), 0.05)
+        for key in vine.pair_copulas
+    }
+    observations = np.random.default_rng(2026082260).uniform(
+        1e-10, 1.0 - 1e-10, size=(n, d))
+
+    def execute():
+        return rvine_rosenblatt_transform(vine, observations)
+
+    calls = {
+        mode: lambda mode=mode: _execute_backend(
+            monkeypatch, mode, execute)
+        for mode in ("python_executor", "native_strict")
+    }
+    for call in calls.values():
+        call()
+    measured = interleaved_timings(calls, repeats=7)
+    elapsed = measured.medians
+    outputs = measured.results
+    np.testing.assert_array_equal(
+        outputs["native_strict"], outputs["python_executor"])
+    speedup = measured.median_ratio("python_executor", "native_strict")
+    _print_benchmark(
+        "rvine_native_rosenblatt",
+        d=d,
+        n=n,
+        python_ms=f"{1e3 * elapsed['python_executor']:.3f}",
+        native_ms=f"{1e3 * elapsed['native_strict']:.3f}",
+        speedup=f"{speedup:.3f}",
+    )
+    assert speedup >= 2.0
+
+
+@pytest.mark.benchmark
+@pytest.mark.parametrize(("n", "repetitions"), [(1, 100), (32, 30)])
+def test_rvine_native_rosenblatt_small_input_adapter_overhead(
+        monkeypatch, n, repetitions):
+    """Track Stage 5 dispatch overhead for small residual batches."""
+    _skip_unless_vine_enabled()
+    d = 10
+    vine = configured_static_dvine(d)
+    vine.pair_copulas = {
+        key: fitted_pair(BivariateGaussianCopula(), 0.05)
+        for key in vine.pair_copulas
+    }
+    observations = np.random.default_rng(2026082261 + n).uniform(
+        1e-10, 1.0 - 1e-10, size=(n, d))
+
+    def execute():
+        return rvine_rosenblatt_transform(vine, observations)
+
+    calls = {
+        mode: lambda mode=mode: _execute_backend(
+            monkeypatch, mode, execute, repetitions)
+        for mode in ("python_executor", "native_strict")
+    }
+    for call in calls.values():
+        call()
+    measured = interleaved_timings(calls, repeats=7)
+    elapsed = {
+        mode: value / repetitions
+        for mode, value in measured.medians.items()
+    }
+    outputs = measured.results
+    np.testing.assert_array_equal(
+        outputs["native_strict"], outputs["python_executor"])
+    ratio = measured.median_ratio("native_strict", "python_executor")
+    _print_benchmark(
+        "rvine_native_rosenblatt_small_input",
+        d=d,
+        n=n,
+        python_us=f"{1e6 * elapsed['python_executor']:.3f}",
+        native_us=f"{1e6 * elapsed['native_strict']:.3f}",
+        native_to_python=f"{ratio:.3f}",
+    )
+    assert ratio <= 1.5
+
+
+@pytest.mark.benchmark
 def test_rvine_native_mcmc_relative_benchmark(monkeypatch):
     """Gate full-recompute coordinate MCMC with an identical draw replay."""
     _skip_unless_vine_enabled()
@@ -888,6 +978,93 @@ def test_rvine_native_small_input_adapter_overhead(
         native_us=f"{1e6 * elapsed['native_strict']:.3f}",
         overhead_us=(
             f"{1e6 * (elapsed['native_strict'] - elapsed['python_executor']):.3f}"),
+        native_to_python=f"{ratio:.3f}",
+    )
+    assert ratio <= 1.5
+
+
+@pytest.mark.benchmark
+def test_dense_student_df_path_native_speedup(monkeypatch):
+    """Guard the Stage 6 dense GAS path against returning to Python rows."""
+    _skip_unless_vine_enabled()
+    dimension = 10
+    rows = 1_000
+    correlation = np.fromfunction(
+        lambda i, j: 0.35 ** np.abs(i - j),
+        (dimension, dimension),
+    )
+    observations = np.random.default_rng(20260822).uniform(
+        0.01, 0.99, size=(rows, dimension))
+    df_path = np.linspace(0.5, 20.0, rows)
+
+    def execute():
+        return student_rosenblatt_transform(
+            correlation, df_path, observations)
+
+    calls = {
+        mode: lambda mode=mode: _execute_backend(
+            monkeypatch, mode, execute)
+        for mode in ("python_executor", "native_strict")
+    }
+    for call in calls.values():
+        call()
+    measured = interleaved_timings(calls, repeats=5)
+    outputs = measured.results
+    np.testing.assert_allclose(
+        outputs["native_strict"],
+        outputs["python_executor"],
+        rtol=2e-10,
+        atol=2e-11,
+    )
+    ratio = measured.median_ratio("native_strict", "python_executor")
+    _print_benchmark(
+        "dense_student_df_path",
+        d=dimension,
+        n=rows,
+        python_ms=f"{1e3 * measured.medians['python_executor']:.3f}",
+        native_ms=f"{1e3 * measured.medians['native_strict']:.3f}",
+        native_to_python=f"{ratio:.3f}",
+    )
+    assert ratio <= 0.2
+
+
+@pytest.mark.benchmark
+@pytest.mark.parametrize(("rows", "repetitions"), [(1, 100), (32, 30)])
+def test_dense_student_small_input_adapter_overhead(
+        monkeypatch, rows, repetitions):
+    _skip_unless_vine_enabled()
+    dimension = 10
+    correlation = np.fromfunction(
+        lambda i, j: 0.2 ** np.abs(i - j),
+        (dimension, dimension),
+    )
+    observations = np.random.default_rng(20260823 + rows).uniform(
+        0.01, 0.99, size=(rows, dimension))
+    df_path = np.linspace(0.5, 10.0, rows)
+
+    def execute():
+        return student_rosenblatt_transform(
+            correlation, df_path, observations)
+
+    calls = {
+        mode: lambda mode=mode: _execute_backend(
+            monkeypatch, mode, execute, repetitions)
+        for mode in ("python_executor", "native_strict")
+    }
+    for call in calls.values():
+        call()
+    measured = interleaved_timings(calls, repeats=5)
+    np.testing.assert_allclose(
+        measured.results["native_strict"],
+        measured.results["python_executor"],
+        rtol=2e-10,
+        atol=2e-11,
+    )
+    ratio = measured.median_ratio("native_strict", "python_executor")
+    _print_benchmark(
+        "dense_student_small_input",
+        d=dimension,
+        n=rows,
         native_to_python=f"{ratio:.3f}",
     )
     assert ratio <= 1.5

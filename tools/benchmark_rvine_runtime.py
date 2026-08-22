@@ -40,7 +40,7 @@ from pyscarcopula import (
     JoeCopula,
 )
 from pyscarcopula.numerical import _cpp_extension
-from pyscarcopula.stattests import _student_rosenblatt_transform_python
+from pyscarcopula.stattests import student_rosenblatt_transform
 from pyscarcopula.vine._edge_adapter import edge_copula
 from pyscarcopula.vine._rvine_dag import (
     build_runtime_rvine_dag,
@@ -428,7 +428,7 @@ def _student_records(dimensions, row_counts, repeats, warmups, profile):
                 seed=seed,
                 call=lambda _rng, correlation=correlation,
                 observations=observations:
-                _student_rosenblatt_transform_python(
+                student_rosenblatt_transform(
                     correlation, 7.5, observations),
             ))
             seed += 10
@@ -448,16 +448,13 @@ def _student_records(dimensions, row_counts, repeats, warmups, profile):
                 continue
             df_path = np.linspace(5.0, 12.0, rows)
 
-            def row_loop(
+            def df_path_transform(
                     _rng,
                     correlation=correlation,
                     observations=observations,
                     df_path=df_path):
-                output = np.empty_like(observations)
-                for row, df in enumerate(df_path):
-                    output[row] = _student_rosenblatt_transform_python(
-                        correlation, float(df), observations[row:row + 1])[0]
-                return output
+                return student_rosenblatt_transform(
+                    correlation, df_path, observations)
 
             records.append(_measure(
                 operation="dense_student_rosenblatt",
@@ -467,7 +464,7 @@ def _student_records(dimensions, row_counts, repeats, warmups, profile):
                 repeats=repeats,
                 warmups=warmups,
                 seed=seed,
-                call=row_loop,
+                call=df_path_transform,
             ))
             seed += 10
     return records

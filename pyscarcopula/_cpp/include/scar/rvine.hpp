@@ -97,6 +97,21 @@ struct DensityResult {
     DensityDiagnostics diagnostics;
 };
 
+/// Result of one static R-vine Rosenblatt residual extraction request.
+struct RosenblattResult {
+    std::vector<double> residuals;
+    std::int64_t n_rows = 0;
+    int dimension = 0;
+    int status = SCAR_OK;
+    std::int64_t failure_row = -1;
+    int failure_edge = -1;
+    int failure_operation = -1;
+    int n_threads_requested = 1;
+    int n_threads_used = 1;
+    std::uint64_t h_pair_operations = 0;
+    std::uint64_t independence_fast_paths = 0;
+};
+
 /// Result of one stateful coordinate-wise conditional-MCMC chunk.
 struct MCMCResult {
     std::vector<double> state;
@@ -178,6 +193,15 @@ ConditionalSampleResult conditional_sample(
     int n_threads = 1);
 
 DensityResult log_pdf_rows(
+    const RVineDensityPlan& plan,
+    const std::vector<EdgeSpec>& edges,
+    const ParameterPack& parameters,
+    DoubleView observations,
+    std::int64_t observation_rows,
+    std::int64_t observation_columns,
+    int n_threads = 1);
+
+RosenblattResult rosenblatt_transform(
     const RVineDensityPlan& plan,
     const std::vector<EdgeSpec>& edges,
     const ParameterPack& parameters,

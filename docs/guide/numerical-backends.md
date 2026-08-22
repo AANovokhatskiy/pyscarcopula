@@ -786,6 +786,11 @@ sampling, bootstrap, or persistence paths needs a dense `d*d` correlation.
   factor when one correlation matrix is shared by all output rows;
 - Student density workspaces are reused inside GAS, static likelihood, Monte
   Carlo batches, and across all grid nodes within each SCAR emission row;
+- dense static and GAS Student Rosenblatt transforms in the parity-validated
+  domain (`df >= 0.1`, symmetric unit-diagonal SPD correlation with condition
+  number at most `1e4`) send all rows and either a scalar or row-specific `df`
+  trajectory to one native call, reuse one correlation Cholesky factor, and
+  parallelize independent rows when useful;
 - equicorrelation grids compute per-row normal-score sums once and reuse them
   for every latent-grid node; prepared static and SCAR-OU evaluators retain
   those statistics across repeated objective calls;
@@ -801,6 +806,11 @@ but not the linear validation pass.
 Row-specific `(n,d,d)` correlation arrays cannot share one Cholesky factor and
 retain per-row factorization cost. Near-singular Student conditional covariance
 matrices also retain the per-row jitter path to preserve numerical semantics.
+For dense Student Rosenblatt, the adapter rejects unsupported capability
+combinations before entering the kernel. In production `auto` mode, low or
+invalid `df`, legacy correlation boundaries, and ill-conditioned matrices use
+the preserved SciPy oracle; `native_strict` raises `CppUnsupported`. Native
+runtime errors after a supported call are never converted into fallback.
 
 ## Independent Fit Parallelism
 

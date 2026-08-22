@@ -166,6 +166,19 @@ struct ConditionalSampleResult {
     std::uint64_t correlation_factorizations = 0;
 };
 
+/// Dense Student-copula Rosenblatt residuals for scalar or per-row df.
+struct DenseStudentRosenblattResult {
+    std::vector<double> residuals;
+    std::int64_t n_rows = 0;
+    int dimension = 0;
+    int status = 0;
+    std::int64_t failure_index = -1;
+    int failure_coordinate = -1;
+    int n_threads_requested = 1;
+    int parallel_blocks = 0;
+    std::uint64_t correlation_factorizations = 0;
+};
+
 /// Static negative log-likelihood objective and requested gradients.
 struct StaticObjectiveResult {
     double negative_log_likelihood = 0.0;
@@ -366,6 +379,13 @@ ConditionalSampleResult multivariate_student_conditional(
     DoubleView normal_draws,
     DoubleView chi_square_draws,
     std::int64_t n_rows,
+    int n_threads = 1);
+
+DenseStudentRosenblattResult student_rosenblatt_dense(
+    DoubleView correlation,
+    int dimension,
+    ObservationView u,
+    DoubleView df,
     int n_threads = 1);
 
 }  // namespace scar

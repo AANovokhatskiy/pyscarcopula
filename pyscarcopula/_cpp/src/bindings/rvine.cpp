@@ -410,6 +410,82 @@ void bind_rvine(py::module_& m) {
         py::arg("observations"),
         py::arg("n_threads") = 1);
 
+    m.def(
+        "rvine_rosenblatt_transform",
+        [](const scar::RVineDensityPlan& plan,
+           const std::vector<scar::rvine::EdgeSpec>& edges,
+           py::array_t<
+               double,
+               py::array::c_style | py::array::forcecast> scalar_parameters,
+           py::array_t<
+               double,
+               py::array::c_style | py::array::forcecast> row_parameters,
+           py::array_t<
+               double,
+               py::array::c_style | py::array::forcecast> observations,
+           int n_threads) {
+            const py::buffer_info scalar_info = scalar_parameters.request();
+            const py::buffer_info row_info = row_parameters.request();
+            const py::buffer_info observation_info = observations.request();
+            if (scalar_info.ndim != 1 || row_info.ndim != 2
+                || observation_info.ndim != 2) {
+                throw std::invalid_argument(
+                    "scalar_parameters must be 1D and row_parameters and "
+                    "observations must be 2D arrays");
+            }
+            scar::rvine::ParameterPack parameters;
+            parameters.scalar_parameters = {
+                static_cast<const double*>(scalar_info.ptr),
+                static_cast<std::size_t>(scalar_info.shape[0]),
+            };
+            parameters.row_parameters = {
+                static_cast<const double*>(row_info.ptr),
+                static_cast<std::size_t>(row_info.size),
+            };
+            parameters.n_rows = static_cast<std::int64_t>(row_info.shape[0]);
+            parameters.row_parameter_columns =
+                static_cast<std::int64_t>(row_info.shape[1]);
+            const scar::DoubleView observation_view = {
+                static_cast<const double*>(observation_info.ptr),
+                static_cast<std::size_t>(observation_info.size),
+            };
+            scar::rvine::RosenblattResult result;
+            {
+                py::gil_scoped_release release;
+                result = scar::rvine::rosenblatt_transform(
+                    plan,
+                    edges,
+                    parameters,
+                    observation_view,
+                    static_cast<std::int64_t>(observation_info.shape[0]),
+                    static_cast<std::int64_t>(observation_info.shape[1]),
+                    n_threads);
+            }
+            py::dict diagnostics;
+            diagnostics["n_threads_requested"] = result.n_threads_requested;
+            diagnostics["n_threads_used"] = result.n_threads_used;
+            diagnostics["h_pair_operations"] = result.h_pair_operations;
+            diagnostics["independence_fast_paths"] =
+                result.independence_fast_paths;
+
+            py::dict out;
+            out["residuals"] = vector_to_array(result.residuals);
+            out["n_rows"] = result.n_rows;
+            out["dimension"] = result.dimension;
+            out["status"] = result.status;
+            out["failure_row"] = result.failure_row;
+            out["failure_edge"] = result.failure_edge;
+            out["failure_operation"] = result.failure_operation;
+            out["diagnostics"] = std::move(diagnostics);
+            return out;
+        },
+        py::arg("plan"),
+        py::arg("edges"),
+        py::arg("scalar_parameters"),
+        py::arg("row_parameters"),
+        py::arg("observations"),
+        py::arg("n_threads") = 1);
+
     const auto mcmc_binding = [](
         const scar::RVineDensityPlan& plan,
         const std::vector<scar::rvine::EdgeSpec>& edges,

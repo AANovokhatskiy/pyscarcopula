@@ -5,7 +5,16 @@ from __future__ import annotations
 import numpy as np
 
 from pyscarcopula.numerical import _cpp_copula, _cpp_extension
-from pyscarcopula.numerical._cpp_extension import CppError
+from pyscarcopula.numerical._cpp_extension import (
+    CppError,
+    CppUnsupported,
+    cpp_status_name,
+)
+
+
+_DENSE_STUDENT_NATIVE_MIN_DF = 0.1
+_DENSE_STUDENT_NATIVE_MAX_CONDITION = 1.0e4
+_DENSE_STUDENT_CORRELATION_TOLERANCE = 1.0e-12
 
 
 def _values(value) -> np.ndarray:
@@ -409,3 +418,156 @@ def student_conditional_latent_info(
             "correlation_factorizations",
         )
     }
+
+
+def _dense_student_rosenblatt_arrays(correlation, df, u):
+    raw_correlation = np.asarray(correlation)
+    raw_observations = np.asarray(u)
+    raw_df = np.asarray(df)
+    if np.iscomplexobj(raw_correlation):
+        raise TypeError("correlation must contain real values")
+    if np.iscomplexobj(raw_observations):
+        raise TypeError("u must contain real values")
+    if np.iscomplexobj(raw_df):
+        raise TypeError("df must contain real values")
+
+    observations = np.ascontiguousarray(
+        np.asarray(raw_observations, dtype=np.float64))
+    if observations.ndim != 2:
+        raise ValueError("u must be a 2D array")
+    rows, dimension = observations.shape
+    correlation_array = np.ascontiguousarray(
+        np.asarray(raw_correlation, dtype=np.float64))
+    if correlation_array.shape != (dimension, dimension) or dimension < 1:
+        raise ValueError(
+            f"correlation must have shape ({dimension}, {dimension})")
+    if not np.all(np.isfinite(correlation_array)):
+        raise ValueError("correlation must contain only finite values")
+    if np.any(np.isnan(observations)):
+        raise ValueError("u must not contain NaN values")
+
+    df_array = np.ascontiguousarray(
+        np.atleast_1d(np.asarray(raw_df, dtype=np.float64)).ravel())
+    if df_array.size not in ({0, 1} if rows == 0 else {1, rows}):
+        raise ValueError("df must be scalar or have one value per row")
+    if not np.all(np.isfinite(df_array)) or np.any(df_array <= 0.0):
+        raise ValueError("df must contain finite positive values")
+    return correlation_array, df_array, observations
+
+
+def _dense_student_rosenblatt_arrays_supported(correlation, df):
+    """Return whether strict native/SciPy parity is established for inputs."""
+    if df.size and np.any(df < _DENSE_STUDENT_NATIVE_MIN_DF):
+        return False
+    symmetry_scale = np.maximum(
+        1.0, np.maximum(np.abs(correlation), np.abs(correlation.T)))
+    if np.any(
+            np.abs(correlation - correlation.T)
+            > _DENSE_STUDENT_CORRELATION_TOLERANCE * symmetry_scale):
+        return False
+    if not np.allclose(
+            np.diag(correlation),
+            1.0,
+            rtol=0.0,
+            atol=_DENSE_STUDENT_CORRELATION_TOLERANCE):
+        return False
+    try:
+        eigenvalues = np.linalg.eigvalsh(correlation)
+    except np.linalg.LinAlgError:
+        return False
+    if (not np.all(np.isfinite(eigenvalues))
+            or eigenvalues[0] <= 0.0):
+        return False
+    condition = float(eigenvalues[-1] / eigenvalues[0])
+    return condition <= _DENSE_STUDENT_NATIVE_MAX_CONDITION
+
+
+def _dense_student_rosenblatt_prepared(
+        correlation_array, df_array, observations, *, n_threads, module):
+    if module is None:
+        module = _cpp_extension.load()
+    result = dict(module.dense_student_rosenblatt_transform(
+        correlation_array,
+        observations,
+        df_array,
+        _validated_n_threads(n_threads),
+    ))
+    status = int(result["status"])
+    if status != int(module.SCAR_OK):
+        failure_index = int(result.get("failure_index", -1))
+        failure_coordinate = int(result.get("failure_coordinate", -1))
+        message = (
+            "C++ dense Student Rosenblatt transform failed: "
+            f"status={status} ({cpp_status_name(status)})"
+        )
+        if failure_index >= 0:
+            message += f", row={failure_index}"
+        if failure_coordinate >= 0:
+            message += f", coordinate={failure_coordinate}"
+        if status in (int(module.SCAR_INVALID_SIZE),
+                      int(module.SCAR_INVALID_PARAMETER)):
+            raise ValueError(message)
+        if status == int(module.SCAR_NUMERICAL_FAILURE):
+            if failure_index < 0:
+                raise np.linalg.LinAlgError(message)
+            raise FloatingPointError(message)
+        raise CppError(message)
+
+    rows, dimension = observations.shape
+    if (int(result["n_rows"]) != rows
+            or int(result["dimension"]) != dimension):
+        raise CppError(
+            "C++ dense Student Rosenblatt transform returned "
+            "inconsistent dimensions")
+    residuals = np.asarray(result["residuals"], dtype=np.float64)
+    if residuals.size != rows * dimension:
+        raise CppError(
+            "C++ dense Student Rosenblatt transform returned an invalid "
+            "buffer")
+    residuals = residuals.reshape(rows, dimension)
+    if not np.all(np.isfinite(residuals)):
+        raise CppError(
+            "C++ dense Student Rosenblatt transform returned invalid values")
+    return np.ascontiguousarray(residuals)
+
+
+def _dense_student_rosenblatt_if_supported(
+        correlation, df, u, *, n_threads=1, module=None):
+    """Return native residuals, or ``None`` for a legacy-oracle case."""
+    try:
+        correlation_array, df_array, observations = (
+            _dense_student_rosenblatt_arrays(correlation, df, u))
+    except (TypeError, ValueError, OverflowError, np.linalg.LinAlgError):
+        return None
+    if not _dense_student_rosenblatt_arrays_supported(
+            correlation_array, df_array):
+        return None
+    return _dense_student_rosenblatt_prepared(
+        correlation_array,
+        df_array,
+        observations,
+        n_threads=_validated_n_threads(n_threads),
+        module=module,
+    )
+
+
+def dense_student_rosenblatt(
+        correlation, df, u, *, n_threads=1, module=None):
+    """Evaluate a parity-validated dense Student transform natively."""
+    correlation_array, df_array, observations = (
+        _dense_student_rosenblatt_arrays(correlation, df, u))
+    if not _dense_student_rosenblatt_arrays_supported(
+            correlation_array, df_array):
+        raise CppUnsupported(
+            "native dense Student Rosenblatt requires df >= "
+            f"{_DENSE_STUDENT_NATIVE_MIN_DF:g}, a symmetric unit-diagonal "
+            "positive-definite correlation matrix, and correlation "
+            f"condition number <= {_DENSE_STUDENT_NATIVE_MAX_CONDITION:g}"
+        )
+    return _dense_student_rosenblatt_prepared(
+        correlation_array,
+        df_array,
+        observations,
+        n_threads=_validated_n_threads(n_threads),
+        module=module,
+    )
