@@ -739,7 +739,7 @@ def test_oracle_names_are_stable_and_independent():
         "rvine_sample",
         "rvine_conditional_sample",
         "rvine_log_pdf_rows",
-        "rvine_mcmc",
+        "rvine_mcmc_chunk",
         "rvine_rosenblatt_transform",
         "dense_student_rosenblatt_transform",
     ],
@@ -773,7 +773,7 @@ def test_native_strict_differential_harness_reserved_for_future_entry_points(
             )
         if native_symbol == "rvine_log_pdf_rows":
             return vine._log_pdf_rows_with_r(observations, r_all)
-        if native_symbol == "rvine_mcmc":
+        if native_symbol == "rvine_mcmc_chunk":
             given = {
                 int(key): value
                 for key, value in golden["inputs"]["dag_given"].items()

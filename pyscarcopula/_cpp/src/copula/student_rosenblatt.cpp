@@ -110,32 +110,18 @@ bool prepare_correlation(
         }
     }
 
-    lower.assign(square, 0.0);
-    for (std::size_t row = 0; row < dimension; ++row) {
-        for (std::size_t column = 0; column <= row; ++column) {
-            double value = correlation[row * dimension + column];
-            value -= scar_internal::linalg::dot(
-                lower.data() + row * dimension,
-                lower.data() + column * dimension,
-                column);
-            if (row == column) {
-                if (!(value > 0.0) || !std::isfinite(value)) {
-                    failure_coordinate = static_cast<int>(row);
-                    failure_status = SCAR_NUMERICAL_FAILURE;
-                    return false;
-                }
-                lower[row * dimension + column] = std::sqrt(value);
-            } else {
-                const double diagonal =
-                    lower[column * dimension + column];
-                if (!(diagonal > 0.0)) {
-                    failure_coordinate = static_cast<int>(column);
-                    failure_status = SCAR_NUMERICAL_FAILURE;
-                    return false;
-                }
-                lower[row * dimension + column] = value / diagonal;
-            }
+    std::size_t cholesky_failure = dimension;
+    if (!scar_internal::linalg::cholesky_symmetric(
+            correlation.data(),
+            dimension,
+            lower,
+            0.0,
+            &cholesky_failure)) {
+        if (cholesky_failure < dimension) {
+            failure_coordinate = static_cast<int>(cholesky_failure);
         }
+        failure_status = SCAR_NUMERICAL_FAILURE;
+        return false;
     }
     return true;
 }

@@ -1,4 +1,6 @@
 import os
+import platform
+import shutil
 import sys
 from pathlib import Path
 
@@ -26,6 +28,33 @@ class build_ext(_build_ext):
         super().finalize_options()
 
     def build_extension(self, ext):
+        if self.compiler.compiler_type == "msvc":
+            sdk_root = os.environ.get("WindowsSdkDir", "").strip()
+            sdk_version = os.environ.get("WindowsSDKVersion", "").strip("\\/")
+            architecture = (
+                "arm64" if platform.machine().lower() == "arm64" else "x64"
+            )
+            resource_directory = (
+                Path(sdk_root) / "bin" / sdk_version / architecture
+            )
+            tools_root = os.environ.get("VCToolsInstallDir", "").strip()
+            compiler_directory = (
+                Path(tools_root) / "bin" / "Hostx64" / architecture
+            )
+            search_directories = [
+                directory
+                for executable, directory in (
+                    ("cl.exe", compiler_directory),
+                    ("rc.exe", resource_directory),
+                )
+                if shutil.which(executable) is None
+                and (directory / executable).is_file()
+            ]
+            if search_directories:
+                os.environ["PATH"] = os.pathsep.join([
+                    *(str(directory) for directory in search_directories),
+                    os.environ.get("PATH", ""),
+                ])
         if self.compiler.compiler_type == "mingw32":
             # pybind11 assumes MSVC on Windows and injects cl-style flags;
             # translate them for GCC.

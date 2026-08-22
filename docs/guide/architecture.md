@@ -77,11 +77,22 @@ evaluator is safe but serializes its objective calls.
 The default thread count is an absolute `1`. Environment variables are not
 consulted. See [CPU Parallelism](parallelism.md) for the public contract.
 
-Sequential unconditional sampling for R-vines with fitted GAS edges is also a
-native operation. Python builds the flat edge/topology plan and generates the
-same fixed draws as the generic path; the C++ kernel owns the row recursion and
-causal GAS state updates. Unsupported custom stateful strategies remain on the
-generic Python path.
+R-vine execution uses one shared flat plan and family-operation layer. Native
+entry points cover supported static unconditional and conditional sampling,
+row log-density, coordinate-update MCMC, and static Rosenblatt transforms.
+Sequential unconditional sampling with fitted GAS edges reuses the same
+topology and family semantics while retaining its causal state-update driver.
+Python owns topology construction, capability dispatch, random draws,
+parameter trajectories, bootstrap orchestration, and the preserved reference
+executor. Unsupported custom copulas and stateful operations remain on that
+Python path.
+
+Compiled R-vine plans and immutable edge specifications are transient fitted
+model state. Their cache keys include the structure, exact copula type,
+rotation, transform metadata, fitted-result identity, parameter storage kind,
+and complete plan signature. Fitting or semantic mutation invalidates the
+cache, and persistence always reconstructs an empty cache. Request-owned
+NumPy buffers are never retained.
 
 ## Native Array Boundary
 

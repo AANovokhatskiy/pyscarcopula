@@ -12,7 +12,10 @@ from collections import defaultdict
 
 import numpy as np
 
-from pyscarcopula.vine._rvine_conditional_plan import FrozenConditionalPlan
+from pyscarcopula.vine._rvine_conditional_plan import (
+    FrozenConditionalPlan,
+    _node_key,
+)
 from pyscarcopula.vine._rvine_edges import _edge_h, _edge_h_inverse
 from pyscarcopula.vine._helpers import (
     _clip_unit,
@@ -25,6 +28,7 @@ class ConditionalSamplePlan(FrozenConditionalPlan):
     """Execution plan with output dimension and used matrix edges attached."""
 
     def __new__(cls, steps, d):
+        """Freeze a DAG program and record every matrix edge it uses."""
         instance = super().__new__(cls, steps, d)
         instance.edges_used = tuple(sorted({
             tuple(step['edge'])
@@ -32,10 +36,6 @@ class ConditionalSamplePlan(FrozenConditionalPlan):
             if step.get('action') in ('h_prop', 'h_inv') and 'edge' in step
         }))
         return instance
-
-
-def _node_key(var, conditioning=()):
-    return int(var), frozenset(int(v) for v in conditioning)
 
 
 def matrix_edge_key(matrix, tree_level, col):

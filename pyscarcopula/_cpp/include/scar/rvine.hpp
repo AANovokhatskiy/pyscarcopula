@@ -249,8 +249,29 @@ MCMCResult mcmc_chunk(
 
 namespace detail {
 
-/// Internal prepared evaluator shared by density.cpp and mcmc.cpp.
-int evaluate_log_pdf_rows(
+/// Evaluate one prepared edge density with its requested orientation.
+double edge_log_pdf(
+    const PreparedEdge& edge,
+    bool transposed,
+    double first,
+    double second,
+    double parameter);
+
+/// Validate and prepare inputs shared by density and Rosenblatt requests.
+int prepare_density_plan_request(
+    const RVineDensityPlan& plan,
+    const std::vector<EdgeSpec>& edges,
+    const ParameterPack& parameters,
+    DoubleView observations,
+    std::int64_t observation_rows,
+    std::int64_t observation_columns,
+    int n_threads,
+    std::vector<PreparedEdge>& prepared_edges,
+    std::size_t& value_count,
+    std::int64_t& failure_row);
+
+/// Internal prepared traversal shared by density, Rosenblatt, and MCMC.
+int evaluate_density_plan_rows(
     const RVineDensityPlan& plan,
     const std::vector<PreparedEdge>& edges,
     const ParameterPack& parameters,
@@ -258,6 +279,7 @@ int evaluate_log_pdf_rows(
     std::int64_t observation_rows,
     std::int64_t observation_columns,
     double* log_pdf,
+    double* residuals,
     bool tolerate_non_finite,
     std::vector<double>& node_workspace,
     std::int64_t& failure_row,

@@ -381,6 +381,37 @@ def test_conditional_cache_distinguishes_full_immutable_plan_signature(
     assert changed.native_signature_digest != plan.native_signature_digest
 
 
+def test_conditional_cache_reuses_only_unchanged_scalar_parameter_pack():
+    vine = configured_mixed_family_vine()
+    given = {2: 0.42}
+    _, plan = _suffix_plan(vine, given)
+    parameters = scalar_parameters(vine)
+    module = _cpp_extension.load()
+
+    context, first = vine._native_conditional_context(
+        module, plan, vine.pair_copulas, parameters, given, 4)
+    reused_context, reused = vine._native_conditional_context(
+        module, plan, vine.pair_copulas, parameters, given, 7)
+    assert reused_context is context
+    assert reused.scalar_parameters is first.scalar_parameters
+    assert reused.row_parameters.shape == (7, 0)
+
+    key = next(
+        key for key in _cpp_rvine.conditional_active_keys(plan)
+        if not isinstance(vine.pair_copulas[key].copula, IndependentCopula)
+    )
+    parameters[key] = np.array([float(parameters[key][0]) + 0.05])
+    changed_context, changed = vine._native_conditional_context(
+        module, plan, vine.pair_copulas, parameters, given, 7)
+    assert changed_context is context
+    assert changed.scalar_parameters is not first.scalar_parameters
+
+    _, changed_reused = vine._native_conditional_context(
+        module, plan, vine.pair_copulas, parameters, given, 3)
+    assert changed_reused.scalar_parameters is changed.scalar_parameters
+    assert changed_reused.row_parameters.shape == (3, 0)
+
+
 def test_missing_used_parameter_path_is_rejected_before_rng(monkeypatch):
     vine = configured_mixed_family_vine()
     given = {2: 0.42}

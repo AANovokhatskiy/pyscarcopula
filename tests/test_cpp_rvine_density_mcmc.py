@@ -350,6 +350,37 @@ def test_native_mcmc_matches_python_across_chunk_boundaries_exactly(
     assert actual_diagnostics == expected_diagnostics
 
 
+def test_native_and_python_mcmc_support_zero_chains(monkeypatch):
+    vine = configured_mixed_family_vine()
+    parameters = scalar_parameters(vine)
+    given = {0: 0.57, 2: 0.31}
+    initial = np.empty((0, vine.d), dtype=np.float64)
+    draws = np.empty((5, 0, 2), dtype=np.float64)
+    results = []
+
+    for mode in ("python_executor", "native_strict"):
+        monkeypatch.setenv(_RVINE_BACKEND_ENV, mode)
+        results.append(vine._sample_arbitrary_given_mcmc(
+            0,
+            parameters,
+            np.random.default_rng(2026082280),
+            given,
+            initial=initial,
+            n_steps=3,
+            burnin_steps=2,
+            random_draws=draws,
+        ))
+
+    for samples, diagnostics in results:
+        assert samples.shape == (0, vine.d)
+        assert diagnostics["proposed"] == {1: 0}
+        assert diagnostics["accepted"] == {1: 0}
+        assert diagnostics["proposals_per_chain"] == {1: 0.0}
+        assert diagnostics["accepted_per_chain"] == {1: 0.0}
+        assert diagnostics["acceptance_mean"] is None
+    assert results[0][1] == results[1][1]
+
+
 def test_incremental_mcmc_matches_full_recompute_bitwise_with_row_paths():
     vine = configured_mixed_family_vine()
     n = 13
@@ -377,7 +408,7 @@ def test_incremental_mcmc_matches_full_recompute_bitwise_with_row_paths():
     acceptance = np.ascontiguousarray(draws[:, :, 1])
 
     def execute(algorithm, budget=64 * 1024 * 1024):
-        return module.rvine_mcmc(
+        return module.rvine_mcmc_chunk(
             context["plan"],
             context["edges"],
             pack.scalar_parameters,
@@ -450,7 +481,7 @@ def test_incremental_mcmc_preserves_cycle_across_non_sweep_chunks(
     )
 
     module, context, pack = _density_request(vine, parameters, n)
-    native_mcmc = module.rvine_mcmc
+    native_mcmc = module.rvine_mcmc_chunk
     offsets = []
     algorithms = []
 
@@ -459,7 +490,7 @@ def test_incremental_mcmc_preserves_cycle_across_non_sweep_chunks(
         algorithms.append(args[13])
         return native_mcmc(*args, **kwargs)
 
-    monkeypatch.setattr(module, "rvine_mcmc", recording_mcmc)
+    monkeypatch.setattr(module, "rvine_mcmc_chunk", recording_mcmc)
     actual, actual_diagnostics = _cpp_rvine.mcmc(
         module,
         vine.pair_copulas,
@@ -519,7 +550,7 @@ def test_incremental_mcmc_matches_every_full_recompute_acceptance_decision():
         log_pdf = np.asarray(density["log_pdf"]).copy()
         trajectory = []
         for step in range(len(draws)):
-            result = module.rvine_mcmc(
+            result = module.rvine_mcmc_chunk(
                 context["plan"],
                 context["edges"],
                 pack.scalar_parameters,
@@ -569,14 +600,14 @@ def test_native_mcmc_preserves_interleaved_rng_state_across_internal_chunk(
     python_rng = np.random.default_rng(2026082245)
     native_rng = np.random.default_rng(2026082245)
     module = _cpp_extension.load()
-    native_mcmc = module.rvine_mcmc
+    native_mcmc = module.rvine_mcmc_chunk
     selected_algorithms = []
 
     def recording_mcmc(*args, **kwargs):
         selected_algorithms.append(args[13])
         return native_mcmc(*args, **kwargs)
 
-    monkeypatch.setattr(module, "rvine_mcmc", recording_mcmc)
+    monkeypatch.setattr(module, "rvine_mcmc_chunk", recording_mcmc)
 
     monkeypatch.setenv(_RVINE_BACKEND_ENV, "python_executor")
     expected, expected_diagnostics = vine._sample_arbitrary_given_mcmc(
@@ -614,14 +645,14 @@ def test_native_mcmc_auto_keeps_single_chain_on_full_recompute(monkeypatch):
     given = {0: 0.43, 2: 0.67}
     initial = np.array([[0.43, 0.25, 0.67, 0.75]])
     module = _cpp_extension.load()
-    native_mcmc = module.rvine_mcmc
+    native_mcmc = module.rvine_mcmc_chunk
     selected_algorithms = []
 
     def recording_mcmc(*args, **kwargs):
         selected_algorithms.append(args[13])
         return native_mcmc(*args, **kwargs)
 
-    monkeypatch.setattr(module, "rvine_mcmc", recording_mcmc)
+    monkeypatch.setattr(module, "rvine_mcmc_chunk", recording_mcmc)
     monkeypatch.setenv(_RVINE_BACKEND_ENV, "native_strict")
     vine._sample_arbitrary_given_mcmc(
         1,
@@ -658,16 +689,18 @@ def test_native_mcmc_chunk_size_obeys_memory_budget_before_rng(monkeypatch):
         random_draws=draws,
     )
     module, context, pack = _density_request(vine, parameters, n)
-    native_mcmc = module.rvine_mcmc
+    native_mcmc = module.rvine_mcmc_chunk
     chunk_sizes = []
     selected_algorithms = []
+    native_budgets = []
 
     def recording_mcmc(*args, **kwargs):
         chunk_sizes.append(np.asarray(args[10]).shape[0])
         selected_algorithms.append(args[13])
+        native_budgets.append(args[14])
         return native_mcmc(*args, **kwargs)
 
-    monkeypatch.setattr(module, "rvine_mcmc", recording_mcmc)
+    monkeypatch.setattr(module, "rvine_mcmc_chunk", recording_mcmc)
     bytes_per_step = 2 * n * np.dtype(np.float64).itemsize
     full_reserved = _cpp_rvine._mcmc_full_reserved_bytes(
         context["plan"], n)
@@ -701,6 +734,11 @@ def test_native_mcmc_chunk_size_obeys_memory_budget_before_rng(monkeypatch):
     assert actual_diagnostics == expected_diagnostics
     assert chunk_sizes == [1] * 5
     assert selected_algorithms == ["full_recompute"] * 5
+    adapter_state_bytes = _cpp_rvine._mcmc_adapter_state_bytes(
+        context["plan"], n)
+    assert native_budgets == [
+        fallback_budget - adapter_state_bytes
+    ] * 5
 
     density = module.rvine_log_pdf_rows(
         context["plan"],
@@ -725,11 +763,11 @@ def test_native_mcmc_chunk_size_obeys_memory_budget_before_rng(monkeypatch):
         np.ascontiguousarray(draws[:1, :, 1]),
         1,
         "full_recompute",
-        fallback_budget,
+        fallback_budget - adapter_state_bytes,
     )
     _cpp_rvine.raise_for_status(direct_full, "test bounded full MCMC")
     assert dict(direct_full["diagnostics"])[
-        "peak_workspace_bytes"] <= fallback_budget
+        "peak_workspace_bytes"] + adapter_state_bytes <= fallback_budget
     rejected_full = native_mcmc(
         context["plan"],
         context["edges"],
@@ -745,7 +783,7 @@ def test_native_mcmc_chunk_size_obeys_memory_budget_before_rng(monkeypatch):
         np.ascontiguousarray(draws[:1, :, 1]),
         1,
         "full_recompute",
-        fallback_budget - 1,
+        fallback_budget - adapter_state_bytes - 1,
     )
     assert rejected_full["status"] == 2
 
@@ -811,7 +849,7 @@ def test_mcmc_direct_counters_offset_and_validation():
     _cpp_rvine.raise_for_status(density, "test initial density")
     proposal = np.full((5, n), 0.5)
     acceptance = np.full((5, n), 0.9)
-    result = module.rvine_mcmc(
+    result = module.rvine_mcmc_chunk(
         context["plan"],
         context["edges"],
         pack.scalar_parameters,
@@ -834,7 +872,7 @@ def test_mcmc_direct_counters_offset_and_validation():
     assert sum(diagnostics["accepted"]) <= 5 * n
     assert diagnostics["non_finite_proposals"] == 0
 
-    invalid = module.rvine_mcmc(
+    invalid = module.rvine_mcmc_chunk(
         context["plan"],
         context["edges"],
         pack.scalar_parameters,
@@ -864,7 +902,7 @@ def test_mcmc_algorithms_report_the_same_invalid_row_location():
 
     failures = []
     for algorithm in ("full_recompute", "incremental"):
-        result = module.rvine_mcmc(
+        result = module.rvine_mcmc_chunk(
             context["plan"],
             context["edges"],
             pack.scalar_parameters,
@@ -903,7 +941,7 @@ def test_mcmc_direct_counts_non_finite_proposals_without_failing_chunk():
 
     results = {}
     for algorithm in ("full_recompute", "incremental"):
-        result = module.rvine_mcmc(
+        result = module.rvine_mcmc_chunk(
             context["plan"],
             context["edges"],
             pack.scalar_parameters,
@@ -1090,7 +1128,7 @@ def test_native_mcmc_releases_the_gil():
     started.wait()
     before = counter[0]
     try:
-        result = module.rvine_mcmc(
+        result = module.rvine_mcmc_chunk(
             context["plan"],
             context["edges"],
             pack.scalar_parameters,

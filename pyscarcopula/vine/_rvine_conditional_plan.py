@@ -9,6 +9,11 @@ from types import MappingProxyType
 import numpy as np
 
 
+def _node_key(variable, conditioning=()):
+    """Normalize one conditioned-variable key shared by R-vine plans."""
+    return int(variable), frozenset(int(value) for value in conditioning)
+
+
 def _freeze(value):
     """Return a deterministic immutable representation for cache identity."""
     if isinstance(value, Mapping):
@@ -29,6 +34,7 @@ class FrozenConditionalPlan(tuple):
     """Tuple of read-only steps with a stable semantic cache signature."""
 
     def __new__(cls, steps, d):
+        """Freeze the steps and attach their stable semantic digest."""
         immutable_steps = tuple(
             MappingProxyType(dict(step)) for step in steps
         )
@@ -43,4 +49,3 @@ class FrozenConditionalPlan(tuple):
             repr(signature).encode("utf-8"), digest_size=16
         ).digest()
         return instance
-

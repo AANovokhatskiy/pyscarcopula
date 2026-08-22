@@ -133,11 +133,11 @@ def _mcmc_diagnostics(
         for var in free_vars
     }
     proposals_per_chain = {
-        var: proposed[var] / n
+        var: proposed[var] / n if n else 0.0
         for var in free_vars
     }
     accepted_per_chain = {
-        var: accepted[var] / n
+        var: accepted[var] / n if n else 0.0
         for var in free_vars
     }
     rate_values = np.array(list(rates.values()), dtype=np.float64)
@@ -211,6 +211,7 @@ def sample_arbitrary_given_mcmc(
 
 
 def _empty_mcmc_diagnostics():
+    """Return diagnostics for a conditional problem without free variables."""
     return {
         'accepted': {},
         'proposed': {},

@@ -133,6 +133,55 @@ inline void lower_triangular_matvec(
     }
 }
 
+inline bool cholesky_symmetric(
+    const double* matrix,
+    std::size_t dimension,
+    std::vector<double>& lower,
+    double diagonal_shift = 0.0,
+    std::size_t* failure_coordinate = nullptr,
+    Backend backend = Backend::Portable) {
+
+    lower.assign(dimension * dimension, 0.0);
+    if (failure_coordinate != nullptr) {
+        *failure_coordinate = dimension;
+    }
+    for (std::size_t row = 0; row < dimension; ++row) {
+        for (std::size_t column = 0; column <= row; ++column) {
+            double value = 0.5 * (
+                matrix[row * dimension + column]
+                + matrix[column * dimension + row]);
+            if (row == column) {
+                value += diagonal_shift;
+            }
+            value -= dot(
+                lower.data() + row * dimension,
+                lower.data() + column * dimension,
+                column,
+                backend);
+            if (row == column) {
+                if (!(value > 0.0) || !std::isfinite(value)) {
+                    if (failure_coordinate != nullptr) {
+                        *failure_coordinate = row;
+                    }
+                    return false;
+                }
+                lower[row * dimension + column] = std::sqrt(value);
+            } else {
+                const double diagonal =
+                    lower[column * dimension + column];
+                if (!(diagonal > 0.0)) {
+                    if (failure_coordinate != nullptr) {
+                        *failure_coordinate = column;
+                    }
+                    return false;
+                }
+                lower[row * dimension + column] = value / diagonal;
+            }
+        }
+    }
+    return true;
+}
+
 inline bool cholesky_symmetric_with_jitter(
     const double* matrix,
     std::size_t dimension,
@@ -140,44 +189,13 @@ inline bool cholesky_symmetric_with_jitter(
     double* applied_jitter = nullptr,
     Backend backend = Backend::Portable) {
 
-    lower.assign(dimension * dimension, 0.0);
     if (applied_jitter != nullptr) {
         *applied_jitter = std::numeric_limits<double>::quiet_NaN();
     }
     double jitter = 0.0;
     for (int attempt = 0; attempt < 7; ++attempt) {
-        std::fill(lower.begin(), lower.end(), 0.0);
-        bool valid = true;
-        for (std::size_t i = 0; i < dimension && valid; ++i) {
-            for (std::size_t j = 0; j <= i; ++j) {
-                double value = 0.5 * (
-                    matrix[i * dimension + j]
-                    + matrix[j * dimension + i]);
-                if (i == j) {
-                    value += jitter;
-                }
-                value -= dot(
-                    lower.data() + i * dimension,
-                    lower.data() + j * dimension,
-                    j,
-                    backend);
-                if (i == j) {
-                    if (!(value > 0.0) || !std::isfinite(value)) {
-                        valid = false;
-                        break;
-                    }
-                    lower[i * dimension + j] = std::sqrt(value);
-                } else {
-                    const double diagonal = lower[j * dimension + j];
-                    if (!(diagonal > 0.0)) {
-                        valid = false;
-                        break;
-                    }
-                    lower[i * dimension + j] = value / diagonal;
-                }
-            }
-        }
-        if (valid) {
+        if (cholesky_symmetric(
+                matrix, dimension, lower, jitter, nullptr, backend)) {
             if (applied_jitter != nullptr) {
                 *applied_jitter = jitter;
             }

@@ -1028,11 +1028,42 @@ The Python reference sampler and native GAS executor consume the same
 model-independent R-vine traversal plan, so matrix order, conditioned nodes,
 and edge orientation have one authoritative representation.
 
+The regular-vine native capability matrix is deliberately narrower than the
+public `VineCopula` API:
+
+| Operation | Native capability | Production fallback |
+|-----------|-------------------|---------------------|
+| Static unconditional sampling | Fixed C-, D-, or R-vine; exact built-in Independent, Clayton, Gumbel, Joe, Frank, or bivariate Gaussian edges; scalar parameters | Dynamic edges, custom copulas, and non-opted-in subclasses use the Python executor |
+| Suffix/DAG conditional execution | The same exact built-in families, including supported rotations/orientations and scalar or row-specific parameter paths | An unsupported active edge uses the Python conditional executor |
+| Row log-density and conditional MCMC | The same exact built-in families with scalar, row-specific, or mixed parameter storage; MCMC selects bounded incremental or full recomputation before consuming RNG | Unsupported active edges use the preserved Python density/MCMC executor |
+| R-vine Rosenblatt and GoF | Static scalar fitted edges from the exact built-in family set | Dynamic edges, custom copulas, and unsupported subclasses use the Python Rosenblatt executor |
+
+An explicitly native-equivalent subclass may opt in on its own class body.
+Inherited opt-in is intentionally ignored so that an overridden pair operation
+cannot silently bypass the Python implementation. Missing operation-specific
+extension symbols and unsupported capability combinations fall back only in
+the default dispatcher; validation or numerical failures after entering a
+supported native call are reported and never retried in Python.
+
+`gof_test(..., bootstrap=True)` also supports fitted `VineCopula` models. Each
+replication simulates from the captured fitted vine, optionally refits an
+independent worker-owned vine with the same structure and fitting contract,
+then evaluates the R-vine Rosenblatt transform and Cramer-von Mises statistic.
+Independent `SeedSequence` streams make the bootstrap statistics deterministic
+across `n_jobs`; omitted native thread settings resolve to one thread per
+worker.
+
 Static `VineCopula` sampling bounds temporary vectorized workspace by processing at
 most 8192 rows at a time. Use `sample(..., batch_rows=...)` to trade throughput
 against peak memory. `memory_budget_bytes=` checks the estimated output and
 workspace requirement before allocation. Dynamic edge trajectories are not
 split because their row order is part of the fitted time-series model.
+
+Arbitrary conditional MCMC checks its complete adapter, binding, state,
+log-density, node-cache, contribution-cache, and replay-draw footprint against
+the internal memory budget before allocation or random-number consumption.
+Draws are validated and transferred in bounded chunks. Empty batches retain
+the same diagnostics schema without undefined acceptance-rate arithmetic.
 
 When benchmarking dynamic vines, report `vine.fit_result.actual_methods` and
 `vine.fit_result.fallback_count`: unsuccessful dynamic edge fits are retained

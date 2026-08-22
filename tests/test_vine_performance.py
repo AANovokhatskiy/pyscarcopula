@@ -472,9 +472,9 @@ def test_rvine_native_unconditional_relative_benchmark(monkeypatch):
         native_ms=f"{1e3 * elapsed['native_strict']:.3f}",
         speedup=f"{speedup:.3f}",
     )
-    # Keep a material relative gate while allowing scheduler contention from
-    # the supported xdist benchmark run. Absolute wall time is not gated.
-    assert speedup >= 1.8
+    # The migration plan requires at least 2x on this target workload.
+    # Absolute wall time remains deliberately ungated.
+    assert speedup >= 2.0
 
 
 @pytest.mark.benchmark

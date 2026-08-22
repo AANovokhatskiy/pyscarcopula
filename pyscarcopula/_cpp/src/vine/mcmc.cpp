@@ -1,6 +1,5 @@
 #include "scar/rvine.hpp"
 
-#include "scar/detail/copula.hpp"
 #include "scar/detail/safety.hpp"
 
 #include <algorithm>
@@ -62,27 +61,6 @@ bool valid_open_uniforms(DoubleView values) {
         }
     }
     return true;
-}
-
-double edge_log_pdf(
-    const PreparedEdge& edge,
-    bool transposed,
-    double first,
-    double second,
-    double parameter) {
-    const CopulaSpec& copula = transposed
-        ? edge.transposed_copula
-        : edge.edge.copula;
-    double rotated_first = 0.0;
-    double rotated_second = 0.0;
-    scar_internal::apply_rotation(
-        first,
-        second,
-        static_cast<int>(copula.rotation),
-        rotated_first,
-        rotated_second);
-    return scar_internal::copula_log_pdf_unrotated(
-        copula, rotated_first, rotated_second, parameter);
 }
 
 bool checked_bytes(std::size_t values, std::uint64_t& bytes) noexcept {
@@ -233,6 +211,34 @@ bool full_memory_layout(
     return peak_bytes <= memory_budget_bytes;
 }
 
+bool propagate_h_pair_nodes(
+    const PreparedEdge& edge,
+    bool transposed,
+    double first,
+    double second,
+    double parameter,
+    double& first_next,
+    double& second_next) {
+    first_next = first;
+    second_next = second;
+    if (!edge.edge.parameter_free) {
+        h_pair(
+            edge,
+            transposed,
+            first,
+            second,
+            parameter,
+            first_next,
+            second_next);
+    }
+    if (!std::isfinite(first_next) || !std::isfinite(second_next)) {
+        return false;
+    }
+    first_next = clip_open_unit(first_next);
+    second_next = clip_open_unit(second_next);
+    return true;
+}
+
 bool initialize_density_cache(
     const RVineDensityPlan& plan,
     const std::vector<PreparedEdge>& edges,
@@ -265,7 +271,7 @@ bool initialize_density_cache(
         const double parameter = parameter_at(edge.edge, parameters, row);
         const double contribution = edge.edge.parameter_free
             ? 0.0
-            : edge_log_pdf(
+            : detail::edge_log_pdf(
                 edge, transposed, first, second, parameter);
         contributions[operation] = contribution;
         if (!std::isfinite(contribution)
@@ -280,27 +286,23 @@ bool initialize_density_cache(
         if (output1 == -1) {
             continue;
         }
-        double first_next = first;
-        double second_next = second;
-        if (!edge.edge.parameter_free) {
-            h_pair(
+        double first_next = 0.0;
+        double second_next = 0.0;
+        if (!propagate_h_pair_nodes(
                 edge,
                 transposed,
                 first,
                 second,
                 parameter,
                 first_next,
-                second_next);
-        }
-        if (!std::isfinite(first_next) || !std::isfinite(second_next)) {
+                second_next)) {
             failure_edge = edge_index;
             failure_operation = static_cast<int>(operation);
             return false;
         }
-        nodes[static_cast<std::size_t>(output1)] =
-            clip_open_unit(first_next);
+        nodes[static_cast<std::size_t>(output1)] = first_next;
         nodes[static_cast<std::size_t>(
-            plan.output2_nodes[operation])] = clip_open_unit(second_next);
+            plan.output2_nodes[operation])] = second_next;
     }
     return true;
 }
@@ -350,7 +352,7 @@ bool evaluate_incremental_proposal(
         const double parameter = parameter_at(edge.edge, parameters, row);
         const double contribution = edge.edge.parameter_free
             ? 0.0
-            : edge_log_pdf(
+            : detail::edge_log_pdf(
                 edge, transposed, first, second, parameter);
         proposal_contributions[operation] = contribution;
         if (!std::isfinite(contribution)) {
@@ -361,28 +363,24 @@ bool evaluate_incremental_proposal(
         if (output1 == -1) {
             continue;
         }
-        double first_next = first;
-        double second_next = second;
-        if (!edge.edge.parameter_free) {
-            h_pair(
+        double first_next = 0.0;
+        double second_next = 0.0;
+        if (!propagate_h_pair_nodes(
                 edge,
                 transposed,
                 first,
                 second,
                 parameter,
                 first_next,
-                second_next);
-        }
-        if (!std::isfinite(first_next) || !std::isfinite(second_next)) {
+                second_next)) {
             return false;
         }
-        proposal_nodes[static_cast<std::size_t>(output1)] =
-            clip_open_unit(first_next);
+        proposal_nodes[static_cast<std::size_t>(output1)] = first_next;
         proposal_node_generations[static_cast<std::size_t>(output1)] =
             proposal_generation;
         const auto output2 = static_cast<std::size_t>(
             plan.output2_nodes[operation]);
-        proposal_nodes[output2] = clip_open_unit(second_next);
+        proposal_nodes[output2] = second_next;
         proposal_node_generations[output2] = proposal_generation;
     }
 
@@ -824,7 +822,7 @@ MCMCResult mcmc_chunk(
         DensityDiagnostics density_diagnostics;
         const DoubleView proposal_view = {
             proposal.data(), proposal.size()};
-        const int density_status = detail::evaluate_log_pdf_rows(
+        const int density_status = detail::evaluate_density_plan_rows(
             plan,
             prepared_edges,
             parameters,
@@ -832,6 +830,7 @@ MCMCResult mcmc_chunk(
             state_rows,
             state_columns,
             proposal_log_pdf.data(),
+            nullptr,
             true,
             node_workspace,
             failure_row,

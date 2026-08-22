@@ -421,6 +421,7 @@ def student_conditional_latent_info(
 
 
 def _dense_student_rosenblatt_arrays(correlation, df, u):
+    """Validate and own dense Student Rosenblatt input arrays."""
     raw_correlation = np.asarray(correlation)
     raw_observations = np.asarray(u)
     raw_df = np.asarray(df)
@@ -484,6 +485,7 @@ def _dense_student_rosenblatt_arrays_supported(correlation, df):
 
 def _dense_student_rosenblatt_prepared(
         correlation_array, df_array, observations, *, n_threads, module):
+    """Execute the native dense Student transform on validated arrays."""
     if module is None:
         module = _cpp_extension.load()
     result = dict(module.dense_student_rosenblatt_transform(

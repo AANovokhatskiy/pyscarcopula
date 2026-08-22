@@ -1,8 +1,90 @@
 #include "common.hpp"
 
+#include <stdexcept>
+#include <string>
+
 namespace py = pybind11;
 
 namespace pyscarcopula::bindings {
+namespace {
+
+using DoubleArray = py::array_t<
+    double,
+    py::array::c_style | py::array::forcecast>;
+
+scar::rvine::ParameterPack parameter_pack_from_buffers(
+    const py::buffer_info& scalar_info,
+    const py::buffer_info& row_info) {
+    scar::rvine::ParameterPack parameters;
+    parameters.scalar_parameters = {
+        static_cast<const double*>(scalar_info.ptr),
+        static_cast<std::size_t>(scalar_info.shape[0]),
+    };
+    parameters.row_parameters = {
+        static_cast<const double*>(row_info.ptr),
+        static_cast<std::size_t>(row_info.size),
+    };
+    parameters.n_rows = static_cast<std::int64_t>(row_info.shape[0]);
+    parameters.row_parameter_columns =
+        static_cast<std::int64_t>(row_info.shape[1]);
+    return parameters;
+}
+
+scar::DoubleView double_view_from_buffer(const py::buffer_info& info) {
+    return {
+        static_cast<const double*>(info.ptr),
+        static_cast<std::size_t>(info.size),
+    };
+}
+
+struct RVineMatrixRequest {
+    scar::rvine::ParameterPack parameters;
+    scar::DoubleView values;
+    std::int64_t rows = 0;
+    std::int64_t columns = 0;
+};
+
+RVineMatrixRequest prepare_matrix_request(
+    const DoubleArray& scalar_parameters,
+    const DoubleArray& row_parameters,
+    const DoubleArray& values,
+    const char* value_name) {
+    const py::buffer_info scalar_info = scalar_parameters.request();
+    const py::buffer_info row_info = row_parameters.request();
+    const py::buffer_info value_info = values.request();
+    if (scalar_info.ndim != 1 || row_info.ndim != 2
+        || value_info.ndim != 2) {
+        throw std::invalid_argument(
+            std::string("scalar_parameters must be 1D and row_parameters and ")
+            + value_name + " must be 2D arrays");
+    }
+    return {
+        parameter_pack_from_buffers(scalar_info, row_info),
+        double_view_from_buffer(value_info),
+        static_cast<std::int64_t>(value_info.shape[0]),
+        static_cast<std::int64_t>(value_info.shape[1]),
+    };
+}
+
+template <typename Result>
+py::dict rvine_vector_result_to_dict(
+    const Result& result,
+    const char* value_name,
+    const std::vector<double>& values,
+    py::dict diagnostics) {
+    py::dict out;
+    out[value_name] = vector_to_array(values);
+    out["n_rows"] = result.n_rows;
+    out["dimension"] = result.dimension;
+    out["status"] = result.status;
+    out["failure_row"] = result.failure_row;
+    out["failure_edge"] = result.failure_edge;
+    out["failure_operation"] = result.failure_operation;
+    out["diagnostics"] = std::move(diagnostics);
+    return out;
+}
+
+}  // namespace
 
 void bind_rvine(py::module_& m) {
     py::enum_<scar::RVineOpcode>(
@@ -186,41 +268,18 @@ void bind_rvine(py::module_& m) {
                double,
                py::array::c_style | py::array::forcecast> uniforms,
            int n_threads) {
-            const py::buffer_info scalar_info = scalar_parameters.request();
-            const py::buffer_info row_info = row_parameters.request();
-            const py::buffer_info uniform_info = uniforms.request();
-            if (scalar_info.ndim != 1 || row_info.ndim != 2
-                || uniform_info.ndim != 2) {
-                throw std::invalid_argument(
-                    "scalar_parameters must be 1D and row_parameters and "
-                    "uniforms must be 2D arrays");
-            }
-            scar::rvine::ParameterPack parameters;
-            parameters.scalar_parameters = {
-                static_cast<const double*>(scalar_info.ptr),
-                static_cast<std::size_t>(scalar_info.shape[0]),
-            };
-            parameters.row_parameters = {
-                static_cast<const double*>(row_info.ptr),
-                static_cast<std::size_t>(row_info.size),
-            };
-            parameters.n_rows = static_cast<std::int64_t>(row_info.shape[0]);
-            parameters.row_parameter_columns =
-                static_cast<std::int64_t>(row_info.shape[1]);
-            const scar::DoubleView uniform_view = {
-                static_cast<const double*>(uniform_info.ptr),
-                static_cast<std::size_t>(uniform_info.size),
-            };
+            const RVineMatrixRequest request = prepare_matrix_request(
+                scalar_parameters, row_parameters, uniforms, "uniforms");
             scar::rvine::SampleResult result;
             {
                 py::gil_scoped_release release;
                 result = scar::rvine::sample(
                     plan,
                     edges,
-                    parameters,
-                    uniform_view,
-                    static_cast<std::int64_t>(uniform_info.shape[0]),
-                    static_cast<std::int64_t>(uniform_info.shape[1]),
+                    request.parameters,
+                    request.values,
+                    request.rows,
+                    request.columns,
                     n_threads);
             }
             py::dict diagnostics;
@@ -231,16 +290,8 @@ void bind_rvine(py::module_& m) {
             diagnostics["independence_fast_paths"] =
                 result.independence_fast_paths;
 
-            py::dict out;
-            out["values"] = vector_to_array(result.values);
-            out["n_rows"] = result.n_rows;
-            out["dimension"] = result.dimension;
-            out["status"] = result.status;
-            out["failure_row"] = result.failure_row;
-            out["failure_edge"] = result.failure_edge;
-            out["failure_operation"] = result.failure_operation;
-            out["diagnostics"] = std::move(diagnostics);
-            return out;
+            return rvine_vector_result_to_dict(
+                result, "values", result.values, std::move(diagnostics));
         },
         py::arg("plan"),
         py::arg("edges"),
@@ -276,26 +327,12 @@ void bind_rvine(py::module_& m) {
                     "scalar_parameters and given_values must be 1D and "
                     "row_parameters and uniforms must be 2D arrays");
             }
-            scar::rvine::ParameterPack parameters;
-            parameters.scalar_parameters = {
-                static_cast<const double*>(scalar_info.ptr),
-                static_cast<std::size_t>(scalar_info.shape[0]),
-            };
-            parameters.row_parameters = {
-                static_cast<const double*>(row_info.ptr),
-                static_cast<std::size_t>(row_info.size),
-            };
-            parameters.n_rows = static_cast<std::int64_t>(row_info.shape[0]);
-            parameters.row_parameter_columns =
-                static_cast<std::int64_t>(row_info.shape[1]);
-            const scar::DoubleView given_view = {
-                static_cast<const double*>(given_info.ptr),
-                static_cast<std::size_t>(given_info.size),
-            };
-            const scar::DoubleView uniform_view = {
-                static_cast<const double*>(uniform_info.ptr),
-                static_cast<std::size_t>(uniform_info.size),
-            };
+            const scar::rvine::ParameterPack parameters =
+                parameter_pack_from_buffers(scalar_info, row_info);
+            const scar::DoubleView given_view =
+                double_view_from_buffer(given_info);
+            const scar::DoubleView uniform_view =
+                double_view_from_buffer(uniform_info);
             scar::rvine::ConditionalSampleResult result;
             {
                 py::gil_scoped_release release;
@@ -323,16 +360,8 @@ void bind_rvine(py::module_& m) {
             diagnostics["peak_workspace_bytes"] =
                 result.peak_workspace_bytes;
 
-            py::dict out;
-            out["values"] = vector_to_array(result.values);
-            out["n_rows"] = result.n_rows;
-            out["dimension"] = result.dimension;
-            out["status"] = result.status;
-            out["failure_row"] = result.failure_row;
-            out["failure_edge"] = result.failure_edge;
-            out["failure_operation"] = result.failure_operation;
-            out["diagnostics"] = std::move(diagnostics);
-            return out;
+            return rvine_vector_result_to_dict(
+                result, "values", result.values, std::move(diagnostics));
         },
         py::arg("plan"),
         py::arg("edges"),
@@ -356,41 +385,21 @@ void bind_rvine(py::module_& m) {
                double,
                py::array::c_style | py::array::forcecast> observations,
            int n_threads) {
-            const py::buffer_info scalar_info = scalar_parameters.request();
-            const py::buffer_info row_info = row_parameters.request();
-            const py::buffer_info observation_info = observations.request();
-            if (scalar_info.ndim != 1 || row_info.ndim != 2
-                || observation_info.ndim != 2) {
-                throw std::invalid_argument(
-                    "scalar_parameters must be 1D and row_parameters and "
-                    "observations must be 2D arrays");
-            }
-            scar::rvine::ParameterPack parameters;
-            parameters.scalar_parameters = {
-                static_cast<const double*>(scalar_info.ptr),
-                static_cast<std::size_t>(scalar_info.shape[0]),
-            };
-            parameters.row_parameters = {
-                static_cast<const double*>(row_info.ptr),
-                static_cast<std::size_t>(row_info.size),
-            };
-            parameters.n_rows = static_cast<std::int64_t>(row_info.shape[0]);
-            parameters.row_parameter_columns =
-                static_cast<std::int64_t>(row_info.shape[1]);
-            const scar::DoubleView observation_view = {
-                static_cast<const double*>(observation_info.ptr),
-                static_cast<std::size_t>(observation_info.size),
-            };
+            const RVineMatrixRequest request = prepare_matrix_request(
+                scalar_parameters,
+                row_parameters,
+                observations,
+                "observations");
             scar::rvine::DensityResult result;
             {
                 py::gil_scoped_release release;
                 result = scar::rvine::log_pdf_rows(
                     plan,
                     edges,
-                    parameters,
-                    observation_view,
-                    static_cast<std::int64_t>(observation_info.shape[0]),
-                    static_cast<std::int64_t>(observation_info.shape[1]),
+                    request.parameters,
+                    request.values,
+                    request.rows,
+                    request.columns,
                     n_threads);
             }
             py::dict diagnostics;
@@ -403,16 +412,8 @@ void bind_rvine(py::module_& m) {
             diagnostics["independence_fast_paths"] =
                 result.diagnostics.independence_fast_paths;
 
-            py::dict out;
-            out["log_pdf"] = vector_to_array(result.log_pdf);
-            out["n_rows"] = result.n_rows;
-            out["dimension"] = result.dimension;
-            out["status"] = result.status;
-            out["failure_row"] = result.failure_row;
-            out["failure_edge"] = result.failure_edge;
-            out["failure_operation"] = result.failure_operation;
-            out["diagnostics"] = std::move(diagnostics);
-            return out;
+            return rvine_vector_result_to_dict(
+                result, "log_pdf", result.log_pdf, std::move(diagnostics));
         },
         py::arg("plan"),
         py::arg("edges"),
@@ -435,41 +436,21 @@ void bind_rvine(py::module_& m) {
                double,
                py::array::c_style | py::array::forcecast> observations,
            int n_threads) {
-            const py::buffer_info scalar_info = scalar_parameters.request();
-            const py::buffer_info row_info = row_parameters.request();
-            const py::buffer_info observation_info = observations.request();
-            if (scalar_info.ndim != 1 || row_info.ndim != 2
-                || observation_info.ndim != 2) {
-                throw std::invalid_argument(
-                    "scalar_parameters must be 1D and row_parameters and "
-                    "observations must be 2D arrays");
-            }
-            scar::rvine::ParameterPack parameters;
-            parameters.scalar_parameters = {
-                static_cast<const double*>(scalar_info.ptr),
-                static_cast<std::size_t>(scalar_info.shape[0]),
-            };
-            parameters.row_parameters = {
-                static_cast<const double*>(row_info.ptr),
-                static_cast<std::size_t>(row_info.size),
-            };
-            parameters.n_rows = static_cast<std::int64_t>(row_info.shape[0]);
-            parameters.row_parameter_columns =
-                static_cast<std::int64_t>(row_info.shape[1]);
-            const scar::DoubleView observation_view = {
-                static_cast<const double*>(observation_info.ptr),
-                static_cast<std::size_t>(observation_info.size),
-            };
+            const RVineMatrixRequest request = prepare_matrix_request(
+                scalar_parameters,
+                row_parameters,
+                observations,
+                "observations");
             scar::rvine::RosenblattResult result;
             {
                 py::gil_scoped_release release;
                 result = scar::rvine::rosenblatt_transform(
                     plan,
                     edges,
-                    parameters,
-                    observation_view,
-                    static_cast<std::int64_t>(observation_info.shape[0]),
-                    static_cast<std::int64_t>(observation_info.shape[1]),
+                    request.parameters,
+                    request.values,
+                    request.rows,
+                    request.columns,
                     n_threads);
             }
             py::dict diagnostics;
@@ -479,16 +460,11 @@ void bind_rvine(py::module_& m) {
             diagnostics["independence_fast_paths"] =
                 result.independence_fast_paths;
 
-            py::dict out;
-            out["residuals"] = vector_to_array(result.residuals);
-            out["n_rows"] = result.n_rows;
-            out["dimension"] = result.dimension;
-            out["status"] = result.status;
-            out["failure_row"] = result.failure_row;
-            out["failure_edge"] = result.failure_edge;
-            out["failure_operation"] = result.failure_operation;
-            out["diagnostics"] = std::move(diagnostics);
-            return out;
+            return rvine_vector_result_to_dict(
+                result,
+                "residuals",
+                result.residuals,
+                std::move(diagnostics));
         },
         py::arg("plan"),
         py::arg("edges"),
@@ -542,38 +518,18 @@ void bind_rvine(py::module_& m) {
                 "R-vine MCMC scalar/given/log-density buffers must be 1D "
                 "and row/state/draw buffers must be 2D arrays");
         }
-        scar::rvine::ParameterPack parameters;
-        parameters.scalar_parameters = {
-            static_cast<const double*>(scalar_info.ptr),
-            static_cast<std::size_t>(scalar_info.shape[0]),
-        };
-        parameters.row_parameters = {
-            static_cast<const double*>(row_info.ptr),
-            static_cast<std::size_t>(row_info.size),
-        };
-        parameters.n_rows = static_cast<std::int64_t>(row_info.shape[0]);
-        parameters.row_parameter_columns =
-            static_cast<std::int64_t>(row_info.shape[1]);
-        const scar::DoubleView given_view = {
-            static_cast<const double*>(given_info.ptr),
-            static_cast<std::size_t>(given_info.size),
-        };
-        const scar::DoubleView state_view = {
-            static_cast<const double*>(state_info.ptr),
-            static_cast<std::size_t>(state_info.size),
-        };
-        const scar::DoubleView log_pdf_view = {
-            static_cast<const double*>(log_pdf_info.ptr),
-            static_cast<std::size_t>(log_pdf_info.size),
-        };
-        const scar::DoubleView proposal_view = {
-            static_cast<const double*>(proposal_info.ptr),
-            static_cast<std::size_t>(proposal_info.size),
-        };
-        const scar::DoubleView acceptance_view = {
-            static_cast<const double*>(acceptance_info.ptr),
-            static_cast<std::size_t>(acceptance_info.size),
-        };
+        const scar::rvine::ParameterPack parameters =
+            parameter_pack_from_buffers(scalar_info, row_info);
+        const scar::DoubleView given_view =
+            double_view_from_buffer(given_info);
+        const scar::DoubleView state_view =
+            double_view_from_buffer(state_info);
+        const scar::DoubleView log_pdf_view =
+            double_view_from_buffer(log_pdf_info);
+        const scar::DoubleView proposal_view =
+            double_view_from_buffer(proposal_info);
+        const scar::DoubleView acceptance_view =
+            double_view_from_buffer(acceptance_info);
         scar::rvine::MCMCDensityAlgorithm native_algorithm;
         if (density_algorithm == "auto") {
             native_algorithm = scar::rvine::MCMCDensityAlgorithm::Auto;
@@ -647,24 +603,6 @@ void bind_rvine(py::module_& m) {
         out["diagnostics"] = std::move(diagnostics);
         return out;
     };
-    m.def(
-        "rvine_mcmc",
-        mcmc_binding,
-        py::arg("plan"),
-        py::arg("edges"),
-        py::arg("scalar_parameters"),
-        py::arg("row_parameters"),
-        py::arg("given_indices"),
-        py::arg("given_values"),
-        py::arg("free_indices"),
-        py::arg("current_state"),
-        py::arg("current_log_pdf"),
-        py::arg("global_step_offset"),
-        py::arg("proposal_uniforms"),
-        py::arg("acceptance_uniforms"),
-        py::arg("n_threads") = 1,
-        py::arg("density_algorithm") = "full_recompute",
-        py::arg("memory_budget_bytes") = 64U * 1024U * 1024U);
     m.def(
         "rvine_mcmc_chunk",
         mcmc_binding,

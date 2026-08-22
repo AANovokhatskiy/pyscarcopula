@@ -14,4 +14,3 @@ def transposed_bivariate_copula(copula):
     transposed = copy(copula)
     transposed._rotate = 360 - rotation
     return transposed
-

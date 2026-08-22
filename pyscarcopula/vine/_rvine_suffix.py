@@ -123,6 +123,7 @@ def build_suffix_conditional_plan(d, start_col, matrix, given):
         })
 
     def append_h_pair(col, tree):
+        """Append one forward h-pair action to the suffix program."""
         leaf = int(M[d - 1 - col, col])
         row = d - 2 - col - tree
         partner = int(M[row, col])

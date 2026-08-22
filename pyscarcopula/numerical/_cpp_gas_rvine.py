@@ -21,6 +21,7 @@ from pyscarcopula.vine._rvine_sampling_plan import (
 
 
 def _native_edges(module, vine, active_keys):
+    """Compile active vine edges and return their dynamic-state mask."""
     native_edges = []
     dynamic = []
     for key in active_keys:

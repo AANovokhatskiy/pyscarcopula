@@ -821,6 +821,7 @@ class StudentCopula(MultivariateCopula):
 
     @model_state_locked
     def sample_conditional(self, n, given, rng=None, *, n_threads=1):
+        """Draw samples conditional on fixed copula-uniform coordinates."""
         if self.df is None:
             raise ValueError("Fit first")
         from pyscarcopula.copula.multivariate.conditional import (
@@ -845,6 +846,7 @@ class StudentCopula(MultivariateCopula):
 
     def predict(self, n, u=None, rng=None, given=None, horizon="next",
                 predictive_r_mode=None, predict_config=None):
+        """Draw predictive samples, optionally conditional on fixed uniforms."""
         if predict_config is not None:
             from pyscarcopula.api import _resolve_predict_config
             config = _resolve_predict_config(

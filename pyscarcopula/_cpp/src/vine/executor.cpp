@@ -44,6 +44,18 @@ bool same_operation_size(
     return values.size() == operation_count;
 }
 
+template <typename Plan>
+bool same_pair_operation_sizes(
+    const Plan& plan,
+    std::size_t operation_count) {
+    return same_operation_size(operation_count, plan.edge_indices)
+        && same_operation_size(operation_count, plan.input1_nodes)
+        && same_operation_size(operation_count, plan.input2_nodes)
+        && same_operation_size(operation_count, plan.output1_nodes)
+        && same_operation_size(operation_count, plan.output2_nodes)
+        && same_operation_size(operation_count, plan.transposed);
+}
+
 bool matches_used_edges(
     const std::vector<int>& operation_edges,
     const std::vector<int>& used_edges) {
@@ -278,12 +290,7 @@ bool validate_conditional_plan(
             != static_cast<std::size_t>(plan.node_count)
         || plan.node_source_indices.size()
             != static_cast<std::size_t>(plan.node_count)
-        || !same_operation_size(operation_count, plan.edge_indices)
-        || !same_operation_size(operation_count, plan.input1_nodes)
-        || !same_operation_size(operation_count, plan.input2_nodes)
-        || !same_operation_size(operation_count, plan.output1_nodes)
-        || !same_operation_size(operation_count, plan.output2_nodes)
-        || !same_operation_size(operation_count, plan.transposed)) {
+        || !same_pair_operation_sizes(plan, operation_count)) {
         return false;
     }
 
@@ -405,11 +412,7 @@ bool validate_density_plan(
         || !bounded_density_node_count(plan)
         || plan.input_nodes.size()
             != static_cast<std::size_t>(plan.dimension)
-        || !same_operation_size(operation_count, plan.input1_nodes)
-        || !same_operation_size(operation_count, plan.input2_nodes)
-        || !same_operation_size(operation_count, plan.output1_nodes)
-        || !same_operation_size(operation_count, plan.output2_nodes)
-        || !same_operation_size(operation_count, plan.transposed)) {
+        || !same_pair_operation_sizes(plan, operation_count)) {
         return false;
     }
     std::vector<unsigned char> initialized(
@@ -690,10 +693,12 @@ void h_pair(
             clip_open_unit(first));
         const double second_quantile = scar_internal::normal_quantile(
             clip_open_unit(second));
-        first_next = scar_internal::gaussian_h_from_quantiles(
-            first_quantile, second_quantile, parameter);
-        second_next = scar_internal::gaussian_h_from_quantiles(
-            second_quantile, first_quantile, parameter);
+        scar_internal::gaussian_h_pair_from_quantiles(
+            first_quantile,
+            second_quantile,
+            parameter,
+            first_next,
+            second_next);
         return;
     }
     first_next = h(
@@ -714,6 +719,31 @@ double h_inverse(
     return scar_internal::copula_h_inverse_rotated(
         copula, quantile, given, parameter);
 }
+
+namespace detail {
+
+double edge_log_pdf(
+    const PreparedEdge& edge,
+    bool transposed,
+    double first,
+    double second,
+    double parameter) {
+    const CopulaSpec& copula = transposed
+        ? edge.transposed_copula
+        : edge.edge.copula;
+    double rotated_first = 0.0;
+    double rotated_second = 0.0;
+    scar_internal::apply_rotation(
+        first,
+        second,
+        static_cast<int>(copula.rotation),
+        rotated_first,
+        rotated_second);
+    return scar_internal::copula_log_pdf_unrotated(
+        copula, rotated_first, rotated_second, parameter);
+}
+
+}  // namespace detail
 
 namespace {
 
@@ -1069,6 +1099,26 @@ ConditionalSampleResult conditional_sample(
             gaussian_quantile_valid.begin(),
             gaussian_quantile_valid.end(),
             static_cast<unsigned char>(0));
+        const auto copy_node_state = [
+                &nodes,
+                &gaussian_quantiles,
+                &gaussian_quantile_valid,
+                block_rows](
+                    std::size_t input_offset,
+                    std::size_t output_offset) {
+            std::copy_n(
+                nodes.data() + input_offset,
+                block_rows,
+                nodes.data() + output_offset);
+            std::copy_n(
+                gaussian_quantiles.data() + input_offset,
+                block_rows,
+                gaussian_quantiles.data() + output_offset);
+            std::copy_n(
+                gaussian_quantile_valid.data() + input_offset,
+                block_rows,
+                gaussian_quantile_valid.data() + output_offset);
+        };
 
     for (int node = 0; node < plan.node_count; ++node) {
         const std::size_t plan_position = static_cast<std::size_t>(node);
@@ -1097,18 +1147,7 @@ ConditionalSampleResult conditional_sample(
         const std::size_t input1_offset = node_offset(input1);
         const std::size_t output1_offset = node_offset(output1);
         if (opcode == static_cast<int>(RVineOpcode::COPY)) {
-            std::copy_n(
-                nodes.data() + input1_offset,
-                block_rows,
-                nodes.data() + output1_offset);
-            std::copy_n(
-                gaussian_quantiles.data() + input1_offset,
-                block_rows,
-                gaussian_quantiles.data() + output1_offset);
-            std::copy_n(
-                gaussian_quantile_valid.data() + input1_offset,
-                block_rows,
-                gaussian_quantile_valid.data() + output1_offset);
+            copy_node_state(input1_offset, output1_offset);
             out.copy_operations += static_cast<std::int64_t>(block_rows);
             continue;
         }
@@ -1126,31 +1165,9 @@ ConditionalSampleResult conditional_sample(
         const bool transposed = plan.transposed[operation] != 0;
 
         if (edge.edge.parameter_free) {
-            std::copy_n(
-                nodes.data() + input1_offset,
-                block_rows,
-                nodes.data() + output1_offset);
-            std::copy_n(
-                gaussian_quantiles.data() + input1_offset,
-                block_rows,
-                gaussian_quantiles.data() + output1_offset);
-            std::copy_n(
-                gaussian_quantile_valid.data() + input1_offset,
-                block_rows,
-                gaussian_quantile_valid.data() + output1_offset);
+            copy_node_state(input1_offset, output1_offset);
             if (opcode == static_cast<int>(RVineOpcode::H_PAIR)) {
-                std::copy_n(
-                    nodes.data() + input2_offset,
-                    block_rows,
-                    nodes.data() + output2_offset);
-                std::copy_n(
-                    gaussian_quantiles.data() + input2_offset,
-                    block_rows,
-                    gaussian_quantiles.data() + output2_offset);
-                std::copy_n(
-                    gaussian_quantile_valid.data() + input2_offset,
-                    block_rows,
-                    gaussian_quantile_valid.data() + output2_offset);
+                copy_node_state(input2_offset, output2_offset);
                 out.h_pair_operations += static_cast<std::int64_t>(
                     block_rows);
             } else if (opcode == static_cast<int>(RVineOpcode::H)) {
@@ -1190,10 +1207,12 @@ ConditionalSampleResult conditional_sample(
                     first_next = scar_internal::gaussian_h_from_quantiles(
                         first_quantile, second_quantile, parameter);
                 } else if (opcode == static_cast<int>(RVineOpcode::H_PAIR)) {
-                    first_next = scar_internal::gaussian_h_from_quantiles(
-                        first_quantile, second_quantile, parameter);
-                    second_next = scar_internal::gaussian_h_from_quantiles(
-                        second_quantile, first_quantile, parameter);
+                    scar_internal::gaussian_h_pair_from_quantiles(
+                        first_quantile,
+                        second_quantile,
+                        parameter,
+                        first_next,
+                        second_next);
                 } else {
                     first_next = gaussian_inverse_from_quantiles(
                         first_quantile, second_quantile, parameter);

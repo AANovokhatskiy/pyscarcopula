@@ -65,6 +65,7 @@ class RVineTraversalPlan:
         self._validate()
 
     def _validate(self):
+        """Validate all traversal-plan dimensions, offsets, and indices."""
         d = self.dimension
         node_count = len(self.node_keys)
         edge_count = len(self.active_keys)

@@ -470,6 +470,7 @@ def _bootstrap_fit_kwargs(fit_result, fit_kwargs):
 
 
 def _fit_result_diagnostics(result):
+    """Return normalized diagnostics for one bootstrap refit."""
     log_likelihood = getattr(result, 'log_likelihood', np.nan)
     if callable(log_likelihood):
         log_likelihood = getattr(result, '_log_likelihood', np.nan)
@@ -636,8 +637,9 @@ def _bootstrap_prepare_student(
     return copula
 
 
-def _bootstrap_simulate_student(
+def _bootstrap_simulate_fitted_model(
         copula, u, fit_result, rng, K, grid_range, n_threads, config):
+    """Simulate one bootstrap sample from a fitted static model."""
     return copula.sample(len(u), rng=rng)
 
 
@@ -661,17 +663,14 @@ def _bootstrap_capture_rvine(copula, fit_result):
 
 def _bootstrap_prepare_rvine(
         copula_class, constructor_kwargs, fit_result, fitted_snapshot):
+    """Clone a fitted R-vine snapshot for one bootstrap worker."""
     return deepcopy(fitted_snapshot)
-
-
-def _bootstrap_simulate_rvine(
-        copula, u, fit_result, rng, K, grid_range, n_threads, config):
-    return copula.sample(len(u), rng=rng)
 
 
 def _bootstrap_refit_rvine(
         copula_class, constructor_kwargs, u_boot, fit_result, fit_kwargs,
         K, grid_range, n_threads, config):
+    """Refit an R-vine worker model to one bootstrap sample."""
     copula = create_worker_model(copula_class, constructor_kwargs)
     method = str(getattr(fit_result, 'method', 'MLE')).lower()
     fitted = copula.fit(
@@ -686,6 +685,7 @@ def _bootstrap_refit_rvine(
 
 def _bootstrap_statistic_rvine(
         copula, u_boot, fit_result, K, grid_range):
+    """Compute the CvM statistic from static R-vine residuals."""
     residuals = rvine_rosenblatt_transform(
         copula,
         u_boot,
@@ -843,14 +843,14 @@ _BOOTSTRAP_ADAPTERS = {
     'student': _BootstrapAdapter(
         capture=_bootstrap_capture_none,
         prepare=_bootstrap_prepare_student,
-        simulate=_bootstrap_simulate_student,
+        simulate=_bootstrap_simulate_fitted_model,
         refit=_bootstrap_refit_static_multivariate,
         statistic=_bootstrap_statistic_student,
     ),
     'rvine': _BootstrapAdapter(
         capture=_bootstrap_capture_rvine,
         prepare=_bootstrap_prepare_rvine,
-        simulate=_bootstrap_simulate_rvine,
+        simulate=_bootstrap_simulate_fitted_model,
         refit=_bootstrap_refit_rvine,
         statistic=_bootstrap_statistic_rvine,
     ),
@@ -1373,7 +1373,8 @@ def _rvine_rosenblatt_transform_native(module, vine, u):
     if layout is None:
         return None
     parameter_paths, parameter_sources = layout
-    observations = _cpp_rvine._rosenblatt_observations(u, vine.d)
+    observations = _cpp_rvine._rvine_observations(
+        u, vine.d, "Rosenblatt")
     residual_node_keys = _cpp_rvine.rosenblatt_residual_node_keys(
         vine.matrix)
     context, parameters = vine._native_density_context(

@@ -108,8 +108,8 @@ def test_stage_six_advertises_all_rosenblatt_entry_points():
     assert hasattr(module, "rvine_sample")
     assert hasattr(module, "rvine_conditional_sample")
     assert hasattr(module, "rvine_log_pdf_rows")
-    assert hasattr(module, "rvine_mcmc")
     assert hasattr(module, "rvine_mcmc_chunk")
+    assert not hasattr(module, "rvine_mcmc")
     assert hasattr(module, "rvine_rosenblatt_transform")
     assert hasattr(module, "dense_student_rosenblatt_transform")
 

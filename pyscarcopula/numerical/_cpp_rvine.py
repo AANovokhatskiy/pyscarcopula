@@ -8,6 +8,7 @@ remain Python-owned; native entry points receive validated contiguous buffers.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 
 import numpy as np
 
@@ -28,6 +29,7 @@ from pyscarcopula.vine._helpers import (
     _open_unit_uniform,
     _prepared_open_unit_draws,
 )
+from pyscarcopula.vine._rvine_conditional_plan import _node_key
 from pyscarcopula._constants import PSEUDO_OBS_EPS
 from pyscarcopula._utils import clip_pseudo_observations
 
@@ -36,7 +38,9 @@ _NATIVE_EQUIVALENT_ATTR = "__pyscarcopula_native_rvine__"
 _DEFAULT_MCMC_DRAW_MEMORY_BUDGET_BYTES = 64 * 1024 * 1024
 
 
+@lru_cache(maxsize=1)
 def _builtin_copula_types():
+    """Return the exact built-in pair-copula classes accepted natively."""
     from pyscarcopula.copula.clayton import ClaytonCopula
     from pyscarcopula.copula.elliptical import BivariateGaussianCopula
     from pyscarcopula.copula.frank import FrankCopula
@@ -114,10 +118,6 @@ def compile_traversal_plan(module, traversal_plan):
     return plan
 
 
-def _node_key(variable, conditioning=()):
-    return int(variable), frozenset(int(value) for value in conditioning)
-
-
 def compile_conditional_plan(module, plan, active_keys, given):
     """Compile a suffix or DAG action program into one flat native format."""
     active_keys = tuple(tuple(int(value) for value in key) for key in active_keys)
@@ -128,6 +128,7 @@ def compile_conditional_plan(module, plan, active_keys, given):
     node_source_indices = []
 
     def node_id(key):
+        """Return the stable native index for a conditional-plan node."""
         if key not in nodes:
             nodes[key] = len(nodes)
             node_sources.append(0)  # RVineNodeSource.COMPUTED
@@ -135,6 +136,7 @@ def compile_conditional_plan(module, plan, active_keys, given):
         return nodes[key]
 
     def mark_source(key, source, source_index):
+        """Register and return the unique source for a plan node."""
         node = node_id(key)
         if node_sources[node] != 0 or node_source_indices[node] != -1:
             raise ValueError(
@@ -297,6 +299,7 @@ def compile_density_plan(
     nodes = {}
 
     def node_id(key):
+        """Return the stable index for a normalized density-plan node."""
         normalized = _node_key(key[0], key[1])
         if normalized not in nodes:
             nodes[normalized] = len(nodes)
@@ -424,6 +427,7 @@ class RVineParameterPack:
 
     @property
     def row_parameter_columns(self):
+        """Return the number of row-specific parameter columns."""
         return int(self.row_parameters.shape[1])
 
 
@@ -436,6 +440,7 @@ class _RVineScalarRequestPack:
 
 
 def _scalar_request_key(active_keys, parameter_sources, native_edges):
+    """Build the cache key for a request-owned scalar parameter buffer."""
     sources = tuple(sorted(
         (tuple(int(value) for value in key), str(source))
         for key, source in (parameter_sources or {}).items()
@@ -448,6 +453,7 @@ def _scalar_request_key(active_keys, parameter_sources, native_edges):
 
 
 def _parameter_path(value, n_rows, edge_key):
+    """Normalize one scalar or row-wise edge-parameter path."""
     raw = np.asarray(value)
     if np.iscomplexobj(raw):
         raise TypeError(
@@ -461,7 +467,12 @@ def _parameter_path(value, n_rows, edge_key):
             f"R-vine parameter path for edge {edge_key} must have length 1 "
             f"or {n_rows}, got shape {path.shape}"
         )
-    if not np.all(np.isfinite(path)):
+    finite = (
+        np.isfinite(float(path[0]))
+        if len(path) == 1 else
+        np.all(np.isfinite(path))
+    )
+    if not finite:
         raise ValueError(
             f"R-vine parameter path for edge {edge_key} must be finite"
         )
@@ -474,29 +485,40 @@ def _validate_parameter_domain(copula, path, edge_key):
         # Custom Python semantics remain owned by the fallback implementation.
         return
 
-    from pyscarcopula.copula.clayton import ClaytonCopula
-    from pyscarcopula.copula.elliptical import BivariateGaussianCopula
-    from pyscarcopula.copula.frank import FrankCopula
-    from pyscarcopula.copula.gumbel import GumbelCopula
-    from pyscarcopula.copula.independent import IndependentCopula
-    from pyscarcopula.copula.joe import JoeCopula
+    (
+        IndependentCopula,
+        ClaytonCopula,
+        GumbelCopula,
+        JoeCopula,
+        FrankCopula,
+        BivariateGaussianCopula,
+    ) = _builtin_copula_types()
 
     values = np.asarray(path, dtype=np.float64)
     if isinstance(copula, IndependentCopula):
         return
+    scalar = values.size == 1
+    value = float(values.reshape(-1)[0]) if scalar else 0.0
     if isinstance(copula, (ClaytonCopula, FrankCopula)):
-        valid = values > 0.0
+        valid = value > 0.0 if scalar else values > 0.0
         domain = "(0, +inf)"
     elif isinstance(copula, (GumbelCopula, JoeCopula)):
-        valid = values >= 1.0
+        valid = value >= 1.0 if scalar else values >= 1.0
         domain = "[1, +inf)"
     elif isinstance(copula, BivariateGaussianCopula):
-        valid = (values > -1.0) & (values < 1.0)
+        valid = (
+            -1.0 < value < 1.0
+            if scalar else
+            (values > -1.0) & (values < 1.0)
+        )
         domain = "(-1, 1)"
     else:  # pragma: no cover - guarded by native_copula_supported
         return
-    if not np.all(valid):
-        invalid = float(values[np.flatnonzero(~valid)[0]])
+    if not (bool(valid) if scalar else np.all(valid)):
+        invalid = (
+            value if scalar else
+            float(values[np.flatnonzero(~valid)[0]])
+        )
         raise ValueError(
             f"R-vine parameter path for edge {edge_key} must lie in "
             f"{domain}; got {invalid!r}"
@@ -698,6 +720,7 @@ def static_rosenblatt_parameter_layout(pair_copulas, active_keys):
 
 
 def _conditional_given_values(dimension, given, expected_variables):
+    """Validate and pack fixed conditional values by variable index."""
     expected = tuple(sorted(int(value) for value in expected_variables))
     actual = tuple(sorted(int(value) for value in given))
     if actual != expected:
@@ -804,7 +827,9 @@ def conditional_sample(
         if active_keys is None else
         tuple(tuple(int(value) for value in key) for key in active_keys)
     )
-    if not native_edges_supported(pair_copulas, active_keys):
+    if (
+            native_edges is None
+            and not native_edges_supported(pair_copulas, active_keys)):
         return None
 
     if normalized_parameter_paths is None or parameter_sources is None:
@@ -836,7 +861,7 @@ def conditional_sample(
             raise ValueError(
                 "precompiled conditional R-vine parameter pack row count "
                 "mismatch")
-        edges = list(native_edges)
+        edges = native_edges
         parameters = parameter_pack
     native = (
         compile_conditional_plan(module, plan, active_keys, given)
@@ -899,7 +924,9 @@ def sample(
     if traversal_plan is None or tuple(traversal_plan.active_keys) != active_keys:
         raise ValueError(
             "R-vine traversal plan does not match active edge keys")
-    if not native_edges_supported(vine.pair_copulas, active_keys):
+    if (
+            native_edges is None
+            and not native_edges_supported(vine.pair_copulas, active_keys)):
         return None
 
     request_key = _scalar_request_key(
@@ -914,7 +941,7 @@ def sample(
         if native_edges is None:
             raise ValueError(
                 "cached scalar R-vine pack requires cached native edges")
-        edges = list(native_edges)
+        edges = native_edges
         parameters = RVineParameterPack(
             scalar_parameters=cached_pack.scalar_parameters,
             row_parameters=np.empty((n, 0), dtype=np.float64),
@@ -984,40 +1011,27 @@ def sample(
     return np.ascontiguousarray(values.reshape(n, int(vine.d)))
 
 
-def _density_observations(values, dimension):
+def _rvine_observations(values, dimension, operation):
+    """Validate row observations for one native R-vine traversal."""
+    label = f"R-vine {operation} observations"
     raw = np.asarray(values)
     if np.iscomplexobj(raw):
-        raise TypeError("R-vine density observations must contain real values")
+        raise TypeError(f"{label} must contain real values")
     observations = np.asarray(raw, dtype=np.float64)
     if observations.ndim != 2 or observations.shape[1] != int(dimension):
         raise ValueError(
-            "R-vine density observations must have shape "
+            f"{label} must have shape "
             f"(n, {int(dimension)}), got {observations.shape}"
         )
     if not np.all(np.isfinite(observations)):
-        raise ValueError("R-vine density observations must be finite")
-    return np.ascontiguousarray(observations)
-
-
-def _rosenblatt_observations(values, dimension):
-    raw = np.asarray(values)
-    if np.iscomplexobj(raw):
-        raise TypeError(
-            "R-vine Rosenblatt observations must contain real values")
-    observations = np.asarray(raw, dtype=np.float64)
-    if observations.ndim != 2 or observations.shape[1] != int(dimension):
-        raise ValueError(
-            "R-vine Rosenblatt observations must have shape "
-            f"(n, {int(dimension)}), got {observations.shape}"
-        )
-    if not np.all(np.isfinite(observations)):
-        raise ValueError("R-vine Rosenblatt observations must be finite")
+        raise ValueError(f"{label} must be finite")
     return np.ascontiguousarray(observations)
 
 
 def _execute_rosenblatt(
         module, native_plan, native_edges, parameters, observations,
         n_threads):
+    """Execute and validate one precompiled native Rosenblatt request."""
     result = module.rvine_rosenblatt_transform(
         native_plan,
         list(native_edges),
@@ -1090,8 +1104,8 @@ def rosenblatt(
             for source in parameter_sources.values()):
         return None
 
-    prepared_observations = _rosenblatt_observations(
-        observations, dimension)
+    prepared_observations = _rvine_observations(
+        observations, dimension, "Rosenblatt")
     n_rows = len(prepared_observations)
     if parameter_pack is None:
         try:
@@ -1180,39 +1194,80 @@ def _mcmc_draw_chunk_capacity(
 
 
 def _mcmc_full_reserved_bytes(plan, n, *, has_proposals=True):
-    """Return native full-recompute bytes excluding replay draw buffers."""
+    """Return process-wide full-recompute bytes excluding draw buffers."""
     item_size = np.dtype(np.float64).itemsize
     rows = int(n)
     if rows == 0:
         return 0
     dimension = int(plan.dimension)
     state_and_log_pdf = rows * (dimension + 1) * item_size
+    # The adapter's current state remains live while native code owns its
+    # result.  The binding then copies both result vectors into NumPy arrays,
+    # so three state/log-density buffers coexist at the process peak.
+    binding_peak = 3 * state_and_log_pdf
     if not has_proposals:
-        return state_and_log_pdf
-    proposal_state_and_log_pdf = state_and_log_pdf
+        return binding_peak
     node_workspace = int(plan.node_count) * item_size
-    return (
-        state_and_log_pdf
-        + proposal_state_and_log_pdf
-        + node_workspace
-    )
+    return binding_peak + node_workspace
 
 
 def _mcmc_incremental_reserved_bytes(plan, n, *, has_proposals=True):
-    """Return native incremental bytes excluding replay draw buffers."""
+    """Return process-wide incremental bytes excluding draw buffers."""
     item_size = np.dtype(np.float64).itemsize
     rows = int(n)
     if rows == 0:
         return 0
     dimension = int(plan.dimension)
     state_and_log_pdf = rows * (dimension + 1) * item_size
+    binding_peak = 3 * state_and_log_pdf
     if not has_proposals:
-        return state_and_log_pdf
+        return binding_peak
     operation_count = len(plan.edge_indices)
     per_row_workspace = (
         2 * (int(plan.node_count) + operation_count) * item_size
         + int(plan.node_count) * np.dtype(np.int32).itemsize)
-    return state_and_log_pdf + per_row_workspace
+    # During execution the adapter and native result consume two state-sized
+    # buffers plus one row chunk.  During result conversion three state-sized
+    # buffers coexist.  Reserve for the larger of those two phases.
+    return max(
+        2 * state_and_log_pdf + per_row_workspace,
+        binding_peak,
+    )
+
+
+def _mcmc_adapter_state_bytes(plan, n):
+    """Return state/log-density bytes retained across each native call."""
+    return (
+        int(n)
+        * (int(plan.dimension) + 1)
+        * np.dtype(np.float64).itemsize
+    )
+
+
+def _validated_mcmc_replay_draws(value, shape, validation_chunk_steps):
+    """Validate replay draws in bounded slices without owning a full copy."""
+    array = np.asarray(value)
+    if np.issubdtype(array.dtype, np.complexfloating):
+        raise TypeError(
+            "MCMC interleaved random draws must contain real values, "
+            "not complex values")
+    if array.shape != tuple(shape):
+        raise ValueError(
+            "MCMC interleaved random draws must have shape "
+            f"{tuple(shape)}, got {array.shape}")
+    for start in range(0, int(shape[0]), int(validation_chunk_steps)):
+        stop = min(start + int(validation_chunk_steps), int(shape[0]))
+        for lane in range(2):
+            values = np.asarray(array[start:stop, :, lane], dtype=np.float64)
+            if not np.all(np.isfinite(values)):
+                raise ValueError(
+                    "MCMC interleaved random draws must contain only "
+                    "finite values")
+            if np.any((values <= 0.0) | (values >= 1.0)):
+                raise ValueError(
+                    "MCMC interleaved random draws must contain values "
+                    "in the open unit interval")
+    return array
 
 
 def _select_mcmc_density_algorithm(
@@ -1274,6 +1329,7 @@ def _select_mcmc_density_algorithm(
 def _execute_log_pdf_rows(
         module, native_plan, native_edges, parameters, observations,
         n_threads):
+    """Execute and validate one precompiled native density request."""
     result = module.rvine_log_pdf_rows(
         native_plan,
         list(native_edges),
@@ -1317,7 +1373,8 @@ def log_pdf_rows(
         raise ValueError(
             "R-vine row log-density n_threads must be a positive integer")
     dimension = int(dimension)
-    prepared_observations = _density_observations(observations, dimension)
+    prepared_observations = _rvine_observations(
+        observations, dimension, "density")
     n_rows = len(prepared_observations)
     active_keys = (
         density_active_keys(trees, edge_map)
@@ -1491,6 +1548,14 @@ def mcmc(
         if total_steps > 0 else int(chunk_steps)
     )
 
+    replay_draws = None
+    if random_draws is not None:
+        replay_draws = _validated_mcmc_replay_draws(
+            random_draws,
+            (total_steps, n, 2),
+            effective_chunk_steps,
+        )
+
     if initial is None:
         current = (
             _open_unit_uniform(rng, size=(n, dimension))
@@ -1520,14 +1585,6 @@ def mcmc(
     current_log_pdf = _execute_log_pdf_rows(
         module, plan, edges, parameters, current, int(n_threads))
 
-    replay_draws = None
-    if random_draws is not None:
-        replay_draws = _prepared_open_unit_draws(
-            random_draws,
-            (total_steps, n, 2),
-            name="MCMC interleaved random draws",
-        )
-
     given_indices = sorted(int(variable) for variable in given)
     full_given_values = _conditional_given_values(
         dimension, given, given_indices)
@@ -1537,6 +1594,8 @@ def mcmc(
     proposed = {int(variable): 0 for variable in free_vars}
     offset = 0
     chunk_steps = effective_chunk_steps
+    native_memory_budget_bytes = (
+        memory_budget_bytes - _mcmc_adapter_state_bytes(plan, n))
     while offset < total_steps:
         count = min(chunk_steps, total_steps - offset)
         if replay_draws is None:
@@ -1551,10 +1610,15 @@ def mcmc(
                 acceptance_uniforms[local_step] = rng.uniform(
                     PSEUDO_OBS_EPS, 1.0, size=n)
         else:
-            chunk = replay_draws[offset:offset + count]
-            proposal_uniforms = np.ascontiguousarray(chunk[:, :, 0])
-            acceptance_uniforms = np.ascontiguousarray(chunk[:, :, 1])
-        result = module.rvine_mcmc(
+            proposal_uniforms = np.ascontiguousarray(
+                replay_draws[offset:offset + count, :, 0],
+                dtype=np.float64,
+            )
+            acceptance_uniforms = np.ascontiguousarray(
+                replay_draws[offset:offset + count, :, 1],
+                dtype=np.float64,
+            )
+        result = module.rvine_mcmc_chunk(
             plan,
             edges,
             parameters.scalar_parameters,
@@ -1569,7 +1633,7 @@ def mcmc(
             acceptance_uniforms,
             int(n_threads),
             selected_algorithm,
-            memory_budget_bytes,
+            native_memory_budget_bytes,
         )
         raise_for_status(result, "R-vine conditional MCMC chunk")
         if (
@@ -1588,7 +1652,10 @@ def mcmc(
         if raw.get("mcmc_density_algorithm") != selected_algorithm:
             raise CppError(
                 "C++ R-vine MCMC changed the preselected density algorithm")
-        if int(raw.get("peak_workspace_bytes", 0)) > memory_budget_bytes:
+        if (
+                int(raw.get("peak_workspace_bytes", 0))
+                + _mcmc_adapter_state_bytes(plan, n)
+                > memory_budget_bytes):
             raise CppError(
                 "C++ R-vine MCMC exceeded its memory budget")
         chunk_proposed = list(raw["proposed"])
