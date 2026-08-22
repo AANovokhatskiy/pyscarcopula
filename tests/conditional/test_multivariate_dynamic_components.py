@@ -387,7 +387,11 @@ def test_stochastic_student_mle_correlation_modes_feed_conditional_sampler(mode)
     model = StochasticStudentCopula(
         DIMENSION, corr_mode=corr_mode, **kwargs
     )
-    result = model.fit(training, method="mle", maxiter=120)
+    # Joint loading estimation has substantially more parameters than the
+    # other modes, and L-BFGS-B needs a larger cross-platform iteration budget
+    # to reach the shared final-gradient validation gate reliably.
+    maxiter = 240 if mode == "factor-joint" else 120
+    result = model.fit(training, method="mle", maxiter=maxiter)
     assert result.success, result.message
     correlation = (
         model.to_correlation_matrix()
