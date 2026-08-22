@@ -112,6 +112,12 @@ struct RosenblattResult {
     std::uint64_t independence_fast_paths = 0;
 };
 
+enum class MCMCDensityAlgorithm : int {
+    Auto = 0,
+    FullRecompute = 1,
+    Incremental = 2,
+};
+
 /// Result of one stateful coordinate-wise conditional-MCMC chunk.
 struct MCMCResult {
     std::vector<double> state;
@@ -128,6 +134,15 @@ struct MCMCResult {
     int n_threads_requested = 1;
     int n_threads_used = 1;
     std::uint64_t non_finite_proposals = 0;
+    MCMCDensityAlgorithm density_algorithm =
+        MCMCDensityAlgorithm::FullRecompute;
+    std::vector<std::uint64_t> affected_operations;
+    std::uint64_t affected_operation_evaluations = 0;
+    std::uint64_t cache_bytes = 0;
+    std::uint64_t peak_workspace_bytes = 0;
+    std::uint64_t row_chunks = 0;
+    std::uint64_t max_chunk_rows = 0;
+    std::uint64_t memory_budget_bytes = 0;
 };
 
 bool valid_index(int value, int limit) noexcept;
@@ -228,7 +243,9 @@ MCMCResult mcmc_chunk(
     DoubleView acceptance_uniforms,
     std::int64_t acceptance_steps,
     std::int64_t acceptance_rows,
-    int n_threads = 1);
+    int n_threads = 1,
+    MCMCDensityAlgorithm density_algorithm = MCMCDensityAlgorithm::Auto,
+    std::uint64_t memory_budget_bytes = 64U * 1024U * 1024U);
 
 namespace detail {
 

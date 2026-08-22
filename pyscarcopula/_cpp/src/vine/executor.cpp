@@ -458,6 +458,77 @@ bool validate_density_plan(
             return false;
         }
     }
+
+    const auto dimension = static_cast<std::size_t>(plan.dimension);
+    if (plan.affected_operation_offsets.size() != dimension + 1U
+        || plan.affected_node_offsets.size() != dimension + 1U
+        || plan.affected_operation_offsets.front() != 0
+        || plan.affected_node_offsets.front() != 0
+        || plan.affected_operation_offsets.back()
+            != static_cast<int>(plan.affected_operations.size())
+        || plan.affected_node_offsets.back()
+            != static_cast<int>(plan.affected_nodes.size())) {
+        return false;
+    }
+    for (std::size_t variable = 0; variable < dimension; ++variable) {
+        const int operation_begin = plan.affected_operation_offsets[variable];
+        const int operation_end =
+            plan.affected_operation_offsets[variable + 1U];
+        const int node_begin = plan.affected_node_offsets[variable];
+        const int node_end = plan.affected_node_offsets[variable + 1U];
+        if (operation_begin < 0 || operation_end < operation_begin
+            || node_begin < 0 || node_end <= node_begin
+            || operation_end
+                > static_cast<int>(plan.affected_operations.size())
+            || node_end > static_cast<int>(plan.affected_nodes.size())
+            || plan.affected_nodes[static_cast<std::size_t>(node_begin)]
+                != plan.input_nodes[variable]) {
+            return false;
+        }
+
+        std::vector<unsigned char> affected(
+            static_cast<std::size_t>(plan.node_count), 0);
+        affected[static_cast<std::size_t>(plan.input_nodes[variable])] = 1;
+        int expected_operation_position = operation_begin;
+        int expected_node_position = node_begin + 1;
+        for (std::size_t operation = 0;
+             operation < operation_count; ++operation) {
+            const bool operation_is_affected =
+                affected[static_cast<std::size_t>(
+                    plan.input1_nodes[operation])] != 0
+                || affected[static_cast<std::size_t>(
+                    plan.input2_nodes[operation])] != 0;
+            if (!operation_is_affected) {
+                continue;
+            }
+            if (expected_operation_position >= operation_end
+                || plan.affected_operations[static_cast<std::size_t>(
+                    expected_operation_position)]
+                    != static_cast<int>(operation)) {
+                return false;
+            }
+            ++expected_operation_position;
+            const int output1 = plan.output1_nodes[operation];
+            if (output1 == -1) {
+                continue;
+            }
+            const int output2 = plan.output2_nodes[operation];
+            if (expected_node_position + 1 >= node_end
+                || plan.affected_nodes[static_cast<std::size_t>(
+                    expected_node_position)] != output1
+                || plan.affected_nodes[static_cast<std::size_t>(
+                    expected_node_position + 1)] != output2) {
+                return false;
+            }
+            expected_node_position += 2;
+            affected[static_cast<std::size_t>(output1)] = 1;
+            affected[static_cast<std::size_t>(output2)] = 1;
+        }
+        if (expected_operation_position != operation_end
+            || expected_node_position != node_end) {
+            return false;
+        }
+    }
     return true;
 }
 

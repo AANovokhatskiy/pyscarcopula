@@ -148,7 +148,18 @@ void bind_rvine(py::module_& m) {
         .def_readwrite("transposed", &scar::RVineDensityPlan::transposed)
         .def_readwrite(
             "residual_nodes", &scar::RVineDensityPlan::residual_nodes)
-        .def_readwrite("used_edges", &scar::RVineDensityPlan::used_edges);
+        .def_readwrite("used_edges", &scar::RVineDensityPlan::used_edges)
+        .def_readwrite(
+            "affected_operation_offsets",
+            &scar::RVineDensityPlan::affected_operation_offsets)
+        .def_readwrite(
+            "affected_operations",
+            &scar::RVineDensityPlan::affected_operations)
+        .def_readwrite(
+            "affected_node_offsets",
+            &scar::RVineDensityPlan::affected_node_offsets)
+        .def_readwrite(
+            "affected_nodes", &scar::RVineDensityPlan::affected_nodes);
 
     m.def(
         "validate_rvine_conditional_plan",
@@ -513,7 +524,9 @@ void bind_rvine(py::module_& m) {
         py::array_t<
             double,
             py::array::c_style | py::array::forcecast> acceptance_uniforms,
-        int n_threads) {
+        int n_threads,
+        const std::string& density_algorithm,
+        std::uint64_t memory_budget_bytes) {
         const py::buffer_info scalar_info = scalar_parameters.request();
         const py::buffer_info row_info = row_parameters.request();
         const py::buffer_info given_info = given_values.request();
@@ -561,6 +574,19 @@ void bind_rvine(py::module_& m) {
             static_cast<const double*>(acceptance_info.ptr),
             static_cast<std::size_t>(acceptance_info.size),
         };
+        scar::rvine::MCMCDensityAlgorithm native_algorithm;
+        if (density_algorithm == "auto") {
+            native_algorithm = scar::rvine::MCMCDensityAlgorithm::Auto;
+        } else if (density_algorithm == "full_recompute") {
+            native_algorithm =
+                scar::rvine::MCMCDensityAlgorithm::FullRecompute;
+        } else if (density_algorithm == "incremental") {
+            native_algorithm = scar::rvine::MCMCDensityAlgorithm::Incremental;
+        } else {
+            throw std::invalid_argument(
+                "R-vine MCMC density_algorithm must be 'auto', "
+                "'full_recompute', or 'incremental'");
+        }
         scar::rvine::MCMCResult result;
         {
             py::gil_scoped_release release;
@@ -582,7 +608,9 @@ void bind_rvine(py::module_& m) {
                 acceptance_view,
                 static_cast<std::int64_t>(acceptance_info.shape[0]),
                 static_cast<std::int64_t>(acceptance_info.shape[1]),
-                n_threads);
+                n_threads,
+                native_algorithm,
+                memory_budget_bytes);
         }
         py::dict diagnostics;
         diagnostics["n_threads_requested"] = result.n_threads_requested;
@@ -591,6 +619,20 @@ void bind_rvine(py::module_& m) {
         diagnostics["accepted"] = result.accepted;
         diagnostics["non_finite_proposals"] =
             result.non_finite_proposals;
+        diagnostics["mcmc_density_algorithm"] =
+            result.density_algorithm
+                == scar::rvine::MCMCDensityAlgorithm::Incremental
+            ? "incremental"
+            : "full_recompute";
+        diagnostics["affected_operations"] = result.affected_operations;
+        diagnostics["affected_operation_evaluations"] =
+            result.affected_operation_evaluations;
+        diagnostics["cache_bytes"] = result.cache_bytes;
+        diagnostics["peak_workspace_bytes"] =
+            result.peak_workspace_bytes;
+        diagnostics["row_chunks"] = result.row_chunks;
+        diagnostics["max_chunk_rows"] = result.max_chunk_rows;
+        diagnostics["memory_budget_bytes"] = result.memory_budget_bytes;
 
         py::dict out;
         out["state"] = vector_to_array(result.state);
@@ -620,7 +662,9 @@ void bind_rvine(py::module_& m) {
         py::arg("global_step_offset"),
         py::arg("proposal_uniforms"),
         py::arg("acceptance_uniforms"),
-        py::arg("n_threads") = 1);
+        py::arg("n_threads") = 1,
+        py::arg("density_algorithm") = "full_recompute",
+        py::arg("memory_budget_bytes") = 64U * 1024U * 1024U);
     m.def(
         "rvine_mcmc_chunk",
         mcmc_binding,
@@ -636,7 +680,9 @@ void bind_rvine(py::module_& m) {
         py::arg("global_step_offset"),
         py::arg("proposal_uniforms"),
         py::arg("acceptance_uniforms"),
-        py::arg("n_threads") = 1);
+        py::arg("n_threads") = 1,
+        py::arg("density_algorithm") = "full_recompute",
+        py::arg("memory_budget_bytes") = 64U * 1024U * 1024U);
 }
 
 }  // namespace pyscarcopula::bindings

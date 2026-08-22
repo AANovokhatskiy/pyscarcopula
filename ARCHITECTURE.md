@@ -173,6 +173,23 @@ GAS sampler execute that same plan. Model-specific parameter generation and
 state updates remain in their strategy executors; the plan owns only topology,
 node dependencies, edge orientation, and operation order.
 
+Arbitrary-given R-vine MCMC also compiles, once per density plan, the
+topologically ordered operations and nodes affected by each original
+coordinate. The native incremental executor caches node values and individual
+edge log-density contributions per chain, recomputes only that closure for a
+proposal, and then sums all edge contributions in their original order. A
+rejected proposal never changes the accepted cache. Its accepted/proposal
+caches are row-chunked under the same preflight memory budget as states,
+log-densities, and replay draws. The adapter selects the incremental path only
+for structurally profitable closures that fit the budget. Otherwise it uses
+the preserved full-recompute oracle only when that driver's complete state,
+proposal, density-workspace, and draw footprint also fits; if neither path
+fits, preflight fails before consuming RNG state or allocating MCMC buffers.
+Algorithm and workspace measurements are internal native diagnostics, while
+the public MCMC diagnostics schema remains unchanged. Single-chain calls
+retain full recomputation because the incremental cache setup does not
+amortize there.
+
 ## Custom Python Extensions
 
 User-defined Python copulas may implement the public protocols for their own

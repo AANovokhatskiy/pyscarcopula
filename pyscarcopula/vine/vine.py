@@ -2653,7 +2653,7 @@ class VineCopula:
     def _sample_arbitrary_given_mcmc(
             self, n, r_all, rng, given, initial=None, n_steps=None,
             burnin_steps=None, *, initial_uniforms=None, random_draws=None,
-            step_offset=0):
+            step_offset=0, density_algorithm="auto", chunk_steps=256):
         from pyscarcopula.numerical import _cpp_rvine
 
         active_keys = _cpp_rvine.density_active_keys(
@@ -2701,6 +2701,8 @@ class VineCopula:
                 native_plan=context['plan'],
                 native_edges=context['edges'],
                 parameter_pack=parameters,
+                density_algorithm=density_algorithm,
+                chunk_steps=chunk_steps,
             )
 
         return dispatch_rvine_backend(

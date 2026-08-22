@@ -86,6 +86,15 @@ struct RVineDensityPlan {
 
     std::vector<int> residual_nodes;
     std::vector<int> used_edges;
+
+    // Static dependency closures for single-coordinate density updates.
+    // Each variable owns a topologically ordered slice in the flattened
+    // operation/node arrays.  These arrays are compiled and validated once;
+    // the MCMC hot path never walks the graph to discover dependencies.
+    std::vector<int> affected_operation_offsets;
+    std::vector<int> affected_operations;
+    std::vector<int> affected_node_offsets;
+    std::vector<int> affected_nodes;
 };
 
 }  // namespace scar

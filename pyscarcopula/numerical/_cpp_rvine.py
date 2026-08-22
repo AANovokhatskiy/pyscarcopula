@@ -341,6 +341,30 @@ def compile_density_plan(
                 output2_nodes.append(-1)
 
     residual_nodes = [node_id(key) for key in residual_node_keys]
+    affected_operation_offsets = [0]
+    affected_operations = []
+    affected_node_offsets = [0]
+    affected_nodes = []
+    for variable in range(dimension):
+        variable_nodes = [input_nodes[variable]]
+        affected = {input_nodes[variable]}
+        for operation, (input1, input2, output1, output2) in enumerate(zip(
+                input1_nodes,
+                input2_nodes,
+                output1_nodes,
+                output2_nodes,
+        )):
+            if input1 not in affected and input2 not in affected:
+                continue
+            affected_operations.append(operation)
+            if output1 >= 0:
+                affected.add(output1)
+                affected.add(output2)
+                variable_nodes.extend((output1, output2))
+        affected_operation_offsets.append(len(affected_operations))
+        affected_nodes.extend(variable_nodes)
+        affected_node_offsets.append(len(affected_nodes))
+
     native = module.RVineDensityPlan()
     native.dimension = dimension
     native.node_count = len(nodes)
@@ -353,6 +377,10 @@ def compile_density_plan(
     native.transposed = transposed
     native.residual_nodes = residual_nodes
     native.used_edges = sorted(set(operation_edges))
+    native.affected_operation_offsets = affected_operation_offsets
+    native.affected_operations = affected_operations
+    native.affected_node_offsets = affected_node_offsets
+    native.affected_nodes = affected_nodes
     if not module.validate_rvine_density_plan(native, len(active_keys)):
         raise ValueError("compile_density_plan: native plan validation failed")
     return native
@@ -1115,8 +1143,8 @@ def rosenblatt(
     )
 
 
-def _mcmc_draw_chunk_capacity(n, chunk_steps, memory_budget_bytes):
-    """Bound generated proposal/acceptance buffers by a byte budget."""
+def _mcmc_memory_budget(memory_budget_bytes):
+    """Validate and normalize the internal native MCMC memory budget."""
     if (
             isinstance(memory_budget_bytes, (bool, np.bool_))
             or not isinstance(memory_budget_bytes, (int, np.integer))):
@@ -1125,11 +1153,23 @@ def _mcmc_draw_chunk_capacity(n, chunk_steps, memory_budget_bytes):
     if budget < 0:
         raise ValueError(
             "R-vine MCMC memory_budget_bytes must be non-negative")
+    return budget
+
+
+def _mcmc_draw_chunk_capacity(
+        n, chunk_steps, memory_budget_bytes, *, reserved_bytes=0):
+    """Bound generated proposal/acceptance buffers by a byte budget."""
+    budget = _mcmc_memory_budget(memory_budget_bytes)
+    reserved = int(reserved_bytes)
+    if reserved < 0 or reserved > budget:
+        raise MemoryError(
+            "R-vine MCMC fixed workspace exceeds "
+            f"memory_budget_bytes={budget}")
     rows = int(n)
     if rows == 0:
         return int(chunk_steps)
     bytes_per_step = 2 * rows * np.dtype(np.float64).itemsize
-    capacity = budget // bytes_per_step
+    capacity = (budget - reserved) // bytes_per_step
     if capacity < 1:
         raise MemoryError(
             "R-vine MCMC requires at least "
@@ -1137,6 +1177,98 @@ def _mcmc_draw_chunk_capacity(n, chunk_steps, memory_budget_bytes):
             f"exceeding memory_budget_bytes={budget}"
         )
     return min(int(chunk_steps), int(capacity))
+
+
+def _mcmc_full_reserved_bytes(plan, n, *, has_proposals=True):
+    """Return native full-recompute bytes excluding replay draw buffers."""
+    item_size = np.dtype(np.float64).itemsize
+    rows = int(n)
+    if rows == 0:
+        return 0
+    dimension = int(plan.dimension)
+    state_and_log_pdf = rows * (dimension + 1) * item_size
+    if not has_proposals:
+        return state_and_log_pdf
+    proposal_state_and_log_pdf = state_and_log_pdf
+    node_workspace = int(plan.node_count) * item_size
+    return (
+        state_and_log_pdf
+        + proposal_state_and_log_pdf
+        + node_workspace
+    )
+
+
+def _mcmc_incremental_reserved_bytes(plan, n, *, has_proposals=True):
+    """Return native incremental bytes excluding replay draw buffers."""
+    item_size = np.dtype(np.float64).itemsize
+    rows = int(n)
+    if rows == 0:
+        return 0
+    dimension = int(plan.dimension)
+    state_and_log_pdf = rows * (dimension + 1) * item_size
+    if not has_proposals:
+        return state_and_log_pdf
+    operation_count = len(plan.edge_indices)
+    per_row_workspace = (
+        2 * (int(plan.node_count) + operation_count) * item_size
+        + int(plan.node_count) * np.dtype(np.int32).itemsize)
+    return state_and_log_pdf + per_row_workspace
+
+
+def _select_mcmc_density_algorithm(
+        plan, free_vars, n, memory_budget_bytes, requested, *,
+        has_proposals=True):
+    """Select incremental execution before state/draw allocation or RNG use."""
+    if requested not in {"auto", "full_recompute", "incremental"}:
+        raise ValueError(
+            "R-vine MCMC density_algorithm must be 'auto', "
+            "'full_recompute', or 'incremental'")
+    operation_count = len(plan.edge_indices)
+    closure_counts = [
+        int(plan.affected_operation_offsets[variable + 1])
+        - int(plan.affected_operation_offsets[variable])
+        for variable in free_vars
+    ]
+    structurally_profitable = (
+        int(n) != 1
+        and operation_count > 0
+        and all(100 * count <= 85 * operation_count
+                for count in closure_counts)
+    )
+    one_draw_step = (
+        2 * int(n) * np.dtype(np.float64).itemsize
+        if has_proposals else 0
+    )
+    full_reserved = _mcmc_full_reserved_bytes(
+        plan, n, has_proposals=has_proposals)
+    incremental_reserved = _mcmc_incremental_reserved_bytes(
+        plan, n, has_proposals=has_proposals)
+    full_fits = full_reserved + one_draw_step <= int(memory_budget_bytes)
+    incremental_fits = (
+        incremental_reserved + one_draw_step <= int(memory_budget_bytes))
+    if requested == "full_recompute":
+        if not full_fits:
+            raise MemoryError(
+                "R-vine full-recompute MCMC fixed workspace plus one draw "
+                f"step requires {full_reserved + one_draw_step} bytes, "
+                f"exceeding memory_budget_bytes={int(memory_budget_bytes)}")
+        return requested, full_reserved
+    if requested == "incremental":
+        if not incremental_fits:
+            raise MemoryError(
+                "R-vine incremental MCMC fixed workspace plus one draw step "
+                f"requires {incremental_reserved + one_draw_step} bytes, "
+                "exceeding "
+                f"memory_budget_bytes={int(memory_budget_bytes)}")
+        return requested, incremental_reserved
+    if structurally_profitable and incremental_fits:
+        return "incremental", incremental_reserved
+    if full_fits:
+        return "full_recompute", full_reserved
+    raise MemoryError(
+        "R-vine MCMC full-recompute fallback plus one draw step requires "
+        f"{full_reserved + one_draw_step} bytes, exceeding "
+        f"memory_budget_bytes={int(memory_budget_bytes)}")
 
 
 def _execute_log_pdf_rows(
@@ -1263,7 +1395,8 @@ def mcmc(
         parameter_pack=None,
         n_threads=1,
         chunk_steps=256,
-        memory_budget_bytes=_DEFAULT_MCMC_DRAW_MEMORY_BUDGET_BYTES):
+        memory_budget_bytes=_DEFAULT_MCMC_DRAW_MEMORY_BUDGET_BYTES,
+        density_algorithm="auto"):
     """Run coordinate-wise MCMC in bounded native chunks with Python RNG."""
     from pyscarcopula.vine._rvine_conditional_runtime import (
         _empty_mcmc_diagnostics,
@@ -1278,8 +1411,7 @@ def mcmc(
         raise ValueError("R-vine MCMC n_threads must be a positive integer")
     if not isinstance(chunk_steps, (int, np.integer)) or int(chunk_steps) <= 0:
         raise ValueError("R-vine MCMC chunk_steps must be a positive integer")
-    effective_chunk_steps = _mcmc_draw_chunk_capacity(
-        n, chunk_steps, memory_budget_bytes)
+    memory_budget_bytes = _mcmc_memory_budget(memory_budget_bytes)
     active_keys = (
         density_active_keys(trees, edge_map)
         if active_keys is None else
@@ -1328,6 +1460,37 @@ def mcmc(
             out[:, variable] = given[variable]
         return out, _empty_mcmc_diagnostics()
 
+    n_steps = (
+        max(80, 30 * len(free_vars))
+        if n_steps is None else int(n_steps)
+    )
+    burnin_steps = (
+        max(40, 10 * len(free_vars))
+        if burnin_steps is None else int(burnin_steps)
+    )
+    total_steps = burnin_steps + n_steps
+    step_offset = int(step_offset)
+    if step_offset < 0:
+        raise ValueError("MCMC step_offset must be non-negative")
+
+    selected_algorithm, reserved_bytes = _select_mcmc_density_algorithm(
+        plan,
+        free_vars,
+        n,
+        memory_budget_bytes,
+        density_algorithm,
+        has_proposals=total_steps > 0,
+    )
+    effective_chunk_steps = (
+        _mcmc_draw_chunk_capacity(
+            n,
+            chunk_steps,
+            memory_budget_bytes,
+            reserved_bytes=reserved_bytes,
+        )
+        if total_steps > 0 else int(chunk_steps)
+    )
+
     if initial is None:
         current = (
             _open_unit_uniform(rng, size=(n, dimension))
@@ -1357,18 +1520,6 @@ def mcmc(
     current_log_pdf = _execute_log_pdf_rows(
         module, plan, edges, parameters, current, int(n_threads))
 
-    n_steps = (
-        max(80, 30 * len(free_vars))
-        if n_steps is None else int(n_steps)
-    )
-    burnin_steps = (
-        max(40, 10 * len(free_vars))
-        if burnin_steps is None else int(burnin_steps)
-    )
-    total_steps = burnin_steps + n_steps
-    step_offset = int(step_offset)
-    if step_offset < 0:
-        raise ValueError("MCMC step_offset must be non-negative")
     replay_draws = None
     if random_draws is not None:
         replay_draws = _prepared_open_unit_draws(
@@ -1417,6 +1568,8 @@ def mcmc(
             proposal_uniforms,
             acceptance_uniforms,
             int(n_threads),
+            selected_algorithm,
+            memory_budget_bytes,
         )
         raise_for_status(result, "R-vine conditional MCMC chunk")
         if (
@@ -1432,6 +1585,12 @@ def mcmc(
         current = np.ascontiguousarray(state.reshape(n, dimension))
         current_log_pdf = np.ascontiguousarray(log_pdf)
         raw = dict(result["diagnostics"])
+        if raw.get("mcmc_density_algorithm") != selected_algorithm:
+            raise CppError(
+                "C++ R-vine MCMC changed the preselected density algorithm")
+        if int(raw.get("peak_workspace_bytes", 0)) > memory_budget_bytes:
+            raise CppError(
+                "C++ R-vine MCMC exceeded its memory budget")
         chunk_proposed = list(raw["proposed"])
         chunk_accepted = list(raw["accepted"])
         if (

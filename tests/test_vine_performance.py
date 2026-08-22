@@ -742,6 +742,84 @@ def test_rvine_native_mcmc_relative_benchmark(monkeypatch):
 
 
 @pytest.mark.benchmark
+@pytest.mark.parametrize(
+    ("free_variable", "minimum_speedup", "maximum_ratio", "case"),
+    [
+        pytest.param(19, 1.5, None, "edge-free", id="edge-free-target"),
+        pytest.param(10, None, 1.1, "central-free", id="large-closure"),
+    ],
+)
+def test_rvine_incremental_mcmc_relative_gate(
+        monkeypatch, free_variable, minimum_speedup, maximum_ratio, case):
+    """Gate incremental density updates against the exact full traversal."""
+    _skip_unless_vine_enabled()
+    d = 20
+    n = 100
+    coordinate_steps = 30
+    vine = configured_static_dvine(d)
+    vine.pair_copulas = {
+        key: fitted_pair(BivariateGaussianCopula(), 0.05)
+        for key in vine.pair_copulas
+    }
+    parameters = scalar_parameters(vine)
+    given = {
+        variable: 0.2 + 0.6 * variable / (d - 1)
+        for variable in range(d)
+        if variable != free_variable
+    }
+    initial = np.random.default_rng(2026082270 + free_variable).uniform(
+        0.02, 0.98, size=(n, d))
+    for variable, value in given.items():
+        initial[:, variable] = value
+    draws = np.random.default_rng(2026082290 + free_variable).uniform(
+        0.01, 0.99, size=(coordinate_steps, n, 2))
+    monkeypatch.setenv(_RVINE_BACKEND_ENV, "native_strict")
+
+    def execute(algorithm):
+        return vine._sample_arbitrary_given_mcmc(
+            n,
+            parameters,
+            np.random.default_rng(1),
+            given,
+            initial=initial,
+            n_steps=coordinate_steps,
+            burnin_steps=0,
+            random_draws=draws,
+            density_algorithm=algorithm,
+        )
+
+    calls = {
+        algorithm: lambda algorithm=algorithm: execute(algorithm)
+        for algorithm in ("full_recompute", "incremental")
+    }
+    for call in calls.values():
+        call()
+    measured = interleaved_timings(calls, repeats=5)
+    outputs = measured.results
+    np.testing.assert_array_equal(
+        outputs["incremental"][0], outputs["full_recompute"][0])
+    assert outputs["incremental"][1] == outputs["full_recompute"][1]
+
+    speedup = measured.median_ratio("full_recompute", "incremental")
+    incremental_ratio = measured.median_ratio(
+        "incremental", "full_recompute")
+    _print_benchmark(
+        "rvine_incremental_mcmc",
+        case=case,
+        d=d,
+        n=n,
+        coordinate_steps=coordinate_steps,
+        full_ms=f"{1e3 * measured.medians['full_recompute']:.3f}",
+        incremental_ms=f"{1e3 * measured.medians['incremental']:.3f}",
+        speedup=f"{speedup:.3f}",
+    )
+    if minimum_speedup is not None:
+        assert speedup >= minimum_speedup
+    if maximum_ratio is not None:
+        assert incremental_ratio <= maximum_ratio
+
+
+@pytest.mark.benchmark
 @pytest.mark.parametrize(("n", "repetitions"), [(1, 100), (32, 30)])
 def test_rvine_native_density_small_input_adapter_overhead(
         monkeypatch, n, repetitions):
