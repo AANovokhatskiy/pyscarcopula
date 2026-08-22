@@ -1,4 +1,4 @@
-"""Stage-2 contracts for native unconditional R-vine sampling."""
+"""Contracts for native unconditional R-vine sampling."""
 
 from __future__ import annotations
 

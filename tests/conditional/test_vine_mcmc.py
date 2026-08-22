@@ -1,4 +1,4 @@
-"""Stage-6 contracts and analytical validation for vine DAG+MCMC."""
+"""Contracts and analytical validation for vine DAG+MCMC."""
 
 from __future__ import annotations
 
@@ -314,4 +314,3 @@ def test_forced_dag_mcmc_agrees_with_exact_suffix_for_same_gaussian_target(
         for variable in free
     ]
     assert max(marginal_ks) < 0.065, marginal_ks
-

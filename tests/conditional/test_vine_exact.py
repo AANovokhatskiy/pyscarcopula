@@ -1,4 +1,4 @@
-"""Stage-5 validation for the generic vine exact suffix subsystem."""
+"""Validation for the generic vine exact suffix subsystem."""
 
 from __future__ import annotations
 

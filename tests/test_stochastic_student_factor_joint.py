@@ -1,4 +1,4 @@
-"""Phase 9.8 convergence and static joint factor MLE contracts."""
+"""Convergence and static joint factor MLE contracts."""
 
 import inspect
 import json

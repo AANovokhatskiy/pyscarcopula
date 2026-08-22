@@ -1880,7 +1880,7 @@ class VineCopula:
                     native_max_tree,
                 )
             active_keys = tuple(native_traversal_plan.active_keys)
-            # Phase 2 enables production dispatch only for static fitted
+            # Production dispatch is enabled only for static fitted
             # edges. The native ABI already supports row paths for direct
             # differential tests and later predictive phases.
             if any(

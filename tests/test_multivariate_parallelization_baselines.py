@@ -5,13 +5,12 @@ import ctypes
 import json
 import os
 import platform
-import statistics
 import sys
-import time
 
 import numpy as np
 import pytest
 
+from benchmark_timing import interleaved_timings
 from pyscarcopula import EquicorrGaussianCopula, StochasticStudentCopula
 from pyscarcopula.numerical import multivariate_native
 
@@ -75,14 +74,10 @@ def _chunked_grid(copula, u, grid, cache, n_workers):
     )
 
 
-def _median_elapsed(call, repeats):
-    elapsed = []
-    result = None
-    for _ in range(repeats):
-        start = time.perf_counter()
-        result = call()
-        elapsed.append(time.perf_counter() - start)
-    return statistics.median(elapsed), result
+def _measure_calls(calls, repeats):
+    for call in calls.values():
+        call()
+    return interleaved_timings(calls, repeats=repeats)
 
 
 def _peak_rss_bytes():
@@ -429,20 +424,20 @@ def _run_scaling_benchmark(family, T, d, K, *, large):
 
     workers = [count for count in (1, 2, 4, 8)
                if count <= (os.cpu_count() or 1)]
-    timings = {}
-    reference = None
-    for count in workers:
-        elapsed, result = _median_elapsed(
-            lambda count=count: _chunked_grid(
-                copula, u, grid, cache, count),
-            repeats=3 if family == "student" else 5,
-        )
-        timings[count] = elapsed
-        if reference is None:
-            reference = result
-        else:
-            assert np.array_equal(result[0], reference[0])
-            assert np.array_equal(result[1], reference[1])
+    measured = _measure_calls(
+        {
+            count: lambda count=count: _chunked_grid(
+                copula, u, grid, cache, count)
+            for count in workers
+        },
+        repeats=3 if family == "student" else 5,
+    )
+    timings = measured.medians
+    reference = measured.results[workers[0]]
+    for count in workers[1:]:
+        result = measured.results[count]
+        assert np.array_equal(result[0], reference[0])
+        assert np.array_equal(result[1], reference[1])
 
     payload = {
         "name": "multivariate_external_thread_scaling_baseline",
@@ -450,7 +445,7 @@ def _run_scaling_benchmark(family, T, d, K, *, large):
         "workload": {"T": T, "d": d, "K": K},
         "seconds": {str(key): value for key, value in timings.items()},
         "speedup": {
-            str(key): timings[1] / value for key, value in timings.items()
+            str(key): measured.median_ratio(1, key) for key in workers
         },
         "execution": "python_thread_chunks",
         "peak_rss_bytes": _peak_rss_bytes(),
@@ -462,13 +457,13 @@ def _run_scaling_benchmark(family, T, d, K, *, large):
         "python": sys.version.split()[0],
         "platform": platform.platform(),
         "logical_cpus": os.cpu_count(),
-        "timer": "perf_counter median",
+        "timer": "perf_counter interleaved median",
     }
     if family == "student":
         _, _, diagnostics = multivariate_native.pdf_and_grad_grid_info(
             copula, u, grid, cache=cache)
         payload["student_kernel_diagnostics"] = diagnostics
-    print("PHASE0_PARALLEL_BENCH " + json.dumps(
+    print("PYSCA_BENCHMARK " + json.dumps(
         payload, sort_keys=True), flush=True)
 
 
@@ -496,27 +491,30 @@ def test_student_internal_thread_scaling_benchmark():
 
     workers = [count for count in (1, 2, 4, 8)
                if count <= (os.cpu_count() or 1)]
-    timings = {}
-    reference = None
-    diagnostics = {}
-    for count in workers:
-        elapsed, result = _median_elapsed(
-            lambda count=count: multivariate_native.pdf_and_grad_grid_info(
+    measured = _measure_calls(
+        {
+            count: (
+                lambda count=count: multivariate_native.pdf_and_grad_grid_info(
                 copula,
                 u,
                 grid,
                 cache=cache,
                 n_threads=count,
-            ),
-            repeats=5,
-        )
-        timings[count] = elapsed
-        diagnostics[count] = result[2]
-        if reference is None:
-            reference = result
-        else:
-            assert np.array_equal(result[0], reference[0])
-            assert np.array_equal(result[1], reference[1])
+                )
+            )
+            for count in workers
+        },
+        repeats=5,
+    )
+    timings = measured.medians
+    reference = measured.results[workers[0]]
+    diagnostics = {
+        count: measured.results[count][2] for count in workers
+    }
+    for count in workers[1:]:
+        result = measured.results[count]
+        assert np.array_equal(result[0], reference[0])
+        assert np.array_equal(result[1], reference[1])
 
     payload = {
         "name": "student_internal_thread_scaling",
@@ -524,16 +522,16 @@ def test_student_internal_thread_scaling_benchmark():
         "workload": {"T": T, "d": d, "K": K},
         "seconds": {str(key): value for key, value in timings.items()},
         "speedup": {
-            str(key): timings[1] / value for key, value in timings.items()
+            str(key): measured.median_ratio(1, key) for key in workers
         },
         "kernel_diagnostics": {
             str(key): value for key, value in diagnostics.items()
         },
         "peak_rss_bytes": _peak_rss_bytes(),
         "logical_cpus": os.cpu_count(),
-        "timer": "perf_counter median",
+        "timer": "perf_counter interleaved median",
     }
-    print("PHASE2_PARALLEL_BENCH " + json.dumps(
+    print("PYSCA_BENCHMARK " + json.dumps(
         payload, sort_keys=True), flush=True)
 
 
@@ -564,20 +562,20 @@ def test_student_scar_matrix_internal_thread_benchmark():
     }
     prepared[max(workers)].neg_loglik_with_grad_info(1.0, 0.1, 0.5)
 
-    timings = {}
-    reference = None
-    for count in workers:
-        elapsed, result = _median_elapsed(
-            lambda count=count: prepared[count].neg_loglik_with_grad_info(
-                1.0, 0.1, 0.5),
-            repeats=5,
-        )
-        timings[count] = elapsed
-        if reference is None:
-            reference = result
-        else:
-            assert result[0] == reference[0]
-            np.testing.assert_array_equal(result[1], reference[1])
+    measured = _measure_calls(
+        {
+            count: lambda count=count: prepared[
+                count].neg_loglik_with_grad_info(1.0, 0.1, 0.5)
+            for count in workers
+        },
+        repeats=5,
+    )
+    timings = measured.medians
+    reference = measured.results[workers[0]]
+    for count in workers[1:]:
+        result = measured.results[count]
+        assert result[0] == reference[0]
+        np.testing.assert_array_equal(result[1], reference[1])
 
     payload = {
         "name": "student_scar_matrix_gradient_internal_thread_scaling",
@@ -585,12 +583,12 @@ def test_student_scar_matrix_internal_thread_benchmark():
         "workload": {"T": T, "d": d, "K": K},
         "seconds": {str(key): value for key, value in timings.items()},
         "speedup": {
-            str(key): timings[1] / value for key, value in timings.items()
+            str(key): measured.median_ratio(1, key) for key in workers
         },
         "logical_cpus": os.cpu_count(),
-        "timer": "perf_counter median",
+        "timer": "perf_counter interleaved median",
     }
-    print("PHASE2_SCAR_BENCH " + json.dumps(
+    print("PYSCA_BENCHMARK " + json.dumps(
         payload, sort_keys=True), flush=True)
 
 
@@ -606,22 +604,25 @@ def test_equicorr_internal_thread_scaling_benchmark():
 
     workers = [count for count in (1, 2, 4, 8)
                if count <= (os.cpu_count() or 1)]
-    timings = {}
-    reference = None
-    diagnostics = {}
-    for count in workers:
-        elapsed, result = _median_elapsed(
-            lambda count=count: multivariate_native.pdf_and_grad_grid_info(
-                copula, u, grid, n_threads=count),
-            repeats=5,
-        )
-        timings[count] = elapsed
-        diagnostics[count] = result[2]
-        if reference is None:
-            reference = result
-        else:
-            assert np.array_equal(result[0], reference[0])
-            assert np.array_equal(result[1], reference[1])
+    measured = _measure_calls(
+        {
+            count: (
+                lambda count=count: multivariate_native.pdf_and_grad_grid_info(
+                    copula, u, grid, n_threads=count)
+            )
+            for count in workers
+        },
+        repeats=5,
+    )
+    timings = measured.medians
+    reference = measured.results[workers[0]]
+    diagnostics = {
+        count: measured.results[count][2] for count in workers
+    }
+    for count in workers[1:]:
+        result = measured.results[count]
+        assert np.array_equal(result[0], reference[0])
+        assert np.array_equal(result[1], reference[1])
 
     payload = {
         "name": "equicorr_internal_thread_scaling",
@@ -629,15 +630,15 @@ def test_equicorr_internal_thread_scaling_benchmark():
         "workload": {"T": T, "d": d, "K": K},
         "seconds": {str(key): value for key, value in timings.items()},
         "speedup": {
-            str(key): timings[1] / value for key, value in timings.items()
+            str(key): measured.median_ratio(1, key) for key in workers
         },
         "kernel_diagnostics": {
             str(key): value for key, value in diagnostics.items()
         },
         "logical_cpus": os.cpu_count(),
-        "timer": "perf_counter median",
+        "timer": "perf_counter interleaved median",
     }
-    print("PHASE3_PARALLEL_BENCH " + json.dumps(
+    print("PYSCA_BENCHMARK " + json.dumps(
         payload, sort_keys=True), flush=True)
 
 
@@ -668,20 +669,20 @@ def test_equicorr_scar_matrix_internal_thread_benchmark():
     }
     prepared[max(workers)].neg_loglik_with_grad_info(1.0, 0.1, 0.5)
 
-    timings = {}
-    reference = None
-    for count in workers:
-        elapsed, result = _median_elapsed(
-            lambda count=count: prepared[count].neg_loglik_with_grad_info(
-                1.0, 0.1, 0.5),
-            repeats=5,
-        )
-        timings[count] = elapsed
-        if reference is None:
-            reference = result
-        else:
-            assert result[0] == reference[0]
-            np.testing.assert_array_equal(result[1], reference[1])
+    measured = _measure_calls(
+        {
+            count: lambda count=count: prepared[
+                count].neg_loglik_with_grad_info(1.0, 0.1, 0.5)
+            for count in workers
+        },
+        repeats=5,
+    )
+    timings = measured.medians
+    reference = measured.results[workers[0]]
+    for count in workers[1:]:
+        result = measured.results[count]
+        assert result[0] == reference[0]
+        np.testing.assert_array_equal(result[1], reference[1])
 
     payload = {
         "name": "equicorr_scar_matrix_gradient_internal_thread_scaling",
@@ -689,10 +690,10 @@ def test_equicorr_scar_matrix_internal_thread_benchmark():
         "workload": {"T": T, "d": d, "K": K},
         "seconds": {str(key): value for key, value in timings.items()},
         "speedup": {
-            str(key): timings[1] / value for key, value in timings.items()
+            str(key): measured.median_ratio(1, key) for key in workers
         },
         "logical_cpus": os.cpu_count(),
-        "timer": "perf_counter median",
+        "timer": "perf_counter interleaved median",
     }
-    print("PHASE3_SCAR_BENCH " + json.dumps(
+    print("PYSCA_BENCHMARK " + json.dumps(
         payload, sort_keys=True), flush=True)

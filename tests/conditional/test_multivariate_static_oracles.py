@@ -1,4 +1,4 @@
-"""Stage-4 conditional tests for static multivariate copulas."""
+"""Conditional tests for static multivariate copulas."""
 
 from __future__ import annotations
 

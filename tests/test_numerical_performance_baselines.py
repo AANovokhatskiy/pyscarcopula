@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 import scipy
 
+from benchmark_timing import interleaved_timings
 from pyscarcopula import GaussianCopula, GumbelCopula, StudentCopula
 from pyscarcopula.copula.multivariate.correlation_policy import (
     CorrelationPolicy,
@@ -144,7 +145,7 @@ def test_static_elliptical_correlation_mode_benchmark_matrix(
         raw = policy.initial_raw_parameters()
     correlation = policy.trial_correlation(raw)
 
-    reference = None
+    calls = {}
     for n_threads in (1, 2, 4):
         prepare = (
             static_likelihood.prepare_gaussian
@@ -153,7 +154,10 @@ def test_static_elliptical_correlation_mode_benchmark_matrix(
         evaluator = prepare(correlation, u, n_threads=n_threads)
         if corr_mode == "fixed":
             parameter = 0.0 if family == "gaussian" else 6.0
-            call = lambda evaluator=evaluator: evaluator.log_likelihood(parameter)
+            calls[n_threads] = (
+                lambda evaluator=evaluator, parameter=parameter:
+                evaluator.log_likelihood(parameter)
+            )
         else:
             def call(evaluator=evaluator):
                 if family == "gaussian":
@@ -167,10 +171,14 @@ def test_static_elliptical_correlation_mode_benchmark_matrix(
                     raw, correlation, corr_gradient)
                 return value, np.concatenate(
                     [parameter_gradient, raw_gradient])
+            calls[n_threads] = call
 
-        elapsed, result = _median_elapsed(call, repeats=3)
-        if reference is None:
-            reference = result
+    for call in calls.values():
+        call()
+    measured = interleaved_timings(calls, repeats=3)
+    reference = measured.results[1]
+    for n_threads in (1, 2, 4):
+        result = measured.results[n_threads]
         if corr_mode == "fixed":
             assert np.isfinite(result)
             np.testing.assert_allclose(result, reference, rtol=1e-12, atol=1e-10)
@@ -183,7 +191,7 @@ def test_static_elliptical_correlation_mode_benchmark_matrix(
                 result[1], reference[1], rtol=2e-11, atol=2e-9)
         _report(
             "static_elliptical_correlation_mode",
-            elapsed,
+            measured.medians[n_threads],
             workload={
                 "T": T,
                 "dimension": d,
@@ -244,16 +252,18 @@ def test_static_factor_large_dimension_benchmark_report(family):
     if family == "student":
         model.df = 6.0
 
-    reference = None
+    calls = {
+        n_threads: lambda n_threads=n_threads: model.log_likelihood(
+            u, n_threads=n_threads)
+        for n_threads in (1, 2, 4)
+    }
+    for call in calls.values():
+        call()
+    measured = interleaved_timings(calls, repeats=3)
+    reference = measured.results[1]
     for n_threads in (1, 2, 4):
-        elapsed, value = _median_elapsed(
-            lambda n_threads=n_threads: model.log_likelihood(
-                u, n_threads=n_threads),
-            repeats=3,
-        )
+        value = measured.results[n_threads]
         assert np.isfinite(value)
-        if reference is None:
-            reference = value
         np.testing.assert_allclose(value, reference, rtol=1e-12, atol=1e-9)
         if family == "gaussian":
             assert model.corr is None
@@ -261,7 +271,7 @@ def test_static_factor_large_dimension_benchmark_report(family):
             assert model.correlation is None
         _report(
             "static_factor_large_dimension",
-            elapsed,
+            measured.medians[n_threads],
             workload={
                 "T": T,
                 "dimension": d,

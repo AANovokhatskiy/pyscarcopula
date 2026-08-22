@@ -1,4 +1,4 @@
-"""Opt-in Phase-8 scaling gates for compact equicorrelation preparation."""
+"""Opt-in scaling gates for compact equicorrelation preparation."""
 
 from __future__ import annotations
 
@@ -6,11 +6,11 @@ import json
 import os
 import platform
 from pathlib import Path
-import time
 
 import numpy as np
 import pytest
 
+from benchmark_timing import interleaved_timings
 from pyscarcopula import EquicorrGaussianCopula
 
 
@@ -20,16 +20,6 @@ def _enabled(*, large: bool) -> None:
     if large and os.environ.get("PYSCA_RUN_LARGE_BENCHMARKS") != "1":
         pytest.skip(
             "set PYSCA_RUN_LARGE_BENCHMARKS=1 to run d=1e6 gate")
-
-
-def _median(callable_, repeats=5):
-    samples = []
-    result = None
-    for _ in range(repeats):
-        start = time.perf_counter()
-        result = callable_()
-        samples.append(time.perf_counter() - start)
-    return float(np.median(samples)), result
 
 
 def _run_gate(*, n_obs: int, dimension: int, large: bool) -> None:
@@ -45,32 +35,35 @@ def _run_gate(*, n_obs: int, dimension: int, large: bool) -> None:
     # Warm native code and page in the input before measuring.
     model.prepare_sufficient_statistics(
         u[:1], dimension_tile=4096, n_threads=1)
-    timings = {}
-    reference = None
-    diagnostics = None
-    for count in workers:
-        elapsed, prepared = _median(
+    calls = {
+        count: (
             lambda count=count: model.prepare_sufficient_statistics(
                 u,
                 batch_rows=n_obs,
                 dimension_tile=4096,
                 n_threads=count,
-            ),
-            repeats=3 if large else 5,
+            )
         )
-        timings[count] = elapsed
-        if reference is None:
-            reference = prepared
-        else:
+        for count in workers
+    }
+    for call in calls.values():
+        call()
+    measured = interleaved_timings(
+        calls, repeats=3 if large else 5)
+    timings = measured.medians
+    reference = measured.results[workers[0]]
+    for count in workers:
+        prepared = measured.results[count]
+        if count != workers[0]:
             np.testing.assert_array_equal(
                 prepared.sum_z, reference.sum_z)
             np.testing.assert_array_equal(
                 prepared.sum_z2, reference.sum_z2)
-        diagnostics = dict(prepared.diagnostics)
+    diagnostics = dict(measured.results[workers[-1]].diagnostics)
 
     speedup = {
-        count: timings[1] / elapsed
-        for count, elapsed in timings.items()
+        count: measured.median_ratio(1, count)
+        for count in workers
     }
     efficiency_4 = (
         speedup[4] / 4.0 if 4 in speedup else None)
@@ -79,7 +72,7 @@ def _run_gate(*, n_obs: int, dimension: int, large: bool) -> None:
         not target_applicable
         or (efficiency_4 is not None and efficiency_4 >= 0.60))
     payload = {
-        "name": "phase8_equicorr_preparation_scaling",
+        "name": "equicorr_preparation_scaling",
         "workload": {"T": n_obs, "d": dimension},
         "seconds": {str(key): value for key, value in timings.items()},
         "speedup": {str(key): value for key, value in speedup.items()},
@@ -92,14 +85,14 @@ def _run_gate(*, n_obs: int, dimension: int, large: bool) -> None:
         "logical_cpus": os.cpu_count(),
         "python": platform.python_version(),
         "platform": platform.platform(),
-        "timer": "perf_counter median",
+        "timer": "perf_counter interleaved median",
     }
     print(
-        "PHASE8_EQUICORR_PREP_BENCH "
+        "PYSCA_BENCHMARK "
         + json.dumps(payload, sort_keys=True),
         flush=True,
     )
-    output = os.environ.get("PYSCA_PHASE8_BENCHMARK_OUTPUT")
+    output = os.environ.get("PYSCA_EQUICORR_BENCHMARK_OUTPUT")
     if output:
         path = Path(output)
         try:

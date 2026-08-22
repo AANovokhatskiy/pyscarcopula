@@ -1,4 +1,4 @@
-"""Phase 9.7 contracts for factor correlation in GaussianCopula."""
+"""Contracts for factor correlation in GaussianCopula."""
 
 from concurrent.futures import ThreadPoolExecutor
 import inspect

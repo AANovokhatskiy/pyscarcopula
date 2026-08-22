@@ -1,9 +1,9 @@
-"""Generate the stage-0 conditional-sampling coverage inventory.
+"""Generate the conditional-sampling coverage inventory.
 
 The inventory combines pytest collection node IDs with a source-level AST
 scan.  It is intentionally an audit heuristic, not a coverage substitute.
-By default, the newly added ``tests/conditional`` directory is excluded so
-the report describes the suite that existed before stage 0.
+By default, ``tests/conditional`` is excluded so the report can compare the
+general suite with the dedicated conditional-sampling contracts.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ TESTS = ROOT / "tests"
 REGISTRY_PATH = TESTS / "conditional" / "support_matrix.json"
 DEFAULT_OUTPUT = (
     ROOT / "benchmark_artifacts" /
-    "conditional_sampling_stage0_inventory.json"
+    "conditional_sampling_inventory.json"
 )
 
 _CONDITIONAL_NAME_PATTERN = re.compile(
@@ -157,11 +157,14 @@ def _relative(path: Path) -> str:
     return path.relative_to(ROOT).as_posix()
 
 
-def discover_test_functions(include_stage0: bool) -> tuple[TestFunction, ...]:
+def discover_test_functions(
+        include_conditional_contracts: bool) -> tuple[TestFunction, ...]:
     discovered: list[TestFunction] = []
     for path in sorted(TESTS.rglob("test_*.py")):
         relative = _relative(path)
-        if not include_stage0 and relative.startswith("tests/conditional/"):
+        if (
+                not include_conditional_contracts
+                and relative.startswith("tests/conditional/")):
             continue
         # Some historical test modules carry an UTF-8 BOM.
         source = path.read_text(encoding="utf-8-sig")
@@ -176,7 +179,8 @@ def _strip_parameter_id(node_id: str) -> str:
     return re.sub(r"\[.*\]$", "", node_id).replace("\\", "/")
 
 
-def collect_pytest_node_ids(include_stage0: bool) -> tuple[str, ...]:
+def collect_pytest_node_ids(
+        include_conditional_contracts: bool) -> tuple[str, ...]:
     artifacts = ROOT / "benchmark_artifacts"
     artifacts.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(
@@ -209,7 +213,7 @@ def collect_pytest_node_ids(include_stage0: bool) -> tuple[str, ...]:
         for line in completed.stdout.splitlines()
         if line.strip().startswith("tests/") and "::" in line
     )
-    if include_stage0:
+    if include_conditional_contracts:
         return node_ids
     return tuple(
         node_id for node_id in node_ids
@@ -248,11 +252,14 @@ def _git_commit() -> str | None:
     return value or None
 
 
-def build_inventory(include_stage0: bool = False) -> dict[str, object]:
+def build_inventory(
+        include_conditional_contracts: bool = False) -> dict[str, object]:
     registry_bytes = REGISTRY_PATH.read_bytes()
     registry = json.loads(registry_bytes.decode("utf-8"))
-    tests = discover_test_functions(include_stage0=include_stage0)
-    node_ids = collect_pytest_node_ids(include_stage0=include_stage0)
+    tests = discover_test_functions(
+        include_conditional_contracts=include_conditional_contracts)
+    node_ids = collect_pytest_node_ids(
+        include_conditional_contracts=include_conditional_contracts)
 
     by_base = {test.node_base: test for test in tests}
     name_matched_functions = {
@@ -265,7 +272,7 @@ def build_inventory(include_stage0: bool = False) -> dict[str, object]:
             _CONDITIONAL_NAME_PATTERN.search(test.qualified_name)
             or _CONDITIONAL_SOURCE_PATTERN.search(test.source)
             or (
-                include_stage0
+                include_conditional_contracts
                 and test.relative_file.startswith("tests/conditional/")
             )
         )
@@ -332,8 +339,7 @@ def build_inventory(include_stage0: bool = False) -> dict[str, object]:
             "unsupported_case_count": len(registry["unsupported_cases"]),
         },
         "collection": {
-            "includes_conditional_contracts": include_stage0,
-            "includes_stage0_tests": include_stage0,
+            "includes_conditional_contracts": include_conditional_contracts,
             "collected_case_count": len(node_ids),
             "source_test_function_count": len(tests),
             "conditional_name_function_count": len(name_matched_functions),
@@ -364,7 +370,8 @@ def build_inventory(include_stage0: bool = False) -> dict[str, object]:
             "The inventory is based on AST/name heuristics, not runtime coverage.",
             "Model tags may be absent when fixtures hide the concrete class.",
             "A collected parameter case can carry multiple model/method tags.",
-            "By default tests/conditional is excluded to preserve the pre-stage-0 view."
+            "By default tests/conditional is excluded for a "
+            "separate-suite comparison."
         ],
     }
 
@@ -375,17 +382,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--output",
         type=Path,
         default=DEFAULT_OUTPUT,
-        help="JSON destination (default: benchmark_artifacts stage-0 file)",
+        help=(
+            "JSON destination (default: "
+            "benchmark_artifacts/conditional_sampling_inventory.json)"
+        ),
     )
     parser.add_argument(
         "--include-conditional-contracts",
-        "--include-stage0",
-        dest="include_stage0",
+        dest="include_conditional_contracts",
         action="store_true",
-        help=(
-            "include tests/conditional in the inventory "
-            "(--include-stage0 is retained as a compatibility alias)"
-        ),
+        help="include tests/conditional in the inventory",
     )
     parser.add_argument(
         "--stdout",
@@ -397,7 +403,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
-    inventory = build_inventory(include_stage0=args.include_stage0)
+    inventory = build_inventory(
+        include_conditional_contracts=args.include_conditional_contracts)
     rendered = json.dumps(inventory, indent=2, sort_keys=True) + "\n"
     output = args.output
     if not output.is_absolute():

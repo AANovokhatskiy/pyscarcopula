@@ -1,7 +1,7 @@
 """Independent bivariate CDF and directional conditional-CDF formulas.
 
 This module intentionally has no pyscarcopula imports.  The formulas are
-used as the primary Stage-3 oracle; pyvinecopulib is a separate external
+used as the primary analytical oracle; pyvinecopulib is a separate external
 cross-check rather than the only reference.
 """
 
@@ -184,4 +184,3 @@ def conditional_cdf(
     return rotated_h_first_given_second(
         free_u, given_u, parameter, family, directional_rotation
     )
-

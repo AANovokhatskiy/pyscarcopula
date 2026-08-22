@@ -1,4 +1,4 @@
-"""Stage-1 contracts for the shared native R-vine layer."""
+"""Contracts for the shared native R-vine layer."""
 
 from __future__ import annotations
 

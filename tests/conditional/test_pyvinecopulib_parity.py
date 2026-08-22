@@ -1,4 +1,4 @@
-"""Optional Stage-3 edge-level parity with pyvinecopulib 0.7.5."""
+"""Optional edge-level parity with pyvinecopulib 0.7.5."""
 
 from __future__ import annotations
 
@@ -12,7 +12,13 @@ import pytest
 
 os.environ.setdefault(
     "MPLCONFIGDIR",
-    str(Path(tempfile.gettempdir()) / "pyscarcopula-matplotlib-cache"),
+    str(
+        Path(tempfile.gettempdir())
+        / (
+            "pyscarcopula-matplotlib-cache-"
+            + os.environ.get("PYTEST_XDIST_WORKER", "main")
+        )
+    ),
 )
 pv = pytest.importorskip("pyvinecopulib")
 

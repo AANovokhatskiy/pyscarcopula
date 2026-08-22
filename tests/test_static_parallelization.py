@@ -1,13 +1,13 @@
-"""Phase-4 contracts for multivariate rows and static likelihood."""
+"""Contracts for multivariate rows and static likelihood."""
 
 from concurrent.futures import ThreadPoolExecutor
 import json
 import os
-import time
 
 import numpy as np
 import pytest
 
+from benchmark_timing import interleaved_timings
 from pyscarcopula import (
     EquicorrGaussianCopula,
     NumericalConfig,
@@ -28,16 +28,6 @@ def _student_case(T=128, d=20, seed=701):
     copula = StochasticStudentCopula(d=d, R=correlation)
     u = rng.uniform(0.02, 0.98, (T, d))
     return copula, u
-
-
-def _median_elapsed(function, repeats=5):
-    samples = []
-    result = None
-    for _ in range(repeats):
-        started = time.perf_counter()
-        result = function()
-        samples.append(time.perf_counter() - started)
-    return float(np.median(samples)), result
 
 
 @pytest.mark.parametrize("family", ["student", "equicorr"])
@@ -193,32 +183,34 @@ def test_static_student_internal_thread_scaling_benchmark():
         count: static_likelihood.prepare(copula, u, n_threads=count)
         for count in (1, 2, 4, 8)
     }
-    evaluators[8].result(6.0)
-    timings = {}
-    reference = None
-    for count, evaluator in evaluators.items():
-        elapsed, result = _median_elapsed(lambda: evaluator.result(6.0))
-        timings[count] = elapsed
-        if reference is None:
-            reference = result
-        else:
-            assert result["negative_log_likelihood"] == pytest.approx(
-                reference["negative_log_likelihood"],
-                rel=0.0,
-                abs=1e-9,
-            )
-            assert result["negative_gradient"] == pytest.approx(
-                reference["negative_gradient"], rel=0.0, abs=1e-9)
+    calls = {
+        count: lambda evaluator=evaluator: evaluator.result(6.0)
+        for count, evaluator in evaluators.items()
+    }
+    for call in calls.values():
+        call()
+    measured = interleaved_timings(calls, repeats=5)
+    timings = measured.medians
+    reference = measured.results[1]
+    for count in (2, 4, 8):
+        result = measured.results[count]
+        assert result["negative_log_likelihood"] == pytest.approx(
+            reference["negative_log_likelihood"],
+            rel=0.0,
+            abs=1e-9,
+        )
+        assert result["negative_gradient"] == pytest.approx(
+            reference["negative_gradient"], rel=0.0, abs=1e-9)
 
     payload = {
         "name": "static_student_internal_thread_scaling",
         "workload": {"T": 700, "d": 80},
         "seconds": {str(key): value for key, value in timings.items()},
         "speedup": {
-            str(key): timings[1] / value for key, value in timings.items()
+            str(key): measured.median_ratio(1, key) for key in evaluators
         },
     }
-    print("PHASE4_STATIC_BENCH " + json.dumps(
+    print("PYSCA_BENCHMARK " + json.dumps(
         payload, sort_keys=True), flush=True)
 
 
@@ -232,32 +224,34 @@ def test_static_equicorr_internal_thread_scaling_benchmark():
         count: static_likelihood.prepare(copula, u, n_threads=count)
         for count in (1, 2, 4, 8)
     }
-    evaluators[8].result(0.2)
-    timings = {}
-    reference = None
-    for count, evaluator in evaluators.items():
-        elapsed, result = _median_elapsed(lambda: evaluator.result(0.2))
-        timings[count] = elapsed
-        if reference is None:
-            reference = result
-        else:
-            assert result["negative_log_likelihood"] == pytest.approx(
-                reference["negative_log_likelihood"],
-                rel=0.0,
-                abs=1e-8,
-            )
-            assert result["negative_gradient"] == pytest.approx(
-                reference["negative_gradient"], rel=0.0, abs=1e-8)
+    calls = {
+        count: lambda evaluator=evaluator: evaluator.result(0.2)
+        for count, evaluator in evaluators.items()
+    }
+    for call in calls.values():
+        call()
+    measured = interleaved_timings(calls, repeats=5)
+    timings = measured.medians
+    reference = measured.results[1]
+    for count in (2, 4, 8):
+        result = measured.results[count]
+        assert result["negative_log_likelihood"] == pytest.approx(
+            reference["negative_log_likelihood"],
+            rel=0.0,
+            abs=1e-8,
+        )
+        assert result["negative_gradient"] == pytest.approx(
+            reference["negative_gradient"], rel=0.0, abs=1e-8)
 
     payload = {
         "name": "static_equicorr_internal_thread_scaling",
         "workload": {"T": 400_000, "d": 2},
         "seconds": {str(key): value for key, value in timings.items()},
         "speedup": {
-            str(key): timings[1] / value for key, value in timings.items()
+            str(key): measured.median_ratio(1, key) for key in evaluators
         },
     }
-    print("PHASE4_STATIC_BENCH " + json.dumps(
+    print("PYSCA_BENCHMARK " + json.dumps(
         payload, sort_keys=True), flush=True)
 
 
@@ -265,26 +259,29 @@ def test_static_equicorr_internal_thread_scaling_benchmark():
 def test_student_rows_internal_thread_scaling_benchmark():
     _benchmark_enabled()
     copula, u = _student_case(T=700, d=80, seed=712)
-    timings = {}
-    reference = None
-    for count in (1, 2, 4, 8):
-        elapsed, result = _median_elapsed(
-            lambda count=count: multivariate_native.log_pdf_and_dlog_rows(
-                copula, u, 6.0, n_threads=count))
-        timings[count] = elapsed
-        if reference is None:
-            reference = result
-        else:
-            np.testing.assert_array_equal(result[0], reference[0])
-            np.testing.assert_array_equal(result[1], reference[1])
+    workers = (1, 2, 4, 8)
+    calls = {
+        count: lambda count=count: multivariate_native.log_pdf_and_dlog_rows(
+            copula, u, 6.0, n_threads=count)
+        for count in workers
+    }
+    for call in calls.values():
+        call()
+    measured = interleaved_timings(calls, repeats=5)
+    timings = measured.medians
+    reference = measured.results[1]
+    for count in workers[1:]:
+        result = measured.results[count]
+        np.testing.assert_array_equal(result[0], reference[0])
+        np.testing.assert_array_equal(result[1], reference[1])
 
     payload = {
         "name": "student_rows_internal_thread_scaling",
         "workload": {"T": 700, "d": 80},
         "seconds": {str(key): value for key, value in timings.items()},
         "speedup": {
-            str(key): timings[1] / value for key, value in timings.items()
+            str(key): measured.median_ratio(1, key) for key in workers
         },
     }
-    print("PHASE4_ROWS_BENCH " + json.dumps(
+    print("PYSCA_BENCHMARK " + json.dumps(
         payload, sort_keys=True), flush=True)

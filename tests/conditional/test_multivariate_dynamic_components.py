@@ -1,4 +1,4 @@
-"""Stage-4 component and execution-contract tests for dynamic models."""
+"""Component and execution-contract tests for dynamic models."""
 
 from __future__ import annotations
 

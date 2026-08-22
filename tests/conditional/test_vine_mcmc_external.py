@@ -14,7 +14,13 @@ from scipy.stats import ks_2samp, spearmanr
 
 os.environ.setdefault(
     "MPLCONFIGDIR",
-    str(Path(tempfile.gettempdir()) / "pyscarcopula-matplotlib-cache"),
+    str(
+        Path(tempfile.gettempdir())
+        / (
+            "pyscarcopula-matplotlib-cache-"
+            + os.environ.get("PYTEST_XDIST_WORKER", "main")
+        )
+    ),
 )
 pv = pytest.importorskip("pyvinecopulib")
 
@@ -161,4 +167,3 @@ def test_arbitrary_non_gaussian_matches_independent_pyvine_density_mcmc(case):
     assert float(np.max(marginal_ks)) < 0.075, marginal_ks
     assert float(np.max(mean_error)) < 0.035, mean_error
     assert rank_error < 0.12, rank_error
-

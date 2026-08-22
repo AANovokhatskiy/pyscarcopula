@@ -1,4 +1,4 @@
-"""Stage-7 validation matrix for ``d=50`` conditional sampling."""
+"""Validation matrix for ``d=50`` conditional sampling."""
 
 from __future__ import annotations
 

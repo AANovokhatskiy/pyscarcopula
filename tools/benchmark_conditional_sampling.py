@@ -41,11 +41,11 @@ from tests.conditional._high_dimensional import (
 
 DEFAULT_JSON = (
     ROOT / "benchmark_artifacts" /
-    "conditional_sampling_stage8_benchmark.json"
+    "conditional_sampling_benchmark.json"
 )
 DEFAULT_CSV = (
     ROOT / "benchmark_artifacts" /
-    "conditional_sampling_stage8_benchmark.csv"
+    "conditional_sampling_benchmark.csv"
 )
 
 

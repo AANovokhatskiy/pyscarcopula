@@ -1,4 +1,4 @@
-"""Stage-4 low-dimensional correlation and tail-regime matrix."""
+"""Low-dimensional correlation and tail-regime matrix."""
 
 from __future__ import annotations
 

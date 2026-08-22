@@ -34,7 +34,7 @@ from tests.conditional._statistical_assertions import (
 
 DEFAULT_OUTPUT = (
     ROOT / "benchmark_artifacts" /
-    "conditional_sampling_stage8_calibration.json"
+    "conditional_sampling_calibration.json"
 )
 
 

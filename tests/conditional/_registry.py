@@ -109,7 +109,7 @@ class ConditionalCase:
 
 @dataclass(frozen=True)
 class SupportRegistry:
-    """The complete stage-0 support inventory."""
+    """The complete conditional-sampling support inventory."""
 
     schema_version: int
     scope: str

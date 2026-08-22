@@ -1,7 +1,7 @@
 """Deterministic ``d=50`` fixtures for conditional-sampling validation.
 
 The helpers in this module configure known-parameter models.  Optimizer
-recovery is deliberately outside the stage-7 target: the tests isolate the
+recovery is deliberately outside the high-dimensional target: the tests isolate the
 high-dimensional sampling kernels and compare them with independent
 closed-form oracles from :mod:`tests.conditional._analytical_oracles`.
 """

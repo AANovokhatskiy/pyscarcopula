@@ -1,4 +1,4 @@
-"""Full analytical Stage-3 bivariate family/rotation sweep."""
+"""Full analytical bivariate family and rotation sweep."""
 
 from __future__ import annotations
 
@@ -108,7 +108,7 @@ def _history(seed: int) -> np.ndarray:
     return np.random.default_rng(seed).uniform(0.12, 0.88, size=(19, 2))
 
 
-def test_stage3_matrix_has_exactly_fifteen_supported_rotation_cells():
+def test_bivariate_matrix_has_exactly_fifteen_supported_rotation_cells():
     assert len(CONFIGURATIONS) == 15
     assert len(CASES) == 44
     assert len(MEDIUM_CASES) == 15

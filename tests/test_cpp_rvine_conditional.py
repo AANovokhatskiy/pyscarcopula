@@ -1,4 +1,4 @@
-"""Stage-3 contracts for native suffix and DAG R-vine sampling."""
+"""Contracts for native suffix and DAG R-vine sampling."""
 
 from __future__ import annotations
 

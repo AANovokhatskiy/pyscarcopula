@@ -72,7 +72,7 @@ Oracle-only false-failure calibration:
 ```bash
 python tools/calibrate_conditional_statistical_gates.py \
   --runs 20 --max-failure-rate 0.01 \
-  --output benchmark_artifacts/conditional_sampling_stage8_calibration.json
+  --output benchmark_artifacts/conditional_sampling_calibration.json
 ```
 
 Manual benchmark artifact:

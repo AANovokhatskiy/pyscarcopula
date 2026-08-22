@@ -41,7 +41,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=7.0", "pandas>=1.5", "mypy>=1.10"]
+test = [
+    "pytest>=7.0",
+    "pytest-xdist>=3.5",
+    "pandas>=1.5",
+    "mypy>=1.10",
+]
 external = ["pyvinecopulib==0.7.5"]
 examples = ["pandas>=1.5", "matplotlib", "jupyter"]
 docs = [
@@ -66,6 +71,11 @@ exclude = ["tests*", "data*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Keep tests from the same module on one worker.  This preserves module-local
+# runtime and filesystem assumptions while allowing independent modules to run
+# concurrently when the caller explicitly supplies ``-n N``.  Without ``-n``
+# pytest remains strictly sequential.
+addopts = "--dist=loadscope"
 markers = [
     "data: tests requiring data/ directory (csv files)",
     "benchmark: optional performance regression checks",

@@ -1,4 +1,4 @@
-"""Stage-1 common syntax and behavioral contracts."""
+"""Common conditional-sampling syntax and behavioral contracts."""
 
 from __future__ import annotations
 

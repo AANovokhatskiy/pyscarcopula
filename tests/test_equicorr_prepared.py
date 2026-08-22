@@ -1,4 +1,4 @@
-﻿"""Phase-8 contracts for compact equicorrelation preparation."""
+﻿"""Contracts for compact equicorrelation preparation."""
 
 from __future__ import annotations
 

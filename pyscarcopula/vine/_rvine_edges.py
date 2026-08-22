@@ -1,4 +1,4 @@
-"""Edge-level operations for the refactored RVineCopula."""
+"""Edge-level operations for RVineCopula."""
 
 import numpy as np
 

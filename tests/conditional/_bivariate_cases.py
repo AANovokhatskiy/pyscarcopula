@@ -1,4 +1,4 @@
-"""Stage-3 bivariate family, rotation, and dependence regimes."""
+"""Bivariate family, rotation, and dependence regimes."""
 
 from __future__ import annotations
 
@@ -71,4 +71,3 @@ def transposed_rotation(rotation: int) -> int:
     if rotation not in (0, 90, 180, 270):
         raise ValueError("rotation must be 0, 90, 180, or 270")
     return {0: 0, 90: 270, 180: 180, 270: 90}[rotation]
-

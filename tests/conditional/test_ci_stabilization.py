@@ -1,4 +1,4 @@
-"""Stage-8 contracts for conditional-sampling CI and artifacts."""
+"""Contracts for conditional-sampling CI and artifacts."""
 
 from __future__ import annotations
 

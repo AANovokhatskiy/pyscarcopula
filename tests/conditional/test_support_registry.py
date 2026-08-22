@@ -1,4 +1,4 @@
-"""Stage-0 executable contracts for conditional-sampling support."""
+"""Executable contracts for the conditional-sampling support registry."""
 
 from __future__ import annotations
 

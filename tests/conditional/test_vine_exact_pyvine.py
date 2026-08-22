@@ -1,4 +1,4 @@
-"""External Stage-5 parity for fixed exact-suffix vine models."""
+"""External parity for fixed exact-suffix vine models."""
 
 from __future__ import annotations
 
@@ -12,7 +12,13 @@ import pytest
 
 os.environ.setdefault(
     "MPLCONFIGDIR",
-    str(Path(tempfile.gettempdir()) / "pyscarcopula-matplotlib-cache"),
+    str(
+        Path(tempfile.gettempdir())
+        / (
+            "pyscarcopula-matplotlib-cache-"
+            + os.environ.get("PYTEST_XDIST_WORKER", "main")
+        )
+    ),
 )
 pv = pytest.importorskip("pyvinecopulib")
 

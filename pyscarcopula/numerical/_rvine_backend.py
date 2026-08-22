@@ -1,8 +1,8 @@
-"""Private backend selection for the staged R-vine C++ migration.
+"""Private backend selection for R-vine runtime validation.
 
 The selector is intentionally controlled only through a project-prefixed
-test environment variable.  Public sampling and GoF signatures must not grow
-a backend argument while the native runtime is being developed.
+test environment variable. Public sampling and GoF signatures do not expose
+a backend argument; tests use it for explicit native/Python parity checks.
 """
 
 from __future__ import annotations
@@ -33,11 +33,11 @@ def rvine_backend_mode() -> str:
 
 
 def native_rvine_symbol_available(symbol: str) -> bool:
-    """Return whether the mandatory extension exposes a migration symbol.
+    """Return whether the mandatory extension exposes a runtime symbol.
 
     Loading is deliberate even for the Python traversal oracle: built-in pair
     operations still require the base extension, and a completely missing
-    ``_scar_cpp`` must remain distinguishable from a missing new entry point.
+    ``_scar_cpp`` must remain distinguishable from a missing entry point.
     """
     return hasattr(_cpp_extension.load(), symbol)
 

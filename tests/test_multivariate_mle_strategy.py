@@ -1,4 +1,4 @@
-"""Stage-2 contracts for shared static multivariate MLE orchestration."""
+"""Contracts for shared static multivariate MLE orchestration."""
 
 from types import SimpleNamespace
 import inspect
