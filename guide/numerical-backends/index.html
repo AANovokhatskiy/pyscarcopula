@@ -1,0 +1,3503 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Python library for bivariate, multivariate, vine, and stochastic copula models">
+      
+      
+      
+        <link rel="canonical" href="https://AANovokhatskiy.github.io/pyscarcopula/guide/numerical-backends/">
+      
+      
+        <link rel="prev" href="../performance/">
+      
+      
+        <link rel="next" href="../parallelism/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Numerical Backends - pyscarcopula</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#numerical-backends" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="pyscarcopula" class="md-header__button md-logo" aria-label="pyscarcopula" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            pyscarcopula
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Numerical Backends
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/AANovokhatskiy/pyscarcopula" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    AANovokhatskiy/pyscarcopula
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="pyscarcopula" class="md-nav__button md-logo" aria-label="pyscarcopula" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    pyscarcopula
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/AANovokhatskiy/pyscarcopula" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    AANovokhatskiy/pyscarcopula
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/choosing-a-model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Choosing a Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    User Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_1" id="__nav_3_1_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Models
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Models
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../bivariate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bivariate Copulas
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../multivariate_models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multivariate Models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../factor-models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Factor Models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../vine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Vine Copulas
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fitting and Prediction
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Fitting and Prediction
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../estimation-methods/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Estimation Methods
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../prediction-semantics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Prediction Semantics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../rvine-conditioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    R-vine Conditioning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mathematical Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Mathematical Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../mathematical-contracts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mathematical Contracts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../transforms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parameter Transforms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Performance and Scaling
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Performance and Scaling
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../performance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Performance Tuning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Numerical Backends
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Numerical Backends
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bivariate-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bivariate Models
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Bivariate Models">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#mle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MLE
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GAS
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#scar-tm-ou" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SCAR-TM-OU
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="SCAR-TM-OU">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#compiled-engine" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Compiled engine
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#manual-python-reference-grid" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Manual Python reference grid
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#student-ppf-table-memory-cap" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Student PPF table memory cap
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#transfer-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Transfer methods
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#matrix-transfer-likelihood" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Matrix transfer likelihood
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#local-gauss-hermite-transition" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Local Gauss-Hermite transition
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#spectral-hermite-likelihood" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Spectral Hermite likelihood
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#scar-tm-jacobi" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SCAR-TM-JACOBI
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="SCAR-TM-JACOBI">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#jacobi-transfer-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Jacobi transfer methods
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unconditional-jacobi-sampling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unconditional Jacobi sampling
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sparse-local-jacobi-transitions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sparse local Jacobi transitions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#experimental-adaptive-jacobi-order" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Experimental adaptive Jacobi order
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#multivariate-native-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multivariate Native Paths
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#independent-fit-parallelism" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Independent Fit Parallelism
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#numericalconfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NumericalConfig
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#legacy-c-vines" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Legacy C-Vines
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#generic-vinecopula" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Generic VineCopula
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../parallelism/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CPU Parallelism
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Developer Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_2" id="__nav_5_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Validation
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Validation
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../conditional-sampling-validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Conditional Sampling CI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/copulas/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core Copulas and Fitting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/multivariate_models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multivariate and Factor Models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/vine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Vines and Prediction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/diagnostics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Diagnostics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/persistence/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Persistence
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/contrib/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contrib Extensions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bivariate-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bivariate Models
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Bivariate Models">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#mle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MLE
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GAS
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#scar-tm-ou" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SCAR-TM-OU
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="SCAR-TM-OU">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#compiled-engine" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Compiled engine
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#manual-python-reference-grid" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Manual Python reference grid
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#student-ppf-table-memory-cap" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Student PPF table memory cap
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#transfer-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Transfer methods
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#matrix-transfer-likelihood" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Matrix transfer likelihood
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#local-gauss-hermite-transition" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Local Gauss-Hermite transition
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#spectral-hermite-likelihood" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Spectral Hermite likelihood
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#scar-tm-jacobi" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SCAR-TM-JACOBI
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="SCAR-TM-JACOBI">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#jacobi-transfer-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Jacobi transfer methods
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unconditional-jacobi-sampling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unconditional Jacobi sampling
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sparse-local-jacobi-transitions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sparse local Jacobi transitions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#experimental-adaptive-jacobi-order" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Experimental adaptive Jacobi order
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#multivariate-native-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multivariate Native Paths
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#independent-fit-parallelism" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Independent Fit Parallelism
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#numericalconfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NumericalConfig
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#legacy-c-vines" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Legacy C-Vines
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#generic-vinecopula" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Generic VineCopula
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="numerical-backends">Numerical Backends<a class="headerlink" href="#numerical-backends" title="Permanent link">&para;</a></h1>
+<p>This page is the detailed reference for optimizer controls, transfer methods,
+native kernels, memory guards, and vine fitting options. Start with
+<a href="../performance/">Performance Tuning</a> for the short decision guide and change a
+backend option only when diagnostics identify the corresponding numerical
+condition.</p>
+<p>For the statistical meaning of each method, see
+<a href="../estimation-methods/">Estimation Methods</a>.</p>
+<p>For the complete native-thread, process-worker, determinism, thread-safety,
+and dimensional-scaling contract, see <a href="../parallelism/">CPU Parallelism</a>.</p>
+<h2 id="bivariate-models">Bivariate Models<a class="headerlink" href="#bivariate-models" title="Permanent link">&para;</a></h2>
+<p>All bivariate fits go through the strategy registry:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pyscarcopula</span><span class="w"> </span><span class="kn">import</span> <span class="n">JoeCopula</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pyscarcopula.api</span><span class="w"> </span><span class="kn">import</span> <span class="n">fit</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">copula</span> <span class="o">=</span> <span class="n">JoeCopula</span><span class="p">(</span><span class="n">rotate</span><span class="o">=</span><span class="mi">180</span><span class="p">)</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="c1"># Default GAS fit.</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="n">result</span> <span class="o">=</span> <span class="n">fit</span><span class="p">(</span><span class="n">copula</span><span class="p">,</span> <span class="n">u</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="s1">'gas'</span><span class="p">)</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="c1"># Tighten or relax optimizer controls for this run.</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="n">result</span> <span class="o">=</span> <span class="n">fit</span><span class="p">(</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>    <span class="n">copula</span><span class="p">,</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>    <span class="n">u</span><span class="p">,</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>    <span class="n">method</span><span class="o">=</span><span class="s1">'gas'</span><span class="p">,</span>
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>    <span class="n">gamma_bound</span><span class="o">=</span><span class="mf">30.0</span><span class="p">,</span>
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>    <span class="n">beta_bound</span><span class="o">=</span><span class="mf">0.995</span><span class="p">,</span>
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>    <span class="n">gtol</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span>
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>    <span class="n">ftol</span><span class="o">=</span><span class="mf">1e-12</span><span class="p">,</span>
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>    <span class="n">maxfun</span><span class="o">=</span><span class="mi">3000</span><span class="p">,</span>
+<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a><span class="p">)</span>
+</code></pre></div>
+<p>The object method is equivalent:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">result</span> <span class="o">=</span> <span class="n">copula</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">u</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="s1">'scar-tm-ou'</span><span class="p">,</span> <span class="n">K</span><span class="o">=</span><span class="mi">500</span><span class="p">,</span> <span class="n">gtol</span><span class="o">=</span><span class="mf">5e-3</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="mle">MLE<a class="headerlink" href="#mle" title="Permanent link">&para;</a></h3>
+<p>MLE labels a static model. For scalar bivariate families it estimates one
+constant copula parameter; the table in this subsection applies to that
+optimizer. Static multivariate Gaussian and Student correlation controls are
+described under <a href="#multivariate-native-paths">Multivariate Native Paths</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Where</th>
+<th>Default</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>alpha0</code></td>
+<td>fit kwarg</td>
+<td>auto</td>
+<td>Initial point in the copula's natural parameter space.</td>
+</tr>
+<tr>
+<td><code>gtol</code></td>
+<td>fit kwarg / <code>mle_optimizer.gtol</code></td>
+<td><code>1e-3</code></td>
+<td>L-BFGS-B projected-gradient tolerance.</td>
+</tr>
+<tr>
+<td><code>maxls</code></td>
+<td>fit kwarg / <code>mle_optimizer.maxls</code></td>
+<td><code>20</code></td>
+<td>Maximum L-BFGS-B line-search steps per iteration.</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pyscarcopula</span><span class="w"> </span><span class="kn">import</span> <span class="n">LBFGSBConfig</span><span class="p">,</span> <span class="n">NumericalConfig</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">cfg</span> <span class="o">=</span> <span class="n">NumericalConfig</span><span class="p">(</span><span class="n">mle_optimizer</span><span class="o">=</span><span class="n">LBFGSBConfig</span><span class="p">(</span><span class="n">gtol</span><span class="o">=</span><span class="mf">1e-6</span><span class="p">))</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="n">result</span> <span class="o">=</span> <span class="n">fit</span><span class="p">(</span><span class="n">copula</span><span class="p">,</span> <span class="n">u</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="s1">'mle'</span><span class="p">,</span> <span class="n">config</span><span class="o">=</span><span class="n">cfg</span><span class="p">)</span>
+</code></pre></div>
+<p>MLE evaluates the likelihood directly in the natural copula parameter. For
+example, <code>alpha0=[2.0]</code> means a Gumbel parameter of <code>2.0</code>, while a stochastic Student
+initial value of <code>5.0</code> means five degrees of freedom. Parameter transforms are
+used by dynamic latent-state methods, not by the MLE objective.</p>
+<p>When <code>alpha0</code> is omitted for a bivariate copula, the implementation calls
+<code>copula.transform([1.5])</code> only to obtain a family-valid natural starting
+value. The returned value is passed directly to the MLE optimizer; it is not
+treated as a latent coordinate.</p>
+<h3 id="gas">GAS<a class="headerlink" href="#gas" title="Permanent link">&para;</a></h3>
+<p>GAS estimates an observation-driven recursion
+<span class="arithmatex">\(g_t = \omega + \beta g_{t-1} + \gamma\,score_{t-1}\)</span>.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Where</th>
+<th>Default</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>gamma0</code></td>
+<td>fit kwarg</td>
+<td>MLE-based</td>
+<td>Initial <span class="arithmatex">\([\omega, \gamma, \beta]\)</span>.</td>
+</tr>
+<tr>
+<td><code>gtol</code></td>
+<td>fit kwarg / <code>gas_optimizer.gtol</code></td>
+<td><code>1e-3</code></td>
+<td>L-BFGS-B projected-gradient tolerance.</td>
+</tr>
+<tr>
+<td><code>ftol</code></td>
+<td>fit kwarg / <code>gas_optimizer.ftol</code></td>
+<td><code>1e-9</code></td>
+<td>Relative objective decrease tolerance.</td>
+</tr>
+<tr>
+<td><code>maxfun</code></td>
+<td>fit kwarg / <code>gas_optimizer.maxfun</code></td>
+<td><code>4000</code></td>
+<td>Maximum function evaluations.</td>
+</tr>
+<tr>
+<td><code>maxiter</code></td>
+<td>fit kwarg / <code>gas_optimizer.maxiter</code></td>
+<td><code>1000</code></td>
+<td>Maximum optimizer iterations.</td>
+</tr>
+<tr>
+<td><code>maxls</code></td>
+<td>fit kwarg / <code>gas_optimizer.maxls</code></td>
+<td><code>100</code></td>
+<td>Maximum L-BFGS-B line-search steps per iteration.</td>
+</tr>
+<tr>
+<td><code>eps</code></td>
+<td>fit kwarg / <code>gas_optimizer.eps</code></td>
+<td><code>1e-5</code></td>
+<td>L-BFGS-B finite-difference step.</td>
+</tr>
+<tr>
+<td><code>score_eps</code></td>
+<td>fit kwarg / <code>gas_score_eps</code></td>
+<td><code>1e-4</code></td>
+<td>Finite-difference step for score calculations where needed.</td>
+</tr>
+<tr>
+<td><code>gamma_bound</code></td>
+<td>fit kwarg / <code>gas_gamma_bound</code></td>
+<td><code>20.0</code></td>
+<td>Bounds score sensitivity to <span class="arithmatex">\([-\texttt{gamma\_bound}, \texttt{gamma\_bound}]\)</span>.</td>
+</tr>
+<tr>
+<td><code>beta_bound</code></td>
+<td>fit kwarg / <code>gas_beta_bound</code></td>
+<td><code>0.999</code></td>
+<td>Bounds persistence to <span class="arithmatex">\([-\texttt{beta\_bound}, \texttt{beta\_bound}]\)</span>; must be in <span class="arithmatex">\((0, 1)\)</span>.</td>
+</tr>
+<tr>
+<td><code>scaling</code></td>
+<td>strategy kwarg</td>
+<td><code>'unit'</code></td>
+<td>Recommended score scaling mode. <code>'fisher'</code> is numerically sensitive.</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">result</span> <span class="o">=</span> <span class="n">fit</span><span class="p">(</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="n">JoeCopula</span><span class="p">(</span><span class="n">rotate</span><span class="o">=</span><span class="mi">180</span><span class="p">),</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="n">u</span><span class="p">,</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    <span class="n">method</span><span class="o">=</span><span class="s1">'gas'</span><span class="p">,</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>    <span class="n">scaling</span><span class="o">=</span><span class="s1">'unit'</span><span class="p">,</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>    <span class="n">ftol</span><span class="o">=</span><span class="mf">1e-12</span><span class="p">,</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>    <span class="n">maxfun</span><span class="o">=</span><span class="mi">3000</span><span class="p">,</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="p">)</span>
+</code></pre></div>
+<p><code>ftol</code> matters for GAS because L-BFGS-B can otherwise report <code>success=True</code>
+after a small relative objective decrease even when the gradient is still
+large. If a GAS result looks sensitive to <code>gamma_bound</code> even though the fitted
+<span class="arithmatex">\(\gamma\)</span> is far from the bound, rerun with tighter <code>ftol</code> and larger <code>maxfun</code>.</p>
+<p>GAS uses the compiled numerical engine for likelihood, score recursion,
+filtering, prediction, and Rosenblatt operations. Unsupported copulas fail
+immediately.</p>
+<p>The model score driving the GAS recursion is not an analytical gradient of the
+complete likelihood with respect to <code>omega</code>, <code>gamma</code>, and <code>beta</code>. SciPy
+L-BFGS-B obtains that optimizer gradient by finite differences.
+<code>GASResult.diagnostics</code> records these as
+<code>model_score='native'</code> and <code>optimizer_gradient='numerical'</code>.</p>
+<p>Fisher scaling computes curvature by a second finite difference inside the GAS
+recursion, while L-BFGS-B also differentiates the outer objective numerically.
+Together with the Fisher floor and score clipping, this can produce a
+piecewise, step-sensitive objective. Prefer <code>scaling='unit'</code> unless Fisher
+behavior is specifically under study.</p>
+<p>GAS <code>sample</code> and <code>predict</code> require a positive integer draw count. Both accept
+<code>memory_budget_bytes=</code> as a pre-allocation guard; <code>sample</code> accounts for its
+output and <code>predict</code> accounts for its output plus the predictive parameter
+path. The causal GAS sample recursion is not split into batches.</p>
+<h3 id="scar-tm-ou">SCAR-TM-OU<a class="headerlink" href="#scar-tm-ou" title="Permanent link">&para;</a></h3>
+<p>SCAR-TM-OU uses a deterministic transfer-matrix likelihood for an OU latent
+state. Unlike Monte Carlo likelihoods, repeated evaluation at fixed inputs
+does not introduce simulation noise.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Where</th>
+<th>Default</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>alpha0</code></td>
+<td>fit kwarg</td>
+<td>smart/MLE-based</td>
+<td>Initial <span class="arithmatex">\([\kappa, \mu, \nu]\)</span>.</td>
+</tr>
+<tr>
+<td><code>gtol</code></td>
+<td>fit kwarg / <code>scar_optimizer.gtol</code></td>
+<td><code>1e-3</code></td>
+<td>L-BFGS-B projected-gradient tolerance. Larger values are faster but less precise.</td>
+</tr>
+<tr>
+<td><code>maxfun</code></td>
+<td>fit kwarg / <code>scar_optimizer.maxfun</code></td>
+<td><code>300</code></td>
+<td>Maximum function evaluations.</td>
+</tr>
+<tr>
+<td><code>maxiter</code></td>
+<td>fit kwarg / <code>scar_optimizer.maxiter</code></td>
+<td><code>100</code></td>
+<td>Maximum optimizer iterations.</td>
+</tr>
+<tr>
+<td><code>maxls</code></td>
+<td>fit kwarg / <code>scar_optimizer.maxls</code></td>
+<td><code>20</code></td>
+<td>Maximum L-BFGS-B line-search steps per iteration.</td>
+</tr>
+<tr>
+<td><code>eps</code></td>
+<td>fit kwarg / <code>scar_optimizer.eps</code></td>
+<td><code>1e-4</code></td>
+<td>L-BFGS-B finite-difference step for numerical-gradient fits.</td>
+</tr>
+<tr>
+<td><code>K</code></td>
+<td>strategy kwarg / <code>default_K</code></td>
+<td><code>300</code></td>
+<td>Minimum latent grid size. May be increased by the adaptive rule.</td>
+</tr>
+<tr>
+<td><code>grid_range</code></td>
+<td>strategy kwarg / <code>default_grid_range</code></td>
+<td><code>5.0</code></td>
+<td>Grid spans <span class="arithmatex">\([-\texttt{grid\_range}\,\sigma, +\texttt{grid\_range}\,\sigma]\)</span>.</td>
+</tr>
+<tr>
+<td><code>grid_method</code></td>
+<td>strategy kwarg / <code>default_grid_method</code></td>
+<td><code>'auto'</code></td>
+<td><code>'auto'</code>, <code>'dense'</code>, or <code>'sparse'</code>. Use sparse for large grids.</td>
+</tr>
+<tr>
+<td><code>adaptive</code></td>
+<td>strategy kwarg / <code>default_adaptive</code></td>
+<td><code>True</code></td>
+<td>Enlarges <code>K</code> when the OU transition kernel needs more resolution.</td>
+</tr>
+<tr>
+<td><code>pts_per_sigma</code></td>
+<td>strategy kwarg / <code>default_pts_per_sigma</code></td>
+<td><code>4</code></td>
+<td>Minimum grid points per conditional standard deviation.</td>
+</tr>
+<tr>
+<td><code>transition_method</code></td>
+<td>strategy kwarg</td>
+<td><code>'auto'</code></td>
+<td><code>'auto'</code>, <code>'matrix'</code>, <code>'local'</code>, or <code>'spectral'</code>. See below.</td>
+</tr>
+<tr>
+<td><code>auto_small_kdt</code></td>
+<td>strategy kwarg</td>
+<td><code>1e-2</code></td>
+<td>In <code>transition_method='auto'</code>, use the local transition when <span class="arithmatex">\(\kappa\,dt\)</span> is below this value.</td>
+</tr>
+<tr>
+<td><code>spectral_basis_order</code></td>
+<td>strategy kwarg</td>
+<td><code>'auto'</code></td>
+<td>Hermite basis size for the spectral likelihood. The auto policy uses 128, 96, 64, or 32 from the current <span class="arithmatex">\(\kappa\,dt\)</span>; pass an integer to fix the basis size.</td>
+</tr>
+<tr>
+<td><code>spectral_quad_order</code></td>
+<td>strategy kwarg</td>
+<td>auto</td>
+<td>Gauss-Hermite quadrature order for spectral multiplication.</td>
+</tr>
+<tr>
+<td><code>analytical_grad</code></td>
+<td>strategy kwarg</td>
+<td><code>True</code></td>
+<td>Uses the analytical gradient and avoids optimizer finite differences.</td>
+</tr>
+<tr>
+<td><code>smart_init</code></td>
+<td>strategy kwarg</td>
+<td><code>True</code></td>
+<td>Uses a heuristic initial point before falling back to MLE-based init.</td>
+</tr>
+<tr>
+<td><code>log_stationary_scale_optimization</code></td>
+<td>strategy kwarg</td>
+<td><code>None</code></td>
+<td>For bivariate models, <code>True</code> enables <code>[log(kappa), mu, log(sigma_x)]</code> with <code>kappa, sigma_x &gt;= 0.001</code>; <code>False</code> forces scaled physical coordinates; <code>None</code> keeps the model default.</td>
+</tr>
+<tr>
+<td><code>stationary_scale_bounds</code></td>
+<td>strategy kwarg</td>
+<td><code>None</code></td>
+<td>Overrides model bounds for <code>sigma_x</code> in log-stationary coordinates. <code>StochasticStudentCopula</code> and bivariate models use separate policies, both defaulting to <code>(0.001, 10000.0)</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>For <code>StochasticStudentCopula</code>, <code>alpha0</code> is still supplied as
+<code>[kappa, mu, nu]</code>, but the optimizer internally uses
+<code>[log(kappa), mu, log(sigma_x)]</code>, where
+<code>sigma_x = nu / sqrt(2 * kappa)</code>. The result is converted back to
+<code>[kappa, mu, nu]</code>. For a bivariate SCAR-TM-OU model this conditioning measure
+is opt-in via <code>log_stationary_scale_optimization=True</code>. The log-coordinate
+fit guarantees positive <code>nu</code> after conversion but does not apply the legacy
+<code>nu &gt;= 0.001</code> bound. <code>StochasticStudentCopula</code> uses
+<code>0.001 &lt;= sigma_x &lt;= 10000</code>, while retaining final validation against the
+physical <code>nu &gt;= 0.001</code> bound and the other OU acceptance checks. Its
+model-specific SCAR optimizer defaults are <code>maxiter=1000</code> and <code>maxls=200</code>;
+they come from <code>stochastic_student_scar_optimizer</code>. Ordinary bivariate
+SCAR-TM-OU fits use <code>bivariate_scar_optimizer</code>; when it is omitted, that field
+resolves from <code>scar_optimizer</code> for backward compatibility. The
+optional bivariate log-coordinate mode instead uses the independent
+<code>bivariate_log_scar_optimizer</code>, whose defaults are <code>maxiter=1000</code> and
+<code>maxls=200</code>. Other SCAR models retain their existing <code>scar_optimizer</code>
+configuration. Inspect
+<code>result.diagnostics['optimizer_parameterization']</code> when auditing fits.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pyscarcopula</span><span class="w"> </span><span class="kn">import</span> <span class="n">LBFGSBConfig</span><span class="p">,</span> <span class="n">NumericalConfig</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="n">config</span> <span class="o">=</span> <span class="n">NumericalConfig</span><span class="p">(</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    <span class="n">scar_optimizer</span><span class="o">=</span><span class="n">LBFGSBConfig</span><span class="p">(</span><span class="n">maxiter</span><span class="o">=</span><span class="mi">200</span><span class="p">),</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    <span class="c1"># Optional explicit override; otherwise this inherits scar_optimizer.</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>    <span class="n">bivariate_scar_optimizer</span><span class="o">=</span><span class="n">LBFGSBConfig</span><span class="p">(</span><span class="n">maxiter</span><span class="o">=</span><span class="mi">300</span><span class="p">),</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>    <span class="n">bivariate_log_scar_optimizer</span><span class="o">=</span><span class="n">LBFGSBConfig</span><span class="p">(</span><span class="n">maxiter</span><span class="o">=</span><span class="mi">1200</span><span class="p">),</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>    <span class="n">stochastic_student_scar_optimizer</span><span class="o">=</span><span class="n">LBFGSBConfig</span><span class="p">(</span><span class="n">maxiter</span><span class="o">=</span><span class="mi">1500</span><span class="p">),</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="p">)</span>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="c1"># Optional only for bivariate models; the default remains scaled [kappa, mu, nu].</span>
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="n">result</span> <span class="o">=</span> <span class="n">fit</span><span class="p">(</span>
+<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a>    <span class="n">copula</span><span class="p">,</span>
+<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>    <span class="n">u</span><span class="p">,</span>
+<a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a>    <span class="n">method</span><span class="o">=</span><span class="s2">"scar-tm-ou"</span><span class="p">,</span>
+<a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a>    <span class="n">config</span><span class="o">=</span><span class="n">config</span><span class="p">,</span>
+<a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a>    <span class="n">log_stationary_scale_optimization</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a><span class="p">)</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">result</span> <span class="o">=</span> <span class="n">fit</span><span class="p">(</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>    <span class="n">copula</span><span class="p">,</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>    <span class="n">u</span><span class="p">,</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>    <span class="n">method</span><span class="o">=</span><span class="s1">'scar-tm-ou'</span><span class="p">,</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>    <span class="n">K</span><span class="o">=</span><span class="mi">500</span><span class="p">,</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>    <span class="n">grid_method</span><span class="o">=</span><span class="s1">'sparse'</span><span class="p">,</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>    <span class="n">transition_method</span><span class="o">=</span><span class="s1">'auto'</span><span class="p">,</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>    <span class="n">gtol</span><span class="o">=</span><span class="mf">5e-3</span><span class="p">,</span>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>    <span class="n">analytical_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="p">)</span>
+</code></pre></div>
+<p>When <code>adaptive=True</code>, the grid is enlarged so the OU transition kernel is
+resolved with at least <code>pts_per_sigma</code> points per conditional standard
+deviation. For slow mean reversion this can produce large grids. If that is too
+expensive, use <code>grid_method='sparse'</code>, reduce <code>pts_per_sigma</code>, or set
+<code>adaptive=False</code> with an explicit <code>K</code>.</p>
+<h4 id="compiled-engine">Compiled engine<a class="headerlink" href="#compiled-engine" title="Permanent link">&para;</a></h4>
+<p>The compiled engine implements the SCAR-TM-OU likelihood, analytical gradient,
+grid forward quantities, and pointwise copula <code>h</code>/<code>h_inverse</code> kernels. No
+backend argument is accepted.</p>
+<p>SCAR-TM-OU likelihood and gradient support:</p>
+<table>
+<thead>
+<tr>
+<th>Family</th>
+<th>Rotations</th>
+<th>Transform</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Clayton</td>
+<td>0, 90, 180, 270</td>
+<td><code>softplus</code>, <code>xtanh</code></td>
+</tr>
+<tr>
+<td>Gumbel</td>
+<td>0, 90, 180, 270</td>
+<td><code>softplus</code>, <code>xtanh</code></td>
+</tr>
+<tr>
+<td>Joe</td>
+<td>0, 90, 180, 270</td>
+<td><code>softplus</code>, <code>xtanh</code></td>
+</tr>
+<tr>
+<td>Frank</td>
+<td>0</td>
+<td><code>softplus</code>, <code>xtanh</code></td>
+</tr>
+<tr>
+<td>Independent</td>
+<td>0</td>
+<td>identity</td>
+</tr>
+<tr>
+<td>Bivariate Gaussian</td>
+<td>0</td>
+<td>Gaussian tanh transform</td>
+</tr>
+<tr>
+<td>Equicorr Gaussian</td>
+<td>0</td>
+<td>dimension-aware Gaussian tanh</td>
+</tr>
+<tr>
+<td>Stochastic Student</td>
+<td>0</td>
+<td>shifted softplus df transform</td>
+</tr>
+</tbody>
+</table>
+<p>Pointwise <code>h</code>/<code>h_inverse</code> support is broader than likelihood support for some
+families and transforms.</p>
+<p>The likelihood accepts <code>transition_method='auto'</code>, <code>'spectral'</code>, <code>'matrix'</code>,
+and <code>'local'</code>. Forward and prediction quantities are grid-based.</p>
+<p>The compiled kernels impose direct numerical-configuration limits:</p>
+<ul>
+<li><code>K &lt;= 100000</code> for local and sparse-grid paths;</li>
+<li><code>K &lt;= 10000</code> for the dense matrix path;</li>
+<li><code>basis_order</code>, <code>quad_order</code>, and <code>gh_order</code> must not exceed <code>1024</code>.</li>
+</ul>
+<p>Observation count, Student dimension, and derived allocation sizes are not
+artificially capped, with one exception: the multivariate Student PPF table
+(see below). Their memory and runtime cost depend on the data size and
+chosen numerical options.</p>
+<h4 id="manual-python-reference-grid">Manual Python reference grid<a class="headerlink" href="#manual-python-reference-grid" title="Permanent link">&para;</a></h4>
+<p><code>TMGrid</code> remains a supported low-level API for manual diagnostics,
+experiments, and numerical comparisons:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pyscarcopula.numerical</span><span class="w"> </span><span class="kn">import</span> <span class="n">TMGrid</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="n">grid</span> <span class="o">=</span> <span class="n">TMGrid</span><span class="p">(</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>    <span class="n">kappa</span><span class="o">=</span><span class="mf">0.8</span><span class="p">,</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>    <span class="n">mu</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>    <span class="n">nu</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span>
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>    <span class="n">n</span><span class="o">=</span><span class="mi">250</span><span class="p">,</span>
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>    <span class="n">K</span><span class="o">=</span><span class="mi">300</span><span class="p">,</span>
+<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>    <span class="n">grid_method</span><span class="o">=</span><span class="s2">"sparse"</span><span class="p">,</span>
+<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a>    <span class="n">transition_method</span><span class="o">=</span><span class="s2">"matrix"</span><span class="p">,</span>
+<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a><span class="p">)</span>
+<a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a><span class="n">diagnostics</span> <span class="o">=</span> <span class="n">grid</span><span class="o">.</span><span class="n">diagnostics</span><span class="p">()</span>
+</code></pre></div>
+<p>It is an independent NumPy/SciPy implementation, not a wrapper around the
+compiled SCAR evaluator. Built-in likelihood, prediction, smoothing, and
+goodness-of-fit operations use the C++ backend directly and do not construct
+<code>TMGrid</code>. The class is intended for explicit manual use and as a reference
+oracle; it is not deprecated.</p>
+<h4 id="student-ppf-table-memory-cap">Student PPF table memory cap<a class="headerlink" href="#student-ppf-table-memory-cap" title="Permanent link">&para;</a></h4>
+<p>Multivariate Student models normally precompute a quantile (inverse-CDF) table
+of shape <code>(n_df_nodes, T, d)</code> (about 360 df nodes by default) to speed up
+emission-density evaluations. The table costs <code>n_nodes × T × d × 8</code> bytes and
+is bounded by <code>DEFAULT_MAX_TABLE_BYTES</code> (256 MiB) from
+<code>pyscarcopula.copula.multivariate.student_ppf_cache</code>. The default nodes include
+a dense geometric layer above <code>df = 2 + 1e-6</code>, where the quantile changes
+rapidly, and extend through <code>df = 1000</code>.</p>
+<p>When the estimated size exceeds the limit, the values table is not built.
+Python-level table calls then use exact <code>scipy.special.stdtrit</code> values. Native
+dynamic-emission specs retain the df nodes even without the values table:
+they use exact quantiles up to the final node and a third-order Cornish-Fisher
+normal-quantile expansion above it. Static Student likelihoods carry no
+dynamic node metadata and retain exact quantiles at all finite <code>df</code> values.</p>
+<p>The native exact path obtains the quantile's <code>df</code> derivative by implicit
+differentiation of the Student CDF. The large-<code>df</code> expansion has a matching
+analytical derivative. Consequently, an analytical SCAR gradient outside the
+cache no longer evaluates the full emission likelihood at perturbed <code>df</code>
+values. Cached interpolation, exact evaluation, and the controlled asymptotic
+are close but not bit-identical, so small likelihood or gradient differences
+are possible at their boundaries.</p>
+<p><code>StudentPPFTable</code> accepts a <code>max_table_bytes</code> constructor argument for direct
+internal table construction. <code>StochasticStudentCopula</code> currently uses the
+package-wide default; there is no model-level fit or constructor option for
+overriding this cap.</p>
+<p>With <code>transition_method='auto'</code>, a <code>numerical_failure</code> from the spectral path
+may be recovered by trying matrix and then local transition methods. Forced
+transition methods raise an error instead of trying other transition methods.
+Invalid configurations and unsupported combinations are not treated as
+recoverable numerical fallbacks.</p>
+<h4 id="transfer-methods">Transfer methods<a class="headerlink" href="#transfer-methods" title="Permanent link">&para;</a></h4>
+<p>SCAR-TM supports four likelihood transition modes:</p>
+<ul>
+<li><code>transition_method='auto'</code> (default): use <code>spectral</code> except in the
+  narrow-kernel regime, where it uses <code>local</code>; if the spectral likelihood
+  fails numerically, it falls back to <code>matrix</code> first and then to <code>local</code> if the
+  matrix result is not accepted.</li>
+<li><code>transition_method='matrix'</code>: use the original transfer matrix on the latent
+  grid for the likelihood.</li>
+<li><code>transition_method='local'</code>: use the local Gauss-Hermite transition on the
+  latent grid. This is useful when the OU transition kernel is very narrow.</li>
+<li><code>transition_method='spectral'</code>: force the Hermite spectral likelihood.</li>
+</ul>
+<p>The forward quantities used for prediction, mixture h-functions, and
+Rosenblatt GoF still need a grid posterior state. If <code>spectral</code> is selected for
+the likelihood, those forward passes use the grid <code>auto</code> fallback internally.</p>
+<h4 id="matrix-transfer-likelihood">Matrix transfer likelihood<a class="headerlink" href="#matrix-transfer-likelihood" title="Permanent link">&para;</a></h4>
+<p>The matrix method is the most direct discretization of the latent-state
+integral. It builds a grid for the OU state,</p>
+<p>$$
+x_j = \mu + z_j,\qquad
+z_j \in [-R \sigma,\,
+          R \sigma],
+\qquad
+\sigma^2 = \frac{\nu^2}{2\kappa},
+$$
+where <span class="arithmatex">\(R\)</span> is <code>grid_range</code>.</p>
+<p>The OU transition over one observation step is Gaussian:</p>
+<div class="arithmatex">\[
+X_k \mid X_{k-1}=x_i
+\sim
+N\left(
+  \mu + \rho(x_i-\mu),
+  \sigma^2(1-\rho^2)
+\right),
+\qquad
+\rho=\exp(-\kappa\,dt).
+\]</div>
+<p>On the grid this becomes a weighted transition matrix</p>
+<div class="arithmatex">\[
+T_{ji} \approx
+p(x_j \mid x_i)\,w_j,
+\]</div>
+<p>where <span class="arithmatex">\(w_j\)</span> are trapezoidal quadrature weights. If</p>
+<div class="arithmatex">\[
+f_k(x_j)=c(u_{1,k},u_{2,k};\Psi(x_j)),
+\]</div>
+<p>then the backward likelihood recursion has the form</p>
+<div class="arithmatex">\[
+m_{k-1,i}
+=
+\sum_j T_{ji}\,f_k(x_j)\,m_{k,j}.
+\]</div>
+<p>The parameters <code>K</code>, <code>grid_range</code>, <code>adaptive</code>, and <code>pts_per_sigma</code> control the
+state grid. <code>grid_method='dense'</code> stores the full matrix, while
+<code>grid_method='sparse'</code> stores only a band around the Gaussian kernel. The
+<code>grid_method='auto'</code> setting chooses between those two matrix layouts.</p>
+<h4 id="local-gauss-hermite-transition">Local Gauss-Hermite transition<a class="headerlink" href="#local-gauss-hermite-transition" title="Permanent link">&para;</a></h4>
+<p>When <span class="arithmatex">\(\kappa\,dt\)</span> is very small, the conditional OU variance
+<span class="arithmatex">\(\sigma^2(1-\rho^2)\)</span> is tiny. A fixed grid may then need many points to resolve
+the narrow Gaussian transition kernel. The local Gauss-Hermite method avoids
+building the full transition matrix. For each previous grid point <span class="arithmatex">\(x_i\)</span>, it
+approximates</p>
+<div class="arithmatex">\[
+\int g(x)\,p(x\mid x_i)\,dx
+\approx
+\sum_{\ell=1}^{q}
+\omega_\ell\,
+g\left(
+  \mu+\rho(x_i-\mu)+
+  \sigma\sqrt{1-\rho^2}\,\sqrt{2}\,\xi_\ell
+\right),
+\]</div>
+<p>where <span class="arithmatex">\(\xi_\ell\)</span> and <span class="arithmatex">\(\omega_\ell\)</span> are Gauss-Hermite nodes and weights and <span class="arithmatex">\(q\)</span> is
+<code>gh_order</code>. The values at off-grid locations are interpolated from the latent
+grid. This makes the transition local: the cost scales with <span class="arithmatex">\(K\,q\)</span>
+rather than with a dense <span class="arithmatex">\(K \times K\)</span> matrix.</p>
+<p>The parameters <code>max_K</code> and <code>r_gh</code> are safeguards for this regime. With
+<code>transition_method='auto'</code>, the grid path uses the local transition when the
+adaptive grid would hit <code>max_K</code> or when the transition kernel is narrow
+relative to the grid spacing. Increasing <code>gh_order</code> improves the local
+quadrature but does not fix a poor latent grid; <code>K</code>, <code>grid_range</code>, and
+<code>pts_per_sigma</code> still determine where the posterior can live.</p>
+<h4 id="spectral-hermite-likelihood">Spectral Hermite likelihood<a class="headerlink" href="#spectral-hermite-likelihood" title="Permanent link">&para;</a></h4>
+<p>The spectral method uses stationarity of the OU process. Write</p>
+<div class="arithmatex">\[
+X_t = \mu + \sigma Z_t,
+\qquad
+\sigma^2 = \frac{\nu^2}{2\kappa},
+\qquad
+Z_t \sim N(0, 1).
+\]</div>
+<p>For observations <span class="arithmatex">\(u_k = (u_{1,k}, u_{2,k})\)</span>, define the emission factor</p>
+<div class="arithmatex">\[
+f_k(z) =
+c\left(u_{1,k}, u_{2,k}; \Psi(\mu + \sigma z)\right),
+\]</div>
+<p>where <span class="arithmatex">\(c\)</span> is the copula density and <span class="arithmatex">\(\Psi\)</span> maps the latent state to the valid
+copula parameter range. The likelihood is the latent OU path integral</p>
+<div class="arithmatex">\[
+L =
+\int f_0(z_0)
+    \prod_{k=1}^{T-1} p_\rho(z_k \mid z_{k-1}) f_k(z_k)
+    \prod_{k=0}^{T-1} \phi(z_k)\,dz_k,
+\]</div>
+<p>with OU correlation</p>
+<div class="arithmatex">\[
+\rho = \exp(-\kappa\,dt).
+\]</div>
+<p>Here <span class="arithmatex">\(p_\rho\)</span> is the OU transition density with respect to the standard normal
+measure in <span class="arithmatex">\(z\)</span> coordinates. This is the measure in which the Hermite basis is
+orthonormal.</p>
+<p>In the orthonormal probabilists-Hermite basis
+<span class="arithmatex">\(\{\psi_n\}_{n \ge 0}\)</span> under the standard normal measure, the OU transition is
+diagonal:</p>
+<div class="arithmatex">\[
+P_\rho \psi_n = \rho^n \psi_n.
+\]</div>
+<p>Each observation only requires projecting multiplication by <span class="arithmatex">\(f_k\)</span> back to the
+truncated basis:</p>
+<div class="arithmatex">\[
+a_{k-1,n}
+=
+\rho^n
+\sum_m
+\left\langle \psi_n, f_k \psi_m \right\rangle_\phi
+a_{k,m}.
+\]</div>
+<p>The inner products are evaluated by Gauss-Hermite quadrature. Therefore the
+high-dimensional latent integral is approximated by repeated multiplication of
+small dense operators in Hermite coordinates, while the OU transition itself is
+just diagonal scaling by <span class="arithmatex">\(\rho^n\)</span>.</p>
+<p>This is fastest when <span class="arithmatex">\(\kappa\,dt\)</span> is not too small: higher Hermite modes are
+damped by <span class="arithmatex">\(\rho^n\)</span>, so a moderate basis order is enough. When <span class="arithmatex">\(\kappa\,dt\)</span> is
+very small, <span class="arithmatex">\(\rho\)</span> is close to one, high modes decay slowly, and a global grid
+does not resolve the narrow transition kernel. The default <code>auto</code> mode sends the
+narrow-kernel regime to <code>local</code>; all other regimes try <code>spectral</code>, with
+<code>matrix</code> and then <code>local</code> as numerical fallbacks.</p>
+<h3 id="scar-tm-jacobi">SCAR-TM-JACOBI<a class="headerlink" href="#scar-tm-jacobi" title="Permanent link">&para;</a></h3>
+<p>SCAR-TM-JACOBI uses a Jacobi diffusion for Kendall's tau on <code>(0, 1)</code>. It is
+available only for copulas with a Kendall-tau parameter mapping. The main
+numerical difference from SCAR-TM-OU is that the transition is built on a
+Jacobi quadrature grid in tau space instead of an OU grid in an unbounded
+latent coordinate.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Where</th>
+<th>Default</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>alpha0</code></td>
+<td>fit kwarg</td>
+<td>smart/MLE-based</td>
+<td>Initial <span class="arithmatex">\([\kappa, m, \xi]\)</span>.</td>
+</tr>
+<tr>
+<td><code>gtol</code></td>
+<td>fit kwarg / <code>scar_optimizer.gtol</code></td>
+<td><code>1e-3</code></td>
+<td>L-BFGS-B projected-gradient tolerance.</td>
+</tr>
+<tr>
+<td><code>maxfun</code></td>
+<td>fit kwarg / <code>scar_optimizer.maxfun</code></td>
+<td><code>300</code></td>
+<td>Maximum function evaluations.</td>
+</tr>
+<tr>
+<td><code>maxiter</code></td>
+<td>fit kwarg / <code>scar_optimizer.maxiter</code></td>
+<td><code>100</code></td>
+<td>Maximum optimizer iterations.</td>
+</tr>
+<tr>
+<td><code>maxls</code></td>
+<td>fit kwarg / <code>scar_optimizer.maxls</code></td>
+<td><code>20</code></td>
+<td>Maximum L-BFGS-B line-search steps per iteration.</td>
+</tr>
+<tr>
+<td><code>eps</code></td>
+<td>fit kwarg / <code>scar_optimizer.eps</code></td>
+<td><code>1e-4</code></td>
+<td>L-BFGS-B finite-difference step.</td>
+</tr>
+<tr>
+<td><code>transition_method</code></td>
+<td>strategy kwarg</td>
+<td><code>'auto'</code></td>
+<td><code>'auto'</code>, <code>'spectral_matrix'</code>, <code>'local'</code>, <code>'local_fixed'</code>, or <code>'spectral_coeff'</code>.</td>
+</tr>
+<tr>
+<td><code>transition_storage</code></td>
+<td>strategy kwarg</td>
+<td><code>'dense'</code></td>
+<td>Dense transition storage, or opt-in <code>'sparse'</code> storage for explicit <code>local</code> and <code>local_fixed</code> backends.</td>
+</tr>
+<tr>
+<td><code>stationarity_correction</code></td>
+<td>strategy kwarg</td>
+<td><code>'none'</code></td>
+<td>Experimental sparse moving-grid correction: <code>'none'</code>, <code>'mh'</code>, or <code>'ipfp'</code>.</td>
+</tr>
+<tr>
+<td><code>adaptive_quad_order</code></td>
+<td>strategy kwarg</td>
+<td><code>False</code></td>
+<td>Experimentally select and then freeze a sparse moving-grid quadrature order before optimization.</td>
+</tr>
+<tr>
+<td><code>adaptive_quad_orders</code></td>
+<td>strategy kwarg</td>
+<td><code>(48, 80, 128, 192, 384, 768)</code></td>
+<td>Strictly increasing candidate ladder for adaptive quadrature.</td>
+</tr>
+<tr>
+<td><code>adaptive_max_full_horizon_tv</code></td>
+<td>strategy kwarg</td>
+<td><code>0.02</code></td>
+<td>Maximum full-horizon total-variation error in the adaptive gate.</td>
+</tr>
+<tr>
+<td><code>adaptive_max_relative_variance_error</code></td>
+<td>strategy kwarg</td>
+<td><code>0.10</code></td>
+<td>Maximum relative stationary-variance error in the adaptive gate.</td>
+</tr>
+<tr>
+<td><code>adaptive_max_conditional_mean_rmse</code></td>
+<td>strategy kwarg</td>
+<td><code>1e-3</code></td>
+<td>Maximum conditional-mean RMSE in the adaptive gate.</td>
+</tr>
+<tr>
+<td><code>adaptive_max_lag_one_correlation_error</code></td>
+<td>strategy kwarg</td>
+<td><code>1e-2</code></td>
+<td>Maximum absolute lag-one correlation error in the adaptive gate.</td>
+</tr>
+<tr>
+<td><code>adaptive_require_pass</code></td>
+<td>strategy kwarg</td>
+<td><code>False</code></td>
+<td>Raise instead of returning an exhausted adaptive-order result when no candidate passes.</td>
+</tr>
+<tr>
+<td><code>spectral_basis_order</code> / <code>basis_order</code></td>
+<td>strategy kwarg</td>
+<td><code>32</code></td>
+<td>Number of Jacobi basis functions.</td>
+</tr>
+<tr>
+<td><code>spectral_quad_order</code> / <code>quad_order</code></td>
+<td>strategy kwarg</td>
+<td>auto</td>
+<td>Jacobi quadrature order; default is <code>max(2 * basis_order + 16, 48)</code>.</td>
+</tr>
+<tr>
+<td><code>analytical_grad</code></td>
+<td>strategy kwarg</td>
+<td><code>False</code></td>
+<td>Passes the Jacobi matrix-filter Jacobian to the optimizer. Fully analytical for <code>local_fixed</code>; semi-analytical for <code>local</code>, <code>spectral_matrix</code>, and <code>auto</code>. Not available with <code>spectral_coeff</code>.</td>
+</tr>
+<tr>
+<td><code>negative_mass_tol</code></td>
+<td>strategy kwarg</td>
+<td><code>1e-5</code></td>
+<td>Maximum spectral truncation noise that may be clipped and renormalized into a probability transition. Larger negative mass makes <code>auto</code> fall back and makes explicit <code>spectral_matrix</code> fail unless <code>clip_negative=True</code>.</td>
+</tr>
+<tr>
+<td><code>gh_order</code></td>
+<td>strategy kwarg</td>
+<td><code>5</code></td>
+<td>Gauss-Hermite order for the local Lamperti transition.</td>
+</tr>
+<tr>
+<td><code>theta_cap</code></td>
+<td>strategy kwarg</td>
+<td><code>None</code></td>
+<td>Optional cap on the copula parameter after mapping from tau. Useful for very high positive dependence.</td>
+</tr>
+<tr>
+<td><code>clip_negative</code></td>
+<td>strategy kwarg</td>
+<td><code>False</code></td>
+<td>Clips negative entries in the truncated spectral matrix before row normalization. Use mainly for diagnostics.</td>
+</tr>
+<tr>
+<td><code>kappa_bounds</code></td>
+<td>strategy kwarg</td>
+<td><code>(1e-3, 100.0)</code></td>
+<td>Bounds for mean-reversion speed.</td>
+</tr>
+<tr>
+<td><code>xi_bounds</code></td>
+<td>strategy kwarg</td>
+<td><code>(1e-3, 5.0)</code></td>
+<td>Bounds for Jacobi volatility.</td>
+</tr>
+<tr>
+<td><code>stationary_shape_max</code></td>
+<td>strategy kwarg</td>
+<td><code>500.0</code></td>
+<td>Rejects extremely concentrated stationary beta shapes.</td>
+</tr>
+<tr>
+<td><code>memory_budget_bytes</code></td>
+<td>strategy kwarg</td>
+<td><code>1 GiB</code></td>
+<td>Conservative pre-allocation limit for basis, transition, gradient, and <code>T x K</code> emission workspaces.</td>
+</tr>
+<tr>
+<td><code>sampling_method</code></td>
+<td>strategy kwarg</td>
+<td><code>'tm_grid'</code></td>
+<td>Unconditional sampler: likelihood-consistent <code>'tm_grid'</code> or experimental continuous <code>'lamperti_euler'</code>.</td>
+</tr>
+<tr>
+<td><code>lamperti_substeps</code></td>
+<td>strategy kwarg</td>
+<td><code>8</code></td>
+<td>Euler substeps per observation interval for <code>lamperti_euler</code>.</td>
+</tr>
+<tr>
+<td><code>lamperti_boundary</code></td>
+<td>strategy kwarg</td>
+<td><code>'reflect'</code></td>
+<td>Boundary policy for <code>lamperti_euler</code>: <code>'reflect'</code> or diagnostic <code>'clip'</code>.</td>
+</tr>
+<tr>
+<td><code>lamperti_eps</code></td>
+<td>strategy kwarg</td>
+<td><code>1e-10</code></td>
+<td>Interior epsilon used only to evaluate the singular Lamperti drift.</td>
+</tr>
+<tr>
+<td><code>lamperti_engine</code></td>
+<td>strategy kwarg</td>
+<td><code>'numba'</code></td>
+<td>Sequential execution engine: compiled <code>'numba'</code> or reference <code>'python'</code>.</td>
+</tr>
+<tr>
+<td><code>lamperti_chunk_observations</code></td>
+<td>strategy kwarg</td>
+<td><code>4096</code></td>
+<td>Maximum complete observation intervals per Gaussian-innovation chunk.</td>
+</tr>
+<tr>
+<td><code>tau_eps</code></td>
+<td>strategy kwarg</td>
+<td><code>1e-6</code></td>
+<td>Keeps tau away from the endpoints.</td>
+</tr>
+<tr>
+<td><code>smart_init</code></td>
+<td>strategy kwarg</td>
+<td><code>True</code></td>
+<td>Tries an MLE-derived tau initial point and falls back to the fixed initializer if validation fails.</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">result</span> <span class="o">=</span> <span class="n">fit</span><span class="p">(</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>    <span class="n">copula</span><span class="p">,</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>    <span class="n">u</span><span class="p">,</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>    <span class="n">method</span><span class="o">=</span><span class="s1">'scar-tm-jacobi'</span><span class="p">,</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>    <span class="n">transition_method</span><span class="o">=</span><span class="s1">'auto'</span><span class="p">,</span>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>    <span class="n">basis_order</span><span class="o">=</span><span class="mi">32</span><span class="p">,</span>
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="p">)</span>
+</code></pre></div>
+<p>Jacobi orders are strict positive integers: booleans and fractional values
+are rejected instead of being silently converted. Empty data, non-finite
+options, non-positive <code>theta_cap</code>, and invalid physical
+<code>alpha0=[kappa, m, xi]</code> are rejected before optimization. All Jacobi orders
+have a safety cap of <code>2048</code>; the default adaptive candidate ladder spans
+orders <code>48</code> through <code>768</code>. Before <code>roots_jacobi</code> or quadratic transition arrays
+are allocated, the implementation estimates the simultaneous float64
+workspace. If <code>memory_budget_bytes</code> is too small, it raises <code>MemoryError</code> with
+the required-byte estimate and guidance to reduce the grid/basis order. The
+same 1 GiB default guard applies to direct numerical Jacobi entry points.</p>
+<h4 id="jacobi-transfer-methods">Jacobi transfer methods<a class="headerlink" href="#jacobi-transfer-methods" title="Permanent link">&para;</a></h4>
+<p><code>transition_method='auto'</code> first tries <code>spectral_matrix</code>. If the truncated
+spectral matrix has negative mass above <code>negative_mass_tol</code>, or if spectral
+matrix construction raises a floating-point error, <code>auto</code> uses <code>local</code>.
+Forcing <code>transition_method='spectral_matrix'</code> keeps those numerical failures
+visible and does not fall back. Spectral negative mass within the configured
+tolerance is treated as truncation noise: it is clipped, rows are renormalized,
+and the cleanup magnitude is reported in transition diagnostics. A material
+negative mass in an explicitly requested spectral matrix raises
+<code>FloatingPointError</code> unless <code>clip_negative=True</code>.</p>
+<p><code>transition_method='local_fixed'</code> uses a parameter-independent tau grid and is
+the fully analytical backend for <code>analytical_grad=True</code>. The <code>local</code> and
+<code>spectral_matrix</code> backends use finite differences for setup-level arrays and
+analytical differentiation for the filtering recursion, so their reported
+<code>gradient_kind</code> is <code>semi_analytical</code>. For <code>auto</code>, diagnostics record the
+backend selected at the fitted parameters. Finite-difference setup
+perturbations use that same selected backend, so a single gradient evaluation
+cannot mix spectral and local objectives. Analytical-gradient fits also
+recompute the ordinary objective at the final point and report
+<code>final_objective_consistent</code> in result diagnostics.
+<code>transition_method='spectral_coeff'</code> uses coefficient-space filtering instead
+of a transition matrix. It is available for diagnostic comparisons and does
+not support the analytical-gradient option.</p>
+<h4 id="unconditional-jacobi-sampling">Unconditional Jacobi sampling<a class="headerlink" href="#unconditional-jacobi-sampling" title="Permanent link">&para;</a></h4>
+<p>By default, <code>sample()</code> reproduces the same discrete Markov model used by the
+matrix likelihood. It draws the first state from the stationary quadrature masses,
+builds the transition with <code>dt = 1 / (n - 1)</code>, converts the probability-safe
+transition to row-wise CDFs in place, and advances quadrature-grid indices.
+The resulting tau atoms are mapped through <code>tau_to_param</code>, including the
+fitted <code>theta_cap</code>, before the existing copula sampler generates observations.</p>
+<p>The selected sampling backend follows the fitted backend. For
+<code>spectral_coeff</code>, which has no probability transition matrix, sampling
+explicitly uses <code>auto</code> with the fitted basis and quadrature orders. Explicit
+<code>spectral_matrix</code> sampling fails if its transition contains material negative
+mass; signed rows are never converted with absolute values.</p>
+<p><code>n</code> must be a non-negative integer. <code>n=0</code> returns an empty sample without
+advancing the supplied generator, and <code>n=1</code> performs only a stationary grid
+draw. Transition construction is <code>O(K^2 B)</code> for the spectral backend or
+<code>O(KG)</code> for local construction, the in-place CDF is <code>O(K^2)</code>, and path
+generation is <code>O(n log K)</code>. Peak memory is conservatively checked before
+transition or output allocation. The same parameter-path implementation is
+used by dynamic edges during C-vine and R-vine sampling.</p>
+<p><code>sampling_method='lamperti_euler'</code> enables an experimental continuous-path
+alternative. It starts from the exact stationary beta law, applies
+Euler--Maruyama with <code>lamperti_substeps</code> in</p>
+<div class="arithmatex">\[
+y=\frac{2}{\xi}\arcsin\sqrt{\tau},
+\]</div>
+<p>and maps back with <span class="arithmatex">\(\tau=\sin^2(\xi y/2)\)</span>. The default boundary policy
+reflects an overshoot in constant time; <code>'clip'</code> is retained only for
+numerical comparison. A mutable dictionary passed as
+<code>sampling_diagnostics=</code> receives the intervention count and rate. This
+sampler approximates the continuous SDE but is not the transition backend
+used by fitting and is not an exact Wright--Fisher sampler.</p>
+<p>The fitted result persists the selected sampling method, Lamperti settings,
+and a non-default memory budget. Call-time keyword arguments can override
+them. Use <code>tools/validate_jacobi_sampling.py</code> to compare stationary
+mean/variance, KS/TV error, conditional first-moment error, interventions,
+and runtime over independent path ensembles.</p>
+<p>The Numba kernel is permanently sequential: <code>parallel=True</code> is not supported
+because each Euler update depends on the preceding state. Random draws remain
+in the Python orchestration layer and are passed to the kernel in bounded
+chunks of complete observation intervals. Consequently, changing
+<code>lamperti_chunk_observations</code> does not change the path or RNG state. External
+applications may parallelize independent paths only with separate explicitly
+managed random streams.</p>
+<p>Warm benchmarks on one million Euler updates showed approximately <code>48x</code> to
+<code>64x</code> speedup over the Python reference on the validation machine. The
+compiled path is already faster for <code>n=32</code> with four or more substeps; <code>n=1</code>
+has no Euler work and therefore no meaningful JIT speedup.</p>
+<p>Accuracy near singular boundaries remains a separate gate. A symmetric
+stationary law with <code>a=b=0.4</code> remained reasonably stable, but the extreme
+asymmetric case <code>a=0.04</code>, <code>b=0.16</code> showed severe reflection bias even at 64
+substeps. Diagnostics therefore expose <code>stationary_boundary_singular</code> and the
+boundary-intervention rate. Lamperti--Euler remains opt-in; Numba acceleration
+does not make it a universally valid default.</p>
+<h3 id="sparse-local-jacobi-transitions">Sparse local Jacobi transitions<a class="headerlink" href="#sparse-local-jacobi-transitions" title="Permanent link">&para;</a></h3>
+<p>The moving-grid local transition has at most <code>2 * gh_order</code> active targets
+per source node. It can be selected explicitly for likelihood, filtering,
+prediction, and state distributions:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">result</span> <span class="o">=</span> <span class="n">copula</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>    <span class="n">u</span><span class="p">,</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>    <span class="n">method</span><span class="o">=</span><span class="s2">"scar-tm-jacobi"</span><span class="p">,</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>    <span class="n">transition_method</span><span class="o">=</span><span class="s2">"local"</span><span class="p">,</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>    <span class="n">transition_storage</span><span class="o">=</span><span class="s2">"sparse"</span><span class="p">,</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="p">)</span>
+</code></pre></div>
+<p>This backend stores and applies the local transition in <code>O(K * gh_order)</code>
+space and time per filtering step. It does not materialize a dense <code>K x K</code>
+matrix. The default remains <code>transition_storage="dense"</code>, and sparse storage
+currently requires an explicit <code>transition_method="local"</code> or
+<code>transition_method="local_fixed"</code>. The fixed-grid sparse backend also stores
+the three transition derivative arrays in <code>O(K * gh_order)</code> space and
+supports the existing fully analytical gradient. Spectral transitions
+continue to use their dense representation.</p>
+<p>Experimental stationarity corrections are available only on the same
+end-to-end sparse path:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="n">result</span> <span class="o">=</span> <span class="n">copula</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>    <span class="n">u</span><span class="p">,</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>    <span class="n">method</span><span class="o">=</span><span class="s2">"scar-tm-jacobi"</span><span class="p">,</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>    <span class="n">transition_method</span><span class="o">=</span><span class="s2">"local"</span><span class="p">,</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>    <span class="n">transition_storage</span><span class="o">=</span><span class="s2">"sparse"</span><span class="p">,</span>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>    <span class="n">stationarity_correction</span><span class="o">=</span><span class="s2">"mh"</span><span class="p">,</span>
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="p">)</span>
+</code></pre></div>
+<p>The MH correction is available only with the moving-grid <code>local</code> backend. It
+enforces the quadrature stationary weights and detailed
+balance, but may materially increase stay probabilities and distort
+short-horizon dynamics. It is therefore opt-in and is not selected by
+<code>auto</code>. Use <code>tools/validate_jacobi_sampling.py</code> to compare transition memory,
+filter timings, full-horizon stationarity, conditional moments, and lag-one
+correlation.</p>
+<p><code>stationarity_correction="ipfp"</code> instead balances the stationary joint flux
+on the existing sparse support. It does not silently add diagonal edges or
+regularization. Consequently, IPFP fails explicitly when the proposal
+support cannot deliver incoming mass to every stationary node. Even when it
+is feasible, its conditional-moment and autocorrelation distortion must be
+checked. Current validation does not support either MH or IPFP as a default;
+increasing <code>K</code> preserved short-horizon dynamics better in the tested matrix.</p>
+<h3 id="experimental-adaptive-jacobi-order">Experimental adaptive Jacobi order<a class="headerlink" href="#experimental-adaptive-jacobi-order" title="Permanent link">&para;</a></h3>
+<p>For an uncorrected sparse moving-grid <code>local</code> backend,
+<code>adaptive_quad_order=True</code> evaluates a strictly increasing candidate ladder
+before optimization. It selects the first order satisfying deterministic
+full-horizon stationarity, variance, conditional-mean, and lag-one
+correlation gates:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">result</span> <span class="o">=</span> <span class="n">copula</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>    <span class="n">u</span><span class="p">,</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>    <span class="n">method</span><span class="o">=</span><span class="s2">"scar-tm-jacobi"</span><span class="p">,</span>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>    <span class="n">transition_method</span><span class="o">=</span><span class="s2">"local"</span><span class="p">,</span>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>    <span class="n">transition_storage</span><span class="o">=</span><span class="s2">"sparse"</span><span class="p">,</span>
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>    <span class="n">adaptive_quad_order</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>    <span class="n">adaptive_quad_orders</span><span class="o">=</span><span class="p">(</span><span class="mi">48</span><span class="p">,</span> <span class="mi">80</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">192</span><span class="p">,</span> <span class="mi">384</span><span class="p">),</span>
+<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="p">)</span>
+</code></pre></div>
+<p>The selected order is frozen for every fitting evaluation and persisted as
+<code>spectral_quad_order</code>. A second diagnostic evaluates the same frozen order at
+the fitted parameters; it does not silently increase the sampling grid.
+Candidate records and both initial/final gate results are stored in
+<code>LatentResult.diagnostics</code>. This mode remains experimental while its default
+thresholds are calibrated over a wider parameter and data matrix.
+The validation tool's <code>--adaptive-calibration</code> option runs predefined
+baseline, high-kappa, symmetric-boundary, and asymmetric-boundary cases over
+multiple observation counts.
+The current matrix shows strongly non-monotone requirements across parameter
+and observation-count regimes: some boundary cases do not pass through
+<code>K=384</code>, while the baseline may select <code>K=80</code> for shorter series but require
+<code>K=384</code> at <code>n=400</code>. Consequently, no stationary-shape-only order heuristic is
+used.</p>
+<p>The local method applies a Gaussian step in the Lamperti coordinate</p>
+<div class="arithmatex">\[
+y = \frac{2}{\xi}\arcsin\sqrt{\tau},
+\]</div>
+<p>then maps the Gauss-Hermite nodes back to tau and interpolates on the Jacobi
+quadrature grid. It produces a nonnegative row-normalized transition matrix
+and is selected by <code>auto</code> when the one-step transition is too narrow for the
+spectral path.</p>
+<p>The spectral matrix method uses the Jacobi eigenbasis of the diffusion. It can
+be useful as a diagnostic, but for high-frequency data the code uses</p>
+<div class="arithmatex">\[
+dt = \frac{1}{T-1}.
+\]</div>
+<p>Large <code>T</code> therefore makes the one-step transition close to a delta kernel.
+Representing such a narrow kernel with a truncated global Jacobi series can
+produce oscillations, negative entries, or invalid row sums. Increasing
+<code>basis_order</code> may reduce the truncation error in some parameter regions, but it
+also raises cost sharply and can worsen conditioning. In that regime, matching
+the high-order spectral likelihood and the local likelihood at a fitted point
+isolates backend approximation error. Leave <code>transition_method='auto'</code> unless
+performing that comparison or reproducing a fixed-backend result.</p>
+<h2 id="multivariate-native-paths">Multivariate Native Paths<a class="headerlink" href="#multivariate-native-paths" title="Permanent link">&para;</a></h2>
+<p>Multivariate Gaussian, Student, stochastic Student, and equicorrelation models
+use compiled row, grid, and conditional kernels. Several optimizations are
+automatic and do not require strategy options:</p>
+<p>Static Gaussian and Student fitting uses the shared multivariate MLE
+orchestrator with independent final-point objective and gradient validation.
+The public <code>method="mle"</code> label means a static model; <code>corr_mode</code> determines
+whether correlation is supplied/plug-in or enters the joint native objective.
+<code>shrinkage</code> maps one analytical correlation score to a raw logit parameter,
+while <code>cholesky</code> pulls the native lower-triangle score back through the full
+SPD parameterization. The Cholesky mode is guarded at <code>d &lt;= 10</code> by default.</p>
+<p><code>fixed</code> retains the fast path: Gaussian prepares normal scores once and uses
+their sample correlation, while Student uses Kendall preprocessing and then
+optimizes only <code>df</code>. Factor mode uses Woodbury operators with <code>O(d*k + k^2)</code>
+stored state. Gaussian and two-stage Student estimate loadings outside the
+joint optimizer; joint static Student uses the native loading score and an
+identified loading parameterization. None of the compact likelihood,
+sampling, bootstrap, or persistence paths needs a dense <code>d*d</code> correlation.</p>
+<ul>
+<li>conditional Gaussian/Student sampling reuses the Schur-complement Cholesky
+  factor when one correlation matrix is shared by all output rows;</li>
+<li>Student density workspaces are reused inside GAS, static likelihood, Monte
+  Carlo batches, and across all grid nodes within each SCAR emission row;</li>
+<li>dense static and GAS Student Rosenblatt transforms in the parity-validated
+  domain (<code>df &gt;= 0.1</code>, symmetric unit-diagonal SPD correlation with condition
+  number at most <code>1e4</code>) send all rows and either a scalar or row-specific <code>df</code>
+  trajectory to one native call, reuse one correlation Cholesky factor, and
+  parallelize independent rows when useful;</li>
+<li>equicorrelation grids compute per-row normal-score sums once and reuse them
+  for every latent-grid node; prepared static and SCAR-OU evaluators retain
+  those statistics across repeated objective calls;</li>
+<li>conditional binding inputs avoid an additional C++ copy when they are
+  C-contiguous <code>float64</code> arrays.</li>
+</ul>
+<p>The zero-copy condition concerns the native boundary. Python adapters may still
+normalize arbitrary user inputs with <code>np.ascontiguousarray</code>; non-contiguous
+arrays and other dtypes therefore require a temporary conversion. Numeric
+inputs are always checked for finite values, so zero-copy removes memory traffic
+but not the linear validation pass.</p>
+<p>Row-specific <code>(n,d,d)</code> correlation arrays cannot share one Cholesky factor and
+retain per-row factorization cost. Near-singular Student conditional covariance
+matrices also retain the per-row jitter path to preserve numerical semantics.
+For dense Student Rosenblatt, the adapter rejects unsupported capability
+combinations before entering the kernel. In production <code>auto</code> mode, low or
+invalid <code>df</code>, legacy correlation boundaries, and ill-conditioned matrices use
+the preserved SciPy oracle; <code>native_strict</code> raises <code>CppUnsupported</code>. Native
+runtime errors after a supported call are never converted into fallback.</p>
+<h2 id="independent-fit-parallelism">Independent Fit Parallelism<a class="headerlink" href="#independent-fit-parallelism" title="Permanent link">&para;</a></h2>
+<p>Use process-level parallelism for independent datasets, bootstrap replicas,
+starting points, hyperparameter variants, or different model prototypes:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pyscarcopula</span><span class="w"> </span><span class="kn">import</span> <span class="n">StochasticStudentCopula</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pyscarcopula.contrib</span><span class="w"> </span><span class="kn">import</span> <span class="n">fit_independent</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="n">batch</span> <span class="o">=</span> <span class="n">fit_independent</span><span class="p">(</span>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>    <span class="n">StochasticStudentCopula</span><span class="p">(</span><span class="n">d</span><span class="o">=</span><span class="n">u_bootstrap</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]),</span>
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>    <span class="n">u_bootstrap</span><span class="p">,</span>
+<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>    <span class="n">method</span><span class="o">=</span><span class="s2">"scar-tm-ou"</span><span class="p">,</span>
+<a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a>    <span class="n">fit_kwargs</span><span class="o">=</span><span class="p">{</span><span class="s2">"maxiter"</span><span class="p">:</span> <span class="mi">100</span><span class="p">},</span>
+<a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a>    <span class="n">n_jobs</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+<a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a><span class="p">)</span>
+<a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a>
+<a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a><span class="n">models</span> <span class="o">=</span> <span class="n">batch</span><span class="o">.</span><span class="n">models</span>
+<a id="__codelineno-11-13" name="__codelineno-11-13" href="#__codelineno-11-13"></a><span class="nb">print</span><span class="p">(</span><span class="n">batch</span><span class="o">.</span><span class="n">diagnostics</span><span class="p">)</span>
+</code></pre></div>
+<p>Every task reconstructs its own model from constructor-level structural
+parameters and creates its own prepared evaluator during fitting. Fitted
+state and transient caches from the prototype are not copied. A list of model
+prototypes and a list of <code>fit_kwargs</code> can be supplied to run different models
+or initial points in the same batch.</p>
+<p>For static Gaussian and Student prototypes, reconstruction preserves
+<code>corr_mode</code>, constructor <code>R</code>/<code>corr_base</code>, shrinkage initialization, Cholesky
+guard settings, and factor identification settings. JSON persistence also
+retains the fitted estimator, raw correlation parameters, and compact
+loadings. Parametric-bootstrap refits therefore use the same correlation
+policy as the source model.</p>
+<p>Avoid accidental CPU oversubscription. With <code>n_jobs &gt; 1</code>, omitted <code>n_threads</code>
+means one native thread per worker. Passing <code>n_threads=2</code> or more explicitly
+enables nested process/thread parallelism; this affects performance, not task
+ownership or correctness. The same strict opt-in rule applies with one outer
+worker: if <code>n_threads</code> is omitted, exactly one native thread is used.</p>
+<p>The same policy applies to rolling <code>risk_metrics</code>. Each result leaf contains a
+<code>diagnostics</code> mapping with <code>n_jobs</code>, <code>n_threads</code>,
+<code>multiprocessing_start_method</code>, <code>nested_parallelism</code>, and the worker ownership
+contract. Per-window <code>SeedSequence</code> objects keep results independent of chunk
+partitioning. For <code>n_jobs=1</code>, sequential windows may reuse the caller's model,
+but each fit invalidates and rebuilds its transient prepared state before the
+next window.</p>
+<h2 id="numericalconfig">NumericalConfig<a class="headerlink" href="#numericalconfig" title="Permanent link">&para;</a></h2>
+<p>Use <code>NumericalConfig</code> when a setting should apply to many fits:</p>
+<p><code>NumericalConfig()</code> always uses <code>n_threads=1</code>, independently of process
+environment variables. Native parallelism is enabled only by explicitly
+passing <code>n_threads</code> to a method or by constructing
+<code>NumericalConfig(n_threads=N)</code>.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pyscarcopula</span><span class="w"> </span><span class="kn">import</span> <span class="n">LBFGSBConfig</span><span class="p">,</span> <span class="n">NumericalConfig</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="n">cfg</span> <span class="o">=</span> <span class="n">NumericalConfig</span><span class="p">(</span>
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>    <span class="n">gas_optimizer</span><span class="o">=</span><span class="n">LBFGSBConfig</span><span class="p">(</span>
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>        <span class="n">gtol</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span>
+<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>        <span class="n">ftol</span><span class="o">=</span><span class="mf">1e-12</span><span class="p">,</span>
+<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a>        <span class="n">maxfun</span><span class="o">=</span><span class="mi">3000</span><span class="p">,</span>
+<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a>        <span class="n">maxiter</span><span class="o">=</span><span class="mi">3000</span><span class="p">,</span>
+<a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a>        <span class="n">maxls</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span>
+<a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a>    <span class="p">),</span>
+<a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a>    <span class="n">scar_optimizer</span><span class="o">=</span><span class="n">LBFGSBConfig</span><span class="p">(</span>
+<a id="__codelineno-12-12" name="__codelineno-12-12" href="#__codelineno-12-12"></a>        <span class="n">gtol</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span>
+<a id="__codelineno-12-13" name="__codelineno-12-13" href="#__codelineno-12-13"></a>        <span class="n">maxls</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span>
+<a id="__codelineno-12-14" name="__codelineno-12-14" href="#__codelineno-12-14"></a>    <span class="p">),</span>
+<a id="__codelineno-12-15" name="__codelineno-12-15" href="#__codelineno-12-15"></a>    <span class="n">default_K</span><span class="o">=</span><span class="mi">500</span><span class="p">,</span>
+<a id="__codelineno-12-16" name="__codelineno-12-16" href="#__codelineno-12-16"></a><span class="p">)</span>
+<a id="__codelineno-12-17" name="__codelineno-12-17" href="#__codelineno-12-17"></a>
+<a id="__codelineno-12-18" name="__codelineno-12-18" href="#__codelineno-12-18"></a><span class="n">result</span> <span class="o">=</span> <span class="n">fit</span><span class="p">(</span><span class="n">copula</span><span class="p">,</span> <span class="n">u</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="s1">'gas'</span><span class="p">,</span> <span class="n">config</span><span class="o">=</span><span class="n">cfg</span><span class="p">)</span>
+</code></pre></div>
+<p>Per-call keyword arguments override the config values for that fit.</p>
+<p>Multivariate Student models use separate GAS optimizer defaults,
+so changing them does not affect bivariate GAS fits or vine edges:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="n">cfg</span> <span class="o">=</span> <span class="n">NumericalConfig</span><span class="p">(</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>    <span class="n">stochastic_student_gas_optimizer</span><span class="o">=</span><span class="n">LBFGSBConfig</span><span class="p">(</span><span class="n">ftol</span><span class="o">=</span><span class="mf">1e-9</span><span class="p">),</span>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="p">)</span>
+</code></pre></div>
+<h2 id="legacy-c-vines">Legacy C-Vines<a class="headerlink" href="#legacy-c-vines" title="Permanent link">&para;</a></h2>
+<p><code>CVineCopula.fit</code> selects a family for each edge using an MLE screening/refine
+step, then optionally refits selected edges with the requested dynamic method.
+All remaining keyword arguments are forwarded to the pair-copula strategy for
+the dynamic refit.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pyscarcopula</span><span class="w"> </span><span class="kn">import</span> <span class="n">CVineCopula</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pyscarcopula</span><span class="w"> </span><span class="kn">import</span> <span class="n">LBFGSBConfig</span><span class="p">,</span> <span class="n">NumericalConfig</span>
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="n">cfg</span> <span class="o">=</span> <span class="n">NumericalConfig</span><span class="p">(</span>
+<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>    <span class="n">gas_optimizer</span><span class="o">=</span><span class="n">LBFGSBConfig</span><span class="p">(</span><span class="n">ftol</span><span class="o">=</span><span class="mf">1e-12</span><span class="p">,</span> <span class="n">maxfun</span><span class="o">=</span><span class="mi">3000</span><span class="p">,</span> <span class="n">maxiter</span><span class="o">=</span><span class="mi">3000</span><span class="p">))</span>
+<a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>
+<a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a><span class="n">vine</span> <span class="o">=</span> <span class="n">CVineCopula</span><span class="p">()</span>
+<a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a><span class="n">vine</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+<a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a>    <span class="n">u</span><span class="p">,</span>
+<a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a>    <span class="n">method</span><span class="o">=</span><span class="s1">'gas'</span><span class="p">,</span>
+<a id="__codelineno-14-11" name="__codelineno-14-11" href="#__codelineno-14-11"></a>    <span class="n">config</span><span class="o">=</span><span class="n">cfg</span><span class="p">,</span>
+<a id="__codelineno-14-12" name="__codelineno-14-12" href="#__codelineno-14-12"></a>    <span class="n">gamma_bound</span><span class="o">=</span><span class="mf">30.0</span><span class="p">,</span>
+<a id="__codelineno-14-13" name="__codelineno-14-13" href="#__codelineno-14-13"></a>    <span class="n">ftol</span><span class="o">=</span><span class="mf">1e-12</span><span class="p">,</span>
+<a id="__codelineno-14-14" name="__codelineno-14-14" href="#__codelineno-14-14"></a>    <span class="n">truncation_level</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+<a id="__codelineno-14-15" name="__codelineno-14-15" href="#__codelineno-14-15"></a>    <span class="n">min_edge_logL</span><span class="o">=</span><span class="mf">10.0</span><span class="p">,</span>
+<a id="__codelineno-14-16" name="__codelineno-14-16" href="#__codelineno-14-16"></a><span class="p">)</span>
+</code></pre></div>
+<p>For <code>method='mle'</code>, the edge stays at the MLE selection result. For dynamic
+methods such as <code>'gas'</code> or <code>'scar-tm-ou'</code>, these controls are forwarded to each
+dynamic edge fit:</p>
+<ul>
+<li>GAS: <code>gamma0</code>, <code>gtol</code>, <code>ftol</code>, <code>maxfun</code>, <code>maxiter</code>, <code>maxls</code>, <code>eps</code>, <code>score_eps</code>,
+  <code>gamma_bound</code>, <code>beta_bound</code>, <code>scaling</code>, <code>verbose</code></li>
+<li>SCAR-TM-OU: <code>alpha0</code>, <code>gtol</code>, <code>ftol</code>, <code>maxfun</code>, <code>maxiter</code>, <code>maxls</code>, <code>eps</code>, <code>K</code>, <code>grid_range</code>, <code>grid_method</code>, <code>adaptive</code>,
+  <code>pts_per_sigma</code>, <code>transition_method</code>, <code>max_K</code>, <code>r_gh</code>, <code>gh_order</code>,
+  <code>auto_small_kdt</code>,
+  <code>spectral_basis_order</code>, <code>spectral_quad_order</code>, <code>analytical_grad</code>,
+  <code>smart_init</code>, <code>verbose</code></li>
+<li>SCAR-TM-JACOBI: <code>alpha0</code>, <code>gtol</code>, <code>ftol</code>, <code>maxfun</code>, <code>maxiter</code>, <code>maxls</code>,
+  <code>eps</code>, <code>transition_method</code>, <code>basis_order</code>, <code>quad_order</code>,
+  <code>spectral_basis_order</code>, <code>spectral_quad_order</code>, <code>transition_storage</code>,
+  <code>stationarity_correction</code>, <code>adaptive_quad_order</code>, <code>adaptive_quad_orders</code>,
+  <code>adaptive_max_full_horizon_tv</code>, <code>adaptive_max_relative_variance_error</code>,
+  <code>adaptive_max_conditional_mean_rmse</code>,
+  <code>adaptive_max_lag_one_correlation_error</code>, <code>adaptive_require_pass</code>,
+  <code>negative_mass_tol</code>, <code>gh_order</code>, <code>theta_cap</code>, <code>clip_negative</code>,
+  <code>kappa_bounds</code>, <code>xi_bounds</code>, <code>stationary_shape_max</code>,
+  <code>memory_budget_bytes</code>, <code>sampling_method</code>, <code>lamperti_substeps</code>,
+  <code>lamperti_boundary</code>, <code>lamperti_eps</code>, <code>lamperti_engine</code>,
+  <code>lamperti_chunk_observations</code>, <code>tau_eps</code>, <code>analytical_grad</code>, <code>smart_init</code>,
+  <code>verbose</code></li>
+</ul>
+<p>Vine-level pruning controls reduce the number of dynamic edge fits:</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>truncation_level</code></td>
+<td><code>None</code></td>
+<td>Tree levels <span class="arithmatex">\(\ge\)</span> <code>truncation_level</code> stay MLE. Useful for high-dimensional vines.</td>
+</tr>
+<tr>
+<td><code>min_edge_logL</code></td>
+<td><code>None</code></td>
+<td>Edges with MLE log-likelihood below the threshold stay MLE.</td>
+</tr>
+<tr>
+<td><code>transform_type</code></td>
+<td><code>'softplus'</code></td>
+<td>Parameter transform used for Archimedean candidate copulas.</td>
+</tr>
+</tbody>
+</table>
+<p>In C-vines, <code>config</code> is accepted through <code>**kwargs</code> and is passed to the
+dynamic edge refit. The initial MLE family-selection stage uses its own fast
+MLE path.</p>
+<p>This section documents the retained legacy implementation. New fixed C-vines
+should use <code>VineCopula.cvine(...)</code> and the generic controls below.</p>
+<h2 id="generic-vinecopula">Generic VineCopula<a class="headerlink" href="#generic-vinecopula" title="Permanent link">&para;</a></h2>
+<p><code>VineCopula.fit</code> has an explicit <code>config</code> argument and forwards strategy
+options through the shared edge-fitting core. With <code>structure=None</code>, the
+Dissmann selector builds the structure; with a fixed <code>RVineMatrix</code>, fitting
+starts directly from decoded trees and skips MST selection.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pyscarcopula</span><span class="w"> </span><span class="kn">import</span> <span class="n">VineCopula</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pyscarcopula</span><span class="w"> </span><span class="kn">import</span> <span class="n">LBFGSBConfig</span><span class="p">,</span> <span class="n">NumericalConfig</span>
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="n">cfg</span> <span class="o">=</span> <span class="n">NumericalConfig</span><span class="p">(</span>
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a>    <span class="n">gas_optimizer</span><span class="o">=</span><span class="n">LBFGSBConfig</span><span class="p">(</span><span class="n">ftol</span><span class="o">=</span><span class="mf">1e-12</span><span class="p">,</span> <span class="n">maxfun</span><span class="o">=</span><span class="mi">3000</span><span class="p">,</span> <span class="n">maxiter</span><span class="o">=</span><span class="mi">3000</span><span class="p">))</span>
+<a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a>
+<a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a><span class="n">vine</span> <span class="o">=</span> <span class="n">VineCopula</span><span class="p">(</span>
+<a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a>    <span class="n">truncation_level</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+<a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a>    <span class="n">truncation_fill</span><span class="o">=</span><span class="s1">'independent'</span><span class="p">,</span>
+<a id="__codelineno-15-10" name="__codelineno-15-10" href="#__codelineno-15-10"></a>    <span class="n">threshold</span><span class="o">=</span><span class="mf">0.02</span><span class="p">,</span>
+<a id="__codelineno-15-11" name="__codelineno-15-11" href="#__codelineno-15-11"></a>    <span class="n">min_edge_logL</span><span class="o">=</span><span class="mf">5.0</span><span class="p">,</span>
+<a id="__codelineno-15-12" name="__codelineno-15-12" href="#__codelineno-15-12"></a><span class="p">)</span>
+<a id="__codelineno-15-13" name="__codelineno-15-13" href="#__codelineno-15-13"></a>
+<a id="__codelineno-15-14" name="__codelineno-15-14" href="#__codelineno-15-14"></a><span class="n">vine</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+<a id="__codelineno-15-15" name="__codelineno-15-15" href="#__codelineno-15-15"></a>    <span class="n">u</span><span class="p">,</span>
+<a id="__codelineno-15-16" name="__codelineno-15-16" href="#__codelineno-15-16"></a>    <span class="n">method</span><span class="o">=</span><span class="s1">'gas'</span><span class="p">,</span>
+<a id="__codelineno-15-17" name="__codelineno-15-17" href="#__codelineno-15-17"></a>    <span class="n">config</span><span class="o">=</span><span class="n">cfg</span><span class="p">,</span>
+<a id="__codelineno-15-18" name="__codelineno-15-18" href="#__codelineno-15-18"></a>    <span class="n">gamma_bound</span><span class="o">=</span><span class="mf">30.0</span><span class="p">,</span>
+<a id="__codelineno-15-19" name="__codelineno-15-19" href="#__codelineno-15-19"></a>    <span class="n">ftol</span><span class="o">=</span><span class="mf">1e-12</span><span class="p">,</span>
+<a id="__codelineno-15-20" name="__codelineno-15-20" href="#__codelineno-15-20"></a><span class="p">)</span>
+</code></pre></div>
+<p>The same strategy options listed for legacy C-vines are forwarded to every
+non-independent, non-truncated edge selected for dynamic fitting. R-vine
+structure controls are:</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>truncation_level</code></td>
+<td>instance value / <code>None</code></td>
+<td>Tree levels <span class="arithmatex">\(\ge\)</span> <code>truncation_level</code> are truncated.</td>
+</tr>
+<tr>
+<td><code>truncation_fill</code></td>
+<td><code>'independent'</code></td>
+<td>Truncated trees become independent edges or MLE-only edges (<code>'mle'</code>).</td>
+</tr>
+<tr>
+<td><code>threshold</code></td>
+<td><code>0.0</code></td>
+<td>Edges with $</td>
+</tr>
+<tr>
+<td><code>min_edge_logL</code></td>
+<td><code>None</code></td>
+<td>Fitted weak edges below the threshold are replaced by independence.</td>
+</tr>
+<tr>
+<td><code>structure_search</code></td>
+<td><code>'beam'</code></td>
+<td>Conditional-structure search mode when <code>given_vars</code> is used.</td>
+</tr>
+<tr>
+<td><code>beam_width</code></td>
+<td><code>4</code></td>
+<td>Number of partial candidate structures retained by beam search.</td>
+</tr>
+<tr>
+<td><code>transform_type</code></td>
+<td>instance value / <code>'softplus'</code></td>
+<td>Parameter transform used for Archimedean candidate copulas.</td>
+</tr>
+</tbody>
+</table>
+<p>As with C-vines, automatic family selection is MLE-based. <code>gtol</code>, <code>ftol</code>,
+<code>gamma_bound</code>, <code>K</code>, and similar strategy controls affect the dynamic edge refit
+after a family has been selected. If <code>method='gas'</code>, a too-loose <code>ftol</code> can make
+some edges stop early with <code>success=True</code>; set <code>ftol=1e-12</code> and increase
+<code>maxfun</code> for difficult edges.</p>
+<p>Fitted generic vines use sequential native hot paths where the model contract permits
+them. GAS unconditional sampling executes the row recursion and causal score
+updates in one native call while preserving RNG and edge-update order. Repeated
+SCAR-TM-OU prediction against unchanged fitted history reuses
+pseudo-observations and terminal posterior state. A new <code>fit</code>, a changed
+explicit history, or an edge replacement invalidates the relevant transient
+cache. These optimizations do not parallelize edge or sample execution.
+The Python reference sampler and native GAS executor consume the same
+model-independent R-vine traversal plan, so matrix order, conditioned nodes,
+and edge orientation have one authoritative representation.</p>
+<p>The regular-vine native capability matrix is deliberately narrower than the
+public <code>VineCopula</code> API:</p>
+<table>
+<thead>
+<tr>
+<th>Operation</th>
+<th>Native capability</th>
+<th>Production fallback</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Static unconditional sampling</td>
+<td>Fixed C-, D-, or R-vine; exact built-in Independent, Clayton, Gumbel, Joe, Frank, or bivariate Gaussian edges; scalar parameters</td>
+<td>Dynamic edges, custom copulas, and non-opted-in subclasses use the Python executor</td>
+</tr>
+<tr>
+<td>Suffix/DAG conditional execution</td>
+<td>The same exact built-in families, including supported rotations/orientations and scalar or row-specific parameter paths</td>
+<td>An unsupported active edge uses the Python conditional executor</td>
+</tr>
+<tr>
+<td>Row log-density and conditional MCMC</td>
+<td>The same exact built-in families with scalar, row-specific, or mixed parameter storage; MCMC selects bounded incremental or full recomputation before consuming RNG</td>
+<td>Unsupported active edges use the preserved Python density/MCMC executor</td>
+</tr>
+<tr>
+<td>R-vine Rosenblatt and GoF</td>
+<td>Static scalar fitted edges from the exact built-in family set</td>
+<td>Dynamic edges, custom copulas, and unsupported subclasses use the Python Rosenblatt executor</td>
+</tr>
+</tbody>
+</table>
+<p>An explicitly native-equivalent subclass may opt in on its own class body.
+Inherited opt-in is intentionally ignored so that an overridden pair operation
+cannot silently bypass the Python implementation. Missing operation-specific
+extension symbols and unsupported capability combinations fall back only in
+the default dispatcher; validation or numerical failures after entering a
+supported native call are reported and never retried in Python.</p>
+<p><code>gof_test(..., bootstrap=True)</code> also supports fitted <code>VineCopula</code> models. Each
+replication simulates from the captured fitted vine, optionally refits an
+independent worker-owned vine with the same structure and fitting contract,
+then evaluates the R-vine Rosenblatt transform and Cramer-von Mises statistic.
+Independent <code>SeedSequence</code> streams make the bootstrap statistics deterministic
+across <code>n_jobs</code>; omitted native thread settings resolve to one thread per
+worker.</p>
+<p>Static <code>VineCopula</code> sampling bounds temporary vectorized workspace by processing at
+most 8192 rows at a time. Use <code>sample(..., batch_rows=...)</code> to trade throughput
+against peak memory. <code>memory_budget_bytes=</code> checks the estimated output and
+workspace requirement before allocation. Dynamic edge trajectories are not
+split because their row order is part of the fitted time-series model.</p>
+<p>Arbitrary conditional MCMC checks its complete adapter, binding, state,
+log-density, node-cache, contribution-cache, and replay-draw footprint against
+the internal memory budget before allocation or random-number consumption.
+Draws are validated and transferred in bounded chunks. Empty batches retain
+the same diagnostics schema without undefined acceptance-rate arithmetic.</p>
+<p>When benchmarking dynamic vines, report <code>vine.fit_result.actual_methods</code> and
+<code>vine.fit_result.fallback_count</code>: unsuccessful dynamic edge fits are retained
+as MLE fallbacks and otherwise make GAS or SCAR timings look artificially fast.
+For prediction caches, measure cold and warm calls separately.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "content.code.copy", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
+</html>

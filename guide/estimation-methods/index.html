@@ -1,0 +1,2229 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Python library for bivariate, multivariate, vine, and stochastic copula models">
+      
+      
+      
+        <link rel="canonical" href="https://AANovokhatskiy.github.io/pyscarcopula/guide/estimation-methods/">
+      
+      
+        <link rel="prev" href="../vine/">
+      
+      
+        <link rel="next" href="../prediction-semantics/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Estimation Methods - pyscarcopula</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#estimation-methods" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="pyscarcopula" class="md-header__button md-logo" aria-label="pyscarcopula" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            pyscarcopula
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Estimation Methods
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/AANovokhatskiy/pyscarcopula" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    AANovokhatskiy/pyscarcopula
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="pyscarcopula" class="md-nav__button md-logo" aria-label="pyscarcopula" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    pyscarcopula
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/AANovokhatskiy/pyscarcopula" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    AANovokhatskiy/pyscarcopula
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/choosing-a-model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Choosing a Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    User Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_1" id="__nav_3_1_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Models
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Models
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../bivariate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Bivariate Copulas
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../multivariate_models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multivariate Models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../factor-models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Factor Models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../vine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Vine Copulas
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fitting and Prediction
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Fitting and Prediction
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Estimation Methods
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Estimation Methods
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#method-summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Method Summary
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#gradient-capability-matrix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gradient capability matrix
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MLE
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#gas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GAS
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#scar-tm-ou" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SCAR-TM-OU
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="SCAR-TM-OU">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#bivariate-copulas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bivariate copulas
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stochastic-student-copula" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stochastic Student copula
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#shared-transition-likelihood" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Shared transition likelihood
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#scar-tm-jacobi" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SCAR-TM-JACOBI
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sampling-prediction-and-diagnostics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sampling, Prediction, and Diagnostics
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../prediction-semantics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Prediction Semantics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../rvine-conditioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    R-vine Conditioning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mathematical Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Mathematical Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../mathematical-contracts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mathematical Contracts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../transforms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parameter Transforms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Performance and Scaling
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Performance and Scaling
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../performance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Performance Tuning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../numerical-backends/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Numerical Backends
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../parallelism/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CPU Parallelism
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Developer Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_2" id="__nav_5_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Validation
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Validation
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../conditional-sampling-validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Conditional Sampling CI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/copulas/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core Copulas and Fitting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/multivariate_models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multivariate and Factor Models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/vine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Vines and Prediction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/diagnostics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Diagnostics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/persistence/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Persistence
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/contrib/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contrib Extensions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#method-summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Method Summary
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#gradient-capability-matrix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gradient capability matrix
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MLE
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#gas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GAS
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#scar-tm-ou" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SCAR-TM-OU
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="SCAR-TM-OU">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#bivariate-copulas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bivariate copulas
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stochastic-student-copula" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stochastic Student copula
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#shared-transition-likelihood" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Shared transition likelihood
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#scar-tm-jacobi" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SCAR-TM-JACOBI
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sampling-prediction-and-diagnostics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sampling, Prediction, and Diagnostics
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="estimation-methods">Estimation Methods<a class="headerlink" href="#estimation-methods" title="Permanent link">&para;</a></h1>
+<p>This page describes fitting methods exposed by <code>pyscarcopula.api.fit</code>,
+including the static multivariate model contract. Performance controls are covered in
+<a href="../performance/">Performance Tuning</a>.</p>
+<p>For the compact formulas behind each dynamic model, including the transfer
+filters, predictive Rosenblatt transform, and numerical convergence criteria,
+see <a href="../mathematical-contracts/">Mathematical Contracts</a>.</p>
+<p>Each estimation method supports a defined set of model families. Unsupported
+combinations fail before optimization starts.</p>
+<h2 id="method-summary">Method Summary<a class="headerlink" href="#method-summary" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Key</th>
+<th>State</th>
+<th>Main use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>MLE</td>
+<td><code>'mle'</code></td>
+<td>Static/constant model parameters</td>
+<td>Baseline fit, family selection, and static multivariate fitting</td>
+</tr>
+<tr>
+<td>GAS</td>
+<td><code>'gas'</code></td>
+<td>Observation-driven score recursion</td>
+<td>Fast dynamic dependence without latent integration</td>
+</tr>
+<tr>
+<td>SCAR-TM-OU</td>
+<td><code>'scar-tm-ou'</code></td>
+<td>OU latent state mapped to bivariate dependence or Student degrees of freedom</td>
+<td>Deterministic stochastic-latent likelihood</td>
+</tr>
+<tr>
+<td>SCAR-TM-JACOBI</td>
+<td><code>'scar-tm-jacobi'</code></td>
+<td>Jacobi diffusion for Kendall's tau</td>
+<td>Bounded tau dynamics with deterministic filtering</td>
+</tr>
+</tbody>
+</table>
+<p>All dynamic methods return a <code>LatentResult</code> with <code>params</code>,
+<code>log_likelihood</code>, optimizer status, and enough metadata for <code>predict</code>,
+<code>predictive_mean</code>, and GoF utilities. Model sampling is available where the
+strategy implements a path simulator. SCAR-TM-JACOBI supports both
+unconditional <code>sample</code> and conditional or unconditional <code>predict</code>.
+Its default unconditional sampler is the likelihood-consistent
+<code>sampling_method='tm_grid'</code>; experimental <code>sampling_method='lamperti_euler'</code>
+is available as an opt-in continuous-path approximation.</p>
+<h2 id="gradient-capability-matrix">Gradient capability matrix<a class="headerlink" href="#gradient-capability-matrix" title="Permanent link">&para;</a></h2>
+<p>The model score used inside a recursion and the optimizer gradient are
+different quantities. The following table describes what is passed to the
+outer optimizer and the corresponding diagnostics.</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Configuration</th>
+<th>Optimizer gradient</th>
+<th><code>model_score</code></th>
+<th><code>gradient_kind</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>MLE</td>
+<td>Built-in supported model</td>
+<td>Analytical</td>
+<td><code>not_applicable</code></td>
+<td><code>analytical</code></td>
+</tr>
+<tr>
+<td>GAS</td>
+<td>Any supported scaling</td>
+<td>Numerical finite differences</td>
+<td><code>native</code></td>
+<td><code>numerical_optimizer</code></td>
+</tr>
+<tr>
+<td>SCAR-TM-OU</td>
+<td><code>analytical_grad=True</code></td>
+<td>Analytical native Jacobian</td>
+<td><code>not_applicable</code></td>
+<td><code>analytical</code></td>
+</tr>
+<tr>
+<td>SCAR-TM-OU</td>
+<td><code>analytical_grad=False</code></td>
+<td>Numerical finite differences</td>
+<td><code>not_applicable</code></td>
+<td><code>numerical</code></td>
+</tr>
+<tr>
+<td>SCAR-TM-JACOBI</td>
+<td><code>analytical_grad=False</code></td>
+<td>Numerical finite differences</td>
+<td><code>not_applicable</code></td>
+<td><code>numerical</code></td>
+</tr>
+<tr>
+<td>SCAR-TM-JACOBI</td>
+<td><code>local_fixed</code>, analytical gradient</td>
+<td>Model-provided</td>
+<td><code>not_applicable</code></td>
+<td><code>analytical</code></td>
+</tr>
+<tr>
+<td>SCAR-TM-JACOBI</td>
+<td><code>local</code>, <code>spectral_matrix</code>, or <code>auto</code>, analytical gradient</td>
+<td>Model-provided</td>
+<td><code>not_applicable</code></td>
+<td><code>semi_analytical</code></td>
+</tr>
+</tbody>
+</table>
+<p>For joint Stochastic Student SCAR-TM-OU fits, the analytical-gradient path
+includes OU and static-correlation derivatives. Result diagnostics report the
+correlation and joint-gradient routes in <code>correlation_gradient</code> and
+<code>joint_gradient</code>. Some fits also include
+<code>prepared_native_evaluator</code>, <code>prepared_native_evaluator_count</code>, and
+<code>prepared_native_fallback</code>.</p>
+<p>For SCAR-TM-OU and SCAR-TM-JACOBI,
+<code>result.diagnostics["initialization"]</code> records how the optimizer initial point
+was obtained. It contains <code>requested_method</code>, <code>selected_method</code>, the final
+<code>alpha0</code>, and an ordered <code>attempts</code> list. Failed attempts retain only a
+serializable <code>error_type</code> and <code>error_message</code>; traceback and exception objects
+are not stored. A user-provided <code>alpha0</code> is reported as <code>user_provided</code>.</p>
+<h2 id="mle">MLE<a class="headerlink" href="#mle" title="Permanent link">&para;</a></h2>
+<p>MLE is the label for a static model. For bivariate scalar families it
+estimates one constant copula parameter and remains the default baseline for
+family screening and dynamic initialization. For multivariate Gaussian and
+Student models, the correlation procedure is an independent policy choice:
+an MLE-labelled result can use supplied, plug-in, or jointly optimized
+correlation.</p>
+<p>The optimizer works directly in the natural copula parameter. An explicit
+<code>alpha0</code> therefore uses natural units:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pyscarcopula</span><span class="w"> </span><span class="kn">import</span> <span class="n">GumbelCopula</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pyscarcopula.api</span><span class="w"> </span><span class="kn">import</span> <span class="n">fit</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">copula</span> <span class="o">=</span> <span class="n">GumbelCopula</span><span class="p">(</span><span class="n">rotate</span><span class="o">=</span><span class="mi">180</span><span class="p">)</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="n">result</span> <span class="o">=</span> <span class="n">fit</span><span class="p">(</span><span class="n">copula</span><span class="p">,</span> <span class="n">u</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="s1">'mle'</span><span class="p">,</span> <span class="n">alpha0</span><span class="o">=</span><span class="p">[</span><span class="mf">2.0</span><span class="p">])</span>
+</code></pre></div>
+<p>For static and stochastic Student copulas fitted with <code>method='mle'</code>, the
+optimized scalar is <code>df</code> itself and is constrained above the model's
+finite-variance threshold. No latent softplus transform is applied inside the
+MLE objective. The softplus transform remains part of dynamic SCAR/GAS models,
+where a latent state drives time-varying degrees of freedom.</p>
+<p>For static <code>GaussianCopula</code> and <code>StudentCopula</code>:</p>
+<table>
+<thead>
+<tr>
+<th><code>corr_mode</code></th>
+<th>Optimizer treatment</th>
+<th>Intended use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>fixed</code></td>
+<td>No correlation optimizer coordinates; supplied <code>R</code> is fixed, otherwise correlation is a counted plug-in estimate</td>
+<td>Default compatibility and fast baseline</td>
+</tr>
+<tr>
+<td><code>shrinkage</code></td>
+<td>Joint analytical correlation score for one raw weight</td>
+<td>Parsimonious joint static fit</td>
+</tr>
+<tr>
+<td><code>cholesky</code></td>
+<td>Joint analytical score for <code>d*(d-1)/2</code> raw coordinates</td>
+<td>Small dimensions</td>
+</tr>
+<tr>
+<td><code>factor</code></td>
+<td>Two-stage compact loadings; static Student also supports joint identified loadings</td>
+<td>Large dimensions under a factor assumption</td>
+</tr>
+</tbody>
+</table>
+<p>The result fields <code>corr_n_params</code>, <code>corr_plugin_n_params</code>, and
+<code>corr_effective_n_params</code> separate optimizer coordinates from data-derived
+plug-in parameters. <code>corr_estimator</code> records the actual procedure. Thus
+<code>fixed</code> alone is not enough to tell whether correlation was supplied or
+estimated.</p>
+<p>For static and stochastic Student models with <code>corr_mode='fixed'</code>, the analytical <code>df</code>
+derivative is passed to L-BFGS-B. Joint <code>df</code> and estimated-correlation MLE
+combines that derivative with the Student correlation score, then maps it into
+the
+configured shrinkage or Cholesky raw parameters. It reports
+<code>gradient_mode='analytical_joint'</code> in result diagnostics.</p>
+<h2 id="gas">GAS<a class="headerlink" href="#gas" title="Permanent link">&para;</a></h2>
+<p>GAS is observation-driven. The copula parameter is</p>
+<div class="arithmatex">\[
+r_t = \Psi(g_t),
+\]</div>
+<p>where the unbounded recursion state follows</p>
+<div class="arithmatex">\[
+g_{t+1} = \omega + \beta g_t + \gamma s_t.
+\]</div>
+<p>The score <span class="arithmatex">\(s_t\)</span> is the scaled derivative of the current copula log-density
+with respect to the recursion state. Conditional on past data, GAS has a point
+state rather than a latent-state distribution, so its likelihood avoids the
+latent-state integration required by SCAR.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">result</span> <span class="o">=</span> <span class="n">fit</span><span class="p">(</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    <span class="n">copula</span><span class="p">,</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    <span class="n">u</span><span class="p">,</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    <span class="n">method</span><span class="o">=</span><span class="s1">'gas'</span><span class="p">,</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>    <span class="n">scaling</span><span class="o">=</span><span class="s1">'unit'</span><span class="p">,</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>    <span class="n">ftol</span><span class="o">=</span><span class="mf">1e-12</span><span class="p">,</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>    <span class="n">maxfun</span><span class="o">=</span><span class="mi">3000</span><span class="p">,</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="p">)</span>
+</code></pre></div>
+<p>GAS uses the compiled evaluator for likelihood, score recursion, state
+updates, prediction, and the bivariate Rosenblatt path for supported built-in
+copulas. Unsupported copulas and missing compiled support fail immediately.</p>
+<p>Use <code>scaling='unit'</code> as the numerical baseline. <code>scaling='fisher'</code> uses
+nested finite differences and clipping/floor thresholds; its fitted optimum
+can be sensitive to optimizer finite-difference steps.</p>
+<p>The GAS copula score and filtering recursion are model calculations.
+They are not the optimizer Jacobian with respect to
+<code>(omega, gamma, beta)</code>. GAS passes objective values to L-BFGS-B, which
+therefore computes that outer gradient numerically. Result
+diagnostics distinguish these concepts with <code>model_score='native'</code> and
+<code>optimizer_gradient='numerical'</code>.</p>
+<h2 id="scar-tm-ou">SCAR-TM-OU<a class="headerlink" href="#scar-tm-ou" title="Permanent link">&para;</a></h2>
+<p>SCAR-TM-OU uses a one-dimensional Ornstein-Uhlenbeck latent state,</p>
+<div class="arithmatex">\[
+dx_t = \kappa(\mu - x_t)\,dt + \nu\,dW_t.
+\]</div>
+<p>What the state controls depends on the model. For a bivariate copula it is
+mapped to that family's scalar dependence parameter. For
+<code>StochasticStudentCopula</code> it is mapped to the time-varying degrees of freedom;
+the multivariate correlation structure remains a separate static component.</p>
+<p>The likelihood integrates the latent Markov path deterministically. The
+bivariate and Stochastic Student models use the same OU transition backends,
+but they do not use the same optimizer coordinates by default.</p>
+<p>SCAR-TM-OU requires the package C++ extension; no Python fallback implements
+this public fitting path.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">result</span> <span class="o">=</span> <span class="n">fit</span><span class="p">(</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="n">copula</span><span class="p">,</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="n">u</span><span class="p">,</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">method</span><span class="o">=</span><span class="s1">'scar-tm-ou'</span><span class="p">,</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="n">transition_method</span><span class="o">=</span><span class="s1">'auto'</span><span class="p">,</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="n">analytical_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="p">)</span>
+</code></pre></div>
+<p>The public OU parameters are always <code>kappa</code>, <code>mu</code>, and <code>nu</code>. A user-supplied
+<code>alpha0</code> must use these physical coordinates in that order.</p>
+<h3 id="bivariate-copulas">Bivariate copulas<a class="headerlink" href="#bivariate-copulas" title="Permanent link">&para;</a></h3>
+<p>For a bivariate family <span class="arithmatex">\(C\)</span>, the dynamic copula parameter is</p>
+<div class="arithmatex">\[
+\theta_t = \Psi_C(x_t).
+\]</div>
+<p>Thus SCAR-TM-OU describes stochastic dependence: examples include a dynamic
+Gumbel parameter and a dynamic Gaussian correlation. The transform
+<span class="arithmatex">\(\Psi_C\)</span> and its admissible range are family-specific.</p>
+<p>By default, the bivariate optimizer uses scaled physical
+<code>[kappa, mu, nu]</code> coordinates. Set
+<code>log_stationary_scale_optimization=True</code> to optimize instead in</p>
+<div class="arithmatex">\[
+(\log\kappa,\ \mu,\ \log\sigma_x),
+\qquad \sigma_x=\frac{\nu}{\sqrt{2\kappa}}.
+\]</div>
+<h3 id="stochastic-student-copula">Stochastic Student copula<a class="headerlink" href="#stochastic-student-copula" title="Permanent link">&para;</a></h3>
+<p>For <code>StochasticStudentCopula</code>, the OU state instead controls tail thickness:</p>
+<div class="arithmatex">\[
+\operatorname{df}_t = 2 + 10^{-6} + \operatorname{softplus}(x_t).
+\]</div>
+<p>The correlation structure remains static. This model uses the log coordinates
+above by default. Set <code>log_stationary_scale_optimization=False</code> to use scaled
+physical <code>[kappa, mu, nu]</code> coordinates instead.</p>
+<h3 id="shared-transition-likelihood">Shared transition likelihood<a class="headerlink" href="#shared-transition-likelihood" title="Permanent link">&para;</a></h3>
+<p>The exact OU one-step transition is Gaussian, so all SCAR-TM-OU likelihood
+backends evaluate the same latent Markov model. They differ only in how the
+one-dimensional transition integral is approximated: Hermite spectral
+projection, a finite-grid transition matrix, or local Gauss-Hermite
+quadrature.</p>
+<p>By default, <code>transition_method='auto'</code> uses a Hermite spectral likelihood
+except in narrow-kernel regimes, where it uses local Gauss-Hermite. If spectral
+evaluation fails numerically, <code>auto</code> tries the matrix grid likelihood first
+and then the local method when the matrix path is not accepted.</p>
+<p><code>LatentResult.diagnostics</code> records objective evaluations,
+spectral/matrix/local attempts, and transition fallback counters such as
+<code>fallback_spectral_to_matrix</code>,
+<code>fallback_matrix_to_local</code>, <code>matrix_failures</code>, and <code>matrix_capped</code>.</p>
+<p>By default, <code>spectral_basis_order='auto'</code> selects the Hermite basis size inside
+each objective evaluation from the current <code>kappa / (T - 1)</code>: 128 below
+<code>0.015</code>, 96 below <code>0.025</code>, 64 below <code>0.06</code>, and 32 otherwise. Use a fixed
+positive integer when exact basis-size reproducibility is needed for numerical
+comparisons.</p>
+<h2 id="scar-tm-jacobi">SCAR-TM-JACOBI<a class="headerlink" href="#scar-tm-jacobi" title="Permanent link">&para;</a></h2>
+<p>SCAR-TM-JACOBI evolves Kendall's tau directly on <code>(0, 1)</code>:</p>
+<div class="arithmatex">\[
+d\tau_t =
+\kappa(m - \tau_t)\,dt
++ \xi\sqrt{\tau_t(1-\tau_t)}\,dW_t.
+\]</div>
+<p>The copula parameter is recovered from tau through the copula's
+<code>tau_to_param</code> mapping. This method is therefore available for copulas that
+implement both <code>tau_to_param</code> and <code>param_to_tau</code>: Gumbel, Clayton, Frank,
+Joe, and bivariate Gaussian copulas.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">result</span> <span class="o">=</span> <span class="n">fit</span><span class="p">(</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="n">copula</span><span class="p">,</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="n">u</span><span class="p">,</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    <span class="n">method</span><span class="o">=</span><span class="s1">'scar-tm-jacobi'</span><span class="p">,</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>    <span class="n">transition_method</span><span class="o">=</span><span class="s1">'auto'</span><span class="p">,</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="p">)</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">params</span><span class="o">.</span><span class="n">kappa</span><span class="p">,</span> <span class="n">result</span><span class="o">.</span><span class="n">params</span><span class="o">.</span><span class="n">m</span><span class="p">,</span> <span class="n">result</span><span class="o">.</span><span class="n">params</span><span class="o">.</span><span class="n">xi</span><span class="p">)</span>
+</code></pre></div>
+<p>The fitted parameters are:</p>
+<ul>
+<li><code>kappa</code>: mean-reversion speed</li>
+<li><code>m</code>: long-run Kendall's tau level</li>
+<li><code>xi</code>: Jacobi volatility</li>
+</ul>
+<p>The Jacobi stationary law is beta, and the transition operators are built in
+tau space rather than in an unconstrained OU coordinate. The local backend uses
+the Lamperti coordinate to apply Gauss-Hermite steps while keeping tau inside
+its bounded state space.</p>
+<p><code>transition_method='auto'</code> first tries a Jacobi spectral transition matrix on
+the tau quadrature grid. If the truncated spectral matrix has material
+negative mass, or if row normalization fails numerically, it falls back to the
+local Lamperti/Gauss-Hermite transition. The default tolerance for accepting
+small spectral truncation errors is <code>negative_mass_tol=1e-5</code>.</p>
+<p>The explicit Jacobi transition backends are <code>spectral_matrix</code>, <code>local</code>,
+<code>local_fixed</code>, and <code>spectral_coeff</code>. With <code>analytical_grad=True</code>, the optimizer
+receives a model-provided Jacobian. For <code>local_fixed</code>, both setup and filtering
+derivatives are analytical. For <code>local</code>, <code>spectral_matrix</code>, and either backend
+selected by <code>auto</code>, setup arrays are differentiated by finite differences and
+the filtering recursion is differentiated analytically; these modes are
+therefore semi-analytical. <code>spectral_coeff</code> is a coefficient-space comparison
+backend and explicitly rejects <code>analytical_grad=True</code>.</p>
+<p><code>LatentResult.diagnostics</code> reports <code>gradient_requested</code>, <code>gradient_used</code>,
+<code>gradient_kind</code>, <code>setup_derivative</code>, <code>filter_derivative</code>, and the transition
+backend actually selected at the fitted parameters.</p>
+<p>The fitted result also retains every Jacobi option that changes subsequent
+likelihood or prediction semantics: <code>transition_method</code>, <code>gh_order</code>,
+<code>spectral_basis_order</code>, <code>spectral_quad_order</code>, <code>tau_eps</code>, <code>theta_cap</code>,
+<code>clip_negative</code>, <code>negative_mass_tol</code>, <code>stationary_shape_max</code>,
+<code>transition_storage</code>, <code>stationarity_correction</code>,
+<code>sampling_method</code>, <code>lamperti_substeps</code>, <code>lamperti_boundary</code>, <code>lamperti_eps</code>,
+<code>lamperti_engine</code>, <code>lamperti_chunk_observations</code>, and a configured
+<code>memory_budget_bytes</code>. Stateless API calls and models restored from JSON
+reconstruct the strategy from these fields. Explicit kwargs passed to a later
+API call still override the stored values.</p>
+<p>Unconditional sampling defaults to the transition-matrix grid used by the
+likelihood. An experimental <code>sampling_method='lamperti_euler'</code> instead
+simulates a continuous tau path with substepped Euler--Maruyama in the
+Lamperti coordinate. It is useful as an independent discretization comparison
+but does not change the fitting backend and is not an exact diffusion sampler.
+Its Numba kernel is strictly sequential and consumes Gaussian innovations
+created by the caller's NumPy generator in bounded chunks. The Python engine
+remains available as a pathwise reference implementation.</p>
+<p>For an explicit moving-grid local transition,
+<code>transition_storage='sparse'</code> selects the <code>O(K * gh_order)</code> sparse filtering
+and prediction backend. The default is <code>'dense'</code>; sparse storage is not
+currently available for <code>auto</code> or spectral transitions. Explicit
+<code>local_fixed</code> supports sparse analytical-gradient filtering with shared
+transition/derivative indices.
+<code>stationarity_correction='mh'</code> and <code>stationarity_correction='ipfp'</code> are
+experimental sparse-only options applied consistently to likelihood,
+prediction, state filtering, and <code>tm_grid</code> sampling for the moving-grid
+<code>local</code> backend. IPFP preserves the original sparse support and therefore
+fails explicitly if that support cannot be balanced to both stationary
+marginals. Neither correction is available for <code>local_fixed</code>; uncorrected
+sparse <code>local_fixed</code> supports <code>analytical_grad=True</code>.</p>
+<p><code>adaptive_quad_order=True</code> is an experimental option for the uncorrected
+sparse moving-grid <code>local</code> backend. It selects a quadrature order once, from
+<code>adaptive_quad_orders</code>, using deterministic full-horizon gates before
+optimization. The chosen order remains fixed for likelihood, prediction, and
+sampling and is persisted in the fitted result. The final-parameter gate is
+diagnostic only and never changes the fitted order.</p>
+<p>For high-frequency data, the code uses <code>dt = 1 / (T - 1)</code>. Large <code>T</code> therefore
+produces very narrow one-step Jacobi transitions. In this regime the local
+transition produces a nonnegative row-normalized matrix. Change
+<code>basis_order</code> only when comparing the spectral approximation against the local
+backend; otherwise leave backend selection to <code>transition_method='auto'</code>.</p>
+<h2 id="sampling-prediction-and-diagnostics">Sampling, Prediction, and Diagnostics<a class="headerlink" href="#sampling-prediction-and-diagnostics" title="Permanent link">&para;</a></h2>
+<p><code>predictive_mean(copula, u, result)</code> returns the predictive mean copula
+parameter at each time step before the current observation is absorbed.</p>
+<p>For <code>predict</code>, SCAR-TM methods support <code>horizon='current'</code> for the posterior
+state after the last observation and <code>horizon='next'</code> for the one-step-ahead
+state. The shared prediction terminology is described in
+<a href="../prediction-semantics/">Prediction Semantics</a>.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "content.code.copy", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
+</html>
