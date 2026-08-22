@@ -39,16 +39,53 @@ struct PreparedEdge {
     CopulaSpec transposed_copula;
 };
 
+/// Result of one generic unconditional R-vine traversal request.
+struct SampleResult {
+    std::vector<double> values;
+    std::int64_t n_rows = 0;
+    int dimension = 0;
+    int status = SCAR_OK;
+    std::int64_t failure_row = -1;
+    int failure_edge = -1;
+    int failure_operation = -1;
+    int n_threads_requested = 1;
+    int n_threads_used = 1;
+    std::uint64_t inverse_operations = 0;
+    std::uint64_t forward_operations = 0;
+    std::uint64_t independence_fast_paths = 0;
+};
+
+/// Result of one suffix or DAG conditional-program request.
+struct ConditionalSampleResult {
+    std::vector<double> values;
+    std::int64_t n_rows = 0;
+    int dimension = 0;
+    int status = SCAR_OK;
+    std::int64_t failure_row = -1;
+    int failure_edge = -1;
+    int failure_operation = -1;
+    int n_threads_requested = 1;
+    int n_threads_used = 1;
+    std::uint64_t h_operations = 0;
+    std::uint64_t h_pair_operations = 0;
+    std::uint64_t inverse_operations = 0;
+    std::uint64_t copy_operations = 0;
+    std::uint64_t independence_fast_paths = 0;
+    std::uint64_t row_blocks = 0;
+    std::uint64_t max_block_rows = 0;
+    std::uint64_t peak_workspace_bytes = 0;
+};
+
 bool valid_index(int value, int limit) noexcept;
 bool validate_traversal_plan(
     const RVineTraversalPlan& plan,
-    std::size_t edge_count) noexcept;
+    std::size_t edge_count);
 bool validate_conditional_plan(
     const RVineConditionalPlan& plan,
-    std::size_t edge_count) noexcept;
+    std::size_t edge_count);
 bool validate_density_plan(
     const RVineDensityPlan& plan,
-    std::size_t edge_count) noexcept;
+    std::size_t edge_count);
 int prepare_edges(
     const std::vector<EdgeSpec>& edges,
     std::vector<PreparedEdge>& prepared);
@@ -81,5 +118,24 @@ double h_inverse(
     double quantile,
     double given,
     double parameter);
+
+SampleResult sample(
+    const RVineTraversalPlan& plan,
+    const std::vector<EdgeSpec>& edges,
+    const ParameterPack& parameters,
+    DoubleView uniforms,
+    std::int64_t uniform_rows,
+    std::int64_t uniform_columns,
+    int n_threads = 1);
+
+ConditionalSampleResult conditional_sample(
+    const RVineConditionalPlan& plan,
+    const std::vector<EdgeSpec>& edges,
+    const ParameterPack& parameters,
+    DoubleView given_values,
+    DoubleView uniforms,
+    std::int64_t uniform_rows,
+    std::int64_t uniform_columns,
+    int n_threads = 1);
 
 }  // namespace scar::rvine

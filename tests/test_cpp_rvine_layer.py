@@ -103,11 +103,11 @@ def test_common_binding_owns_plan_and_preserves_gas_alias():
     assert hasattr(module, "RVineDensityPlan")
 
 
-def test_stage_one_does_not_advertise_future_runtime_entry_points():
+def test_stage_three_advertises_conditional_runtime_entry_point():
     module = _cpp_extension.load()
+    assert hasattr(module, "rvine_sample")
+    assert hasattr(module, "rvine_conditional_sample")
     for symbol in (
-            "rvine_sample",
-            "rvine_conditional_sample",
             "rvine_log_pdf_rows",
             "rvine_mcmc",
             "rvine_rosenblatt_transform"):

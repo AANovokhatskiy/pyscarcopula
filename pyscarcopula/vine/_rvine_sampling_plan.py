@@ -135,6 +135,22 @@ class RVineTraversalPlan:
                 ) for value in values)):
             raise ValueError("R-vine traversal plan contains invalid indices")
 
+        if edge_count == 0:
+            expected_nodes = tuple(
+                (variable, frozenset()) for variable in range(d))
+            if (
+                    self.node_keys != expected_nodes
+                    or self.last_uniform_column != d - 1
+                    or self.last_output_node != d - 1
+                    or self.output_nodes != tuple(range(d))
+                    or self.column_uniforms != tuple(range(d - 2, -1, -1))
+                    or inverse_count != 0
+                    or forward_count != 0):
+                raise ValueError(
+                    "independent R-vine traversal plan must be an identity "
+                    "uniform mapping")
+            return
+
         for index in range(inverse_count):
             target_variable = self.node_keys[
                 self.inverse_output_nodes[index]][0]
@@ -203,6 +219,33 @@ def build_rvine_sampling_plan(
         raise ValueError(
             "R-vine sampling active edge keys do not match the canonical "
             f"order: expected {expected_active_keys}, got {active_keys}")
+    if not active_keys:
+        columns = tuple(range(d - 2, -1, -1))
+        offsets = (0,) * (len(columns) + 1)
+        return RVineTraversalPlan(
+            dimension=d,
+            active_keys=(),
+            node_keys=tuple(
+                (variable, frozenset()) for variable in range(d)),
+            last_uniform_column=d - 1,
+            last_output_node=d - 1,
+            output_nodes=tuple(range(d)),
+            column_uniforms=columns,
+            inverse_offsets=offsets,
+            inverse_edges=(),
+            inverse_partner_nodes=(),
+            inverse_output_nodes=(),
+            inverse_transposed=(),
+            forward_offsets=offsets,
+            forward_edges=(),
+            forward_leaf_nodes=(),
+            forward_partner_nodes=(),
+            forward_leaf_output_nodes=(),
+            forward_partner_output_nodes=(),
+            forward_transposed=(),
+            update_u1_nodes=(),
+            update_u2_nodes=(),
+        )
     edge_indices = {
         key: index for index, key in enumerate(active_keys)
     }

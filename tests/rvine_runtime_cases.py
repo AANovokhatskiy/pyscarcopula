@@ -80,9 +80,10 @@ def configured_mixed_family_vine() -> RVineCopula:
     return vine
 
 
-def configured_static_dvine(dimension: int, *, independent: bool = False):
+def configured_static_dvine(
+        dimension: int, *, independent: bool = False, order=None):
     """Return a fitted-looking static D-vine without optimizer noise."""
-    structure = dvine_structure(int(dimension))
+    structure = dvine_structure(int(dimension), order=order)
     trees = structure.to_trees()
     matrix, edge_map = build_rvine_matrix_with_edge_map(dimension, trees)
     vine = RVineCopula(structure=structure, vine_type="dvine")

@@ -5,6 +5,7 @@ import numpy as np
 from pyscarcopula.vine._conditional_rvine import (
     find_rvine_peel_order_for_given_suffix,
 )
+from pyscarcopula.vine._rvine_conditional_plan import FrozenConditionalPlan
 from pyscarcopula.vine._rvine_edges import (
     _edge_h_inverse_for_variables,
     _edge_h_pair_for_variables,
@@ -86,12 +87,8 @@ def suffix_sampling_state(d, trees, matrix, edge_map, pair_copulas,
     return start_col, rebuilt_matrix, rebuilt_edge_map, rebuilt_pair_copulas
 
 
-class SuffixConditionalPlan(list):
+class SuffixConditionalPlan(FrozenConditionalPlan):
     """Executor-neutral suffix program with the output dimension attached."""
-
-    def __init__(self, steps, d):
-        super().__init__(steps)
-        self.d = int(d)
 
 
 def build_suffix_conditional_plan(d, start_col, matrix, given):

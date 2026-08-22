@@ -13,7 +13,18 @@ from pyscarcopula._utils import pobs
 from pyscarcopula.copula.elliptical import BivariateGaussianCopula
 from pyscarcopula.copula.independent import IndependentCopula
 from pyscarcopula.strategy.scar_tm import SCARTMStrategy
+from pyscarcopula.numerical._rvine_backend import _RVINE_BACKEND_ENV
+from pyscarcopula.vine._rvine_dag import (
+    build_runtime_rvine_dag,
+    plan_conditional_sample,
+)
 from pyscarcopula.vine.rvine import RVineCopula
+
+from rvine_runtime_cases import (
+    configured_static_dvine,
+    fitted_pair,
+    scalar_parameters,
+)
 
 
 def _example_u():
@@ -406,3 +417,257 @@ def test_rvine_scar_conditional_suffix_cached_predict_benchmark_report():
         d=out.shape[1],
         elapsed_ms=f"{1e3 * elapsed:.3f}",
     )
+
+
+@pytest.mark.benchmark
+def test_rvine_native_unconditional_relative_benchmark(monkeypatch):
+    """Compare warm native traversal with the preserved Python executor."""
+    _skip_unless_vine_enabled()
+    d = 50
+    n = 1000
+    vine = configured_static_dvine(d)
+    vine.pair_copulas = {
+        key: fitted_pair(BivariateGaussianCopula(), 0.05)
+        for key in vine.pair_copulas
+    }
+    parameters = scalar_parameters(vine)
+    uniforms = np.random.default_rng(2026081504).uniform(
+        1e-10, 1.0 - 1e-10, size=(n, d))
+    elapsed = {}
+    outputs = {}
+
+    for mode in ("python_executor", "native_strict"):
+        monkeypatch.setenv(_RVINE_BACKEND_ENV, mode)
+        vine._sample_with_r(
+            n, parameters, np.random.default_rng(1), uniforms=uniforms)
+        timings = []
+        for _ in range(7):
+            start = time.perf_counter()
+            outputs[mode] = vine._sample_with_r(
+                n, parameters, np.random.default_rng(1), uniforms=uniforms)
+            timings.append(time.perf_counter() - start)
+        elapsed[mode] = float(np.median(timings))
+
+    np.testing.assert_array_equal(
+        outputs["native_strict"], outputs["python_executor"])
+    speedup = elapsed["python_executor"] / elapsed["native_strict"]
+    _print_benchmark(
+        "rvine_native_unconditional",
+        d=d,
+        n=n,
+        python_ms=f"{1e3 * elapsed['python_executor']:.3f}",
+        native_ms=f"{1e3 * elapsed['native_strict']:.3f}",
+        speedup=f"{speedup:.3f}",
+    )
+    assert speedup >= 2.0
+
+
+@pytest.mark.benchmark
+@pytest.mark.parametrize("kind", ["suffix", "dag"])
+def test_rvine_native_conditional_relative_benchmark(monkeypatch, kind):
+    """Compare warm conditional opcodes with the preserved Python executor."""
+    _skip_unless_vine_enabled()
+    d = 15
+    n = 1000
+    vine = configured_static_dvine(d)
+    vine.pair_copulas = {
+        key: fitted_pair(BivariateGaussianCopula(), 0.05)
+        for key in vine.pair_copulas
+    }
+    parameters = scalar_parameters(vine)
+    if kind == "suffix":
+        given = {int(vine.matrix[0, d - 1]): 0.4}
+        start_col = vine._given_suffix_start_col(given)
+        assert start_col is not None
+        uniforms = np.random.default_rng(2026082211).uniform(
+            1e-10, 1.0 - 1e-10, size=(n, d))
+
+        def execute():
+            return vine._sample_suffix_given_with_r(
+                n,
+                parameters,
+                np.random.default_rng(1),
+                given,
+                start_col,
+                uniforms=uniforms,
+            )
+    else:
+        given = {0: 0.4, 2: 0.6}
+        assert vine._suffix_sampling_state(given) is None
+        plan = plan_conditional_sample(
+            build_runtime_rvine_dag(vine.matrix, vine._edge_map),
+            given,
+            vine.d,
+        )
+        draw_count = sum(
+            step["action"] == "sample_uniform" for step in plan)
+        uniforms = np.random.default_rng(2026082212).uniform(
+            1e-10, 1.0 - 1e-10, size=(n, draw_count))
+
+        def execute():
+            return vine._sample_dag_given_with_r(
+                n,
+                parameters,
+                np.random.default_rng(1),
+                given,
+                plan,
+                vine.pair_copulas,
+                uniforms=uniforms,
+            )
+
+    elapsed = {}
+    outputs = {}
+    for mode in ("python_executor", "native_strict"):
+        monkeypatch.setenv(_RVINE_BACKEND_ENV, mode)
+        execute()
+        timings = []
+        for _ in range(7):
+            start = time.perf_counter()
+            outputs[mode] = execute()
+            timings.append(time.perf_counter() - start)
+        elapsed[mode] = float(np.median(timings))
+
+    np.testing.assert_array_equal(
+        outputs["native_strict"], outputs["python_executor"])
+    speedup = elapsed["python_executor"] / elapsed["native_strict"]
+    _print_benchmark(
+        "rvine_native_conditional",
+        kind=kind,
+        d=d,
+        n=n,
+        python_ms=f"{1e3 * elapsed['python_executor']:.3f}",
+        native_ms=f"{1e3 * elapsed['native_strict']:.3f}",
+        speedup=f"{speedup:.3f}",
+    )
+    assert speedup >= 2.0
+
+
+@pytest.mark.benchmark
+@pytest.mark.parametrize("kind", ["suffix", "dag"])
+@pytest.mark.parametrize(("n", "repetitions"), [(1, 100), (32, 30)])
+def test_rvine_native_conditional_small_input_adapter_overhead(
+        monkeypatch, kind, n, repetitions):
+    """Guard conditional dispatch overhead at public small row counts."""
+    _skip_unless_vine_enabled()
+    d = 10
+    vine = configured_static_dvine(d)
+    vine.pair_copulas = {
+        key: fitted_pair(BivariateGaussianCopula(), 0.05)
+        for key in vine.pair_copulas
+    }
+    parameters = scalar_parameters(vine)
+    if kind == "suffix":
+        given = {int(vine.matrix[0, d - 1]): 0.4}
+        start_col = vine._given_suffix_start_col(given)
+        uniforms = np.random.default_rng(2026082300 + n).uniform(
+            1e-10, 1.0 - 1e-10, size=(n, d))
+
+        def execute():
+            return vine._sample_suffix_given_with_r(
+                n,
+                parameters,
+                np.random.default_rng(1),
+                given,
+                start_col,
+                uniforms=uniforms,
+            )
+    else:
+        given = {0: 0.4, 2: 0.6}
+        plan = plan_conditional_sample(
+            build_runtime_rvine_dag(vine.matrix, vine._edge_map),
+            given,
+            vine.d,
+        )
+        draw_count = sum(
+            step["action"] == "sample_uniform" for step in plan)
+        uniforms = np.random.default_rng(2026082400 + n).uniform(
+            1e-10, 1.0 - 1e-10, size=(n, draw_count))
+
+        def execute():
+            return vine._sample_dag_given_with_r(
+                n,
+                parameters,
+                np.random.default_rng(1),
+                given,
+                plan,
+                vine.pair_copulas,
+                uniforms=uniforms,
+            )
+
+    elapsed = {}
+    outputs = {}
+    for mode in ("python_executor", "native_strict"):
+        monkeypatch.setenv(_RVINE_BACKEND_ENV, mode)
+        execute()
+        timings = []
+        for _ in range(7):
+            start = time.perf_counter()
+            for _ in range(repetitions):
+                outputs[mode] = execute()
+            timings.append((time.perf_counter() - start) / repetitions)
+        elapsed[mode] = float(np.median(timings))
+
+    np.testing.assert_array_equal(
+        outputs["native_strict"], outputs["python_executor"])
+    ratio = elapsed["native_strict"] / elapsed["python_executor"]
+    _print_benchmark(
+        "rvine_native_conditional_small_input",
+        kind=kind,
+        d=d,
+        n=n,
+        python_us=f"{1e6 * elapsed['python_executor']:.3f}",
+        native_us=f"{1e6 * elapsed['native_strict']:.3f}",
+        native_to_python=f"{ratio:.3f}",
+    )
+    assert ratio <= 1.5
+
+
+@pytest.mark.benchmark
+@pytest.mark.parametrize(("n", "repetitions"), [(1, 100), (32, 30)])
+def test_rvine_native_small_input_adapter_overhead(
+        monkeypatch, n, repetitions):
+    """Guard the request adapter against regressions hidden by large inputs."""
+    _skip_unless_vine_enabled()
+    d = 10
+    vine = configured_static_dvine(d)
+    vine.pair_copulas = {
+        key: fitted_pair(BivariateGaussianCopula(), 0.05)
+        for key in vine.pair_copulas
+    }
+    parameters = scalar_parameters(vine)
+    uniforms = np.random.default_rng(2026081505 + n).uniform(
+        1e-10, 1.0 - 1e-10, size=(n, d))
+    elapsed = {}
+    outputs = {}
+
+    for mode in ("python_executor", "native_strict"):
+        monkeypatch.setenv(_RVINE_BACKEND_ENV, mode)
+        vine._sample_with_r(
+            n, parameters, np.random.default_rng(1), uniforms=uniforms)
+        timings = []
+        for _ in range(7):
+            start = time.perf_counter()
+            for _ in range(repetitions):
+                outputs[mode] = vine._sample_with_r(
+                    n,
+                    parameters,
+                    np.random.default_rng(1),
+                    uniforms=uniforms,
+                )
+            timings.append((time.perf_counter() - start) / repetitions)
+        elapsed[mode] = float(np.median(timings))
+
+    np.testing.assert_array_equal(
+        outputs["native_strict"], outputs["python_executor"])
+    ratio = elapsed["native_strict"] / elapsed["python_executor"]
+    _print_benchmark(
+        "rvine_native_small_input",
+        d=d,
+        n=n,
+        python_us=f"{1e6 * elapsed['python_executor']:.3f}",
+        native_us=f"{1e6 * elapsed['native_strict']:.3f}",
+        overhead_us=(
+            f"{1e6 * (elapsed['native_strict'] - elapsed['python_executor']):.3f}"),
+        native_to_python=f"{ratio:.3f}",
+    )
+    assert ratio <= 1.5

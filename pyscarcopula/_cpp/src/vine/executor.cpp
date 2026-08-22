@@ -53,6 +53,41 @@ bool matches_used_edges(
     return expected == used_edges;
 }
 
+bool bounded_traversal_node_count(const RVineTraversalPlan& plan) noexcept {
+    if (plan.dimension < 0 || plan.node_count < 0) {
+        return false;
+    }
+    const std::size_t maximum = std::numeric_limits<std::size_t>::max();
+    std::size_t bound = static_cast<std::size_t>(plan.dimension);
+    if (plan.inverse_edges.size() > maximum - bound) {
+        return false;
+    }
+    bound += plan.inverse_edges.size();
+    if (plan.forward_edges.size() > (maximum - bound) / 2U) {
+        return false;
+    }
+    bound += 2U * plan.forward_edges.size();
+    return static_cast<std::size_t>(plan.node_count) <= bound;
+}
+
+bool bounded_conditional_node_count(
+    const RVineConditionalPlan& plan) noexcept {
+    if (plan.dimension < 0 || plan.node_count < 0) {
+        return false;
+    }
+    const std::size_t maximum = std::numeric_limits<std::size_t>::max();
+    std::size_t bound = plan.given_nodes.size();
+    if (plan.uniform_nodes.size() > maximum - bound) {
+        return false;
+    }
+    bound += plan.uniform_nodes.size();
+    if (plan.opcodes.size() > (maximum - bound) / 2U) {
+        return false;
+    }
+    bound += 2U * plan.opcodes.size();
+    return static_cast<std::size_t>(plan.node_count) <= bound;
+}
+
 }  // namespace
 
 bool valid_index(int value, int limit) noexcept {
@@ -61,7 +96,7 @@ bool valid_index(int value, int limit) noexcept {
 
 bool validate_traversal_plan(
     const RVineTraversalPlan& plan,
-    std::size_t edge_count) noexcept {
+    std::size_t edge_count) {
     const std::size_t column_count = plan.column_uniforms.size();
     if (plan.dimension < 2 || plan.node_count < plan.dimension
         || !valid_index(plan.last_uniform_column, plan.dimension)
@@ -69,6 +104,7 @@ bool validate_traversal_plan(
         || plan.output_nodes.size() != static_cast<std::size_t>(plan.dimension)
         || plan.inverse_offsets.size() != column_count + 1
         || plan.forward_offsets.size() != column_count + 1
+        || !bounded_traversal_node_count(plan)
         || !valid_offsets(plan.inverse_offsets, plan.inverse_edges.size())
         || !valid_offsets(plan.forward_offsets, plan.forward_edges.size())
         || !same_size(plan.inverse_edges, plan.inverse_partner_nodes)
@@ -124,14 +160,84 @@ bool validate_traversal_plan(
             return false;
         }
     }
+
+    if (edge_count == 0) {
+        if (plan.node_count != plan.dimension
+            || column_count
+                != static_cast<std::size_t>(plan.dimension - 1)
+            || plan.last_uniform_column != plan.dimension - 1
+            || plan.last_output_node != plan.dimension - 1
+            || !plan.inverse_edges.empty()
+            || !plan.forward_edges.empty()) {
+            return false;
+        }
+        for (int variable = 0; variable < plan.dimension; ++variable) {
+            if (plan.output_nodes[static_cast<std::size_t>(variable)]
+                    != variable) {
+                return false;
+            }
+        }
+        for (std::size_t column = 0; column < column_count; ++column) {
+            if (plan.column_uniforms[column]
+                    != plan.dimension - 2 - static_cast<int>(column)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // The Python builder validates initialization order, but the native
+    // boundary repeats it so malformed direct calls cannot read NaN sentinel
+    // nodes or rely on unchecked plan topology.
+    std::vector<unsigned char> initialized(
+        static_cast<std::size_t>(plan.node_count), 0);
+    initialized[static_cast<std::size_t>(plan.last_output_node)] = 1;
+    for (std::size_t column = 0; column < column_count; ++column) {
+        for (int index = plan.inverse_offsets[column];
+             index < plan.inverse_offsets[column + 1]; ++index) {
+            const int partner = plan.inverse_partner_nodes[index];
+            if (initialized[static_cast<std::size_t>(partner)] == 0) {
+                return false;
+            }
+            initialized[static_cast<std::size_t>(
+                plan.inverse_output_nodes[index])] = 1;
+        }
+        for (int index = plan.forward_offsets[column];
+             index < plan.forward_offsets[column + 1]; ++index) {
+            const int leaf = plan.forward_leaf_nodes[index];
+            const int partner = plan.forward_partner_nodes[index];
+            if (initialized[static_cast<std::size_t>(leaf)] == 0
+                || initialized[static_cast<std::size_t>(partner)] == 0) {
+                return false;
+            }
+            initialized[static_cast<std::size_t>(
+                plan.forward_leaf_output_nodes[index])] = 1;
+            initialized[static_cast<std::size_t>(
+                plan.forward_partner_output_nodes[index])] = 1;
+        }
+    }
+    for (int node : plan.output_nodes) {
+        if (initialized[static_cast<std::size_t>(node)] == 0) {
+            return false;
+        }
+    }
+    for (std::size_t index = 0; index < edge_count; ++index) {
+        if (initialized[static_cast<std::size_t>(
+                plan.update_u1_nodes[index])] == 0
+            || initialized[static_cast<std::size_t>(
+                plan.update_u2_nodes[index])] == 0) {
+            return false;
+        }
+    }
     return true;
 }
 
 bool validate_conditional_plan(
     const RVineConditionalPlan& plan,
-    std::size_t edge_count) noexcept {
+    std::size_t edge_count) {
     const std::size_t operation_count = plan.opcodes.size();
     if (plan.dimension < 2 || plan.node_count < plan.dimension
+        || !bounded_conditional_node_count(plan)
         || plan.output_nodes.size()
             != static_cast<std::size_t>(plan.dimension)
         || plan.given_variables.size() != plan.given_nodes.size()
@@ -260,7 +366,7 @@ bool validate_conditional_plan(
 
 bool validate_density_plan(
     const RVineDensityPlan& plan,
-    std::size_t edge_count) noexcept {
+    std::size_t edge_count) {
     const std::size_t operation_count = plan.edge_indices.size();
     if (plan.dimension < 2 || plan.node_count < plan.dimension
         || plan.input_nodes.size()
@@ -437,6 +543,29 @@ void h_pair(
     double parameter,
     double& first_next,
     double& second_next) {
+    const CopulaSpec& first_copula = first_transposed
+        ? edge.transposed_copula
+        : edge.edge.copula;
+    const CopulaSpec& second_copula = first_transposed
+        ? edge.edge.copula
+        : edge.transposed_copula;
+    if (first_copula.family == CopulaFamily::Gaussian
+        && second_copula.family == CopulaFamily::Gaussian
+        && first_copula.rotation == Rotation::R0
+        && second_copula.rotation == Rotation::R0) {
+        // The two Gaussian directions use the same pair of normal quantiles.
+        // Reusing them preserves the scalar kernel's operation order while
+        // avoiding two of the four inverse-normal evaluations.
+        const double first_quantile = scar_internal::normal_quantile(
+            clip_open_unit(first));
+        const double second_quantile = scar_internal::normal_quantile(
+            clip_open_unit(second));
+        first_next = scar_internal::gaussian_h_from_quantiles(
+            first_quantile, second_quantile, parameter);
+        second_next = scar_internal::gaussian_h_from_quantiles(
+            second_quantile, first_quantile, parameter);
+        return;
+    }
     first_next = h(
         edge, first_transposed, first, second, parameter);
     second_next = h(
@@ -454,6 +583,565 @@ double h_inverse(
         : edge.edge.copula;
     return scar_internal::copula_h_inverse_rotated(
         copula, quantile, given, parameter);
+}
+
+namespace {
+
+void fail_sample(
+    SampleResult& out,
+    int status,
+    std::int64_t row,
+    int edge,
+    int operation) noexcept {
+    out.status = status;
+    out.failure_row = row;
+    out.failure_edge = edge;
+    out.failure_operation = operation;
+}
+
+void fail_conditional_sample(
+    ConditionalSampleResult& out,
+    int status,
+    std::int64_t row,
+    int edge,
+    int operation) noexcept {
+    out.status = status;
+    out.failure_row = row;
+    out.failure_edge = edge;
+    out.failure_operation = operation;
+}
+
+bool checked_product(
+    std::size_t left,
+    std::size_t right,
+    std::size_t& product) noexcept {
+    if (left != 0
+        && right > std::numeric_limits<std::size_t>::max() / left) {
+        return false;
+    }
+    product = left * right;
+    return true;
+}
+
+bool is_unrotated_gaussian(const PreparedEdge& edge) noexcept {
+    return edge.edge.copula.family == CopulaFamily::Gaussian
+        && edge.edge.copula.rotation == Rotation::R0
+        && edge.transposed_copula.family == CopulaFamily::Gaussian
+        && edge.transposed_copula.rotation == Rotation::R0;
+}
+
+double gaussian_inverse_from_quantiles(
+    double quantile,
+    double given,
+    double rho) noexcept {
+    const double clipped_rho = std::min(std::max(rho, -0.999999), 0.999999);
+    const double z = quantile
+        * std::sqrt(1.0 - clipped_rho * clipped_rho)
+        + clipped_rho * given;
+    return 0.5 * (1.0 + std::erf(z / std::sqrt(2.0)));
+}
+
+}  // namespace
+
+SampleResult sample(
+    const RVineTraversalPlan& plan,
+    const std::vector<EdgeSpec>& edges,
+    const ParameterPack& parameters,
+    DoubleView uniforms,
+    std::int64_t uniform_rows,
+    std::int64_t uniform_columns,
+    int n_threads) {
+    SampleResult out;
+    out.n_rows = uniform_rows;
+    out.dimension = plan.dimension;
+    out.n_threads_requested = n_threads;
+    const std::size_t edge_count = edges.size();
+    if (n_threads <= 0 || uniform_rows < 0
+        || uniform_columns != plan.dimension
+        || parameters.n_rows != uniform_rows
+        || !validate_traversal_plan(plan, edge_count)) {
+        fail_sample(out, SCAR_INVALID_SIZE, -1, -1, -1);
+        return out;
+    }
+
+    const auto rows = static_cast<std::size_t>(uniform_rows);
+    const auto dimension = static_cast<std::size_t>(plan.dimension);
+    std::size_t uniform_values = 0;
+    std::size_t output_values = 0;
+    if (!checked_product(rows, dimension, uniform_values)
+        || !checked_product(rows, dimension, output_values)
+        || uniforms.size() != uniform_values
+        || (uniform_values > 0 && uniforms.data() == nullptr)) {
+        fail_sample(out, SCAR_INVALID_SIZE, -1, -1, -1);
+        return out;
+    }
+    const int parameter_status = validate_parameter_pack(edges, parameters);
+    if (parameter_status != SCAR_OK) {
+        fail_sample(out, parameter_status, -1, -1, -1);
+        return out;
+    }
+    std::vector<PreparedEdge> prepared_edges;
+    const int prepare_status = prepare_edges(edges, prepared_edges);
+    if (prepare_status != SCAR_OK) {
+        fail_sample(out, prepare_status, -1, -1, -1);
+        return out;
+    }
+    for (std::size_t index = 0; index < uniform_values; ++index) {
+        if (!std::isfinite(uniforms[index])
+            || uniforms[index] <= 0.0 || uniforms[index] >= 1.0) {
+            const auto row = static_cast<std::int64_t>(index / dimension);
+            fail_sample(out, SCAR_INVALID_PARAMETER, row, -1, -1);
+            return out;
+        }
+    }
+
+    out.values.assign(output_values, 0.0);
+    if (rows == 0) {
+        return out;
+    }
+    if (edge_count == 0) {
+        std::copy(
+            uniforms.data(), uniforms.data() + uniform_values,
+            out.values.begin());
+        return out;
+    }
+    std::vector<double> nodes(
+        static_cast<std::size_t>(plan.node_count),
+        std::numeric_limits<double>::quiet_NaN());
+
+    for (std::int64_t row = 0; row < uniform_rows; ++row) {
+        std::fill(
+            nodes.begin(), nodes.end(),
+            std::numeric_limits<double>::quiet_NaN());
+        const double* uniform_row = uniforms.data()
+            + static_cast<std::size_t>(row) * dimension;
+        nodes[static_cast<std::size_t>(plan.last_output_node)] =
+            clip_open_unit(uniform_row[plan.last_uniform_column]);
+
+        int operation = 0;
+        for (std::size_t column = 0;
+             column < plan.column_uniforms.size(); ++column) {
+            double current = clip_open_unit(
+                uniform_row[plan.column_uniforms[column]]);
+            for (int index = plan.inverse_offsets[column];
+                 index < plan.inverse_offsets[column + 1];
+                 ++index, ++operation) {
+                const int edge_index = plan.inverse_edges[index];
+                const PreparedEdge& edge = prepared_edges[
+                    static_cast<std::size_t>(edge_index)];
+                if (edge.edge.parameter_free) {
+                    nodes[static_cast<std::size_t>(
+                        plan.inverse_output_nodes[index])] = current;
+                    ++out.independence_fast_paths;
+                    ++out.inverse_operations;
+                    continue;
+                }
+                const double partner = nodes[static_cast<std::size_t>(
+                    plan.inverse_partner_nodes[index])];
+                const double parameter = parameter_at(
+                    edge.edge, parameters, row);
+                current = h_inverse(
+                    edge,
+                    plan.inverse_transposed[index] != 0,
+                    current,
+                    partner,
+                    parameter);
+                if (!std::isfinite(current)) {
+                    fail_sample(
+                        out, SCAR_NUMERICAL_FAILURE, row, edge_index,
+                        operation);
+                    return out;
+                }
+                current = clip_open_unit(current);
+                nodes[static_cast<std::size_t>(
+                    plan.inverse_output_nodes[index])] = current;
+                ++out.inverse_operations;
+            }
+
+            for (int index = plan.forward_offsets[column];
+                 index < plan.forward_offsets[column + 1];
+                 ++index, ++operation) {
+                const int edge_index = plan.forward_edges[index];
+                const PreparedEdge& edge = prepared_edges[
+                    static_cast<std::size_t>(edge_index)];
+                const double leaf = nodes[static_cast<std::size_t>(
+                    plan.forward_leaf_nodes[index])];
+                const double partner = nodes[static_cast<std::size_t>(
+                    plan.forward_partner_nodes[index])];
+                double leaf_next = leaf;
+                double partner_next = partner;
+                if (edge.edge.parameter_free) {
+                    ++out.independence_fast_paths;
+                } else {
+                    const double parameter = parameter_at(
+                        edge.edge, parameters, row);
+                    h_pair(
+                        edge,
+                        plan.forward_transposed[index] != 0,
+                        leaf,
+                        partner,
+                        parameter,
+                        leaf_next,
+                        partner_next);
+                    if (!std::isfinite(leaf_next)
+                        || !std::isfinite(partner_next)) {
+                        fail_sample(
+                            out, SCAR_NUMERICAL_FAILURE, row, edge_index,
+                            operation);
+                        return out;
+                    }
+                }
+                nodes[static_cast<std::size_t>(
+                    plan.forward_leaf_output_nodes[index])] =
+                    clip_open_unit(leaf_next);
+                nodes[static_cast<std::size_t>(
+                    plan.forward_partner_output_nodes[index])] =
+                    clip_open_unit(partner_next);
+                ++out.forward_operations;
+            }
+        }
+
+        double* result_row = out.values.data()
+            + static_cast<std::size_t>(row) * dimension;
+        for (int variable = 0; variable < plan.dimension; ++variable) {
+            const double value = nodes[static_cast<std::size_t>(
+                plan.output_nodes[static_cast<std::size_t>(variable)])];
+            if (!std::isfinite(value)) {
+                fail_sample(
+                    out, SCAR_NUMERICAL_FAILURE, row, -1, operation);
+                return out;
+            }
+            result_row[variable] = clip_open_unit(value);
+        }
+    }
+    return out;
+}
+
+ConditionalSampleResult conditional_sample(
+    const RVineConditionalPlan& plan,
+    const std::vector<EdgeSpec>& edges,
+    const ParameterPack& parameters,
+    DoubleView given_values,
+    DoubleView uniforms,
+    std::int64_t uniform_rows,
+    std::int64_t uniform_columns,
+    int n_threads) {
+    ConditionalSampleResult out;
+    out.n_rows = uniform_rows;
+    out.dimension = plan.dimension;
+    out.n_threads_requested = n_threads;
+    const std::size_t edge_count = edges.size();
+    if (n_threads <= 0 || uniform_rows < 0
+        || uniform_columns != plan.dimension
+        || parameters.n_rows != uniform_rows
+        || !validate_conditional_plan(plan, edge_count)) {
+        fail_conditional_sample(out, SCAR_INVALID_SIZE, -1, -1, -1);
+        return out;
+    }
+
+    const auto rows = static_cast<std::size_t>(uniform_rows);
+    const auto dimension = static_cast<std::size_t>(plan.dimension);
+    std::size_t uniform_value_count = 0;
+    std::size_t output_value_count = 0;
+    if (!checked_product(rows, dimension, uniform_value_count)
+        || !checked_product(rows, dimension, output_value_count)
+        || given_values.size() != dimension
+        || uniforms.size() != uniform_value_count
+        || (dimension > 0 && given_values.data() == nullptr)
+        || (uniform_value_count > 0 && uniforms.data() == nullptr)) {
+        fail_conditional_sample(out, SCAR_INVALID_SIZE, -1, -1, -1);
+        return out;
+    }
+    const int parameter_status = validate_parameter_pack(edges, parameters);
+    if (parameter_status != SCAR_OK) {
+        fail_conditional_sample(out, parameter_status, -1, -1, -1);
+        return out;
+    }
+    std::vector<PreparedEdge> prepared_edges;
+    const int prepare_status = prepare_edges(edges, prepared_edges);
+    if (prepare_status != SCAR_OK) {
+        fail_conditional_sample(out, prepare_status, -1, -1, -1);
+        return out;
+    }
+    for (std::size_t variable = 0; variable < dimension; ++variable) {
+        const double value = given_values[variable];
+        if (!std::isfinite(value) || value <= 0.0 || value >= 1.0) {
+            fail_conditional_sample(
+                out, SCAR_INVALID_PARAMETER, -1, -1, -1);
+            return out;
+        }
+    }
+    for (std::size_t index = 0; index < uniform_value_count; ++index) {
+        if (!std::isfinite(uniforms[index])
+            || uniforms[index] <= 0.0 || uniforms[index] >= 1.0) {
+            const auto row = static_cast<std::int64_t>(index / dimension);
+            fail_conditional_sample(
+                out, SCAR_INVALID_PARAMETER, row, -1, -1);
+            return out;
+        }
+    }
+
+    out.values.assign(output_value_count, 0.0);
+    if (rows == 0) {
+        return out;
+    }
+    constexpr std::size_t conditional_max_block_rows = 1024;
+    constexpr std::size_t conditional_workspace_budget =
+        64U * 1024U * 1024U;
+    constexpr std::size_t bytes_per_node_value =
+        2U * sizeof(double) + sizeof(unsigned char);
+    const std::size_t node_count = static_cast<std::size_t>(plan.node_count);
+    std::size_t bytes_per_row = 0;
+    if (!checked_product(node_count, bytes_per_node_value, bytes_per_row)) {
+        fail_conditional_sample(out, SCAR_INVALID_SIZE, -1, -1, -1);
+        return out;
+    }
+    if (bytes_per_row > conditional_workspace_budget) {
+        fail_conditional_sample(out, SCAR_INVALID_SIZE, -1, -1, -1);
+        return out;
+    }
+    const std::size_t memory_limited_rows = bytes_per_row == 0
+        ? conditional_max_block_rows
+        : conditional_workspace_budget / bytes_per_row;
+    const std::size_t block_capacity = std::min(
+        rows,
+        std::min(conditional_max_block_rows, memory_limited_rows));
+    std::size_t node_value_count = 0;
+    std::size_t peak_workspace_bytes = 0;
+    if (!checked_product(block_capacity, node_count, node_value_count)
+        || !checked_product(
+            block_capacity, bytes_per_row, peak_workspace_bytes)) {
+        fail_conditional_sample(out, SCAR_INVALID_SIZE, -1, -1, -1);
+        return out;
+    }
+    out.max_block_rows = static_cast<std::uint64_t>(block_capacity);
+    out.peak_workspace_bytes = static_cast<std::uint64_t>(
+        peak_workspace_bytes);
+
+    // Conditional plans operate on bounded row blocks. Keeping each node's
+    // block contiguous hoists opcode/family dispatch out of the hot row loop
+    // while bounding workspace independently of the public request size.
+    const double missing = std::numeric_limits<double>::quiet_NaN();
+    std::vector<double> nodes(node_value_count, missing);
+    std::vector<double> gaussian_quantiles(node_value_count, 0.0);
+    std::vector<unsigned char> gaussian_quantile_valid(node_value_count, 0);
+    const auto node_offset = [block_capacity](int node) noexcept {
+        return static_cast<std::size_t>(node) * block_capacity;
+    };
+
+    for (std::size_t row_start = 0; row_start < rows;
+         row_start += block_capacity) {
+        const std::size_t block_rows = std::min(
+            block_capacity, rows - row_start);
+        ++out.row_blocks;
+        std::fill(nodes.begin(), nodes.end(), missing);
+        std::fill(
+            gaussian_quantile_valid.begin(),
+            gaussian_quantile_valid.end(),
+            static_cast<unsigned char>(0));
+
+    for (int node = 0; node < plan.node_count; ++node) {
+        const std::size_t plan_position = static_cast<std::size_t>(node);
+        const int source = plan.node_sources[plan_position];
+        const int source_index = plan.node_source_indices[plan_position];
+        double* destination = nodes.data() + node_offset(node);
+        if (source == static_cast<int>(RVineNodeSource::Given)) {
+            std::fill(
+                destination,
+                destination + block_rows,
+                given_values[static_cast<std::size_t>(source_index)]);
+        } else if (source == static_cast<int>(RVineNodeSource::Uniform)) {
+            for (std::size_t row = 0; row < block_rows; ++row) {
+                destination[row] = uniforms[
+                    (row_start + row) * dimension
+                    + static_cast<std::size_t>(source_index)];
+            }
+        }
+    }
+
+    for (std::size_t operation = 0;
+         operation < plan.opcodes.size(); ++operation) {
+        const int opcode = plan.opcodes[operation];
+        const int input1 = plan.input1_nodes[operation];
+        const int output1 = plan.output1_nodes[operation];
+        const std::size_t input1_offset = node_offset(input1);
+        const std::size_t output1_offset = node_offset(output1);
+        if (opcode == static_cast<int>(RVineOpcode::COPY)) {
+            std::copy_n(
+                nodes.data() + input1_offset,
+                block_rows,
+                nodes.data() + output1_offset);
+            std::copy_n(
+                gaussian_quantiles.data() + input1_offset,
+                block_rows,
+                gaussian_quantiles.data() + output1_offset);
+            std::copy_n(
+                gaussian_quantile_valid.data() + input1_offset,
+                block_rows,
+                gaussian_quantile_valid.data() + output1_offset);
+            out.copy_operations += static_cast<std::int64_t>(block_rows);
+            continue;
+        }
+
+        const int edge_index = plan.edge_indices[operation];
+        const PreparedEdge& edge = prepared_edges[
+            static_cast<std::size_t>(edge_index)];
+        const int input2 = plan.input2_nodes[operation];
+        const int output2 = plan.output2_nodes[operation];
+        const std::size_t input2_offset = node_offset(input2);
+        const std::size_t output2_offset = opcode
+                == static_cast<int>(RVineOpcode::H_PAIR)
+            ? node_offset(output2)
+            : 0;
+        const bool transposed = plan.transposed[operation] != 0;
+
+        if (edge.edge.parameter_free) {
+            std::copy_n(
+                nodes.data() + input1_offset,
+                block_rows,
+                nodes.data() + output1_offset);
+            std::copy_n(
+                gaussian_quantiles.data() + input1_offset,
+                block_rows,
+                gaussian_quantiles.data() + output1_offset);
+            std::copy_n(
+                gaussian_quantile_valid.data() + input1_offset,
+                block_rows,
+                gaussian_quantile_valid.data() + output1_offset);
+            if (opcode == static_cast<int>(RVineOpcode::H_PAIR)) {
+                std::copy_n(
+                    nodes.data() + input2_offset,
+                    block_rows,
+                    nodes.data() + output2_offset);
+                std::copy_n(
+                    gaussian_quantiles.data() + input2_offset,
+                    block_rows,
+                    gaussian_quantiles.data() + output2_offset);
+                std::copy_n(
+                    gaussian_quantile_valid.data() + input2_offset,
+                    block_rows,
+                    gaussian_quantile_valid.data() + output2_offset);
+                out.h_pair_operations += static_cast<std::int64_t>(
+                    block_rows);
+            } else if (opcode == static_cast<int>(RVineOpcode::H)) {
+                out.h_operations += static_cast<std::int64_t>(block_rows);
+            } else {
+                out.inverse_operations += static_cast<std::int64_t>(
+                    block_rows);
+            }
+            out.independence_fast_paths += static_cast<std::int64_t>(
+                block_rows);
+            continue;
+        }
+
+        const bool gaussian = is_unrotated_gaussian(edge);
+        for (std::size_t row = 0; row < block_rows; ++row) {
+            const double first = nodes[input1_offset + row];
+            const double second = nodes[input2_offset + row];
+            const double parameter = parameter_at(
+                edge.edge,
+                parameters,
+                static_cast<std::int64_t>(row_start + row));
+            double first_next = missing;
+            double second_next = missing;
+            if (gaussian) {
+                const auto quantile_at = [&](std::size_t position) {
+                    if (gaussian_quantile_valid[position] == 0) {
+                        gaussian_quantiles[position] =
+                            scar_internal::normal_quantile(
+                                clip_open_unit(nodes[position]));
+                        gaussian_quantile_valid[position] = 1;
+                    }
+                    return gaussian_quantiles[position];
+                };
+                const double first_quantile = quantile_at(input1_offset + row);
+                const double second_quantile = quantile_at(input2_offset + row);
+                if (opcode == static_cast<int>(RVineOpcode::H)) {
+                    first_next = scar_internal::gaussian_h_from_quantiles(
+                        first_quantile, second_quantile, parameter);
+                } else if (opcode == static_cast<int>(RVineOpcode::H_PAIR)) {
+                    first_next = scar_internal::gaussian_h_from_quantiles(
+                        first_quantile, second_quantile, parameter);
+                    second_next = scar_internal::gaussian_h_from_quantiles(
+                        second_quantile, first_quantile, parameter);
+                } else {
+                    first_next = gaussian_inverse_from_quantiles(
+                        first_quantile, second_quantile, parameter);
+                }
+            } else if (opcode == static_cast<int>(RVineOpcode::H)) {
+                first_next = h(
+                    edge, transposed, first, second, parameter);
+            } else if (opcode == static_cast<int>(RVineOpcode::H_PAIR)) {
+                h_pair(
+                    edge,
+                    transposed,
+                    first,
+                    second,
+                    parameter,
+                    first_next,
+                    second_next);
+            } else {
+                first_next = h_inverse(
+                    edge, transposed, first, second, parameter);
+            }
+            if (!std::isfinite(first_next)
+                || (opcode == static_cast<int>(RVineOpcode::H_PAIR)
+                    && !std::isfinite(second_next))) {
+                fail_conditional_sample(
+                    out,
+                    SCAR_NUMERICAL_FAILURE,
+                    static_cast<std::int64_t>(row_start + row),
+                    edge_index,
+                    static_cast<int>(operation));
+                return out;
+            }
+            nodes[output1_offset + row] = clip_open_unit(first_next);
+            gaussian_quantile_valid[output1_offset + row] = 0;
+            if (opcode == static_cast<int>(RVineOpcode::H_PAIR)) {
+                nodes[output2_offset + row] = clip_open_unit(second_next);
+                gaussian_quantile_valid[output2_offset + row] = 0;
+            }
+        }
+        if (opcode == static_cast<int>(RVineOpcode::H)) {
+            out.h_operations += static_cast<std::int64_t>(block_rows);
+        } else if (opcode == static_cast<int>(RVineOpcode::H_PAIR)) {
+            out.h_pair_operations += static_cast<std::int64_t>(block_rows);
+        } else {
+            out.inverse_operations += static_cast<std::int64_t>(block_rows);
+        }
+    }
+
+    for (std::size_t row = 0; row < block_rows; ++row) {
+        const std::size_t result_index = row_start + row;
+        double* result_row = out.values.data()
+            + result_index * dimension;
+        for (int variable = 0; variable < plan.dimension; ++variable) {
+            const int output_node = plan.output_nodes[
+                static_cast<std::size_t>(variable)];
+            const double value = nodes[
+                node_offset(output_node)
+                + row];
+            if (!std::isfinite(value)) {
+                fail_conditional_sample(
+                    out,
+                    SCAR_NUMERICAL_FAILURE,
+                    static_cast<std::int64_t>(result_index),
+                    -1,
+                    static_cast<int>(plan.opcodes.size()));
+                return out;
+            }
+            // Conditioning values are public outputs, not internal pseudo-
+            // observations. Preserve every valid open-interval bit exactly;
+            // clipping is only part of the numerical kernel contract.
+            result_row[variable] = plan.node_sources[
+                    static_cast<std::size_t>(output_node)]
+                    == static_cast<int>(RVineNodeSource::Given)
+                ? value
+                : clip_open_unit(value);
+        }
+    }
+    }
+    return out;
 }
 
 }  // namespace scar::rvine

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyscarcopula"
-version = "0.20.3"
+version = "0.21.0"
 description = "Python library for bivariate, multivariate, vine, and stochastic copula models"
 readme = "README.md"
 license = "MIT"
@@ -74,7 +74,7 @@ markers = [
     "validation: optional distributional validation checks",
     "external: optional checks against external reference libraries",
     "high_dimensional: d=50 conditional-sampling validation and benchmark cases",
-    "rvine_native: existing GAS R-vine tests that require the native sampler",
+    "rvine_native: tests that require native R-vine runtime entry points",
 ]
 
 [tool.mypy]

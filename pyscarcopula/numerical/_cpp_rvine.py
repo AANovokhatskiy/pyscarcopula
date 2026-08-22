@@ -1,8 +1,8 @@
 """Shared serializers and capability gates for native R-vine runtimes.
 
 The topology builders remain in :mod:`pyscarcopula.vine`; this module owns
-only the flat pybind11 boundary.  It deliberately does not dispatch a generic
-runtime until the corresponding migration phase adds a native entry point.
+only the flat pybind11 boundary.  Random numbers and parameter trajectories
+remain Python-owned; native entry points receive validated contiguous buffers.
 """
 
 from __future__ import annotations
@@ -17,7 +17,15 @@ from pyscarcopula.numerical._cpp_extension import (
     CppUnsupported,
     cpp_status_name,
 )
-from pyscarcopula.vine._edge_adapter import edge_copula
+from pyscarcopula.vine._edge_adapter import (
+    edge_copula,
+    edge_has_dynamic_params,
+    edge_is_independent,
+)
+from pyscarcopula.vine._helpers import (
+    _open_unit_uniform,
+    _prepared_open_unit_draws,
+)
 
 
 _NATIVE_EQUIVALENT_ATTR = "__pyscarcopula_native_rvine__"
@@ -199,7 +207,13 @@ def compile_conditional_plan(module, plan, active_keys, given):
         output1_nodes.append(node_id(output1))
         output2_nodes.append(
             -1 if output2 is None else node_id(output2))
-        transposed.append(int(leaf > partner))
+        # The preserved arbitrary-DAG oracle calls the fitted edge directly
+        # in plan argument order.  Suffix actions instead use the explicit
+        # variable-aware helpers and therefore transpose when leaf > partner.
+        is_dag_action = action == "h_prop" or (
+            action == "h_inv" and "cond" in step
+        )
+        transposed.append(0 if is_dag_action else int(leaf > partner))
 
     output_nodes = [node_id(_node_key(variable)) for variable in range(
         int(plan.d))]
@@ -227,6 +241,15 @@ def compile_conditional_plan(module, plan, active_keys, given):
         raise ValueError(
             "compile_conditional_plan: native plan validation failed")
     return native
+
+
+def conditional_active_keys(plan):
+    """Return the sorted matrix-edge keys actually referenced by a plan."""
+    return tuple(sorted({
+        tuple(int(value) for value in step["edge"])
+        for step in plan
+        if step.get("action") in {"h_prop", "h_pair", "h_inv"}
+    }))
 
 
 def compile_density_plan(
@@ -317,6 +340,26 @@ class RVineParameterPack:
         return int(self.row_parameters.shape[1])
 
 
+@dataclass(frozen=True)
+class _RVineScalarRequestPack:
+    """Request-owned scalar buffer reusable across bounded row batches."""
+
+    key: tuple
+    scalar_parameters: np.ndarray
+
+
+def _scalar_request_key(active_keys, parameter_sources, native_edges):
+    sources = tuple(sorted(
+        (tuple(int(value) for value in key), str(source))
+        for key, source in (parameter_sources or {}).items()
+    ))
+    return (
+        tuple(active_keys),
+        sources,
+        tuple(id(edge) for edge in (native_edges or ())),
+    )
+
+
 def _parameter_path(value, n_rows, edge_key):
     raw = np.asarray(value)
     if np.iscomplexobj(raw):
@@ -345,31 +388,47 @@ def compile_edge_specs(
         parameter_paths,
         n_rows,
         *,
-        parameter_sources=None):
+        parameter_sources=None,
+        native_edges=None):
     """Pack edge metadata plus separate scalar and per-row parameter buffers."""
     n_rows = int(n_rows)
     if n_rows < 0:
         raise ValueError("R-vine parameter row count must be non-negative")
+    active_keys = tuple(
+        tuple(int(value) for value in key) for key in active_keys)
+    cached_edges = None if native_edges is None else tuple(native_edges)
+    if cached_edges is not None:
+        if len(cached_edges) != len(active_keys):
+            raise ValueError(
+                "cached native R-vine edge count does not match active_keys")
     declared_sources = {
         tuple(int(value) for value in key): source
         for key, source in (parameter_sources or {}).items()
     }
     scalar_parameters = []
     row_parameters = []
-    native_edges = []
-    independent_type = _builtin_copula_types()[0]
-
-    for key in active_keys:
-        key = tuple(int(value) for value in key)
+    compiled_edges = []
+    for edge_position, key in enumerate(active_keys):
         edge = pair_copulas[key]
         copula = edge_copula(edge)
-        native = module.RVineEdgeSpec()
-        native.copula = compile_copula_spec(module, copula)
-        parameter_free = isinstance(copula, independent_type)
-        native.parameter_free = parameter_free
+        cached_native = (
+            None if cached_edges is None else cached_edges[edge_position])
+        native = (
+            module.RVineEdgeSpec()
+            if cached_native is None
+            else cached_native
+        )
+        if cached_native is None:
+            native.copula = compile_copula_spec(module, copula)
+        parameter_free = edge_is_independent(edge)
+        if cached_native is None:
+            native.parameter_free = parameter_free
+        elif bool(native.parameter_free) != parameter_free:
+            raise ValueError(
+                f"cached native R-vine edge metadata is stale for edge {key}")
         if parameter_free:
-            native.parameter_source = module.RVineParameterSource.NONE
-            native.parameter_index = -1
+            source = module.RVineParameterSource.NONE
+            parameter_index = -1
         else:
             if key not in parameter_paths:
                 raise KeyError(f"missing R-vine parameter path for edge {key}")
@@ -406,14 +465,23 @@ def compile_edge_specs(
                     f"invalid R-vine parameter source for edge {key}: "
                     f"{declared!r}")
             if not is_row_path:
-                native.parameter_source = module.RVineParameterSource.SCALAR
-                native.parameter_index = len(scalar_parameters)
+                source = module.RVineParameterSource.SCALAR
+                parameter_index = len(scalar_parameters)
                 scalar_parameters.append(float(path[0]))
             else:
-                native.parameter_source = module.RVineParameterSource.ROW_PATH
-                native.parameter_index = len(row_parameters)
+                source = module.RVineParameterSource.ROW_PATH
+                parameter_index = len(row_parameters)
                 row_parameters.append(path)
-        native_edges.append(native)
+        if cached_native is None:
+            native.parameter_source = source
+            native.parameter_index = parameter_index
+        elif (
+                native.parameter_source != source
+                or int(native.parameter_index) != parameter_index):
+            raise ValueError(
+                "cached native R-vine parameter layout does not match edge "
+                f"{key}")
+        compiled_edges.append(native)
 
     scalar_buffer = np.ascontiguousarray(
         scalar_parameters, dtype=np.float64)
@@ -422,11 +490,336 @@ def compile_edge_specs(
             np.column_stack(row_parameters), dtype=np.float64)
     else:
         row_buffer = np.empty((n_rows, 0), dtype=np.float64)
-    return native_edges, RVineParameterPack(
+    return compiled_edges, RVineParameterPack(
         scalar_parameters=scalar_buffer,
         row_parameters=row_buffer,
         n_rows=n_rows,
     )
+
+
+def conditional_parameter_layout(
+        pair_copulas, active_keys, parameter_paths, n_rows):
+    """Normalize conditional edge paths and classify scalar/path storage.
+
+    Static prediction currently materializes constant length-``n`` arrays.
+    They are collapsed back to one scalar at the native boundary, while
+    genuinely dynamic or varying paths retain one value per row.
+    """
+    n_rows = int(n_rows)
+    normalized = dict(parameter_paths)
+    sources = {}
+    for raw_key in active_keys:
+        key = tuple(int(value) for value in raw_key)
+        edge = pair_copulas[key]
+        if edge_is_independent(edge):
+            continue
+        if key not in parameter_paths:
+            raise KeyError(f"missing R-vine parameter path for edge {key}")
+        raw = parameter_paths[key]
+        path = _parameter_path(raw, n_rows, key)
+        dynamic = edge_has_dynamic_params(edge)
+        if dynamic:
+            if len(path) != n_rows:
+                raise ValueError(
+                    f"dynamic R-vine parameter path for edge {key} must "
+                    f"have length {n_rows}, got {len(path)}")
+            sources[key] = "row_path"
+            normalized[key] = path
+        elif len(path) == 1 or (
+                len(path) > 1 and np.all(path == path[0])):
+            sources[key] = "scalar"
+            normalized[key] = float(path[0])
+        else:
+            sources[key] = "row_path"
+            normalized[key] = path
+    return normalized, sources
+
+
+def _conditional_given_values(dimension, given, expected_variables):
+    expected = tuple(sorted(int(value) for value in expected_variables))
+    actual = tuple(sorted(int(value) for value in given))
+    if actual != expected:
+        raise ValueError(
+            "conditional R-vine plan given variables do not match values: "
+            f"expected {expected}, got {actual}")
+    values = np.full(int(dimension), 0.5, dtype=np.float64)
+    for variable, raw_value in given.items():
+        if isinstance(raw_value, complex) or np.iscomplexobj(raw_value):
+            raise TypeError(
+                "conditional R-vine given values must contain real values")
+        value = float(raw_value)
+        if not np.isfinite(value) or not 0.0 < value < 1.0:
+            raise ValueError(
+                "conditional R-vine given values must lie in the open unit "
+                f"interval; variable {int(variable)} has {value!r}")
+        values[int(variable)] = value
+    return np.ascontiguousarray(values)
+
+
+def _conditional_uniform_buffer(plan, n_rows, rng, uniforms):
+    """Prepare full-width uniforms while preserving each Python RNG contract."""
+    n_rows = int(n_rows)
+    dimension = int(plan.d)
+    draw_steps = [
+        step for step in plan if step.get("action") == "sample_uniform"
+    ]
+    is_suffix = any("column" in step for step in draw_steps)
+    if is_suffix:
+        if uniforms is None:
+            return np.ascontiguousarray(
+                _open_unit_uniform(rng, size=(n_rows, dimension)),
+                dtype=np.float64,
+            )
+        return _prepared_open_unit_draws(
+            uniforms,
+            (n_rows, dimension),
+            name="suffix sampling uniforms",
+        )
+
+    draw_count = len(draw_steps)
+    prepared = np.full((n_rows, dimension), 0.5, dtype=np.float64)
+    if uniforms is None:
+        for step in draw_steps:
+            prepared[:, int(step["var"])] = _open_unit_uniform(
+                rng, size=n_rows)
+        return prepared
+
+    supplied = np.asarray(uniforms)
+    if supplied.shape == (n_rows, draw_count):
+        compact = _prepared_open_unit_draws(
+            supplied,
+            (n_rows, draw_count),
+            name="conditional DAG uniforms",
+        )
+        for draw_index, step in enumerate(draw_steps):
+            prepared[:, int(step["var"])] = compact[:, draw_index]
+        return prepared
+    if supplied.shape == (n_rows, dimension):
+        return _prepared_open_unit_draws(
+            supplied,
+            (n_rows, dimension),
+            name="conditional DAG uniforms",
+        )
+    raise ValueError(
+        "conditional DAG uniforms must have shape "
+        f"{(n_rows, draw_count)} (draw order) or "
+        f"{(n_rows, dimension)} (variable columns), got {supplied.shape}"
+    )
+
+
+def conditional_sample(
+        module,
+        pair_copulas,
+        plan,
+        n,
+        rng,
+        given,
+        parameter_paths,
+        *,
+        uniforms=None,
+        active_keys=None,
+        parameter_sources=None,
+        normalized_parameter_paths=None,
+        native_plan=None,
+        native_edges=None,
+        parameter_pack=None,
+        n_threads=1):
+    """Execute one suffix or DAG conditional program in the native runtime.
+
+    ``None`` is returned only when the exact-type capability gate rejects an
+    edge before parameter validation or RNG consumption.
+    """
+    n = int(n)
+    if n < 0:
+        raise ValueError(
+            "R-vine conditional sample row count must be non-negative")
+    if not isinstance(n_threads, (int, np.integer)) or int(n_threads) <= 0:
+        raise ValueError(
+            "R-vine conditional sample n_threads must be a positive integer")
+    n_threads = int(n_threads)
+    active_keys = (
+        conditional_active_keys(plan)
+        if active_keys is None else
+        tuple(tuple(int(value) for value in key) for key in active_keys)
+    )
+    if not native_edges_supported(pair_copulas, active_keys):
+        return None
+
+    if normalized_parameter_paths is None or parameter_sources is None:
+        normalized_parameter_paths, parameter_sources = (
+            conditional_parameter_layout(
+                pair_copulas, active_keys, parameter_paths, n)
+        )
+    if parameter_pack is None:
+        try:
+            edges, parameters = compile_edge_specs(
+                module,
+                pair_copulas,
+                active_keys,
+                normalized_parameter_paths,
+                n,
+                parameter_sources=parameter_sources,
+                native_edges=native_edges,
+            )
+        except CppUnsupported:
+            return None
+    else:
+        if native_edges is None:
+            raise ValueError(
+                "precompiled conditional R-vine parameter pack requires "
+                "native edges")
+        if not isinstance(parameter_pack, RVineParameterPack):
+            raise TypeError("parameter_pack must be an RVineParameterPack")
+        if int(parameter_pack.n_rows) != n:
+            raise ValueError(
+                "precompiled conditional R-vine parameter pack row count "
+                "mismatch")
+        edges = list(native_edges)
+        parameters = parameter_pack
+    native = (
+        compile_conditional_plan(module, plan, active_keys, given)
+        if native_plan is None else native_plan
+    )
+    given_values = _conditional_given_values(
+        int(plan.d), given, native.given_variables)
+    prepared_uniforms = _conditional_uniform_buffer(
+        plan, n, rng, uniforms)
+    result = module.rvine_conditional_sample(
+        native,
+        edges,
+        parameters.scalar_parameters,
+        parameters.row_parameters,
+        given_values,
+        prepared_uniforms,
+        n_threads,
+    )
+    raise_for_status(result, "R-vine conditional sample")
+    if int(result["n_rows"]) != n or int(result["dimension"]) != int(plan.d):
+        raise CppError(
+            "C++ R-vine conditional sample returned inconsistent dimensions")
+    values = np.asarray(result["values"], dtype=np.float64)
+    if values.size != n * int(plan.d):
+        raise CppError(
+            "C++ R-vine conditional sample returned an invalid value count")
+    return np.ascontiguousarray(values.reshape(n, int(plan.d)))
+
+
+def sample(
+        module,
+        vine,
+        n,
+        rng,
+        active_keys,
+        traversal_plan,
+        parameter_paths,
+        *,
+        uniforms=None,
+        parameter_sources=None,
+        native_plan=None,
+        native_edges=None,
+        n_threads=1,
+        parameter_pack=None,
+        request_state=None):
+    """Execute one generic unconditional R-vine batch.
+
+    ``None`` is returned only when the exact-type capability gate rejects an
+    edge before entering C++.  Validation and numerical failures after the
+    native call are always raised and must never trigger Python fallback.
+    """
+    n = int(n)
+    if n < 0:
+        raise ValueError("R-vine sample row count must be non-negative")
+    if not isinstance(n_threads, (int, np.integer)) or int(n_threads) <= 0:
+        raise ValueError("R-vine sample n_threads must be a positive integer")
+    n_threads = int(n_threads)
+    active_keys = tuple(
+        tuple(int(value) for value in key) for key in active_keys)
+    if traversal_plan is None or tuple(traversal_plan.active_keys) != active_keys:
+        raise ValueError(
+            "R-vine traversal plan does not match active edge keys")
+    if not native_edges_supported(vine.pair_copulas, active_keys):
+        return None
+
+    request_key = _scalar_request_key(
+        active_keys, parameter_sources, native_edges)
+    cached_pack = (
+        None if request_state is None
+        else request_state.get("scalar_parameter_pack")
+    )
+    if (
+            isinstance(cached_pack, _RVineScalarRequestPack)
+            and cached_pack.key == request_key):
+        if native_edges is None:
+            raise ValueError(
+                "cached scalar R-vine pack requires cached native edges")
+        edges = list(native_edges)
+        parameters = RVineParameterPack(
+            scalar_parameters=cached_pack.scalar_parameters,
+            row_parameters=np.empty((n, 0), dtype=np.float64),
+            n_rows=n,
+        )
+    else:
+        if parameter_pack is None:
+            try:
+                edges, parameters = compile_edge_specs(
+                    module,
+                    vine.pair_copulas,
+                    active_keys,
+                    parameter_paths,
+                    n,
+                    parameter_sources=parameter_sources,
+                    native_edges=native_edges,
+                )
+            except CppUnsupported:
+                return None
+        else:
+            if native_edges is None:
+                raise ValueError(
+                    "precompiled R-vine parameter pack requires native edges")
+            if not isinstance(parameter_pack, RVineParameterPack):
+                raise TypeError(
+                    "parameter_pack must be an RVineParameterPack")
+            if int(parameter_pack.n_rows) != n:
+                raise ValueError(
+                    "precompiled R-vine parameter pack row count mismatch")
+            edges = list(native_edges)
+            parameters = parameter_pack
+        if request_state is not None and parameters.row_parameter_columns == 0:
+            request_state["scalar_parameter_pack"] = _RVineScalarRequestPack(
+                key=request_key,
+                scalar_parameters=parameters.scalar_parameters,
+            )
+    plan = (
+        compile_traversal_plan(module, traversal_plan)
+        if native_plan is None
+        else native_plan
+    )
+    if uniforms is None:
+        prepared_uniforms = np.ascontiguousarray(
+            _open_unit_uniform(rng, size=(n, int(vine.d))),
+            dtype=np.float64,
+        )
+    else:
+        prepared_uniforms = _prepared_open_unit_draws(
+            uniforms,
+            (n, int(vine.d)),
+            name="R-vine sampling uniforms",
+        )
+    result = module.rvine_sample(
+        plan,
+        edges,
+        parameters.scalar_parameters,
+        parameters.row_parameters,
+        prepared_uniforms,
+        n_threads,
+    )
+    raise_for_status(result, "R-vine sample")
+    if int(result["n_rows"]) != n or int(result["dimension"]) != int(vine.d):
+        raise CppError("C++ R-vine sample returned inconsistent dimensions")
+    values = np.asarray(result["values"], dtype=np.float64)
+    if values.size != n * int(vine.d):
+        raise CppError("C++ R-vine sample returned an invalid value count")
+    return np.ascontiguousarray(values.reshape(n, int(vine.d)))
 
 
 def raise_for_status(result, operation):
@@ -436,6 +829,7 @@ def raise_for_status(result, operation):
         return
     row = int(result.get("failure_row", -1))
     edge = int(result.get("failure_edge", -1))
+    operation_index = int(result.get("failure_operation", -1))
     message = (
         f"C++ {operation} failed: status={status} "
         f"({cpp_status_name(status)})"
@@ -444,6 +838,8 @@ def raise_for_status(result, operation):
         message += f", row={row}"
     if edge >= 0:
         message += f", edge={edge}"
+    if operation_index >= 0:
+        message += f", operation={operation_index}"
     if status in (2, 6):
         raise ValueError(message)
     if status in (3, 4, 5):

@@ -160,6 +160,176 @@ void bind_rvine(py::module_& m) {
         &scar::rvine::validate_density_plan,
         py::arg("plan"),
         py::arg("edge_count"));
+
+    m.def(
+        "rvine_sample",
+        [](const scar::RVineTraversalPlan& plan,
+           const std::vector<scar::rvine::EdgeSpec>& edges,
+           py::array_t<
+               double,
+               py::array::c_style | py::array::forcecast> scalar_parameters,
+           py::array_t<
+               double,
+               py::array::c_style | py::array::forcecast> row_parameters,
+           py::array_t<
+               double,
+               py::array::c_style | py::array::forcecast> uniforms,
+           int n_threads) {
+            const py::buffer_info scalar_info = scalar_parameters.request();
+            const py::buffer_info row_info = row_parameters.request();
+            const py::buffer_info uniform_info = uniforms.request();
+            if (scalar_info.ndim != 1 || row_info.ndim != 2
+                || uniform_info.ndim != 2) {
+                throw std::invalid_argument(
+                    "scalar_parameters must be 1D and row_parameters and "
+                    "uniforms must be 2D arrays");
+            }
+            scar::rvine::ParameterPack parameters;
+            parameters.scalar_parameters = {
+                static_cast<const double*>(scalar_info.ptr),
+                static_cast<std::size_t>(scalar_info.shape[0]),
+            };
+            parameters.row_parameters = {
+                static_cast<const double*>(row_info.ptr),
+                static_cast<std::size_t>(row_info.size),
+            };
+            parameters.n_rows = static_cast<std::int64_t>(row_info.shape[0]);
+            parameters.row_parameter_columns =
+                static_cast<std::int64_t>(row_info.shape[1]);
+            const scar::DoubleView uniform_view = {
+                static_cast<const double*>(uniform_info.ptr),
+                static_cast<std::size_t>(uniform_info.size),
+            };
+            scar::rvine::SampleResult result;
+            {
+                py::gil_scoped_release release;
+                result = scar::rvine::sample(
+                    plan,
+                    edges,
+                    parameters,
+                    uniform_view,
+                    static_cast<std::int64_t>(uniform_info.shape[0]),
+                    static_cast<std::int64_t>(uniform_info.shape[1]),
+                    n_threads);
+            }
+            py::dict diagnostics;
+            diagnostics["n_threads_requested"] = result.n_threads_requested;
+            diagnostics["n_threads_used"] = result.n_threads_used;
+            diagnostics["inverse_operations"] = result.inverse_operations;
+            diagnostics["forward_operations"] = result.forward_operations;
+            diagnostics["independence_fast_paths"] =
+                result.independence_fast_paths;
+
+            py::dict out;
+            out["values"] = vector_to_array(result.values);
+            out["n_rows"] = result.n_rows;
+            out["dimension"] = result.dimension;
+            out["status"] = result.status;
+            out["failure_row"] = result.failure_row;
+            out["failure_edge"] = result.failure_edge;
+            out["failure_operation"] = result.failure_operation;
+            out["diagnostics"] = std::move(diagnostics);
+            return out;
+        },
+        py::arg("plan"),
+        py::arg("edges"),
+        py::arg("scalar_parameters"),
+        py::arg("row_parameters"),
+        py::arg("uniforms"),
+        py::arg("n_threads") = 1);
+
+    m.def(
+        "rvine_conditional_sample",
+        [](const scar::RVineConditionalPlan& plan,
+           const std::vector<scar::rvine::EdgeSpec>& edges,
+           py::array_t<
+               double,
+               py::array::c_style | py::array::forcecast> scalar_parameters,
+           py::array_t<
+               double,
+               py::array::c_style | py::array::forcecast> row_parameters,
+           py::array_t<
+               double,
+               py::array::c_style | py::array::forcecast> given_values,
+           py::array_t<
+               double,
+               py::array::c_style | py::array::forcecast> uniforms,
+           int n_threads) {
+            const py::buffer_info scalar_info = scalar_parameters.request();
+            const py::buffer_info row_info = row_parameters.request();
+            const py::buffer_info given_info = given_values.request();
+            const py::buffer_info uniform_info = uniforms.request();
+            if (scalar_info.ndim != 1 || row_info.ndim != 2
+                || given_info.ndim != 1 || uniform_info.ndim != 2) {
+                throw std::invalid_argument(
+                    "scalar_parameters and given_values must be 1D and "
+                    "row_parameters and uniforms must be 2D arrays");
+            }
+            scar::rvine::ParameterPack parameters;
+            parameters.scalar_parameters = {
+                static_cast<const double*>(scalar_info.ptr),
+                static_cast<std::size_t>(scalar_info.shape[0]),
+            };
+            parameters.row_parameters = {
+                static_cast<const double*>(row_info.ptr),
+                static_cast<std::size_t>(row_info.size),
+            };
+            parameters.n_rows = static_cast<std::int64_t>(row_info.shape[0]);
+            parameters.row_parameter_columns =
+                static_cast<std::int64_t>(row_info.shape[1]);
+            const scar::DoubleView given_view = {
+                static_cast<const double*>(given_info.ptr),
+                static_cast<std::size_t>(given_info.size),
+            };
+            const scar::DoubleView uniform_view = {
+                static_cast<const double*>(uniform_info.ptr),
+                static_cast<std::size_t>(uniform_info.size),
+            };
+            scar::rvine::ConditionalSampleResult result;
+            {
+                py::gil_scoped_release release;
+                result = scar::rvine::conditional_sample(
+                    plan,
+                    edges,
+                    parameters,
+                    given_view,
+                    uniform_view,
+                    static_cast<std::int64_t>(uniform_info.shape[0]),
+                    static_cast<std::int64_t>(uniform_info.shape[1]),
+                    n_threads);
+            }
+            py::dict diagnostics;
+            diagnostics["n_threads_requested"] = result.n_threads_requested;
+            diagnostics["n_threads_used"] = result.n_threads_used;
+            diagnostics["h_operations"] = result.h_operations;
+            diagnostics["h_pair_operations"] = result.h_pair_operations;
+            diagnostics["inverse_operations"] = result.inverse_operations;
+            diagnostics["copy_operations"] = result.copy_operations;
+            diagnostics["independence_fast_paths"] =
+                result.independence_fast_paths;
+            diagnostics["row_blocks"] = result.row_blocks;
+            diagnostics["max_block_rows"] = result.max_block_rows;
+            diagnostics["peak_workspace_bytes"] =
+                result.peak_workspace_bytes;
+
+            py::dict out;
+            out["values"] = vector_to_array(result.values);
+            out["n_rows"] = result.n_rows;
+            out["dimension"] = result.dimension;
+            out["status"] = result.status;
+            out["failure_row"] = result.failure_row;
+            out["failure_edge"] = result.failure_edge;
+            out["failure_operation"] = result.failure_operation;
+            out["diagnostics"] = std::move(diagnostics);
+            return out;
+        },
+        py::arg("plan"),
+        py::arg("edges"),
+        py::arg("scalar_parameters"),
+        py::arg("row_parameters"),
+        py::arg("given_values"),
+        py::arg("uniforms"),
+        py::arg("n_threads") = 1);
 }
 
 }  // namespace pyscarcopula::bindings
