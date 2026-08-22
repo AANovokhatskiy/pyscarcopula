@@ -178,10 +178,11 @@ class StudentCopula(MultivariateCopula):
             None if self._base_preprocessing is None
             else self._base_preprocessing.correlation.copy())
         self._constructor_R = (
-            None if self._supplied_correlation is None
-            else self._supplied_correlation.copy())
+            None if self._supplied_preprocessing is None
+            else self._supplied_preprocessing.input_correlation.copy())
         self._constructor_corr_base = (
-            None if self._corr_base is None else self._corr_base.copy())
+            None if self._base_preprocessing is None
+            else self._base_preprocessing.input_correlation.copy())
         for matrix, name in (
                 (self._supplied_correlation, "R"),
                 (self._corr_base, "corr_base")):
