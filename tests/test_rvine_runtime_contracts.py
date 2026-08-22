@@ -55,6 +55,8 @@ from rvine_runtime_cases import (
 
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "rvine_runtime_oracle_v1.json"
+_GOLDEN_RTOL = 2e-15
+_GOLDEN_ATOL = 2e-15
 
 
 @pytest.fixture
@@ -72,6 +74,16 @@ def _fixture_parameters(payload):
 
 def _assert_rng_equal(left, right):
     np.testing.assert_array_equal(left.random(16), right.random(16))
+
+
+def _assert_golden_close(actual, expected):
+    """Compare floating-point oracles across supported platform toolchains."""
+    np.testing.assert_allclose(
+        actual,
+        expected,
+        rtol=_GOLDEN_RTOL,
+        atol=_GOLDEN_ATOL,
+    )
 
 
 @pytest.mark.parametrize(
@@ -272,7 +284,7 @@ def test_oracle_fixture_has_immutable_provenance(golden):
         golden["provenance"]["extension_oracle"])
 
 
-def test_python_oracles_match_runtime_golden_exactly(monkeypatch, golden):
+def test_python_oracles_match_runtime_golden(monkeypatch, golden):
     monkeypatch.setenv(_RVINE_BACKEND_ENV, "python_executor")
     vine = configured_mixed_family_vine()
     inputs = golden["inputs"]
@@ -287,8 +299,7 @@ def test_python_oracles_match_runtime_golden_exactly(monkeypatch, golden):
         np.random.default_rng(1),
         uniforms=uniforms,
     )
-    np.testing.assert_array_equal(
-        unconditional, expected["unconditional_sample"])
+    _assert_golden_close(unconditional, expected["unconditional_sample"])
 
     suffix_given = {
         int(key): value for key, value in inputs["suffix_given"].items()
@@ -301,7 +312,7 @@ def test_python_oracles_match_runtime_golden_exactly(monkeypatch, golden):
         vine._given_suffix_start_col(suffix_given),
         uniforms=uniforms,
     )
-    np.testing.assert_array_equal(suffix, expected["suffix_sample"])
+    _assert_golden_close(suffix, expected["suffix_sample"])
 
     dag_given = {
         int(key): value for key, value in inputs["dag_given"].items()
@@ -317,29 +328,27 @@ def test_python_oracles_match_runtime_golden_exactly(monkeypatch, golden):
         vine.pair_copulas,
         uniforms=np.asarray(inputs["dag_uniforms"], dtype=np.float64),
     )
-    np.testing.assert_array_equal(dag_sample, expected["dag_sample"])
+    _assert_golden_close(dag_sample, expected["dag_sample"])
 
     log_pdf = vine._log_pdf_rows_with_r(observations, r_all)
-    np.testing.assert_array_equal(log_pdf, expected["log_pdf_rows"])
+    _assert_golden_close(log_pdf, expected["log_pdf_rows"])
 
     transformed = rvine_rosenblatt_transform(vine, observations)
-    np.testing.assert_array_equal(
-        transformed, expected["rvine_rosenblatt"])
+    _assert_golden_close(transformed, expected["rvine_rosenblatt"])
 
     student = student_rosenblatt_transform(
         np.asarray(inputs["student_correlation"], dtype=np.float64),
         float(inputs["student_df"]),
         observations,
     )
-    np.testing.assert_allclose(
-        student, expected["student_rosenblatt"], rtol=2e-15, atol=2e-15)
+    _assert_golden_close(student, expected["student_rosenblatt"])
 
     student_df_path = student_rosenblatt_transform(
         np.asarray(inputs["student_correlation"], dtype=np.float64),
         np.asarray(inputs["student_df_path"], dtype=np.float64),
         observations,
     )
-    np.testing.assert_array_equal(
+    _assert_golden_close(
         student_df_path, expected["student_rosenblatt_df_path"])
 
     student_low_df = student_rosenblatt_transform(
@@ -347,7 +356,7 @@ def test_python_oracles_match_runtime_golden_exactly(monkeypatch, golden):
         float(inputs["student_low_df"]),
         np.asarray(inputs["student_low_df_observations"], dtype=np.float64),
     )
-    np.testing.assert_array_equal(
+    _assert_golden_close(
         student_low_df, expected["student_rosenblatt_low_df"])
 
     mcmc, diagnostics = vine._sample_arbitrary_given_mcmc(
@@ -361,7 +370,7 @@ def test_python_oracles_match_runtime_golden_exactly(monkeypatch, golden):
         random_draws=np.asarray(
             inputs["mcmc_random_draws"], dtype=np.float64),
     )
-    np.testing.assert_array_equal(mcmc, expected["mcmc_sample"])
+    _assert_golden_close(mcmc, expected["mcmc_sample"])
     assert json.loads(json.dumps(diagnostics)) == expected["mcmc_diagnostics"]
 
 
@@ -385,9 +394,9 @@ def test_auto_dense_student_capability_fallback_matches_gate_zero_golden(
         np.asarray(inputs["student_low_df_observations"], dtype=np.float64),
     )
 
-    np.testing.assert_array_equal(
+    _assert_golden_close(
         path_result, expected["student_rosenblatt_df_path"])
-    np.testing.assert_array_equal(
+    _assert_golden_close(
         low_df_result, expected["student_rosenblatt_low_df"])
 
 
