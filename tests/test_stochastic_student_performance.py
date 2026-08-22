@@ -7,6 +7,7 @@ import time
 import numpy as np
 import pytest
 
+from benchmark_timing import interleaved_timings
 from pyscarcopula._utils import pobs
 from pyscarcopula.copula.multivariate.stochastic_student import (
     StochasticStudentCopula,
@@ -144,12 +145,18 @@ def test_stochastic_student_cpp_cold_cache_benchmark(T, d, K):
     warm_copula = StochasticStudentCopula(d=d, R=R)
     warm_value = _cpp_scar_ou.neg_loglik(
         *params, u, warm_copula, config)
-    cold_elapsed, cold_value = _median_elapsed(cold_call, repeats=3)
-    warm_elapsed, measured_warm_value = _median_elapsed(
-        lambda: _cpp_scar_ou.neg_loglik(
-            *params, u, warm_copula, config),
-        repeats=7,
+    measured = interleaved_timings(
+        {
+            "cold": cold_call,
+            "warm": lambda: _cpp_scar_ou.neg_loglik(
+                *params, u, warm_copula, config),
+        },
+        repeats=3,
     )
+    cold_elapsed = measured.medians["cold"]
+    warm_elapsed = measured.medians["warm"]
+    cold_value = measured.results["cold"]
+    measured_warm_value = measured.results["warm"]
 
     np.testing.assert_allclose(
         cold_value, warm_value, rtol=0.0, atol=1e-12)
@@ -163,7 +170,7 @@ def test_stochastic_student_cpp_cold_cache_benchmark(T, d, K):
         transition="matrix",
         cold_ms=f"{1e3 * cold_elapsed:.3f}",
         warm_ms=f"{1e3 * warm_elapsed:.3f}",
-        cold_over_warm=f"{cold_elapsed / warm_elapsed:.2f}",
+        cold_over_warm=f"{measured.median_ratio('cold', 'warm'):.2f}",
     )
 
 
@@ -186,10 +193,19 @@ def test_stochastic_student_warm_likelihood_benchmark(
 
     wrapper_value = auto_neg_loglik(*params, u, copula, config)
     cpp_value = _cpp_scar_ou.neg_loglik(*params, u, copula, config)
-    wrapper_elapsed, measured_wrapper = _median_elapsed(
-        lambda: auto_neg_loglik(*params, u, copula, config))
-    cpp_elapsed, measured_cpp = _median_elapsed(
-        lambda: _cpp_scar_ou.neg_loglik(*params, u, copula, config))
+    measured = interleaved_timings(
+        {
+            "wrapper": lambda: auto_neg_loglik(
+                *params, u, copula, config),
+            "cpp": lambda: _cpp_scar_ou.neg_loglik(
+                *params, u, copula, config),
+        },
+        repeats=5,
+    )
+    wrapper_elapsed = measured.medians["wrapper"]
+    cpp_elapsed = measured.medians["cpp"]
+    measured_wrapper = measured.results["wrapper"]
+    measured_cpp = measured.results["cpp"]
 
     np.testing.assert_allclose(
         cpp_value, wrapper_value, rtol=0.0, atol=5e-4)
@@ -205,7 +221,7 @@ def test_stochastic_student_warm_likelihood_benchmark(
         transition=transition_method,
         wrapper_ms=f"{1e3 * wrapper_elapsed:.3f}",
         cpp_ms=f"{1e3 * cpp_elapsed:.3f}",
-        wrapper_overhead=f"{wrapper_elapsed / cpp_elapsed:.2f}",
+        wrapper_overhead=f"{measured.median_ratio('wrapper', 'cpp'):.2f}",
     )
 
 
@@ -230,12 +246,19 @@ def test_stochastic_student_warm_gradient_benchmark(
         *params, u, copula, config)
     cpp_result = _cpp_scar_ou.neg_loglik_with_grad(
         *params, u, copula, config)
-    wrapper_elapsed, measured_wrapper = _median_elapsed(
-        lambda: auto_neg_loglik_with_grad(
-            *params, u, copula, config))
-    cpp_elapsed, measured_cpp = _median_elapsed(
-        lambda: _cpp_scar_ou.neg_loglik_with_grad(
-            *params, u, copula, config))
+    measured = interleaved_timings(
+        {
+            "wrapper": lambda: auto_neg_loglik_with_grad(
+                *params, u, copula, config),
+            "cpp": lambda: _cpp_scar_ou.neg_loglik_with_grad(
+                *params, u, copula, config),
+        },
+        repeats=5,
+    )
+    wrapper_elapsed = measured.medians["wrapper"]
+    cpp_elapsed = measured.medians["cpp"]
+    measured_wrapper = measured.results["wrapper"]
+    measured_cpp = measured.results["cpp"]
 
     np.testing.assert_allclose(
         cpp_result[0], wrapper_result[0], rtol=0.0, atol=5e-4)
@@ -253,7 +276,7 @@ def test_stochastic_student_warm_gradient_benchmark(
         transition=transition_method,
         wrapper_ms=f"{1e3 * wrapper_elapsed:.3f}",
         cpp_ms=f"{1e3 * cpp_elapsed:.3f}",
-        wrapper_overhead=f"{wrapper_elapsed / cpp_elapsed:.2f}",
+        wrapper_overhead=f"{measured.median_ratio('wrapper', 'cpp'):.2f}",
     )
 
 
@@ -301,10 +324,14 @@ def test_stochastic_student_prepared_spectral_directional_benchmark():
 
     functional_result = functional_calls()
     prepared_result = prepared_calls()
-    functional_elapsed, measured_functional = _median_elapsed(
-        functional_calls, repeats=3)
-    prepared_elapsed, measured_prepared = _median_elapsed(
-        prepared_calls, repeats=3)
+    measured = interleaved_timings(
+        {"functional": functional_calls, "prepared": prepared_calls},
+        repeats=3,
+    )
+    functional_elapsed = measured.medians["functional"]
+    prepared_elapsed = measured.medians["prepared"]
+    measured_functional = measured.results["functional"]
+    measured_prepared = measured.results["prepared"]
 
     np.testing.assert_allclose(
         prepared_result[0], functional_result[0], rtol=0.0, atol=0.0)
@@ -322,7 +349,7 @@ def test_stochastic_student_prepared_spectral_directional_benchmark():
         calls=n_calls,
         functional_ms=f"{1e3 * functional_elapsed:.3f}",
         prepared_ms=f"{1e3 * prepared_elapsed:.3f}",
-        speedup=f"{functional_elapsed / prepared_elapsed:.2f}",
+        speedup=f"{measured.median_ratio('functional', 'prepared'):.2f}",
     )
 
 
@@ -384,13 +411,13 @@ def test_stochastic_student_large_cholesky_native_gradient_benchmark(
     _skip_unless_large_enabled()
     _skip_unless_cpp_available()
     _, u = _example_student(d=d, T=T)
-    fallback_timings = {
+    fallback_totals = {
         "fd_seconds": 0.0,
         "ou_gradient_seconds": 0.0,
         "fd_calls": 0,
         "ou_gradient_calls": 0,
     }
-    native_timings = {"seconds": 0.0, "calls": 0}
+    native_totals = {"seconds": 0.0, "calls": 0}
     original_value = _cpp_scar_ou.neg_loglik_info
     original_gradient = _cpp_scar_ou.neg_loglik_with_grad_info
     original_native = _cpp_scar_ou.neg_loglik_with_grad_and_corr_info
@@ -401,17 +428,17 @@ def test_stochastic_student_large_cholesky_native_gradient_benchmark(
         try:
             return original_value(*args, **kwargs)
         finally:
-            fallback_timings["fd_seconds"] += time.perf_counter() - start
-            fallback_timings["fd_calls"] += 1
+            fallback_totals["fd_seconds"] += time.perf_counter() - start
+            fallback_totals["fd_calls"] += 1
 
     def timed_gradient(*args, **kwargs):
         start = time.perf_counter()
         try:
             return original_gradient(*args, **kwargs)
         finally:
-            fallback_timings[
+            fallback_totals[
                 "ou_gradient_seconds"] += time.perf_counter() - start
-            fallback_timings["ou_gradient_calls"] += 1
+            fallback_totals["ou_gradient_calls"] += 1
 
     def unsupported_native(*args, **kwargs):
         raise _cpp_scar_ou.CppUnsupported("benchmark finite-difference path")
@@ -424,8 +451,8 @@ def test_stochastic_student_large_cholesky_native_gradient_benchmark(
         try:
             return original_native(*args, **kwargs)
         finally:
-            native_timings["seconds"] += time.perf_counter() - start
-            native_timings["calls"] += 1
+            native_totals["seconds"] += time.perf_counter() - start
+            native_totals["calls"] += 1
 
     def fit_model():
         copula = StochasticStudentCopula(
@@ -447,30 +474,47 @@ def test_stochastic_student_large_cholesky_native_gradient_benchmark(
             smart_init=False,
         )
 
-    monkeypatch.setattr(_cpp_scar_ou, "neg_loglik_info", timed_value)
-    monkeypatch.setattr(
-        _cpp_scar_ou, "neg_loglik_with_grad_info", timed_gradient)
-    monkeypatch.setattr(
-        _cpp_scar_ou,
-        "neg_loglik_with_grad_and_corr_info",
-        unsupported_native,
-    )
-    monkeypatch.setattr(
-        _cpp_scar_ou, "prepare_objective", unsupported_prepare)
-    start = time.perf_counter()
-    fallback_result = fit_model()
-    fallback_seconds = time.perf_counter() - start
+    def run_fallback():
+        before = dict(fallback_totals)
+        monkeypatch.setattr(_cpp_scar_ou, "neg_loglik_info", timed_value)
+        monkeypatch.setattr(
+            _cpp_scar_ou, "neg_loglik_with_grad_info", timed_gradient)
+        monkeypatch.setattr(
+            _cpp_scar_ou,
+            "neg_loglik_with_grad_and_corr_info",
+            unsupported_native,
+        )
+        monkeypatch.setattr(
+            _cpp_scar_ou, "prepare_objective", unsupported_prepare)
+        result = fit_model()
+        return result, {
+            key: fallback_totals[key] - before[key]
+            for key in fallback_totals
+        }
 
-    monkeypatch.setattr(_cpp_scar_ou, "neg_loglik_info", original_value)
-    monkeypatch.setattr(
-        _cpp_scar_ou, "neg_loglik_with_grad_info", original_gradient)
-    monkeypatch.setattr(
-        _cpp_scar_ou, "neg_loglik_with_grad_and_corr_info", timed_native)
-    monkeypatch.setattr(
-        _cpp_scar_ou, "prepare_objective", unsupported_prepare)
-    start = time.perf_counter()
-    native_result = fit_model()
-    native_seconds = time.perf_counter() - start
+    def run_native():
+        before = dict(native_totals)
+        monkeypatch.setattr(_cpp_scar_ou, "neg_loglik_info", original_value)
+        monkeypatch.setattr(
+            _cpp_scar_ou, "neg_loglik_with_grad_info", original_gradient)
+        monkeypatch.setattr(
+            _cpp_scar_ou, "neg_loglik_with_grad_and_corr_info", timed_native)
+        monkeypatch.setattr(
+            _cpp_scar_ou, "prepare_objective", unsupported_prepare)
+        result = fit_model()
+        return result, {
+            key: native_totals[key] - before[key]
+            for key in native_totals
+        }
+
+    measured = interleaved_timings(
+        {"fallback": run_fallback, "native": run_native},
+        repeats=2,
+    )
+    fallback_seconds = measured.medians["fallback"]
+    native_seconds = measured.medians["native"]
+    fallback_result, fallback_timings = measured.results["fallback"]
+    native_result, native_timings = measured.results["native"]
     monkeypatch.setattr(
         _cpp_scar_ou, "prepare_objective", original_prepare)
 
@@ -481,7 +525,7 @@ def test_stochastic_student_large_cholesky_native_gradient_benchmark(
         + fallback_timings["ou_gradient_seconds"]
     )
     fd_backend_share = fallback_timings["fd_seconds"] / backend_seconds
-    speedup = fallback_seconds / native_seconds
+    speedup = measured.median_ratio("fallback", "native")
 
     assert np.isfinite(fallback_result.log_likelihood)
     assert np.isfinite(native_result.log_likelihood)

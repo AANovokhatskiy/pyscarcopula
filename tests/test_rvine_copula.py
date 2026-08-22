@@ -325,6 +325,30 @@ def _gas_gaussian_pair(r_last=0.0, gamma=1.0):
     )
 
 
+def _gas_clayton_pair(rotation, omega=0.05, gamma=0.12, beta=0.35):
+    copula = ClaytonCopula(rotate=rotation)
+    initial_r = float(copula.transform(np.array([
+        omega / (1.0 - beta),
+    ]))[0])
+    result = GASResult(
+        log_likelihood=0.0,
+        method='GAS',
+        copula_name=copula.name,
+        success=True,
+        params=gas_params(omega, gamma, beta),
+        scaling='unit',
+        r_last=initial_r,
+    )
+    return PairCopula(
+        copula=copula,
+        param=initial_r,
+        log_likelihood=0.0,
+        nfev=0,
+        tau=0.0,
+        fit_result=result,
+    )
+
+
 def _scar_tm_gaussian_pair(kappa=1.0, mu=0.0, nu=4.0):
     copula = BivariateGaussianCopula()
     result = LatentResult(
@@ -1320,6 +1344,7 @@ class TestSampling:
         assert np.all(s > 0.0)
         assert np.all(s < 1.0)
 
+    @pytest.mark.rvine_native
     def test_native_gas_sample_matches_legacy_stepwise_exactly(
             self, monkeypatch):
         vine = _manual_suffix_stateful_rvine()
@@ -1342,6 +1367,7 @@ class TestSampling:
 
         assert np.array_equal(actual, expected)
 
+    @pytest.mark.rvine_native
     def test_gas_sample_passes_canonical_traversal_plan_to_native(
             self, monkeypatch):
         from pyscarcopula.numerical import _cpp_gas_rvine
@@ -1366,12 +1392,14 @@ class TestSampling:
         assert isinstance(captured[0], RVineTraversalPlan)
         assert captured[0].active_keys == vine._sample_active_edge_keys()
 
-    def test_native_gas_sample_matches_legacy_for_transposed_rotated_edge(
-            self, monkeypatch):
+    @pytest.mark.parametrize('rotation', [90, 270])
+    @pytest.mark.rvine_native
+    def test_native_gas_sample_matches_python_for_transposed_rotated_mle_edge(
+            self, monkeypatch, rotation):
         vine = _manual_suffix_stateful_rvine()
         # Matrix column 0 uses leaf=2, partner=1, while this edge was fitted
         # in ascending variable order (1, 2).
-        vine.pair_copulas[(0, 0)] = _mle_clayton_pair(0.8, 90)
+        vine.pair_copulas[(0, 0)] = _mle_clayton_pair(0.8, rotation)
         max_active_tree = vine._max_non_independent_tree_level()
         active_keys = vine._sample_active_edge_keys(max_active_tree)
 
@@ -1391,6 +1419,76 @@ class TestSampling:
 
         assert np.array_equal(actual, expected)
 
+    @pytest.mark.parametrize('rotation', [90, 270])
+    @pytest.mark.rvine_native
+    def test_native_gas_sample_matches_python_for_transposed_rotated_gas_edge(
+            self, monkeypatch, rotation):
+        vine = _manual_suffix_stateful_rvine()
+        # Matrix column 1 uses leaf=1, partner=0, so the dynamic edge must use
+        # the transposed 270/90-degree rotation during inverse and forward h.
+        vine.pair_copulas[(0, 1)] = _gas_clayton_pair(rotation)
+        max_active_tree = vine._max_non_independent_tree_level()
+        active_keys = vine._sample_active_edge_keys(max_active_tree)
+
+        expected = vine._sample_stepwise_stateful(
+            128,
+            np.random.default_rng(20260812 + rotation),
+            active_keys=active_keys,
+            max_active_tree=max_active_tree,
+        )
+
+        def fail_fallback(*args, **kwargs):
+            raise AssertionError("native GAS R-vine path was not used")
+
+        monkeypatch.setattr(
+            vine, "_sample_stepwise_stateful", fail_fallback)
+        actual = vine.sample(
+            128, rng=np.random.default_rng(20260812 + rotation))
+
+        assert np.array_equal(actual, expected)
+
+    @pytest.mark.rvine_native
+    def test_native_gas_sample_matches_python_for_truncated_mixed_edges(
+            self, monkeypatch):
+        vine = _manual_multi_edge_dynamic_rvine()
+        vine.truncation_level = 2
+        vine.truncation_fill = 'independent'
+        vine.pair_copulas[(1, 0)] = _independent_pair()
+        vine.pair_copulas[(1, 1)] = _mle_gaussian_pair(0.55)
+        vine.pair_copulas[(2, 0)] = _independent_pair()
+        max_active_tree = vine._max_non_independent_tree_level()
+        active_keys = vine._sample_active_edge_keys(max_active_tree)
+
+        assert max_active_tree == 1
+        assert active_keys == (
+            (0, 2),
+            (0, 1),
+            (1, 1),
+            (0, 0),
+            (1, 0),
+        )
+        assert isinstance(
+            vine.pair_copulas[(1, 1)].fit_result, MLEResult)
+        assert isinstance(
+            vine.pair_copulas[(1, 0)].fit_result, IndependentResult)
+
+        expected = vine._sample_stepwise_stateful(
+            192,
+            np.random.default_rng(20260813),
+            active_keys=active_keys,
+            max_active_tree=max_active_tree,
+        )
+
+        def fail_fallback(*args, **kwargs):
+            raise AssertionError("native GAS R-vine path was not used")
+
+        monkeypatch.setattr(
+            vine, "_sample_stepwise_stateful", fail_fallback)
+        actual = vine.sample(192, rng=np.random.default_rng(20260813))
+
+        assert np.array_equal(actual, expected)
+
+    @pytest.mark.rvine_native
     def test_native_gas_sample_matches_python_for_mixed_dynamic_edges(
             self, monkeypatch):
         vine = _manual_multi_edge_dynamic_rvine()
@@ -1412,6 +1510,7 @@ class TestSampling:
 
         assert np.array_equal(actual, expected)
 
+    @pytest.mark.rvine_native
     def test_native_gas_sample_matches_python_for_multiple_gas_edges(
             self, monkeypatch):
         vine = _manual_multi_edge_dynamic_rvine()

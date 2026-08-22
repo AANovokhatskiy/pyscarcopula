@@ -1,4 +1,4 @@
-"""Stage-0 regression and oracle baselines for static elliptical fits.
+"""Regression and oracle baselines for static elliptical fits.
 
 The default fits intentionally characterize the pre-correlation-mode behavior:
 Gaussian uses a normal-score plug-in correlation and Student uses a Kendall

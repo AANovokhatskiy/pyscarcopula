@@ -1,5 +1,7 @@
 """Shared fixtures for pyscarcopula tests."""
 import os
+from pathlib import Path
+import sys
 
 import pytest
 import numpy as np
@@ -8,6 +10,17 @@ from pyscarcopula._utils import pobs
 from pyscarcopula import (
     GumbelCopula, ClaytonCopula, FrankCopula, JoeCopula,
 )
+
+
+# The wheel release gate runs this suite from outside the source checkout with
+# ``--import-mode=importlib``.  Import the production package above first so
+# that gate keeps exercising the installed wheel, then expose only the
+# checkout locations containing test and tooling helpers.
+_TESTS_DIR = Path(__file__).resolve().parent
+_PROJECT_ROOT = _TESTS_DIR.parent
+for _support_path in (_TESTS_DIR, _PROJECT_ROOT):
+    if str(_support_path) not in sys.path:
+        sys.path.append(str(_support_path))
 
 
 # Copula instances for parametrized tests
@@ -54,15 +67,25 @@ def pytest_addoption(parser):
 
 
 def pytest_collection_modifyitems(config, items):
-    if config.getoption("--run-validation"):
-        return
+    if not config.getoption("--run-validation"):
+        skip_validation = pytest.mark.skip(
+            reason="need --run-validation option to run"
+        )
+        for item in items:
+            if "validation" in item.keywords:
+                item.add_marker(skip_validation)
 
-    skip_validation = pytest.mark.skip(
-        reason="need --run-validation option to run"
-    )
-    for item in items:
-        if "validation" in item.keywords:
-            item.add_marker(skip_validation)
+    if os.environ.get("PYSCARCOPULA_TEST_RVINE_BACKEND", "").lower() == (
+            "python_executor"):
+        skip_native = pytest.mark.skip(
+            reason=(
+                "native GAS R-vine assertion is run separately from the "
+                "forced python_executor characterization suite"
+            )
+        )
+        for item in items:
+            if item.get_closest_marker("rvine_native") is not None:
+                item.add_marker(skip_native)
 
 
 @pytest.fixture(scope="session")

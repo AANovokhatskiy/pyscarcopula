@@ -119,8 +119,9 @@ JSON persistence retains fitted raw parameters and compact factor state.
 
 The pybind11 C++ extension is mandatory. Built-in point operations, static
 likelihoods, GAS filtering, multivariate conditional linear algebra,
-sequential GAS R-vine sampling, and SCAR-TM-OU likelihood/gradient/forward
-operations have one production implementation in C++.
+sequential GAS R-vine sampling, dense Student Rosenblatt transforms, and
+SCAR-TM-OU likelihood/gradient/forward operations have one production
+implementation in C++.
 
 Python remains responsible for:
 
@@ -130,6 +131,18 @@ Python remains responsible for:
 - Jacobi filtering orchestration;
 - SCAR-MC/EIS orchestration;
 - goodness-of-fit and contribution analytics.
+
+For dense static and GAS Student GoF, Python owns dispatch and the `df`
+trajectory. In the differential-validated native domain (`df >= 0.1`, a
+symmetric unit-diagonal SPD correlation with condition number at most `1e4`),
+it transfers the complete observation matrix and either a scalar or per-row
+`df` path in one call. C++ factors the fixed correlation once, executes all
+sequential conditionals without the GIL, and may parallelize independent rows.
+Inputs outside that domain are rejected by a pre-call capability gate: `auto`
+preserves the SciPy oracle's low-`df`, invalid-input, and ill-conditioned-matrix
+semantics, while `native_strict` reports `CppUnsupported`. Native runtime
+errors are not retried. Factor-correlation and latent SCAR Rosenblatt paths
+keep their specialized native implementations.
 
 There is no GAS or SCAR-TM-OU backend selector and no Python likelihood
 fallback.
@@ -159,6 +172,23 @@ semantic trees, and edge map into one model-independent
 GAS sampler execute that same plan. Model-specific parameter generation and
 state updates remain in their strategy executors; the plan owns only topology,
 node dependencies, edge orientation, and operation order.
+
+Arbitrary-given R-vine MCMC also compiles, once per density plan, the
+topologically ordered operations and nodes affected by each original
+coordinate. The native incremental executor caches node values and individual
+edge log-density contributions per chain, recomputes only that closure for a
+proposal, and then sums all edge contributions in their original order. A
+rejected proposal never changes the accepted cache. Its accepted/proposal
+caches are row-chunked under the same preflight memory budget as states,
+log-densities, and replay draws. The adapter selects the incremental path only
+for structurally profitable closures that fit the budget. Otherwise it uses
+the preserved full-recompute oracle only when that driver's complete state,
+proposal, density-workspace, and draw footprint also fits; if neither path
+fits, preflight fails before consuming RNG state or allocating MCMC buffers.
+Algorithm and workspace measurements are internal native diagnostics, while
+the public MCMC diagnostics schema remains unchanged. Single-chain calls
+retain full recomputation because the incremental cache setup does not
+amortize there.
 
 ## Custom Python Extensions
 

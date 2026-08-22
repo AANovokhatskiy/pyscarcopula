@@ -2,12 +2,12 @@
 
 import inspect
 import os
-from time import perf_counter
 
 import numpy as np
 import pytest
 from scipy.stats import norm
 
+from benchmark_timing import interleaved_timings
 from pyscarcopula import GumbelCopula, VineCopula
 from pyscarcopula.api import sample
 from pyscarcopula._types import LatentResult, jacobi_params
@@ -412,20 +412,25 @@ def test_lamperti_numba_warm_speedup_report():
         substeps=substeps,
         engine="numba",
     )
-    elapsed = {}
-    for engine in ("numba", "python"):
-        started = perf_counter()
-        sample_jacobi_lamperti_trajectory(
-            1.2,
-            0.4,
-            0.25,
-            n,
-            rng=np.random.default_rng(201),
-            substeps=substeps,
-            engine=engine,
-        )
-        elapsed[engine] = perf_counter() - started
-    speedup = elapsed["python"] / elapsed["numba"]
+    measured = interleaved_timings(
+        {
+            engine: (
+                lambda engine=engine: sample_jacobi_lamperti_trajectory(
+                    1.2,
+                    0.4,
+                    0.25,
+                    n,
+                    rng=np.random.default_rng(201),
+                    substeps=substeps,
+                    engine=engine,
+                )
+            )
+            for engine in ("numba", "python")
+        },
+        repeats=3,
+    )
+    elapsed = measured.medians
+    speedup = measured.median_ratio("python", "numba")
 
     print(
         "lamperti_numba_warm "

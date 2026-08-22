@@ -67,6 +67,104 @@ def test_stateless_scar_bindings_release_gil_after_array_validation():
     assert source.count("observation_view_from_array(copula, u)") == 2
 
 
+def test_rvine_sample_binding_keeps_arrays_alive_and_releases_gil():
+    source = (
+        ROOT / "pyscarcopula/_cpp/src/bindings/rvine.cpp"
+    ).read_text(encoding="utf-8")
+
+    request = source.index('"rvine_sample"')
+    release = source.index("py::gil_scoped_release release", request)
+    native_call = source.index("scar::rvine::sample(", release)
+    result_dict = source.index("py::dict diagnostics", native_call)
+    assert request < release < native_call < result_dict
+    for name in ("scalar_parameters", "row_parameters", "uniforms"):
+        assert name in source[request:release]
+
+
+def test_rvine_conditional_binding_keeps_arrays_alive_and_releases_gil():
+    source = (
+        ROOT / "pyscarcopula/_cpp/src/bindings/rvine.cpp"
+    ).read_text(encoding="utf-8")
+
+    request = source.index('"rvine_conditional_sample"')
+    release = source.index("py::gil_scoped_release release", request)
+    native_call = source.index("scar::rvine::conditional_sample(", release)
+    result_dict = source.index("py::dict diagnostics", native_call)
+    assert request < release < native_call < result_dict
+    for name in (
+            "scalar_parameters",
+            "row_parameters",
+            "given_values",
+            "uniforms"):
+        assert name in source[request:release]
+
+
+def test_rvine_density_binding_keeps_arrays_alive_and_releases_gil():
+    source = (
+        ROOT / "pyscarcopula/_cpp/src/bindings/rvine.cpp"
+    ).read_text(encoding="utf-8")
+
+    request = source.index('"rvine_log_pdf_rows"')
+    release = source.index("py::gil_scoped_release release", request)
+    native_call = source.index("scar::rvine::log_pdf_rows(", release)
+    result_dict = source.index("py::dict diagnostics", native_call)
+    assert request < release < native_call < result_dict
+    for name in (
+            "scalar_parameters", "row_parameters", "observations"):
+        assert name in source[request:release]
+
+
+def test_rvine_rosenblatt_binding_keeps_arrays_alive_and_releases_gil():
+    source = (
+        ROOT / "pyscarcopula/_cpp/src/bindings/rvine.cpp"
+    ).read_text(encoding="utf-8")
+
+    request = source.index('"rvine_rosenblatt_transform"')
+    release = source.index("py::gil_scoped_release release", request)
+    native_call = source.index(
+        "scar::rvine::rosenblatt_transform(", release)
+    result_dict = source.index("py::dict diagnostics", native_call)
+    assert request < release < native_call < result_dict
+    for name in (
+            "scalar_parameters", "row_parameters", "observations"):
+        assert name in source[request:release]
+
+
+def test_dense_student_binding_keeps_arrays_alive_and_releases_gil():
+    source = (
+        ROOT / "pyscarcopula/_cpp/src/bindings/multivariate.cpp"
+    ).read_text(encoding="utf-8")
+
+    request = source.index('"dense_student_rosenblatt_transform"')
+    release = source.index("py::gil_scoped_release release", request)
+    native_call = source.index("scar::student_rosenblatt_dense(", release)
+    result_dict = source.index("py::dict diagnostics", native_call)
+    assert request < release < native_call < result_dict
+    for name in ("correlation_view", "df_view", "observations"):
+        assert name in source[request:release]
+
+
+def test_rvine_mcmc_binding_keeps_arrays_alive_and_releases_gil():
+    source = (
+        ROOT / "pyscarcopula/_cpp/src/bindings/rvine.cpp"
+    ).read_text(encoding="utf-8")
+
+    request = source.index("const auto mcmc_binding")
+    release = source.index("py::gil_scoped_release release", request)
+    native_call = source.index("scar::rvine::mcmc_chunk(", release)
+    result_dict = source.index("py::dict diagnostics", native_call)
+    assert request < release < native_call < result_dict
+    for name in (
+            "scalar_parameters",
+            "row_parameters",
+            "given_values",
+            "current_state",
+            "current_log_pdf",
+            "proposal_uniforms",
+            "acceptance_uniforms"):
+        assert name in source[request:release]
+
+
 @pytest.mark.parametrize(
     ("relative", "content", "expected_rule"),
     [
@@ -84,6 +182,11 @@ def test_stateless_scar_bindings_release_gil_after_array_validation():
             "pyscarcopula/_cpp/src/copula/families/bad.cpp",
             '#include "scar/detail/scar_ou/grid.hpp"\n',
             "families-independent-of-ou",
+        ),
+        (
+            "pyscarcopula/_cpp/src/vine/bad.cpp",
+            '#include "scar/gas_rvine.hpp"\n',
+            "rvine-independent-of-dynamic-models",
         ),
         (
             "pyscarcopula/_cpp/include/scar/detail/internal.hpp",

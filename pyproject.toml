@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyscarcopula"
-version = "0.20.2"
+version = "0.21.0"
 description = "Python library for bivariate, multivariate, vine, and stochastic copula models"
 readme = "README.md"
 license = "MIT"
@@ -41,7 +41,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=7.0", "pandas>=1.5", "mypy>=1.10"]
+test = [
+    "pytest>=7.0",
+    "pytest-xdist>=3.5",
+    "pandas>=1.5",
+    "mypy>=1.10",
+    "tomli>=1.1.0; python_version < '3.11'",
+]
+external = ["pyvinecopulib==0.7.5"]
 examples = ["pandas>=1.5", "matplotlib", "jupyter"]
 docs = [
     "mkdocs-material>=9.5",
@@ -65,12 +72,20 @@ exclude = ["tests*", "data*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Keep tests from the same module on one worker.  This preserves module-local
+# runtime and filesystem assumptions while allowing independent modules to run
+# concurrently when the caller explicitly supplies ``-n N``.  Without ``-n``
+# pytest remains strictly sequential.
+addopts = "--dist=loadscope"
 markers = [
     "data: tests requiring data/ directory (csv files)",
     "benchmark: optional performance regression checks",
     "sanitizer_numerical: exact floating-point golden checks excluded from sanitizer builds",
     "tsan_incompatible: fork-after-threads checks unsupported by ThreadSanitizer",
     "validation: optional distributional validation checks",
+    "external: optional checks against external reference libraries",
+    "high_dimensional: d=50 conditional-sampling validation and benchmark cases",
+    "rvine_native: tests that require native R-vine runtime entry points",
 ]
 
 [tool.mypy]

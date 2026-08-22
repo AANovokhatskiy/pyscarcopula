@@ -1,4 +1,4 @@
-"""Phase 9.4 model adapter contracts for factor Student correlation."""
+"""Model adapter contracts for factor Student correlation."""
 
 import inspect
 

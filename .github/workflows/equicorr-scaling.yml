@@ -7,8 +7,8 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  phase8-scaling:
-    name: Phase 8 Equicorr scaling
+  equicorr-scaling:
+    name: Equicorr preparation scaling
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -17,22 +17,22 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install -e ".[test]"
-      - name: Enforce Phase 8 CPU scaling target
+      - name: Enforce equicorrelation CPU scaling target
         env:
           PYSCA_RUN_BENCHMARKS: "1"
           PYSCA_RUN_LARGE_BENCHMARKS: "1"
           PYSCA_ENFORCE_PERFORMANCE_GATES: "1"
-          PYSCA_PHASE8_BENCHMARK_OUTPUT: ${{ github.workspace }}/build/release/phase8-scaling-metrics.json
+          PYSCA_EQUICORR_BENCHMARK_OUTPUT: ${{ github.workspace }}/build/release/equicorr-scaling-metrics.json
         run: >-
           python -m pytest -vv -s
           tests/test_equicorr_prepared_performance.py
           -m benchmark
-      - name: Write Phase 8 scaling metadata
+      - name: Write equicorrelation scaling metadata
         run: >-
           python tools/write_release_metadata.py
-          --configuration linux-phase8-equicorr-scaling
-          --output build/release/linux-phase8-equicorr-scaling.json
+          --configuration linux-equicorr-preparation-scaling
+          --output build/release/linux-equicorr-preparation-scaling.json
       - uses: actions/upload-artifact@v7
         with:
-          name: equicorr-phase8-scaling
+          name: equicorr-preparation-scaling
           path: build/release/*.json

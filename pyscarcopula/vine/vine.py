@@ -56,6 +56,7 @@ from pyscarcopula.numerical._arrays import (
 from pyscarcopula._types import (
     PredictConfig,
 )
+from pyscarcopula.numerical._rvine_backend import dispatch_rvine_backend
 from pyscarcopula.vine._conditional_rvine import (
     validate_rvine_given_vars,
     validate_rvine_given,
@@ -112,15 +113,20 @@ from pyscarcopula.vine._dynamic_conditioning import (
     predictive_state_cache_key,
 )
 from pyscarcopula.vine._rvine_conditional_runtime import (
-    sample_arbitrary_given_mcmc,
+    _sample_arbitrary_given_mcmc_python,
     sample_dag_given_with_r,
 )
 from pyscarcopula.vine._rvine_summary import format_rvine_summary
-from pyscarcopula.vine._helpers import _clip_unit, _open_unit_uniform
+from pyscarcopula.vine._helpers import (
+    _clip_unit,
+    _open_unit_uniform,
+    _prepared_open_unit_draws,
+)
 from pyscarcopula.vine._rvine_suffix import (
+    _sample_suffix_given_with_r_python,
+    build_suffix_conditional_plan,
     edge_pair_from_pseudo_map,
     given_suffix_start_col,
-    sample_suffix_given_with_r,
     suffix_sampling_state,
 )
 
@@ -306,6 +312,7 @@ class VineCopula:
         structure=None,
         vine_type=None,
     ):
+        """Initialize a configurable C-, D-, or R-vine model."""
         from pyscarcopula.vine._selection import validate_pair_candidates
         validate_pair_candidates(candidates)
         if structure is not None and not isinstance(structure, RVineMatrix):
@@ -380,6 +387,8 @@ class VineCopula:
         self._fit_diagnostics = None
         self._suffix_state_cache = {}
         self._predict_history_cache = {}
+        self._native_rvine_cache = {}
+        self._native_rvine_generation = 0
 
     @classmethod
     def cvine(
@@ -418,6 +427,8 @@ class VineCopula:
         state['trees'] = _copy_trees(state.pop('_trees', None))
         state.pop('_predict_history_cache', None)
         state.pop('_suffix_state_cache', None)
+        state.pop('_native_rvine_cache', None)
+        state.pop('_native_rvine_generation', None)
         state['_structure_source'] = self.structure_source
         return state
 
@@ -573,11 +584,15 @@ class VineCopula:
 
         state.pop('_suffix_state_cache', None)
         state.pop('_predict_history_cache', None)
+        state.pop('_native_rvine_cache', None)
+        state.pop('_native_rvine_generation', None)
         state.pop('trees', None)
         state['_trees'] = _freeze_trees(trees)
         self.__dict__.update(state)
         self._suffix_state_cache = {}
         self._predict_history_cache = {}
+        self._native_rvine_cache = {}
+        self._native_rvine_generation = 0
 
     # Fit
 
@@ -900,6 +915,7 @@ class VineCopula:
         self._conditional_mode = conditional_mode if given_vars else None
         self._suffix_state_cache = {}
         self._predict_history_cache = {}
+        self._invalidate_native_rvine_cache()
         return self
 
     def _build_fit_diagnostics(
@@ -1080,6 +1096,7 @@ class VineCopula:
         """Set legacy hand-built runtime state using an owned matrix copy."""
         self._natural_order_matrix = (
             None if value is None else np.asarray(value, dtype=int).copy())
+        self._invalidate_native_rvine_cache()
 
     @property
     def natural_order_matrix(self) -> np.ndarray:
@@ -1323,6 +1340,472 @@ class VineCopula:
             f"n_params={self.n_parameters})"
         )
 
+    def _invalidate_native_rvine_cache(self):
+        """Discard transient compiled native plans after structural changes."""
+        self._native_rvine_cache = {}
+        self._native_rvine_generation = (
+            int(getattr(self, '_native_rvine_generation', 0)) + 1)
+
+    def _native_unconditional_fingerprint(
+            self, module, traversal_plan, parameter_sources):
+        """Return a semantic cache key, including mutable edge metadata."""
+        matrix = np.ascontiguousarray(self._natural_order_matrix, dtype=int)
+        structure = (
+            int(self.d),
+            matrix.shape,
+            matrix.dtype.str,
+            matrix.tobytes(),
+            tuple(
+                tuple((
+                    tuple(sorted(int(value) for value in conditioned)),
+                    tuple(sorted(int(value) for value in conditioning)),
+                ) for conditioned, conditioning in level)
+                for level in self._trees
+            ),
+            tuple(sorted(
+                (tuple(int(value) for value in key), int(original))
+                for key, original in self._edge_map.items()
+            )),
+        )
+        edge_fingerprint = []
+        for key in traversal_plan.active_keys:
+            edge = self.pair_copulas[key]
+            copula = edge_copula(edge)
+            result = edge_result(edge)
+            edge_fingerprint.append((
+                tuple(key),
+                type(edge),
+                id(edge),
+                type(copula),
+                id(copula),
+                int(getattr(copula, 'rotate', 0)),
+                str(getattr(copula, '_transform_type', '')),
+                bool(edge_is_independent(edge)),
+                type(result),
+                id(result),
+            ))
+        plan_fingerprint = tuple(
+            tuple(getattr(traversal_plan, name))
+            for name in (
+                'output_nodes',
+                'column_uniforms',
+                'inverse_offsets',
+                'inverse_edges',
+                'inverse_partner_nodes',
+                'inverse_output_nodes',
+                'inverse_transposed',
+                'forward_offsets',
+                'forward_edges',
+                'forward_leaf_nodes',
+                'forward_partner_nodes',
+                'forward_leaf_output_nodes',
+                'forward_partner_output_nodes',
+                'forward_transposed',
+                'update_u1_nodes',
+                'update_u2_nodes',
+            )
+        )
+        return (
+            id(module),
+            int(getattr(self, '_native_rvine_generation', 0)),
+            structure,
+            tuple(edge_fingerprint),
+            tuple(sorted(parameter_sources.items())),
+            tuple(traversal_plan.active_keys),
+            tuple(traversal_plan.node_keys),
+            int(traversal_plan.last_uniform_column),
+            int(traversal_plan.last_output_node),
+            plan_fingerprint,
+        )
+
+    def _native_unconditional_context(
+            self, module, traversal_plan, r_all, n):
+        """Compile/cache plan and edge metadata, never request-owned buffers."""
+        from pyscarcopula.numerical import _cpp_rvine
+        from pyscarcopula.numerical._cpp_extension import CppUnsupported
+
+        active_keys = tuple(traversal_plan.active_keys)
+        if not _cpp_rvine.native_edges_supported(
+                self.pair_copulas, active_keys):
+            return None, None
+        parameter_sources = {}
+        for key in active_keys:
+            if edge_is_independent(self.pair_copulas[key]):
+                continue
+            if key not in r_all:
+                # Let the common packer produce the stable missing-edge error.
+                continue
+            raw = np.asarray(r_all[key])
+            if raw.ndim == 0 or raw.size == 1:
+                parameter_sources[key] = 'scalar'
+            elif raw.ndim == 1 and len(raw) == int(n):
+                parameter_sources[key] = 'row_path'
+
+        fingerprint = self._native_unconditional_fingerprint(
+            module, traversal_plan, parameter_sources)
+        cache = getattr(self, '_native_rvine_cache', None)
+        if cache is None:
+            cache = {}
+            self._native_rvine_cache = cache
+        cached = cache.get('unconditional')
+        if cached is not None and cached['fingerprint'] == fingerprint:
+            return cached, None
+
+        try:
+            edges, parameters = _cpp_rvine.compile_edge_specs(
+                module,
+                self.pair_copulas,
+                active_keys,
+                r_all,
+                int(n),
+                parameter_sources=parameter_sources,
+            )
+        except CppUnsupported:
+            return None, None
+        context = {
+            'fingerprint': fingerprint,
+            'parameter_sources': parameter_sources,
+            'plan': _cpp_rvine.compile_traversal_plan(
+                module, traversal_plan),
+            'edges': tuple(edges),
+        }
+        cache['unconditional'] = context
+        return context, parameters
+
+    def _native_conditional_fingerprint(
+            self, module, plan, active_keys, pair_copulas, given,
+            parameter_sources):
+        """Return a cache key for one structure/given-set native program.
+
+        Plans are immutable and carry a digest of their full node/opcode/
+        orientation signature.  The digest keeps warm comparison O(1) while
+        preventing topology-compatible edge sets from reusing a stale plan.
+        """
+        edge_fingerprint = []
+        for key in active_keys:
+            edge = pair_copulas[key]
+            copula = edge_copula(edge)
+            result = edge_result(edge)
+            edge_fingerprint.append((
+                tuple(key),
+                type(edge),
+                id(edge),
+                type(copula),
+                id(copula),
+                int(getattr(copula, 'rotate', 0)),
+                str(getattr(copula, '_transform_type', '')),
+                bool(edge_is_independent(edge)),
+                type(result),
+                id(result),
+            ))
+        return (
+            id(module),
+            int(getattr(self, '_native_rvine_generation', 0)),
+            type(plan),
+            int(plan.d),
+            tuple(sorted(int(variable) for variable in given)),
+            bytes(plan.native_signature_digest),
+            tuple(active_keys),
+            tuple(edge_fingerprint),
+            tuple(sorted(parameter_sources.items())),
+        )
+
+    def _native_suffix_conditional_plan(
+            self, start_col, matrix, given):
+        """Return one immutable suffix program per structure/given set."""
+        normalized_matrix = np.ascontiguousarray(matrix, dtype=int)
+        fingerprint = (
+            int(getattr(self, '_native_rvine_generation', 0)),
+            int(self.d),
+            int(start_col),
+            tuple(sorted(int(variable) for variable in given)),
+            normalized_matrix.shape,
+            normalized_matrix.dtype.str,
+            normalized_matrix.tobytes(),
+        )
+        cache = getattr(self, '_native_rvine_cache', None)
+        if cache is None:
+            cache = {}
+            self._native_rvine_cache = cache
+        plans = cache.setdefault('conditional_python_plans', {})
+        key = (
+            'suffix',
+            tuple(sorted(int(variable) for variable in given)),
+        )
+        cached = plans.get(key)
+        if cached is not None and cached['fingerprint'] == fingerprint:
+            return cached['plan']
+        plan = build_suffix_conditional_plan(
+            self.d, start_col, normalized_matrix, given)
+        plans[key] = {'fingerprint': fingerprint, 'plan': plan}
+        return plan
+
+    def _native_conditional_context(
+            self, module, plan, pair_copulas, r_all, given, n, *,
+            active_keys=None, normalized_paths=None,
+            parameter_sources=None):
+        """Compile/cache conditional topology and immutable edge metadata."""
+        from pyscarcopula.numerical import _cpp_rvine
+        from pyscarcopula.numerical._cpp_extension import CppUnsupported
+
+        active_keys = (
+            _cpp_rvine.conditional_active_keys(plan)
+            if active_keys is None else tuple(active_keys)
+        )
+        if not _cpp_rvine.native_edges_supported(pair_copulas, active_keys):
+            return None, None
+        if normalized_paths is None or parameter_sources is None:
+            normalized_paths, parameter_sources = (
+                _cpp_rvine.conditional_parameter_layout(
+                    pair_copulas, active_keys, r_all, int(n))
+            )
+        fingerprint = self._native_conditional_fingerprint(
+            module,
+            plan,
+            active_keys,
+            pair_copulas,
+            given,
+            parameter_sources,
+        )
+        cache = getattr(self, '_native_rvine_cache', None)
+        if cache is None:
+            cache = {}
+            self._native_rvine_cache = cache
+        conditional_cache = cache.setdefault('conditional', {})
+        cache_key = (
+            type(plan).__module__,
+            type(plan).__qualname__,
+            tuple(sorted(int(variable) for variable in given)),
+        )
+        cached = conditional_cache.get(cache_key)
+        if cached is not None and cached['fingerprint'] == fingerprint:
+            scalar_signature = None
+            if all(source == 'scalar'
+                   for source in parameter_sources.values()):
+                scalar_signature = tuple(
+                    (key, float(normalized_paths[key]))
+                    for key in active_keys
+                    if parameter_sources.get(key) == 'scalar'
+                )
+            if (
+                    scalar_signature is not None
+                    and cached.get('scalar_parameter_signature')
+                    == scalar_signature):
+                parameters = _cpp_rvine.RVineParameterPack(
+                    scalar_parameters=cached['scalar_parameters'],
+                    row_parameters=np.empty((int(n), 0), dtype=np.float64),
+                    n_rows=int(n),
+                )
+                return cached, parameters
+            try:
+                _edges, parameters = _cpp_rvine.compile_edge_specs(
+                    module,
+                    pair_copulas,
+                    active_keys,
+                    normalized_paths,
+                    int(n),
+                    parameter_sources=parameter_sources,
+                    native_edges=cached['edges'],
+                )
+            except CppUnsupported:
+                return None, None
+            if scalar_signature is not None:
+                cached['scalar_parameter_signature'] = scalar_signature
+                cached['scalar_parameters'] = parameters.scalar_parameters
+            return cached, parameters
+
+        try:
+            edges, parameters = _cpp_rvine.compile_edge_specs(
+                module,
+                pair_copulas,
+                active_keys,
+                normalized_paths,
+                int(n),
+                parameter_sources=parameter_sources,
+            )
+        except CppUnsupported:
+            return None, None
+        context = {
+            'fingerprint': fingerprint,
+            'active_keys': active_keys,
+            'parameter_sources': parameter_sources,
+            'plan': _cpp_rvine.compile_conditional_plan(
+                module, plan, active_keys, given),
+            'edges': tuple(edges),
+        }
+        if all(source == 'scalar'
+               for source in parameter_sources.values()):
+            context['scalar_parameter_signature'] = tuple(
+                (key, float(normalized_paths[key]))
+                for key in active_keys
+                if parameter_sources.get(key) == 'scalar'
+            )
+            context['scalar_parameters'] = parameters.scalar_parameters
+        conditional_cache[cache_key] = context
+        return context, parameters
+
+    def _native_conditional_executor(
+            self, plan, pair_copulas, r_all, given, n, rng, *, uniforms,
+            active_keys, normalized_paths, parameter_sources):
+        """Build one shared native callback for suffix and DAG programs."""
+        from pyscarcopula.numerical import _cpp_rvine
+
+        def execute(module):
+            """Execute the compiled native conditional request."""
+            context, parameters = self._native_conditional_context(
+                module,
+                plan,
+                pair_copulas,
+                r_all,
+                given,
+                n,
+                active_keys=active_keys,
+                normalized_paths=normalized_paths,
+                parameter_sources=parameter_sources,
+            )
+            if context is None:
+                return None
+            return _cpp_rvine.conditional_sample(
+                module,
+                pair_copulas,
+                plan,
+                n,
+                rng,
+                given,
+                r_all,
+                uniforms=uniforms,
+                active_keys=context['active_keys'],
+                parameter_sources=context['parameter_sources'],
+                native_plan=context['plan'],
+                native_edges=context['edges'],
+                parameter_pack=parameters,
+            )
+
+        return execute
+
+    def _native_density_fingerprint(
+            self, module, pair_copulas, edge_map, active_keys,
+            parameter_sources, residual_node_keys=()):
+        """Return a semantic key for the fused density/MCMC program."""
+        edge_fingerprint = []
+        for key in active_keys:
+            edge = pair_copulas[key]
+            copula = edge_copula(edge)
+            result = edge_result(edge)
+            edge_fingerprint.append((
+                tuple(key),
+                type(edge),
+                id(edge),
+                type(copula),
+                id(copula),
+                int(getattr(copula, 'rotate', 0)),
+                str(getattr(copula, '_transform_type', '')),
+                bool(edge_is_independent(edge)),
+                type(result),
+                id(result),
+            ))
+        tree_fingerprint = tuple(
+            tuple((
+                tuple(sorted(int(value) for value in conditioned)),
+                tuple(sorted(int(value) for value in conditioning)),
+            ) for conditioned, conditioning in level)
+            for level in self._trees
+        )
+        return (
+            id(module),
+            int(getattr(self, '_native_rvine_generation', 0)),
+            int(self.d),
+            id(pair_copulas),
+            tree_fingerprint,
+            tuple(sorted(
+                (tuple(int(value) for value in key), int(original))
+                for key, original in edge_map.items()
+            )),
+            tuple(active_keys),
+            tuple(edge_fingerprint),
+            tuple(sorted(parameter_sources.items())),
+            tuple(
+                (int(variable), tuple(sorted(int(value) for value in cond)))
+                for variable, cond in residual_node_keys
+            ),
+        )
+
+    def _native_density_context(
+            self, module, pair_copulas, edge_map, r_all, n, *,
+            active_keys=None, normalized_paths=None,
+            parameter_sources=None, residual_node_keys=(),
+            cache_slot='density'):
+        """Compile/cache the shared density plan and immutable edge specs."""
+        from pyscarcopula.numerical import _cpp_rvine
+        from pyscarcopula.numerical._cpp_extension import CppUnsupported
+
+        active_keys = (
+            _cpp_rvine.density_active_keys(self._trees, edge_map)
+            if active_keys is None else tuple(active_keys)
+        )
+        if not _cpp_rvine.native_edges_supported(pair_copulas, active_keys):
+            return None, None
+        if normalized_paths is None or parameter_sources is None:
+            normalized_paths, parameter_sources = (
+                _cpp_rvine.density_parameter_layout(
+                    pair_copulas, active_keys, r_all, int(n))
+            )
+        fingerprint = self._native_density_fingerprint(
+            module,
+            pair_copulas,
+            edge_map,
+            active_keys,
+            parameter_sources,
+            residual_node_keys,
+        )
+        cache = getattr(self, '_native_rvine_cache', None)
+        if cache is None:
+            cache = {}
+            self._native_rvine_cache = cache
+        cached = cache.get(cache_slot)
+        if cached is not None and cached['fingerprint'] == fingerprint:
+            try:
+                _edges, parameters = _cpp_rvine.compile_edge_specs(
+                    module,
+                    pair_copulas,
+                    active_keys,
+                    normalized_paths,
+                    int(n),
+                    parameter_sources=parameter_sources,
+                    native_edges=cached['edges'],
+                )
+            except CppUnsupported:
+                return None, None
+            return cached, parameters
+
+        try:
+            edges, parameters = _cpp_rvine.compile_edge_specs(
+                module,
+                pair_copulas,
+                active_keys,
+                normalized_paths,
+                int(n),
+                parameter_sources=parameter_sources,
+            )
+        except CppUnsupported:
+            return None, None
+        context = {
+            'fingerprint': fingerprint,
+            'active_keys': active_keys,
+            'parameter_sources': parameter_sources,
+            'plan': _cpp_rvine.compile_density_plan(
+                module,
+                self.d,
+                self._trees,
+                edge_map,
+                active_keys,
+                residual_node_keys=residual_node_keys,
+            ),
+            'edges': tuple(edges),
+        }
+        cache[cache_slot] = context
+        return context, parameters
+
     # Sampling
 
     def sample(
@@ -1391,20 +1874,25 @@ class VineCopula:
             from pyscarcopula.numerical._cpp_gas_rvine import (
                 sample as native_gas_rvine_sample,
             )
-            native = native_gas_rvine_sample(
-                self,
-                n,
-                rng,
-                active_keys,
-                max_active_tree,
-                traversal_plan=traversal_plan,
+            return dispatch_rvine_backend(
+                capability="gas_unconditional_sampling",
+                native_symbol="gas_rvine_sample",
+                python_executor=lambda: self._sample_stepwise_stateful(
+                    n,
+                    rng,
+                    active_keys=active_keys,
+                    max_active_tree=max_active_tree,
+                    traversal_plan=traversal_plan,
+                ),
+                native_executor=lambda _module: native_gas_rvine_sample(
+                    self,
+                    n,
+                    rng,
+                    active_keys,
+                    max_active_tree,
+                    traversal_plan=traversal_plan,
+                ),
             )
-            if native is not None:
-                return native
-            return self._sample_stepwise_stateful(
-                n, rng, active_keys=active_keys,
-                max_active_tree=max_active_tree,
-                traversal_plan=traversal_plan)
 
         if is_static:
             r_all = {
@@ -1414,6 +1902,7 @@ class VineCopula:
                 )
                 for key in active_keys
             }
+            native_request = {}
             if batch_rows < n:
                 out = np.empty((n, self.d), dtype=np.float64)
                 for start in range(0, n, batch_rows):
@@ -1424,6 +1913,7 @@ class VineCopula:
                         rng,
                         max_active_tree=max_active_tree,
                         traversal_plan=traversal_plan,
+                        native_request=native_request,
                     )
                 return out
             return self._sample_with_r(
@@ -1432,6 +1922,7 @@ class VineCopula:
                 rng,
                 max_active_tree=max_active_tree,
                 traversal_plan=traversal_plan,
+                native_request=native_request,
             )
 
         r_all = {
@@ -1468,10 +1959,16 @@ class VineCopula:
                 "memory_budget_bytes"
             )
 
-    def _sample_with_r(self, n, r_all, rng, return_pseudo=False,
-                       max_active_tree=None, traversal_plan=None):
+    def _sample_with_r_python(
+            self, n, r_all, rng, return_pseudo=False,
+            max_active_tree=None, traversal_plan=None, *, uniforms=None):
+        """Preserved Python oracle for canonical R-vine traversal."""
         d = self.d
-        w = _open_unit_uniform(rng, size=(n, d))
+        if uniforms is None:
+            w = _open_unit_uniform(rng, size=(n, d))
+        else:
+            w = _prepared_open_unit_draws(
+                uniforms, (n, d), name="R-vine sampling uniforms")
         if max_active_tree is None:
             max_active_tree = self._max_non_independent_tree_level()
         if max_active_tree < 0:
@@ -1554,6 +2051,73 @@ class VineCopula:
             return out, pseudo_obs
         return out
 
+    def _sample_with_r(self, n, r_all, rng, return_pseudo=False,
+                       max_active_tree=None, traversal_plan=None, *,
+                       uniforms=None, native_request=None):
+        """Dispatch unconditional sampling for caller-supplied parameters."""
+        def native_executor(module):
+            """Attempt native unconditional sampling for this request."""
+            if return_pseudo:
+                return None
+            native_max_tree = max_active_tree
+            if native_max_tree is None:
+                native_max_tree = self._max_non_independent_tree_level()
+            native_traversal_plan = traversal_plan
+            if native_traversal_plan is None:
+                active_keys = self._sample_active_edge_keys(native_max_tree)
+                native_traversal_plan = build_rvine_sampling_plan(
+                    self.d,
+                    self._natural_order_matrix,
+                    self._trees,
+                    self._edge_map,
+                    active_keys,
+                    native_max_tree,
+                )
+            active_keys = tuple(native_traversal_plan.active_keys)
+            # Production dispatch is enabled only for static fitted
+            # edges. The native ABI already supports row paths for direct
+            # differential tests and later predictive phases.
+            if any(
+                    edge_has_dynamic_params(self.pair_copulas[key])
+                    for key in active_keys):
+                return None
+            from pyscarcopula.numerical import _cpp_rvine
+
+            context, initial_parameters = self._native_unconditional_context(
+                module, native_traversal_plan, r_all, n)
+            if context is None:
+                return None
+            return _cpp_rvine.sample(
+                module,
+                self,
+                n,
+                rng,
+                active_keys,
+                native_traversal_plan,
+                r_all,
+                uniforms=uniforms,
+                parameter_sources=context['parameter_sources'],
+                native_plan=context['plan'],
+                native_edges=context['edges'],
+                parameter_pack=initial_parameters,
+                request_state=native_request,
+            )
+
+        return dispatch_rvine_backend(
+            capability="unconditional_sampling",
+            native_symbol="rvine_sample",
+            python_executor=lambda: self._sample_with_r_python(
+                n,
+                r_all,
+                rng,
+                return_pseudo=return_pseudo,
+                max_active_tree=max_active_tree,
+                traversal_plan=traversal_plan,
+                uniforms=uniforms,
+            ),
+            native_executor=native_executor,
+        )
+
     def _given_suffix_start_col(self, given, matrix=None):
         matrix = self._natural_order_matrix if matrix is None else matrix
         return given_suffix_start_col(self.d, given, matrix)
@@ -1578,12 +2142,68 @@ class VineCopula:
         cache[cache_key] = state
         return state
 
-    def _sample_suffix_given_with_r(self, n, r_all, rng, given, start_col,
-                                    matrix=None, pair_copulas=None):
+    def _sample_suffix_given_with_r_python(
+            self, n, r_all, rng, given, start_col, matrix=None,
+            pair_copulas=None, *, uniforms=None):
+        """Run the preserved Python suffix-conditioning executor."""
         M = self._natural_order_matrix if matrix is None else matrix
         pair_copulas = self.pair_copulas if pair_copulas is None else pair_copulas
-        return sample_suffix_given_with_r(
-            self.d, n, r_all, rng, given, start_col, M, pair_copulas)
+        return _sample_suffix_given_with_r_python(
+            self.d,
+            n,
+            r_all,
+            rng,
+            given,
+            start_col,
+            M,
+            pair_copulas,
+            uniforms=uniforms,
+        )
+
+    def _sample_suffix_given_with_r(
+            self, n, r_all, rng, given, start_col, matrix=None,
+            pair_copulas=None, *, uniforms=None):
+        """Dispatch exact suffix conditioning with supplied edge parameters."""
+        M = self._natural_order_matrix if matrix is None else matrix
+        pair_copulas = self.pair_copulas if pair_copulas is None else pair_copulas
+        from pyscarcopula.numerical import _cpp_rvine
+
+        plan = self._native_suffix_conditional_plan(
+            start_col, M, given)
+        active_keys = _cpp_rvine.conditional_active_keys(plan)
+        normalized_paths, parameter_sources = (
+            _cpp_rvine.conditional_parameter_layout(
+                pair_copulas, active_keys, r_all, int(n))
+        )
+
+        native_executor = self._native_conditional_executor(
+            plan,
+            pair_copulas,
+            r_all,
+            given,
+            n,
+            rng,
+            uniforms=uniforms,
+            active_keys=active_keys,
+            normalized_paths=normalized_paths,
+            parameter_sources=parameter_sources,
+        )
+
+        return dispatch_rvine_backend(
+            capability="suffix_conditional_sampling",
+            native_symbol="rvine_conditional_sample",
+            python_executor=lambda: self._sample_suffix_given_with_r_python(
+                n,
+                r_all,
+                rng,
+                given,
+                start_col,
+                matrix=matrix,
+                pair_copulas=pair_copulas,
+                uniforms=uniforms,
+            ),
+            native_executor=native_executor,
+        )
 
     # Dynamic conditioning contract is documented in
     # docs/rvine-conditional-notes.md. Keep these helpers strategy-generic:
@@ -1745,6 +2365,7 @@ class VineCopula:
             active_keys=None,
             max_active_tree=None,
             traversal_plan=None):
+        """Sample while advancing stateful edge parameters after each draw."""
         if max_active_tree is None:
             max_active_tree = self._max_non_independent_tree_level()
         if active_keys is None:
@@ -1784,7 +2405,7 @@ class VineCopula:
                 else:
                     r_i[key] = vectorized_r[key][i:i + 1]
 
-            row, pseudo_obs = self._sample_with_r(
+            row, pseudo_obs = self._sample_with_r_python(
                 1, r_i, rng, return_pseudo=True,
                 max_active_tree=max_active_tree,
                 traversal_plan=traversal_plan)
@@ -1891,11 +2512,69 @@ class VineCopula:
             )
         return r_all
 
-    def _sample_dag_given_with_r(self, n, r_all, rng, given, plan, pair_copulas):
+    def _sample_dag_given_with_r_python(
+            self, n, r_all, rng, given, plan, pair_copulas, *,
+            uniforms=None):
+        """Run the preserved Python arbitrary-DAG executor."""
         return sample_dag_given_with_r(
-            n, r_all, rng, given, plan, pair_copulas)
+            n,
+            r_all,
+            rng,
+            given,
+            plan,
+            pair_copulas,
+            uniforms=uniforms,
+        )
 
-    def _log_pdf_rows_with_r(self, u, r_all, pair_copulas=None, edge_map=None):
+    def _sample_dag_given_with_r(
+            self, n, r_all, rng, given, plan, pair_copulas, *,
+            uniforms=None):
+        """Dispatch an arbitrary-DAG conditional initialization program."""
+        from pyscarcopula.numerical import _cpp_rvine
+
+        missing = sorted(set(plan.edges_used) - set(r_all))
+        if missing:
+            raise KeyError(
+                "RVineCopula._sample_dag_given_with_r: missing predicted "
+                f"parameters for DAG edges {missing}"
+            )
+        active_keys = _cpp_rvine.conditional_active_keys(plan)
+        normalized_paths, parameter_sources = (
+            _cpp_rvine.conditional_parameter_layout(
+                pair_copulas, active_keys, r_all, int(n))
+        )
+
+        native_executor = self._native_conditional_executor(
+            plan,
+            pair_copulas,
+            r_all,
+            given,
+            n,
+            rng,
+            uniforms=uniforms,
+            active_keys=active_keys,
+            normalized_paths=normalized_paths,
+            parameter_sources=parameter_sources,
+        )
+
+        return dispatch_rvine_backend(
+            capability="dag_conditional_sampling",
+            native_symbol="rvine_conditional_sample",
+            python_executor=lambda: self._sample_dag_given_with_r_python(
+                n,
+                r_all,
+                rng,
+                given,
+                plan,
+                pair_copulas,
+                uniforms=uniforms,
+            ),
+            native_executor=native_executor,
+        )
+
+    def _log_pdf_rows_with_r_python(
+            self, u, r_all, pair_copulas=None, edge_map=None):
+        """Preserved Python oracle for row-wise R-vine log-density."""
         pair_copulas = self.pair_copulas if pair_copulas is None else pair_copulas
         edge_map = self._edge_map if edge_map is None else edge_map
         pseudo_obs = {
@@ -1929,25 +2608,167 @@ class VineCopula:
                     pseudo_obs[(v1, conditioning | {v2})] = _clip_unit(u1_next)
         return logp
 
+    def _log_pdf_rows_with_r(
+            self, u, r_all, pair_copulas=None, edge_map=None):
+        """Dispatch fused row log-density for supplied edge parameters."""
+        from pyscarcopula.numerical import _cpp_rvine
+
+        pair_copulas = (
+            self.pair_copulas if pair_copulas is None else pair_copulas)
+        edge_map = self._edge_map if edge_map is None else edge_map
+        observations = _cpp_rvine._rvine_observations(
+            u, self.d, "density")
+        active_keys = _cpp_rvine.density_active_keys(
+            self._trees, edge_map)
+        normalized_paths, parameter_sources = (
+            _cpp_rvine.density_parameter_layout(
+                pair_copulas, active_keys, r_all, len(observations))
+        )
+
+        def native_executor(module):
+            """Attempt fused native log-density evaluation for all rows."""
+            if not _cpp_rvine.native_edges_supported(
+                    pair_copulas, active_keys):
+                return None
+            context, parameters = self._native_density_context(
+                module,
+                pair_copulas,
+                edge_map,
+                r_all,
+                len(observations),
+                active_keys=active_keys,
+                normalized_paths=normalized_paths,
+                parameter_sources=parameter_sources,
+            )
+            if context is None:
+                return None
+            return _cpp_rvine.log_pdf_rows(
+                module,
+                pair_copulas,
+                self.d,
+                self._trees,
+                edge_map,
+                r_all,
+                observations,
+                active_keys=context['active_keys'],
+                normalized_parameter_paths=normalized_paths,
+                parameter_sources=context['parameter_sources'],
+                native_plan=context['plan'],
+                native_edges=context['edges'],
+                parameter_pack=parameters,
+            )
+
+        return dispatch_rvine_backend(
+            capability="log_pdf_rows",
+            native_symbol="rvine_log_pdf_rows",
+            python_executor=lambda: self._log_pdf_rows_with_r_python(
+                observations,
+                r_all,
+                pair_copulas=pair_copulas,
+                edge_map=edge_map,
+            ),
+            native_executor=native_executor,
+        )
+
     def _matrix_key_from_map(self, tree_level, orig_idx, edge_map):
         for key, mapped_idx in edge_map.items():
             if key[0] == tree_level and mapped_idx == orig_idx:
                 return key
         raise KeyError((tree_level, orig_idx))
 
-    def _sample_arbitrary_given_mcmc(
+    def _sample_arbitrary_given_mcmc_python(
             self, n, r_all, rng, given, initial=None, n_steps=None,
-            burnin_steps=None):
-        return sample_arbitrary_given_mcmc(
+            burnin_steps=None, *, initial_uniforms=None, random_draws=None,
+            step_offset=0):
+        """Run the preserved Python coordinate-update MCMC executor."""
+        return _sample_arbitrary_given_mcmc_python(
             self.d,
             n,
             r_all,
             rng,
             given,
-            self._log_pdf_rows_with_r,
+            self._log_pdf_rows_with_r_python,
             initial=initial,
             n_steps=n_steps,
             burnin_steps=burnin_steps,
+            initial_uniforms=initial_uniforms,
+            random_draws=random_draws,
+            step_offset=step_offset,
+        )
+
+    def _sample_arbitrary_given_mcmc(
+            self, n, r_all, rng, given, initial=None, n_steps=None,
+            burnin_steps=None, *, initial_uniforms=None, random_draws=None,
+            step_offset=0, density_algorithm="auto", chunk_steps=256):
+        """Dispatch bounded coordinate-update MCMC for arbitrary given sets."""
+        from pyscarcopula.numerical import _cpp_rvine
+
+        active_keys = _cpp_rvine.density_active_keys(
+            self._trees, self._edge_map)
+        normalized_paths, parameter_sources = (
+            _cpp_rvine.density_parameter_layout(
+                self.pair_copulas, active_keys, r_all, int(n))
+        )
+
+        def native_executor(module):
+            """Attempt native arbitrary-given MCMC sampling."""
+            if not _cpp_rvine.native_edges_supported(
+                    self.pair_copulas, active_keys):
+                return None
+            context, parameters = self._native_density_context(
+                module,
+                self.pair_copulas,
+                self._edge_map,
+                r_all,
+                n,
+                active_keys=active_keys,
+                normalized_paths=normalized_paths,
+                parameter_sources=parameter_sources,
+            )
+            if context is None:
+                return None
+            return _cpp_rvine.mcmc(
+                module,
+                self.pair_copulas,
+                self.d,
+                self._trees,
+                self._edge_map,
+                r_all,
+                n,
+                rng,
+                given,
+                initial=initial,
+                n_steps=n_steps,
+                burnin_steps=burnin_steps,
+                initial_uniforms=initial_uniforms,
+                random_draws=random_draws,
+                step_offset=step_offset,
+                active_keys=context['active_keys'],
+                normalized_parameter_paths=normalized_paths,
+                parameter_sources=context['parameter_sources'],
+                native_plan=context['plan'],
+                native_edges=context['edges'],
+                parameter_pack=parameters,
+                density_algorithm=density_algorithm,
+                chunk_steps=chunk_steps,
+            )
+
+        return dispatch_rvine_backend(
+            capability="conditional_mcmc",
+            native_symbol="rvine_mcmc_chunk",
+            python_executor=lambda: self._sample_arbitrary_given_mcmc_python(
+                n,
+                r_all,
+                rng,
+                given,
+                initial=initial,
+                n_steps=n_steps,
+                burnin_steps=burnin_steps,
+                initial_uniforms=initial_uniforms,
+                random_draws=random_draws,
+                step_offset=step_offset,
+            ),
+            native_executor=native_executor,
         )
 
     def predict(
@@ -2021,12 +2842,14 @@ class VineCopula:
             If True, return ``(samples, diagnostics)`` instead of only
             samples.
         mcmc_steps : int or None, default None
-            Number of Metropolis-within-Gibbs sampling sweeps used after the
-            DAG initializer for arbitrary non-suffix ``given`` patterns. If
-            ``None``, a dimension-based default is used.
-        mcmc_burnin : int or None, default None
-            Number of burn-in sweeps for the arbitrary-``given`` MCMC fallback.
+            Number of Metropolis-within-Gibbs single-coordinate updates used
+            after the DAG initializer for arbitrary non-suffix ``given``
+            patterns. One full sweep contains one update per free variable.
             If ``None``, a dimension-based default is used.
+        mcmc_burnin : int or None, default None
+            Number of burn-in single-coordinate updates for the arbitrary-
+            ``given`` MCMC fallback. If ``None``, a dimension-based default is
+            used.
 
         Returns
         -------
@@ -2035,7 +2858,11 @@ class VineCopula:
         samples, diagnostics : tuple
             Returned when ``return_diagnostics=True``. Diagnostics include the
             conditioning method, suffix position, dynamic edge updates and
-            MCMC acceptance information when applicable.
+            MCMC acceptance, completed-sweep and convergence-warning
+            information when applicable. ``convergence_warning`` is a
+            conservative heuristic: it is set when a free coordinate accepts
+            fewer than 2 percent of proposals or fewer than five moves per
+            parallel chain. It is not a proof of convergence.
         """
         self._require_fit()
         if not isinstance(n, (int, np.integer)) or n <= 0:
@@ -2130,6 +2957,8 @@ class VineCopula:
                     'given': dict(given),
                     'dynamic_conditioning': dynamic_conditioning,
                     'suffix_start_col': 0,
+                    'matrix_rebuilt': False,
+                    'conditional_method': 'suffix',
                     'updated_edges': [],
                     'skipped_edges': [],
                     'all_variables_given': True,

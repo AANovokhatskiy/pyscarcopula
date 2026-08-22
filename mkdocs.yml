@@ -74,6 +74,8 @@ nav:
     - CPU Parallelism: guide/parallelism.md
   - Developer Guide:
     - Developer Architecture: guide/architecture.md
+    - Validation:
+      - Conditional Sampling CI: guide/conditional-sampling-validation.md
   - API Reference:
     - Core Copulas and Fitting: api/copulas.md
     - Multivariate and Factor Models: api/multivariate_models.md

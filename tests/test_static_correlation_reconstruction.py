@@ -44,6 +44,7 @@ def test_worker_reconstruction_preserves_dense_constructor_policy(
         if model_type is StudentCopula or corr_mode != "fixed" else {})
     source.fit(_observations(), **fit_kwargs)
 
+    np.testing.assert_array_equal(source._constructor_R, CORRELATION)
     rebuilt = create_worker_model(source)
 
     assert type(rebuilt) is model_type
@@ -52,9 +53,10 @@ def test_worker_reconstruction_preserves_dense_constructor_policy(
     assert rebuilt._corr_shrinkage_init == pytest.approx(0.63)
     assert rebuilt._cholesky_d_max == 4
     assert rebuilt._allow_large_cholesky is True
-    np.testing.assert_allclose(
-        rebuilt._constructor_R, CORRELATION, atol=3e-16, rtol=0.0)
+    np.testing.assert_array_equal(rebuilt._constructor_R, CORRELATION)
     if corr_mode != "fixed":
+        np.testing.assert_array_equal(
+            source._constructor_corr_base, np.eye(3))
         np.testing.assert_array_equal(
             rebuilt._constructor_corr_base, np.eye(3))
 

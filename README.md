@@ -79,6 +79,43 @@ pytest --run-validation
 without a successfully built extension is incomplete for the default
 bivariate GAS workflow.
 
+The default command uses one pytest worker and runs tests sequentially. To
+run independent test modules on an explicit number of CPU cores, pass that
+number to pytest-xdist:
+
+```bash
+pytest -n 4 --run-validation
+```
+
+The repository configures xdist's `loadscope` scheduler, so tests within one
+module remain sequential while separate modules can run concurrently. Use an
+explicit core count rather than `-n auto` for reproducible resource usage.
+
+Timing gates compare relative speedups or overhead ratios; absolute seconds
+are report-only. Opt-in benchmarks may run through xdist like the rest of the
+suite:
+
+```bash
+PYSCA_RUN_BENCHMARKS=1 pytest -n 10 -m benchmark
+```
+
+CPU placement remains under operating-system control. Relative alternatives
+are measured in paired, interleaved rounds so scheduler migration or transient
+load cannot systematically put the complete baseline and candidate phases on
+different classes of CPU core.
+
+Validation and optional external groups use the same parallel runner:
+
+```bash
+pytest -n 10 --run-validation -m validation
+pytest -n 10 --run-validation -m external  # requires .[external]
+```
+
+`loadscope` intentionally keeps cases from one test module sequential. In
+particular, alternatives inside one relative benchmark must not execute at the
+same time, and the release/equicorrelation report writers use one shared JSON
+artifact per module. Their modules still run concurrently with other modules.
+
 Optional benchmark and large validation checks are disabled by default. Enable
 them explicitly:
 
@@ -97,6 +134,12 @@ $env:PYSCA_RUN_LARGE_BENCHMARKS = "1"
 $env:PYSCA_RUN_VINE_BENCHMARKS = "1"
 pytest tests --run-validation
 ```
+
+Conditional sampling has separate PR, distributional, nightly external/d=50,
+and manual benchmark layers.  See the
+[conditional sampling validation guide](docs/guide/conditional-sampling-validation.md)
+for exact marker selections, oracle-only calibration, artifacts, and failure
+triage.
 
 Core dependencies: `numpy`, `numba`, `scipy`, `joblib`, `tqdm`.
 

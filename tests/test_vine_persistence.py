@@ -118,6 +118,8 @@ def test_generic_vine_roundtrip_preserves_mode_structure_and_runtime(
     vine = factory().fit(data, method="mle")
     vine._suffix_state_cache["transient"] = object()
     vine._predict_history_cache["transient"] = object()
+    vine._native_rvine_cache["transient"] = object()
+    vine._native_rvine_generation = 7
     path = tmp_path / f"{expected_type}.json"
 
     vine.save(path, include_data=True)
@@ -134,6 +136,8 @@ def test_generic_vine_roundtrip_preserves_mode_structure_and_runtime(
         vine.structure_source)
     assert "_suffix_state_cache" not in serialized
     assert "_predict_history_cache" not in serialized
+    assert "_native_rvine_cache" not in serialized
+    assert "_native_rvine_generation" not in serialized
 
     loaded = load_model(path, expected_type=RVineCopula)
     assert type(loaded) is VineCopula
@@ -148,6 +152,8 @@ def test_generic_vine_roundtrip_preserves_mode_structure_and_runtime(
     assert loaded.log_likelihood() == vine.log_likelihood()
     assert loaded._suffix_state_cache == {}
     assert loaded._predict_history_cache == {}
+    assert loaded._native_rvine_cache == {}
+    assert loaded._native_rvine_generation == 0
     assert loaded._last_u.flags.writeable is False
     np.testing.assert_array_equal(
         loaded.sample(8, rng=np.random.default_rng(9)),

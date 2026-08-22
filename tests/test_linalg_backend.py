@@ -1,10 +1,10 @@
 import json
 import os
-import time
 
 import numpy as np
 import pytest
 
+from benchmark_timing import interleaved_timings
 
 DIMENSIONS = (20, 80, 150, 300)
 
@@ -13,16 +13,6 @@ def _module():
     import pyscarcopula._scar_cpp as module
 
     return module
-
-
-def _median_elapsed(callable_, repeat=7):
-    callable_()
-    elapsed = []
-    for _ in range(repeat):
-        started = time.perf_counter()
-        callable_()
-        elapsed.append(time.perf_counter() - started)
-    return float(np.median(elapsed))
 
 
 def test_dependency_free_linalg_backend_contract():
@@ -103,31 +93,38 @@ def test_dependency_free_linalg_benchmark():
         matrix = rng.normal(size=(dimension, dimension))
         vector = rng.normal(size=dimension)
         repeats = max(10, 20_000_000 // (dimension * dimension))
-        scalar = _median_elapsed(lambda: module._linalg_matvec_probe(
-            matrix, vector, scalar=True, repeat=repeats), repeat=5)
-        portable = _median_elapsed(lambda: module._linalg_matvec_probe(
-            matrix, vector, scalar=False, repeat=repeats), repeat=5)
+        matvec_calls = {
+            "scalar": lambda: module._linalg_matvec_probe(
+                matrix, vector, scalar=True, repeat=repeats),
+            "portable": lambda: module._linalg_matvec_probe(
+                matrix, vector, scalar=False, repeat=repeats),
+        }
+        for call in matvec_calls.values():
+            call()
+        matvec = interleaved_timings(matvec_calls, repeats=5)
 
         spd = matrix @ matrix.T + np.eye(dimension)
         rhs = rng.normal(size=(dimension, 4))
-        scalar_solve = _median_elapsed(
-            lambda: module._linalg_cholesky_solve_probe(
+        solve_calls = {
+            "scalar": lambda: module._linalg_cholesky_solve_probe(
                 spd, rhs, scalar=True),
-            repeat=5,
-        )
-        portable_solve = _median_elapsed(
-            lambda: module._linalg_cholesky_solve_probe(
+            "portable": lambda: module._linalg_cholesky_solve_probe(
                 spd, rhs, scalar=False),
-            repeat=5,
-        )
+        }
+        for call in solve_calls.values():
+            call()
+        solve = interleaved_timings(solve_calls, repeats=5)
+        matvec_medians = matvec.medians
+        solve_medians = solve.medians
         payload[str(dimension)] = {
-            "matvec_scalar_seconds": scalar,
-            "matvec_portable_seconds": portable,
-            "matvec_speedup": scalar / portable,
-            "cholesky_solve_scalar_seconds": scalar_solve,
-            "cholesky_solve_portable_seconds": portable_solve,
-            "cholesky_solve_speedup": scalar_solve / portable_solve,
+            "matvec_scalar_seconds": matvec_medians["scalar"],
+            "matvec_portable_seconds": matvec_medians["portable"],
+            "matvec_speedup": matvec.median_ratio("scalar", "portable"),
+            "cholesky_solve_scalar_seconds": solve_medians["scalar"],
+            "cholesky_solve_portable_seconds": solve_medians["portable"],
+            "cholesky_solve_speedup": solve.median_ratio(
+                "scalar", "portable"),
         }
 
-    print("PHASE7_LINALG_BENCH " + json.dumps(
+    print("PYSCA_BENCHMARK " + json.dumps(
         payload, sort_keys=True), flush=True)

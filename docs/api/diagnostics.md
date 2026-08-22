@@ -21,6 +21,14 @@ recomputes the statistic on generated samples. For stochastic latent-state
 models this means resampling both the latent path and the copula observations,
 not only perturbing the observed pseudo-observations.
 
+Fitted `VineCopula` models follow the same parametric-bootstrap contract. A
+replication simulates from the captured fitted R-vine, optionally refits a
+worker-owned vine with the same structure and fitting settings, applies the
+R-vine Rosenblatt transform, and recomputes the Cramer-von Mises statistic.
+Static exact built-in edges use the native Rosenblatt runtime; unsupported or
+dynamic edges use the preserved Python transform without changing the result
+schema or random-stream policy.
+
 The returned `BootstrapGoFResult` exposes `statistic`, the calibrated
 `pvalue`, `bootstrap_statistics`, `n_bootstrap`, and
 `bootstrap_diagnostics`. Parallel execution metadata is available as

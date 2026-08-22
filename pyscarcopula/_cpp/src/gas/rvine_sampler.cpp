@@ -1,7 +1,6 @@
 #include "scar/gas_rvine.hpp"
 
-#include "scar/detail/copula.hpp"
-#include "scar/detail/safety.hpp"
+#include "scar/rvine.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -10,92 +9,6 @@
 
 namespace scar {
 namespace {
-
-bool valid_index(int value, int limit) {
-    return value >= 0 && value < limit;
-}
-
-bool same_size(const std::vector<int>& left, const std::vector<int>& right) {
-    return left.size() == right.size();
-}
-
-bool valid_offsets(const std::vector<int>& offsets, std::size_t item_count) {
-    if (offsets.empty() || offsets.front() != 0
-        || offsets.back() != static_cast<int>(item_count)) {
-        return false;
-    }
-    for (std::size_t i = 1; i < offsets.size(); ++i) {
-        if (offsets[i] < offsets[i - 1]) {
-            return false;
-        }
-    }
-    return true;
-}
-
-bool valid_plan(const RVineTraversalPlan& plan, std::size_t edge_count) {
-    const std::size_t column_count = plan.column_uniforms.size();
-    if (plan.dimension < 2 || plan.node_count < plan.dimension
-        || !valid_index(plan.last_uniform_column, plan.dimension)
-        || !valid_index(plan.last_output_node, plan.node_count)
-        || plan.output_nodes.size() != static_cast<std::size_t>(plan.dimension)
-        || plan.inverse_offsets.size() != column_count + 1
-        || plan.forward_offsets.size() != column_count + 1
-        || !valid_offsets(plan.inverse_offsets, plan.inverse_edges.size())
-        || !valid_offsets(plan.forward_offsets, plan.forward_edges.size())
-        || !same_size(plan.inverse_edges, plan.inverse_partner_nodes)
-        || !same_size(plan.inverse_edges, plan.inverse_output_nodes)
-        || !same_size(plan.inverse_edges, plan.inverse_transposed)
-        || !same_size(plan.forward_edges, plan.forward_leaf_nodes)
-        || !same_size(plan.forward_edges, plan.forward_partner_nodes)
-        || !same_size(plan.forward_edges, plan.forward_leaf_output_nodes)
-        || !same_size(plan.forward_edges, plan.forward_partner_output_nodes)
-        || !same_size(plan.forward_edges, plan.forward_transposed)
-        || plan.update_u1_nodes.size() != edge_count
-        || plan.update_u2_nodes.size() != edge_count) {
-        return false;
-    }
-    for (int value : plan.output_nodes) {
-        if (!valid_index(value, plan.node_count)) {
-            return false;
-        }
-    }
-    for (int value : plan.column_uniforms) {
-        if (!valid_index(value, plan.dimension)) {
-            return false;
-        }
-    }
-    for (std::size_t i = 0; i < plan.inverse_edges.size(); ++i) {
-        if (!valid_index(plan.inverse_edges[i], static_cast<int>(edge_count))
-            || !valid_index(plan.inverse_partner_nodes[i], plan.node_count)
-            || !valid_index(plan.inverse_output_nodes[i], plan.node_count)
-            || (plan.inverse_transposed[i] != 0
-                && plan.inverse_transposed[i] != 1)) {
-            return false;
-        }
-    }
-    for (std::size_t i = 0; i < plan.forward_edges.size(); ++i) {
-        if (!valid_index(plan.forward_edges[i], static_cast<int>(edge_count))
-            || !valid_index(plan.forward_leaf_nodes[i], plan.node_count)
-            || !valid_index(plan.forward_partner_nodes[i], plan.node_count)
-            || !valid_index(plan.forward_leaf_output_nodes[i], plan.node_count)
-            || !valid_index(plan.forward_partner_output_nodes[i], plan.node_count)
-            || (plan.forward_transposed[i] != 0
-                && plan.forward_transposed[i] != 1)) {
-            return false;
-        }
-    }
-    for (std::size_t i = 0; i < edge_count; ++i) {
-        if (!valid_index(plan.update_u1_nodes[i], plan.node_count)
-            || !valid_index(plan.update_u2_nodes[i], plan.node_count)) {
-            return false;
-        }
-    }
-    return true;
-}
-
-double clipped(double value) {
-    return scar_internal::clip_pseudo_observation(value);
-}
 
 void fail(
     GasRvineSampleResult& out,
@@ -128,7 +41,7 @@ GasRvineSampleResult gas_rvine_sample(
         || parameter_rows != n_rows
         || parameter_edges != static_cast<std::int64_t>(edge_count)
         || edge_count == 0
-        || !valid_plan(plan, edge_count)) {
+        || !rvine::validate_traversal_plan(plan, edge_count)) {
         fail(out, SCAR_INVALID_SIZE, -1, -1);
         return out;
     }
@@ -139,15 +52,19 @@ GasRvineSampleResult gas_rvine_sample(
         fail(out, SCAR_INVALID_SIZE, -1, -1);
         return out;
     }
-    std::vector<CopulaSpec> transposed_copulas;
-    transposed_copulas.reserve(edge_count);
+    std::vector<rvine::EdgeSpec> edge_specs;
+    edge_specs.reserve(edge_count);
     for (const GasRvineEdge& edge : edges) {
-        if (!is_supported(edge.copula) || edge.copula.dim != 2) {
-            fail(out, SCAR_INVALID_FAMILY, -1, -1);
-            return out;
-        }
-        transposed_copulas.push_back(
-            scar_internal::transposed_copula_spec(edge.copula));
+        rvine::EdgeSpec spec;
+        spec.copula = edge.copula;
+        edge_specs.push_back(spec);
+    }
+    std::vector<rvine::PreparedEdge> prepared_edges;
+    const int prepare_status = rvine::prepare_edges(
+        edge_specs, prepared_edges);
+    if (prepare_status != SCAR_OK) {
+        fail(out, prepare_status, -1, -1);
+        return out;
     }
 
     GasEvaluator evaluator;
@@ -191,26 +108,22 @@ GasRvineSampleResult gas_rvine_sample(
         const double* uniform_row = uniforms
             + static_cast<std::size_t>(row)
                 * static_cast<std::size_t>(plan.dimension);
-        nodes[static_cast<std::size_t>(plan.last_output_node)] = clipped(
-            uniform_row[plan.last_uniform_column]);
+        nodes[static_cast<std::size_t>(plan.last_output_node)] =
+            rvine::clip_open_unit(uniform_row[plan.last_uniform_column]);
 
         for (std::size_t column = 0;
              column < plan.column_uniforms.size(); ++column) {
-            double current = clipped(uniform_row[plan.column_uniforms[column]]);
+            double current = rvine::clip_open_unit(
+                uniform_row[plan.column_uniforms[column]]);
             for (int index = plan.inverse_offsets[column];
                  index < plan.inverse_offsets[column + 1]; ++index) {
                 const int edge_index = plan.inverse_edges[index];
                 const double partner = nodes[static_cast<std::size_t>(
                     plan.inverse_partner_nodes[index])];
                 const double parameter = edge_parameter(row, edge_index);
-                const std::size_t edge_position =
-                    static_cast<std::size_t>(edge_index);
-                const CopulaSpec& inverse_copula =
-                    plan.inverse_transposed[index] != 0
-                    ? transposed_copulas[edge_position]
-                    : edges[edge_position].copula;
-                current = scar_internal::copula_h_inverse_rotated(
-                    inverse_copula,
+                current = rvine::h_inverse(
+                    prepared_edges[static_cast<std::size_t>(edge_index)],
+                    plan.inverse_transposed[index] != 0,
                     current,
                     partner,
                     parameter);
@@ -218,7 +131,7 @@ GasRvineSampleResult gas_rvine_sample(
                     fail(out, SCAR_NUMERICAL_FAILURE, row, edge_index);
                     return out;
                 }
-                current = clipped(current);
+                current = rvine::clip_open_unit(current);
                 nodes[static_cast<std::size_t>(
                     plan.inverse_output_nodes[index])] = current;
             }
@@ -226,41 +139,33 @@ GasRvineSampleResult gas_rvine_sample(
             for (int index = plan.forward_offsets[column];
                  index < plan.forward_offsets[column + 1]; ++index) {
                 const int edge_index = plan.forward_edges[index];
-                const GasRvineEdge& edge =
-                    edges[static_cast<std::size_t>(edge_index)];
                 const double leaf = nodes[static_cast<std::size_t>(
                     plan.forward_leaf_nodes[index])];
                 const double partner = nodes[static_cast<std::size_t>(
                     plan.forward_partner_nodes[index])];
                 const double parameter = edge_parameter(row, edge_index);
-                const std::size_t edge_position =
-                    static_cast<std::size_t>(edge_index);
                 const bool leaf_is_transposed =
                     plan.forward_transposed[index] != 0;
-                const CopulaSpec& leaf_copula =
-                    leaf_is_transposed
-                    ? transposed_copulas[edge_position]
-                    : edge.copula;
-                const CopulaSpec& partner_copula =
-                    leaf_is_transposed
-                    ? edge.copula
-                    : transposed_copulas[edge_position];
-                const double leaf_next = scar_internal::copula_h_rotated(
-                    leaf_copula, leaf, partner, parameter);
-                const double partner_next = scar_internal::copula_h_rotated(
-                    partner_copula,
-                    partner,
+                double leaf_next = 0.0;
+                double partner_next = 0.0;
+                rvine::h_pair(
+                    prepared_edges[static_cast<std::size_t>(edge_index)],
+                    leaf_is_transposed,
                     leaf,
-                    parameter);
+                    partner,
+                    parameter,
+                    leaf_next,
+                    partner_next);
                 if (!std::isfinite(leaf_next) || !std::isfinite(partner_next)) {
                     fail(out, SCAR_NUMERICAL_FAILURE, row, edge_index);
                     return out;
                 }
                 nodes[static_cast<std::size_t>(
-                    plan.forward_leaf_output_nodes[index])] = clipped(leaf_next);
+                    plan.forward_leaf_output_nodes[index])] =
+                    rvine::clip_open_unit(leaf_next);
                 nodes[static_cast<std::size_t>(
-                    plan.forward_partner_output_nodes[index])] = clipped(
-                        partner_next);
+                    plan.forward_partner_output_nodes[index])] =
+                    rvine::clip_open_unit(partner_next);
             }
         }
 

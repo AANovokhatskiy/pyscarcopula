@@ -5,34 +5,11 @@ from __future__ import annotations
 import numpy as np
 from numpy.polynomial.legendre import leggauss
 
-from pyscarcopula.vine._helpers import _clip_unit
+from pyscarcopula.vine._helpers import (
+    _clip_unit,
+    validate_vine_given as validate_cvine_given,
+)
 from pyscarcopula.vine._edge_adapter import edge_is_independent
-
-
-def validate_cvine_given(given, d):
-    """Validate `given` for C-vine conditional predict."""
-    if given is None:
-        return {}
-
-    if not isinstance(given, dict):
-        raise TypeError("given must be a dict[int, float] or None")
-
-    out = {}
-    for key, value in given.items():
-        try:
-            idx = int(key)
-        except Exception as exc:
-            raise TypeError("given keys must be integers") from exc
-        if idx < 0 or idx >= d:
-            raise ValueError(f"given key must be in [0, {d - 1}], got {key!r}")
-        val = float(value)
-        if not (0.0 < val < 1.0):
-            raise ValueError(
-                f"given[{idx}] must be in pseudo-observation space (0, 1), got {val}"
-            )
-        out[idx] = val
-
-    return out
 
 
 def ensure_cvine_conditional_supported(vine):

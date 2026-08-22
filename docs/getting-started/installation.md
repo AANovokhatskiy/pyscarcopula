@@ -56,6 +56,26 @@ Tests require the `data/` directory, which is included in the git repository
 but not in the PyPI package. Native tests require a successful extension
 build.
 
+The default is sequential and uses one pytest worker. After installing the
+`test` extra, independent test modules can be distributed over an explicit
+number of CPU cores:
+
+```bash
+pytest tests/ -n 4
+```
+
+Tests from the same module stay on one worker (`--dist=loadscope`) because
+some modules intentionally share local runtime state. Timing gates use only
+relative comparisons; absolute seconds are report-only. CPU placement remains
+under operating-system control. Baseline and candidate timings are collected
+in paired, interleaved rounds to avoid a systematic split across different
+classes of CPU core.
+
+The same `-n N` mode supports `benchmark`, `validation`, `external`,
+`high_dimensional`, `data`, sanitizer, and native-runtime marker selections.
+Relative alternatives within one benchmark remain sequential by design, and
+module-scoped report writers remain on one worker.
+
 ## Run the notebooks
 
 Clone the repository so the example datasets are available, then install the

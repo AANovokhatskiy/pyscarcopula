@@ -1,4 +1,4 @@
-"""Stage-1 contracts for typed static correlation policies."""
+"""Contracts for typed static correlation policies."""
 
 from dataclasses import FrozenInstanceError
 from typing import get_type_hints

@@ -26,6 +26,7 @@ Usage:
 
 import numpy as np
 import time
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Callable
 from scipy.stats import chi2, norm, cramervonmises
@@ -48,6 +49,7 @@ from pyscarcopula.numerical._arrays import (
     validate_float64_allocation,
     validate_positive_int,
 )
+from pyscarcopula.numerical._rvine_backend import dispatch_rvine_backend
 
 
 @dataclass(frozen=True)
@@ -229,9 +231,9 @@ def gof_test(model, data, to_pobs=True, K=300, grid_range=5.0,
         If provided, use this instead of model.fit_result.
         Enables the stateless API: gof_test(copula, u, fit_result=result)
     bootstrap : bool
-        If True, calibrate a supported bivariate, static multivariate, or
-        dynamic multivariate CvM statistic by parametric bootstrap instead of
-        using the one-sample asymptotic p-value.
+        If True, calibrate a supported bivariate, regular-vine, static
+        multivariate, or dynamic multivariate CvM statistic by parametric
+        bootstrap instead of using the one-sample asymptotic p-value.
     n_bootstrap : int
         Number of bootstrap replications.
     bootstrap_refit : bool
@@ -307,16 +309,38 @@ def gof_test(model, data, to_pobs=True, K=300, grid_range=5.0,
                               bootstrap_fit_kwargs=bootstrap_fit_kwargs,
                               rng=rng, n_jobs=n_jobs)
     elif isinstance(model, VineCopula):
-        if bootstrap:
-            raise NotImplementedError(
-                "Bootstrap GoF is not implemented for VineCopula.")
-        return rvine_gof_test(
+        u = _prepare_gof_data(
+            data, expected_dim=getattr(model, "d", None), to_pobs=to_pobs)
+        result = rvine_gof_test(
             model,
-            data,
-            to_pobs,
+            u,
+            False,
             K,
             grid_range,
             vine_type=model.vine_type,
+        )
+        if not bootstrap:
+            return result
+        rvine_fit_result = (
+            fit_result
+            if fit_result is not None
+            else getattr(model, 'fit_result', None)
+        )
+        if rvine_fit_result is None:
+            rvine_fit_result = model
+        return _bootstrap_gof(
+            'rvine',
+            rvine_fit_result,
+            u,
+            model,
+            float(result.statistic),
+            K=K,
+            grid_range=grid_range,
+            n_bootstrap=n_bootstrap,
+            bootstrap_refit=bootstrap_refit,
+            bootstrap_fit_kwargs=bootstrap_fit_kwargs,
+            rng=rng,
+            n_jobs=n_jobs,
         )
     elif isinstance(model, CVineCopula):
         if bootstrap:
@@ -446,10 +470,13 @@ def _bootstrap_fit_kwargs(fit_result, fit_kwargs):
 
 
 def _fit_result_diagnostics(result):
+    """Return normalized diagnostics for one bootstrap refit."""
+    log_likelihood = getattr(result, 'log_likelihood', np.nan)
+    if callable(log_likelihood):
+        log_likelihood = getattr(result, '_log_likelihood', np.nan)
     row = {
         'bootstrap_fit_method': getattr(result, 'method', ''),
-        'bootstrap_fit_log_likelihood': float(
-            getattr(result, 'log_likelihood', np.nan)),
+        'bootstrap_fit_log_likelihood': float(log_likelihood),
         'bootstrap_fit_success': bool(getattr(result, 'success', False)),
         'bootstrap_fit_nfev': int(getattr(result, 'nfev', 0)),
         'bootstrap_fit_message': str(getattr(result, 'message', '')),
@@ -610,8 +637,9 @@ def _bootstrap_prepare_student(
     return copula
 
 
-def _bootstrap_simulate_student(
+def _bootstrap_simulate_fitted_model(
         copula, u, fit_result, rng, K, grid_range, n_threads, config):
+    """Simulate one bootstrap sample from a fitted static model."""
     return copula.sample(len(u), rng=rng)
 
 
@@ -626,6 +654,46 @@ def _bootstrap_statistic_student(
     e_boot = student_rosenblatt_transform(
         correlation, float(df), u_boot)
     return float(cvm_test(e_boot).statistic)
+
+
+def _bootstrap_capture_rvine(copula, fit_result):
+    """Capture fitted Python state without persisting transient native cache."""
+    return deepcopy(copula)
+
+
+def _bootstrap_prepare_rvine(
+        copula_class, constructor_kwargs, fit_result, fitted_snapshot):
+    """Clone a fitted R-vine snapshot for one bootstrap worker."""
+    return deepcopy(fitted_snapshot)
+
+
+def _bootstrap_refit_rvine(
+        copula_class, constructor_kwargs, u_boot, fit_result, fit_kwargs,
+        K, grid_range, n_threads, config):
+    """Refit an R-vine worker model to one bootstrap sample."""
+    copula = create_worker_model(copula_class, constructor_kwargs)
+    method = str(getattr(fit_result, 'method', 'MLE')).lower()
+    fitted = copula.fit(
+        u_boot,
+        method=method,
+        to_pobs=False,
+        config=config,
+        **fit_kwargs,
+    )
+    return fitted, fitted.fit_result
+
+
+def _bootstrap_statistic_rvine(
+        copula, u_boot, fit_result, K, grid_range):
+    """Compute the CvM statistic from static R-vine residuals."""
+    residuals = rvine_rosenblatt_transform(
+        copula,
+        u_boot,
+        K=K,
+        grid_range=grid_range,
+        vine_type=copula.vine_type,
+    )
+    return float(cvm_test(residuals).statistic)
 
 
 def _bootstrap_prepare_equicorr(
@@ -775,9 +843,16 @@ _BOOTSTRAP_ADAPTERS = {
     'student': _BootstrapAdapter(
         capture=_bootstrap_capture_none,
         prepare=_bootstrap_prepare_student,
-        simulate=_bootstrap_simulate_student,
+        simulate=_bootstrap_simulate_fitted_model,
         refit=_bootstrap_refit_static_multivariate,
         statistic=_bootstrap_statistic_student,
+    ),
+    'rvine': _BootstrapAdapter(
+        capture=_bootstrap_capture_rvine,
+        prepare=_bootstrap_prepare_rvine,
+        simulate=_bootstrap_simulate_fitted_model,
+        refit=_bootstrap_refit_rvine,
+        statistic=_bootstrap_statistic_rvine,
     ),
     'equicorr': _BootstrapAdapter(
         capture=_bootstrap_capture_none,
@@ -1169,7 +1244,7 @@ def vine_gof_test(vine, data, to_pobs=True, K=500, grid_range=7.0):
     return cvm_test(e)
 
 
-def rvine_rosenblatt_transform(
+def _rvine_rosenblatt_transform_python(
         vine, u, K=300, grid_range=5.0, *, vine_type=None):
     """
     Rosenblatt transform for a fitted R-vine copula.
@@ -1270,6 +1345,99 @@ def rvine_rosenblatt_transform(
         e[:, col] = cur
 
     return clip_rosenblatt_output(e)
+
+
+def _prepare_rvine_rosenblatt_observations(vine, u):
+    """Preserve the characterized public input contract before dispatch."""
+    observations = np.asarray(u, dtype=np.float64)
+    _, dimension = observations.shape
+    if dimension != vine.d:
+        raise ValueError(
+            f"u has d={dimension}, but fitted vine has d={vine.d}")
+    if np.any(np.isnan(observations)):
+        raise ValueError("u must contain only finite values")
+    return clip_pseudo_observations(observations)
+
+
+def _rvine_rosenblatt_transform_native(module, vine, u):
+    """Run the scalar-only Stage 5 native capability when supported."""
+    from pyscarcopula.numerical import _cpp_rvine
+
+    active_keys = _cpp_rvine.density_active_keys(
+        vine._trees, vine._edge_map)
+    if not _cpp_rvine.native_edges_supported(
+            vine.pair_copulas, active_keys):
+        return None
+    layout = _cpp_rvine.static_rosenblatt_parameter_layout(
+        vine.pair_copulas, active_keys)
+    if layout is None:
+        return None
+    parameter_paths, parameter_sources = layout
+    observations = _cpp_rvine._rvine_observations(
+        u, vine.d, "Rosenblatt")
+    residual_node_keys = _cpp_rvine.rosenblatt_residual_node_keys(
+        vine.matrix)
+    context, parameters = vine._native_density_context(
+        module,
+        vine.pair_copulas,
+        vine._edge_map,
+        parameter_paths,
+        len(observations),
+        active_keys=active_keys,
+        normalized_paths=parameter_paths,
+        parameter_sources=parameter_sources,
+        residual_node_keys=residual_node_keys,
+        cache_slot='rosenblatt',
+    )
+    if context is None:
+        return None
+    residuals = _cpp_rvine.rosenblatt(
+        module,
+        vine.pair_copulas,
+        vine.d,
+        vine._trees,
+        vine._edge_map,
+        vine.matrix,
+        observations,
+        active_keys=context['active_keys'],
+        parameter_paths=parameter_paths,
+        parameter_sources=context['parameter_sources'],
+        residual_node_keys=residual_node_keys,
+        native_plan=context['plan'],
+        native_edges=context['edges'],
+        parameter_pack=parameters,
+    )
+    if residuals is None:
+        return None
+    return clip_rosenblatt_output(residuals)
+
+
+def rvine_rosenblatt_transform(
+        vine, u, K=300, grid_range=5.0, *, vine_type=None):
+    """Dispatch the R-vine transform while preserving the Python oracle."""
+    if vine_type is None:
+        vine_type = getattr(vine, "vine_type", "rvine")
+    if vine_type not in {"cvine", "dvine", "rvine"}:
+        raise ValueError(
+            "vine_type must be 'cvine', 'dvine' or 'rvine', "
+            f"got {vine_type!r}")
+    if getattr(vine, 'matrix', None) is None:
+        raise ValueError("Fit the vine first")
+    observations = _prepare_rvine_rosenblatt_observations(vine, u)
+    return dispatch_rvine_backend(
+        capability="rosenblatt_transform",
+        native_symbol="rvine_rosenblatt_transform",
+        python_executor=lambda: _rvine_rosenblatt_transform_python(
+            vine,
+            observations,
+            K=K,
+            grid_range=grid_range,
+            vine_type=vine_type,
+        ),
+        native_executor=lambda module: _rvine_rosenblatt_transform_native(
+            module, vine, observations),
+    )
+
 
 def rvine_gof_test(
         vine, data, to_pobs=True, K=500, grid_range=7.0, *,
@@ -1420,7 +1588,7 @@ def gaussian_gof_test(copula, data, to_pobs=True):
 # Student-t copula Rosenblatt
 # ══════════════════════════════════════════════════════════════════
 
-def student_rosenblatt_transform(R, df, u):
+def _student_rosenblatt_transform_python(R, df, u):
     """
     Rosenblatt transform for d-dimensional Student-t copula.
 
@@ -1450,6 +1618,28 @@ def student_rosenblatt_transform(R, df, u):
     e : (T, d)
     """
     from scipy.stats import t as t_dist
+
+    df_values = np.asarray(df)
+    if df_values.ndim != 0:
+        if np.iscomplexobj(df_values):
+            raise TypeError("df must contain real values")
+        df_path = np.asarray(df_values, dtype=np.float64).ravel()
+        observations = np.asarray(u)
+        if df_path.size == 1:
+            df = float(df_path[0])
+        else:
+            if observations.ndim != 2 or len(df_path) != len(observations):
+                raise ValueError("df must be scalar or have one value per row")
+            if len(observations) == 0:
+                return np.empty(observations.shape, dtype=np.float64)
+            return np.vstack([
+                _student_rosenblatt_transform_python(
+                    R,
+                    float(row_df),
+                    observations[row:row + 1],
+                )
+                for row, row_df in enumerate(df_path)
+            ])
 
     u_c = clip_pseudo_observations(u)
     x = t_dist.ppf(u_c, df=df)
@@ -1490,6 +1680,21 @@ def student_rosenblatt_transform(R, df, u):
         e[:, i] = t_dist.cdf(z, df=df_cond)
 
     return clip_pseudo_observations(e)
+
+
+def student_rosenblatt_transform(R, df, u):
+    """Dispatch dense Student Rosenblatt while preserving the SciPy oracle."""
+    from pyscarcopula.numerical.multivariate_native import (
+        _dense_student_rosenblatt_if_supported,
+    )
+
+    return dispatch_rvine_backend(
+        capability="dense_student_rosenblatt",
+        native_symbol="dense_student_rosenblatt_transform",
+        python_executor=lambda: _student_rosenblatt_transform_python(R, df, u),
+        native_executor=lambda module: _dense_student_rosenblatt_if_supported(
+            R, df, u, module=module),
+    )
 
 
 def factor_student_rosenblatt_transform(correlation, df, u):
@@ -1822,10 +2027,7 @@ def stochastic_student_rosenblatt_transform(copula, u, fit_result,
             e = factor_student_rosenblatt_transform(
                 copula.correlation_operator_, df_path, u)
         else:
-            e = np.empty((T, d))
-            for t_idx, df_t in enumerate(df_path):
-                e[t_idx] = student_rosenblatt_transform(
-                    copula.R, float(df_t), u[t_idx:t_idx + 1])[0]
+            e = student_rosenblatt_transform(copula.R, df_path, u)
         return clip_pseudo_observations(e)
 
     raise AssertionError(f"unsupported Student estimation method: {method}")

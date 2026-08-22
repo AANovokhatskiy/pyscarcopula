@@ -4,11 +4,15 @@ import numpy as np
 
 from pyscarcopula._constants import PSEUDO_OBS_EPS
 from pyscarcopula._utils import clip_pseudo_observations
-from pyscarcopula.vine._helpers import _open_unit_uniform
-from pyscarcopula.vine._rvine_dag import execute_conditional_plan
+from pyscarcopula.vine._helpers import (
+    _open_unit_uniform,
+    _prepared_open_unit_draws,
+)
+from pyscarcopula.vine._rvine_dag import _execute_conditional_plan_python
 
 
-def sample_dag_given_with_r(n, r_all, rng, given, plan, pair_copulas):
+def sample_dag_given_with_r(
+        n, r_all, rng, given, plan, pair_copulas, *, uniforms=None):
     """Execute a DAG conditional sampling plan with precomputed parameters."""
     missing = sorted(set(plan.edges_used) - set(r_all))
     if missing:
@@ -23,13 +27,21 @@ def sample_dag_given_with_r(n, r_all, rng, given, plan, pair_copulas):
         }
         for key in plan.edges_used
     }
-    return execute_conditional_plan(plan, r_payload, given, n, rng)
+    return _execute_conditional_plan_python(
+        plan, r_payload, given, n, rng, uniforms=uniforms)
 
 
-def sample_arbitrary_given_mcmc(
+def _sample_arbitrary_given_mcmc_python(
         d, n, r_all, rng, given, log_pdf_rows, initial=None,
-        n_steps=None, burnin_steps=None):
-    """Metropolis-within-Gibbs fallback for arbitrary conditional patterns."""
+        n_steps=None, burnin_steps=None, *, initial_uniforms=None,
+        random_draws=None, step_offset=0):
+    """Python Metropolis-within-Gibbs oracle for arbitrary conditioning.
+
+    One step is one coordinate update across all ``n`` parallel chains.  It
+    is deliberately not called a sweep: a full sweep consists of
+    ``len(free_vars)`` steps.  Keeping that unit explicit prevents callers
+    from under-budgeting higher-dimensional conditional draws.
+    """
     free_vars = [var for var in range(d) if var not in given]
     if not free_vars:
         out = np.empty((n, d), dtype=np.float64)
@@ -38,10 +50,21 @@ def sample_arbitrary_given_mcmc(
         return out, _empty_mcmc_diagnostics()
 
     if initial is None:
-        current = _open_unit_uniform(rng, size=(n, d))
+        current = (
+            _open_unit_uniform(rng, size=(n, d))
+            if initial_uniforms is None else
+            _prepared_open_unit_draws(
+                initial_uniforms,
+                (n, d),
+                name="MCMC initial uniforms",
+            ).copy()
+        )
         for var, value in given.items():
             current[:, var] = value
     else:
+        if initial_uniforms is not None:
+            raise ValueError(
+                "MCMC initial_uniforms cannot be supplied with initial")
         current = np.asarray(initial, dtype=np.float64).copy()
         for var, value in given.items():
             current[:, var] = value
@@ -56,25 +79,65 @@ def sample_arbitrary_given_mcmc(
         if burnin_steps is None else int(burnin_steps)
     )
     total_steps = burnin_steps + n_steps
+    step_offset = int(step_offset)
+    if step_offset < 0:
+        raise ValueError("MCMC step_offset must be non-negative")
+    replay_draws = None
+    if random_draws is not None:
+        replay_draws = _prepared_open_unit_draws(
+            random_draws,
+            (total_steps, n, 2),
+            name="MCMC interleaved random draws",
+        )
     accepted = {int(var): 0 for var in free_vars}
     proposed = {int(var): 0 for var in free_vars}
 
     for step_idx in range(total_steps):
-        var = free_vars[step_idx % len(free_vars)]
+        var = free_vars[(step_offset + step_idx) % len(free_vars)]
         proposal = current.copy()
-        proposal[:, var] = _open_unit_uniform(rng, size=n)
+        proposal[:, var] = (
+            _open_unit_uniform(rng, size=n)
+            if replay_draws is None else replay_draws[step_idx, :, 0]
+        )
         proposal_logp = log_pdf_rows(proposal, r_all)
         log_alpha = proposal_logp - current_logp
-        accept = np.log(
-            rng.uniform(PSEUDO_OBS_EPS, 1.0, size=n)) < log_alpha
+        acceptance_uniforms = (
+            rng.uniform(PSEUDO_OBS_EPS, 1.0, size=n)
+            if replay_draws is None else replay_draws[step_idx, :, 1]
+        )
+        accept = np.log(acceptance_uniforms) < log_alpha
         if np.any(accept):
             current[accept, var] = proposal[accept, var]
             current_logp[accept] = proposal_logp[accept]
         accepted[int(var)] += int(np.sum(accept))
         proposed[int(var)] += int(n)
 
+    return clip_pseudo_observations(current), _mcmc_diagnostics(
+        free_vars,
+        accepted,
+        proposed,
+        n,
+        n_steps,
+        burnin_steps,
+    )
+
+
+def _mcmc_diagnostics(
+        free_vars, accepted, proposed, n, n_steps, burnin_steps):
+    """Build the stable public diagnostics from raw coordinate counters."""
+    free_vars = [int(var) for var in free_vars]
+    accepted = {int(var): int(accepted[var]) for var in free_vars}
+    proposed = {int(var): int(proposed[var]) for var in free_vars}
     rates = {
         var: accepted[var] / proposed[var] if proposed[var] else 0.0
+        for var in free_vars
+    }
+    proposals_per_chain = {
+        var: proposed[var] / n if n else 0.0
+        for var in free_vars
+    }
+    accepted_per_chain = {
+        var: accepted[var] / n if n else 0.0
         for var in free_vars
     }
     rate_values = np.array(list(rates.values()), dtype=np.float64)
@@ -87,30 +150,87 @@ def sample_arbitrary_given_mcmc(
         and acceptance_min is not None
         and acceptance_min < 0.02
     )
-    return clip_pseudo_observations(current), {
+    minimum_accepted_moves_per_chain = (
+        float(min(accepted_per_chain.values()))
+        if has_proposals else None
+    )
+    insufficient_moves_warning = (
+        minimum_accepted_moves_per_chain is not None
+        and minimum_accepted_moves_per_chain < 5.0
+    )
+    warning_codes = []
+    if low_acceptance_warning:
+        warning_codes.append('low_acceptance')
+    if insufficient_moves_warning:
+        warning_codes.append('insufficient_accepted_moves')
+    convergence_warning = bool(warning_codes)
+    total_steps = int(burnin_steps) + int(n_steps)
+    return {
         'accepted': accepted,
         'proposed': proposed,
         'acceptance_rate': rates,
+        'accepted_per_chain': accepted_per_chain,
+        'proposals_per_chain': proposals_per_chain,
         'acceptance_min': acceptance_min,
         'acceptance_mean': acceptance_mean,
         'acceptance_max': acceptance_max,
         'low_acceptance_warning': low_acceptance_warning,
-        'n_steps': n_steps,
-        'burnin_steps': burnin_steps,
+        'insufficient_moves_warning': insufficient_moves_warning,
+        'minimum_accepted_moves_per_chain': minimum_accepted_moves_per_chain,
+        'convergence_warning': convergence_warning,
+        'warning_codes': tuple(warning_codes),
+        'step_unit': 'single_coordinate_update',
+        'n_free': len(free_vars),
+        'n_steps': int(n_steps),
+        'burnin_steps': int(burnin_steps),
         'total_steps': total_steps,
+        'completed_sweeps': total_steps // len(free_vars),
+        'partial_sweep_steps': total_steps % len(free_vars),
     }
 
 
+def sample_arbitrary_given_mcmc(
+        d, n, r_all, rng, given, log_pdf_rows, initial=None,
+        n_steps=None, burnin_steps=None, *, initial_uniforms=None,
+        random_draws=None, step_offset=0):
+    """Compatibility name for the preserved Python MCMC oracle."""
+    return _sample_arbitrary_given_mcmc_python(
+        d,
+        n,
+        r_all,
+        rng,
+        given,
+        log_pdf_rows,
+        initial=initial,
+        n_steps=n_steps,
+        burnin_steps=burnin_steps,
+        initial_uniforms=initial_uniforms,
+        random_draws=random_draws,
+        step_offset=step_offset,
+    )
+
+
 def _empty_mcmc_diagnostics():
+    """Return diagnostics for a conditional problem without free variables."""
     return {
         'accepted': {},
         'proposed': {},
         'acceptance_rate': {},
+        'accepted_per_chain': {},
+        'proposals_per_chain': {},
         'acceptance_min': None,
         'acceptance_mean': None,
         'acceptance_max': None,
         'low_acceptance_warning': False,
+        'insufficient_moves_warning': False,
+        'minimum_accepted_moves_per_chain': None,
+        'convergence_warning': False,
+        'warning_codes': (),
+        'step_unit': 'single_coordinate_update',
+        'n_free': 0,
         'n_steps': 0,
         'burnin_steps': 0,
         'total_steps': 0,
+        'completed_sweeps': 0,
+        'partial_sweep_steps': 0,
     }

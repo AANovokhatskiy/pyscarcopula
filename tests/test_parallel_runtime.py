@@ -1,4 +1,4 @@
-"""Phase-1 contracts for the native per-process thread runtime."""
+"""Contracts for the native per-process thread runtime."""
 
 from concurrent.futures import ThreadPoolExecutor
 import inspect

@@ -5,11 +5,9 @@ from __future__ import annotations
 import numpy as np
 
 from pyscarcopula._types import GASResult
-from pyscarcopula.numerical import _cpp_copula, _cpp_extension, _cpp_gas
+from pyscarcopula.numerical import _cpp_extension, _cpp_gas, _cpp_rvine
 from pyscarcopula.numerical._cpp_extension import (
-    CppError,
     CppUnsupported,
-    cpp_status_name,
 )
 from pyscarcopula.vine._edge_adapter import edge_copula, edge_result
 from pyscarcopula.vine._helpers import _open_unit_uniform
@@ -22,36 +20,8 @@ from pyscarcopula.vine._rvine_sampling_plan import (
 )
 
 
-def _native_plan(module, traversal_plan):
-    """Serialize the canonical Python traversal plan for the C++ executor."""
-    plan = module.RVineTraversalPlan()
-    plan.dimension = traversal_plan.dimension
-    plan.node_count = len(traversal_plan.node_keys)
-    plan.last_uniform_column = traversal_plan.last_uniform_column
-    plan.last_output_node = traversal_plan.last_output_node
-    for name in (
-        "output_nodes",
-        "column_uniforms",
-        "inverse_offsets",
-        "inverse_edges",
-        "inverse_partner_nodes",
-        "inverse_output_nodes",
-        "inverse_transposed",
-        "forward_offsets",
-        "forward_edges",
-        "forward_leaf_nodes",
-        "forward_partner_nodes",
-        "forward_leaf_output_nodes",
-        "forward_partner_output_nodes",
-        "forward_transposed",
-        "update_u1_nodes",
-        "update_u2_nodes",
-    ):
-        setattr(plan, name, list(getattr(traversal_plan, name)))
-    return plan
-
-
 def _native_edges(module, vine, active_keys):
+    """Compile active vine edges and return their dynamic-state mask."""
     native_edges = []
     dynamic = []
     for key in active_keys:
@@ -59,7 +29,7 @@ def _native_edges(module, vine, active_keys):
         result = edge_result(edge)
         copula = edge_copula(edge)
         native = module.GasRvineEdge()
-        native.copula = _cpp_copula.make_copula_ops_spec(module, copula)
+        native.copula = _cpp_rvine.compile_copula_spec(module, copula)
         is_dynamic = isinstance(result, GASResult)
         native.dynamic = is_dynamic
         if is_dynamic:
@@ -123,32 +93,14 @@ def sample(
     elif traversal_plan.active_keys != tuple(active_keys):
         raise ValueError(
             "R-vine traversal plan does not match active edge keys")
-    plan = _native_plan(module, traversal_plan)
+    plan = _cpp_rvine.compile_traversal_plan(module, traversal_plan)
     result = module.gas_rvine_sample(
         native_edges,
         plan,
         uniforms,
         parameter_paths,
     )
-    status = int(result["status"])
-    if status != 0:
-        row = int(result["failure_row"])
-        edge = int(result["failure_edge"])
-        message = (
-            "C++ GAS R-vine sample failed: "
-            f"status={status} ({cpp_status_name(status)})"
-        )
-        if row >= 0:
-            message += f", row={row}"
-        if edge >= 0:
-            message += f", edge={edge}"
-        if status in (2, 6):
-            raise ValueError(message)
-        if status in (3, 4, 5):
-            raise CppUnsupported(message)
-        if status == 7:
-            raise FloatingPointError(message)
-        raise CppError(message)
+    _cpp_rvine.raise_for_status(result, "GAS R-vine sample")
     values = np.asarray(result["values"], dtype=np.float64)
     return values.reshape(n, vine.d)
 

@@ -1,12 +1,12 @@
-"""Phase-5 contracts for conditional sampling and MC trajectory grids."""
+"""Contracts for conditional sampling and MC trajectory grids."""
 
 import json
 import os
-import time
 
 import numpy as np
 import pytest
 
+from benchmark_timing import interleaved_timings
 from pyscarcopula import (
     EquicorrGaussianCopula,
     StochasticStudentCopula,
@@ -35,16 +35,6 @@ def _conditional_inputs(n=256, d=20, seed=801):
     given_latent = rng.normal(size=(n, len(given)))
     normal_draws = rng.normal(size=(n, n_free))
     return given, given_latent, normal_draws
-
-
-def _median_elapsed(function, repeats=5):
-    samples = []
-    result = None
-    for _ in range(repeats):
-        started = time.perf_counter()
-        result = function()
-        samples.append(time.perf_counter() - started)
-    return float(np.median(samples)), result
 
 
 def test_gaussian_conditional_fixed_draws_are_bitwise_equivalent():
@@ -308,11 +298,9 @@ def test_conditional_internal_thread_scaling_benchmark():
     given, given_latent, normal_draws = _conditional_inputs(
         n=n, d=d, seed=811)
     correlation = equicorr_matrix(d, 0.2)
-    timings = {}
-    reference = None
-    for count in (1, 2, 4, 8):
-        elapsed, result = _median_elapsed(
-            lambda count=count: (
+    workers = (1, 2, 4, 8)
+    calls = {
+        count: lambda count=count: (
                 multivariate_native.gaussian_conditional_latent(
                     correlation,
                     given,
@@ -320,22 +308,26 @@ def test_conditional_internal_thread_scaling_benchmark():
                     normal_draws,
                     n_threads=count,
                 )
-            ))
-        timings[count] = elapsed
-        if reference is None:
-            reference = result
-        else:
-            np.testing.assert_array_equal(result, reference)
+            )
+        for count in workers
+    }
+    for call in calls.values():
+        call()
+    measured = interleaved_timings(calls, repeats=5)
+    timings = measured.medians
+    reference = measured.results[1]
+    for count in workers[1:]:
+        np.testing.assert_array_equal(measured.results[count], reference)
 
     payload = {
         "name": "conditional_gaussian_internal_thread_scaling",
         "workload": {"n": n, "d": d, "n_given": len(given)},
         "seconds": {str(key): value for key, value in timings.items()},
         "speedup": {
-            str(key): timings[1] / value for key, value in timings.items()
+            str(key): measured.median_ratio(1, key) for key in workers
         },
     }
-    print("PHASE5_CONDITIONAL_BENCH " + json.dumps(
+    print("PYSCA_BENCHMARK " + json.dumps(
         payload, sort_keys=True), flush=True)
 
 
@@ -347,25 +339,27 @@ def test_mc_student_internal_thread_scaling_benchmark():
     copula, _ = _student_model(d)
     u = rng.uniform(0.02, 0.98, (T, d))
     paths = rng.normal(size=(T, n_trajectories))
-    timings = {}
-    reference = None
-    for count in (1, 2, 4, 8):
-        elapsed, result = _median_elapsed(
-            lambda count=count: mc_native.log_pdf_trajectory_grid(
-                copula, u, paths, n_threads=count))
-        timings[count] = elapsed
-        if reference is None:
-            reference = result
-        else:
-            np.testing.assert_array_equal(result, reference)
+    workers = (1, 2, 4, 8)
+    calls = {
+        count: lambda count=count: mc_native.log_pdf_trajectory_grid(
+            copula, u, paths, n_threads=count)
+        for count in workers
+    }
+    for call in calls.values():
+        call()
+    measured = interleaved_timings(calls, repeats=5)
+    timings = measured.medians
+    reference = measured.results[1]
+    for count in workers[1:]:
+        np.testing.assert_array_equal(measured.results[count], reference)
 
     payload = {
         "name": "mc_student_internal_thread_scaling",
         "workload": {"T": T, "d": d, "n_trajectories": n_trajectories},
         "seconds": {str(key): value for key, value in timings.items()},
         "speedup": {
-            str(key): timings[1] / value for key, value in timings.items()
+            str(key): measured.median_ratio(1, key) for key in workers
         },
     }
-    print("PHASE5_MC_BENCH " + json.dumps(
+    print("PYSCA_BENCHMARK " + json.dumps(
         payload, sort_keys=True), flush=True)

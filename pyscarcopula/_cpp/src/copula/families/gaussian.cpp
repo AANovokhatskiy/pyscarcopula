@@ -86,6 +86,17 @@ double gaussian_h_from_quantiles(double z_u, double z_v, double rho) {
     return norm_cdf(z);
 }
 
+void gaussian_h_pair_from_quantiles(
+    double z_first,
+    double z_second,
+    double rho,
+    double& first_next,
+    double& second_next) {
+    const double scale = std::sqrt(1.0 - rho * rho);
+    first_next = norm_cdf((z_first - rho * z_second) / scale);
+    second_next = norm_cdf((z_second - rho * z_first) / scale);
+}
+
 double gaussian_h_rotated(double u, double v, double rho, int rotation) {
     if (rotation == 0) {
         return gaussian_h_unrotated(u, v, rho);

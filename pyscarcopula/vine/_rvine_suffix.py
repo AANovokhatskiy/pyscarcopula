@@ -5,12 +5,17 @@ import numpy as np
 from pyscarcopula.vine._conditional_rvine import (
     find_rvine_peel_order_for_given_suffix,
 )
+from pyscarcopula.vine._rvine_conditional_plan import FrozenConditionalPlan
 from pyscarcopula.vine._rvine_edges import (
-    _edge_h_inverse,
-    _edge_h_pair_with_r,
+    _edge_h_inverse_for_variables,
+    _edge_h_pair_for_variables,
 )
 from pyscarcopula.vine._rvine_matrix_builder import build_rvine_matrix_with_edge_map
-from pyscarcopula.vine._helpers import _clip_unit, _open_unit_uniform
+from pyscarcopula.vine._helpers import (
+    _clip_unit,
+    _open_unit_uniform,
+    _prepared_open_unit_draws,
+)
 
 
 def given_suffix_start_col(d, given, matrix):
@@ -82,11 +87,112 @@ def suffix_sampling_state(d, trees, matrix, edge_map, pair_copulas,
     return start_col, rebuilt_matrix, rebuilt_edge_map, rebuilt_pair_copulas
 
 
-def sample_suffix_given_with_r(d, n, r_all, rng, given, start_col, matrix,
-                               pair_copulas):
-    """Sample from an exact suffix-conditioned R-vine with fixed r paths."""
+class SuffixConditionalPlan(FrozenConditionalPlan):
+    """Executor-neutral suffix program with the output dimension attached."""
+
+
+def build_suffix_conditional_plan(d, start_col, matrix, given):
+    """Compile suffix topology into the common conditional action format."""
+    d = int(d)
+    start_col = int(start_col)
+    M = np.asarray(matrix)
+    if d < 2 or M.shape != (d, d) or not 0 <= start_col <= d:
+        raise ValueError("invalid suffix conditional-plan dimensions")
+    expected_given = {
+        int(M[d - 1 - col, col])
+        for col in range(start_col, d)
+    }
+    if set(int(variable) for variable in given) != expected_given:
+        raise ValueError(
+            "suffix conditional plan does not match the given variables")
+
+    steps = []
+    last_var = int(M[0, d - 1])
+    if d - 1 < start_col:
+        uniform_node = ("w", d - 1)
+        steps.append({
+            "action": "sample_uniform",
+            "var": last_var,
+            "column": d - 1,
+            "node": uniform_node,
+        })
+        steps.append({
+            "action": "copy",
+            "from": uniform_node,
+            "to": (last_var, frozenset()),
+        })
+
+    def append_h_pair(col, tree):
+        """Append one forward h-pair action to the suffix program."""
+        leaf = int(M[d - 1 - col, col])
+        row = d - 2 - col - tree
+        partner = int(M[row, col])
+        conditioning = frozenset(
+            int(M[source_row, col])
+            for source_row in range(row + 1, d - 1 - col)
+        )
+        steps.append({
+            "action": "h_pair",
+            "edge": (tree, col),
+            "leaf": leaf,
+            "partner": partner,
+            "first": (leaf, conditioning),
+            "second": (partner, conditioning),
+            "first_to": (leaf, conditioning | {partner}),
+            "second_to": (partner, conditioning | {leaf}),
+        })
+
+    for col in range(d - 2, start_col - 1, -1):
+        top_tree = d - 2 - col
+        for tree in range(top_tree + 1):
+            append_h_pair(col, tree)
+
+    for col in range(min(start_col - 1, d - 2), -1, -1):
+        leaf = int(M[d - 1 - col, col])
+        top_tree = d - 2 - col
+        uniform_node = ("w", col)
+        steps.append({
+            "action": "sample_uniform",
+            "var": leaf,
+            "column": col,
+            "node": uniform_node,
+        })
+        current_node = uniform_node
+        for tree in range(top_tree, -1, -1):
+            row = d - 2 - col - tree
+            partner = int(M[row, col])
+            conditioning = frozenset(
+                int(M[source_row, col])
+                for source_row in range(row + 1, d - 1 - col)
+            )
+            output_node = (leaf, conditioning)
+            steps.append({
+                "action": "h_inv",
+                "edge": (tree, col),
+                "leaf": leaf,
+                "partner": partner,
+                "from": current_node,
+                "known": (partner, conditioning),
+                "to": output_node,
+            })
+            current_node = output_node
+        for tree in range(top_tree + 1):
+            append_h_pair(col, tree)
+
+    return SuffixConditionalPlan(steps, d)
+
+
+def _sample_suffix_given_with_r_python(
+        d, n, r_all, rng, given, start_col, matrix, pair_copulas, *,
+        uniforms=None):
+    """Python traversal oracle for exact suffix-conditioned sampling."""
     M = matrix
-    w = _open_unit_uniform(rng, size=(n, d))
+    w = (
+        _open_unit_uniform(rng, size=(n, d))
+        if uniforms is None else
+        _prepared_open_unit_draws(
+            uniforms, (n, d), name="suffix sampling uniforms")
+    )
     pseudo_obs = {}
 
     last_var = int(M[0, d - 1])
@@ -115,8 +221,14 @@ def sample_suffix_given_with_r(d, n, r_all, rng, given, start_col, matrix,
 
             leaf_val = pseudo_obs[(leaf, conditioning)]
             partner_val = pseudo_obs[(partner, conditioning)]
-            leaf_next, partner_next = _edge_h_pair_with_r(
-                edge, leaf_val, partner_val, r)
+            leaf_next, partner_next = _edge_h_pair_for_variables(
+                edge,
+                leaf,
+                leaf_val,
+                partner,
+                partner_val,
+                config={'r': r},
+            )
             pseudo_obs[(leaf, next_leaf_cond)] = _clip_unit(leaf_next)
             pseudo_obs[(partner, next_partner_cond)] = _clip_unit(partner_next)
 
@@ -134,9 +246,11 @@ def sample_suffix_given_with_r(d, n, r_all, rng, given, start_col, matrix,
             )
             partner_val = pseudo_obs[(partner, conditioning)]
             edge = pair_copulas[(t, col)]
-            current = _clip_unit(_edge_h_inverse(
+            current = _clip_unit(_edge_h_inverse_for_variables(
                 edge,
+                leaf,
                 current,
+                partner,
                 partner_val,
                 config={'r': r_all[(t, col)]},
             ))
@@ -156,8 +270,14 @@ def sample_suffix_given_with_r(d, n, r_all, rng, given, start_col, matrix,
 
             leaf_val = pseudo_obs[(leaf, conditioning)]
             partner_val = pseudo_obs[(partner, conditioning)]
-            leaf_next, partner_next = _edge_h_pair_with_r(
-                edge, leaf_val, partner_val, r)
+            leaf_next, partner_next = _edge_h_pair_for_variables(
+                edge,
+                leaf,
+                leaf_val,
+                partner,
+                partner_val,
+                config={'r': r},
+            )
             pseudo_obs[(leaf, next_leaf_cond)] = _clip_unit(leaf_next)
             pseudo_obs[(partner, next_partner_cond)] = _clip_unit(partner_next)
 
@@ -165,6 +285,23 @@ def sample_suffix_given_with_r(d, n, r_all, rng, given, start_col, matrix,
     for var in range(d):
         out[:, var] = pseudo_obs[(var, frozenset())]
     return out
+
+
+def sample_suffix_given_with_r(
+        d, n, r_all, rng, given, start_col, matrix, pair_copulas, *,
+        uniforms=None):
+    """Compatibility name for the preserved Python traversal oracle."""
+    return _sample_suffix_given_with_r_python(
+        d,
+        n,
+        r_all,
+        rng,
+        given,
+        start_col,
+        matrix,
+        pair_copulas,
+        uniforms=uniforms,
+    )
 
 
 def given_suffix_edge_observations_with_r(
@@ -202,8 +339,14 @@ def given_suffix_edge_observations_with_r(
             partner_val = pseudo_obs[(partner, conditioning)]
             observed[(t, col)] = edge_pair_from_pseudo_map(
                 trees, (t, col), pseudo_obs, edge_map)
-            leaf_next, partner_next = _edge_h_pair_with_r(
-                edge, leaf_val, partner_val, r)
+            leaf_next, partner_next = _edge_h_pair_for_variables(
+                edge,
+                leaf,
+                leaf_val,
+                partner,
+                partner_val,
+                config={'r': r},
+            )
             pseudo_obs[(leaf, next_leaf_cond)] = _clip_unit(leaf_next)
             pseudo_obs[(partner, next_partner_cond)] = _clip_unit(partner_next)
 

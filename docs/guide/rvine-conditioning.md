@@ -85,6 +85,19 @@ This fallback supports arbitrary conditioning but performs MCMC refinement.
 For repeated predictions with the same conditioning variables, fit with
 `given_vars` so the exact suffix path can avoid that per-call refinement.
 
+For supported native static edges, the MCMC density update may reuse a bounded
+per-chain cache. Each proposed coordinate evaluates only the precompiled
+R-vine nodes that depend on that coordinate, but the edge log-density terms
+are still summed in the original traversal order. This is an implementation
+optimization: proposal order, random-number consumption, accepted samples,
+and the public diagnostics are identical to the full-density traversal. If a
+dependency closure is too large or the configured internal workspace budget
+cannot hold one incremental row chunk, dispatch selects the full traversal
+before drawing random values only when its complete footprint also fits. If
+neither footprint fits, prediction fails before RNG consumption. Numerical
+failures retain the full-traversal behavior and do not trigger a retry with
+another algorithm.
+
 For strongly dependent or high-dimensional conditional targets, increase
 `mcmc_steps` and inspect `diagnostics["mcmc"]["low_acceptance_warning"]`.
 

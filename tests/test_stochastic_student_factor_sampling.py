@@ -1,4 +1,4 @@
-"""Phase 9.6 factor Student batch and conditional sampling contracts."""
+"""Factor Student batch and conditional sampling contracts."""
 
 from concurrent.futures import ThreadPoolExecutor
 import inspect

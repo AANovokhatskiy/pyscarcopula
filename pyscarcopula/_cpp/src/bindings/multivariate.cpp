@@ -261,6 +261,71 @@ void bind_multivariate(py::module_& m) {
         py::arg("normal_draws"),
         py::arg("chi_square_draws"),
         py::arg("n_threads") = 1);
+
+    m.def(
+        "dense_student_rosenblatt_transform",
+        [](
+            py::array_t<double, py::array::c_style | py::array::forcecast>
+                correlation,
+            py::array_t<double, py::array::c_style | py::array::forcecast> u,
+            py::array_t<double, py::array::c_style | py::array::forcecast> df,
+            int n_threads) {
+
+            const py::buffer_info correlation_info = correlation.request();
+            const py::buffer_info observation_info = u.request();
+            if (correlation_info.ndim != 2
+                || correlation_info.shape[0] != correlation_info.shape[1]
+                || observation_info.ndim != 2
+                || observation_info.shape[1] != correlation_info.shape[0]
+                || correlation_info.shape[0] <= 0
+                || correlation_info.shape[0]
+                    > static_cast<py::ssize_t>(
+                        std::numeric_limits<int>::max())) {
+                throw std::invalid_argument(
+                    "correlation must have shape (d, d) and u must have "
+                    "shape (n, d), with d >= 1");
+            }
+
+            scar::DenseStudentRosenblattResult result;
+            {
+                const auto correlation_view = flat_view_from_array(
+                    correlation, "correlation");
+                const auto df_view = flat_view_from_array(df, "df");
+                const scar::ObservationView observations{
+                    static_cast<const double*>(observation_info.ptr),
+                    static_cast<std::size_t>(observation_info.shape[0]),
+                    static_cast<int>(observation_info.shape[1]),
+                };
+                py::gil_scoped_release release;
+                result = scar::student_rosenblatt_dense(
+                    correlation_view,
+                    static_cast<int>(correlation_info.shape[0]),
+                    observations,
+                    df_view,
+                    n_threads);
+            }
+
+            py::dict diagnostics;
+            diagnostics["n_threads_requested"] =
+                result.n_threads_requested;
+            diagnostics["parallel_blocks"] = result.parallel_blocks;
+            diagnostics["correlation_factorizations"] =
+                result.correlation_factorizations;
+
+            py::dict out;
+            out["residuals"] = vector_to_array(result.residuals);
+            out["n_rows"] = result.n_rows;
+            out["dimension"] = result.dimension;
+            out["status"] = result.status;
+            out["failure_index"] = result.failure_index;
+            out["failure_coordinate"] = result.failure_coordinate;
+            out["diagnostics"] = std::move(diagnostics);
+            return out;
+        },
+        py::arg("correlation"),
+        py::arg("u"),
+        py::arg("df"),
+        py::arg("n_threads") = 1);
 }
 
 }  // namespace pyscarcopula::bindings

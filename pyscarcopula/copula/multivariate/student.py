@@ -178,10 +178,11 @@ class StudentCopula(MultivariateCopula):
             None if self._base_preprocessing is None
             else self._base_preprocessing.correlation.copy())
         self._constructor_R = (
-            None if self._supplied_correlation is None
-            else self._supplied_correlation.copy())
+            None if self._supplied_preprocessing is None
+            else self._supplied_preprocessing.input_correlation.copy())
         self._constructor_corr_base = (
-            None if self._corr_base is None else self._corr_base.copy())
+            None if self._base_preprocessing is None
+            else self._base_preprocessing.input_correlation.copy())
         for matrix, name in (
                 (self._supplied_correlation, "R"),
                 (self._corr_base, "corr_base")):
@@ -821,30 +822,38 @@ class StudentCopula(MultivariateCopula):
 
     @model_state_locked
     def sample_conditional(self, n, given, rng=None, *, n_threads=1):
+        """Draw samples conditional on fixed copula-uniform coordinates."""
         if self.df is None:
             raise ValueError("Fit first")
+        from pyscarcopula.copula.multivariate.conditional import (
+            validate_multivariate_given,
+        )
+        normalized = validate_multivariate_given(given, self.dimension)
+        if not normalized:
+            return self.sample(n, rng=rng)
         if self._corr_mode == "factor":
             from pyscarcopula.copula.multivariate.conditional import (
                 sample_factor_student_conditional,
             )
             return sample_factor_student_conditional(
-                n, self.correlation_operator_, self.df, given,
+                n, self.correlation_operator_, self.df, normalized,
                 rng=rng, n_threads=n_threads)
         from pyscarcopula.copula.multivariate.conditional import (
             sample_student_conditional,
         )
         return sample_student_conditional(
-            n, self._correlation, self.df, given=given, rng=rng,
+            n, self._correlation, self.df, given=normalized, rng=rng,
             n_threads=n_threads)
 
     def predict(self, n, u=None, rng=None, given=None, horizon="next",
                 predictive_r_mode=None, predict_config=None):
+        """Draw predictive samples, optionally conditional on fixed uniforms."""
         if predict_config is not None:
             from pyscarcopula.api import _resolve_predict_config
             config = _resolve_predict_config(
                 predict_config, given, horizon,
                 {"predictive_r_mode": predictive_r_mode})
             given = config.given
-        if given:
+        if given is not None:
             return self.sample_conditional(n, given=given, rng=rng)
         return self.sample(n, u=u, rng=rng)

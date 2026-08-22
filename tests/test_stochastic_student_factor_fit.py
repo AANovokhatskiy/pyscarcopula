@@ -1,4 +1,4 @@
-"""Phase 9.5 end-to-end fitting contracts for factor Student models."""
+"""End-to-end fitting contracts for factor Student models."""
 
 import numpy as np
 import pytest
