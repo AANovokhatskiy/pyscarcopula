@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections import Counter
 from copy import deepcopy
 import threading
-import time
 
 import numpy as np
 import pytest
@@ -637,13 +636,12 @@ def test_native_conditional_sample_releases_the_gil_for_block_execution():
 
     def worker():
         started.set()
-        time.sleep(0.01)
         while not stop.is_set():
             counter[0] += 1
 
     thread = threading.Thread(target=worker)
     thread.start()
-    started.wait()
+    assert started.wait(timeout=2.0)
     before = counter[0]
     try:
         result = module.rvine_conditional_sample(

@@ -3,7 +3,11 @@
 from pathlib import Path
 import ast
 import re
-import tomllib
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python 3.10
+    import tomli as tomllib
 
 import pytest
 

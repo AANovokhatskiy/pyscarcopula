@@ -5,7 +5,11 @@ from __future__ import annotations
 import csv
 import json
 from pathlib import Path
-import tomllib
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python 3.10
+    import tomli as tomllib
 
 from tools.benchmark_conditional_sampling import write_artifacts
 from tools.calibrate_conditional_statistical_gates import (
