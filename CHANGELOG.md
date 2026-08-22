@@ -1,14 +1,15 @@
 # Changelog
 
-## 0.21.0 - Unreleased
+## 0.21.0 - 2026-08-22
 
 Version: `0.20.2` -> `0.21.0`
 
 - Add a shared native R-vine runtime for static unconditional sampling,
   suffix and arbitrary-DAG conditional execution, fused row log-density,
-  bounded coordinate-update MCMC, and static Rosenblatt transforms. The
-  runtime preserves the Python executor as the production fallback and as a
-  differential-test oracle.
+  bounded coordinate-update MCMC, and static Rosenblatt transforms. Density
+  and Rosenblatt share one validated traversal core, while full and
+  incremental MCMC share the same pair-propagation primitive. The Python
+  executor remains the production fallback and differential-test oracle.
 - Support the exact built-in pair-copula families (Independent, Clayton,
   Gumbel, Joe, Frank, and bivariate Gaussian) with their public rotations and
   orientations, including mixed scalar and row-specific parameter packs.
@@ -17,6 +18,10 @@ Version: `0.20.2` -> `0.21.0`
 - Add semantic compiled-plan caches for fitted regular vines. Caches are
   invalidated by fitting and semantic model mutation and are excluded from
   persistence.
+- Consolidate vine validation, conditioned-node keys, bootstrap simulation,
+  native callback dispatch, binding marshalling, and symmetric Cholesky into
+  shared helpers. Expose only the canonical `rvine_mcmc_chunk` native entry
+  point instead of parallel aliases.
 - Add deterministic parametric-bootstrap goodness-of-fit calibration for
   fitted `VineCopula` models, including simulate/refit/Rosenblatt/CvM worker
   ownership and reproducibility across worker counts.
@@ -34,6 +39,9 @@ Version: `0.20.2` -> `0.21.0`
 ## 0.20.2 - 2026-08-10
 
 Version: `0.20.1` -> `0.20.2`
+
+Commit: `cbc2f6d`
+Merge PR: #47 (`c97aa9c`, 2026-08-10)
 
 - Add an optional bivariate SCAR-TM-OU optimizer parameterization in
   `(log(kappa), mu, log(sigma_x))` coordinates, enabled explicitly with
