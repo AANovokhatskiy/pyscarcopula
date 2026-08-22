@@ -1,5 +1,7 @@
 """Shared fixtures for pyscarcopula tests."""
 import os
+from pathlib import Path
+import sys
 
 import pytest
 import numpy as np
@@ -8,6 +10,17 @@ from pyscarcopula._utils import pobs
 from pyscarcopula import (
     GumbelCopula, ClaytonCopula, FrankCopula, JoeCopula,
 )
+
+
+# The wheel release gate runs this suite from outside the source checkout with
+# ``--import-mode=importlib``.  Import the production package above first so
+# that gate keeps exercising the installed wheel, then expose only the
+# checkout locations containing test and tooling helpers.
+_TESTS_DIR = Path(__file__).resolve().parent
+_PROJECT_ROOT = _TESTS_DIR.parent
+for _support_path in (_TESTS_DIR, _PROJECT_ROOT):
+    if str(_support_path) not in sys.path:
+        sys.path.append(str(_support_path))
 
 
 # Copula instances for parametrized tests
