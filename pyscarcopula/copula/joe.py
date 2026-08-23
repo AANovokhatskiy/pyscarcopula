@@ -25,6 +25,8 @@ def _joe_v_from_uniforms(n, r, uniforms):
 
 class JoeCopula(BivariateCopula):
 
+    _native_pair_family = "Joe"
+
     def __init__(self, rotate: int = 0, transform_type: str = "softplus"):
         super().__init__(rotate)
         self._name = "Joe copula"

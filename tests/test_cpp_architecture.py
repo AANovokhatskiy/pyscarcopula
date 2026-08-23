@@ -161,6 +161,78 @@ def test_stage2_foundation_helpers_have_single_canonical_owners():
         assert "output_shape.is_ok()" in consumer
 
 
+def test_stage3_pair_copulas_are_vertical_and_prepared_once():
+    include = ROOT / "pyscarcopula" / "_cpp" / "include" / "scar"
+    source = ROOT / "pyscarcopula" / "_cpp" / "src" / "copula"
+    manifest = include / "copula" / "pair" / "families.def"
+    entries = re.findall(
+        r"^SCAR_PAIR_FAMILY\(\s*([A-Za-z][A-Za-z0-9_]*)\s*,\s*"
+        r"([a-z][a-z0-9_]*)\s*,",
+        manifest.read_text(encoding="utf-8"),
+        re.MULTILINE,
+    )
+    assert entries
+    families = tuple(package for _, package in entries)
+
+    assert not (include / "detail" / "copula.hpp").exists()
+    assert (include / "copula" / "prepared_pair_kernel.hpp").is_file()
+    for family in families:
+        assert (include / "copula" / "pair" / f"{family}.hpp").is_file()
+        assert (source / "pair" / f"{family}.cpp").is_file()
+
+    registry = (source / "pair" / "runtime_registry.cpp").read_text(
+        encoding="utf-8")
+    assert registry.count("switch (family)") == 1
+    assert registry.count(
+        '#include "scar/copula/pair/families.def"') == 2
+
+    kernel = (include / "copula" / "pair" / "kernel.hpp").read_text(
+        encoding="utf-8")
+    assert "PairSupportKernel" not in kernel
+    assert "Rotation" not in kernel
+    assert "Transform" not in kernel
+    for family in families:
+        implementation = (source / "pair" / f"{family}.cpp").read_text(
+            encoding="utf-8")
+        assert "_h_rotated" not in implementation
+        assert "_h_inverse_rotated" not in implementation
+        assert "scar/copula/rotation.hpp" not in implementation
+
+    dispatch = (source / "dispatch.cpp").read_text(encoding="utf-8")
+    for family in ("clayton", "gumbel", "frank", "joe"):
+        assert re.search(rf"\b{family}_[A-Za-z0-9_]+", dispatch) is None
+    assert "const scar::PreparedPairKernel kernel(spec);" in dispatch
+    assert "is_pair_copula_family" not in dispatch
+
+    core = (source / "core.cpp").read_text(encoding="utf-8")
+    assert "const PreparedPairKernel kernel(spec);" in core
+    assert core.count("scar_internal::copula_log_pdf_unrotated(") == 0
+    assert "is_pair_copula_family" not in core
+
+    binding = (
+        ROOT / "pyscarcopula" / "_cpp" / "src" / "bindings" / "common.cpp"
+    ).read_text(encoding="utf-8")
+    assert binding.count(
+        '#include "scar/copula/pair/families.def"') == 1
+    adapter = (
+        ROOT / "pyscarcopula" / "numerical" / "_cpp_copula.py"
+    ).read_text(encoding="utf-8")
+    rvine_adapter = (
+        ROOT / "pyscarcopula" / "numerical" / "_cpp_rvine.py"
+    ).read_text(encoding="utf-8")
+    for enum_name, _ in entries:
+        assert f'.value("{enum_name}",' not in binding
+        assert f"CopulaFamily.{enum_name}" not in adapter
+    assert "_builtin_copula_types" not in rvine_adapter
+    assert "from pyscarcopula.copula." not in rvine_adapter
+
+    sources = (
+        ROOT / "pyscarcopula" / "_cpp" / "build_support" / "sources.py"
+    ).read_text(encoding="utf-8")
+    assert "PAIR_FAMILY_SOURCES = _pair_family_sources()" in sources
+    assert "*PAIR_FAMILY_SOURCES" in sources
+
+
 def test_setup_build_path_does_not_mutate_path():
     source = (ROOT / "setup.py").read_text(encoding="utf-8")
     assert 'os.environ["PATH"]' not in source

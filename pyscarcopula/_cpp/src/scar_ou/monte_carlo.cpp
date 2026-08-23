@@ -1,7 +1,11 @@
 #include "scar/ou.hpp"
 
-#include "scar/detail/copula.hpp"
+#include "scar/copula/rotation.hpp"
+#include "scar/detail/copula/common.hpp"
+#include "scar/detail/copula/dispatch.hpp"
+#include "scar/detail/copula/student.hpp"
 #include "scar/detail/parallel.hpp"
+#include "scar/detail/safety.hpp"
 #include "scar/factor.hpp"
 
 #include <algorithm>
@@ -132,7 +136,7 @@ TrajectoryLogPdfResult copula_log_pdf_trajectory_grid(
                     current_t = t;
                     row = u.data() + t * observation_stride;
                     if (copula.family != CopulaFamily::Student) {
-                        scar_internal::apply_rotation(
+                        scar::copula::apply_rotation(
                             row[0],
                             row[1],
                             static_cast<int>(copula.rotation),

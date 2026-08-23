@@ -10,6 +10,7 @@ import inspect
 import json
 from pathlib import Path
 import re
+import runpy
 import subprocess
 from typing import Any
 
@@ -144,6 +145,35 @@ def _python_constant_inventory() -> list[dict[str, Any]]:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         module = path.relative_to(ROOT).with_suffix("").as_posix().replace("/", ".")
         walk_body(path, tree.body, module)
+
+    # Source manifests derived from families.def deliberately are not Python
+    # literals.  Evaluate this build-only module so the generated source lists
+    # remain covered by the compatibility inventory.
+    sources_path = (
+        ROOT / "pyscarcopula" / "_cpp" / "build_support" / "sources.py")
+    sources_module = runpy.run_path(str(sources_path))
+    source_lines = {
+        node.targets[0].id: node.lineno
+        for node in ast.parse(
+            sources_path.read_text(encoding="utf-8"),
+            filename=str(sources_path),
+        ).body
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+    }
+    owner = "pyscarcopula._cpp.build_support.sources"
+    recorded = {(item["owner"], item["symbol"]) for item in records}
+    for name in ("PAIR_FAMILY_SOURCES", "SCAR_COMPUTE_SOURCES"):
+        if (owner, name) in recorded:
+            continue
+        records.append({
+            "owner": owner,
+            "symbol": name,
+            "value": _json_value(sources_module[name]),
+            "source": sources_path.relative_to(ROOT).as_posix(),
+            "line": source_lines[name],
+        })
     return records
 
 

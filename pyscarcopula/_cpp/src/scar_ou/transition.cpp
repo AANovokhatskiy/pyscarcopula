@@ -1,4 +1,6 @@
 #include "scar/ou.hpp"
+#include "scar/copula/pair/gaussian.hpp"
+#include "scar/detail/copula/common.hpp"
 #include "scar/detail/safety.hpp"
 #include "scar/detail/linalg.hpp"
 #include "scar/detail/scar_ou/quadrature.hpp"
@@ -891,10 +893,12 @@ bool matrix_forward_mixture_h(
             for (int j = 0; j < grid.K; ++j) {
                 const std::size_t idx = static_cast<std::size_t>(j);
                 h_mix += weights[idx]
-                    * gaussian_h_from_quantiles(z2, z1, r_grid[idx]);
+                    * scar::copula::pair::gaussian_h_from_quantiles(
+                        z2, z1, r_grid[idx]);
                 if (out_reverse != nullptr) {
                     h_mix_reverse += weights[idx]
-                        * gaussian_h_from_quantiles(z1, z2, r_grid[idx]);
+                        * scar::copula::pair::gaussian_h_from_quantiles(
+                            z1, z2, r_grid[idx]);
                 }
             }
         } else {
@@ -1020,10 +1024,12 @@ bool local_forward_mixture_h(
             for (int j = 0; j < grid.K; ++j) {
                 const std::size_t idx = static_cast<std::size_t>(j);
                 h_mix += weights[idx]
-                    * gaussian_h_from_quantiles(z2, z1, r_grid[idx]);
+                    * scar::copula::pair::gaussian_h_from_quantiles(
+                        z2, z1, r_grid[idx]);
                 if (out_reverse != nullptr) {
                     h_mix_reverse += weights[idx]
-                        * gaussian_h_from_quantiles(z1, z2, r_grid[idx]);
+                        * scar::copula::pair::gaussian_h_from_quantiles(
+                            z1, z2, r_grid[idx]);
                 }
             }
         } else {

@@ -8,7 +8,6 @@ remain Python-owned; native entry points receive validated contiguous buffers.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from functools import lru_cache
 
 import numpy as np
 
@@ -38,35 +37,19 @@ _NATIVE_EQUIVALENT_ATTR = "__pyscarcopula_native_rvine__"
 _DEFAULT_MCMC_DRAW_MEMORY_BUDGET_BYTES = 64 * 1024 * 1024
 
 
-@lru_cache(maxsize=1)
-def _builtin_copula_types():
-    """Return the exact built-in pair-copula classes accepted natively."""
-    from pyscarcopula.copula.clayton import ClaytonCopula
-    from pyscarcopula.copula.elliptical import BivariateGaussianCopula
-    from pyscarcopula.copula.frank import FrankCopula
-    from pyscarcopula.copula.gumbel import GumbelCopula
-    from pyscarcopula.copula.independent import IndependentCopula
-    from pyscarcopula.copula.joe import JoeCopula
-
-    return (
-        IndependentCopula,
-        ClaytonCopula,
-        GumbelCopula,
-        JoeCopula,
-        FrankCopula,
-        BivariateGaussianCopula,
-    )
-
-
 def native_copula_supported(copula) -> bool:
     """Return whether a pair copula has native-equivalent point semantics.
 
     Built-ins are accepted by exact type.  A subclass must opt in on its own
     class body so an inherited marker cannot accidentally bypass overrides.
     """
-    if type(copula) in _builtin_copula_types():
+    own_family = vars(type(copula)).get("_native_pair_family")
+    if isinstance(own_family, str) and own_family:
         return True
-    return vars(type(copula)).get(_NATIVE_EQUIVALENT_ATTR) is True
+    return (
+        vars(type(copula)).get(_NATIVE_EQUIVALENT_ATTR) is True
+        and _cpp_copula._native_pair_family_name(copula) is not None
+    )
 
 
 def native_edges_supported(pair_copulas, active_keys) -> bool:
@@ -485,44 +468,32 @@ def _validate_parameter_domain(copula, path, edge_key):
         # Custom Python semantics remain owned by the fallback implementation.
         return
 
-    (
-        IndependentCopula,
-        ClaytonCopula,
-        GumbelCopula,
-        JoeCopula,
-        FrankCopula,
-        BivariateGaussianCopula,
-    ) = _builtin_copula_types()
+    values = np.ascontiguousarray(path, dtype=np.float64)
+    try:
+        tau = np.asarray(copula.param_to_tau(values), dtype=np.float64)
+        if np.all(np.isfinite(tau)):
+            return
+    except (FloatingPointError, NotImplementedError, ValueError):
+        pass
 
-    values = np.asarray(path, dtype=np.float64)
-    if isinstance(copula, IndependentCopula):
-        return
-    scalar = values.size == 1
-    value = float(values.reshape(-1)[0]) if scalar else 0.0
-    if isinstance(copula, (ClaytonCopula, FrankCopula)):
-        valid = value > 0.0 if scalar else values > 0.0
-        domain = "(0, +inf)"
-    elif isinstance(copula, (GumbelCopula, JoeCopula)):
-        valid = value >= 1.0 if scalar else values >= 1.0
-        domain = "[1, +inf)"
-    elif isinstance(copula, BivariateGaussianCopula):
-        valid = (
-            -1.0 < value < 1.0
-            if scalar else
-            (values > -1.0) & (values < 1.0)
-        )
-        domain = "(-1, 1)"
-    else:  # pragma: no cover - guarded by native_copula_supported
-        return
-    if not (bool(valid) if scalar else np.all(valid)):
-        invalid = (
-            value if scalar else
-            float(values[np.flatnonzero(~valid)[0]])
-        )
-        raise ValueError(
-            f"R-vine parameter path for edge {edge_key} must lie in "
-            f"{domain}; got {invalid!r}"
-        )
+    invalid = float(values[0])
+    for value in values:
+        try:
+            tau = np.asarray(
+                copula.param_to_tau(np.asarray([value], dtype=np.float64)),
+                dtype=np.float64,
+            )
+            if np.all(np.isfinite(tau)):
+                continue
+        except (FloatingPointError, NotImplementedError, ValueError):
+            pass
+        invalid = float(value)
+        break
+    family = _cpp_copula._native_pair_family_name(copula)
+    raise ValueError(
+        f"R-vine parameter path for edge {edge_key} must lie in the "
+        f"native {family} parameter domain; got {invalid!r}"
+    )
 
 
 def compile_edge_specs(

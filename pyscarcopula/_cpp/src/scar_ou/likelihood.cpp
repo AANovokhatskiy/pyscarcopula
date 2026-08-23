@@ -1,7 +1,8 @@
 #include "scar/ou.hpp"
 
 #include "evaluator_internal.hpp"
-#include "scar/detail/copula.hpp"
+#include "scar/detail/copula/common.hpp"
+#include "scar/detail/copula/dispatch.hpp"
 #include "scar/detail/safety.hpp"
 #include "scar/detail/scar_ou/grid.hpp"
 #include "scar/detail/scar_ou/quadrature.hpp"

@@ -1,6 +1,9 @@
-#include "scar/detail/copula.hpp"
+#include "scar/detail/copula/common.hpp"
+#include "scar/detail/copula/student.hpp"
 #include "scar/detail/parallel.hpp"
+#include "scar/detail/safety.hpp"
 #include "scar/factor.hpp"
+#include "scar/math/normal.hpp"
 
 #include <algorithm>
 #include <array>
@@ -9,6 +12,10 @@
 #include <vector>
 
 namespace scar_internal {
+
+using scar::math::normal_quantile;
+using scar::math::normal_quantile_refined;
+
 namespace {
 
 bool valid_factor_student_spec(const scar::CopulaSpec& spec) {

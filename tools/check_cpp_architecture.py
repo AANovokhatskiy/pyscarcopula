@@ -146,7 +146,10 @@ def check_include_boundaries(root: Path) -> list[Violation]:
     ))
     violations.extend(_forbid_includes(
         root,
-        _source_files(src / "copula" / "families"),
+        (
+            *list(_source_files(src / "copula" / "families")),
+            *list(_source_files(src / "copula" / "pair")),
+        ),
         "families-independent-of-ou",
         lambda value: value == "ou.hpp"
         or value.startswith("detail/scar_ou/"),
@@ -338,16 +341,208 @@ def check_python_free_compute_boundary(root: Path) -> list[Violation]:
 
 
 def check_removed_monolith(root: Path) -> list[Violation]:
-    path = (
-        root / "pyscarcopula" / "_cpp" / "include"
-        / "scar" / "detail" / "internal.hpp")
-    if path.exists():
-        return [Violation(
-            "removed-internal-header",
-            path,
-            "the monolithic internal.hpp must not be reintroduced",
-        )]
-    return []
+    detail = (
+        root / "pyscarcopula" / "_cpp" / "include" / "scar" / "detail")
+    violations = []
+    for name in ("internal.hpp", "copula.hpp"):
+        path = detail / name
+        if path.exists():
+            violations.append(Violation(
+                "removed-internal-header",
+                path,
+                f"the monolithic detail/{name} must not be reintroduced",
+            ))
+    return violations
+
+
+def check_pair_verticalization(root: Path) -> list[Violation]:
+    cpp = root / "pyscarcopula" / "_cpp"
+    include = cpp / "include" / "scar" / "copula"
+    source = cpp / "src" / "copula"
+    violations = []
+    manifest = include / "pair" / "families.def"
+    entry_pattern = re.compile(
+        r"^SCAR_PAIR_FAMILY\(\s*"
+        r"([A-Za-z][A-Za-z0-9_]*)\s*,\s*"
+        r"([a-z][a-z0-9_]*)\s*,\s*"
+        r"([0-9]+)\s*,\s*"
+        r"(Any|Archimedean|GaussianTanh)\s*,\s*"
+        r"(Any|R0Only)\s*,\s*"
+        r"(Softplus|XTanh|GaussianTanh|Exponential|Logistic)\s*,\s*"
+        r"([0-9]+(?:\.[0-9]+)?)\s*\)$"
+    )
+    entries: list[tuple[str, str, int]] = []
+    if manifest.is_file():
+        for line_number, raw_line in enumerate(
+                manifest.read_text(encoding="utf-8").splitlines(), 1):
+            line = raw_line.strip()
+            if not line or line.startswith("//"):
+                continue
+            match = entry_pattern.fullmatch(line)
+            if match is None:
+                violations.append(Violation(
+                    "pair-copula-verticalization",
+                    manifest,
+                    "invalid pair-family registry entry",
+                    line_number,
+                ))
+                continue
+            entries.append((match.group(1), match.group(2), int(match.group(3))))
+    family_names = tuple(package for _, package, _ in entries)
+
+    if not entries:
+        violations.append(Violation(
+            "pair-copula-verticalization",
+            manifest,
+            "pair-family registry must contain at least one entry",
+        ))
+    elif (
+            len({enum_name for enum_name, _, _ in entries}) != len(entries)
+            or len(set(family_names)) != len(entries)
+            or len({value for _, _, value in entries}) != len(entries)):
+        violations.append(Violation(
+            "pair-copula-verticalization",
+            manifest,
+            "pair-family enum names, package names, and values must be unique",
+        ))
+
+    required = [
+        manifest,
+        include / "pair" / "kernel.hpp",
+        include / "prepared_pair_kernel.hpp",
+        source / "pair" / "runtime_registry.cpp",
+    ]
+    required.extend(include / "pair" / f"{name}.hpp" for name in family_names)
+    required.extend(source / "pair" / f"{name}.cpp" for name in family_names)
+    for path in required:
+        if not path.is_file():
+            violations.append(Violation(
+                "pair-copula-verticalization",
+                path,
+                "required pair-copula package file is missing",
+            ))
+
+    registry = source / "pair" / "runtime_registry.cpp"
+    if registry.is_file():
+        text = registry.read_text(encoding="utf-8")
+        if text.count("switch (family)") != 1:
+            violations.append(Violation(
+                "pair-copula-verticalization",
+                registry,
+                "pair families must have exactly one runtime registration switch",
+            ))
+        if text.count('#include "scar/copula/pair/families.def"') != 2:
+            violations.append(Violation(
+                "pair-copula-verticalization",
+                registry,
+                "runtime declarations and registration must use families.def",
+            ))
+
+    kernel_contract = include / "pair" / "kernel.hpp"
+    if kernel_contract.is_file():
+        text = kernel_contract.read_text(encoding="utf-8")
+        for forbidden in ("Rotation", "Transform", "supports"):
+            if re.search(rf"\b{forbidden}\b", text):
+                violations.append(Violation(
+                    "pair-copula-verticalization",
+                    kernel_contract,
+                    f"{forbidden} must remain outside the family contract",
+                ))
+
+    dispatch = source / "dispatch.cpp"
+    if dispatch.is_file():
+        text = dispatch.read_text(encoding="utf-8")
+        for family in ("clayton", "gumbel", "frank", "joe"):
+            if re.search(rf"\b{family}_[A-Za-z0-9_]+", text):
+                violations.append(Violation(
+                    "pair-copula-verticalization",
+                    dispatch,
+                    f"{family} implementation leaked into generic dispatch",
+                ))
+
+    for generic_source in (source / "core.cpp", dispatch):
+        if (
+                generic_source.is_file()
+                and "is_pair_copula_family" in generic_source.read_text(
+                    encoding="utf-8")):
+            violations.append(Violation(
+                "pair-copula-verticalization",
+                generic_source,
+                "construct PreparedPairKernel directly to avoid a second lookup",
+            ))
+
+    pair_source = source / "pair"
+    for name in family_names:
+        path = pair_source / f"{name}.cpp"
+        if not path.is_file():
+            continue
+        includes = {value for value, _ in _include_lines(path)}
+        expected = f"copula/pair/{name}.hpp"
+        other_families = {
+            f"copula/pair/{other}.hpp"
+            for other in family_names
+            if other != name
+        }
+        if expected not in includes or includes & other_families:
+            violations.append(Violation(
+                "pair-copula-verticalization",
+                path,
+                "a pair implementation must include its own package header only",
+            ))
+        text = path.read_text(encoding="utf-8")
+        for forbidden in (
+                "scar/copula/rotation.hpp",
+                "scar::Rotation",
+                "scar::Transform",
+                "_h_rotated",
+                "_h_inverse_rotated"):
+            if forbidden in text:
+                violations.append(Violation(
+                    "pair-copula-verticalization",
+                    path,
+                    f"common rotation/transform concern leaked into family: {forbidden}",
+                ))
+
+    binding = cpp / "src" / "bindings" / "common.cpp"
+    if binding.is_file():
+        text = binding.read_text(encoding="utf-8")
+        if text.count('#include "scar/copula/pair/families.def"') != 1:
+            violations.append(Violation(
+                "pair-copula-verticalization",
+                binding,
+                "generic CopulaFamily binding must consume families.def",
+            ))
+        for enum_name, _, _ in entries:
+            if f'.value("{enum_name}",' in text:
+                violations.append(Violation(
+                    "pair-copula-verticalization",
+                    binding,
+                    f"pair family {enum_name} is hard-coded in generic binding",
+                ))
+
+    adapter = root / "pyscarcopula" / "numerical" / "_cpp_copula.py"
+    if adapter.is_file():
+        text = adapter.read_text(encoding="utf-8")
+        for enum_name, _, _ in entries:
+            if f"CopulaFamily.{enum_name}" in text:
+                violations.append(Violation(
+                    "pair-copula-verticalization",
+                    adapter,
+                    f"pair family {enum_name} is hard-coded in generic adapter",
+                ))
+
+    rvine_adapter = root / "pyscarcopula" / "numerical" / "_cpp_rvine.py"
+    if rvine_adapter.is_file():
+        text = rvine_adapter.read_text(encoding="utf-8")
+        if (
+                "_builtin_copula_types" in text
+                or "from pyscarcopula.copula." in text):
+            violations.append(Violation(
+                "pair-copula-verticalization",
+                rvine_adapter,
+                "generic R-vine adapter must discover pair families by marker",
+            ))
+    return violations
 
 
 def _find_cycle(graph: dict[str, set[str]]) -> list[str] | None:
@@ -411,6 +606,7 @@ def check_repository(root: Path) -> list[Violation]:
         check_source_manifest,
         check_python_free_compute_boundary,
         check_removed_monolith,
+        check_pair_verticalization,
         check_public_header_cycles,
     )
     return [

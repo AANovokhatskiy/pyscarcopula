@@ -6,7 +6,7 @@
 #include "scar/factor.hpp"
 #include "scar/ou.hpp"
 #include "scar/rvine.hpp"
-#include "scar/detail/copula.hpp"
+#include "scar/detail/copula/student.hpp"
 #include "scar/detail/safety.hpp"
 #include "scar/detail/scar_ou/quadrature.hpp"
 

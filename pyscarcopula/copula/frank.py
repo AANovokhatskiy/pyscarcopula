@@ -20,6 +20,8 @@ def _frank_bivariate_sample_from_uniforms(n, r, u0_data, v_data):
 class FrankCopula(BivariateCopula):
     """Frank copula. Rotation is unsupported because it is symmetric."""
 
+    _native_pair_family = "Frank"
+
     def __init__(self, rotate: int = 0, transform_type: str = "softplus"):
         if rotate != 0:
             raise ValueError("Rotation not supported for Frank copula")

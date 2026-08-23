@@ -1,8 +1,13 @@
 #include "scar/copula.hpp"
 
-#include "scar/detail/copula.hpp"
+#include "scar/copula/rotation.hpp"
+#include "scar/detail/copula/common.hpp"
+#include "scar/detail/copula/dispatch.hpp"
+#include "scar/detail/copula/student.hpp"
 #include "scar/detail/parallel.hpp"
+#include "scar/detail/safety.hpp"
 #include "scar/factor.hpp"
+#include "scar/math/normal.hpp"
 #include "scar/status.hpp"
 
 #include <algorithm>
@@ -251,7 +256,7 @@ StaticCopulaEvaluator::StaticCopulaEvaluator(
             gaussian_scores_[
                 i * static_cast<std::size_t>(dim)
                 + static_cast<std::size_t>(j)] =
-                scar_internal::normal_quantile(
+                scar::math::normal_quantile(
                     scar_internal::clip_pseudo_observation(
                         u_[i][static_cast<std::size_t>(j)]));
         }
@@ -589,7 +594,7 @@ StaticObjectiveResult StaticCopulaEvaluator::evaluate_objective(
                 } else {
                     double u1 = 0.0;
                     double u2 = 0.0;
-                    scar_internal::apply_rotation(
+                    scar::copula::apply_rotation(
                         row[0], row[1],
                         static_cast<int>(spec_.rotation), u1, u2);
                     log_pdf = scar_internal::copula_log_pdf_unrotated(
@@ -705,7 +710,7 @@ std::vector<double> StaticCopulaEvaluator::log_pdf_rows(
                 } else {
                     double u1 = 0.0;
                     double u2 = 0.0;
-                    scar_internal::apply_rotation(
+                    scar::copula::apply_rotation(
                         row[0], row[1],
                         static_cast<int>(spec_.rotation), u1, u2);
                     out[i] = scar_internal::copula_log_pdf_unrotated(

@@ -1,10 +1,11 @@
 #include "scar/ou.hpp"
 
 #include "evaluator_internal.hpp"
-#include "scar/detail/copula.hpp"
+#include "scar/detail/copula/common.hpp"
 #include "scar/detail/safety.hpp"
 #include "scar/detail/scar_ou/grid.hpp"
 #include "scar/detail/scar_ou/transition.hpp"
+#include "scar/math/normal.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -82,7 +83,7 @@ bool equicorr_gaussian_rosenblatt_impl(
         const std::size_t row =
             static_cast<std::size_t>(t) * dimension;
         for (std::size_t column = 0; column < dimension; ++column) {
-            quantiles[column] = scar_internal::normal_quantile_refined(
+            quantiles[column] = scar::math::normal_quantile_refined(
                 scar_internal::clip_pseudo_observation(
                     u.data()[row + column]));
             if (!std::isfinite(quantiles[column])) {
@@ -118,7 +119,7 @@ bool equicorr_gaussian_rosenblatt_impl(
                     (quantiles[column] - conditional_mean)
                     / std::sqrt(conditional_variance);
                 conditional_cdf[state] =
-                    scar_internal::normal_cdf(standardized);
+                    scar::math::normal_cdf(standardized);
 
                 double prefix_density = 1.0;
                 if (column > 1) {

@@ -18,12 +18,12 @@ class FactorCorrelationOperator;
 
 /// Copula kernels supported by the native dispatch layer.
 enum class CopulaFamily : int {
-    Independent = 0,
-    Clayton = 1,
-    Gumbel = 2,
-    Frank = 3,
-    Joe = 4,
-    Gaussian = 5,
+#define SCAR_PAIR_FAMILY(                                                \
+    enum_name, package_name, enum_value, transform_policy, rotation_policy, \
+    default_transform, default_offset)                                  \
+    enum_name = enum_value,
+#include "scar/copula/pair/families.def"
+#undef SCAR_PAIR_FAMILY
     Student = 6,
     EquicorrGaussian = 7,
     MultivariateGaussian = 8,

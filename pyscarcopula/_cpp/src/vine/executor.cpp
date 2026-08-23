@@ -1,8 +1,12 @@
 #include "scar/rvine.hpp"
 
+#include "scar/copula/pair/gaussian.hpp"
+#include "scar/copula/rotation.hpp"
 #include "scar/core/threading.hpp"
-#include "scar/detail/copula.hpp"
+#include "scar/detail/copula/common.hpp"
+#include "scar/detail/copula/dispatch.hpp"
 #include "scar/detail/safety.hpp"
+#include "scar/math/normal.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -691,11 +695,11 @@ void h_pair(
         // The two Gaussian directions use the same pair of normal quantiles.
         // Reusing them preserves the scalar kernel's operation order while
         // avoiding two of the four inverse-normal evaluations.
-        const double first_quantile = scar_internal::normal_quantile(
+        const double first_quantile = scar::math::normal_quantile(
             clip_open_unit(first));
-        const double second_quantile = scar_internal::normal_quantile(
+        const double second_quantile = scar::math::normal_quantile(
             clip_open_unit(second));
-        scar_internal::gaussian_h_pair_from_quantiles(
+        scar::copula::pair::gaussian_h_pair_from_quantiles(
             first_quantile,
             second_quantile,
             parameter,
@@ -735,7 +739,7 @@ double edge_log_pdf(
         : edge.edge.copula;
     double rotated_first = 0.0;
     double rotated_second = 0.0;
-    scar_internal::apply_rotation(
+    scar::copula::apply_rotation(
         first,
         second,
         static_cast<int>(copula.rotation),
@@ -1191,7 +1195,7 @@ ConditionalSampleResult conditional_sample(
                 const auto quantile_at = [&](std::size_t position) {
                     if (gaussian_quantile_valid[position] == 0) {
                         gaussian_quantiles[position] =
-                            scar_internal::normal_quantile(
+                            scar::math::normal_quantile(
                                 clip_open_unit(nodes[position]));
                         gaussian_quantile_valid[position] = 1;
                     }
@@ -1200,10 +1204,11 @@ ConditionalSampleResult conditional_sample(
                 const double first_quantile = quantile_at(input1_offset + row);
                 const double second_quantile = quantile_at(input2_offset + row);
                 if (opcode == static_cast<int>(RVineOpcode::H)) {
-                    first_next = scar_internal::gaussian_h_from_quantiles(
+                    first_next =
+                        scar::copula::pair::gaussian_h_from_quantiles(
                         first_quantile, second_quantile, parameter);
                 } else if (opcode == static_cast<int>(RVineOpcode::H_PAIR)) {
-                    scar_internal::gaussian_h_pair_from_quantiles(
+                    scar::copula::pair::gaussian_h_pair_from_quantiles(
                         first_quantile,
                         second_quantile,
                         parameter,

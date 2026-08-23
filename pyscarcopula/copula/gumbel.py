@@ -37,6 +37,8 @@ def _generate_levy_stable_from_uniforms(
 
 class GumbelCopula(BivariateCopula):
 
+    _native_pair_family = "Gumbel"
+
     def __init__(self, rotate: int = 0, transform_type: str = "softplus"):
         super().__init__(rotate)
         self._name = "Gumbel copula"

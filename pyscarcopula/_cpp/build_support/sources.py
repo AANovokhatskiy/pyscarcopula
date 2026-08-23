@@ -7,6 +7,41 @@ Python package or extension exists.
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
+
+_PAIR_FAMILY_DEFINITION = (
+    Path(__file__).resolve().parents[1]
+    / "include" / "scar" / "copula" / "pair" / "families.def"
+)
+_PAIR_FAMILY_PATTERN = re.compile(
+    r"^SCAR_PAIR_FAMILY\(\s*[A-Za-z][A-Za-z0-9_]*\s*,\s*"
+    r"([a-z][a-z0-9_]*)\s*,"
+)
+
+
+def _pair_family_sources() -> tuple[str, ...]:
+    """Derive pair implementation paths from the C++ registry manifest."""
+
+    sources = []
+    for raw_line in _PAIR_FAMILY_DEFINITION.read_text(
+            encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("//"):
+            continue
+        match = _PAIR_FAMILY_PATTERN.match(line)
+        if match is None:
+            raise RuntimeError(
+                f"invalid pair-family registry entry: {raw_line!r}")
+        sources.append(f"copula/pair/{match.group(1)}.cpp")
+    if not sources:
+        raise RuntimeError("pair-family registry must not be empty")
+    return tuple(sources)
+
+
+PAIR_FAMILY_SOURCES = _pair_family_sources()
+
 
 SCAR_COMPUTE_SOURCES = (
     "copula/core.cpp",
@@ -14,11 +49,8 @@ SCAR_COMPUTE_SOURCES = (
     "copula/rotation.cpp",
     "copula/transforms.cpp",
     "copula/dispatch.cpp",
-    "copula/families/clayton.cpp",
-    "copula/families/gumbel.cpp",
-    "copula/families/frank.cpp",
-    "copula/families/joe.cpp",
-    "copula/families/gaussian.cpp",
+    "copula/pair/runtime_registry.cpp",
+    *PAIR_FAMILY_SOURCES,
     "copula/kendall.cpp",
     "copula/families/student.cpp",
     "copula/multivariate.cpp",

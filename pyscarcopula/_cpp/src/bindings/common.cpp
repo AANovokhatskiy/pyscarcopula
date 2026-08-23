@@ -662,14 +662,15 @@ void bind_common(py::module_& m) {
         py::arg("quad_order"),
         py::arg("basis_order"));
 
-    py::enum_<scar::CopulaFamily>(
-        m, "CopulaFamily", "Native copula-family dispatch identifier.")
-        .value("Independent", scar::CopulaFamily::Independent)
-        .value("Clayton", scar::CopulaFamily::Clayton)
-        .value("Gumbel", scar::CopulaFamily::Gumbel)
-        .value("Frank", scar::CopulaFamily::Frank)
-        .value("Joe", scar::CopulaFamily::Joe)
-        .value("Gaussian", scar::CopulaFamily::Gaussian)
+    auto copula_family = py::enum_<scar::CopulaFamily>(
+        m, "CopulaFamily", "Native copula-family dispatch identifier.");
+#define SCAR_PAIR_FAMILY(                                                \
+    enum_name, package_name, enum_value, transform_policy, rotation_policy, \
+    default_transform, default_offset)                                  \
+    copula_family.value(#enum_name, scar::CopulaFamily::enum_name);
+#include "scar/copula/pair/families.def"
+#undef SCAR_PAIR_FAMILY
+    copula_family
         .value("Student", scar::CopulaFamily::Student)
         .value(
             "EquicorrGaussian",

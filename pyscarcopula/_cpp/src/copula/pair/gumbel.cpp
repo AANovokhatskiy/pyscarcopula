@@ -1,9 +1,23 @@
-#include "scar/detail/copula.hpp"
+#include "scar/copula/pair/gumbel.hpp"
+#include "scar/detail/safety.hpp"
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace scar_internal {
+
+double gumbel_tau_to_parameter(double tau) {
+    return std::isfinite(tau) && tau > 0.0 && tau < 1.0
+        ? 1.0 / (1.0 - tau)
+        : std::numeric_limits<double>::quiet_NaN();
+}
+
+double gumbel_parameter_to_tau(double parameter) {
+    return std::isfinite(parameter) && parameter >= 1.0
+        ? 1.0 - 1.0 / parameter
+        : std::numeric_limits<double>::quiet_NaN();
+}
 
 double gumbel_log_pdf_unrotated(double u1, double u2, double r) {
     const double v1 = std::min(std::max(u1, kPdfEps), 1.0 - kPdfEps);
@@ -97,6 +111,104 @@ void gumbel_pdf_and_grad_x_unrotated(
     d_pdf_dx = pdf * dlog_dr * d_r_dx;
 }
 
+void gumbel_pair_pdf_and_gradient(
+    double u1,
+    double u2,
+    double,
+    double parameter,
+    double d_parameter_dx,
+    double& pdf,
+    double& d_pdf_dx) {
+
+    gumbel_pdf_and_grad_x_unrotated(
+        u1,
+        u2,
+        parameter,
+        d_parameter_dx,
+        pdf,
+        d_pdf_dx);
+}
+
+void gumbel_fill_grid_row(
+    double u1,
+    double u2,
+    const std::vector<double>& parameter_grid,
+    const std::vector<double>& derivative_grid,
+    double* pdf_row,
+    double* gradient_row) {
+
+    const double v1 = std::min(std::max(u1, kPdfEps), 1.0 - kPdfEps);
+    const double v2 = std::min(std::max(u2, kPdfEps), 1.0 - kPdfEps);
+    const double log_v1 = std::log(v1);
+    const double log_v2 = std::log(v2);
+    const double log_p1 = std::log(std::max(-log_v1, kPdfEps));
+    const double log_p2 = std::log(std::max(-log_v2, kPdfEps));
+    const double log_max = std::max(log_p1, log_p2);
+    const double log_min = std::min(log_p1, log_p2);
+
+    for (std::size_t j = 0; j < parameter_grid.size(); ++j) {
+        const double parameter = parameter_grid[j];
+        const double delta = parameter * (log_min - log_max);
+        const double exp_delta = std::exp(delta);
+        const double S = parameter * log_max + std::log1p(exp_delta);
+        const double A = std::exp(S / parameter);
+        const double log_pdf =
+            (parameter - 1.0) * (log_p1 + log_p2)
+            + (1.0 / parameter - 2.0) * S
+            + std::log(parameter - 1.0 + A)
+            - A
+            - log_v1
+            - log_v2;
+        const double pdf = std::exp(log_pdf);
+        pdf_row[j] = pdf;
+        if (gradient_row != nullptr) {
+            const double sig = exp_delta / (1.0 + exp_delta);
+            const double dS_dparameter =
+                log_max + (log_min - log_max) * sig;
+            const double dlogA_dparameter =
+                (dS_dparameter * parameter - S)
+                / (parameter * parameter);
+            const double dA_dparameter = A * dlogA_dparameter;
+            const double dlog_dparameter =
+                (log_p1 + log_p2)
+                - S / (parameter * parameter)
+                + (1.0 / parameter - 2.0) * dS_dparameter
+                + (1.0 + dA_dparameter) / (parameter - 1.0 + A)
+                - dA_dparameter;
+            gradient_row[j] =
+                pdf * dlog_dparameter * derivative_grid[j];
+        }
+    }
+}
+
+void gumbel_fill_density_grid_row(
+    double u1,
+    double u2,
+    const std::vector<double>& parameter_grid,
+    double* pdf_row) {
+
+    static const std::vector<double> no_derivatives;
+    gumbel_fill_grid_row(
+        u1, u2, parameter_grid, no_derivatives, pdf_row, nullptr);
+}
+
+void gumbel_fill_density_gradient_grid_row(
+    double u1,
+    double u2,
+    const std::vector<double>& parameter_grid,
+    const std::vector<double>& derivative_grid,
+    double* pdf_row,
+    double* gradient_row) {
+
+    gumbel_fill_grid_row(
+        u1,
+        u2,
+        parameter_grid,
+        derivative_grid,
+        pdf_row,
+        gradient_row);
+}
+
 double gumbel_h_unrotated(double u, double v, double r) {
     const double u_clipped = std::min(std::max(u, kHEps), 1.0 - kHEps);
     const double v_clipped = std::min(std::max(v, kHEps), 1.0 - kHEps);
@@ -136,11 +248,6 @@ double gumbel_h_unrotated(double u, double v, double r) {
         return 1.0 - kHEps;
     }
     return std::exp(log_h);
-}
-
-double gumbel_h_rotated(double u, double v, double r, int rotation) {
-    return evaluate_rotated_conditional(
-        u, v, r, rotation, gumbel_h_unrotated);
 }
 
 double gumbel_h_inverse_unrotated(double q, double given, double r) {
@@ -198,9 +305,23 @@ double gumbel_h_inverse_unrotated(double q, double given, double r) {
     return std::min(std::max(value, kHEps), 1.0 - kHEps);
 }
 
-double gumbel_h_inverse_rotated(double q, double given, double r, int rotation) {
-    return evaluate_rotated_conditional(
-        q, given, r, rotation, gumbel_h_inverse_unrotated);
+}  // namespace scar_internal
+
+namespace scar::copula::pair {
+
+const PairKernelFunctions& gumbel_kernel() noexcept {
+    static const PairKernelFunctions functions = {
+        scar_internal::gumbel_tau_to_parameter,
+        scar_internal::gumbel_parameter_to_tau,
+        scar_internal::gumbel_log_pdf_unrotated,
+        scar_internal::gumbel_dlog_pdf_dr_unrotated,
+        scar_internal::gumbel_pair_pdf_and_gradient,
+        scar_internal::gumbel_h_unrotated,
+        scar_internal::gumbel_h_inverse_unrotated,
+        scar_internal::gumbel_fill_density_grid_row,
+        scar_internal::gumbel_fill_density_gradient_grid_row,
+    };
+    return functions;
 }
 
-}  // namespace scar_internal
+}  // namespace scar::copula::pair

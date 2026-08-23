@@ -1,9 +1,16 @@
-#include "scar/detail/copula.hpp"
+#include "scar/detail/copula/common.hpp"
 
+#include "scar/copula/transforms.hpp"
+#include "scar/math/normal.hpp"
+
+#include <algorithm>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 
 namespace scar_internal {
+
+using scar::math::normal_quantile_refined;
 
 scar::CopulaSpec transposed_copula_spec(const scar::CopulaSpec& spec) {
     scar::CopulaSpec transposed = spec;

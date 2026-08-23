@@ -1,7 +1,9 @@
 #include "scar/ou.hpp"
 
-#include "scar/detail/copula.hpp"
+#include "scar/copula/rotation.hpp"
+#include "scar/detail/copula/common.hpp"
 #include "scar/detail/safety.hpp"
+#include "scar/math/normal.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -88,14 +90,14 @@ PreparedScarOuEvaluator::PreparedScarOuEvaluator(
         for (std::size_t row = 0; row < n_obs_size; ++row) {
             double u1 = 0.0;
             double u2 = 0.0;
-            scar_internal::apply_rotation(
+            scar::copula::apply_rotation(
                 observations_[2 * row],
                 observations_[2 * row + 1],
                 static_cast<int>(copula_.rotation),
                 u1,
                 u2);
-            const double x1 = scar_internal::normal_quantile(u1);
-            const double x2 = scar_internal::normal_quantile(u2);
+            const double x1 = scar::math::normal_quantile(u1);
+            const double x2 = scar::math::normal_quantile(u2);
             copula_.gaussian_z1_cache[row] = x1;
             copula_.gaussian_z2_cache[row] = x2;
         }

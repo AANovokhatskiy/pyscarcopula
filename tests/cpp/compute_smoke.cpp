@@ -1,4 +1,5 @@
 #include "scar/copula.hpp"
+#include "scar/copula/prepared_pair_kernel.hpp"
 #include "scar/core/checked_arithmetic.hpp"
 #include "scar/core/result.hpp"
 #include "scar/core/threading.hpp"
@@ -65,6 +66,52 @@ int main() {
     const auto density = scar::copula_pdf(spec, observations, parameters);
     if (density.size() != 1 || std::abs(density.front() - 1.0) > 1e-15) {
         return 6;
+    }
+
+    scar::CopulaSpec clayton_spec;
+    clayton_spec.family = scar::CopulaFamily::Clayton;
+    clayton_spec.rotation = scar::Rotation::R180;
+    clayton_spec.transform = scar::Transform::Softplus;
+    const scar::PreparedPairKernel clayton(clayton_spec);
+    const scar::PreparedPairKernel student(student_spec);
+    if (!clayton.is_supported()
+        || student.is_supported()
+        || std::abs(clayton.tau_to_parameter(0.5) - 2.0) > 1e-15
+        || std::abs(clayton.parameter_to_tau(2.0) - 0.5) > 1e-15) {
+        return 7;
+    }
+
+    const std::vector<double> value_grid{-1.0, 0.0, 1.0};
+    std::vector<double> parameter_grid;
+    std::vector<double> derivative_grid;
+    std::vector<double> densities(value_grid.size(), 0.0);
+    std::vector<double> gradients(value_grid.size(), 0.0);
+    clayton.prepare_parameter_grid(
+        value_grid, parameter_grid, derivative_grid);
+    clayton.fill_grid_row_with_gradient(
+        0.25,
+        0.75,
+        parameter_grid,
+        derivative_grid,
+        densities.data(),
+        gradients.data());
+    if (parameter_grid.size() != value_grid.size()
+        || derivative_grid.size() != value_grid.size()) {
+        return 8;
+    }
+    for (std::size_t index = 0; index < value_grid.size(); ++index) {
+        double scalar_density = 0.0;
+        double scalar_gradient = 0.0;
+        clayton.pdf_and_gradient(
+            0.25,
+            0.75,
+            value_grid[index],
+            scalar_density,
+            scalar_gradient);
+        if (densities[index] != scalar_density
+            || gradients[index] != scalar_gradient) {
+            return 9;
+        }
     }
     return scar::SCAR_OK;
 }

@@ -132,11 +132,11 @@
       ".github/workflows/parallel-release-gates.yml": "5bf5bd210a18929091ed71553a251ad084f7498e150b2bf71846580e6cd66238",
       ".github/workflows/wheels.yml": "5e4fff9c1ada46b147cf7ba85b2367b802a34f491dc2b97b41158c23d9887f31",
       "pyproject.toml": "81b3eaacc7c30e9d169de1ed60af08b0e89fdc6ca267b3be98653d03a5a0130d",
-      "pyscarcopula/_cpp/build_support/sources.py": "83376c17b3bdca60d6d96f1d8a3e01663b201ecf6a4bb62b7e627920bb051c6e",
+      "pyscarcopula/_cpp/build_support/sources.py": "c936a69bcfd10a0d190746a8a3bdb8f3f9b4e616dedcd9c9f9e678e22ad7aa73",
       "pyscarcopula/_cpp/build_support/toolchain.py": "5d7990b2cb89bd8bdf58e887795f6c4d027eeb39d5f99a9b49ba11548e2da701",
       "setup.py": "11690d112f39f7da39d7b9d80155e9aabdbb6187565720d7fed19ba8a58103df",
       "tools/build_cpp_tests.py": "99838f4bfb1199527b5a904c169828515bf7cda438102bdaffd600f07ede8b62",
-      "tools/check_cpp_architecture.py": "314464a2203b16a0f2556e84cadc93fdaa1987b1f4118f89599c9b4ae691f66e"
+      "tools/check_cpp_architecture.py": "3d7dd0676a4ab9881b112a188b3e44f3f3d33f53d639003440a00c1257d61690"
     },
     "sources": [
       ".github/workflows/parallel-release-gates.yml",
@@ -168,7 +168,7 @@
       ]
     }
   },
-  "compute_source_sha256": "ea413546c6496b622624f97f0b95821b29f5b183d627073ba94faaa98ac76b1f",
+  "compute_source_sha256": "565c03c460b1dd505bbe6de31b7bfc62c14bf2b2117b301598e46dec3e932c9b",
   "configuration_contracts": {
     "complete_constant_mappings": [
       {
@@ -223,57 +223,7 @@
       },
       {
         "kind": "python",
-        "line": 11,
-        "old": "pyscarcopula._cpp.build_support.sources.SCAR_COMPUTE_SOURCES",
-        "semantic": "preserve the current value, bounds, and usage semantics",
-        "source": "pyscarcopula/_cpp/build_support/sources.py",
-        "target": "SCAR_COMPUTE_SOURCES",
-        "target_owner": "foundation",
-        "value": [
-          "copula/core.cpp",
-          "copula/common.cpp",
-          "copula/rotation.cpp",
-          "copula/transforms.cpp",
-          "copula/dispatch.cpp",
-          "copula/families/clayton.cpp",
-          "copula/families/gumbel.cpp",
-          "copula/families/frank.cpp",
-          "copula/families/joe.cpp",
-          "copula/families/gaussian.cpp",
-          "copula/kendall.cpp",
-          "copula/families/student.cpp",
-          "copula/multivariate.cpp",
-          "copula/student_rosenblatt.cpp",
-          "factor/operator.cpp",
-          "factor/grid.cpp",
-          "factor/student.cpp",
-          "math/normal.cpp",
-          "parallel/runtime.cpp",
-          "likelihood/static.cpp",
-          "gas/evaluator.cpp",
-          "vine/executor.cpp",
-          "vine/density.cpp",
-          "vine/mcmc.cpp",
-          "vine/rosenblatt.cpp",
-          "gas/rvine_sampler.cpp",
-          "scar_ou/monte_carlo.cpp",
-          "scar_ou/validation.cpp",
-          "scar_ou/likelihood.cpp",
-          "scar_ou/gradient.cpp",
-          "scar_ou/prediction.cpp",
-          "scar_ou/gaussian_rosenblatt.cpp",
-          "scar_ou/student_rosenblatt.cpp",
-          "scar_ou/state_distribution.cpp",
-          "scar_ou/evaluator.cpp",
-          "scar_ou/prepared.cpp",
-          "scar_ou/grid.cpp",
-          "scar_ou/quadrature.cpp",
-          "scar_ou/transition.cpp"
-        ]
-      },
-      {
-        "kind": "python",
-        "line": 53,
+        "line": 85,
         "old": "pyscarcopula._cpp.build_support.sources.PYTHON_BINDING_SOURCES",
         "semantic": "preserve the current value, bounds, and usage semantics",
         "source": "pyscarcopula/_cpp/build_support/sources.py",
@@ -894,7 +844,7 @@
       },
       {
         "kind": "python",
-        "line": 37,
+        "line": 36,
         "old": "pyscarcopula.numerical._cpp_rvine._NATIVE_EQUIVALENT_ATTR",
         "semantic": "preserve the current value, bounds, and usage semantics",
         "source": "pyscarcopula/numerical/_cpp_rvine.py",
@@ -1221,6 +1171,75 @@
         "value": 8192
       },
       {
+        "kind": "python",
+        "line": 43,
+        "old": "pyscarcopula._cpp.build_support.sources.PAIR_FAMILY_SOURCES",
+        "semantic": "preserve the current value, bounds, and usage semantics",
+        "source": "pyscarcopula/_cpp/build_support/sources.py",
+        "target": "PAIR_FAMILY_SOURCES",
+        "target_owner": "foundation",
+        "value": [
+          "copula/pair/independent.cpp",
+          "copula/pair/clayton.cpp",
+          "copula/pair/gumbel.cpp",
+          "copula/pair/frank.cpp",
+          "copula/pair/joe.cpp",
+          "copula/pair/gaussian.cpp"
+        ]
+      },
+      {
+        "kind": "python",
+        "line": 46,
+        "old": "pyscarcopula._cpp.build_support.sources.SCAR_COMPUTE_SOURCES",
+        "semantic": "preserve the current value, bounds, and usage semantics",
+        "source": "pyscarcopula/_cpp/build_support/sources.py",
+        "target": "SCAR_COMPUTE_SOURCES",
+        "target_owner": "foundation",
+        "value": [
+          "copula/core.cpp",
+          "copula/common.cpp",
+          "copula/rotation.cpp",
+          "copula/transforms.cpp",
+          "copula/dispatch.cpp",
+          "copula/pair/runtime_registry.cpp",
+          "copula/pair/independent.cpp",
+          "copula/pair/clayton.cpp",
+          "copula/pair/gumbel.cpp",
+          "copula/pair/frank.cpp",
+          "copula/pair/joe.cpp",
+          "copula/pair/gaussian.cpp",
+          "copula/kendall.cpp",
+          "copula/families/student.cpp",
+          "copula/multivariate.cpp",
+          "copula/student_rosenblatt.cpp",
+          "factor/operator.cpp",
+          "factor/grid.cpp",
+          "factor/student.cpp",
+          "math/normal.cpp",
+          "parallel/runtime.cpp",
+          "likelihood/static.cpp",
+          "gas/evaluator.cpp",
+          "vine/executor.cpp",
+          "vine/density.cpp",
+          "vine/mcmc.cpp",
+          "vine/rosenblatt.cpp",
+          "gas/rvine_sampler.cpp",
+          "scar_ou/monte_carlo.cpp",
+          "scar_ou/validation.cpp",
+          "scar_ou/likelihood.cpp",
+          "scar_ou/gradient.cpp",
+          "scar_ou/prediction.cpp",
+          "scar_ou/gaussian_rosenblatt.cpp",
+          "scar_ou/student_rosenblatt.cpp",
+          "scar_ou/state_distribution.cpp",
+          "scar_ou/evaluator.cpp",
+          "scar_ou/prepared.cpp",
+          "scar_ou/grid.cpp",
+          "scar_ou/quadrature.cpp",
+          "scar_ou/transition.cpp"
+        ]
+      },
+      {
         "kind": "cpp",
         "line": 17,
         "old": "pyscarcopula/_cpp/include/scar/core/status.hpp:SCAR_OK",
@@ -1492,7 +1511,7 @@
       },
       {
         "kind": "cpp",
-        "line": 11,
+        "line": 16,
         "old": "pyscarcopula/_cpp/src/copula/dispatch.cpp:kEquicorrGridMinRowsPerBlock",
         "semantic": "preserve the current value, bounds, and usage semantics",
         "source": "pyscarcopula/_cpp/src/copula/dispatch.cpp",
@@ -1502,7 +1521,7 @@
       },
       {
         "kind": "cpp",
-        "line": 12,
+        "line": 17,
         "old": "pyscarcopula/_cpp/src/copula/dispatch.cpp:kEquicorrGridMinCells",
         "semantic": "preserve the current value, bounds, and usage semantics",
         "source": "pyscarcopula/_cpp/src/copula/dispatch.cpp",
@@ -1512,7 +1531,7 @@
       },
       {
         "kind": "cpp",
-        "line": 916,
+        "line": 590,
         "old": "pyscarcopula/_cpp/src/copula/dispatch.cpp:min_rows_per_block",
         "semantic": "preserve the current value, bounds, and usage semantics",
         "source": "pyscarcopula/_cpp/src/copula/dispatch.cpp",
@@ -1522,7 +1541,7 @@
       },
       {
         "kind": "cpp",
-        "line": 121,
+        "line": 128,
         "old": "pyscarcopula/_cpp/src/copula/families/student.cpp:max_iter",
         "semantic": "preserve the current value, bounds, and usage semantics",
         "source": "pyscarcopula/_cpp/src/copula/families/student.cpp",
@@ -1532,7 +1551,7 @@
       },
       {
         "kind": "cpp",
-        "line": 122,
+        "line": 129,
         "old": "pyscarcopula/_cpp/src/copula/families/student.cpp:eps",
         "semantic": "preserve the current value, bounds, and usage semantics",
         "source": "pyscarcopula/_cpp/src/copula/families/student.cpp",
@@ -1542,7 +1561,7 @@
       },
       {
         "kind": "cpp",
-        "line": 123,
+        "line": 130,
         "old": "pyscarcopula/_cpp/src/copula/families/student.cpp:fpmin",
         "semantic": "preserve the current value, bounds, and usage semantics",
         "source": "pyscarcopula/_cpp/src/copula/families/student.cpp",
@@ -1552,7 +1571,7 @@
       },
       {
         "kind": "cpp",
-        "line": 172,
+        "line": 179,
         "old": "pyscarcopula/_cpp/src/copula/families/student.cpp:max_iter",
         "semantic": "preserve the current value, bounds, and usage semantics",
         "source": "pyscarcopula/_cpp/src/copula/families/student.cpp",
@@ -1562,7 +1581,7 @@
       },
       {
         "kind": "cpp",
-        "line": 173,
+        "line": 180,
         "old": "pyscarcopula/_cpp/src/copula/families/student.cpp:eps",
         "semantic": "preserve the current value, bounds, and usage semantics",
         "source": "pyscarcopula/_cpp/src/copula/families/student.cpp",
@@ -1572,7 +1591,7 @@
       },
       {
         "kind": "cpp",
-        "line": 174,
+        "line": 181,
         "old": "pyscarcopula/_cpp/src/copula/families/student.cpp:fpmin",
         "semantic": "preserve the current value, bounds, and usage semantics",
         "source": "pyscarcopula/_cpp/src/copula/families/student.cpp",
@@ -1582,7 +1601,7 @@
       },
       {
         "kind": "cpp",
-        "line": 1365,
+        "line": 1372,
         "old": "pyscarcopula/_cpp/src/copula/families/student.cpp:min_rows_per_block",
         "semantic": "preserve the current value, bounds, and usage semantics",
         "source": "pyscarcopula/_cpp/src/copula/families/student.cpp",
@@ -1592,7 +1611,7 @@
       },
       {
         "kind": "cpp",
-        "line": 16,
+        "line": 19,
         "old": "pyscarcopula/_cpp/src/copula/multivariate.cpp:kStudentGridMinRowsPerBlock",
         "semantic": "preserve the current value, bounds, and usage semantics",
         "source": "pyscarcopula/_cpp/src/copula/multivariate.cpp",
@@ -1602,7 +1621,7 @@
       },
       {
         "kind": "cpp",
-        "line": 17,
+        "line": 20,
         "old": "pyscarcopula/_cpp/src/copula/multivariate.cpp:kEquicorrGridMinRowsPerBlock",
         "semantic": "preserve the current value, bounds, and usage semantics",
         "source": "pyscarcopula/_cpp/src/copula/multivariate.cpp",
@@ -1612,7 +1631,7 @@
       },
       {
         "kind": "cpp",
-        "line": 18,
+        "line": 21,
         "old": "pyscarcopula/_cpp/src/copula/multivariate.cpp:kEquicorrGridMinCells",
         "semantic": "preserve the current value, bounds, and usage semantics",
         "source": "pyscarcopula/_cpp/src/copula/multivariate.cpp",
@@ -1622,7 +1641,7 @@
       },
       {
         "kind": "cpp",
-        "line": 19,
+        "line": 22,
         "old": "pyscarcopula/_cpp/src/copula/multivariate.cpp:kStudentRowsMinCells",
         "semantic": "preserve the current value, bounds, and usage semantics",
         "source": "pyscarcopula/_cpp/src/copula/multivariate.cpp",
@@ -1632,7 +1651,7 @@
       },
       {
         "kind": "cpp",
-        "line": 20,
+        "line": 23,
         "old": "pyscarcopula/_cpp/src/copula/multivariate.cpp:kEquicorrPreparationMinCells",
         "semantic": "preserve the current value, bounds, and usage semantics",
         "source": "pyscarcopula/_cpp/src/copula/multivariate.cpp",
@@ -1642,7 +1661,7 @@
       },
       {
         "kind": "cpp",
-        "line": 341,
+        "line": 344,
         "old": "pyscarcopula/_cpp/src/copula/multivariate.cpp:min_rows",
         "semantic": "preserve the current value, bounds, and usage semantics",
         "source": "pyscarcopula/_cpp/src/copula/multivariate.cpp",
@@ -1652,7 +1671,7 @@
       },
       {
         "kind": "cpp",
-        "line": 342,
+        "line": 345,
         "old": "pyscarcopula/_cpp/src/copula/multivariate.cpp:min_work",
         "semantic": "preserve the current value, bounds, and usage semantics",
         "source": "pyscarcopula/_cpp/src/copula/multivariate.cpp",
@@ -1692,7 +1711,7 @@
       },
       {
         "kind": "cpp",
-        "line": 16,
+        "line": 21,
         "old": "pyscarcopula/_cpp/src/likelihood/static.cpp:kExpensiveMinRows",
         "semantic": "preserve the current value, bounds, and usage semantics",
         "source": "pyscarcopula/_cpp/src/likelihood/static.cpp",
@@ -1702,7 +1721,7 @@
       },
       {
         "kind": "cpp",
-        "line": 17,
+        "line": 22,
         "old": "pyscarcopula/_cpp/src/likelihood/static.cpp:kExpensiveMinWork",
         "semantic": "preserve the current value, bounds, and usage semantics",
         "source": "pyscarcopula/_cpp/src/likelihood/static.cpp",
@@ -1712,7 +1731,7 @@
       },
       {
         "kind": "cpp",
-        "line": 18,
+        "line": 23,
         "old": "pyscarcopula/_cpp/src/likelihood/static.cpp:kCheapMinRows",
         "semantic": "preserve the current value, bounds, and usage semantics",
         "source": "pyscarcopula/_cpp/src/likelihood/static.cpp",
@@ -1722,7 +1741,7 @@
       },
       {
         "kind": "cpp",
-        "line": 19,
+        "line": 24,
         "old": "pyscarcopula/_cpp/src/likelihood/static.cpp:kCheapMinWork",
         "semantic": "preserve the current value, bounds, and usage semantics",
         "source": "pyscarcopula/_cpp/src/likelihood/static.cpp",
@@ -1742,7 +1761,7 @@
       },
       {
         "kind": "cpp",
-        "line": 98,
+        "line": 102,
         "old": "pyscarcopula/_cpp/src/scar_ou/monte_carlo.cpp:min_cells_student",
         "semantic": "preserve the current value, bounds, and usage semantics",
         "source": "pyscarcopula/_cpp/src/scar_ou/monte_carlo.cpp",
@@ -1752,7 +1771,7 @@
       },
       {
         "kind": "cpp",
-        "line": 99,
+        "line": 103,
         "old": "pyscarcopula/_cpp/src/scar_ou/monte_carlo.cpp:min_cells_other",
         "semantic": "preserve the current value, bounds, and usage semantics",
         "source": "pyscarcopula/_cpp/src/scar_ou/monte_carlo.cpp",
@@ -1762,7 +1781,7 @@
       },
       {
         "kind": "cpp",
-        "line": 100,
+        "line": 104,
         "old": "pyscarcopula/_cpp/src/scar_ou/monte_carlo.cpp:min_cells_per_block",
         "semantic": "preserve the current value, bounds, and usage semantics",
         "source": "pyscarcopula/_cpp/src/scar_ou/monte_carlo.cpp",
@@ -1772,7 +1791,7 @@
       },
       {
         "kind": "cpp",
-        "line": 1042,
+        "line": 1046,
         "old": "pyscarcopula/_cpp/src/vine/executor.cpp:conditional_max_block_rows",
         "semantic": "preserve the current value, bounds, and usage semantics",
         "source": "pyscarcopula/_cpp/src/vine/executor.cpp",
@@ -1782,7 +1801,7 @@
       },
       {
         "kind": "cpp",
-        "line": 1043,
+        "line": 1047,
         "old": "pyscarcopula/_cpp/src/vine/executor.cpp:conditional_workspace_budget",
         "semantic": "preserve the current value, bounds, and usage semantics",
         "source": "pyscarcopula/_cpp/src/vine/executor.cpp",
@@ -1982,119 +2001,119 @@
         "value_expression": "1e-6"
       },
       {
-        "line": 11,
+        "line": 16,
         "owner": "current C++ translation unit/namespace",
         "source": "pyscarcopula/_cpp/src/copula/dispatch.cpp",
         "symbol": "kEquicorrGridMinRowsPerBlock",
         "value_expression": "64"
       },
       {
-        "line": 12,
+        "line": 17,
         "owner": "current C++ translation unit/namespace",
         "source": "pyscarcopula/_cpp/src/copula/dispatch.cpp",
         "symbol": "kEquicorrGridMinCells",
         "value_expression": "262144"
       },
       {
-        "line": 916,
+        "line": 590,
         "owner": "current C++ translation unit/namespace",
         "source": "pyscarcopula/_cpp/src/copula/dispatch.cpp",
         "symbol": "min_rows_per_block",
         "value_expression": "8"
       },
       {
-        "line": 121,
+        "line": 128,
         "owner": "current C++ translation unit/namespace",
         "source": "pyscarcopula/_cpp/src/copula/families/student.cpp",
         "symbol": "max_iter",
         "value_expression": "200"
       },
       {
-        "line": 122,
+        "line": 129,
         "owner": "current C++ translation unit/namespace",
         "source": "pyscarcopula/_cpp/src/copula/families/student.cpp",
         "symbol": "eps",
         "value_expression": "3e-14"
       },
       {
-        "line": 123,
+        "line": 130,
         "owner": "current C++ translation unit/namespace",
         "source": "pyscarcopula/_cpp/src/copula/families/student.cpp",
         "symbol": "fpmin",
         "value_expression": "1e-300"
       },
       {
-        "line": 172,
+        "line": 179,
         "owner": "current C++ translation unit/namespace",
         "source": "pyscarcopula/_cpp/src/copula/families/student.cpp",
         "symbol": "max_iter",
         "value_expression": "200"
       },
       {
-        "line": 173,
+        "line": 180,
         "owner": "current C++ translation unit/namespace",
         "source": "pyscarcopula/_cpp/src/copula/families/student.cpp",
         "symbol": "eps",
         "value_expression": "3e-14"
       },
       {
-        "line": 174,
+        "line": 181,
         "owner": "current C++ translation unit/namespace",
         "source": "pyscarcopula/_cpp/src/copula/families/student.cpp",
         "symbol": "fpmin",
         "value_expression": "1e-300"
       },
       {
-        "line": 1365,
+        "line": 1372,
         "owner": "current C++ translation unit/namespace",
         "source": "pyscarcopula/_cpp/src/copula/families/student.cpp",
         "symbol": "min_rows_per_block",
         "value_expression": "8"
       },
       {
-        "line": 16,
+        "line": 19,
         "owner": "current C++ translation unit/namespace",
         "source": "pyscarcopula/_cpp/src/copula/multivariate.cpp",
         "symbol": "kStudentGridMinRowsPerBlock",
         "value_expression": "8"
       },
       {
-        "line": 17,
+        "line": 20,
         "owner": "current C++ translation unit/namespace",
         "source": "pyscarcopula/_cpp/src/copula/multivariate.cpp",
         "symbol": "kEquicorrGridMinRowsPerBlock",
         "value_expression": "64"
       },
       {
-        "line": 18,
+        "line": 21,
         "owner": "current C++ translation unit/namespace",
         "source": "pyscarcopula/_cpp/src/copula/multivariate.cpp",
         "symbol": "kEquicorrGridMinCells",
         "value_expression": "262144"
       },
       {
-        "line": 19,
+        "line": 22,
         "owner": "current C++ translation unit/namespace",
         "source": "pyscarcopula/_cpp/src/copula/multivariate.cpp",
         "symbol": "kStudentRowsMinCells",
         "value_expression": "4096"
       },
       {
-        "line": 20,
+        "line": 23,
         "owner": "current C++ translation unit/namespace",
         "source": "pyscarcopula/_cpp/src/copula/multivariate.cpp",
         "symbol": "kEquicorrPreparationMinCells",
         "value_expression": "4096"
       },
       {
-        "line": 341,
+        "line": 344,
         "owner": "current C++ translation unit/namespace",
         "source": "pyscarcopula/_cpp/src/copula/multivariate.cpp",
         "symbol": "min_rows",
         "value_expression": "32"
       },
       {
-        "line": 342,
+        "line": 345,
         "owner": "current C++ translation unit/namespace",
         "source": "pyscarcopula/_cpp/src/copula/multivariate.cpp",
         "symbol": "min_work",
@@ -2122,28 +2141,28 @@
         "value_expression": "1e-12"
       },
       {
-        "line": 16,
+        "line": 21,
         "owner": "current C++ translation unit/namespace",
         "source": "pyscarcopula/_cpp/src/likelihood/static.cpp",
         "symbol": "kExpensiveMinRows",
         "value_expression": "8"
       },
       {
-        "line": 17,
+        "line": 22,
         "owner": "current C++ translation unit/namespace",
         "source": "pyscarcopula/_cpp/src/likelihood/static.cpp",
         "symbol": "kExpensiveMinWork",
         "value_expression": "4096"
       },
       {
-        "line": 18,
+        "line": 23,
         "owner": "current C++ translation unit/namespace",
         "source": "pyscarcopula/_cpp/src/likelihood/static.cpp",
         "symbol": "kCheapMinRows",
         "value_expression": "1024"
       },
       {
-        "line": 19,
+        "line": 24,
         "owner": "current C++ translation unit/namespace",
         "source": "pyscarcopula/_cpp/src/likelihood/static.cpp",
         "symbol": "kCheapMinWork",
@@ -2157,35 +2176,35 @@
         "value_expression": "numerical::kPseudoObservationEps"
       },
       {
-        "line": 98,
+        "line": 102,
         "owner": "current C++ translation unit/namespace",
         "source": "pyscarcopula/_cpp/src/scar_ou/monte_carlo.cpp",
         "symbol": "min_cells_student",
         "value_expression": "4096"
       },
       {
-        "line": 99,
+        "line": 103,
         "owner": "current C++ translation unit/namespace",
         "source": "pyscarcopula/_cpp/src/scar_ou/monte_carlo.cpp",
         "symbol": "min_cells_other",
         "value_expression": "262144"
       },
       {
-        "line": 100,
+        "line": 104,
         "owner": "current C++ translation unit/namespace",
         "source": "pyscarcopula/_cpp/src/scar_ou/monte_carlo.cpp",
         "symbol": "min_cells_per_block",
         "value_expression": "1024"
       },
       {
-        "line": 1042,
+        "line": 1046,
         "owner": "current C++ translation unit/namespace",
         "source": "pyscarcopula/_cpp/src/vine/executor.cpp",
         "symbol": "conditional_max_block_rows",
         "value_expression": "1024"
       },
       {
-        "line": 1043,
+        "line": 1047,
         "owner": "current C++ translation unit/namespace",
         "source": "pyscarcopula/_cpp/src/vine/executor.cpp",
         "symbol": "conditional_workspace_budget",
@@ -2229,54 +2248,7 @@
         "value": 1e-12
       },
       {
-        "line": 11,
-        "owner": "pyscarcopula._cpp.build_support.sources",
-        "source": "pyscarcopula/_cpp/build_support/sources.py",
-        "symbol": "SCAR_COMPUTE_SOURCES",
-        "value": [
-          "copula/core.cpp",
-          "copula/common.cpp",
-          "copula/rotation.cpp",
-          "copula/transforms.cpp",
-          "copula/dispatch.cpp",
-          "copula/families/clayton.cpp",
-          "copula/families/gumbel.cpp",
-          "copula/families/frank.cpp",
-          "copula/families/joe.cpp",
-          "copula/families/gaussian.cpp",
-          "copula/kendall.cpp",
-          "copula/families/student.cpp",
-          "copula/multivariate.cpp",
-          "copula/student_rosenblatt.cpp",
-          "factor/operator.cpp",
-          "factor/grid.cpp",
-          "factor/student.cpp",
-          "math/normal.cpp",
-          "parallel/runtime.cpp",
-          "likelihood/static.cpp",
-          "gas/evaluator.cpp",
-          "vine/executor.cpp",
-          "vine/density.cpp",
-          "vine/mcmc.cpp",
-          "vine/rosenblatt.cpp",
-          "gas/rvine_sampler.cpp",
-          "scar_ou/monte_carlo.cpp",
-          "scar_ou/validation.cpp",
-          "scar_ou/likelihood.cpp",
-          "scar_ou/gradient.cpp",
-          "scar_ou/prediction.cpp",
-          "scar_ou/gaussian_rosenblatt.cpp",
-          "scar_ou/student_rosenblatt.cpp",
-          "scar_ou/state_distribution.cpp",
-          "scar_ou/evaluator.cpp",
-          "scar_ou/prepared.cpp",
-          "scar_ou/grid.cpp",
-          "scar_ou/quadrature.cpp",
-          "scar_ou/transition.cpp"
-        ]
-      },
-      {
-        "line": 53,
+        "line": 85,
         "owner": "pyscarcopula._cpp.build_support.sources",
         "source": "pyscarcopula/_cpp/build_support/sources.py",
         "symbol": "PYTHON_BINDING_SOURCES",
@@ -2732,7 +2704,7 @@
         "value": null
       },
       {
-        "line": 37,
+        "line": 36,
         "owner": "pyscarcopula.numerical._cpp_rvine",
         "source": "pyscarcopula/numerical/_cpp_rvine.py",
         "symbol": "_NATIVE_EQUIVALENT_ATTR",
@@ -2965,6 +2937,69 @@
         "source": "pyscarcopula/vine/vine.py",
         "symbol": "_DEFAULT_STATIC_SAMPLE_BATCH_ROWS",
         "value": 8192
+      },
+      {
+        "line": 43,
+        "owner": "pyscarcopula._cpp.build_support.sources",
+        "source": "pyscarcopula/_cpp/build_support/sources.py",
+        "symbol": "PAIR_FAMILY_SOURCES",
+        "value": [
+          "copula/pair/independent.cpp",
+          "copula/pair/clayton.cpp",
+          "copula/pair/gumbel.cpp",
+          "copula/pair/frank.cpp",
+          "copula/pair/joe.cpp",
+          "copula/pair/gaussian.cpp"
+        ]
+      },
+      {
+        "line": 46,
+        "owner": "pyscarcopula._cpp.build_support.sources",
+        "source": "pyscarcopula/_cpp/build_support/sources.py",
+        "symbol": "SCAR_COMPUTE_SOURCES",
+        "value": [
+          "copula/core.cpp",
+          "copula/common.cpp",
+          "copula/rotation.cpp",
+          "copula/transforms.cpp",
+          "copula/dispatch.cpp",
+          "copula/pair/runtime_registry.cpp",
+          "copula/pair/independent.cpp",
+          "copula/pair/clayton.cpp",
+          "copula/pair/gumbel.cpp",
+          "copula/pair/frank.cpp",
+          "copula/pair/joe.cpp",
+          "copula/pair/gaussian.cpp",
+          "copula/kendall.cpp",
+          "copula/families/student.cpp",
+          "copula/multivariate.cpp",
+          "copula/student_rosenblatt.cpp",
+          "factor/operator.cpp",
+          "factor/grid.cpp",
+          "factor/student.cpp",
+          "math/normal.cpp",
+          "parallel/runtime.cpp",
+          "likelihood/static.cpp",
+          "gas/evaluator.cpp",
+          "vine/executor.cpp",
+          "vine/density.cpp",
+          "vine/mcmc.cpp",
+          "vine/rosenblatt.cpp",
+          "gas/rvine_sampler.cpp",
+          "scar_ou/monte_carlo.cpp",
+          "scar_ou/validation.cpp",
+          "scar_ou/likelihood.cpp",
+          "scar_ou/gradient.cpp",
+          "scar_ou/prediction.cpp",
+          "scar_ou/gaussian_rosenblatt.cpp",
+          "scar_ou/student_rosenblatt.cpp",
+          "scar_ou/state_distribution.cpp",
+          "scar_ou/evaluator.cpp",
+          "scar_ou/prepared.cpp",
+          "scar_ou/grid.cpp",
+          "scar_ou/quadrature.cpp",
+          "scar_ou/transition.cpp"
+        ]
       }
     ],
     "model_operation_matrix": [
@@ -3789,10 +3824,33 @@
     "include_graph": {
       "pyscarcopula/_cpp/include/scar/copula.hpp": [
         "scar/copula/model_descriptor.hpp",
+        "scar/copula/pair/families.def",
         "scar/copula/rotation.hpp",
         "scar/copula/transforms.hpp",
         "scar/core/span.hpp",
         "scar/observation.hpp"
+      ],
+      "pyscarcopula/_cpp/include/scar/copula/pair/clayton.hpp": [
+        "scar/copula/pair/kernel.hpp"
+      ],
+      "pyscarcopula/_cpp/include/scar/copula/pair/frank.hpp": [
+        "scar/copula/pair/kernel.hpp"
+      ],
+      "pyscarcopula/_cpp/include/scar/copula/pair/gaussian.hpp": [
+        "scar/copula/pair/kernel.hpp"
+      ],
+      "pyscarcopula/_cpp/include/scar/copula/pair/gumbel.hpp": [
+        "scar/copula/pair/kernel.hpp"
+      ],
+      "pyscarcopula/_cpp/include/scar/copula/pair/independent.hpp": [
+        "scar/copula/pair/kernel.hpp"
+      ],
+      "pyscarcopula/_cpp/include/scar/copula/pair/joe.hpp": [
+        "scar/copula/pair/kernel.hpp"
+      ],
+      "pyscarcopula/_cpp/include/scar/copula/prepared_pair_kernel.hpp": [
+        "scar/copula.hpp",
+        "scar/copula/pair/kernel.hpp"
       ],
       "pyscarcopula/_cpp/include/scar/core/matrix_view.hpp": [
         "scar/core/span.hpp"
@@ -3800,12 +3858,14 @@
       "pyscarcopula/_cpp/include/scar/core/result.hpp": [
         "scar/core/status.hpp"
       ],
-      "pyscarcopula/_cpp/include/scar/detail/copula.hpp": [
-        "scar/copula.hpp",
-        "scar/copula/rotation.hpp",
-        "scar/copula/transforms.hpp",
-        "scar/detail/safety.hpp",
-        "scar/math/normal.hpp"
+      "pyscarcopula/_cpp/include/scar/detail/copula/common.hpp": [
+        "scar/copula.hpp"
+      ],
+      "pyscarcopula/_cpp/include/scar/detail/copula/dispatch.hpp": [
+        "scar/copula.hpp"
+      ],
+      "pyscarcopula/_cpp/include/scar/detail/copula/student.hpp": [
+        "scar/copula.hpp"
       ],
       "pyscarcopula/_cpp/include/scar/detail/parallel.hpp": [
         "scar/core/threading.hpp"
@@ -3818,7 +3878,8 @@
         "scar/copula.hpp"
       ],
       "pyscarcopula/_cpp/include/scar/detail/scar_ou/transition.hpp": [
-        "scar/detail/copula.hpp",
+        "scar/detail/copula/dispatch.hpp",
+        "scar/detail/safety.hpp",
         "scar/detail/scar_ou/grid.hpp"
       ],
       "pyscarcopula/_cpp/include/scar/gas.hpp": [
@@ -3850,12 +3911,13 @@
       ],
       "pyscarcopula/_cpp/src/bindings/common.cpp": [
         "scar/copula.hpp",
+        "scar/copula/pair/families.def",
         "scar/gas.hpp",
         "scar/ou.hpp"
       ],
       "pyscarcopula/_cpp/src/bindings/common.hpp": [
         "scar/copula.hpp",
-        "scar/detail/copula.hpp",
+        "scar/detail/copula/student.hpp",
         "scar/detail/safety.hpp",
         "scar/detail/scar_ou/quadrature.hpp",
         "scar/factor.hpp",
@@ -3863,6 +3925,9 @@
         "scar/gas_rvine.hpp",
         "scar/ou.hpp",
         "scar/rvine.hpp"
+      ],
+      "pyscarcopula/_cpp/src/bindings/copula.cpp": [
+        "scar/copula/prepared_pair_kernel.hpp"
       ],
       "pyscarcopula/_cpp/src/bindings/factor.cpp": [
         "scar/factor.hpp"
@@ -3875,53 +3940,84 @@
         "scar/detail/scar_ou/transition.hpp"
       ],
       "pyscarcopula/_cpp/src/copula/common.cpp": [
-        "scar/detail/copula.hpp"
+        "scar/copula/transforms.hpp",
+        "scar/detail/copula/common.hpp",
+        "scar/math/normal.hpp"
       ],
       "pyscarcopula/_cpp/src/copula/core.cpp": [
         "scar/copula.hpp",
-        "scar/detail/copula.hpp"
+        "scar/copula/prepared_pair_kernel.hpp",
+        "scar/detail/copula/common.hpp",
+        "scar/detail/copula/dispatch.hpp",
+        "scar/detail/safety.hpp"
       ],
       "pyscarcopula/_cpp/src/copula/dispatch.cpp": [
-        "scar/detail/copula.hpp",
+        "scar/copula/pair/gaussian.hpp",
+        "scar/copula/prepared_pair_kernel.hpp",
+        "scar/detail/copula/common.hpp",
+        "scar/detail/copula/dispatch.hpp",
+        "scar/detail/copula/student.hpp",
         "scar/detail/parallel.hpp",
+        "scar/detail/safety.hpp",
         "scar/factor.hpp"
-      ],
-      "pyscarcopula/_cpp/src/copula/families/clayton.cpp": [
-        "scar/detail/copula.hpp"
-      ],
-      "pyscarcopula/_cpp/src/copula/families/frank.cpp": [
-        "scar/detail/copula.hpp"
-      ],
-      "pyscarcopula/_cpp/src/copula/families/gaussian.cpp": [
-        "scar/detail/copula.hpp"
-      ],
-      "pyscarcopula/_cpp/src/copula/families/gumbel.cpp": [
-        "scar/detail/copula.hpp"
-      ],
-      "pyscarcopula/_cpp/src/copula/families/joe.cpp": [
-        "scar/detail/copula.hpp"
       ],
       "pyscarcopula/_cpp/src/copula/families/student.cpp": [
-        "scar/detail/copula.hpp",
+        "scar/detail/copula/common.hpp",
+        "scar/detail/copula/student.hpp",
         "scar/detail/parallel.hpp",
-        "scar/factor.hpp"
+        "scar/detail/safety.hpp",
+        "scar/factor.hpp",
+        "scar/math/normal.hpp"
       ],
       "pyscarcopula/_cpp/src/copula/kendall.cpp": [
-        "scar/detail/copula.hpp"
+        "scar/copula/prepared_pair_kernel.hpp"
       ],
       "pyscarcopula/_cpp/src/copula/multivariate.cpp": [
         "scar/copula.hpp",
-        "scar/detail/copula.hpp",
+        "scar/detail/copula/common.hpp",
+        "scar/detail/copula/student.hpp",
         "scar/detail/linalg.hpp",
         "scar/detail/parallel.hpp",
+        "scar/detail/safety.hpp",
+        "scar/math/normal.hpp",
         "scar/status.hpp"
+      ],
+      "pyscarcopula/_cpp/src/copula/pair/clayton.cpp": [
+        "scar/copula/pair/clayton.hpp",
+        "scar/detail/safety.hpp"
+      ],
+      "pyscarcopula/_cpp/src/copula/pair/frank.cpp": [
+        "scar/copula/pair/frank.hpp",
+        "scar/detail/copula/common.hpp",
+        "scar/detail/safety.hpp"
+      ],
+      "pyscarcopula/_cpp/src/copula/pair/gaussian.cpp": [
+        "scar/copula/pair/gaussian.hpp",
+        "scar/detail/safety.hpp",
+        "scar/math/normal.hpp"
+      ],
+      "pyscarcopula/_cpp/src/copula/pair/gumbel.cpp": [
+        "scar/copula/pair/gumbel.hpp",
+        "scar/detail/safety.hpp"
+      ],
+      "pyscarcopula/_cpp/src/copula/pair/independent.cpp": [
+        "scar/copula/pair/independent.hpp"
+      ],
+      "pyscarcopula/_cpp/src/copula/pair/joe.cpp": [
+        "scar/copula/pair/joe.hpp",
+        "scar/detail/copula/common.hpp",
+        "scar/detail/safety.hpp"
+      ],
+      "pyscarcopula/_cpp/src/copula/pair/runtime_registry.cpp": [
+        "scar/copula/pair/families.def",
+        "scar/copula/prepared_pair_kernel.hpp"
       ],
       "pyscarcopula/_cpp/src/copula/rotation.cpp": [
         "scar/copula/rotation.hpp"
       ],
       "pyscarcopula/_cpp/src/copula/student_rosenblatt.cpp": [
         "scar/copula.hpp",
-        "scar/detail/copula.hpp",
+        "scar/detail/copula/student.hpp",
         "scar/detail/linalg.hpp",
         "scar/detail/parallel.hpp",
         "scar/detail/safety.hpp",
@@ -3931,7 +4027,7 @@
         "scar/copula/transforms.hpp"
       ],
       "pyscarcopula/_cpp/src/factor/grid.cpp": [
-        "scar/detail/copula.hpp",
+        "scar/detail/copula/student.hpp",
         "scar/detail/parallel.hpp",
         "scar/detail/safety.hpp",
         "scar/factor.hpp"
@@ -3943,13 +4039,17 @@
         "scar/factor.hpp"
       ],
       "pyscarcopula/_cpp/src/factor/student.cpp": [
-        "scar/detail/copula.hpp",
+        "scar/detail/copula/student.hpp",
         "scar/detail/parallel.hpp",
         "scar/detail/safety.hpp",
         "scar/factor.hpp"
       ],
       "pyscarcopula/_cpp/src/gas/evaluator.cpp": [
-        "scar/detail/copula.hpp",
+        "scar/copula/rotation.hpp",
+        "scar/detail/copula/common.hpp",
+        "scar/detail/copula/dispatch.hpp",
+        "scar/detail/copula/student.hpp",
+        "scar/detail/safety.hpp",
         "scar/gas.hpp"
       ],
       "pyscarcopula/_cpp/src/gas/rvine_sampler.cpp": [
@@ -3959,9 +4059,14 @@
       ],
       "pyscarcopula/_cpp/src/likelihood/static.cpp": [
         "scar/copula.hpp",
-        "scar/detail/copula.hpp",
+        "scar/copula/rotation.hpp",
+        "scar/detail/copula/common.hpp",
+        "scar/detail/copula/dispatch.hpp",
+        "scar/detail/copula/student.hpp",
         "scar/detail/parallel.hpp",
+        "scar/detail/safety.hpp",
         "scar/factor.hpp",
+        "scar/math/normal.hpp",
         "scar/status.hpp"
       ],
       "pyscarcopula/_cpp/src/math/normal.cpp": [
@@ -3981,14 +4086,17 @@
         "scar/ou.hpp"
       ],
       "pyscarcopula/_cpp/src/scar_ou/gaussian_rosenblatt.cpp": [
-        "scar/detail/copula.hpp",
+        "scar/detail/copula/common.hpp",
         "scar/detail/safety.hpp",
         "scar/detail/scar_ou/grid.hpp",
         "scar/detail/scar_ou/transition.hpp",
+        "scar/math/normal.hpp",
         "scar/ou.hpp"
       ],
       "pyscarcopula/_cpp/src/scar_ou/gradient.cpp": [
-        "scar/detail/copula.hpp",
+        "scar/detail/copula/common.hpp",
+        "scar/detail/copula/dispatch.hpp",
+        "scar/detail/copula/student.hpp",
         "scar/detail/linalg.hpp",
         "scar/detail/safety.hpp",
         "scar/detail/scar_ou/grid.hpp",
@@ -3997,12 +4105,12 @@
         "scar/ou.hpp"
       ],
       "pyscarcopula/_cpp/src/scar_ou/grid.cpp": [
-        "scar/detail/copula.hpp",
         "scar/detail/safety.hpp",
         "scar/detail/scar_ou/grid.hpp"
       ],
       "pyscarcopula/_cpp/src/scar_ou/likelihood.cpp": [
-        "scar/detail/copula.hpp",
+        "scar/detail/copula/common.hpp",
+        "scar/detail/copula/dispatch.hpp",
         "scar/detail/safety.hpp",
         "scar/detail/scar_ou/grid.hpp",
         "scar/detail/scar_ou/quadrature.hpp",
@@ -4010,8 +4118,12 @@
         "scar/ou.hpp"
       ],
       "pyscarcopula/_cpp/src/scar_ou/monte_carlo.cpp": [
-        "scar/detail/copula.hpp",
+        "scar/copula/rotation.hpp",
+        "scar/detail/copula/common.hpp",
+        "scar/detail/copula/dispatch.hpp",
+        "scar/detail/copula/student.hpp",
         "scar/detail/parallel.hpp",
+        "scar/detail/safety.hpp",
         "scar/factor.hpp",
         "scar/ou.hpp"
       ],
@@ -4023,8 +4135,10 @@
         "scar/ou.hpp"
       ],
       "pyscarcopula/_cpp/src/scar_ou/prepared.cpp": [
-        "scar/detail/copula.hpp",
+        "scar/copula/rotation.hpp",
+        "scar/detail/copula/common.hpp",
         "scar/detail/safety.hpp",
+        "scar/math/normal.hpp",
         "scar/ou.hpp"
       ],
       "pyscarcopula/_cpp/src/scar_ou/quadrature.cpp": [
@@ -4039,7 +4153,8 @@
         "scar/ou.hpp"
       ],
       "pyscarcopula/_cpp/src/scar_ou/student_rosenblatt.cpp": [
-        "scar/detail/copula.hpp",
+        "scar/detail/copula/common.hpp",
+        "scar/detail/copula/student.hpp",
         "scar/detail/linalg.hpp",
         "scar/detail/safety.hpp",
         "scar/detail/scar_ou/grid.hpp",
@@ -4048,6 +4163,8 @@
         "scar/ou.hpp"
       ],
       "pyscarcopula/_cpp/src/scar_ou/transition.cpp": [
+        "scar/copula/pair/gaussian.hpp",
+        "scar/detail/copula/common.hpp",
         "scar/detail/linalg.hpp",
         "scar/detail/safety.hpp",
         "scar/detail/scar_ou/quadrature.hpp",
@@ -4056,7 +4173,7 @@
       ],
       "pyscarcopula/_cpp/src/scar_ou/validation.cpp": [
         "scar/core/threading.hpp",
-        "scar/detail/copula.hpp",
+        "scar/detail/copula/dispatch.hpp",
         "scar/detail/safety.hpp",
         "scar/detail/scar_ou/grid.hpp",
         "scar/ou.hpp"
@@ -4067,9 +4184,13 @@
         "scar/rvine.hpp"
       ],
       "pyscarcopula/_cpp/src/vine/executor.cpp": [
+        "scar/copula/pair/gaussian.hpp",
+        "scar/copula/rotation.hpp",
         "scar/core/threading.hpp",
-        "scar/detail/copula.hpp",
+        "scar/detail/copula/common.hpp",
+        "scar/detail/copula/dispatch.hpp",
         "scar/detail/safety.hpp",
+        "scar/math/normal.hpp",
         "scar/rvine.hpp"
       ],
       "pyscarcopula/_cpp/src/vine/mcmc.cpp": [
@@ -4130,6 +4251,7 @@
       "_FactorCorrelationOperator",
       "_SparseTransitionOperator",
       "_clear_hermite_rule_cache",
+      "_default_pair_copula_spec",
       "_factor_student_joint_likelihood_gradient",
       "_factor_student_log_pdf_and_dlog_ddf",
       "_factor_student_log_pdf_and_dlog_ddf_grid",
@@ -4803,5 +4925,5 @@
     ]
   },
   "schema_version": 1,
-  "source_commit": "ffad2100dfb477cfdfc9175ee117f898bb846b84"
+  "source_commit": "5f5c7b2eda166b481d65bbdc066a7a042826e8d8"
 }

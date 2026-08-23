@@ -1,6 +1,6 @@
 #include "scar/copula.hpp"
 
-#include "scar/detail/copula.hpp"
+#include "scar/detail/copula/student.hpp"
 #include "scar/detail/linalg.hpp"
 #include "scar/detail/parallel.hpp"
 #include "scar/detail/safety.hpp"

@@ -5,6 +5,8 @@ from pyscarcopula.copula.base import BivariateCopula
 
 class ClaytonCopula(BivariateCopula):
 
+    _native_pair_family = "Clayton"
+
     def __init__(self, rotate: int = 0, transform_type: str = "softplus"):
         super().__init__(rotate)
         self._name = "Clayton copula"

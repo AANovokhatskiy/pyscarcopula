@@ -24,6 +24,8 @@ class IndependentCopula(BivariateCopula):
     are set to independent, eliminating all fit/forward-pass cost.
     """
 
+    _native_pair_family = "Independent"
+
     def __init__(self, rotate: int = 0):
         # rotation is meaningless for independence, but accept it
         # to keep the interface uniform

@@ -1,6 +1,10 @@
 #include "scar/gas.hpp"
 
-#include "scar/detail/copula.hpp"
+#include "scar/copula/rotation.hpp"
+#include "scar/detail/copula/common.hpp"
+#include "scar/detail/copula/dispatch.hpp"
+#include "scar/detail/copula/student.hpp"
+#include "scar/detail/safety.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -55,7 +59,7 @@ int validate_copula(const CopulaSpec& copula) {
     if (copula.dim != 2) {
         return SCAR_INVALID_FAMILY;
     }
-    if (!scar_internal::is_valid_rotation(
+    if (!scar::copula::is_valid_rotation(
             static_cast<int>(copula.rotation))) {
         return SCAR_INVALID_ROTATION;
     }
@@ -175,7 +179,7 @@ double log_pdf_at_g(
     }
     double v1 = 0.0;
     double v2 = 0.0;
-    scar_internal::apply_rotation(
+    scar::copula::apply_rotation(
         row[0], row[1], static_cast<int>(copula.rotation), v1, v2);
     return scar_internal::copula_log_pdf_unrotated(
         copula, v1, v2, r);
@@ -246,7 +250,7 @@ RowEvaluation evaluate_row(
     } else {
         double v1 = 0.0;
         double v2 = 0.0;
-        scar_internal::apply_rotation(
+        scar::copula::apply_rotation(
             row[0], row[1], static_cast<int>(copula.rotation), v1, v2);
         out.log_likelihood = scar_internal::copula_log_pdf_unrotated(
             copula, v1, v2, out.r);

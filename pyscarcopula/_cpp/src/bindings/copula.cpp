@@ -1,5 +1,7 @@
 #include "common.hpp"
 
+#include "scar/copula/prepared_pair_kernel.hpp"
+
 namespace py = pybind11;
 
 namespace pyscarcopula::bindings {
@@ -34,6 +36,11 @@ void bind_copula(py::module_& m) {
             &set_student_ppf_cache,
             py::arg("nodes"),
             py::arg("table"));
+
+    m.def(
+        "_default_pair_copula_spec",
+        &scar::default_pair_copula_spec,
+        py::arg("family"));
 
     py::class_<scar::StaticCopulaEvaluator>(
         m,

@@ -1,8 +1,11 @@
 #include "scar/copula.hpp"
 
-#include "scar/detail/copula.hpp"
+#include "scar/detail/copula/common.hpp"
+#include "scar/detail/copula/student.hpp"
 #include "scar/detail/linalg.hpp"
 #include "scar/detail/parallel.hpp"
+#include "scar/detail/safety.hpp"
+#include "scar/math/normal.hpp"
 #include "scar/status.hpp"
 
 #include <algorithm>
@@ -600,7 +603,7 @@ EquicorrPreparationResult prepare_equicorr_sufficient_statistics(
                     scar_internal::clip_pseudo_observation(value);
                 local_clipping += clipped != value ? 1U : 0U;
                 const double z =
-                    scar_internal::normal_quantile_refined(clipped);
+                    scar::math::normal_quantile_refined(clipped);
                 neumaier_add(z, sum, carry);
                 neumaier_add(z * z, sum2, carry2);
             }

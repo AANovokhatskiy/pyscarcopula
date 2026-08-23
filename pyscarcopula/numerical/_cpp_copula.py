@@ -16,9 +16,6 @@ from pyscarcopula.numerical._cpp_extension import CppUnsupported
 
 
 _STUDENT_SPEC_CACHE = weakref.WeakKeyDictionary()
-_ARCHIMEDEAN_TRANSFORMS = frozenset(
-    {"softplus", "xtanh", "exp", "logistic"}
-)
 
 
 def _set_student_ppf_cache(spec, cache) -> None:
@@ -53,6 +50,59 @@ def _native_archimedean_transform(module, transform_name):
         raise CppUnsupported(
             f"Unsupported Archimedean transform: {transform_name!r}"
         ) from exc
+
+
+def _native_pair_family_name(copula) -> str | None:
+    """Return the registered family used for native point operations.
+
+    Subclasses inherit the marker so Python fallback paths can still use the
+    built-in implementation for methods they do not override. Whole native
+    R-vine execution applies its stricter gate before this serializer.
+    """
+
+    value = getattr(type(copula), "_native_pair_family", None)
+    return value if isinstance(value, str) and value else None
+
+
+def _ensure_native_pair_copula(copula) -> str:
+    family_name = _native_pair_family_name(copula)
+    if family_name is None:
+        name = getattr(copula, "name", type(copula).__name__)
+        raise CppUnsupported(
+            f"C++ pair kernels do not support {name}; a registered native "
+            "pair family marker is required"
+        )
+    if int(getattr(copula, "rotate", 0)) not in (0, 90, 180, 270):
+        raise CppUnsupported(
+            f"Invalid rotation for native pair family {family_name}"
+        )
+    return family_name
+
+
+def _make_native_pair_spec(module, copula):
+    family_name = _ensure_native_pair_copula(copula)
+    try:
+        family = getattr(module.CopulaFamily, family_name)
+    except AttributeError as exc:
+        raise CppUnsupported(
+            f"Native pair family {family_name!r} is not registered"
+        ) from exc
+
+    spec = module._default_pair_copula_spec(family)
+    spec.rotation = {
+        0: module.Rotation.R0,
+        90: module.Rotation.R90,
+        180: module.Rotation.R180,
+        270: module.Rotation.R270,
+    }[int(getattr(copula, "rotate", 0))]
+
+    transform_name = _transform_name(copula)
+    if (
+            transform_name
+            and spec.transform != module.Transform.GaussianTanh):
+        spec.transform = _native_archimedean_transform(
+            module, transform_name)
+    return spec
 
 
 def supported_for_scar_ou(copula) -> bool:
@@ -241,30 +291,16 @@ def make_static_likelihood_spec(module, copula, u=None):
 
 def ensure_supported_for_scar_ou(copula) -> None:
     """Validate that ``copula`` is implemented for C++ SCAR-TM-OU."""
+    if _native_pair_family_name(copula) is not None:
+        _ensure_native_pair_copula(copula)
+        return
+
     try:
-        from pyscarcopula.copula.clayton import ClaytonCopula
-        from pyscarcopula.copula.elliptical import BivariateGaussianCopula
-        from pyscarcopula.copula.independent import IndependentCopula
         from pyscarcopula.copula.multivariate.equicorr import EquicorrGaussianCopula
         from pyscarcopula.copula.multivariate.stochastic_student import StochasticStudentCopula
-        from pyscarcopula.copula.frank import FrankCopula
-        from pyscarcopula.copula.gumbel import GumbelCopula
-        from pyscarcopula.copula.joe import JoeCopula
     except ImportError as exc:
         raise CppUnsupported("Required copula classes are not importable") from exc
 
-    archimedean_types = (ClaytonCopula, GumbelCopula, FrankCopula, JoeCopula)
-    if (
-            isinstance(copula, archimedean_types)
-            and _transform_name(copula) in _ARCHIMEDEAN_TRANSFORMS):
-        if isinstance(copula, FrankCopula) and int(getattr(copula, "rotate", 0)) != 0:
-            pass
-        else:
-            return
-    if isinstance(copula, IndependentCopula):
-        return
-    if isinstance(copula, BivariateGaussianCopula):
-        return
     if isinstance(copula, EquicorrGaussianCopula):
         return
     if isinstance(copula, StochasticStudentCopula):
@@ -281,49 +317,16 @@ def ensure_supported_for_scar_ou(copula) -> None:
         return
 
     name = getattr(copula, "name", type(copula).__name__)
-    transform = _transform_name(copula) or "<unknown>"
     raise CppUnsupported(
-        "C++ SCAR-OU kernels currently support only "
-        f"Clayton, Gumbel, Frank, Joe with "
-        f"softplus/xtanh/exp/logistic transforms, "
-        f"IndependentCopula, BivariateGaussianCopula, "
-        f"EquicorrGaussianCopula, and StochasticStudentCopula; got {name} "
-        f"with transform={transform}"
+        "C++ SCAR-OU kernels require a registered native pair family, "
+        "EquicorrGaussianCopula, or StochasticStudentCopula; "
+        f"got {name}"
     )
 
 
 def ensure_supported_for_copula_ops(copula) -> None:
     """Validate that ``copula`` is implemented by the C++ copula core."""
-    try:
-        from pyscarcopula.copula.clayton import ClaytonCopula
-        from pyscarcopula.copula.elliptical import BivariateGaussianCopula
-        from pyscarcopula.copula.frank import FrankCopula
-        from pyscarcopula.copula.gumbel import GumbelCopula
-        from pyscarcopula.copula.independent import IndependentCopula
-        from pyscarcopula.copula.joe import JoeCopula
-    except ImportError as exc:
-        raise CppUnsupported("Required copula classes are not importable") from exc
-
-    if isinstance(copula, IndependentCopula):
-        return
-    if isinstance(copula, FrankCopula):
-        if (
-                int(getattr(copula, "rotate", 0)) == 0
-                and _transform_name(copula) in _ARCHIMEDEAN_TRANSFORMS):
-            return
-    elif isinstance(copula, (ClaytonCopula, GumbelCopula, JoeCopula)):
-        if _transform_name(copula) in _ARCHIMEDEAN_TRANSFORMS:
-            return
-    elif isinstance(copula, BivariateGaussianCopula):
-        if int(getattr(copula, "rotate", 0)) == 0:
-            return
-
-    name = getattr(copula, "name", type(copula).__name__)
-    raise CppUnsupported(
-        "C++ copula operations currently support Clayton, Gumbel, "
-        f"Joe with rotations, Frank rotate=0, BivariateGaussian rotate=0, "
-        f"and Independent; got {name}"
-    )
+    _ensure_native_pair_copula(copula)
 
 
 def ensure_supported_for_gas(copula) -> None:
@@ -371,51 +374,7 @@ def ensure_supported_for_gas(copula) -> None:
 
 def make_copula_ops_spec(module, copula):
     """Build a C++ ``CopulaSpec`` for shared point/grid operations."""
-    ensure_supported_for_copula_ops(copula)
-    spec = module.CopulaSpec()
-    spec.rotation = {
-        0: module.Rotation.R0,
-        90: module.Rotation.R90,
-        180: module.Rotation.R180,
-        270: module.Rotation.R270,
-    }[int(getattr(copula, "rotate", 0))]
-
-    from pyscarcopula.copula.clayton import ClaytonCopula
-    from pyscarcopula.copula.elliptical import BivariateGaussianCopula
-    from pyscarcopula.copula.frank import FrankCopula
-    from pyscarcopula.copula.gumbel import GumbelCopula
-    from pyscarcopula.copula.independent import IndependentCopula
-    from pyscarcopula.copula.joe import JoeCopula
-
-    transform = _transform_name(copula)
-    if isinstance(copula, IndependentCopula):
-        spec.family = module.CopulaFamily.Independent
-        spec.transform = module.Transform.Softplus
-        spec.offset = 0.0
-    elif isinstance(copula, ClaytonCopula):
-        spec.family = module.CopulaFamily.Clayton
-        spec.transform = _native_archimedean_transform(module, transform)
-        spec.offset = 0.0001
-    elif isinstance(copula, GumbelCopula):
-        spec.family = module.CopulaFamily.Gumbel
-        spec.transform = _native_archimedean_transform(module, transform)
-        spec.offset = 1.0001
-    elif isinstance(copula, FrankCopula):
-        spec.family = module.CopulaFamily.Frank
-        spec.transform = _native_archimedean_transform(module, transform)
-        spec.offset = 0.0001
-    elif isinstance(copula, JoeCopula):
-        spec.family = module.CopulaFamily.Joe
-        spec.transform = _native_archimedean_transform(module, transform)
-        spec.offset = 1.0001
-    elif isinstance(copula, BivariateGaussianCopula):
-        spec.family = module.CopulaFamily.Gaussian
-        spec.rotation = module.Rotation.R0
-        spec.transform = module.Transform.GaussianTanh
-        spec.offset = 0.0
-    else:
-        raise CppUnsupported(f"Unsupported copula: {type(copula).__name__}")
-    return spec
+    return _make_native_pair_spec(module, copula)
 
 
 def make_mc_spec(module, copula, u=None):
@@ -549,6 +508,9 @@ def make_spec(module, copula, u=None):
 
 def _make_spec_unlocked(module, copula, u=None):
     ensure_supported_for_scar_ou(copula)
+    if _native_pair_family_name(copula) is not None:
+        return _make_native_pair_spec(module, copula)
+
     spec = module.CopulaSpec()
     spec.rotation = {
         0: module.Rotation.R0,
@@ -557,43 +519,10 @@ def _make_spec_unlocked(module, copula, u=None):
         270: module.Rotation.R270,
     }[int(getattr(copula, "rotate", 0))]
 
-    from pyscarcopula.copula.clayton import ClaytonCopula
-    from pyscarcopula.copula.elliptical import BivariateGaussianCopula
-    from pyscarcopula.copula.independent import IndependentCopula
     from pyscarcopula.copula.multivariate.equicorr import EquicorrGaussianCopula
     from pyscarcopula.copula.multivariate.stochastic_student import StochasticStudentCopula
-    from pyscarcopula.copula.frank import FrankCopula
-    from pyscarcopula.copula.gumbel import GumbelCopula
-    from pyscarcopula.copula.joe import JoeCopula
 
-    transform = _transform_name(copula)
-    if isinstance(copula, IndependentCopula):
-        spec.family = module.CopulaFamily.Independent
-        spec.rotation = module.Rotation.R0
-        spec.transform = module.Transform.Softplus
-        spec.offset = 0.0
-    elif isinstance(copula, ClaytonCopula):
-        spec.family = module.CopulaFamily.Clayton
-        spec.transform = _native_archimedean_transform(module, transform)
-        spec.offset = 0.0001
-    elif isinstance(copula, GumbelCopula):
-        spec.family = module.CopulaFamily.Gumbel
-        spec.transform = _native_archimedean_transform(module, transform)
-        spec.offset = 1.0001
-    elif isinstance(copula, FrankCopula):
-        spec.family = module.CopulaFamily.Frank
-        spec.transform = _native_archimedean_transform(module, transform)
-        spec.offset = 0.0001
-    elif isinstance(copula, JoeCopula):
-        spec.family = module.CopulaFamily.Joe
-        spec.transform = _native_archimedean_transform(module, transform)
-        spec.offset = 1.0001
-    elif isinstance(copula, BivariateGaussianCopula):
-        spec.family = module.CopulaFamily.Gaussian
-        spec.rotation = module.Rotation.R0
-        spec.transform = module.Transform.GaussianTanh
-        spec.offset = 0.0
-    elif isinstance(copula, EquicorrGaussianCopula):
+    if isinstance(copula, EquicorrGaussianCopula):
         spec.family = module.CopulaFamily.EquicorrGaussian
         spec.rotation = module.Rotation.R0
         spec.transform = module.Transform.GaussianTanh
