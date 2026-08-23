@@ -1,9 +1,12 @@
 #include "scar/copula.hpp"
 
 #include "scar/copula/rotation.hpp"
+#include "scar/copula/multivariate/correlation/dense.hpp"
+#include "scar/copula/multivariate/gaussian/density.hpp"
 #include "scar/detail/copula/common.hpp"
 #include "scar/detail/copula/dispatch.hpp"
-#include "scar/detail/copula/student.hpp"
+#include "scar/copula/multivariate/student/density.hpp"
+#include "scar/copula/multivariate/equicorrelation/kernel.hpp"
 #include "scar/detail/parallel.hpp"
 #include "scar/detail/safety.hpp"
 #include "scar/factor.hpp"
@@ -45,10 +48,10 @@ bool static_parallel_worthwhile(
         if (
                 spec.family == CopulaFamily::MultivariateGaussian
                 && spec.correlation_kind == CorrelationKind::Factor
-                && spec.factor_correlation != nullptr) {
+                && spec.factor_operator() != nullptr) {
             return scar_internal::grid_parallel_worthwhile(
                 rows,
-                dim * spec.factor_correlation->rank(),
+                dim * spec.factor_operator()->rank(),
                 kExpensiveMinRows,
                 kExpensiveMinWork);
         }
@@ -70,14 +73,18 @@ std::int64_t static_min_rows(const CopulaSpec& spec) {
 bool valid_dense_factor(const CopulaSpec& spec) {
     std::size_t square = 0;
     if (spec.dim < 2
-        || !scar_internal::valid_student_dimension(spec.dim, square)
-        || spec.l_inv.size() != square
-        || !std::isfinite(spec.log_det)) {
+        || !scar_internal::valid_student_dimension(spec.dim, square)) {
+        return false;
+    }
+    const auto& correlation =
+        copula::multivariate::correlation::dense(spec);
+    if (correlation.inverse_cholesky.size() != square
+        || !std::isfinite(correlation.log_determinant)) {
         return false;
     }
     for (int i = 0; i < spec.dim; ++i) {
         for (int j = 0; j < spec.dim; ++j) {
-            const double value = spec.l_inv[
+            const double value = correlation.inverse_cholesky[
                 static_cast<std::size_t>(i)
                     * static_cast<std::size_t>(spec.dim)
                 + static_cast<std::size_t>(j)];
@@ -92,13 +99,14 @@ bool valid_dense_factor(const CopulaSpec& spec) {
 
 bool valid_multivariate_gaussian_correlation(const CopulaSpec& spec) {
     if (spec.correlation_kind == CorrelationKind::Factor) {
+        const auto& factor = spec.factor_operator();
         return (
             spec.dim >= 2
-            && spec.factor_correlation != nullptr
-            && spec.factor_correlation->dimension()
+            && factor != nullptr
+            && factor->dimension()
                 == static_cast<std::size_t>(spec.dim)
-            && std::isfinite(spec.factor_correlation->logdet())
-            && std::isfinite(spec.log_det)
+            && std::isfinite(factor->logdet())
+            && std::isfinite(spec.dense_log_determinant())
         );
     }
     return valid_dense_factor(spec);
@@ -136,72 +144,6 @@ int validate(const CopulaSpec& spec, const Observations& u) {
         }
     }
     return SCAR_OK;
-}
-
-double multivariate_gaussian_log_pdf(
-    const CopulaSpec& spec,
-    const double* scores,
-    std::vector<double>& factor_projection,
-    std::vector<double>& factor_solved) {
-
-    double marginal_quad = 0.0;
-    if (
-            spec.correlation_kind == CorrelationKind::Factor
-            && spec.factor_correlation != nullptr) {
-        const FactorCorrelationOperator& correlation =
-            *spec.factor_correlation;
-        const std::size_t dimension = correlation.dimension();
-        const std::size_t rank = correlation.rank();
-        const std::vector<double>& inverse_uniqueness =
-            correlation.inverse_uniqueness();
-        const std::vector<double>& weighted_loadings =
-            correlation.weighted_loadings();
-        factor_projection.assign(rank, 0.0);
-        double diagonal_quad = 0.0;
-        for (std::size_t column = 0; column < dimension; ++column) {
-            const double value = scores[column];
-            marginal_quad += value * value;
-            diagonal_quad +=
-                inverse_uniqueness[column] * value * value;
-            const double* weighted =
-                weighted_loadings.data() + column * rank;
-            for (std::size_t factor = 0; factor < rank; ++factor) {
-                factor_projection[factor] += weighted[factor] * value;
-            }
-        }
-        factor_solved.assign(
-            factor_projection.begin(), factor_projection.end());
-        correlation.solve_core_inplace(factor_solved.data());
-        double correction = 0.0;
-        for (std::size_t factor = 0; factor < rank; ++factor) {
-            correction +=
-                factor_projection[factor] * factor_solved[factor];
-        }
-        const double joint_quad = diagonal_quad - correction;
-        if (!std::isfinite(joint_quad) || joint_quad < -1e-10) {
-            return std::numeric_limits<double>::quiet_NaN();
-        }
-        return (
-            -0.5 * correlation.logdet()
-            - 0.5 * (std::max(0.0, joint_quad) - marginal_quad)
-        );
-    }
-
-    double joint_quad = 0.0;
-    for (int i = 0; i < spec.dim; ++i) {
-        const double xi = scores[i];
-        marginal_quad += xi * xi;
-        double whitened = 0.0;
-        for (int j = 0; j <= i; ++j) {
-            whitened += spec.l_inv[
-                static_cast<std::size_t>(i)
-                    * static_cast<std::size_t>(spec.dim)
-                + static_cast<std::size_t>(j)]
-                * scores[j];
-        }
-        joint_quad += whitened * whitened;
-    }
-    return -0.5 * spec.log_det - 0.5 * (joint_quad - marginal_quad);
 }
 
 }  // namespace
@@ -361,6 +303,19 @@ StaticObjectiveResult StaticCopulaEvaluator::evaluate_gaussian_objective(
             std::numeric_limits<double>::infinity();
         return out;
     }
+    const std::vector<double>* inverse_cholesky =
+        correlation_gradient_requested
+            ? &copula::multivariate::correlation::dense(spec)
+                .inverse_cholesky
+            : nullptr;
+    const auto* dense_correlation =
+        spec.correlation_kind == CorrelationKind::DenseCholesky
+            ? &copula::multivariate::correlation::dense(spec)
+            : nullptr;
+    const FactorCorrelationOperator* factor_correlation =
+        spec.correlation_kind == CorrelationKind::Factor
+            ? spec.factor_operator().get()
+            : nullptr;
 
     const bool use_threads = static_parallel_worthwhile(
         spec, n_obs_, n_threads_);
@@ -381,13 +336,34 @@ StaticObjectiveResult StaticCopulaEvaluator::evaluate_gaussian_objective(
             std::vector<double> factor_solved;
             std::vector<double> whitened(dim, 0.0);
             std::vector<double> precision_score(dim, 0.0);
+            if (dense_correlation != nullptr
+                && !correlation_gradient_requested) {
+                std::int64_t relative_failure = -1;
+                if (!copula::multivariate::gaussian::accumulate_log_pdf(
+                        *dense_correlation,
+                        spec.dim,
+                        gaussian_scores_.data()
+                            + static_cast<std::size_t>(begin) * dim,
+                        static_cast<std::size_t>(end - begin),
+                        block_result.log_likelihood,
+                        relative_failure)) {
+                    block_result.failure_index = begin + relative_failure;
+                }
+                return;
+            }
             for (std::int64_t row_index = begin;
                  row_index < end;
                  ++row_index) {
                 const double* scores = gaussian_scores_.data()
                     + static_cast<std::size_t>(row_index) * dim;
-                const double log_pdf = multivariate_gaussian_log_pdf(
-                    spec, scores, factor_projection, factor_solved);
+                const double log_pdf = dense_correlation != nullptr
+                    ? copula::multivariate::gaussian::log_pdf(
+                        *dense_correlation, spec.dim, scores)
+                    : copula::multivariate::gaussian::log_pdf(
+                        *factor_correlation,
+                        scores,
+                        factor_projection,
+                        factor_solved);
                 if (!std::isfinite(log_pdf)) {
                     block_result.failure_index = row_index;
                     return;
@@ -399,7 +375,7 @@ StaticObjectiveResult StaticCopulaEvaluator::evaluate_gaussian_objective(
                 for (int i = 0; i < spec.dim; ++i) {
                     double value = 0.0;
                     for (int j = 0; j <= i; ++j) {
-                        value += spec.l_inv[
+                        value += (*inverse_cholesky)[
                             static_cast<std::size_t>(i) * dim
                             + static_cast<std::size_t>(j)]
                             * scores[static_cast<std::size_t>(j)];
@@ -409,7 +385,7 @@ StaticObjectiveResult StaticCopulaEvaluator::evaluate_gaussian_objective(
                 for (int i = 0; i < spec.dim; ++i) {
                     double value = 0.0;
                     for (int j = i; j < spec.dim; ++j) {
-                        value += spec.l_inv[
+                        value += (*inverse_cholesky)[
                             static_cast<std::size_t>(j) * dim
                             + static_cast<std::size_t>(i)]
                             * whitened[static_cast<std::size_t>(j)];
@@ -585,7 +561,7 @@ StaticObjectiveResult StaticCopulaEvaluator::evaluate_objective(
                         parameter_gradient_requested ? &dlog : nullptr);
                 } else if (
                     spec_.family == CopulaFamily::MultivariateGaussian) {
-                    log_pdf = multivariate_gaussian_log_pdf(
+                    log_pdf = copula::multivariate::gaussian::log_pdf(
                         spec_,
                         gaussian_scores_.data()
                             + i * static_cast<std::size_t>(dim),
@@ -701,7 +677,7 @@ std::vector<double> StaticCopulaEvaluator::log_pdf_rows(
                         spec_, stats, parameter, nullptr);
                 } else if (
                     spec_.family == CopulaFamily::MultivariateGaussian) {
-                    out[i] = multivariate_gaussian_log_pdf(
+                    out[i] = copula::multivariate::gaussian::log_pdf(
                         spec_,
                         gaussian_scores_.data()
                             + i * static_cast<std::size_t>(dim),

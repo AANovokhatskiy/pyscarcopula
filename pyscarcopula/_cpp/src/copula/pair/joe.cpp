@@ -280,8 +280,8 @@ void joe_fill_grid_row(
         const double pdf = std::exp(log_pdf);
         pdf_row[j] = pdf;
         if (gradient_row != nullptr) {
-            const double q1r = std::exp(parameter * log_q1);
-            const double q2r = std::exp(parameter * log_q2);
+            const double q1r = std::pow(q1, parameter);
+            const double q2r = std::pow(q2, parameter);
             const double B =
                 std::max(q1r + q2r - q1r * q2r, kPdfEps);
             const double dB =

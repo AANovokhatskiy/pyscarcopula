@@ -2,10 +2,12 @@
 #include "scar/copula/prepared_pair_kernel.hpp"
 #include "scar/detail/copula/common.hpp"
 #include "scar/detail/copula/dispatch.hpp"
-#include "scar/detail/copula/student.hpp"
+#include "scar/copula/multivariate/student/density.hpp"
+#include "scar/copula/multivariate/equicorrelation/kernel.hpp"
 #include "scar/detail/parallel.hpp"
 #include "scar/detail/safety.hpp"
 #include "scar/factor.hpp"
+#include "scar/math/normal.hpp"
 
 #include <cmath>
 
@@ -21,10 +23,38 @@ bool gaussian_cache_available(
     std::int64_t row_index) {
 
     return row_index >= 0
-        && spec.gaussian_z1_cache.size()
-            == spec.gaussian_z2_cache.size()
+        && spec.pair_gaussian_first_scores().size()
+            == spec.pair_gaussian_second_scores().size()
         && static_cast<std::size_t>(row_index)
-            < spec.gaussian_z1_cache.size();
+            < spec.pair_gaussian_first_scores().size();
+}
+
+void gaussian_fill_row(
+    const scar::CopulaSpec& spec,
+    double first,
+    double second,
+    const std::vector<double>& r_grid,
+    const std::vector<double>& dpsi_grid,
+    double* fi_row,
+    double* dfi_dx_row) {
+
+    double rotated_first = 0.0;
+    double rotated_second = 0.0;
+    scar::copula::apply_rotation(
+        first,
+        second,
+        static_cast<int>(spec.rotation),
+        rotated_first,
+        rotated_second);
+    const double z1 = scar::math::normal_quantile(rotated_first);
+    const double z2 = scar::math::normal_quantile(rotated_second);
+    scar::copula::pair::gaussian_fill_grid_row_from_stats(
+        z1 * z1 + z2 * z2,
+        z1 * z2,
+        r_grid,
+        dpsi_grid,
+        fi_row,
+        dfi_dx_row);
 }
 
 void equicorr_fill_row(
@@ -39,14 +69,14 @@ void equicorr_fill_row(
     EquicorrStats stats;
     const bool cache_available =
         row_index >= 0
-        && spec.equicorr_sum_cache.size()
-            == spec.equicorr_sum_squares_cache.size()
+        && spec.equicorr_sum_scores().size()
+            == spec.equicorr_sum_squares().size()
         && static_cast<std::size_t>(row_index)
-            < spec.equicorr_sum_cache.size();
+            < spec.equicorr_sum_scores().size();
     if (cache_available) {
         const std::size_t index = static_cast<std::size_t>(row_index);
-        stats.sum = spec.equicorr_sum_cache[index];
-        stats.sum_squares = spec.equicorr_sum_squares_cache[index];
+        stats.sum = spec.equicorr_sum_scores()[index];
+        stats.sum_squares = spec.equicorr_sum_squares()[index];
     } else if (!equicorr_sufficient_statistics(spec, row, stats)) {
         std::fill(
             fi_row,
@@ -103,18 +133,18 @@ bool copula_is_supported(const scar::CopulaSpec& spec) {
                 && spec.transform == scar::Transform::Softplus
                 && spec.offset >= 2.0
                 && spec.dim >= 2
-                && spec.factor_correlation != nullptr
-                && spec.factor_correlation->dimension()
+                && spec.factor_operator() != nullptr
+                && spec.factor_operator()->dimension()
                     == static_cast<std::size_t>(spec.dim)
                 && std::isfinite(
-                    spec.factor_correlation->logdet());
+                    spec.factor_operator()->logdet());
         }
         const bool valid_values = std::all_of(
-            spec.l_inv.begin(), spec.l_inv.end(), [](double value) {
+            spec.dense_inverse_cholesky().begin(), spec.dense_inverse_cholesky().end(), [](double value) {
                 return std::isfinite(value);
             });
         bool lower_triangular =
-            spec.dim >= 2 && spec.l_inv.size() == expected;
+            spec.dim >= 2 && spec.dense_inverse_cholesky().size() == expected;
         if (lower_triangular) {
             for (int i = 0; i < spec.dim && lower_triangular; ++i) {
                 for (int j = i + 1; j < spec.dim; ++j) {
@@ -122,7 +152,7 @@ bool copula_is_supported(const scar::CopulaSpec& spec) {
                         static_cast<std::size_t>(i)
                             * static_cast<std::size_t>(spec.dim)
                         + static_cast<std::size_t>(j);
-                    if (std::abs(spec.l_inv[index]) > 1e-14) {
+                    if (std::abs(spec.dense_inverse_cholesky()[index]) > 1e-14) {
                         lower_triangular = false;
                         break;
                     }
@@ -133,8 +163,8 @@ bool copula_is_supported(const scar::CopulaSpec& spec) {
             && spec.transform == scar::Transform::Softplus
             && spec.offset >= 2.0
             && spec.dim >= 2
-            && spec.l_inv.size() == expected
-            && std::isfinite(spec.log_det)
+            && spec.dense_inverse_cholesky().size() == expected
+            && std::isfinite(spec.dense_log_determinant())
             && valid_values
             && lower_triangular;
     }
@@ -262,18 +292,18 @@ void copula_pdf_row_precomputed_flat(
     }
     if (spec.family == scar::CopulaFamily::Student
         && spec.correlation_kind == scar::CorrelationKind::Factor
-        && spec.factor_correlation != nullptr) {
+        && spec.factor_operator() != nullptr) {
         const std::size_t row_offset =
             static_cast<std::size_t>(t)
             * static_cast<std::size_t>(spec.dim);
         const scar::FactorStudentGridResult result =
             scar::factor_student_log_pdf_and_dlog_ddf_grid(
-                *spec.factor_correlation,
+                *spec.factor_operator(),
                 u + row_offset,
                 1,
                 r_grid.data(),
                 r_grid.size(),
-                spec.factor_dimension_tile,
+                spec.factor_dimension_tile(),
                 1);
         if (result.failure_index >= 0
             || result.log_pdf.size() != r_grid.size()) {
@@ -305,10 +335,10 @@ void copula_pdf_row_precomputed_flat(
         static const std::vector<double> no_dpsi;
         const bool cache_available =
             t >= 0
-            && spec.equicorr_sum_cache.size()
-                == spec.equicorr_sum_squares_cache.size()
+            && spec.equicorr_sum_scores().size()
+                == spec.equicorr_sum_squares().size()
             && static_cast<std::size_t>(t)
-                < spec.equicorr_sum_cache.size();
+                < spec.equicorr_sum_scores().size();
         const double* row = cache_available || u == nullptr
             ? nullptr
             : u + static_cast<std::size_t>(t)
@@ -330,11 +360,23 @@ void copula_pdf_row_precomputed_flat(
         && gaussian_cache_available(spec, t)) {
         static const std::vector<double> no_dpsi;
         const std::size_t index = static_cast<std::size_t>(t);
-        const double z1 = spec.gaussian_z1_cache[index];
-        const double z2 = spec.gaussian_z2_cache[index];
+        const double z1 = spec.pair_gaussian_first_scores()[index];
+        const double z2 = spec.pair_gaussian_second_scores()[index];
         scar::copula::pair::gaussian_fill_grid_row_from_stats(
             z1 * z1 + z2 * z2,
             z1 * z2,
+            r_grid,
+            no_dpsi,
+            fi_row,
+            nullptr);
+        return;
+    }
+    if (spec.family == scar::CopulaFamily::Gaussian) {
+        static const std::vector<double> no_dpsi;
+        gaussian_fill_row(
+            spec,
+            row[0],
+            row[1],
             r_grid,
             no_dpsi,
             fi_row,
@@ -394,18 +436,18 @@ void copula_pdf_and_grad_row_precomputed_flat(
     }
     if (spec.family == scar::CopulaFamily::Student
         && spec.correlation_kind == scar::CorrelationKind::Factor
-        && spec.factor_correlation != nullptr) {
+        && spec.factor_operator() != nullptr) {
         const std::size_t row_offset =
             static_cast<std::size_t>(t)
             * static_cast<std::size_t>(spec.dim);
         const scar::FactorStudentGridResult result =
             scar::factor_student_log_pdf_and_dlog_ddf_grid(
-                *spec.factor_correlation,
+                *spec.factor_operator(),
                 u + row_offset,
                 1,
                 r_grid.data(),
                 r_grid.size(),
-                spec.factor_dimension_tile,
+                spec.factor_dimension_tile(),
                 1);
         if (result.failure_index >= 0
             || result.log_pdf.size() != r_grid.size()
@@ -448,10 +490,10 @@ void copula_pdf_and_grad_row_precomputed_flat(
     if (spec.family == scar::CopulaFamily::EquicorrGaussian) {
         const bool cache_available =
             t >= 0
-            && spec.equicorr_sum_cache.size()
-                == spec.equicorr_sum_squares_cache.size()
+            && spec.equicorr_sum_scores().size()
+                == spec.equicorr_sum_squares().size()
             && static_cast<std::size_t>(t)
-                < spec.equicorr_sum_cache.size();
+                < spec.equicorr_sum_scores().size();
         const double* row = cache_available || u == nullptr
             ? nullptr
             : u + static_cast<std::size_t>(t)
@@ -472,11 +514,22 @@ void copula_pdf_and_grad_row_precomputed_flat(
     if (spec.family == scar::CopulaFamily::Gaussian
         && gaussian_cache_available(spec, t)) {
         const std::size_t index = static_cast<std::size_t>(t);
-        const double z1 = spec.gaussian_z1_cache[index];
-        const double z2 = spec.gaussian_z2_cache[index];
+        const double z1 = spec.pair_gaussian_first_scores()[index];
+        const double z2 = spec.pair_gaussian_second_scores()[index];
         scar::copula::pair::gaussian_fill_grid_row_from_stats(
             z1 * z1 + z2 * z2,
             z1 * z2,
+            r_grid,
+            dpsi_grid,
+            fi_row,
+            dfi_dx_row);
+        return;
+    }
+    if (spec.family == scar::CopulaFamily::Gaussian) {
+        gaussian_fill_row(
+            spec,
+            row[0],
+            row[1],
             r_grid,
             dpsi_grid,
             fi_row,
@@ -515,15 +568,15 @@ void copula_pdf_and_grad_grid_precomputed(
     dfi_dx.assign(elements, 0.0);
     if (spec.family == scar::CopulaFamily::Student
         && spec.correlation_kind == scar::CorrelationKind::Factor
-        && spec.factor_correlation != nullptr) {
+        && spec.factor_operator() != nullptr) {
         const scar::FactorStudentGridResult result =
             scar::factor_student_log_pdf_and_dlog_ddf_grid(
-                *spec.factor_correlation,
+                *spec.factor_operator(),
                 u,
                 n_obs_size,
                 r_grid.data(),
                 K,
-                spec.factor_dimension_tile,
+                spec.factor_dimension_tile(),
                 n_threads);
         if (result.failure_index >= 0
             || result.log_pdf.size() != elements
@@ -638,10 +691,10 @@ void copula_pdf_and_grad_grid_precomputed(
                     const std::size_t output_row =
                         static_cast<std::size_t>(t) * K;
                     const bool cache_available =
-                        spec.equicorr_sum_cache.size()
-                            == spec.equicorr_sum_squares_cache.size()
+                        spec.equicorr_sum_scores().size()
+                            == spec.equicorr_sum_squares().size()
                         && static_cast<std::size_t>(t)
-                            < spec.equicorr_sum_cache.size();
+                            < spec.equicorr_sum_scores().size();
                     const double* observation_row =
                         cache_available || u == nullptr
                         ? nullptr
@@ -661,16 +714,28 @@ void copula_pdf_and_grad_grid_precomputed(
     }
     const scar::PreparedPairKernel pair_kernel(spec);
     if (pair_kernel.is_registered()) {
-        if (spec.family == scar::CopulaFamily::Gaussian
-            && spec.gaussian_z1_cache.size()
-                == spec.gaussian_z2_cache.size()
-            && spec.gaussian_z1_cache.size() >= n_obs_size) {
+        if (spec.family == scar::CopulaFamily::Gaussian) {
+            const bool cache_available =
+                spec.pair_gaussian_first_scores().size()
+                    == spec.pair_gaussian_second_scores().size()
+                && spec.pair_gaussian_first_scores().size() >= n_obs_size;
             for (std::int64_t t = 0; t < n_obs; ++t) {
-                const std::size_t observation =
-                    static_cast<std::size_t>(t);
+                const std::size_t observation = static_cast<std::size_t>(t);
                 const std::size_t output_row = observation * K;
-                const double z1 = spec.gaussian_z1_cache[observation];
-                const double z2 = spec.gaussian_z2_cache[observation];
+                if (!cache_available) {
+                    const double* observation_row = u + observation * 2;
+                    gaussian_fill_row(
+                        spec,
+                        observation_row[0],
+                        observation_row[1],
+                        r_grid,
+                        dpsi_grid,
+                        fi.data() + output_row,
+                        dfi_dx.data() + output_row);
+                    continue;
+                }
+                const double z1 = spec.pair_gaussian_first_scores()[observation];
+                const double z2 = spec.pair_gaussian_second_scores()[observation];
                 scar::copula::pair::gaussian_fill_grid_row_from_stats(
                     z1 * z1 + z2 * z2,
                     z1 * z2,

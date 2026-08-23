@@ -2,6 +2,7 @@
 
 #include "evaluator_internal.hpp"
 #include "scar/detail/copula/common.hpp"
+#include "scar/copula/multivariate/equicorrelation/kernel.hpp"
 #include "scar/detail/safety.hpp"
 #include "scar/detail/scar_ou/grid.hpp"
 #include "scar/detail/scar_ou/transition.hpp"

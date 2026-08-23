@@ -867,8 +867,8 @@ bool matrix_forward_mixture_h(
     const bool use_gaussian_quantiles =
         copula.family == scar::CopulaFamily::Gaussian
         && copula.rotation == scar::Rotation::R0
-        && copula.gaussian_z1_cache.size() == n_obs_size
-        && copula.gaussian_z2_cache.size() == n_obs_size;
+        && copula.pair_gaussian_first_scores().size() == n_obs_size
+        && copula.pair_gaussian_second_scores().size() == n_obs_size;
     const scar::CopulaSpec transposed_copula =
         transposed_copula_spec(copula);
 
@@ -888,8 +888,8 @@ bool matrix_forward_mixture_h(
         const double u1 = u[2 * t];
         if (use_gaussian_quantiles) {
             const std::size_t row = static_cast<std::size_t>(t);
-            const double z1 = copula.gaussian_z1_cache[row];
-            const double z2 = copula.gaussian_z2_cache[row];
+            const double z1 = copula.pair_gaussian_first_scores()[row];
+            const double z2 = copula.pair_gaussian_second_scores()[row];
             for (int j = 0; j < grid.K; ++j) {
                 const std::size_t idx = static_cast<std::size_t>(j);
                 h_mix += weights[idx]
@@ -992,8 +992,8 @@ bool local_forward_mixture_h(
     const bool use_gaussian_quantiles =
         copula.family == scar::CopulaFamily::Gaussian
         && copula.rotation == scar::Rotation::R0
-        && copula.gaussian_z1_cache.size() == n_obs_size
-        && copula.gaussian_z2_cache.size() == n_obs_size;
+        && copula.pair_gaussian_first_scores().size() == n_obs_size
+        && copula.pair_gaussian_second_scores().size() == n_obs_size;
     const scar::CopulaSpec transposed_copula =
         transposed_copula_spec(copula);
 
@@ -1019,8 +1019,8 @@ bool local_forward_mixture_h(
         const double u1 = u[2 * t];
         if (use_gaussian_quantiles) {
             const std::size_t row = static_cast<std::size_t>(t);
-            const double z1 = copula.gaussian_z1_cache[row];
-            const double z2 = copula.gaussian_z2_cache[row];
+            const double z1 = copula.pair_gaussian_first_scores()[row];
+            const double z2 = copula.pair_gaussian_second_scores()[row];
             for (int j = 0; j < grid.K; ++j) {
                 const std::size_t idx = static_cast<std::size_t>(j);
                 h_mix += weights[idx]

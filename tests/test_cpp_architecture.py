@@ -122,9 +122,9 @@ def test_stage2_foundation_helpers_have_single_canonical_owners():
     ).read_text(encoding="utf-8")
     assert "class TypedModelDescriptor" in descriptor_text
     assert "int expected_dimension() const noexcept" in descriptor_text
-    copula_text = (include / "copula.hpp").read_text(encoding="utf-8")
-    assert "TypedModelDescriptor model_descriptor() const noexcept;" in copula_text
-    assert "int expected_dimension() const noexcept;" not in copula_text
+    spec_text = (include / "copula" / "spec.hpp").read_text(encoding="utf-8")
+    assert "TypedModelDescriptor model_descriptor() const noexcept;" in spec_text
+    assert "int expected_dimension() const noexcept;" not in spec_text
     assert "struct DoubleView" not in header_text
     assert "using DoubleView = Span<const double>;" in (
         include / "core" / "span.hpp"
@@ -231,6 +231,113 @@ def test_stage3_pair_copulas_are_vertical_and_prepared_once():
     ).read_text(encoding="utf-8")
     assert "PAIR_FAMILY_SOURCES = _pair_family_sources()" in sources
     assert "*PAIR_FAMILY_SOURCES" in sources
+
+
+def test_stage4_multivariate_models_are_vertical_and_typed():
+    cpp = ROOT / "pyscarcopula" / "_cpp"
+    include = cpp / "include" / "scar"
+    source = cpp / "src" / "copula"
+    multivariate_include = include / "copula" / "multivariate"
+    multivariate_source = source / "multivariate"
+
+    assert not (source / "multivariate.cpp").exists()
+    assert not (source / "families" / "student.cpp").exists()
+    assert not (include / "detail" / "copula" / "student.hpp").exists()
+
+    for relative in (
+        "correlation/dense.hpp",
+        "correlation/factor.hpp",
+        "gaussian/model.hpp",
+        "gaussian/density.hpp",
+        "gaussian/conditional.hpp",
+        "equicorrelation/model.hpp",
+        "equicorrelation/kernel.hpp",
+        "student/model.hpp",
+        "student/distribution.hpp",
+        "student/quantile.hpp",
+        "student/ppf_cache.hpp",
+        "student/density.hpp",
+        "student/conditional.hpp",
+        "student/rosenblatt.hpp",
+    ):
+        assert (multivariate_include / relative).is_file()
+
+    for relative in (
+        "correlation/conditional.cpp",
+        "correlation/dense.cpp",
+        "correlation/factor.cpp",
+        "equicorrelation/evaluator.cpp",
+        "gaussian/density.cpp",
+        "gaussian/conditional.cpp",
+        "equicorrelation/model.cpp",
+        "equicorrelation/kernel.cpp",
+        "student/distribution.cpp",
+        "student/density.cpp",
+        "student/evaluator.cpp",
+        "student/conditional.cpp",
+        "student/factor_density.cpp",
+        "student/factor_grid.cpp",
+        "student/ppf_cache.cpp",
+        "student/quantile.cpp",
+        "student/rosenblatt.cpp",
+    ):
+        assert (multivariate_source / relative).is_file()
+
+    dispatch = (multivariate_source / "dispatch.cpp").read_text(
+        encoding="utf-8")
+    assert len(dispatch.splitlines()) <= 100
+    for model_implementation in (
+        "StudentWorkspace",
+        "EquicorrStats",
+        "conditional_df",
+        "parallel_for_blocks",
+        "student_fill_",
+        "equicorr_log_pdf_from_stats(",
+        "normal_quantile",
+        "cholesky",
+    ):
+        assert model_implementation not in dispatch
+
+    conditional_engine = (
+        multivariate_source / "correlation" / "conditional.cpp"
+    ).read_text(encoding="utf-8")
+    for model_specific in (
+        "Student", "student_", "conditional_df", "chi_square",
+    ):
+        assert model_specific not in conditional_engine
+    student_conditional = (
+        multivariate_source / "student" / "conditional.cpp"
+    ).read_text(encoding="utf-8")
+    assert "student_conditional_scale" in student_conditional
+    assert "conditional_df" in student_conditional
+
+    spec = (include / "copula" / "spec.hpp").read_text(encoding="utf-8")
+    for old_field in (
+        "l_inv;", "log_det;", "ppf_n_obs;", "ppf_nodes;", "ppf_table;",
+        "gaussian_z1_cache;", "equicorr_sum_cache;",
+    ):
+        assert old_field not in spec
+    storage = (include / "copula" / "model_storage.hpp").read_text(
+        encoding="utf-8")
+    assert "std::variant<" in storage
+    assert "student::DenseModelStorage" in storage
+    assert "gaussian::FactorModelStorage" in storage
+
+    factor = (
+        multivariate_include / "correlation" / "factor.hpp"
+    ).read_text(encoding="utf-8")
+    assert "FactorCorrelationOperator" in factor
+    assert "FactorStudent" not in factor
+
+    for package in (
+        multivariate_include / "gaussian",
+        multivariate_source / "gaussian",
+    ):
+        for path in package.rglob("*"):
+            if path.is_file():
+                text = path.read_text(encoding="utf-8")
+                assert "/student/" not in text
+                assert "Student" not in text
 
 
 def test_setup_build_path_does_not_mutate_path():

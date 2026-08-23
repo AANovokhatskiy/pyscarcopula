@@ -1,13 +1,32 @@
 #pragma once
 
-#include "scar/copula.hpp"
+#include "scar/copula/multivariate/correlation/dense.hpp"
+#include "scar/copula/multivariate/student/ppf_cache.hpp"
+#include "scar/copula/spec.hpp"
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
 
+namespace scar {
+struct MultivariateGridResult;
+struct MultivariateRowsResult;
+}
+
 namespace scar_internal {
+
+struct PreparedStudentDensity {
+    int dimension = 0;
+    const scar::copula::multivariate::correlation::DenseCorrelation* dense =
+        nullptr;
+    const scar::FactorCorrelationOperator* factor = nullptr;
+    const scar::copula::multivariate::student::PpfCache* ppf_cache = nullptr;
+    bool valid = false;
+};
+
+PreparedStudentDensity prepare_student_density(
+    const scar::CopulaSpec& spec);
 
 struct StudentWorkspace {
     struct Diagnostics {
@@ -82,6 +101,12 @@ struct StudentWorkspace {
 };
 
 double student_log_pdf(
+    const PreparedStudentDensity& model,
+    const double* row,
+    double df,
+    std::int64_t row_index,
+    StudentWorkspace& workspace);
+double student_log_pdf(
     const scar::CopulaSpec& spec,
     const double* row,
     double df,
@@ -91,6 +116,14 @@ double student_log_pdf(
     const double* row,
     double df,
     std::int64_t row_index,
+    StudentWorkspace& workspace);
+bool student_log_pdf_and_dlog_ddf(
+    const PreparedStudentDensity& model,
+    const double* row,
+    double df,
+    std::int64_t row_index,
+    double& log_pdf,
+    double& dlog_ddf,
     StudentWorkspace& workspace);
 bool student_log_pdf_and_dlog_ddf(
     const scar::CopulaSpec& spec,
@@ -139,18 +172,6 @@ bool student_log_pdf_from_summaries(
     double marginal_dlog_ddf,
     double& log_pdf,
     double* dlog_ddf);
-double student_quantile_value(double p, double df);
-double student_quantile_for_observation(
-    const scar::CopulaSpec& spec,
-    double p,
-    double df,
-    std::int64_t row_index,
-    int column);
-double student_cdf_value(double value, double df);
-void student_quantile_value_and_derivative(
-    double p, double df, double& value, double& derivative);
-void student_quantile_large_df_value_and_derivative(
-    double p, double df, double& value, double& derivative);
 bool student_precision_matrix(
     const scar::CopulaSpec& spec,
     std::vector<double>& precision);
@@ -179,6 +200,15 @@ void student_fill_row(
     double* dfi_dx_row,
     StudentWorkspace::Diagnostics* diagnostics = nullptr);
 void student_fill_row_with_workspace(
+    const PreparedStudentDensity& model,
+    const double* row,
+    std::int64_t row_index,
+    const std::vector<double>& df_grid,
+    const std::vector<double>& dpsi_grid,
+    double* fi_row,
+    double* dfi_dx_row,
+    StudentWorkspace& workspace);
+void student_fill_row_with_workspace(
     const scar::CopulaSpec& spec,
     const double* row,
     std::int64_t row_index,
@@ -201,5 +231,18 @@ bool student_fill_grid_bivariate(
     double* fi,
     double* dfi_dx,
     int n_threads = 1);
+
+scar::MultivariateRowsResult student_log_pdf_and_grad_rows(
+    const scar::CopulaSpec& spec,
+    const std::vector<std::vector<double>>& observations,
+    const std::vector<double>& degrees_of_freedom,
+    std::int64_t row_offset,
+    int n_threads);
+scar::MultivariateGridResult student_pdf_and_grad_grid(
+    const scar::CopulaSpec& spec,
+    const std::vector<std::vector<double>>& observations,
+    const std::vector<double>& state_grid,
+    std::int64_t row_offset,
+    int n_threads);
 
 }  // namespace scar_internal

@@ -3,7 +3,7 @@
 #include "scar/copula/rotation.hpp"
 #include "scar/detail/copula/common.hpp"
 #include "scar/detail/copula/dispatch.hpp"
-#include "scar/detail/copula/student.hpp"
+#include "scar/copula/multivariate/student/density.hpp"
 #include "scar/detail/parallel.hpp"
 #include "scar/detail/safety.hpp"
 #include "scar/factor.hpp"
@@ -25,23 +25,23 @@ bool valid_student_spec(const CopulaSpec& spec, std::size_t n_obs) {
     std::size_t square = 0;
     const bool factor_correlation =
         spec.correlation_kind == CorrelationKind::Factor
-        && spec.factor_correlation != nullptr
-        && spec.factor_correlation->dimension()
+        && spec.factor_operator() != nullptr
+        && spec.factor_operator()->dimension()
             == static_cast<std::size_t>(spec.dim)
-        && std::isfinite(spec.factor_correlation->logdet());
+        && std::isfinite(spec.factor_operator()->logdet());
     if (spec.dim < 2
         || spec.rotation != Rotation::R0
         || spec.transform != Transform::Softplus
         || !scar_internal::valid_student_dimension(spec.dim, square)
-        || (!factor_correlation && spec.l_inv.size() != square)
+        || (!factor_correlation && spec.dense_inverse_cholesky().size() != square)
         || !std::isfinite(
             factor_correlation
-                ? spec.factor_correlation->logdet()
-                : spec.log_det)) {
+                ? spec.factor_operator()->logdet()
+                : spec.dense_log_determinant())) {
         return false;
     }
-    if (!spec.ppf_nodes.empty() || !spec.ppf_table.empty()) {
-        return spec.ppf_n_obs == static_cast<std::int64_t>(n_obs);
+    if (!spec.student_ppf_nodes().empty() || !spec.student_ppf_table().empty()) {
+        return spec.student_ppf_observation_count() == static_cast<std::int64_t>(n_obs);
     }
     return true;
 }

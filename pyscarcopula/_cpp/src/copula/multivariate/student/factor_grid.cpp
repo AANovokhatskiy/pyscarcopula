@@ -1,6 +1,7 @@
-#include "scar/factor.hpp"
+#include "scar/copula/multivariate/student/factor_grid.hpp"
 
-#include "scar/detail/copula/student.hpp"
+#include "scar/copula/multivariate/student/density.hpp"
+#include "scar/copula/multivariate/student/quantile.hpp"
 #include "scar/detail/parallel.hpp"
 #include "scar/detail/safety.hpp"
 

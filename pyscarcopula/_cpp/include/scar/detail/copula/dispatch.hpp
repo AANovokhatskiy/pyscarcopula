@@ -1,6 +1,6 @@
 #pragma once
 
-#include "scar/copula.hpp"
+#include "scar/copula/spec.hpp"
 
 #include <cstdint>
 #include <vector>

@@ -129,6 +129,36 @@ only Python-free computational translation units;
 `PYTHON_BINDING_SOURCES` contains the pybind adapter. `setup.py` combines both
 lists for `_scar_cpp` without creating or shipping a separate C++ library.
 
+Native copula code is organized by model ownership rather than by a shared
+horizontal implementation file:
+
+```text
+include/scar/copula/spec.hpp                 generic metadata boundary
+include/scar/copula/model_storage.hpp        typed model-storage variant
+src/copula/pair/                             pair families and dispatch
+src/copula/multivariate/correlation/         dense and factor operators
+src/copula/multivariate/gaussian/            Gaussian density/conditional
+src/copula/multivariate/equicorrelation/     equicorrelation model/kernel
+src/copula/multivariate/student/             Student distribution, quantile,
+                                             PPF cache, density, conditional,
+                                             factor grid, and Rosenblatt code
+```
+
+`CopulaSpec` owns only universal metadata plus a `TypedModelStorage` whose
+variant alternative is synchronized with family and correlation kind. Pair,
+dense Gaussian, factor Gaussian, equicorrelation, dense Student, and factor
+Student state therefore have distinct storage types. Compatibility accessors
+remain at binding and migration boundaries, but computational kernels resolve
+the typed alternative once before entering a hot loop.
+
+Dense and factor correlation are separate native contracts. Dense kernels may
+own inverse-Cholesky and log-determinant state; factor kernels own compact
+loadings/operators and must not acquire an implicit dense `d*d` workspace.
+Pair headers depend on pair contracts and `spec.hpp`, not on Student, factor,
+or SCAR-OU headers. Gaussian multivariate headers likewise do not depend on
+Student implementation headers. `tools/check_cpp_architecture.py` enforces
+these dependency and placement rules.
+
 The computational boundary is independently buildable as a C++17 executable:
 
 ```bash
@@ -152,7 +182,8 @@ parameter transforms, rotations, and the shared `Status`/`Result`/
 the architecture checker rejects reverse dependencies on model or workflow
 headers. `CopulaSpec` remains a temporary compatibility DTO, but converts to a
 `TypedModelDescriptor`; `expected_dimension()` belongs to that typed
-descriptor rather than to foundation or the universal DTO. Production
+descriptor rather than to foundation or universal metadata. Model-specific
+mutable state belongs to `TypedModelStorage`, not to common fields. Production
 Rosenblatt shape validation uses `Result<std::size_t>` and preserves typed
 failure context. Migration of the remaining domain result DTOs is deferred to
 the error-model cleanup stage. Kernel-specific work thresholds and

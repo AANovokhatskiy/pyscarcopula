@@ -545,6 +545,190 @@ def check_pair_verticalization(root: Path) -> list[Violation]:
     return violations
 
 
+def check_multivariate_verticalization(root: Path) -> list[Violation]:
+    cpp = root / "pyscarcopula" / "_cpp"
+    include = cpp / "include" / "scar"
+    source = cpp / "src" / "copula"
+    multivariate_include = include / "copula" / "multivariate"
+    multivariate_source = source / "multivariate"
+    violations = []
+
+    removed = (
+        source / "multivariate.cpp",
+        source / "families" / "student.cpp",
+        source / "student_rosenblatt.cpp",
+        cpp / "src" / "factor" / "operator.cpp",
+        cpp / "src" / "factor" / "student.cpp",
+        cpp / "src" / "factor" / "grid.cpp",
+        include / "detail" / "copula" / "student.hpp",
+    )
+    for path in removed:
+        if path.exists():
+            violations.append(Violation(
+                "multivariate-model-verticalization",
+                path,
+                "legacy horizontal multivariate source/header must be removed",
+            ))
+
+    required = (
+        include / "copula" / "spec.hpp",
+        include / "copula" / "model_storage.hpp",
+        include / "detail" / "copula" / "multivariate" / "batch.hpp",
+        multivariate_include / "correlation" / "dense.hpp",
+        multivariate_include / "correlation" / "factor.hpp",
+        multivariate_include / "gaussian" / "model.hpp",
+        multivariate_include / "gaussian" / "density.hpp",
+        multivariate_include / "gaussian" / "conditional.hpp",
+        multivariate_include / "equicorrelation" / "model.hpp",
+        multivariate_include / "equicorrelation" / "kernel.hpp",
+        multivariate_include / "student" / "model.hpp",
+        multivariate_include / "student" / "distribution.hpp",
+        multivariate_include / "student" / "quantile.hpp",
+        multivariate_include / "student" / "ppf_cache.hpp",
+        multivariate_include / "student" / "density.hpp",
+        multivariate_include / "student" / "conditional.hpp",
+        multivariate_include / "student" / "rosenblatt.hpp",
+        multivariate_source / "correlation" / "dense.cpp",
+        multivariate_source / "correlation" / "factor.cpp",
+        multivariate_source / "correlation" / "conditional.cpp",
+        multivariate_source / "gaussian" / "density.cpp",
+        multivariate_source / "gaussian" / "conditional.cpp",
+        multivariate_source / "equicorrelation" / "evaluator.cpp",
+        multivariate_source / "equicorrelation" / "model.cpp",
+        multivariate_source / "equicorrelation" / "kernel.cpp",
+        multivariate_source / "student" / "distribution.cpp",
+        multivariate_source / "student" / "density.cpp",
+        multivariate_source / "student" / "evaluator.cpp",
+        multivariate_source / "student" / "conditional.cpp",
+        multivariate_source / "student" / "factor_density.cpp",
+        multivariate_source / "student" / "factor_grid.cpp",
+        multivariate_source / "student" / "ppf_cache.cpp",
+        multivariate_source / "student" / "quantile.cpp",
+        multivariate_source / "student" / "rosenblatt.cpp",
+    )
+    for path in required:
+        if not path.is_file():
+            violations.append(Violation(
+                "multivariate-model-verticalization",
+                path,
+                "required vertical multivariate package file is missing",
+            ))
+
+    dispatch = multivariate_source / "dispatch.cpp"
+    if dispatch.is_file():
+        text = dispatch.read_text(encoding="utf-8")
+        forbidden_dispatch_markers = (
+            "StudentWorkspace",
+            "EquicorrStats",
+            "conditional_df",
+            "parallel_for_blocks",
+            "student_fill_",
+            "equicorr_log_pdf_from_stats(",
+            "normal_quantile",
+            "cholesky",
+        )
+        if len(text.splitlines()) > 100:
+            violations.append(Violation(
+                "multivariate-model-verticalization",
+                dispatch,
+                "multivariate dispatch must remain a thin translation unit",
+            ))
+        for marker in forbidden_dispatch_markers:
+            if marker in text:
+                violations.append(Violation(
+                    "multivariate-model-verticalization",
+                    dispatch,
+                    f"model implementation leaked into dispatch: {marker}",
+                ))
+
+    conditional_engine = (
+        multivariate_source / "correlation" / "conditional.cpp"
+    )
+    if conditional_engine.is_file():
+        text = conditional_engine.read_text(encoding="utf-8")
+        for marker in ("Student", "student_", "conditional_df", "chi_square"):
+            if marker in text:
+                violations.append(Violation(
+                    "multivariate-model-verticalization",
+                    conditional_engine,
+                    f"model-specific conditional policy leaked into correlation algebra: {marker}",
+                ))
+
+    student_conditional = multivariate_source / "student" / "conditional.cpp"
+    if student_conditional.is_file():
+        text = student_conditional.read_text(encoding="utf-8")
+        if (
+                "student_conditional_scale" not in text
+                or "conditional_df" not in text):
+            violations.append(Violation(
+                "multivariate-model-verticalization",
+                student_conditional,
+                "Student conditional scaling must be owned by the Student package",
+            ))
+
+    spec = include / "copula" / "spec.hpp"
+    if spec.is_file():
+        text = spec.read_text(encoding="utf-8")
+        for field in (
+                "l_inv", "log_det", "ppf_n_obs", "ppf_nodes", "ppf_table",
+                "gaussian_z1_cache", "gaussian_z2_cache",
+                "equicorr_sum_cache", "equicorr_sum_squares_cache"):
+            if re.search(rf"\b{field}\s*(?:=|;)", text):
+                violations.append(Violation(
+                    "multivariate-model-verticalization",
+                    spec,
+                    f"model-specific field remains in CopulaSpec: {field}",
+                ))
+
+    storage = include / "copula" / "model_storage.hpp"
+    if storage.is_file():
+        text = storage.read_text(encoding="utf-8")
+        required_alternatives = (
+            "gaussian::DenseModelStorage",
+            "gaussian::FactorModelStorage",
+            "equicorrelation::ModelStorage",
+            "student::DenseModelStorage",
+            "student::FactorModelStorage",
+        )
+        if "std::variant<" not in text or any(
+                alternative not in text for alternative in required_alternatives):
+            violations.append(Violation(
+                "multivariate-model-verticalization",
+                storage,
+                "typed model storage must enumerate every multivariate model",
+            ))
+
+    factor_contract = multivariate_include / "correlation" / "factor.hpp"
+    if factor_contract.is_file():
+        text = factor_contract.read_text(encoding="utf-8")
+        if "FactorCorrelationOperator" not in text or "FactorStudent" in text:
+            violations.append(Violation(
+                "multivariate-model-verticalization",
+                factor_contract,
+                "factor correlation contract must be model-independent",
+            ))
+
+    for package, forbidden in (
+        (multivariate_include / "gaussian", ("/student/", "Student")),
+        (multivariate_source / "gaussian", ("/student/", "Student")),
+        (include / "copula" / "pair", ("/multivariate/", "scar/factor.hpp", "scar/ou.hpp")),
+        (source / "pair", ("/multivariate/", "scar/factor.hpp", "scar/ou.hpp")),
+    ):
+        if not package.is_dir():
+            continue
+        for path in _source_files(package):
+            text = path.read_text(encoding="utf-8")
+            for marker in forbidden:
+                if marker in text:
+                    violations.append(Violation(
+                        "multivariate-model-verticalization",
+                        path,
+                        f"forbidden cross-model dependency: {marker}",
+                    ))
+
+    return violations
+
+
 def _find_cycle(graph: dict[str, set[str]]) -> list[str] | None:
     visited: set[str] = set()
     active: set[str] = set()
@@ -607,6 +791,7 @@ def check_repository(root: Path) -> list[Violation]:
         check_python_free_compute_boundary,
         check_removed_monolith,
         check_pair_verticalization,
+        check_multivariate_verticalization,
         check_public_header_cycles,
     )
     return [

@@ -3,7 +3,7 @@
 #include "evaluator_internal.hpp"
 #include "scar/detail/copula/common.hpp"
 #include "scar/detail/copula/dispatch.hpp"
-#include "scar/detail/copula/student.hpp"
+#include "scar/copula/multivariate/student/density.hpp"
 #include "scar/detail/linalg.hpp"
 #include "scar/detail/safety.hpp"
 #include "scar/detail/scar_ou/grid.hpp"
@@ -40,8 +40,8 @@ bool prepare_gaussian_spectral_terms(
 
     const std::size_t n_obs_size = static_cast<std::size_t>(n_obs);
     if (copula.family != CopulaFamily::Gaussian
-        || copula.gaussian_z1_cache.size() != n_obs_size
-        || copula.gaussian_z2_cache.size() != n_obs_size) {
+        || copula.pair_gaussian_first_scores().size() != n_obs_size
+        || copula.pair_gaussian_second_scores().size() != n_obs_size) {
         return false;
     }
 
@@ -74,8 +74,8 @@ void gaussian_spectral_pdf_and_grad_row(
     double* dfi_dx_row) {
 
     const std::size_t row_index = static_cast<std::size_t>(row);
-    const double z1 = copula.gaussian_z1_cache[row_index];
-    const double z2 = copula.gaussian_z2_cache[row_index];
+    const double z1 = copula.pair_gaussian_first_scores()[row_index];
+    const double z2 = copula.pair_gaussian_second_scores()[row_index];
     const double sum_squares = z1 * z1 + z2 * z2;
     const double cross_product = z1 * z2;
     for (std::size_t j = 0; j < r_grid.size(); ++j) {

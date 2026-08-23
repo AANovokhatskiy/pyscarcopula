@@ -1,7 +1,7 @@
 #pragma once
 
-#include "scar/copula.hpp"
 #include "scar/copula/pair/kernel.hpp"
+#include "scar/copula/spec.hpp"
 
 #include <vector>
 
@@ -71,7 +71,6 @@ public:
         const std::vector<double>& derivatives,
         double* densities,
         double* gradients) const;
-
 private:
     const copula::pair::PairKernelFunctions* functions_ = nullptr;
     CopulaFamily family_ = CopulaFamily::Independent;

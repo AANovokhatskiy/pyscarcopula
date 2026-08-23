@@ -3,7 +3,8 @@
 #include "scar/copula/rotation.hpp"
 #include "scar/detail/copula/common.hpp"
 #include "scar/detail/copula/dispatch.hpp"
-#include "scar/detail/copula/student.hpp"
+#include "scar/copula/multivariate/student/density.hpp"
+#include "scar/copula/multivariate/equicorrelation/kernel.hpp"
 #include "scar/detail/safety.hpp"
 
 #include <algorithm>
@@ -101,17 +102,17 @@ int validate_inputs(
     }
     const bool prepared_equicorr =
         copula.family == CopulaFamily::EquicorrGaussian
-        && copula.equicorr_sum_cache.size() == u.n_obs
-        && copula.equicorr_sum_squares_cache.size() == u.n_obs;
+        && copula.equicorr_sum_scores().size() == u.n_obs
+        && copula.equicorr_sum_squares().size() == u.n_obs;
     if (u.values == nullptr && !prepared_equicorr) {
         return SCAR_NULL_POINTER;
     }
     if (prepared_equicorr) {
         for (std::size_t row = 0; row < u.n_obs; ++row) {
-            if (!std::isfinite(copula.equicorr_sum_cache[row])
+            if (!std::isfinite(copula.equicorr_sum_scores()[row])
                 || !std::isfinite(
-                    copula.equicorr_sum_squares_cache[row])
-                || copula.equicorr_sum_squares_cache[row] < 0.0) {
+                    copula.equicorr_sum_squares()[row])
+                || copula.equicorr_sum_squares()[row] < 0.0) {
                 return SCAR_INVALID_PARAMETER;
             }
         }
@@ -162,6 +163,7 @@ double gas_dtransform(const CopulaSpec& copula, double g) {
 
 double log_pdf_at_g(
     const CopulaSpec& copula,
+    const scar_internal::PreparedStudentDensity* student_model,
     const double* row,
     std::int64_t row_index,
     double g,
@@ -171,7 +173,7 @@ double log_pdf_at_g(
     const double r = gas_transform(copula, g);
     if (copula.family == CopulaFamily::Student) {
         return scar_internal::student_log_pdf(
-            copula, row, r, row_index, student_workspace);
+            *student_model, row, r, row_index, student_workspace);
     }
     if (copula.family == CopulaFamily::EquicorrGaussian) {
         return scar_internal::equicorr_log_pdf_from_stats(
@@ -187,6 +189,7 @@ double log_pdf_at_g(
 
 RowEvaluation evaluate_row(
     const CopulaSpec& copula,
+    const scar_internal::PreparedStudentDensity* student_model,
     const double* row,
     std::int64_t row_index,
     double g,
@@ -207,14 +210,14 @@ RowEvaluation evaluate_row(
             static_cast<std::size_t>(row_index);
         const bool cache_available =
             row_index >= 0
-            && copula.equicorr_sum_cache.size()
-                == copula.equicorr_sum_squares_cache.size()
-            && index < copula.equicorr_sum_cache.size();
+            && copula.equicorr_sum_scores().size()
+                == copula.equicorr_sum_squares().size()
+            && index < copula.equicorr_sum_scores().size();
         if (cache_available) {
             equicorr_stats.sum =
-                copula.equicorr_sum_cache[index];
+                copula.equicorr_sum_scores()[index];
             equicorr_stats.sum_squares =
-                copula.equicorr_sum_squares_cache[index];
+                copula.equicorr_sum_squares()[index];
         } else if (!scar_internal::equicorr_sufficient_statistics(
                        copula, row, equicorr_stats)) {
             out.status = SCAR_NUMERICAL_FAILURE;
@@ -225,7 +228,7 @@ RowEvaluation evaluate_row(
     if (copula.family == CopulaFamily::Student) {
         if (need_score && config.scaling == GasScaling::Unit) {
             if (!scar_internal::student_log_pdf_and_dlog_ddf(
-                    copula,
+                    *student_model,
                     row,
                     out.r,
                     row_index,
@@ -237,7 +240,11 @@ RowEvaluation evaluate_row(
             }
         } else {
             out.log_likelihood = scar_internal::student_log_pdf(
-                copula, row, out.r, row_index, student_workspace);
+                *student_model,
+                row,
+                out.r,
+                row_index,
+                student_workspace);
         }
     } else if (copula.family == CopulaFamily::EquicorrGaussian) {
         out.log_likelihood = scar_internal::equicorr_log_pdf_from_stats(
@@ -271,11 +278,11 @@ RowEvaluation evaluate_row(
         out.score = dlog_dr * gas_dtransform(copula, g);
     } else {
         const double ll_plus = log_pdf_at_g(
-            copula, row, row_index, g + config.score_eps,
+            copula, student_model, row, row_index, g + config.score_eps,
             &equicorr_stats,
             student_workspace);
         const double ll_minus = log_pdf_at_g(
-            copula, row, row_index, g - config.score_eps,
+            copula, student_model, row, row_index, g - config.score_eps,
             &equicorr_stats,
             student_workspace);
         if (!std::isfinite(ll_plus) || !std::isfinite(ll_minus)) {
@@ -341,7 +348,11 @@ GasLogLikResult run_log_likelihood(
         return out;
     }
     scar_internal::StudentWorkspace student_workspace;
+    scar_internal::PreparedStudentDensity student_model;
+    const scar_internal::PreparedStudentDensity* student_model_ptr = nullptr;
     if (copula.family == CopulaFamily::Student) {
+        student_model = scar_internal::prepare_student_density(copula);
+        student_model_ptr = &student_model;
         student_workspace.reserve_x(static_cast<std::size_t>(copula.dim));
         student_workspace.reserve_dx_ddf(
             static_cast<std::size_t>(copula.dim));
@@ -353,6 +364,7 @@ GasLogLikResult run_log_likelihood(
         const bool need_score = t + 1 < u.n_obs;
         const RowEvaluation evaluation = evaluate_row(
             copula,
+            student_model_ptr,
             row,
             static_cast<std::int64_t>(t),
             g,
@@ -431,7 +443,11 @@ GasFilterResult GasEvaluator::filter(
         return out;
     }
     scar_internal::StudentWorkspace student_workspace;
+    scar_internal::PreparedStudentDensity student_model;
+    const scar_internal::PreparedStudentDensity* student_model_ptr = nullptr;
     if (copula.family == CopulaFamily::Student) {
+        student_model = scar_internal::prepare_student_density(copula);
+        student_model_ptr = &student_model;
         student_workspace.reserve_x(static_cast<std::size_t>(copula.dim));
         student_workspace.reserve_dx_ddf(
             static_cast<std::size_t>(copula.dim));
@@ -444,6 +460,7 @@ GasFilterResult GasEvaluator::filter(
         const bool need_score = t + 1 < u.n_obs;
         const RowEvaluation evaluation = evaluate_row(
             copula,
+            student_model_ptr,
             row,
             static_cast<std::int64_t>(t),
             g,
@@ -545,8 +562,14 @@ GasUpdateResult GasEvaluator::update_observation(
     }
 
     scar_internal::StudentWorkspace student_workspace;
+    scar_internal::PreparedStudentDensity student_model;
+    const scar_internal::PreparedStudentDensity* student_model_ptr = nullptr;
+    if (copula.family == CopulaFamily::Student) {
+        student_model = scar_internal::prepare_student_density(copula);
+        student_model_ptr = &student_model;
+    }
     const RowEvaluation evaluation = evaluate_row(
-        copula, observation.values, 0, g, config, true,
+        copula, student_model_ptr, observation.values, 0, g, config, true,
         student_workspace);
     out.status = evaluation.status;
     out.r = evaluation.r;
@@ -592,8 +615,15 @@ GasPredictResult GasEvaluator::predict_parameter(
         : u.values
             + static_cast<std::size_t>(u.dim) * (u.n_obs - 1);
     scar_internal::StudentWorkspace student_workspace;
+    scar_internal::PreparedStudentDensity student_model;
+    const scar_internal::PreparedStudentDensity* student_model_ptr = nullptr;
+    if (copula.family == CopulaFamily::Student) {
+        student_model = scar_internal::prepare_student_density(copula);
+        student_model_ptr = &student_model;
+    }
     const RowEvaluation evaluation = evaluate_row(
         copula,
+        student_model_ptr,
         row,
         static_cast<std::int64_t>(u.n_obs - 1),
         filtered.g_path.back(),

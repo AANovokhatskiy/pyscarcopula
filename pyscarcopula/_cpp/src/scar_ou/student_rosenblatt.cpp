@@ -2,7 +2,8 @@
 
 #include "evaluator_internal.hpp"
 #include "scar/detail/copula/common.hpp"
-#include "scar/detail/copula/student.hpp"
+#include "scar/copula/multivariate/student/distribution.hpp"
+#include "scar/copula/multivariate/student/quantile.hpp"
 #include "scar/detail/linalg.hpp"
 #include "scar/detail/safety.hpp"
 #include "scar/detail/scar_ou/grid.hpp"
@@ -27,18 +28,18 @@ bool valid_student_spec(const CopulaSpec& copula) {
         return false;
     }
     if (copula.correlation_kind == CorrelationKind::Factor) {
-        return copula.factor_correlation != nullptr
-            && copula.factor_correlation->dimension()
+        return copula.factor_operator() != nullptr
+            && copula.factor_operator()->dimension()
                 == static_cast<std::size_t>(copula.dim)
-            && std::isfinite(copula.factor_correlation->logdet());
+            && std::isfinite(copula.factor_operator()->logdet());
     }
     return copula.correlation_kind == CorrelationKind::DenseCholesky
         && scar_internal::checked_size_mul(
             static_cast<std::size_t>(copula.dim),
             static_cast<std::size_t>(copula.dim),
             matrix_size)
-        && copula.l_inv.size() == matrix_size
-        && std::isfinite(copula.log_det);
+        && copula.dense_inverse_cholesky().size() == matrix_size
+        && std::isfinite(copula.dense_log_determinant());
 }
 
 double multivariate_student_log_pdf(
@@ -106,7 +107,7 @@ bool student_rosenblatt_impl(
     const FactorCorrelationOperator* factor = nullptr;
     std::size_t factor_rank = 0;
     if (factor_correlation) {
-        factor = copula.factor_correlation.get();
+        factor = copula.factor_operator().get();
         factor_rank = factor->rank();
         std::size_t prefix_inverse_size = 0;
         if (!scar_internal::checked_size_mul(
@@ -203,7 +204,7 @@ bool student_rosenblatt_impl(
     } else {
         for (std::size_t prefix = 1; prefix < dimension; ++prefix) {
             const double diagonal =
-                copula.l_inv[(prefix - 1) * dimension + prefix - 1];
+                copula.dense_inverse_cholesky()[(prefix - 1) * dimension + prefix - 1];
             if (!std::isfinite(diagonal) || diagonal <= 0.0) {
                 return false;
             }
@@ -330,7 +331,7 @@ bool student_rosenblatt_impl(
                         factor_conditional_variance[column]);
                 } else {
                     const double diagonal =
-                        copula.l_inv[column * dimension + column];
+                        copula.dense_inverse_cholesky()[column * dimension + column];
                     if (!std::isfinite(diagonal) || diagonal <= 0.0) {
                         valid = false;
                         return;
@@ -339,7 +340,7 @@ bool student_rosenblatt_impl(
                          prefix < column;
                          ++prefix) {
                         conditional_mean -=
-                            copula.l_inv[column * dimension + prefix]
+                            copula.dense_inverse_cholesky()[column * dimension + prefix]
                             * quantiles[state_offset + prefix]
                             / diagonal;
                     }
@@ -351,7 +352,7 @@ bool student_rosenblatt_impl(
                              prefix <= factor_row;
                              ++prefix) {
                             whitened +=
-                                copula.l_inv[
+                                copula.dense_inverse_cholesky()[
                                     factor_row * dimension + prefix]
                                 * quantiles[state_offset + prefix];
                         }

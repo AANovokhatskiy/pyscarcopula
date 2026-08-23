@@ -12,25 +12,121 @@ void bind_copula(py::module_& m) {
         "CopulaSpec",
         "Native copula family, transform, dimension, and cached factors.")
         .def(py::init<>())
-        .def_readwrite("family", &scar::CopulaSpec::family)
+        .def_property(
+            "family",
+            [](const scar::CopulaSpec& spec) { return spec.family; },
+            [](scar::CopulaSpec& spec, scar::CopulaFamily family) {
+                if (spec.family != family) {
+                    spec.family = family;
+                    spec.reset_model_storage();
+                }
+            })
         .def_readwrite("rotation", &scar::CopulaSpec::rotation)
         .def_readwrite("transform", &scar::CopulaSpec::transform)
         .def_readwrite("offset", &scar::CopulaSpec::offset)
         .def_readwrite("dim", &scar::CopulaSpec::dim)
-        .def_readwrite(
+        .def_property(
             "correlation_kind",
-            &scar::CopulaSpec::correlation_kind)
-        .def_readwrite("l_inv", &scar::CopulaSpec::l_inv)
-        .def_readwrite(
+            [](const scar::CopulaSpec& spec) {
+                return spec.correlation_kind;
+            },
+            [](scar::CopulaSpec& spec, scar::CorrelationKind kind) {
+                if (spec.correlation_kind != kind) {
+                    spec.correlation_kind = kind;
+                    spec.reset_model_storage();
+                }
+            })
+        .def_property(
+            "l_inv",
+            [](const scar::CopulaSpec& spec) {
+                if (spec.family != scar::CopulaFamily::Student
+                    && spec.family
+                        != scar::CopulaFamily::MultivariateGaussian) {
+                    return std::vector<double>{};
+                }
+                return spec.dense_inverse_cholesky();
+            },
+            [](scar::CopulaSpec& spec, std::vector<double> value) {
+                spec.dense_inverse_cholesky() = std::move(value);
+            })
+        .def_property(
             "factor_correlation",
-            &scar::CopulaSpec::factor_correlation)
-        .def_readwrite(
+            [](const scar::CopulaSpec& spec) {
+                if ((spec.family != scar::CopulaFamily::Student
+                     && spec.family
+                         != scar::CopulaFamily::MultivariateGaussian)
+                    || spec.correlation_kind
+                        != scar::CorrelationKind::Factor) {
+                    return std::shared_ptr<
+                        const scar::FactorCorrelationOperator>{};
+                }
+                return spec.factor_operator();
+            },
+            [](scar::CopulaSpec& spec,
+               std::shared_ptr<const scar::FactorCorrelationOperator> value) {
+                spec.factor_operator() = std::move(value);
+            })
+        .def_property(
             "factor_dimension_tile",
-            &scar::CopulaSpec::factor_dimension_tile)
-        .def_readwrite("log_det", &scar::CopulaSpec::log_det)
-        .def_readwrite("ppf_n_obs", &scar::CopulaSpec::ppf_n_obs)
-        .def_readwrite("ppf_nodes", &scar::CopulaSpec::ppf_nodes)
-        .def_readwrite("ppf_table", &scar::CopulaSpec::ppf_table)
+            [](const scar::CopulaSpec& spec) {
+                if ((spec.family != scar::CopulaFamily::Student
+                     && spec.family
+                         != scar::CopulaFamily::MultivariateGaussian)
+                    || spec.correlation_kind
+                        != scar::CorrelationKind::Factor) {
+                    return std::size_t{16384};
+                }
+                return spec.factor_dimension_tile();
+            },
+            [](scar::CopulaSpec& spec, std::size_t value) {
+                spec.factor_dimension_tile() = value;
+            })
+        .def_property(
+            "log_det",
+            [](const scar::CopulaSpec& spec) {
+                if (spec.family != scar::CopulaFamily::Student
+                    && spec.family
+                        != scar::CopulaFamily::MultivariateGaussian) {
+                    return 0.0;
+                }
+                return spec.dense_log_determinant();
+            },
+            [](scar::CopulaSpec& spec, double value) {
+                spec.dense_log_determinant() = value;
+            })
+        .def_property(
+            "ppf_n_obs",
+            [](const scar::CopulaSpec& spec) {
+                if (spec.family != scar::CopulaFamily::Student) {
+                    return std::int64_t{0};
+                }
+                return spec.student_ppf_observation_count();
+            },
+            [](scar::CopulaSpec& spec, std::int64_t value) {
+                spec.student_ppf_observation_count() = value;
+            })
+        .def_property(
+            "ppf_nodes",
+            [](const scar::CopulaSpec& spec) {
+                if (spec.family != scar::CopulaFamily::Student) {
+                    return std::vector<double>{};
+                }
+                return spec.student_ppf_nodes();
+            },
+            [](scar::CopulaSpec& spec, std::vector<double> value) {
+                spec.student_ppf_nodes() = std::move(value);
+            })
+        .def_property(
+            "ppf_table",
+            [](const scar::CopulaSpec& spec) {
+                if (spec.family != scar::CopulaFamily::Student) {
+                    return std::vector<double>{};
+                }
+                return spec.student_ppf_table();
+            },
+            [](scar::CopulaSpec& spec, std::vector<double> value) {
+                spec.student_ppf_table() = std::move(value);
+            })
         .def(
             "set_student_ppf_cache",
             &set_student_ppf_cache,

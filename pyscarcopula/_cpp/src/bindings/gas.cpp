@@ -10,17 +10,17 @@ scar::ObservationView set_equicorr_prepared(
     py::array_t<double, py::array::c_style | py::array::forcecast> sum_z,
     py::array_t<double, py::array::c_style | py::array::forcecast> sum_z2) {
 
-    copula.equicorr_sum_cache = vector_from_array(sum_z);
-    copula.equicorr_sum_squares_cache = vector_from_array(sum_z2);
-    if (copula.equicorr_sum_cache.empty()
-        || copula.equicorr_sum_squares_cache.size()
-            != copula.equicorr_sum_cache.size()) {
+    copula.equicorr_sum_scores() = vector_from_array(sum_z);
+    copula.equicorr_sum_squares() = vector_from_array(sum_z2);
+    if (copula.equicorr_sum_scores().empty()
+        || copula.equicorr_sum_squares().size()
+            != copula.equicorr_sum_scores().size()) {
         throw std::invalid_argument(
             "prepared Equicorr statistics must be non-empty and equal-sized");
     }
     return {
         nullptr,
-        copula.equicorr_sum_cache.size(),
+        copula.equicorr_sum_scores().size(),
         copula.dim,
     };
 }

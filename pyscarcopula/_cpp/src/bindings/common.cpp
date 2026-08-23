@@ -1,6 +1,7 @@
 #include "common.hpp"
 
 #include "scar/copula.hpp"
+#include "scar/copula/multivariate/student/quantile.hpp"
 #include "scar/gas.hpp"
 #include "scar/ou.hpp"
 #include <pybind11/numpy.h>
@@ -268,9 +269,9 @@ void set_student_ppf_cache(
         }
     }
 
-    spec.ppf_nodes.assign(nodes_data, nodes_data + n_nodes);
-    spec.ppf_table.assign(table_data, table_data + table_size);
-    spec.ppf_n_obs = n_obs;
+    spec.student_ppf_nodes().assign(nodes_data, nodes_data + n_nodes);
+    spec.student_ppf_table().assign(table_data, table_data + table_size);
+    spec.student_ppf_observation_count() = n_obs;
 }
 
 py::list backend_chain_to_list(const std::vector<scar::OuBackend>& chain) {

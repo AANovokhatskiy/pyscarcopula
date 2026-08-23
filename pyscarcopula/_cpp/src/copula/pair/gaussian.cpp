@@ -188,13 +188,17 @@ void gaussian_fill_density_gradient_grid_row(
     double* pdf_row,
     double* gradient_row) {
 
-    gaussian_fill_grid_row(
-        u1,
-        u2,
-        parameter_grid,
-        derivative_grid,
-        pdf_row,
-        gradient_row);
+    for (std::size_t index = 0; index < parameter_grid.size(); ++index) {
+        const double parameter = parameter_grid[index];
+        const double density = std::exp(
+            gaussian_log_pdf_unrotated(u1, u2, parameter));
+        pdf_row[index] = density;
+        if (gradient_row != nullptr) {
+            gradient_row[index] = density
+                * gaussian_dlog_pdf_dr_unrotated(u1, u2, parameter)
+                * derivative_grid[index];
+        }
+    }
 }
 
 double gaussian_h_from_quantiles(double z_u, double z_v, double rho);

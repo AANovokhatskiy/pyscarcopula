@@ -406,21 +406,13 @@ GridValuesWithGrad copula_pdf_and_grad_grid(
         const std::size_t row =
             static_cast<std::size_t>(t)
             * static_cast<std::size_t>(out.pdf.n_grid);
-        double v1 = 0.0;
-        double v2 = 0.0;
-        apply_rotation(
-            spec, row_value(u, t, 0), row_value(u, t, 1), v1, v2);
-        for (std::int64_t j = 0; j < out.pdf.n_grid; ++j) {
-            const std::size_t index = static_cast<std::size_t>(j);
-            const std::size_t output_index = row + index;
-            out.pdf.values[output_index] = std::exp(
-                kernel.log_pdf_unrotated(v1, v2, parameter_grid[index]));
-            out.d_pdf_dx.values[output_index] =
-                out.pdf.values[output_index]
-                * kernel.dlog_pdf_dparameter_unrotated(
-                    v1, v2, parameter_grid[index])
-                * derivative_grid[index];
-        }
+        kernel.fill_grid_row_with_gradient(
+            row_value(u, t, 0),
+            row_value(u, t, 1),
+            parameter_grid,
+            derivative_grid,
+            out.pdf.values.data() + row,
+            out.d_pdf_dx.values.data() + row);
     }
     return out;
 }

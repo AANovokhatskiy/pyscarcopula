@@ -1,5 +1,7 @@
-#include "scar/factor.hpp"
+#include "scar/copula/multivariate/correlation/factor.hpp"
 
+#include "scar/copula/model_storage.hpp"
+#include "scar/copula/spec.hpp"
 #include "scar/detail/linalg.hpp"
 #include "scar/detail/parallel.hpp"
 #include "scar/detail/safety.hpp"
@@ -411,3 +413,33 @@ void FactorCorrelationOperator::solve_core_inplace(
 }
 
 }  // namespace scar
+
+namespace scar::copula::multivariate::correlation {
+
+FactorCorrelation& factor(CopulaSpec& spec) {
+    TypedModelStorage& storage = spec.model_storage();
+    if (auto* gaussian = std::get_if<
+            gaussian::FactorModelStorage>(&storage.value)) {
+        return gaussian->correlation;
+    }
+    if (auto* student = std::get_if<
+            student::FactorModelStorage>(&storage.value)) {
+        return student->correlation;
+    }
+    throw std::logic_error("copula does not own a factor correlation");
+}
+
+const FactorCorrelation& factor(const CopulaSpec& spec) {
+    const TypedModelStorage& storage = spec.model_storage();
+    if (const auto* gaussian = std::get_if<
+            gaussian::FactorModelStorage>(&storage.value)) {
+        return gaussian->correlation;
+    }
+    if (const auto* student = std::get_if<
+            student::FactorModelStorage>(&storage.value)) {
+        return student->correlation;
+    }
+    throw std::logic_error("copula does not own a factor correlation");
+}
+
+}  // namespace scar::copula::multivariate::correlation

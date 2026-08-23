@@ -1,67 +1,20 @@
 #pragma once
 
-#include "scar/copula/model_descriptor.hpp"
 #include "scar/copula/rotation.hpp"
+#include "scar/copula/spec.hpp"
 #include "scar/copula/transforms.hpp"
+#include "scar/copula/multivariate/gaussian/conditional.hpp"
+#include "scar/copula/multivariate/student/conditional.hpp"
+#include "scar/copula/multivariate/student/rosenblatt.hpp"
 #include "scar/core/span.hpp"
 #include "scar/observation.hpp"
 
 #include <cstddef>
 #include <cstdint>
-#include <memory>
 #include <utility>
 #include <vector>
 
 namespace scar {
-
-class FactorCorrelationOperator;
-
-/// Copula kernels supported by the native dispatch layer.
-enum class CopulaFamily : int {
-#define SCAR_PAIR_FAMILY(                                                \
-    enum_name, package_name, enum_value, transform_policy, rotation_policy, \
-    default_transform, default_offset)                                  \
-    enum_name = enum_value,
-#include "scar/copula/pair/families.def"
-#undef SCAR_PAIR_FAMILY
-    Student = 6,
-    EquicorrGaussian = 7,
-    MultivariateGaussian = 8,
-};
-
-enum class CorrelationKind : int {
-    DenseCholesky = 0,
-    Factor = 1,
-};
-
-/// Complete, immutable-by-convention input specification for copula kernels.
-///
-/// Multivariate Student and Gaussian families may populate the factor and
-/// PPF-cache fields. Bivariate families use only the family, rotation,
-/// transform, and offset fields.
-struct CopulaSpec {
-    CopulaFamily family = CopulaFamily::Clayton;  ///< Kernel family.
-    Rotation rotation = Rotation::R0;             ///< Pair rotation.
-    Transform transform = Transform::Softplus;    ///< Parameter transform.
-    double offset = 0.0001;                       ///< Transform offset.
-    int dim = 2;                                  ///< Copula dimension.
-    CorrelationKind correlation_kind =
-        CorrelationKind::DenseCholesky;
-    std::vector<double> l_inv;  ///< Row-major inverse Cholesky factor.
-    std::shared_ptr<const FactorCorrelationOperator> factor_correlation;
-    std::size_t factor_dimension_tile = 16384;
-    double log_det = 0.0;       ///< Log determinant of correlation factor.
-    std::int64_t ppf_n_obs = 0;  ///< Rows represented by the PPF cache.
-    std::vector<double> ppf_nodes;  ///< Student degrees-of-freedom nodes.
-    std::vector<double> ppf_table;  ///< Flattened cached Student quantiles.
-    std::vector<double> gaussian_z1_cache;
-    std::vector<double> gaussian_z2_cache;
-    std::vector<double> equicorr_sum_cache;
-    std::vector<double> equicorr_sum_squares_cache;
-
-    /// Convert this compatibility DTO to a typed model-shape descriptor.
-    TypedModelDescriptor model_descriptor() const noexcept;
-};
 
 using Observations = std::vector<std::vector<double>>;
 
@@ -124,31 +77,6 @@ struct EquicorrPreparationResult {
     std::size_t temporary_values = 0;
     std::uint64_t clipping_events = 0;
     std::uint64_t nonfinite_values = 0;
-};
-
-/// Conditional latent samples for coordinates not supplied by the caller.
-struct ConditionalSampleResult {
-    std::vector<double> values;
-    std::int64_t n_rows = 0;
-    std::int64_t n_free = 0;
-    int status = 0;
-    std::int64_t failure_index = -1;
-    int n_threads_requested = 1;
-    int parallel_blocks = 0;
-    std::uint64_t correlation_factorizations = 0;
-};
-
-/// Dense Student-copula Rosenblatt residuals for scalar or per-row df.
-struct DenseStudentRosenblattResult {
-    std::vector<double> residuals;
-    std::int64_t n_rows = 0;
-    int dimension = 0;
-    int status = 0;
-    std::int64_t failure_index = -1;
-    int failure_coordinate = -1;
-    int n_threads_requested = 1;
-    int parallel_blocks = 0;
-    std::uint64_t correlation_factorizations = 0;
 };
 
 /// Static negative log-likelihood objective and requested gradients.
@@ -307,57 +235,6 @@ MultivariateGridResult equicorr_pdf_and_grad_grid_from_stats(
 EquicorrPreparationResult prepare_equicorr_sufficient_statistics(
     ObservationView u,
     std::size_t dimension_tile = 16384,
-    int n_threads = 1);
-
-ConditionalSampleResult multivariate_gaussian_conditional(
-    const std::vector<double>& correlations,
-    std::int64_t correlation_rows,
-    int dimension,
-    const std::vector<int>& given_indices,
-    const std::vector<double>& given_latent,
-    const std::vector<double>& normal_draws,
-    std::int64_t n_rows,
-    int n_threads = 1);
-
-ConditionalSampleResult multivariate_gaussian_conditional(
-    DoubleView correlations,
-    std::int64_t correlation_rows,
-    int dimension,
-    const std::vector<int>& given_indices,
-    DoubleView given_latent,
-    DoubleView normal_draws,
-    std::int64_t n_rows,
-    int n_threads = 1);
-
-ConditionalSampleResult multivariate_student_conditional(
-    const std::vector<double>& correlations,
-    std::int64_t correlation_rows,
-    int dimension,
-    const std::vector<int>& given_indices,
-    const std::vector<double>& given_latent,
-    const std::vector<double>& df,
-    const std::vector<double>& normal_draws,
-    const std::vector<double>& chi_square_draws,
-    std::int64_t n_rows,
-    int n_threads = 1);
-
-ConditionalSampleResult multivariate_student_conditional(
-    DoubleView correlations,
-    std::int64_t correlation_rows,
-    int dimension,
-    const std::vector<int>& given_indices,
-    DoubleView given_latent,
-    DoubleView df,
-    DoubleView normal_draws,
-    DoubleView chi_square_draws,
-    std::int64_t n_rows,
-    int n_threads = 1);
-
-DenseStudentRosenblattResult student_rosenblatt_dense(
-    DoubleView correlation,
-    int dimension,
-    ObservationView u,
-    DoubleView df,
     int n_threads = 1);
 
 }  // namespace scar

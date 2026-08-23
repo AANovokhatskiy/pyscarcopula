@@ -22,8 +22,8 @@ const double* observation_data(const CopulaSpec& copula, ObservationView u) {
     }
     const bool prepared_equicorr =
         copula.family == CopulaFamily::EquicorrGaussian
-        && copula.equicorr_sum_cache.size() == u.size()
-        && copula.equicorr_sum_squares_cache.size() == u.size();
+        && copula.equicorr_sum_scores().size() == u.size()
+        && copula.equicorr_sum_squares().size() == u.size();
     if (!u.empty() && u.data() == nullptr && !prepared_equicorr) {
         throw std::invalid_argument("u data pointer must not be null");
     }

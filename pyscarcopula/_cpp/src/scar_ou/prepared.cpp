@@ -2,6 +2,7 @@
 
 #include "scar/copula/rotation.hpp"
 #include "scar/detail/copula/common.hpp"
+#include "scar/copula/multivariate/equicorrelation/kernel.hpp"
 #include "scar/detail/safety.hpp"
 #include "scar/math/normal.hpp"
 
@@ -69,8 +70,8 @@ PreparedScarOuEvaluator::PreparedScarOuEvaluator(
         throw std::invalid_argument("u must contain only finite values");
     }
     if (copula_.family == CopulaFamily::EquicorrGaussian) {
-        copula_.equicorr_sum_cache.resize(n_obs_size, 0.0);
-        copula_.equicorr_sum_squares_cache.resize(n_obs_size, 0.0);
+        copula_.equicorr_sum_scores().resize(n_obs_size, 0.0);
+        copula_.equicorr_sum_squares().resize(n_obs_size, 0.0);
         for (std::size_t row = 0; row < n_obs_size; ++row) {
             scar_internal::EquicorrStats stats;
             if (!scar_internal::equicorr_sufficient_statistics(
@@ -80,13 +81,13 @@ PreparedScarOuEvaluator::PreparedScarOuEvaluator(
                 throw std::invalid_argument(
                     "failed to prepare equicorrelation statistics");
             }
-            copula_.equicorr_sum_cache[row] = stats.sum;
-            copula_.equicorr_sum_squares_cache[row] = stats.sum_squares;
+            copula_.equicorr_sum_scores()[row] = stats.sum;
+            copula_.equicorr_sum_squares()[row] = stats.sum_squares;
         }
     }
     if (copula_.family == CopulaFamily::Gaussian) {
-        copula_.gaussian_z1_cache.resize(n_obs_size, 0.0);
-        copula_.gaussian_z2_cache.resize(n_obs_size, 0.0);
+        copula_.pair_gaussian_first_scores().resize(n_obs_size, 0.0);
+        copula_.pair_gaussian_second_scores().resize(n_obs_size, 0.0);
         for (std::size_t row = 0; row < n_obs_size; ++row) {
             double u1 = 0.0;
             double u2 = 0.0;
@@ -98,8 +99,8 @@ PreparedScarOuEvaluator::PreparedScarOuEvaluator(
                 u2);
             const double x1 = scar::math::normal_quantile(u1);
             const double x2 = scar::math::normal_quantile(u2);
-            copula_.gaussian_z1_cache[row] = x1;
-            copula_.gaussian_z2_cache[row] = x2;
+            copula_.pair_gaussian_first_scores()[row] = x1;
+            copula_.pair_gaussian_second_scores()[row] = x2;
         }
     }
 }
@@ -143,8 +144,8 @@ PreparedScarOuEvaluator::PreparedScarOuEvaluator(
                 "prepared statistics must contain finite valid values");
         }
     }
-    copula_.equicorr_sum_cache = std::move(equicorr_sums);
-    copula_.equicorr_sum_squares_cache =
+    copula_.equicorr_sum_scores() = std::move(equicorr_sums);
+    copula_.equicorr_sum_squares() =
         std::move(equicorr_sum_squares);
 }
 
@@ -178,8 +179,8 @@ void PreparedScarOuEvaluator::update_student_factor(
             throw std::invalid_argument("l_inv must contain only finite values");
         }
     }
-    copula_.l_inv = l_inv;
-    copula_.log_det = log_det;
+    copula_.dense_inverse_cholesky() = l_inv;
+    copula_.dense_log_determinant() = log_det;
 }
 
 ObservationView PreparedScarOuEvaluator::view() const noexcept {
