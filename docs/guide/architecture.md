@@ -69,6 +69,11 @@ own runtime when it first performs explicitly parallel work and never reuses
 the parent's workers. Nested native dispatch from a worker falls back to a
 local sequential call, preventing starvation and deadlock.
 
+Each submitted batch captures the calling thread's C floating-point
+environment and applies it before numerical work starts on a pool worker.
+This prevents operating-system or runtime-specific worker defaults from
+changing the last bits of otherwise identical serial and parallel results.
+
 Model mutation is protected by a per-instance re-entrant lock. Prepared SCAR
 evaluators protect mutable workspace with a native mutex. Concurrent work
 should normally use independent models/evaluators; sharing one prepared

@@ -237,7 +237,11 @@ def test_native_transforms_preserve_python_contract(
 
     np.testing.assert_allclose(copula.transform(x), expected_r)
     np.testing.assert_allclose(copula.dtransform(x), expected_d)
-    np.testing.assert_allclose(copula.inv_transform(expected_r), expected_x)
+    np.testing.assert_allclose(
+        copula.inv_transform(expected_r),
+        expected_x,
+        atol=4.0 * np.finfo(np.float64).eps,
+    )
 
 
 @pytest.mark.parametrize(

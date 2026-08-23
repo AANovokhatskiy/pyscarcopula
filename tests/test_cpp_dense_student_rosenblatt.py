@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ctypes
+import sys
 import threading
 from types import SimpleNamespace
 
@@ -196,6 +198,40 @@ def test_noncontiguous_inputs_and_four_threads_match_serial():
 
     np.testing.assert_array_equal(parallel, serial)
     assert parallel.flags.c_contiguous
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="UCRT floating-point environment regression contract",
+)
+def test_parallel_workers_inherit_calling_floating_point_environment():
+    rng = np.random.default_rng(20260824)
+    dimension = 6
+    correlation = np.full((dimension, dimension), 0.15)
+    np.fill_diagonal(correlation, 1.0)
+    observations = rng.uniform(0.01, 0.99, size=(256, dimension))
+    df_path = rng.uniform(0.25, 30.0, size=len(observations))
+
+    module = _cpp_extension.load()
+    module._parallel_runtime_shutdown()
+    module._parallel_for_blocks_probe(16, 1, 4)
+
+    ucrt = ctypes.CDLL("ucrtbase")
+    ucrt.fegetround.restype = ctypes.c_int
+    ucrt.fesetround.argtypes = [ctypes.c_int]
+    ucrt.fesetround.restype = ctypes.c_int
+    original_rounding = ucrt.fegetround()
+    ucrt_round_downward = 0x100
+    try:
+        assert ucrt.fesetround(ucrt_round_downward) == 0
+        serial = dense_student_rosenblatt(
+            correlation, df_path, observations, n_threads=1)
+        parallel = dense_student_rosenblatt(
+            correlation, df_path, observations, n_threads=4)
+    finally:
+        assert ucrt.fesetround(original_rounding) == 0
+
+    np.testing.assert_array_equal(parallel, serial)
 
 
 def test_native_diagnostics_report_one_factorization_and_parallel_rows():

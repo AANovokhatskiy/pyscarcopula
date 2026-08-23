@@ -198,7 +198,7 @@ def test_benchmark_baseline_supports_coarse_regression_detection():
         environment["compiler_identity"]
     )
     assert gate_candidate["environment"]["compute_source_sha256"] == (
-        environment["compute_source_sha256"]
+        benchmark_cpp_refactor._source_digest()
     )
     gate_comparison = gate_candidate["comparison"]
     assert gate_comparison["passed"] is True

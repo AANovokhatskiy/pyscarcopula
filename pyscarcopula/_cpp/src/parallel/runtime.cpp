@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <atomic>
 #include <condition_variable>
+#include <cfenv>
 #include <cstdlib>
 #include <deque>
 #include <exception>
@@ -33,12 +34,18 @@ std::uint64_t current_pid() noexcept {
 }
 
 struct Batch {
-    explicit Batch(std::size_t count) : remaining(count) {}
+    explicit Batch(std::size_t count) : remaining(count) {
+        if (std::fegetenv(&floating_point_environment) != 0) {
+            throw std::runtime_error(
+                "failed to capture caller floating-point environment");
+        }
+    }
 
     std::mutex mutex;
     std::condition_variable completed;
     std::size_t remaining;
     std::exception_ptr exception;
+    std::fenv_t floating_point_environment{};
 };
 
 class ThreadPool {
@@ -64,6 +71,12 @@ public:
             for (auto& task : tasks) {
                 queue_.emplace_back([batch, task = std::move(task)]() mutable {
                     try {
+                        if (std::fesetenv(
+                                &batch->floating_point_environment) != 0) {
+                            throw std::runtime_error(
+                                "failed to apply caller floating-point "
+                                "environment to worker");
+                        }
                         task();
                     } catch (...) {
                         std::lock_guard<std::mutex> batch_lock(batch->mutex);
