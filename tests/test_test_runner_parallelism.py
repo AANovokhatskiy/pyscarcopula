@@ -11,8 +11,8 @@ except ModuleNotFoundError:  # pragma: no cover - Python 3.10
 
 import pytest
 
-import benchmark_timing
-from benchmark_timing import interleaved_timings
+from tools import benchmark_timing
+from tools.benchmark_timing import interleaved_timings
 
 
 ROOT = Path(__file__).resolve().parents[1]

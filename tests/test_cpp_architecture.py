@@ -30,12 +30,27 @@ def _write(root: Path, relative: str, text: str = "") -> Path:
     return path
 
 
+def _set_manifest(
+    root: Path,
+    compute: list[str] | tuple[str, ...],
+    bindings: list[str] | tuple[str, ...] = ("bindings/module.cpp",),
+) -> None:
+    _write(
+        root,
+        "pyscarcopula/_cpp/build_support/sources.py",
+        f"SCAR_COMPUTE_SOURCES = {tuple(compute)!r}\n"
+        f"PYTHON_BINDING_SOURCES = {tuple(bindings)!r}\n",
+    )
+
+
 def _minimal_repository(root: Path) -> Path:
     _write(
         root,
         "setup.py",
-        'SCAR_CORE_SOURCES = ["bindings/module.cpp"]\n',
+        "SCAR_COMPUTE_SOURCES = manifest.SCAR_COMPUTE_SOURCES\n"
+        "PYTHON_BINDING_SOURCES = manifest.PYTHON_BINDING_SOURCES\n",
     )
+    _set_manifest(root, ())
     _write(root, "pyscarcopula/_cpp/include/scar/copula.hpp", "#pragma once\n")
     _write(root, "pyscarcopula/_cpp/include/scar/gas.hpp", "#pragma once\n")
     _write(root, "pyscarcopula/_cpp/include/scar/ou.hpp", "#pragma once\n")
@@ -56,6 +71,35 @@ def _rules(root: Path) -> set[str]:
 
 def test_current_repository_satisfies_cpp_architecture_contract():
     assert check_repository(ROOT) == []
+
+
+def test_setup_build_path_does_not_mutate_path():
+    source = (ROOT / "setup.py").read_text(encoding="utf-8")
+    assert 'os.environ["PATH"]' not in source
+    assert "shutil.which" not in source
+
+
+def test_gate4_workflow_covers_required_compilers_and_build_boundaries():
+    source = (
+        ROOT / ".github/workflows/parallel-release-gates.yml"
+    ).read_text(encoding="utf-8")
+    for configuration in (
+        "linux-gcc-py310",
+        "linux-gcc-py314",
+        "linux-clang-py312",
+        "windows-msvc-py312",
+        "windows-mingw64-py312",
+        "macos-arm64-clang-py312",
+    ):
+        assert source.count(f"name: {configuration}") == 1
+
+    assert "msystem: MINGW64" in source
+    assert "install: mingw-w64-x86_64-gcc" in source
+    assert "python tools/build_cpp_tests.py --force" in source
+    assert "python -m pyscarcopula._native_smoke" in source
+    assert "Run full non-benchmark suite against wheel" in source
+    assert source.index("Verify Python-free C++ build boundary") < source.index(
+        "Build strict wheel")
 
 
 def test_stateless_scar_bindings_release_gil_after_array_validation():
@@ -206,12 +250,10 @@ def test_forbidden_dependencies_produce_clear_rule(
     if relative.endswith(".cpp"):
         source = Path(relative).relative_to(
             "pyscarcopula/_cpp/src").as_posix()
-        setup = root / "setup.py"
-        setup.write_text(
-            "SCAR_CORE_SOURCES = "
-            f"{['bindings/module.cpp', source]!r}\n",
-            encoding="utf-8",
-        )
+        if source.startswith("bindings/"):
+            _set_manifest(root, (), ("bindings/module.cpp", source))
+        else:
+            _set_manifest(root, (source,))
     assert expected_rule in _rules(root)
 
 
@@ -245,3 +287,37 @@ def test_public_header_cycle_is_rejected(tmp_path):
         '#include "scar/copula.hpp"\n',
     )
     assert "public-header-cycle" in _rules(root)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        '#include <pybind11/pybind11.h>\n',
+        '#include <Python.h>\n',
+        '#include <numpy/arrayobject.h>\n',
+        "PyObject* callback = nullptr;\n",
+        "auto value = py::none();\n",
+    ],
+)
+def test_python_dependencies_are_rejected_from_compute_boundary(
+    tmp_path, content,
+):
+    root = _minimal_repository(tmp_path)
+    _write(root, "pyscarcopula/_cpp/src/copula/bad.cpp", content)
+    _set_manifest(root, ("copula/bad.cpp",))
+    assert "python-free-compute-boundary" in _rules(root)
+
+
+def test_binding_source_cannot_be_declared_as_compute(tmp_path):
+    root = _minimal_repository(tmp_path)
+    _set_manifest(root, ("bindings/module.cpp",), ())
+    assert "source-manifest" in _rules(root)
+
+
+def test_setup_must_consume_both_canonical_manifests(tmp_path):
+    root = _minimal_repository(tmp_path)
+    (root / "setup.py").write_text(
+        "SCAR_COMPUTE_SOURCES = manifest.SCAR_COMPUTE_SOURCES\n",
+        encoding="utf-8",
+    )
+    assert "source-manifest" in _rules(root)

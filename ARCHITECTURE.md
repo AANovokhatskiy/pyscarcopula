@@ -123,6 +123,26 @@ sequential GAS R-vine sampling, dense Student Rosenblatt transforms, and
 SCAR-TM-OU likelihood/gradient/forward operations have one production
 implementation in C++.
 
+The extension build has one canonical source manifest at
+`pyscarcopula/_cpp/build_support/sources.py`. `SCAR_COMPUTE_SOURCES` contains
+only Python-free computational translation units;
+`PYTHON_BINDING_SOURCES` contains the pybind adapter. `setup.py` combines both
+lists for `_scar_cpp` without creating or shipping a separate C++ library.
+
+The computational boundary is independently buildable as a C++17 executable:
+
+```bash
+python tools/check_cpp_architecture.py
+python tools/build_cpp_tests.py
+```
+
+The second command uses setuptools' configured compiler abstraction. It
+compiles every computational source and every `scar/*.hpp` header in
+isolation, links `tests/cpp/compute_smoke.cpp`, and runs the executable without
+Python, NumPy, or pybind11 include paths or libraries. Compiler provisioning is
+the responsibility of the local environment or CI runner; `setup.py` does not
+modify `PATH`.
+
 Python remains responsible for:
 
 - optimizer orchestration and result construction;

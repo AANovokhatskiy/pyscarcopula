@@ -180,6 +180,11 @@ void bind_parallel(py::module_& m) {
         return runtime_info_to_dict(
             scar_internal::parallel_runtime_info());
     });
+    // Python atexit handlers run before the C/C++ runtime starts unloading
+    // the extension and its threading support.  The C++ atexit fallback in
+    // runtime.cpp remains in place for non-Python callers.
+    py::module_::import("atexit").attr("register")(
+        m.attr("_parallel_runtime_shutdown"));
 
     m.def(
         "_parallel_for_blocks_probe",

@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from scipy.stats import norm
 
-from benchmark_timing import interleaved_timings
+from tools.benchmark_timing import interleaved_timings
 from pyscarcopula import GumbelCopula, VineCopula
 from pyscarcopula.api import sample
 from pyscarcopula._types import LatentResult, jacobi_params

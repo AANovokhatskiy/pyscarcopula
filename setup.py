@@ -1,12 +1,31 @@
-import os
-import platform
-import shutil
-import sys
+import importlib.util
 from pathlib import Path
 
 from pybind11.setup_helpers import Pybind11Extension
 from pybind11.setup_helpers import build_ext as _build_ext
 from setuptools import setup
+
+
+ROOT = Path(__file__).resolve().parent
+CPP_ROOT = ROOT / "pyscarcopula" / "_cpp"
+CPP_SRC = Path("pyscarcopula") / "_cpp" / "src"
+
+
+def _load_build_support(name: str):
+    path = CPP_ROOT / "build_support" / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(
+        f"_pyscarcopula_build_{name}", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load C++ build support module from {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_sources = _load_build_support("sources")
+_toolchain = _load_build_support("toolchain")
+SCAR_COMPUTE_SOURCES = _sources.SCAR_COMPUTE_SOURCES
+PYTHON_BINDING_SOURCES = _sources.PYTHON_BINDING_SOURCES
 
 
 class build_ext(_build_ext):
@@ -22,186 +41,29 @@ class build_ext(_build_ext):
     """
 
     def finalize_options(self):
-        compiler = os.environ.get("PYSCA_CPP_COMPILER", "").strip()
+        compiler = _toolchain.requested_compiler()
         if compiler:
             self.compiler = compiler
         super().finalize_options()
 
     def build_extension(self, ext):
-        if self.compiler.compiler_type == "msvc":
-            sdk_root = os.environ.get("WindowsSdkDir", "").strip()
-            sdk_version = os.environ.get("WindowsSDKVersion", "").strip("\\/")
-            architecture = (
-                "arm64" if platform.machine().lower() == "arm64" else "x64"
-            )
-            resource_directory = (
-                Path(sdk_root) / "bin" / sdk_version / architecture
-            )
-            tools_root = os.environ.get("VCToolsInstallDir", "").strip()
-            compiler_directory = (
-                Path(tools_root) / "bin" / "Hostx64" / architecture
-            )
-            search_directories = [
-                directory
-                for executable, directory in (
-                    ("cl.exe", compiler_directory),
-                    ("rc.exe", resource_directory),
-                )
-                if shutil.which(executable) is None
-                and (directory / executable).is_file()
-            ]
-            if search_directories:
-                os.environ["PATH"] = os.pathsep.join([
-                    *(str(directory) for directory in search_directories),
-                    os.environ.get("PATH", ""),
-                ])
         if self.compiler.compiler_type == "mingw32":
-            # pybind11 assumes MSVC on Windows and injects cl-style flags;
-            # translate them for GCC.
-            translated = []
-            for arg in ext.extra_compile_args:
-                if arg.startswith("/std:"):
-                    translated.append("-std=" + arg[len("/std:"):])
-                elif arg == "/W4":
-                    translated.extend(["-Wall", "-Wextra"])
-                elif arg == "/WX":
-                    translated.append("-Werror")
-                elif arg in ("/EHsc", "/bigobj"):
-                    continue  # no GCC equivalent needed
-                else:
-                    translated.append(arg)
-            if "-fvisibility=hidden" not in translated:
-                translated.append("-fvisibility=hidden")
-            # Match the optimization level of the MSVC release build
-            # (/O2 /DNDEBUG). Prepended so that user-supplied CFLAGS
-            # (appended by pybind11 at the end) can still override it.
-            ext.extra_compile_args = ["-O2", "-DNDEBUG", *translated]
-            # Link the GCC runtime statically so the built .pyd does not
-            # depend on MSYS2 DLLs (libstdc++-6.dll, libgcc_s_seh-1.dll,
-            # libwinpthread-1.dll) being importable at runtime.
-            ext.extra_link_args = [
-                *ext.extra_link_args,
-                "-static-libstdc++",
-                "-static-libgcc",
-                "-Wl,-Bstatic",
-                "-lwinpthread",
-                "-Wl,-Bdynamic",
-            ]
+            _toolchain.prepare_mingw_extension(ext)
         super().build_extension(ext)
-
-
-ROOT = Path(__file__).resolve().parent
-CPP_ROOT = ROOT / "pyscarcopula" / "_cpp"
-CPP_SRC = Path("pyscarcopula") / "_cpp" / "src"
-
-SCAR_CORE_SOURCES = [
-    "copula/core.cpp",
-    "copula/common.cpp",
-    "copula/dispatch.cpp",
-    "copula/families/clayton.cpp",
-    "copula/families/gumbel.cpp",
-    "copula/families/frank.cpp",
-    "copula/families/joe.cpp",
-    "copula/families/gaussian.cpp",
-    "copula/kendall.cpp",
-    "copula/families/student.cpp",
-    "copula/multivariate.cpp",
-    "copula/student_rosenblatt.cpp",
-    "factor/operator.cpp",
-    "factor/grid.cpp",
-    "factor/student.cpp",
-    "parallel/runtime.cpp",
-    "likelihood/static.cpp",
-    "gas/evaluator.cpp",
-    "vine/executor.cpp",
-    "vine/density.cpp",
-    "vine/mcmc.cpp",
-    "vine/rosenblatt.cpp",
-    "gas/rvine_sampler.cpp",
-    "scar_ou/monte_carlo.cpp",
-    "scar_ou/validation.cpp",
-    "scar_ou/likelihood.cpp",
-    "scar_ou/gradient.cpp",
-    "scar_ou/prediction.cpp",
-    "scar_ou/gaussian_rosenblatt.cpp",
-    "scar_ou/student_rosenblatt.cpp",
-    "scar_ou/state_distribution.cpp",
-    "scar_ou/evaluator.cpp",
-    "scar_ou/prepared.cpp",
-    "scar_ou/grid.cpp",
-    "scar_ou/quadrature.cpp",
-    "scar_ou/transition.cpp",
-    "bindings/common.cpp",
-    "bindings/parallel.cpp",
-    "bindings/copula.cpp",
-    "bindings/factor.cpp",
-    "bindings/multivariate.cpp",
-    "bindings/scar_ou_types.cpp",
-    "bindings/rvine.cpp",
-    "bindings/gas.cpp",
-    "bindings/scar_ou.cpp",
-    "bindings/module.cpp",
-]
-
-
-def _env_flag(name: str) -> bool:
-    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
-
-
-extra_compile_args = []
-extra_link_args = []
-
-if _env_flag("PYSCA_CPP_STRICT"):
-    if sys.platform == "win32":
-        extra_compile_args.extend(["/W4", "/WX"])
-    else:
-        extra_compile_args.extend(["-Wall", "-Wextra", "-Wpedantic", "-Werror"])
-
-sanitize = _env_flag("PYSCA_CPP_SANITIZE")
-thread_sanitize = _env_flag("PYSCA_CPP_THREAD_SANITIZE")
-if sanitize and thread_sanitize:
-    raise RuntimeError(
-        "PYSCA_CPP_SANITIZE and PYSCA_CPP_THREAD_SANITIZE are mutually "
-        "exclusive"
-    )
-
-if sanitize:
-    if sys.platform == "win32":
-        raise RuntimeError(
-            "PYSCA_CPP_SANITIZE requires a GCC- or Clang-compatible platform"
-        )
-    sanitizer_flags = [
-        "-fsanitize=address,undefined",
-        "-fno-omit-frame-pointer",
-        "-fno-sanitize-recover=all",
-    ]
-    extra_compile_args.extend([*sanitizer_flags, "-O1", "-g"])
-    extra_link_args.extend(sanitizer_flags)
-
-if thread_sanitize:
-    if sys.platform == "win32":
-        raise RuntimeError(
-            "PYSCA_CPP_THREAD_SANITIZE requires a GCC- or "
-            "Clang-compatible platform"
-        )
-    sanitizer_flags = [
-        "-fsanitize=thread",
-        "-fno-omit-frame-pointer",
-        "-fno-sanitize-recover=all",
-    ]
-    extra_compile_args.extend([*sanitizer_flags, "-O1", "-g"])
-    extra_link_args.extend(sanitizer_flags)
 
 
 ext_modules = [
     Pybind11Extension(
         "pyscarcopula._scar_cpp",
-        [str(CPP_SRC / name) for name in SCAR_CORE_SOURCES],
+        [
+            str(CPP_SRC / name)
+            for name in (*SCAR_COMPUTE_SOURCES, *PYTHON_BINDING_SOURCES)
+        ],
         include_dirs=[str(CPP_ROOT / "include")],
-        cxx_std=17,
+        cxx_std=_toolchain.CXX_STANDARD,
         optional=False,
-        extra_compile_args=extra_compile_args,
-        extra_link_args=extra_link_args,
+        extra_compile_args=_toolchain.extension_compile_args(),
+        extra_link_args=_toolchain.extension_link_args(),
     )
 ]
 

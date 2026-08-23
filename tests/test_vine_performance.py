@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from benchmark_timing import interleaved_timings
+from tools.benchmark_timing import interleaved_timings
 from pyscarcopula._utils import pobs
 from pyscarcopula.copula.elliptical import BivariateGaussianCopula
 from pyscarcopula.copula.independent import IndependentCopula

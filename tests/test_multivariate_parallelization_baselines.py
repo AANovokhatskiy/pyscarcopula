@@ -10,7 +10,7 @@ import sys
 import numpy as np
 import pytest
 
-from benchmark_timing import interleaved_timings
+from tools.benchmark_timing import interleaved_timings
 from pyscarcopula import EquicorrGaussianCopula, StochasticStudentCopula
 from pyscarcopula.numerical import multivariate_native
 

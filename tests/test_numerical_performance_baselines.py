@@ -15,7 +15,7 @@ import numpy as np
 import pytest
 import scipy
 
-from benchmark_timing import interleaved_timings
+from tools.benchmark_timing import interleaved_timings
 from pyscarcopula import GaussianCopula, GumbelCopula, StudentCopula
 from pyscarcopula.copula.multivariate.correlation_policy import (
     CorrelationPolicy,

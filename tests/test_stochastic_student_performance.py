@@ -7,7 +7,7 @@ import time
 import numpy as np
 import pytest
 
-from benchmark_timing import interleaved_timings
+from tools.benchmark_timing import interleaved_timings
 from pyscarcopula._utils import pobs
 from pyscarcopula.copula.multivariate.stochastic_student import (
     StochasticStudentCopula,

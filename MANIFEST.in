@@ -4,16 +4,29 @@ include README.md
 include ARCHITECTURE.md
 include pyproject.toml
 include tools/check_cpp_architecture.py
+include tools/build_cpp_tests.py
+include tools/benchmark_timing.py
+include tools/benchmark_cpp_refactor.py
+include tools/capture_cpp_refactor_goldens.py
+include tools/write_cpp_refactor_inventory.py
 include tools/aggregate_release_validation.py
 include tools/allocation_probe.c
 include tools/native_dependency_audit.py
 include tools/write_release_metadata.py
 recursive-include tests *.py
+recursive-include tests/cpp *.cpp
 recursive-include tests/fixtures *.json
+include benchmarks/cpp_refactor_manifest.json
+include benchmarks/cpp_refactor_inventory.json
+include benchmark_artifacts/cpp_refactor_baseline.json
+include benchmark_artifacts/cpp_refactor_baseline.md
+include benchmark_artifacts/cpp_refactor_candidate.json
+include benchmark_artifacts/cpp_refactor_candidate.md
 recursive-include docs *.md
 recursive-exclude data *.csv
 include data/crypto_prices.csv
 recursive-include pyscarcopula/_cpp *.cpp *.hpp
+recursive-include pyscarcopula/_cpp/build_support *.py
 
 # Exclude generated/cache files
 global-exclude __pycache__

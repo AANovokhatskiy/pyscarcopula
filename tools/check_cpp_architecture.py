@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import argparse
-import ast
 from dataclasses import dataclass
+import importlib.util
 from pathlib import Path
 import re
 import sys
@@ -15,6 +15,29 @@ _SCAR_INCLUDE = re.compile(
     r'^\s*#\s*include\s+"scar/([^"]+)"', re.MULTILINE)
 _MODULE_LINE = re.compile(
     r"pyscarcopula::bindings::bind_[A-Za-z0-9_]+\(module\);")
+_FORBIDDEN_COMPUTE_DEPENDENCIES = (
+    (
+        "pybind11",
+        re.compile(
+            r"#\s*include\s*[<\"]pybind11/|\bpybind11::|\bpy::",
+            re.MULTILINE,
+        ),
+    ),
+    (
+        "Python C API",
+        re.compile(
+            r"#\s*include\s*[<\"]Python\.h[>\"]|\bPyObject\b|\bPy_[A-Z]",
+            re.MULTILINE,
+        ),
+    ),
+    (
+        "NumPy C API",
+        re.compile(
+            r"#\s*include\s*[<\"]numpy/|\bPyArray_|\bNPY_[A-Z0-9_]",
+            re.MULTILINE,
+        ),
+    ),
+)
 
 
 @dataclass(frozen=True)
@@ -160,52 +183,131 @@ def check_module_entrypoint(root: Path) -> list[Violation]:
     return violations
 
 
-def _setup_sources(path: Path) -> set[str]:
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    for node in tree.body:
-        if not isinstance(node, ast.Assign):
-            continue
-        if not any(
-            isinstance(target, ast.Name)
-            and target.id == "SCAR_CORE_SOURCES"
-            for target in node.targets
-        ):
-            continue
-        value = ast.literal_eval(node.value)
-        if not isinstance(value, list) or not all(
-            isinstance(item, str) for item in value
-        ):
-            raise ValueError("SCAR_CORE_SOURCES must be a list of strings")
-        if len(value) != len(set(value)):
-            raise ValueError("SCAR_CORE_SOURCES contains duplicate paths")
-        return {Path(item).as_posix() for item in value}
-    raise ValueError("SCAR_CORE_SOURCES assignment was not found")
+def _source_manifest(root: Path) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    path = (
+        root / "pyscarcopula" / "_cpp" / "build_support" / "sources.py")
+    spec = importlib.util.spec_from_file_location(
+        "_pyscarcopula_cpp_source_manifest", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load canonical source manifest from {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    values = []
+    for name in ("SCAR_COMPUTE_SOURCES", "PYTHON_BINDING_SOURCES"):
+        value = getattr(module, name, None)
+        if not isinstance(value, (list, tuple)) or not all(
+                isinstance(item, str) for item in value):
+            raise ValueError(f"{name} must be a list or tuple of strings")
+        normalized = tuple(Path(item).as_posix() for item in value)
+        if len(normalized) != len(set(normalized)):
+            raise ValueError(f"{name} contains duplicate paths")
+        if any(
+                Path(item).is_absolute() or ".." in Path(item).parts
+                for item in normalized):
+            raise ValueError(f"{name} must contain relative paths below src")
+        values.append(normalized)
+    return values[0], values[1]
 
 
 def check_source_manifest(root: Path) -> list[Violation]:
-    setup_path = root / "setup.py"
+    manifest_path = (
+        root / "pyscarcopula" / "_cpp" / "build_support" / "sources.py")
     src = root / "pyscarcopula" / "_cpp" / "src"
     try:
-        declared = _setup_sources(setup_path)
-    except (OSError, SyntaxError, ValueError) as error:
-        return [Violation("source-manifest", setup_path, str(error))]
+        compute, bindings = _source_manifest(root)
+    except (ImportError, OSError, SyntaxError, ValueError) as error:
+        return [Violation("source-manifest", manifest_path, str(error))]
+
+    declared_compute = set(compute)
+    declared_bindings = set(bindings)
     actual = {
         path.relative_to(src).as_posix()
         for path in src.rglob("*.cpp")
     }
     violations = []
-    for path in sorted(actual - declared):
+    overlap = declared_compute & declared_bindings
+    for path in sorted(overlap):
+        violations.append(Violation(
+            "source-manifest",
+            manifest_path,
+            f"source is listed in both canonical manifests: {path}",
+        ))
+
+    actual_bindings = {
+        path for path in actual if path.startswith("bindings/")
+    }
+    actual_compute = actual - actual_bindings
+    for label, declared, discovered in (
+        ("SCAR_COMPUTE_SOURCES", declared_compute, actual_compute),
+        ("PYTHON_BINDING_SOURCES", declared_bindings, actual_bindings),
+    ):
+        for path in sorted(discovered - declared):
+            violations.append(Violation(
+                "source-manifest",
+                manifest_path,
+                f"C++ source is not listed in {label}: {path}",
+            ))
+        for path in sorted(declared - discovered):
+            violations.append(Violation(
+                "source-manifest",
+                manifest_path,
+                f"{label} references a missing or mispartitioned file: {path}",
+            ))
+
+    setup_path = root / "setup.py"
+    try:
+        setup_text = setup_path.read_text(encoding="utf-8")
+    except OSError as error:
+        violations.append(Violation(
+            "source-manifest",
+            setup_path, str(error),
+        ))
+        return violations
+    for name in ("SCAR_COMPUTE_SOURCES", "PYTHON_BINDING_SOURCES"):
+        if name not in setup_text:
+            violations.append(Violation(
+                "source-manifest",
+                setup_path,
+                f"setup.py must consume canonical {name}",
+            ))
+    if "SCAR_CORE_SOURCES" in setup_text:
         violations.append(Violation(
             "source-manifest",
             setup_path,
-            f"C++ source is not listed in SCAR_CORE_SOURCES: {path}",
+            "legacy combined SCAR_CORE_SOURCES manifest must not be restored",
         ))
-    for path in sorted(declared - actual):
-        violations.append(Violation(
-            "source-manifest",
-            setup_path,
-            f"SCAR_CORE_SOURCES references a missing file: {path}",
-        ))
+    return violations
+
+
+def check_python_free_compute_boundary(root: Path) -> list[Violation]:
+    cpp_root = root / "pyscarcopula" / "_cpp"
+    src = cpp_root / "src"
+    try:
+        compute, _ = _source_manifest(root)
+    except (ImportError, OSError, SyntaxError, ValueError):
+        return []  # check_source_manifest reports the canonical root cause.
+
+    files = [src / relative for relative in compute]
+    files.extend(_source_files(cpp_root / "include"))
+    files.extend(
+        path for path in _source_files(src)
+        if path.suffix == ".hpp"
+        and "bindings" not in path.relative_to(src).parts
+    )
+    violations = []
+    for path in sorted(set(files)):
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        for dependency, pattern in _FORBIDDEN_COMPUTE_DEPENDENCIES:
+            for match in pattern.finditer(text):
+                violations.append(Violation(
+                    "python-free-compute-boundary",
+                    path,
+                    f"computational C++ must not depend on {dependency}",
+                    text.count("\n", 0, match.start()) + 1,
+                ))
     return violations
 
 
@@ -281,6 +383,7 @@ def check_repository(root: Path) -> list[Violation]:
         check_include_boundaries,
         check_module_entrypoint,
         check_source_manifest,
+        check_python_free_compute_boundary,
         check_removed_monolith,
         check_public_header_cycles,
     )

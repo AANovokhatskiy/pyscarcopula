@@ -537,6 +537,19 @@ namespace pyscarcopula::bindings {
 
 void bind_common(py::module_& m) {
     m.doc() = "pybind11 bindings for the pyscarcopula SCAR C++ kernels";
+#if defined(_MSC_VER)
+#define PYSCA_STRINGIFY_DETAIL(value) #value
+#define PYSCA_STRINGIFY(value) PYSCA_STRINGIFY_DETAIL(value)
+    m.attr("__cpp_compiler__") = py::str("MSVC " PYSCA_STRINGIFY(_MSC_VER));
+#undef PYSCA_STRINGIFY
+#undef PYSCA_STRINGIFY_DETAIL
+#elif defined(__clang__)
+    m.attr("__cpp_compiler__") = py::str("Clang " __clang_version__);
+#elif defined(__GNUC__)
+    m.attr("__cpp_compiler__") = py::str("GCC " __VERSION__);
+#else
+    m.attr("__cpp_compiler__") = py::str("unknown");
+#endif
     py::register_exception_translator([](std::exception_ptr exception) {
         if (!exception) {
             return;
