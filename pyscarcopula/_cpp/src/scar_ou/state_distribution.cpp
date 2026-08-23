@@ -35,16 +35,16 @@ SmoothedStateDistribution smoothed_state_distribution_impl(
 
     const std::int64_t n_obs = static_cast<std::int64_t>(u.size());
     const std::size_t K = static_cast<std::size_t>(grid.K);
+    std::size_t state_value_count = 0;
     if (n_obs < 2
         || K < 2
-        || static_cast<std::uint64_t>(n_obs)
-            > std::numeric_limits<std::size_t>::max() / K) {
+        || !scar_internal::checked_shape_size(
+            static_cast<std::size_t>(n_obs), K, state_value_count)) {
         return invalid_smoothed_state_distribution(
             SCAR_INVALID_SIZE, backend);
     }
 
-    std::vector<double> emissions(
-        static_cast<std::size_t>(n_obs) * K, 0.0);
+    std::vector<double> emissions(state_value_count, 0.0);
     const double* observation_values = observation_data(copula, u);
     std::vector<double> row(K, 0.0);
     for (std::int64_t t = 0; t < n_obs; ++t) {

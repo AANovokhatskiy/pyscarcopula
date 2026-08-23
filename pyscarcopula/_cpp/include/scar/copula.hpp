@@ -1,5 +1,9 @@
 #pragma once
 
+#include "scar/copula/model_descriptor.hpp"
+#include "scar/copula/rotation.hpp"
+#include "scar/copula/transforms.hpp"
+#include "scar/core/span.hpp"
 #include "scar/observation.hpp"
 
 #include <cstddef>
@@ -23,23 +27,6 @@ enum class CopulaFamily : int {
     Student = 6,
     EquicorrGaussian = 7,
     MultivariateGaussian = 8,
-};
-
-/// Standard pair-copula rotations, expressed in degrees.
-enum class Rotation : int {
-    R0 = 0,
-    R90 = 90,
-    R180 = 180,
-    R270 = 270,
-};
-
-/// Mapping used to convert an unconstrained latent state to a parameter.
-enum class Transform : int {
-    Softplus = 1,
-    XTanh = 2,
-    GaussianTanh = 3,
-    Exponential = 4,
-    Logistic = 5,
 };
 
 enum class CorrelationKind : int {
@@ -71,27 +58,12 @@ struct CopulaSpec {
     std::vector<double> gaussian_z2_cache;
     std::vector<double> equicorr_sum_cache;
     std::vector<double> equicorr_sum_squares_cache;
+
+    /// Convert this compatibility DTO to a typed model-shape descriptor.
+    TypedModelDescriptor model_descriptor() const noexcept;
 };
 
 using Observations = std::vector<std::vector<double>>;
-
-/// Lightweight non-owning view over a contiguous vector of doubles.
-struct DoubleView {
-    const double* values = nullptr;
-    std::size_t count = 0;
-
-    std::size_t size() const noexcept {
-        return count;
-    }
-
-    const double* data() const noexcept {
-        return values;
-    }
-
-    const double& operator[](std::size_t index) const noexcept {
-        return values[index];
-    }
-};
 
 /// Flattened row-major values with explicit two-dimensional shape.
 struct GridValues {

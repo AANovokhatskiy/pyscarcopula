@@ -143,6 +143,21 @@ Python, NumPy, or pybind11 include paths or libraries. Compiler provisioning is
 the responsibility of the local environment or CI runner; `setup.py` does not
 modify `PATH`.
 
+The native foundation has explicit, model-independent owners under
+`include/scar/core`, `include/scar/math`, and the common `include/scar/copula`
+wrappers. It owns C++17 `Span`/`DoubleView`/`MatrixView`, checked shape and byte
+arithmetic, thread-count validation and worker limiting, normal CDF/quantile,
+parameter transforms, rotations, and the shared `Status`/`Result`/
+`FailureContext` vocabulary. Foundation math includes only foundation headers;
+the architecture checker rejects reverse dependencies on model or workflow
+headers. `CopulaSpec` remains a temporary compatibility DTO, but converts to a
+`TypedModelDescriptor`; `expected_dimension()` belongs to that typed
+descriptor rather than to foundation or the universal DTO. Production
+Rosenblatt shape validation uses `Result<std::size_t>` and preserves typed
+failure context. Migration of the remaining domain result DTOs is deferred to
+the error-model cleanup stage. Kernel-specific work thresholds and
+parallel-axis policies stay in the owning kernels.
+
 Python remains responsible for:
 
 - optimizer orchestration and result construction;

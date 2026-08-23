@@ -1,5 +1,6 @@
 #include "scar/rvine.hpp"
 
+#include "scar/core/threading.hpp"
 #include "scar/detail/safety.hpp"
 
 #include <algorithm>
@@ -63,26 +64,6 @@ bool valid_open_uniforms(DoubleView values) {
     return true;
 }
 
-bool checked_bytes(std::size_t values, std::uint64_t& bytes) noexcept {
-    constexpr std::uint64_t item_size = sizeof(double);
-    if (values > std::numeric_limits<std::uint64_t>::max() / item_size) {
-        return false;
-    }
-    bytes = static_cast<std::uint64_t>(values) * item_size;
-    return true;
-}
-
-bool checked_add(
-    std::uint64_t first,
-    std::uint64_t second,
-    std::uint64_t& result) noexcept {
-    if (first > std::numeric_limits<std::uint64_t>::max() - second) {
-        return false;
-    }
-    result = first + second;
-    return true;
-}
-
 std::uint64_t affected_operation_count(
     const RVineDensityPlan& plan,
     int variable) noexcept {
@@ -126,12 +107,16 @@ bool incremental_memory_layout(
     std::uint64_t state_bytes = 0;
     std::uint64_t log_pdf_bytes = 0;
     std::uint64_t draw_bytes = 0;
-    if (!checked_bytes(state_value_count, state_bytes)
-        || !checked_bytes(rows, log_pdf_bytes)
-        || !checked_bytes(draw_value_count, draw_bytes)) {
+    if (!scar_internal::checked_byte_count<double>(
+            state_value_count, state_bytes)
+        || !scar_internal::checked_byte_count<double>(
+            rows, log_pdf_bytes)
+        || !scar_internal::checked_byte_count<double>(
+            draw_value_count, draw_bytes)) {
         return false;
     }
-    if (!checked_add(state_bytes, log_pdf_bytes, fixed_bytes)) {
+    if (!scar_internal::checked_uint64_add(
+            state_bytes, log_pdf_bytes, fixed_bytes)) {
         return false;
     }
     if (!has_proposals || rows == 0) {
@@ -147,21 +132,23 @@ bool incremental_memory_layout(
             node_count, operation_count, node_and_operation_values)
         || !scar_internal::checked_size_mul(
             node_and_operation_values, 2U, per_row_values)
-        || !checked_bytes(per_row_values, per_row_workspace_bytes)) {
+        || !scar_internal::checked_byte_count<double>(
+            per_row_values, per_row_workspace_bytes)) {
         return false;
     }
     std::uint64_t marker_bytes = 0;
-    if (node_count
-            > std::numeric_limits<std::uint64_t>::max() / sizeof(int)) {
+    if (!scar_internal::checked_byte_count<int>(
+            node_count, marker_bytes)) {
         return false;
     }
-    marker_bytes = static_cast<std::uint64_t>(node_count) * sizeof(int);
-    if (!checked_add(
+    if (!scar_internal::checked_uint64_add(
             per_row_workspace_bytes,
             marker_bytes,
             per_row_workspace_bytes)
-        || !checked_add(draw_bytes, draw_bytes, draw_bytes)
-        || !checked_add(fixed_bytes, draw_bytes, fixed_bytes)) {
+        || !scar_internal::checked_uint64_add(
+            draw_bytes, draw_bytes, draw_bytes)
+        || !scar_internal::checked_uint64_add(
+            fixed_bytes, draw_bytes, fixed_bytes)) {
         return false;
     }
     if (fixed_bytes > memory_budget_bytes
@@ -186,9 +173,12 @@ bool full_memory_layout(
     std::uint64_t& peak_bytes) noexcept {
     std::uint64_t state_bytes = 0;
     std::uint64_t log_pdf_bytes = 0;
-    if (!checked_bytes(state_value_count, state_bytes)
-        || !checked_bytes(rows, log_pdf_bytes)
-        || !checked_add(state_bytes, log_pdf_bytes, peak_bytes)) {
+    if (!scar_internal::checked_byte_count<double>(
+            state_value_count, state_bytes)
+        || !scar_internal::checked_byte_count<double>(
+            rows, log_pdf_bytes)
+        || !scar_internal::checked_uint64_add(
+            state_bytes, log_pdf_bytes, peak_bytes)) {
         return false;
     }
     if (!has_proposals || rows == 0) {
@@ -198,14 +188,20 @@ bool full_memory_layout(
     std::uint64_t draw_bytes = 0;
     std::uint64_t node_bytes = 0;
     std::uint64_t proposal_bytes = 0;
-    if (!checked_bytes(draw_value_count, draw_bytes)
-        || !checked_bytes(
+    if (!scar_internal::checked_byte_count<double>(
+            draw_value_count, draw_bytes)
+        || !scar_internal::checked_byte_count<double>(
             static_cast<std::size_t>(plan.node_count), node_bytes)
-        || !checked_add(state_bytes, log_pdf_bytes, proposal_bytes)
-        || !checked_add(peak_bytes, proposal_bytes, peak_bytes)
-        || !checked_add(draw_bytes, draw_bytes, draw_bytes)
-        || !checked_add(peak_bytes, draw_bytes, peak_bytes)
-        || !checked_add(peak_bytes, node_bytes, peak_bytes)) {
+        || !scar_internal::checked_uint64_add(
+            state_bytes, log_pdf_bytes, proposal_bytes)
+        || !scar_internal::checked_uint64_add(
+            peak_bytes, proposal_bytes, peak_bytes)
+        || !scar_internal::checked_uint64_add(
+            draw_bytes, draw_bytes, draw_bytes)
+        || !scar_internal::checked_uint64_add(
+            peak_bytes, draw_bytes, peak_bytes)
+        || !scar_internal::checked_uint64_add(
+            peak_bytes, node_bytes, peak_bytes)) {
         return false;
     }
     return peak_bytes <= memory_budget_bytes;
@@ -436,7 +432,7 @@ MCMCResult mcmc_chunk(
     out.coordinate_steps = proposal_steps;
     out.n_threads_requested = n_threads;
     out.memory_budget_bytes = memory_budget_bytes;
-    if (n_threads <= 0 || state_rows < 0
+    if (!scar_internal::valid_thread_count(n_threads) || state_rows < 0
         || state_columns != plan.dimension
         || global_step_offset < 0 || proposal_steps < 0
         || proposal_rows != state_rows
@@ -632,39 +628,38 @@ MCMCResult mcmc_chunk(
             contribution_values, 0.0);
         std::vector<int> proposal_node_generations(node_values, 0);
 
-        std::uint64_t cache_values = 0;
+        std::size_t cache_values = 0;
         std::uint64_t cache_bytes = 0;
-        if (!checked_add(
-                static_cast<std::uint64_t>(node_values),
-                static_cast<std::uint64_t>(contribution_values),
+        if (!scar_internal::checked_size_add(
+                node_values,
+                contribution_values,
                 cache_values)
-            || cache_values
-                > std::numeric_limits<std::uint64_t>::max() / sizeof(double)) {
+            || !scar_internal::checked_byte_count<double>(
+                cache_values, cache_bytes)) {
             fail_mcmc(out, SCAR_INVALID_SIZE, -1, -1, -1);
             return out;
         }
-        cache_bytes = cache_values * sizeof(double);
         out.cache_bytes = cache_bytes;
         std::uint64_t total_cache_bytes = 0;
         std::uint64_t marker_bytes = 0;
-        if (!checked_add(cache_bytes, cache_bytes, total_cache_bytes)) {
+        if (!scar_internal::checked_uint64_add(
+                cache_bytes, cache_bytes, total_cache_bytes)) {
             fail_mcmc(out, SCAR_INVALID_SIZE, -1, -1, -1);
             return out;
         }
-        if (node_values
-                > std::numeric_limits<std::uint64_t>::max() / sizeof(int)) {
+        if (!scar_internal::checked_byte_count<int>(
+                node_values, marker_bytes)) {
             fail_mcmc(out, SCAR_INVALID_SIZE, -1, -1, -1);
             return out;
         }
-        marker_bytes = static_cast<std::uint64_t>(node_values) * sizeof(int);
-        if (!checked_add(
+        if (!scar_internal::checked_uint64_add(
                 total_cache_bytes,
                 marker_bytes,
                 total_cache_bytes)) {
             fail_mcmc(out, SCAR_INVALID_SIZE, -1, -1, -1);
             return out;
         }
-        if (!checked_add(
+        if (!scar_internal::checked_uint64_add(
                 incremental_fixed_bytes,
                 total_cache_bytes,
                 out.peak_workspace_bytes)) {

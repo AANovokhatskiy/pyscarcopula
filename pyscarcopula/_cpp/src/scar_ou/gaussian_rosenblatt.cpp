@@ -17,26 +17,6 @@ using namespace evaluator_detail;
 
 namespace {
 
-std::size_t rosenblatt_output_size(
-    ObservationView u,
-    const CopulaSpec& copula) {
-
-    std::size_t output_size = 0;
-    if (copula.dim < 2
-        || u.dim != copula.dim
-        || !scar_internal::checked_size_mul(
-            u.size(),
-            static_cast<std::size_t>(copula.dim),
-            output_size)) {
-        return 0;
-    }
-    return output_size;
-}
-
-double normal_cdf(double value) {
-    return 0.5 * std::erfc(-value / std::sqrt(2.0));
-}
-
 bool equicorr_gaussian_rosenblatt_impl(
     const CopulaSpec& copula,
     ObservationView u,
@@ -44,10 +24,15 @@ bool equicorr_gaussian_rosenblatt_impl(
     const scar_internal::GridTransitionOperator& transition,
     std::vector<double>& out) {
 
-    const std::size_t output_size = rosenblatt_output_size(u, copula);
-    if (output_size == 0 || u.size() < 2 || u.data() == nullptr) {
+    const Result<std::size_t> output_shape = rosenblatt_output_size(
+        u, copula.model_descriptor().expected_dimension());
+    if (!output_shape.is_ok()
+        || output_shape.value == 0
+        || u.size() < 2
+        || u.data() == nullptr) {
         return false;
     }
+    const std::size_t output_size = output_shape.value;
 
     const std::size_t dimension = static_cast<std::size_t>(copula.dim);
     const std::size_t K = static_cast<std::size_t>(grid.K);
@@ -132,7 +117,8 @@ bool equicorr_gaussian_rosenblatt_impl(
                 const double standardized =
                     (quantiles[column] - conditional_mean)
                     / std::sqrt(conditional_variance);
-                conditional_cdf[state] = normal_cdf(standardized);
+                conditional_cdf[state] =
+                    scar_internal::normal_cdf(standardized);
 
                 double prefix_density = 1.0;
                 if (column > 1) {
@@ -205,8 +191,10 @@ std::vector<double> invalid_gaussian_rosenblatt(
     int& status) {
 
     status = error;
+    const Result<std::size_t> output_shape = rosenblatt_output_size(
+        u, copula.model_descriptor().expected_dimension());
     return std::vector<double>(
-        rosenblatt_output_size(u, copula), 0.0);
+        output_shape.is_ok() ? output_shape.value : 0, 0.0);
 }
 
 }  // namespace
@@ -227,7 +215,11 @@ std::vector<double> ScarOuEvaluator::gaussian_rosenblatt_matrix(
         return invalid_gaussian_rosenblatt(
             u, copula, SCAR_INVALID_PARAMETER, status);
     }
-    if (u.size() < 2 || rosenblatt_output_size(u, copula) == 0) {
+    const Result<std::size_t> output_shape = rosenblatt_output_size(
+        u, copula.model_descriptor().expected_dimension());
+    if (u.size() < 2
+        || !output_shape.is_ok()
+        || output_shape.value == 0) {
         return invalid_gaussian_rosenblatt(
             u, copula, SCAR_INVALID_SIZE, status);
     }
@@ -281,7 +273,11 @@ std::vector<double> ScarOuEvaluator::gaussian_rosenblatt_local_gh(
         return invalid_gaussian_rosenblatt(
             u, copula, SCAR_INVALID_PARAMETER, status);
     }
-    if (u.size() < 2 || rosenblatt_output_size(u, copula) == 0) {
+    const Result<std::size_t> output_shape = rosenblatt_output_size(
+        u, copula.model_descriptor().expected_dimension());
+    if (u.size() < 2
+        || !output_shape.is_ok()
+        || output_shape.value == 0) {
         return invalid_gaussian_rosenblatt(
             u, copula, SCAR_INVALID_SIZE, status);
     }
@@ -338,8 +334,11 @@ std::vector<double> ScarOuEvaluator::gaussian_rosenblatt_auto(
     }
 
     scar_internal::OuGrid grid;
+    const Result<std::size_t> output_shape = rosenblatt_output_size(
+        u, copula.model_descriptor().expected_dimension());
     if (u.size() < 2
-        || rosenblatt_output_size(u, copula) == 0
+        || !output_shape.is_ok()
+        || output_shape.value == 0
         || !scar_internal::build_ou_grid(
             params.kappa,
             params.mu,

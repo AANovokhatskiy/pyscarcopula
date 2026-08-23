@@ -7,6 +7,26 @@
 #include <limits>
 
 namespace scar {
+
+TypedModelDescriptor CopulaSpec::model_descriptor() const noexcept {
+    if (family == CopulaFamily::Student) {
+        if (correlation_kind == CorrelationKind::Factor) {
+            return FactorStudentDescriptor{{dim}};
+        }
+        return DenseStudentDescriptor{{dim}};
+    }
+    if (family == CopulaFamily::EquicorrGaussian) {
+        return EquicorrGaussianDescriptor{{dim}};
+    }
+    if (family == CopulaFamily::MultivariateGaussian) {
+        if (correlation_kind == CorrelationKind::Factor) {
+            return FactorGaussianDescriptor{{dim}};
+        }
+        return DenseGaussianDescriptor{{dim}};
+    }
+    return PairCopulaDescriptor{};
+}
+
 namespace {
 
 std::int64_t checked_size(const Observations& u) {

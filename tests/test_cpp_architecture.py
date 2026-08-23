@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+import re
 import sys
 
 import pytest
@@ -71,6 +72,93 @@ def _rules(root: Path) -> set[str]:
 
 def test_current_repository_satisfies_cpp_architecture_contract():
     assert check_repository(ROOT) == []
+
+
+def test_stage2_foundation_helpers_have_single_canonical_owners():
+    include = ROOT / "pyscarcopula" / "_cpp" / "include" / "scar"
+    source = ROOT / "pyscarcopula" / "_cpp" / "src"
+    expected_headers = {
+        "core/span.hpp",
+        "core/matrix_view.hpp",
+        "core/checked_arithmetic.hpp",
+        "core/threading.hpp",
+        "core/status.hpp",
+        "core/result.hpp",
+        "math/normal.hpp",
+        "copula/model_descriptor.hpp",
+        "copula/transforms.hpp",
+        "copula/rotation.hpp",
+    }
+    assert all((include / path).is_file() for path in expected_headers)
+
+    cpp_text = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted(source.rglob("*.cpp"))
+    )
+    header_text = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted(include.rglob("*.hpp"))
+    )
+
+    for removed_duplicate in (
+        "validate_threads",
+        "effective_threads",
+        "checked_product",
+    ):
+        assert removed_duplicate not in cpp_text
+
+    assert len(re.findall(r"\bdouble\s+normal_cdf\s*\(", cpp_text)) == 1
+    assert len(re.findall(r"\bdouble\s+normal_quantile\s*\(", cpp_text)) == 1
+    assert len(re.findall(
+        r"\bResult<std::size_t>\s+rosenblatt_output_size\s*\(",
+        cpp_text,
+    )) == 1
+    assert "CopulaSpec::expected_dimension" not in cpp_text
+    assert cpp_text.count(
+        "TypedModelDescriptor CopulaSpec::model_descriptor()"
+    ) == 1
+    descriptor_text = (
+        include / "copula" / "model_descriptor.hpp"
+    ).read_text(encoding="utf-8")
+    assert "class TypedModelDescriptor" in descriptor_text
+    assert "int expected_dimension() const noexcept" in descriptor_text
+    copula_text = (include / "copula.hpp").read_text(encoding="utf-8")
+    assert "TypedModelDescriptor model_descriptor() const noexcept;" in copula_text
+    assert "int expected_dimension() const noexcept;" not in copula_text
+    assert "struct DoubleView" not in header_text
+    assert "using DoubleView = Span<const double>;" in (
+        include / "core" / "span.hpp"
+    ).read_text(encoding="utf-8")
+    assert "n_threads > 256" not in cpp_text
+
+    foundation_files = [
+        *sorted((include / "core").glob("*.hpp")),
+        *sorted((include / "math").glob("*.hpp")),
+        include / "copula" / "transforms.hpp",
+        include / "copula" / "rotation.hpp",
+        source / "math" / "normal.cpp",
+        source / "copula" / "transforms.cpp",
+        source / "copula" / "rotation.cpp",
+    ]
+    forbidden_foundation_include = re.compile(
+        r'#\s*include\s+"scar/(?:detail/|factor\.hpp|gas(?:_rvine)?\.hpp|'
+        r'ou\.hpp|rvine(?:_plan)?\.hpp|copula\.hpp)'
+    )
+    for path in foundation_files:
+        assert forbidden_foundation_include.search(
+            path.read_text(encoding="utf-8")
+        ) is None, path
+
+    validation_text = (
+        source / "scar_ou" / "validation.cpp"
+    ).read_text(encoding="utf-8")
+    assert "Result<std::size_t> rosenblatt_output_size(" in validation_text
+    assert "result.failure.coordinate" in validation_text
+    assert "return success(output_size);" in validation_text
+    for name in ("gaussian_rosenblatt.cpp", "student_rosenblatt.cpp"):
+        consumer = (source / "scar_ou" / name).read_text(encoding="utf-8")
+        assert "const Result<std::size_t> output_shape" in consumer
+        assert "output_shape.is_ok()" in consumer
 
 
 def test_setup_build_path_does_not_mutate_path():
@@ -216,6 +304,11 @@ def test_rvine_mcmc_binding_keeps_arrays_alive_and_releases_gil():
             "pyscarcopula/_cpp/src/gas/bad.cpp",
             '#include "scar/ou.hpp"\n',
             "gas-independent-of-ou",
+        ),
+        (
+            "pyscarcopula/_cpp/src/math/bad.cpp",
+            '#include "scar/detail/safety.hpp"\n',
+            "foundation-independent-of-models",
         ),
         (
             "pyscarcopula/_cpp/src/copula/bad.cpp",

@@ -1,5 +1,6 @@
 #include "scar/rvine.hpp"
 
+#include "scar/core/threading.hpp"
 #include "scar/detail/safety.hpp"
 
 #include <algorithm>
@@ -21,7 +22,7 @@ int prepare_density_plan_request(
     std::vector<PreparedEdge>& prepared_edges,
     std::size_t& value_count,
     std::int64_t& failure_row) {
-    if (n_threads <= 0 || observation_rows < 0
+    if (!scar_internal::valid_thread_count(n_threads) || observation_rows < 0
         || observation_columns != plan.dimension
         || parameters.n_rows != observation_rows
         || !validate_density_plan(plan, edges.size())) {

@@ -229,9 +229,7 @@ void parallel_for_blocks(
     if (min_grain < 1) {
         throw std::invalid_argument("parallel min_grain must be >= 1");
     }
-    if (n_threads < 1) {
-        throw std::invalid_argument("n_threads must be >= 1");
-    }
+    validate_thread_count(n_threads);
     const std::int64_t length = end - begin;
     if (length == 0) {
         return;
@@ -243,8 +241,8 @@ void parallel_for_blocks(
 
     const auto grain_blocks = static_cast<std::size_t>(
         length / min_grain + (length % min_grain == 0 ? 0 : 1));
-    const std::size_t block_count = std::min(
-        static_cast<std::size_t>(n_threads), grain_blocks);
+    const std::size_t block_count = static_cast<std::size_t>(
+        limit_worker_count(n_threads, grain_blocks));
     if (block_count <= 1) {
         function(begin, end, 0);
         return;

@@ -1,7 +1,10 @@
 #pragma once
 
 #include "scar/copula.hpp"
+#include "scar/copula/rotation.hpp"
+#include "scar/copula/transforms.hpp"
 #include "scar/detail/safety.hpp"
+#include "scar/math/normal.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -10,15 +13,19 @@
 
 namespace scar_internal {
 
-bool is_valid_rotation(int rotation);
+using scar::copula::apply_rotation;
+using scar::copula::ConditionalKernel;
+using scar::copula::d_softplus;
+using scar::copula::evaluate_rotated_conditional;
+using scar::copula::is_valid_rotation;
+using scar::copula::softplus;
+using scar::math::normal_cdf;
+using scar::math::normal_quantile;
+using scar::math::normal_quantile_refined;
+
 scar::CopulaSpec transposed_copula_spec(const scar::CopulaSpec& spec);
-using ConditionalKernel = double (*)(double, double, double);
-double softplus(double x);
-double d_softplus(double x);
 double log1mexp(double x);
 double logsumexp(double a, double b);
-double normal_quantile(double p);
-double normal_quantile_refined(double p);
 struct EquicorrStats {
     double sum = 0.0;
     double sum_squares = 0.0;
@@ -45,14 +52,6 @@ double copula_inverse_transform(const scar::CopulaSpec& spec, double r);
 double copula_dtransform(const scar::CopulaSpec& spec, double x);
 double copula_tau_to_param(const scar::CopulaSpec& spec, double tau);
 double copula_param_to_tau(const scar::CopulaSpec& spec, double r);
-void apply_rotation(double u1, double u2, int rotation, double& v1, double& v2);
-double evaluate_rotated_conditional(
-    double first,
-    double second,
-    double parameter,
-    int rotation,
-    ConditionalKernel kernel);
-
 double clayton_log_pdf_unrotated(double u1, double u2, double r);
 double clayton_dlog_pdf_dr_unrotated(double u1, double u2, double r);
 void clayton_pdf_and_grad_x_unrotated(

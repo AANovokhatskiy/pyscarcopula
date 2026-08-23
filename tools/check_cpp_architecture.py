@@ -98,6 +98,32 @@ def check_include_boundaries(root: Path) -> list[Violation]:
     src = cpp_root / "src"
     include = cpp_root / "include" / "scar"
     violations = []
+    foundation_files = [
+        *list(_source_files(include / "core")),
+        *list(_source_files(include / "math")),
+        *list(_source_files(src / "math")),
+        include / "copula" / "rotation.hpp",
+        include / "copula" / "transforms.hpp",
+        src / "copula" / "rotation.cpp",
+        src / "copula" / "transforms.cpp",
+    ]
+    violations.extend(_forbid_includes(
+        root,
+        (path for path in foundation_files if path.is_file()),
+        "foundation-independent-of-models",
+        lambda value: value.startswith("detail/")
+        or value in {
+            "copula.hpp",
+            "copula/model_descriptor.hpp",
+            "factor.hpp",
+            "gas.hpp",
+            "gas_rvine.hpp",
+            "ou.hpp",
+            "rvine.hpp",
+            "rvine_plan.hpp",
+        },
+        "foundation helpers must not depend on model or workflow headers",
+    ))
     gas_files = [
         *list(_source_files(src / "gas")),
         include / "gas.hpp",

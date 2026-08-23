@@ -1,5 +1,6 @@
 #include "scar/gas_rvine.hpp"
 
+#include "scar/core/checked_arithmetic.hpp"
 #include "scar/rvine.hpp"
 
 #include <algorithm>
@@ -47,8 +48,12 @@ GasRvineSampleResult gas_rvine_sample(
     }
     const std::size_t rows = static_cast<std::size_t>(n_rows);
     const std::size_t dimension = static_cast<std::size_t>(plan.dimension);
-    if (rows > std::numeric_limits<std::size_t>::max() / dimension
-        || rows > std::numeric_limits<std::size_t>::max() / edge_count) {
+    std::size_t result_size = 0;
+    std::size_t parameter_value_count = 0;
+    if (!scar_internal::checked_shape_size(
+            rows, dimension, result_size)
+        || !scar_internal::checked_shape_size(
+            rows, edge_count, parameter_value_count)) {
         fail(out, SCAR_INVALID_SIZE, -1, -1);
         return out;
     }
@@ -86,7 +91,6 @@ GasRvineSampleResult gas_rvine_sample(
         gas_r[edge_index] = state.parameter;
     }
 
-    const std::size_t result_size = rows * dimension;
     out.values.assign(result_size, 0.0);
     std::vector<double> nodes(
         static_cast<std::size_t>(plan.node_count),

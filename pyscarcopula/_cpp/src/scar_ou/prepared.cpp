@@ -19,14 +19,6 @@ bool valid_method(const std::string& method) {
         || method == "matrix";
 }
 
-int expected_dimension(const CopulaSpec& copula) {
-    if (copula.family == CopulaFamily::Student
-        || copula.family == CopulaFamily::EquicorrGaussian) {
-        return copula.dim;
-    }
-    return 2;
-}
-
 }  // namespace
 
 PreparedScarOuEvaluator::PreparedScarOuEvaluator(
@@ -52,7 +44,8 @@ PreparedScarOuEvaluator::PreparedScarOuEvaluator(
     if (n_obs_ < 0 || dim_ < 2) {
         throw std::invalid_argument("invalid observation shape");
     }
-    const int expected_dim = expected_dimension(copula_);
+    const int expected_dim =
+        copula_.model_descriptor().expected_dimension();
     if (dim_ != expected_dim) {
         throw std::invalid_argument(
             "u dimension does not match CopulaSpec dimension");

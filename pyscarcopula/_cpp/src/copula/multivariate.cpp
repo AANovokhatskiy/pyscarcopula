@@ -277,7 +277,7 @@ ConditionalSampleResult conditional_latent(
         out.status = SCAR_INVALID_SIZE;
         return out;
     }
-    if (n_threads < 1 || n_threads > 256) {
+    if (!scar_internal::valid_thread_count(n_threads)) {
         out.status = SCAR_INVALID_PARAMETER;
         return out;
     }
@@ -512,7 +512,7 @@ EquicorrPreparationResult prepare_equicorr_sufficient_statistics(
         out.status = SCAR_INVALID_SIZE;
         return out;
     }
-    if (n_threads < 1 || n_threads > 256) {
+    if (!scar_internal::valid_thread_count(n_threads)) {
         out.status = SCAR_INVALID_PARAMETER;
         return out;
     }
@@ -634,8 +634,8 @@ EquicorrPreparationResult prepare_equicorr_sufficient_statistics(
         && partial_values > 1;
     if (row_parallel) {
         out.parallel_axis = 1;
-        out.parallel_blocks = static_cast<int>(std::min(
-            static_cast<std::size_t>(n_threads), u.n_obs));
+        out.parallel_blocks = scar_internal::limit_worker_count(
+            n_threads, u.n_obs);
         scar_internal::parallel_for_blocks(
             0,
             static_cast<std::int64_t>(u.n_obs),
@@ -659,8 +659,8 @@ EquicorrPreparationResult prepare_equicorr_sufficient_statistics(
             });
     } else if (tile_parallel) {
         out.parallel_axis = 2;
-        out.parallel_blocks = static_cast<int>(std::min(
-            static_cast<std::size_t>(n_threads), partial_values));
+        out.parallel_blocks = scar_internal::limit_worker_count(
+            n_threads, partial_values);
         scar_internal::parallel_for_blocks(
             0,
             static_cast<std::int64_t>(partial_values),
@@ -742,7 +742,7 @@ MultivariateRowsResult multivariate_log_pdf_and_grad(
     if (out.status != SCAR_OK) {
         return out;
     }
-    if (n_threads < 1 || n_threads > 256) {
+    if (!scar_internal::valid_thread_count(n_threads)) {
         out.status = SCAR_INVALID_PARAMETER;
         return out;
     }
@@ -879,7 +879,7 @@ MultivariateRowsResult equicorr_log_pdf_and_grad_from_stats(
         out.status = SCAR_INVALID_SIZE;
         return out;
     }
-    if (n_threads < 1 || n_threads > 256) {
+    if (!scar_internal::valid_thread_count(n_threads)) {
         out.status = SCAR_INVALID_PARAMETER;
         return out;
     }
@@ -967,7 +967,7 @@ MultivariateGridResult multivariate_pdf_and_grad_grid(
         return out;
     }
     out.status = validate(spec, u, row_offset);
-    if (n_threads < 1 || n_threads > 256) {
+    if (!scar_internal::valid_thread_count(n_threads)) {
         out.status = SCAR_INVALID_PARAMETER;
     }
     if (out.status != SCAR_OK || x_grid.empty()) {
@@ -1183,7 +1183,7 @@ MultivariateGridResult equicorr_pdf_and_grad_grid_from_stats(
         out.status = SCAR_INVALID_SIZE;
         return out;
     }
-    if (n_threads < 1 || n_threads > 256) {
+    if (!scar_internal::valid_thread_count(n_threads)) {
         out.status = SCAR_INVALID_PARAMETER;
         return out;
     }

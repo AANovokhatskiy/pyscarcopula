@@ -62,15 +62,6 @@ std::int64_t static_min_rows(const CopulaSpec& spec) {
         : kCheapMinRows);
 }
 
-int expected_dimension(const CopulaSpec& spec) {
-    if (spec.family == CopulaFamily::Student
-        || spec.family == CopulaFamily::EquicorrGaussian
-        || spec.family == CopulaFamily::MultivariateGaussian) {
-        return spec.dim;
-    }
-    return 2;
-}
-
 bool valid_dense_factor(const CopulaSpec& spec) {
     std::size_t square = 0;
     if (spec.dim < 2
@@ -128,7 +119,7 @@ int validate(const CopulaSpec& spec, const Observations& u) {
         return SCAR_INVALID_FAMILY;
     }
 
-    const int dim = expected_dimension(spec);
+    const int dim = spec.model_descriptor().expected_dimension();
     for (const auto& row : u) {
         if (row.size() != static_cast<std::size_t>(dim)) {
             return SCAR_INVALID_SIZE;
@@ -220,7 +211,7 @@ StaticCopulaEvaluator::StaticCopulaEvaluator(
       n_threads_(n_threads),
       status_(validate(spec_, u_)) {
 
-    if (n_threads_ < 1 || n_threads_ > 256) {
+    if (!scar_internal::valid_thread_count(n_threads_)) {
         status_ = SCAR_INVALID_PARAMETER;
     }
     if (status_ != SCAR_OK) {
@@ -247,7 +238,7 @@ StaticCopulaEvaluator::StaticCopulaEvaluator(
         && spec_.family != CopulaFamily::MultivariateGaussian) {
         return;
     }
-    const int dim = expected_dimension(spec_);
+    const int dim = spec_.model_descriptor().expected_dimension();
     std::size_t score_count = 0;
     if (!scar_internal::checked_size_mul(
             u_.size(), static_cast<std::size_t>(dim), score_count)) {
@@ -285,7 +276,7 @@ StaticCopulaEvaluator::StaticCopulaEvaluator(
         status_ = SCAR_INVALID_FAMILY;
         return;
     }
-    if (n_threads_ < 1 || n_threads_ > 256) {
+    if (!scar_internal::valid_thread_count(n_threads_)) {
         status_ = SCAR_INVALID_PARAMETER;
         return;
     }
@@ -499,7 +490,7 @@ StaticObjectiveResult StaticCopulaEvaluator::evaluate_objective(
         return out;
     }
 
-    const int dim = expected_dimension(spec_);
+    const int dim = spec_.model_descriptor().expected_dimension();
     std::vector<double> precision;
     std::vector<double> df_grid;
     std::size_t n_corr = 0;
@@ -666,7 +657,7 @@ std::vector<double> StaticCopulaEvaluator::log_pdf_rows(
     if (status_ != SCAR_OK || !std::isfinite(parameter)) {
         return out;
     }
-    const int dim = expected_dimension(spec_);
+    const int dim = spec_.model_descriptor().expected_dimension();
     const bool use_threads = static_parallel_worthwhile(
         spec_, n_obs_, n_threads_);
     scar_internal::parallel_for_blocks(

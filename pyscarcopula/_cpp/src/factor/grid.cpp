@@ -21,12 +21,6 @@ struct WorkerResult {
     std::int64_t failure_index = -1;
 };
 
-void validate_threads(int n_threads) {
-    if (n_threads < 1 || n_threads > 256) {
-        throw std::invalid_argument("n_threads must be in [1, 256]");
-    }
-}
-
 bool accumulate_tile(
     const FactorCorrelationOperator& correlation,
     const double* observation,
@@ -198,7 +192,7 @@ FactorStudentGridResult factor_student_log_pdf_and_dlog_ddf_grid(
     std::size_t dimension_tile,
     int n_threads) {
 
-    validate_threads(n_threads);
+    scar_internal::validate_thread_count(n_threads);
     if (observations == nullptr
         || rows == 0
         || df_grid == nullptr

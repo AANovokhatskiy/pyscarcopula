@@ -1,6 +1,7 @@
 #include "scar/ou.hpp"
 
 #include "evaluator_internal.hpp"
+#include "scar/core/threading.hpp"
 #include "scar/detail/copula.hpp"
 #include "scar/detail/safety.hpp"
 #include "scar/detail/scar_ou/grid.hpp"
@@ -15,10 +16,7 @@ namespace scar::evaluator_detail {
 
 const double* observation_data(const CopulaSpec& copula, ObservationView u) {
     const int expected_dim =
-        (copula.family == CopulaFamily::Student
-         || copula.family == CopulaFamily::EquicorrGaussian)
-        ? copula.dim
-        : 2;
+        copula.model_descriptor().expected_dimension();
     if (u.dim != expected_dim) {
         throw std::invalid_argument("u dimension does not match CopulaSpec::dim");
     }
@@ -30,6 +28,27 @@ const double* observation_data(const CopulaSpec& copula, ObservationView u) {
         throw std::invalid_argument("u data pointer must not be null");
     }
     return u.data();
+}
+
+Result<std::size_t> rosenblatt_output_size(
+    ObservationView u,
+    int expected_dimension) noexcept {
+
+    Result<std::size_t> result;
+    std::size_t output_size = 0;
+    if (expected_dimension < 2 || u.dim != expected_dimension) {
+        result.status = Status::InvalidSize;
+        result.failure.coordinate = u.dim;
+        return result;
+    }
+    if (!scar_internal::checked_shape_size(
+            u.size(),
+            static_cast<std::size_t>(expected_dimension),
+            output_size)) {
+        result.status = Status::InvalidSize;
+        return result;
+    }
+    return success(output_size);
 }
 
 bool supported_ou_copula(const CopulaSpec& copula) {
@@ -52,8 +71,7 @@ bool finite_config_doubles(const OuNumericalConfig& config) {
     return std::isfinite(config.grid_range)
         && std::isfinite(config.r_gh)
         && std::isfinite(config.auto_small_kdt)
-        && config.n_threads >= 1
-        && config.n_threads <= 256
+        && scar_internal::valid_thread_count(config.n_threads)
         && valid_grid_method;
 }
 

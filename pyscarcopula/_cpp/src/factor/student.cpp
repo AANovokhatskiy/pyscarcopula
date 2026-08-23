@@ -30,20 +30,6 @@ struct JointBlockResult {
 
 constexpr std::size_t kJointReductionBlocks = 64;
 
-void validate_threads(int n_threads) {
-    if (n_threads < 1 || n_threads > 256) {
-        throw std::invalid_argument("n_threads must be in [1, 256]");
-    }
-}
-
-int effective_threads(std::size_t rows, int n_threads) {
-    if (n_threads == 1
-        || rows < 4 * static_cast<std::size_t>(n_threads)) {
-        return 1;
-    }
-    return n_threads;
-}
-
 }  // namespace
 
 FactorStudentRowsResult factor_student_log_pdf_and_dlog_ddf(
@@ -54,7 +40,7 @@ FactorStudentRowsResult factor_student_log_pdf_and_dlog_ddf(
     std::size_t df_count,
     int n_threads) {
 
-    validate_threads(n_threads);
+    scar_internal::validate_thread_count(n_threads);
     if ((rows > 0 && observations == nullptr)
         || df == nullptr
         || (df_count != 1 && df_count != rows)) {
@@ -89,7 +75,8 @@ FactorStudentRowsResult factor_student_log_pdf_and_dlog_ddf(
         rows, std::numeric_limits<double>::quiet_NaN());
     result.n_threads_requested = n_threads;
 
-    const int threads = effective_threads(rows, n_threads);
+    const int threads = scar_internal::worker_count_for_items(
+        n_threads, rows, 4);
     std::vector<WorkerResult> worker_results(
         static_cast<std::size_t>(threads));
     scar_internal::parallel_for_blocks(
@@ -197,7 +184,7 @@ FactorStudentJointResult factor_student_joint_likelihood_gradient(
     double df,
     int n_threads) {
 
-    validate_threads(n_threads);
+    scar_internal::validate_thread_count(n_threads);
     if ((rows > 0 && observations == nullptr)
         || !std::isfinite(df)
         || df <= 2.0) {
@@ -274,7 +261,8 @@ FactorStudentJointResult factor_student_joint_likelihood_gradient(
         block.loading_gradient.assign(loading_values, 0.0);
     }
     result.reduction_workspace_bytes = reduction_bytes;
-    const int threads = effective_threads(reduction_blocks, n_threads);
+    const int threads = scar_internal::worker_count_for_items(
+        n_threads, reduction_blocks, 4);
     result.worker_workspace_peak_bytes = worker_bytes;
 
     scar_internal::parallel_for_blocks(

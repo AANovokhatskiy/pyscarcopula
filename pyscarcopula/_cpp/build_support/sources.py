@@ -11,6 +11,8 @@ from __future__ import annotations
 SCAR_COMPUTE_SOURCES = (
     "copula/core.cpp",
     "copula/common.cpp",
+    "copula/rotation.cpp",
+    "copula/transforms.cpp",
     "copula/dispatch.cpp",
     "copula/families/clayton.cpp",
     "copula/families/gumbel.cpp",
@@ -24,6 +26,7 @@ SCAR_COMPUTE_SOURCES = (
     "factor/operator.cpp",
     "factor/grid.cpp",
     "factor/student.cpp",
+    "math/normal.cpp",
     "parallel/runtime.cpp",
     "likelihood/static.cpp",
     "gas/evaluator.cpp",
@@ -65,4 +68,3 @@ def extension_sources() -> tuple[str, ...]:
     """Return the complete extension source set in deterministic order."""
 
     return (*SCAR_COMPUTE_SOURCES, *PYTHON_BINDING_SOURCES)
-

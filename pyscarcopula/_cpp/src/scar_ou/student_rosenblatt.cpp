@@ -20,22 +20,6 @@ using namespace evaluator_detail;
 
 namespace {
 
-std::size_t rosenblatt_output_size(
-    ObservationView u,
-    const CopulaSpec& copula) {
-
-    std::size_t output_size = 0;
-    if (copula.dim < 2
-        || u.dim != copula.dim
-        || !scar_internal::checked_size_mul(
-            u.size(),
-            static_cast<std::size_t>(copula.dim),
-            output_size)) {
-        return 0;
-    }
-    return output_size;
-}
-
 bool valid_student_spec(const CopulaSpec& copula) {
     std::size_t matrix_size = 0;
     if (copula.family != CopulaFamily::Student || copula.dim < 2) {
@@ -85,13 +69,16 @@ bool student_rosenblatt_impl(
     const scar_internal::GridTransitionOperator& transition,
     std::vector<double>& out) {
 
-    const std::size_t output_size = rosenblatt_output_size(u, copula);
-    if (output_size == 0
+    const Result<std::size_t> output_shape = rosenblatt_output_size(
+        u, copula.model_descriptor().expected_dimension());
+    if (!output_shape.is_ok()
+        || output_shape.value == 0
         || u.size() < 2
         || u.data() == nullptr
         || !valid_student_spec(copula)) {
         return false;
     }
+    const std::size_t output_size = output_shape.value;
 
     const std::size_t dimension = static_cast<std::size_t>(copula.dim);
     const std::size_t K = static_cast<std::size_t>(grid.K);
@@ -480,8 +467,10 @@ std::vector<double> invalid_student_rosenblatt(
     int& status) {
 
     status = error;
+    const Result<std::size_t> output_shape = rosenblatt_output_size(
+        u, copula.model_descriptor().expected_dimension());
     return std::vector<double>(
-        rosenblatt_output_size(u, copula), 0.0);
+        output_shape.is_ok() ? output_shape.value : 0, 0.0);
 }
 
 std::vector<double> student_rosenblatt_backend(
@@ -501,7 +490,11 @@ std::vector<double> student_rosenblatt_backend(
         return invalid_student_rosenblatt(
             u, copula, SCAR_INVALID_PARAMETER, status);
     }
-    if (u.size() < 2 || rosenblatt_output_size(u, copula) == 0) {
+    const Result<std::size_t> output_shape = rosenblatt_output_size(
+        u, copula.model_descriptor().expected_dimension());
+    if (u.size() < 2
+        || !output_shape.is_ok()
+        || output_shape.value == 0) {
         return invalid_student_rosenblatt(
             u, copula, SCAR_INVALID_SIZE, status);
     }
@@ -581,8 +574,11 @@ std::vector<double> ScarOuEvaluator::student_rosenblatt_auto(
     }
 
     scar_internal::OuGrid grid;
+    const Result<std::size_t> output_shape = rosenblatt_output_size(
+        u, copula.model_descriptor().expected_dimension());
     if (u.size() < 2
-        || rosenblatt_output_size(u, copula) == 0
+        || !output_shape.is_ok()
+        || output_shape.value == 0
         || !scar_internal::build_ou_grid(
             params.kappa,
             params.mu,

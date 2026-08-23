@@ -67,10 +67,7 @@ scar::ObservationView observation_view_from_array(
 
     const py::buffer_info info = u.request();
     const int expected_dim =
-        (copula.family == scar::CopulaFamily::Student
-         || copula.family == scar::CopulaFamily::EquicorrGaussian)
-        ? copula.dim
-        : 2;
+        copula.model_descriptor().expected_dimension();
     if (info.ndim != 2 || info.shape[1] != expected_dim) {
         throw std::invalid_argument(
             "u must be a 2D float64 array with shape "

@@ -14,20 +14,6 @@
 namespace scar {
 namespace {
 
-void validate_threads(int n_threads) {
-    if (n_threads < 1 || n_threads > 256) {
-        throw std::invalid_argument("n_threads must be in [1, 256]");
-    }
-}
-
-int effective_threads(std::size_t rows, int n_threads) {
-    if (n_threads == 1
-        || rows < 4 * static_cast<std::size_t>(n_threads)) {
-        return 1;
-    }
-    return n_threads;
-}
-
 void solve_cholesky_inplace(
     const std::vector<double>& lower,
     std::size_t dimension,
@@ -219,8 +205,9 @@ void FactorCorrelationOperator::matvec_rows(
     double* output,
     int n_threads) const {
 
-    validate_threads(n_threads);
-    const int threads = effective_threads(rows, n_threads);
+    scar_internal::validate_thread_count(n_threads);
+    const int threads = scar_internal::worker_count_for_items(
+        n_threads, rows, 4);
     scar_internal::parallel_for_blocks(
         0,
         static_cast<std::int64_t>(rows),
@@ -265,8 +252,9 @@ void FactorCorrelationOperator::solve_rows(
     double* output,
     int n_threads) const {
 
-    validate_threads(n_threads);
-    const int threads = effective_threads(rows, n_threads);
+    scar_internal::validate_thread_count(n_threads);
+    const int threads = scar_internal::worker_count_for_items(
+        n_threads, rows, 4);
     scar_internal::parallel_for_blocks(
         0,
         static_cast<std::int64_t>(rows),
@@ -313,8 +301,9 @@ void FactorCorrelationOperator::quadratic_forms(
     double* output,
     int n_threads) const {
 
-    validate_threads(n_threads);
-    const int threads = effective_threads(rows, n_threads);
+    scar_internal::validate_thread_count(n_threads);
+    const int threads = scar_internal::worker_count_for_items(
+        n_threads, rows, 4);
     scar_internal::parallel_for_blocks(
         0,
         static_cast<std::int64_t>(rows),
@@ -359,8 +348,9 @@ void FactorCorrelationOperator::sample_normal_inplace(
     std::size_t rows,
     int n_threads) const {
 
-    validate_threads(n_threads);
-    const int threads = effective_threads(rows, n_threads);
+    scar_internal::validate_thread_count(n_threads);
+    const int threads = scar_internal::worker_count_for_items(
+        n_threads, rows, 4);
     scar_internal::parallel_for_blocks(
         0,
         static_cast<std::int64_t>(rows),

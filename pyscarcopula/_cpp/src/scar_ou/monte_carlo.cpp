@@ -86,7 +86,7 @@ TrajectoryLogPdfResult copula_log_pdf_trajectory_grid(
         out.status = SCAR_INVALID_FAMILY;
         return out;
     }
-    if (n_threads < 1 || n_threads > 256
+    if (!scar_internal::valid_thread_count(n_threads)
         || elements > static_cast<std::size_t>(
             std::numeric_limits<std::int64_t>::max())) {
         out.status = SCAR_INVALID_PARAMETER;

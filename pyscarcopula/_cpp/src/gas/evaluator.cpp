@@ -77,14 +77,6 @@ int validate_copula(const CopulaSpec& copula) {
     return SCAR_OK;
 }
 
-int expected_dimension(const CopulaSpec& copula) {
-    if (copula.family == CopulaFamily::Student
-        || copula.family == CopulaFamily::EquicorrGaussian) {
-        return copula.dim;
-    }
-    return 2;
-}
-
 int validate_inputs(
     const GasParams& params,
     const CopulaSpec& copula,
@@ -98,7 +90,8 @@ int validate_inputs(
     if (copula_status != SCAR_OK) {
         return copula_status;
     }
-    const int expected_dim = expected_dimension(copula);
+    const int expected_dim =
+        copula.model_descriptor().expected_dimension();
     if (u.dim != expected_dim || u.n_obs == 0) {
         return SCAR_INVALID_SIZE;
     }
@@ -535,7 +528,8 @@ GasUpdateResult GasEvaluator::update_observation(
     }
     if (observation.values == nullptr
         || observation.n_obs != 1
-        || observation.dim != expected_dimension(copula)) {
+        || observation.dim
+            != copula.model_descriptor().expected_dimension()) {
         out.status = SCAR_INVALID_SIZE;
         return out;
     }
@@ -624,7 +618,7 @@ GasPathResult GasEvaluator::h_path(
     const GasConfig& config) const {
 
     GasPathResult out;
-    if (expected_dimension(copula) != 2
+    if (copula.model_descriptor().expected_dimension() != 2
         || copula.family == CopulaFamily::Student
         || copula.family == CopulaFamily::EquicorrGaussian) {
         set_failure(out, SCAR_INVALID_FAMILY, -1);

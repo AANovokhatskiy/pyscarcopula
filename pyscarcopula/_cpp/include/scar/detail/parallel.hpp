@@ -1,5 +1,7 @@
 #pragma once
 
+#include "scar/core/threading.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <functional>

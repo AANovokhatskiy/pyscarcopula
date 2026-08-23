@@ -1,5 +1,6 @@
 #include "scar/rvine.hpp"
 
+#include "scar/core/threading.hpp"
 #include "scar/detail/copula.hpp"
 #include "scar/detail/safety.hpp"
 
@@ -562,13 +563,14 @@ int validate_parameter_pack(
     const auto rows = static_cast<std::size_t>(parameters.n_rows);
     const auto columns = static_cast<std::size_t>(
         parameters.row_parameter_columns);
+    std::size_t row_parameter_count = 0;
     if ((parameters.scalar_parameters.size() > 0
          && parameters.scalar_parameters.data() == nullptr)
         || (rows > 0 && columns > 0
             && parameters.row_parameters.data() == nullptr)
-        || (columns > 0
-            && rows > std::numeric_limits<std::size_t>::max() / columns)
-        || parameters.row_parameters.size() != rows * columns) {
+        || !scar_internal::checked_shape_size(
+            rows, columns, row_parameter_count)
+        || parameters.row_parameters.size() != row_parameter_count) {
         return SCAR_INVALID_SIZE;
     }
     for (std::size_t index = 0;
@@ -771,18 +773,6 @@ void fail_conditional_sample(
     out.failure_operation = operation;
 }
 
-bool checked_product(
-    std::size_t left,
-    std::size_t right,
-    std::size_t& product) noexcept {
-    if (left != 0
-        && right > std::numeric_limits<std::size_t>::max() / left) {
-        return false;
-    }
-    product = left * right;
-    return true;
-}
-
 bool is_unrotated_gaussian(const PreparedEdge& edge) noexcept {
     return edge.edge.copula.family == CopulaFamily::Gaussian
         && edge.edge.copula.rotation == Rotation::R0
@@ -816,7 +806,7 @@ SampleResult sample(
     out.dimension = plan.dimension;
     out.n_threads_requested = n_threads;
     const std::size_t edge_count = edges.size();
-    if (n_threads <= 0 || uniform_rows < 0
+    if (!scar_internal::valid_thread_count(n_threads) || uniform_rows < 0
         || uniform_columns != plan.dimension
         || parameters.n_rows != uniform_rows
         || !validate_traversal_plan(plan, edge_count)) {
@@ -828,8 +818,10 @@ SampleResult sample(
     const auto dimension = static_cast<std::size_t>(plan.dimension);
     std::size_t uniform_values = 0;
     std::size_t output_values = 0;
-    if (!checked_product(rows, dimension, uniform_values)
-        || !checked_product(rows, dimension, output_values)
+    if (!scar_internal::checked_shape_size(
+            rows, dimension, uniform_values)
+        || !scar_internal::checked_shape_size(
+            rows, dimension, output_values)
         || uniforms.size() != uniform_values
         || (uniform_values > 0 && uniforms.data() == nullptr)) {
         fail_sample(out, SCAR_INVALID_SIZE, -1, -1, -1);
@@ -991,7 +983,7 @@ ConditionalSampleResult conditional_sample(
     out.dimension = plan.dimension;
     out.n_threads_requested = n_threads;
     const std::size_t edge_count = edges.size();
-    if (n_threads <= 0 || uniform_rows < 0
+    if (!scar_internal::valid_thread_count(n_threads) || uniform_rows < 0
         || uniform_columns != plan.dimension
         || parameters.n_rows != uniform_rows
         || !validate_conditional_plan(plan, edge_count)) {
@@ -1003,8 +995,10 @@ ConditionalSampleResult conditional_sample(
     const auto dimension = static_cast<std::size_t>(plan.dimension);
     std::size_t uniform_value_count = 0;
     std::size_t output_value_count = 0;
-    if (!checked_product(rows, dimension, uniform_value_count)
-        || !checked_product(rows, dimension, output_value_count)
+    if (!scar_internal::checked_shape_size(
+            rows, dimension, uniform_value_count)
+        || !scar_internal::checked_shape_size(
+            rows, dimension, output_value_count)
         || given_values.size() != dimension
         || uniforms.size() != uniform_value_count
         || (dimension > 0 && given_values.data() == nullptr)
@@ -1052,7 +1046,8 @@ ConditionalSampleResult conditional_sample(
         2U * sizeof(double) + sizeof(unsigned char);
     const std::size_t node_count = static_cast<std::size_t>(plan.node_count);
     std::size_t bytes_per_row = 0;
-    if (!checked_product(node_count, bytes_per_node_value, bytes_per_row)) {
+    if (!scar_internal::checked_size_mul(
+            node_count, bytes_per_node_value, bytes_per_row)) {
         fail_conditional_sample(out, SCAR_INVALID_SIZE, -1, -1, -1);
         return out;
     }
@@ -1068,8 +1063,9 @@ ConditionalSampleResult conditional_sample(
         std::min(conditional_max_block_rows, memory_limited_rows));
     std::size_t node_value_count = 0;
     std::size_t peak_workspace_bytes = 0;
-    if (!checked_product(block_capacity, node_count, node_value_count)
-        || !checked_product(
+    if (!scar_internal::checked_size_mul(
+            block_capacity, node_count, node_value_count)
+        || !scar_internal::checked_size_mul(
             block_capacity, bytes_per_row, peak_workspace_bytes)) {
         fail_conditional_sample(out, SCAR_INVALID_SIZE, -1, -1, -1);
         return out;
