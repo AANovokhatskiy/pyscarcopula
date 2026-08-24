@@ -11,6 +11,7 @@ from typing import Any, Mapping
 
 import numpy as np
 
+from pyscarcopula._native.threads import validate_n_threads
 from pyscarcopula.numerical._arrays import validate_integer
 
 
@@ -18,13 +19,7 @@ FACTOR_CORRELATION_FORMAT_VERSION = 1
 
 
 def _validated_n_threads(value):
-    if isinstance(value, (bool, np.bool_)) or not isinstance(
-            value, (int, np.integer)):
-        raise ValueError("n_threads must be an integer in [1, 256]")
-    value = int(value)
-    if value < 1 or value > 256:
-        raise ValueError("n_threads must be an integer in [1, 256]")
-    return value
+    return validate_n_threads(value)
 
 
 def _validated_budget(memory_budget_bytes, required, guidance):

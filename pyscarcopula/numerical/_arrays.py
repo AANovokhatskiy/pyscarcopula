@@ -2,6 +2,8 @@
 
 import numpy as np
 
+from pyscarcopula._native.threads import validate_n_threads
+
 
 def as_float64_array(value, *, name="array"):
     """Return a real float64 array without lossy complex coercion."""
@@ -61,10 +63,7 @@ def validate_integer(value, name, *, minimum=0):
 
 def validate_sampling_n_threads(value):
     """Validate the public sampling thread-count contract."""
-    result = validate_integer(value, "n_threads", minimum=1)
-    if result > 256:
-        raise ValueError("n_threads must be an integer in [1, 256]")
-    return result
+    return validate_n_threads(value)
 
 
 def validate_sampling_memory_budget(memory_budget_bytes, required, guidance):

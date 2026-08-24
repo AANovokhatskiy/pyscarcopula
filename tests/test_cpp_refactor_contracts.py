@@ -197,8 +197,14 @@ def test_benchmark_baseline_supports_coarse_regression_detection():
     assert gate_candidate["environment"]["compiler_identity"] == (
         environment["compiler_identity"]
     )
+    # Repository captures are immutable historical Stage 0 artifacts.  They
+    # were made at two different source revisions, so freeze each provenance
+    # explicitly rather than comparing either one with the current tree.
+    assert environment["compute_source_sha256"] == (
+        "c492bb11b5f231e91b52c860fd54e934288a9bd46a2fc7a4d2c30722a235d9ea"
+    )
     assert gate_candidate["environment"]["compute_source_sha256"] == (
-        benchmark_cpp_refactor._source_digest()
+        "037a1d762fae997e274b6afe1c9d2ac8373dcd4a4c68fab0c50cb8ff3aea4360"
     )
     gate_comparison = gate_candidate["comparison"]
     assert gate_comparison["passed"] is True
@@ -300,6 +306,26 @@ def test_inventory_matches_current_public_and_native_configs():
     assert all(
         entry["target_owner"] and entry["target"] and entry["semantic"]
         for entry in complete)
+
+    current = write_cpp_refactor_inventory.build_payload()
+    changed_constant = copy.deepcopy(current)
+    frozen_name = (
+        "pyscarcopula.numerical.multivariate_native."
+        "_DENSE_STUDENT_NATIVE_MIN_DF"
+    )
+    for entry in changed_constant["configuration_contracts"][
+            "complete_constant_mappings"]:
+        if entry["old"] == frozen_name:
+            entry["value"] = 0.2
+            break
+    else:  # pragma: no cover - inventory construction contract
+        raise AssertionError(f"missing frozen constant {frozen_name}")
+    assert write_cpp_refactor_inventory._gate3_drift(
+        inventory, changed_constant
+    ) == [
+        "Python constant "
+        f"{frozen_name} changed from 0.1 to 0.2"
+    ]
 
     changed = copy.deepcopy(inventory)
     changed["dependencies"]["include_graph"] = {}

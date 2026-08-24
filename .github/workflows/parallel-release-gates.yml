@@ -119,7 +119,7 @@ jobs:
 
       - name: Smoke-test wheel outside source tree
         working-directory: ${{ runner.temp }}
-        run: python -m pyscarcopula._native_smoke
+        run: python -m pyscarcopula._native.smoke
 
       - name: Audit binary dependencies
         working-directory: ${{ runner.temp }}

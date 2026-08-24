@@ -146,7 +146,7 @@ Core dependencies: `numpy`, `numba`, `scipy`, `joblib`, `tqdm`.
 Verify the compiled extension with:
 
 ```bash
-python -m pyscarcopula._native_smoke
+python -m pyscarcopula._native.smoke
 ```
 
 ## Quick start

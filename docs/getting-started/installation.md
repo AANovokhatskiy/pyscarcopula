@@ -43,7 +43,7 @@ Python copulas may still be used by custom Python strategies and utilities.
 Verify the installed wheel or source build:
 
 ```bash
-python -m pyscarcopula._native_smoke
+python -m pyscarcopula._native.smoke
 ```
 
 ## Run tests

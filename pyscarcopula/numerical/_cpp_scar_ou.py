@@ -32,8 +32,20 @@ from pyscarcopula.numerical._cpp_extension import (
     CppError,
     CppUnavailable,
     CppUnsupported,
-    cpp_status_name as _status_name,
+    FailureContext,
+    LEGACY_CPP_STATUS_EXCEPTION_POLICY,
+    raise_for_status as _raise_native_status,
 )
+
+
+def _raise_native_result(result, operation: str, *, backend=None) -> None:
+    _raise_native_status(
+        result,
+        operation,
+        prefix="C++ SCAR-OU",
+        context=FailureContext(backend=backend),
+        exception_policy=LEGACY_CPP_STATUS_EXCEPTION_POLICY,
+    )
 
 
 def available() -> bool:
@@ -228,13 +240,8 @@ class PreparedScarOuObjective:
         params = _params(self.module, kappa, mu, nu)
         result = self._native.loglik(params)
         info = _result_info(result, self.method, kappa, len(self.obs), self.cfg_py)
-        status = info["status"]
-        if status != 0:
-            raise CppError(
-                "C++ prepared SCAR-OU loglik failed: "
-                f"status={status} ({_status_name(status)}), "
-                f"backend={info['backend']}"
-            )
+        _raise_native_result(
+            result, "prepared loglik", backend=info["backend"])
         value = -float(result["log_likelihood"])
         if not np.isfinite(value):
             return 1e10, info
@@ -311,11 +318,7 @@ class PreparedScarOuObjective:
             raise ValueError("horizon must be 'current' or 'next'")
         params = _params(self.module, kappa, mu, nu)
         result = self._native.state_distribution(params, horizon == "next")
-        status = int(result["status"])
-        if status != 0:
-            raise CppError(
-                "C++ prepared SCAR-OU state_distribution failed: "
-                f"status={status} ({_status_name(status)})")
+        _raise_native_result(result, "prepared state_distribution")
         return (
             np.asarray(result["z_grid"], dtype=np.float64),
             np.asarray(result["prob"], dtype=np.float64),
@@ -323,13 +326,8 @@ class PreparedScarOuObjective:
 
     @staticmethod
     def _raise_if_failed(info: dict, message: str) -> None:
-        status = info["status"]
-        if status != 0:
-            raise CppError(
-                f"{message}: "
-                f"status={status} ({_status_name(status)}), "
-                f"backend={info['backend']}"
-            )
+        operation = message.removeprefix("C++ ").removesuffix(" failed")
+        _raise_native_result(info, operation, backend=info["backend"])
 
 
 def prepare_objective(u, copula, config: AutoTMConfig | None = None):
@@ -413,11 +411,7 @@ def loglik(kappa, mu, nu, u, copula,
     result = _call_loglik(
         module.ScarOuEvaluator(), method, params, spec, obs, cfg)
     info = _result_info(result, method, kappa, len(obs), cfg_py)
-    if info["status"] != 0:
-        raise CppError(
-            "C++ SCAR-OU loglik failed: "
-            f"status={info['status']} ({_status_name(info['status'])})"
-        )
+    _raise_native_result(result, "loglik", backend=info["backend"])
     return float(result["log_likelihood"]), info
 
 
@@ -468,13 +462,7 @@ def neg_loglik_with_grad_info(kappa, mu, nu, u, copula,
         raise ValueError(f"Unsupported transition_method: {method}")
 
     info = _result_info(result, method, kappa, len(obs), cfg_py)
-    status = info["status"]
-    if status != 0:
-        raise CppError(
-            "C++ SCAR-OU gradient failed: "
-            f"status={status} ({_status_name(status)}), "
-            f"backend={info['backend']}"
-        )
+    _raise_native_result(result, "gradient", backend=info["backend"])
     return (
         float(result["neg_log_likelihood"]),
         np.asarray(result["neg_gradient"], dtype=np.float64),
@@ -519,13 +507,8 @@ def neg_loglik_with_grad_and_corr_info(
         raise ValueError(f"Unsupported transition_method: {method}")
 
     info = _result_info(result, method, kappa, len(obs), cfg_py)
-    status = info["status"]
-    if status != 0:
-        raise CppError(
-            "C++ SCAR-OU correlation gradient failed: "
-            f"status={status} ({_status_name(status)}), "
-            f"backend={info['backend']}"
-        )
+    _raise_native_result(
+        result, "correlation gradient", backend=info["backend"])
     return (
         float(result["neg_log_likelihood"]),
         np.asarray(result["neg_gradient"], dtype=np.float64),
@@ -560,13 +543,11 @@ def neg_loglik_with_grad_and_corr_directional_info(
         raise ValueError(f"Unsupported transition_method: {method}")
 
     info = _result_info(result, method, kappa, len(obs), cfg_py)
-    status = info["status"]
-    if status != 0:
-        raise CppError(
-            "C++ SCAR-OU directional correlation gradient failed: "
-            f"status={status} ({_status_name(status)}), "
-            f"backend={info['backend']}"
-        )
+    _raise_native_result(
+        result,
+        "directional correlation gradient",
+        backend=info["backend"],
+    )
     return (
         float(result["neg_log_likelihood"]),
         np.asarray(result["neg_gradient"], dtype=np.float64),
@@ -598,12 +579,7 @@ def _grid_config(config: AutoTMConfig | None) -> AutoTMConfig:
 
 
 def _vector_result(result):
-    status = int(result["status"])
-    if status != 0:
-        raise CppError(
-            "C++ SCAR-OU forward call failed: "
-            f"status={status} ({_status_name(status)})"
-        )
+    _raise_native_result(result, "forward call")
     return np.asarray(result["values"], dtype=np.float64)
 
 
@@ -755,11 +731,7 @@ def state_distribution(kappa, mu, nu, u, copula,
     else:
         raise ValueError(f"Unsupported transition_method: {method}")
 
-    status = int(result["status"])
-    if status != 0:
-        raise CppError(
-            "C++ SCAR-OU state_distribution failed: "
-            f"status={status} ({_status_name(status)})")
+    _raise_native_result(result, "state_distribution")
     return (
         np.asarray(result["z_grid"], dtype=np.float64),
         np.asarray(result["prob"], dtype=np.float64),
@@ -791,12 +763,7 @@ def smoothed_state_distribution(
     else:
         raise ValueError(f"Unsupported transition_method: {method}")
 
-    status = int(result["status"])
-    if status != 0:
-        raise CppError(
-            "C++ SCAR-OU state smoothing failed: "
-            f"status={status} ({_status_name(status)})"
-        )
+    _raise_native_result(result, "state smoothing")
     z_grid = np.asarray(result["z_grid"], dtype=np.float64)
     weights = np.asarray(result["weights"], dtype=np.float64)
     if z_grid.ndim != 1 or weights.shape != (len(obs), len(z_grid)):

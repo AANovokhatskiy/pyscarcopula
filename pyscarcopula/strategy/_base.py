@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Protocol, runtime_checkable
 import numpy as np
 from pyscarcopula.numerical._arrays import as_pseudo_observation_array
+from pyscarcopula._native.registry import strategy_support
 
 from pyscarcopula._types import (
     FitResult,
@@ -155,6 +156,22 @@ def ensure_strategy_supported(copula, method):
             "factor_estimation='joint' is currently supported only for "
             "static MLE; dynamic GAS/SCAR joint loading estimation is "
             "not implemented")
+    native_support = strategy_support(copula, normalized)
+    if native_support is not None and not native_support.supported:
+        if normalized == "GAS":
+            raise TypeError(f"{type(copula).__name__} does not support GAS")
+        if normalized == "SCAR-TM-OU":
+            raise TypeError(
+                f"{type(copula).__name__} does not support SCAR-TM-OU")
+        if normalized in {"SCAR-P-OU", "SCAR-M-OU"}:
+            raise TypeError(
+                f"{type(copula).__name__} does not support {normalized}")
+        if normalized == "SCAR-TM-JACOBI":
+            raise TypeError(
+                f"{type(copula).__name__} does not support pair "
+                "Jacobi dynamics")
+        raise TypeError(
+            f"{type(copula).__name__} does not support {normalized}")
     if (
             normalized in dynamic_methods
             and not capabilities.has_dynamic_scalar_parameter):

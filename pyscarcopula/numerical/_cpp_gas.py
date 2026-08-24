@@ -17,7 +17,7 @@ from pyscarcopula.numerical._cpp_extension import (
     CppError,
     CppUnavailable,
     CppUnsupported,
-    cpp_status_name as _status_name,
+    raise_for_status,
 )
 
 
@@ -174,23 +174,12 @@ def _inputs(omega, gamma, beta, u, copula, scaling, score_eps):
 
 
 def _raise_status(result, operation: str) -> None:
-    status = int(result["status"])
-    if status == 0:
-        return
-    failure_index = int(result.get("failure_index", -1))
-    detail = (
-        f"C++ GAS {operation} failed: status={status} "
-        f"({_status_name(status)})"
+    raise_for_status(
+        result,
+        operation,
+        prefix="C++ GAS",
+        failure_fields={"failure_index": "observation"},
     )
-    if failure_index >= 0:
-        detail += f", observation={failure_index}"
-    if status in (2, 6):
-        raise ValueError(detail)
-    if status in (3, 4, 5):
-        raise CppUnsupported(detail)
-    if status == 7:
-        raise FloatingPointError(detail)
-    raise CppError(detail)
 
 
 def filter_result(

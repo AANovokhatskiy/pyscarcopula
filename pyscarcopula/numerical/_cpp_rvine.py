@@ -15,7 +15,7 @@ from pyscarcopula.numerical import _cpp_copula
 from pyscarcopula.numerical._cpp_extension import (
     CppError,
     CppUnsupported,
-    cpp_status_name,
+    raise_for_status as _raise_native_status,
 )
 from pyscarcopula.vine._edge_adapter import (
     edge_copula,
@@ -1652,29 +1652,15 @@ def mcmc(
 
 def raise_for_status(result, operation):
     """Translate a structured native R-vine status without fallback."""
-    status = int(result["status"])
-    if status == 0:
-        return
-    row = int(result.get("failure_row", -1))
-    edge = int(result.get("failure_edge", -1))
-    operation_index = int(result.get("failure_operation", -1))
-    message = (
-        f"C++ {operation} failed: status={status} "
-        f"({cpp_status_name(status)})"
+    _raise_native_status(
+        result,
+        operation,
+        failure_fields={
+            "failure_row": "row",
+            "failure_edge": "edge",
+            "failure_operation": "operation",
+        },
     )
-    if row >= 0:
-        message += f", row={row}"
-    if edge >= 0:
-        message += f", edge={edge}"
-    if operation_index >= 0:
-        message += f", operation={operation_index}"
-    if status in (2, 6):
-        raise ValueError(message)
-    if status in (3, 4, 5):
-        raise CppUnsupported(message)
-    if status == 7:
-        raise FloatingPointError(message)
-    raise CppError(message)
 
 
 __all__: list[str] = []

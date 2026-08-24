@@ -839,7 +839,7 @@ def test_gate4_workflow_covers_required_compilers_and_build_boundaries():
     assert "msystem: MINGW64" in source
     assert "install: mingw-w64-x86_64-gcc" in source
     assert "python tools/build_cpp_tests.py --force" in source
-    assert "python -m pyscarcopula._native_smoke" in source
+    assert "python -m pyscarcopula._native.smoke" in source
     assert "Run full non-benchmark suite against wheel" in source
     assert source.index("Verify Python-free C++ build boundary") < source.index(
         "Build strict wheel")

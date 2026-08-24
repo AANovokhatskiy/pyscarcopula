@@ -554,18 +554,101 @@ def _contract_view(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _gate3_contract_view(payload: dict[str, Any]) -> dict[str, Any]:
+    """Return the preserved config/constants part of the Stage 0 artifact.
+
+    Stage 8 deliberately changes build graphs, extension symbols, owners and
+    source locations.  The repository inventory is the historical Stage 0
+    artifact; the external Stage 8 inventory owns those approved boundary
+    changes.  Its blocking responsibility here is therefore Gate 3: values,
+    mappings and model-operation policy must remain unchanged.
+    """
+    contracts = payload["configuration_contracts"]
+    return {
+        "public_config_defaults": contracts["public_config_defaults"],
+        "native_config_defaults": contracts["native_config_defaults"],
+        "numerical_config_mappings": contracts[
+            "numerical_config_mappings"],
+        "named_constant_mappings": contracts["named_constant_mappings"],
+        "model_operation_matrix": contracts["model_operation_matrix"],
+        "discovered_cpp_constants": contracts["discovered_cpp_constants"],
+    }
+
+
+_GATE3_PYTHON_CONSTANT_RELOCATIONS = {
+    "pyscarcopula.numerical._cpp_extension._CPP_STATUS_NAMES":
+        "pyscarcopula._native.errors._STATUS_NAMES",
+    "pyscarcopula.numerical._cpp_extension._MODULE":
+        "pyscarcopula._native._extension._MODULE",
+    "pyscarcopula.numerical._cpp_extension._MODULE_ERROR":
+        "pyscarcopula._native._extension._MODULE_ERROR",
+}
+
+_GATE3_APPROVED_ARCHITECTURE_MANIFESTS = {
+    "pyscarcopula._cpp.build_support.sources.SCAR_COMPUTE_SOURCES",
+    "pyscarcopula._cpp.build_support.sources.PYTHON_BINDING_SOURCES",
+}
+
+
+def _python_constant_values(payload: dict[str, Any]) -> dict[str, Any]:
+    mappings = payload["configuration_contracts"][
+        "complete_constant_mappings"]
+    return {
+        entry["old"]: entry["value"]
+        for entry in mappings
+        if entry["kind"] == "python"
+    }
+
+
+def _gate3_python_constant_drift(
+        expected: dict[str, Any], actual: dict[str, Any]) -> list[str]:
+    """Compare frozen Python values while permitting approved relocations.
+
+    Source paths and line numbers are deliberately ignored.  Additions made by
+    later architectural stages are allowed, but every Stage 0 Python constant
+    remains required with its frozen value unless the manifest itself is an
+    approved build-boundary list.
+    """
+    frozen = _python_constant_values(expected)
+    current = _python_constant_values(actual)
+    drift = []
+    for old, expected_value in frozen.items():
+        if old in _GATE3_APPROVED_ARCHITECTURE_MANIFESTS:
+            continue
+        current_name = _GATE3_PYTHON_CONSTANT_RELOCATIONS.get(old, old)
+        if current_name not in current:
+            drift.append(f"missing Python constant {old} ({current_name})")
+        elif current[current_name] != expected_value:
+            drift.append(
+                f"Python constant {old} changed from {expected_value!r} "
+                f"to {current[current_name]!r}"
+            )
+    return drift
+
+
+def _gate3_drift(
+        expected: dict[str, Any], actual: dict[str, Any]) -> list[str]:
+    drift = []
+    if _gate3_contract_view(expected) != _gate3_contract_view(actual):
+        drift.append("config, mapping, model-operation, or C++ constant drift")
+    drift.extend(_gate3_python_constant_drift(expected, actual))
+    return drift
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     output = args.output.resolve()
     payload = build_payload()
     if args.check:
         expected = json.loads(output.read_text(encoding="utf-8"))
-        if _contract_view(expected) != _contract_view(payload):
+        drift = _gate3_drift(expected, payload)
+        if drift:
             raise SystemExit(
-                "C++ refactor config/API contract drifted; update the mapping or "
-                "add a compatibility adapter before accepting the change"
+                "C++ refactor Gate 3 contract drifted; update the mapping or "
+                "add a compatibility adapter before accepting the change: "
+                + "; ".join(drift)
             )
-        print(f"C++ refactor inventory contracts are unchanged: {output}")
+        print(f"C++ refactor Gate 3 contracts are unchanged: {output}")
         return 0
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(

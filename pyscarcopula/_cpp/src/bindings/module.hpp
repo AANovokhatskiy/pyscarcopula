@@ -7,6 +7,7 @@ namespace pyscarcopula::bindings {
 void bind_common(pybind11::module_& module);
 void bind_parallel(pybind11::module_& module);
 void bind_copula(pybind11::module_& module);
+void bind_capability(pybind11::module_& module);
 void bind_factor(pybind11::module_& module);
 void bind_multivariate(pybind11::module_& module);
 void bind_scar_ou_types(pybind11::module_& module);

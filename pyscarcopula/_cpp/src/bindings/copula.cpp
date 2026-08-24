@@ -119,7 +119,15 @@ void bind_copula(py::module_& m) {
     py::enum_<scar::CorrelationKind>(
         m, "CorrelationKind", "Native correlation representation.")
         .value("DenseCholesky", scar::CorrelationKind::DenseCholesky)
-        .value("Factor", scar::CorrelationKind::Factor);
+        .value("Factor", scar::CorrelationKind::Factor)
+        .value("Fixed", scar::CorrelationKind::Fixed)
+        .value("Shrinkage", scar::CorrelationKind::Shrinkage)
+        .value("Equicorrelation", scar::CorrelationKind::Equicorrelation)
+        .value(
+            "FactorJointDynamicEstimation",
+            scar::CorrelationKind::FactorJointDynamicEstimation)
+        .value("NotApplicable", scar::CorrelationKind::NotApplicable)
+        .value("MixedPairEdges", scar::CorrelationKind::MixedPairEdges);
     py::enum_<scar::Rotation>(
         m, "Rotation", "Bivariate copula rotation in degrees.")
         .value("R0", scar::Rotation::R0)

@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import numpy as np
 
+from pyscarcopula._native.threads import validate_n_threads
 from pyscarcopula.numerical import _cpp_copula, _cpp_extension
 from pyscarcopula.numerical._cpp_extension import (
     CppError,
     CppUnsupported,
-    cpp_status_name,
+    raise_for_status,
 )
 
 
@@ -60,13 +61,7 @@ def _kernel_diagnostics(result) -> dict:
 
 
 def _validated_n_threads(n_threads) -> int:
-    if isinstance(n_threads, (bool, np.bool_)) or not isinstance(
-            n_threads, (int, np.integer)):
-        raise ValueError("n_threads must be an integer in [1, 256]")
-    value = int(n_threads)
-    if value < 1 or value > 256:
-        raise ValueError(f"n_threads must be in [1, 256], got {value}")
-    return value
+    return validate_n_threads(n_threads)
 
 
 def prepare_equicorr_statistics(
@@ -497,23 +492,19 @@ def _dense_student_rosenblatt_prepared(
     status = int(result["status"])
     if status != int(module.SCAR_OK):
         failure_index = int(result.get("failure_index", -1))
-        failure_coordinate = int(result.get("failure_coordinate", -1))
-        message = (
-            "C++ dense Student Rosenblatt transform failed: "
-            f"status={status} ({cpp_status_name(status)})"
+        raise_for_status(
+            result,
+            "dense Student Rosenblatt transform",
+            failure_fields={
+                "failure_index": "row",
+                "failure_coordinate": "coordinate",
+            },
+            numerical_exception=(
+                np.linalg.LinAlgError
+                if failure_index < 0
+                else FloatingPointError
+            ),
         )
-        if failure_index >= 0:
-            message += f", row={failure_index}"
-        if failure_coordinate >= 0:
-            message += f", coordinate={failure_coordinate}"
-        if status in (int(module.SCAR_INVALID_SIZE),
-                      int(module.SCAR_INVALID_PARAMETER)):
-            raise ValueError(message)
-        if status == int(module.SCAR_NUMERICAL_FAILURE):
-            if failure_index < 0:
-                raise np.linalg.LinAlgError(message)
-            raise FloatingPointError(message)
-        raise CppError(message)
 
     rows, dimension = observations.shape
     if (int(result["n_rows"]) != rows

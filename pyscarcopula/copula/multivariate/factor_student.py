@@ -20,29 +20,14 @@ from pyscarcopula.numerical._arrays import validate_integer
 
 def _raise_native_status(result: Mapping[str, Any], operation: str) -> None:
     """Translate a mechanical native result at the Python adapter boundary."""
-    from pyscarcopula.numerical._cpp_extension import (
-        CppError,
-        CppUnsupported,
-        cpp_status_name,
-    )
+    from pyscarcopula._native.errors import raise_for_status
 
-    status = int(result["status"])
-    if status == 0:
-        return
-    failure_index = int(result.get("failure_index", -1))
-    detail = (
-        f"C++ factor Student {operation} failed: status={status} "
-        f"({cpp_status_name(status)})"
+    raise_for_status(
+        result,
+        operation,
+        prefix="C++ factor Student",
+        failure_fields={"failure_index": "index"},
     )
-    if failure_index >= 0:
-        detail += f", index={failure_index}"
-    if status in (2, 6):
-        raise ValueError(detail)
-    if status in (3, 4, 5):
-        raise CppUnsupported(detail)
-    if status == 7:
-        raise FloatingPointError(detail)
-    raise CppError(detail)
 
 
 @dataclass(frozen=True)

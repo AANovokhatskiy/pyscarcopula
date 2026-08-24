@@ -5,7 +5,11 @@ from __future__ import annotations
 import numpy as np
 
 from pyscarcopula.numerical import _cpp_copula, _cpp_extension
-from pyscarcopula.numerical._cpp_extension import CppError
+from pyscarcopula.numerical._cpp_extension import (
+    CppError,
+    LEGACY_CPP_STATUS_EXCEPTION_POLICY,
+    raise_for_status,
+)
 
 
 class StaticLikelihoodEvaluator:
@@ -38,10 +42,11 @@ class StaticLikelihoodEvaluator:
         self._module = module
         self._native = module.StaticCopulaEvaluator(
             spec, observations, _validated_n_threads(n_threads))
-        if self._native.status != module.SCAR_OK:
-            raise CppError(
-                "C++ static likelihood evaluator rejected its inputs "
-                f"with status={self._native.status}")
+        raise_for_status(
+            int(self._native.status),
+            "static likelihood evaluator initialization",
+            exception_policy=LEGACY_CPP_STATUS_EXCEPTION_POLICY,
+        )
 
     def _initialize_prepared(self, module, spec, prepared, n_threads):
         from pyscarcopula.numerical.multivariate_native import (
@@ -54,10 +59,11 @@ class StaticLikelihoodEvaluator:
             prepared.sum_z2,
             _validated_n_threads(n_threads),
         )
-        if self._native.status != module.SCAR_OK:
-            raise CppError(
-                "C++ static likelihood evaluator rejected prepared "
-                f"statistics with status={self._native.status}")
+        raise_for_status(
+            int(self._native.status),
+            "static likelihood prepared-statistics initialization",
+            exception_policy=LEGACY_CPP_STATUS_EXCEPTION_POLICY,
+        )
 
     @classmethod
     def from_spec(cls, module, spec, u, *, n_threads=1):

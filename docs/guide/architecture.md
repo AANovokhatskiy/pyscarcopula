@@ -33,7 +33,9 @@ print(copula.capabilities.supports_gas)
 print(copula.capabilities.supports_scar_ou)
 ```
 
-The strategy layer validates capabilities before optimization. A multivariate
+For exact built-in model types, these public flags are projected from the
+opaque C++ descriptor and operation-level capability query. The strategy layer
+validates named native requirements before optimization. A multivariate
 model is therefore not accepted by a pair-only strategy merely because it has
 similarly named methods.
 
@@ -41,7 +43,9 @@ similarly named methods.
 
 Strategies own optimization, filtering coordination, and result
 construction. Copulas own model metadata, transforms, and sampling behavior.
-Native adapters own calls into the mandatory C++ extension.
+The `pyscarcopula._native` facade owns loading the mandatory C++ extension,
+typed model descriptors, capability decisions, status translation, and thread
+validation. Numerical adapters are transitional callers of that facade.
 
 | Layer | Main responsibility |
 |-------|---------------------|

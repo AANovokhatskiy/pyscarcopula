@@ -45,6 +45,7 @@ PAIR_FAMILY_SOURCES = _pair_family_sources()
 
 SCAR_COMPUTE_SOURCES = (
     "copula/core.cpp",
+    "copula/capability.cpp",
     "copula/model_storage.cpp",
     "copula/common.cpp",
     "copula/rotation.cpp",
@@ -102,6 +103,7 @@ PYTHON_BINDING_SOURCES = (
     "bindings/array.cpp",
     "bindings/parallel.cpp",
     "bindings/copula.cpp",
+    "bindings/capability.cpp",
     "bindings/factor.cpp",
     "bindings/multivariate.cpp",
     "bindings/scar_ou_types.cpp",

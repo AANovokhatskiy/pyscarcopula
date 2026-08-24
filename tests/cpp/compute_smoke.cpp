@@ -1,4 +1,5 @@
 #include "scar/copula.hpp"
+#include "scar/copula/capability.hpp"
 #include "scar/copula/prepared_dynamic_emission.hpp"
 #include "scar/copula/prepared_pair_kernel.hpp"
 #include "scar/copula/result.hpp"
@@ -72,6 +73,26 @@ int main() {
         || !std::holds_alternative<scar::FactorStudentDescriptor>(
             student_descriptor.alternative())) {
         return 4;
+    }
+    const scar::TypedModelDescriptor capability_descriptor =
+        scar::make_typed_model_descriptor(
+            scar::NativeModelId::StochasticStudent,
+            5,
+            scar::CorrelationKind::Factor,
+            0,
+            scar::FactorEstimationKind::TwoStage);
+    const scar::CapabilityInfo dynamic_capability = scar::query_capability(
+        capability_descriptor,
+        scar::NativeOperation::StateFilterSmoother,
+        scar::DynamicsKind::ScarTmOu);
+    const scar::CapabilityInfo jacobi_capability = scar::query_capability(
+        capability_descriptor,
+        scar::NativeOperation::StateFilterSmoother,
+        scar::DynamicsKind::ScarTmJacobi);
+    if (!dynamic_capability.supported
+        || jacobi_capability.supported
+        || jacobi_capability.reason.empty()) {
+        return 16;
     }
 
     if (!scar::is_supported(spec)) {

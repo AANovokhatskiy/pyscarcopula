@@ -26,11 +26,6 @@ enum class CopulaFamily : int {
     MultivariateGaussian = 8,
 };
 
-enum class CorrelationKind : int {
-    DenseCholesky = 0,
-    Factor = 1,
-};
-
 struct TypedModelStorage;
 
 /// Compatibility descriptor accepted by the generic runtime boundary.

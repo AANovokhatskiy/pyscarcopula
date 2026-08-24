@@ -7,6 +7,7 @@ pyscarcopula/
 |-- __init__.py              # Public re-exports and BLAS thread policy
 |-- api.py                   # Top-level fit/predict/sample helpers
 |-- _types.py                # Results and numerical configuration
+|-- _native/                 # Stable extension facade and support policy
 |-- io.py                    # JSON model persistence
 |-- stattests.py             # Goodness-of-fit orchestration
 |-- copula/
@@ -65,8 +66,10 @@ typing. They do not grant native support by themselves.
 
 ## Capabilities And Strategies
 
-Class hierarchy answers what a model is. `CopulaCapabilities` answers which
-built-in strategies and numerical operations it supports:
+Class hierarchy answers what a model is. For exact built-in model types, the
+opaque C++ `TypedModelDescriptor` and `query_capability` operation matrix are
+the authoritative support contract. `CopulaCapabilities` is a temporary public
+projection of that contract during the Stage 8 migration:
 
 - `supports_pair_ops`
 - `supports_native_mle`
@@ -76,14 +79,18 @@ built-in strategies and numerical operations it supports:
 - `supports_conditional_sampling`
 - `has_dynamic_scalar_parameter`
 
-The strategy registry in `strategy/_base.py` validates these capabilities
-before fitting. Strategy classes own optimization and result construction;
-copula classes own model metadata, parameter transforms, and sampling.
+The strategy registry in `strategy/_base.py` checks named
+`StrategyRequirements` through the native query before fitting. Custom Python
+subclasses remain on the temporary legacy adapter and do not acquire native
+support through inheritance. Strategy classes own optimization and result
+construction; copula classes own model metadata, parameter transforms, and
+sampling.
 
 The main dependency flow is:
 
 ```text
-api.py -> strategy/ -> numerical native adapters -> C++ extension
+api.py -> strategy/ -> _native facade -> C++ extension
+                    -> transitional numerical adapters
                     -> copula model metadata
 vine/vine.py -> structure selection or fixed RVineMatrix
              -> _vine_fit.py + bivariate copula contract
@@ -117,7 +124,10 @@ JSON persistence retains fitted raw parameters and compact factor state.
 
 ## Native Boundary
 
-The pybind11 C++ extension is mandatory. Built-in point operations, static
+The pybind11 C++ extension is mandatory. `_native/_extension.py` is the sole
+owner of importing its current binary location; `_native` domain modules expose
+the stable facade while legacy numerical adapters remain as Stage 8.1
+compatibility shims. Built-in point operations, static
 likelihoods, GAS filtering, multivariate conditional linear algebra,
 sequential GAS R-vine sampling, dense Student Rosenblatt transforms, and
 SCAR-TM-OU likelihood/gradient/forward operations have one production
@@ -143,10 +153,11 @@ rejects result-dependent status policy, NumPy buffer access while the GIL is
 released, and SCAR-OU grid/filter orchestration inside a binder.
 
 Native results are serialized mechanically, including `Status` and failure
-context. Python adapters decide whether a non-OK status becomes `ValueError`,
-`CppUnsupported`, `FloatingPointError`, or `CppError`. In particular, the
-Factor Student adapter owns this policy; its binder does not throw based on a
-returned failure index. Raw OU emission filtering is a public computational
+context. `_native/errors.py` centrally decides whether a non-OK status becomes
+`ValueError`, `NativeUnsupported`, `FloatingPointError`, or `NativeError`;
+the legacy `Cpp*` names are aliases during migration. Adapters contribute only
+operation and location labels. Binders do not throw based on returned failure
+indices. Raw OU emission filtering is a public computational
 operation, `filter_ou_grid_emissions`, returning `OuGridFilterResult`; the
 SCAR-OU binder only validates the buffer shape/lifetime, invokes that API
 without the GIL, and serializes its result.

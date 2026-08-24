@@ -130,6 +130,16 @@ class CopulaBase:
     @property
     def capabilities(self) -> CopulaCapabilities:
         """Capabilities used for strategy and numerical dispatch."""
+        from pyscarcopula._native.registry import (
+            compatibility_capability_flags,
+        )
+
+        projected = compatibility_capability_flags(self)
+        if projected is not None:
+            return CopulaCapabilities(
+                dimension=self.dimension,
+                **projected,
+            )
         return replace(self._capabilities, dimension=self.dimension)
 
     def validate_dimension(self, data: ArrayLike) -> np.ndarray:
@@ -392,7 +402,7 @@ class BivariateCopula(CopulaBase):
     # ── transform ──────────────────────────────────────────────────
     @staticmethod
     def _native_adapter():
-        from pyscarcopula.numerical import copula_native
+        from pyscarcopula._native import pair as copula_native
 
         return copula_native
 

@@ -14,9 +14,14 @@ namespace scar {
 TypedModelDescriptor CopulaSpec::model_descriptor() const noexcept {
     if (family == CopulaFamily::Student) {
         if (correlation_kind == CorrelationKind::Factor) {
-            return FactorStudentDescriptor{{dim}};
+            return TypedModelDescriptor(
+                FactorStudentDescriptor{{dim}},
+                NativeModelId::StochasticStudent);
         }
-        return DenseStudentDescriptor{{dim}};
+        return TypedModelDescriptor(
+            DenseStudentDescriptor{{dim}},
+            NativeModelId::StochasticStudent,
+            correlation_kind);
     }
     if (family == CopulaFamily::EquicorrGaussian) {
         return EquicorrGaussianDescriptor{{dim}};
@@ -27,7 +32,31 @@ TypedModelDescriptor CopulaSpec::model_descriptor() const noexcept {
         }
         return DenseGaussianDescriptor{{dim}};
     }
-    return PairCopulaDescriptor{};
+    NativeModelId model_id = NativeModelId::Clayton;
+    switch (family) {
+        case CopulaFamily::Independent:
+            model_id = NativeModelId::Independent;
+            break;
+        case CopulaFamily::Clayton:
+            model_id = NativeModelId::Clayton;
+            break;
+        case CopulaFamily::Frank:
+            model_id = NativeModelId::Frank;
+            break;
+        case CopulaFamily::Gumbel:
+            model_id = NativeModelId::Gumbel;
+            break;
+        case CopulaFamily::Joe:
+            model_id = NativeModelId::Joe;
+            break;
+        case CopulaFamily::Gaussian:
+            model_id = NativeModelId::BivariateGaussian;
+            break;
+        default:
+            break;
+    }
+    return TypedModelDescriptor(
+        PairCopulaDescriptor{}, model_id, static_cast<int>(rotation));
 }
 
 namespace {

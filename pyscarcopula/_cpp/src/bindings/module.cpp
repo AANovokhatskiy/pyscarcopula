@@ -5,6 +5,7 @@ PYBIND11_MODULE(_scar_cpp, module, pybind11::multiple_interpreters::not_supporte
     pyscarcopula::bindings::bind_parallel(module);
     pyscarcopula::bindings::bind_factor(module);
     pyscarcopula::bindings::bind_copula(module);
+    pyscarcopula::bindings::bind_capability(module);
     pyscarcopula::bindings::bind_multivariate(module);
     pyscarcopula::bindings::bind_scar_ou_types(module);
     pyscarcopula::bindings::bind_rvine(module);

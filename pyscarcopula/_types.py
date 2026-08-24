@@ -14,6 +14,8 @@ from dataclasses import dataclass, field, replace as dataclass_replace
 from typing import Any
 import numpy as np
 
+from pyscarcopula._native.threads import validate_n_threads
+
 
 # Numerical configuration
 
@@ -210,14 +212,7 @@ class NumericalConfig:
     default_M_iterations: int = 3
 
     def __post_init__(self) -> None:
-        n_threads = self.n_threads
-        if isinstance(n_threads, (bool, np.bool_)) or not isinstance(
-                n_threads, (int, np.integer)):
-            raise ValueError("n_threads must be an integer in [1, 256]")
-        resolved_threads = int(n_threads)
-        if resolved_threads < 1 or resolved_threads > 256:
-            raise ValueError(
-                f"n_threads must be in [1, 256], got {resolved_threads}")
+        resolved_threads = validate_n_threads(self.n_threads)
         object.__setattr__(self, 'n_threads', resolved_threads)
         object.__setattr__(
             self, 'mle_optimizer',
