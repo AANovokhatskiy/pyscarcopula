@@ -1,6 +1,6 @@
 #pragma once
 
-#include "scar/detail/copula/dispatch.hpp"
+#include "scar/copula/prepared_dynamic_emission.hpp"
 #include "scar/detail/safety.hpp"
 #include "scar/detail/scar_ou/grid.hpp"
 
@@ -64,7 +64,7 @@ bool normalize_density_by_max(std::vector<double>& values);
 
 template <typename AdvancePhi, typename OnRow>
 bool forward_filter_grid(
-    const scar::CopulaSpec& copula,
+    const scar::PreparedDynamicEmission& emission,
     const OuGrid& grid,
     const double* u,
     std::int64_t n_obs,
@@ -80,7 +80,8 @@ bool forward_filter_grid(
         if (!predictive_weights_from_phi(grid, phi, weights)) {
             return false;
         }
-        copula_fi_row_on_grid(copula, u, t, grid.x_grid, fi_row);
+        emission.fill_density_row_on_state_grid(
+            u, t, grid.x_grid, fi_row);
         on_row(t, weights, fi_row);
 
         if (t < n_obs - 1) {
@@ -193,21 +194,21 @@ void dense_predict_matvec(
     const std::vector<double>& source,
     std::vector<double>& out_density);
 bool matrix_backward_loglik(
-    const scar::CopulaSpec& copula,
+    const scar::PreparedDynamicEmission& emission,
     const OuGrid& grid,
     const MatrixTransitionOperator& op,
     const double* u,
     std::int64_t n_obs,
     double& loglik);
 bool matrix_forward_predictive_mean(
-    const scar::CopulaSpec& copula,
+    const scar::PreparedDynamicEmission& emission,
     const OuGrid& grid,
     const MatrixTransitionOperator& op,
     const double* u,
     std::int64_t n_obs,
     double* out);
 bool matrix_forward_mixture_h(
-    const scar::CopulaSpec& copula,
+    const scar::PreparedDynamicEmission& emission,
     const OuGrid& grid,
     const MatrixTransitionOperator& op,
     const double* u,
@@ -216,7 +217,7 @@ bool matrix_forward_mixture_h(
     double* out_reverse = nullptr,
     bool direct_swapped_h = false);
 bool local_forward_predictive_mean(
-    const scar::CopulaSpec& copula,
+    const scar::PreparedDynamicEmission& emission,
     const OuGrid& grid,
     const std::vector<double>& gh_nodes,
     const std::vector<double>& gh_weights,
@@ -224,7 +225,7 @@ bool local_forward_predictive_mean(
     std::int64_t n_obs,
     double* out);
 bool local_forward_mixture_h(
-    const scar::CopulaSpec& copula,
+    const scar::PreparedDynamicEmission& emission,
     const OuGrid& grid,
     const std::vector<double>& gh_nodes,
     const std::vector<double>& gh_weights,

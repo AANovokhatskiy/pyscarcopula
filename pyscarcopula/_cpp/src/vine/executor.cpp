@@ -1,12 +1,8 @@
 #include "scar/rvine.hpp"
 
-#include "scar/copula/pair/gaussian.hpp"
-#include "scar/copula/rotation.hpp"
 #include "scar/core/threading.hpp"
 #include "scar/detail/copula/common.hpp"
-#include "scar/detail/copula/dispatch.hpp"
 #include "scar/detail/safety.hpp"
-#include "scar/math/normal.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -546,14 +542,14 @@ int prepare_edges(
     prepared.clear();
     prepared.reserve(edges.size());
     for (const EdgeSpec& edge : edges) {
-        if (!is_supported(edge.copula) || edge.copula.dim != 2) {
+        const PreparedPairKernel kernel(edge.copula);
+        if (!kernel.is_supported() || edge.copula.dim != 2) {
             prepared.clear();
             return SCAR_INVALID_FAMILY;
         }
-        prepared.push_back({
+        prepared.emplace_back(
             edge,
-            scar_internal::transposed_copula_spec(edge.copula),
-        });
+            scar_internal::transposed_copula_spec(edge.copula));
     }
     return SCAR_OK;
 }
@@ -667,11 +663,10 @@ double h(
     double value,
     double partner,
     double parameter) {
-    const CopulaSpec& copula = transposed
-        ? edge.transposed_copula
-        : edge.edge.copula;
-    return scar_internal::copula_h_rotated(
-        copula, value, partner, parameter);
+    const PreparedPairKernel& kernel = transposed
+        ? edge.transposed_kernel
+        : edge.kernel;
+    return kernel.h(value, partner, parameter);
 }
 
 void h_pair(
@@ -682,35 +677,24 @@ void h_pair(
     double parameter,
     double& first_next,
     double& second_next) {
-    const CopulaSpec& first_copula = first_transposed
-        ? edge.transposed_copula
-        : edge.edge.copula;
-    const CopulaSpec& second_copula = first_transposed
-        ? edge.edge.copula
-        : edge.transposed_copula;
-    if (first_copula.family == CopulaFamily::Gaussian
-        && second_copula.family == CopulaFamily::Gaussian
-        && first_copula.rotation == Rotation::R0
-        && second_copula.rotation == Rotation::R0) {
-        // The two Gaussian directions use the same pair of normal quantiles.
-        // Reusing them preserves the scalar kernel's operation order while
-        // avoiding two of the four inverse-normal evaluations.
-        const double first_quantile = scar::math::normal_quantile(
-            clip_open_unit(first));
-        const double second_quantile = scar::math::normal_quantile(
-            clip_open_unit(second));
-        scar::copula::pair::gaussian_h_pair_from_quantiles(
-            first_quantile,
-            second_quantile,
+    const PreparedPairKernel& first_kernel = first_transposed
+        ? edge.transposed_kernel
+        : edge.kernel;
+    const PreparedPairKernel& second_kernel = first_transposed
+        ? edge.kernel
+        : edge.transposed_kernel;
+    if (first_kernel.is_unrotated_gaussian()
+        && second_kernel.is_unrotated_gaussian()) {
+        first_kernel.h_pair(
+            clip_open_unit(first),
+            clip_open_unit(second),
             parameter,
             first_next,
             second_next);
         return;
     }
-    first_next = h(
-        edge, first_transposed, first, second, parameter);
-    second_next = h(
-        edge, !first_transposed, second, first, parameter);
+    first_next = first_kernel.h(first, second, parameter);
+    second_next = second_kernel.h(second, first, parameter);
 }
 
 double h_inverse(
@@ -719,11 +703,10 @@ double h_inverse(
     double quantile,
     double given,
     double parameter) {
-    const CopulaSpec& copula = transposed
-        ? edge.transposed_copula
-        : edge.edge.copula;
-    return scar_internal::copula_h_inverse_rotated(
-        copula, quantile, given, parameter);
+    const PreparedPairKernel& kernel = transposed
+        ? edge.transposed_kernel
+        : edge.kernel;
+    return kernel.inverse_h(quantile, given, parameter);
 }
 
 namespace detail {
@@ -734,19 +717,10 @@ double edge_log_pdf(
     double first,
     double second,
     double parameter) {
-    const CopulaSpec& copula = transposed
-        ? edge.transposed_copula
-        : edge.edge.copula;
-    double rotated_first = 0.0;
-    double rotated_second = 0.0;
-    scar::copula::apply_rotation(
-        first,
-        second,
-        static_cast<int>(copula.rotation),
-        rotated_first,
-        rotated_second);
-    return scar_internal::copula_log_pdf_unrotated(
-        copula, rotated_first, rotated_second, parameter);
+    const PreparedPairKernel& kernel = transposed
+        ? edge.transposed_kernel
+        : edge.kernel;
+    return kernel.log_pdf(first, second, parameter);
 }
 
 }  // namespace detail
@@ -778,10 +752,8 @@ void fail_conditional_sample(
 }
 
 bool is_unrotated_gaussian(const PreparedEdge& edge) noexcept {
-    return edge.edge.copula.family == CopulaFamily::Gaussian
-        && edge.edge.copula.rotation == Rotation::R0
-        && edge.transposed_copula.family == CopulaFamily::Gaussian
-        && edge.transposed_copula.rotation == Rotation::R0;
+    return edge.kernel.is_unrotated_gaussian()
+        && edge.transposed_kernel.is_unrotated_gaussian();
 }
 
 double gaussian_inverse_from_quantiles(
@@ -1195,8 +1167,8 @@ ConditionalSampleResult conditional_sample(
                 const auto quantile_at = [&](std::size_t position) {
                     if (gaussian_quantile_valid[position] == 0) {
                         gaussian_quantiles[position] =
-                            scar::math::normal_quantile(
-                                clip_open_unit(nodes[position]));
+                            edge.kernel.prepare_conditional_value(
+                                nodes[position]);
                         gaussian_quantile_valid[position] = 1;
                     }
                     return gaussian_quantiles[position];
@@ -1204,11 +1176,10 @@ ConditionalSampleResult conditional_sample(
                 const double first_quantile = quantile_at(input1_offset + row);
                 const double second_quantile = quantile_at(input2_offset + row);
                 if (opcode == static_cast<int>(RVineOpcode::H)) {
-                    first_next =
-                        scar::copula::pair::gaussian_h_from_quantiles(
+                    first_next = edge.kernel.h_from_prepared_values(
                         first_quantile, second_quantile, parameter);
                 } else if (opcode == static_cast<int>(RVineOpcode::H_PAIR)) {
-                    scar::copula::pair::gaussian_h_pair_from_quantiles(
+                    edge.kernel.h_pair_from_prepared_values(
                         first_quantile,
                         second_quantile,
                         parameter,

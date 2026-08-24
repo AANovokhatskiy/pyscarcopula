@@ -132,11 +132,11 @@
       ".github/workflows/parallel-release-gates.yml": "5bf5bd210a18929091ed71553a251ad084f7498e150b2bf71846580e6cd66238",
       ".github/workflows/wheels.yml": "5e4fff9c1ada46b147cf7ba85b2367b802a34f491dc2b97b41158c23d9887f31",
       "pyproject.toml": "81b3eaacc7c30e9d169de1ed60af08b0e89fdc6ca267b3be98653d03a5a0130d",
-      "pyscarcopula/_cpp/build_support/sources.py": "9335124d99f05a5983ae472a562cf4bb340b4a790dd0119bf14bb3632cb76062",
+      "pyscarcopula/_cpp/build_support/sources.py": "40d54adaa22c7edcf85eca9141ed02da50ddb3d1ecfc2ca872f821be980aeebb",
       "pyscarcopula/_cpp/build_support/toolchain.py": "5d7990b2cb89bd8bdf58e887795f6c4d027eeb39d5f99a9b49ba11548e2da701",
       "setup.py": "11690d112f39f7da39d7b9d80155e9aabdbb6187565720d7fed19ba8a58103df",
       "tools/build_cpp_tests.py": "99838f4bfb1199527b5a904c169828515bf7cda438102bdaffd600f07ede8b62",
-      "tools/check_cpp_architecture.py": "a2aa9c9c3ad5e6583f0e5f702199608cf73ed0077ae6b59711aa4752bab3bc91"
+      "tools/check_cpp_architecture.py": "b8fc16c4e9ea7b905296fe90cf18e8f40db6892cbfad578ba79825479ff01d7c"
     },
     "sources": [
       ".github/workflows/parallel-release-gates.yml",
@@ -168,7 +168,7 @@
       ]
     }
   },
-  "compute_source_sha256": "a38d38676a479d123880a054b3bd08457b0cd1b3f99aa77d2eb0ebe760c4221a",
+  "compute_source_sha256": "b9acebb9965ec1f204fe7bd9572325b3def2a7d4d1a480d5b643f82d711a66b7",
   "configuration_contracts": {
     "complete_constant_mappings": [
       {
@@ -223,7 +223,7 @@
       },
       {
         "kind": "python",
-        "line": 99,
+        "line": 100,
         "old": "pyscarcopula._cpp.build_support.sources.PYTHON_BINDING_SOURCES",
         "semantic": "preserve the current value, bounds, and usage semantics",
         "source": "pyscarcopula/_cpp/build_support/sources.py",
@@ -1202,6 +1202,7 @@
           "copula/rotation.cpp",
           "copula/transforms.cpp",
           "copula/dispatch.cpp",
+          "copula/prepared_dynamic_emission.cpp",
           "copula/pair/runtime_registry.cpp",
           "copula/pair/model.cpp",
           "copula/pair/independent.cpp",
@@ -1805,7 +1806,7 @@
       },
       {
         "kind": "cpp",
-        "line": 102,
+        "line": 74,
         "old": "pyscarcopula/_cpp/src/scar_ou/monte_carlo.cpp:min_cells_student",
         "semantic": "preserve the current value, bounds, and usage semantics",
         "source": "pyscarcopula/_cpp/src/scar_ou/monte_carlo.cpp",
@@ -1815,7 +1816,7 @@
       },
       {
         "kind": "cpp",
-        "line": 103,
+        "line": 75,
         "old": "pyscarcopula/_cpp/src/scar_ou/monte_carlo.cpp:min_cells_other",
         "semantic": "preserve the current value, bounds, and usage semantics",
         "source": "pyscarcopula/_cpp/src/scar_ou/monte_carlo.cpp",
@@ -1825,7 +1826,7 @@
       },
       {
         "kind": "cpp",
-        "line": 104,
+        "line": 76,
         "old": "pyscarcopula/_cpp/src/scar_ou/monte_carlo.cpp:min_cells_per_block",
         "semantic": "preserve the current value, bounds, and usage semantics",
         "source": "pyscarcopula/_cpp/src/scar_ou/monte_carlo.cpp",
@@ -1835,7 +1836,7 @@
       },
       {
         "kind": "cpp",
-        "line": 1046,
+        "line": 1018,
         "old": "pyscarcopula/_cpp/src/vine/executor.cpp:conditional_max_block_rows",
         "semantic": "preserve the current value, bounds, and usage semantics",
         "source": "pyscarcopula/_cpp/src/vine/executor.cpp",
@@ -1845,7 +1846,7 @@
       },
       {
         "kind": "cpp",
-        "line": 1047,
+        "line": 1019,
         "old": "pyscarcopula/_cpp/src/vine/executor.cpp:conditional_workspace_budget",
         "semantic": "preserve the current value, bounds, and usage semantics",
         "source": "pyscarcopula/_cpp/src/vine/executor.cpp",
@@ -2241,35 +2242,35 @@
         "value_expression": "numerical::kPseudoObservationEps"
       },
       {
-        "line": 102,
+        "line": 74,
         "owner": "current C++ translation unit/namespace",
         "source": "pyscarcopula/_cpp/src/scar_ou/monte_carlo.cpp",
         "symbol": "min_cells_student",
         "value_expression": "4096"
       },
       {
-        "line": 103,
+        "line": 75,
         "owner": "current C++ translation unit/namespace",
         "source": "pyscarcopula/_cpp/src/scar_ou/monte_carlo.cpp",
         "symbol": "min_cells_other",
         "value_expression": "262144"
       },
       {
-        "line": 104,
+        "line": 76,
         "owner": "current C++ translation unit/namespace",
         "source": "pyscarcopula/_cpp/src/scar_ou/monte_carlo.cpp",
         "symbol": "min_cells_per_block",
         "value_expression": "1024"
       },
       {
-        "line": 1046,
+        "line": 1018,
         "owner": "current C++ translation unit/namespace",
         "source": "pyscarcopula/_cpp/src/vine/executor.cpp",
         "symbol": "conditional_max_block_rows",
         "value_expression": "1024"
       },
       {
-        "line": 1047,
+        "line": 1019,
         "owner": "current C++ translation unit/namespace",
         "source": "pyscarcopula/_cpp/src/vine/executor.cpp",
         "symbol": "conditional_workspace_budget",
@@ -2313,7 +2314,7 @@
         "value": 1e-12
       },
       {
-        "line": 99,
+        "line": 100,
         "owner": "pyscarcopula._cpp.build_support.sources",
         "source": "pyscarcopula/_cpp/build_support/sources.py",
         "symbol": "PYTHON_BINDING_SOURCES",
@@ -3029,6 +3030,7 @@
           "copula/rotation.cpp",
           "copula/transforms.cpp",
           "copula/dispatch.cpp",
+          "copula/prepared_dynamic_emission.cpp",
           "copula/pair/runtime_registry.cpp",
           "copula/pair/model.cpp",
           "copula/pair/independent.cpp",
@@ -3902,9 +3904,11 @@
     },
     "include_graph": {
       "pyscarcopula/_cpp/include/scar/copula.hpp": [
+        "scar/copula/grid_values.hpp",
         "scar/copula/multivariate/gaussian/conditional.hpp",
         "scar/copula/multivariate/student/conditional.hpp",
         "scar/copula/multivariate/student/rosenblatt.hpp",
+        "scar/copula/prepared_dynamic_emission.hpp",
         "scar/copula/rotation.hpp",
         "scar/copula/spec.hpp",
         "scar/copula/transforms.hpp",
@@ -3978,6 +3982,10 @@
       "pyscarcopula/_cpp/include/scar/copula/pair/joe.hpp": [
         "scar/copula/pair/kernel.hpp"
       ],
+      "pyscarcopula/_cpp/include/scar/copula/prepared_dynamic_emission.hpp": [
+        "scar/copula/spec.hpp",
+        "scar/observation.hpp"
+      ],
       "pyscarcopula/_cpp/include/scar/copula/prepared_pair_kernel.hpp": [
         "scar/copula/pair/kernel.hpp",
         "scar/copula/spec.hpp"
@@ -4020,7 +4028,7 @@
         "scar/copula.hpp"
       ],
       "pyscarcopula/_cpp/include/scar/detail/scar_ou/transition.hpp": [
-        "scar/detail/copula/dispatch.hpp",
+        "scar/copula/prepared_dynamic_emission.hpp",
         "scar/detail/safety.hpp",
         "scar/detail/scar_ou/grid.hpp"
       ],
@@ -4030,12 +4038,12 @@
         "scar/copula/multivariate/student/factor_grid.hpp"
       ],
       "pyscarcopula/_cpp/include/scar/gas.hpp": [
-        "scar/copula.hpp",
+        "scar/copula/spec.hpp",
         "scar/observation.hpp",
         "scar/status.hpp"
       ],
       "pyscarcopula/_cpp/include/scar/gas_rvine.hpp": [
-        "scar/copula.hpp",
+        "scar/copula/spec.hpp",
         "scar/gas.hpp",
         "scar/rvine_plan.hpp",
         "scar/status.hpp"
@@ -4044,12 +4052,14 @@
         "scar/core/matrix_view.hpp"
       ],
       "pyscarcopula/_cpp/include/scar/ou.hpp": [
-        "scar/copula.hpp",
+        "scar/copula/grid_values.hpp",
+        "scar/copula/prepared_dynamic_emission.hpp",
         "scar/observation.hpp",
         "scar/status.hpp"
       ],
       "pyscarcopula/_cpp/include/scar/rvine.hpp": [
-        "scar/copula.hpp",
+        "scar/copula/prepared_pair_kernel.hpp",
+        "scar/core/span.hpp",
         "scar/rvine_plan.hpp",
         "scar/status.hpp"
       ],
@@ -4272,7 +4282,21 @@
       ],
       "pyscarcopula/_cpp/src/copula/pair/runtime_registry.cpp": [
         "scar/copula/pair/families.def",
-        "scar/copula/prepared_pair_kernel.hpp"
+        "scar/copula/pair/gaussian.hpp",
+        "scar/copula/prepared_pair_kernel.hpp",
+        "scar/math/normal.hpp",
+        "scar/numerical_constants.hpp"
+      ],
+      "pyscarcopula/_cpp/src/copula/prepared_dynamic_emission.cpp": [
+        "scar/copula/multivariate/equicorrelation/kernel.hpp",
+        "scar/copula/multivariate/student/density.hpp",
+        "scar/copula/pair/gaussian.hpp",
+        "scar/copula/prepared_dynamic_emission.hpp",
+        "scar/copula/prepared_pair_kernel.hpp",
+        "scar/detail/copula/common.hpp",
+        "scar/detail/copula/dispatch.hpp",
+        "scar/detail/safety.hpp",
+        "scar/status.hpp"
       ],
       "pyscarcopula/_cpp/src/copula/rotation.cpp": [
         "scar/copula/rotation.hpp"
@@ -4281,15 +4305,13 @@
         "scar/copula/transforms.hpp"
       ],
       "pyscarcopula/_cpp/src/gas/evaluator.cpp": [
-        "scar/copula/multivariate/equicorrelation/kernel.hpp",
-        "scar/copula/multivariate/student/density.hpp",
-        "scar/copula/rotation.hpp",
+        "scar/copula/prepared_dynamic_emission.hpp",
         "scar/detail/copula/common.hpp",
-        "scar/detail/copula/dispatch.hpp",
         "scar/detail/safety.hpp",
         "scar/gas.hpp"
       ],
       "pyscarcopula/_cpp/src/gas/rvine_sampler.cpp": [
+        "scar/copula/prepared_dynamic_emission.hpp",
         "scar/core/checked_arithmetic.hpp",
         "scar/gas_rvine.hpp",
         "scar/rvine.hpp"
@@ -4337,7 +4359,6 @@
       "pyscarcopula/_cpp/src/scar_ou/gradient.cpp": [
         "scar/copula/multivariate/student/density.hpp",
         "scar/detail/copula/common.hpp",
-        "scar/detail/copula/dispatch.hpp",
         "scar/detail/linalg.hpp",
         "scar/detail/safety.hpp",
         "scar/detail/scar_ou/grid.hpp",
@@ -4350,8 +4371,6 @@
         "scar/detail/scar_ou/grid.hpp"
       ],
       "pyscarcopula/_cpp/src/scar_ou/likelihood.cpp": [
-        "scar/detail/copula/common.hpp",
-        "scar/detail/copula/dispatch.hpp",
         "scar/detail/safety.hpp",
         "scar/detail/scar_ou/grid.hpp",
         "scar/detail/scar_ou/quadrature.hpp",
@@ -4359,13 +4378,9 @@
         "scar/ou.hpp"
       ],
       "pyscarcopula/_cpp/src/scar_ou/monte_carlo.cpp": [
-        "scar/copula/multivariate/student/density.hpp",
-        "scar/copula/rotation.hpp",
-        "scar/detail/copula/common.hpp",
-        "scar/detail/copula/dispatch.hpp",
+        "scar/copula/prepared_dynamic_emission.hpp",
         "scar/detail/parallel.hpp",
         "scar/detail/safety.hpp",
-        "scar/factor.hpp",
         "scar/ou.hpp"
       ],
       "pyscarcopula/_cpp/src/scar_ou/prediction.cpp": [
@@ -4406,7 +4421,6 @@
         "scar/ou.hpp"
       ],
       "pyscarcopula/_cpp/src/scar_ou/transition.cpp": [
-        "scar/copula/pair/gaussian.hpp",
         "scar/detail/copula/common.hpp",
         "scar/detail/linalg.hpp",
         "scar/detail/safety.hpp",
@@ -4416,7 +4430,6 @@
       ],
       "pyscarcopula/_cpp/src/scar_ou/validation.cpp": [
         "scar/core/threading.hpp",
-        "scar/detail/copula/dispatch.hpp",
         "scar/detail/safety.hpp",
         "scar/detail/scar_ou/grid.hpp",
         "scar/ou.hpp"
@@ -4427,13 +4440,9 @@
         "scar/rvine.hpp"
       ],
       "pyscarcopula/_cpp/src/vine/executor.cpp": [
-        "scar/copula/pair/gaussian.hpp",
-        "scar/copula/rotation.hpp",
         "scar/core/threading.hpp",
         "scar/detail/copula/common.hpp",
-        "scar/detail/copula/dispatch.hpp",
         "scar/detail/safety.hpp",
-        "scar/math/normal.hpp",
         "scar/rvine.hpp"
       ],
       "pyscarcopula/_cpp/src/vine/mcmc.cpp": [
@@ -5168,5 +5177,5 @@
     ]
   },
   "schema_version": 1,
-  "source_commit": "1749a8b83fbf9de261effd4618184543253967ee"
+  "source_commit": "efa34551a35fa60ba82266ca29d13e7ec560e02a"
 }

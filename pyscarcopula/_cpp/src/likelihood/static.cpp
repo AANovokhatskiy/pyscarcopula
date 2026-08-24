@@ -164,6 +164,7 @@ StaticCopulaEvaluator::StaticCopulaEvaluator(
     if (status_ != SCAR_OK) {
         return;
     }
+    emission_ = std::make_unique<PreparedDynamicEmission>(spec_);
     if (spec_.family == CopulaFamily::EquicorrGaussian) {
         equicorr_sums_.resize(u_.size(), 0.0);
         equicorr_sum_squares_.resize(u_.size(), 0.0);
@@ -179,6 +180,9 @@ StaticCopulaEvaluator::StaticCopulaEvaluator(
             equicorr_sums_[i] = stats.sum;
             equicorr_sum_squares_[i] = stats.sum_squares;
         }
+        spec_.equicorr_sum_scores() = equicorr_sums_;
+        spec_.equicorr_sum_squares() = equicorr_sum_squares_;
+        emission_->refresh(spec_);
         return;
     }
     if (spec_.family != CopulaFamily::Gaussian
@@ -241,6 +245,9 @@ StaticCopulaEvaluator::StaticCopulaEvaluator(
         }
     }
     status_ = SCAR_OK;
+    spec_.equicorr_sum_scores() = equicorr_sums_;
+    spec_.equicorr_sum_squares() = equicorr_sum_squares_;
+    emission_ = std::make_unique<PreparedDynamicEmission>(spec_);
 }
 
 StaticObjectiveResult StaticCopulaEvaluator::objective(
@@ -506,14 +513,10 @@ StaticObjectiveResult StaticCopulaEvaluator::evaluate_objective(
             block_result.ran = true;
             block_result.correlation_gradient.assign(n_corr, 0.0);
             std::vector<double> corr_scores(n_corr, 0.0);
-            scar_internal::StudentWorkspace student_workspace;
+            PreparedDynamicEmissionWorkspace emission_workspace =
+                emission_->make_workspace(parameter_gradient_requested);
             std::vector<double> gaussian_factor_projection;
             std::vector<double> gaussian_factor_solved;
-            if (spec_.family == CopulaFamily::Student) {
-                student_workspace.reserve_x(static_cast<std::size_t>(dim));
-                student_workspace.reserve_dx_ddf(
-                    static_cast<std::size_t>(dim));
-            }
             for (std::int64_t row_index = begin;
                  row_index < end;
                  ++row_index) {
@@ -527,17 +530,20 @@ StaticObjectiveResult StaticCopulaEvaluator::evaluate_objective(
                     ? nullptr
                     : u_[i].data();
 
-                if (spec_.family == CopulaFamily::Student) {
-                    if (!parameter_gradient_requested) {
-                        log_pdf = scar_internal::student_log_pdf(
-                            spec_, row, parameter, row_index,
-                            student_workspace);
-                    } else {
-                        ok = scar_internal::student_log_pdf_and_dlog_ddf(
-                            spec_, row, parameter, row_index,
-                            log_pdf, dlog, student_workspace);
-                    }
-                    if (ok && correlation_gradient_requested) {
+                if (spec_.family != CopulaFamily::MultivariateGaussian) {
+                    const DynamicEmissionRowResult evaluation =
+                        emission_->evaluate_parameter(
+                            row,
+                            row_index,
+                            parameter,
+                            parameter_gradient_requested,
+                            emission_workspace);
+                    ok = evaluation.status == SCAR_OK;
+                    log_pdf = evaluation.log_pdf;
+                    dlog = evaluation.dlog_dparameter;
+                    if (ok
+                        && spec_.family == CopulaFamily::Student
+                        && correlation_gradient_requested) {
                         ok = scar_internal::student_corr_score_row(
                             spec_,
                             row,
@@ -552,33 +558,13 @@ StaticObjectiveResult StaticCopulaEvaluator::evaluate_objective(
                             }
                         }
                     }
-                } else if (
-                    spec_.family == CopulaFamily::EquicorrGaussian) {
-                    const scar_internal::EquicorrStats stats{
-                        equicorr_sums_[i], equicorr_sum_squares_[i]};
-                    log_pdf = scar_internal::equicorr_log_pdf_from_stats(
-                        spec_, stats, parameter,
-                        parameter_gradient_requested ? &dlog : nullptr);
-                } else if (
-                    spec_.family == CopulaFamily::MultivariateGaussian) {
+                } else {
                     log_pdf = copula::multivariate::gaussian::log_pdf(
                         spec_,
                         gaussian_scores_.data()
                             + i * static_cast<std::size_t>(dim),
                         gaussian_factor_projection,
                         gaussian_factor_solved);
-                } else {
-                    double u1 = 0.0;
-                    double u2 = 0.0;
-                    scar::copula::apply_rotation(
-                        row[0], row[1],
-                        static_cast<int>(spec_.rotation), u1, u2);
-                    log_pdf = scar_internal::copula_log_pdf_unrotated(
-                        spec_, u1, u2, parameter);
-                    if (parameter_gradient_requested) {
-                        dlog = scar_internal::copula_dlog_pdf_dr_unrotated(
-                            spec_, u1, u2, parameter);
-                    }
                 }
 
                 if (!ok
@@ -649,13 +635,12 @@ std::vector<double> StaticCopulaEvaluator::log_pdf_rows(
         [&](std::int64_t begin,
             std::int64_t end,
             std::size_t) {
-            scar_internal::StudentWorkspace student_workspace;
+            PreparedDynamicEmissionWorkspace emission_workspace =
+                emission_ == nullptr
+                    ? PreparedDynamicEmissionWorkspace{}
+                    : emission_->make_workspace(false);
             std::vector<double> gaussian_factor_projection;
             std::vector<double> gaussian_factor_solved;
-            if (spec_.family == CopulaFamily::Student) {
-                student_workspace.reserve_x(
-                    static_cast<std::size_t>(dim));
-            }
             for (std::int64_t row_index = begin;
                  row_index < end;
                  ++row_index) {
@@ -665,32 +650,24 @@ std::vector<double> StaticCopulaEvaluator::log_pdf_rows(
                     spec_.family == CopulaFamily::EquicorrGaussian
                     ? nullptr
                     : u_[i].data();
-                if (spec_.family == CopulaFamily::Student) {
-                    out[i] = scar_internal::student_log_pdf(
-                        spec_, row, parameter, row_index,
-                        student_workspace);
-                } else if (
-                    spec_.family == CopulaFamily::EquicorrGaussian) {
-                    const scar_internal::EquicorrStats stats{
-                        equicorr_sums_[i], equicorr_sum_squares_[i]};
-                    out[i] = scar_internal::equicorr_log_pdf_from_stats(
-                        spec_, stats, parameter, nullptr);
-                } else if (
-                    spec_.family == CopulaFamily::MultivariateGaussian) {
+                if (spec_.family == CopulaFamily::MultivariateGaussian) {
                     out[i] = copula::multivariate::gaussian::log_pdf(
                         spec_,
                         gaussian_scores_.data()
                             + i * static_cast<std::size_t>(dim),
                         gaussian_factor_projection,
                         gaussian_factor_solved);
-                } else {
-                    double u1 = 0.0;
-                    double u2 = 0.0;
-                    scar::copula::apply_rotation(
-                        row[0], row[1],
-                        static_cast<int>(spec_.rotation), u1, u2);
-                    out[i] = scar_internal::copula_log_pdf_unrotated(
-                        spec_, u1, u2, parameter);
+                } else if (emission_ != nullptr) {
+                    const DynamicEmissionRowResult evaluation =
+                        emission_->evaluate_parameter(
+                            row,
+                            row_index,
+                            parameter,
+                            false,
+                            emission_workspace);
+                    out[i] = evaluation.status == SCAR_OK
+                        ? evaluation.log_pdf
+                        : -std::numeric_limits<double>::infinity();
                 }
             }
         });

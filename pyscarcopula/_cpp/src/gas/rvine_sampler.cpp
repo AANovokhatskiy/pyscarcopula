@@ -1,5 +1,6 @@
 #include "scar/gas_rvine.hpp"
 
+#include "scar/copula/prepared_dynamic_emission.hpp"
 #include "scar/core/checked_arithmetic.hpp"
 #include "scar/rvine.hpp"
 
@@ -7,6 +8,7 @@
 #include <cmath>
 #include <cstddef>
 #include <limits>
+#include <memory>
 
 namespace scar {
 namespace {
@@ -75,13 +77,23 @@ GasRvineSampleResult gas_rvine_sample(
     GasEvaluator evaluator;
     std::vector<double> gas_g(edge_count, 0.0);
     std::vector<double> gas_r(edge_count, 0.0);
+    std::vector<std::unique_ptr<PreparedDynamicEmission>> gas_emissions(
+        edge_count);
+    std::vector<std::unique_ptr<PreparedDynamicEmissionWorkspace>>
+        gas_workspaces(edge_count);
     for (std::size_t edge_index = 0; edge_index < edge_count; ++edge_index) {
         if (!edges[edge_index].dynamic) {
             continue;
         }
-        const GasStateResult state = evaluator.initial_state(
+        gas_emissions[edge_index] =
+            std::make_unique<PreparedDynamicEmission>(
+                edges[edge_index].copula);
+        gas_workspaces[edge_index] =
+            std::make_unique<PreparedDynamicEmissionWorkspace>(
+                gas_emissions[edge_index]->make_workspace(true));
+        const GasStateResult state = evaluator.initial_state_prepared(
             edges[edge_index].gas_params,
-            edges[edge_index].copula,
+            *gas_emissions[edge_index],
             edges[edge_index].gas_config);
         if (state.status != SCAR_OK) {
             fail(out, state.status, -1, static_cast<int>(edge_index));
@@ -194,9 +206,10 @@ GasRvineSampleResult gas_rvine_sample(
                 plan.update_u1_nodes[edge_index])];
             const double u2 = nodes[static_cast<std::size_t>(
                 plan.update_u2_nodes[edge_index])];
-            const GasUpdateResult update = evaluator.update_one(
+            const GasUpdateResult update = evaluator.update_one_prepared(
                 edge.gas_params,
-                edge.copula,
+                *gas_emissions[edge_index],
+                *gas_workspaces[edge_index],
                 gas_g[edge_index],
                 u1,
                 u2,

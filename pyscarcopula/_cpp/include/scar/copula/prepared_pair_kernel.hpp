@@ -34,6 +34,10 @@ public:
         double first,
         double second,
         double parameter) const;
+    double dlog_pdf_dparameter(
+        double first,
+        double second,
+        double parameter) const;
     double log_pdf(
         double first,
         double second,
@@ -53,7 +57,26 @@ public:
         double& density,
         double& gradient) const;
     double h(double first, double second, double parameter) const;
+    void h_pair(
+        double first,
+        double second,
+        double parameter,
+        double& first_next,
+        double& second_next) const;
     double inverse_h(double quantile, double given, double parameter) const;
+
+    bool is_unrotated_gaussian() const noexcept;
+    double prepare_conditional_value(double value) const;
+    double h_from_prepared_values(
+        double first,
+        double second,
+        double parameter) const;
+    void h_pair_from_prepared_values(
+        double first,
+        double second,
+        double parameter,
+        double& first_next,
+        double& second_next) const;
 
     void prepare_parameter_grid(
         const std::vector<double>& values,

@@ -1,10 +1,7 @@
 #include "scar/gas.hpp"
 
-#include "scar/copula/rotation.hpp"
+#include "scar/copula/prepared_dynamic_emission.hpp"
 #include "scar/detail/copula/common.hpp"
-#include "scar/detail/copula/dispatch.hpp"
-#include "scar/copula/multivariate/student/density.hpp"
-#include "scar/copula/multivariate/equicorrelation/kernel.hpp"
 #include "scar/detail/safety.hpp"
 
 #include <algorithm>
@@ -44,9 +41,10 @@ bool valid_config(const GasConfig& config) {
         && config.stationary_beta_tol < 1.0;
 }
 
-int validate_copula(const CopulaSpec& copula) {
+int validate_copula(const PreparedDynamicEmission& emission) {
+    const CopulaSpec& copula = emission.compatibility_spec();
     if (copula.family == CopulaFamily::Student) {
-        return scar_internal::copula_is_supported(copula)
+        return emission.is_supported()
             ? SCAR_OK
             : SCAR_INVALID_FAMILY;
     }
@@ -76,7 +74,7 @@ int validate_copula(const CopulaSpec& copula) {
         && copula.transform != Transform::Logistic) {
         return SCAR_INVALID_TRANSFORM;
     }
-    if (!scar_internal::copula_is_supported(copula)) {
+    if (!emission.is_supported()) {
         return SCAR_INVALID_FAMILY;
     }
     return SCAR_OK;
@@ -84,51 +82,18 @@ int validate_copula(const CopulaSpec& copula) {
 
 int validate_inputs(
     const GasParams& params,
-    const CopulaSpec& copula,
+    const PreparedDynamicEmission& emission,
     ObservationView u,
     const GasConfig& config) {
 
     if (!valid_params(params) || !valid_config(config)) {
         return SCAR_INVALID_PARAMETER;
     }
-    const int copula_status = validate_copula(copula);
+    const int copula_status = validate_copula(emission);
     if (copula_status != SCAR_OK) {
         return copula_status;
     }
-    const int expected_dim =
-        copula.model_descriptor().expected_dimension();
-    if (u.dim != expected_dim || u.n_obs == 0) {
-        return SCAR_INVALID_SIZE;
-    }
-    const bool prepared_equicorr =
-        copula.family == CopulaFamily::EquicorrGaussian
-        && copula.equicorr_sum_scores().size() == u.n_obs
-        && copula.equicorr_sum_squares().size() == u.n_obs;
-    if (u.values == nullptr && !prepared_equicorr) {
-        return SCAR_NULL_POINTER;
-    }
-    if (prepared_equicorr) {
-        for (std::size_t row = 0; row < u.n_obs; ++row) {
-            if (!std::isfinite(copula.equicorr_sum_scores()[row])
-                || !std::isfinite(
-                    copula.equicorr_sum_squares()[row])
-                || copula.equicorr_sum_squares()[row] < 0.0) {
-                return SCAR_INVALID_PARAMETER;
-            }
-        }
-        return SCAR_OK;
-    }
-    std::size_t value_count = 0;
-    if (!scar_internal::checked_size_mul(
-            u.n_obs, static_cast<std::size_t>(u.dim), value_count)) {
-        return SCAR_INVALID_SIZE;
-    }
-    for (std::size_t index = 0; index < value_count; ++index) {
-        if (!std::isfinite(u.values[index])) {
-            return SCAR_INVALID_PARAMETER;
-        }
-    }
-    return SCAR_OK;
+    return emission.validate_observations(u);
 }
 
 double initial_g(
@@ -141,133 +106,52 @@ double initial_g(
     return params.omega;
 }
 
-double gas_transform(const CopulaSpec& copula, double g) {
-    if (copula.family == CopulaFamily::Independent) {
-        return 0.0;
-    }
-    if (copula.family == CopulaFamily::EquicorrGaussian) {
-        return scar_internal::equicorr_transform(copula, g);
-    }
-    return scar_internal::copula_transform(copula, g);
+double gas_transform(const PreparedDynamicEmission& emission, double g) {
+    return emission.transform_state(g);
 }
 
-double gas_dtransform(const CopulaSpec& copula, double g) {
-    if (copula.family == CopulaFamily::Independent) {
-        return 0.0;
-    }
-    if (copula.family == CopulaFamily::EquicorrGaussian) {
-        return scar_internal::equicorr_dtransform(copula, g);
-    }
-    return scar_internal::copula_dtransform(copula, g);
+double gas_dtransform(const PreparedDynamicEmission& emission, double g) {
+    return emission.dtransform_state(g);
 }
 
 double log_pdf_at_g(
-    const CopulaSpec& copula,
-    const scar_internal::PreparedStudentDensity* student_model,
+    const PreparedDynamicEmission& emission,
     const double* row,
     std::int64_t row_index,
     double g,
-    const scar_internal::EquicorrStats* equicorr_stats,
-    scar_internal::StudentWorkspace& student_workspace) {
+    PreparedDynamicEmissionWorkspace& workspace) {
 
-    const double r = gas_transform(copula, g);
-    if (copula.family == CopulaFamily::Student) {
-        return scar_internal::student_log_pdf(
-            *student_model, row, r, row_index, student_workspace);
-    }
-    if (copula.family == CopulaFamily::EquicorrGaussian) {
-        return scar_internal::equicorr_log_pdf_from_stats(
-            copula, *equicorr_stats, r, nullptr);
-    }
-    double v1 = 0.0;
-    double v2 = 0.0;
-    scar::copula::apply_rotation(
-        row[0], row[1], static_cast<int>(copula.rotation), v1, v2);
-    return scar_internal::copula_log_pdf_unrotated(
-        copula, v1, v2, r);
+    return emission.log_pdf_at_state(row, row_index, g, workspace);
 }
 
 RowEvaluation evaluate_row(
-    const CopulaSpec& copula,
-    const scar_internal::PreparedStudentDensity* student_model,
+    const PreparedDynamicEmission& emission,
     const double* row,
     std::int64_t row_index,
     double g,
     const GasConfig& config,
     bool need_score,
-    scar_internal::StudentWorkspace& student_workspace) {
+    PreparedDynamicEmissionWorkspace& workspace) {
 
     RowEvaluation out;
-    out.r = gas_transform(copula, g);
+    out.r = gas_transform(emission, g);
     if (!std::isfinite(out.r)) {
         out.status = SCAR_NUMERICAL_FAILURE;
         return out;
     }
 
-    scar_internal::EquicorrStats equicorr_stats;
-    if (copula.family == CopulaFamily::EquicorrGaussian) {
-        const std::size_t index =
-            static_cast<std::size_t>(row_index);
-        const bool cache_available =
-            row_index >= 0
-            && copula.equicorr_sum_scores().size()
-                == copula.equicorr_sum_squares().size()
-            && index < copula.equicorr_sum_scores().size();
-        if (cache_available) {
-            equicorr_stats.sum =
-                copula.equicorr_sum_scores()[index];
-            equicorr_stats.sum_squares =
-                copula.equicorr_sum_squares()[index];
-        } else if (!scar_internal::equicorr_sufficient_statistics(
-                       copula, row, equicorr_stats)) {
-            out.status = SCAR_NUMERICAL_FAILURE;
-            return out;
-        }
-    }
-    double dlog_dr = std::numeric_limits<double>::quiet_NaN();
-    if (copula.family == CopulaFamily::Student) {
-        if (need_score && config.scaling == GasScaling::Unit) {
-            if (!scar_internal::student_log_pdf_and_dlog_ddf(
-                    *student_model,
-                    row,
-                    out.r,
-                    row_index,
-                    out.log_likelihood,
-                    dlog_dr,
-                    student_workspace)) {
-                out.status = SCAR_NUMERICAL_FAILURE;
-                return out;
-            }
-        } else {
-            out.log_likelihood = scar_internal::student_log_pdf(
-                *student_model,
-                row,
-                out.r,
-                row_index,
-                student_workspace);
-        }
-    } else if (copula.family == CopulaFamily::EquicorrGaussian) {
-        out.log_likelihood = scar_internal::equicorr_log_pdf_from_stats(
-            copula,
-            equicorr_stats,
+    const bool analytic_derivative =
+        need_score && config.scaling == GasScaling::Unit;
+    const DynamicEmissionRowResult emission_row =
+        emission.evaluate_parameter(
+            row,
+            row_index,
             out.r,
-            need_score && config.scaling == GasScaling::Unit
-                ? &dlog_dr
-                : nullptr);
-    } else {
-        double v1 = 0.0;
-        double v2 = 0.0;
-        scar::copula::apply_rotation(
-            row[0], row[1], static_cast<int>(copula.rotation), v1, v2);
-        out.log_likelihood = scar_internal::copula_log_pdf_unrotated(
-            copula, v1, v2, out.r);
-        if (need_score && config.scaling == GasScaling::Unit) {
-            dlog_dr = scar_internal::copula_dlog_pdf_dr_unrotated(
-                copula, v1, v2, out.r);
-        }
-    }
-    if (!std::isfinite(out.log_likelihood)) {
-        out.status = SCAR_NUMERICAL_FAILURE;
+            analytic_derivative,
+            workspace);
+    out.log_likelihood = emission_row.log_pdf;
+    if (emission_row.status != SCAR_OK) {
+        out.status = emission_row.status;
         return out;
     }
     if (!need_score) {
@@ -275,16 +159,13 @@ RowEvaluation evaluate_row(
     }
 
     if (config.scaling == GasScaling::Unit) {
-        out.score = dlog_dr * gas_dtransform(copula, g);
+        out.score = emission_row.dlog_dparameter
+            * gas_dtransform(emission, g);
     } else {
         const double ll_plus = log_pdf_at_g(
-            copula, student_model, row, row_index, g + config.score_eps,
-            &equicorr_stats,
-            student_workspace);
+            emission, row, row_index, g + config.score_eps, workspace);
         const double ll_minus = log_pdf_at_g(
-            copula, student_model, row, row_index, g - config.score_eps,
-            &equicorr_stats,
-            student_workspace);
+            emission, row, row_index, g - config.score_eps, workspace);
         if (!std::isfinite(ll_plus) || !std::isfinite(ll_minus)) {
             out.status = SCAR_NUMERICAL_FAILURE;
             return out;
@@ -336,7 +217,9 @@ GasLogLikResult run_log_likelihood(
     const GasConfig& config) {
 
     GasLogLikResult out;
-    const int status = validate_inputs(params, copula, u, config);
+    PreparedDynamicEmission emission =
+        PreparedDynamicEmission::borrow(copula);
+    const int status = validate_inputs(params, emission, u, config);
     if (status != SCAR_OK) {
         set_failure(out, status, -1);
         return out;
@@ -347,30 +230,21 @@ GasLogLikResult run_log_likelihood(
         set_failure(out, SCAR_NUMERICAL_FAILURE, -1);
         return out;
     }
-    scar_internal::StudentWorkspace student_workspace;
-    scar_internal::PreparedStudentDensity student_model;
-    const scar_internal::PreparedStudentDensity* student_model_ptr = nullptr;
-    if (copula.family == CopulaFamily::Student) {
-        student_model = scar_internal::prepare_student_density(copula);
-        student_model_ptr = &student_model;
-        student_workspace.reserve_x(static_cast<std::size_t>(copula.dim));
-        student_workspace.reserve_dx_ddf(
-            static_cast<std::size_t>(copula.dim));
-    }
+    PreparedDynamicEmissionWorkspace workspace =
+        emission.make_workspace(true);
     for (std::size_t t = 0; t < u.n_obs; ++t) {
         const double* row = u.values == nullptr
             ? nullptr
             : u.values + static_cast<std::size_t>(u.dim) * t;
         const bool need_score = t + 1 < u.n_obs;
         const RowEvaluation evaluation = evaluate_row(
-            copula,
-            student_model_ptr,
+            emission,
             row,
             static_cast<std::int64_t>(t),
             g,
             config,
             need_score,
-            student_workspace);
+            workspace);
         if (evaluation.status != SCAR_OK) {
             set_failure(
                 out, evaluation.status, static_cast<std::int64_t>(t));
@@ -403,17 +277,27 @@ GasStateResult GasEvaluator::initial_state(
     const CopulaSpec& copula,
     const GasConfig& config) const {
 
+    PreparedDynamicEmission emission =
+        PreparedDynamicEmission::borrow(copula);
+    return initial_state_prepared(params, emission, config);
+}
+
+GasStateResult GasEvaluator::initial_state_prepared(
+    const GasParams& params,
+    const PreparedDynamicEmission& emission,
+    const GasConfig& config) const {
+
     GasStateResult out;
     if (!valid_params(params) || !valid_config(config)) {
         out.status = SCAR_INVALID_PARAMETER;
         return out;
     }
-    out.status = validate_copula(copula);
+    out.status = validate_copula(emission);
     if (out.status != SCAR_OK) {
         return out;
     }
     out.g = initial_g(params, config);
-    out.parameter = gas_transform(copula, out.g);
+    out.parameter = gas_transform(emission, out.g);
     if (!std::isfinite(out.g) || !std::isfinite(out.parameter)) {
         out.status = SCAR_NUMERICAL_FAILURE;
     }
@@ -427,7 +311,9 @@ GasFilterResult GasEvaluator::filter(
     const GasConfig& config) const {
 
     GasFilterResult out;
-    const int status = validate_inputs(params, copula, u, config);
+    PreparedDynamicEmission emission =
+        PreparedDynamicEmission::borrow(copula);
+    const int status = validate_inputs(params, emission, u, config);
     if (status != SCAR_OK) {
         set_failure(out, status, -1);
         return out;
@@ -442,16 +328,8 @@ GasFilterResult GasEvaluator::filter(
         set_failure(out, SCAR_NUMERICAL_FAILURE, -1);
         return out;
     }
-    scar_internal::StudentWorkspace student_workspace;
-    scar_internal::PreparedStudentDensity student_model;
-    const scar_internal::PreparedStudentDensity* student_model_ptr = nullptr;
-    if (copula.family == CopulaFamily::Student) {
-        student_model = scar_internal::prepare_student_density(copula);
-        student_model_ptr = &student_model;
-        student_workspace.reserve_x(static_cast<std::size_t>(copula.dim));
-        student_workspace.reserve_dx_ddf(
-            static_cast<std::size_t>(copula.dim));
-    }
+    PreparedDynamicEmissionWorkspace workspace =
+        emission.make_workspace(true);
     for (std::size_t t = 0; t < u.n_obs; ++t) {
         out.g_path[t] = g;
         const double* row = u.values == nullptr
@@ -459,14 +337,13 @@ GasFilterResult GasEvaluator::filter(
             : u.values + static_cast<std::size_t>(u.dim) * t;
         const bool need_score = t + 1 < u.n_obs;
         const RowEvaluation evaluation = evaluate_row(
-            copula,
-            student_model_ptr,
+            emission,
             row,
             static_cast<std::int64_t>(t),
             g,
             config,
             need_score,
-            student_workspace);
+            workspace);
         out.r_path[t] = evaluation.r;
         if (evaluation.status != SCAR_OK) {
             set_failure(
@@ -530,9 +407,39 @@ GasUpdateResult GasEvaluator::update_one(
         params, copula, g, {values, 1, 2}, config);
 }
 
+GasUpdateResult GasEvaluator::update_one_prepared(
+    const GasParams& params,
+    const PreparedDynamicEmission& emission,
+    PreparedDynamicEmissionWorkspace& workspace,
+    double g,
+    double u1,
+    double u2,
+    const GasConfig& config) const {
+
+    const double values[2] = {u1, u2};
+    return update_observation_prepared(
+        params, emission, workspace, g, {values, 1, 2}, config);
+}
+
 GasUpdateResult GasEvaluator::update_observation(
     const GasParams& params,
     const CopulaSpec& copula,
+    double g,
+    ObservationView observation,
+    const GasConfig& config) const {
+
+    PreparedDynamicEmission emission =
+        PreparedDynamicEmission::borrow(copula);
+    PreparedDynamicEmissionWorkspace workspace =
+        emission.make_workspace(true);
+    return update_observation_prepared(
+        params, emission, workspace, g, observation, config);
+}
+
+GasUpdateResult GasEvaluator::update_observation_prepared(
+    const GasParams& params,
+    const PreparedDynamicEmission& emission,
+    PreparedDynamicEmissionWorkspace& workspace,
     double g,
     ObservationView observation,
     const GasConfig& config) const {
@@ -543,34 +450,23 @@ GasUpdateResult GasEvaluator::update_observation(
         out.status = SCAR_INVALID_PARAMETER;
         return out;
     }
-    out.status = validate_copula(copula);
+    out.status = validate_copula(emission);
     if (out.status != SCAR_OK) {
         return out;
     }
     if (observation.values == nullptr
         || observation.n_obs != 1
-        || observation.dim
-            != copula.model_descriptor().expected_dimension()) {
+        || observation.dim != emission.expected_dimension()) {
         out.status = SCAR_INVALID_SIZE;
         return out;
     }
-    for (int j = 0; j < observation.dim; ++j) {
-        if (!std::isfinite(observation.values[j])) {
-            out.status = SCAR_INVALID_PARAMETER;
-            return out;
-        }
+    out.status = emission.validate_observations(observation);
+    if (out.status != SCAR_OK) {
+        return out;
     }
 
-    scar_internal::StudentWorkspace student_workspace;
-    scar_internal::PreparedStudentDensity student_model;
-    const scar_internal::PreparedStudentDensity* student_model_ptr = nullptr;
-    if (copula.family == CopulaFamily::Student) {
-        student_model = scar_internal::prepare_student_density(copula);
-        student_model_ptr = &student_model;
-    }
     const RowEvaluation evaluation = evaluate_row(
-        copula, student_model_ptr, observation.values, 0, g, config, true,
-        student_workspace);
+        emission, observation.values, 0, g, config, true, workspace);
     out.status = evaluation.status;
     out.r = evaluation.r;
     out.log_likelihood = evaluation.log_likelihood;
@@ -583,7 +479,7 @@ GasUpdateResult GasEvaluator::update_observation(
         out.status = SCAR_NUMERICAL_FAILURE;
         return out;
     }
-    out.r_next = gas_transform(copula, out.g_next);
+    out.r_next = gas_transform(emission, out.g_next);
     if (!std::isfinite(out.r_next)) {
         out.status = SCAR_NUMERICAL_FAILURE;
     }
@@ -614,29 +510,25 @@ GasPredictResult GasEvaluator::predict_parameter(
         ? nullptr
         : u.values
             + static_cast<std::size_t>(u.dim) * (u.n_obs - 1);
-    scar_internal::StudentWorkspace student_workspace;
-    scar_internal::PreparedStudentDensity student_model;
-    const scar_internal::PreparedStudentDensity* student_model_ptr = nullptr;
-    if (copula.family == CopulaFamily::Student) {
-        student_model = scar_internal::prepare_student_density(copula);
-        student_model_ptr = &student_model;
-    }
+    PreparedDynamicEmission emission =
+        PreparedDynamicEmission::borrow(copula);
+    PreparedDynamicEmissionWorkspace workspace =
+        emission.make_workspace(true);
     const RowEvaluation evaluation = evaluate_row(
-        copula,
-        student_model_ptr,
+        emission,
         row,
         static_cast<std::int64_t>(u.n_obs - 1),
         filtered.g_path.back(),
         config,
         true,
-        student_workspace);
+        workspace);
     out.status = evaluation.status;
     if (out.status != SCAR_OK) {
         out.failure_index = static_cast<std::int64_t>(u.n_obs - 1);
         return out;
     }
     out.parameter = gas_transform(
-        copula,
+        emission,
         next_g(
             params,
             config,
@@ -652,7 +544,9 @@ GasPathResult GasEvaluator::h_path(
     const GasConfig& config) const {
 
     GasPathResult out;
-    if (copula.model_descriptor().expected_dimension() != 2
+    PreparedDynamicEmission emission =
+        PreparedDynamicEmission::borrow(copula);
+    if (emission.expected_dimension() != 2
         || copula.family == CopulaFamily::Student
         || copula.family == CopulaFamily::EquicorrGaussian) {
         set_failure(out, SCAR_INVALID_FAMILY, -1);
@@ -669,10 +563,12 @@ GasPathResult GasEvaluator::h_path(
     out.values.resize(u.n_obs);
     const CopulaSpec transposed_copula =
         scar_internal::transposed_copula_spec(copula);
+    PreparedDynamicEmission transposed_emission =
+        PreparedDynamicEmission::borrow(transposed_copula);
     for (std::size_t t = 0; t < u.n_obs; ++t) {
         const double* row = u.values + 2 * t;
-        const double value = scar_internal::copula_h_rotated(
-            transposed_copula, row[1], row[0], filtered.r_path[t]);
+        const double value = transposed_emission.h(
+            row[1], row[0], filtered.r_path[t]);
         if (!std::isfinite(value)) {
             set_failure(
                 out, SCAR_NUMERICAL_FAILURE,

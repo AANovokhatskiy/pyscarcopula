@@ -1,12 +1,8 @@
 #include "scar/ou.hpp"
 
-#include "scar/copula/rotation.hpp"
-#include "scar/detail/copula/common.hpp"
-#include "scar/detail/copula/dispatch.hpp"
-#include "scar/copula/multivariate/student/density.hpp"
+#include "scar/copula/prepared_dynamic_emission.hpp"
 #include "scar/detail/parallel.hpp"
 #include "scar/detail/safety.hpp"
-#include "scar/factor.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -21,43 +17,17 @@ struct TrajectoryBlockResult {
         std::numeric_limits<std::size_t>::max();
 };
 
-bool valid_student_spec(const CopulaSpec& spec, std::size_t n_obs) {
-    std::size_t square = 0;
-    const bool factor_correlation =
-        spec.correlation_kind == CorrelationKind::Factor
-        && spec.factor_operator() != nullptr
-        && spec.factor_operator()->dimension()
-            == static_cast<std::size_t>(spec.dim)
-        && std::isfinite(spec.factor_operator()->logdet());
-    if (spec.dim < 2
-        || spec.rotation != Rotation::R0
-        || spec.transform != Transform::Softplus
-        || !scar_internal::valid_student_dimension(spec.dim, square)
-        || (!factor_correlation && spec.dense_inverse_cholesky().size() != square)
-        || !std::isfinite(
-            factor_correlation
-                ? spec.factor_operator()->logdet()
-                : spec.dense_log_determinant())) {
-        return false;
-    }
-    if (!spec.student_ppf_nodes().empty() || !spec.student_ppf_table().empty()) {
-        return spec.student_ppf_observation_count() == static_cast<std::int64_t>(n_obs);
-    }
-    return true;
-}
-
 bool valid_spec(
-    const CopulaSpec& spec,
+    const PreparedDynamicEmission& emission,
     ObservationView u,
     std::size_t n_trajectories) {
 
     if (u.empty() || u.data() == nullptr || n_trajectories == 0) {
         return false;
     }
-    if (spec.family == CopulaFamily::Student) {
-        return u.dim == spec.dim && valid_student_spec(spec, u.size());
-    }
-    return u.dim == 2 && scar_internal::copula_is_supported(spec);
+    return emission.is_supported()
+        && emission.validate_observations(u) == SCAR_OK
+        && emission.observation_cache_compatible(u.size());
 }
 
 }  // namespace
@@ -70,6 +40,8 @@ TrajectoryLogPdfResult copula_log_pdf_trajectory_grid(
     int n_threads) {
 
     TrajectoryLogPdfResult out;
+    const PreparedDynamicEmission emission =
+        PreparedDynamicEmission::borrow(copula);
     out.n_threads_requested = n_threads;
     out.log_pdf.n_obs = static_cast<std::int64_t>(u.size());
     out.log_pdf.n_grid = static_cast<std::int64_t>(n_trajectories);
@@ -86,7 +58,7 @@ TrajectoryLogPdfResult copula_log_pdf_trajectory_grid(
         out.status = SCAR_NULL_POINTER;
         return out;
     }
-    if (!valid_spec(copula, u, n_trajectories)) {
+    if (!valid_spec(emission, u, n_trajectories)) {
         out.status = SCAR_INVALID_FAMILY;
         return out;
     }
@@ -102,7 +74,7 @@ TrajectoryLogPdfResult copula_log_pdf_trajectory_grid(
     constexpr std::size_t min_cells_student = 4096;
     constexpr std::size_t min_cells_other = 262144;
     constexpr std::int64_t min_cells_per_block = 1024;
-    const std::size_t min_cells = copula.family == CopulaFamily::Student
+    const std::size_t min_cells = emission.kind() == DynamicEmissionKind::Student
         ? min_cells_student
         : min_cells_other;
     const bool use_threads = n_threads > 1 && elements >= min_cells;
@@ -118,14 +90,10 @@ TrajectoryLogPdfResult copula_log_pdf_trajectory_grid(
             std::size_t block) {
             TrajectoryBlockResult& block_result = block_results[block];
             block_result.ran = true;
-            scar_internal::StudentWorkspace student_workspace;
-            if (copula.family == CopulaFamily::Student) {
-                student_workspace.reserve_x(observation_stride);
-            }
+            PreparedDynamicEmissionWorkspace workspace =
+                emission.make_workspace(false);
             std::size_t current_t = std::numeric_limits<std::size_t>::max();
             const double* row = nullptr;
-            double v1 = 0.0;
-            double v2 = 0.0;
             for (std::int64_t flat_index = begin;
                  flat_index < end;
                  ++flat_index) {
@@ -135,29 +103,22 @@ TrajectoryLogPdfResult copula_log_pdf_trajectory_grid(
                 if (t != current_t) {
                     current_t = t;
                     row = u.data() + t * observation_stride;
-                    if (copula.family != CopulaFamily::Student) {
-                        scar::copula::apply_rotation(
-                            row[0],
-                            row[1],
-                            static_cast<int>(copula.rotation),
-                            v1,
-                            v2);
-                    }
                 }
                 const double latent = latent_paths[flat];
                 const double parameter =
-                    scar_internal::copula_transform(copula, latent);
+                    emission.transform_state(latent);
                 double value = -std::numeric_limits<double>::infinity();
                 if (std::isfinite(parameter)) {
-                    value = copula.family == CopulaFamily::Student
-                        ? scar_internal::student_log_pdf(
-                            copula,
+                    const DynamicEmissionRowResult evaluation =
+                        emission.evaluate_parameter(
                             row,
-                            parameter,
                             static_cast<std::int64_t>(t),
-                            student_workspace)
-                        : scar_internal::copula_log_pdf_unrotated(
-                            copula, v1, v2, parameter);
+                            parameter,
+                            false,
+                            workspace);
+                    if (evaluation.status == SCAR_OK) {
+                        value = evaluation.log_pdf;
+                    }
                 }
                 if (!std::isfinite(value)) {
                     block_result.failure_flat_index = flat;

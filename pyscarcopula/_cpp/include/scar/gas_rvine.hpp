@@ -1,6 +1,6 @@
 #pragma once
 
-#include "scar/copula.hpp"
+#include "scar/copula/spec.hpp"
 #include "scar/gas.hpp"
 #include "scar/rvine_plan.hpp"
 #include "scar/status.hpp"

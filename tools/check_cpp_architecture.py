@@ -729,6 +729,289 @@ def check_multivariate_verticalization(root: Path) -> list[Violation]:
     return violations
 
 
+def check_prepared_application_modules(root: Path) -> list[Violation]:
+    cpp = root / "pyscarcopula" / "_cpp"
+    include = cpp / "include" / "scar"
+    source = cpp / "src"
+    violations = []
+    rule = "prepared-application-modules"
+
+    required = (
+        include / "copula" / "grid_values.hpp",
+        include / "copula" / "prepared_pair_kernel.hpp",
+        include / "copula" / "prepared_dynamic_emission.hpp",
+        source / "copula" / "prepared_dynamic_emission.cpp",
+    )
+    for path in required:
+        if not path.is_file():
+            violations.append(Violation(
+                rule,
+                path,
+                "required prepared copula interface is missing",
+            ))
+
+    prepared_emission_header = (
+        include / "copula" / "prepared_dynamic_emission.hpp")
+    if prepared_emission_header.is_file():
+        text = prepared_emission_header.read_text(encoding="utf-8")
+        for marker in (
+                "class PreparedDynamicEmission",
+                "class PreparedDynamicEmissionWorkspace",
+                "DynamicEmissionRowResult evaluate_parameter(",
+                "bool observation_cache_compatible("):
+            if marker not in text:
+                violations.append(Violation(
+                    rule,
+                    prepared_emission_header,
+                    f"dynamic emission contract is missing: {marker}",
+                ))
+        for include_name, line in _include_lines(prepared_emission_header):
+            if (
+                    include_name.startswith("copula/pair/")
+                    or include_name.startswith("copula/multivariate/")
+                    or include_name.startswith("detail/copula/")):
+                violations.append(Violation(
+                    rule,
+                    prepared_emission_header,
+                    "public dynamic-emission contract exposed a concrete model",
+                    line,
+                ))
+
+    gas_evaluator = source / "gas" / "evaluator.cpp"
+    if gas_evaluator.is_file():
+        text = gas_evaluator.read_text(encoding="utf-8")
+        if "PreparedDynamicEmission" not in text:
+            violations.append(Violation(
+                rule,
+                gas_evaluator,
+                "GAS must evaluate through the scalar dynamic-emission interface",
+            ))
+        violations.extend(_forbid_includes(
+            root,
+            (gas_evaluator,),
+            rule,
+            lambda value: value in {
+                "copula.hpp", "detail/copula/dispatch.hpp",
+            }
+            or value.startswith("copula/pair/")
+            or value.startswith("copula/multivariate/"),
+            "GAS must not include concrete copula implementations",
+        ))
+
+    gas_interface = include / "gas.hpp"
+    if gas_interface.is_file():
+        text = gas_interface.read_text(encoding="utf-8")
+        for marker in (
+                "GasStateResult initial_state_prepared(",
+                "GasUpdateResult update_one_prepared(",
+                "GasUpdateResult update_observation_prepared("):
+            if marker not in text:
+                violations.append(Violation(
+                    rule,
+                    gas_interface,
+                    f"prepared GAS update contract is missing: {marker}",
+                ))
+
+    static_header = include / "copula.hpp"
+    static_source = source / "likelihood" / "static.cpp"
+    for path, markers in (
+        (static_header, ("PreparedDynamicEmission", "emission_")),
+        (static_source, ("emission_->evaluate_parameter(",)),
+    ):
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        for marker in markers:
+            if marker not in text:
+                violations.append(Violation(
+                    rule,
+                    path,
+                    f"static evaluator is not prepared through: {marker}",
+                ))
+
+    scar_ou_interface = include / "ou.hpp"
+    if scar_ou_interface.is_file():
+        text = scar_ou_interface.read_text(encoding="utf-8")
+        for marker in (
+                "const PreparedDynamicEmission* prepared_emission_",
+                "PreparedDynamicEmission emission_;"):
+            if marker not in text:
+                violations.append(Violation(
+                    rule,
+                    scar_ou_interface,
+                    f"SCAR-OU prepared dependency is missing: {marker}",
+                ))
+
+    generic_scar_ou_files = tuple(
+        source / "scar_ou" / name
+        for name in (
+            "evaluator.cpp",
+            "evaluator_internal.hpp",
+            "likelihood.cpp",
+            "monte_carlo.cpp",
+            "prediction.cpp",
+            "state_distribution.cpp",
+            "transition.cpp",
+            "validation.cpp",
+        )
+    )
+    violations.extend(_forbid_includes(
+        root,
+        (path for path in generic_scar_ou_files if path.is_file()),
+        rule,
+        lambda value: value in {
+            "detail/copula/dispatch.hpp", "factor.hpp",
+        }
+        or value.startswith("copula/pair/")
+        or value.startswith("copula/multivariate/"),
+        "generic SCAR-OU execution must use its prepared emission dependency",
+    ))
+    forbidden_scar_ou_model_storage = (
+        "factor_operator(",
+        "dense_inverse_cholesky(",
+        "student_ppf_nodes(",
+        "student_ppf_table(",
+        "student_ppf_observation_count(",
+    )
+    for path in generic_scar_ou_files:
+        if path.is_file() and path.name not in {"evaluator_internal.hpp"}:
+            text = path.read_text(encoding="utf-8")
+            if "PreparedDynamicEmission" not in text:
+                violations.append(Violation(
+                    rule,
+                    path,
+                    "generic SCAR-OU execution lost its prepared emission dependency",
+                ))
+            for marker in forbidden_scar_ou_model_storage:
+                if marker in text:
+                    violations.append(Violation(
+                        rule,
+                        path,
+                        "generic SCAR-OU execution accessed concrete model "
+                        f"storage: {marker}",
+                    ))
+
+    scar_ou_gradient = source / "scar_ou" / "gradient.cpp"
+    if scar_ou_gradient.is_file():
+        text = scar_ou_gradient.read_text(encoding="utf-8")
+        if "&prepared->compatibility_spec() == &copula" in text:
+            violations.append(Violation(
+                rule,
+                scar_ou_gradient,
+                "prepared SCAR-OU gradient emission must not be selected by "
+                "CopulaSpec address identity",
+            ))
+        for marker in (
+                "if (prepared != nullptr)",
+                "const CopulaSpec& copula = emission.compatibility_spec();"):
+            if marker not in text:
+                violations.append(Violation(
+                    rule,
+                    scar_ou_gradient,
+                    f"prepared SCAR-OU gradient lifecycle is missing: {marker}",
+                ))
+
+    vine_header = include / "rvine.hpp"
+    vine_files = (
+        *tuple(_source_files(source / "vine")),
+        vine_header,
+        include / "rvine_plan.hpp",
+    )
+    violations.extend(_forbid_includes(
+        root,
+        (path for path in vine_files if path.is_file()),
+        rule,
+        lambda value: value in {
+            "copula.hpp", "detail/copula/dispatch.hpp",
+        }
+        or value.startswith("copula/pair/")
+        or value.startswith("copula/multivariate/"),
+        "R-vine runtime must use PreparedPairKernel",
+    ))
+    if vine_header.is_file():
+        text = vine_header.read_text(encoding="utf-8")
+        if (
+                "PreparedPairKernel kernel;" not in text
+                or "PreparedPairKernel transposed_kernel;" not in text):
+            violations.append(Violation(
+                rule,
+                vine_header,
+                "each prepared vine edge must own forward and transposed pair kernels",
+            ))
+
+    scar_ou_files = (
+        *tuple(_source_files(source / "scar_ou")),
+        include / "ou.hpp",
+    )
+    violations.extend(_forbid_includes(
+        root,
+        (path for path in scar_ou_files if path.is_file()),
+        rule,
+        lambda value: value in {
+            "copula.hpp", "gas.hpp", "gas_rvine.hpp",
+        },
+        "SCAR-OU must depend on prepared copulas and remain independent of GAS",
+    ))
+
+    model_files = (
+        *tuple(_source_files(include / "copula")),
+        *tuple(_source_files(source / "copula")),
+    )
+    violations.extend(_forbid_includes(
+        root,
+        model_files,
+        rule,
+        lambda value: value in {
+            "gas.hpp", "gas_rvine.hpp", "ou.hpp", "rvine.hpp",
+            "rvine_plan.hpp",
+        } or value.startswith("detail/scar_ou/"),
+        "copula models must not depend on application modules",
+    ))
+
+    composition = source / "gas" / "rvine_sampler.cpp"
+    composition_header = include / "gas_rvine.hpp"
+    if composition_header.is_file():
+        includes = {value for value, _ in _include_lines(composition_header)}
+        if "copula.hpp" in includes or "copula/spec.hpp" not in includes:
+            violations.append(Violation(
+                rule,
+                composition_header,
+                "GAS-vine composition must depend on CopulaSpec rather than "
+                "the static/copula umbrella",
+            ))
+    if composition.is_file():
+        includes = {value for value, _ in _include_lines(composition)}
+        for expected in (
+                "gas_rvine.hpp",
+                "rvine.hpp",
+                "copula/prepared_dynamic_emission.hpp"):
+            if expected not in includes:
+                violations.append(Violation(
+                    rule,
+                    composition,
+                    f"GAS-vine composition must explicitly own {expected}",
+                ))
+        text = composition.read_text(encoding="utf-8")
+        for marker in (
+                "gas_emissions",
+                "gas_workspaces",
+                "update_one_prepared("):
+            if marker not in text:
+                violations.append(Violation(
+                    rule,
+                    composition,
+                    f"GAS-vine hot path lost prepared state: {marker}",
+                ))
+        if "evaluator.update_one(" in text:
+            violations.append(Violation(
+                rule,
+                composition,
+                "GAS-vine must not prepare a scalar emission inside its row loop",
+            ))
+
+    return violations
+
+
 def _find_cycle(graph: dict[str, set[str]]) -> list[str] | None:
     visited: set[str] = set()
     active: set[str] = set()
@@ -792,6 +1075,7 @@ def check_repository(root: Path) -> list[Violation]:
         check_removed_monolith,
         check_pair_verticalization,
         check_multivariate_verticalization,
+        check_prepared_application_modules,
         check_public_header_cycles,
     )
     return [

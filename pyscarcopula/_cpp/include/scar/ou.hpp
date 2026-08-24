@@ -1,6 +1,7 @@
 #pragma once
 
-#include "scar/copula.hpp"
+#include "scar/copula/grid_values.hpp"
+#include "scar/copula/prepared_dynamic_emission.hpp"
 #include "scar/observation.hpp"
 #include "scar/status.hpp"
 
@@ -184,6 +185,11 @@ struct ScarOuSpectralGradientWorkspace {
 /// for concurrent calls. Use one evaluator per thread.
 class ScarOuEvaluator {
 public:
+    ScarOuEvaluator() = default;
+    explicit ScarOuEvaluator(
+        const PreparedDynamicEmission* prepared_emission) noexcept
+        : prepared_emission_(prepared_emission) {}
+
     LogLikResult loglik_spectral(
         const OuParams& params,
         const CopulaSpec& copula,
@@ -456,6 +462,11 @@ public:
         const OuNumericalConfig& config) const;
 
 private:
+    const PreparedDynamicEmission& resolve_dynamic_emission(
+        const CopulaSpec& copula,
+        std::unique_ptr<PreparedDynamicEmission>& owner) const;
+
+    const PreparedDynamicEmission* prepared_emission_ = nullptr;
     // Reused by prepared evaluators during one fit/objective loop. These
     // buffers are mutable because likelihood methods keep const call sites;
     // a ScarOuEvaluator instance is therefore intentionally not thread-safe.
@@ -545,6 +556,7 @@ private:
         bool horizon_next) const;
 
     CopulaSpec copula_;
+    PreparedDynamicEmission emission_;
     std::vector<double> observations_;
     std::int64_t n_obs_ = 0;
     int dim_ = 0;

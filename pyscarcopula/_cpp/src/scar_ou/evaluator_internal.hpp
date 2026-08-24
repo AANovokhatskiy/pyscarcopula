@@ -9,11 +9,13 @@
 
 namespace scar::evaluator_detail {
 
-const double* observation_data(const CopulaSpec& copula, ObservationView u);
+const double* observation_data(
+    const PreparedDynamicEmission& emission,
+    ObservationView u);
 Result<std::size_t> rosenblatt_output_size(
     ObservationView u,
     int expected_dimension) noexcept;
-bool supported_ou_copula(const CopulaSpec& copula);
+bool supported_ou_copula(const PreparedDynamicEmission& emission);
 bool valid_ou_params(const OuParams& params);
 bool finite_config_doubles(const OuNumericalConfig& config);
 bool valid_grid_config(

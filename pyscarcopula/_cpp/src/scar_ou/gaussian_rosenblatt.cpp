@@ -26,6 +26,8 @@ bool equicorr_gaussian_rosenblatt_impl(
     const scar_internal::GridTransitionOperator& transition,
     std::vector<double>& out) {
 
+    const PreparedDynamicEmission emission =
+        PreparedDynamicEmission::borrow(copula);
     const Result<std::size_t> output_shape = rosenblatt_output_size(
         u, copula.model_descriptor().expected_dimension());
     if (!output_shape.is_ok()
@@ -173,7 +175,7 @@ bool equicorr_gaussian_rosenblatt_impl(
     };
 
     const bool filtered = scar_internal::forward_filter_grid(
-        copula,
+        emission,
         grid,
         u.data(),
         static_cast<std::int64_t>(u.size()),

@@ -1,11 +1,13 @@
 #pragma once
 
-#include "scar/copula.hpp"
+#include "scar/copula/prepared_pair_kernel.hpp"
+#include "scar/core/span.hpp"
 #include "scar/rvine_plan.hpp"
 #include "scar/status.hpp"
 
 #include <cstddef>
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 namespace scar::rvine {
@@ -37,6 +39,14 @@ struct ParameterPack {
 struct PreparedEdge {
     EdgeSpec edge;
     CopulaSpec transposed_copula;
+    PreparedPairKernel kernel;
+    PreparedPairKernel transposed_kernel;
+
+    PreparedEdge(EdgeSpec edge_spec, CopulaSpec transposed)
+        : edge(std::move(edge_spec)),
+          transposed_copula(std::move(transposed)),
+          kernel(edge.copula),
+          transposed_kernel(transposed_copula) {}
 };
 
 /// Result of one generic unconditional R-vine traversal request.

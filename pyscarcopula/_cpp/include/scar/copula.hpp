@@ -1,35 +1,25 @@
 #pragma once
 
 #include "scar/copula/rotation.hpp"
+#include "scar/copula/grid_values.hpp"
 #include "scar/copula/spec.hpp"
 #include "scar/copula/transforms.hpp"
 #include "scar/copula/multivariate/gaussian/conditional.hpp"
 #include "scar/copula/multivariate/student/conditional.hpp"
 #include "scar/copula/multivariate/student/rosenblatt.hpp"
+#include "scar/copula/prepared_dynamic_emission.hpp"
 #include "scar/core/span.hpp"
 #include "scar/observation.hpp"
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <utility>
 #include <vector>
 
 namespace scar {
 
 using Observations = std::vector<std::vector<double>>;
-
-/// Flattened row-major values with explicit two-dimensional shape.
-struct GridValues {
-    std::vector<double> values;  ///< Row-major values.
-    std::int64_t n_obs = 0;      ///< Number of observation rows.
-    std::int64_t n_grid = 0;     ///< Number of grid columns.
-};
-
-/// Copula density and its derivative on the same grid.
-struct GridValuesWithGrad {
-    GridValues pdf;
-    GridValues d_pdf_dx;
-};
 
 /// Per-row multivariate log densities and scalar-parameter derivatives.
 struct MultivariateRowsResult {
@@ -123,6 +113,7 @@ private:
         const CopulaSpec& spec,
         bool correlation_gradient_requested) const;
     CopulaSpec spec_;
+    std::unique_ptr<PreparedDynamicEmission> emission_;
     Observations u_;
     std::vector<double> gaussian_scores_;
     std::vector<double> equicorr_sums_;

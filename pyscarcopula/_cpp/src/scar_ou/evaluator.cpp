@@ -9,6 +9,17 @@
 namespace scar {
 using namespace evaluator_detail;
 
+const PreparedDynamicEmission& ScarOuEvaluator::resolve_dynamic_emission(
+    const CopulaSpec& copula,
+    std::unique_ptr<PreparedDynamicEmission>& owner) const {
+
+    if (prepared_emission_ != nullptr) {
+        return *prepared_emission_;
+    }
+    owner = std::make_unique<PreparedDynamicEmission>(copula);
+    return *owner;
+}
+
 GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_and_corr_auto(
     const OuParams& params,
     const CopulaSpec& copula,
@@ -222,7 +233,10 @@ std::vector<double> ScarOuEvaluator::predictive_mean_auto(
     int& status) const {
 
     scar_internal::OuGrid grid;
-    if (!supported_ou_copula(copula)) {
+    std::unique_ptr<PreparedDynamicEmission> emission_owner;
+    const PreparedDynamicEmission& emission =
+        resolve_dynamic_emission(copula, emission_owner);
+    if (!supported_ou_copula(emission)) {
         status = SCAR_INVALID_TRANSFORM;
         return std::vector<double>(u.size(), 0.0);
     }
@@ -259,7 +273,10 @@ std::vector<double> ScarOuEvaluator::mixture_h_auto(
     int& status) const {
 
     scar_internal::OuGrid grid;
-    if (!supported_ou_copula(copula)) {
+    std::unique_ptr<PreparedDynamicEmission> emission_owner;
+    const PreparedDynamicEmission& emission =
+        resolve_dynamic_emission(copula, emission_owner);
+    if (!supported_ou_copula(emission)) {
         status = SCAR_INVALID_TRANSFORM;
         return std::vector<double>(u.size(), 0.0);
     }
@@ -292,7 +309,10 @@ std::vector<double> ScarOuEvaluator::mixture_h_pair_auto(
     int& status) const {
 
     scar_internal::OuGrid grid;
-    if (!supported_ou_copula(copula)) {
+    std::unique_ptr<PreparedDynamicEmission> emission_owner;
+    const PreparedDynamicEmission& emission =
+        resolve_dynamic_emission(copula, emission_owner);
+    if (!supported_ou_copula(emission)) {
         status = SCAR_INVALID_TRANSFORM;
         return std::vector<double>(2 * u.size(), 0.0);
     }
@@ -325,7 +345,10 @@ StateDistribution ScarOuEvaluator::state_distribution_auto(
     bool horizon_next) const {
 
     scar_internal::OuGrid grid;
-    if (!supported_ou_copula(copula)) {
+    std::unique_ptr<PreparedDynamicEmission> emission_owner;
+    const PreparedDynamicEmission& emission =
+        resolve_dynamic_emission(copula, emission_owner);
+    if (!supported_ou_copula(emission)) {
         return invalid_state_distribution(SCAR_INVALID_TRANSFORM, OuBackend::Matrix);
     }
     if (!valid_ou_params(params) || !finite_config_doubles(config)) {
@@ -360,7 +383,10 @@ ScarOuEvaluator::smoothed_state_distribution_auto(
     };
 
     scar_internal::OuGrid grid;
-    if (!supported_ou_copula(copula)) {
+    std::unique_ptr<PreparedDynamicEmission> emission_owner;
+    const PreparedDynamicEmission& emission =
+        resolve_dynamic_emission(copula, emission_owner);
+    if (!supported_ou_copula(emission)) {
         return invalid(SCAR_INVALID_TRANSFORM);
     }
     if (!valid_ou_params(params) || !finite_config_doubles(config)) {

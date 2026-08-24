@@ -1,8 +1,10 @@
 #include "scar/copula.hpp"
+#include "scar/copula/prepared_dynamic_emission.hpp"
 #include "scar/copula/prepared_pair_kernel.hpp"
 #include "scar/core/checked_arithmetic.hpp"
 #include "scar/core/result.hpp"
 #include "scar/core/threading.hpp"
+#include "scar/gas.hpp"
 #include "scar/math/normal.hpp"
 #include "scar/status.hpp"
 
@@ -112,6 +114,73 @@ int main() {
             || gradients[index] != scalar_gradient) {
             return 9;
         }
+    }
+
+    scar::CopulaSpec clayton_90_spec = clayton_spec;
+    clayton_90_spec.rotation = scar::Rotation::R90;
+    scar::CopulaSpec clayton_270_spec = clayton_spec;
+    clayton_270_spec.rotation = scar::Rotation::R270;
+    const scar::PreparedPairKernel clayton_90(clayton_90_spec);
+    const scar::PreparedPairKernel clayton_270(clayton_270_spec);
+    double first_h = 0.0;
+    double second_h = 0.0;
+    clayton_90.h_pair(0.25, 0.75, 2.0, first_h, second_h);
+    if (first_h != clayton_90.h(0.25, 0.75, 2.0)
+        || second_h != clayton_270.h(0.75, 0.25, 2.0)) {
+        return 10;
+    }
+
+    const scar::ObservationView observation_view{
+        span_values, 1, 2};
+    scar::PreparedDynamicEmission emission(spec);
+    scar::PreparedDynamicEmissionWorkspace emission_workspace =
+        emission.make_workspace(true);
+    const scar::DynamicEmissionRowResult emission_result =
+        emission.evaluate_parameter(
+            span_values, 0, 0.0, true, emission_workspace);
+    if (!emission.is_supported()
+        || emission.kind() != scar::DynamicEmissionKind::Pair
+        || emission.validate_observations(observation_view) != scar::SCAR_OK
+        || emission_result.status != scar::SCAR_OK
+        || std::abs(emission_result.log_pdf) > 1e-15
+        || std::abs(emission_result.dlog_dparameter) > 1e-15
+        || std::abs(emission.h(0.25, 0.75, 0.0) - 0.25) > 1e-15
+        || std::abs(emission.inverse_h(0.25, 0.75, 0.0) - 0.25)
+            > 1e-15) {
+        return 11;
+    }
+
+    const scar::GasParams gas_params{0.1, 0.2, 0.3};
+    const scar::GasConfig gas_config{};
+    const scar::GasEvaluator gas;
+    const scar::GasStateResult cold_state =
+        gas.initial_state(gas_params, spec, gas_config);
+    const scar::GasStateResult prepared_state =
+        gas.initial_state_prepared(gas_params, emission, gas_config);
+    if (cold_state.status != scar::SCAR_OK
+        || prepared_state.status != scar::SCAR_OK
+        || cold_state.g != prepared_state.g
+        || cold_state.parameter != prepared_state.parameter) {
+        return 12;
+    }
+    const scar::GasUpdateResult cold_update = gas.update_one(
+        gas_params, spec, cold_state.g, 0.25, 0.75, gas_config);
+    const scar::GasUpdateResult prepared_update = gas.update_one_prepared(
+        gas_params,
+        emission,
+        emission_workspace,
+        prepared_state.g,
+        0.25,
+        0.75,
+        gas_config);
+    if (cold_update.status != scar::SCAR_OK
+        || prepared_update.status != scar::SCAR_OK
+        || cold_update.g_next != prepared_update.g_next
+        || cold_update.r != prepared_update.r
+        || cold_update.r_next != prepared_update.r_next
+        || cold_update.log_likelihood != prepared_update.log_likelihood
+        || cold_update.score != prepared_update.score) {
+        return 13;
     }
     return scar::SCAR_OK;
 }

@@ -2,7 +2,6 @@
 
 #include "evaluator_internal.hpp"
 #include "scar/detail/copula/common.hpp"
-#include "scar/detail/copula/dispatch.hpp"
 #include "scar/copula/multivariate/student/density.hpp"
 #include "scar/detail/linalg.hpp"
 #include "scar/detail/safety.hpp"
@@ -31,6 +30,19 @@ enum class CorrGradientMode {
 using GridGradientOperators = ScarOuGridGradientOperators;
 using GridGradientWorkspace = ScarOuGridGradientWorkspace;
 using SpectralGradientWorkspace = ScarOuSpectralGradientWorkspace;
+
+const PreparedDynamicEmission& select_emission(
+    const CopulaSpec& copula,
+    const PreparedDynamicEmission* prepared,
+    std::unique_ptr<PreparedDynamicEmission>& owner) {
+
+    if (prepared != nullptr) {
+        return *prepared;
+    }
+    owner = std::make_unique<PreparedDynamicEmission>(
+        PreparedDynamicEmission::borrow(copula));
+    return *owner;
+}
 
 bool prepare_gaussian_spectral_terms(
     const CopulaSpec& copula,
@@ -440,16 +452,22 @@ bool build_local_grid_gradient_operator(
 
 GradLogLikResult grid_neg_loglik_with_grad(
     const OuParams& params,
-    const CopulaSpec& copula,
+    const CopulaSpec& requested_copula,
     ObservationView u,
     const OuNumericalConfig& config,
     OuBackend backend,
+    const PreparedDynamicEmission* prepared_emission,
     CorrGradientMode corr_gradient_mode = CorrGradientMode::None,
     const std::vector<double>* corr_direction = nullptr,
     GridGradientWorkspace* workspace = nullptr) {
 
     const std::int64_t n_obs = static_cast<std::int64_t>(u.size());
-    if (!supported_ou_copula(copula)) {
+    std::unique_ptr<PreparedDynamicEmission> emission_owner;
+    const PreparedDynamicEmission& emission =
+        select_emission(
+            requested_copula, prepared_emission, emission_owner);
+    const CopulaSpec& copula = emission.compatibility_spec();
+    if (!supported_ou_copula(emission)) {
         return invalid_grad(SCAR_INVALID_TRANSFORM, backend);
     }
     if (!valid_ou_params(params) || !finite_config_doubles(config)) {
@@ -589,7 +607,7 @@ GradLogLikResult grid_neg_loglik_with_grad(
         return invalid_grad(SCAR_NUMERICAL_FAILURE, backend);
     }
 
-    const double* observation_values = observation_data(copula, u);
+    const double* observation_values = observation_data(emission, u);
     const std::size_t K_size = static_cast<std::size_t>(K_eff);
     std::size_t nK = 0;
     if (!scar_internal::checked_size_mul(u.size(), K_size, nK)) {
@@ -603,11 +621,10 @@ GradLogLikResult grid_neg_loglik_with_grad(
     dfi_dx.assign(nK, 0.0);
     r_grid.clear();
     dpsi_grid.clear();
-    scar_internal::copula_prepare_grid_transform(
-        copula, x_grid, r_grid, dpsi_grid);
+    emission.prepare_grid_transform(
+        x_grid, r_grid, dpsi_grid);
     double emission_log_scale = 0.0;
-    scar_internal::copula_pdf_and_grad_grid_precomputed(
-        copula,
+    emission.fill_density_and_gradient_grid(
         observation_values,
         n_obs,
         r_grid,
@@ -872,9 +889,10 @@ GradLogLikResult grid_neg_loglik_with_grad(
 
 GradLogLikResult spectral_neg_loglik_with_grad(
     const OuParams& params,
-    const CopulaSpec& copula,
+    const CopulaSpec& requested_copula,
     ObservationView u,
     const OuNumericalConfig& raw_config,
+    const PreparedDynamicEmission* prepared_emission,
     CorrGradientMode corr_gradient_mode,
     const std::vector<double>* corr_direction = nullptr,
     SpectralGradientWorkspace* workspace = nullptr) {
@@ -883,7 +901,12 @@ GradLogLikResult spectral_neg_loglik_with_grad(
     const std::int64_t n_obs = static_cast<std::int64_t>(u.size());
     const bool correlation_gradient =
         corr_gradient_mode != CorrGradientMode::None;
-    if (!supported_ou_copula(copula)) {
+    std::unique_ptr<PreparedDynamicEmission> emission_owner;
+    const PreparedDynamicEmission& emission =
+        select_emission(
+            requested_copula, prepared_emission, emission_owner);
+    const CopulaSpec& copula = emission.compatibility_spec();
+    if (!supported_ou_copula(emission)) {
         return invalid_grad(SCAR_INVALID_TRANSFORM, OuBackend::Spectral);
     }
     if (correlation_gradient && copula.family != CopulaFamily::Student) {
@@ -932,7 +955,7 @@ GradLogLikResult spectral_neg_loglik_with_grad(
         ws.cached_basis_order = basis_order;
     }
 
-    const double* observation_values = observation_data(copula, u);
+    const double* observation_values = observation_data(emission, u);
     const double dt = n_obs > 1 ? 1.0 / static_cast<double>(n_obs - 1) : 1.0;
     const double rho = std::exp(-params.kappa * dt);
 
@@ -971,8 +994,7 @@ GradLogLikResult spectral_neg_loglik_with_grad(
     std::vector<double>& dpsi_grid = ws.dpsi_grid;
     r_grid.clear();
     dpsi_grid.clear();
-    scar_internal::copula_prepare_grid_transform(
-        copula, x_grid, r_grid, dpsi_grid);
+    emission.prepare_grid_transform(x_grid, r_grid, dpsi_grid);
     const bool use_gaussian_spectral_terms =
         prepare_gaussian_spectral_terms(copula, n_obs, r_grid, ws);
 
@@ -1054,8 +1076,7 @@ GradLogLikResult spectral_neg_loglik_with_grad(
                 fi_row.data(),
                 dfi_dx_row.data());
         } else {
-            scar_internal::copula_pdf_and_grad_row_precomputed_flat(
-                copula,
+            emission.fill_density_and_gradient_row(
                 observation_values,
                 t,
                 r_grid,
@@ -1217,8 +1238,7 @@ GradLogLikResult spectral_neg_loglik_with_grad(
             fi_row.data(),
             dfi_dx_row.data());
     } else {
-        scar_internal::copula_pdf_and_grad_row_precomputed_flat(
-            copula,
+        emission.fill_density_and_gradient_row(
             observation_values,
             0,
             r_grid,
@@ -1319,7 +1339,8 @@ GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_spectral(
     const OuNumericalConfig& config) const {
 
     return spectral_neg_loglik_with_grad(
-        params, copula, u, config, CorrGradientMode::None, nullptr,
+        params, copula, u, config, prepared_emission_,
+        CorrGradientMode::None, nullptr,
         &spectral_gradient_workspace_);
 }
 
@@ -1330,7 +1351,8 @@ GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_and_corr_spectral(
     const OuNumericalConfig& config) const {
 
     return spectral_neg_loglik_with_grad(
-        params, copula, u, config, CorrGradientMode::Full, nullptr,
+        params, copula, u, config, prepared_emission_,
+        CorrGradientMode::Full, nullptr,
         &spectral_gradient_workspace_);
 }
 
@@ -1342,7 +1364,8 @@ GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_and_corr_directional_spec
     const std::vector<double>& corr_direction) const {
 
     return spectral_neg_loglik_with_grad(
-        params, copula, u, config, CorrGradientMode::Directional,
+        params, copula, u, config, prepared_emission_,
+        CorrGradientMode::Directional,
         &corr_direction, &spectral_gradient_workspace_);
 }
 
@@ -1353,7 +1376,7 @@ GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_local_gh(
     const OuNumericalConfig& config) const {
 
     return grid_neg_loglik_with_grad(
-        params, copula, u, config, OuBackend::LocalGh,
+        params, copula, u, config, OuBackend::LocalGh, prepared_emission_,
         CorrGradientMode::None, nullptr, &grid_gradient_workspace_);
 }
 
@@ -1364,7 +1387,7 @@ GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_matrix(
     const OuNumericalConfig& config) const {
 
     return grid_neg_loglik_with_grad(
-        params, copula, u, config, OuBackend::Matrix,
+        params, copula, u, config, OuBackend::Matrix, prepared_emission_,
         CorrGradientMode::None, nullptr, &grid_gradient_workspace_);
 }
 
@@ -1375,7 +1398,7 @@ GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_and_corr_local_gh(
     const OuNumericalConfig& config) const {
 
     return grid_neg_loglik_with_grad(
-        params, copula, u, config, OuBackend::LocalGh,
+        params, copula, u, config, OuBackend::LocalGh, prepared_emission_,
         CorrGradientMode::Full, nullptr, &grid_gradient_workspace_);
 }
 
@@ -1386,7 +1409,7 @@ GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_and_corr_matrix(
     const OuNumericalConfig& config) const {
 
     return grid_neg_loglik_with_grad(
-        params, copula, u, config, OuBackend::Matrix,
+        params, copula, u, config, OuBackend::Matrix, prepared_emission_,
         CorrGradientMode::Full, nullptr, &grid_gradient_workspace_);
 }
 
@@ -1398,7 +1421,7 @@ GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_and_corr_directional_loca
     const std::vector<double>& corr_direction) const {
 
     return grid_neg_loglik_with_grad(
-        params, copula, u, config, OuBackend::LocalGh,
+        params, copula, u, config, OuBackend::LocalGh, prepared_emission_,
         CorrGradientMode::Directional, &corr_direction,
         &grid_gradient_workspace_);
 }
@@ -1411,7 +1434,7 @@ GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_and_corr_directional_matr
     const std::vector<double>& corr_direction) const {
 
     return grid_neg_loglik_with_grad(
-        params, copula, u, config, OuBackend::Matrix,
+        params, copula, u, config, OuBackend::Matrix, prepared_emission_,
         CorrGradientMode::Directional, &corr_direction,
         &grid_gradient_workspace_);
 }

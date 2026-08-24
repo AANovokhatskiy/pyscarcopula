@@ -1,5 +1,4 @@
 #include "scar/ou.hpp"
-#include "scar/copula/pair/gaussian.hpp"
 #include "scar/detail/copula/common.hpp"
 #include "scar/detail/safety.hpp"
 #include "scar/detail/linalg.hpp"
@@ -738,7 +737,7 @@ void dense_predict_matvec(
 }
 
 bool matrix_backward_loglik(
-    const scar::CopulaSpec& copula,
+    const scar::PreparedDynamicEmission& emission,
     const OuGrid& grid,
     const MatrixTransitionOperator& op,
     const double* u,
@@ -751,13 +750,12 @@ bool matrix_backward_loglik(
     std::vector<double> fi_row(static_cast<std::size_t>(grid.K), 0.0);
     std::vector<double> r_grid;
     std::vector<double> dpsi_grid;
-    copula_prepare_grid_transform(copula, grid.x_grid, r_grid, dpsi_grid);
+    emission.prepare_grid_transform(grid.x_grid, r_grid, dpsi_grid);
 
     double log_scale = 0.0;
     for (std::int64_t t = n_obs - 1; t >= 1; --t) {
         double emission_log_scale = 0.0;
-        copula_pdf_row_precomputed_flat(
-            copula,
+        emission.fill_density_row(
             u,
             t,
             r_grid,
@@ -786,8 +784,7 @@ bool matrix_backward_loglik(
     }
 
     double emission_log_scale = 0.0;
-    copula_pdf_row_precomputed_flat(
-        copula,
+    emission.fill_density_row(
         u,
         0,
         r_grid,
@@ -808,7 +805,7 @@ bool matrix_backward_loglik(
 }
 
 bool matrix_forward_predictive_mean(
-    const scar::CopulaSpec& copula,
+    const scar::PreparedDynamicEmission& emission,
     const OuGrid& grid,
     const MatrixTransitionOperator& op,
     const double* u,
@@ -818,7 +815,8 @@ bool matrix_forward_predictive_mean(
     std::vector<double> r_grid(static_cast<std::size_t>(grid.K), 0.0);
     for (int j = 0; j < grid.K; ++j) {
         r_grid[static_cast<std::size_t>(j)] =
-            copula_transform(copula, grid.x_grid[static_cast<std::size_t>(j)]);
+            emission.transform_state(
+                grid.x_grid[static_cast<std::size_t>(j)]);
     }
     std::vector<double> source(static_cast<std::size_t>(grid.K), 0.0);
 
@@ -840,11 +838,12 @@ bool matrix_forward_predictive_mean(
         out[t] = mean;
     };
 
-    return forward_filter_grid(copula, grid, u, n_obs, advance_matrix, on_row);
+    return forward_filter_grid(
+        emission, grid, u, n_obs, advance_matrix, on_row);
 }
 
 bool matrix_forward_mixture_h(
-    const scar::CopulaSpec& copula,
+    const scar::PreparedDynamicEmission& emission,
     const OuGrid& grid,
     const MatrixTransitionOperator& op,
     const double* u,
@@ -853,24 +852,25 @@ bool matrix_forward_mixture_h(
     double* out_reverse,
     bool direct_swapped_h) {
 
-    if (copula.family == scar::CopulaFamily::Student) {
+    if (emission.family() == scar::CopulaFamily::Student) {
         return false;
     }
 
     std::vector<double> r_grid(static_cast<std::size_t>(grid.K), 0.0);
     for (int j = 0; j < grid.K; ++j) {
         r_grid[static_cast<std::size_t>(j)] =
-            copula_transform(copula, grid.x_grid[static_cast<std::size_t>(j)]);
+            emission.transform_state(
+                grid.x_grid[static_cast<std::size_t>(j)]);
     }
     std::vector<double> source(static_cast<std::size_t>(grid.K), 0.0);
     const std::size_t n_obs_size = static_cast<std::size_t>(n_obs);
     const bool use_gaussian_quantiles =
-        copula.family == scar::CopulaFamily::Gaussian
-        && copula.rotation == scar::Rotation::R0
-        && copula.pair_gaussian_first_scores().size() == n_obs_size
-        && copula.pair_gaussian_second_scores().size() == n_obs_size;
+        emission.is_unrotated_gaussian_pair()
+        && emission.has_cached_observations(n_obs_size);
     const scar::CopulaSpec transposed_copula =
-        transposed_copula_spec(copula);
+        transposed_copula_spec(emission.compatibility_spec());
+    const scar::PreparedDynamicEmission transposed_emission =
+        scar::PreparedDynamicEmission::borrow(transposed_copula);
 
     auto advance_matrix = [&](const std::vector<double>& phi,
                               const std::vector<double>& fi_row,
@@ -888,29 +888,27 @@ bool matrix_forward_mixture_h(
         const double u1 = u[2 * t];
         if (use_gaussian_quantiles) {
             const std::size_t row = static_cast<std::size_t>(t);
-            const double z1 = copula.pair_gaussian_first_scores()[row];
-            const double z2 = copula.pair_gaussian_second_scores()[row];
             for (int j = 0; j < grid.K; ++j) {
                 const std::size_t idx = static_cast<std::size_t>(j);
                 h_mix += weights[idx]
-                    * scar::copula::pair::gaussian_h_from_quantiles(
-                        z2, z1, r_grid[idx]);
+                    * emission.h_from_cached_observation(
+                        row, false, r_grid[idx]);
                 if (out_reverse != nullptr) {
                     h_mix_reverse += weights[idx]
-                        * scar::copula::pair::gaussian_h_from_quantiles(
-                            z1, z2, r_grid[idx]);
+                        * emission.h_from_cached_observation(
+                            row, true, r_grid[idx]);
                 }
             }
         } else {
             for (int j = 0; j < grid.K; ++j) {
                 const std::size_t idx = static_cast<std::size_t>(j);
-                const scar::CopulaSpec& h_copula =
-                    direct_swapped_h ? copula : transposed_copula;
-                h_mix += weights[idx] * copula_h_rotated(
-                    h_copula, u2, u1, r_grid[idx]);
+                const scar::PreparedDynamicEmission& h_emission =
+                    direct_swapped_h ? emission : transposed_emission;
+                h_mix += weights[idx]
+                    * h_emission.h(u2, u1, r_grid[idx]);
                 if (out_reverse != nullptr) {
                     h_mix_reverse += weights[idx]
-                        * copula_h_rotated(copula, u1, u2, r_grid[idx]);
+                        * emission.h(u1, u2, r_grid[idx]);
                 }
             }
         }
@@ -921,11 +919,12 @@ bool matrix_forward_mixture_h(
         }
     };
 
-    return forward_filter_grid(copula, grid, u, n_obs, advance_matrix, on_row);
+    return forward_filter_grid(
+        emission, grid, u, n_obs, advance_matrix, on_row);
 }
 
 bool local_forward_predictive_mean(
-    const scar::CopulaSpec& copula,
+    const scar::PreparedDynamicEmission& emission,
     const OuGrid& grid,
     const std::vector<double>& gh_nodes,
     const std::vector<double>& gh_weights,
@@ -936,7 +935,8 @@ bool local_forward_predictive_mean(
     std::vector<double> r_grid(static_cast<std::size_t>(grid.K), 0.0);
     for (int j = 0; j < grid.K; ++j) {
         r_grid[static_cast<std::size_t>(j)] =
-            copula_transform(copula, grid.x_grid[static_cast<std::size_t>(j)]);
+            emission.transform_state(
+                grid.x_grid[static_cast<std::size_t>(j)]);
     }
     std::vector<double> source(static_cast<std::size_t>(grid.K), 0.0);
 
@@ -964,11 +964,12 @@ bool local_forward_predictive_mean(
         out[t] = mean;
     };
 
-    return forward_filter_grid(copula, grid, u, n_obs, advance_local, on_row);
+    return forward_filter_grid(
+        emission, grid, u, n_obs, advance_local, on_row);
 }
 
 bool local_forward_mixture_h(
-    const scar::CopulaSpec& copula,
+    const scar::PreparedDynamicEmission& emission,
     const OuGrid& grid,
     const std::vector<double>& gh_nodes,
     const std::vector<double>& gh_weights,
@@ -978,24 +979,25 @@ bool local_forward_mixture_h(
     double* out_reverse,
     bool direct_swapped_h) {
 
-    if (copula.family == scar::CopulaFamily::Student) {
+    if (emission.family() == scar::CopulaFamily::Student) {
         return false;
     }
 
     std::vector<double> r_grid(static_cast<std::size_t>(grid.K), 0.0);
     for (int j = 0; j < grid.K; ++j) {
         r_grid[static_cast<std::size_t>(j)] =
-            copula_transform(copula, grid.x_grid[static_cast<std::size_t>(j)]);
+            emission.transform_state(
+                grid.x_grid[static_cast<std::size_t>(j)]);
     }
     std::vector<double> source(static_cast<std::size_t>(grid.K), 0.0);
     const std::size_t n_obs_size = static_cast<std::size_t>(n_obs);
     const bool use_gaussian_quantiles =
-        copula.family == scar::CopulaFamily::Gaussian
-        && copula.rotation == scar::Rotation::R0
-        && copula.pair_gaussian_first_scores().size() == n_obs_size
-        && copula.pair_gaussian_second_scores().size() == n_obs_size;
+        emission.is_unrotated_gaussian_pair()
+        && emission.has_cached_observations(n_obs_size);
     const scar::CopulaSpec transposed_copula =
-        transposed_copula_spec(copula);
+        transposed_copula_spec(emission.compatibility_spec());
+    const scar::PreparedDynamicEmission transposed_emission =
+        scar::PreparedDynamicEmission::borrow(transposed_copula);
 
     auto advance_local = [&](const std::vector<double>& phi,
                              const std::vector<double>& fi_row,
@@ -1019,29 +1021,27 @@ bool local_forward_mixture_h(
         const double u1 = u[2 * t];
         if (use_gaussian_quantiles) {
             const std::size_t row = static_cast<std::size_t>(t);
-            const double z1 = copula.pair_gaussian_first_scores()[row];
-            const double z2 = copula.pair_gaussian_second_scores()[row];
             for (int j = 0; j < grid.K; ++j) {
                 const std::size_t idx = static_cast<std::size_t>(j);
                 h_mix += weights[idx]
-                    * scar::copula::pair::gaussian_h_from_quantiles(
-                        z2, z1, r_grid[idx]);
+                    * emission.h_from_cached_observation(
+                        row, false, r_grid[idx]);
                 if (out_reverse != nullptr) {
                     h_mix_reverse += weights[idx]
-                        * scar::copula::pair::gaussian_h_from_quantiles(
-                            z1, z2, r_grid[idx]);
+                        * emission.h_from_cached_observation(
+                            row, true, r_grid[idx]);
                 }
             }
         } else {
             for (int j = 0; j < grid.K; ++j) {
                 const std::size_t idx = static_cast<std::size_t>(j);
-                const scar::CopulaSpec& h_copula =
-                    direct_swapped_h ? copula : transposed_copula;
-                h_mix += weights[idx] * copula_h_rotated(
-                    h_copula, u2, u1, r_grid[idx]);
+                const scar::PreparedDynamicEmission& h_emission =
+                    direct_swapped_h ? emission : transposed_emission;
+                h_mix += weights[idx]
+                    * h_emission.h(u2, u1, r_grid[idx]);
                 if (out_reverse != nullptr) {
                     h_mix_reverse += weights[idx]
-                        * copula_h_rotated(copula, u1, u2, r_grid[idx]);
+                        * emission.h(u1, u2, r_grid[idx]);
                 }
             }
         }
@@ -1052,7 +1052,8 @@ bool local_forward_mixture_h(
         }
     };
 
-    return forward_filter_grid(copula, grid, u, n_obs, advance_local, on_row);
+    return forward_filter_grid(
+        emission, grid, u, n_obs, advance_local, on_row);
 }
 
 }  // namespace scar_internal

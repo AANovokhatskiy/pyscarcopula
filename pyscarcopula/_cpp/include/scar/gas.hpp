@@ -1,6 +1,6 @@
 #pragma once
 
-#include "scar/copula.hpp"
+#include "scar/copula/spec.hpp"
 #include "scar/observation.hpp"
 #include "scar/status.hpp"
 
@@ -8,6 +8,9 @@
 #include <vector>
 
 namespace scar {
+
+class PreparedDynamicEmission;
+class PreparedDynamicEmissionWorkspace;
 
 /// Scaling applied to the GAS score in the state recursion.
 enum class GasScaling : int {
@@ -83,6 +86,11 @@ public:
         const CopulaSpec& copula,
         const GasConfig& config) const;
 
+    GasStateResult initial_state_prepared(
+        const GasParams& params,
+        const PreparedDynamicEmission& emission,
+        const GasConfig& config) const;
+
     GasFilterResult filter(
         const GasParams& params,
         const CopulaSpec& copula,
@@ -109,9 +117,26 @@ public:
         double u2,
         const GasConfig& config) const;
 
+    GasUpdateResult update_one_prepared(
+        const GasParams& params,
+        const PreparedDynamicEmission& emission,
+        PreparedDynamicEmissionWorkspace& workspace,
+        double g,
+        double u1,
+        double u2,
+        const GasConfig& config) const;
+
     GasUpdateResult update_observation(
         const GasParams& params,
         const CopulaSpec& copula,
+        double g,
+        ObservationView observation,
+        const GasConfig& config) const;
+
+    GasUpdateResult update_observation_prepared(
+        const GasParams& params,
+        const PreparedDynamicEmission& emission,
+        PreparedDynamicEmissionWorkspace& workspace,
         double g,
         ObservationView observation,
         const GasConfig& config) const;

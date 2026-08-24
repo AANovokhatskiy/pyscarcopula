@@ -27,7 +27,7 @@ SmoothedStateDistribution invalid_smoothed_state_distribution(
 }
 
 SmoothedStateDistribution smoothed_state_distribution_impl(
-    const CopulaSpec& copula,
+    const PreparedDynamicEmission& emission,
     ObservationView u,
     const scar_internal::OuGrid& grid,
     const scar_internal::GridTransitionOperator& transition,
@@ -45,11 +45,11 @@ SmoothedStateDistribution smoothed_state_distribution_impl(
     }
 
     std::vector<double> emissions(state_value_count, 0.0);
-    const double* observation_values = observation_data(copula, u);
+    const double* observation_values = observation_data(emission, u);
     std::vector<double> row(K, 0.0);
     for (std::int64_t t = 0; t < n_obs; ++t) {
-        scar_internal::copula_fi_row_on_grid(
-            copula, observation_values, t, grid.x_grid, row);
+        emission.fill_density_row_on_state_grid(
+            observation_values, t, grid.x_grid, row);
         std::copy(
             row.begin(),
             row.end(),
@@ -81,7 +81,7 @@ SmoothedStateDistribution smoothed_state_distribution_impl(
 
 template <typename AdvanceDensity>
 StateDistribution state_distribution_impl(
-    const CopulaSpec& copula,
+    const PreparedDynamicEmission& emission,
     const scar_internal::OuGrid& grid,
     const double* u,
     std::int64_t n_obs,
@@ -105,8 +105,8 @@ StateDistribution state_distribution_impl(
     };
 
     for (std::int64_t t = 0; t < n_obs; ++t) {
-        scar_internal::copula_fi_row_on_grid(
-            copula, u, t, grid.x_grid, fi_row);
+        emission.fill_density_row_on_state_grid(
+            u, t, grid.x_grid, fi_row);
         for (int j = 0; j < grid.K; ++j) {
             const std::size_t idx = static_cast<std::size_t>(j);
             phi[idx] *= fi_row[idx];
@@ -151,7 +151,10 @@ StateDistribution ScarOuEvaluator::state_distribution_matrix(
     bool horizon_next) const {
 
     const std::int64_t n_obs = static_cast<std::int64_t>(u.size());
-    if (!supported_ou_copula(copula)) {
+    std::unique_ptr<PreparedDynamicEmission> emission_owner;
+    const PreparedDynamicEmission& emission =
+        resolve_dynamic_emission(copula, emission_owner);
+    if (!supported_ou_copula(emission)) {
         return invalid_state_distribution(SCAR_INVALID_TRANSFORM, OuBackend::Matrix);
     }
     if (!valid_ou_params(params) || !finite_config_doubles(config)) {
@@ -183,14 +186,14 @@ StateDistribution ScarOuEvaluator::state_distribution_matrix(
         return invalid_state_distribution(
             SCAR_INVALID_SIZE, OuBackend::Matrix);
     }
-    const double* observation_values = observation_data(copula, u);
+    const double* observation_values = observation_data(emission, u);
     auto advance = [&](const std::vector<double>& source,
                        std::vector<double>& next_phi) {
         scar_internal::matrix_predict_matvec(
             transition, grid, source, next_phi);
     };
     return state_distribution_impl(
-        copula, grid, observation_values, n_obs, horizon_next,
+        emission, grid, observation_values, n_obs, horizon_next,
         OuBackend::Matrix, advance);
 }
 
@@ -202,7 +205,10 @@ StateDistribution ScarOuEvaluator::state_distribution_local_gh(
     bool horizon_next) const {
 
     const std::int64_t n_obs = static_cast<std::int64_t>(u.size());
-    if (!supported_ou_copula(copula)) {
+    std::unique_ptr<PreparedDynamicEmission> emission_owner;
+    const PreparedDynamicEmission& emission =
+        resolve_dynamic_emission(copula, emission_owner);
+    if (!supported_ou_copula(emission)) {
         return invalid_state_distribution(SCAR_INVALID_TRANSFORM, OuBackend::LocalGh);
     }
     if (!valid_ou_params(params) || !finite_config_doubles(config)) {
@@ -235,7 +241,7 @@ StateDistribution ScarOuEvaluator::state_distribution_local_gh(
         return invalid_state_distribution(SCAR_INVALID_SIZE, OuBackend::LocalGh);
     }
 
-    const double* observation_values = observation_data(copula, u);
+    const double* observation_values = observation_data(emission, u);
     auto advance = [&](const std::vector<double>& source,
                        std::vector<double>& next_phi) {
         scar_internal::local_gh_predict_matvec(
@@ -249,7 +255,7 @@ StateDistribution ScarOuEvaluator::state_distribution_local_gh(
             next_phi);
     };
     return state_distribution_impl(
-        copula, grid, observation_values, n_obs, horizon_next,
+        emission, grid, observation_values, n_obs, horizon_next,
         OuBackend::LocalGh, advance);
 }
 
@@ -261,7 +267,10 @@ ScarOuEvaluator::smoothed_state_distribution_matrix(
     const OuNumericalConfig& config) const {
 
     const std::int64_t n_obs = static_cast<std::int64_t>(u.size());
-    if (!supported_ou_copula(copula)) {
+    std::unique_ptr<PreparedDynamicEmission> emission_owner;
+    const PreparedDynamicEmission& emission =
+        resolve_dynamic_emission(copula, emission_owner);
+    if (!supported_ou_copula(emission)) {
         return invalid_smoothed_state_distribution(
             SCAR_INVALID_TRANSFORM, OuBackend::Matrix);
     }
@@ -298,7 +307,7 @@ ScarOuEvaluator::smoothed_state_distribution_matrix(
             SCAR_INVALID_SIZE, OuBackend::Matrix);
     }
     return smoothed_state_distribution_impl(
-        copula, u, grid, transition, OuBackend::Matrix);
+        emission, u, grid, transition, OuBackend::Matrix);
 }
 
 SmoothedStateDistribution
@@ -309,7 +318,10 @@ ScarOuEvaluator::smoothed_state_distribution_local_gh(
     const OuNumericalConfig& config) const {
 
     const std::int64_t n_obs = static_cast<std::int64_t>(u.size());
-    if (!supported_ou_copula(copula)) {
+    std::unique_ptr<PreparedDynamicEmission> emission_owner;
+    const PreparedDynamicEmission& emission =
+        resolve_dynamic_emission(copula, emission_owner);
+    if (!supported_ou_copula(emission)) {
         return invalid_smoothed_state_distribution(
             SCAR_INVALID_TRANSFORM, OuBackend::LocalGh);
     }
@@ -346,7 +358,7 @@ ScarOuEvaluator::smoothed_state_distribution_local_gh(
             SCAR_INVALID_SIZE, OuBackend::LocalGh);
     }
     return smoothed_state_distribution_impl(
-        copula, u, grid, transition, OuBackend::LocalGh);
+        emission, u, grid, transition, OuBackend::LocalGh);
 }
 
 }  // namespace scar

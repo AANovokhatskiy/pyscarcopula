@@ -2,7 +2,6 @@
 
 #include "evaluator_internal.hpp"
 #include "scar/core/threading.hpp"
-#include "scar/detail/copula/dispatch.hpp"
 #include "scar/detail/safety.hpp"
 #include "scar/detail/scar_ou/grid.hpp"
 
@@ -14,16 +13,17 @@
 
 namespace scar::evaluator_detail {
 
-const double* observation_data(const CopulaSpec& copula, ObservationView u) {
-    const int expected_dim =
-        copula.model_descriptor().expected_dimension();
+const double* observation_data(
+    const PreparedDynamicEmission& emission,
+    ObservationView u) {
+
+    const int expected_dim = emission.expected_dimension();
     if (u.dim != expected_dim) {
         throw std::invalid_argument("u dimension does not match CopulaSpec::dim");
     }
     const bool prepared_equicorr =
-        copula.family == CopulaFamily::EquicorrGaussian
-        && copula.equicorr_sum_scores().size() == u.size()
-        && copula.equicorr_sum_squares().size() == u.size();
+        emission.kind() == DynamicEmissionKind::Equicorrelation
+        && emission.has_cached_observations(u.size());
     if (!u.empty() && u.data() == nullptr && !prepared_equicorr) {
         throw std::invalid_argument("u data pointer must not be null");
     }
@@ -51,8 +51,8 @@ Result<std::size_t> rosenblatt_output_size(
     return success(output_size);
 }
 
-bool supported_ou_copula(const CopulaSpec& copula) {
-    return scar_internal::copula_is_supported_for_ou(copula);
+bool supported_ou_copula(const PreparedDynamicEmission& emission) {
+    return emission.is_supported_for_ou();
 }
 
 bool valid_ou_params(const OuParams& params) {

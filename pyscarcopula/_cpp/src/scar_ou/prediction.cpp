@@ -59,7 +59,10 @@ std::vector<double> ScarOuEvaluator::predictive_mean_local_gh(
 
     status = SCAR_OK;
     std::vector<double> out(u.size(), 0.0);
-    if (!supported_ou_copula(copula)) {
+    std::unique_ptr<PreparedDynamicEmission> emission_owner;
+    const PreparedDynamicEmission& emission =
+        resolve_dynamic_emission(copula, emission_owner);
+    if (!supported_ou_copula(emission)) {
         status = SCAR_INVALID_TRANSFORM;
         return out;
     }
@@ -83,9 +86,9 @@ std::vector<double> ScarOuEvaluator::predictive_mean_local_gh(
         status = SCAR_INVALID_SIZE;
         return out;
     }
-    const double* observation_values = observation_data(copula, u);
+    const double* observation_values = observation_data(emission, u);
     if (!scar_internal::local_forward_predictive_mean(
-            copula,
+            emission,
             grid, gh_nodes, gh_weights, observation_values,
             static_cast<std::int64_t>(u.size()),
             out.data())) {
@@ -103,7 +106,10 @@ std::vector<double> ScarOuEvaluator::predictive_mean_matrix(
 
     status = SCAR_OK;
     std::vector<double> out(u.size(), 0.0);
-    if (!supported_ou_copula(copula)) {
+    std::unique_ptr<PreparedDynamicEmission> emission_owner;
+    const PreparedDynamicEmission& emission =
+        resolve_dynamic_emission(copula, emission_owner);
+    if (!supported_ou_copula(emission)) {
         status = SCAR_INVALID_TRANSFORM;
         return out;
     }
@@ -126,9 +132,9 @@ std::vector<double> ScarOuEvaluator::predictive_mean_matrix(
         status = SCAR_INVALID_SIZE;
         return out;
     }
-    const double* observation_values = observation_data(copula, u);
+    const double* observation_values = observation_data(emission, u);
     if (!scar_internal::matrix_forward_predictive_mean(
-            copula, grid, transition, observation_values,
+            emission, grid, transition, observation_values,
             static_cast<std::int64_t>(u.size()),
             out.data())) {
         status = SCAR_NUMERICAL_FAILURE;
@@ -145,11 +151,14 @@ std::vector<double> ScarOuEvaluator::forward_rosenblatt_local_gh(
 
     status = SCAR_OK;
     std::vector<double> values(u.size(), 0.0);
+    std::unique_ptr<PreparedDynamicEmission> emission_owner;
+    const PreparedDynamicEmission& emission =
+        resolve_dynamic_emission(copula, emission_owner);
     if (u.dim != 2) {
         status = SCAR_INVALID_SIZE;
         return std::vector<double>(2 * u.size(), 0.0);
     }
-    if (!supported_ou_copula(copula)) {
+    if (!supported_ou_copula(emission)) {
         status = SCAR_INVALID_TRANSFORM;
         return std::vector<double>(2 * u.size(), 0.0);
     }
@@ -174,9 +183,9 @@ std::vector<double> ScarOuEvaluator::forward_rosenblatt_local_gh(
         status = SCAR_INVALID_SIZE;
         return std::vector<double>(2 * u.size(), 0.0);
     }
-    const double* observation_values = observation_data(copula, u);
+    const double* observation_values = observation_data(emission, u);
     if (!scar_internal::local_forward_mixture_h(
-            copula,
+            emission,
             grid,
             gh_nodes,
             gh_weights,
@@ -199,11 +208,14 @@ std::vector<double> ScarOuEvaluator::forward_rosenblatt_matrix(
 
     status = SCAR_OK;
     std::vector<double> values(u.size(), 0.0);
+    std::unique_ptr<PreparedDynamicEmission> emission_owner;
+    const PreparedDynamicEmission& emission =
+        resolve_dynamic_emission(copula, emission_owner);
     if (u.dim != 2) {
         status = SCAR_INVALID_SIZE;
         return std::vector<double>(2 * u.size(), 0.0);
     }
-    if (!supported_ou_copula(copula)) {
+    if (!supported_ou_copula(emission)) {
         status = SCAR_INVALID_TRANSFORM;
         return std::vector<double>(2 * u.size(), 0.0);
     }
@@ -227,9 +239,9 @@ std::vector<double> ScarOuEvaluator::forward_rosenblatt_matrix(
         status = SCAR_INVALID_SIZE;
         return std::vector<double>(2 * u.size(), 0.0);
     }
-    const double* observation_values = observation_data(copula, u);
+    const double* observation_values = observation_data(emission, u);
     if (!scar_internal::matrix_forward_mixture_h(
-            copula,
+            emission,
             grid,
             transition,
             observation_values,
@@ -251,12 +263,15 @@ std::vector<double> ScarOuEvaluator::forward_rosenblatt_auto(
     int& status) const {
 
     status = SCAR_OK;
+    std::unique_ptr<PreparedDynamicEmission> emission_owner;
+    const PreparedDynamicEmission& emission =
+        resolve_dynamic_emission(copula, emission_owner);
     if (u.dim != 2) {
         status = SCAR_INVALID_SIZE;
         return std::vector<double>(2 * u.size(), 0.0);
     }
     scar_internal::OuGrid grid;
-    if (!supported_ou_copula(copula)) {
+    if (!supported_ou_copula(emission)) {
         status = SCAR_INVALID_TRANSFORM;
         return std::vector<double>(2 * u.size(), 0.0);
     }
@@ -296,7 +311,10 @@ std::vector<double> ScarOuEvaluator::mixture_h_local_gh(
 
     status = SCAR_OK;
     std::vector<double> out(u.size(), 0.0);
-    if (!supported_ou_copula(copula)) {
+    std::unique_ptr<PreparedDynamicEmission> emission_owner;
+    const PreparedDynamicEmission& emission =
+        resolve_dynamic_emission(copula, emission_owner);
+    if (!supported_ou_copula(emission)) {
         status = SCAR_INVALID_TRANSFORM;
         return out;
     }
@@ -320,9 +338,9 @@ std::vector<double> ScarOuEvaluator::mixture_h_local_gh(
         status = SCAR_INVALID_SIZE;
         return out;
     }
-    const double* observation_values = observation_data(copula, u);
+    const double* observation_values = observation_data(emission, u);
     if (!scar_internal::local_forward_mixture_h(
-            copula,
+            emission,
             grid, gh_nodes, gh_weights, observation_values,
             static_cast<std::int64_t>(u.size()),
             out.data())) {
@@ -340,7 +358,10 @@ std::vector<double> ScarOuEvaluator::mixture_h_matrix(
 
     status = SCAR_OK;
     std::vector<double> out(u.size(), 0.0);
-    if (!supported_ou_copula(copula)) {
+    std::unique_ptr<PreparedDynamicEmission> emission_owner;
+    const PreparedDynamicEmission& emission =
+        resolve_dynamic_emission(copula, emission_owner);
+    if (!supported_ou_copula(emission)) {
         status = SCAR_INVALID_TRANSFORM;
         return out;
     }
@@ -362,9 +383,9 @@ std::vector<double> ScarOuEvaluator::mixture_h_matrix(
         status = SCAR_INVALID_SIZE;
         return out;
     }
-    const double* observation_values = observation_data(copula, u);
+    const double* observation_values = observation_data(emission, u);
     if (!scar_internal::matrix_forward_mixture_h(
-            copula, grid, transition, observation_values,
+            emission, grid, transition, observation_values,
             static_cast<std::int64_t>(u.size()),
             out.data())) {
         status = SCAR_NUMERICAL_FAILURE;
@@ -381,7 +402,10 @@ std::vector<double> ScarOuEvaluator::mixture_h_pair_local_gh(
 
     status = SCAR_OK;
     std::vector<double> out(2 * u.size(), 0.0);
-    if (!supported_ou_copula(copula)) {
+    std::unique_ptr<PreparedDynamicEmission> emission_owner;
+    const PreparedDynamicEmission& emission =
+        resolve_dynamic_emission(copula, emission_owner);
+    if (!supported_ou_copula(emission)) {
         status = SCAR_INVALID_TRANSFORM;
         return out;
     }
@@ -406,9 +430,9 @@ std::vector<double> ScarOuEvaluator::mixture_h_pair_local_gh(
         status = SCAR_INVALID_SIZE;
         return out;
     }
-    const double* observation_values = observation_data(copula, u);
+    const double* observation_values = observation_data(emission, u);
     if (!scar_internal::local_forward_mixture_h(
-            copula, grid, gh_nodes, gh_weights, observation_values,
+            emission, grid, gh_nodes, gh_weights, observation_values,
             static_cast<std::int64_t>(u.size()), out.data(),
             out.data() + u.size())) {
         status = SCAR_NUMERICAL_FAILURE;
@@ -425,7 +449,10 @@ std::vector<double> ScarOuEvaluator::mixture_h_pair_matrix(
 
     status = SCAR_OK;
     std::vector<double> out(2 * u.size(), 0.0);
-    if (!supported_ou_copula(copula)) {
+    std::unique_ptr<PreparedDynamicEmission> emission_owner;
+    const PreparedDynamicEmission& emission =
+        resolve_dynamic_emission(copula, emission_owner);
+    if (!supported_ou_copula(emission)) {
         status = SCAR_INVALID_TRANSFORM;
         return out;
     }
@@ -448,9 +475,9 @@ std::vector<double> ScarOuEvaluator::mixture_h_pair_matrix(
         status = SCAR_INVALID_SIZE;
         return out;
     }
-    const double* observation_values = observation_data(copula, u);
+    const double* observation_values = observation_data(emission, u);
     if (!scar_internal::matrix_forward_mixture_h(
-            copula, grid, transition, observation_values,
+            emission, grid, transition, observation_values,
             static_cast<std::int64_t>(u.size()), out.data(),
             out.data() + u.size())) {
         status = SCAR_NUMERICAL_FAILURE;

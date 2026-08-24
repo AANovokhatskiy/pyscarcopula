@@ -1,5 +1,9 @@
 #include "scar/copula/prepared_pair_kernel.hpp"
 
+#include "scar/copula/pair/gaussian.hpp"
+#include "scar/math/normal.hpp"
+#include "scar/numerical_constants.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -205,6 +209,26 @@ double PreparedPairKernel::dlog_pdf_dparameter_unrotated(
         : quiet_nan();
 }
 
+double PreparedPairKernel::dlog_pdf_dparameter(
+    double first,
+    double second,
+    double parameter) const {
+
+    if (!is_supported()) {
+        return quiet_nan();
+    }
+    double rotated_first = 0.0;
+    double rotated_second = 0.0;
+    copula::apply_rotation(
+        first,
+        second,
+        static_cast<int>(rotation_),
+        rotated_first,
+        rotated_second);
+    return functions_->dlog_pdf_dparameter(
+        rotated_first, rotated_second, parameter);
+}
+
 double PreparedPairKernel::log_pdf(
     double first,
     double second,
@@ -301,6 +325,42 @@ double PreparedPairKernel::h(
         : quiet_nan();
 }
 
+void PreparedPairKernel::h_pair(
+    double first,
+    double second,
+    double parameter,
+    double& first_next,
+    double& second_next) const {
+
+    if (is_unrotated_gaussian()) {
+        const double first_quantile = math::normal_quantile(
+            std::clamp(
+                first,
+                numerical::kPseudoObservationEps,
+                1.0 - numerical::kPseudoObservationEps));
+        const double second_quantile = math::normal_quantile(
+            std::clamp(
+                second,
+                numerical::kPseudoObservationEps,
+                1.0 - numerical::kPseudoObservationEps));
+        copula::pair::gaussian_h_pair_from_quantiles(
+            first_quantile,
+            second_quantile,
+            parameter,
+            first_next,
+            second_next);
+        return;
+    }
+    first_next = h(first, second, parameter);
+    PreparedPairKernel transposed = *this;
+    if (transposed.rotation_ == Rotation::R90) {
+        transposed.rotation_ = Rotation::R270;
+    } else if (transposed.rotation_ == Rotation::R270) {
+        transposed.rotation_ = Rotation::R90;
+    }
+    second_next = transposed.h(second, first, parameter);
+}
+
 double PreparedPairKernel::inverse_h(
     double quantile,
     double given,
@@ -314,6 +374,53 @@ double PreparedPairKernel::inverse_h(
             static_cast<int>(rotation_),
             functions_->inverse_h)
         : quiet_nan();
+}
+
+bool PreparedPairKernel::is_unrotated_gaussian() const noexcept {
+    return is_supported()
+        && family_ == CopulaFamily::Gaussian
+        && rotation_ == Rotation::R0;
+}
+
+double PreparedPairKernel::prepare_conditional_value(double value) const {
+    if (!is_unrotated_gaussian()) {
+        return quiet_nan();
+    }
+    return math::normal_quantile(
+        std::clamp(
+            value,
+            numerical::kPseudoObservationEps,
+            1.0 - numerical::kPseudoObservationEps));
+}
+
+double PreparedPairKernel::h_from_prepared_values(
+    double first,
+    double second,
+    double parameter) const {
+    return is_unrotated_gaussian()
+        ? copula::pair::gaussian_h_from_quantiles(
+            first, second, parameter)
+        : quiet_nan();
+}
+
+void PreparedPairKernel::h_pair_from_prepared_values(
+    double first,
+    double second,
+    double parameter,
+    double& first_next,
+    double& second_next) const {
+
+    if (!is_unrotated_gaussian()) {
+        first_next = quiet_nan();
+        second_next = quiet_nan();
+        return;
+    }
+    copula::pair::gaussian_h_pair_from_quantiles(
+        first,
+        second,
+        parameter,
+        first_next,
+        second_next);
 }
 
 void PreparedPairKernel::prepare_parameter_grid(

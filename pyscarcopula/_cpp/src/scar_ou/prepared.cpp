@@ -32,11 +32,13 @@ PreparedScarOuEvaluator::PreparedScarOuEvaluator(
     OuNumericalConfig config,
     std::string method)
     : copula_(std::move(copula)),
+      emission_(copula_),
       observations_(std::move(observations)),
       n_obs_(n_obs),
       dim_(dim),
       config_(config),
-      method_(std::move(method)) {
+      method_(std::move(method)),
+      evaluator_(&emission_) {
 
     // Prepared objects own the observation memory so ObservationView remains
     // valid across repeated optimizer callbacks after the pybind constructor
@@ -103,6 +105,7 @@ PreparedScarOuEvaluator::PreparedScarOuEvaluator(
             copula_.pair_gaussian_second_scores()[row] = x2;
         }
     }
+    emission_.refresh(copula_);
 }
 
 PreparedScarOuEvaluator::PreparedScarOuEvaluator(
@@ -112,10 +115,12 @@ PreparedScarOuEvaluator::PreparedScarOuEvaluator(
     OuNumericalConfig config,
     std::string method)
     : copula_(std::move(copula)),
+      emission_(copula_),
       n_obs_(0),
       dim_(copula_.dim),
       config_(config),
-      method_(std::move(method)) {
+      method_(std::move(method)),
+      evaluator_(&emission_) {
 
     if (!valid_method(method_)) {
         throw std::invalid_argument("unsupported transition_method");
@@ -147,6 +152,7 @@ PreparedScarOuEvaluator::PreparedScarOuEvaluator(
     copula_.equicorr_sum_scores() = std::move(equicorr_sums);
     copula_.equicorr_sum_squares() =
         std::move(equicorr_sum_squares);
+    emission_.refresh(copula_);
 }
 
 void PreparedScarOuEvaluator::update_student_factor(
@@ -181,6 +187,7 @@ void PreparedScarOuEvaluator::update_student_factor(
     }
     copula_.dense_inverse_cholesky() = l_inv;
     copula_.dense_log_determinant() = log_det;
+    emission_.refresh(copula_);
 }
 
 ObservationView PreparedScarOuEvaluator::view() const noexcept {

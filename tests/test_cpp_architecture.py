@@ -340,6 +340,95 @@ def test_stage4_multivariate_models_are_vertical_and_typed():
                 assert "Student" not in text
 
 
+def test_stage5_application_modules_use_prepared_copula_interfaces():
+    cpp = ROOT / "pyscarcopula" / "_cpp"
+    include = cpp / "include" / "scar"
+    source = cpp / "src"
+
+    emission_header = include / "copula" / "prepared_dynamic_emission.hpp"
+    emission_source = source / "copula" / "prepared_dynamic_emission.cpp"
+    assert (include / "copula" / "grid_values.hpp").is_file()
+    assert emission_header.is_file()
+    assert emission_source.is_file()
+    emission_contract = emission_header.read_text(encoding="utf-8")
+    assert "class PreparedDynamicEmission" in emission_contract
+    assert "class PreparedDynamicEmissionWorkspace" in emission_contract
+    assert "DynamicEmissionRowResult evaluate_parameter(" in emission_contract
+    assert "bool observation_cache_compatible(" in emission_contract
+    assert "copula/pair/" not in emission_contract
+    assert "copula/multivariate/" not in emission_contract
+    assert "detail/copula/" not in emission_contract
+
+    gas = (source / "gas" / "evaluator.cpp").read_text(encoding="utf-8")
+    assert "PreparedDynamicEmission" in gas
+    assert '#include "scar/copula.hpp"' not in gas
+    assert "detail/copula/dispatch.hpp" not in gas
+    assert "copula/multivariate/" not in gas
+    assert "copula/pair/" not in gas
+    gas_header = (include / "gas.hpp").read_text(encoding="utf-8")
+    assert "GasStateResult initial_state_prepared(" in gas_header
+    assert "GasUpdateResult update_one_prepared(" in gas_header
+    assert "GasUpdateResult update_observation_prepared(" in gas_header
+
+    static_header = (include / "copula.hpp").read_text(encoding="utf-8")
+    static_source = (source / "likelihood" / "static.cpp").read_text(
+        encoding="utf-8")
+    assert "PreparedDynamicEmission" in static_header
+    assert "emission_" in static_header
+    assert "emission_->evaluate_parameter(" in static_source
+
+    ou_header = (include / "ou.hpp").read_text(encoding="utf-8")
+    assert '#include "scar/copula.hpp"' not in ou_header
+    assert "const PreparedDynamicEmission* prepared_emission_" in ou_header
+    assert "PreparedDynamicEmission emission_;" in ou_header
+    for name in (
+        "evaluator.cpp",
+        "likelihood.cpp",
+        "monte_carlo.cpp",
+        "prediction.cpp",
+        "state_distribution.cpp",
+        "transition.cpp",
+        "validation.cpp",
+    ):
+        text = (source / "scar_ou" / name).read_text(encoding="utf-8")
+        assert "PreparedDynamicEmission" in text, name
+        assert "detail/copula/dispatch.hpp" not in text, name
+        assert "copula/multivariate/" not in text, name
+        assert "copula/pair/" not in text, name
+        assert "factor_operator(" not in text, name
+        assert "student_ppf_nodes(" not in text, name
+
+    gradient = (source / "scar_ou" / "gradient.cpp").read_text(
+        encoding="utf-8")
+    assert "&prepared->compatibility_spec() == &copula" not in gradient
+    assert "if (prepared != nullptr)" in gradient
+    assert "const CopulaSpec& copula = emission.compatibility_spec();" in gradient
+
+    vine_header = (include / "rvine.hpp").read_text(encoding="utf-8")
+    assert "PreparedPairKernel kernel;" in vine_header
+    assert "PreparedPairKernel transposed_kernel;" in vine_header
+    for path in (source / "vine").glob("*.cpp"):
+        text = path.read_text(encoding="utf-8")
+        assert "detail/copula/dispatch.hpp" not in text, path
+        assert "copula/multivariate/" not in text, path
+        assert "copula/pair/" not in text, path
+
+    composition = (source / "gas" / "rvine_sampler.cpp").read_text(
+        encoding="utf-8")
+    assert '#include "scar/gas_rvine.hpp"' in composition
+    assert '#include "scar/rvine.hpp"' in composition
+    assert '#include "scar/copula/prepared_dynamic_emission.hpp"' in composition
+    assert "gas_emissions" in composition
+    assert "gas_workspaces" in composition
+    assert "update_one_prepared(" in composition
+    assert "evaluator.update_one(" not in composition
+
+    composition_header = (include / "gas_rvine.hpp").read_text(
+        encoding="utf-8")
+    assert '#include "scar/copula/spec.hpp"' in composition_header
+    assert '#include "scar/copula.hpp"' not in composition_header
+
+
 def test_setup_build_path_does_not_mutate_path():
     source = (ROOT / "setup.py").read_text(encoding="utf-8")
     assert 'os.environ["PATH"]' not in source
@@ -503,6 +592,41 @@ def test_rvine_mcmc_binding_keeps_arrays_alive_and_releases_gil():
             "pyscarcopula/_cpp/src/vine/bad.cpp",
             '#include "scar/gas_rvine.hpp"\n',
             "rvine-independent-of-dynamic-models",
+        ),
+        (
+            "pyscarcopula/_cpp/src/gas/evaluator.cpp",
+            '#include "scar/copula/multivariate/student/density.hpp"\n',
+            "prepared-application-modules",
+        ),
+        (
+            "pyscarcopula/_cpp/src/scar_ou/likelihood.cpp",
+            '#include "scar/detail/copula/dispatch.hpp"\n',
+            "prepared-application-modules",
+        ),
+        (
+            "pyscarcopula/_cpp/src/copula/bad.cpp",
+            '#include "scar/rvine.hpp"\n',
+            "prepared-application-modules",
+        ),
+        (
+            "pyscarcopula/_cpp/src/scar_ou/gradient.cpp",
+            "&prepared->compatibility_spec() == &copula;\n",
+            "prepared-application-modules",
+        ),
+        (
+            "pyscarcopula/_cpp/src/scar_ou/monte_carlo.cpp",
+            "spec.student_ppf_nodes();\n",
+            "prepared-application-modules",
+        ),
+        (
+            "pyscarcopula/_cpp/include/scar/gas_rvine.hpp",
+            '#include "scar/copula.hpp"\n',
+            "prepared-application-modules",
+        ),
+        (
+            "pyscarcopula/_cpp/src/gas/rvine_sampler.cpp",
+            "evaluator.update_one();\n",
+            "prepared-application-modules",
         ),
         (
             "pyscarcopula/_cpp/include/scar/detail/internal.hpp",

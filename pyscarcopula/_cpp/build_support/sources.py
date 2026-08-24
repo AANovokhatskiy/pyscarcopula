@@ -50,6 +50,7 @@ SCAR_COMPUTE_SOURCES = (
     "copula/rotation.cpp",
     "copula/transforms.cpp",
     "copula/dispatch.cpp",
+    "copula/prepared_dynamic_emission.cpp",
     "copula/pair/runtime_registry.cpp",
     "copula/pair/model.cpp",
     *PAIR_FAMILY_SOURCES,
