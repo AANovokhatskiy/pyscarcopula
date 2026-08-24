@@ -1,14 +1,139 @@
-#include "common.hpp"
+#include "array.hpp"
+#include "module.hpp"
 
+#include "scar/copula.hpp"
 #include "scar/copula/multivariate/gaussian/conditional.hpp"
 #include "scar/copula/multivariate/student/conditional.hpp"
+#include "scar/copula/multivariate/student/quantile.hpp"
 #include "scar/copula/multivariate/student/rosenblatt.hpp"
+#include "scar/core/checked_arithmetic.hpp"
+
+#include <pybind11/stl.h>
+
+#include <limits>
+#include <stdexcept>
 
 namespace py = pybind11;
 
 namespace pyscarcopula::bindings {
+namespace {
+
+py::array_t<double> grid_values_to_array(const scar::GridValues& values) {
+    return matrix_to_array(
+        values.values,
+        static_cast<std::size_t>(values.n_obs),
+        static_cast<std::size_t>(values.n_grid));
+}
+
+py::dict multivariate_rows_result_to_dict(
+    const scar::MultivariateRowsResult& result) {
+
+    py::dict output;
+    output["log_pdf"] = vector_to_array(result.log_pdf);
+    output["dlog_dr"] = vector_to_array(result.dlog_dr);
+    output["status"] = static_cast<int>(result.status);
+    output["failure_index"] = result.failure.index;
+    output["student_ppf_cache_values"] = result.student_ppf_cache_values;
+    output["student_ppf_exact_values"] = result.student_ppf_exact_values;
+    output["student_ppf_asymptotic_values"] =
+        result.student_ppf_asymptotic_values;
+    output["student_workspace_growth_events"] =
+        result.student_workspace_growth_events;
+    output["student_workspace_peak_bytes"] =
+        result.student_workspace_peak_bytes;
+    output["n_threads_requested"] = result.n_threads_requested;
+    output["row_parallel_blocks"] = result.row_parallel_blocks;
+    return output;
+}
+
+py::dict multivariate_grid_result_to_dict(
+    const scar::MultivariateGridResult& result) {
+
+    py::dict output;
+    output["pdf"] = grid_values_to_array(result.pdf);
+    output["d_pdf_dx"] = grid_values_to_array(result.d_pdf_dx);
+    output["status"] = static_cast<int>(result.status);
+    output["failure_index"] = result.failure.index;
+    output["student_ppf_cache_values"] = result.student_ppf_cache_values;
+    output["student_ppf_exact_values"] = result.student_ppf_exact_values;
+    output["student_ppf_asymptotic_values"] =
+        result.student_ppf_asymptotic_values;
+    output["student_workspace_growth_events"] =
+        result.student_workspace_growth_events;
+    output["student_workspace_peak_bytes"] =
+        result.student_workspace_peak_bytes;
+    output["n_threads_requested"] = result.n_threads_requested;
+    output["student_parallel_blocks"] = result.student_parallel_blocks;
+    output["equicorr_parallel_blocks"] = result.equicorr_parallel_blocks;
+    return output;
+}
+
+py::dict equicorr_preparation_result_to_dict(
+    const scar::EquicorrPreparationResult& result) {
+
+    py::dict output;
+    output["sum_z"] = vector_to_array(result.sum_z);
+    output["sum_z2"] = vector_to_array(result.sum_z2);
+    output["status"] = static_cast<int>(result.status);
+    output["failure_index"] = result.failure.index;
+    output["n_threads_requested"] = result.n_threads_requested;
+    output["parallel_blocks"] = result.parallel_blocks;
+    output["parallel_axis"] = result.parallel_axis;
+    output["dimension_tiles"] = result.dimension_tiles;
+    output["temporary_values"] = result.temporary_values;
+    output["clipping_events"] = result.clipping_events;
+    output["nonfinite_values"] = result.nonfinite_values;
+    return output;
+}
+
+py::dict conditional_sample_result_to_dict(
+    const scar::ConditionalSampleResult& result) {
+
+    py::dict output;
+    output["values"] = matrix_to_array(
+        result.values,
+        static_cast<std::size_t>(result.n_rows),
+        static_cast<std::size_t>(result.n_free));
+    output["status"] = static_cast<int>(result.status);
+    output["failure_index"] = result.failure.index;
+    output["n_threads_requested"] = result.n_threads_requested;
+    output["parallel_blocks"] = result.parallel_blocks;
+    output["correlation_factorizations"] =
+        result.correlation_factorizations;
+    return output;
+}
+
+}  // namespace
 
 void bind_multivariate(py::module_& m) {
+    m.def(
+        "_student_quantile",
+        &scar_internal::student_quantile_value,
+        py::arg("p"),
+        py::arg("df"));
+    m.def(
+        "_student_quantile_large_df",
+        [](double p, double df) {
+            double value = 0.0;
+            double derivative = 0.0;
+            scar_internal::student_quantile_large_df_value_and_derivative(
+                p, df, value, derivative);
+            return py::make_tuple(value, derivative);
+        },
+        py::arg("p"),
+        py::arg("df"));
+    m.def(
+        "_student_quantile_with_df_derivative",
+        [](double p, double df) {
+            double value = 0.0;
+            double derivative = 0.0;
+            scar_internal::student_quantile_value_and_derivative(
+                p, df, value, derivative);
+            return py::make_tuple(value, derivative);
+        },
+        py::arg("p"),
+        py::arg("df"));
+
     m.def(
         "prepare_equicorr_sufficient_statistics",
         [](
@@ -20,17 +145,18 @@ void bind_multivariate(py::module_& m) {
                 throw std::invalid_argument(
                     "u must be a 2D float64 array with shape (n, d), d >= 2");
             }
-            std::size_t n_obs = 0;
-            std::size_t dimension = 0;
+            if (info.shape[0] < 0 || info.shape[1] < 0) {
+                throw std::invalid_argument("u shape is not representable");
+            }
+            const std::size_t n_obs =
+                static_cast<std::size_t>(info.shape[0]);
+            const std::size_t dimension =
+                static_cast<std::size_t>(info.shape[1]);
             std::size_t values = 0;
-            if (!scar_internal::checked_nonnegative_size(
-                    info.shape[0], n_obs)
-                || !scar_internal::checked_nonnegative_size(
-                    info.shape[1], dimension)
-                || dimension
+            if (dimension
                     > static_cast<std::size_t>(
                         std::numeric_limits<int>::max())
-                || !scar_internal::checked_size_mul(
+                || !scar::core::checked_size_mul(
                     n_obs, dimension, values)) {
                 throw std::invalid_argument("u shape is not representable");
             }

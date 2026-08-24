@@ -16,7 +16,11 @@ from pyscarcopula import (
     FactorStudentEvaluator,
     FactorStudentGridEvaluation,
 )
+from pyscarcopula.copula.multivariate.factor_student import (
+    _raise_native_status,
+)
 from pyscarcopula.numerical import static_likelihood
+from pyscarcopula.numerical._cpp_extension import CppError, CppUnsupported
 
 
 def _problem(dimension=10, rank=3, rows=24, seed=1201):
@@ -390,3 +394,24 @@ def test_invalid_grid_contract_is_rejected(grid, kwargs):
     evaluator = FactorStudentEvaluator(factor, observations)
     with pytest.raises((TypeError, ValueError)):
         evaluator.evaluate_grid(grid, **kwargs)
+
+
+@pytest.mark.parametrize(
+    ("status", "error"),
+    [
+        (2, ValueError),
+        (3, CppUnsupported),
+        (7, FloatingPointError),
+        (1, CppError),
+    ],
+)
+def test_native_factor_status_is_translated_by_python_adapter(status, error):
+    with pytest.raises(error, match=rf"status={status} .*index=4"):
+        _raise_native_status(
+            {"status": status, "failure_index": 4},
+            "contract test",
+        )
+
+
+def test_native_factor_success_status_is_accepted():
+    _raise_native_status({"status": 0}, "contract test")

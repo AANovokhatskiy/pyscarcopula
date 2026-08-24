@@ -1,7 +1,10 @@
-#include "common.hpp"
+#include "array.hpp"
+#include "module.hpp"
 
 #include "scar/detail/parallel.hpp"
 #include "scar/detail/linalg.hpp"
+
+#include <pybind11/stl.h>
 
 #include <cmath>
 #include <cstdint>

@@ -1,8 +1,11 @@
-#include "common.hpp"
+#include "array.hpp"
+#include "module.hpp"
 
 #include "scar/factor.hpp"
+#include "scar/core/checked_arithmetic.hpp"
 
-#include <cstring>
+#include <pybind11/stl.h>
+
 #include <limits>
 #include <memory>
 #include <stdexcept>
@@ -29,11 +32,13 @@ std::size_t checked_rows(
         throw std::invalid_argument(
             std::string(name) + " must be a 2D array with expected width");
     }
-    std::size_t rows = 0;
+    if (info.shape[0] < 0) {
+        throw std::invalid_argument(
+            std::string(name) + " shape is not representable");
+    }
+    const std::size_t rows = static_cast<std::size_t>(info.shape[0]);
     std::size_t values = 0;
-    if (!scar_internal::checked_nonnegative_size(info.shape[0], rows)
-        || !scar_internal::checked_size_mul(
-            rows, expected_columns, values)
+    if (!scar::core::checked_size_mul(rows, expected_columns, values)
         || rows
             > static_cast<std::size_t>(
                 std::numeric_limits<std::int64_t>::max())) {
@@ -43,29 +48,64 @@ std::size_t checked_rows(
     return rows;
 }
 
-py::array_t<double> matrix_copy(
-    const std::vector<double>& values,
-    std::size_t rows,
-    std::size_t columns) {
+py::dict factor_student_rows_result_to_dict(
+    const scar::FactorStudentRowsResult& result) {
 
-    py::array_t<double> output({
-        static_cast<py::ssize_t>(rows),
-        static_cast<py::ssize_t>(columns),
-    });
-    std::memcpy(
-        output.mutable_data(),
-        values.data(),
-        values.size() * sizeof(double));
+    py::dict output;
+    output["log_pdf"] = vector_to_array(result.log_pdf);
+    output["dlog_ddf"] = vector_to_array(result.dlog_ddf);
+    output["status"] = static_cast<int>(result.status);
+    output["failure_index"] = result.failure.index;
+    output["n_threads_requested"] = result.n_threads_requested;
+    output["row_parallel_blocks"] = result.row_parallel_blocks;
+    output["worker_workspace_peak_bytes"] =
+        result.worker_workspace_peak_bytes;
     return output;
 }
 
-py::array_t<double> vector_copy(const std::vector<double>& values) {
-    py::array_t<double> output(
-        static_cast<py::ssize_t>(values.size()));
-    std::memcpy(
-        output.mutable_data(),
-        values.data(),
-        values.size() * sizeof(double));
+py::dict factor_student_joint_result_to_dict(
+    const scar::FactorStudentJointResult& result,
+    std::size_t dimension,
+    std::size_t rank) {
+
+    py::dict output;
+    output["log_likelihood"] = result.log_likelihood;
+    output["dlog_likelihood_ddf"] = result.dlog_likelihood_ddf;
+    output["dlog_likelihood_dloadings"] = matrix_to_array(
+        result.dlog_likelihood_dloadings, dimension, rank);
+    output["status"] = static_cast<int>(result.status);
+    output["failure_index"] = result.failure.index;
+    output["n_threads_requested"] = result.n_threads_requested;
+    output["reduction_blocks"] = result.reduction_blocks;
+    output["parallel_blocks"] = result.parallel_blocks;
+    output["worker_workspace_peak_bytes"] =
+        result.worker_workspace_peak_bytes;
+    output["reduction_workspace_bytes"] =
+        result.reduction_workspace_bytes;
+    return output;
+}
+
+py::dict factor_student_grid_result_to_dict(
+    const scar::FactorStudentGridResult& result) {
+
+    py::dict output;
+    output["log_pdf"] = matrix_to_array(
+        result.log_pdf, result.rows, result.grid_size);
+    output["dlog_ddf"] = matrix_to_array(
+        result.dlog_ddf, result.rows, result.grid_size);
+    output["rows"] = result.rows;
+    output["grid_size"] = result.grid_size;
+    output["dimension_tiles"] = result.dimension_tiles;
+    output["status"] = static_cast<int>(result.status);
+    output["failure_index"] = result.failure.index;
+    output["n_threads_requested"] = result.n_threads_requested;
+    output["parallel_axis"] = result.parallel_axis;
+    output["parallel_blocks"] = result.parallel_blocks;
+    output["worker_workspace_peak_bytes"] =
+        result.worker_workspace_peak_bytes;
+    output["partial_workspace_peak_bytes"] =
+        result.partial_workspace_peak_bytes;
+    output["ppf_exact_values"] = result.ppf_exact_values;
     return output;
 }
 
@@ -118,7 +158,7 @@ void bind_factor(py::module_& m) {
         .def_property_readonly(
             "loadings",
             [](const scar::FactorCorrelationOperator& self) {
-                return matrix_copy(
+                return matrix_to_array(
                     self.loadings(), self.dimension(), self.rank());
             })
         .def_property_readonly(
@@ -134,7 +174,7 @@ void bind_factor(py::module_& m) {
         .def_property_readonly(
             "weighted_loadings",
             [](const scar::FactorCorrelationOperator& self) {
-                return matrix_copy(
+                return matrix_to_array(
                     self.weighted_loadings(),
                     self.dimension(),
                     self.rank());
@@ -142,7 +182,7 @@ void bind_factor(py::module_& m) {
         .def_property_readonly(
             "cholesky_m",
             [](const scar::FactorCorrelationOperator& self) {
-                return matrix_copy(
+                return matrix_to_array(
                     self.cholesky_m(), self.rank(), self.rank());
             })
         .def(
@@ -157,12 +197,13 @@ void bind_factor(py::module_& m) {
                     static_cast<py::ssize_t>(rows),
                     static_cast<py::ssize_t>(self.dimension()),
                 });
+                double* const output_data = output.mutable_data();
                 {
                     py::gil_scoped_release release;
                     self.matvec_rows(
                         static_cast<const double*>(info.ptr),
                         rows,
-                        output.mutable_data(),
+                        output_data,
                         n_threads);
                 }
                 return output;
@@ -181,12 +222,13 @@ void bind_factor(py::module_& m) {
                     static_cast<py::ssize_t>(rows),
                     static_cast<py::ssize_t>(self.dimension()),
                 });
+                double* const output_data = output.mutable_data();
                 {
                     py::gil_scoped_release release;
                     self.solve_rows(
                         static_cast<const double*>(info.ptr),
                         rows,
-                        output.mutable_data(),
+                        output_data,
                         n_threads);
                 }
                 return output;
@@ -203,12 +245,13 @@ void bind_factor(py::module_& m) {
                     info, self.dimension(), "values");
                 py::array_t<double> output(
                     static_cast<py::ssize_t>(rows));
+                double* const output_data = output.mutable_data();
                 {
                     py::gil_scoped_release release;
                     self.quadratic_forms(
                         static_cast<const double*>(info.ptr),
                         rows,
-                        output.mutable_data(),
+                        output_data,
                         n_threads);
                 }
                 return output;
@@ -279,22 +322,7 @@ void bind_factor(py::module_& m) {
                     static_cast<std::size_t>(df_info.shape[0]),
                     n_threads);
             }
-            if (result.failure.index >= 0) {
-                throw std::runtime_error(
-                    "factor Student evaluation failed at observation row "
-                    + std::to_string(result.failure.index));
-            }
-            py::dict output;
-            output["log_pdf"] = vector_copy(result.log_pdf);
-            output["dlog_ddf"] = vector_copy(result.dlog_ddf);
-            output["failure_index"] = result.failure.index;
-            output["n_threads_requested"] =
-                result.n_threads_requested;
-            output["row_parallel_blocks"] =
-                result.row_parallel_blocks;
-            output["worker_workspace_peak_bytes"] =
-                result.worker_workspace_peak_bytes;
-            return output;
+            return factor_student_rows_result_to_dict(result);
         },
         py::arg("correlation"),
         py::arg("observations"),
@@ -325,24 +353,10 @@ void bind_factor(py::module_& m) {
                         df,
                         n_threads);
             }
-            py::dict output;
-            output["log_likelihood"] = result.log_likelihood;
-            output["dlog_likelihood_ddf"] =
-                result.dlog_likelihood_ddf;
-            output["dlog_likelihood_dloadings"] = matrix_copy(
-                result.dlog_likelihood_dloadings,
+            return factor_student_joint_result_to_dict(
+                result,
                 correlation.dimension(),
                 correlation.rank());
-            output["failure_index"] = result.failure.index;
-            output["n_threads_requested"] =
-                result.n_threads_requested;
-            output["reduction_blocks"] = result.reduction_blocks;
-            output["parallel_blocks"] = result.parallel_blocks;
-            output["worker_workspace_peak_bytes"] =
-                result.worker_workspace_peak_bytes;
-            output["reduction_workspace_bytes"] =
-                result.reduction_workspace_bytes;
-            return output;
         },
         py::arg("correlation"),
         py::arg("observations"),
@@ -383,30 +397,7 @@ void bind_factor(py::module_& m) {
                         dimension_tile,
                         n_threads);
             }
-            if (result.failure.index >= 0) {
-                throw std::runtime_error(
-                    "factor Student grid evaluation failed at flat cell "
-                    + std::to_string(result.failure.index));
-            }
-            py::dict output;
-            output["log_pdf"] = matrix_copy(
-                result.log_pdf, result.rows, result.grid_size);
-            output["dlog_ddf"] = matrix_copy(
-                result.dlog_ddf, result.rows, result.grid_size);
-            output["rows"] = result.rows;
-            output["grid_size"] = result.grid_size;
-            output["dimension_tiles"] = result.dimension_tiles;
-            output["failure_index"] = result.failure.index;
-            output["n_threads_requested"] =
-                result.n_threads_requested;
-            output["parallel_axis"] = result.parallel_axis;
-            output["parallel_blocks"] = result.parallel_blocks;
-            output["worker_workspace_peak_bytes"] =
-                result.worker_workspace_peak_bytes;
-            output["partial_workspace_peak_bytes"] =
-                result.partial_workspace_peak_bytes;
-            output["ppf_exact_values"] = result.ppf_exact_values;
-            return output;
+            return factor_student_grid_result_to_dict(result);
         },
         py::arg("correlation"),
         py::arg("observations"),

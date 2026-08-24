@@ -1338,6 +1338,7 @@ def test_cpp_grid_filter_engine_matches_tmgrid(
         _cpp_scar_ou._config(module, config),
         getattr(module.OuBackend, backend_name),
     )
+    assert result["status"] == module.SCAR_OK
     tolerance = 2e-8 if grid_method == "sparse" else 2e-13
 
     np.testing.assert_allclose(
@@ -1389,6 +1390,7 @@ def test_cpp_grid_filter_engine_can_skip_history_storage():
         run_smoothing=False,
     )
 
+    assert result["status"] == module.SCAR_OK
     assert result["predictive_weights"].shape == (0, 17)
     assert result["filtered_weights"].shape == (0, 17)
     assert result["backward_messages"].shape == (0, 17)
@@ -1409,13 +1411,16 @@ def test_cpp_grid_filter_engine_rejects_invalid_emissions(bad_value):
     emissions = np.ones((4, 9), dtype=np.float64)
     emissions[2, 3] = bad_value
 
-    with pytest.raises(RuntimeError, match="filtering failed"):
-        module._ou_grid_filter_engine(
-            _cpp_scar_ou._params(module, 0.9, 0.0, 1.0),
-            emissions,
-            _cpp_scar_ou._config(module, config),
-            module.OuBackend.Matrix,
-        )
+    result = module._ou_grid_filter_engine(
+        _cpp_scar_ou._params(module, 0.9, 0.0, 1.0),
+        emissions,
+        _cpp_scar_ou._config(module, config),
+        module.OuBackend.Matrix,
+    )
+
+    assert result["status"] == module.SCAR_INVALID_PARAMETER
+    assert result["failure_index"] == 2 * 9 + 3
+    assert result["failure_row"] == 2
 
 
 def test_cpp_grid_filter_engine_rejects_degenerate_emission_row():
@@ -1429,13 +1434,15 @@ def test_cpp_grid_filter_engine_rejects_degenerate_emission_row():
     emissions = np.ones((4, 9), dtype=np.float64)
     emissions[1] = 0.0
 
-    with pytest.raises(RuntimeError, match="filtering failed"):
-        module._ou_grid_filter_engine(
-            _cpp_scar_ou._params(module, 0.9, 0.0, 1.0),
-            emissions,
-            _cpp_scar_ou._config(module, config),
-            module.OuBackend.LocalGh,
-        )
+    result = module._ou_grid_filter_engine(
+        _cpp_scar_ou._params(module, 0.9, 0.0, 1.0),
+        emissions,
+        _cpp_scar_ou._config(module, config),
+        module.OuBackend.LocalGh,
+    )
+
+    assert result["status"] == module.SCAR_NUMERICAL_FAILURE
+    assert result["failure_row"] == 1
 
 
 def test_cpp_sparse_gradient_is_invariant_to_grid_scale_rounding():

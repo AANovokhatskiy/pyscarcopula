@@ -9,6 +9,7 @@
 #include "scar/gas/result.hpp"
 #include "scar/gas_rvine/result.hpp"
 #include "scar/math/normal.hpp"
+#include "scar/ou.hpp"
 #include "scar/scar_ou/result.hpp"
 #include "scar/static/result.hpp"
 #include "scar/status.hpp"
@@ -208,6 +209,30 @@ int main() {
         || ou_failure.is_ok()
         || ou_failure.failure.fallback_from != 0) {
         return 14;
+    }
+    std::vector<double> grid_emissions(4 * 9, 1.0);
+    scar::OuNumericalConfig ou_config;
+    ou_config.K = 9;
+    ou_config.grid_range = 3.0;
+    ou_config.adaptive = false;
+    ou_config.grid_method = scar::OuGridMethod::Dense;
+    const scar::OuGridFilterResult filter_result =
+        scar::filter_ou_grid_emissions(
+            scar::OuParams{0.9, 0.0, 1.0},
+            scar::DoubleView{grid_emissions.data(), grid_emissions.size()},
+            4,
+            9,
+            ou_config,
+            scar::OuBackend::Matrix);
+    if (!filter_result.is_ok()
+        || filter_result.n_obs != 4
+        || filter_result.K != 9
+        || filter_result.z_grid.size() != 9
+        || filter_result.predictive_weights.size() != 4 * 9
+        || filter_result.filtered_weights.size() != 4 * 9
+        || filter_result.backward_messages.size() != 4 * 9
+        || filter_result.smoothed_weights.size() != 4 * 9) {
+        return 15;
     }
     return scar::SCAR_OK;
 }

@@ -1,12 +1,139 @@
-#include "common.hpp"
+#include "array.hpp"
+#include "module.hpp"
 
+#include "scar/copula.hpp"
+#include "scar/copula/multivariate/correlation/factor.hpp"
 #include "scar/copula/prepared_pair_kernel.hpp"
+#include "scar/core/checked_arithmetic.hpp"
+
+#include <pybind11/stl.h>
+
+#include <cmath>
+#include <cstdint>
+#include <stdexcept>
+#include <utility>
+#include <vector>
 
 namespace py = pybind11;
 
 namespace pyscarcopula::bindings {
+namespace {
+
+py::array_t<double> grid_values_to_array(const scar::GridValues& values) {
+    return matrix_to_array(
+        values.values,
+        static_cast<std::size_t>(values.n_obs),
+        static_cast<std::size_t>(values.n_grid));
+}
+
+void set_student_ppf_cache(
+    scar::CopulaSpec& spec,
+    Float64Array nodes,
+    Float64Array table) {
+
+    const py::buffer_info nodes_info = nodes.request();
+    const py::buffer_info table_info = table.request();
+    if (nodes_info.ndim != 1 || nodes_info.shape[0] < 2) {
+        throw std::invalid_argument(
+            "PPF nodes must be a 1D float64 array with at least two values");
+    }
+    if (table_info.ndim != 3
+        || table_info.shape[0] != nodes_info.shape[0]
+        || table_info.shape[1] <= 0
+        || table_info.shape[2] != spec.dim) {
+        throw std::invalid_argument(
+            "PPF table must have shape (n_nodes, n_obs, copula.dim)");
+    }
+
+    const std::size_t node_count =
+        static_cast<std::size_t>(nodes_info.shape[0]);
+    const std::size_t observation_count =
+        static_cast<std::size_t>(table_info.shape[1]);
+    const std::size_t dimension =
+        static_cast<std::size_t>(table_info.shape[2]);
+    std::size_t rows = 0;
+    std::size_t table_size = 0;
+    if (!scar::core::checked_size_mul(
+            node_count, observation_count, rows)
+        || !scar::core::checked_size_mul(rows, dimension, table_size)) {
+        throw std::invalid_argument("PPF table shape is not representable");
+    }
+    const auto* node_data = static_cast<const double*>(nodes_info.ptr);
+    const auto* table_data = static_cast<const double*>(table_info.ptr);
+    for (std::size_t index = 0; index < node_count; ++index) {
+        if (!std::isfinite(node_data[index])) {
+            throw std::invalid_argument(
+                "PPF nodes must contain only finite values");
+        }
+        if (index > 0 && node_data[index] <= node_data[index - 1]) {
+            throw std::invalid_argument(
+                "PPF nodes must be strictly increasing");
+        }
+    }
+    for (std::size_t index = 0; index < table_size; ++index) {
+        if (!std::isfinite(table_data[index])) {
+            throw std::invalid_argument(
+                "PPF table must contain only finite values");
+        }
+    }
+
+    spec.student_ppf_nodes().assign(node_data, node_data + node_count);
+    spec.student_ppf_table().assign(table_data, table_data + table_size);
+    spec.student_ppf_observation_count() =
+        static_cast<std::int64_t>(observation_count);
+}
+
+py::dict static_objective_result_to_dict(
+    const scar::StaticObjectiveResult& result) {
+
+    py::dict output;
+    output["negative_log_likelihood"] = result.negative_log_likelihood;
+    output["negative_gradient"] = result.negative_gradient;
+    output["negative_correlation_gradient"] =
+        vector_to_array(result.negative_correlation_gradient);
+    output["status"] = static_cast<int>(result.status);
+    output["failure_index"] = result.failure.index;
+    output["n_threads_requested"] = result.n_threads_requested;
+    output["parallel_blocks"] = result.parallel_blocks;
+    return output;
+}
+
+}  // namespace
 
 void bind_copula(py::module_& m) {
+    auto copula_family = py::enum_<scar::CopulaFamily>(
+        m, "CopulaFamily", "Native copula-family dispatch identifier.");
+#define SCAR_PAIR_FAMILY(                                                \
+    enum_name, package_name, enum_value, transform_policy, rotation_policy, \
+    default_transform, default_offset)                                  \
+    copula_family.value(#enum_name, scar::CopulaFamily::enum_name);
+#include "scar/copula/pair/families.def"
+#undef SCAR_PAIR_FAMILY
+    copula_family
+        .value("Student", scar::CopulaFamily::Student)
+        .value("EquicorrGaussian", scar::CopulaFamily::EquicorrGaussian)
+        .value(
+            "MultivariateGaussian",
+            scar::CopulaFamily::MultivariateGaussian);
+
+    py::enum_<scar::CorrelationKind>(
+        m, "CorrelationKind", "Native correlation representation.")
+        .value("DenseCholesky", scar::CorrelationKind::DenseCholesky)
+        .value("Factor", scar::CorrelationKind::Factor);
+    py::enum_<scar::Rotation>(
+        m, "Rotation", "Bivariate copula rotation in degrees.")
+        .value("R0", scar::Rotation::R0)
+        .value("R90", scar::Rotation::R90)
+        .value("R180", scar::Rotation::R180)
+        .value("R270", scar::Rotation::R270);
+    py::enum_<scar::Transform>(
+        m, "Transform", "Latent-state to copula-parameter transform.")
+        .value("Softplus", scar::Transform::Softplus)
+        .value("XTanh", scar::Transform::XTanh)
+        .value("GaussianTanh", scar::Transform::GaussianTanh)
+        .value("Exponential", scar::Transform::Exponential)
+        .value("Logistic", scar::Transform::Logistic);
+
     py::class_<scar::CopulaSpec>(
         m,
         "CopulaSpec",
@@ -437,41 +564,6 @@ void bind_copula(py::module_& m) {
         py::arg("u"),
         py::arg("r_grid"));
 
-    m.def(
-        "copula_log_pdf_trajectory_grid",
-        [](const scar::CopulaSpec& copula,
-           py::array_t<double, py::array::c_style | py::array::forcecast> u,
-           py::array_t<double, py::array::c_style | py::array::forcecast>
-               latent_paths,
-           int n_threads) {
-            const scar::ObservationView observations =
-                observation_view_from_array(copula, u);
-            const py::buffer_info paths_info = latent_paths.request();
-            if (paths_info.ndim != 2
-                || paths_info.shape[0]
-                    != static_cast<py::ssize_t>(observations.n_obs)
-                || paths_info.shape[1] <= 0) {
-                throw std::invalid_argument(
-                    "latent_paths must have shape (n_obs, n_trajectories)");
-            }
-            const double* paths =
-                static_cast<const double*>(paths_info.ptr);
-            scar::TrajectoryLogPdfResult result;
-            {
-                py::gil_scoped_release release;
-                result = scar::copula_log_pdf_trajectory_grid(
-                    copula,
-                    observations,
-                    paths,
-                    static_cast<std::size_t>(paths_info.shape[1]),
-                    n_threads);
-            }
-            return trajectory_log_pdf_result_to_dict(result);
-        },
-        py::arg("copula"),
-        py::arg("u"),
-        py::arg("latent_paths"),
-        py::arg("n_threads") = 1);
 }
 
 }  // namespace pyscarcopula::bindings

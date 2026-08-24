@@ -129,6 +129,28 @@ only Python-free computational translation units;
 `PYTHON_BINDING_SOURCES` contains the pybind adapter. `setup.py` combines both
 lists for `_scar_cpp` without creating or shipping a separate C++ library.
 
+The adapter has no umbrella binding header. `bindings/module.hpp` declares only
+the registration entry points, while `bindings/array.hpp` and `array.cpp` own
+the shared, model-neutral NumPy array/view conversions and their synchronous
+lifetime helper. Module metadata, constants, and thrown-exception translation
+remain in `bindings/common.cpp`. Enums, model-specific result serialization,
+and other domain DTO conversion live in the binder that owns that domain. Each
+binder imports its own computational API explicitly; in particular, Student
+headers are absent from pair-only, GAS, R-vine, parallel, and SCAR-OU binders.
+The architecture checker enforces this include matrix and rejects a recreated
+`bindings/common.hpp` or model-result conversion in a shared header. It also
+rejects result-dependent status policy, NumPy buffer access while the GIL is
+released, and SCAR-OU grid/filter orchestration inside a binder.
+
+Native results are serialized mechanically, including `Status` and failure
+context. Python adapters decide whether a non-OK status becomes `ValueError`,
+`CppUnsupported`, `FloatingPointError`, or `CppError`. In particular, the
+Factor Student adapter owns this policy; its binder does not throw based on a
+returned failure index. Raw OU emission filtering is a public computational
+operation, `filter_ou_grid_emissions`, returning `OuGridFilterResult`; the
+SCAR-OU binder only validates the buffer shape/lifetime, invokes that API
+without the GIL, and serializes its result.
+
 Native copula code is organized by model ownership rather than by a shared
 horizontal implementation file:
 
@@ -225,7 +247,11 @@ views. C-contiguous NumPy `float64` inputs remain alive for the complete
 synchronous binding call, including the section executed without the GIL, and
 are not copied into C++ vectors. Non-contiguous arrays and other dtypes retain
 pybind11's `forcecast` fallback. Every numeric input still receives one finite
-validation pass before the GIL is released.
+validation pass before the GIL is released. Binding lambdas take the owning
+`py::array_t` objects by value; buffer metadata and native views are created
+before `py::gil_scoped_release`, and serialization back to Python starts only
+after that scope ends. The same lifetime order is checker-covered for the
+shared observation helper and direct SCAR-OU view paths.
 
 Static and prepared SCAR-OU equicorrelation evaluators cache per-row `sum(z)`
 and `sum(z^2)` statistics for their owned observation snapshots. Repeated

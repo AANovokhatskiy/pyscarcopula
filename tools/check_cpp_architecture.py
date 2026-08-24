@@ -199,7 +199,7 @@ def check_module_entrypoint(root: Path) -> list[Violation]:
         ))
     for line_number, line in significant:
         allowed = (
-            line == '#include "common.hpp"'
+            line == '#include "module.hpp"'
             or line.startswith("PYBIND11_MODULE(")
             or line == "}"
             or _MODULE_LINE.fullmatch(line) is not None
@@ -208,7 +208,7 @@ def check_module_entrypoint(root: Path) -> list[Violation]:
             violations.append(Violation(
                 "minimal-module-entrypoint",
                 path,
-                "only common.hpp, PYBIND11_MODULE, and bind_* calls are allowed",
+                "only module.hpp, PYBIND11_MODULE, and bind_* calls are allowed",
                 line_number,
             ))
     return violations
@@ -505,7 +505,7 @@ def check_pair_verticalization(root: Path) -> list[Violation]:
                     f"common rotation/transform concern leaked into family: {forbidden}",
                 ))
 
-    binding = cpp / "src" / "bindings" / "common.cpp"
+    binding = cpp / "src" / "bindings" / "copula.cpp"
     if binding.is_file():
         text = binding.read_text(encoding="utf-8")
         if text.count('#include "scar/copula/pair/families.def"') != 1:
@@ -1031,7 +1031,7 @@ def check_public_cpp_api(root: Path) -> list[Violation]:
         include / "scar_ou" / "result.hpp": (
             "ScarOuVectorResult", "LogLikResult", "GradLogLikResult",
             "StateDistribution", "SmoothedStateDistribution",
-            "TrajectoryLogPdfResult"),
+            "OuGridFilterResult", "TrajectoryLogPdfResult"),
         include / "copula" / "result.hpp": (
             "MultivariateRowsResult", "MultivariateGridResult",
             "EquicorrPreparationResult"),
@@ -1256,6 +1256,303 @@ def check_public_cpp_api(root: Path) -> list[Violation]:
     return violations
 
 
+def check_thin_bindings(root: Path) -> list[Violation]:
+    """Enforce the Stage 7 pybind include and conversion boundaries."""
+
+    bindings = (
+        root / "pyscarcopula" / "_cpp" / "src" / "bindings")
+    rule = "thin-python-bindings"
+    violations = []
+
+    legacy_umbrella = bindings / "common.hpp"
+    if legacy_umbrella.exists():
+        violations.append(Violation(
+            rule,
+            legacy_umbrella,
+            "the umbrella bindings/common.hpp must not be restored",
+        ))
+
+    required = (
+        bindings / "module.hpp",
+        bindings / "array.hpp",
+        bindings / "array.cpp",
+    )
+    for path in required:
+        if not path.is_file():
+            violations.append(Violation(
+                rule,
+                path,
+                "required focused binding helper is missing",
+            ))
+
+    module_header = bindings / "module.hpp"
+    if module_header.is_file():
+        text = module_header.read_text(encoding="utf-8")
+        if _SCAR_INCLUDE.search(text):
+            violations.append(Violation(
+                rule,
+                module_header,
+                "module declarations must not import computational APIs",
+            ))
+        if "pybind11/numpy.h" in text:
+            violations.append(Violation(
+                rule,
+                module_header,
+                "module declarations must not import array conversion",
+            ))
+
+    array_header = bindings / "array.hpp"
+    if array_header.is_file():
+        text = array_header.read_text(encoding="utf-8")
+        for marker in (
+                "CopulaSpec", "GridValues", "Gas", "OuBackend",
+                "RVine", "Student", "Result"):
+            if marker in text:
+                violations.append(Violation(
+                    rule,
+                    array_header,
+                    f"array/view conversion depends on a domain type: {marker}",
+                ))
+        for signature in (
+                "const Float64Array& values",
+                "const Float64Array& values,"):
+            if signature not in text:
+                violations.append(Violation(
+                    rule,
+                    array_header,
+                    "view-producing conversion must retain its array owner "
+                    "through a const reference",
+                ))
+                break
+
+    shared_files = (
+        bindings / "common.cpp",
+        bindings / "array.cpp",
+        bindings / "array.hpp",
+        bindings / "module.hpp",
+    )
+    domain_include = re.compile(
+        r"^(?:copula(?:\.hpp|/)|factor\.hpp|gas(?:\.hpp|_rvine\.hpp|/)|"
+        r"ou\.hpp|rvine(?:\.hpp|_plan\.hpp)|scar_ou/|vine/|gas_rvine/)"
+    )
+    for path in shared_files:
+        if not path.is_file():
+            continue
+        for include, line in _include_lines(path):
+            if domain_include.match(include):
+                violations.append(Violation(
+                    rule,
+                    path,
+                    "shared binding helper imports a domain API: "
+                    f"scar/{include}",
+                    line,
+                ))
+
+    binder_sources = {
+        "common.cpp", "parallel.cpp", "copula.cpp", "factor.cpp",
+        "multivariate.cpp", "scar_ou_types.cpp", "rvine.cpp", "gas.cpp",
+        "scar_ou.cpp",
+    }
+    for name in sorted(binder_sources):
+        path = bindings / name
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        if '#include "module.hpp"' not in text:
+            violations.append(Violation(
+                rule,
+                path,
+                "domain binder must import only the focused module contract",
+            ))
+
+    forbidden_by_binder = {
+        "parallel.cpp": domain_include,
+        "gas.cpp": re.compile(
+            r"^(?:factor\.hpp|ou\.hpp|rvine\.hpp|scar_ou/|vine/|"
+            r"copula/multivariate/student/)"),
+        "rvine.cpp": re.compile(
+            r"^(?:factor\.hpp|gas(?:\.hpp|_rvine\.hpp|/)|ou\.hpp|"
+            r"scar_ou/|copula/multivariate/)"),
+        "factor.cpp": re.compile(
+            r"^(?:gas(?:\.hpp|_rvine\.hpp|/)|ou\.hpp|rvine\.hpp|"
+            r"scar_ou/|vine/)"),
+        "copula.cpp": re.compile(
+            r"^(?:gas(?:\.hpp|_rvine\.hpp|/)|ou\.hpp|rvine\.hpp|"
+            r"scar_ou/|vine/)"),
+        "multivariate.cpp": re.compile(
+            r"^(?:gas(?:\.hpp|_rvine\.hpp|/)|ou\.hpp|rvine\.hpp|"
+            r"scar_ou/|vine/)"),
+        "scar_ou_types.cpp": re.compile(
+            r"^(?:copula(?:\.hpp|/)|factor\.hpp|gas(?:\.hpp|_rvine\.hpp|/)|"
+            r"ou\.hpp|rvine\.hpp|vine/)"),
+        "scar_ou.cpp": re.compile(
+            r"^(?:factor\.hpp|gas(?:\.hpp|_rvine\.hpp|/)|rvine\.hpp|vine/)"),
+    }
+    for name, forbidden in forbidden_by_binder.items():
+        path = bindings / name
+        if not path.is_file():
+            continue
+        for include, line in _include_lines(path):
+            if forbidden.match(include):
+                violations.append(Violation(
+                    rule,
+                    path,
+                    "binder imports an unrelated domain API: "
+                    f"scar/{include}",
+                    line,
+                ))
+
+    result_owners = {
+        "copula.cpp": ("StaticObjectiveResult",),
+        "multivariate.cpp": (
+            "MultivariateRowsResult", "MultivariateGridResult",
+            "EquicorrPreparationResult", "ConditionalSampleResult"),
+        "gas.cpp": (
+            "GasLogLikResult", "GasFilterResult", "GasUpdateResult",
+            "GasStateResult", "GasPredictResult", "GasPathResult"),
+        "scar_ou.cpp": (
+            "ScarOuVectorResult", "LogLikResult", "GradLogLikResult",
+            "StateDistribution", "SmoothedStateDistribution",
+            "OuGridFilterResult", "TrajectoryLogPdfResult"),
+        "factor.cpp": (
+            "FactorStudentRowsResult", "FactorStudentJointResult",
+            "FactorStudentGridResult"),
+        "rvine.cpp": (
+            "SampleResult", "ConditionalSampleResult", "DensityResult",
+            "RosenblattResult", "MCMCResult"),
+    }
+    all_result_names = {
+        result_name
+        for names in result_owners.values()
+        for result_name in names
+    }
+    for owner, names in result_owners.items():
+        path = bindings / owner
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        for result_name in names:
+            if result_name not in text:
+                violations.append(Violation(
+                    rule,
+                    path,
+                    f"domain result serialization is missing: {result_name}",
+                ))
+    for path in _source_files(bindings):
+        if path.suffix == ".hpp":
+            text = path.read_text(encoding="utf-8")
+            if "_result_to_dict" in text or any(
+                    name in text for name in all_result_names):
+                violations.append(Violation(
+                    rule,
+                    path,
+                    "model-specific result conversion must stay beside its binder",
+                ))
+
+    student_allowed = {"copula.cpp", "factor.cpp", "multivariate.cpp"}
+    for path in bindings.glob("*.cpp"):
+        if path.name in student_allowed:
+            continue
+        for include, line in _include_lines(path):
+            if "/student/" in include:
+                violations.append(Violation(
+                    rule,
+                    path,
+                    "Student API leaked into a Student-independent binder",
+                    line,
+                ))
+
+    factor_binding = bindings / "factor.cpp"
+    if factor_binding.is_file():
+        text = factor_binding.read_text(encoding="utf-8")
+        for marker in ("matrix_copy(", "vector_copy("):
+            if marker in text:
+                violations.append(Violation(
+                    rule,
+                    factor_binding,
+                    "factor binder duplicates shared array conversion: "
+                    f"{marker[:-1]}",
+                ))
+        for serializer in (
+                "factor_student_rows_result_to_dict",
+                "factor_student_joint_result_to_dict",
+                "factor_student_grid_result_to_dict"):
+            if serializer not in text:
+                violations.append(Violation(
+                    rule,
+                    factor_binding,
+                    "factor result serialization is missing: " + serializer,
+                ))
+        status_serialization = (
+            'output["status"] = static_cast<int>(result.status);')
+        if text.count(status_serialization) < 3:
+            violations.append(Violation(
+                rule,
+                factor_binding,
+                "every factor Student result must serialize Status",
+            ))
+
+    status_policy = re.compile(
+        r"\bif\s*\([^;{}]*\bresult\.(?:status|failure|is_ok\s*\()",
+        re.DOTALL,
+    )
+    gil_python_access = re.compile(
+        r"py::gil_scoped_release\s+\w+\s*;"
+        r"(?:(?!^\s*\}).)*?\b\w+\."
+        r"(?:request|mutable_data|writeable)\s*\(",
+        re.MULTILINE | re.DOTALL,
+    )
+    orchestration_calls = (
+        "build_ou_grid(",
+        "build_grid_transition_operator(",
+        "forward_filter_emissions(",
+        "backward_filter_emissions(",
+        "smooth_state_emissions(",
+    )
+    for path in bindings.glob("*.cpp"):
+        text = path.read_text(encoding="utf-8")
+        match = status_policy.search(text)
+        if match is not None:
+            violations.append(Violation(
+                rule,
+                path,
+                "binding must serialize Status without result-dependent policy",
+                text.count("\n", 0, match.start()) + 1,
+            ))
+        match = gil_python_access.search(text)
+        if match is not None:
+            violations.append(Violation(
+                rule,
+                path,
+                "Python/NumPy array API used while the GIL is released",
+                text.count("\n", 0, match.start()) + 1,
+            ))
+        for marker in orchestration_calls:
+            index = text.find(marker)
+            if index >= 0:
+                violations.append(Violation(
+                    rule,
+                    path,
+                    "model orchestration belongs in the computational API: "
+                    f"{marker[:-1]}",
+                    text.count("\n", 0, index) + 1,
+                ))
+
+    copula_binding = bindings / "copula.cpp"
+    if copula_binding.is_file():
+        for include, line in _include_lines(copula_binding):
+            if include == "factor.hpp":
+                violations.append(Violation(
+                    rule,
+                    copula_binding,
+                    "generic copula binder must import the focused factor "
+                    "correlation contract instead of scar/factor.hpp",
+                    line,
+                ))
+
+    return violations
+
+
 def _find_cycle(graph: dict[str, set[str]]) -> list[str] | None:
     visited: set[str] = set()
     active: set[str] = set()
@@ -1321,6 +1618,7 @@ def check_repository(root: Path) -> list[Violation]:
         check_multivariate_verticalization,
         check_prepared_application_modules,
         check_public_cpp_api,
+        check_thin_bindings,
         check_public_header_cycles,
     )
     return [

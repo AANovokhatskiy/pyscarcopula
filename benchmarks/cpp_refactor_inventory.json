@@ -132,11 +132,11 @@
       ".github/workflows/parallel-release-gates.yml": "5bf5bd210a18929091ed71553a251ad084f7498e150b2bf71846580e6cd66238",
       ".github/workflows/wheels.yml": "5e4fff9c1ada46b147cf7ba85b2367b802a34f491dc2b97b41158c23d9887f31",
       "pyproject.toml": "81b3eaacc7c30e9d169de1ed60af08b0e89fdc6ca267b3be98653d03a5a0130d",
-      "pyscarcopula/_cpp/build_support/sources.py": "40d54adaa22c7edcf85eca9141ed02da50ddb3d1ecfc2ca872f821be980aeebb",
+      "pyscarcopula/_cpp/build_support/sources.py": "fcde51576a283d89f4d58c700e41aea7bb12d3eda78265397186d5200866679d",
       "pyscarcopula/_cpp/build_support/toolchain.py": "5d7990b2cb89bd8bdf58e887795f6c4d027eeb39d5f99a9b49ba11548e2da701",
       "setup.py": "11690d112f39f7da39d7b9d80155e9aabdbb6187565720d7fed19ba8a58103df",
       "tools/build_cpp_tests.py": "99838f4bfb1199527b5a904c169828515bf7cda438102bdaffd600f07ede8b62",
-      "tools/check_cpp_architecture.py": "ef504d5a11dd7bf318cef40bab3286dbb9733bfcf26689d9f6f2f35615e76f8e"
+      "tools/check_cpp_architecture.py": "c8df4b952a718f43ec560070b28638deebda3e94af03ef9468587fa45c65daaf"
     },
     "sources": [
       ".github/workflows/parallel-release-gates.yml",
@@ -168,7 +168,7 @@
       ]
     }
   },
-  "compute_source_sha256": "e0b60ce0ec9f79a72a735fd67d7cfa66c69401763e39658308886118ea59ca3b",
+  "compute_source_sha256": "037a1d762fae997e274b6afe1c9d2ac8373dcd4a4c68fab0c50cb8ff3aea4360",
   "configuration_contracts": {
     "complete_constant_mappings": [
       {
@@ -231,6 +231,7 @@
         "target_owner": "foundation",
         "value": [
           "bindings/common.cpp",
+          "bindings/array.cpp",
           "bindings/parallel.cpp",
           "bindings/copula.cpp",
           "bindings/factor.cpp",
@@ -2320,6 +2321,7 @@
         "symbol": "PYTHON_BINDING_SOURCES",
         "value": [
           "bindings/common.cpp",
+          "bindings/array.cpp",
           "bindings/parallel.cpp",
           "bindings/copula.cpp",
           "bindings/factor.cpp",
@@ -4066,6 +4068,7 @@
       ],
       "pyscarcopula/_cpp/include/scar/ou.hpp": [
         "scar/copula/prepared_dynamic_emission.hpp",
+        "scar/core/span.hpp",
         "scar/observation.hpp",
         "scar/scar_ou/result.hpp",
         "scar/scar_ou/types.hpp"
@@ -4092,42 +4095,55 @@
       "pyscarcopula/_cpp/include/scar/vine/result.hpp": [
         "scar/core/result.hpp"
       ],
-      "pyscarcopula/_cpp/src/bindings/common.cpp": [
-        "scar/copula.hpp",
-        "scar/copula/multivariate/student/quantile.hpp",
-        "scar/copula/pair/families.def",
-        "scar/gas.hpp",
-        "scar/ou.hpp"
+      "pyscarcopula/_cpp/src/bindings/array.cpp": [
+        "scar/core/checked_arithmetic.hpp"
       ],
-      "pyscarcopula/_cpp/src/bindings/common.hpp": [
-        "scar/copula.hpp",
-        "scar/copula/multivariate/conditional_result.hpp",
-        "scar/copula/multivariate/student/density.hpp",
+      "pyscarcopula/_cpp/src/bindings/array.hpp": [
+        "scar/core/span.hpp",
+        "scar/observation.hpp"
+      ],
+      "pyscarcopula/_cpp/src/bindings/common.cpp": [
         "scar/detail/safety.hpp",
-        "scar/detail/scar_ou/quadrature.hpp",
-        "scar/factor.hpp",
-        "scar/gas.hpp",
-        "scar/gas_rvine.hpp",
-        "scar/ou.hpp",
-        "scar/rvine.hpp"
+        "scar/status.hpp"
       ],
       "pyscarcopula/_cpp/src/bindings/copula.cpp": [
-        "scar/copula/prepared_pair_kernel.hpp"
+        "scar/copula.hpp",
+        "scar/copula/multivariate/correlation/factor.hpp",
+        "scar/copula/pair/families.def",
+        "scar/copula/prepared_pair_kernel.hpp",
+        "scar/core/checked_arithmetic.hpp"
       ],
       "pyscarcopula/_cpp/src/bindings/factor.cpp": [
+        "scar/core/checked_arithmetic.hpp",
         "scar/factor.hpp"
       ],
+      "pyscarcopula/_cpp/src/bindings/gas.cpp": [
+        "scar/gas.hpp",
+        "scar/gas_rvine.hpp"
+      ],
       "pyscarcopula/_cpp/src/bindings/multivariate.cpp": [
+        "scar/copula.hpp",
         "scar/copula/multivariate/gaussian/conditional.hpp",
         "scar/copula/multivariate/student/conditional.hpp",
-        "scar/copula/multivariate/student/rosenblatt.hpp"
+        "scar/copula/multivariate/student/quantile.hpp",
+        "scar/copula/multivariate/student/rosenblatt.hpp",
+        "scar/core/checked_arithmetic.hpp"
       ],
       "pyscarcopula/_cpp/src/bindings/parallel.cpp": [
         "scar/detail/linalg.hpp",
         "scar/detail/parallel.hpp"
       ],
+      "pyscarcopula/_cpp/src/bindings/rvine.cpp": [
+        "scar/rvine.hpp"
+      ],
       "pyscarcopula/_cpp/src/bindings/scar_ou.cpp": [
-        "scar/detail/scar_ou/transition.hpp"
+        "scar/core/checked_arithmetic.hpp",
+        "scar/detail/scar_ou/quadrature.hpp",
+        "scar/detail/scar_ou/transition.hpp",
+        "scar/ou.hpp"
+      ],
+      "pyscarcopula/_cpp/src/bindings/scar_ou_types.cpp": [
+        "scar/scar_ou/types.hpp"
       ],
       "pyscarcopula/_cpp/src/copula/common.cpp": [
         "scar/copula/multivariate/equicorrelation/kernel.hpp",
@@ -5216,5 +5232,5 @@
     ]
   },
   "schema_version": 1,
-  "source_commit": "68fc2953e9c7ef07bef4332bb438d72df91b7da9"
+  "source_commit": "88560231c5208d6282128cfb3b68af33c2310319"
 }

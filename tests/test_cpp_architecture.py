@@ -58,10 +58,15 @@ def _minimal_repository(root: Path) -> Path:
     _write(
         root,
         "pyscarcopula/_cpp/src/bindings/module.cpp",
-        '#include "common.hpp"\n\n'
+        '#include "module.hpp"\n\n'
         "PYBIND11_MODULE(_scar_cpp, module) {\n"
         "    pyscarcopula::bindings::bind_common(module);\n"
         "}\n",
+    )
+    _write(
+        root,
+        "pyscarcopula/_cpp/src/bindings/module.hpp",
+        "#include <pybind11/pybind11.h>\n",
     )
     return root
 
@@ -210,7 +215,7 @@ def test_stage3_pair_copulas_are_vertical_and_prepared_once():
     assert "is_pair_copula_family" not in core
 
     binding = (
-        ROOT / "pyscarcopula" / "_cpp" / "src" / "bindings" / "common.cpp"
+        ROOT / "pyscarcopula" / "_cpp" / "src" / "bindings" / "copula.cpp"
     ).read_text(encoding="utf-8")
     assert binding.count(
         '#include "scar/copula/pair/families.def"') == 1
@@ -523,7 +528,7 @@ def test_stage6_checker_rejects_workspace_and_caller_leaks(tmp_path):
         "scar_ou/result.hpp": (
             "ScarOuVectorResult", "LogLikResult", "GradLogLikResult",
             "StateDistribution", "SmoothedStateDistribution",
-            "TrajectoryLogPdfResult"),
+            "OuGridFilterResult", "TrajectoryLogPdfResult"),
         "copula/result.hpp": (
             "MultivariateRowsResult", "MultivariateGridResult",
             "EquicorrPreparationResult"),
@@ -660,6 +665,157 @@ def test_stage6_checker_rejects_workspace_and_caller_leaks(tmp_path):
     )
 
 
+def test_stage7_bindings_are_thin_and_domain_scoped():
+    bindings = ROOT / "pyscarcopula/_cpp/src/bindings"
+    assert not (bindings / "common.hpp").exists()
+    for name in ("module.hpp", "array.hpp", "array.cpp"):
+        assert (bindings / name).is_file()
+
+    module = (bindings / "module.hpp").read_text(encoding="utf-8")
+    assert 'scar/' not in module
+    array = (bindings / "array.hpp").read_text(encoding="utf-8")
+    for marker in (
+            "CopulaSpec", "GridValues", "Gas", "OuBackend", "RVine",
+            "Student", "Result"):
+        assert marker not in array
+
+    owners = {
+        "copula.cpp": ("StaticObjectiveResult",),
+        "multivariate.cpp": (
+            "MultivariateRowsResult", "ConditionalSampleResult"),
+        "gas.cpp": ("GasLogLikResult", "GasFilterResult"),
+        "scar_ou.cpp": (
+            "LogLikResult", "GradLogLikResult",
+            "SmoothedStateDistribution", "OuGridFilterResult",
+            "TrajectoryLogPdfResult"),
+        "factor.cpp": (
+            "FactorStudentRowsResult", "FactorStudentJointResult",
+            "FactorStudentGridResult"),
+        "rvine.cpp": (
+            "SampleResult", "ConditionalSampleResult", "DensityResult",
+            "RosenblattResult", "MCMCResult"),
+    }
+    for owner, results in owners.items():
+        source = (bindings / owner).read_text(encoding="utf-8")
+        assert '#include "module.hpp"' in source
+        for result in results:
+            assert result in source
+
+    for name in (
+            "common.cpp", "parallel.cpp", "gas.cpp", "rvine.cpp",
+            "scar_ou_types.cpp", "scar_ou.cpp"):
+        source = (bindings / name).read_text(encoding="utf-8")
+        assert 'copula/multivariate/student/' not in source
+
+    factor = (bindings / "factor.cpp").read_text(encoding="utf-8")
+    assert factor.count(
+        'output["status"] = static_cast<int>(result.status);') >= 3
+    assert "matrix_copy(" not in factor
+    assert "vector_copy(" not in factor
+    assert re.search(
+        r"py::gil_scoped_release\s+\w+\s*;"
+        r"(?:(?!^\s*\}).)*?\.(?:request|mutable_data|writeable)\s*\(",
+        factor,
+        re.MULTILINE | re.DOTALL,
+    ) is None
+
+    scar_ou = (bindings / "scar_ou.cpp").read_text(encoding="utf-8")
+    for model_call in (
+            "build_ou_grid(", "build_grid_transition_operator(",
+            "forward_filter_emissions(", "backward_filter_emissions(",
+            "smooth_state_emissions("):
+        assert model_call not in scar_ou
+    copula = (bindings / "copula.cpp").read_text(encoding="utf-8")
+    assert '#include "scar/factor.hpp"' not in copula
+    assert (
+        '#include "scar/copula/multivariate/correlation/factor.hpp"'
+        in copula)
+
+    ou_header = (
+        ROOT / "pyscarcopula/_cpp/include/scar/ou.hpp"
+    ).read_text(encoding="utf-8")
+    ou_result = (
+        ROOT / "pyscarcopula/_cpp/include/scar/scar_ou/result.hpp"
+    ).read_text(encoding="utf-8")
+    assert "OuGridFilterResult filter_ou_grid_emissions(" in ou_header
+    assert "struct OuGridFilterResult" in ou_result
+
+
+def test_stage7_checker_rejects_umbrella_and_cross_domain_binding_leaks(
+    tmp_path,
+):
+    root = _minimal_repository(tmp_path)
+    bindings = root / "pyscarcopula/_cpp/src/bindings"
+    _write(root, "pyscarcopula/_cpp/src/bindings/common.hpp", "#pragma once\n")
+    _write(
+        root,
+        "pyscarcopula/_cpp/src/bindings/common.cpp",
+        '#include "module.hpp"\n#include "scar/ou.hpp"\n',
+    )
+    _write(
+        root,
+        "pyscarcopula/_cpp/src/bindings/array.hpp",
+        "struct CopulaSpec;\n",
+    )
+    _write(root, "pyscarcopula/_cpp/src/bindings/array.cpp", "")
+    _write(
+        root,
+        "pyscarcopula/_cpp/src/bindings/gas.cpp",
+        '#include "module.hpp"\n#include "scar/ou.hpp"\n',
+    )
+
+    violations = CHECKER_MODULE.check_thin_bindings(root)
+    messages = {violation.message for violation in violations}
+    assert "the umbrella bindings/common.hpp must not be restored" in messages
+    assert any("shared binding helper imports" in message for message in messages)
+    assert any("unrelated domain API" in message for message in messages)
+    assert any("array/view conversion depends" in message for message in messages)
+    assert bindings.is_dir()
+
+
+def test_stage7_checker_rejects_policy_gil_and_model_logic_in_bindings(
+    tmp_path,
+):
+    root = _minimal_repository(tmp_path)
+    _write(root, "pyscarcopula/_cpp/src/bindings/array.hpp", "")
+    _write(root, "pyscarcopula/_cpp/src/bindings/array.cpp", "")
+    _write(
+        root,
+        "pyscarcopula/_cpp/src/bindings/factor.cpp",
+        '#include "module.hpp"\n'
+        "void bind() {\n"
+        "    py::array_t<double> output(2);\n"
+        "    {\n"
+        "        py::gil_scoped_release release;\n"
+        "        output.mutable_data();\n"
+        "    }\n"
+        "    FactorStudentRowsResult result;\n"
+        "    if (result.failure.index >= 0) { throw 1; }\n"
+        "    matrix_copy(values, 1, 1);\n"
+        "}\n",
+    )
+    _write(
+        root,
+        "pyscarcopula/_cpp/src/bindings/scar_ou.cpp",
+        '#include "module.hpp"\nvoid bind() { build_ou_grid(); }\n',
+    )
+    _write(
+        root,
+        "pyscarcopula/_cpp/src/bindings/copula.cpp",
+        '#include "module.hpp"\n#include "scar/factor.hpp"\n',
+    )
+
+    messages = {
+        violation.message
+        for violation in CHECKER_MODULE.check_thin_bindings(root)
+    }
+    assert any("result-dependent policy" in message for message in messages)
+    assert any("GIL is released" in message for message in messages)
+    assert any("model orchestration" in message for message in messages)
+    assert any("duplicates shared array" in message for message in messages)
+    assert any("focused factor correlation" in message for message in messages)
+
+
 def test_setup_build_path_does_not_mutate_path():
     source = (ROOT / "setup.py").read_text(encoding="utf-8")
     assert 'os.environ["PATH"]' not in source
@@ -695,7 +851,11 @@ def test_stateless_scar_bindings_release_gil_after_array_validation():
     ).read_text(encoding="utf-8")
 
     assert "with_observation_view_without_gil" in source
-    assert source.count("observation_view_from_array(copula, u)") == 2
+    assert source.count("observation_view_from_array(") == 3
+    helper = source.index("with_observation_view_without_gil")
+    view = source.index("observation_view_from_array(", helper)
+    release = source.index("py::gil_scoped_release release", view)
+    assert helper < view < release
 
 
 def test_rvine_sample_binding_keeps_arrays_alive_and_releases_gil():

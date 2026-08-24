@@ -8,7 +8,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <limits>
+#include <utility>
 #include <vector>
 
 namespace scar {
@@ -23,6 +25,20 @@ SmoothedStateDistribution invalid_smoothed_state_distribution(
     SmoothedStateDistribution out;
     out.backend = backend;
     out.status = status_from_int(status);
+    return out;
+}
+
+OuGridFilterResult invalid_grid_filter_result(
+    Status status,
+    OuBackend backend,
+    std::int64_t n_obs,
+    int K) {
+
+    OuGridFilterResult out;
+    out.n_obs = n_obs;
+    out.K = K;
+    out.backend = backend;
+    out.status = status;
     return out;
 }
 
@@ -142,6 +158,152 @@ StateDistribution state_distribution_impl(
 
 
 }  // namespace
+
+OuGridFilterResult filter_ou_grid_emissions(
+    const OuParams& params,
+    DoubleView emissions,
+    std::int64_t n_obs,
+    int emission_columns,
+    const OuNumericalConfig& config,
+    OuBackend backend,
+    bool store_predictive,
+    bool store_filtered,
+    bool run_backward,
+    bool run_smoothing) {
+
+    if (!valid_ou_params(params)
+        || !finite_config_doubles(config)
+        || (backend != OuBackend::Matrix
+            && backend != OuBackend::LocalGh)) {
+        return invalid_grid_filter_result(
+            Status::InvalidParameter, backend, n_obs, emission_columns);
+    }
+    if (n_obs < 2 || emission_columns < 2) {
+        return invalid_grid_filter_result(
+            Status::InvalidSize, backend, n_obs, emission_columns);
+    }
+
+    std::size_t rows = 0;
+    std::size_t expected_values = 0;
+    if (!scar_internal::checked_nonnegative_size(n_obs, rows)
+        || !scar_internal::checked_size_mul(
+            rows,
+            static_cast<std::size_t>(emission_columns),
+            expected_values)
+        || emissions.data() == nullptr
+        || emissions.size() != expected_values) {
+        return invalid_grid_filter_result(
+            Status::InvalidSize, backend, n_obs, emission_columns);
+    }
+    for (std::size_t index = 0; index < emissions.size(); ++index) {
+        if (!std::isfinite(emissions[index]) || emissions[index] < 0.0) {
+            OuGridFilterResult out = invalid_grid_filter_result(
+                Status::InvalidParameter, backend, n_obs, emission_columns);
+            out.failure.index = static_cast<std::int64_t>(index);
+            out.failure.row = static_cast<std::int64_t>(
+                index / static_cast<std::size_t>(emission_columns));
+            return out;
+        }
+    }
+    for (std::size_t row = 0; row < rows; ++row) {
+        bool positive = false;
+        const std::size_t offset =
+            row * static_cast<std::size_t>(emission_columns);
+        for (int column = 0; column < emission_columns; ++column) {
+            positive = positive
+                || emissions[offset + static_cast<std::size_t>(column)] > 0.0;
+        }
+        if (!positive) {
+            OuGridFilterResult out = invalid_grid_filter_result(
+                Status::NumericalFailure, backend, n_obs, emission_columns);
+            out.failure.row = static_cast<std::int64_t>(row);
+            return out;
+        }
+    }
+
+    scar_internal::OuGrid grid;
+    if (!valid_grid_config(config, backend)
+        || !scar_internal::build_ou_grid(
+            params.kappa,
+            params.mu,
+            params.nu,
+            n_obs,
+            config.K,
+            config.grid_range,
+            config.adaptive,
+            config.pts_per_sigma,
+            config.max_K,
+            grid)
+        || grid.K != emission_columns) {
+        return invalid_grid_filter_result(
+            Status::InvalidSize, backend, n_obs, emission_columns);
+    }
+
+    scar_internal::GridTransitionOperator transition;
+    if (!scar_internal::build_grid_transition_operator(
+            grid,
+            backend,
+            config.grid_method,
+            config.gh_order,
+            transition)) {
+        return invalid_grid_filter_result(
+            Status::InvalidSize, backend, n_obs, grid.K);
+    }
+
+    scar_internal::ForwardFilterOptions options;
+    options.store_predictive_weights = store_predictive;
+    options.store_filtered_weights = store_filtered;
+    scar_internal::ForwardFilterResult forward;
+    if (!scar_internal::forward_filter_emissions(
+            grid,
+            transition,
+            emissions.data(),
+            n_obs,
+            options,
+            forward)) {
+        return invalid_grid_filter_result(
+            Status::NumericalFailure, backend, n_obs, grid.K);
+    }
+
+    scar_internal::BackwardFilterResult backward;
+    if (run_backward
+        && !scar_internal::backward_filter_emissions(
+            grid,
+            transition,
+            emissions.data(),
+            n_obs,
+            backward)) {
+        return invalid_grid_filter_result(
+            Status::NumericalFailure, backend, n_obs, grid.K);
+    }
+
+    scar_internal::SmoothedStateResult smoothed;
+    if (run_smoothing
+        && !scar_internal::smooth_state_emissions(
+            grid,
+            transition,
+            emissions.data(),
+            n_obs,
+            smoothed)) {
+        return invalid_grid_filter_result(
+            Status::NumericalFailure, backend, n_obs, grid.K);
+    }
+
+    OuGridFilterResult out;
+    out.z_grid = std::move(grid.x_grid);
+    out.predictive_weights = std::move(forward.predictive_weights);
+    out.filtered_weights = std::move(forward.filtered_weights);
+    out.final_filtered_density =
+        std::move(forward.final_filtered_density);
+    out.backward_messages = std::move(backward.messages);
+    out.smoothed_weights = std::move(smoothed.weights);
+    out.n_obs = n_obs;
+    out.K = grid.K;
+    out.backend = backend;
+    out.sparse = !transition.local_gh && transition.matrix.sparse;
+    out.status = Status::Ok;
+    return out;
+}
 
 StateDistribution ScarOuEvaluator::state_distribution_matrix(
     const OuParams& params,

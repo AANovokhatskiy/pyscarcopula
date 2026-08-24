@@ -99,6 +99,7 @@ SCAR_COMPUTE_SOURCES = (
 
 PYTHON_BINDING_SOURCES = (
     "bindings/common.cpp",
+    "bindings/array.cpp",
     "bindings/parallel.cpp",
     "bindings/copula.cpp",
     "bindings/factor.cpp",

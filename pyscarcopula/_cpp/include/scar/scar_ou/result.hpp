@@ -80,6 +80,26 @@ struct SmoothedStateDistribution {
     }
 };
 
+/// Raw forward/backward filtering over caller-provided OU-grid emissions.
+struct OuGridFilterResult {
+    std::vector<double> z_grid;
+    std::vector<double> predictive_weights;
+    std::vector<double> filtered_weights;
+    std::vector<double> final_filtered_density;
+    std::vector<double> backward_messages;
+    std::vector<double> smoothed_weights;
+    std::int64_t n_obs = 0;
+    int K = 0;
+    OuBackend backend = OuBackend::Matrix;
+    bool sparse = false;
+    Status status = Status::Ok;
+    FailureContext failure{};
+
+    bool is_ok() const noexcept {
+        return ok(status);
+    }
+};
+
 struct TrajectoryLogPdfResult {
     GridValues log_pdf;
     Status status = Status::Ok;

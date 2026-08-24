@@ -1,17 +1,122 @@
-#include "common.hpp"
+#include "array.hpp"
+#include "module.hpp"
 
+#include "scar/ou.hpp"
+#include "scar/core/checked_arithmetic.hpp"
+#include "scar/detail/scar_ou/quadrature.hpp"
 #include "scar/detail/scar_ou/transition.hpp"
 
+#include <pybind11/stl.h>
+
 #include <algorithm>
-#include <cstring>
+#include <cstdint>
+#include <limits>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace py = pybind11;
 
 namespace pyscarcopula::bindings {
 namespace {
+
+py::list backend_chain_to_list(const std::vector<scar::OuBackend>& chain) {
+    py::list output;
+    for (const scar::OuBackend backend : chain) {
+        output.append(static_cast<int>(backend));
+    }
+    return output;
+}
+
+py::dict loglik_result_to_dict(const scar::LogLikResult& result) {
+    py::dict output;
+    output["log_likelihood"] = result.log_likelihood;
+    output["backend"] = static_cast<int>(result.backend);
+    output["status"] = static_cast<int>(result.status);
+    output["fallback_from"] = result.failure.fallback_from;
+    output["fallback_chain"] = backend_chain_to_list(result.fallback_chain);
+    output["matrix_fallback_reason"] = result.matrix_fallback_reason;
+    return output;
+}
+
+py::dict grad_loglik_result_to_dict(const scar::GradLogLikResult& result) {
+    py::dict output;
+    output["neg_log_likelihood"] = result.neg_log_likelihood;
+    output["neg_gradient"] = vector_to_array(result.neg_gradient);
+    output["backend"] = static_cast<int>(result.backend);
+    output["status"] = static_cast<int>(result.status);
+    output["fallback_from"] = result.failure.fallback_from;
+    output["fallback_chain"] = backend_chain_to_list(result.fallback_chain);
+    output["matrix_fallback_reason"] = result.matrix_fallback_reason;
+    output["neg_corr_gradient"] =
+        vector_to_array(result.neg_corr_gradient);
+    return output;
+}
+
+py::dict vector_result_to_dict(const scar::ScarOuVectorResult& result) {
+    py::dict output;
+    output["values"] = vector_to_array(result.values);
+    output["status"] = static_cast<int>(result.status);
+    output["backend"] = static_cast<int>(result.backend);
+    return output;
+}
+
+py::dict state_distribution_to_dict(const scar::StateDistribution& result) {
+    py::dict output;
+    output["z_grid"] = vector_to_array(result.z_grid);
+    output["prob"] = vector_to_array(result.prob);
+    output["status"] = static_cast<int>(result.status);
+    output["backend"] = static_cast<int>(result.backend);
+    return output;
+}
+
+py::dict smoothed_state_distribution_to_dict(
+    const scar::SmoothedStateDistribution& result) {
+
+    py::dict output;
+    output["z_grid"] = vector_to_array(result.z_grid);
+    output["weights"] = matrix_to_array(
+        result.weights,
+        static_cast<std::size_t>(result.n_obs),
+        static_cast<std::size_t>(result.K));
+    output["status"] = static_cast<int>(result.status);
+    output["backend"] = static_cast<int>(result.backend);
+    return output;
+}
+
+py::dict trajectory_log_pdf_result_to_dict(
+    const scar::TrajectoryLogPdfResult& result) {
+
+    py::dict output;
+    output["log_pdf"] = matrix_to_array(
+        result.log_pdf.values,
+        static_cast<std::size_t>(result.log_pdf.n_obs),
+        static_cast<std::size_t>(result.log_pdf.n_grid));
+    output["status"] = static_cast<int>(result.status);
+    output["failure_index"] = result.failure.index;
+    output["n_threads_requested"] = result.n_threads_requested;
+    output["parallel_blocks"] = result.parallel_blocks;
+    return output;
+}
+
+py::dict hermite_rule_cache_info_to_dict(
+    const scar_internal::HermiteRuleCacheInfo& info) {
+
+    py::dict output;
+    output["entries"] = info.entries;
+    output["bytes"] = info.bytes;
+    output["max_entries"] = info.max_entries;
+    output["max_bytes"] = info.max_bytes;
+    output["hits"] = info.hits;
+    output["misses"] = info.misses;
+    output["insertions"] = info.insertions;
+    output["evictions"] = info.evictions;
+    output["oversized_skips"] = info.oversized_skips;
+    output["duplicate_builds"] = info.duplicate_builds;
+    return output;
+}
 
 std::unique_ptr<scar::PreparedScarOuEvaluator>
 make_prepared_scar_ou_evaluator(
@@ -27,7 +132,8 @@ make_prepared_scar_ou_evaluator(
     }
     const auto n_obs = static_cast<std::int64_t>(info.shape[0]);
     const auto dim = static_cast<int>(info.shape[1]);
-    observation_view_from_array(copula, u);
+    observation_view_from_array(
+        copula.model_descriptor().expected_dimension(), u);
     std::vector<double> observations = flat_vector_from_array(u, "u");
     return std::make_unique<scar::PreparedScarOuEvaluator>(
         std::move(copula),
@@ -61,7 +167,8 @@ auto with_observation_view_without_gil(
     Callback&& callback) {
 
     const scar::ObservationView obs =
-        observation_view_from_array(copula, u);
+        observation_view_from_array(
+            copula.model_descriptor().expected_dimension(), u);
     py::gil_scoped_release release;
     return std::forward<Callback>(callback)(obs);
 }
@@ -112,20 +219,34 @@ py::array_t<double> filter_matrix_to_array(
     std::int64_t rows,
     int columns) {
 
-    if (values.empty()) {
-        return py::array_t<double>(
-            py::array::ShapeContainer{
-                static_cast<py::ssize_t>(0),
-                static_cast<py::ssize_t>(columns)});
-    }
-    py::array_t<double> out(
-        py::array::ShapeContainer{
-            static_cast<py::ssize_t>(rows),
-            static_cast<py::ssize_t>(columns)});
-    std::memcpy(
-        out.mutable_data(),
-        values.data(),
-        values.size() * sizeof(double));
+    return matrix_to_array(
+        values,
+        values.empty() ? 0 : static_cast<std::size_t>(rows),
+        static_cast<std::size_t>(columns));
+}
+
+py::dict ou_grid_filter_result_to_dict(
+    const scar::OuGridFilterResult& result) {
+
+    py::dict out;
+    out["z_grid"] = vector_to_array(result.z_grid);
+    out["predictive_weights"] = filter_matrix_to_array(
+        result.predictive_weights, result.n_obs, result.K);
+    out["filtered_weights"] = filter_matrix_to_array(
+        result.filtered_weights, result.n_obs, result.K);
+    out["final_filtered_density"] =
+        vector_to_array(result.final_filtered_density);
+    out["backward_messages"] = filter_matrix_to_array(
+        result.backward_messages, result.n_obs, result.K);
+    out["smoothed_weights"] = filter_matrix_to_array(
+        result.smoothed_weights, result.n_obs, result.K);
+    out["n_obs"] = result.n_obs;
+    out["K"] = result.K;
+    out["backend"] = static_cast<int>(result.backend);
+    out["sparse"] = result.sparse;
+    out["status"] = static_cast<int>(result.status);
+    out["failure_index"] = result.failure.index;
+    out["failure_row"] = result.failure.row;
     return out;
 }
 
@@ -146,82 +267,129 @@ py::dict run_ou_grid_filter_engine(
         throw std::invalid_argument(
             "emissions must have shape (n_obs, K), with both dimensions >= 2");
     }
+    if (static_cast<std::uint64_t>(info.shape[0])
+            > static_cast<std::uint64_t>(
+                std::numeric_limits<std::int64_t>::max())
+        || info.shape[1]
+            > static_cast<py::ssize_t>(std::numeric_limits<int>::max())) {
+        throw std::invalid_argument(
+            "emissions shape is not representable by the native API");
+    }
     const std::int64_t n_obs = static_cast<std::int64_t>(info.shape[0]);
-    scar_internal::OuGrid grid;
-    scar_internal::GridTransitionOperator transition;
-    scar_internal::ForwardFilterOptions options;
-    options.store_predictive_weights = store_predictive;
-    options.store_filtered_weights = store_filtered;
-    scar_internal::ForwardFilterResult forward;
-    scar_internal::BackwardFilterResult backward;
-    scar_internal::SmoothedStateResult smoothed;
-    bool ok = false;
+    const int columns = static_cast<int>(info.shape[1]);
+    std::size_t value_count = 0;
+    if (!scar::core::checked_size_mul(
+            static_cast<std::size_t>(n_obs),
+            static_cast<std::size_t>(columns),
+            value_count)) {
+        throw std::invalid_argument(
+            "emissions shape is not representable by the native API");
+    }
+    const scar::DoubleView emission_view{
+        static_cast<const double*>(info.ptr), value_count};
+    scar::OuGridFilterResult result;
     {
         py::gil_scoped_release release;
-        ok = scar_internal::build_ou_grid(
-                params.kappa,
-                params.mu,
-                params.nu,
-                n_obs,
-                config.K,
-                config.grid_range,
-                config.adaptive,
-                config.pts_per_sigma,
-                config.max_K,
-                grid)
-            && info.shape[1] == grid.K
-            && scar_internal::build_grid_transition_operator(
-                grid,
-                backend,
-                config.grid_method,
-                config.gh_order,
-                transition)
-            && scar_internal::forward_filter_emissions(
-                grid,
-                transition,
-                static_cast<const double*>(info.ptr),
-                n_obs,
-                options,
-                forward)
-            && (!run_backward
-                || scar_internal::backward_filter_emissions(
-                    grid,
-                    transition,
-                    static_cast<const double*>(info.ptr),
-                    n_obs,
-                    backward))
-            && (!run_smoothing
-                || scar_internal::smooth_state_emissions(
-                    grid,
-                    transition,
-                    static_cast<const double*>(info.ptr),
-                    n_obs,
-                    smoothed));
+        result = scar::filter_ou_grid_emissions(
+            params,
+            emission_view,
+            n_obs,
+            columns,
+            config,
+            backend,
+            store_predictive,
+            store_filtered,
+            run_backward,
+            run_smoothing);
     }
-    if (!ok) {
-        throw std::runtime_error("native OU grid filtering failed");
-    }
-
-    py::dict out;
-    out["z_grid"] = vector_to_array(grid.x_grid);
-    out["predictive_weights"] = filter_matrix_to_array(
-        forward.predictive_weights, n_obs, grid.K);
-    out["filtered_weights"] = filter_matrix_to_array(
-        forward.filtered_weights, n_obs, grid.K);
-    out["final_filtered_density"] =
-        vector_to_array(forward.final_filtered_density);
-    out["backward_messages"] = filter_matrix_to_array(
-        backward.messages, n_obs, grid.K);
-    out["smoothed_weights"] = filter_matrix_to_array(
-        smoothed.weights, n_obs, grid.K);
-    out["backend"] = static_cast<int>(backend);
-    out["sparse"] = !transition.local_gh && transition.matrix.sparse;
-    return out;
+    return ou_grid_filter_result_to_dict(result);
 }
 
 }  // namespace
 
 void bind_scar_ou(py::module_& m) {
+    m.def(
+        "copula_log_pdf_trajectory_grid",
+        [](const scar::CopulaSpec& copula,
+           Float64Array u,
+           Float64Array latent_paths,
+           int n_threads) {
+            const scar::ObservationView observations =
+                observation_view_from_array(
+                    copula.model_descriptor().expected_dimension(), u);
+            const py::buffer_info paths_info = latent_paths.request();
+            if (paths_info.ndim != 2
+                || paths_info.shape[0]
+                    != static_cast<py::ssize_t>(observations.n_obs)
+                || paths_info.shape[1] <= 0) {
+                throw std::invalid_argument(
+                    "latent_paths must have shape (n_obs, n_trajectories)");
+            }
+            scar::TrajectoryLogPdfResult result;
+            {
+                py::gil_scoped_release release;
+                result = scar::copula_log_pdf_trajectory_grid(
+                    copula,
+                    observations,
+                    static_cast<const double*>(paths_info.ptr),
+                    static_cast<std::size_t>(paths_info.shape[1]),
+                    n_threads);
+            }
+            return trajectory_log_pdf_result_to_dict(result);
+        },
+        py::arg("copula"),
+        py::arg("u"),
+        py::arg("latent_paths"),
+        py::arg("n_threads") = 1);
+
+    m.def(
+        "_hermite_rule_cache_info",
+        []() {
+            return hermite_rule_cache_info_to_dict(
+                scar_internal::hermite_rule_cache_info());
+        });
+    m.def(
+        "_clear_hermite_rule_cache",
+        &scar_internal::clear_hermite_rule_cache);
+    m.def(
+        "_set_hermite_rule_cache_limits_for_testing",
+        &scar_internal::set_hermite_rule_cache_limits_for_testing,
+        py::arg("max_entries"),
+        py::arg("max_bytes"));
+    m.def(
+        "_reset_hermite_rule_cache_limits_for_testing",
+        &scar_internal::reset_hermite_rule_cache_limits_for_testing);
+    m.def(
+        "_hermite_rule_for_testing",
+        [](int quad_order, int basis_order) {
+            std::vector<double> z;
+            std::vector<double> weights;
+            std::vector<double> basis;
+            std::vector<double> weighted_basis;
+            bool ok = false;
+            {
+                py::gil_scoped_release release;
+                ok = scar_internal::standard_normal_hermite_rule_with_weighted_basis(
+                    quad_order,
+                    basis_order,
+                    z,
+                    weights,
+                    basis,
+                    weighted_basis);
+            }
+            if (!ok) {
+                throw std::invalid_argument(
+                    "invalid or numerically unstable Hermite rule");
+            }
+            return py::make_tuple(
+                vector_to_array(z),
+                vector_to_array(weights),
+                vector_to_array(basis),
+                vector_to_array(weighted_basis));
+        },
+        py::arg("quad_order"),
+        py::arg("basis_order"));
+
     m.def(
         "_ou_grid_filter_engine",
         &run_ou_grid_filter_engine,

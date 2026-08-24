@@ -1,9 +1,72 @@
-#include "common.hpp"
+#include "array.hpp"
+#include "module.hpp"
+
+#include "scar/gas.hpp"
+#include "scar/gas_rvine.hpp"
+
+#include <pybind11/stl.h>
+
+#include <stdexcept>
+#include <vector>
 
 namespace py = pybind11;
 
 namespace pyscarcopula::bindings {
 namespace {
+
+py::dict gas_loglik_result_to_dict(const scar::GasLogLikResult& result) {
+    py::dict output;
+    output["log_likelihood"] = result.log_likelihood;
+    output["status"] = static_cast<int>(result.status);
+    output["failure_index"] = result.failure.index;
+    return output;
+}
+
+py::dict gas_filter_result_to_dict(const scar::GasFilterResult& result) {
+    py::dict output;
+    output["g_path"] = vector_to_array(result.g_path);
+    output["r_path"] = vector_to_array(result.r_path);
+    output["score_path"] = vector_to_array(result.score_path);
+    output["log_likelihood"] = result.log_likelihood;
+    output["status"] = static_cast<int>(result.status);
+    output["failure_index"] = result.failure.index;
+    return output;
+}
+
+py::dict gas_update_result_to_dict(const scar::GasUpdateResult& result) {
+    py::dict output;
+    output["g_next"] = result.g_next;
+    output["r"] = result.r;
+    output["r_next"] = result.r_next;
+    output["log_likelihood"] = result.log_likelihood;
+    output["score"] = result.score;
+    output["status"] = static_cast<int>(result.status);
+    return output;
+}
+
+py::dict gas_state_result_to_dict(const scar::GasStateResult& result) {
+    py::dict output;
+    output["g"] = result.g;
+    output["parameter"] = result.parameter;
+    output["status"] = static_cast<int>(result.status);
+    return output;
+}
+
+py::dict gas_predict_result_to_dict(const scar::GasPredictResult& result) {
+    py::dict output;
+    output["parameter"] = result.parameter;
+    output["status"] = static_cast<int>(result.status);
+    output["failure_index"] = result.failure.index;
+    return output;
+}
+
+py::dict gas_path_result_to_dict(const scar::GasPathResult& result) {
+    py::dict output;
+    output["values"] = vector_to_array(result.values);
+    output["status"] = static_cast<int>(result.status);
+    output["failure_index"] = result.failure.index;
+    return output;
+}
 
 scar::ObservationView set_equicorr_prepared(
     scar::CopulaSpec& copula,
@@ -28,6 +91,11 @@ scar::ObservationView set_equicorr_prepared(
 }  // namespace
 
 void bind_gas(py::module_& m) {
+    py::enum_<scar::GasScaling>(
+        m, "GasScaling", "Scaling applied to the GAS score.")
+        .value("Unit", scar::GasScaling::Unit)
+        .value("Fisher", scar::GasScaling::Fisher);
+
     py::class_<scar::GasParams>(
         m, "GasParams", "Parameters of the score-driven GAS recursion.")
         .def(py::init<>())
@@ -122,7 +190,8 @@ void bind_gas(py::module_& m) {
                py::array_t<double, py::array::c_style | py::array::forcecast> u,
                const scar::GasConfig& config) {
                 const scar::ObservationView obs =
-                    observation_view_from_array(copula, u);
+                    observation_view_from_array(
+                        copula.model_descriptor().expected_dimension(), u);
                 scar::GasFilterResult result;
                 {
                     py::gil_scoped_release release;
@@ -169,7 +238,8 @@ void bind_gas(py::module_& m) {
                py::array_t<double, py::array::c_style | py::array::forcecast> u,
                const scar::GasConfig& config) {
                 const scar::ObservationView obs =
-                    observation_view_from_array(copula, u);
+                    observation_view_from_array(
+                        copula.model_descriptor().expected_dimension(), u);
                 scar::GasLogLikResult result;
                 {
                     py::gil_scoped_release release;
@@ -217,7 +287,8 @@ void bind_gas(py::module_& m) {
                py::array_t<double, py::array::c_style | py::array::forcecast> u,
                const scar::GasConfig& config) {
                 const scar::ObservationView obs =
-                    observation_view_from_array(copula, u);
+                    observation_view_from_array(
+                        copula.model_descriptor().expected_dimension(), u);
                 scar::GasLogLikResult result;
                 {
                     py::gil_scoped_release release;
@@ -291,7 +362,9 @@ void bind_gas(py::module_& m) {
                    py::array::c_style | py::array::forcecast> observation,
                const scar::GasConfig& config) {
                 const scar::ObservationView obs =
-                    observation_view_from_array(copula, observation);
+                    observation_view_from_array(
+                        copula.model_descriptor().expected_dimension(),
+                        observation);
                 scar::GasUpdateResult result;
                 {
                     py::gil_scoped_release release;
@@ -314,7 +387,8 @@ void bind_gas(py::module_& m) {
                const scar::GasConfig& config,
                bool horizon_next) {
                 const scar::ObservationView obs =
-                    observation_view_from_array(copula, u);
+                    observation_view_from_array(
+                        copula.model_descriptor().expected_dimension(), u);
                 scar::GasPredictResult result;
                 {
                     py::gil_scoped_release release;
@@ -365,7 +439,8 @@ void bind_gas(py::module_& m) {
                py::array_t<double, py::array::c_style | py::array::forcecast> u,
                const scar::GasConfig& config) {
                 const scar::ObservationView obs =
-                    observation_view_from_array(copula, u);
+                    observation_view_from_array(
+                        copula.model_descriptor().expected_dimension(), u);
                 scar::GasPathResult result;
                 {
                     py::gil_scoped_release release;

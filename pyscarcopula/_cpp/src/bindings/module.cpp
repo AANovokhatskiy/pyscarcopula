@@ -1,4 +1,4 @@
-#include "common.hpp"
+#include "module.hpp"
 
 PYBIND11_MODULE(_scar_cpp, module, pybind11::multiple_interpreters::not_supported()) {
     pyscarcopula::bindings::bind_common(module);

@@ -18,6 +18,33 @@ from pyscarcopula.copula.multivariate.factor_correlation import (
 from pyscarcopula.numerical._arrays import validate_integer
 
 
+def _raise_native_status(result: Mapping[str, Any], operation: str) -> None:
+    """Translate a mechanical native result at the Python adapter boundary."""
+    from pyscarcopula.numerical._cpp_extension import (
+        CppError,
+        CppUnsupported,
+        cpp_status_name,
+    )
+
+    status = int(result["status"])
+    if status == 0:
+        return
+    failure_index = int(result.get("failure_index", -1))
+    detail = (
+        f"C++ factor Student {operation} failed: status={status} "
+        f"({cpp_status_name(status)})"
+    )
+    if failure_index >= 0:
+        detail += f", index={failure_index}"
+    if status in (2, 6):
+        raise ValueError(detail)
+    if status in (3, 4, 5):
+        raise CppUnsupported(detail)
+    if status == 7:
+        raise FloatingPointError(detail)
+    raise CppError(detail)
+
+
 @dataclass(frozen=True)
 class FactorStudentEvaluation:
     """Immutable row likelihood and degrees-of-freedom derivative result."""
@@ -163,6 +190,8 @@ class FactorStudentEvaluator:
                 n_threads,
             )
         )
+        _raise_native_status(native_result, "row evaluation")
+        native_result.pop("status")
         log_pdf = np.asarray(
             native_result.pop("log_pdf"), dtype=np.float64)
         dlog_ddf = np.asarray(
@@ -251,6 +280,8 @@ class FactorStudentEvaluator:
                 n_threads,
             )
         )
+        _raise_native_status(native_result, "joint evaluation")
+        native_result.pop("status")
         log_likelihood = float(native_result.pop("log_likelihood"))
         df_gradient = float(
             native_result.pop("dlog_likelihood_ddf"))
@@ -354,6 +385,8 @@ class FactorStudentEvaluator:
                 n_threads,
             )
         )
+        _raise_native_status(native_result, "grid evaluation")
+        native_result.pop("status")
         log_pdf = np.asarray(
             native_result.pop("log_pdf"), dtype=np.float64)
         dlog_ddf = np.asarray(

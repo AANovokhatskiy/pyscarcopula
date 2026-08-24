@@ -1,6 +1,7 @@
 #pragma once
 
 #include "scar/copula/prepared_dynamic_emission.hpp"
+#include "scar/core/span.hpp"
 #include "scar/observation.hpp"
 #include "scar/scar_ou/result.hpp"
 #include "scar/scar_ou/types.hpp"
@@ -19,6 +20,18 @@ TrajectoryLogPdfResult copula_log_pdf_trajectory_grid(
     const double* latent_paths,
     std::size_t n_trajectories,
     int n_threads = 1);
+
+OuGridFilterResult filter_ou_grid_emissions(
+    const OuParams& params,
+    DoubleView emissions,
+    std::int64_t n_obs,
+    int emission_columns,
+    const OuNumericalConfig& config,
+    OuBackend backend,
+    bool store_predictive = true,
+    bool store_filtered = true,
+    bool run_backward = true,
+    bool run_smoothing = true);
 
 /// Reusable SCAR-OU evaluator.
 ///

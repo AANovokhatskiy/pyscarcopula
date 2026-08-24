@@ -1,4 +1,9 @@
-#include "common.hpp"
+#include "array.hpp"
+#include "module.hpp"
+
+#include "scar/rvine.hpp"
+
+#include <pybind11/stl.h>
 
 #include <stdexcept>
 #include <string>
