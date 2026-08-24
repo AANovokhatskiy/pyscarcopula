@@ -143,7 +143,7 @@ DenseStudentRosenblattResult student_rosenblatt_dense(
         || u.dim != dimension
         || u.n_obs > static_cast<std::size_t>(
             std::numeric_limits<std::int64_t>::max())) {
-        out.status = SCAR_INVALID_SIZE;
+        out.status = Status::InvalidSize;
         return out;
     }
     out.n_rows = static_cast<std::int64_t>(u.n_obs);
@@ -155,18 +155,18 @@ DenseStudentRosenblattResult student_rosenblatt_dense(
         || (df.size() != 1 && df.size() != u.n_obs)
         || (df.size() != 0 && df.data() == nullptr)
         || (u.n_obs != 0 && df.size() == 0)) {
-        out.status = SCAR_INVALID_SIZE;
+        out.status = Status::InvalidSize;
         return out;
     }
     if (!scar_internal::valid_thread_count(n_threads)) {
-        out.status = SCAR_INVALID_PARAMETER;
+        out.status = Status::InvalidParameter;
         return out;
     }
 
     for (std::size_t row = 0; row < df.size(); ++row) {
         if (!std::isfinite(df[row]) || !(df[row] > 0.0)) {
-            out.status = SCAR_INVALID_PARAMETER;
-            out.failure_index = df.size() == 1
+            out.status = Status::InvalidParameter;
+            out.failure.index = df.size() == 1
                 ? -1
                 : static_cast<std::int64_t>(row);
             return out;
@@ -182,14 +182,14 @@ DenseStudentRosenblattResult student_rosenblatt_dense(
             lower,
             correlation_failure,
             correlation_status)) {
-        out.status = correlation_status;
-        out.failure_coordinate = correlation_failure;
+        out.status = status_from_int(correlation_status);
+        out.failure.coordinate = correlation_failure;
         return out;
     }
     out.correlation_factorizations = 1;
     out.residuals.assign(output_size, 0.0);
     if (u.n_obs == 0) {
-        out.status = SCAR_OK;
+        out.status = Status::Ok;
         return out;
     }
 
@@ -281,15 +281,15 @@ DenseStudentRosenblattResult student_rosenblatt_dense(
         }
         ++out.parallel_blocks;
         if (block.failure_row >= 0
-            && (out.failure_index < 0
-                || block.failure_row < out.failure_index)) {
-            out.failure_index = block.failure_row;
-            out.failure_coordinate = block.failure_coordinate;
+            && (out.failure.index < 0
+                || block.failure_row < out.failure.index)) {
+            out.failure.index = block.failure_row;
+            out.failure.coordinate = block.failure_coordinate;
         }
     }
-    out.status = out.failure_index >= 0
-        ? SCAR_NUMERICAL_FAILURE
-        : SCAR_OK;
+    out.status = out.failure.index >= 0
+        ? Status::NumericalFailure
+        : Status::Ok;
     return out;
 }
 

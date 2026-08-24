@@ -200,20 +200,20 @@ const CopulaSpec& PreparedDynamicEmission::compatibility_spec() const noexcept {
     return *impl_->spec;
 }
 
-int PreparedDynamicEmission::validate_observations(
+Status PreparedDynamicEmission::validate_observations(
     ObservationView observations,
     bool require_nonempty) const {
 
     if (!impl_->supported) {
-        return SCAR_INVALID_FAMILY;
+        return Status::InvalidFamily;
     }
     if (observations.dim != expected_dimension()
         || (require_nonempty && observations.empty())) {
-        return SCAR_INVALID_SIZE;
+        return Status::InvalidSize;
     }
     const bool cached = has_cached_observations(observations.size());
     if (!observations.empty() && observations.data() == nullptr && !cached) {
-        return SCAR_NULL_POINTER;
+        return Status::NullPointer;
     }
     if (impl_->kind == DynamicEmissionKind::Equicorrelation && cached) {
         const auto& sums = impl_->spec->equicorr_sum_scores();
@@ -222,24 +222,24 @@ int PreparedDynamicEmission::validate_observations(
             if (!std::isfinite(sums[row])
                 || !std::isfinite(squares[row])
                 || squares[row] < 0.0) {
-                return SCAR_INVALID_PARAMETER;
+                return Status::InvalidParameter;
             }
         }
-        return SCAR_OK;
+        return Status::Ok;
     }
     std::size_t values = 0;
     if (!scar_internal::checked_shape_size(
             observations.size(),
             static_cast<std::size_t>(observations.dim),
             values)) {
-        return SCAR_INVALID_SIZE;
+        return Status::InvalidSize;
     }
     for (std::size_t index = 0; index < values; ++index) {
         if (!std::isfinite(observations.data()[index])) {
-            return SCAR_INVALID_PARAMETER;
+            return Status::InvalidParameter;
         }
     }
-    return SCAR_OK;
+    return Status::Ok;
 }
 
 PreparedDynamicEmissionWorkspace PreparedDynamicEmission::make_workspace(
@@ -292,15 +292,14 @@ DynamicEmissionRowResult PreparedDynamicEmission::evaluate_parameter(
 
     DynamicEmissionRowResult out;
     out.parameter = parameter;
-    out.status = SCAR_OK;
     if (!impl_->supported || !std::isfinite(parameter)) {
         out.status = impl_->supported
-            ? SCAR_INVALID_PARAMETER : SCAR_INVALID_FAMILY;
+            ? Status::InvalidParameter : Status::InvalidFamily;
         return out;
     }
     if (impl_->kind == DynamicEmissionKind::Pair) {
         if (row == nullptr) {
-            out.status = SCAR_NULL_POINTER;
+            out.status = Status::NullPointer;
             return out;
         }
         out.log_pdf = impl_->pair.log_pdf(row[0], row[1], parameter);
@@ -310,7 +309,7 @@ DynamicEmissionRowResult PreparedDynamicEmission::evaluate_parameter(
         }
     } else if (impl_->kind == DynamicEmissionKind::Student) {
         if (row == nullptr) {
-            out.status = SCAR_NULL_POINTER;
+            out.status = Status::NullPointer;
             return out;
         }
         if (derivative) {
@@ -322,7 +321,8 @@ DynamicEmissionRowResult PreparedDynamicEmission::evaluate_parameter(
                     out.log_pdf,
                     out.dlog_dparameter,
                     workspace.impl_->student)) {
-                out.status = SCAR_NUMERICAL_FAILURE;
+                out.status = Status::NumericalFailure;
+                out.failure.index = row_index;
                 return out;
             }
         } else {
@@ -347,7 +347,8 @@ DynamicEmissionRowResult PreparedDynamicEmission::evaluate_parameter(
                 impl_->spec->equicorr_sum_squares()[index];
         } else if (!scar_internal::equicorr_sufficient_statistics(
                        *impl_->spec, row, stats)) {
-            out.status = SCAR_NUMERICAL_FAILURE;
+            out.status = Status::NumericalFailure;
+            out.failure.index = row_index;
             return out;
         }
         out.log_pdf = scar_internal::equicorr_log_pdf_from_stats(
@@ -356,12 +357,13 @@ DynamicEmissionRowResult PreparedDynamicEmission::evaluate_parameter(
             parameter,
             derivative ? &out.dlog_dparameter : nullptr);
     } else {
-        out.status = SCAR_INVALID_FAMILY;
+        out.status = Status::InvalidFamily;
         return out;
     }
     if (!std::isfinite(out.log_pdf)
         || (derivative && !std::isfinite(out.dlog_dparameter))) {
-        out.status = SCAR_NUMERICAL_FAILURE;
+        out.status = Status::NumericalFailure;
+        out.failure.index = row_index;
     }
     return out;
 }
@@ -388,7 +390,7 @@ double PreparedDynamicEmission::log_pdf_at_state(
 
     const DynamicEmissionRowResult result = evaluate_state(
         row, row_index, state, false, workspace);
-    return result.status == SCAR_OK
+    return result.is_ok()
         ? result.log_pdf
         : std::numeric_limits<double>::quiet_NaN();
 }

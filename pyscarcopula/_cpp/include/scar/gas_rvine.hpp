@@ -2,8 +2,8 @@
 
 #include "scar/copula/spec.hpp"
 #include "scar/gas.hpp"
+#include "scar/gas_rvine/result.hpp"
 #include "scar/rvine_plan.hpp"
-#include "scar/status.hpp"
 
 #include <cstdint>
 #include <vector>
@@ -15,15 +15,6 @@ struct GasRvineEdge {
     GasParams gas_params;
     GasConfig gas_config;
     bool dynamic = false;
-};
-
-struct GasRvineSampleResult {
-    std::vector<double> values;
-    std::int64_t n_rows = 0;
-    int dimension = 0;
-    int status = SCAR_OK;
-    std::int64_t failure_row = -1;
-    int failure_edge = -1;
 };
 
 GasRvineSampleResult gas_rvine_sample(

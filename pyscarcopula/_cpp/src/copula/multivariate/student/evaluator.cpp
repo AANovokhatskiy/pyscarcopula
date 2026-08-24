@@ -116,21 +116,22 @@ scar::MultivariateRowsResult student_log_pdf_and_grad_rows(
 
     scar::MultivariateRowsResult out;
     out.n_threads_requested = n_threads;
-    out.status = validate_student_batch(spec, observations, row_offset);
+    out.status = scar::status_from_int(
+        validate_student_batch(spec, observations, row_offset));
     out.log_pdf.assign(
         observations.size(), -std::numeric_limits<double>::infinity());
     out.dlog_dr.assign(
         observations.size(), std::numeric_limits<double>::quiet_NaN());
-    if (out.status != SCAR_OK) {
+    if (!out.is_ok()) {
         return out;
     }
     if (!valid_thread_count(n_threads)) {
-        out.status = SCAR_INVALID_PARAMETER;
+        out.status = scar::Status::InvalidParameter;
         return out;
     }
     if (degrees_of_freedom.size() != 1
         && degrees_of_freedom.size() != observations.size()) {
-        out.status = SCAR_INVALID_SIZE;
+        out.status = scar::Status::InvalidSize;
         return out;
     }
 
@@ -191,15 +192,15 @@ scar::MultivariateRowsResult student_log_pdf_and_grad_rows(
         ++out.row_parallel_blocks;
         accumulate_diagnostics(block.diagnostics, out);
         if (block.failure_index >= 0
-            && (out.failure_index < 0
-                || block.failure_index < out.failure_index)) {
-            out.failure_index = block.failure_index;
+            && (out.failure.index < 0
+                || block.failure_index < out.failure.index)) {
+            out.failure.index = block.failure_index;
         }
     }
-    if (out.failure_index >= 0) {
-        out.status = SCAR_NUMERICAL_FAILURE;
+    if (out.failure.index >= 0) {
+        out.status = scar::Status::NumericalFailure;
         const std::size_t first_uncomputed =
-            static_cast<std::size_t>(out.failure_index + 1);
+            static_cast<std::size_t>(out.failure.index + 1);
         std::fill(
             out.log_pdf.begin() + first_uncomputed,
             out.log_pdf.end(),
@@ -223,16 +224,17 @@ scar::MultivariateGridResult student_pdf_and_grad_grid(
     out.n_threads_requested = n_threads;
     initialize_multivariate_grid(
         out, observations.size(), state_grid.size());
-    if (out.status != SCAR_OK) {
+    if (!out.is_ok()) {
         return out;
     }
-    out.status = validate_student_batch(spec, observations, row_offset);
+    out.status = scar::status_from_int(
+        validate_student_batch(spec, observations, row_offset));
     if (!valid_thread_count(n_threads)) {
-        out.status = SCAR_INVALID_PARAMETER;
+        out.status = scar::Status::InvalidParameter;
     }
-    if (out.status != SCAR_OK || state_grid.empty()) {
-        if (out.status == SCAR_OK) {
-            out.status = SCAR_INVALID_SIZE;
+    if (!out.is_ok() || state_grid.empty()) {
+        if (out.is_ok()) {
+            out.status = scar::Status::InvalidSize;
         }
         return out;
     }
@@ -240,7 +242,7 @@ scar::MultivariateGridResult student_pdf_and_grad_grid(
             state_grid.begin(), state_grid.end(), [](double value) {
                 return std::isfinite(value);
             })) {
-        out.status = SCAR_INVALID_PARAMETER;
+        out.status = scar::Status::InvalidParameter;
         return out;
     }
 
@@ -304,15 +306,15 @@ scar::MultivariateGridResult student_pdf_and_grad_grid(
         ++out.student_parallel_blocks;
         accumulate_diagnostics(block.diagnostics, out);
         if (block.failure_index >= 0
-            && (out.failure_index < 0
-                || block.failure_index < out.failure_index)) {
-            out.failure_index = block.failure_index;
+            && (out.failure.index < 0
+                || block.failure_index < out.failure.index)) {
+            out.failure.index = block.failure_index;
         }
     }
-    if (out.failure_index >= 0) {
-        out.status = SCAR_NUMERICAL_FAILURE;
+    if (out.failure.index >= 0) {
+        out.status = scar::Status::NumericalFailure;
         const std::size_t first_uncomputed =
-            static_cast<std::size_t>(out.failure_index + 1)
+            static_cast<std::size_t>(out.failure.index + 1)
             * state_grid.size();
         std::fill(
             out.pdf.values.begin() + first_uncomputed,

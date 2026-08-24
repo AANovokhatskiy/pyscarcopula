@@ -1,12 +1,18 @@
 #include "scar/copula.hpp"
 #include "scar/copula/prepared_dynamic_emission.hpp"
 #include "scar/copula/prepared_pair_kernel.hpp"
+#include "scar/copula/result.hpp"
 #include "scar/core/checked_arithmetic.hpp"
 #include "scar/core/result.hpp"
 #include "scar/core/threading.hpp"
 #include "scar/gas.hpp"
+#include "scar/gas/result.hpp"
+#include "scar/gas_rvine/result.hpp"
 #include "scar/math/normal.hpp"
+#include "scar/scar_ou/result.hpp"
+#include "scar/static/result.hpp"
 #include "scar/status.hpp"
+#include "scar/vine/result.hpp"
 
 #include <cmath>
 #include <variant>
@@ -35,7 +41,15 @@ int main() {
     }
 
     const scar::Result<double> foundation_result = scar::success(1.0);
+    const scar::MultivariateRowsResult copula_result;
+    const scar::ScarOuVectorResult scar_ou_vector_result;
+    const scar::GasRvineSampleResult gas_rvine_result;
+    const scar::rvine::SampleResult vine_result;
     if (!foundation_result.is_ok()
+        || !copula_result.is_ok()
+        || !scar_ou_vector_result.is_ok()
+        || !gas_rvine_result.is_ok()
+        || !vine_result.is_ok()
         || std::abs(scar::math::normal_cdf(0.0) - 0.5) > 1e-15
         || std::abs(scar::math::normal_quantile(0.5)) > 1e-15) {
         return 3;
@@ -140,8 +154,8 @@ int main() {
             span_values, 0, 0.0, true, emission_workspace);
     if (!emission.is_supported()
         || emission.kind() != scar::DynamicEmissionKind::Pair
-        || emission.validate_observations(observation_view) != scar::SCAR_OK
-        || emission_result.status != scar::SCAR_OK
+        || !scar::ok(emission.validate_observations(observation_view))
+        || !emission_result.is_ok()
         || std::abs(emission_result.log_pdf) > 1e-15
         || std::abs(emission_result.dlog_dparameter) > 1e-15
         || std::abs(emission.h(0.25, 0.75, 0.0) - 0.25) > 1e-15
@@ -157,8 +171,8 @@ int main() {
         gas.initial_state(gas_params, spec, gas_config);
     const scar::GasStateResult prepared_state =
         gas.initial_state_prepared(gas_params, emission, gas_config);
-    if (cold_state.status != scar::SCAR_OK
-        || prepared_state.status != scar::SCAR_OK
+    if (!cold_state.is_ok()
+        || !prepared_state.is_ok()
         || cold_state.g != prepared_state.g
         || cold_state.parameter != prepared_state.parameter) {
         return 12;
@@ -173,14 +187,27 @@ int main() {
         0.25,
         0.75,
         gas_config);
-    if (cold_update.status != scar::SCAR_OK
-        || prepared_update.status != scar::SCAR_OK
+    if (!cold_update.is_ok()
+        || !prepared_update.is_ok()
         || cold_update.g_next != prepared_update.g_next
         || cold_update.r != prepared_update.r
         || cold_update.r_next != prepared_update.r_next
         || cold_update.log_likelihood != prepared_update.log_likelihood
         || cold_update.score != prepared_update.score) {
         return 13;
+    }
+    scar::StaticObjectiveResult static_failure;
+    static_failure.status = scar::Status::NumericalFailure;
+    static_failure.failure.index = 7;
+    scar::LogLikResult ou_failure;
+    ou_failure.status = scar::Status::InvalidParameter;
+    ou_failure.failure.fallback_from =
+        static_cast<int>(scar::OuBackend::Spectral);
+    if (static_failure.is_ok()
+        || static_failure.failure.index != 7
+        || ou_failure.is_ok()
+        || ou_failure.failure.fallback_from != 0) {
+        return 14;
     }
     return scar::SCAR_OK;
 }

@@ -37,8 +37,8 @@ struct TypedModelStorage;
 ///
 /// Family-specific numerical state is owned by a typed storage alternative,
 /// rather than exposed as an ever-growing collection of unrelated fields.
-/// The Python adapter intentionally remains available while application
-/// modules migrate to prepared typed models in Stage 5.
+/// The compatibility adapter remains available while callers migrate to
+/// prepared typed models.
 struct CopulaSpec {
     CopulaSpec();
     ~CopulaSpec();

@@ -1,10 +1,9 @@
 #pragma once
 
 #include "scar/copula/spec.hpp"
+#include "scar/gas/result.hpp"
 #include "scar/observation.hpp"
-#include "scar/status.hpp"
 
-#include <cstdint>
 #include <vector>
 
 namespace scar {
@@ -33,49 +32,6 @@ struct GasConfig {
     double score_clip = 100.0;
     double fisher_floor = 1e-6;
     double stationary_beta_tol = 1e-8;
-};
-
-struct GasLogLikResult {
-    double log_likelihood = 0.0;
-    int status = SCAR_OK;
-    std::int64_t failure_index = -1;
-};
-
-/// Full filtered GAS paths and their total log-likelihood.
-struct GasFilterResult {
-    std::vector<double> g_path;
-    std::vector<double> r_path;
-    std::vector<double> score_path;
-    double log_likelihood = 0.0;
-    int status = SCAR_OK;
-    std::int64_t failure_index = -1;
-};
-
-struct GasUpdateResult {
-    double g_next = 0.0;
-    double r = 0.0;
-    double r_next = 0.0;
-    double log_likelihood = 0.0;
-    double score = 0.0;
-    int status = SCAR_OK;
-};
-
-struct GasStateResult {
-    double g = 0.0;
-    double parameter = 0.0;
-    int status = SCAR_OK;
-};
-
-struct GasPredictResult {
-    double parameter = 0.0;
-    int status = SCAR_OK;
-    std::int64_t failure_index = -1;
-};
-
-struct GasPathResult {
-    std::vector<double> values;
-    int status = SCAR_OK;
-    std::int64_t failure_index = -1;
 };
 
 /// Native evaluator for bivariate score-driven copula dynamics.

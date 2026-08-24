@@ -305,7 +305,7 @@ void copula_pdf_row_precomputed_flat(
                 r_grid.size(),
                 spec.factor_dimension_tile(),
                 1);
-        if (result.failure_index >= 0
+        if (result.failure.index >= 0
             || result.log_pdf.size() != r_grid.size()) {
             std::fill(
                 fi_row,
@@ -449,7 +449,7 @@ void copula_pdf_and_grad_row_precomputed_flat(
                 r_grid.size(),
                 spec.factor_dimension_tile(),
                 1);
-        if (result.failure_index >= 0
+        if (result.failure.index >= 0
             || result.log_pdf.size() != r_grid.size()
             || result.dlog_ddf.size() != r_grid.size()) {
             std::fill(
@@ -578,7 +578,7 @@ void copula_pdf_and_grad_grid_precomputed(
                 K,
                 spec.factor_dimension_tile(),
                 n_threads);
-        if (result.failure_index >= 0
+        if (result.failure.index >= 0
             || result.log_pdf.size() != elements
             || result.dlog_ddf.size() != elements) {
             std::fill(

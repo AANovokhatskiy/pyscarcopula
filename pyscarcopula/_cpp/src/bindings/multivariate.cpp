@@ -1,5 +1,9 @@
 #include "common.hpp"
 
+#include "scar/copula/multivariate/gaussian/conditional.hpp"
+#include "scar/copula/multivariate/student/conditional.hpp"
+#include "scar/copula/multivariate/student/rosenblatt.hpp"
+
 namespace py = pybind11;
 
 namespace pyscarcopula::bindings {
@@ -316,9 +320,9 @@ void bind_multivariate(py::module_& m) {
             out["residuals"] = vector_to_array(result.residuals);
             out["n_rows"] = result.n_rows;
             out["dimension"] = result.dimension;
-            out["status"] = result.status;
-            out["failure_index"] = result.failure_index;
-            out["failure_coordinate"] = result.failure_coordinate;
+            out["status"] = static_cast<int>(result.status);
+            out["failure_index"] = result.failure.index;
+            out["failure_coordinate"] = result.failure.coordinate;
             out["diagnostics"] = std::move(diagnostics);
             return out;
         },

@@ -1,5 +1,7 @@
 #include "scar/rvine.hpp"
 
+#include "density_internal.hpp"
+
 #include <cstddef>
 
 namespace scar::rvine {
@@ -17,7 +19,7 @@ RosenblattResult rosenblatt_transform(
     out.n_threads_requested = n_threads;
     if (plan.residual_nodes.size()
             != static_cast<std::size_t>(plan.dimension)) {
-        out.status = SCAR_INVALID_SIZE;
+        out.status = Status::InvalidSize;
         return out;
     }
 
@@ -33,9 +35,9 @@ RosenblattResult rosenblatt_transform(
         n_threads,
         prepared_edges,
         value_count,
-        out.failure_row);
+        out.failure.row);
     if (request_status != SCAR_OK) {
-        out.status = request_status;
+        out.status = status_from_int(request_status);
         return out;
     }
 
@@ -54,15 +56,15 @@ RosenblattResult rosenblatt_transform(
         out.residuals.data(),
         false,
         node_workspace,
-        out.failure_row,
-        out.failure_edge,
-        out.failure_operation,
+        out.failure.row,
+        out.failure.edge,
+        out.failure.operation,
         non_finite_rows,
         diagnostics);
     out.h_pair_operations = diagnostics.h_pair_operations;
     out.independence_fast_paths = diagnostics.independence_fast_paths;
     if (status != SCAR_OK) {
-        out.status = status;
+        out.status = status_from_int(status);
     }
     return out;
 }

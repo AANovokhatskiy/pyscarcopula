@@ -38,6 +38,8 @@ _FORBIDDEN_COMPUTE_DEPENDENCIES = (
         ),
     ),
 )
+_CALLER_SPECIFIC_CONTRACT_TERMS = re.compile(
+    r"\b(?:Python|pybind11|NumPy|PyObject)\b", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -1012,6 +1014,248 @@ def check_prepared_application_modules(root: Path) -> list[Violation]:
     return violations
 
 
+def check_public_cpp_api(root: Path) -> list[Violation]:
+    """Enforce the Stage 6 domain contracts and opaque workspace boundary."""
+
+    cpp = root / "pyscarcopula" / "_cpp"
+    include = cpp / "include" / "scar"
+    source = cpp / "src"
+    rule = "public-cpp-api"
+    violations = []
+
+    result_contracts = {
+        include / "static" / "result.hpp": ("StaticObjectiveResult",),
+        include / "gas" / "result.hpp": (
+            "GasLogLikResult", "GasFilterResult", "GasUpdateResult",
+            "GasStateResult", "GasPredictResult", "GasPathResult"),
+        include / "scar_ou" / "result.hpp": (
+            "ScarOuVectorResult", "LogLikResult", "GradLogLikResult",
+            "StateDistribution", "SmoothedStateDistribution",
+            "TrajectoryLogPdfResult"),
+        include / "copula" / "result.hpp": (
+            "MultivariateRowsResult", "MultivariateGridResult",
+            "EquicorrPreparationResult"),
+        include / "vine" / "result.hpp": (
+            "SampleResult", "ConditionalSampleResult", "DensityResult",
+            "RosenblattResult", "MCMCResult"),
+        include / "gas_rvine" / "result.hpp": ("GasRvineSampleResult",),
+    }
+    for path, result_names in result_contracts.items():
+        if not path.is_file():
+            violations.append(Violation(
+                rule,
+                path,
+                "domain result contract is missing",
+            ))
+            continue
+        text = path.read_text(encoding="utf-8")
+        for result_name in result_names:
+            result_match = re.search(
+                rf"(?ms)^struct\s+{re.escape(result_name)}\s*\{{(.*?)^\}};",
+                text,
+            )
+            if result_match is None:
+                violations.append(Violation(
+                    rule,
+                    path,
+                    f"domain result contract is missing: {result_name}",
+                ))
+                continue
+            body = result_match.group(1)
+            for required in ("Status status", "FailureContext failure"):
+                if required not in body:
+                    violations.append(Violation(
+                        rule,
+                        path,
+                        f"{result_name} is missing {required}",
+                    ))
+            if re.search(
+                    r"\bint\s+status\b|\bfailure_(?:index|row|edge|operation|coordinate)\b",
+                    body):
+                violations.append(Violation(
+                    rule,
+                    path,
+                    f"{result_name} must use Status and FailureContext",
+                ))
+
+    for path in _source_files(include):
+        if "detail" in path.relative_to(include).parts:
+            continue
+        text = path.read_text(encoding="utf-8")
+        for match in re.finditer(
+                r"(?ms)^struct\s+(\w*Result)\s*\{(.*?)^\};", text):
+            name, body = match.groups()
+            for required in ("Status status", "FailureContext failure"):
+                if required not in body:
+                    violations.append(Violation(
+                        rule,
+                        path,
+                        f"public result {name} is missing {required}",
+                        text.count("\n", 0, match.start()) + 1,
+                    ))
+            if re.search(
+                    r"\bint\s+status\b|\bfailure_(?:index|row|edge|operation|coordinate)\b",
+                    body):
+                violations.append(Violation(
+                    rule,
+                    path,
+                    f"public result {name} exposes legacy integer errors",
+                    text.count("\n", 0, match.start()) + 1,
+                ))
+
+    umbrella_contracts = {
+        include / "copula.hpp": (
+            ("copula/result.hpp", "static/result.hpp"),
+            ("struct MultivariateRowsResult", "struct StaticObjectiveResult")),
+        include / "gas.hpp": ("gas/result.hpp", "struct GasLogLikResult"),
+        include / "ou.hpp": ("scar_ou/result.hpp", "struct LogLikResult"),
+        include / "rvine.hpp": ("vine/result.hpp", "struct SampleResult"),
+        include / "gas_rvine.hpp": (
+            "gas_rvine/result.hpp", "struct GasRvineSampleResult"),
+    }
+    for path, (required_includes, forbidden_definitions) in (
+            umbrella_contracts.items()):
+        if not path.is_file():
+            continue
+        includes = {value for value, _ in _include_lines(path)}
+        text = path.read_text(encoding="utf-8")
+        if isinstance(required_includes, str):
+            required_includes = (required_includes,)
+        if isinstance(forbidden_definitions, str):
+            forbidden_definitions = (forbidden_definitions,)
+        for required_include in required_includes:
+            if required_include not in includes:
+                violations.append(Violation(
+                    rule,
+                    path,
+                    f"public API must import scar/{required_include}",
+                ))
+        for forbidden_definition in forbidden_definitions:
+            if forbidden_definition in text:
+                violations.append(Violation(
+                    rule,
+                    path,
+                    "domain result is defined in an umbrella header",
+                ))
+
+    copula_header = include / "copula.hpp"
+    if copula_header.is_file():
+        concrete_imports = {
+            value for value, _ in _include_lines(copula_header)
+            if value.startswith("copula/multivariate/")
+            or value.startswith("copula/pair/")
+            or value == "copula/prepared_dynamic_emission.hpp"
+        }
+        for concrete_import in sorted(concrete_imports):
+            violations.append(Violation(
+                rule,
+                copula_header,
+                "static copula umbrella imports concrete implementation: "
+                f"{concrete_import}",
+            ))
+
+    status_header = include / "core" / "status.hpp"
+    if status_header.is_file():
+        text = status_header.read_text(encoding="utf-8")
+        if re.search(r"operator\s*[!=]=\s*\(\s*(?:Status\s+\w+\s*,\s*int|int\s+\w+\s*,\s*Status)", text):
+            violations.append(Violation(
+                rule,
+                status_header,
+                "Status must not compare implicitly with legacy integer codes",
+            ))
+
+    ou_header = include / "ou.hpp"
+    if ou_header.is_file():
+        text = ou_header.read_text(encoding="utf-8")
+        for marker in (
+                "ScarOuGridGradientOperators",
+                "ScarOuGridGradientWorkspace",
+                "ScarOuSpectralGradientWorkspace"):
+            if marker in text:
+                violations.append(Violation(
+                    rule,
+                    ou_header,
+                    f"public SCAR-OU API exposes private workspace: {marker}",
+                ))
+        for marker in ("struct Workspace;", "std::unique_ptr<Workspace>"):
+            if marker not in text:
+                violations.append(Violation(
+                    rule,
+                    ou_header,
+                    f"SCAR-OU evaluator PImpl boundary is missing: {marker}",
+                ))
+        for class_name in ("ScarOuEvaluator", "PreparedScarOuEvaluator"):
+            public = re.search(
+                rf"(?ms)class\s+{class_name}\s*\{{\s*public:(.*?)^private:",
+                text,
+            )
+            if public is not None and re.search(
+                    r"\bint\s*&\s*status\b|\bint&\s*status\b",
+                    public.group(1)):
+                violations.append(Violation(
+                    rule,
+                    ou_header,
+                    f"{class_name} exposes a legacy status out-parameter",
+                ))
+        for marker in (
+                "ScarOuVectorResult predictive_mean_local_gh(",
+                "ScarOuVectorResult mixture_h_pair_auto(",
+                "ScarOuVectorResult predictive_mean(const OuParams& params)",
+                "ScarOuVectorResult mixture_h_pair(const OuParams& params)"):
+            if marker not in text:
+                violations.append(Violation(
+                    rule,
+                    ou_header,
+                    f"typed SCAR-OU vector contract is missing: {marker}",
+                ))
+
+    rvine_header = include / "rvine.hpp"
+    if rvine_header.is_file():
+        text = rvine_header.read_text(encoding="utf-8")
+        if re.search(r"\bfailure_(?:row|edge|operation)\s*[,);]", text):
+            violations.append(Violation(
+                rule,
+                rvine_header,
+                "public R-vine API exposes internal failure out-parameters",
+            ))
+
+    private_workspace = source / "scar_ou" / "gradient_workspace.hpp"
+    if not private_workspace.is_file():
+        violations.append(Violation(
+            rule,
+            private_workspace,
+            "private SCAR-OU gradient workspace is missing",
+        ))
+    elif "ScarOuSpectralGradientWorkspace" not in (
+            private_workspace.read_text(encoding="utf-8")):
+        violations.append(Violation(
+            rule,
+            private_workspace,
+            "private SCAR-OU gradient workspace is incomplete",
+        ))
+
+    compute_contract_files = (
+        *tuple(_source_files(include)),
+        *tuple(
+            path for path in _source_files(source)
+            if "bindings" not in path.relative_to(source).parts
+        ),
+    )
+    for path in compute_contract_files:
+        text = path.read_text(encoding="utf-8")
+        match = _CALLER_SPECIFIC_CONTRACT_TERMS.search(text)
+        if match is not None:
+            violations.append(Violation(
+                rule,
+                path,
+                "computational contracts must be caller-neutral; found "
+                f"{match.group(0)!r}",
+                text.count("\n", 0, match.start()) + 1,
+            ))
+
+    return violations
+
+
 def _find_cycle(graph: dict[str, set[str]]) -> list[str] | None:
     visited: set[str] = set()
     active: set[str] = set()
@@ -1076,6 +1320,7 @@ def check_repository(root: Path) -> list[Violation]:
         check_pair_verticalization,
         check_multivariate_verticalization,
         check_prepared_application_modules,
+        check_public_cpp_api,
         check_public_header_cycles,
     )
     return [

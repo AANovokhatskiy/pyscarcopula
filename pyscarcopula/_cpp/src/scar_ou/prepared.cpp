@@ -41,8 +41,7 @@ PreparedScarOuEvaluator::PreparedScarOuEvaluator(
       evaluator_(&emission_) {
 
     // Prepared objects own the observation memory so ObservationView remains
-    // valid across repeated optimizer callbacks after the pybind constructor
-    // returns.
+    // valid across repeated evaluator calls.
     if (!valid_method(method_)) {
         throw std::invalid_argument("unsupported transition_method");
     }
@@ -224,36 +223,32 @@ PreparedScarOuEvaluator::neg_loglik_with_grad_and_corr_directional(
     return call_directional_corr(params, corr_direction);
 }
 
-std::vector<double> PreparedScarOuEvaluator::predictive_mean(
-    const OuParams& params,
-    OuBackend& backend,
-    int& status) const {
+ScarOuVectorResult PreparedScarOuEvaluator::predictive_mean(
+    const OuParams& params) const {
     const std::lock_guard<std::mutex> lock(call_mutex_);
-    return call_predictive_mean(params, backend, status);
+    return call_predictive_mean(params);
 }
 
-std::vector<double> PreparedScarOuEvaluator::mixture_h(
-    const OuParams& params,
-    OuBackend& backend,
-    int& status) const {
+ScarOuVectorResult PreparedScarOuEvaluator::mixture_h(
+    const OuParams& params) const {
     const std::lock_guard<std::mutex> lock(call_mutex_);
     if (observations_.empty()) {
-        status = SCAR_INVALID_FAMILY;
-        return {};
+        ScarOuVectorResult result;
+        result.status = Status::InvalidFamily;
+        return result;
     }
-    return call_mixture_h(params, backend, status);
+    return call_mixture_h(params);
 }
 
-std::vector<double> PreparedScarOuEvaluator::mixture_h_pair(
-    const OuParams& params,
-    OuBackend& backend,
-    int& status) const {
+ScarOuVectorResult PreparedScarOuEvaluator::mixture_h_pair(
+    const OuParams& params) const {
     const std::lock_guard<std::mutex> lock(call_mutex_);
     if (observations_.empty()) {
-        status = SCAR_INVALID_FAMILY;
-        return {};
+        ScarOuVectorResult result;
+        result.status = Status::InvalidFamily;
+        return result;
     }
-    return call_mixture_h_pair(params, backend, status);
+    return call_mixture_h_pair(params);
 }
 
 StateDistribution PreparedScarOuEvaluator::state_distribution(
@@ -340,64 +335,44 @@ GradLogLikResult PreparedScarOuEvaluator::call_directional_corr(
         params, copula_, u, config_, corr_direction);
 }
 
-std::vector<double> PreparedScarOuEvaluator::call_predictive_mean(
-    const OuParams& params,
-    OuBackend& backend,
-    int& status) const {
-
+ScarOuVectorResult PreparedScarOuEvaluator::call_predictive_mean(
+    const OuParams& params) const {
     const ObservationView u = view();
     if (method_ == "local") {
-        backend = OuBackend::LocalGh;
         return evaluator_.predictive_mean_local_gh(
-            params, copula_, u, config_, status);
+            params, copula_, u, config_);
     }
     if (method_ == "matrix") {
-        backend = OuBackend::Matrix;
         return evaluator_.predictive_mean_matrix(
-            params, copula_, u, config_, status);
+            params, copula_, u, config_);
     }
-    return evaluator_.predictive_mean_auto(
-        params, copula_, u, config_, backend, status);
+    return evaluator_.predictive_mean_auto(params, copula_, u, config_);
 }
 
-std::vector<double> PreparedScarOuEvaluator::call_mixture_h(
-    const OuParams& params,
-    OuBackend& backend,
-    int& status) const {
-
+ScarOuVectorResult PreparedScarOuEvaluator::call_mixture_h(
+    const OuParams& params) const {
     const ObservationView u = view();
     if (method_ == "local") {
-        backend = OuBackend::LocalGh;
-        return evaluator_.mixture_h_local_gh(
-            params, copula_, u, config_, status);
+        return evaluator_.mixture_h_local_gh(params, copula_, u, config_);
     }
     if (method_ == "matrix") {
-        backend = OuBackend::Matrix;
-        return evaluator_.mixture_h_matrix(
-            params, copula_, u, config_, status);
+        return evaluator_.mixture_h_matrix(params, copula_, u, config_);
     }
-    return evaluator_.mixture_h_auto(
-        params, copula_, u, config_, backend, status);
+    return evaluator_.mixture_h_auto(params, copula_, u, config_);
 }
 
-std::vector<double> PreparedScarOuEvaluator::call_mixture_h_pair(
-    const OuParams& params,
-    OuBackend& backend,
-    int& status) const {
-
+ScarOuVectorResult PreparedScarOuEvaluator::call_mixture_h_pair(
+    const OuParams& params) const {
     const ObservationView u = view();
     if (method_ == "local") {
-        backend = OuBackend::LocalGh;
         return evaluator_.mixture_h_pair_local_gh(
-            params, copula_, u, config_, status);
+            params, copula_, u, config_);
     }
     if (method_ == "matrix") {
-        backend = OuBackend::Matrix;
         return evaluator_.mixture_h_pair_matrix(
-            params, copula_, u, config_, status);
+            params, copula_, u, config_);
     }
-    return evaluator_.mixture_h_pair_auto(
-        params, copula_, u, config_, backend, status);
+    return evaluator_.mixture_h_pair_auto(params, copula_, u, config_);
 }
 
 StateDistribution PreparedScarOuEvaluator::call_state_distribution(

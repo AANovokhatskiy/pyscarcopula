@@ -171,11 +171,11 @@ scar::ConditionalSampleResult conditional_latent(
     out.n_threads_requested = n_threads;
     if (dimension < 2 || n_rows <= 0 || given_indices.empty()
         || given_indices.size() >= static_cast<std::size_t>(dimension)) {
-        out.status = SCAR_INVALID_SIZE;
+        out.status = scar::Status::InvalidSize;
         return out;
     }
     if (!valid_thread_count(n_threads)) {
-        out.status = SCAR_INVALID_PARAMETER;
+        out.status = scar::Status::InvalidParameter;
         return out;
     }
     const std::size_t d = static_cast<std::size_t>(dimension);
@@ -184,7 +184,7 @@ scar::ConditionalSampleResult conditional_latent(
     const std::size_t n_free = d - n_given;
     out.n_free = static_cast<std::int64_t>(n_free);
     if (correlation_rows != 1 && correlation_rows != n_rows) {
-        out.status = SCAR_INVALID_SIZE;
+        out.status = scar::Status::InvalidSize;
         return out;
     }
     const std::size_t corr_rows =
@@ -194,7 +194,7 @@ scar::ConditionalSampleResult conditional_latent(
         || (given_latent.size() != n_given
             && given_latent.size() != rows * n_given)
         || !policy.auxiliary_sizes_valid) {
-        out.status = SCAR_INVALID_SIZE;
+        out.status = scar::Status::InvalidSize;
         return out;
     }
 
@@ -202,7 +202,7 @@ scar::ConditionalSampleResult conditional_latent(
     for (int index : given_indices) {
         if (index < 0 || index >= dimension
             || is_given[static_cast<std::size_t>(index)]) {
-            out.status = SCAR_INVALID_PARAMETER;
+            out.status = scar::Status::InvalidParameter;
             return out;
         }
         is_given[static_cast<std::size_t>(index)] = true;
@@ -226,8 +226,8 @@ scar::ConditionalSampleResult conditional_latent(
                 true,
                 policy,
                 common_factors)) {
-            out.status = SCAR_NUMERICAL_FAILURE;
-            out.failure_index = 0;
+            out.status = scar::Status::NumericalFailure;
+            out.failure.index = 0;
             return out;
         }
         out.correlation_factorizations = 1;
@@ -366,15 +366,15 @@ scar::ConditionalSampleResult conditional_latent(
         ++out.parallel_blocks;
         out.correlation_factorizations += block.correlation_factorizations;
         if (block.failure_index >= 0
-            && (out.failure_index < 0
-                || block.failure_index < out.failure_index)) {
-            out.failure_index = block.failure_index;
-            out.status = block.status;
+            && (out.failure.index < 0
+                || block.failure_index < out.failure.index)) {
+            out.failure.index = block.failure_index;
+            out.status = scar::status_from_int(block.status);
         }
     }
-    if (out.failure_index >= 0) {
+    if (out.failure.index >= 0) {
         const std::size_t first_uncomputed =
-            static_cast<std::size_t>(out.failure_index + 1) * n_free;
+            static_cast<std::size_t>(out.failure.index + 1) * n_free;
         std::fill(
             out.values.begin() + first_uncomputed,
             out.values.end(),

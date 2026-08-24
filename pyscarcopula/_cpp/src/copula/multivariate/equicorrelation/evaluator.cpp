@@ -61,21 +61,22 @@ scar::MultivariateRowsResult equicorr_log_pdf_and_grad_rows(
 
     scar::MultivariateRowsResult out;
     out.n_threads_requested = n_threads;
-    out.status = validate_equicorr_batch(spec, observations, row_offset);
+    out.status = scar::status_from_int(
+        validate_equicorr_batch(spec, observations, row_offset));
     out.log_pdf.assign(
         observations.size(), -std::numeric_limits<double>::infinity());
     out.dlog_dr.assign(
         observations.size(), std::numeric_limits<double>::quiet_NaN());
-    if (out.status != SCAR_OK) {
+    if (!out.is_ok()) {
         return out;
     }
     if (!valid_thread_count(n_threads)) {
-        out.status = SCAR_INVALID_PARAMETER;
+        out.status = scar::Status::InvalidParameter;
         return out;
     }
     if (correlations.size() != 1
         && correlations.size() != observations.size()) {
-        out.status = SCAR_INVALID_SIZE;
+        out.status = scar::Status::InvalidSize;
         return out;
     }
 
@@ -126,15 +127,15 @@ scar::MultivariateRowsResult equicorr_log_pdf_and_grad_rows(
         }
         ++out.row_parallel_blocks;
         if (block.failure_index >= 0
-            && (out.failure_index < 0
-                || block.failure_index < out.failure_index)) {
-            out.failure_index = block.failure_index;
+            && (out.failure.index < 0
+                || block.failure_index < out.failure.index)) {
+            out.failure.index = block.failure_index;
         }
     }
-    if (out.failure_index >= 0) {
-        out.status = SCAR_NUMERICAL_FAILURE;
+    if (out.failure.index >= 0) {
+        out.status = scar::Status::NumericalFailure;
         const std::size_t first_uncomputed =
-            static_cast<std::size_t>(out.failure_index + 1);
+            static_cast<std::size_t>(out.failure.index + 1);
         std::fill(
             out.log_pdf.begin() + first_uncomputed,
             out.log_pdf.end(),
@@ -158,16 +159,17 @@ scar::MultivariateGridResult equicorr_pdf_and_grad_grid(
     out.n_threads_requested = n_threads;
     initialize_multivariate_grid(
         out, observations.size(), state_grid.size());
-    if (out.status != SCAR_OK) {
+    if (!out.is_ok()) {
         return out;
     }
-    out.status = validate_equicorr_batch(spec, observations, row_offset);
+    out.status = scar::status_from_int(
+        validate_equicorr_batch(spec, observations, row_offset));
     if (!valid_thread_count(n_threads)) {
-        out.status = SCAR_INVALID_PARAMETER;
+        out.status = scar::Status::InvalidParameter;
     }
-    if (out.status != SCAR_OK || state_grid.empty()) {
-        if (out.status == SCAR_OK) {
-            out.status = SCAR_INVALID_SIZE;
+    if (!out.is_ok() || state_grid.empty()) {
+        if (scar::ok(out.status)) {
+            out.status = scar::Status::InvalidSize;
         }
         return out;
     }
@@ -175,7 +177,7 @@ scar::MultivariateGridResult equicorr_pdf_and_grad_grid(
             state_grid.begin(), state_grid.end(), [](double value) {
                 return std::isfinite(value);
             })) {
-        out.status = SCAR_INVALID_PARAMETER;
+        out.status = scar::Status::InvalidParameter;
         return out;
     }
 
@@ -250,15 +252,15 @@ scar::MultivariateGridResult equicorr_pdf_and_grad_grid(
         }
         ++out.equicorr_parallel_blocks;
         if (block.failure_index >= 0
-            && (out.failure_index < 0
-                || block.failure_index < out.failure_index)) {
-            out.failure_index = block.failure_index;
+            && (out.failure.index < 0
+                || block.failure_index < out.failure.index)) {
+            out.failure.index = block.failure_index;
         }
     }
-    if (out.failure_index >= 0) {
-        out.status = SCAR_NUMERICAL_FAILURE;
+    if (out.failure.index >= 0) {
+        out.status = scar::Status::NumericalFailure;
         const std::size_t first_uncomputed =
-            static_cast<std::size_t>(out.failure_index + 1)
+            static_cast<std::size_t>(out.failure.index + 1)
             * state_grid.size();
         std::fill(
             out.pdf.values.begin() + first_uncomputed,
@@ -297,11 +299,11 @@ EquicorrPreparationResult prepare_equicorr_sufficient_statistics(
     out.n_threads_requested = n_threads;
     if (observations.empty() || observations.values == nullptr
         || observations.dim < 2 || dimension_tile == 0) {
-        out.status = SCAR_INVALID_SIZE;
+        out.status = scar::Status::InvalidSize;
         return out;
     }
     if (!scar_internal::valid_thread_count(n_threads)) {
-        out.status = SCAR_INVALID_PARAMETER;
+        out.status = scar::Status::InvalidParameter;
         return out;
     }
 
@@ -313,7 +315,7 @@ EquicorrPreparationResult prepare_equicorr_sufficient_statistics(
         || input_values
             > static_cast<std::size_t>(
                 std::numeric_limits<std::int64_t>::max())) {
-        out.status = SCAR_INVALID_SIZE;
+        out.status = scar::Status::InvalidSize;
         return out;
     }
     const std::size_t dimension_tiles =
@@ -322,13 +324,13 @@ EquicorrPreparationResult prepare_equicorr_sufficient_statistics(
     std::size_t partial_values = 0;
     if (!scar_internal::checked_size_mul(
             observations.n_obs, dimension_tiles, partial_values)) {
-        out.status = SCAR_INVALID_SIZE;
+        out.status = scar::Status::InvalidSize;
         return out;
     }
     std::size_t temporary_values = 0;
     if (!scar_internal::checked_size_mul(
             partial_values, std::size_t{2}, temporary_values)) {
-        out.status = SCAR_INVALID_SIZE;
+        out.status = scar::Status::InvalidSize;
         return out;
     }
 
@@ -489,8 +491,8 @@ EquicorrPreparationResult prepare_equicorr_sufficient_statistics(
     out.nonfinite_values =
         nonfinite_values.load(std::memory_order_relaxed);
     if (out.nonfinite_values != 0) {
-        out.status = SCAR_INVALID_PARAMETER;
-        out.failure_index =
+        out.status = scar::Status::InvalidParameter;
+        out.failure.index =
             first_failure.load(std::memory_order_relaxed);
         return out;
     }
@@ -508,7 +510,7 @@ EquicorrPreparationResult prepare_equicorr_sufficient_statistics(
         out.sum_z[row] = sum + carry;
         out.sum_z2[row] = sum2 + carry2;
     }
-    out.status = SCAR_OK;
+    out.status = scar::Status::Ok;
     return out;
 }
 
@@ -529,25 +531,25 @@ MultivariateRowsResult equicorr_log_pdf_and_grad_from_stats(
         || spec.rotation != Rotation::R0
         || spec.transform != Transform::GaussianTanh
         || spec.dim < 2) {
-        out.status = SCAR_INVALID_FAMILY;
+        out.status = scar::Status::InvalidFamily;
         return out;
     }
     if (sum_z.size() == 0 || sum_z.data() == nullptr
         || sum_z2.data() == nullptr || sum_z2.size() != sum_z.size()
         || (correlations.size() != 1
             && correlations.size() != sum_z.size())) {
-        out.status = SCAR_INVALID_SIZE;
+        out.status = scar::Status::InvalidSize;
         return out;
     }
     if (!scar_internal::valid_thread_count(n_threads)) {
-        out.status = SCAR_INVALID_PARAMETER;
+        out.status = scar::Status::InvalidParameter;
         return out;
     }
     for (std::size_t row = 0; row < sum_z.size(); ++row) {
         if (!std::isfinite(sum_z[row]) || !std::isfinite(sum_z2[row])
             || sum_z2[row] < 0.0) {
-            out.status = SCAR_INVALID_PARAMETER;
-            out.failure_index = static_cast<std::int64_t>(row);
+            out.status = scar::Status::InvalidParameter;
+            out.failure.index = static_cast<std::int64_t>(row);
             return out;
         }
     }
@@ -598,13 +600,13 @@ MultivariateRowsResult equicorr_log_pdf_and_grad_from_stats(
         }
         ++out.row_parallel_blocks;
         if (block.failure_index >= 0
-            && (out.failure_index < 0
-                || block.failure_index < out.failure_index)) {
-            out.failure_index = block.failure_index;
+            && (out.failure.index < 0
+                || block.failure_index < out.failure.index)) {
+            out.failure.index = block.failure_index;
         }
     }
-    out.status = out.failure_index >= 0
-        ? SCAR_NUMERICAL_FAILURE : SCAR_OK;
+    out.status = out.failure.index >= 0
+        ? Status::NumericalFailure : Status::Ok;
     return out;
 }
 
@@ -619,31 +621,31 @@ MultivariateGridResult equicorr_pdf_and_grad_grid_from_stats(
     out.n_threads_requested = n_threads;
     scar_internal::initialize_multivariate_grid(
         out, sum_z.size(), state_grid.size());
-    if (out.status != SCAR_OK) {
+    if (!out.is_ok()) {
         return out;
     }
     if (spec.family != CopulaFamily::EquicorrGaussian
         || spec.rotation != Rotation::R0
         || spec.transform != Transform::GaussianTanh
         || spec.dim < 2) {
-        out.status = SCAR_INVALID_FAMILY;
+        out.status = scar::Status::InvalidFamily;
         return out;
     }
     if (sum_z.size() == 0 || sum_z.data() == nullptr
         || sum_z2.data() == nullptr || sum_z2.size() != sum_z.size()
         || state_grid.empty()) {
-        out.status = SCAR_INVALID_SIZE;
+        out.status = scar::Status::InvalidSize;
         return out;
     }
     if (!scar_internal::valid_thread_count(n_threads)) {
-        out.status = SCAR_INVALID_PARAMETER;
+        out.status = scar::Status::InvalidParameter;
         return out;
     }
     for (std::size_t row = 0; row < sum_z.size(); ++row) {
         if (!std::isfinite(sum_z[row]) || !std::isfinite(sum_z2[row])
             || sum_z2[row] < 0.0) {
-            out.status = SCAR_INVALID_PARAMETER;
-            out.failure_index = static_cast<std::int64_t>(row);
+            out.status = scar::Status::InvalidParameter;
+            out.failure.index = static_cast<std::int64_t>(row);
             return out;
         }
     }
@@ -651,7 +653,7 @@ MultivariateGridResult equicorr_pdf_and_grad_grid_from_stats(
             state_grid.begin(), state_grid.end(), [](double value) {
                 return std::isfinite(value);
             })) {
-        out.status = SCAR_INVALID_PARAMETER;
+        out.status = scar::Status::InvalidParameter;
         return out;
     }
 
@@ -718,13 +720,13 @@ MultivariateGridResult equicorr_pdf_and_grad_grid_from_stats(
         }
         ++out.equicorr_parallel_blocks;
         if (block.failure_index >= 0
-            && (out.failure_index < 0
-                || block.failure_index < out.failure_index)) {
-            out.failure_index = block.failure_index;
+            && (out.failure.index < 0
+                || block.failure_index < out.failure.index)) {
+            out.failure.index = block.failure_index;
         }
     }
-    out.status = out.failure_index >= 0
-        ? SCAR_NUMERICAL_FAILURE : SCAR_OK;
+    out.status = out.failure.index >= 0
+        ? Status::NumericalFailure : Status::Ok;
     return out;
 }
 

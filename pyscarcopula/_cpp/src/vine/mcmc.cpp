@@ -1,5 +1,7 @@
 #include "scar/rvine.hpp"
 
+#include "density_internal.hpp"
+
 #include "scar/core/threading.hpp"
 #include "scar/detail/safety.hpp"
 
@@ -18,10 +20,10 @@ void fail_mcmc(
     std::int64_t row,
     int edge,
     int operation) noexcept {
-    out.status = status;
-    out.failure_row = row;
-    out.failure_edge = edge;
-    out.failure_operation = operation;
+    out.status = status_from_int(status);
+    out.failure.row = row;
+    out.failure.edge = edge;
+    out.failure.operation = operation;
 }
 
 bool validate_partition(

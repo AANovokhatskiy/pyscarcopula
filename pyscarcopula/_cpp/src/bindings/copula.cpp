@@ -238,7 +238,9 @@ void bind_copula(py::module_& m) {
             py::arg("parameter"))
         .def_property_readonly(
             "status",
-            &scar::StaticCopulaEvaluator::status);
+            [](const scar::StaticCopulaEvaluator& evaluator) {
+                return static_cast<int>(evaluator.status());
+            });
 
     m.def(
         "copula_transform",

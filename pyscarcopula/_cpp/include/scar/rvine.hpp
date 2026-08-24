@@ -4,6 +4,7 @@
 #include "scar/core/span.hpp"
 #include "scar/rvine_plan.hpp"
 #include "scar/status.hpp"
+#include "scar/vine/result.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -27,7 +28,7 @@ struct EdgeSpec {
     bool parameter_free = false;
 };
 
-/// Non-owning parameter buffers kept alive by the pybind11 call frame.
+/// Non-owning parameter buffers that must outlive the native call.
 struct ParameterPack {
     DoubleView scalar_parameters;
     DoubleView row_parameters;
@@ -47,112 +48,6 @@ struct PreparedEdge {
           transposed_copula(std::move(transposed)),
           kernel(edge.copula),
           transposed_kernel(transposed_copula) {}
-};
-
-/// Result of one generic unconditional R-vine traversal request.
-struct SampleResult {
-    std::vector<double> values;
-    std::int64_t n_rows = 0;
-    int dimension = 0;
-    int status = SCAR_OK;
-    std::int64_t failure_row = -1;
-    int failure_edge = -1;
-    int failure_operation = -1;
-    int n_threads_requested = 1;
-    int n_threads_used = 1;
-    std::uint64_t inverse_operations = 0;
-    std::uint64_t forward_operations = 0;
-    std::uint64_t independence_fast_paths = 0;
-};
-
-/// Result of one suffix or DAG conditional-program request.
-struct ConditionalSampleResult {
-    std::vector<double> values;
-    std::int64_t n_rows = 0;
-    int dimension = 0;
-    int status = SCAR_OK;
-    std::int64_t failure_row = -1;
-    int failure_edge = -1;
-    int failure_operation = -1;
-    int n_threads_requested = 1;
-    int n_threads_used = 1;
-    std::uint64_t h_operations = 0;
-    std::uint64_t h_pair_operations = 0;
-    std::uint64_t inverse_operations = 0;
-    std::uint64_t copy_operations = 0;
-    std::uint64_t independence_fast_paths = 0;
-    std::uint64_t row_blocks = 0;
-    std::uint64_t max_block_rows = 0;
-    std::uint64_t peak_workspace_bytes = 0;
-};
-
-/// Diagnostics shared by standalone and MCMC density evaluation.
-struct DensityDiagnostics {
-    std::uint64_t density_operations = 0;
-    std::uint64_t h_pair_operations = 0;
-    std::uint64_t independence_fast_paths = 0;
-};
-
-/// Result of one fused row-wise R-vine density request.
-struct DensityResult {
-    std::vector<double> log_pdf;
-    std::int64_t n_rows = 0;
-    int dimension = 0;
-    int status = SCAR_OK;
-    std::int64_t failure_row = -1;
-    int failure_edge = -1;
-    int failure_operation = -1;
-    int n_threads_requested = 1;
-    int n_threads_used = 1;
-    DensityDiagnostics diagnostics;
-};
-
-/// Result of one static R-vine Rosenblatt residual extraction request.
-struct RosenblattResult {
-    std::vector<double> residuals;
-    std::int64_t n_rows = 0;
-    int dimension = 0;
-    int status = SCAR_OK;
-    std::int64_t failure_row = -1;
-    int failure_edge = -1;
-    int failure_operation = -1;
-    int n_threads_requested = 1;
-    int n_threads_used = 1;
-    std::uint64_t h_pair_operations = 0;
-    std::uint64_t independence_fast_paths = 0;
-};
-
-enum class MCMCDensityAlgorithm : int {
-    Auto = 0,
-    FullRecompute = 1,
-    Incremental = 2,
-};
-
-/// Result of one stateful coordinate-wise conditional-MCMC chunk.
-struct MCMCResult {
-    std::vector<double> state;
-    std::vector<double> log_pdf;
-    std::vector<std::uint64_t> proposed;
-    std::vector<std::uint64_t> accepted;
-    std::int64_t n_rows = 0;
-    int dimension = 0;
-    std::int64_t coordinate_steps = 0;
-    int status = SCAR_OK;
-    std::int64_t failure_row = -1;
-    int failure_edge = -1;
-    int failure_operation = -1;
-    int n_threads_requested = 1;
-    int n_threads_used = 1;
-    std::uint64_t non_finite_proposals = 0;
-    MCMCDensityAlgorithm density_algorithm =
-        MCMCDensityAlgorithm::FullRecompute;
-    std::vector<std::uint64_t> affected_operations;
-    std::uint64_t affected_operation_evaluations = 0;
-    std::uint64_t cache_bytes = 0;
-    std::uint64_t peak_workspace_bytes = 0;
-    std::uint64_t row_chunks = 0;
-    std::uint64_t max_chunk_rows = 0;
-    std::uint64_t memory_budget_bytes = 0;
 };
 
 bool valid_index(int value, int limit) noexcept;
@@ -256,48 +151,5 @@ MCMCResult mcmc_chunk(
     int n_threads = 1,
     MCMCDensityAlgorithm density_algorithm = MCMCDensityAlgorithm::Auto,
     std::uint64_t memory_budget_bytes = 64U * 1024U * 1024U);
-
-namespace detail {
-
-/// Evaluate one prepared edge density with its requested orientation.
-double edge_log_pdf(
-    const PreparedEdge& edge,
-    bool transposed,
-    double first,
-    double second,
-    double parameter);
-
-/// Validate and prepare inputs shared by density and Rosenblatt requests.
-int prepare_density_plan_request(
-    const RVineDensityPlan& plan,
-    const std::vector<EdgeSpec>& edges,
-    const ParameterPack& parameters,
-    DoubleView observations,
-    std::int64_t observation_rows,
-    std::int64_t observation_columns,
-    int n_threads,
-    std::vector<PreparedEdge>& prepared_edges,
-    std::size_t& value_count,
-    std::int64_t& failure_row);
-
-/// Internal prepared traversal shared by density, Rosenblatt, and MCMC.
-int evaluate_density_plan_rows(
-    const RVineDensityPlan& plan,
-    const std::vector<PreparedEdge>& edges,
-    const ParameterPack& parameters,
-    DoubleView observations,
-    std::int64_t observation_rows,
-    std::int64_t observation_columns,
-    double* log_pdf,
-    double* residuals,
-    bool tolerate_non_finite,
-    std::vector<double>& node_workspace,
-    std::int64_t& failure_row,
-    int& failure_edge,
-    int& failure_operation,
-    std::uint64_t& non_finite_rows,
-    DensityDiagnostics& diagnostics);
-
-}  // namespace detail
 
 }  // namespace scar::rvine

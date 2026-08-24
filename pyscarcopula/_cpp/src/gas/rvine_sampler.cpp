@@ -18,9 +18,9 @@ void fail(
     int status,
     std::int64_t row,
     int edge) {
-    out.status = status;
-    out.failure_row = row;
-    out.failure_edge = edge;
+    out.status = status_from_int(status);
+    out.failure.row = row;
+    out.failure.edge = edge;
 }
 
 }  // namespace
@@ -95,8 +95,12 @@ GasRvineSampleResult gas_rvine_sample(
             edges[edge_index].gas_params,
             *gas_emissions[edge_index],
             edges[edge_index].gas_config);
-        if (state.status != SCAR_OK) {
-            fail(out, state.status, -1, static_cast<int>(edge_index));
+        if (!state.is_ok()) {
+            fail(
+                out,
+                static_cast<int>(state.status),
+                -1,
+                static_cast<int>(edge_index));
             return out;
         }
         gas_g[edge_index] = state.g;
@@ -214,8 +218,12 @@ GasRvineSampleResult gas_rvine_sample(
                 u1,
                 u2,
                 edge.gas_config);
-            if (update.status != SCAR_OK) {
-                fail(out, update.status, row, static_cast<int>(edge_index));
+            if (!update.is_ok()) {
+                fail(
+                    out,
+                    static_cast<int>(update.status),
+                    row,
+                    static_cast<int>(edge_index));
                 return out;
             }
             gas_g[edge_index] = update.g_next;

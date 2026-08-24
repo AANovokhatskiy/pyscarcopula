@@ -1,101 +1,17 @@
 #pragma once
 
-#include "scar/copula/grid_values.hpp"
 #include "scar/copula/prepared_dynamic_emission.hpp"
 #include "scar/observation.hpp"
-#include "scar/status.hpp"
+#include "scar/scar_ou/result.hpp"
+#include "scar/scar_ou/types.hpp"
 
 #include <cstdint>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
 
 namespace scar {
-
-/// Numerical representation used for SCAR-OU state propagation.
-enum class OuBackend : int {
-    Spectral = 0,
-    LocalGh = 1,
-    Matrix = 2,
-};
-
-/// Storage used by the Gaussian grid transition in the matrix backend.
-enum class OuGridMethod : int {
-    Auto = 0,
-    Dense = 1,
-    Sparse = 2,
-};
-
-/// Ornstein-Uhlenbeck parameters `(kappa, mu, nu)`.
-struct OuParams {
-    double kappa = 1.0;
-    double mu = 0.0;
-    double nu = 1.0;
-};
-
-/// Grid, quadrature, and automatic-dispatch settings for SCAR-OU kernels.
-struct OuNumericalConfig {
-    int K = 300;
-    double grid_range = 5.0;
-    bool adaptive = true;
-    int pts_per_sigma = 4;
-    int max_K = 1000;
-    double r_gh = 3.0;
-    int gh_order = 5;
-    double auto_small_kdt = 1e-2;
-    int spectral_basis_order = 32;
-    int spectral_quad_order = 0;
-    int n_threads = 1;
-    OuGridMethod grid_method = OuGridMethod::Auto;
-};
-
-/// Likelihood value together with backend and fallback diagnostics.
-struct LogLikResult {
-    double log_likelihood = 0.0;
-    OuBackend backend = OuBackend::Spectral;
-    int status = 0;
-    int fallback_from = -1;
-    std::vector<OuBackend> fallback_chain;
-    int matrix_fallback_reason = SCAR_FALLBACK_NONE;
-};
-
-/// Negative likelihood and gradients with backend diagnostics.
-struct GradLogLikResult {
-    double neg_log_likelihood = 0.0;
-    std::vector<double> neg_gradient;
-    OuBackend backend = OuBackend::Spectral;
-    int status = 0;
-    int fallback_from = -1;
-    std::vector<OuBackend> fallback_chain;
-    int matrix_fallback_reason = SCAR_FALLBACK_NONE;
-    std::vector<double> neg_corr_gradient;
-};
-
-/// Discrete posterior or predictive distribution over latent states.
-struct StateDistribution {
-    std::vector<double> z_grid;
-    std::vector<double> prob;
-    OuBackend backend = OuBackend::Matrix;
-    int status = 0;
-};
-
-/// Full posterior state distribution for every observation on one OU grid.
-struct SmoothedStateDistribution {
-    std::vector<double> z_grid;
-    std::vector<double> weights;  ///< Row-major `(n_obs, K)` probabilities.
-    std::int64_t n_obs = 0;
-    int K = 0;
-    OuBackend backend = OuBackend::Matrix;
-    int status = 0;
-};
-
-struct TrajectoryLogPdfResult {
-    GridValues log_pdf;
-    int status = SCAR_OK;
-    std::int64_t failure_index = -1;
-    int n_threads_requested = 1;
-    int parallel_blocks = 0;
-};
 
 TrajectoryLogPdfResult copula_log_pdf_trajectory_grid(
     const CopulaSpec& copula,
@@ -104,91 +20,20 @@ TrajectoryLogPdfResult copula_log_pdf_trajectory_grid(
     std::size_t n_trajectories,
     int n_threads = 1);
 
-struct ScarOuGridGradientOperators {
-    int K = 0;
-    int width = 0;
-    bool local = false;
-    bool sparse = false;
-    std::vector<double> dense;
-    std::vector<double> dense_grad;
-    std::vector<int> cols;
-    std::vector<int> indptr;
-    std::vector<double> vals;
-    std::vector<double> grad_vals;
-};
-
-struct ScarOuGridGradientWorkspace {
-    ScarOuGridGradientOperators op;
-    std::vector<double> xi;
-    std::vector<double> base_w;
-    std::vector<double> pw_const;
-    std::vector<double> x_grid;
-    std::vector<double> fi;
-    std::vector<double> dfi_dx;
-    std::vector<double> r_grid;
-    std::vector<double> dpsi_grid;
-    std::vector<double> beta;
-    std::vector<double> c_vals;
-    std::vector<double> target;
-    std::vector<double> next;
-    std::vector<double> dx_dalpha;
-    std::vector<double> d_beta;
-    std::vector<double> new_d_beta;
-    std::vector<double> d_target;
-    std::vector<double> contrib;
-    std::vector<double> transition_grad;
-    std::vector<double> precision;
-    std::vector<double> scores;
-    std::vector<double> alpha;
-    std::vector<double> alpha_source;
-    std::vector<double> alpha_next;
-};
-
-struct ScarOuSpectralGradientWorkspace {
-    int cached_quad_order = 0;
-    int cached_basis_order = 0;
-    std::vector<double> z;
-    std::vector<double> weights;
-    std::vector<double> basis;
-    std::vector<double> weighted_basis;
-    std::vector<double> powers;
-    std::vector<double> dpowers_dkappa;
-    std::vector<double> x_grid;
-    std::vector<double> dx_dalpha;
-    std::vector<double> r_grid;
-    std::vector<double> dpsi_grid;
-    std::vector<double> gaussian_r2;
-    std::vector<double> gaussian_omr2;
-    std::vector<double> gaussian_log_norm;
-    std::vector<double> gaussian_dlog_det;
-    std::vector<double> gaussian_omr2_squared;
-    std::vector<double> coeff;
-    std::vector<double> dcoeff;
-    std::vector<double> projected;
-    std::vector<double> dprojected;
-    std::vector<double> raw;
-    std::vector<double> draw;
-    std::vector<double> fi_row;
-    std::vector<double> dfi_dx_row;
-    std::vector<double> precision;
-    std::vector<double> scores;
-    std::vector<double> corr_coeff;
-    std::vector<double> corr_projected;
-    std::vector<double> corr_raw;
-    std::vector<double> corr_value_projected;
-    std::vector<double> corr_dlog_scale;
-};
-
 /// Reusable SCAR-OU evaluator.
 ///
 /// Each instance owns mutable scratch buffers and is intentionally not safe
 /// for concurrent calls. Use one evaluator per thread.
 class ScarOuEvaluator {
 public:
-    ScarOuEvaluator() = default;
+    ScarOuEvaluator();
     explicit ScarOuEvaluator(
-        const PreparedDynamicEmission* prepared_emission) noexcept
-        : prepared_emission_(prepared_emission) {}
+        const PreparedDynamicEmission* prepared_emission) noexcept;
+    ~ScarOuEvaluator();
+    ScarOuEvaluator(const ScarOuEvaluator&) = delete;
+    ScarOuEvaluator& operator=(const ScarOuEvaluator&) = delete;
+    ScarOuEvaluator(ScarOuEvaluator&&) noexcept;
+    ScarOuEvaluator& operator=(ScarOuEvaluator&&) noexcept;
 
     LogLikResult loglik_spectral(
         const OuParams& params,
@@ -290,137 +135,113 @@ public:
         ObservationView u,
         const OuNumericalConfig& config) const;
 
-    std::vector<double> predictive_mean_local_gh(
+    ScarOuVectorResult predictive_mean_local_gh(
         const OuParams& params,
         const CopulaSpec& copula,
         ObservationView u,
-        const OuNumericalConfig& config,
-        int& status) const;
+        const OuNumericalConfig& config) const;
 
-    std::vector<double> predictive_mean_matrix(
+    ScarOuVectorResult predictive_mean_matrix(
         const OuParams& params,
         const CopulaSpec& copula,
         ObservationView u,
-        const OuNumericalConfig& config,
-        int& status) const;
+        const OuNumericalConfig& config) const;
 
-    std::vector<double> predictive_mean_auto(
+    ScarOuVectorResult predictive_mean_auto(
         const OuParams& params,
         const CopulaSpec& copula,
         ObservationView u,
-        const OuNumericalConfig& config,
-        OuBackend& backend,
-        int& status) const;
+        const OuNumericalConfig& config) const;
 
-    std::vector<double> forward_rosenblatt_local_gh(
+    ScarOuVectorResult forward_rosenblatt_local_gh(
         const OuParams& params,
         const CopulaSpec& copula,
         ObservationView u,
-        const OuNumericalConfig& config,
-        int& status) const;
+        const OuNumericalConfig& config) const;
 
-    std::vector<double> forward_rosenblatt_matrix(
+    ScarOuVectorResult forward_rosenblatt_matrix(
         const OuParams& params,
         const CopulaSpec& copula,
         ObservationView u,
-        const OuNumericalConfig& config,
-        int& status) const;
+        const OuNumericalConfig& config) const;
 
-    std::vector<double> forward_rosenblatt_auto(
+    ScarOuVectorResult forward_rosenblatt_auto(
         const OuParams& params,
         const CopulaSpec& copula,
         ObservationView u,
-        const OuNumericalConfig& config,
-        OuBackend& backend,
-        int& status) const;
+        const OuNumericalConfig& config) const;
 
-    std::vector<double> gaussian_rosenblatt_local_gh(
+    ScarOuVectorResult gaussian_rosenblatt_local_gh(
         const OuParams& params,
         const CopulaSpec& copula,
         ObservationView u,
-        const OuNumericalConfig& config,
-        int& status) const;
+        const OuNumericalConfig& config) const;
 
-    std::vector<double> gaussian_rosenblatt_matrix(
+    ScarOuVectorResult gaussian_rosenblatt_matrix(
         const OuParams& params,
         const CopulaSpec& copula,
         ObservationView u,
-        const OuNumericalConfig& config,
-        int& status) const;
+        const OuNumericalConfig& config) const;
 
-    std::vector<double> gaussian_rosenblatt_auto(
+    ScarOuVectorResult gaussian_rosenblatt_auto(
         const OuParams& params,
         const CopulaSpec& copula,
         ObservationView u,
-        const OuNumericalConfig& config,
-        OuBackend& backend,
-        int& status) const;
+        const OuNumericalConfig& config) const;
 
-    std::vector<double> student_rosenblatt_local_gh(
+    ScarOuVectorResult student_rosenblatt_local_gh(
         const OuParams& params,
         const CopulaSpec& copula,
         ObservationView u,
-        const OuNumericalConfig& config,
-        int& status) const;
+        const OuNumericalConfig& config) const;
 
-    std::vector<double> student_rosenblatt_matrix(
+    ScarOuVectorResult student_rosenblatt_matrix(
         const OuParams& params,
         const CopulaSpec& copula,
         ObservationView u,
-        const OuNumericalConfig& config,
-        int& status) const;
+        const OuNumericalConfig& config) const;
 
-    std::vector<double> student_rosenblatt_auto(
+    ScarOuVectorResult student_rosenblatt_auto(
         const OuParams& params,
         const CopulaSpec& copula,
         ObservationView u,
-        const OuNumericalConfig& config,
-        OuBackend& backend,
-        int& status) const;
+        const OuNumericalConfig& config) const;
 
-    std::vector<double> mixture_h_local_gh(
+    ScarOuVectorResult mixture_h_local_gh(
         const OuParams& params,
         const CopulaSpec& copula,
         ObservationView u,
-        const OuNumericalConfig& config,
-        int& status) const;
+        const OuNumericalConfig& config) const;
 
-    std::vector<double> mixture_h_matrix(
+    ScarOuVectorResult mixture_h_matrix(
         const OuParams& params,
         const CopulaSpec& copula,
         ObservationView u,
-        const OuNumericalConfig& config,
-        int& status) const;
+        const OuNumericalConfig& config) const;
 
-    std::vector<double> mixture_h_auto(
+    ScarOuVectorResult mixture_h_auto(
         const OuParams& params,
         const CopulaSpec& copula,
         ObservationView u,
-        const OuNumericalConfig& config,
-        OuBackend& backend,
-        int& status) const;
+        const OuNumericalConfig& config) const;
 
-    std::vector<double> mixture_h_pair_local_gh(
+    ScarOuVectorResult mixture_h_pair_local_gh(
         const OuParams& params,
         const CopulaSpec& copula,
         ObservationView u,
-        const OuNumericalConfig& config,
-        int& status) const;
+        const OuNumericalConfig& config) const;
 
-    std::vector<double> mixture_h_pair_matrix(
+    ScarOuVectorResult mixture_h_pair_matrix(
         const OuParams& params,
         const CopulaSpec& copula,
         ObservationView u,
-        const OuNumericalConfig& config,
-        int& status) const;
+        const OuNumericalConfig& config) const;
 
-    std::vector<double> mixture_h_pair_auto(
+    ScarOuVectorResult mixture_h_pair_auto(
         const OuParams& params,
         const CopulaSpec& copula,
         ObservationView u,
-        const OuNumericalConfig& config,
-        OuBackend& backend,
-        int& status) const;
+        const OuNumericalConfig& config) const;
 
     StateDistribution state_distribution_local_gh(
         const OuParams& params,
@@ -462,16 +283,72 @@ public:
         const OuNumericalConfig& config) const;
 
 private:
+    struct Workspace;
+
+    // Private adapters retained while the compiled kernels are migrated away
+    // from legacy status out-parameters. They are not part of the caller API.
+    std::vector<double> predictive_mean_local_gh(
+        const OuParams&, const CopulaSpec&, ObservationView,
+        const OuNumericalConfig&, int&) const;
+    std::vector<double> predictive_mean_matrix(
+        const OuParams&, const CopulaSpec&, ObservationView,
+        const OuNumericalConfig&, int&) const;
+    std::vector<double> predictive_mean_auto(
+        const OuParams&, const CopulaSpec&, ObservationView,
+        const OuNumericalConfig&, OuBackend&, int&) const;
+    std::vector<double> forward_rosenblatt_local_gh(
+        const OuParams&, const CopulaSpec&, ObservationView,
+        const OuNumericalConfig&, int&) const;
+    std::vector<double> forward_rosenblatt_matrix(
+        const OuParams&, const CopulaSpec&, ObservationView,
+        const OuNumericalConfig&, int&) const;
+    std::vector<double> forward_rosenblatt_auto(
+        const OuParams&, const CopulaSpec&, ObservationView,
+        const OuNumericalConfig&, OuBackend&, int&) const;
+    std::vector<double> gaussian_rosenblatt_local_gh(
+        const OuParams&, const CopulaSpec&, ObservationView,
+        const OuNumericalConfig&, int&) const;
+    std::vector<double> gaussian_rosenblatt_matrix(
+        const OuParams&, const CopulaSpec&, ObservationView,
+        const OuNumericalConfig&, int&) const;
+    std::vector<double> gaussian_rosenblatt_auto(
+        const OuParams&, const CopulaSpec&, ObservationView,
+        const OuNumericalConfig&, OuBackend&, int&) const;
+    std::vector<double> student_rosenblatt_local_gh(
+        const OuParams&, const CopulaSpec&, ObservationView,
+        const OuNumericalConfig&, int&) const;
+    std::vector<double> student_rosenblatt_matrix(
+        const OuParams&, const CopulaSpec&, ObservationView,
+        const OuNumericalConfig&, int&) const;
+    std::vector<double> student_rosenblatt_auto(
+        const OuParams&, const CopulaSpec&, ObservationView,
+        const OuNumericalConfig&, OuBackend&, int&) const;
+    std::vector<double> mixture_h_local_gh(
+        const OuParams&, const CopulaSpec&, ObservationView,
+        const OuNumericalConfig&, int&) const;
+    std::vector<double> mixture_h_matrix(
+        const OuParams&, const CopulaSpec&, ObservationView,
+        const OuNumericalConfig&, int&) const;
+    std::vector<double> mixture_h_auto(
+        const OuParams&, const CopulaSpec&, ObservationView,
+        const OuNumericalConfig&, OuBackend&, int&) const;
+    std::vector<double> mixture_h_pair_local_gh(
+        const OuParams&, const CopulaSpec&, ObservationView,
+        const OuNumericalConfig&, int&) const;
+    std::vector<double> mixture_h_pair_matrix(
+        const OuParams&, const CopulaSpec&, ObservationView,
+        const OuNumericalConfig&, int&) const;
+    std::vector<double> mixture_h_pair_auto(
+        const OuParams&, const CopulaSpec&, ObservationView,
+        const OuNumericalConfig&, OuBackend&, int&) const;
+
     const PreparedDynamicEmission& resolve_dynamic_emission(
         const CopulaSpec& copula,
         std::unique_ptr<PreparedDynamicEmission>& owner) const;
 
     const PreparedDynamicEmission* prepared_emission_ = nullptr;
-    // Reused by prepared evaluators during one fit/objective loop. These
-    // buffers are mutable because likelihood methods keep const call sites;
-    // a ScarOuEvaluator instance is therefore intentionally not thread-safe.
-    mutable ScarOuGridGradientWorkspace grid_gradient_workspace_;
-    mutable ScarOuSpectralGradientWorkspace spectral_gradient_workspace_;
+    Workspace& workspace() const;
+    mutable std::unique_ptr<Workspace> workspace_;
 };
 
 /// Evaluator that owns validated observations and a fixed numerical setup.
@@ -512,20 +389,11 @@ public:
         const OuParams& params,
         const std::vector<double>& corr_direction) const;
 
-    std::vector<double> predictive_mean(
-        const OuParams& params,
-        OuBackend& backend,
-        int& status) const;
+    ScarOuVectorResult predictive_mean(const OuParams& params) const;
 
-    std::vector<double> mixture_h(
-        const OuParams& params,
-        OuBackend& backend,
-        int& status) const;
+    ScarOuVectorResult mixture_h(const OuParams& params) const;
 
-    std::vector<double> mixture_h_pair(
-        const OuParams& params,
-        OuBackend& backend,
-        int& status) const;
+    ScarOuVectorResult mixture_h_pair(const OuParams& params) const;
 
     StateDistribution state_distribution(
         const OuParams& params,
@@ -539,18 +407,9 @@ private:
     GradLogLikResult call_directional_corr(
         const OuParams& params,
         const std::vector<double>& corr_direction) const;
-    std::vector<double> call_predictive_mean(
-        const OuParams& params,
-        OuBackend& backend,
-        int& status) const;
-    std::vector<double> call_mixture_h(
-        const OuParams& params,
-        OuBackend& backend,
-        int& status) const;
-    std::vector<double> call_mixture_h_pair(
-        const OuParams& params,
-        OuBackend& backend,
-        int& status) const;
+    ScarOuVectorResult call_predictive_mean(const OuParams& params) const;
+    ScarOuVectorResult call_mixture_h(const OuParams& params) const;
+    ScarOuVectorResult call_mixture_h_pair(const OuParams& params) const;
     StateDistribution call_state_distribution(
         const OuParams& params,
         bool horizon_next) const;

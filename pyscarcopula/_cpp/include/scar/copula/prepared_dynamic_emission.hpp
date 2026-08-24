@@ -1,6 +1,7 @@
 #pragma once
 
 #include "scar/copula/spec.hpp"
+#include "scar/core/result.hpp"
 #include "scar/observation.hpp"
 
 #include <cstddef>
@@ -21,7 +22,12 @@ struct DynamicEmissionRowResult {
     double parameter = 0.0;
     double log_pdf = 0.0;
     double dlog_dparameter = 0.0;
-    int status = 0;
+    Status status = Status::Ok;
+    FailureContext failure{};
+
+    bool is_ok() const noexcept {
+        return ok(status);
+    }
 };
 
 /// Per-call scratch storage for a prepared dynamic emission.
@@ -83,7 +89,7 @@ public:
 
     const CopulaSpec& compatibility_spec() const noexcept;
 
-    int validate_observations(
+    Status validate_observations(
         ObservationView observations,
         bool require_nonempty = true) const;
 

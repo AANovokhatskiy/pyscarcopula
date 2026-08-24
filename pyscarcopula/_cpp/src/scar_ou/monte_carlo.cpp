@@ -26,7 +26,7 @@ bool valid_spec(
         return false;
     }
     return emission.is_supported()
-        && emission.validate_observations(u) == SCAR_OK
+        && ok(emission.validate_observations(u))
         && emission.observation_cache_compatible(u.size());
 }
 
@@ -49,23 +49,23 @@ TrajectoryLogPdfResult copula_log_pdf_trajectory_grid(
     std::size_t elements = 0;
     if (!scar_internal::checked_size_mul(
             u.size(), n_trajectories, elements)) {
-        out.status = SCAR_INVALID_SIZE;
+        out.status = Status::InvalidSize;
         return out;
     }
     out.log_pdf.values.assign(
         elements, -std::numeric_limits<double>::infinity());
     if (latent_paths == nullptr) {
-        out.status = SCAR_NULL_POINTER;
+        out.status = Status::NullPointer;
         return out;
     }
     if (!valid_spec(emission, u, n_trajectories)) {
-        out.status = SCAR_INVALID_FAMILY;
+        out.status = Status::InvalidFamily;
         return out;
     }
     if (!scar_internal::valid_thread_count(n_threads)
         || elements > static_cast<std::size_t>(
             std::numeric_limits<std::int64_t>::max())) {
-        out.status = SCAR_INVALID_PARAMETER;
+        out.status = Status::InvalidParameter;
         return out;
     }
 
@@ -116,7 +116,7 @@ TrajectoryLogPdfResult copula_log_pdf_trajectory_grid(
                             parameter,
                             false,
                             workspace);
-                    if (evaluation.status == SCAR_OK) {
+                    if (evaluation.is_ok()) {
                         value = evaluation.log_pdf;
                     }
                 }
@@ -137,8 +137,8 @@ TrajectoryLogPdfResult copula_log_pdf_trajectory_grid(
         failure_flat = std::min(failure_flat, block.failure_flat_index);
     }
     if (failure_flat != std::numeric_limits<std::size_t>::max()) {
-        out.status = SCAR_NUMERICAL_FAILURE;
-        out.failure_index = static_cast<std::int64_t>(
+        out.status = Status::NumericalFailure;
+        out.failure.index = static_cast<std::int64_t>(
             failure_flat / n_trajectories);
         std::fill(
             out.log_pdf.values.begin() + failure_flat,

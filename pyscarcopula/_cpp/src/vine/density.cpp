@@ -1,5 +1,7 @@
 #include "scar/rvine.hpp"
 
+#include "density_internal.hpp"
+
 #include "scar/core/threading.hpp"
 #include "scar/detail/safety.hpp"
 
@@ -229,9 +231,9 @@ DensityResult log_pdf_rows(
         n_threads,
         prepared_edges,
         value_count,
-        out.failure_row);
+        out.failure.row);
     if (request_status != SCAR_OK) {
-        out.status = request_status;
+        out.status = status_from_int(request_status);
         return out;
     }
 
@@ -250,13 +252,13 @@ DensityResult log_pdf_rows(
         nullptr,
         false,
         node_workspace,
-        out.failure_row,
-        out.failure_edge,
-        out.failure_operation,
+        out.failure.row,
+        out.failure.edge,
+        out.failure.operation,
         non_finite_rows,
         out.diagnostics);
     if (status != SCAR_OK) {
-        out.status = status;
+        out.status = status_from_int(status);
     }
     return out;
 }

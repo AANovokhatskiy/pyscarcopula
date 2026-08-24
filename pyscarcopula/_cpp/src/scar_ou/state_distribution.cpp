@@ -22,7 +22,7 @@ SmoothedStateDistribution invalid_smoothed_state_distribution(
 
     SmoothedStateDistribution out;
     out.backend = backend;
-    out.status = status;
+    out.status = status_from_int(status);
     return out;
 }
 
@@ -75,7 +75,7 @@ SmoothedStateDistribution smoothed_state_distribution_impl(
     out.n_obs = n_obs;
     out.K = grid.K;
     out.backend = backend;
-    out.status = SCAR_OK;
+    out.status = Status::Ok;
     return out;
 }
 
@@ -136,7 +136,7 @@ StateDistribution state_distribution_impl(
             SCAR_NUMERICAL_FAILURE, backend);
     }
     out.backend = backend;
-    out.status = SCAR_OK;
+    out.status = Status::Ok;
     return out;
 }
 

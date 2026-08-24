@@ -50,7 +50,7 @@ inline void initialize_multivariate_grid(
     out.d_pdf_dx.n_grid = out.pdf.n_grid;
     std::size_t elements = 0;
     if (!checked_size_mul(n_obs, n_grid, elements)) {
-        out.status = SCAR_INVALID_SIZE;
+        out.status = scar::Status::InvalidSize;
         return;
     }
     out.pdf.values.assign(elements, 0.0);

@@ -1,5 +1,7 @@
 #include "scar/rvine.hpp"
 
+#include "density_internal.hpp"
+
 #include "scar/core/threading.hpp"
 #include "scar/detail/copula/common.hpp"
 #include "scar/detail/safety.hpp"
@@ -232,7 +234,7 @@ bool validate_traversal_plan(
         return true;
     }
 
-    // The Python builder validates initialization order, but the native
+    // The topology builder validates initialization order, but the native
     // boundary repeats it so malformed direct calls cannot read NaN sentinel
     // nodes or rely on unchecked plan topology.
     std::vector<unsigned char> initialized(
@@ -587,7 +589,7 @@ int validate_parameter_pack(
     }
     for (const EdgeSpec& edge : edges) {
         // A fitted IndependentResult is authoritative even when the retained
-        // Python copula object belongs to another family.  The reverse is not
+        // retained source descriptor belongs to another family. The reverse is not
         // valid: an Independent family must never request a parameter.
         if (edge.copula.family == CopulaFamily::Independent
             && !edge.parameter_free) {
@@ -733,10 +735,10 @@ void fail_sample(
     std::int64_t row,
     int edge,
     int operation) noexcept {
-    out.status = status;
-    out.failure_row = row;
-    out.failure_edge = edge;
-    out.failure_operation = operation;
+    out.status = status_from_int(status);
+    out.failure.row = row;
+    out.failure.edge = edge;
+    out.failure.operation = operation;
 }
 
 void fail_conditional_sample(
@@ -745,10 +747,10 @@ void fail_conditional_sample(
     std::int64_t row,
     int edge,
     int operation) noexcept {
-    out.status = status;
-    out.failure_row = row;
-    out.failure_edge = edge;
-    out.failure_operation = operation;
+    out.status = status_from_int(status);
+    out.failure.row = row;
+    out.failure.edge = edge;
+    out.failure.operation = operation;
 }
 
 bool is_unrotated_gaussian(const PreparedEdge& edge) noexcept {

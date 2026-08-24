@@ -76,10 +76,10 @@ py::dict rvine_vector_result_to_dict(
     out[value_name] = vector_to_array(values);
     out["n_rows"] = result.n_rows;
     out["dimension"] = result.dimension;
-    out["status"] = result.status;
-    out["failure_row"] = result.failure_row;
-    out["failure_edge"] = result.failure_edge;
-    out["failure_operation"] = result.failure_operation;
+    out["status"] = static_cast<int>(result.status);
+    out["failure_row"] = result.failure.row;
+    out["failure_edge"] = result.failure.edge;
+    out["failure_operation"] = result.failure.operation;
     out["diagnostics"] = std::move(diagnostics);
     return out;
 }
@@ -596,10 +596,10 @@ void bind_rvine(py::module_& m) {
         out["n_rows"] = result.n_rows;
         out["dimension"] = result.dimension;
         out["coordinate_steps"] = result.coordinate_steps;
-        out["status"] = result.status;
-        out["failure_row"] = result.failure_row;
-        out["failure_edge"] = result.failure_edge;
-        out["failure_operation"] = result.failure_operation;
+        out["status"] = static_cast<int>(result.status);
+        out["failure_row"] = result.failure.row;
+        out["failure_edge"] = result.failure.edge;
+        out["failure_operation"] = result.failure.operation;
         out["diagnostics"] = std::move(diagnostics);
         return out;
     };

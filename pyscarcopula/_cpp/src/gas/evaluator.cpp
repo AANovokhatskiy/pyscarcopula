@@ -93,7 +93,7 @@ int validate_inputs(
     if (copula_status != SCAR_OK) {
         return copula_status;
     }
-    return emission.validate_observations(u);
+    return static_cast<int>(emission.validate_observations(u));
 }
 
 double initial_g(
@@ -150,8 +150,8 @@ RowEvaluation evaluate_row(
             analytic_derivative,
             workspace);
     out.log_likelihood = emission_row.log_pdf;
-    if (emission_row.status != SCAR_OK) {
-        out.status = emission_row.status;
+    if (!emission_row.is_ok()) {
+        out.status = static_cast<int>(emission_row.status);
         return out;
     }
     if (!need_score) {
@@ -206,8 +206,8 @@ double next_g(
 
 template <typename Result>
 void set_failure(Result& result, int status, std::int64_t index) {
-    result.status = status;
-    result.failure_index = index;
+    result.status = status_from_int(status);
+    result.failure.index = index;
 }
 
 GasLogLikResult run_log_likelihood(
@@ -289,17 +289,17 @@ GasStateResult GasEvaluator::initial_state_prepared(
 
     GasStateResult out;
     if (!valid_params(params) || !valid_config(config)) {
-        out.status = SCAR_INVALID_PARAMETER;
+        out.status = Status::InvalidParameter;
         return out;
     }
-    out.status = validate_copula(emission);
-    if (out.status != SCAR_OK) {
+    out.status = status_from_int(validate_copula(emission));
+    if (!out.is_ok()) {
         return out;
     }
     out.g = initial_g(params, config);
     out.parameter = gas_transform(emission, out.g);
     if (!std::isfinite(out.g) || !std::isfinite(out.parameter)) {
-        out.status = SCAR_NUMERICAL_FAILURE;
+        out.status = Status::NumericalFailure;
     }
     return out;
 }
@@ -388,7 +388,7 @@ GasLogLikResult GasEvaluator::negative_log_likelihood(
 
     GasLogLikResult out = run_log_likelihood(
         params, copula, u, config);
-    if (out.status == SCAR_OK) {
+    if (out.is_ok()) {
         out.log_likelihood = -out.log_likelihood;
     }
     return out;
@@ -447,41 +447,41 @@ GasUpdateResult GasEvaluator::update_observation_prepared(
     GasUpdateResult out;
     if (!valid_params(params) || !valid_config(config)
         || !std::isfinite(g)) {
-        out.status = SCAR_INVALID_PARAMETER;
+        out.status = Status::InvalidParameter;
         return out;
     }
-    out.status = validate_copula(emission);
-    if (out.status != SCAR_OK) {
+    out.status = status_from_int(validate_copula(emission));
+    if (!out.is_ok()) {
         return out;
     }
     if (observation.values == nullptr
         || observation.n_obs != 1
         || observation.dim != emission.expected_dimension()) {
-        out.status = SCAR_INVALID_SIZE;
+        out.status = Status::InvalidSize;
         return out;
     }
     out.status = emission.validate_observations(observation);
-    if (out.status != SCAR_OK) {
+    if (!out.is_ok()) {
         return out;
     }
 
     const RowEvaluation evaluation = evaluate_row(
         emission, observation.values, 0, g, config, true, workspace);
-    out.status = evaluation.status;
+    out.status = status_from_int(evaluation.status);
     out.r = evaluation.r;
     out.log_likelihood = evaluation.log_likelihood;
     out.score = evaluation.score;
-    if (out.status != SCAR_OK) {
+    if (!out.is_ok()) {
         return out;
     }
     out.g_next = next_g(params, config, g, evaluation.score);
     if (!std::isfinite(out.g_next)) {
-        out.status = SCAR_NUMERICAL_FAILURE;
+        out.status = Status::NumericalFailure;
         return out;
     }
     out.r_next = gas_transform(emission, out.g_next);
     if (!std::isfinite(out.r_next)) {
-        out.status = SCAR_NUMERICAL_FAILURE;
+        out.status = Status::NumericalFailure;
     }
     return out;
 }
@@ -497,8 +497,8 @@ GasPredictResult GasEvaluator::predict_parameter(
     const GasFilterResult filtered = filter(
         params, copula, u, config);
     out.status = filtered.status;
-    out.failure_index = filtered.failure_index;
-    if (out.status != SCAR_OK) {
+    out.failure = filtered.failure;
+    if (!out.is_ok()) {
         return out;
     }
     out.parameter = filtered.r_path.back();
@@ -522,9 +522,9 @@ GasPredictResult GasEvaluator::predict_parameter(
         config,
         true,
         workspace);
-    out.status = evaluation.status;
-    if (out.status != SCAR_OK) {
-        out.failure_index = static_cast<std::int64_t>(u.n_obs - 1);
+    out.status = status_from_int(evaluation.status);
+    if (!out.is_ok()) {
+        out.failure.index = static_cast<std::int64_t>(u.n_obs - 1);
         return out;
     }
     out.parameter = gas_transform(
@@ -555,8 +555,8 @@ GasPathResult GasEvaluator::h_path(
     const GasFilterResult filtered = filter(
         params, copula, u, config);
     out.status = filtered.status;
-    out.failure_index = filtered.failure_index;
-    if (out.status != SCAR_OK) {
+    out.failure = filtered.failure;
+    if (!out.is_ok()) {
         return out;
     }
 

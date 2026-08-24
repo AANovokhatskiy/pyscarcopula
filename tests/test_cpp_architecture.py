@@ -429,6 +429,237 @@ def test_stage5_application_modules_use_prepared_copula_interfaces():
     assert '#include "scar/copula.hpp"' not in composition_header
 
 
+def test_stage6_public_cpp_api_is_domain_scoped_and_caller_neutral():
+    cpp = ROOT / "pyscarcopula" / "_cpp"
+    include = cpp / "include" / "scar"
+    source = cpp / "src"
+
+    contracts = {
+        include / "static" / "result.hpp": "StaticObjectiveResult",
+        include / "gas" / "result.hpp": "GasLogLikResult",
+        include / "scar_ou" / "result.hpp": "ScarOuVectorResult",
+        include / "copula" / "result.hpp": "MultivariateRowsResult",
+        include / "vine" / "result.hpp": "SampleResult",
+        include / "gas_rvine" / "result.hpp": "GasRvineSampleResult",
+    }
+    for path, marker in contracts.items():
+        text = path.read_text(encoding="utf-8")
+        assert marker in text
+        assert "Status status" in text
+        assert "FailureContext failure" in text
+        assert re.search(r"\bint\s+status\b|\bfailure_index\b", text) is None
+
+    umbrella_expectations = {
+        include / "copula.hpp": (
+            ('#include "scar/copula/result.hpp"',
+             '#include "scar/static/result.hpp"'),
+            ("struct MultivariateRowsResult", "struct StaticObjectiveResult")),
+        include / "gas.hpp": (
+            '#include "scar/gas/result.hpp"',
+            "struct GasLogLikResult"),
+        include / "ou.hpp": (
+            '#include "scar/scar_ou/result.hpp"',
+            "struct LogLikResult"),
+        include / "rvine.hpp": (
+            '#include "scar/vine/result.hpp"',
+            "struct SampleResult"),
+        include / "gas_rvine.hpp": (
+            '#include "scar/gas_rvine/result.hpp"',
+            "struct GasRvineSampleResult"),
+    }
+    for path, (required, forbidden) in umbrella_expectations.items():
+        text = path.read_text(encoding="utf-8")
+        required = required if isinstance(required, tuple) else (required,)
+        forbidden = forbidden if isinstance(forbidden, tuple) else (forbidden,)
+        assert all(marker in text for marker in required)
+        assert all(marker not in text for marker in forbidden)
+
+    copula_header = (include / "copula.hpp").read_text(encoding="utf-8")
+    assert "copula/multivariate/" not in copula_header
+    assert "copula/pair/" not in copula_header
+    assert "copula/prepared_dynamic_emission.hpp" not in copula_header
+    status_header = (include / "core" / "status.hpp").read_text(
+        encoding="utf-8")
+    assert "operator==(Status" not in status_header
+    assert "operator!=(Status" not in status_header
+
+    ou_header = (include / "ou.hpp").read_text(encoding="utf-8")
+    assert "struct Workspace;" in ou_header
+    assert "std::unique_ptr<Workspace>" in ou_header
+    assert "ScarOuGridGradientWorkspace" not in ou_header
+    assert "ScarOuSpectralGradientWorkspace" not in ou_header
+    assert "ScarOuVectorResult predictive_mean_local_gh(" in ou_header
+    assert "ScarOuVectorResult mixture_h_pair_auto(" in ou_header
+    assert "ScarOuVectorResult predictive_mean(const OuParams& params)" in ou_header
+    assert "ScarOuVectorResult mixture_h_pair(const OuParams& params)" in ou_header
+    workspace = source / "scar_ou" / "gradient_workspace.hpp"
+    assert workspace.is_file()
+    assert "ScarOuSpectralGradientWorkspace" in workspace.read_text(
+        encoding="utf-8")
+
+    caller_specific = re.compile(
+        r"\b(?:Python|pybind11|NumPy|PyObject)\b", re.IGNORECASE)
+    compute_files = [
+        *include.rglob("*.hpp"),
+        *(path for path in source.rglob("*.cpp")
+          if "bindings" not in path.relative_to(source).parts),
+        *(path for path in source.rglob("*.hpp")
+          if "bindings" not in path.relative_to(source).parts),
+    ]
+    for path in compute_files:
+        assert caller_specific.search(path.read_text(encoding="utf-8")) is None
+
+
+def test_stage6_checker_rejects_workspace_and_caller_leaks(tmp_path):
+    cpp = "pyscarcopula/_cpp"
+    include = f"{cpp}/include/scar"
+    source = f"{cpp}/src"
+
+    result_contracts = {
+        "static/result.hpp": ("StaticObjectiveResult",),
+        "gas/result.hpp": (
+            "GasLogLikResult", "GasFilterResult", "GasUpdateResult",
+            "GasStateResult", "GasPredictResult", "GasPathResult"),
+        "scar_ou/result.hpp": (
+            "ScarOuVectorResult", "LogLikResult", "GradLogLikResult",
+            "StateDistribution", "SmoothedStateDistribution",
+            "TrajectoryLogPdfResult"),
+        "copula/result.hpp": (
+            "MultivariateRowsResult", "MultivariateGridResult",
+            "EquicorrPreparationResult"),
+        "vine/result.hpp": (
+            "SampleResult", "ConditionalSampleResult", "DensityResult",
+            "RosenblattResult", "MCMCResult"),
+        "gas_rvine/result.hpp": ("GasRvineSampleResult",),
+    }
+    for relative, result_names in result_contracts.items():
+        _write(
+            tmp_path,
+            f"{include}/{relative}",
+            "".join(
+                f"struct {name} {{\n"
+                "  Status status;\n"
+                "  FailureContext failure;\n"
+                "};\n"
+                for name in result_names
+            ),
+        )
+
+    _write(
+        tmp_path,
+        f"{include}/copula.hpp",
+        '#include "scar/copula/result.hpp"\n'
+        '#include "scar/static/result.hpp"\n',
+    )
+    _write(
+        tmp_path,
+        f"{include}/gas.hpp",
+        '#include "scar/gas/result.hpp"\n',
+    )
+    _write(
+        tmp_path,
+        f"{include}/rvine.hpp",
+        '#include "scar/vine/result.hpp"\n',
+    )
+    _write(
+        tmp_path,
+        f"{include}/gas_rvine.hpp",
+        '#include "scar/gas_rvine/result.hpp"\n',
+    )
+    ou_header = _write(
+        tmp_path,
+        f"{include}/ou.hpp",
+        '#include "scar/scar_ou/result.hpp"\n'
+        "struct Workspace;\n"
+        "std::unique_ptr<Workspace> workspace_;\n"
+        "ScarOuVectorResult predictive_mean_local_gh();\n"
+        "ScarOuVectorResult mixture_h_pair_auto();\n"
+        "ScarOuVectorResult predictive_mean(const OuParams& params);\n"
+        "ScarOuVectorResult mixture_h_pair(const OuParams& params);\n",
+    )
+    _write(
+        tmp_path,
+        f"{source}/scar_ou/gradient_workspace.hpp",
+        "struct ScarOuSpectralGradientWorkspace {};\n",
+    )
+
+    assert CHECKER_MODULE.check_public_cpp_api(tmp_path) == []
+
+    status_header = _write(
+        tmp_path,
+        f"{include}/core/status.hpp",
+        "bool operator==(Status lhs, int rhs);\n",
+    )
+    violations = CHECKER_MODULE.check_public_cpp_api(tmp_path)
+    assert any(
+        "must not compare implicitly" in violation.message
+        for violation in violations
+    )
+    status_header.write_text("#pragma once\n", encoding="utf-8")
+
+    copula_header = tmp_path / f"{include}/copula.hpp"
+    copula_contract = copula_header.read_text(encoding="utf-8")
+    copula_header.write_text(
+        copula_contract
+        + '#include "scar/copula/multivariate/student/conditional.hpp"\n',
+        encoding="utf-8",
+    )
+    violations = CHECKER_MODULE.check_public_cpp_api(tmp_path)
+    assert any(
+        "imports concrete implementation" in violation.message
+        for violation in violations
+    )
+    copula_header.write_text(copula_contract, encoding="utf-8")
+
+    ou_contract = ou_header.read_text(encoding="utf-8")
+    ou_header.write_text(
+        ou_contract
+        + "class ScarOuEvaluator { public:\n"
+        + "  void legacy(int& status);\nprivate:\n};\n",
+        encoding="utf-8",
+    )
+    violations = CHECKER_MODULE.check_public_cpp_api(tmp_path)
+    assert any(
+        "legacy status out-parameter" in violation.message
+        for violation in violations
+    )
+    ou_header.write_text(ou_contract, encoding="utf-8")
+
+    vine_header = tmp_path / f"{include}/rvine.hpp"
+    vine_contract = vine_header.read_text(encoding="utf-8")
+    vine_header.write_text(
+        vine_contract + "void legacy(std::int64_t& failure_row);\n",
+        encoding="utf-8",
+    )
+    violations = CHECKER_MODULE.check_public_cpp_api(tmp_path)
+    assert any(
+        "failure out-parameters" in violation.message
+        for violation in violations
+    )
+    vine_header.write_text(vine_contract, encoding="utf-8")
+
+    ou_header.write_text(
+        ou_header.read_text(encoding="utf-8")
+        + "struct ScarOuGridGradientWorkspace {};\n",
+        encoding="utf-8",
+    )
+    violations = CHECKER_MODULE.check_public_cpp_api(tmp_path)
+    assert any(
+        "exposes private workspace" in violation.message
+        for violation in violations
+    )
+
+    _write(
+        tmp_path,
+        f"{source}/scar_ou/caller_leak.cpp",
+        "// Python-specific computational contract.\n",
+    )
+    violations = CHECKER_MODULE.check_public_cpp_api(tmp_path)
+    assert any(
+        "caller-neutral" in violation.message for violation in violations
+    )
+
+
 def test_setup_build_path_does_not_mutate_path():
     source = (ROOT / "setup.py").read_text(encoding="utf-8")
     assert 'os.environ["PATH"]' not in source

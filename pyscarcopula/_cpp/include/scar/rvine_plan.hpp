@@ -48,7 +48,7 @@ enum class RVineNodeSource : int {
     Uniform = 2,
 };
 
-/// Flat conditional program compiled by the Python topology layer.
+/// Flat conditional program compiled by an external topology layer.
 struct RVineConditionalPlan {
     int dimension = 0;
     int node_count = 0;
@@ -71,7 +71,7 @@ struct RVineConditionalPlan {
     std::vector<int> used_edges;
 };
 
-/// Flat density traversal compiled by the Python R-vine structure layer.
+/// Flat density traversal compiled by an external R-vine structure layer.
 struct RVineDensityPlan {
     int dimension = 0;
     int node_count = 0;

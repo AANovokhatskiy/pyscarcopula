@@ -1,6 +1,7 @@
 #include "scar/ou.hpp"
 
 #include "evaluator_internal.hpp"
+#include "gradient_workspace.hpp"
 #include "scar/detail/copula/common.hpp"
 #include "scar/copula/multivariate/student/density.hpp"
 #include "scar/detail/linalg.hpp"
@@ -18,6 +19,26 @@
 
 namespace scar {
 using namespace evaluator_detail;
+
+struct ScarOuEvaluator::Workspace : ScarOuEvaluatorWorkspace {};
+
+ScarOuEvaluator::ScarOuEvaluator() = default;
+
+ScarOuEvaluator::ScarOuEvaluator(
+    const PreparedDynamicEmission* prepared_emission) noexcept
+    : prepared_emission_(prepared_emission) {}
+
+ScarOuEvaluator::~ScarOuEvaluator() = default;
+ScarOuEvaluator::ScarOuEvaluator(ScarOuEvaluator&&) noexcept = default;
+ScarOuEvaluator& ScarOuEvaluator::operator=(ScarOuEvaluator&&) noexcept =
+    default;
+
+ScarOuEvaluator::Workspace& ScarOuEvaluator::workspace() const {
+    if (!workspace_) {
+        workspace_ = std::make_unique<Workspace>();
+    }
+    return *workspace_;
+}
 
 namespace {
 
@@ -550,7 +571,7 @@ GradLogLikResult grid_neg_loglik_with_grad(
     const bool adaptive_was_capped = K_eff < K_adaptive;
     if (backend == OuBackend::Matrix
         && (adaptive_was_capped || r_kernel_grid <= config.r_gh)) {
-        // Explicit matrix mode is still valid; keep it explicit like Python.
+        // Explicit matrix mode remains a valid caller-selected backend.
     }
 
     GridGradientWorkspace local_workspace;
@@ -883,7 +904,7 @@ GradLogLikResult grid_neg_loglik_with_grad(
         out.neg_corr_gradient[i] = -corr_grad[i];
     }
     out.backend = backend;
-    out.status = SCAR_OK;
+    out.status = Status::Ok;
     return out;
 }
 
@@ -1326,7 +1347,7 @@ GradLogLikResult spectral_neg_loglik_with_grad(
         out.neg_corr_gradient[p] = -grad;
     }
     out.backend = OuBackend::Spectral;
-    out.status = SCAR_OK;
+    out.status = Status::Ok;
     return out;
 }
 
@@ -1341,7 +1362,7 @@ GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_spectral(
     return spectral_neg_loglik_with_grad(
         params, copula, u, config, prepared_emission_,
         CorrGradientMode::None, nullptr,
-        &spectral_gradient_workspace_);
+        &workspace().spectral_gradient);
 }
 
 GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_and_corr_spectral(
@@ -1353,7 +1374,7 @@ GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_and_corr_spectral(
     return spectral_neg_loglik_with_grad(
         params, copula, u, config, prepared_emission_,
         CorrGradientMode::Full, nullptr,
-        &spectral_gradient_workspace_);
+        &workspace().spectral_gradient);
 }
 
 GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_and_corr_directional_spectral(
@@ -1366,7 +1387,7 @@ GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_and_corr_directional_spec
     return spectral_neg_loglik_with_grad(
         params, copula, u, config, prepared_emission_,
         CorrGradientMode::Directional,
-        &corr_direction, &spectral_gradient_workspace_);
+        &corr_direction, &workspace().spectral_gradient);
 }
 
 GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_local_gh(
@@ -1377,7 +1398,7 @@ GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_local_gh(
 
     return grid_neg_loglik_with_grad(
         params, copula, u, config, OuBackend::LocalGh, prepared_emission_,
-        CorrGradientMode::None, nullptr, &grid_gradient_workspace_);
+        CorrGradientMode::None, nullptr, &workspace().grid_gradient);
 }
 
 GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_matrix(
@@ -1388,7 +1409,7 @@ GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_matrix(
 
     return grid_neg_loglik_with_grad(
         params, copula, u, config, OuBackend::Matrix, prepared_emission_,
-        CorrGradientMode::None, nullptr, &grid_gradient_workspace_);
+        CorrGradientMode::None, nullptr, &workspace().grid_gradient);
 }
 
 GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_and_corr_local_gh(
@@ -1399,7 +1420,7 @@ GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_and_corr_local_gh(
 
     return grid_neg_loglik_with_grad(
         params, copula, u, config, OuBackend::LocalGh, prepared_emission_,
-        CorrGradientMode::Full, nullptr, &grid_gradient_workspace_);
+        CorrGradientMode::Full, nullptr, &workspace().grid_gradient);
 }
 
 GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_and_corr_matrix(
@@ -1410,7 +1431,7 @@ GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_and_corr_matrix(
 
     return grid_neg_loglik_with_grad(
         params, copula, u, config, OuBackend::Matrix, prepared_emission_,
-        CorrGradientMode::Full, nullptr, &grid_gradient_workspace_);
+        CorrGradientMode::Full, nullptr, &workspace().grid_gradient);
 }
 
 GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_and_corr_directional_local_gh(
@@ -1423,7 +1444,7 @@ GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_and_corr_directional_loca
     return grid_neg_loglik_with_grad(
         params, copula, u, config, OuBackend::LocalGh, prepared_emission_,
         CorrGradientMode::Directional, &corr_direction,
-        &grid_gradient_workspace_);
+        &workspace().grid_gradient);
 }
 
 GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_and_corr_directional_matrix(
@@ -1436,7 +1457,7 @@ GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_and_corr_directional_matr
     return grid_neg_loglik_with_grad(
         params, copula, u, config, OuBackend::Matrix, prepared_emission_,
         CorrGradientMode::Directional, &corr_direction,
-        &grid_gradient_workspace_);
+        &workspace().grid_gradient);
 }
 
 }  // namespace scar

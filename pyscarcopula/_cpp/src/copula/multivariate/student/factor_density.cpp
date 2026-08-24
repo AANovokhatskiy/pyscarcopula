@@ -170,10 +170,13 @@ FactorStudentRowsResult factor_student_log_pdf_and_dlog_ddf(
             result.worker_workspace_peak_bytes,
             worker.workspace_peak_bytes);
         if (worker.failure_index >= 0
-            && (result.failure_index < 0
-                || worker.failure_index < result.failure_index)) {
-            result.failure_index = worker.failure_index;
+            && (result.failure.index < 0
+                || worker.failure_index < result.failure.index)) {
+            result.failure.index = worker.failure_index;
         }
+    }
+    if (result.failure.index >= 0) {
+        result.status = Status::NumericalFailure;
     }
     return result;
 }
@@ -407,9 +410,9 @@ FactorStudentJointResult factor_student_joint_likelihood_gradient(
         ++result.parallel_blocks;
         if (block.failure_index >= 0) {
             if (
-                    result.failure_index < 0
-                    || block.failure_index < result.failure_index) {
-                result.failure_index = block.failure_index;
+                    result.failure.index < 0
+                    || block.failure_index < result.failure.index) {
+                result.failure.index = block.failure_index;
             }
             continue;
         }
@@ -422,7 +425,8 @@ FactorStudentJointResult factor_student_joint_likelihood_gradient(
                 block.loading_gradient[index];
         }
     }
-    if (result.failure_index >= 0) {
+    if (result.failure.index >= 0) {
+        result.status = Status::NumericalFailure;
         result.log_likelihood =
             std::numeric_limits<double>::quiet_NaN();
         result.dlog_likelihood_ddf =

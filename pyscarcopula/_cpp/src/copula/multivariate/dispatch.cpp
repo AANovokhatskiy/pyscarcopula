@@ -30,7 +30,7 @@ MultivariateRowsResult multivariate_log_pdf_and_grad(
     MultivariateRowsResult out;
     out.n_threads_requested = n_threads;
     out.status = observations.empty() || row_offset < 0
-        ? SCAR_INVALID_SIZE : SCAR_INVALID_FAMILY;
+        ? Status::InvalidSize : Status::InvalidFamily;
     out.log_pdf.assign(
         observations.size(), -std::numeric_limits<double>::infinity());
     out.dlog_dr.assign(
@@ -58,12 +58,12 @@ MultivariateGridResult multivariate_pdf_and_grad_grid(
     out.n_threads_requested = n_threads;
     scar_internal::initialize_multivariate_grid(
         out, observations.size(), state_grid.size());
-    if (out.status == SCAR_OK) {
+    if (out.is_ok()) {
         out.status = observations.empty() || row_offset < 0
-            ? SCAR_INVALID_SIZE : SCAR_INVALID_FAMILY;
+            ? Status::InvalidSize : Status::InvalidFamily;
     }
     if (!scar_internal::valid_thread_count(n_threads)) {
-        out.status = SCAR_INVALID_PARAMETER;
+        out.status = Status::InvalidParameter;
     }
     return out;
 }

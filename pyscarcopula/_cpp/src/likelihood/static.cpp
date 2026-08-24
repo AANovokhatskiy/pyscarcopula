@@ -1,5 +1,8 @@
 #include "scar/copula.hpp"
 
+#include "../copula/multivariate/gaussian/density_internal.hpp"
+
+#include "scar/copula/prepared_dynamic_emission.hpp"
 #include "scar/copula/rotation.hpp"
 #include "scar/copula/multivariate/correlation/dense.hpp"
 #include "scar/copula/multivariate/gaussian/density.hpp"
@@ -250,6 +253,12 @@ StaticCopulaEvaluator::StaticCopulaEvaluator(
     emission_ = std::make_unique<PreparedDynamicEmission>(spec_);
 }
 
+StaticCopulaEvaluator::~StaticCopulaEvaluator() = default;
+StaticCopulaEvaluator::StaticCopulaEvaluator(
+    StaticCopulaEvaluator&&) noexcept = default;
+StaticCopulaEvaluator& StaticCopulaEvaluator::operator=(
+    StaticCopulaEvaluator&&) noexcept = default;
+
 StaticObjectiveResult StaticCopulaEvaluator::objective(
     double parameter,
     bool correlation_gradient_requested) const {
@@ -276,13 +285,13 @@ StaticObjectiveResult StaticCopulaEvaluator::evaluate_gaussian_objective(
     bool correlation_gradient_requested) const {
 
     StaticObjectiveResult out;
-    out.status = status_;
+    out.status = status_from_int(status_);
     out.n_threads_requested = n_threads_;
     const std::size_t dim = static_cast<std::size_t>(spec.dim);
     std::size_t square = 0;
     std::size_t n_corr = 0;
     std::size_t score_count = 0;
-    if (out.status != SCAR_OK
+    if (!out.is_ok()
         || spec_.family != CopulaFamily::MultivariateGaussian
         || spec.family != CopulaFamily::MultivariateGaussian
         || spec.dim != spec_.dim
@@ -295,8 +304,8 @@ StaticObjectiveResult StaticCopulaEvaluator::evaluate_gaussian_objective(
         || (correlation_gradient_requested
             && !scar_internal::valid_student_correlation_count(
                 spec.dim, n_corr))) {
-        out.status = out.status == SCAR_OK
-            ? SCAR_INVALID_PARAMETER : out.status;
+        out.status = out.is_ok()
+            ? Status::InvalidParameter : out.status;
         out.negative_log_likelihood =
             std::numeric_limits<double>::infinity();
         return out;
@@ -305,7 +314,7 @@ StaticObjectiveResult StaticCopulaEvaluator::evaluate_gaussian_objective(
     std::vector<double> precision;
     if (correlation_gradient_requested
         && !scar_internal::student_precision_matrix(spec, precision)) {
-        out.status = SCAR_INVALID_SIZE;
+        out.status = Status::InvalidSize;
         out.negative_log_likelihood =
             std::numeric_limits<double>::infinity();
         return out;
@@ -422,9 +431,9 @@ StaticObjectiveResult StaticCopulaEvaluator::evaluate_gaussian_objective(
         }
         ++out.parallel_blocks;
         if (block.failure_index >= 0
-            && (out.failure_index < 0
-                || block.failure_index < out.failure_index)) {
-            out.failure_index = block.failure_index;
+            && (out.failure.index < 0
+                || block.failure_index < out.failure.index)) {
+            out.failure.index = block.failure_index;
         }
         log_likelihood += block.log_likelihood;
         for (std::size_t index = 0; index < n_corr; ++index) {
@@ -432,8 +441,8 @@ StaticObjectiveResult StaticCopulaEvaluator::evaluate_gaussian_objective(
                 block.correlation_gradient[index];
         }
     }
-    if (out.failure_index >= 0) {
-        out.status = SCAR_NUMERICAL_FAILURE;
+    if (out.failure.index >= 0) {
+        out.status = Status::NumericalFailure;
         out.negative_log_likelihood =
             std::numeric_limits<double>::infinity();
         return out;
@@ -456,7 +465,7 @@ StaticObjectiveResult StaticCopulaEvaluator::evaluate_objective(
     if (spec_.family == CopulaFamily::MultivariateGaussian) {
         if (!std::isfinite(parameter)) {
             StaticObjectiveResult invalid;
-            invalid.status = SCAR_INVALID_PARAMETER;
+            invalid.status = Status::InvalidParameter;
             invalid.n_threads_requested = n_threads_;
             invalid.negative_log_likelihood =
                 std::numeric_limits<double>::infinity();
@@ -467,11 +476,11 @@ StaticObjectiveResult StaticCopulaEvaluator::evaluate_objective(
     }
 
     StaticObjectiveResult out;
-    out.status = status_;
+    out.status = status_from_int(status_);
     out.n_threads_requested = n_threads_;
     if (status_ != SCAR_OK || !std::isfinite(parameter)) {
-        if (out.status == SCAR_OK) {
-            out.status = SCAR_INVALID_PARAMETER;
+        if (out.is_ok()) {
+            out.status = Status::InvalidParameter;
         }
         out.negative_log_likelihood =
             std::numeric_limits<double>::infinity();
@@ -489,7 +498,7 @@ StaticObjectiveResult StaticCopulaEvaluator::evaluate_objective(
         if (!scar_internal::valid_student_correlation_count(
                 spec_.dim, n_corr)
             || !scar_internal::student_precision_matrix(spec_, precision)) {
-            out.status = SCAR_INVALID_SIZE;
+            out.status = Status::InvalidSize;
             out.negative_log_likelihood =
                 std::numeric_limits<double>::infinity();
             return out;
@@ -538,7 +547,7 @@ StaticObjectiveResult StaticCopulaEvaluator::evaluate_objective(
                             parameter,
                             parameter_gradient_requested,
                             emission_workspace);
-                    ok = evaluation.status == SCAR_OK;
+                    ok = evaluation.is_ok();
                     log_pdf = evaluation.log_pdf;
                     dlog = evaluation.dlog_dparameter;
                     if (ok
@@ -590,9 +599,9 @@ StaticObjectiveResult StaticCopulaEvaluator::evaluate_objective(
         }
         ++out.parallel_blocks;
         if (block.failure_index >= 0
-            && (out.failure_index < 0
-                || block.failure_index < out.failure_index)) {
-            out.failure_index = block.failure_index;
+            && (out.failure.index < 0
+                || block.failure_index < out.failure.index)) {
+            out.failure.index = block.failure_index;
         }
         log_likelihood += block.log_likelihood;
         gradient += block.gradient;
@@ -600,8 +609,8 @@ StaticObjectiveResult StaticCopulaEvaluator::evaluate_objective(
             corr_gradient[p] += block.correlation_gradient[p];
         }
     }
-    if (out.failure_index >= 0) {
-        out.status = SCAR_NUMERICAL_FAILURE;
+    if (out.failure.index >= 0) {
+        out.status = Status::NumericalFailure;
         out.negative_log_likelihood =
             std::numeric_limits<double>::infinity();
         out.negative_gradient = 0.0;
@@ -665,7 +674,7 @@ std::vector<double> StaticCopulaEvaluator::log_pdf_rows(
                             parameter,
                             false,
                             emission_workspace);
-                    out[i] = evaluation.status == SCAR_OK
+                    out[i] = evaluation.is_ok()
                         ? evaluation.log_pdf
                         : -std::numeric_limits<double>::infinity();
                 }
@@ -674,8 +683,8 @@ std::vector<double> StaticCopulaEvaluator::log_pdf_rows(
     return out;
 }
 
-int StaticCopulaEvaluator::status() const noexcept {
-    return status_;
+Status StaticCopulaEvaluator::status() const noexcept {
+    return status_from_int(status_);
 }
 
 }  // namespace scar

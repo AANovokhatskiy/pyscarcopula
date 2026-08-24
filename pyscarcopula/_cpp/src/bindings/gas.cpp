@@ -89,9 +89,9 @@ void bind_gas(py::module_& m) {
             out["values"] = vector_to_array(result.values);
             out["n_rows"] = result.n_rows;
             out["dimension"] = result.dimension;
-            out["status"] = result.status;
-            out["failure_row"] = result.failure_row;
-            out["failure_edge"] = result.failure_edge;
+            out["status"] = static_cast<int>(result.status);
+            out["failure_row"] = result.failure.row;
+            out["failure_edge"] = result.failure.edge;
             return out;
         },
         py::arg("edges"),

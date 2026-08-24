@@ -279,15 +279,15 @@ void bind_factor(py::module_& m) {
                     static_cast<std::size_t>(df_info.shape[0]),
                     n_threads);
             }
-            if (result.failure_index >= 0) {
+            if (result.failure.index >= 0) {
                 throw std::runtime_error(
                     "factor Student evaluation failed at observation row "
-                    + std::to_string(result.failure_index));
+                    + std::to_string(result.failure.index));
             }
             py::dict output;
             output["log_pdf"] = vector_copy(result.log_pdf);
             output["dlog_ddf"] = vector_copy(result.dlog_ddf);
-            output["failure_index"] = result.failure_index;
+            output["failure_index"] = result.failure.index;
             output["n_threads_requested"] =
                 result.n_threads_requested;
             output["row_parallel_blocks"] =
@@ -333,7 +333,7 @@ void bind_factor(py::module_& m) {
                 result.dlog_likelihood_dloadings,
                 correlation.dimension(),
                 correlation.rank());
-            output["failure_index"] = result.failure_index;
+            output["failure_index"] = result.failure.index;
             output["n_threads_requested"] =
                 result.n_threads_requested;
             output["reduction_blocks"] = result.reduction_blocks;
@@ -383,10 +383,10 @@ void bind_factor(py::module_& m) {
                         dimension_tile,
                         n_threads);
             }
-            if (result.failure_index >= 0) {
+            if (result.failure.index >= 0) {
                 throw std::runtime_error(
                     "factor Student grid evaluation failed at flat cell "
-                    + std::to_string(result.failure_index));
+                    + std::to_string(result.failure.index));
             }
             py::dict output;
             output["log_pdf"] = matrix_copy(
@@ -396,7 +396,7 @@ void bind_factor(py::module_& m) {
             output["rows"] = result.rows;
             output["grid_size"] = result.grid_size;
             output["dimension_tiles"] = result.dimension_tiles;
-            output["failure_index"] = result.failure_index;
+            output["failure_index"] = result.failure.index;
             output["n_threads_requested"] =
                 result.n_threads_requested;
             output["parallel_axis"] = result.parallel_axis;

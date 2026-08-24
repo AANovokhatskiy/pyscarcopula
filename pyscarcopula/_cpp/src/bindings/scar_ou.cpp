@@ -369,43 +369,34 @@ void bind_scar_ou(py::module_& m) {
             "predictive_mean",
             [](const scar::PreparedScarOuEvaluator& evaluator,
                const scar::OuParams& params) {
-                int status = 0;
-                scar::OuBackend backend = scar::OuBackend::Matrix;
-                std::vector<double> values;
+                scar::ScarOuVectorResult result;
                 {
                     py::gil_scoped_release release;
-                    values = evaluator.predictive_mean(params, backend, status);
+                    result = evaluator.predictive_mean(params);
                 }
-                return vector_result_to_dict(
-                    values, status, static_cast<int>(backend));
+                return vector_result_to_dict(result);
             })
         .def(
             "mixture_h",
             [](const scar::PreparedScarOuEvaluator& evaluator,
                const scar::OuParams& params) {
-                int status = 0;
-                scar::OuBackend backend = scar::OuBackend::Matrix;
-                std::vector<double> values;
+                scar::ScarOuVectorResult result;
                 {
                     py::gil_scoped_release release;
-                    values = evaluator.mixture_h(params, backend, status);
+                    result = evaluator.mixture_h(params);
                 }
-                return vector_result_to_dict(
-                    values, status, static_cast<int>(backend));
+                return vector_result_to_dict(result);
             })
         .def(
             "mixture_h_pair",
             [](const scar::PreparedScarOuEvaluator& evaluator,
                const scar::OuParams& params) {
-                int status = 0;
-                scar::OuBackend backend = scar::OuBackend::Matrix;
-                std::vector<double> values;
+                scar::ScarOuVectorResult result;
                 {
                     py::gil_scoped_release release;
-                    values = evaluator.mixture_h_pair(params, backend, status);
+                    result = evaluator.mixture_h_pair(params);
                 }
-                return vector_result_to_dict(
-                    values, status, static_cast<int>(backend));
+                return vector_result_to_dict(result);
             })
         .def(
             "state_distribution",
@@ -689,15 +680,13 @@ void bind_scar_ou(py::module_& m) {
                const scar::CopulaSpec& copula,
                py::array_t<double, py::array::c_style | py::array::forcecast> u,
                const scar::OuNumericalConfig& config) {
-                int status = 0;
-                std::vector<double> values =
+                const scar::ScarOuVectorResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
                             return evaluator.predictive_mean_local_gh(
-                                params, copula, obs, config, status);
+                                params, copula, obs, config);
                         });
-                return vector_result_to_dict(
-                    values, status, static_cast<int>(scar::OuBackend::LocalGh));
+                return vector_result_to_dict(result);
             })
         .def(
             "predictive_mean_matrix",
@@ -706,15 +695,13 @@ void bind_scar_ou(py::module_& m) {
                const scar::CopulaSpec& copula,
                py::array_t<double, py::array::c_style | py::array::forcecast> u,
                const scar::OuNumericalConfig& config) {
-                int status = 0;
-                std::vector<double> values =
+                const scar::ScarOuVectorResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
                             return evaluator.predictive_mean_matrix(
-                                params, copula, obs, config, status);
+                                params, copula, obs, config);
                         });
-                return vector_result_to_dict(
-                    values, status, static_cast<int>(scar::OuBackend::Matrix));
+                return vector_result_to_dict(result);
             })
         .def(
             "predictive_mean_auto",
@@ -723,16 +710,13 @@ void bind_scar_ou(py::module_& m) {
                const scar::CopulaSpec& copula,
                py::array_t<double, py::array::c_style | py::array::forcecast> u,
                const scar::OuNumericalConfig& config) {
-                int status = 0;
-                scar::OuBackend backend = scar::OuBackend::Matrix;
-                std::vector<double> values =
+                const scar::ScarOuVectorResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
                             return evaluator.predictive_mean_auto(
-                                params, copula, obs, config, backend, status);
+                                params, copula, obs, config);
                         });
-                return vector_result_to_dict(
-                    values, status, static_cast<int>(backend));
+                return vector_result_to_dict(result);
             })
         .def(
             "forward_rosenblatt_local_gh",
@@ -741,15 +725,13 @@ void bind_scar_ou(py::module_& m) {
                const scar::CopulaSpec& copula,
                py::array_t<double, py::array::c_style | py::array::forcecast> u,
                const scar::OuNumericalConfig& config) {
-                int status = 0;
-                std::vector<double> values =
+                const scar::ScarOuVectorResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
                             return evaluator.forward_rosenblatt_local_gh(
-                                params, copula, obs, config, status);
+                                params, copula, obs, config);
                         });
-                return vector_result_to_dict(
-                    values, status, static_cast<int>(scar::OuBackend::LocalGh));
+                return vector_result_to_dict(result);
             })
         .def(
             "forward_rosenblatt_matrix",
@@ -758,15 +740,13 @@ void bind_scar_ou(py::module_& m) {
                const scar::CopulaSpec& copula,
                py::array_t<double, py::array::c_style | py::array::forcecast> u,
                const scar::OuNumericalConfig& config) {
-                int status = 0;
-                std::vector<double> values =
+                const scar::ScarOuVectorResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
                             return evaluator.forward_rosenblatt_matrix(
-                                params, copula, obs, config, status);
+                                params, copula, obs, config);
                         });
-                return vector_result_to_dict(
-                    values, status, static_cast<int>(scar::OuBackend::Matrix));
+                return vector_result_to_dict(result);
             })
         .def(
             "forward_rosenblatt_auto",
@@ -775,16 +755,13 @@ void bind_scar_ou(py::module_& m) {
                const scar::CopulaSpec& copula,
                py::array_t<double, py::array::c_style | py::array::forcecast> u,
                const scar::OuNumericalConfig& config) {
-                int status = 0;
-                scar::OuBackend backend = scar::OuBackend::Matrix;
-                std::vector<double> values =
+                const scar::ScarOuVectorResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
                             return evaluator.forward_rosenblatt_auto(
-                                params, copula, obs, config, backend, status);
+                                params, copula, obs, config);
                         });
-                return vector_result_to_dict(
-                    values, status, static_cast<int>(backend));
+                return vector_result_to_dict(result);
             })
         .def(
             "gaussian_rosenblatt_local_gh",
@@ -793,15 +770,13 @@ void bind_scar_ou(py::module_& m) {
                const scar::CopulaSpec& copula,
                py::array_t<double, py::array::c_style | py::array::forcecast> u,
                const scar::OuNumericalConfig& config) {
-                int status = 0;
-                std::vector<double> values =
+                const scar::ScarOuVectorResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
                             return evaluator.gaussian_rosenblatt_local_gh(
-                                params, copula, obs, config, status);
+                                params, copula, obs, config);
                         });
-                return vector_result_to_dict(
-                    values, status, static_cast<int>(scar::OuBackend::LocalGh));
+                return vector_result_to_dict(result);
             })
         .def(
             "gaussian_rosenblatt_matrix",
@@ -810,15 +785,13 @@ void bind_scar_ou(py::module_& m) {
                const scar::CopulaSpec& copula,
                py::array_t<double, py::array::c_style | py::array::forcecast> u,
                const scar::OuNumericalConfig& config) {
-                int status = 0;
-                std::vector<double> values =
+                const scar::ScarOuVectorResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
                             return evaluator.gaussian_rosenblatt_matrix(
-                                params, copula, obs, config, status);
+                                params, copula, obs, config);
                         });
-                return vector_result_to_dict(
-                    values, status, static_cast<int>(scar::OuBackend::Matrix));
+                return vector_result_to_dict(result);
             })
         .def(
             "gaussian_rosenblatt_auto",
@@ -827,16 +800,13 @@ void bind_scar_ou(py::module_& m) {
                const scar::CopulaSpec& copula,
                py::array_t<double, py::array::c_style | py::array::forcecast> u,
                const scar::OuNumericalConfig& config) {
-                int status = 0;
-                scar::OuBackend backend = scar::OuBackend::Matrix;
-                std::vector<double> values =
+                const scar::ScarOuVectorResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
                             return evaluator.gaussian_rosenblatt_auto(
-                                params, copula, obs, config, backend, status);
+                                params, copula, obs, config);
                         });
-                return vector_result_to_dict(
-                    values, status, static_cast<int>(backend));
+                return vector_result_to_dict(result);
             })
         .def(
             "student_rosenblatt_local_gh",
@@ -845,15 +815,13 @@ void bind_scar_ou(py::module_& m) {
                const scar::CopulaSpec& copula,
                py::array_t<double, py::array::c_style | py::array::forcecast> u,
                const scar::OuNumericalConfig& config) {
-                int status = 0;
-                std::vector<double> values =
+                const scar::ScarOuVectorResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
                             return evaluator.student_rosenblatt_local_gh(
-                                params, copula, obs, config, status);
+                                params, copula, obs, config);
                         });
-                return vector_result_to_dict(
-                    values, status, static_cast<int>(scar::OuBackend::LocalGh));
+                return vector_result_to_dict(result);
             })
         .def(
             "student_rosenblatt_matrix",
@@ -862,15 +830,13 @@ void bind_scar_ou(py::module_& m) {
                const scar::CopulaSpec& copula,
                py::array_t<double, py::array::c_style | py::array::forcecast> u,
                const scar::OuNumericalConfig& config) {
-                int status = 0;
-                std::vector<double> values =
+                const scar::ScarOuVectorResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
                             return evaluator.student_rosenblatt_matrix(
-                                params, copula, obs, config, status);
+                                params, copula, obs, config);
                         });
-                return vector_result_to_dict(
-                    values, status, static_cast<int>(scar::OuBackend::Matrix));
+                return vector_result_to_dict(result);
             })
         .def(
             "student_rosenblatt_auto",
@@ -879,16 +845,13 @@ void bind_scar_ou(py::module_& m) {
                const scar::CopulaSpec& copula,
                py::array_t<double, py::array::c_style | py::array::forcecast> u,
                const scar::OuNumericalConfig& config) {
-                int status = 0;
-                scar::OuBackend backend = scar::OuBackend::Matrix;
-                std::vector<double> values =
+                const scar::ScarOuVectorResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
                             return evaluator.student_rosenblatt_auto(
-                                params, copula, obs, config, backend, status);
+                                params, copula, obs, config);
                         });
-                return vector_result_to_dict(
-                    values, status, static_cast<int>(backend));
+                return vector_result_to_dict(result);
             })
         .def(
             "mixture_h_local_gh",
@@ -897,15 +860,13 @@ void bind_scar_ou(py::module_& m) {
                const scar::CopulaSpec& copula,
                py::array_t<double, py::array::c_style | py::array::forcecast> u,
                const scar::OuNumericalConfig& config) {
-                int status = 0;
-                std::vector<double> values =
+                const scar::ScarOuVectorResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
                             return evaluator.mixture_h_local_gh(
-                                params, copula, obs, config, status);
+                                params, copula, obs, config);
                         });
-                return vector_result_to_dict(
-                    values, status, static_cast<int>(scar::OuBackend::LocalGh));
+                return vector_result_to_dict(result);
             })
         .def(
             "mixture_h_matrix",
@@ -914,15 +875,13 @@ void bind_scar_ou(py::module_& m) {
                const scar::CopulaSpec& copula,
                py::array_t<double, py::array::c_style | py::array::forcecast> u,
                const scar::OuNumericalConfig& config) {
-                int status = 0;
-                std::vector<double> values =
+                const scar::ScarOuVectorResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
                             return evaluator.mixture_h_matrix(
-                                params, copula, obs, config, status);
+                                params, copula, obs, config);
                         });
-                return vector_result_to_dict(
-                    values, status, static_cast<int>(scar::OuBackend::Matrix));
+                return vector_result_to_dict(result);
             })
         .def(
             "mixture_h_auto",
@@ -931,16 +890,13 @@ void bind_scar_ou(py::module_& m) {
                const scar::CopulaSpec& copula,
                py::array_t<double, py::array::c_style | py::array::forcecast> u,
                const scar::OuNumericalConfig& config) {
-                int status = 0;
-                scar::OuBackend backend = scar::OuBackend::Matrix;
-                std::vector<double> values =
+                const scar::ScarOuVectorResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
                             return evaluator.mixture_h_auto(
-                                params, copula, obs, config, backend, status);
+                                params, copula, obs, config);
                         });
-                return vector_result_to_dict(
-                    values, status, static_cast<int>(backend));
+                return vector_result_to_dict(result);
             })
         .def(
             "mixture_h_pair_local_gh",
@@ -949,15 +905,13 @@ void bind_scar_ou(py::module_& m) {
                const scar::CopulaSpec& copula,
                py::array_t<double, py::array::c_style | py::array::forcecast> u,
                const scar::OuNumericalConfig& config) {
-                int status = 0;
-                std::vector<double> values =
+                const scar::ScarOuVectorResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
                             return evaluator.mixture_h_pair_local_gh(
-                                params, copula, obs, config, status);
+                                params, copula, obs, config);
                         });
-                return vector_result_to_dict(
-                    values, status, static_cast<int>(scar::OuBackend::LocalGh));
+                return vector_result_to_dict(result);
             })
         .def(
             "mixture_h_pair_matrix",
@@ -966,15 +920,13 @@ void bind_scar_ou(py::module_& m) {
                const scar::CopulaSpec& copula,
                py::array_t<double, py::array::c_style | py::array::forcecast> u,
                const scar::OuNumericalConfig& config) {
-                int status = 0;
-                std::vector<double> values =
+                const scar::ScarOuVectorResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
                             return evaluator.mixture_h_pair_matrix(
-                                params, copula, obs, config, status);
+                                params, copula, obs, config);
                         });
-                return vector_result_to_dict(
-                    values, status, static_cast<int>(scar::OuBackend::Matrix));
+                return vector_result_to_dict(result);
             })
         .def(
             "mixture_h_pair_auto",
@@ -983,16 +935,13 @@ void bind_scar_ou(py::module_& m) {
                const scar::CopulaSpec& copula,
                py::array_t<double, py::array::c_style | py::array::forcecast> u,
                const scar::OuNumericalConfig& config) {
-                int status = 0;
-                scar::OuBackend backend = scar::OuBackend::Matrix;
-                std::vector<double> values =
+                const scar::ScarOuVectorResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
                             return evaluator.mixture_h_pair_auto(
-                                params, copula, obs, config, backend, status);
+                                params, copula, obs, config);
                         });
-                return vector_result_to_dict(
-                    values, status, static_cast<int>(backend));
+                return vector_result_to_dict(result);
             })
         .def(
             "state_distribution_local_gh",

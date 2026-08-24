@@ -1,6 +1,7 @@
 #pragma once
 
 #include "scar/copula.hpp"
+#include "scar/copula/multivariate/conditional_result.hpp"
 #include "scar/gas.hpp"
 #include "scar/gas_rvine.hpp"
 #include "scar/factor.hpp"
@@ -64,10 +65,7 @@ pybind11::list backend_chain_to_list(
 pybind11::dict loglik_result_to_dict(const scar::LogLikResult& result);
 pybind11::dict grad_loglik_result_to_dict(
     const scar::GradLogLikResult& result);
-pybind11::dict vector_result_to_dict(
-    const std::vector<double>& values,
-    int status,
-    int backend);
+pybind11::dict vector_result_to_dict(const scar::ScarOuVectorResult& result);
 pybind11::dict state_distribution_to_dict(
     const scar::StateDistribution& result);
 pybind11::dict smoothed_state_distribution_to_dict(

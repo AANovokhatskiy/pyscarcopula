@@ -1,5 +1,7 @@
 #include "scar/copula/multivariate/gaussian/density.hpp"
 
+#include "density_internal.hpp"
+
 #include "scar/copula/multivariate/correlation/dense.hpp"
 #include "scar/copula/multivariate/correlation/factor.hpp"
 

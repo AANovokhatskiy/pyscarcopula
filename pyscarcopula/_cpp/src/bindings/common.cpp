@@ -286,8 +286,8 @@ py::dict loglik_result_to_dict(const scar::LogLikResult& result) {
     py::dict out;
     out["log_likelihood"] = result.log_likelihood;
     out["backend"] = static_cast<int>(result.backend);
-    out["status"] = result.status;
-    out["fallback_from"] = result.fallback_from;
+    out["status"] = static_cast<int>(result.status);
+    out["fallback_from"] = result.failure.fallback_from;
     out["fallback_chain"] = backend_chain_to_list(result.fallback_chain);
     out["matrix_fallback_reason"] = result.matrix_fallback_reason;
     return out;
@@ -298,25 +298,19 @@ py::dict grad_loglik_result_to_dict(const scar::GradLogLikResult& result) {
     out["neg_log_likelihood"] = result.neg_log_likelihood;
     out["neg_gradient"] = vector_to_array(result.neg_gradient);
     out["backend"] = static_cast<int>(result.backend);
-    out["status"] = result.status;
-    out["fallback_from"] = result.fallback_from;
+    out["status"] = static_cast<int>(result.status);
+    out["fallback_from"] = result.failure.fallback_from;
     out["fallback_chain"] = backend_chain_to_list(result.fallback_chain);
     out["matrix_fallback_reason"] = result.matrix_fallback_reason;
     out["neg_corr_gradient"] = vector_to_array(result.neg_corr_gradient);
     return out;
 }
 
-py::dict vector_result_to_dict(
-    const std::vector<double>& values,
-    int status,
-    int backend = -1) {
-
+py::dict vector_result_to_dict(const scar::ScarOuVectorResult& result) {
     py::dict out;
-    out["values"] = vector_to_array(values);
-    out["status"] = status;
-    if (backend >= 0) {
-        out["backend"] = backend;
-    }
+    out["values"] = vector_to_array(result.values);
+    out["status"] = static_cast<int>(result.status);
+    out["backend"] = static_cast<int>(result.backend);
     return out;
 }
 
@@ -324,7 +318,7 @@ py::dict state_distribution_to_dict(const scar::StateDistribution& result) {
     py::dict out;
     out["z_grid"] = vector_to_array(result.z_grid);
     out["prob"] = vector_to_array(result.prob);
-    out["status"] = result.status;
+    out["status"] = static_cast<int>(result.status);
     out["backend"] = static_cast<int>(result.backend);
     return out;
 }
@@ -344,7 +338,7 @@ py::dict smoothed_state_distribution_to_dict(
             result.weights.size() * sizeof(double));
     }
     out["weights"] = std::move(weights);
-    out["status"] = result.status;
+    out["status"] = static_cast<int>(result.status);
     out["backend"] = static_cast<int>(result.backend);
     return out;
 }
@@ -352,8 +346,8 @@ py::dict smoothed_state_distribution_to_dict(
 py::dict gas_loglik_result_to_dict(const scar::GasLogLikResult& result) {
     py::dict out;
     out["log_likelihood"] = result.log_likelihood;
-    out["status"] = result.status;
-    out["failure_index"] = result.failure_index;
+    out["status"] = static_cast<int>(result.status);
+    out["failure_index"] = result.failure.index;
     return out;
 }
 
@@ -365,8 +359,8 @@ py::dict static_objective_result_to_dict(
     out["negative_gradient"] = result.negative_gradient;
     out["negative_correlation_gradient"] =
         vector_to_array(result.negative_correlation_gradient);
-    out["status"] = result.status;
-    out["failure_index"] = result.failure_index;
+    out["status"] = static_cast<int>(result.status);
+    out["failure_index"] = result.failure.index;
     out["n_threads_requested"] = result.n_threads_requested;
     out["parallel_blocks"] = result.parallel_blocks;
     return out;
@@ -378,8 +372,8 @@ py::dict multivariate_rows_result_to_dict(
     py::dict out;
     out["log_pdf"] = vector_to_array(result.log_pdf);
     out["dlog_dr"] = vector_to_array(result.dlog_dr);
-    out["status"] = result.status;
-    out["failure_index"] = result.failure_index;
+    out["status"] = static_cast<int>(result.status);
+    out["failure_index"] = result.failure.index;
     out["student_ppf_cache_values"] = result.student_ppf_cache_values;
     out["student_ppf_exact_values"] = result.student_ppf_exact_values;
     out["student_ppf_asymptotic_values"] =
@@ -399,8 +393,8 @@ py::dict multivariate_grid_result_to_dict(
     py::dict out;
     out["pdf"] = grid_values_to_array(result.pdf);
     out["d_pdf_dx"] = grid_values_to_array(result.d_pdf_dx);
-    out["status"] = result.status;
-    out["failure_index"] = result.failure_index;
+    out["status"] = static_cast<int>(result.status);
+    out["failure_index"] = result.failure.index;
     out["student_ppf_cache_values"] = result.student_ppf_cache_values;
     out["student_ppf_exact_values"] = result.student_ppf_exact_values;
     out["student_ppf_asymptotic_values"] =
@@ -421,8 +415,8 @@ py::dict equicorr_preparation_result_to_dict(
     py::dict out;
     out["sum_z"] = vector_to_array(result.sum_z);
     out["sum_z2"] = vector_to_array(result.sum_z2);
-    out["status"] = result.status;
-    out["failure_index"] = result.failure_index;
+    out["status"] = static_cast<int>(result.status);
+    out["failure_index"] = result.failure.index;
     out["n_threads_requested"] = result.n_threads_requested;
     out["parallel_blocks"] = result.parallel_blocks;
     out["parallel_axis"] = result.parallel_axis;
@@ -445,8 +439,8 @@ py::dict conditional_sample_result_to_dict(
     std::copy(result.values.begin(), result.values.end(), data);
     py::dict out;
     out["values"] = std::move(values);
-    out["status"] = result.status;
-    out["failure_index"] = result.failure_index;
+    out["status"] = static_cast<int>(result.status);
+    out["failure_index"] = result.failure.index;
     out["n_threads_requested"] = result.n_threads_requested;
     out["parallel_blocks"] = result.parallel_blocks;
     out["correlation_factorizations"] =
@@ -459,8 +453,8 @@ py::dict trajectory_log_pdf_result_to_dict(
 
     py::dict out;
     out["log_pdf"] = grid_values_to_array(result.log_pdf);
-    out["status"] = result.status;
-    out["failure_index"] = result.failure_index;
+    out["status"] = static_cast<int>(result.status);
+    out["failure_index"] = result.failure.index;
     out["n_threads_requested"] = result.n_threads_requested;
     out["parallel_blocks"] = result.parallel_blocks;
     return out;
@@ -472,8 +466,8 @@ py::dict gas_filter_result_to_dict(const scar::GasFilterResult& result) {
     out["r_path"] = vector_to_array(result.r_path);
     out["score_path"] = vector_to_array(result.score_path);
     out["log_likelihood"] = result.log_likelihood;
-    out["status"] = result.status;
-    out["failure_index"] = result.failure_index;
+    out["status"] = static_cast<int>(result.status);
+    out["failure_index"] = result.failure.index;
     return out;
 }
 
@@ -484,7 +478,7 @@ py::dict gas_update_result_to_dict(const scar::GasUpdateResult& result) {
     out["r_next"] = result.r_next;
     out["log_likelihood"] = result.log_likelihood;
     out["score"] = result.score;
-    out["status"] = result.status;
+    out["status"] = static_cast<int>(result.status);
     return out;
 }
 
@@ -492,23 +486,23 @@ py::dict gas_state_result_to_dict(const scar::GasStateResult& result) {
     py::dict out;
     out["g"] = result.g;
     out["parameter"] = result.parameter;
-    out["status"] = result.status;
+    out["status"] = static_cast<int>(result.status);
     return out;
 }
 
 py::dict gas_predict_result_to_dict(const scar::GasPredictResult& result) {
     py::dict out;
     out["parameter"] = result.parameter;
-    out["status"] = result.status;
-    out["failure_index"] = result.failure_index;
+    out["status"] = static_cast<int>(result.status);
+    out["failure_index"] = result.failure.index;
     return out;
 }
 
 py::dict gas_path_result_to_dict(const scar::GasPathResult& result) {
     py::dict out;
     out["values"] = vector_to_array(result.values);
-    out["status"] = result.status;
-    out["failure_index"] = result.failure_index;
+    out["status"] = static_cast<int>(result.status);
+    out["failure_index"] = result.failure.index;
     return out;
 }
 

@@ -26,7 +26,7 @@ bool adaptive_grid_exceeds_limit(
     const OuParams& params,
     std::int64_t n_obs,
     const OuNumericalConfig& config);
-bool recoverable_numerical_status(int status);
+bool recoverable_numerical_status(Status status);
 bool auto_loglik_accepted(const LogLikResult& result);
 bool auto_grad_accepted(const GradLogLikResult& result);
 LogLikResult invalid_loglik(int status, OuBackend backend);

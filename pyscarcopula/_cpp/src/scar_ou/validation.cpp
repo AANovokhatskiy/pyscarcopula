@@ -136,48 +136,44 @@ bool adaptive_grid_exceeds_limit(
             || K_min_value > static_cast<double>(INT_MAX));
 }
 
-bool recoverable_numerical_status(int status) {
-    return status == SCAR_NUMERICAL_FAILURE;
+bool recoverable_numerical_status(Status status) {
+    return status == Status::NumericalFailure;
 }
 
 bool auto_loglik_accepted(const LogLikResult& result) {
-    return result.status == SCAR_OK
+    return result.is_ok()
         && std::isfinite(result.log_likelihood)
         && result.log_likelihood > -1e9;
 }
 
 bool auto_grad_accepted(const GradLogLikResult& result) {
-    return result.status == SCAR_OK
+    return result.is_ok()
         && std::isfinite(result.neg_log_likelihood)
         && result.neg_log_likelihood < 1e9;
 }
 
 LogLikResult invalid_loglik(int status, OuBackend backend) {
-    return {
-        -std::numeric_limits<double>::infinity(),
-        backend,
-        status,
-        -1,
-        {},
-        SCAR_FALLBACK_NONE,
-    };
+    LogLikResult out;
+    out.log_likelihood = -std::numeric_limits<double>::infinity();
+    out.backend = backend;
+    out.status = status_from_int(status);
+    return out;
 }
 
 GradLogLikResult invalid_grad(int status, OuBackend backend) {
-    return {
-        1e10,
-        std::vector<double>{0.0, 0.0, 0.0},
-        backend,
-        status,
-        -1,
-        {},
-        SCAR_FALLBACK_NONE,
-        {},
-    };
+    GradLogLikResult out;
+    out.neg_log_likelihood = 1e10;
+    out.neg_gradient = {0.0, 0.0, 0.0};
+    out.backend = backend;
+    out.status = status_from_int(status);
+    return out;
 }
 
 StateDistribution invalid_state_distribution(int status, OuBackend backend) {
-    return {{}, {}, backend, status};
+    StateDistribution out;
+    out.backend = backend;
+    out.status = status_from_int(status);
+    return out;
 }
 
 OuNumericalConfig with_default_quad_order(OuNumericalConfig config) {
@@ -223,7 +219,7 @@ void set_auto_fallback(
     int matrix_reason) {
 
     result.fallback_chain = chain;
-    result.fallback_from = chain.empty()
+    result.failure.fallback_from = chain.empty()
         ? -1
         : static_cast<int>(chain.back());
     result.matrix_fallback_reason = matrix_reason;
@@ -235,7 +231,7 @@ void set_auto_fallback(
     int matrix_reason) {
 
     result.fallback_chain = chain;
-    result.fallback_from = chain.empty()
+    result.failure.fallback_from = chain.empty()
         ? -1
         : static_cast<int>(chain.back());
     result.matrix_fallback_reason = matrix_reason;

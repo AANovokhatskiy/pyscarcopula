@@ -136,7 +136,7 @@
       "pyscarcopula/_cpp/build_support/toolchain.py": "5d7990b2cb89bd8bdf58e887795f6c4d027eeb39d5f99a9b49ba11548e2da701",
       "setup.py": "11690d112f39f7da39d7b9d80155e9aabdbb6187565720d7fed19ba8a58103df",
       "tools/build_cpp_tests.py": "99838f4bfb1199527b5a904c169828515bf7cda438102bdaffd600f07ede8b62",
-      "tools/check_cpp_architecture.py": "b8fc16c4e9ea7b905296fe90cf18e8f40db6892cbfad578ba79825479ff01d7c"
+      "tools/check_cpp_architecture.py": "ef504d5a11dd7bf318cef40bab3286dbb9733bfcf26689d9f6f2f35615e76f8e"
     },
     "sources": [
       ".github/workflows/parallel-release-gates.yml",
@@ -168,7 +168,7 @@
       ]
     }
   },
-  "compute_source_sha256": "b9acebb9965ec1f204fe7bd9572325b3def2a7d4d1a480d5b643f82d711a66b7",
+  "compute_source_sha256": "e0b60ce0ec9f79a72a735fd67d7cfa66c69401763e39658308886118ea59ca3b",
   "configuration_contracts": {
     "complete_constant_mappings": [
       {
@@ -1606,7 +1606,7 @@
       },
       {
         "kind": "cpp",
-        "line": 280,
+        "line": 282,
         "old": "pyscarcopula/_cpp/src/copula/multivariate/equicorrelation/evaluator.cpp:kEquicorrGridMinRowsPerBlock",
         "semantic": "preserve the current value, bounds, and usage semantics",
         "source": "pyscarcopula/_cpp/src/copula/multivariate/equicorrelation/evaluator.cpp",
@@ -1616,7 +1616,7 @@
       },
       {
         "kind": "cpp",
-        "line": 281,
+        "line": 283,
         "old": "pyscarcopula/_cpp/src/copula/multivariate/equicorrelation/evaluator.cpp:kEquicorrGridMinCells",
         "semantic": "preserve the current value, bounds, and usage semantics",
         "source": "pyscarcopula/_cpp/src/copula/multivariate/equicorrelation/evaluator.cpp",
@@ -1626,7 +1626,7 @@
       },
       {
         "kind": "cpp",
-        "line": 282,
+        "line": 284,
         "old": "pyscarcopula/_cpp/src/copula/multivariate/equicorrelation/evaluator.cpp:kEquicorrPreparationMinCells",
         "semantic": "preserve the current value, bounds, and usage semantics",
         "source": "pyscarcopula/_cpp/src/copula/multivariate/equicorrelation/evaluator.cpp",
@@ -1756,7 +1756,7 @@
       },
       {
         "kind": "cpp",
-        "line": 24,
+        "line": 27,
         "old": "pyscarcopula/_cpp/src/likelihood/static.cpp:kExpensiveMinRows",
         "semantic": "preserve the current value, bounds, and usage semantics",
         "source": "pyscarcopula/_cpp/src/likelihood/static.cpp",
@@ -1766,7 +1766,7 @@
       },
       {
         "kind": "cpp",
-        "line": 25,
+        "line": 28,
         "old": "pyscarcopula/_cpp/src/likelihood/static.cpp:kExpensiveMinWork",
         "semantic": "preserve the current value, bounds, and usage semantics",
         "source": "pyscarcopula/_cpp/src/likelihood/static.cpp",
@@ -1776,7 +1776,7 @@
       },
       {
         "kind": "cpp",
-        "line": 26,
+        "line": 29,
         "old": "pyscarcopula/_cpp/src/likelihood/static.cpp:kCheapMinRows",
         "semantic": "preserve the current value, bounds, and usage semantics",
         "source": "pyscarcopula/_cpp/src/likelihood/static.cpp",
@@ -1786,7 +1786,7 @@
       },
       {
         "kind": "cpp",
-        "line": 27,
+        "line": 30,
         "old": "pyscarcopula/_cpp/src/likelihood/static.cpp:kCheapMinWork",
         "semantic": "preserve the current value, bounds, and usage semantics",
         "source": "pyscarcopula/_cpp/src/likelihood/static.cpp",
@@ -1836,7 +1836,7 @@
       },
       {
         "kind": "cpp",
-        "line": 1018,
+        "line": 1020,
         "old": "pyscarcopula/_cpp/src/vine/executor.cpp:conditional_max_block_rows",
         "semantic": "preserve the current value, bounds, and usage semantics",
         "source": "pyscarcopula/_cpp/src/vine/executor.cpp",
@@ -1846,7 +1846,7 @@
       },
       {
         "kind": "cpp",
-        "line": 1019,
+        "line": 1021,
         "old": "pyscarcopula/_cpp/src/vine/executor.cpp:conditional_workspace_budget",
         "semantic": "preserve the current value, bounds, and usage semantics",
         "source": "pyscarcopula/_cpp/src/vine/executor.cpp",
@@ -2102,21 +2102,21 @@
         "value_expression": "4096"
       },
       {
-        "line": 280,
+        "line": 282,
         "owner": "current C++ translation unit/namespace",
         "source": "pyscarcopula/_cpp/src/copula/multivariate/equicorrelation/evaluator.cpp",
         "symbol": "kEquicorrGridMinRowsPerBlock",
         "value_expression": "64"
       },
       {
-        "line": 281,
+        "line": 283,
         "owner": "current C++ translation unit/namespace",
         "source": "pyscarcopula/_cpp/src/copula/multivariate/equicorrelation/evaluator.cpp",
         "symbol": "kEquicorrGridMinCells",
         "value_expression": "262144"
       },
       {
-        "line": 282,
+        "line": 284,
         "owner": "current C++ translation unit/namespace",
         "source": "pyscarcopula/_cpp/src/copula/multivariate/equicorrelation/evaluator.cpp",
         "symbol": "kEquicorrPreparationMinCells",
@@ -2207,28 +2207,28 @@
         "value_expression": "1e-12"
       },
       {
-        "line": 24,
+        "line": 27,
         "owner": "current C++ translation unit/namespace",
         "source": "pyscarcopula/_cpp/src/likelihood/static.cpp",
         "symbol": "kExpensiveMinRows",
         "value_expression": "8"
       },
       {
-        "line": 25,
+        "line": 28,
         "owner": "current C++ translation unit/namespace",
         "source": "pyscarcopula/_cpp/src/likelihood/static.cpp",
         "symbol": "kExpensiveMinWork",
         "value_expression": "4096"
       },
       {
-        "line": 26,
+        "line": 29,
         "owner": "current C++ translation unit/namespace",
         "source": "pyscarcopula/_cpp/src/likelihood/static.cpp",
         "symbol": "kCheapMinRows",
         "value_expression": "1024"
       },
       {
-        "line": 27,
+        "line": 30,
         "owner": "current C++ translation unit/namespace",
         "source": "pyscarcopula/_cpp/src/likelihood/static.cpp",
         "symbol": "kCheapMinWork",
@@ -2263,14 +2263,14 @@
         "value_expression": "1024"
       },
       {
-        "line": 1018,
+        "line": 1020,
         "owner": "current C++ translation unit/namespace",
         "source": "pyscarcopula/_cpp/src/vine/executor.cpp",
         "symbol": "conditional_max_block_rows",
         "value_expression": "1024"
       },
       {
-        "line": 1019,
+        "line": 1021,
         "owner": "current C++ translation unit/namespace",
         "source": "pyscarcopula/_cpp/src/vine/executor.cpp",
         "symbol": "conditional_workspace_budget",
@@ -3905,21 +3905,20 @@
     "include_graph": {
       "pyscarcopula/_cpp/include/scar/copula.hpp": [
         "scar/copula/grid_values.hpp",
-        "scar/copula/multivariate/gaussian/conditional.hpp",
-        "scar/copula/multivariate/student/conditional.hpp",
-        "scar/copula/multivariate/student/rosenblatt.hpp",
-        "scar/copula/prepared_dynamic_emission.hpp",
-        "scar/copula/rotation.hpp",
+        "scar/copula/result.hpp",
         "scar/copula/spec.hpp",
-        "scar/copula/transforms.hpp",
         "scar/core/span.hpp",
-        "scar/observation.hpp"
+        "scar/observation.hpp",
+        "scar/static/result.hpp"
       ],
       "pyscarcopula/_cpp/include/scar/copula/model_storage.hpp": [
         "scar/copula/multivariate/equicorrelation/model.hpp",
         "scar/copula/multivariate/gaussian/model.hpp",
         "scar/copula/multivariate/student/model.hpp",
         "scar/copula/pair/model.hpp"
+      ],
+      "pyscarcopula/_cpp/include/scar/copula/multivariate/conditional_result.hpp": [
+        "scar/core/result.hpp"
       ],
       "pyscarcopula/_cpp/include/scar/copula/multivariate/equicorrelation/kernel.hpp": [
         "scar/copula/spec.hpp"
@@ -3946,10 +3945,12 @@
         "scar/copula/spec.hpp"
       ],
       "pyscarcopula/_cpp/include/scar/copula/multivariate/student/factor_density.hpp": [
-        "scar/copula/multivariate/correlation/factor.hpp"
+        "scar/copula/multivariate/correlation/factor.hpp",
+        "scar/core/result.hpp"
       ],
       "pyscarcopula/_cpp/include/scar/copula/multivariate/student/factor_grid.hpp": [
-        "scar/copula/multivariate/correlation/factor.hpp"
+        "scar/copula/multivariate/correlation/factor.hpp",
+        "scar/core/result.hpp"
       ],
       "pyscarcopula/_cpp/include/scar/copula/multivariate/student/model.hpp": [
         "scar/copula/multivariate/correlation/dense.hpp",
@@ -3961,6 +3962,7 @@
         "scar/copula/spec.hpp"
       ],
       "pyscarcopula/_cpp/include/scar/copula/multivariate/student/rosenblatt.hpp": [
+        "scar/core/result.hpp",
         "scar/core/span.hpp",
         "scar/observation.hpp"
       ],
@@ -3984,11 +3986,16 @@
       ],
       "pyscarcopula/_cpp/include/scar/copula/prepared_dynamic_emission.hpp": [
         "scar/copula/spec.hpp",
+        "scar/core/result.hpp",
         "scar/observation.hpp"
       ],
       "pyscarcopula/_cpp/include/scar/copula/prepared_pair_kernel.hpp": [
         "scar/copula/pair/kernel.hpp",
         "scar/copula/spec.hpp"
+      ],
+      "pyscarcopula/_cpp/include/scar/copula/result.hpp": [
+        "scar/copula/grid_values.hpp",
+        "scar/core/result.hpp"
       ],
       "pyscarcopula/_cpp/include/scar/copula/spec.hpp": [
         "scar/copula/model_descriptor.hpp",
@@ -4039,32 +4046,51 @@
       ],
       "pyscarcopula/_cpp/include/scar/gas.hpp": [
         "scar/copula/spec.hpp",
-        "scar/observation.hpp",
-        "scar/status.hpp"
+        "scar/gas/result.hpp",
+        "scar/observation.hpp"
+      ],
+      "pyscarcopula/_cpp/include/scar/gas/result.hpp": [
+        "scar/core/result.hpp"
       ],
       "pyscarcopula/_cpp/include/scar/gas_rvine.hpp": [
         "scar/copula/spec.hpp",
         "scar/gas.hpp",
-        "scar/rvine_plan.hpp",
-        "scar/status.hpp"
+        "scar/gas_rvine/result.hpp",
+        "scar/rvine_plan.hpp"
+      ],
+      "pyscarcopula/_cpp/include/scar/gas_rvine/result.hpp": [
+        "scar/core/result.hpp"
       ],
       "pyscarcopula/_cpp/include/scar/observation.hpp": [
         "scar/core/matrix_view.hpp"
       ],
       "pyscarcopula/_cpp/include/scar/ou.hpp": [
-        "scar/copula/grid_values.hpp",
         "scar/copula/prepared_dynamic_emission.hpp",
         "scar/observation.hpp",
-        "scar/status.hpp"
+        "scar/scar_ou/result.hpp",
+        "scar/scar_ou/types.hpp"
       ],
       "pyscarcopula/_cpp/include/scar/rvine.hpp": [
         "scar/copula/prepared_pair_kernel.hpp",
         "scar/core/span.hpp",
         "scar/rvine_plan.hpp",
+        "scar/status.hpp",
+        "scar/vine/result.hpp"
+      ],
+      "pyscarcopula/_cpp/include/scar/scar_ou/result.hpp": [
+        "scar/copula/grid_values.hpp",
+        "scar/core/result.hpp",
+        "scar/scar_ou/types.hpp",
         "scar/status.hpp"
+      ],
+      "pyscarcopula/_cpp/include/scar/static/result.hpp": [
+        "scar/core/result.hpp"
       ],
       "pyscarcopula/_cpp/include/scar/status.hpp": [
         "scar/core/status.hpp"
+      ],
+      "pyscarcopula/_cpp/include/scar/vine/result.hpp": [
+        "scar/core/result.hpp"
       ],
       "pyscarcopula/_cpp/src/bindings/common.cpp": [
         "scar/copula.hpp",
@@ -4075,6 +4101,7 @@
       ],
       "pyscarcopula/_cpp/src/bindings/common.hpp": [
         "scar/copula.hpp",
+        "scar/copula/multivariate/conditional_result.hpp",
         "scar/copula/multivariate/student/density.hpp",
         "scar/detail/safety.hpp",
         "scar/detail/scar_ou/quadrature.hpp",
@@ -4089,6 +4116,11 @@
       ],
       "pyscarcopula/_cpp/src/bindings/factor.cpp": [
         "scar/factor.hpp"
+      ],
+      "pyscarcopula/_cpp/src/bindings/multivariate.cpp": [
+        "scar/copula/multivariate/gaussian/conditional.hpp",
+        "scar/copula/multivariate/student/conditional.hpp",
+        "scar/copula/multivariate/student/rosenblatt.hpp"
       ],
       "pyscarcopula/_cpp/src/bindings/parallel.cpp": [
         "scar/detail/linalg.hpp",
@@ -4183,6 +4215,9 @@
         "scar/copula/multivariate/correlation/dense.hpp",
         "scar/copula/multivariate/correlation/factor.hpp",
         "scar/copula/multivariate/gaussian/density.hpp"
+      ],
+      "pyscarcopula/_cpp/src/copula/multivariate/gaussian/density_internal.hpp": [
+        "scar/copula/multivariate/correlation/dense.hpp"
       ],
       "pyscarcopula/_cpp/src/copula/multivariate/student/conditional.cpp": [
         "scar/copula/multivariate/student/conditional.hpp",
@@ -4322,6 +4357,7 @@
         "scar/copula/multivariate/equicorrelation/kernel.hpp",
         "scar/copula/multivariate/gaussian/density.hpp",
         "scar/copula/multivariate/student/density.hpp",
+        "scar/copula/prepared_dynamic_emission.hpp",
         "scar/copula/rotation.hpp",
         "scar/detail/copula/common.hpp",
         "scar/detail/copula/dispatch.hpp",
@@ -4437,6 +4473,9 @@
       "pyscarcopula/_cpp/src/vine/density.cpp": [
         "scar/core/threading.hpp",
         "scar/detail/safety.hpp",
+        "scar/rvine.hpp"
+      ],
+      "pyscarcopula/_cpp/src/vine/density_internal.hpp": [
         "scar/rvine.hpp"
       ],
       "pyscarcopula/_cpp/src/vine/executor.cpp": [
@@ -5177,5 +5216,5 @@
     ]
   },
   "schema_version": 1,
-  "source_commit": "efa34551a35fa60ba82266ca29d13e7ec560e02a"
+  "source_commit": "68fc2953e9c7ef07bef4332bb438d72df91b7da9"
 }

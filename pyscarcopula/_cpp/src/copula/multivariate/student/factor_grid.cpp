@@ -320,7 +320,8 @@ FactorStudentGridResult factor_student_log_pdf_and_dlog_ddf_grid(
                     row_df,
                     marginal_constant,
                     marginal_constant_derivative)) {
-                result.failure_index =
+                result.status = Status::NumericalFailure;
+                result.failure.index =
                     static_cast<std::int64_t>(cell);
                 return result;
             }
@@ -361,7 +362,8 @@ FactorStudentGridResult factor_student_log_pdf_and_dlog_ddf_grid(
                  tile < dimension_tiles;
                  ++tile) {
                 if (tile_ok[tile] == 0) {
-                    result.failure_index =
+                    result.status = Status::NumericalFailure;
+                    result.failure.index =
                         static_cast<std::int64_t>(cell);
                     return result;
                 }
@@ -380,7 +382,8 @@ FactorStudentGridResult factor_student_log_pdf_and_dlog_ddf_grid(
                     solved_projection,
                     result.log_pdf[cell],
                     result.dlog_ddf[cell])) {
-                result.failure_index =
+                result.status = Status::NumericalFailure;
+                result.failure.index =
                     static_cast<std::int64_t>(cell);
                 return result;
             }
@@ -434,10 +437,13 @@ FactorStudentGridResult factor_student_log_pdf_and_dlog_ddf_grid(
         }
         ++result.parallel_blocks;
         if (worker.failure_index >= 0
-            && (result.failure_index < 0
-                || worker.failure_index < result.failure_index)) {
-            result.failure_index = worker.failure_index;
+            && (result.failure.index < 0
+                || worker.failure_index < result.failure.index)) {
+            result.failure.index = worker.failure_index;
         }
+    }
+    if (result.failure.index >= 0) {
+        result.status = Status::NumericalFailure;
     }
     return result;
 }
