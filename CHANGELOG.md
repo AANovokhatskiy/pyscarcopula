@@ -17,6 +17,14 @@
   for Jacobi construction. The memory guard includes the full Golub--Welsch
   eigenvector peak and the configured Hermite order, including direct
   quadrature entry points.
+- Move dense/sparse Jacobi TM-grid trajectories and chunked Lamperti--Euler
+  evolution to fixed-draw C++17 contracts with exact RNG-consumption and
+  boundary-intervention diagnostics. Native filtered/conditioned-state
+  sampling owns grid/histogram selection and tau-to-parameter mapping, and
+  built-in conditional pair sampling uses the native inverse-h kernel. The
+  pre-RNG memory guard includes simultaneous Python, binding, native, and
+  returned-array copies; transition aliases normalize before RNG use; and
+  fixed conditional uniforms follow NumPy's `[0, 1)` domain, including zero.
 - Remove the discontinued SCAR Monte Carlo estimators from strategy,
   capability, conditional/vine, persistence, documentation, and benchmark
   surfaces. Legacy persisted artifacts now fail with an explicit unsupported

@@ -79,6 +79,17 @@ def test_current_repository_satisfies_cpp_architecture_contract():
     assert check_repository(ROOT) == []
 
 
+def test_jacobi_python_sampling_kernel_is_rejected(tmp_path):
+    root = _minimal_repository(tmp_path)
+    _write(
+        root,
+        "pyscarcopula/numerical/jacobi_sampling.py",
+        "@njit\ndef _lamperti_chunk_kernel():\n    return np.sin(0.0)\n",
+    )
+
+    assert "jacobi-native-sampling-ownership" in _rules(root)
+
+
 def test_stage2_foundation_helpers_have_single_canonical_owners():
     include = ROOT / "pyscarcopula" / "_cpp" / "include" / "scar"
     source = ROOT / "pyscarcopula" / "_cpp" / "src"

@@ -525,12 +525,12 @@ latent coordinate.
 | `kappa_bounds` | strategy kwarg | `(1e-3, 100.0)` | Bounds for mean-reversion speed. |
 | `xi_bounds` | strategy kwarg | `(1e-3, 5.0)` | Bounds for Jacobi volatility. |
 | `stationary_shape_max` | strategy kwarg | `500.0` | Rejects extremely concentrated stationary beta shapes. |
-| `memory_budget_bytes` | strategy kwarg | `1 GiB` | Conservative pre-allocation limit for basis, transition, gradient, and `T x K` emission workspaces. |
+| `memory_budget_bytes` | strategy kwarg | `1 GiB` | Conservative pre-allocation limit for basis, transition, gradient, `T x K` emission, and simultaneous Python/native fixed-draw boundary buffers. |
 | `sampling_method` | strategy kwarg | `'tm_grid'` | Unconditional sampler: likelihood-consistent `'tm_grid'` or experimental continuous `'lamperti_euler'`. |
 | `lamperti_substeps` | strategy kwarg | `8` | Euler substeps per observation interval for `lamperti_euler`. |
 | `lamperti_boundary` | strategy kwarg | `'reflect'` | Boundary policy for `lamperti_euler`: `'reflect'` or diagnostic `'clip'`. |
 | `lamperti_eps` | strategy kwarg | `1e-10` | Interior epsilon used only to evaluate the singular Lamperti drift. |
-| `lamperti_engine` | strategy kwarg | `'numba'` | Sequential execution engine: compiled `'numba'` or reference `'python'`. |
+| `lamperti_engine` | strategy kwarg | `'native'` | Mandatory fixed-draw C++ Lamperti--Euler engine; legacy `'numba'`/`'python'` labels normalize to `'native'`. |
 | `lamperti_chunk_observations` | strategy kwarg | `4096` | Maximum complete observation intervals per Gaussian-innovation chunk. |
 | `tau_eps` | strategy kwarg | `1e-6` | Keeps tau away from the endpoints. |
 | `smart_init` | strategy kwarg | `True` | Tries an MLE-derived tau initial point and falls back to the fixed initializer if validation fails. |
@@ -609,8 +609,11 @@ advancing the supplied generator, and `n=1` performs only a stationary grid
 draw. Transition construction is `O(K^2 B)` for the spectral backend or
 `O(KG)` for local construction, the in-place CDF is `O(K^2)`, and path
 generation is `O(n log K)`. Peak memory is conservatively checked before
-transition or output allocation. The same parameter-path implementation is
-used by dynamic edges during C-vine and R-vine sampling.
+transition or RNG allocation, including simultaneously live Python, binding,
+native, and returned path buffers. Hyphenated transition aliases are
+normalized before this preflight and before any RNG draw. The same
+parameter-path implementation is used by dynamic edges during C-vine and
+R-vine sampling.
 
 `sampling_method='lamperti_euler'` enables an experimental continuous-path
 alternative. It starts from the exact stationary beta law, applies
@@ -633,24 +636,25 @@ them. Use `tools/validate_jacobi_sampling.py` to compare stationary
 mean/variance, KS/TV error, conditional first-moment error, interventions,
 and runtime over independent path ensembles.
 
-The Numba kernel is permanently sequential: `parallel=True` is not supported
-because each Euler update depends on the preceding state. Random draws remain
-in the Python orchestration layer and are passed to the kernel in bounded
-chunks of complete observation intervals. Consequently, changing
-`lamperti_chunk_observations` does not change the path or RNG state. External
-applications may parallelize independent paths only with separate explicitly
-managed random streams.
+The state evolution is sequential because each Euler update depends on the
+preceding state. Random draws remain in the Python orchestration layer and are
+passed to C++ in bounded chunks of complete observation intervals.
+Consequently, changing `lamperti_chunk_observations` does not change the path
+or RNG state. External applications may parallelize independent paths only
+with separate explicitly managed random streams.
 
-Warm benchmarks on one million Euler updates showed approximately `48x` to
-`64x` speedup over the Python reference on the validation machine. The
-compiled path is already faster for `n=32` with four or more substeps; `n=1`
-has no Euler work and therefore no meaningful JIT speedup.
+Lamperti--Euler evolution now has one mandatory fixed-draw C++17 path. Python
+generates the stationary Beta draw and bounded normal chunks; C++ owns the
+drift, substeps, boundary policy, tau reconstruction, diagnostics, and exact
+draw-consumption counters. Chunk sizing includes both Python/C++ normal
+buffers and both native/NumPy result buffers in the memory peak. `n=1` has no
+Euler work.
 
 Accuracy near singular boundaries remains a separate gate. A symmetric
 stationary law with `a=b=0.4` remained reasonably stable, but the extreme
 asymmetric case `a=0.04`, `b=0.16` showed severe reflection bias even at 64
 substeps. Diagnostics therefore expose `stationary_boundary_singular` and the
-boundary-intervention rate. Lamperti--Euler remains opt-in; Numba acceleration
+boundary-intervention rate. Lamperti--Euler remains opt-in; native execution
 does not make it a universally valid default.
 
 ### Sparse local Jacobi transitions

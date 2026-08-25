@@ -26,6 +26,7 @@
 int run_jacobi_domain_tests();
 int run_jacobi_transition_tests();
 int run_jacobi_evaluator_tests();
+int run_jacobi_sampling_tests();
 
 int main() {
     const int jacobi_status = run_jacobi_domain_tests();
@@ -39,6 +40,10 @@ int main() {
     const int jacobi_evaluator_status = run_jacobi_evaluator_tests();
     if (jacobi_evaluator_status != 0) {
         return 300 + jacobi_evaluator_status;
+    }
+    const int jacobi_sampling_status = run_jacobi_sampling_tests();
+    if (jacobi_sampling_status != 0) {
+        return 400 + jacobi_sampling_status;
     }
     const double span_values[] = {0.25, 0.75};
     const scar::DoubleView span{span_values, 2};
@@ -130,6 +135,20 @@ int main() {
         spec, fixed_uniforms, parameters);
     if (independent_samples != fixed_uniforms) {
         return 17;
+    }
+    const auto independent_conditional =
+        scar::copula_conditional_sample_from_uniforms(
+            spec, {0.25, 0.75}, parameters, 0, 0.60);
+    if (independent_conditional
+        != scar::Observations({{0.60, 0.25}, {0.60, 0.75}})) {
+        return 19;
+    }
+    const auto independent_conditional_zero =
+        scar::copula_conditional_sample_from_uniforms(
+            spec, {0.0}, parameters, 0, 0.60);
+    if (independent_conditional_zero
+        != scar::Observations({{0.60, 0.0}})) {
+        return 20;
     }
     const scar::Observations no_auxiliary;
     const auto independent_rng_samples = scar::copula_sample_from_rng_draws(

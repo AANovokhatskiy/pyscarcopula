@@ -131,6 +131,13 @@ Observations copula_sample_from_uniforms(
     const Observations& uniforms,
     const std::vector<double>& r);
 
+Observations copula_conditional_sample_from_uniforms(
+    const CopulaSpec& spec,
+    const std::vector<double>& uniforms,
+    const std::vector<double>& r,
+    int given_coordinate,
+    double given_value);
+
 /// Reproduce the family-specific pre-refactor sampling transform from
 /// caller-owned RNG draws.  ``draws`` always has two columns; ``auxiliary``
 /// carries family-specific RNG results (Clayton frailty or Gumbel angle and

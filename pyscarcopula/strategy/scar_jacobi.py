@@ -194,7 +194,7 @@ class SCARJacobiStrategy:
                  lamperti_substeps: int = 8,
                  lamperti_boundary: str = "reflect",
                  lamperti_eps: float = 1e-10,
-                 lamperti_engine: str = "numba",
+                 lamperti_engine: str = "native",
                  lamperti_chunk_observations: int = (
                      DEFAULT_LAMPERTI_CHUNK_OBSERVATIONS),
                  analytical_grad: bool = False,
@@ -976,21 +976,32 @@ class SCARJacobiStrategy:
             rng = np.random.default_rng()
         if state.kind == 'stationary_jacobi':
             tau = rng.beta(state.metadata['alpha'], state.metadata['beta'], n)
-            if copula_native.supported(copula):
-                theta = copula_native.tau_to_param(copula, tau)
-            else:
-                theta = copula.tau_to_param(tau)
+            if not copula_native.supported(copula):
+                raise ValueError(
+                    "Jacobi predictive sampling requires a native pair copula")
+            theta = copula_native.tau_to_param(copula, tau)
             if self.theta_cap is not None:
                 theta = np.minimum(theta, float(self.theta_cap))
             return theta
 
-        from pyscarcopula.numerical.predictive_tm import sample_grid_distribution
+        if not copula_native.supported(copula):
+            raise ValueError(
+                "Jacobi predictive sampling requires a native pair copula")
         mode = kwargs.get('predictive_r_mode')
-        tau = sample_grid_distribution(state.z_grid, state.prob, n, rng, mode=mode)
-        if copula_native.supported(copula):
-            theta = copula_native.tau_to_param(copula, tau)
+        mode = 'grid' if mode is None else str(mode).lower()
+        if mode not in {'grid', 'histogram'}:
+            raise ValueError(
+                "predictive_r_mode must be 'grid' or 'histogram'")
+        tau_grid = np.asarray(state.z_grid, dtype=np.float64)
+        probability = np.asarray(state.prob, dtype=np.float64)
+        indices = rng.choice(tau_grid.size, size=n, p=probability)
+        if mode == 'grid' or tau_grid.size == 1:
+            tau = tau_grid[indices]
         else:
-            theta = copula.tau_to_param(tau)
+            left, right = jacobi_native.state_histogram_cells(
+                tau_grid, indices)
+            tau = rng.uniform(left, right)
+        theta = copula_native.tau_to_param(copula, tau)
         if self.theta_cap is not None:
             theta = np.minimum(theta, float(self.theta_cap))
         return theta
@@ -1074,10 +1085,10 @@ class SCARJacobiStrategy:
             diagnostics_out.update(sampling_diagnostics)
         if tau.size == 0:
             return np.empty(0, dtype=np.float64)
-        if copula_native.supported(copula):
-            theta = copula_native.tau_to_param(copula, tau)
-        else:
-            theta = np.asarray(copula.tau_to_param(tau), dtype=np.float64)
+        if not copula_native.supported(copula):
+            raise ValueError(
+                "Jacobi trajectory sampling requires a native pair copula")
+        theta = copula_native.tau_to_param(copula, tau)
         if self.theta_cap is not None:
             theta = np.minimum(theta, float(self.theta_cap))
         if np.any(~np.isfinite(theta)):

@@ -117,26 +117,6 @@ def _sparse_to_dense(indices, probabilities, counts):
     return dense
 
 
-@njit(cache=True, nogil=True)
-def _sample_sparse_path_kernel(
-        tau, indices, probabilities, counts, uniforms, initial_index):
-    path = np.empty(uniforms.size, dtype=np.float64)
-    index = initial_index
-    path[0] = tau[index]
-    for observation in range(1, uniforms.size):
-        draw = uniforms[observation]
-        cumulative = 0.0
-        selected = counts[index] - 1
-        for slot in range(counts[index]):
-            cumulative += probabilities[index, slot]
-            if draw < cumulative:
-                selected = slot
-                break
-        index = indices[index, selected]
-        path[observation] = tau[index]
-    return path
-
-
 def _validate_sparse_workspace(
         *,
         quad_order,
@@ -683,28 +663,41 @@ def sample_sparse_jacobi_trajectory(
         memory_budget_bytes=None):
     """Sample one path from a prepared sparse Jacobi transition."""
     n = _validate_nonnegative_int(n, "n")
+    if n == 0:
+        validate_float64_allocation(
+            (0,),
+            name="sparse Jacobi trajectory",
+            memory_budget_bytes=memory_budget_bytes,
+        )
+        return np.empty(0, dtype=np.float64)
+    tau_values = np.asarray(tau, dtype=np.float64)
+    weight_values = np.asarray(weights, dtype=np.float64)
+    retained_bytes = int(transition.retained_bytes)
+    grid_bytes = int(tau_values.nbytes + weight_values.nbytes)
+    path_bytes = validate_float64_allocation(
+        (n,), name="sparse Jacobi trajectory")
+    # Conservatively allow for contiguous adapter copies and C++ vector
+    # copies of every prepared input while the caller uniforms, native path,
+    # and returned NumPy path are simultaneously live.
+    required_bytes = (
+        2 * retained_bytes + 2 * grid_bytes + 4 * path_bytes)
     validate_float64_allocation(
-        (n,),
-        name="sparse Jacobi trajectory",
+        (required_bytes // np.dtype(np.float64).itemsize,),
+        name="prepared sparse Jacobi fixed-draw boundary",
         memory_budget_bytes=memory_budget_bytes,
     )
-    if n == 0:
-        return np.empty(0, dtype=np.float64)
     if rng is None:
         rng = np.random.default_rng()
     uniforms = np.asarray(rng.random(n), dtype=np.float64)
-    stationary_cdf = np.cumsum(weights)
-    stationary_cdf[-1] = 1.0
-    initial_index = int(np.searchsorted(
-        stationary_cdf, uniforms[0], side="right"))
-    return _sample_sparse_path_kernel(
-        np.asarray(tau, dtype=np.float64),
+    path, _ = jacobi_native.sample_prepared_sparse_trajectory_fixed_draws(
+        tau_values,
+        weight_values,
         transition.indices,
         transition.probabilities,
         transition.counts,
         uniforms,
-        initial_index,
     )
+    return path
 
 
 __all__ = [

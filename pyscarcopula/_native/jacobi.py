@@ -532,6 +532,157 @@ def _transition_diagnostics(values):
     return diagnostics
 
 
+def sample_grid_trajectory_fixed_draws(
+        kappa, m, xi, uniforms, *, quad_order, basis_order, gh_order,
+        method, storage="dense", correction="none", clip_negative=False,
+        negative_mass_tol=1e-5, memory_budget_bytes=1024**3):
+    """Run the complete dense/sparse TM-grid trajectory in native C++."""
+    draws = np.ascontiguousarray(
+        np.asarray(uniforms, dtype=np.float64).ravel())
+    if draws.size == 0:
+        return np.empty(0, dtype=np.float64), {
+            "draws_used": 0,
+            "transition_method_requested": str(method),
+            "transition_method": "not_built",
+            "transition_storage": str(storage),
+            "correction": str(correction),
+        }
+    config = _transition_config(
+        n_obs=draws.size,
+        quad_order=quad_order,
+        basis_order=basis_order,
+        gh_order=gh_order,
+        method=method,
+        storage=storage,
+        correction=correction,
+        clip_negative=clip_negative,
+        negative_mass_tol=negative_mass_tol,
+        memory_budget_bytes=memory_budget_bytes,
+    )
+    result = load().jacobi_sample_grid_trajectory(
+        _params(kappa, m, xi), config, draws)
+    _transition_raise(result, "fixed-draw grid trajectory sampling")
+    used = int(result["draws_used"])
+    if used != draws.size:
+        raise RuntimeError(
+            "C++ Jacobi grid sampler violated its fixed-draw contract: "
+            f"used {used} of {draws.size} uniforms")
+    diagnostics = _transition_diagnostics(result["diagnostics"])
+    diagnostics["draws_used"] = used
+    return np.asarray(result["tau"], dtype=np.float64), diagnostics
+
+
+def sample_lamperti_chunk_fixed_draws(
+        kappa, m, xi, initial_lamperti_value, normal_draws, *,
+        n_obs, substeps, boundary, interior_eps):
+    """Advance complete Lamperti intervals using caller-owned normals."""
+    module = load()
+    config = module.JacobiLampertiSamplingConfig()
+    config.n_obs = int(n_obs)
+    config.substeps = int(substeps)
+    config.interior_eps = float(interior_eps)
+    config.boundary = {
+        "reflect": module.JacobiBoundaryPolicy.Reflect,
+        "clip": module.JacobiBoundaryPolicy.Clip,
+    }[boundary]
+    draws = np.ascontiguousarray(
+        np.asarray(normal_draws, dtype=np.float64))
+    result = module.jacobi_sample_lamperti_chunk(
+        _params(kappa, m, xi), config, float(initial_lamperti_value), draws)
+    _raise(result, "fixed-draw Lamperti-Euler chunk")
+    used = int(result["normal_draws_used"])
+    if used != draws.size:
+        raise RuntimeError(
+            "C++ Lamperti sampler violated its fixed-draw contract: "
+            f"used {used} of {draws.size} normals")
+    return {
+        "tau": np.asarray(result["tau"], dtype=np.float64),
+        "final_lamperti_value": float(result["final_lamperti_value"]),
+        "normal_draws_used": used,
+        "euler_steps": int(result["euler_steps"]),
+        "boundary_interventions": int(result["boundary_interventions"]),
+    }
+
+
+def sample_prepared_sparse_trajectory_fixed_draws(
+        tau, weights, indices, probabilities, counts, uniforms):
+    """Sample a caller-prepared sparse transition wholly in native C++."""
+    draws = np.ascontiguousarray(
+        np.asarray(uniforms, dtype=np.float64).ravel())
+    result = load().jacobi_sample_prepared_sparse_trajectory(
+        np.ascontiguousarray(np.asarray(tau, dtype=np.float64).ravel()),
+        np.ascontiguousarray(np.asarray(weights, dtype=np.float64).ravel()),
+        np.ascontiguousarray(np.asarray(indices, dtype=np.int64)),
+        np.ascontiguousarray(np.asarray(probabilities, dtype=np.float64)),
+        np.ascontiguousarray(np.asarray(counts, dtype=np.int64).ravel()),
+        draws,
+    )
+    _raise(result, "fixed-draw prepared sparse trajectory sampling")
+    used = int(result["draws_used"])
+    if used != draws.size:
+        raise RuntimeError(
+            "C++ sparse Jacobi sampler violated its fixed-draw contract")
+    return np.asarray(result["tau"], dtype=np.float64), used
+
+
+def sample_state_distribution_fixed_draws(
+        copula, tau, probability, selection_draws, jitter_draws, *,
+        mode="grid", theta_cap=None):
+    """Sample a native filtered/conditioned state and map tau to theta."""
+    from pyscarcopula.numerical import _cpp_copula
+
+    module = load()
+    normalized = str(mode).lower()
+    native_mode = {
+        "grid": module.JacobiStateSamplingMode.Grid,
+        "histogram": module.JacobiStateSamplingMode.Histogram,
+    }.get(normalized)
+    if native_mode is None:
+        raise ValueError("predictive_r_mode must be 'grid' or 'histogram'")
+    spec = _cpp_copula.make_copula_ops_spec(module, copula)
+    selection = np.ascontiguousarray(
+        np.asarray(selection_draws, dtype=np.float64).ravel())
+    jitter = np.ascontiguousarray(
+        np.asarray(jitter_draws, dtype=np.float64).ravel())
+    result = module.jacobi_sample_state_distribution(
+        spec,
+        np.ascontiguousarray(np.asarray(tau, dtype=np.float64).ravel()),
+        np.ascontiguousarray(
+            np.asarray(probability, dtype=np.float64).ravel()),
+        selection,
+        jitter,
+        native_mode,
+        math.nan if theta_cap is None else float(theta_cap),
+    )
+    _raise(result, "fixed-draw filtered-state sampling")
+    selection_used = int(result["selection_draws_used"])
+    jitter_used = int(result["jitter_draws_used"])
+    if selection_used != selection.size or jitter_used != jitter.size:
+        raise RuntimeError(
+            "C++ Jacobi state sampler violated its fixed-draw contract")
+    return (
+        np.asarray(result["tau"], dtype=np.float64),
+        np.asarray(result["parameters"], dtype=np.float64),
+        {
+            "selection_draws_used": selection_used,
+            "jitter_draws_used": jitter_used,
+        },
+    )
+
+
+def state_histogram_cells(tau, indices):
+    """Return native midpoint cells for selected Jacobi grid indices."""
+    result = load().jacobi_state_histogram_cells(
+        np.ascontiguousarray(np.asarray(tau, dtype=np.float64).ravel()),
+        np.ascontiguousarray(np.asarray(indices, dtype=np.int64).ravel()),
+    )
+    _raise(result, "Jacobi predictive histogram cells")
+    return (
+        np.asarray(result["left"], dtype=np.float64),
+        np.asarray(result["right"], dtype=np.float64),
+    )
+
+
 def dense_transition(
         kappa, m, xi, *, n_obs, quad_order, basis_order,
         gh_order, method, raw_backend=None, clip_negative=False,
@@ -755,6 +906,11 @@ __all__ = [
     "physical_to_raw",
     "raw_bounds",
     "raw_to_physical",
+    "sample_grid_trajectory_fixed_draws",
+    "sample_lamperti_chunk_fixed_draws",
+    "sample_prepared_sparse_trajectory_fixed_draws",
+    "sample_state_distribution_fixed_draws",
+    "state_histogram_cells",
     "shape_is_supported",
     "stationary_shape",
 ]

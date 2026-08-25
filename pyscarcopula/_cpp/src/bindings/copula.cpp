@@ -601,6 +601,35 @@ void bind_copula(py::module_& m) {
         py::arg("r"));
 
     m.def(
+        "copula_conditional_sample_from_uniforms",
+        [](const scar::CopulaSpec& copula,
+           py::array_t<double, py::array::c_style | py::array::forcecast>
+               uniforms,
+           py::array_t<double, py::array::c_style | py::array::forcecast> r,
+           int given_coordinate,
+           double given_value) {
+            const std::vector<double> uniform_values =
+                vector_from_array(uniforms);
+            const std::vector<double> parameters = vector_from_array(r);
+            scar::Observations result;
+            {
+                py::gil_scoped_release release;
+                result = scar::copula_conditional_sample_from_uniforms(
+                    copula,
+                    uniform_values,
+                    parameters,
+                    given_coordinate,
+                    given_value);
+            }
+            return pair_observations_to_array(result);
+        },
+        py::arg("copula"),
+        py::arg("uniforms"),
+        py::arg("r"),
+        py::arg("given_coordinate"),
+        py::arg("given_value"));
+
+    m.def(
         "copula_pdf_grid",
         [](const scar::CopulaSpec& copula,
            py::array_t<double, py::array::c_style | py::array::forcecast> u,

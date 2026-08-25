@@ -163,7 +163,7 @@ def test_legacy_jacobi_result_without_semantic_options_uses_defaults():
     assert loaded.lamperti_substeps == 8
     assert loaded.lamperti_boundary == "reflect"
     assert loaded.lamperti_eps == pytest.approx(1e-10)
-    assert loaded.lamperti_engine == "numba"
+    assert loaded.lamperti_engine == "native"
     assert loaded.lamperti_chunk_observations == 4096
     assert loaded.memory_budget_bytes is None
 
@@ -213,7 +213,7 @@ def test_jacobi_semantic_options_model_roundtrip(tmp_path):
     assert loaded_result.lamperti_substeps == 4
     assert loaded_result.lamperti_boundary == "clip"
     assert loaded_result.lamperti_eps == pytest.approx(2e-9)
-    assert loaded_result.lamperti_engine == "python"
+    assert loaded_result.lamperti_engine == "native"
     assert loaded_result.lamperti_chunk_observations == 3
     assert loaded_result.memory_budget_bytes == 2_000_000
     assert log_likelihood(loaded, u, loaded_result) == pytest.approx(

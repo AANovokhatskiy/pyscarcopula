@@ -502,7 +502,7 @@ def get_strategy_for_result(result: FitResult,
             'lamperti_eps': getattr(
                 result, 'lamperti_eps', 1e-10),
             'lamperti_engine': getattr(
-                result, 'lamperti_engine', 'numba'),
+                result, 'lamperti_engine', 'native'),
             'lamperti_chunk_observations': getattr(
                 result, 'lamperti_chunk_observations', 4096),
         })

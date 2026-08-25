@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import numpy as np
-from numba import njit
+
+from pyscarcopula._native import jacobi as jacobi_native
 
 from pyscarcopula.numerical._arrays import (
     validate_float64_allocation,
@@ -17,9 +18,7 @@ from pyscarcopula.numerical.jacobi_tm import (
 
 
 _LAMPERTI_BOUNDARIES = frozenset({"reflect", "clip"})
-_LAMPERTI_ENGINES = frozenset({"numba", "python"})
-_BOUNDARY_REFLECT = 0
-_BOUNDARY_CLIP = 1
+_LAMPERTI_ENGINES = frozenset({"native", "numba", "python"})
 DEFAULT_LAMPERTI_CHUNK_OBSERVATIONS = 4096
 
 
@@ -46,13 +45,13 @@ def normalize_lamperti_boundary(value) -> str:
 
 
 def normalize_lamperti_engine(value) -> str:
-    """Return a supported Lamperti execution engine."""
+    """Normalize legacy engine labels to the mandatory native engine."""
     if not isinstance(value, str):
         raise TypeError("lamperti_engine must be a string")
     engine = value.strip().lower()
     if engine not in _LAMPERTI_ENGINES:
-        raise ValueError("lamperti_engine must be 'numba' or 'python'")
-    return engine
+        raise ValueError("lamperti_engine must be 'native'")
+    return "native"
 
 
 def validate_lamperti_eps(value) -> float:
@@ -71,77 +70,6 @@ def validate_lamperti_eps(value) -> float:
     return eps
 
 
-@njit(cache=True, nogil=True)
-def _reflect_interval(value: float, upper: float) -> float:
-    """Reflect a finite scalar into ``[0, upper]`` in constant time."""
-    period = 2.0 * upper
-    reflected = np.fmod(value, period)
-    if reflected < 0.0:
-        reflected += period
-    if reflected > upper:
-        reflected = period - reflected
-    return reflected
-
-
-@njit(cache=True, nogil=True)
-def _lamperti_drift(kappa, m, xi, tau, eps):
-    tau_drift = tau
-    if tau_drift < eps:
-        tau_drift = eps
-    elif tau_drift > 1.0 - eps:
-        tau_drift = 1.0 - eps
-    root = np.sqrt(tau_drift * (1.0 - tau_drift))
-    return (
-        kappa * (m - tau_drift) / (xi * root)
-        - xi * (1.0 - 2.0 * tau_drift) / (4.0 * root)
-    )
-
-
-@njit(cache=True, nogil=True)
-def _lamperti_chunk_kernel(
-        y,
-        innovations,
-        output,
-        output_offset,
-        kappa,
-        m,
-        xi,
-        h,
-        sqrt_h,
-        upper,
-        eps,
-        boundary_code):
-    """Advance complete observation intervals sequentially.
-
-    ``parallel=True`` is intentionally and permanently forbidden: every
-    update depends on the preceding value of ``y``.
-    """
-    interventions = 0
-    for row in range(innovations.shape[0]):
-        for substep in range(innovations.shape[1]):
-            tau = np.sin(0.5 * xi * y) ** 2
-            candidate = (
-                y
-                + _lamperti_drift(kappa, m, xi, tau, eps) * h
-                + sqrt_h * innovations[row, substep]
-            )
-            if not np.isfinite(candidate):
-                raise FloatingPointError(
-                    "Lamperti-Euler update produced a non-finite value")
-            if candidate < 0.0 or candidate > upper:
-                interventions += 1
-                if boundary_code == _BOUNDARY_REFLECT:
-                    candidate = _reflect_interval(candidate, upper)
-                else:
-                    if candidate < 0.0:
-                        candidate = 0.0
-                    elif candidate > upper:
-                        candidate = upper
-            y = candidate
-        output[output_offset + row] = np.sin(0.5 * xi * y) ** 2
-    return y, interventions
-
-
 def _effective_chunk_observations(
         *, n, substeps, requested, memory_budget_bytes):
     if n <= 1:
@@ -152,18 +80,21 @@ def _effective_chunk_observations(
         )
         return 0
 
+    # One chunk keeps the Python path, Python and C++ innovation buffers, and
+    # the C++ and NumPy tau result buffers live at the pybind boundary.
+    elements_per_interval = 2 * substeps + 2
     # The smallest executable chunk contains one full observation interval.
     validate_float64_allocation(
-        (n + substeps,),
-        name="Lamperti-Euler path and innovation chunk",
+        (n + elements_per_interval,),
+        name="Lamperti-Euler native chunk peak",
         memory_budget_bytes=memory_budget_bytes,
     )
     max_elements = memory_budget_bytes // np.dtype(np.float64).itemsize
-    max_chunk = (max_elements - n) // substeps
+    max_chunk = (max_elements - n) // elements_per_interval
     effective = min(requested, n - 1, max_chunk)
     validate_float64_allocation(
-        (n + effective * substeps,),
-        name="Lamperti-Euler path and innovation chunk",
+        (n + effective * elements_per_interval,),
+        name="Lamperti-Euler native chunk peak",
         memory_budget_bytes=memory_budget_bytes,
     )
     return int(effective)
@@ -179,7 +110,7 @@ def sample_jacobi_lamperti_trajectory(
         substeps=8,
         boundary="reflect",
         eps=1e-10,
-        engine="numba",
+        engine="native",
         chunk_observations=DEFAULT_LAMPERTI_CHUNK_OBSERVATIONS,
         memory_budget_bytes=None,
         return_diagnostics=False):
@@ -248,19 +179,9 @@ def sample_jacobi_lamperti_trajectory(
     if n == 1:
         return (path, diagnostics) if return_diagnostics else path
 
-    upper = np.pi / xi
-    h = 1.0 / ((n - 1) * substeps)
-    sqrt_h = np.sqrt(h)
-    y = 2.0 * np.arcsin(np.sqrt(path[0])) / xi
+    y = float(jacobi_native.lamperti(
+        np.array([path[0]], dtype=np.float64), xi)[0])
     interventions = 0
-    boundary_code = (
-        _BOUNDARY_REFLECT
-        if boundary == "reflect"
-        else _BOUNDARY_CLIP)
-    kernel = (
-        _lamperti_chunk_kernel
-        if engine == "numba"
-        else _lamperti_chunk_kernel.py_func)
     output_offset = 1
     while output_offset < n:
         block = min(effective_chunk, n - output_offset)
@@ -268,21 +189,24 @@ def sample_jacobi_lamperti_trajectory(
             rng.standard_normal((block, substeps)),
             dtype=np.float64,
         )
-        y, block_interventions = kernel(
-            y,
-            innovations,
-            path,
-            output_offset,
+        native = jacobi_native.sample_lamperti_chunk_fixed_draws(
             kappa,
             m,
             xi,
-            h,
-            sqrt_h,
-            upper,
-            eps,
-            boundary_code,
+            y,
+            innovations,
+            n_obs=n,
+            substeps=substeps,
+            boundary=boundary,
+            interior_eps=eps,
         )
-        interventions += int(block_interventions)
+        used = int(native["normal_draws_used"])
+        if used != block * substeps:
+            raise RuntimeError(
+                "native Lamperti sampler returned an invalid draw count")
+        path[output_offset:output_offset + block] = native["tau"]
+        y = float(native["final_lamperti_value"])
+        interventions += int(native["boundary_interventions"])
         output_offset += block
 
     diagnostics["boundary_interventions"] = interventions

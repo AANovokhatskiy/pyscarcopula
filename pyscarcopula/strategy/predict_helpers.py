@@ -69,6 +69,17 @@ def conditional_sample_bivariate(copula, n, r, given=None, rng=None):
 
     z = rng.uniform(0.0, 1.0, size=n)
 
+    from pyscarcopula.numerical import copula_native
+    if copula_native.supported(copula):
+        given_coordinate, given_value = next(iter(given.items()))
+        return copula_native.conditional_sample_from_uniforms(
+            copula,
+            z,
+            r_arr,
+            given_coordinate=given_coordinate,
+            given_value=given_value,
+        )
+
     if 0 in given:
         directional_copula = transposed_bivariate_copula(copula)
         samples[:, 1] = directional_copula.h_inverse(

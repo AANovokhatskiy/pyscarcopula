@@ -189,34 +189,36 @@ def test_jacobi_grid_sampler_is_seed_reproducible_and_uses_grid_atoms():
     assert np.all((first > 0.0) & (first < 1.0))
 
 
-def test_jacobi_grid_sampler_matches_row_probabilities(monkeypatch):
-    tau = np.array([0.2, 0.8], dtype=np.float64)
-    stationary = np.array([1.0, 0.0], dtype=np.float64)
-    target = np.array([0.25, 0.75], dtype=np.float64)
-    transition = np.vstack([target, target])
-
-    def fixed_transition(*args, **kwargs):
-        diagnostics = {"transition_method": "local_fixed"}
-        return tau.copy(), stationary.copy(), transition.copy(), diagnostics
-
-    monkeypatch.setattr(
-        jacobi_tm, "jacobi_transition_matrix", fixed_transition)
+def test_jacobi_grid_sampler_matches_native_fixed_draw_contract():
+    n = 200
+    public_rng = np.random.default_rng(14)
+    fixed_rng = np.random.default_rng(14)
     path = sample_jacobi_grid_trajectory(
         1.2,
         0.4,
         0.25,
-        40_000,
-        rng=np.random.default_rng(14),
-        basis_order=1,
-        quad_order=2,
+        n,
+        rng=public_rng,
+        basis_order=4,
+        quad_order=20,
         transition_method="local_fixed",
     )
-    observed = np.array([
-        np.mean(path[1:] == tau[0]),
-        np.mean(path[1:] == tau[1]),
-    ])
+    uniforms = fixed_rng.random(n)
+    expected, diagnostics = jacobi_native.sample_grid_trajectory_fixed_draws(
+        1.2,
+        0.4,
+        0.25,
+        uniforms,
+        basis_order=4,
+        quad_order=20,
+        gh_order=5,
+        method="local_fixed",
+        storage="dense",
+    )
 
-    np.testing.assert_allclose(observed, target, atol=0.01)
+    np.testing.assert_array_equal(path, expected)
+    assert diagnostics["draws_used"] == n
+    np.testing.assert_array_equal(public_rng.random(8), fixed_rng.random(8))
 
 
 def test_jacobi_grid_sampler_spectral_coeff_uses_safe_auto_matrix():
@@ -238,6 +240,84 @@ def test_jacobi_grid_sampler_spectral_coeff_uses_safe_auto_matrix():
     assert diagnostics["transition_method"] in {"local", "spectral_matrix"}
 
 
+@pytest.mark.parametrize(
+    ("alias", "canonical"),
+    [("local-fixed", "local_fixed"), ("spectral-matrix", "spectral_matrix")],
+)
+def test_jacobi_grid_sampler_normalizes_method_alias_before_rng(
+        alias, canonical):
+    alias_rng = np.random.default_rng(151)
+    canonical_rng = np.random.default_rng(151)
+    alias_path = sample_jacobi_grid_trajectory(
+        1.5,
+        0.4,
+        0.35,
+        5,
+        rng=alias_rng,
+        basis_order=1,
+        quad_order=24,
+        transition_method=alias,
+    )
+    canonical_path = sample_jacobi_grid_trajectory(
+        1.5,
+        0.4,
+        0.35,
+        5,
+        rng=canonical_rng,
+        basis_order=1,
+        quad_order=24,
+        transition_method=canonical,
+    )
+
+    np.testing.assert_array_equal(alias_path, canonical_path)
+    np.testing.assert_array_equal(
+        alias_rng.random(8), canonical_rng.random(8))
+
+
+def test_jacobi_grid_sampler_invalid_method_precedes_rng_draw():
+    rng = np.random.default_rng(152)
+    with pytest.raises(ValueError, match="transition_method"):
+        sample_jacobi_grid_trajectory(
+            1.2,
+            0.4,
+            0.25,
+            12,
+            rng=rng,
+            basis_order=4,
+            quad_order=24,
+            transition_method="invalid",
+        )
+    np.testing.assert_array_equal(
+        rng.random(8), np.random.default_rng(152).random(8))
+
+
+def test_irrelevant_sparse_storage_flag_preserves_dense_sampling():
+    dense = sample_jacobi_grid_trajectory(
+        1.2,
+        0.4,
+        0.25,
+        12,
+        rng=np.random.default_rng(153),
+        basis_order=4,
+        quad_order=24,
+        transition_method="auto",
+        transition_storage="dense",
+    )
+    flagged = sample_jacobi_grid_trajectory(
+        1.2,
+        0.4,
+        0.25,
+        12,
+        rng=np.random.default_rng(153),
+        basis_order=4,
+        quad_order=24,
+        transition_method="auto",
+        transition_storage="sparse",
+    )
+
+    np.testing.assert_array_equal(flagged, dense)
+
+
 def test_jacobi_grid_sampler_memory_guard_precedes_rng_draw():
     rng = np.random.default_rng(16)
     with pytest.raises(MemoryError, match="memory_budget_bytes"):
@@ -255,6 +335,33 @@ def test_jacobi_grid_sampler_memory_guard_precedes_rng_draw():
         rng.random(8),
         np.random.default_rng(16).random(8),
     )
+
+
+def test_fixed_draw_boundary_peak_is_included_before_rng_draw():
+    n = 1_000
+    native_only_budget = jacobi_native.estimate_sampling_workspace(
+        n=n,
+        quad_order=2,
+        basis_order=1,
+        gh_order=1,
+        memory_budget_bytes=DEFAULT_JACOBI_MEMORY_BUDGET_BYTES,
+    )
+    rng = np.random.default_rng(161)
+    with pytest.raises(MemoryError, match="memory_budget_bytes"):
+        sample_jacobi_grid_trajectory(
+            1.2,
+            0.4,
+            0.25,
+            n,
+            rng=rng,
+            basis_order=1,
+            quad_order=2,
+            gh_order=1,
+            transition_method="local_fixed",
+            memory_budget_bytes=native_only_budget,
+        )
+    np.testing.assert_array_equal(
+        rng.random(8), np.random.default_rng(161).random(8))
 
 
 def test_jacobi_spectral_transition_matrix_is_row_stochastic():

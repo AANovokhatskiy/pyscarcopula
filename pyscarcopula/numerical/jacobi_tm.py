@@ -12,6 +12,7 @@ from pyscarcopula.numerical._arrays import (
 from pyscarcopula.numerical._transition_methods import (
     normalize_jacobi_stationarity_correction,
     normalize_jacobi_matrix_transition_method,
+    normalize_jacobi_strategy_transition_method,
     normalize_jacobi_transition_storage,
 )
 
@@ -84,7 +85,7 @@ def _validate_jacobi_workspace(
 def _validate_jacobi_sampling_workspace(
         *, n, quad_order, basis_order, gh_order=1,
         memory_budget_bytes=None):
-    """Preflight transition construction, in-place CDF, and the tau path."""
+    """Preflight transition construction and fixed-draw boundary copies."""
     n = _validate_nonnegative_int(n, "n")
     quad_order = _validate_jacobi_order(quad_order, "quad_order")
     basis_order = _validate_jacobi_order(basis_order, "basis_order")
@@ -96,13 +97,25 @@ def _validate_jacobi_sampling_workspace(
     k = quad_order
     b = basis_order
     try:
-        return jacobi_native.estimate_sampling_workspace(
+        native_peak_bytes = jacobi_native.estimate_sampling_workspace(
             n=n,
             quad_order=k,
             basis_order=b,
             gh_order=gh_order,
             memory_budget_bytes=memory_budget_bytes,
         )
+        # The native estimate already includes its trajectory result.  Across
+        # the Python/pybind boundary the caller-owned uniform array, the C++
+        # input copy, and the returned NumPy copy are simultaneously live.
+        boundary_bytes = validate_float64_allocation(
+            (3, n), name="Jacobi fixed-draw boundary buffers")
+        required_bytes = native_peak_bytes + boundary_bytes
+        validate_float64_allocation(
+            (required_bytes // np.dtype(np.float64).itemsize,),
+            name="Jacobi sampling workspace",
+            memory_budget_bytes=memory_budget_bytes,
+        )
+        return required_bytes
     except MemoryError as exc:
         _raise_jacobi_memory_error(exc)
 
@@ -465,6 +478,105 @@ def jacobi_transition_matrix(
     return tau, weights, transition
 
 
+def _legacy_grid_sampling_diagnostics(
+        native, *, sampling_method, requested_method, storage, correction, n):
+    """Preserve the frozen public diagnostics while C++ owns execution."""
+    method_used = native["transition_method"]
+    if n == 1:
+        return {
+            "transition_method_requested": requested_method,
+            "sampling_transition_method_requested": sampling_method,
+            "transition_method": "stationary_only",
+            "n": 1,
+        }
+    if storage == "sparse":
+        diagnostics = {
+            "dt": native["dt"],
+            "alpha": native["alpha"],
+            "beta": native["beta"],
+            "gh_order": native["gh_order"],
+            "transition_method": sampling_method,
+            "correction": correction,
+            "nnz": int(native["nnz"]),
+            "max_width": int(native["max_width"]),
+            "retained_bytes": int(native["retained_bytes"]),
+            "dense_bytes": int(native["dense_bytes"]),
+            "stationary_error": native["stationary_error"],
+        }
+        if sampling_method == "local":
+            diagnostics["max_row_sum_error"] = native[
+                "max_row_sum_error"]
+        if correction == "mh":
+            for name in (
+                    "mean_accepted_off_diagonal_mass",
+                    "mean_proposed_off_diagonal_mass",
+                    "acceptance_mass_ratio",
+                    "min_row_acceptance_ratio",
+                    "mean_stay_probability",
+                    "max_stay_probability",
+                    "reverse_missing_edge_fraction",
+                    "detailed_balance_error"):
+                diagnostics[name] = native[name]
+        elif correction == "ipfp":
+            diagnostics.update({
+                "ipfp_iterations": int(native["ipfp_iterations"]),
+                "ipfp_stationary_residual": native[
+                    "ipfp_stationary_residual"],
+                "ipfp_kl_divergence": native["ipfp_kl_divergence"],
+                "ipfp_max_probability_change": native[
+                    "ipfp_max_probability_change"],
+                "mean_stay_probability": native["mean_stay_probability"],
+                "max_stay_probability": native["max_stay_probability"],
+            })
+        diagnostics.update({
+            "transition_method_requested": requested_method,
+            "sampling_transition_method_requested": sampling_method,
+            "model_transition_method_requested": requested_method,
+            "transition_storage": "sparse",
+            "n": n,
+        })
+        return diagnostics
+    if method_used == "spectral_matrix":
+        diagnostics = {
+            "dt": native["dt"],
+            "alpha": native["alpha"],
+            "beta": native["beta"],
+            "raw_min_entry": native["raw_min_entry"],
+            "raw_negative_mass": native["raw_negative_mass"],
+            "max_row_sum_error_before_normalization": native[
+                "max_row_sum_error_before_normalization"],
+            "stationary_error": native["stationary_error"],
+            "clipped_negative": native["clipped_negative"],
+            "transition_method_requested": sampling_method,
+            "transition_method": method_used,
+            "probability_cleanup_applied": native[
+                "probability_cleanup_applied"],
+            "probability_cleanup_negative_mass": native[
+                "probability_cleanup_negative_mass"],
+            "probability_min_entry_before_cleanup": native[
+                "probability_min_entry_before_cleanup"],
+        }
+    else:
+        diagnostics = {
+            "dt": native["dt"],
+            "alpha": native["alpha"],
+            "beta": native["beta"],
+            "gh_order": native["gh_order"],
+            "min_entry": native["min_entry"],
+            "max_row_sum_error": native["max_row_sum_error"],
+            "stationary_error": native["stationary_error"],
+            "transition_method_requested": sampling_method,
+            "transition_method": method_used,
+        }
+        if int(native["spectral_status"]) != 0:
+            diagnostics["spectral_error"] = (
+                "FloatingPointError: C++ Jacobi spectral transition failed")
+    diagnostics["sampling_transition_method_requested"] = sampling_method
+    diagnostics["model_transition_method_requested"] = requested_method
+    diagnostics["n"] = n
+    return diagnostics
+
+
 def sample_jacobi_grid_trajectory(
         kappa,
         m,
@@ -482,12 +594,7 @@ def sample_jacobi_grid_trajectory(
         stationarity_correction="none",
         memory_budget_bytes=None,
         return_diagnostics=False):
-    """Sample the discrete Jacobi Markov model used by matrix likelihoods.
-
-    The returned values are quadrature-grid atoms. The transition matrix is
-    converted to row-wise CDFs in place, so sampling does not retain a second
-    ``K x K`` array.
-    """
+    """Sample the discrete Jacobi Markov model through fixed-draw C++."""
     n = _validate_nonnegative_int(n, "n")
     stationarity_correction = normalize_jacobi_stationarity_correction(
         stationarity_correction)
@@ -503,172 +610,98 @@ def sample_jacobi_grid_trajectory(
             }
         return empty
 
-    shapes = _jacobi_stationary_shape(kappa, m, xi)
-    if shapes is None:
+    if _jacobi_stationary_shape(kappa, m, xi) is None:
         raise ValueError("invalid Jacobi parameters")
-    alpha, beta = shapes
     basis_order = _validate_jacobi_order(basis_order, "basis_order")
     if quad_order is None:
         quad_order = default_quad_order(basis_order)
     quad_order = _validate_jacobi_order(quad_order, "quad_order")
     gh_order = _validate_jacobi_order(gh_order, "gh_order")
 
-    requested_method = str(transition_method).lower()
+    requested_method = normalize_jacobi_strategy_transition_method(
+        transition_method)
     sampling_method = (
         "auto" if requested_method == "spectral_coeff"
         else requested_method)
-    if stationarity_correction != "none" and sampling_method != "local":
-        raise ValueError(
-            "stationarity_correction currently requires "
-            "transition_method='local'")
     use_sparse_sampling = (
         n > 1
         and (
             sampling_method == "local"
             or (
                 sampling_method == "local_fixed"
-                and transition_storage == "sparse")
+                and transition_storage == "sparse"
+            )
         )
     )
-    if use_sparse_sampling:
-        from pyscarcopula.numerical.jacobi_sparse import (
-            jacobi_sparse_fixed_grid_transition,
-            jacobi_sparse_local_transition,
-            sample_sparse_jacobi_trajectory,
+    sampling_storage = "sparse" if use_sparse_sampling else "dense"
+    if stationarity_correction != "none" and sampling_method != "local":
+        raise ValueError(
+            "stationarity_correction currently requires "
+            "transition_method='local'")
+    budget = (
+        DEFAULT_JACOBI_MEMORY_BUDGET_BYTES
+        if memory_budget_bytes is None else memory_budget_bytes)
+    # Workspace and output preflights remain before the first RNG draw.
+    if sampling_storage == "sparse" and n > 1:
+        sparse_workspace_bytes = jacobi_native.estimate_sparse_workspace(
+            quad_order=quad_order,
+            gh_order=gh_order,
+            correction=stationarity_correction,
+            memory_budget_bytes=budget,
         )
-
-        if sampling_method == "local_fixed":
-            result = jacobi_sparse_fixed_grid_transition(
-                kappa,
-                m,
-                xi,
-                n_obs=n,
-                quad_order=quad_order,
-                gh_order=gh_order,
-                memory_budget_bytes=memory_budget_bytes,
-                return_diagnostics=True,
-            )
-        else:
-            result = jacobi_sparse_local_transition(
-                kappa,
-                m,
-                xi,
-                n_obs=n,
-                quad_order=quad_order,
-                basis_order=basis_order,
-                gh_order=gh_order,
-                correction=stationarity_correction,
-                memory_budget_bytes=memory_budget_bytes,
-                return_diagnostics=True,
-            )
-        tau_grid, stationary_prob, sparse_transition, diagnostics = result
-        budget = (
-            DEFAULT_JACOBI_MEMORY_BUDGET_BYTES
-            if memory_budget_bytes is None
-            else memory_budget_bytes)
-        retained_bytes = (
-            sparse_transition.retained_bytes
-            + tau_grid.nbytes
-            + stationary_prob.nbytes
-            + n * np.dtype(np.float64).itemsize)
+        retained = jacobi_native.estimate_sparse_storage(
+            quad_order=quad_order,
+            gh_order=gh_order,
+            correction=stationarity_correction,
+            memory_budget_bytes=budget,
+        )
+        native_peak_bytes = max(
+            sparse_workspace_bytes,
+            retained + (2 * quad_order + n) * 8,
+        )
+        boundary_bytes = validate_float64_allocation(
+            (3, n), name="sparse Jacobi fixed-draw boundary buffers")
+        required_bytes = native_peak_bytes + boundary_bytes
         validate_float64_allocation(
-            ((retained_bytes + 7) // 8,),
+            (required_bytes // np.dtype(np.float64).itemsize,),
             name="sparse Jacobi sampling workspace",
             memory_budget_bytes=budget,
         )
-        path = sample_sparse_jacobi_trajectory(
-            tau_grid,
-            stationary_prob,
-            sparse_transition,
-            n,
-            rng=rng,
+    else:
+        _validate_jacobi_sampling_workspace(
+            n=n,
+            quad_order=quad_order,
+            basis_order=basis_order,
+            gh_order=gh_order,
             memory_budget_bytes=budget,
         )
-        if return_diagnostics:
-            diagnostics = dict(diagnostics)
-            diagnostics.update({
-                "transition_method_requested": requested_method,
-                "sampling_transition_method_requested": sampling_method,
-                "model_transition_method_requested": requested_method,
-                "transition_method": sampling_method,
-                "transition_storage": "sparse",
-                "n": n,
-            })
-            return path, diagnostics
-        return path
-
-    _validate_jacobi_sampling_workspace(
-        n=n,
-        quad_order=quad_order,
-        basis_order=basis_order,
-        gh_order=gh_order,
-        memory_budget_bytes=memory_budget_bytes,
-    )
     if rng is None:
         rng = np.random.default_rng()
-
-    if n == 1:
-        if sampling_method == "local_fixed":
-            tau_grid, stationary_prob = _fixed_tau_rule(
-                alpha, beta, quad_order)
-        else:
-            tau_grid, stationary_prob, _ = jacobi_rule(
-                alpha,
-                beta,
-                quad_order,
-                basis_order=1,
-                memory_budget_bytes=memory_budget_bytes,
-            )
-        stationary_cdf = np.cumsum(stationary_prob)
-        stationary_cdf[-1] = 1.0
-        index = int(np.searchsorted(
-            stationary_cdf, rng.random(), side="right"))
-        path = np.array([tau_grid[index]], dtype=np.float64)
-        if return_diagnostics:
-            return path, {
-                "transition_method_requested": requested_method,
-                "sampling_transition_method_requested": sampling_method,
-                "transition_method": "stationary_only",
-                "n": 1,
-            }
-        return path
-
-    tau_grid, stationary_prob, transition, diagnostics = (
-        jacobi_transition_matrix(
-            kappa,
-            m,
-            xi,
-            n_obs=n,
-            basis_order=basis_order,
-            quad_order=quad_order,
-            transition_method=sampling_method,
-            clip_negative=clip_negative,
-            negative_mass_tol=negative_mass_tol,
-            gh_order=gh_order,
-            memory_budget_bytes=memory_budget_bytes,
-            return_diagnostics=True,
-        )
+    uniforms = np.asarray(rng.random(n), dtype=np.float64)
+    path, diagnostics = jacobi_native.sample_grid_trajectory_fixed_draws(
+        kappa,
+        m,
+        xi,
+        uniforms,
+        basis_order=basis_order,
+        quad_order=quad_order,
+        method=sampling_method,
+        storage=sampling_storage,
+        correction=stationarity_correction,
+        clip_negative=clip_negative,
+        negative_mass_tol=negative_mass_tol,
+        gh_order=gh_order,
+        memory_budget_bytes=budget,
     )
-    stationary_cdf = np.cumsum(stationary_prob)
-    stationary_cdf[-1] = 1.0
-    np.cumsum(transition, axis=1, out=transition)
-    transition[:, -1] = 1.0
-
-    # Reuse the uniform buffer as the returned tau path.
-    path = np.asarray(rng.random(n), dtype=np.float64)
-    index = int(np.searchsorted(
-        stationary_cdf, path[0], side="right"))
-    path[0] = tau_grid[index]
-    for t in range(1, n):
-        index = int(np.searchsorted(
-            transition[index], path[t], side="right"))
-        path[t] = tau_grid[index]
-
     if return_diagnostics:
-        diagnostics = dict(diagnostics)
-        diagnostics["sampling_transition_method_requested"] = sampling_method
-        diagnostics["model_transition_method_requested"] = requested_method
-        diagnostics["n"] = n
+        diagnostics = _legacy_grid_sampling_diagnostics(
+            diagnostics,
+            sampling_method=sampling_method,
+            requested_method=requested_method,
+            storage=sampling_storage,
+            correction=stationarity_correction,
+            n=n,
+        )
         return path, diagnostics
     return path
 

@@ -232,6 +232,33 @@ struct JacobiStateDistribution {
     JacobiFilterDiagnostics diagnostics{};
 };
 
+/// Fixed-draw trajectory payload shared by dense/sparse TM-grid and
+/// Lamperti--Euler sampling.  Grid sampling populates transition diagnostics;
+/// Lamperti sampling populates the boundary/final-state fields.
+struct JacobiTrajectory {
+    std::vector<double> tau;
+    std::int64_t draws_used = 0;
+    std::int64_t normal_draws_used = 0;
+    std::int64_t euler_steps = 0;
+    std::int64_t boundary_interventions = 0;
+    double final_lamperti_value = 0.0;
+    JacobiTransitionDiagnostics transition{};
+};
+
+/// Samples from a native Jacobi state distribution after the native pair
+/// kernel maps sampled tau values to copula parameters.
+struct JacobiStateSample {
+    std::vector<double> tau;
+    std::vector<double> parameters;
+    std::int64_t selection_draws_used = 0;
+    std::int64_t jitter_draws_used = 0;
+};
+
+struct JacobiHistogramCells {
+    std::vector<double> left;
+    std::vector<double> right;
+};
+
 using JacobiParamsResult = Result<JacobiParams>;
 using JacobiRawParamsResult = Result<std::array<double, 3>>;
 using JacobiRawBoundsResult = Result<JacobiRawBounds>;
@@ -256,5 +283,8 @@ using JacobiGradientResult = Result<JacobiObjectiveGradient>;
 using JacobiEvaluatorVectorResult = Result<JacobiEvaluatorVector>;
 using JacobiEvaluatorPairResult = Result<JacobiEvaluatorPair>;
 using JacobiStateDistributionResult = Result<JacobiStateDistribution>;
+using JacobiTrajectoryResult = Result<JacobiTrajectory>;
+using JacobiStateSampleResult = Result<JacobiStateSample>;
+using JacobiHistogramCellsResult = Result<JacobiHistogramCells>;
 
 }  // namespace scar

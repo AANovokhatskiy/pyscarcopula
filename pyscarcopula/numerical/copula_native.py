@@ -167,6 +167,22 @@ def sample_from_rng_draws(copula, draws, auxiliary, r) -> np.ndarray:
     return _finite(values, "copula_sample_from_rng_draws")
 
 
+def conditional_sample_from_uniforms(
+        copula, uniforms, r, *, given_coordinate, given_value) -> np.ndarray:
+    """Apply the native fixed-uniform inverse-h conditional transform."""
+    module, spec = _module_and_spec(copula)
+    draws = _vector(uniforms)
+    parameters = _vector(0.0 if r is None else r)
+    values = module.copula_conditional_sample_from_uniforms(
+        spec,
+        draws,
+        parameters,
+        int(given_coordinate),
+        float(given_value),
+    )
+    return _finite(values, "copula_conditional_sample_from_uniforms")
+
+
 def pdf_grid(copula, u, x_grid) -> np.ndarray:
     module, spec = _module_and_spec(copula)
     values = module.copula_pdf_grid(

@@ -12,6 +12,7 @@ void bind_factor(pybind11::module_& module);
 void bind_multivariate(pybind11::module_& module);
 void bind_scar_ou_types(pybind11::module_& module);
 void bind_jacobi(pybind11::module_& module);
+void bind_jacobi_sampling(pybind11::module_& module);
 void bind_rvine(pybind11::module_& module);
 void bind_gas(pybind11::module_& module);
 void bind_scar_ou(pybind11::module_& module);

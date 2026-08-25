@@ -104,4 +104,18 @@ struct JacobiEvaluatorConfig {
     double finite_difference_relative_step = 1e-5;
 };
 
+/// Fixed-draw Lamperti--Euler policy.  The observation horizon is always
+/// `[0, 1]`, so C++ derives the Euler step from `n_obs` and `substeps`.
+struct JacobiLampertiSamplingConfig {
+    std::int64_t n_obs = 0;
+    int substeps = 8;
+    double interior_eps = 1e-10;
+    JacobiBoundaryPolicy boundary = JacobiBoundaryPolicy::Reflect;
+};
+
+enum class JacobiStateSamplingMode : int {
+    Grid = 0,
+    Histogram = 1,
+};
+
 }  // namespace scar

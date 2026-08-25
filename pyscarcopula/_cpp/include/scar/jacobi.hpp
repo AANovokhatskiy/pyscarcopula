@@ -176,6 +176,47 @@ JacobiAdaptiveSelectionResult select_sparse_jacobi_order(
     const JacobiAdaptiveThresholds& thresholds,
     bool require_pass);
 
+/// Build the requested dense or sparse TM-grid transition and sample one
+/// path from caller-owned uniform draws.  One draw is consumed per returned
+/// state, including the stationary initial state.
+JacobiTrajectoryResult sample_jacobi_grid_trajectory(
+    const JacobiParams& params,
+    const JacobiTransitionConfig& config,
+    const std::vector<double>& uniforms);
+
+JacobiTrajectoryResult sample_prepared_jacobi_sparse_trajectory(
+    const std::vector<double>& tau,
+    const std::vector<double>& weights,
+    const JacobiSparseTransition& transition,
+    const std::vector<double>& uniforms);
+
+/// Advance a Lamperti--Euler path across complete observation intervals.
+/// `normal_draws` is row-major `(intervals, substeps)` and every successful
+/// call reports the exact number consumed plus the final Lamperti state for
+/// deterministic chunk continuation.
+JacobiTrajectoryResult sample_jacobi_lamperti_chunk(
+    const JacobiParams& params,
+    const JacobiLampertiSamplingConfig& config,
+    double initial_lamperti_value,
+    const std::vector<double>& normal_draws);
+
+/// Select tau values from an arbitrary native filtered/conditioned state and
+/// map them to parameters with the prepared pair-copula kernel.  Histogram
+/// mode consumes one additional jitter draw per sample when the grid has
+/// more than one atom.
+JacobiStateSampleResult sample_jacobi_state_distribution(
+    const CopulaSpec& copula,
+    const std::vector<double>& tau,
+    const std::vector<double>& probability,
+    const std::vector<double>& selection_draws,
+    const std::vector<double>& jitter_draws,
+    JacobiStateSamplingMode mode,
+    double theta_cap);
+
+JacobiHistogramCellsResult jacobi_state_histogram_cells(
+    const std::vector<double>& tau,
+    const std::vector<std::int64_t>& indices);
+
 /// Reusable SCAR-TM-Jacobi evaluator for one immutable copula/observation
 /// cell.  The implementation owns observation caches, transformed grids,
 /// emissions, transitions, filter/smoother states, and reusable workspaces.

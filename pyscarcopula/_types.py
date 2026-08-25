@@ -649,7 +649,7 @@ class LatentResult(FitResultBase):
     lamperti_substeps: int = 8
     lamperti_boundary: str = "reflect"
     lamperti_eps: float = 1e-10
-    lamperti_engine: str = "numba"
+    lamperti_engine: str = "native"
     lamperti_chunk_observations: int = 4096
     memory_budget_bytes: int | None = None
     transition_storage: str = "dense"

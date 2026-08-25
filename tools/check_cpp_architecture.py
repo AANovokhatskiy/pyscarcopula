@@ -1605,6 +1605,41 @@ def check_public_header_cycles(root: Path) -> list[Violation]:
     )]
 
 
+def check_jacobi_sampling_ownership(root: Path) -> list[Violation]:
+    """Keep Stage 8.3.5 trajectory/state evolution out of Python."""
+    rule = "jacobi-native-sampling-ownership"
+    numerical = root / "pyscarcopula" / "numerical"
+    forbidden = {
+        numerical / "jacobi_sampling.py": (
+            "@njit",
+            "_lamperti_chunk_kernel",
+            "np.sin(",
+            "np.arcsin(",
+        ),
+        numerical / "jacobi_sparse.py": (
+            "_sample_sparse_path_kernel",
+        ),
+        numerical / "jacobi_tm.py": (
+            "np.cumsum(transition",
+        ),
+    }
+    violations = []
+    for path, markers in forbidden.items():
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        for marker in markers:
+            index = text.find(marker)
+            if index >= 0:
+                violations.append(Violation(
+                    rule,
+                    path,
+                    "Jacobi sampling math must remain native: " + marker,
+                    text.count("\n", 0, index) + 1,
+                ))
+    return violations
+
+
 def check_repository(root: Path) -> list[Violation]:
     root = root.resolve()
     checks = (
@@ -1619,6 +1654,7 @@ def check_repository(root: Path) -> list[Violation]:
         check_public_cpp_api,
         check_thin_bindings,
         check_public_header_cycles,
+        check_jacobi_sampling_ownership,
     )
     return [
         violation

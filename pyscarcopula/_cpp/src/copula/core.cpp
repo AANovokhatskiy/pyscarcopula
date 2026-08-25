@@ -406,6 +406,59 @@ Observations copula_sample_from_uniforms(
     return out;
 }
 
+Observations copula_conditional_sample_from_uniforms(
+    const CopulaSpec& spec,
+    const std::vector<double>& uniforms,
+    const std::vector<double>& r,
+    int given_coordinate,
+    double given_value) {
+
+    if (given_coordinate != 0 && given_coordinate != 1) {
+        throw std::invalid_argument(
+            "conditional pair sampling coordinate must be 0 or 1");
+    }
+    if (!std::isfinite(given_value)
+        || !(given_value > 0.0 && given_value < 1.0)) {
+        throw std::invalid_argument(
+            "conditional pair sampling value must be in (0, 1)");
+    }
+    if (r.size() != 1 && r.size() != uniforms.size()) {
+        throw std::invalid_argument(
+            "pair sampling parameter must be scalar or have one value per row");
+    }
+    const CopulaSpec conditional_spec = given_coordinate == 0
+        ? scar_internal::transposed_copula_spec(spec) : spec;
+    const PreparedPairKernel kernel(conditional_spec);
+    if (!kernel.is_supported()) {
+        throw std::invalid_argument(
+            "conditional pair sampling requires a supported pair copula");
+    }
+
+    Observations out;
+    out.reserve(uniforms.size());
+    for (std::size_t row = 0; row < uniforms.size(); ++row) {
+        const double quantile = uniforms[row];
+        if (!std::isfinite(quantile)
+            || !(quantile >= 0.0 && quantile < 1.0)) {
+            throw std::invalid_argument(
+                "conditional pair sampling uniforms must be in [0, 1)");
+        }
+        const double sampled = kernel.inverse_h(
+            quantile,
+            given_value,
+            r_value(r, static_cast<std::int64_t>(row)));
+        if (!std::isfinite(sampled)
+            || !(sampled >= 0.0 && sampled <= 1.0)) {
+            throw std::invalid_argument(
+                "conditional pair sampling produced a value outside [0, 1]");
+        }
+        out.push_back(given_coordinate == 0
+            ? std::vector<double>{given_value, sampled}
+            : std::vector<double>{sampled, given_value});
+    }
+    return out;
+}
+
 Observations copula_sample_from_rng_draws(
     const CopulaSpec& spec,
     const Observations& draws,
