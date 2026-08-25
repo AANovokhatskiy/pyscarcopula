@@ -22,61 +22,6 @@ FloatArray = NDArray[np.float64]
 CopulaT = TypeVar("CopulaT", bound="CopulaBase")
 
 
-def _xtanh_transform(x, offset):
-    values = np.asarray(x, dtype=np.float64)
-    return values * np.tanh(values) + offset
-
-
-def _xtanh_dtransform(x):
-    values = np.asarray(x, dtype=np.float64)
-    tanh_values = np.tanh(values)
-    return tanh_values + values * (1.0 - tanh_values * tanh_values)
-
-
-def _inv_xtanh_transform(r, offset):
-    """Return the historical modulus-based latent approximation for xtanh.
-
-    ``x * tanh(x) + offset`` is even, so it has no globally unique inverse.
-    This helper intentionally preserves the established positive-branch
-    approximation ``abs(r) + offset``. It is an initialization convention,
-    not a round-trip inverse of :func:`_xtanh_transform`.
-    """
-    values = np.atleast_1d(np.asarray(r, dtype=np.float64)).ravel()
-    return np.abs(values) + offset
-
-
-def _softplus_transform(x, offset):
-    values = np.asarray(x, dtype=np.float64)
-    return np.logaddexp(0.0, values) + offset
-
-
-def _softplus_dtransform(x):
-    values = np.asarray(x, dtype=np.float64)
-    out = np.empty_like(values)
-    positive = values >= 0.0
-    out[positive] = 1.0 / (1.0 + np.exp(-values[positive]))
-    exp_values = np.exp(values[~positive])
-    out[~positive] = exp_values / (1.0 + exp_values)
-    return out
-
-
-def _softplus_inv_transform(r, offset):
-    values = np.asarray(r, dtype=np.float64) - offset
-    return np.where(
-        values > 20.0,
-        values,
-        np.where(
-            values <= 0.0,
-            np.log(1e-300),
-            np.where(
-                values < 1e-8,
-                np.log(values),
-                np.log(np.expm1(values)),
-            ),
-        ),
-    )
-
-
 @dataclass(frozen=True)
 class CopulaCapabilities:
     """Immutable strategy and numerical capability descriptor.
@@ -335,7 +280,8 @@ class BivariateCopula(CopulaBase):
 
     Built-in families use the shared native adapter for density, derivatives,
     transforms, conditional distributions, inverse conditionals, and grids.
-    Subclasses retain family metadata, sampling, and Kendall-tau behavior.
+    Subclasses retain family metadata and Kendall-tau behavior. Python owns
+    RNG draws; the fixed-draw sampling transform is native.
 
     Estimation methods (via .fit()):
         'mle'        — constant parameter (1 param)
@@ -460,26 +406,7 @@ class BivariateCopula(CopulaBase):
         """d(log c)/dr with rotation applied."""
         return self._native_adapter().dlog_pdf_dr(self, u1, u2, r)
 
-    def _apply_rotation(self, u1, u2):
-        rot = self._rotate
-        if rot == 0:
-            return u1, u2
-        elif rot == 90:
-            return 1.0 - u1, u2
-        elif rot == 180:
-            return 1.0 - u1, 1.0 - u2
-        else:
-            return u1, 1.0 - u2
-
     # ── sampling ──────────────────────────────────────────────────
-    def psi(self, t, r):
-        """Inverse generator (Laplace-Stieltjes)."""
-        return np.exp(-t)
-
-    def V(self, n, r, rng=None):
-        """Sample from F = LS^{-1}(psi). Override per copula."""
-        return np.ones(n)
-
     def sample_at_parameter(self, n, r, rng=None):
         """
         Sample at an explicitly supplied copula parameter.
@@ -493,27 +420,39 @@ class BivariateCopula(CopulaBase):
         if rng is None:
             rng = np.random.default_rng()
 
-        _r = np.atleast_1d(np.asarray(r, dtype=np.float64))
-        if _r.size == 1:
-            _r = np.full(n, _r[0])
+        parameter = np.atleast_1d(np.asarray(r, dtype=np.float64)).ravel()
+        if parameter.size == 1:
+            parameter = np.full(n, parameter[0])
+        elif parameter.size != n:
+            raise ValueError(
+                f"r must be scalar or array of length {n}, "
+                f"got {parameter.size}")
 
-        x = rng.uniform(0, 1, size=(n, 2))
-        V_data = np.clip(self.V(n, _r, rng=rng), 1e-50, None)
+        family = self._native_pair_family
+        auxiliary = np.empty((0, 0), dtype=np.float64)
+        if family == "Gaussian":
+            draws = rng.standard_normal((n, 2))
+        elif family == "Clayton":
+            draws = rng.uniform(0, 1, size=(n, 2))
+            auxiliary = rng.gamma(
+                1.0 / parameter, scale=parameter).reshape(n, 1)
+        elif family == "Gumbel":
+            draws = rng.uniform(0, 1, size=(n, 2))
+            angle = rng.uniform(-np.pi / 2.0, np.pi / 2.0, size=n)
+            uniform = rng.uniform(0.0, 1.0, size=n)
+            auxiliary = np.column_stack((angle, uniform))
+        elif family in {"Frank", "Joe"}:
+            first = rng.uniform(0.0, 1.0, size=n)
+            second = rng.uniform(0.0, 1.0, size=n)
+            draws = np.column_stack((first, second))
+        elif family == "Independent":
+            draws = rng.uniform(0, 1, size=(n, 2))
+        else:
+            raise ValueError(
+                f"unsupported native pair sampling family: {family}")
 
-        u = np.empty((n, 2))
-        u[:, 0] = self.psi(-np.log(x[:, 0]) / V_data, _r)
-        u[:, 1] = self.psi(-np.log(x[:, 1]) / V_data, _r)
-
-        rot = self._rotate
-        if rot == 90:
-            u[:, 0] = 1.0 - u[:, 0]
-        elif rot == 180:
-            u[:, 0] = 1.0 - u[:, 0]
-            u[:, 1] = 1.0 - u[:, 1]
-        elif rot == 270:
-            u[:, 1] = 1.0 - u[:, 1]
-
-        return u
+        return self._native_adapter().sample_from_rng_draws(
+            self, draws, auxiliary, parameter)
 
     # ── h-functions ───────────────────────────────────────────────
     def h_unrotated(self, u, v, r):

@@ -82,12 +82,18 @@ class FactorCorrelation:
         if not np.all(np.isfinite(loadings)):
             raise ValueError("loadings must contain only finite values")
 
-        uniqueness = 1.0 - np.einsum(
-            "ij,ij->i", loadings, loadings, optimize=False)
-        if np.any(uniqueness < self.uniqueness_min):
+        from pyscarcopula.numerical import multivariate_native
+        try:
+            validated_loadings, uniqueness = (
+                multivariate_native.factor_correlation_from_loadings(
+                    loadings, self.uniqueness_min)
+            )
+        except ValueError as exc:
             raise ValueError(
                 "each loading row must satisfy "
-                "1 - squared_norm >= uniqueness_min")
+                "1 - squared_norm >= uniqueness_min") from exc
+        if _copy_arrays:
+            loadings = validated_loadings
         loadings.setflags(write=False)
         uniqueness.setflags(write=False)
         object.__setattr__(self, "loadings", loadings)
@@ -139,45 +145,11 @@ class FactorCorrelation:
                 0.0 < float(uniqueness_min) < 1.0):
             raise ValueError(
                 "uniqueness_min must be finite and in (0, 1)")
-        row_scale = np.max(np.abs(unconstrained), axis=1)
-        scaled = np.divide(
-            unconstrained,
-            row_scale[:, None],
-            out=np.zeros_like(unconstrained),
-            where=row_scale[:, None] > 0.0,
-        )
-        scaled_norms_squared = np.einsum(
-            "ij,ij->i", scaled, scaled, optimize=False)
-        inverse_scale = np.divide(
-            1.0,
-            row_scale,
-            out=np.zeros_like(row_scale),
-            where=row_scale > 0.0,
-        )
-        inverse_scale_squared = inverse_scale * inverse_scale
-        denominator = np.sqrt(
-            scaled_norms_squared + inverse_scale_squared)
-        loadings = np.divide(
-            scaled,
-            denominator[:, None],
-            out=np.zeros_like(scaled),
-            where=denominator[:, None] > 0.0,
-        )
-        max_norm = np.sqrt(np.nextafter(
-            1.0 - float(uniqueness_min), 0.0))
-        norms = np.sqrt(np.einsum(
-            "ij,ij->i", loadings, loadings, optimize=False))
-        scale = np.minimum(
-            1.0,
-            np.divide(
-                max_norm,
-                norms,
-                out=np.ones_like(norms),
-                where=norms > 0.0,
-            ),
-        )
+        from pyscarcopula.numerical import multivariate_native
+        loadings = multivariate_native.factor_correlation_from_unconstrained(
+            unconstrained, uniqueness_min)
         return cls(
-            loadings=loadings * scale[:, None],
+            loadings=loadings,
             uniqueness_min=uniqueness_min,
             diagnostics={"source": "unconstrained_row_transform"},
         )
@@ -204,9 +176,9 @@ class FactorCorrelation:
             required,
             "increase memory_budget_bytes or use prepare()",
         )
-        dense = self.loadings @ self.loadings.T
-        dense.flat[::self.dimension + 1] += self.uniqueness
-        return dense
+        from pyscarcopula.numerical import multivariate_native
+        return multivariate_native.factor_correlation_to_dense(
+            self.loadings, self.uniqueness)
 
     def save_npz(self, path: str | Path) -> Path:
         """Write the compact factor representation."""

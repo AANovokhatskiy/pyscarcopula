@@ -1,5 +1,6 @@
 #include "scar/copula/multivariate/student/factor_density.hpp"
 
+#include "scar/copula/multivariate/correlation/factor_parameterization.hpp"
 #include "scar/copula/multivariate/student/density.hpp"
 #include "scar/copula/multivariate/student/quantile.hpp"
 #include "scar/detail/parallel.hpp"
@@ -177,7 +178,23 @@ FactorStudentRowsResult factor_student_log_pdf_and_dlog_ddf(
     }
     if (result.failure.index >= 0) {
         result.status = Status::NumericalFailure;
+        result.log_likelihood =
+            std::numeric_limits<double>::quiet_NaN();
+        result.dlog_likelihood_ddf =
+            std::numeric_limits<double>::quiet_NaN();
+        result.negative_log_likelihood =
+            std::numeric_limits<double>::quiet_NaN();
+        result.dnegative_log_likelihood_ddf =
+            std::numeric_limits<double>::quiet_NaN();
+        return result;
     }
+    for (std::size_t row = 0; row < rows; ++row) {
+        result.log_likelihood += result.log_pdf[row];
+        result.dlog_likelihood_ddf += result.dlog_ddf[row];
+    }
+    result.negative_log_likelihood = -result.log_likelihood;
+    result.dnegative_log_likelihood_ddf =
+        -result.dlog_likelihood_ddf;
     return result;
 }
 
@@ -436,6 +453,115 @@ FactorStudentJointResult factor_student_joint_likelihood_gradient(
             result.dlog_likelihood_dloadings.end(),
             std::numeric_limits<double>::quiet_NaN());
     }
+    return result;
+}
+
+FactorStudentPenalizedObjectiveResult
+factor_student_penalized_parameterized_objective_gradient(
+    const double* observations,
+    std::size_t rows,
+    double df,
+    const double* parameters,
+    std::size_t parameter_count,
+    const double* free_rows,
+    const double* free_columns,
+    const double* diagonal_entries,
+    std::size_t dimension,
+    std::size_t rank,
+    double max_norm,
+    double uniqueness_min,
+    double condition_max,
+    double penalty,
+    int n_threads) {
+
+    if (!std::isfinite(penalty)
+        || penalty < 0.0
+        || !std::isfinite(condition_max)
+        || !(condition_max > 0.0)) {
+        throw std::invalid_argument(
+            "factor Student penalty and condition gate are invalid");
+    }
+    const DoubleView parameter_view{parameters, parameter_count};
+    const DoubleView free_row_view{free_rows, parameter_count};
+    const DoubleView free_column_view{free_columns, parameter_count};
+    const DoubleView diagonal_view{diagonal_entries, parameter_count};
+    Result<std::vector<double>> transformed =
+        factor_parameterization_loadings(
+            parameter_view,
+            free_row_view,
+            free_column_view,
+            diagonal_view,
+            dimension,
+            rank,
+            max_norm);
+
+    FactorStudentPenalizedObjectiveResult result;
+    result.n_threads_requested = n_threads;
+    if (!transformed.is_ok()) {
+        result.status = transformed.status;
+        result.failure = transformed.failure;
+        return result;
+    }
+    result.loadings = std::move(transformed.value);
+    FactorCorrelationOperator correlation(
+        result.loadings, dimension, rank, uniqueness_min);
+    result.condition_estimate = correlation.condition_estimate();
+    if (result.condition_estimate > condition_max) {
+        result.status = Status::InvalidParameter;
+        return result;
+    }
+    FactorStudentJointResult joint =
+        factor_student_joint_likelihood_gradient(
+            correlation, observations, rows, df, n_threads);
+    result.status = joint.status;
+    result.failure = joint.failure;
+    result.n_threads_requested = joint.n_threads_requested;
+    result.reduction_blocks = joint.reduction_blocks;
+    result.parallel_blocks = joint.parallel_blocks;
+    result.worker_workspace_peak_bytes =
+        joint.worker_workspace_peak_bytes;
+    result.reduction_workspace_bytes =
+        joint.reduction_workspace_bytes;
+    result.log_likelihood = joint.log_likelihood;
+    if (!joint.is_ok()) {
+        return result;
+    }
+
+    std::vector<double> penalized_loading_gradient =
+        std::move(joint.dlog_likelihood_dloadings);
+    double squared_norm = 0.0;
+    for (std::size_t index = 0;
+         index < result.loadings.size();
+         ++index) {
+        squared_norm += result.loadings[index] * result.loadings[index];
+        penalized_loading_gradient[index] =
+            -penalized_loading_gradient[index]
+            + 2.0 * penalty * result.loadings[index];
+    }
+    Result<std::vector<double>> pulled_back =
+        factor_parameterization_pullback(
+            parameter_view,
+            DoubleView{
+                penalized_loading_gradient.data(),
+                penalized_loading_gradient.size()},
+            free_row_view,
+            free_column_view,
+            diagonal_view,
+            dimension,
+            rank,
+            max_norm);
+    if (!pulled_back.is_ok()) {
+        result.status = pulled_back.status;
+        result.failure = pulled_back.failure;
+        return result;
+    }
+    result.objective = -joint.log_likelihood + penalty * squared_norm;
+    result.gradient.resize(parameter_count + 1);
+    result.gradient[0] = -joint.dlog_likelihood_ddf;
+    std::copy(
+        pulled_back.value.begin(),
+        pulled_back.value.end(),
+        result.gradient.begin() + 1);
     return result;
 }
 

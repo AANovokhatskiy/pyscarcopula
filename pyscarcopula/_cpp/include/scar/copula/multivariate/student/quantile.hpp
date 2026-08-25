@@ -24,6 +24,7 @@ void student_quantile_for_emission(
     double& value,
     double* derivative);
 double student_quantile_value(double p, double df);
+double student_quantile_refined_value(double p, double df);
 double student_quantile_for_observation(
     const scar::CopulaSpec& spec,
     double p,

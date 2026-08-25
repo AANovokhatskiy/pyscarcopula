@@ -1,7 +1,5 @@
 """Shared Kendall-correlation preprocessing contracts."""
 
-from types import SimpleNamespace
-
 import numpy as np
 import pytest
 
@@ -12,6 +10,8 @@ from pyscarcopula.copula.multivariate import (
 from pyscarcopula.copula.multivariate import corr_param
 from pyscarcopula.copula.multivariate.corr_param import (
     estimate_kendall_correlation,
+    preprocess_correlation_matrix,
+    project_to_corr,
     validate_corr_matrix,
 )
 
@@ -95,23 +95,35 @@ def test_nearly_singular_kendall_matrix_is_projected_and_reported():
     assert result.min_eigenvalue_after > 0.0
 
 
-def test_nonfinite_pairwise_statistic_is_recorded(monkeypatch):
-    original = corr_param.kendalltau
-    calls = 0
-
-    def one_missing_pair(x, y):
-        nonlocal calls
-        calls += 1
-        if calls == 2:
-            return SimpleNamespace(statistic=np.nan)
-        return original(x, y)
-
-    monkeypatch.setattr(corr_param, "kendalltau", one_missing_pair)
+def test_kendall_initialization_has_no_python_statistic_callback():
+    assert not hasattr(corr_param, "kendalltau")
     result = estimate_kendall_correlation(_ordinary_u())
-
     _assert_valid_correlation(result)
-    assert result.nonfinite_kendall_pairs == ((0, 2),)
-    assert result.input_correlation[0, 2] == 0.0
+    assert result.nonfinite_kendall_pairs == ()
+
+
+def test_projection_and_diagnostics_do_not_use_numpy_eigensolvers(monkeypatch):
+    def forbidden(*args, **kwargs):
+        raise AssertionError("correlation eigendecomposition must run in C++")
+
+    monkeypatch.setattr(np.linalg, "eigh", forbidden)
+    monkeypatch.setattr(np.linalg, "eigvalsh", forbidden)
+    matrix = np.array([
+        [1.0, 1.2, -0.1],
+        [1.2, 1.0, 0.3],
+        [-0.1, 0.3, 1.0],
+    ])
+
+    projected = project_to_corr(matrix)
+    result = preprocess_correlation_matrix(matrix, source="supplied")
+
+    np.testing.assert_array_equal(projected, result.correlation)
+    np.testing.assert_array_equal(result.input_correlation, matrix)
+    assert result.source == "supplied"
+    assert result.projection_applied is True
+    assert result.min_eigenvalue_before < 0.0
+    assert result.min_eigenvalue_after > 0.0
+    validate_corr_matrix(result.correlation)
 
 
 def test_stochastic_mle_exposes_kendall_projection_diagnostics():

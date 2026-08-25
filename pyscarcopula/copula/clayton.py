@@ -31,15 +31,3 @@ class ClaytonCopula(BivariateCopula):
         if np.any(r <= 0.0):
             raise ValueError("Clayton parameter must be positive")
         return self._native_adapter().param_to_tau(self, r)
-
-    @staticmethod
-    def psi(t, r):
-        return (1.0 + t * r) ** (-1.0 / r)
-
-    def V(self, n, r, rng=None):
-        if rng is None:
-            rng = np.random.default_rng()
-        parameter = np.atleast_1d(np.asarray(r, dtype=np.float64))
-        if parameter.size == 1:
-            parameter = np.full(n, parameter[0])
-        return rng.gamma(1.0 / parameter, scale=parameter)

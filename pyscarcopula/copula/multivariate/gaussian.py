@@ -6,10 +6,8 @@ from typing import Any, Literal
 
 import numpy as np
 from numpy.typing import ArrayLike
-from scipy.special import expit
-from scipy.stats import norm
 
-from pyscarcopula._utils import clip_pseudo_observations, pobs
+from pyscarcopula._utils import pobs
 from pyscarcopula._types import (
     DEFAULT_CONFIG,
     MultivariateMLEResult,
@@ -20,7 +18,10 @@ from pyscarcopula.copula.multivariate.base import (
     MultivariateCopula,
     model_state_locked,
 )
-from pyscarcopula.copula.multivariate.corr_param import validate_corr_matrix
+from pyscarcopula.copula.multivariate.corr_param import (
+    sigmoid,
+    validate_corr_matrix,
+)
 from pyscarcopula.copula.multivariate.correlation_policy import (
     CorrelationEstimator,
     CorrelationMode,
@@ -103,21 +104,8 @@ def _validated_correlation(value, *, name, dimension=None):
 
 
 def _gaussian_score_correlation(u):
-    u_c = clip_pseudo_observations(u)
-    x = norm.ppf(u_c)
-    if np.any(np.std(x, axis=0) <= 0.0):
-        raise ValueError("data columns must not be constant")
-    corr = np.corrcoef(x.T)
-    corr = np.asarray(corr, dtype=np.float64)
-    if corr.shape != (u.shape[1], u.shape[1]):
-        raise ValueError("fitted correlation matrix has invalid shape")
-    if not np.all(np.isfinite(corr)):
-        raise ValueError(
-            "fitted correlation matrix must contain only finite values")
-    corr = 0.5 * (corr + corr.T)
-    np.fill_diagonal(corr, 1.0)
-    validate_corr_matrix(corr)
-    return corr
+    from pyscarcopula.numerical import multivariate_native
+    return multivariate_native.gaussian_score_correlation(u)
 
 
 class GaussianCopula(MultivariateCopula):
@@ -711,7 +699,7 @@ class GaussianCopula(MultivariateCopula):
                 else np.asarray(outcome.evaluation.correlation).copy())
             corr_raw = outcome.parameters.copy()
             corr_alpha = (
-                float(expit(corr_raw[0]))
+                float(sigmoid(corr_raw[0]))
                 if self._corr_mode == "shrinkage" and corr_raw.size
                 else None)
         else:
@@ -829,6 +817,9 @@ class GaussianCopula(MultivariateCopula):
             memory_budget_bytes=None):
         n = validate_integer(n, "n")
         n_threads = _validated_n_threads(n_threads)
+        if rng is None:
+            rng = np.random.default_rng()
+        from pyscarcopula.numerical import multivariate_native
         if self._corr_mode == "factor":
             operator = self.correlation_operator_
             _validated_budget(
@@ -837,19 +828,22 @@ class GaussianCopula(MultivariateCopula):
                 "use sample_batches(), reduce batch_rows, or increase "
                 "memory_budget_bytes",
             )
-            latent = operator.sample_normal(
-                n, rng=rng, n_threads=n_threads)
-            return norm.cdf(latent)
+            factor_draws = rng.standard_normal((n, operator.rank))
+            residual_draws = rng.standard_normal((n, operator.dimension))
+            return multivariate_native.factor_gaussian_sample_from_normals(
+                operator,
+                factor_draws,
+                residual_draws,
+                n_threads=n_threads,
+            )
 
         correlation = self._fitted_correlation()
         if correlation is None:
             raise ValueError("Fit first")
-        if rng is None:
-            rng = np.random.default_rng()
-
         d = correlation.shape[0]
-        x = rng.multivariate_normal(np.zeros(d), correlation, size=n)
-        return norm.cdf(x)
+        normal_draws = rng.standard_normal((n, d))
+        return multivariate_native.gaussian_sample_from_normals(
+            correlation, normal_draws, n_threads=n_threads)
 
     @model_state_locked
     def sample_batches(

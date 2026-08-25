@@ -51,9 +51,15 @@ DualValue dual(double value, double derivative = 0.0) {
     return {value, derivative};
 }
 
-double betacf(double a, double b, double x) {
+double betacf(
+    double a,
+    double b,
+    double x,
+    double requested_tolerance = 3e-14) {
     constexpr int max_iter = 200;
     constexpr double eps = 3e-14;
+    const double convergence_tolerance = std::min(
+        eps, requested_tolerance);
     constexpr double fpmin = 1e-300;
 
     const double qab = a + b;
@@ -95,7 +101,7 @@ double betacf(double a, double b, double x) {
         d = 1.0 / d;
         const double del = d * c;
         h *= del;
-        if (std::abs(del - 1.0) < eps) {
+        if (std::abs(del - 1.0) < convergence_tolerance) {
             break;
         }
     }
@@ -157,7 +163,11 @@ DualValue betacf_dual(DualValue a, DualValue b, DualValue x) {
     return h;
 }
 
-double regularized_beta(double x, double a, double b) {
+double regularized_beta(
+    double x,
+    double a,
+    double b,
+    double tolerance = 3e-14) {
     if (x <= 0.0) {
         return 0.0;
     }
@@ -170,9 +180,9 @@ double regularized_beta(double x, double a, double b) {
         - student_log_gamma(b)
         + a * std::log(x) + b * std::log1p(-x));
     if (x < (a + 1.0) / (a + b + 2.0)) {
-        return bt * betacf(a, b, x) / a;
+        return bt * betacf(a, b, x, tolerance) / a;
     }
-    return 1.0 - bt * betacf(b, a, 1.0 - x) / b;
+    return 1.0 - bt * betacf(b, a, 1.0 - x, tolerance) / b;
 }
 
 DualValue regularized_beta_dual(
@@ -281,6 +291,21 @@ double student_cdf_value(double value, double df) {
     const double cdf = value >= 0.0
         ? 1.0 - student_survival_positive_value(value, df)
         : student_survival_positive_value(-value, df);
+    return std::clamp(cdf, 0.0, 1.0);
+}
+
+double student_cdf_refined_value(double value, double df) {
+    if (!std::isfinite(value) || !std::isfinite(df) || df <= 0.0) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    const double magnitude = std::abs(value);
+    const double x = df / (df + magnitude * magnitude);
+    const double survival = 0.5 * regularized_beta(
+        x,
+        0.5 * df,
+        0.5,
+        4.0 * std::numeric_limits<double>::epsilon());
+    const double cdf = value >= 0.0 ? 1.0 - survival : survival;
     return std::clamp(cdf, 0.0, 1.0);
 }
 

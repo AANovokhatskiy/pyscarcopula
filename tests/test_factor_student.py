@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import inspect
 import json
 import subprocess
 import sys
@@ -18,6 +19,9 @@ from pyscarcopula import (
 )
 from pyscarcopula.copula.multivariate.factor_student import (
     _raise_native_status,
+)
+from pyscarcopula.copula.multivariate.factor_estimation import (
+    FactorLoadingParameterization,
 )
 from pyscarcopula.numerical import static_likelihood
 from pyscarcopula.numerical._cpp_extension import CppError, CppUnsupported
@@ -149,6 +153,59 @@ def test_evaluator_owns_read_only_observations_and_optimizer_contract():
     assert objective == pytest.approx(-result.log_likelihood)
     np.testing.assert_allclose(
         gradient, [-result.dlog_likelihood_ddf])
+
+
+def test_parameterized_penalized_objective_matches_composed_native_results():
+    factor, observations = _problem(
+        dimension=7, rank=2, rows=31, seed=1206)
+    parameterization, parameters = (
+        FactorLoadingParameterization.from_loadings(
+            factor.loadings, uniqueness_min=1e-8))
+    evaluator = FactorStudentEvaluator(factor, observations)
+    penalty = 2.5e-5
+    df = 6.25
+
+    result = evaluator.penalized_parameterized_objective_and_gradient(
+        df,
+        parameters,
+        parameterization,
+        penalty=penalty,
+        condition_max=1e12,
+        n_threads=4,
+    )
+    joint = FactorStudentEvaluator(
+        FactorCorrelation(result.loadings), observations
+    ).joint_likelihood_and_gradient(df, n_threads=4)
+    expected_loading_gradient = (
+        -joint.dlog_likelihood_dloadings
+        + 2.0 * penalty * result.loadings
+    )
+    expected_gradient = np.concatenate((
+        np.asarray([-joint.dlog_likelihood_ddf]),
+        parameterization.pullback(parameters, expected_loading_gradient),
+    ))
+
+    assert result.objective == pytest.approx(
+        -joint.log_likelihood
+        + penalty * float(np.sum(result.loadings ** 2)),
+        rel=2e-13,
+        abs=2e-13,
+    )
+    assert result.log_likelihood == pytest.approx(
+        joint.log_likelihood, rel=0.0, abs=0.0)
+    np.testing.assert_allclose(
+        result.gradient, expected_gradient, rtol=2e-13, atol=2e-13)
+    assert result.gradient.flags.writeable is False
+    assert result.loadings.flags.writeable is False
+
+
+def test_factor_student_python_adapter_contains_no_aggregate_or_grid_math():
+    evaluation_source = inspect.getsource(FactorStudentEvaluation)
+    grid_source = inspect.getsource(FactorStudentGridEvaluation)
+
+    assert "np.sum" not in evaluation_source
+    assert "np.exp" not in grid_source
+    assert "* self.dlog_ddf" not in grid_source
 
 
 def test_large_dimension_uses_linear_worker_workspace():

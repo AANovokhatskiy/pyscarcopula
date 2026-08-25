@@ -119,6 +119,28 @@ std::vector<double> copula_h_inverse(
     const Observations& q_given,
     const std::vector<double>& r);
 
+/// Transform caller-owned independent uniforms into pair-copula samples.
+///
+/// Each input row contains ``(u_first, conditional_quantile)``.  The first
+/// coordinate is preserved and the second coordinate is obtained from the
+/// inverse conditional distribution using the transposed pair orientation.
+/// Random-number generation deliberately remains outside the computational
+/// boundary.
+Observations copula_sample_from_uniforms(
+    const CopulaSpec& spec,
+    const Observations& uniforms,
+    const std::vector<double>& r);
+
+/// Reproduce the family-specific pre-refactor sampling transform from
+/// caller-owned RNG draws.  ``draws`` always has two columns; ``auxiliary``
+/// carries family-specific RNG results (Clayton frailty or Gumbel angle and
+/// exponential uniform) and is empty for the other pair families.
+Observations copula_sample_from_rng_draws(
+    const CopulaSpec& spec,
+    const Observations& draws,
+    const Observations& auxiliary,
+    const std::vector<double>& r);
+
 GridValues copula_pdf_grid(
     const CopulaSpec& spec,
     const Observations& u,

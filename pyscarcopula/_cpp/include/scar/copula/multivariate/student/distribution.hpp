@@ -12,5 +12,6 @@ void student_survival_positive_df_value_and_derivative(
     double& survival,
     double& derivative);
 double student_cdf_value(double value, double df);
+double student_cdf_refined_value(double value, double df);
 
 }  // namespace scar_internal

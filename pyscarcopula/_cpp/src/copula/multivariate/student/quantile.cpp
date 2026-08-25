@@ -30,7 +30,12 @@ double student_quantile_initial(double p, double df) {
             * inv_df3 / 384.0;
 }
 
-double student_quantile(double p, double df) {
+double student_quantile(
+    double p,
+    double df,
+    double tolerance = 2e-13,
+    int maximum_iterations = 50,
+    bool refined_cdf = false) {
     p = clip_pseudo_observation(p);
     if (p == 0.5) {
         return 0.0;
@@ -43,22 +48,27 @@ double student_quantile(double p, double df) {
         student_quantile_initial(initial_probability, df));
     double lo = 0.0;
     double hi = std::max(1.0, initial);
-    while (student_survival_positive_value(hi, df) > tail_probability
+    const auto survival_value = [df, refined_cdf](double value) {
+        return refined_cdf
+            ? student_cdf_refined_value(-value, df)
+            : student_survival_positive_value(value, df);
+    };
+    while (survival_value(hi) > tail_probability
            && hi < 1e12) {
         hi *= 2.0;
     }
 
     double x = std::min(std::max(initial, lo), hi);
-    for (int iter = 0; iter < 50; ++iter) {
-        const double survival = student_survival_positive_value(x, df);
+    for (int iter = 0; iter < maximum_iterations; ++iter) {
+        const double survival = survival_value(x);
         const double error = survival - tail_probability;
         if (error > 0.0) {
             lo = x;
         } else {
             hi = x;
         }
-        if (std::abs(error) <= 2e-13 * tail_probability
-            || hi - lo <= 2e-13 * std::max(1.0, std::abs(x))) {
+        if (std::abs(error) <= tolerance * tail_probability
+            || hi - lo <= tolerance * std::max(1.0, std::abs(x))) {
             return negative ? -x : x;
         }
 
@@ -180,6 +190,15 @@ void student_quantile_for_emission(
 
 double student_quantile_value(double p, double df) {
     return student_quantile(p, df);
+}
+
+double student_quantile_refined_value(double p, double df) {
+    return student_quantile(
+        p,
+        df,
+        16.0 * std::numeric_limits<double>::epsilon(),
+        80,
+        true);
 }
 
 double student_quantile_for_observation(

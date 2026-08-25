@@ -36,13 +36,17 @@ class FactorStudentEvaluation:
 
     log_pdf: np.ndarray
     dlog_ddf: np.ndarray
+    _log_likelihood: float
+    _dlog_likelihood_ddf: float
+    _negative_log_likelihood: float
+    _dnegative_log_likelihood_ddf: float
     diagnostics: Mapping[str, Any]
     common_df: bool
 
     @property
     def log_likelihood(self) -> float:
         """Sum the row log densities."""
-        return float(np.sum(self.log_pdf))
+        return self._log_likelihood
 
     @property
     def dlog_likelihood_ddf(self) -> float:
@@ -50,7 +54,20 @@ class FactorStudentEvaluation:
         if not self.common_df:
             raise ValueError(
                 "one aggregate df derivative requires a common scalar df")
-        return float(np.sum(self.dlog_ddf))
+        return self._dlog_likelihood_ddf
+
+    @property
+    def negative_log_likelihood(self) -> float:
+        """Return the native negative aggregate likelihood."""
+        return self._negative_log_likelihood
+
+    @property
+    def dnegative_log_likelihood_ddf(self) -> float:
+        """Return its native derivative for one common ``df``."""
+        if not self.common_df:
+            raise ValueError(
+                "one aggregate df derivative requires a common scalar df")
+        return self._dnegative_log_likelihood_ddf
 
 
 @dataclass(frozen=True)
@@ -64,6 +81,17 @@ class FactorStudentJointEvaluation:
 
 
 @dataclass(frozen=True)
+class FactorStudentParameterizedEvaluation:
+    """Native penalized objective in identifiable factor coordinates."""
+
+    objective: float
+    gradient: np.ndarray
+    loadings: np.ndarray
+    log_likelihood: float
+    diagnostics: Mapping[str, Any]
+
+
+@dataclass(frozen=True)
 class FactorStudentGridEvaluation:
     """Immutable tiled Student log-density grid result."""
 
@@ -73,13 +101,20 @@ class FactorStudentGridEvaluation:
 
     def pdf_and_gradient(self) -> tuple[np.ndarray, np.ndarray]:
         """Convert stable log values into density and ``d pdf / d df``."""
-        density = np.exp(self.log_pdf)
-        gradient = density * self.dlog_ddf
-        if (
-                np.any(~np.isfinite(density))
-                or np.any(~np.isfinite(gradient))):
-            raise FloatingPointError(
-                "factor Student density grid overflowed; use log_pdf")
+        from pyscarcopula.numerical import _cpp_extension
+
+        native_result = dict(
+            _cpp_extension.load()._factor_student_density_from_log_grid(
+                self.log_pdf, self.dlog_ddf))
+        _raise_native_status(native_result, "density-grid conversion")
+        density = np.asarray(native_result["pdf"], dtype=np.float64)
+        gradient = np.asarray(
+            native_result["d_pdf_ddf"], dtype=np.float64)
+        if density.shape != self.log_pdf.shape or gradient.shape != (
+                self.log_pdf.shape):
+            raise RuntimeError(
+                "native factor Student density-grid conversion returned "
+                "invalid output")
         density.setflags(write=False)
         gradient.setflags(write=False)
         return density, gradient
@@ -181,11 +216,22 @@ class FactorStudentEvaluator:
             native_result.pop("log_pdf"), dtype=np.float64)
         dlog_ddf = np.asarray(
             native_result.pop("dlog_ddf"), dtype=np.float64)
+        log_likelihood = float(native_result.pop("log_likelihood"))
+        dlog_likelihood_ddf = float(
+            native_result.pop("dlog_likelihood_ddf"))
+        negative_log_likelihood = float(
+            native_result.pop("negative_log_likelihood"))
+        dnegative_log_likelihood_ddf = float(
+            native_result.pop("dnegative_log_likelihood_ddf"))
         if (
                 log_pdf.shape != (self.n_observations,)
                 or dlog_ddf.shape != (self.n_observations,)
                 or np.any(~np.isfinite(log_pdf))
-                or np.any(~np.isfinite(dlog_ddf))):
+                or np.any(~np.isfinite(dlog_ddf))
+                or not np.isfinite(log_likelihood)
+                or not np.isfinite(dlog_likelihood_ddf)
+                or not np.isfinite(negative_log_likelihood)
+                or not np.isfinite(dnegative_log_likelihood_ddf)):
             raise RuntimeError(
                 "native factor Student evaluation returned invalid output")
         log_pdf.setflags(write=False)
@@ -201,6 +247,11 @@ class FactorStudentEvaluator:
         return FactorStudentEvaluation(
             log_pdf=log_pdf,
             dlog_ddf=dlog_ddf,
+            _log_likelihood=log_likelihood,
+            _dlog_likelihood_ddf=dlog_likelihood_ddf,
+            _negative_log_likelihood=negative_log_likelihood,
+            _dnegative_log_likelihood_ddf=
+                dnegative_log_likelihood_ddf,
             diagnostics=diagnostics,
             common_df=common,
         )
@@ -236,11 +287,76 @@ class FactorStudentEvaluator:
             self, df: float, *, n_threads: int = 1
     ) -> tuple[float, np.ndarray]:
         """Return negative likelihood and a one-element optimizer gradient."""
-        log_likelihood, gradient = self.log_likelihood_and_gradient(
-            df, n_threads=n_threads)
+        result = self.evaluate(df, n_threads=n_threads)
         return (
-            -log_likelihood,
-            np.asarray([-gradient], dtype=np.float64),
+            result.negative_log_likelihood,
+            np.asarray(
+                [result.dnegative_log_likelihood_ddf],
+                dtype=np.float64),
+        )
+
+    def penalized_parameterized_objective_and_gradient(
+            self, df, parameters, parameterization, *, penalty,
+            condition_max, n_threads=1
+    ) -> FactorStudentParameterizedEvaluation:
+        """Evaluate the joint factor objective entirely in native code."""
+        from pyscarcopula.numerical import _cpp_extension
+
+        df_value = float(df)
+        if not np.isfinite(df_value) or df_value <= 2.0:
+            raise ValueError("df must be finite and greater than 2")
+        values = np.ascontiguousarray(parameters, dtype=np.float64)
+        if values.ndim != 1 or values.shape != (
+                parameterization.n_parameters,):
+            raise ValueError("factor parameters have unexpected shape")
+        n_threads = _validated_n_threads(n_threads)
+        native_result = dict(
+            _cpp_extension.load()
+            ._factor_student_penalized_parameterized_objective_gradient(
+                self._observations,
+                df_value,
+                values,
+                np.ascontiguousarray(
+                    parameterization.free_rows, dtype=np.float64),
+                np.ascontiguousarray(
+                    parameterization.free_columns, dtype=np.float64),
+                np.ascontiguousarray(
+                    parameterization.diagonal_entries, dtype=np.float64),
+                self.dimension,
+                self.rank,
+                float(parameterization.max_norm),
+                float(parameterization.uniqueness_min),
+                float(condition_max),
+                float(penalty),
+                n_threads,
+            )
+        )
+        _raise_native_status(native_result, "parameterized objective")
+        native_result.pop("status")
+        objective = float(native_result.pop("objective"))
+        log_likelihood = float(native_result.pop("log_likelihood"))
+        gradient = np.asarray(
+            native_result.pop("gradient"), dtype=np.float64)
+        loadings = np.asarray(
+            native_result.pop("loadings"), dtype=np.float64)
+        if (
+                not np.isfinite(objective)
+                or not np.isfinite(log_likelihood)
+                or gradient.shape != (values.size + 1,)
+                or loadings.shape != (self.dimension, self.rank)
+                or np.any(~np.isfinite(gradient))
+                or np.any(~np.isfinite(loadings))):
+            raise RuntimeError(
+                "native factor Student parameterized objective returned "
+                "invalid output")
+        gradient.setflags(write=False)
+        loadings.setflags(write=False)
+        return FactorStudentParameterizedEvaluation(
+            objective=objective,
+            gradient=gradient,
+            loadings=loadings,
+            log_likelihood=log_likelihood,
+            diagnostics=MappingProxyType(native_result),
         )
 
     def joint_likelihood_and_gradient(

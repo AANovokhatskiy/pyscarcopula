@@ -34,7 +34,6 @@ from pyscarcopula.numerical._rvine_backend import (
 )
 from pyscarcopula.stattests import (
     _rvine_rosenblatt_transform_python,
-    _student_rosenblatt_transform_python,
     rvine_rosenblatt_transform,
     student_rosenblatt_transform,
 )
@@ -368,12 +367,8 @@ def test_python_oracles_match_runtime_golden(monkeypatch, golden):
         float(inputs["student_low_df"]),
         np.asarray(inputs["student_low_df_observations"], dtype=np.float64),
     )
-    local_low_df_oracle = _student_rosenblatt_transform_python(
-        np.asarray(inputs["student_correlation"], dtype=np.float64),
-        float(inputs["student_low_df"]),
-        np.asarray(inputs["student_low_df_observations"], dtype=np.float64),
-    )
-    np.testing.assert_array_equal(student_low_df, local_low_df_oracle)
+    _assert_scipy_golden_close(
+        student_low_df, expected["student_rosenblatt_low_df"])
 
     mcmc, diagnostics = vine._sample_arbitrary_given_mcmc(
         len(uniforms),
@@ -391,7 +386,7 @@ def test_python_oracles_match_runtime_golden(monkeypatch, golden):
 
 
 @pytest.mark.rvine_native
-def test_auto_dense_student_capability_fallback_matches_python_oracle(
+def test_dense_student_backend_selector_does_not_change_mandatory_native_path(
         monkeypatch, golden):
     monkeypatch.setenv(_RVINE_BACKEND_ENV, "auto")
     inputs = golden["inputs"]
@@ -414,16 +409,10 @@ def test_auto_dense_student_capability_fallback_matches_python_oracle(
         low_df_observations,
     )
 
-    np.testing.assert_array_equal(
-        path_result,
-        _student_rosenblatt_transform_python(
-            correlation, df_path, observations),
-    )
-    np.testing.assert_array_equal(
-        low_df_result,
-        _student_rosenblatt_transform_python(
-            correlation, low_df, low_df_observations),
-    )
+    _assert_scipy_golden_close(
+        path_result, golden["expected"]["student_rosenblatt_df_path"])
+    _assert_scipy_golden_close(
+        low_df_result, golden["expected"]["student_rosenblatt_low_df"])
 
 
 def test_replay_inputs_are_owned_contiguous_and_do_not_mutate_or_consume_rng(
@@ -765,7 +754,6 @@ def test_oracle_names_are_stable_and_independent():
     assert callable(vine._sample_arbitrary_given_mcmc_python)
     assert callable(_execute_conditional_plan_python)
     assert callable(_rvine_rosenblatt_transform_python)
-    assert callable(_student_rosenblatt_transform_python)
 
 
 @pytest.mark.parametrize(

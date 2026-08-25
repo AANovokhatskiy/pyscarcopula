@@ -32,7 +32,6 @@ from typing import Any
 
 import numpy as np
 from numpy.typing import ArrayLike
-from scipy.stats import t as t_dist
 
 from pyscarcopula.copula.base import CopulaCapabilities
 from pyscarcopula.copula.multivariate.base import (
@@ -494,10 +493,16 @@ class StochasticStudentCopula(MultivariateCopula):
                     self, "_factor_initialization_diagnostics",
                     {"source": "restored"}),
             )
-        if "_L" not in self.__dict__:
-            # States pickled before the Cholesky factor was cached.
-            self._L = (
-                np.linalg.cholesky(self._R) if self._R is not None else None)
+        self._L = None
+        if (
+                getattr(self, "_corr_mode", None) != "factor"
+                and self._R is not None):
+            from pyscarcopula.numerical import multivariate_native
+            self._L_inv, self._log_det = (
+                multivariate_native.prepare_dense_correlation(self._R))
+        else:
+            self._L_inv = None
+            self._log_det = None
 
     def _set_factor_loadings(self, loadings, *, diagnostics=None):
         if self._corr_mode != 'factor':
@@ -603,21 +608,20 @@ class StochasticStudentCopula(MultivariateCopula):
         self._corr_preprocessing = preprocessing
 
     def _set_generated_R(self, R):
-        """Commit an internally generated SPD correlation matrix."""
+        """Commit an internally validated SPD correlation matrix."""
         R = np.asarray(R, dtype=np.float64)
         if R.shape != (self._d, self._d):
             raise ValueError(
                 f"R must be ({self._d}, {self._d}), got {R.shape}")
         if not np.all(np.isfinite(R)):
             raise ValueError("R must contain only finite values")
-        try:
-            L = np.linalg.cholesky(R)
-        except np.linalg.LinAlgError as exc:
-            raise ValueError("R must be positive definite") from exc
-        self._R = R
-        self._L = L
-        self._L_inv = np.linalg.inv(L)
-        self._log_det = 2.0 * np.sum(np.log(np.diag(L)))
+        from pyscarcopula.numerical import multivariate_native
+        inverse_cholesky, log_determinant = (
+            multivariate_native.prepare_dense_correlation(R))
+        self._R = np.ascontiguousarray(R)
+        self._L = None
+        self._L_inv = inverse_cholesky
+        self._log_det = log_determinant
         self._corr_cache_version += 1
 
     def _initial_corr(self, u):
@@ -1515,14 +1519,7 @@ class StochasticStudentCopula(MultivariateCopula):
                 self._set_factor_loadings(
                     candidate_factor.loadings, diagnostics=initialization)
             else:
-                L = np.linalg.cholesky(correlation)
-                L_inv = np.linalg.inv(L)
-                log_det = 2.0 * np.sum(np.log(np.diag(L)))
-                self._R = correlation.copy()
-                self._L = L
-                self._L_inv = L_inv
-                self._log_det = log_det
-                self._corr_cache_version += 1
+                self._set_generated_R(correlation)
                 self._corr_preprocessing = preprocessing
                 if self._corr_mode in {"shrinkage", "cholesky"}:
                     self._corr_base = initial_correlation.copy()
@@ -1689,6 +1686,9 @@ class StochasticStudentCopula(MultivariateCopula):
         n = validate_integer(n, "n")
         n_threads = _sampling_n_threads(n_threads)
         r_arr = _validated_student_sampling_parameters(r, n)
+        if rng is None:
+            rng = np.random.default_rng()
+        from pyscarcopula.numerical import multivariate_native
         if self._corr_mode == 'factor':
             if self._factor_operator is None:
                 raise ValueError(
@@ -1700,8 +1700,6 @@ class StochasticStudentCopula(MultivariateCopula):
                 "use sample_at_parameter_batches(), reduce batch_rows, "
                 "or increase memory_budget_bytes",
             )
-            if rng is None:
-                rng = np.random.default_rng()
             df_path = r_arr
             if df_path.size == 1:
                 df_path = np.full(n, df_path[0], dtype=np.float64)
@@ -1709,58 +1707,48 @@ class StochasticStudentCopula(MultivariateCopula):
                 raise ValueError(
                     f"r must be scalar or array of length {n}, "
                     f"got {df_path.size}")
-            latent = self._factor_operator.sample_normal(
-                n,
-                rng=rng,
-                n_threads=n_threads,
-            )
+            factor_draws = rng.standard_normal(
+                (n, self._factor_operator.rank))
+            residual_draws = rng.standard_normal((n, self._d))
             chi_square = np.empty(n, dtype=np.float64)
             for df_value in np.unique(df_path):
                 rows = np.flatnonzero(df_path == df_value)
                 chi_square[rows] = rng.chisquare(
                     float(df_value), size=len(rows))
-            latent *= np.sqrt(df_path / chi_square)[:, None]
-            return t_dist.cdf(latent, df=df_path[:, None])
+            return multivariate_native.factor_student_sample_from_draws(
+                self._factor_operator,
+                df_path,
+                factor_draws,
+                residual_draws,
+                chi_square,
+                n_threads=n_threads,
+            )
         if self._R is None:
             raise ValueError("Correlation matrix R not set. Call fit() first.")
-        if rng is None:
-            rng = np.random.default_rng()
 
         is_scalar = (r_arr.size == 1)
-
-        d = self._d
-        L = self._L
-
+        normal_draws = rng.standard_normal((n, self._d))
+        chi_square = np.empty(n, dtype=np.float64)
         if is_scalar:
-            # All samples share same df — vectorized
             df_val = float(r_arr[0])
-            # multivariate t: x = sqrt(df/chi2) * L @ z, z ~ N(0,I)
-            z = rng.standard_normal((n, d))
-            chi2_samples = rng.chisquare(df_val, size=n)
-            scale = np.sqrt(df_val / chi2_samples)  # (n,)
-            x = scale[:, np.newaxis] * (z @ L.T)  # (n, d)
-            u = t_dist.cdf(x, df=df_val)
+            chi_square[:] = rng.chisquare(df_val, size=n)
         else:
-            # Each sample has its own df — vectorized where possible
             if len(r_arr) != n:
                 raise ValueError(
                     f"r must be scalar or array of length {n}, got {len(r_arr)}")
-
-            z = rng.standard_normal((n, d))
-            x_normal = z @ L.T  # (n, d) — correlated normal
-
-            u = np.empty((n, d))
-            # Group by unique df values for efficiency
             unique_dfs, inverse = np.unique(r_arr, return_inverse=True)
             for idx, df_val in enumerate(unique_dfs):
                 mask = (inverse == idx)
-                n_mask = np.sum(mask)
-                chi2_samples = rng.chisquare(df_val, size=n_mask)
-                scale = np.sqrt(df_val / chi2_samples)
-                x_t = scale[:, np.newaxis] * x_normal[mask]
-                u[mask] = t_dist.cdf(x_t, df=df_val)
+                chi_square[mask] = rng.chisquare(
+                    df_val, size=int(np.sum(mask)))
 
-        return u
+        return multivariate_native.student_sample_from_draws(
+            self._R,
+            r_arr,
+            normal_draws,
+            chi_square,
+            n_threads=n_threads,
+        )
 
     def sample_at_parameter_batches(
             self,

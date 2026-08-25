@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstdint>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -24,6 +25,49 @@ py::array_t<double> grid_values_to_array(const scar::GridValues& values) {
         values.values,
         static_cast<std::size_t>(values.n_obs),
         static_cast<std::size_t>(values.n_grid));
+}
+
+py::array_t<double> pair_observations_to_array(
+    const scar::Observations& observations) {
+
+    std::vector<double> values;
+    std::size_t size = 0;
+    if (!scar::core::checked_size_mul(
+            observations.size(), std::size_t{2}, size)) {
+        throw std::invalid_argument(
+            "pair sample output shape is not representable");
+    }
+    values.reserve(size);
+    for (const std::vector<double>& row : observations) {
+        if (row.size() != 2) {
+            throw std::logic_error(
+                "pair sampling kernel returned an invalid row width");
+        }
+        values.insert(values.end(), row.begin(), row.end());
+    }
+    return matrix_to_array(values, observations.size(), 2);
+}
+
+scar::Observations finite_rows_from_array(
+    Float64Array values,
+    const char* name) {
+
+    const py::buffer_info info = values.request();
+    if (info.ndim != 2 || info.shape[0] < 0 || info.shape[1] < 0) {
+        throw std::invalid_argument(
+            std::string(name) + " must be a finite 2D float64 array");
+    }
+    const std::size_t rows = static_cast<std::size_t>(info.shape[0]);
+    const std::size_t columns = static_cast<std::size_t>(info.shape[1]);
+    const std::vector<double> flat = flat_vector_from_array(values, name);
+    scar::Observations output(
+        rows, std::vector<double>(columns, 0.0));
+    for (std::size_t row = 0; row < rows; ++row) {
+        for (std::size_t column = 0; column < columns; ++column) {
+            output[row][column] = flat[row * columns + column];
+        }
+    }
+    return output;
 }
 
 void set_student_ppf_cache(
@@ -507,6 +551,53 @@ void bind_copula(py::module_& m) {
         },
         py::arg("copula"),
         py::arg("q_given"),
+        py::arg("r"));
+
+    m.def(
+        "copula_sample_from_uniforms",
+        [](const scar::CopulaSpec& copula,
+           py::array_t<double, py::array::c_style | py::array::forcecast>
+               uniforms,
+           py::array_t<double, py::array::c_style | py::array::forcecast> r) {
+            const scar::Observations uniform_values =
+                observations_from_array(uniforms);
+            const std::vector<double> parameters = vector_from_array(r);
+            scar::Observations result;
+            {
+                py::gil_scoped_release release;
+                result = scar::copula_sample_from_uniforms(
+                    copula, uniform_values, parameters);
+            }
+            return pair_observations_to_array(result);
+        },
+        py::arg("copula"),
+        py::arg("uniforms"),
+        py::arg("r"));
+
+    m.def(
+        "copula_sample_from_rng_draws",
+        [](const scar::CopulaSpec& copula,
+           py::array_t<double, py::array::c_style | py::array::forcecast>
+               draws,
+           py::array_t<double, py::array::c_style | py::array::forcecast>
+               auxiliary,
+           py::array_t<double, py::array::c_style | py::array::forcecast> r) {
+            const scar::Observations draw_values =
+                finite_rows_from_array(draws, "draws");
+            const scar::Observations auxiliary_values =
+                finite_rows_from_array(auxiliary, "auxiliary");
+            const std::vector<double> parameters = vector_from_array(r);
+            scar::Observations result;
+            {
+                py::gil_scoped_release release;
+                result = scar::copula_sample_from_rng_draws(
+                    copula, draw_values, auxiliary_values, parameters);
+            }
+            return pair_observations_to_array(result);
+        },
+        py::arg("copula"),
+        py::arg("draws"),
+        py::arg("auxiliary"),
         py::arg("r"));
 
     m.def(

@@ -133,6 +133,31 @@ sequential GAS R-vine sampling, dense Student Rosenblatt transforms, and
 SCAR-TM-OU likelihood/gradient/forward operations have one production
 implementation in C++.
 
+Pair-copula unconditional sampling keeps RNG ownership in Python but passes
+the complete fixed-uniform draw matrix through the native facade. C++ applies
+the transposed conditional orientation, including rotated-family semantics;
+built-in pair subclasses contain no frailty or conditional-inversion sampling
+formulae. Point evaluation and sampling use the same family `h_inverse`
+implementation and accuracy contract; there is no sampling-specific inverse.
+
+Static dense/factor Gaussian and Student runtime sampling/GoF paths likewise
+keep only RNG draw generation and output assembly in Python. Fixed normal and
+chi-square draws, unconditional and conditional latent transforms, correlation
+algebra, marginal CDFs, dense/factor Rosenblatt transforms, and the radial GoF
+summary are owned by `copula::multivariate`. SciPy remains at the facade only
+for the final one-sample Cramér-von Mises statistic and p-value.
+Equicorrelation unconditional sampling, conditional sampling, and Rosenblatt
+transforms use specialized scalar-or-row C++ kernels without materializing a
+dense correlation matrix. Only dynamic state/filter ownership remains in the
+Stage 8.3 migration boundary.
+
+Static dense-correlation preprocessing uses the dependency-free C++17 Jacobi
+eigensolver as its canonical arithmetic path. Python performs boundary shape
+and finiteness checks and constructs the public diagnostics DTO, but does not
+run an eigendecomposition or reconstruct the projected matrix. The numerical
+baseline was explicitly refrozen when this owner changed; LAPACK, OpenBLAS,
+and other external linear-algebra runtimes are not build dependencies.
+
 The extension build has one canonical source manifest at
 `pyscarcopula/_cpp/build_support/sources.py`. `SCAR_COMPUTE_SOURCES` contains
 only Python-free computational translation units;

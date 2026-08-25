@@ -38,4 +38,20 @@ FactorStudentGridResult factor_student_log_pdf_and_dlog_ddf_grid(
     std::size_t dimension_tile,
     int n_threads = 1);
 
+struct FactorStudentDensityGridResult {
+    std::vector<double> pdf;
+    std::vector<double> d_pdf_ddf;
+    Status status = Status::Ok;
+    FailureContext failure{};
+
+    bool is_ok() const noexcept {
+        return ok(status);
+    }
+};
+
+FactorStudentDensityGridResult factor_student_density_from_log_grid(
+    const double* log_pdf,
+    const double* dlog_ddf,
+    std::size_t cells);
+
 }  // namespace scar

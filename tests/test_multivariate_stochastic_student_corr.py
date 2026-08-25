@@ -490,7 +490,7 @@ def test_kendall_initialization_is_used_when_no_corr_is_supplied(corr_mode):
         ("cholesky", np.array([0.1, -0.2, 0.3])),
     ],
 )
-def test_internal_corr_trial_skips_projection_and_uses_one_cholesky(
+def test_internal_corr_trial_uses_native_dense_preparation(
         corr_mode, corr_params, monkeypatch):
     R0 = _R()
     model = StochasticStudentCopula(
@@ -504,24 +504,30 @@ def test_internal_corr_trial_skips_projection_and_uses_one_cholesky(
         if corr_mode == "shrinkage"
         else unpack_cholesky_corr(corr_params, model.d)
     )
-    original_cholesky = np.linalg.cholesky
-    cholesky_calls = 0
-
     def fail_eigh(*args, **kwargs):
         raise AssertionError("correlation trial must not run SPD projection")
 
-    def counting_cholesky(*args, **kwargs):
-        nonlocal cholesky_calls
-        cholesky_calls += 1
-        return original_cholesky(*args, **kwargs)
+    def fail_cholesky(*args, **kwargs):
+        raise AssertionError("correlation trial must not run Python Cholesky")
 
     monkeypatch.setattr(np.linalg, "eigh", fail_eigh)
-    monkeypatch.setattr(np.linalg, "cholesky", counting_cholesky)
+    monkeypatch.setattr(np.linalg, "cholesky", fail_cholesky)
 
     model._set_corr_from_params(corr_params)
 
-    assert cholesky_calls == 1
     np.testing.assert_allclose(model.R, expected, atol=1e-12, rtol=1e-12)
+    np.testing.assert_allclose(
+        model._L_inv @ expected @ model._L_inv.T,
+        np.eye(model.d),
+        atol=2e-12,
+        rtol=2e-12,
+    )
+    np.testing.assert_allclose(
+        model._log_det,
+        np.linalg.slogdet(expected)[1],
+        atol=2e-12,
+        rtol=2e-12,
+    )
 
 
 @pytest.mark.parametrize(

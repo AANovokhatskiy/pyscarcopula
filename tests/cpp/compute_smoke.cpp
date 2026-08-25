@@ -1,5 +1,7 @@
 #include "scar/copula.hpp"
 #include "scar/copula/capability.hpp"
+#include "scar/copula/multivariate/rosenblatt.hpp"
+#include "scar/copula/multivariate/sampling.hpp"
 #include "scar/copula/prepared_dynamic_emission.hpp"
 #include "scar/copula/prepared_pair_kernel.hpp"
 #include "scar/copula/result.hpp"
@@ -104,6 +106,19 @@ int main() {
     const auto density = scar::copula_pdf(spec, observations, parameters);
     if (density.size() != 1 || std::abs(density.front() - 1.0) > 1e-15) {
         return 6;
+    }
+
+    const scar::Observations fixed_uniforms{{0.25, 0.75}, {0.60, 0.40}};
+    const auto independent_samples = scar::copula_sample_from_uniforms(
+        spec, fixed_uniforms, parameters);
+    if (independent_samples != fixed_uniforms) {
+        return 17;
+    }
+    const scar::Observations no_auxiliary;
+    const auto independent_rng_samples = scar::copula_sample_from_rng_draws(
+        spec, fixed_uniforms, no_auxiliary, parameters);
+    if (independent_rng_samples != fixed_uniforms) {
+        return 18;
     }
 
     scar::CopulaSpec clayton_spec;
@@ -254,6 +269,46 @@ int main() {
         || filter_result.backward_messages.size() != 4 * 9
         || filter_result.smoothed_weights.size() != 4 * 9) {
         return 15;
+    }
+
+    const std::vector<double> identity_correlation{
+        1.0, 0.0,
+        0.0, 1.0,
+    };
+    const std::vector<double> normal_draws{
+        0.0, 0.0,
+        1.0, -1.0,
+    };
+    const scar::ConditionalSampleResult gaussian_sample =
+        scar::multivariate_gaussian_sample_dense(
+            scar::DoubleView{
+                identity_correlation.data(), identity_correlation.size()},
+            2,
+            scar::DoubleView{normal_draws.data(), normal_draws.size()},
+            2,
+            1);
+    const std::vector<double> rosenblatt_input{
+        0.25, 0.75,
+        0.60, 0.40,
+    };
+    const scar::ObservationView rosenblatt_view{
+        rosenblatt_input.data(), 2, 2};
+    const scar::MultivariateRosenblattResult gaussian_rosenblatt =
+        scar::gaussian_rosenblatt_dense(
+            scar::DoubleView{
+                identity_correlation.data(), identity_correlation.size()},
+            2,
+            rosenblatt_view,
+            1);
+    const scar::RadialSummaryResult radial_summary =
+        scar::radial_uniform_summary(rosenblatt_view, 1);
+    if (!gaussian_sample.is_ok()
+        || gaussian_sample.values.size() != 4
+        || !gaussian_rosenblatt.is_ok()
+        || gaussian_rosenblatt.residuals.size() != 4
+        || !radial_summary.is_ok()
+        || radial_summary.values.size() != 2) {
+        return 18;
     }
     return scar::SCAR_OK;
 }

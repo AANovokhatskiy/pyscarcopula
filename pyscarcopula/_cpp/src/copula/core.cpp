@@ -4,10 +4,12 @@
 #include "scar/detail/copula/common.hpp"
 #include "scar/detail/copula/dispatch.hpp"
 #include "scar/detail/safety.hpp"
+#include "scar/math/normal.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <stdexcept>
 
 namespace scar {
 
@@ -354,6 +356,224 @@ std::vector<double> copula_h_inverse(
             row_value(q_given, i, 0),
             row_value(q_given, i, 1),
             r_value(r, i));
+    }
+    return out;
+}
+
+Observations copula_sample_from_uniforms(
+    const CopulaSpec& spec,
+    const Observations& uniforms,
+    const std::vector<double>& r) {
+
+    if (r.size() != 1 && r.size() != uniforms.size()) {
+        throw std::invalid_argument(
+            "pair sampling parameter must be scalar or have one value per row");
+    }
+
+    const CopulaSpec transposed_spec =
+        scar_internal::transposed_copula_spec(spec);
+    const PreparedPairKernel kernel(transposed_spec);
+    if (!kernel.is_supported()) {
+        throw std::invalid_argument(
+            "pair sampling requires a supported pair-copula specification");
+    }
+
+    Observations out;
+    out.reserve(uniforms.size());
+    for (std::size_t row = 0; row < uniforms.size(); ++row) {
+        if (uniforms[row].size() != 2) {
+            throw std::invalid_argument(
+                "pair sampling uniforms must have exactly two columns");
+        }
+        const double first = uniforms[row][0];
+        const double quantile = uniforms[row][1];
+        if (!std::isfinite(first)
+            || !std::isfinite(quantile)
+            || !(first > 0.0 && first < 1.0)
+            || !(quantile > 0.0 && quantile < 1.0)) {
+            throw std::invalid_argument(
+                "pair sampling uniforms must be finite and in (0, 1)");
+        }
+        const double sampled = kernel.inverse_h(
+            quantile, first, r_value(r, static_cast<std::int64_t>(row)));
+        if (!std::isfinite(sampled)
+            || !(sampled > 0.0 && sampled < 1.0)) {
+            throw std::invalid_argument(
+                "pair sampling transform produced a value outside (0, 1)");
+        }
+        out.push_back({first, sampled});
+    }
+    return out;
+}
+
+Observations copula_sample_from_rng_draws(
+    const CopulaSpec& spec,
+    const Observations& draws,
+    const Observations& auxiliary,
+    const std::vector<double>& r) {
+
+    if (r.size() != 1 && r.size() != draws.size()) {
+        throw std::invalid_argument(
+            "pair sampling parameter must be scalar or have one value per row");
+    }
+    if (!auxiliary.empty() && auxiliary.size() != draws.size()) {
+        throw std::invalid_argument(
+            "pair sampling auxiliary draws must have one row per sample");
+    }
+
+    const PreparedPairKernel kernel(spec);
+    if (!kernel.is_supported()) {
+        throw std::invalid_argument(
+            "pair sampling requires a supported pair-copula specification");
+    }
+
+    constexpr double kPi = 3.141592653589793238462643383279502884;
+    Observations out;
+    out.reserve(draws.size());
+    for (std::size_t row = 0; row < draws.size(); ++row) {
+        if (draws[row].size() != 2) {
+            throw std::invalid_argument(
+                "pair sampling RNG draws must have exactly two columns");
+        }
+        const double first_draw = draws[row][0];
+        const double second_draw = draws[row][1];
+        if (!std::isfinite(first_draw) || !std::isfinite(second_draw)) {
+            throw std::invalid_argument(
+                "pair sampling RNG draws must be finite");
+        }
+        if (spec.family != CopulaFamily::Gaussian
+            && (!(first_draw > 0.0 && first_draw < 1.0)
+                || !(second_draw > 0.0 && second_draw < 1.0))) {
+            throw std::invalid_argument(
+                "pair sampling uniform draws must be in (0, 1)");
+        }
+        const double parameter = r_value(
+            r, static_cast<std::int64_t>(row));
+        double first = 0.0;
+        double second = 0.0;
+
+        switch (spec.family) {
+            case CopulaFamily::Independent:
+                first = first_draw;
+                second = second_draw;
+                break;
+            case CopulaFamily::Gaussian: {
+                if (spec.rotation != Rotation::R0) {
+                    throw std::invalid_argument(
+                        "Gaussian pair sampling does not support rotation");
+                }
+                const double correlated =
+                    parameter * first_draw
+                    + std::sqrt(1.0 - parameter * parameter) * second_draw;
+                first = math::normal_cdf(first_draw);
+                second = math::normal_cdf(correlated);
+                break;
+            }
+            case CopulaFamily::Frank: {
+                const double t = std::exp(-parameter * first_draw);
+                const double p = std::exp(-parameter);
+                const double f1 = second_draw * (1.0 - p);
+                const double f2 = t + second_draw * (1.0 - t);
+                first = first_draw;
+                second = std::abs(f1 - f2) < 1e-9
+                    ? first_draw
+                    : -std::log1p(-f1 / f2) / parameter;
+                break;
+            }
+            case CopulaFamily::Joe:
+                first = first_draw;
+                second = kernel.inverse_h(
+                    second_draw, first_draw, parameter);
+                break;
+            case CopulaFamily::Clayton: {
+                if (auxiliary.empty() || auxiliary[row].size() != 1) {
+                    throw std::invalid_argument(
+                        "Clayton sampling requires one frailty draw per row");
+                }
+                const double raw_frailty = auxiliary[row][0];
+                if (!(raw_frailty > 0.0) || !std::isfinite(raw_frailty)) {
+                    throw std::invalid_argument(
+                        "Clayton frailty draws must be finite and positive");
+                }
+                const double frailty = std::max(raw_frailty, 1e-50);
+                const double unrotated_first = std::pow(
+                    1.0 + (-std::log(first_draw) / frailty) * parameter,
+                    -1.0 / parameter);
+                const double unrotated_second = std::pow(
+                    1.0 + (-std::log(second_draw) / frailty) * parameter,
+                    -1.0 / parameter);
+                apply_rotation(
+                    spec,
+                    unrotated_first,
+                    unrotated_second,
+                    first,
+                    second);
+                break;
+            }
+            case CopulaFamily::Gumbel: {
+                if (auxiliary.empty() || auxiliary[row].size() != 2) {
+                    throw std::invalid_argument(
+                        "Gumbel sampling requires angle and uniform draws");
+                }
+                const double angle = auxiliary[row][0];
+                const double uniform = auxiliary[row][1];
+                if (!std::isfinite(angle)
+                    || !(angle > -kPi / 2.0 && angle < kPi / 2.0)
+                    || !(uniform > 0.0 && uniform < 1.0)) {
+                    throw std::invalid_argument(
+                        "Gumbel auxiliary draws have an invalid domain");
+                }
+                const double alpha = 1.0 / parameter;
+                const double scale = std::pow(
+                    std::cos(kPi / (2.0 * parameter)), parameter);
+                const double exponential = -std::log1p(-uniform);
+                double stable = 0.0;
+                if (alpha != 1.0) {
+                    const double tangent = std::tan(kPi * alpha / 2.0);
+                    const double shift = std::atan(tangent) / alpha;
+                    const double factor = std::pow(
+                        1.0 + tangent * tangent, 1.0 / (2.0 * alpha));
+                    stable =
+                        factor
+                        * std::sin(alpha * (angle + shift))
+                        / std::pow(std::cos(angle), 1.0 / alpha)
+                        * std::pow(
+                            std::cos(angle - alpha * (angle + shift))
+                                / exponential,
+                            (1.0 - alpha) / alpha);
+                    stable *= scale;
+                } else {
+                    stable = 2.0 / kPi * (
+                        (kPi / 2.0 + angle) * std::tan(angle)
+                        - std::log(
+                            kPi / 2.0 * exponential * std::cos(angle)
+                            / (kPi / 2.0 + angle)));
+                    stable = scale * stable
+                        + 2.0 / kPi * scale * std::log(scale);
+                }
+                const double frailty = std::max(stable, 1e-50);
+                const double unrotated_first = std::exp(-std::pow(
+                    -std::log(first_draw) / frailty, 1.0 / parameter));
+                const double unrotated_second = std::exp(-std::pow(
+                    -std::log(second_draw) / frailty, 1.0 / parameter));
+                apply_rotation(
+                    spec,
+                    unrotated_first,
+                    unrotated_second,
+                    first,
+                    second);
+                break;
+            }
+            default:
+                throw std::invalid_argument(
+                    "family-specific pair sampling is unavailable");
+        }
+
+        if (!std::isfinite(first) || !std::isfinite(second)) {
+            throw std::invalid_argument(
+                "pair sampling transform produced non-finite values");
+        }
+        out.push_back({first, second});
     }
     return out;
 }

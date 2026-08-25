@@ -52,6 +52,16 @@ COPULA_R_RANGES = [
 COPULA_R_IDS = [f"{c.__name__}-{r}" for c, r, _ in COPULA_R_RANGES]
 
 
+def _rotated_coordinates(first, second, rotation):
+    rotated_first = np.asarray(first, dtype=np.float64).copy()
+    rotated_second = np.asarray(second, dtype=np.float64).copy()
+    if rotation in (90, 180):
+        rotated_first = 1.0 - rotated_first
+    if rotation in (180, 270):
+        rotated_second = 1.0 - rotated_second
+    return rotated_first, rotated_second
+
+
 @pytest.mark.parametrize("cls,rot,r_vals", COPULA_R_RANGES, ids=COPULA_R_IDS)
 def test_dlogc_dr(cls, rot, r_vals):
     """Analytical d(log c)/dr matches finite differences."""
@@ -65,7 +75,7 @@ def test_dlogc_dr(cls, rot, r_vals):
             for u2_val in u_vals:
                 u1a, u2a, ra = broadcast(
                     np.array([u1_val]), np.array([u2_val]), np.array([r_val]))
-                v1, v2 = cop._apply_rotation(u1a, u2a)
+                v1, v2 = _rotated_coordinates(u1a, u2a, rot)
                 ana = cop.dlog_pdf_dr_unrotated(v1, v2, ra)[0]
                 lp = cop.log_pdf_unrotated(v1, v2, ra + eps)[0]
                 lm = cop.log_pdf_unrotated(v1, v2, ra - eps)[0]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import ast
 from dataclasses import asdict, fields, is_dataclass
 import hashlib
@@ -237,6 +238,14 @@ def _complete_constant_mappings(
         python_constants: list[dict[str, Any]],
         cpp_constants: list[dict[str, Any]]) -> list[dict[str, Any]]:
     curated = {entry["old"]: entry for entry in _named_constant_mappings()}
+    retired_python_constants = {
+        "pyscarcopula.numerical.multivariate_native."
+        "_DENSE_STUDENT_NATIVE_MIN_DF",
+        "pyscarcopula.numerical.multivariate_native."
+        "_DENSE_STUDENT_NATIVE_MAX_CONDITION",
+        "pyscarcopula.numerical.multivariate_native."
+        "_DENSE_STUDENT_CORRELATION_TOLERANCE",
+    }
     records = []
     for kind, constants in (
             ("python", python_constants), ("cpp", cpp_constants)):
@@ -268,6 +277,19 @@ def _complete_constant_mappings(
                     else "preserve the current value, bounds, and usage semantics"
                 ),
             })
+    discovered = {entry["old"] for entry in records}
+    for old in sorted(retired_python_constants - discovered):
+        entry = curated[old]
+        records.append({
+            "kind": "historical-python",
+            "old": old,
+            "source": None,
+            "line": None,
+            "value": entry["value"],
+            "target_owner": entry["target_owner"],
+            "target": entry["target"],
+            "semantic": entry["semantic"],
+        })
     return records
 
 
@@ -432,7 +454,6 @@ def _breaking_changes() -> dict[str, Any]:
             "pyscarcopula.vine.vine.VineCopula._sample_arbitrary_given_mcmc_python",
             "pyscarcopula.numerical._rvine_backend.dispatch_rvine_backend",
             "pyscarcopula.stattests._rvine_rosenblatt_transform_python",
-            "pyscarcopula.stattests._student_rosenblatt_transform_python",
             "custom subclass capability fallbacks in numerical/_cpp_copula.py and numerical/_cpp_rvine.py",
             "production pair transform/rotation formulas retained only as test oracles",
             "replaced OU/TM core paths in numerical/ou_kernels.py, hermite_tm.py, predictive_tm.py, tm_functions.py, and tm_grid.py"
@@ -571,7 +592,6 @@ def _gate3_contract_view(payload: dict[str, Any]) -> dict[str, Any]:
             "numerical_config_mappings"],
         "named_constant_mappings": contracts["named_constant_mappings"],
         "model_operation_matrix": contracts["model_operation_matrix"],
-        "discovered_cpp_constants": contracts["discovered_cpp_constants"],
     }
 
 
@@ -589,6 +609,12 @@ _GATE3_APPROVED_ARCHITECTURE_MANIFESTS = {
     "pyscarcopula._cpp.build_support.sources.PYTHON_BINDING_SOURCES",
 }
 
+_GATE3_PYTHON_TO_CPP_CONSTANT_RELOCATIONS = {
+    "pyscarcopula.copula.multivariate.factor_estimation."
+    "_JOINT_DIAGONAL_RAW_FLOOR": (
+        "kJointDiagonalRawFloor", "1e-10"),
+}
+
 
 def _python_constant_values(payload: dict[str, Any]) -> dict[str, Any]:
     mappings = payload["configuration_contracts"][
@@ -596,7 +622,7 @@ def _python_constant_values(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         entry["old"]: entry["value"]
         for entry in mappings
-        if entry["kind"] == "python"
+        if entry["kind"] in {"python", "historical-python"}
     }
 
 
@@ -611,12 +637,20 @@ def _gate3_python_constant_drift(
     """
     frozen = _python_constant_values(expected)
     current = _python_constant_values(actual)
+    cpp_constants = {
+        (entry["symbol"], entry["value_expression"])
+        for entry in actual["configuration_contracts"][
+            "discovered_cpp_constants"]
+    }
     drift = []
     for old, expected_value in frozen.items():
         if old in _GATE3_APPROVED_ARCHITECTURE_MANIFESTS:
             continue
         current_name = _GATE3_PYTHON_CONSTANT_RELOCATIONS.get(old, old)
         if current_name not in current:
+            relocation = _GATE3_PYTHON_TO_CPP_CONSTANT_RELOCATIONS.get(old)
+            if relocation in cpp_constants:
+                continue
             drift.append(f"missing Python constant {old} ({current_name})")
         elif current[current_name] != expected_value:
             drift.append(
@@ -626,12 +660,36 @@ def _gate3_python_constant_drift(
     return drift
 
 
+def _gate3_cpp_constant_drift(
+        expected: dict[str, Any], actual: dict[str, Any]) -> list[str]:
+    """Require every frozen C++ symbol/value pair; permit later additions.
+
+    Stage 8 moves declarations and adds native-only convergence controls, so
+    source paths and line numbers are not stable Gate 3 identifiers.  The
+    historical value contract is the multiset of symbol/value expressions.
+    """
+    def signatures(payload: dict[str, Any]) -> Counter[tuple[str, str]]:
+        constants = payload["configuration_contracts"][
+            "discovered_cpp_constants"]
+        return Counter(
+            (entry["symbol"], entry["value_expression"])
+            for entry in constants
+        )
+
+    missing = signatures(expected) - signatures(actual)
+    return [
+        f"missing C++ constant {symbol}={value!r} (count={count})"
+        for (symbol, value), count in sorted(missing.items())
+    ]
+
+
 def _gate3_drift(
         expected: dict[str, Any], actual: dict[str, Any]) -> list[str]:
     drift = []
     if _gate3_contract_view(expected) != _gate3_contract_view(actual):
-        drift.append("config, mapping, model-operation, or C++ constant drift")
+        drift.append("config, mapping, or model-operation drift")
     drift.extend(_gate3_python_constant_drift(expected, actual))
+    drift.extend(_gate3_cpp_constant_drift(expected, actual))
     return drift
 
 

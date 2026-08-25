@@ -929,8 +929,12 @@ def test_dense_student_binding_keeps_arrays_alive_and_releases_gil():
     request = source.index('"dense_student_rosenblatt_transform"')
     release = source.index("py::gil_scoped_release release", request)
     native_call = source.index("scar::student_rosenblatt_dense(", release)
-    result_dict = source.index("py::dict diagnostics", native_call)
-    assert request < release < native_call < result_dict
+    result_dict = source.index(
+        "return multivariate_rosenblatt_result_to_dict(result);",
+        native_call,
+    )
+    helper = source.index("py::dict multivariate_rosenblatt_result_to_dict(")
+    assert helper < request < release < native_call < result_dict
     for name in ("correlation_view", "df_view", "observations"):
         assert name in source[request:release]
 

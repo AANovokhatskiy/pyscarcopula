@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
-from scipy.stats import kendalltau
 
 
 @dataclass(frozen=True)
@@ -32,41 +31,29 @@ class CorrelationPreprocessingResult:
 
 
 def sigmoid(x: float | np.ndarray) -> np.ndarray:
-    """Numerically stable logistic transform."""
-    x_arr = np.asarray(x, dtype=np.float64)
-    out = np.empty_like(x_arr, dtype=np.float64)
-    positive = x_arr >= 0.0
-    out[positive] = 1.0 / (1.0 + np.exp(-x_arr[positive]))
-    exp_x = np.exp(x_arr[~positive])
-    out[~positive] = exp_x / (1.0 + exp_x)
-    return out
+    """Numerically stable native logistic transform."""
+    from pyscarcopula.numerical import multivariate_native
+    return multivariate_native.correlation_logistic(x)
 
 
 def logit(p: float | np.ndarray) -> np.ndarray:
-    """Inverse logistic transform with open-interval clipping."""
-    p_arr = np.asarray(p, dtype=np.float64)
-    p_clip = np.clip(p_arr, 1e-12, 1.0 - 1e-12)
-    return np.log(p_clip) - np.log1p(-p_clip)
+    """Native inverse logistic transform with open-interval clipping."""
+    from pyscarcopula.numerical import multivariate_native
+    return multivariate_native.correlation_logit(p)
 
 
 def project_to_corr(R: np.ndarray, eps: float = 1e-8) -> np.ndarray:
-    """Project a finite square matrix to an SPD correlation matrix."""
+    """Project a finite square matrix to an SPD correlation matrix in C++."""
     R = np.asarray(R, dtype=np.float64)
     if R.ndim != 2 or R.shape[0] != R.shape[1]:
         raise ValueError("R must be a square matrix")
     if not np.all(np.isfinite(R)):
         raise ValueError("R must contain only finite values")
 
-    sym = 0.5 * (R + R.T)
-    vals, vecs = np.linalg.eigh(sym)
-    vals = np.maximum(vals, float(eps))
-    out = vecs @ np.diag(vals) @ vecs.T
-    diag = np.sqrt(np.maximum(np.diag(out), float(eps)))
-    out = out / np.outer(diag, diag)
-    out = 0.5 * (out + out.T)
-    np.fill_diagonal(out, 1.0)
-    validate_corr_matrix(out, eps=eps)
-    return out
+    from pyscarcopula.numerical import multivariate_native
+    correlation, _ = multivariate_native.preprocess_correlation(
+        R, eigenvalue_floor=eps)
+    return correlation
 
 
 def preprocess_correlation_matrix(
@@ -84,26 +71,16 @@ def preprocess_correlation_matrix(
     if not np.all(np.isfinite(input_correlation)):
         raise ValueError("R must contain only finite values")
 
-    symmetric = 0.5 * (input_correlation + input_correlation.T)
-    min_before = float(np.min(np.linalg.eigvalsh(symmetric)))
-    correlation = project_to_corr(input_correlation, eps=eps)
-    min_after = float(np.min(np.linalg.eigvalsh(correlation)))
-    projection_applied = (
-        min_before <= float(eps)
-        or not np.allclose(
-            input_correlation,
-            correlation,
-            rtol=0.0,
-            atol=10.0 * np.finfo(np.float64).eps,
-        )
-    )
+    from pyscarcopula.numerical import multivariate_native
+    correlation, native = multivariate_native.preprocess_correlation(
+        input_correlation, eigenvalue_floor=eps)
     return CorrelationPreprocessingResult(
         correlation=correlation,
-        input_correlation=input_correlation.copy(),
+        input_correlation=native["input_correlation"],
         source=str(source),
-        projection_applied=bool(projection_applied),
-        min_eigenvalue_before=min_before,
-        min_eigenvalue_after=min_after,
+        projection_applied=native["projection_applied"],
+        min_eigenvalue_before=native["min_eigenvalue_before"],
+        min_eigenvalue_after=native["min_eigenvalue_after"],
         nonfinite_kendall_pairs=tuple(
             (int(i), int(j)) for i, j in nonfinite_kendall_pairs),
     )
@@ -126,61 +103,37 @@ def estimate_kendall_correlation(
     if observations.shape[1] < 2:
         raise ValueError("observations must contain at least two variables")
 
-    d = observations.shape[1]
-    correlation = np.eye(d, dtype=np.float64)
-    nonfinite_pairs = []
-    for i in range(d):
-        for j in range(i + 1, d):
-            kendall_result = kendalltau(
-                observations[:, i],
-                observations[:, j],
-            )
-            tau = float(
-                kendall_result.statistic
-                if hasattr(kendall_result, "statistic")
-                else kendall_result[0]
-            )
-            if not np.isfinite(tau):
-                tau = 0.0
-                nonfinite_pairs.append((i, j))
-            value = float(np.sin(0.5 * np.pi * tau))
-            correlation[i, j] = value
-            correlation[j, i] = value
-
-    return preprocess_correlation_matrix(
-        correlation,
+    from pyscarcopula.numerical import multivariate_native
+    correlation, native = multivariate_native.estimate_kendall_correlation(
+        observations, eigenvalue_floor=eps)
+    return CorrelationPreprocessingResult(
+        correlation=correlation,
+        input_correlation=native["input_correlation"],
         source="kendall",
-        eps=eps,
-        nonfinite_kendall_pairs=nonfinite_pairs,
+        projection_applied=native["projection_applied"],
+        min_eigenvalue_before=native["min_eigenvalue_before"],
+        min_eigenvalue_after=native["min_eigenvalue_after"],
+        nonfinite_kendall_pairs=native["nonfinite_kendall_pairs"],
     )
 
 
 def validate_corr_matrix(R: np.ndarray, eps: float = 1e-8) -> None:
-    """Validate that ``R`` is a finite SPD correlation matrix."""
+    """Validate a finite SPD correlation matrix in the native kernel."""
     R = np.asarray(R, dtype=np.float64)
     if R.ndim != 2 or R.shape[0] != R.shape[1]:
         raise ValueError("R must be a square matrix")
     if not np.all(np.isfinite(R)):
         raise ValueError("R must contain only finite values")
-    if not np.allclose(R, R.T, atol=eps, rtol=0.0):
-        raise ValueError("R must be symmetric")
-    if not np.allclose(np.diag(R), 1.0, atol=eps, rtol=0.0):
-        raise ValueError("R must have unit diagonal")
-    try:
-        np.linalg.cholesky(R)
-    except np.linalg.LinAlgError as exc:
-        raise ValueError("R must be positive definite") from exc
+    from pyscarcopula.numerical import multivariate_native
+    multivariate_native.validate_correlation(R, tolerance=eps)
 
 
 def _make_shrinkage_corr_from_validated(
         alpha_raw: float, R0: np.ndarray) -> np.ndarray:
-    """Build a shrinkage correlation from an already validated base."""
+    """Build a shrinkage correlation from a validated base in C++."""
     R0 = np.asarray(R0, dtype=np.float64)
-    alpha = float(sigmoid(alpha_raw))
-    out = alpha * R0 + (1.0 - alpha) * np.eye(R0.shape[0])
-    out = 0.5 * (out + out.T)
-    np.fill_diagonal(out, 1.0)
-    return out
+    from pyscarcopula.numerical import multivariate_native
+    return multivariate_native.make_shrinkage_correlation(alpha_raw, R0)
 
 
 def make_shrinkage_corr(alpha_raw: float, R0: np.ndarray) -> np.ndarray:
@@ -200,25 +153,13 @@ def cholesky_corr_n_params(d: int) -> int:
 
 
 def pack_cholesky_corr(R: np.ndarray) -> np.ndarray:
-    """Pack row-major lower off-diagonal entries from a unit-diagonal Cholesky."""
-    R = project_to_corr(R)
-    L = np.linalg.cholesky(R)
-    diag = np.diag(L)
-    if np.any(diag <= 0.0):
-        raise ValueError("Cholesky diagonal must be positive")
-    L_unit = L / diag[:, None]
-    d = R.shape[0]
-    params = np.empty(cholesky_corr_n_params(d), dtype=np.float64)
-    pos = 0
-    for i in range(1, d):
-        for j in range(i):
-            params[pos] = L_unit[i, j]
-            pos += 1
-    return params
+    """Pack native row-major unit-diagonal Cholesky coordinates."""
+    from pyscarcopula.numerical import multivariate_native
+    return multivariate_native.pack_cholesky_correlation(R)
 
 
 def _corr_from_cholesky_params(params: np.ndarray, d: int) -> np.ndarray:
-    """Build a correlation matrix from finite Cholesky parameters."""
+    """Build a correlation matrix from native Cholesky parameters."""
     d = int(d)
     expected = cholesky_corr_n_params(d)
     params = np.asarray(params, dtype=np.float64).reshape(-1)
@@ -229,18 +170,8 @@ def _corr_from_cholesky_params(params: np.ndarray, d: int) -> np.ndarray:
     if not np.all(np.isfinite(params)):
         raise ValueError("Cholesky correlation parameters must be finite")
 
-    L = np.eye(d, dtype=np.float64)
-    pos = 0
-    for i in range(1, d):
-        for j in range(i):
-            L[i, j] = params[pos]
-            pos += 1
-    sigma = L @ L.T
-    diag = np.sqrt(np.diag(sigma))
-    R = sigma / np.outer(diag, diag)
-    R = 0.5 * (R + R.T)
-    np.fill_diagonal(R, 1.0)
-    return R
+    from pyscarcopula.numerical import multivariate_native
+    return multivariate_native.unpack_cholesky_correlation(params, d)
 
 
 def unpack_cholesky_corr(params: np.ndarray, d: int) -> np.ndarray:
@@ -258,90 +189,20 @@ def _corr_gradient_to_raw_params(
         corr_base: np.ndarray | None = None) -> np.ndarray:
     """Map derivatives over symmetric ``R[i, j]`` to raw parameters."""
     corr_mode = str(corr_mode).lower()
-    params = np.asarray(params, dtype=np.float64).reshape(-1)
-    R = np.asarray(R, dtype=np.float64)
-    d = R.shape[0]
-    expected = cholesky_corr_n_params(d)
-    corr_gradient = np.asarray(
-        corr_gradient, dtype=np.float64).reshape(-1)
-    if R.shape != (d, d) or corr_gradient.size != expected:
-        raise ValueError("correlation gradient shape does not match R")
-    if not np.all(np.isfinite(corr_gradient)):
-        raise ValueError("correlation gradient must contain only finite values")
-
-    if corr_mode == "shrinkage":
-        if params.size != 1 or corr_base is None:
-            raise ValueError("shrinkage gradient requires one parameter and base")
-        corr_base = np.asarray(corr_base, dtype=np.float64)
-        if corr_base.shape != R.shape:
-            raise ValueError("corr_base shape does not match R")
-        alpha = float(sigmoid(params[0]))
-        factor = alpha * (1.0 - alpha)
-        gradient = 0.0
-        pos = 0
-        for i in range(1, d):
-            for j in range(i):
-                gradient += (
-                    corr_gradient[pos] * factor * corr_base[i, j])
-                pos += 1
-        return np.array([gradient], dtype=np.float64)
-
-    if corr_mode != "cholesky" or params.size != expected:
-        raise ValueError("unsupported correlation gradient parameterization")
-
-    A = np.eye(d, dtype=np.float64)
-    pos = 0
-    for i in range(1, d):
-        for j in range(i):
-            A[i, j] = params[pos]
-            pos += 1
-    sigma = A @ A.T
-    sigma_diag = np.diag(sigma)
-    scales = np.sqrt(sigma_diag)
-
-    matrix_gradient = np.zeros((d, d), dtype=np.float64)
-    pos = 0
-    for i in range(1, d):
-        for j in range(i):
-            value = 0.5 * corr_gradient[pos]
-            matrix_gradient[i, j] = value
-            matrix_gradient[j, i] = value
-            pos += 1
-
-    sigma_gradient = matrix_gradient / np.outer(scales, scales)
-    diagonal_correction = np.sum(matrix_gradient * R, axis=1) / sigma_diag
-    sigma_gradient[np.diag_indices(d)] -= diagonal_correction
-    A_gradient = 2.0 * sigma_gradient @ A
-
-    raw_gradient = np.empty(expected, dtype=np.float64)
-    pos = 0
-    for i in range(1, d):
-        for j in range(i):
-            raw_gradient[pos] = A_gradient[i, j]
-            pos += 1
-    return raw_gradient
+    from pyscarcopula.numerical import multivariate_native
+    return multivariate_native.correlation_gradient_to_raw(
+        corr_mode,
+        np.asarray(params, dtype=np.float64).reshape(-1),
+        R,
+        np.asarray(corr_gradient, dtype=np.float64).reshape(-1),
+        corr_base,
+    )
 
 
 def _shrinkage_raw_corr_direction(
         params: np.ndarray,
         corr_base: np.ndarray) -> np.ndarray:
     """Return lower-triangle ``dR/draw`` for shrinkage correlation."""
-    params = np.asarray(params, dtype=np.float64).reshape(-1)
-    if params.size != 1:
-        raise ValueError("shrinkage direction requires one raw parameter")
-    corr_base = np.asarray(corr_base, dtype=np.float64)
-    if corr_base.ndim != 2 or corr_base.shape[0] != corr_base.shape[1]:
-        raise ValueError("corr_base must be a square matrix")
-    if not np.all(np.isfinite(corr_base)):
-        raise ValueError("corr_base must contain only finite values")
-
-    d = corr_base.shape[0]
-    direction = np.empty(cholesky_corr_n_params(d), dtype=np.float64)
-    alpha = float(sigmoid(params[0]))
-    factor = alpha * (1.0 - alpha)
-    pos = 0
-    for i in range(1, d):
-        for j in range(i):
-            direction[pos] = factor * corr_base[i, j]
-            pos += 1
-    return direction
+    from pyscarcopula.numerical import multivariate_native
+    return multivariate_native.shrinkage_raw_correlation_direction(
+        np.asarray(params, dtype=np.float64).reshape(-1), corr_base)

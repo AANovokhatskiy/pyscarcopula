@@ -135,6 +135,38 @@ def h_inverse(copula, q, u_given, r, *, unrotated=False) -> np.ndarray:
     )
 
 
+def sample_from_uniforms(copula, uniforms, r) -> np.ndarray:
+    """Apply the native fixed-uniform pair sampling transform."""
+    module, spec = _module_and_spec(copula)
+    draws = np.ascontiguousarray(
+        np.asarray(uniforms, dtype=np.float64))
+    if draws.ndim != 2 or draws.shape[1] != 2:
+        raise ValueError(
+            f"uniforms must have shape (n, 2), got {draws.shape}")
+    parameters = _vector(0.0 if r is None else r)
+    values = module.copula_sample_from_uniforms(spec, draws, parameters)
+    return _finite(values, "copula_sample_from_uniforms")
+
+
+def sample_from_rng_draws(copula, draws, auxiliary, r) -> np.ndarray:
+    """Apply the native family-specific transform to caller-owned RNG draws."""
+    module, spec = _module_and_spec(copula)
+    primary = np.ascontiguousarray(
+        np.asarray(draws, dtype=np.float64))
+    extra = np.ascontiguousarray(
+        np.asarray(auxiliary, dtype=np.float64))
+    if primary.ndim != 2 or primary.shape[1] != 2:
+        raise ValueError(
+            f"draws must have shape (n, 2), got {primary.shape}")
+    if extra.ndim != 2:
+        raise ValueError(
+            f"auxiliary must be a 2D array, got {extra.shape}")
+    parameters = _vector(0.0 if r is None else r)
+    values = module.copula_sample_from_rng_draws(
+        spec, primary, extra, parameters)
+    return _finite(values, "copula_sample_from_rng_draws")
+
+
 def pdf_grid(copula, u, x_grid) -> np.ndarray:
     module, spec = _module_and_spec(copula)
     values = module.copula_pdf_grid(

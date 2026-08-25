@@ -9,18 +9,15 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+from scipy.stats import t as t_dist
 
 import pyscarcopula.stattests as statt
 from pyscarcopula.numerical import _cpp_extension
-from pyscarcopula.numerical._cpp_extension import CppUnsupported
 from pyscarcopula.numerical._rvine_backend import _RVINE_BACKEND_ENV
 from pyscarcopula.numerical.multivariate_native import (
     dense_student_rosenblatt,
 )
-from pyscarcopula.stattests import (
-    _student_rosenblatt_transform_python,
-    student_rosenblatt_transform,
-)
+from pyscarcopula.stattests import student_rosenblatt_transform
 
 
 pytestmark = pytest.mark.rvine_native
@@ -61,12 +58,54 @@ def _observations():
     )
 
 
+def _student_scipy_oracle(correlation, df, observations):
+    """Frozen pre-8.2 dense Student implementation used only as an oracle."""
+    values = np.asarray(observations)
+    df_values = np.asarray(df)
+    if df_values.ndim != 0:
+        df_path = np.asarray(df_values, dtype=np.float64).ravel()
+        if df_path.size == 1:
+            df = float(df_path[0])
+        elif len(values) == 0:
+            return np.empty(values.shape, dtype=np.float64)
+        else:
+            return np.vstack([
+                _student_scipy_oracle(
+                    correlation, float(row_df), values[row:row + 1])
+                for row, row_df in enumerate(df_path)
+            ])
+
+    clipped = np.clip(values, 1e-10, 1.0 - 1e-10)
+    quantiles = t_dist.ppf(clipped, df=df)
+    rows, dimension = quantiles.shape
+    transformed = np.empty((rows, dimension))
+    transformed[:, 0] = t_dist.cdf(quantiles[:, 0], df=df)
+    for index in range(1, dimension):
+        leading = correlation[:index, :index]
+        cross = correlation[index, :index]
+        inverse = np.linalg.inv(leading)
+        beta = cross @ inverse
+        variance = correlation[index, index] - cross @ inverse @ cross
+        previous = quantiles[:, :index]
+        mean = previous @ beta
+        quadratic = np.sum(previous @ inverse * previous, axis=1)
+        conditional_df = df + index
+        scale = (df + quadratic) / conditional_df
+        standardized = (
+            (quantiles[:, index] - mean)
+            / (np.sqrt(max(variance, 1e-12)) * np.sqrt(scale))
+        )
+        transformed[:, index] = t_dist.cdf(
+            standardized, df=conditional_df)
+    return np.clip(transformed, 1e-10, 1.0 - 1e-10)
+
+
 @pytest.mark.parametrize("df", [0.1, 0.5, 1.0, 2.0, 5.0, 1000.0])
 def test_native_scalar_df_matches_independent_scipy_oracle(
         monkeypatch, df):
     correlation = _correlation()
     observations = _observations()
-    expected = _student_rosenblatt_transform_python(
+    expected = _student_scipy_oracle(
         correlation, df, observations)
 
     monkeypatch.setenv(_RVINE_BACKEND_ENV, "native_strict")
@@ -82,7 +121,7 @@ def test_df_path_is_dispatched_once_and_matches_rowwise_oracle(monkeypatch):
     observations = _observations()
     df_path = np.array([0.5, 2.0, 5.0, 17.0])
     expected = np.vstack([
-        _student_rosenblatt_transform_python(
+        _student_scipy_oracle(
             correlation, df, observations[row:row + 1])
         for row, df in enumerate(df_path)
     ])
@@ -95,20 +134,20 @@ def test_df_path_is_dispatched_once_and_matches_rowwise_oracle(monkeypatch):
 
 
 @pytest.mark.parametrize("df", [1e-4, 1e-3, 1e-2, 2e-2, 5e-2])
-def test_low_positive_df_auto_preserves_scipy_oracle_exactly(
+def test_low_positive_df_mandatory_native_matches_scipy_oracle(
         monkeypatch, df):
     correlation = _correlation()
     observations = _observations()
-    expected = _student_rosenblatt_transform_python(
+    expected = _student_scipy_oracle(
         correlation, df, observations)
 
     monkeypatch.setenv(_RVINE_BACKEND_ENV, "auto")
     actual = student_rosenblatt_transform(correlation, df, observations)
 
-    np.testing.assert_array_equal(actual, expected)
+    _assert_native_matches_scipy(actual, expected)
 
 
-def test_low_df_tail_coordinate_does_not_silently_use_native_approximation(
+def test_low_df_tail_coordinate_preserves_scipy_finite_endpoint(
         monkeypatch):
     correlation = _correlation()
     observations = np.array(
@@ -116,7 +155,7 @@ def test_low_df_tail_coordinate_does_not_silently_use_native_approximation(
          [0.9, 0.7, 1.0 - 1e-10]],
         dtype=np.float64,
     )
-    expected = _student_rosenblatt_transform_python(
+    expected = _student_scipy_oracle(
         correlation, 0.02, observations)
     assert expected[0, 0] > 1e-4
 
@@ -124,25 +163,26 @@ def test_low_df_tail_coordinate_does_not_silently_use_native_approximation(
     actual = student_rosenblatt_transform(
         correlation, 0.02, observations)
 
-    np.testing.assert_array_equal(actual, expected)
+    _assert_native_matches_scipy(actual, expected)
 
 
-def test_df_path_with_low_value_falls_back_as_one_legacy_operation(
+def test_df_path_with_low_value_uses_one_mandatory_native_operation(
         monkeypatch):
     correlation = _correlation()
     observations = _observations()
     df_path = np.array([0.02, 0.5, 2.0, 10.0])
-    expected = _student_rosenblatt_transform_python(
+    expected = _student_scipy_oracle(
         correlation, df_path, observations)
 
     monkeypatch.setenv(_RVINE_BACKEND_ENV, "auto")
     actual = student_rosenblatt_transform(
         correlation, df_path, observations)
-    np.testing.assert_array_equal(actual, expected)
+    _assert_native_matches_scipy(actual, expected)
 
     monkeypatch.setenv(_RVINE_BACKEND_ENV, "native_strict")
-    with pytest.raises(CppUnsupported, match="does not support"):
-        student_rosenblatt_transform(correlation, df_path, observations)
+    strict = student_rosenblatt_transform(
+        correlation, df_path, observations)
+    np.testing.assert_array_equal(strict, actual)
 
 
 @pytest.mark.parametrize(
@@ -157,7 +197,7 @@ def test_empty_and_single_row_contracts(monkeypatch, observations, df):
     monkeypatch.setenv(_RVINE_BACKEND_ENV, "native_strict")
 
     actual = student_rosenblatt_transform(correlation, df, observations)
-    expected = _student_rosenblatt_transform_python(
+    expected = _student_scipy_oracle(
         correlation, df, observations)
 
     assert actual.shape == observations.shape
@@ -308,16 +348,10 @@ def test_invalid_df_is_rejected_before_native_call(df, match):
 
 
 @pytest.mark.parametrize("df", [0.0, -1.0, np.nan, np.inf])
-def test_public_auto_preserves_legacy_df_boundary_results(monkeypatch, df):
-    correlation = _correlation()
-    observations = _observations()
-    expected = _student_rosenblatt_transform_python(
-        correlation, df, observations)
-
+def test_public_entry_rejects_invalid_df_without_fallback(monkeypatch, df):
     monkeypatch.setenv(_RVINE_BACKEND_ENV, "auto")
-    actual = student_rosenblatt_transform(correlation, df, observations)
-
-    np.testing.assert_array_equal(actual, expected)
+    with pytest.raises(ValueError, match="finite positive"):
+        student_rosenblatt_transform(_correlation(), df, _observations())
 
 
 @pytest.mark.parametrize(
@@ -357,60 +391,50 @@ def test_correlation_validation_and_near_singular_spd_contract():
     failed = module.dense_student_rosenblatt_transform(
         non_spd, observations, df, 1)
     assert failed["status"] == module.SCAR_NUMERICAL_FAILURE
-    with pytest.raises(CppUnsupported, match="positive-definite"):
+    with pytest.raises(np.linalg.LinAlgError, match="numerical_failure"):
         dense_student_rosenblatt(non_spd, df, observations)
 
     near_singular = np.full((3, 3), 0.999)
     np.fill_diagonal(near_singular, 1.0)
     actual = dense_student_rosenblatt(
         near_singular, df, observations)
-    expected = _student_rosenblatt_transform_python(
+    expected = _student_scipy_oracle(
         near_singular, float(df[0]), observations)
     _assert_native_matches_scipy(actual, expected)
 
 
 @pytest.mark.parametrize(
-    "correlation",
+    ("correlation", "error"),
     [
-        np.array([[1.0, 0.46, -0.2],
-                  [0.45, 1.0, 0.3],
-                  [-0.2, 0.3, 1.0]]),
-        np.array([[1.2, 0.45, -0.2],
-                  [0.45, 1.0, 0.3],
-                  [-0.2, 0.3, 1.0]]),
-        np.array([[1.0, 1.1, 0.0],
-                  [1.1, 1.0, 0.0],
-                  [0.0, 0.0, 1.0]]),
+        (np.array([[1.0, 0.46, -0.2],
+                   [0.45, 1.0, 0.3],
+                   [-0.2, 0.3, 1.0]]), ValueError),
+        (np.array([[1.2, 0.45, -0.2],
+                   [0.45, 1.0, 0.3],
+                   [-0.2, 0.3, 1.0]]), ValueError),
+        (np.array([[1.0, 1.1, 0.0],
+                   [1.1, 1.0, 0.0],
+                   [0.0, 0.0, 1.0]]), np.linalg.LinAlgError),
     ],
 )
-def test_public_auto_preserves_legacy_correlation_results(
-        monkeypatch, correlation):
-    observations = np.array([[0.2, 0.5, 0.8]])
-    expected = _student_rosenblatt_transform_python(
-        correlation, 0.5, observations)
-
+def test_public_entry_rejects_invalid_correlation_without_fallback(
+        monkeypatch, correlation, error):
     monkeypatch.setenv(_RVINE_BACKEND_ENV, "auto")
-    actual = student_rosenblatt_transform(
-        correlation, 0.5, observations)
-
-    np.testing.assert_array_equal(actual, expected)
+    with pytest.raises(error):
+        student_rosenblatt_transform(
+            correlation, 0.5, np.array([[0.2, 0.5, 0.8]]))
 
 
 def test_capability_symmetry_tolerance_matches_native_validation(monkeypatch):
     correlation = _correlation()
     correlation[0, 1] += 1.5e-12
     observations = np.array([[0.2, 0.5, 0.8]])
-    expected = _student_rosenblatt_transform_python(
-        correlation, 0.5, observations)
-
     monkeypatch.setenv(_RVINE_BACKEND_ENV, "auto")
-    actual = student_rosenblatt_transform(
-        correlation, 0.5, observations)
-
-    np.testing.assert_array_equal(actual, expected)
+    with pytest.raises(ValueError, match="invalid_parameter"):
+        student_rosenblatt_transform(correlation, 0.5, observations)
 
 
-def test_public_auto_preserves_legacy_singular_failure(monkeypatch):
+def test_public_entry_preserves_singular_failure_type(monkeypatch):
     correlation = np.ones((3, 3), dtype=np.float64)
     observations = np.array([[0.2, 0.5, 0.8]])
     monkeypatch.setenv(_RVINE_BACKEND_ENV, "auto")
@@ -419,36 +443,30 @@ def test_public_auto_preserves_legacy_singular_failure(monkeypatch):
         student_rosenblatt_transform(correlation, 0.5, observations)
 
 
-def test_public_auto_preserves_nan_observation_result(monkeypatch):
+def test_public_entry_rejects_nan_observation_without_fallback(monkeypatch):
     observations = np.array([[0.2, np.nan, 0.8]])
-    expected = _student_rosenblatt_transform_python(
-        _correlation(), 0.5, observations)
     monkeypatch.setenv(_RVINE_BACKEND_ENV, "auto")
 
-    actual = student_rosenblatt_transform(
-        _correlation(), 0.5, observations)
-
-    np.testing.assert_array_equal(actual, expected)
+    with pytest.raises(ValueError, match="NaN"):
+        student_rosenblatt_transform(_correlation(), 0.5, observations)
 
 
-def test_ill_conditioned_spd_uses_legacy_oracle_in_auto(monkeypatch):
+def test_ill_conditioned_spd_uses_mandatory_native_path(monkeypatch):
     correlation = np.full((3, 3), 0.9999999)
     np.fill_diagonal(correlation, 1.0)
     observations = np.array([[0.2, 0.5, 0.8]])
-    expected = _student_rosenblatt_transform_python(
-        correlation, 0.5, observations)
-
     monkeypatch.setenv(_RVINE_BACKEND_ENV, "auto")
     actual = student_rosenblatt_transform(
         correlation, 0.5, observations)
-    np.testing.assert_array_equal(actual, expected)
-
-    with pytest.raises(CppUnsupported, match="condition number"):
-        dense_student_rosenblatt(correlation, 0.5, observations)
+    assert np.all(np.isfinite(actual))
+    assert np.all((actual > 0.0) & (actual < 1.0))
+    direct = dense_student_rosenblatt(correlation, 0.5, observations)
+    np.testing.assert_array_equal(direct, actual)
 
     monkeypatch.setenv(_RVINE_BACKEND_ENV, "native_strict")
-    with pytest.raises(CppUnsupported, match="does not support"):
-        student_rosenblatt_transform(correlation, 0.5, observations)
+    strict = student_rosenblatt_transform(
+        correlation, 0.5, observations)
+    np.testing.assert_array_equal(strict, actual)
 
 
 def test_infinite_and_out_of_range_uniforms_are_clipped():

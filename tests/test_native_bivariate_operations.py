@@ -13,14 +13,6 @@ from pyscarcopula import (
     IndependentCopula,
     JoeCopula,
 )
-from pyscarcopula.copula.base import (
-    _inv_xtanh_transform,
-    _softplus_dtransform,
-    _softplus_inv_transform,
-    _softplus_transform,
-    _xtanh_dtransform,
-    _xtanh_transform,
-)
 from pyscarcopula.numerical import _cpp_copula, _cpp_extension, copula_native
 
 
@@ -161,6 +153,8 @@ def test_pybind_exports_complete_bivariate_operation_surface():
         "copula_h",
         "copula_h_pair",
         "copula_h_inverse",
+        "copula_sample_from_uniforms",
+        "copula_sample_from_rng_draws",
         "copula_pdf_grid",
         "copula_pdf_and_grad_grid",
     }
@@ -194,6 +188,29 @@ def test_direct_family_operations_use_shared_native_adapter(factory, param):
     np.testing.assert_allclose(h_vu, transposed.h(v, u, r))
     np.testing.assert_allclose(copula.h_inverse(h_uv, v, r), u, atol=2e-8)
 
+    uniforms = np.array([[0.17, 0.31], [0.43, 0.59], [0.83, 0.71]])
+    samples = copula_native.sample_from_uniforms(copula, uniforms, r)
+
+    transposed_rotation = {
+        0: 0,
+        90: 270,
+        180: 180,
+        270: 90,
+    }[rotation]
+    transposed = (
+        type(copula)(rotate=transposed_rotation)
+        if transposed_rotation != rotation else copula
+    )
+    np.testing.assert_array_equal(samples[:, 0], uniforms[:, 0])
+    # Preserve the historical family kernels rather than imposing a new
+    # high-precision contract during the architectural refactor.
+    np.testing.assert_allclose(
+        transposed.h(samples[:, 1], uniforms[:, 0], r),
+        uniforms[:, 1],
+        rtol=0.0,
+        atol=2e-8,
+    )
+
     grid = copula.copula_grid_batch(observations, x)
     grid_pdf, grid_grad = copula.pdf_and_grad_on_grid_batch(
         observations, x)
@@ -217,13 +234,19 @@ def test_native_transforms_preserve_python_contract(
     copula = factory(transform_type=transform_type)
     x = np.array([-30.0, -1.0, 0.0, 1.0, 30.0])
     if transform_type == "softplus":
-        expected_r = _softplus_transform(x, offset)
-        expected_d = _softplus_dtransform(x)
-        expected_x = _softplus_inv_transform(expected_r, offset)
+        expected_r = np.logaddexp(0.0, x) + offset
+        expected_d = 1.0 / (1.0 + np.exp(-x))
+        shifted = expected_r - offset
+        expected_x = np.where(
+            shifted > 20.0,
+            shifted,
+            np.log(np.expm1(shifted)),
+        )
     elif transform_type == "xtanh":
-        expected_r = _xtanh_transform(x, offset)
-        expected_d = _xtanh_dtransform(x)
-        expected_x = _inv_xtanh_transform(expected_r, offset)
+        tanh_x = np.tanh(x)
+        expected_r = x * tanh_x + offset
+        expected_d = tanh_x + x * (1.0 - tanh_x * tanh_x)
+        expected_x = np.abs(expected_r) + offset
     elif transform_type == "exp":
         expected_r = np.exp(x) + offset
         expected_d = np.exp(x)
@@ -380,6 +403,61 @@ def test_family_python_kernels_are_removed():
         "_clayton_pdf_and_grad_batch",
     ):
         assert not hasattr(clayton_module, name)
+
+
+def test_pair_sampling_formulas_are_removed_from_production_python():
+    from pyscarcopula.copula import base, frank, gumbel, joe
+
+    assert not hasattr(base.BivariateCopula, "psi")
+    assert not hasattr(base.BivariateCopula, "V")
+    assert not hasattr(frank, "_frank_bivariate_sample_from_uniforms")
+    assert not hasattr(gumbel, "_generate_levy_stable_from_uniforms")
+    assert not hasattr(joe, "_joe_v_from_uniforms")
+
+
+def test_pair_h_inverse_has_one_native_implementation():
+    cpp_root = Path(__file__).parents[1] / "pyscarcopula" / "_cpp"
+    production = "\n".join(
+        path.read_text(encoding="utf-8")
+        for directory in (cpp_root / "include", cpp_root / "src")
+        for path in directory.rglob("*")
+        if path.suffix in {".cpp", ".hpp"}
+    )
+    assert "sample_inverse_h" not in production
+
+
+@pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+def test_joe_h_inverse_preserves_legacy_sampling_accuracy(rotation):
+    copula = JoeCopula(rotate=rotation)
+    quantiles = np.array([0.031, 0.173, 0.421, 0.793, 0.941])
+    given = np.array([0.887, 0.509, 0.257, 0.619, 0.113])
+    parameter = np.full(len(quantiles), 1.72)
+    inverse = copula.h_inverse(quantiles, given, parameter)
+    np.testing.assert_allclose(
+        copula.h(inverse, given, parameter),
+        quantiles,
+        rtol=0.0,
+        atol=1e-10,
+    )
+
+
+def test_gaussian_h_inverse_preserves_legacy_sampling_accuracy():
+    from scipy.stats import norm
+
+    copula = BivariateGaussianCopula()
+    quantiles = np.array([0.031, 0.173, 0.421, 0.793, 0.941])
+    given = np.array([0.887, 0.509, 0.257, 0.619, 0.113])
+    parameter = np.array([-0.73, -0.21, 0.0, 0.47, 0.82])
+    expected = norm.cdf(
+        norm.ppf(quantiles) * np.sqrt(1.0 - parameter**2)
+        + parameter * norm.ppf(given)
+    )
+    np.testing.assert_allclose(
+        copula.h_inverse(quantiles, given, parameter),
+        expected,
+        rtol=0.0,
+        atol=5e-9,
+    )
 
 
 def test_adapter_is_the_base_operation_surface(monkeypatch):

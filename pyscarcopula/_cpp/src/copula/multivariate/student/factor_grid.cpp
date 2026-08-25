@@ -444,6 +444,32 @@ FactorStudentGridResult factor_student_log_pdf_and_dlog_ddf_grid(
     }
     if (result.failure.index >= 0) {
         result.status = Status::NumericalFailure;
+        return result;
+    }
+    return result;
+}
+
+FactorStudentDensityGridResult factor_student_density_from_log_grid(
+    const double* log_pdf,
+    const double* dlog_ddf,
+    std::size_t cells) {
+
+    if (cells > 0 && (log_pdf == nullptr || dlog_ddf == nullptr)) {
+        throw std::invalid_argument(
+            "factor Student log-grid inputs must be present");
+    }
+    FactorStudentDensityGridResult result;
+    result.pdf.resize(cells);
+    result.d_pdf_ddf.resize(cells);
+    for (std::size_t cell = 0; cell < cells; ++cell) {
+        result.pdf[cell] = std::exp(log_pdf[cell]);
+        result.d_pdf_ddf[cell] = result.pdf[cell] * dlog_ddf[cell];
+        if (!std::isfinite(result.pdf[cell])
+            || !std::isfinite(result.d_pdf_ddf[cell])) {
+            result.status = Status::NumericalFailure;
+            result.failure.index = static_cast<std::int64_t>(cell);
+            return result;
+        }
     }
     return result;
 }

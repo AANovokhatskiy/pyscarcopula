@@ -3,20 +3,6 @@ import numpy as np
 from pyscarcopula.copula.base import BivariateCopula
 
 
-def _frank_bivariate_sample_from_uniforms(n, r, u0_data, v_data):
-    """Direct conditional-inversion sampling from fixed uniforms."""
-    parameter = np.asarray(r, dtype=np.float64)
-    if parameter.size == 1:
-        parameter = np.full(n, parameter[0])
-    t = np.exp(-parameter * u0_data)
-    p = np.exp(-parameter)
-    f1 = v_data * (1.0 - p)
-    f2 = t + v_data * (1.0 - t)
-    sampled = -np.log1p(-f1 / f2) / parameter
-    sampled = np.where(np.abs(f1 - f2) < 1e-9, u0_data, sampled)
-    return np.column_stack((u0_data, sampled))
-
-
 class FrankCopula(BivariateCopula):
     """Frank copula. Rotation is unsupported because it is symmetric."""
 
@@ -48,14 +34,3 @@ class FrankCopula(BivariateCopula):
         if np.any(r <= 0.0):
             raise ValueError("Frank parameter must be positive")
         return self._native_adapter().param_to_tau(self, r)
-
-    def sample_at_parameter(self, n, r, rng=None):
-        if rng is None:
-            rng = np.random.default_rng()
-        parameter = np.atleast_1d(np.asarray(r, dtype=np.float64))
-        if parameter.size == 1:
-            parameter = np.full(n, parameter[0])
-        u0 = rng.uniform(0.0, 1.0, size=n)
-        v = rng.uniform(0.0, 1.0, size=n)
-        return _frank_bivariate_sample_from_uniforms(
-            n, parameter, u0, v)

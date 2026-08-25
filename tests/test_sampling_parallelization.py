@@ -12,7 +12,6 @@ from pyscarcopula import (
     StochasticStudentCopula,
     StudentCopula,
 )
-from pyscarcopula.copula.multivariate.conditional import equicorr_matrix
 from pyscarcopula.numerical import (
     _cpp_copula,
     _cpp_extension,
@@ -20,6 +19,13 @@ from pyscarcopula.numerical import (
     multivariate_native,
 )
 from pyscarcopula.numerical.mc_samplers import p_sampler_loglik
+
+
+def equicorr_matrix(d, rho):
+    """Test-only dense fixture for generic conditional kernels."""
+    matrix = np.full((int(d), int(d)), float(rho), dtype=np.float64)
+    np.fill_diagonal(matrix, 1.0)
+    return matrix
 
 
 def _student_model(d):

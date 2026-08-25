@@ -29,34 +29,43 @@ struct RosenblattBlockResult {
 
 double dense_student_quantile(double probability, double df) {
     const double p = scar_internal::clip_pseudo_observation(probability);
-    const double initial = scar_internal::student_quantile_value(p, df);
+    const double initial = scar_internal::student_quantile_refined_value(p, df);
     const double initial_cdf =
-        scar_internal::student_cdf_value(initial, df);
+        scar_internal::student_cdf_refined_value(initial, df);
     const double tail = p < 0.5 ? p : 1.0 - p;
+    constexpr double tolerance =
+        16.0 * std::numeric_limits<double>::epsilon();
     if (std::isfinite(initial)
         && std::isfinite(initial_cdf)
-        && std::abs(initial_cdf - p) <= 2e-13 * tail) {
+        && std::abs(initial_cdf - p) <= tolerance * tail) {
         return initial;
     }
 
     const bool negative = p < 0.5;
     double low = 0.0;
     double high = std::max(1.0, std::abs(initial));
-    const double maximum = std::numeric_limits<double>::max() / 4.0;
-    while (scar_internal::student_cdf_value(-high, df) > tail
+    // Cephes/SciPy's stdtrit reaches the smallest representable beta-tail
+    // argument before the Student quantile itself overflows.  Keeping the
+    // same finite endpoint preserves the historical static-copula oracle for
+    // very small positive degrees of freedom (for example df=0.02), while
+    // avoiding value*value overflow in the CDF below.
+    const double maximum = std::sqrt(
+        df / std::numeric_limits<double>::min());
+    high = std::min(high, maximum);
+    while (scar_internal::student_cdf_refined_value(-high, df) > tail
            && high < maximum) {
         high = std::min(maximum, high * 2.0);
     }
-    if (scar_internal::student_cdf_value(-high, df) > tail) {
-        return std::numeric_limits<double>::quiet_NaN();
+    if (scar_internal::student_cdf_refined_value(-high, df) > tail) {
+        return negative ? -maximum : maximum;
     }
 
     for (int iteration = 0; iteration < 256; ++iteration) {
         const double middle = low + 0.5 * (high - low);
         const double survival =
-            scar_internal::student_cdf_value(-middle, df);
-        if (std::abs(survival - tail) <= 2e-13 * tail
-            || high - low <= 2e-13 * std::max(1.0, middle)) {
+            scar_internal::student_cdf_refined_value(-middle, df);
+        if (std::abs(survival - tail) <= tolerance * tail
+            || high - low <= tolerance * std::max(1.0, middle)) {
             return negative ? -middle : middle;
         }
         if (survival > tail) {
@@ -245,14 +254,14 @@ DenseStudentRosenblattResult student_rosenblatt_dense(
 
                     double residual = 0.0;
                     if (column == 0) {
-                        residual = scar_internal::student_cdf_value(
+                        residual = scar_internal::student_cdf_refined_value(
                             quantiles[column], row_df);
                     } else {
                         const double conditional_df =
                             row_df + static_cast<double>(column);
                         const double scale =
                             (row_df + quadratic_form) / conditional_df;
-                        residual = scar_internal::student_cdf_value(
+                        residual = scar_internal::student_cdf_refined_value(
                             whitened[column] / std::sqrt(scale),
                             conditional_df);
                     }

@@ -22,11 +22,8 @@ def _student_models():
     )
 
 
-def test_equicorr_conditional_never_requests_a_dense_matrix(monkeypatch):
-    def reject_dense(*args, **kwargs):
-        raise AssertionError("dense equicorrelation matrix requested")
-
-    monkeypatch.setattr(conditional, "equicorr_matrix", reject_dense)
+def test_equicorr_conditional_never_requests_a_dense_matrix():
+    assert not hasattr(conditional, "equicorr_matrix")
     model = EquicorrGaussianCopula(10_000)
     samples = model.sample_conditional(
         2,

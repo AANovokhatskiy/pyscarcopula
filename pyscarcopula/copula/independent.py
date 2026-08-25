@@ -68,14 +68,14 @@ class IndependentCopula(BivariateCopula):
     # ── sampling ─────────────────────────────────────────────────
 
     def sample_at_parameter(self, n, r=None, rng=None):
-        if rng is None:
-            rng = np.random.default_rng()
-        return rng.uniform(0, 1, size=(n, 2))
+        return super().sample_at_parameter(
+            n, 0.0 if r is None else r, rng=rng)
 
     # ── log-likelihood ───────────────────────────────────────────
 
     def log_likelihood(self, u, r=None):
-        return 0.0
+        from pyscarcopula._native import static as static_likelihood
+        return static_likelihood.prepare(self, u).log_likelihood(0.0)
 
     # ── grid evaluations (all trivial) ───────────────────────────
 
@@ -121,7 +121,7 @@ class IndependentCopula(BivariateCopula):
         """Fit already validated pair data without rescanning vine edges."""
         from pyscarcopula._types import IndependentResult
         result = IndependentResult(
-            log_likelihood=0.0,
+            log_likelihood=self.log_likelihood(u),
             method='MLE',
             copula_name=self._name,
             success=True,

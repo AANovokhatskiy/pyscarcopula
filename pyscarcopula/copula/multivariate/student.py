@@ -6,8 +6,6 @@ from typing import Any
 
 import numpy as np
 from numpy.typing import ArrayLike
-from scipy.special import expit
-from scipy.stats import multivariate_t, t as t_dist
 
 from pyscarcopula._types import (
     DEFAULT_CONFIG,
@@ -23,6 +21,7 @@ from pyscarcopula.copula.multivariate.base import (
 from pyscarcopula.copula.multivariate.corr_param import (
     estimate_kendall_correlation,
     preprocess_correlation_matrix,
+    sigmoid,
 )
 from pyscarcopula.copula.multivariate.correlation_policy import (
     CorrelationEstimator,
@@ -547,7 +546,7 @@ class StudentCopula(MultivariateCopula):
             initial_correlation.copy() if outcome.evaluation is None
             else np.asarray(outcome.evaluation.correlation).copy())
         raw = outcome.parameters[1:].copy()
-        alpha = float(expit(raw[0])) if self._corr_mode == "shrinkage" and raw.size else None
+        alpha = float(sigmoid(raw[0])) if self._corr_mode == "shrinkage" and raw.size else None
         return self._make_result_and_commit(
             u=u, config=config, outcome=outcome, policy=policy,
             correlation=correlation, preprocessing=preprocessing,
@@ -608,30 +607,30 @@ class StudentCopula(MultivariateCopula):
             factor_rank=self._factor_rank, factor_estimation="joint",
             initialization_source=str(
                 initialization.get("source", "factor_loadings")))
+        factor_evaluator = FactorStudentEvaluator(
+            FactorCorrelation(
+                loadings,
+                uniqueness_min=self._factor_uniqueness_min,
+                diagnostics={"source": "joint_static_mle_initial"}),
+            u,
+        )
 
         def evaluate(parameters):
-            candidate_loadings = parameterization.loadings(parameters[1:])
-            factor = FactorCorrelation(
-                candidate_loadings,
-                uniqueness_min=self._factor_uniqueness_min,
-                diagnostics={"source": "joint_static_mle_trial"})
-            operator = factor.prepare()
-            if operator.diagnostics["condition_estimate_m"] > self._factor_joint_condition_max:
-                raise ValueError("joint factor Woodbury core exceeds condition gate")
-            native = FactorStudentEvaluator(
-                operator, u).joint_likelihood_and_gradient(
-                    float(parameters[0]), n_threads=config.n_threads)
-            penalty = self._factor_joint_penalty
-            objective = -native.log_likelihood + penalty * float(np.sum(candidate_loadings ** 2))
-            loading_gradient = -native.dlog_likelihood_dloadings + 2.0 * penalty * candidate_loadings
-            gradient = np.empty_like(parameters)
-            gradient[0] = -native.dlog_likelihood_ddf
-            gradient[1:] = parameterization.pullback(parameters[1:], loading_gradient)
+            native = (
+                factor_evaluator
+                .penalized_parameterized_objective_and_gradient(
+                    float(parameters[0]),
+                    parameters[1:],
+                    parameterization,
+                    penalty=self._factor_joint_penalty,
+                    condition_max=self._factor_joint_condition_max,
+                    n_threads=config.n_threads,
+                ))
             return StaticMLEEvaluation(
-                objective=objective, gradient=gradient,
+                objective=native.objective, gradient=native.gradient,
                 state={
                     "df": float(parameters[0]),
-                    "loadings": candidate_loadings.copy(),
+                    "loadings": native.loadings.copy(),
                     "log_likelihood": float(native.log_likelihood),
                     "anchor_rows": parameterization.anchors.copy(),
                 })
@@ -788,7 +787,16 @@ class StudentCopula(MultivariateCopula):
             self._correlation, u, n_threads=n_threads).log_pdf_rows(df)
 
     def log_likelihood(self, u, *, n_threads=1):
-        return float(np.sum(self.log_pdf_rows(u, n_threads=n_threads)))
+        if self.df is None:
+            raise ValueError("Fit first")
+        if self._corr_mode == "factor":
+            return FactorStudentEvaluator(
+                self.correlation_operator_, u).evaluate(
+                    self.df, n_threads=n_threads).log_likelihood
+        from pyscarcopula.numerical import static_likelihood
+        return static_likelihood.prepare_student(
+            self._correlation, u,
+            n_threads=n_threads).log_likelihood(self.df)
 
     def _nll_with_params(self, u, R, df):
         from pyscarcopula.numerical import static_likelihood
@@ -807,18 +815,26 @@ class StudentCopula(MultivariateCopula):
     def sample(self, n, u=None, rng=None):
         if rng is None:
             rng = np.random.default_rng()
+        from pyscarcopula.numerical import multivariate_native
         if self._corr_mode == "factor":
             if self.df is None:
                 raise ValueError("Fit first")
-            latent = self.correlation_operator_.sample_normal(n, rng=rng)
+            operator = self.correlation_operator_
+            factor_draws = rng.standard_normal((n, operator.rank))
+            residual_draws = rng.standard_normal((n, operator.dimension))
             chi_square = rng.chisquare(self.df, size=n)
-            latent *= np.sqrt(self.df / chi_square)[:, None]
-            return t_dist.cdf(latent, df=self.df)
+            return multivariate_native.factor_student_sample_from_draws(
+                operator,
+                self.df,
+                factor_draws,
+                residual_draws,
+                chi_square,
+            )
         correlation, df = self._fitted_parameters()
-        x = multivariate_t.rvs(
-            loc=np.zeros(correlation.shape[0]), shape=correlation, df=df,
-            size=n, random_state=rng)
-        return t_dist.cdf(x, df=df)
+        chi_square = rng.chisquare(df, size=n)
+        normal_draws = rng.standard_normal((n, correlation.shape[0]))
+        return multivariate_native.student_sample_from_draws(
+            correlation, df, normal_draws, chi_square)
 
     @model_state_locked
     def sample_conditional(self, n, given, rng=None, *, n_threads=1):

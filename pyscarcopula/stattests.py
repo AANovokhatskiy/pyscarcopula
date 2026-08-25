@@ -29,7 +29,7 @@ import time
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Callable
-from scipy.stats import chi2, norm, cramervonmises
+from scipy.stats import cramervonmises
 
 from pyscarcopula._parallel import (
     create_worker_model,
@@ -105,12 +105,8 @@ def cvm_test(e):
     if d == 0:
         raise ValueError("e must contain at least one dimension")
 
-    # Avoid inf in norm.ppf at exactly 0 or 1
-    e = clip_pseudo_observations(e)
-
-    z = norm.ppf(e)                       # (T, d)
-    q = np.sum(z * z, axis=1)             # (T,)
-    y = chi2.cdf(q, df=d)                 # should be U[0,1] under H0
+    from pyscarcopula.numerical import multivariate_native
+    y = multivariate_native.radial_uniform_summary(e)
 
     return cramervonmises(y, "uniform")
 
@@ -1502,16 +1498,8 @@ def gaussian_rosenblatt_transform(R, u):
     -------
     e : (T, d)
     """
-    u_c = clip_pseudo_observations_no_copy(u)
-    x = norm.ppf(u_c)
-
-    L = np.linalg.cholesky(R)
-    # z = L^{-1} x, so z_i are independent N(0,1)
-    # e_i = Phi(z_i)
-    z = np.linalg.solve(L, x.T).T  # (T, d)
-    e = norm.cdf(z)
-
-    return clip_pseudo_observations(e)
+    from pyscarcopula.numerical import multivariate_native
+    return multivariate_native.gaussian_rosenblatt(R, u)
 
 
 def factor_gaussian_rosenblatt_transform(correlation, u):
@@ -1521,37 +1509,8 @@ def factor_gaussian_rosenblatt_transform(correlation, u):
     rank-dimensional posterior of the latent factor. Storage is
     ``O(T*k + k*k)`` and no dense correlation or Cholesky factor is formed.
     """
-    u_c = clip_pseudo_observations_no_copy(u)
-    x = norm.ppf(u_c)
-    if x.ndim != 2 or x.shape[1] != correlation.dimension:
-        raise ValueError(
-            "data width must match factor correlation dimension")
-
-    rows, dimension = x.shape
-    rank = correlation.rank
-    loadings = correlation.loadings
-    uniqueness = correlation.uniqueness
-    factor_mean = np.zeros((rows, rank), dtype=np.float64)
-    factor_covariance = np.eye(rank, dtype=np.float64)
-    transformed = np.empty_like(x)
-
-    for index in range(dimension):
-        loading = loadings[index]
-        covariance_loading = factor_covariance @ loading
-        conditional_variance = (
-            uniqueness[index] + loading @ covariance_loading)
-        residual = x[:, index] - factor_mean @ loading
-        transformed[:, index] = norm.cdf(
-            residual / np.sqrt(conditional_variance))
-        factor_mean += (
-            residual / conditional_variance)[:, None] * (
-                covariance_loading[None, :])
-        factor_covariance -= np.outer(
-            covariance_loading,
-            covariance_loading,
-        ) / conditional_variance
-
-    return clip_pseudo_observations(transformed)
+    from pyscarcopula.numerical import multivariate_native
+    return multivariate_native.factor_gaussian_rosenblatt(correlation, u)
 
 
 def gaussian_gof_test(copula, data, to_pobs=True):
@@ -1588,113 +1547,10 @@ def gaussian_gof_test(copula, data, to_pobs=True):
 # Student-t copula Rosenblatt
 # ══════════════════════════════════════════════════════════════════
 
-def _student_rosenblatt_transform_python(R, df, u):
-    """
-    Rosenblatt transform for d-dimensional Student-t copula.
-
-    x = t_df^{-1}(u), x ~ t_d(0, R, df).
-
-    Sequential conditioning using the property that for
-    multivariate t with shape R and df degrees of freedom:
-
-        x_i | x_0,...,x_{i-1} ~ t_{df+i}(mu_i, sigma^2_i * scale)
-
-    where:
-        mu_i = R_{i,0:i} R_{0:i,0:i}^{-1} x_{0:i}
-        sigma^2_i = R_{ii} - R_{i,0:i} R_{0:i,0:i}^{-1} R_{0:i,i}
-        scale = (df + x_{0:i}^T R_{0:i,0:i}^{-1} x_{0:i}) / (df + i)
-
-    Here i is the zero-based coordinate index, so the conditioning set has
-    size i.
-
-    Parameters
-    ----------
-    R : (d, d) shape matrix (correlation)
-    df : float — degrees of freedom
-    u : (T, d) pseudo-observations
-
-    Returns
-    -------
-    e : (T, d)
-    """
-    from scipy.stats import t as t_dist
-
-    df_values = np.asarray(df)
-    if df_values.ndim != 0:
-        if np.iscomplexobj(df_values):
-            raise TypeError("df must contain real values")
-        df_path = np.asarray(df_values, dtype=np.float64).ravel()
-        observations = np.asarray(u)
-        if df_path.size == 1:
-            df = float(df_path[0])
-        else:
-            if observations.ndim != 2 or len(df_path) != len(observations):
-                raise ValueError("df must be scalar or have one value per row")
-            if len(observations) == 0:
-                return np.empty(observations.shape, dtype=np.float64)
-            return np.vstack([
-                _student_rosenblatt_transform_python(
-                    R,
-                    float(row_df),
-                    observations[row:row + 1],
-                )
-                for row, row_df in enumerate(df_path)
-            ])
-
-    u_c = clip_pseudo_observations(u)
-    x = t_dist.ppf(u_c, df=df)
-
-    T, d = x.shape
-    e = np.empty((T, d))
-
-    # First variable: e_0 = t_df.cdf(x_0)
-    e[:, 0] = t_dist.cdf(x[:, 0], df=df)
-
-    for i in range(1, d):
-        # Conditional distribution of x_i | x_{0:i-1}
-        R_11 = R[:i, :i]          # (i, i)
-        R_21 = R[i, :i]           # (i,)
-        R_22 = R[i, i]            # scalar
-
-        R_11_inv = np.linalg.inv(R_11)
-        beta = R_21 @ R_11_inv    # (i,) — regression coefficients
-
-        # Conditional variance (without scale)
-        sigma2_cond = R_22 - R_21 @ R_11_inv @ R_21  # scalar
-        sigma_cond = np.sqrt(max(sigma2_cond, 1e-12))
-
-        # For each observation
-        x_prev = x[:, :i]                          # (T, i)
-        mu_cond = x_prev @ beta                     # (T,)
-
-        # Quadratic form: x_{1:i-1}^T R_{1:i-1}^{-1} x_{1:i-1}
-        quad = np.sum(x_prev @ R_11_inv * x_prev, axis=1)  # (T,)
-
-        # Scale factor and conditional df
-        df_cond = df + i
-        scale = (df + quad) / df_cond
-
-        # Standardized residual
-        z = (x[:, i] - mu_cond) / (sigma_cond * np.sqrt(scale))
-
-        e[:, i] = t_dist.cdf(z, df=df_cond)
-
-    return clip_pseudo_observations(e)
-
-
 def student_rosenblatt_transform(R, df, u):
-    """Dispatch dense Student Rosenblatt while preserving the SciPy oracle."""
-    from pyscarcopula.numerical.multivariate_native import (
-        _dense_student_rosenblatt_if_supported,
-    )
-
-    return dispatch_rvine_backend(
-        capability="dense_student_rosenblatt",
-        native_symbol="dense_student_rosenblatt_transform",
-        python_executor=lambda: _student_rosenblatt_transform_python(R, df, u),
-        native_executor=lambda module: _dense_student_rosenblatt_if_supported(
-            R, df, u, module=module),
-    )
+    """Evaluate the dense Student Rosenblatt transform natively."""
+    from pyscarcopula.numerical import multivariate_native
+    return multivariate_native.dense_student_rosenblatt(R, df, u)
 
 
 def factor_student_rosenblatt_transform(correlation, df, u):
@@ -1704,76 +1560,9 @@ def factor_student_rosenblatt_transform(correlation, df, u):
     Storage is ``O(T*k + k*k)`` and no dense correlation matrix is formed.
     ``df`` may be scalar or contain one value per observation.
     """
-    from scipy.stats import t as t_dist
-
-    u_c = clip_pseudo_observations_no_copy(u)
-    if u_c.ndim != 2 or u_c.shape[1] != correlation.dimension:
-        raise ValueError(
-            "data width must match factor correlation dimension")
-    rows, dimension = u_c.shape
-    df_path = np.asarray(df, dtype=np.float64)
-    if df_path.ndim == 0:
-        df_path = np.full(rows, float(df_path), dtype=np.float64)
-    else:
-        df_path = np.ravel(df_path)
-        if len(df_path) != rows:
-            raise ValueError("df must be scalar or have one value per row")
-    if (
-            not np.all(np.isfinite(df_path))
-            or np.any(df_path <= 2.0)):
-        raise ValueError("df must be finite and greater than 2")
-
-    x = t_dist.ppf(u_c, df=df_path[:, None])
-    loadings = correlation.loadings
-    uniqueness = correlation.uniqueness
-    rank = correlation.rank
-    factor_covariance = np.eye(rank, dtype=np.float64)
-    projected = np.zeros((rows, rank), dtype=np.float64)
-    diagonal_quadratic = np.zeros(rows, dtype=np.float64)
-    transformed = np.empty_like(x)
-    transformed[:, 0] = u_c[:, 0]
-
-    for index in range(dimension):
-        loading = loadings[index]
-        covariance_loading = factor_covariance @ loading
-        conditional_variance = float(
-            uniqueness[index] + loading @ covariance_loading)
-        if not np.isfinite(conditional_variance) or (
-                conditional_variance <= 0.0):
-            raise ValueError(
-                "factor correlation produced non-positive "
-                "conditional variance")
-
-        if index > 0:
-            solved_projection = projected @ factor_covariance
-            conditional_mean = solved_projection @ loading
-            quadratic = diagonal_quadratic - np.einsum(
-                "ij,ij->i",
-                projected,
-                solved_projection,
-                optimize=False,
-            )
-            quadratic = np.maximum(quadratic, 0.0)
-            conditional_df = df_path + index
-            scale = (df_path + quadratic) / conditional_df
-            standardized = (
-                (x[:, index] - conditional_mean)
-                / np.sqrt(conditional_variance * scale)
-            )
-            transformed[:, index] = t_dist.cdf(
-                standardized, df=conditional_df)
-
-        projected += (
-            x[:, index] / uniqueness[index]
-        )[:, None] * loading[None, :]
-        diagonal_quadratic += (
-            x[:, index] * x[:, index] / uniqueness[index])
-        factor_covariance -= np.outer(
-            covariance_loading,
-            covariance_loading,
-        ) / conditional_variance
-
-    return clip_pseudo_observations(transformed)
+    from pyscarcopula.numerical import multivariate_native
+    return multivariate_native.factor_student_rosenblatt(
+        correlation, df, u)
 
 
 def student_gof_test(copula, data, to_pobs=True):
@@ -1899,38 +1688,15 @@ def equicorr_rosenblatt_transform(copula, u, fit_result, K=300, grid_range=5.0):
                 fit_result, K, grid_range),
         )
 
-    u_c = clip_pseudo_observations(u)
-    x_norm = norm.ppf(u_c)
-
     if method == 'MLE':
         rho = fit_result.copula_param
-        e = np.empty((T, d))
-        e[:, 0] = u[:, 0]
-        for i in range(1, d):
-            sx = np.sum(x_norm[:, :i], axis=1)
-            cond_mean = rho * sx / (1.0 + (i - 1) * rho)
-            cond_var = 1.0 - i * rho ** 2 / (1.0 + (i - 1) * rho)
-            cond_var = max(cond_var, 1e-10)
-            z_i = (x_norm[:, i] - cond_mean) / np.sqrt(cond_var)
-            e[:, i] = norm.cdf(z_i)
-        return clip_pseudo_observations(e)
+    elif method == 'GAS':
+        rho = _gas_parameter_path(copula, u, fit_result)
+    else:
+        raise AssertionError(f"unsupported equicorrelation method: {method}")
 
-    if method == 'GAS':
-        rho_path = _gas_parameter_path(copula, u, fit_result)
-        e = np.empty((T, d))
-        e[:, 0] = u[:, 0]
-        for i in range(1, d):
-            rho = rho_path
-            sx = np.sum(x_norm[:, :i], axis=1)
-            cond_mean = rho * sx / (1.0 + (i - 1) * rho)
-            cond_var = 1.0 - i * rho ** 2 / (1.0 + (i - 1) * rho)
-            cond_var = np.maximum(cond_var, 1e-10)
-            z_i = (x_norm[:, i] - cond_mean) / np.sqrt(cond_var)
-            e[:, i] = norm.cdf(z_i)
-        return clip_pseudo_observations(e)
-
-    raise ValueError(
-        f"Unsupported EquicorrGaussianCopula fit method: {fit_result.method}")
+    from pyscarcopula.numerical import multivariate_native
+    return multivariate_native.equicorr_gaussian_rosenblatt(rho, u)
 
 
 def equicorr_gof_test(copula, data, to_pobs=True,

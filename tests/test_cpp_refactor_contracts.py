@@ -274,6 +274,11 @@ def test_pair_kernel_goldens_are_unchanged():
     capture_cpp_refactor_goldens.check_fixture(GOLDEN_PATH)
 
 
+def test_pair_kernel_golden_checker_has_no_superseded_outputs():
+    assert not hasattr(
+        capture_cpp_refactor_goldens, "SUPERSEDED_GOLDEN_OUTPUTS")
+
+
 def test_pair_kernel_golden_tolerances_cannot_be_widened(tmp_path):
     fixture = _json(GOLDEN_PATH)
     fixture["cases"][0]["cross_platform_atol"] = 1.0
@@ -302,6 +307,8 @@ def test_inventory_matches_current_public_and_native_configs():
     assert len(complete) == (
         len(contracts["discovered_python_constants"])
         + len(contracts["discovered_cpp_constants"])
+        + sum(
+            entry["kind"] == "historical-python" for entry in complete)
     )
     assert all(
         entry["target_owner"] and entry["target"] and entry["semantic"]

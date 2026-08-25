@@ -1,7 +1,6 @@
 """Bivariate Gaussian copula."""
 
 import numpy as np
-from scipy.stats import norm
 
 from pyscarcopula.copula.base import BivariateCopula
 
@@ -52,30 +51,3 @@ class BivariateGaussianCopula(BivariateCopula):
             raise ValueError(
                 "Gaussian correlation parameter must be in (-1, 1)")
         return self._native_adapter().param_to_tau(self, r)
-
-    def sample_at_parameter(self, n, r, rng=None):
-        """Sample from the Gaussian copula."""
-        parameter = np.atleast_1d(np.asarray(r, dtype=np.float64))
-        rho = parameter[0] if parameter.size == 1 else parameter
-        if rng is None:
-            rng = np.random.default_rng()
-
-        normal = rng.standard_normal((n, 2))
-        if np.isscalar(rho):
-            rho_value = float(rho)
-            second = (
-                rho_value * normal[:, 0]
-                + np.sqrt(1.0 - rho_value ** 2) * normal[:, 1]
-            )
-        else:
-            rho_values = np.asarray(rho).ravel()
-            if rho_values.size != n:
-                raise ValueError(
-                    f"r must be scalar or array of length {n}, "
-                    f"got {rho_values.size}"
-                )
-            second = (
-                rho_values * normal[:, 0]
-                + np.sqrt(1.0 - rho_values ** 2) * normal[:, 1]
-            )
-        return np.column_stack((norm.cdf(normal[:, 0]), norm.cdf(second)))

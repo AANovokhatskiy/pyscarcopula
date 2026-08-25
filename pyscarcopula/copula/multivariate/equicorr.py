@@ -2,7 +2,6 @@
 
 import numpy as np
 from scipy.optimize import minimize
-from scipy.stats import norm
 
 from pyscarcopula._types import DEFAULT_CONFIG, NumericalConfig
 from pyscarcopula.copula.base import CopulaCapabilities
@@ -502,21 +501,18 @@ class EquicorrGaussianCopula(MultivariateCopula):
                 f"r must be finite and in ({lower}, 1)")
 
         normal = rng.standard_normal((n, self._d))
-        if np.all(parameters >= 0.0):
-            common = rng.standard_normal((n, 1))
-            values = (
-                np.sqrt(1.0 - parameters)[:, None] * normal
-                + np.sqrt(parameters)[:, None] * common
-            )
-        else:
-            row_means = normal.mean(axis=1, keepdims=True)
-            lambda_parallel = 1.0 + (self._d - 1.0) * parameters
-            values = (
-                np.sqrt(1.0 - parameters)[:, None]
-                * (normal - row_means)
-                + np.sqrt(lambda_parallel)[:, None] * row_means
-            )
-        return norm.cdf(values)
+        common = (
+            rng.standard_normal(n)
+            if np.all(parameters >= 0.0)
+            else np.empty(0, dtype=np.float64)
+        )
+        from pyscarcopula.numerical import multivariate_native
+        return multivariate_native.equicorr_gaussian_sample_from_normals(
+            parameters,
+            self._d,
+            normal,
+            common,
+        )
 
     def sample_at_parameter_batches(
             self,
