@@ -28,8 +28,6 @@ ALL_METHODS = frozenset(
         "MLE",
         "SCAR-TM-OU",
         "SCAR-TM-JACOBI",
-        "SCAR-P-OU",
-        "SCAR-M-OU",
         "GAS",
     }
 )
@@ -151,7 +149,7 @@ SUPPORT_CASES = [
         transform="student_df",
         rotation=None,
         methods=frozenset(
-            {"MLE", "SCAR-TM-OU", "SCAR-P-OU", "SCAR-M-OU", "GAS"}
+            {"MLE", "SCAR-TM-OU", "GAS"}
         ),
         native_point_ops=False,
         native_gas=True,
@@ -165,7 +163,7 @@ SUPPORT_CASES = [
         transform="student_df",
         rotation=None,
         methods=frozenset(
-            {"MLE", "SCAR-TM-OU", "SCAR-P-OU", "SCAR-M-OU", "GAS"}
+            {"MLE", "SCAR-TM-OU", "GAS"}
         ),
         native_point_ops=False,
         native_gas=True,
@@ -255,12 +253,6 @@ def test_capability_and_runtime_readiness_are_separate():
     ("factory", "method"),
     [
         (IndependentCopula, "scar-tm-jacobi"),
-        (IndependentCopula, "scar-p-ou"),
-        (IndependentCopula, "scar-m-ou"),
-        (GaussianCopula, "scar-p-ou"),
-        (StudentCopula, "scar-m-ou"),
-        (lambda: EquicorrGaussianCopula(d=3), "scar-p-ou"),
-        (lambda: EquicorrGaussianCopula(d=3), "scar-m-ou"),
     ],
 )
 def test_top_level_api_rejects_unsupported_strategy_combinations(
@@ -269,4 +261,4 @@ def test_top_level_api_rejects_unsupported_strategy_combinations(
     u = np.random.default_rng(20260704).uniform(0.1, 0.9, size=(20, d))
 
     with pytest.raises(TypeError, match="does not support"):
-        fit(factory(), u, method=method, n_tr=5, M_iterations=1, maxiter=1)
+        fit(factory(), u, method=method, maxiter=1)

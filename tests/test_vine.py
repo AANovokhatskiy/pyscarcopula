@@ -679,16 +679,6 @@ class TestVineSamplePredict:
         with pytest.raises(ValueError):
             vine.predict(50, given={0: 1.0})
 
-    def test_predict_given_dynamic_edges_uses_strategy_adapter(self):
-        d = 3
-        u = pobs(np.random.default_rng(11).standard_normal((200, d)))
-        vine = CVineCopula()
-        vine.fit(u, method='scar-m-ou', gtol=0.5)
-        samples = vine.predict(50, given={0: 0.5},
-                               rng=np.random.default_rng(111))
-        assert samples.shape == (50, d)
-        np.testing.assert_allclose(samples[:, 0], 0.5)
-
     def test_predict_given_non_prefix_independence_sanity(self):
         from pyscarcopula.copula.independent import IndependentCopula
 

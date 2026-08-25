@@ -254,7 +254,7 @@ def test_optimizer_success_is_rejected_when_joint_gradient_is_large(
 
 
 @pytest.mark.parametrize(
-    "method", ["gas", "scar-tm-ou", "scar-p-ou", "scar-m-ou"])
+    "method", ["gas", "scar-tm-ou"])
 @pytest.mark.parametrize("entrypoint", ["model", "api"])
 def test_dynamic_joint_factor_fit_is_rejected_before_state_mutation(
         method, entrypoint):

@@ -20,6 +20,51 @@ _TYPE = "__pyscarcopula_type__"
 ModelT = TypeVar("ModelT")
 
 
+def _removed_method_identity(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    identity = "".join(character for character in value.casefold()
+                       if character.isalnum())
+    return identity in {"scarpou", "scarmou"}
+
+
+def _reject_removed_persistence(payload: Any) -> None:
+    """Reject removed Monte Carlo strategy artifacts without importing them."""
+    if isinstance(payload, list):
+        for item in payload:
+            _reject_removed_persistence(item)
+        return
+    if not isinstance(payload, dict):
+        return
+
+    method = payload.get("method")
+    if _removed_method_identity(method):
+        raise ValueError(
+            "Unsupported persisted model method: legacy SCAR Monte Carlo "
+            "artifacts have no migration execution path")
+    class_path = payload.get("class")
+    if (
+        isinstance(class_path, str)
+        and class_path.startswith("pyscarcopula.strategy.scar_mc.")
+    ):
+        raise ValueError(
+            "Unsupported persisted model format: legacy SCAR Monte Carlo "
+            "strategy classes cannot be loaded")
+    if payload.get(_TYPE) == "dict":
+        for pair in payload.get("items", ()):
+            if (
+                isinstance(pair, list)
+                and len(pair) == 2
+                and pair[0] == "method"
+                and _removed_method_identity(pair[1])
+            ):
+                raise ValueError(
+                    "Unsupported persisted model method: legacy SCAR Monte "
+                    "Carlo artifacts have no migration execution path")
+    for value in payload.values():
+        _reject_removed_persistence(value)
+
+
 def _class_path(cls: type) -> str:
     return f"{cls.__module__}.{cls.__qualname__}"
 
@@ -140,16 +185,18 @@ def _to_jsonable(obj: Any) -> Any:
     raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
 
-def _from_jsonable(payload: Any) -> Any:
+def _from_jsonable(payload: Any, _removed_checked: bool = False) -> Any:
+    if not _removed_checked:
+        _reject_removed_persistence(payload)
     if isinstance(payload, list):
-        return [_from_jsonable(item) for item in payload]
+        return [_from_jsonable(item, True) for item in payload]
     if not isinstance(payload, dict) or _TYPE not in payload:
         return payload
 
     tag = payload[_TYPE]
     if tag == "ndarray":
         arr = np.asarray(
-            _from_jsonable(payload["data"]),
+            _from_jsonable(payload["data"], True),
             dtype=np.dtype(payload["dtype"]),
         )
         return arr.reshape(tuple(payload["shape"]))
@@ -165,11 +212,11 @@ def _from_jsonable(payload: Any) -> Any:
     if tag == "class":
         return _resolve_class(payload["class"])
     if tag == "optimize_result":
-        return OptimizeResult(_from_jsonable(payload["data"]))
+        return OptimizeResult(_from_jsonable(payload["data"], True))
     if tag == "dataclass":
         cls = _resolve_class(payload["class"])
         values = {
-            key: _from_jsonable(value)
+            key: _from_jsonable(value, True)
             for key, value in payload["fields"].items()
         }
         if (
@@ -179,21 +226,22 @@ def _from_jsonable(payload: Any) -> Any:
             values.pop("backend", None)
         return cls(**values)
     if tag == "tuple":
-        return tuple(_from_jsonable(item) for item in payload["items"])
+        return tuple(_from_jsonable(item, True) for item in payload["items"])
     if tag == "frozenset":
-        return frozenset(_from_jsonable(item) for item in payload["items"])
+        return frozenset(
+            _from_jsonable(item, True) for item in payload["items"])
     if tag == "set":
-        return set(_from_jsonable(item) for item in payload["items"])
+        return set(_from_jsonable(item, True) for item in payload["items"])
     if tag == "dict":
         return {
-            _from_jsonable(key): _from_jsonable(value)
+            _from_jsonable(key, True): _from_jsonable(value, True)
             for key, value in payload["items"]
         }
     if tag == "object":
         cls = _resolve_class(payload["class"])
         obj = cls.__new__(cls)
         state = {
-            key: _from_jsonable(value)
+            key: _from_jsonable(value, True)
             for key, value in payload["state"].items()
         }
         if hasattr(obj, "__setstate__"):
@@ -227,6 +275,7 @@ def save_model(model: object, path: str | Path, *, include_data: bool = False) -
         "include_data": bool(include_data),
         "state": _to_jsonable(payload_model),
     }
+    _reject_removed_persistence(envelope)
     with Path(path).open("w", encoding="utf-8") as fh:
         json.dump(
             envelope,

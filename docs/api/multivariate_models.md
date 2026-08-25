@@ -417,10 +417,10 @@ multivariate guide for fitting details and diagnostic fields.
 
 `factor` stores `O(d*k + k^2)` state and supports explicit
 `initialize_factor`, static row likelihood, tiled latent-grid evaluation,
-MLE, GAS, SCAR-TM-OU, native SCAR-MC trajectory likelihood, bounded batch
-sampling, and exact conditional sampling. It forbids `R` and `corr_base`, and
-its `R` property never silently allocates a dense matrix. Factor sampling and
-conditioning retain the compact representation.
+MLE, GAS, SCAR-TM-OU, bounded batch sampling, and exact conditional sampling.
+It forbids `R` and `corr_base`, and its `R` property never silently allocates
+a dense matrix. Factor sampling and conditioning retain the compact
+representation.
 
 Dynamic emission densities normally use an interpolated, precomputed Student
 quantile (PPF) table of shape `(n_df_nodes, T, d)`, covering the model boundary

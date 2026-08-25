@@ -218,7 +218,6 @@ can be constant or dynamic:
 | MLE + `joint` | One fitted constant `df` | Optimized jointly with `df` |
 | GAS | Score-driven `df_t` | Supplied or two-stage, then fixed |
 | SCAR-TM-OU | Latent OU-driven `df_t` | Supplied or two-stage, then fixed |
-| SCAR-P-OU / SCAR-M-OU | Monte Carlo latent dynamics | Supplied or two-stage, then fixed |
 
 ### Static MLE with two-stage loadings
 
@@ -369,10 +368,9 @@ scar_draws = scar_student.predict(
 ```
 
 The matrix, local, and spectral SCAR-TM backends consume the same compact
-factor operator. SCAR-P-OU and SCAR-M-OU use the native factor trajectory
-kernel. Forward/backward filtering remains sequential in time; emission rows,
-grid cells, dimension tiles, and independent trajectories are parallelized
-where their workload passes the native thresholds.
+factor operator. Forward/backward filtering remains sequential in time;
+emission rows, grid cells, and dimension tiles are parallelized where their
+workload passes the native thresholds.
 
 ### Estimation-mode compatibility
 

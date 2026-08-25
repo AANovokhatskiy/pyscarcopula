@@ -142,7 +142,7 @@ class StochasticStudentCopula(MultivariateCopula):
         df(t) = Psi(x(t)) = 2 + 1e-6 + softplus(x(t))
 
     Compatible with SCAR-TM-OU: one latent OU process drives df(t).
-    Also supports MLE (constant df), GAS, and SCAR-MC methods.
+    Also supports MLE (constant df) and GAS methods.
 
     Parameters
     ----------
@@ -192,7 +192,6 @@ class StochasticStudentCopula(MultivariateCopula):
     _capabilities = CopulaCapabilities(
         supports_gas=True,
         supports_scar_ou=True,
-        supports_scar_mc=True,
         supports_latent_grid=True,
         supports_conditional_sampling=True,
         has_dynamic_scalar_parameter=True,

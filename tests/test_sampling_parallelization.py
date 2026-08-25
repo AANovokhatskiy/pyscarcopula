@@ -1,4 +1,4 @@
-"""Contracts for conditional sampling and MC trajectory grids."""
+"""Contracts for conditional sampling parallelism."""
 
 import json
 import os
@@ -12,13 +12,7 @@ from pyscarcopula import (
     StochasticStudentCopula,
     StudentCopula,
 )
-from pyscarcopula.numerical import (
-    _cpp_copula,
-    _cpp_extension,
-    mc_native,
-    multivariate_native,
-)
-from pyscarcopula.numerical.mc_samplers import p_sampler_loglik
+from pyscarcopula.numerical import _cpp_extension, multivariate_native
 
 
 def equicorr_matrix(d, rho):
@@ -224,61 +218,6 @@ def test_conditional_small_workload_stays_sequential():
     assert batches_after == batches_before
 
 
-def test_mc_student_fixed_trajectories_are_bitwise_equivalent():
-    T, d, n_trajectories = 20, 8, 256
-    rng = np.random.default_rng(808)
-    copula, _ = _student_model(d)
-    u = rng.uniform(0.02, 0.98, (T, d))
-    paths = rng.normal(size=(T, n_trajectories))
-
-    expected, _ = mc_native.log_pdf_trajectory_grid_info(
-        copula, u, paths, n_threads=1)
-    actual, diagnostics = mc_native.log_pdf_trajectory_grid_info(
-        copula, u, paths, n_threads=4)
-
-    np.testing.assert_array_equal(actual, expected)
-    assert diagnostics["n_threads_requested"] == 4
-    assert diagnostics["parallel_blocks"] == 4
-
-
-def test_mc_parallel_failure_index_matches_sequential():
-    module = _cpp_extension.load()
-    T, d, n_trajectories = 20, 8, 256
-    rng = np.random.default_rng(809)
-    copula, _ = _student_model(d)
-    u = rng.uniform(0.02, 0.98, (T, d))
-    paths = np.full((T, n_trajectories), 1.0)
-    paths[5] = np.nan
-    spec = _cpp_copula.make_mc_spec(module, copula, u=u)
-
-    sequential = dict(module.copula_log_pdf_trajectory_grid(
-        spec, u, paths, 1))
-    parallel = dict(module.copula_log_pdf_trajectory_grid(
-        spec, u, paths, 4))
-
-    assert sequential["status"] == module.SCAR_NUMERICAL_FAILURE
-    assert parallel["status"] == module.SCAR_NUMERICAL_FAILURE
-    assert sequential["failure_index"] == parallel["failure_index"] == 5
-    np.testing.assert_array_equal(
-        parallel["log_pdf"][:5], sequential["log_pdf"][:5])
-    assert np.all(np.isneginf(parallel["log_pdf"][6:]))
-
-
-def test_mc_sampler_fixed_draws_are_reproducible_across_threads():
-    T, d, n_trajectories = 20, 8, 256
-    rng = np.random.default_rng(810)
-    copula, _ = _student_model(d)
-    u = rng.uniform(0.02, 0.98, (T, d))
-    dwt = rng.normal(size=(T, n_trajectories))
-
-    expected = p_sampler_loglik(
-        1.0, 0.2, 0.4, u, dwt, copula, True, n_threads=1)
-    actual = p_sampler_loglik(
-        1.0, 0.2, 0.4, u, dwt, copula, True, n_threads=4)
-
-    assert actual == expected
-
-
 @pytest.mark.parametrize("n_threads", [0, 257, True, 1.5])
 def test_sampling_kernels_reject_invalid_thread_count(n_threads):
     given, given_latent, normal_draws = _conditional_inputs(n=8, d=10)
@@ -328,40 +267,6 @@ def test_conditional_internal_thread_scaling_benchmark():
     payload = {
         "name": "conditional_gaussian_internal_thread_scaling",
         "workload": {"n": n, "d": d, "n_given": len(given)},
-        "seconds": {str(key): value for key, value in timings.items()},
-        "speedup": {
-            str(key): measured.median_ratio(1, key) for key in workers
-        },
-    }
-    print("PYSCA_BENCHMARK " + json.dumps(
-        payload, sort_keys=True), flush=True)
-
-
-@pytest.mark.benchmark
-def test_mc_student_internal_thread_scaling_benchmark():
-    _benchmark_enabled()
-    T, d, n_trajectories = 100, 40, 128
-    rng = np.random.default_rng(812)
-    copula, _ = _student_model(d)
-    u = rng.uniform(0.02, 0.98, (T, d))
-    paths = rng.normal(size=(T, n_trajectories))
-    workers = (1, 2, 4, 8)
-    calls = {
-        count: lambda count=count: mc_native.log_pdf_trajectory_grid(
-            copula, u, paths, n_threads=count)
-        for count in workers
-    }
-    for call in calls.values():
-        call()
-    measured = interleaved_timings(calls, repeats=5)
-    timings = measured.medians
-    reference = measured.results[1]
-    for count in workers[1:]:
-        np.testing.assert_array_equal(measured.results[count], reference)
-
-    payload = {
-        "name": "mc_student_internal_thread_scaling",
-        "workload": {"T": T, "d": d, "n_trajectories": n_trajectories},
         "seconds": {str(key): value for key, value in timings.items()},
         "speedup": {
             str(key): measured.median_ratio(1, key) for key in workers

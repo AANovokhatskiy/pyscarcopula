@@ -45,10 +45,6 @@ STRATEGY_REQUIREMENTS = {
         "SCAR-TM-JACOBI",
         (*_BASE_FIT_OPERATIONS, "state_filter_smoother"),
     ),
-    "SCAR-P-OU": StrategyRequirements(
-        "SCAR-P-OU", (*_BASE_FIT_OPERATIONS, "state_filter_smoother")),
-    "SCAR-M-OU": StrategyRequirements(
-        "SCAR-M-OU", (*_BASE_FIT_OPERATIONS, "state_filter_smoother")),
 }
 
 
@@ -72,8 +68,6 @@ _DYNAMICS_NAMES = {
     "GAS": "Gas",
     "SCAR-TM-OU": "ScarTmOu",
     "SCAR-TM-JACOBI": "ScarTmJacobi",
-    "SCAR-P-OU": "ScarPOu",
-    "SCAR-M-OU": "ScarMOu",
 }
 
 
@@ -309,18 +303,13 @@ def compatibility_capability_flags(model) -> dict[str, bool] | None:
 
     gas = strategy_support(model, "GAS")
     scar_ou = strategy_support(model, "SCAR-TM-OU")
-    scar_p = strategy_support(model, "SCAR-P-OU")
-    scar_m = strategy_support(model, "SCAR-M-OU")
-    dynamic_kinds = (
-        "GAS", "SCAR-TM-OU", "SCAR-TM-JACOBI", "SCAR-P-OU", "SCAR-M-OU")
+    dynamic_kinds = ("GAS", "SCAR-TM-OU", "SCAR-TM-JACOBI")
     return {
         "supports_pair_ops": supports("point_density_derivatives"),
         "supports_native_point_ops": supports("point_density_derivatives"),
         "supports_native_mle": supports("likelihood_objective_gradient"),
         "supports_gas": bool(gas and gas.supported),
         "supports_scar_ou": bool(scar_ou and scar_ou.supported),
-        "supports_scar_mc": bool(
-            scar_p and scar_p.supported and scar_m and scar_m.supported),
         "supports_latent_grid": supports(
             "row_grid_density_gradient", "SCAR-TM-OU"),
         "supports_conditional_sampling": supports(

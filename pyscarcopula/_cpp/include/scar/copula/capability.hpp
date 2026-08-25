@@ -25,8 +25,6 @@ enum class DynamicsKind : int {
     Gas = 1,
     ScarTmOu = 2,
     ScarTmJacobi = 3,
-    ScarPOu = 4,
-    ScarMOu = 5,
 };
 
 struct CapabilityRequest {

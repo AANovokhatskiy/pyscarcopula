@@ -1138,7 +1138,7 @@ def test_multivariate_direct_predict_honors_all_given_coordinates():
 @pytest.mark.parametrize("horizon", ["current", "next"])
 @pytest.mark.parametrize(
     "method",
-    ["scar-tm-ou", "gas", "scar-p-ou", "scar-m-ou"],
+    ["scar-tm-ou", "gas"],
 )
 @pytest.mark.parametrize("corr_mode", ["fixed", "factor"])
 def test_stochastic_student_direct_dynamic_predict_matches_api(
@@ -1161,16 +1161,6 @@ def test_stochastic_student_direct_dynamic_predict_matches_api(
             params=gas_params(0.1, 0.2, 0.7),
             scaling="unit",
             r_last=5.0,
-        )
-    else:
-        result = LatentResult(
-            log_likelihood=0.0,
-            method=method.upper(),
-            copula_name=copula.name,
-            success=True,
-            params=ou_params(0.8, 0.0, 1.0),
-            n_tr=10,
-            M_iterations=1 if method == "scar-m-ou" else None,
         )
     copula.fit_result = result
     copula._last_u = u

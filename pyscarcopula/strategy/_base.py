@@ -129,22 +129,18 @@ def _allows_gas_static_correlation(copula, method) -> bool:
 
 def ensure_strategy_supported(copula, method):
     """Reject incompatible built-in strategy selections deterministically."""
+    normalized = validate_strategy_method(str(method))
     capabilities = get_copula_capabilities(copula)
     if capabilities is None:
         return
-    normalized = str(method).upper()
     dynamic_methods = {
         "GAS",
         "SCAR-TM-OU",
         "SCAR-TM-JACOBI",
-        "SCAR-P-OU",
-        "SCAR-M-OU",
     }
     joint_factor_dynamic_methods = {
         "GAS",
         "SCAR-TM-OU",
-        "SCAR-P-OU",
-        "SCAR-M-OU",
     }
     if (
             normalized in joint_factor_dynamic_methods
@@ -163,9 +159,6 @@ def ensure_strategy_supported(copula, method):
         if normalized == "SCAR-TM-OU":
             raise TypeError(
                 f"{type(copula).__name__} does not support SCAR-TM-OU")
-        if normalized in {"SCAR-P-OU", "SCAR-M-OU"}:
-            raise TypeError(
-                f"{type(copula).__name__} does not support {normalized}")
         if normalized == "SCAR-TM-JACOBI":
             raise TypeError(
                 f"{type(copula).__name__} does not support pair "
@@ -187,10 +180,6 @@ def ensure_strategy_supported(copula, method):
             "corr_mode='shrinkage'")
     if normalized == "SCAR-TM-OU" and not capabilities.supports_scar_ou:
         raise TypeError(f"{type(copula).__name__} does not support SCAR-TM-OU")
-    if (
-            normalized in {"SCAR-P-OU", "SCAR-M-OU"}
-            and not capabilities.supports_scar_mc):
-        raise TypeError(f"{type(copula).__name__} does not support {normalized}")
     if normalized == "SCAR-TM-JACOBI" and not capabilities.supports_pair_ops:
         raise TypeError(
             f"{type(copula).__name__} does not support pair Jacobi dynamics")
@@ -428,8 +417,7 @@ def get_strategy(method: str, config: NumericalConfig | None = None,
     Parameters
     ----------
     method : str
-        'mle', 'scar-tm-ou', 'scar-tm-jacobi', 'scar-p-ou',
-        'scar-m-ou', 'gas'
+        'mle', 'scar-tm-ou', 'scar-tm-jacobi', or 'gas'
     config : NumericalConfig or None
     **kwargs : forwarded to strategy constructor
 
@@ -441,20 +429,7 @@ def get_strategy(method: str, config: NumericalConfig | None = None,
     ------
     ValueError if method is unknown
     """
-    m = method.upper()
-
-    # Lazy registration: import strategies if requested method is missing.
-    # Using `m not in _REGISTRY` instead of `not _REGISTRY` to avoid a
-    # race condition: if one strategy module is imported early (e.g. GAS
-    # init triggers MLE import), _REGISTRY is non-empty but incomplete,
-    # and other methods like SCAR-M-OU would not be found.
-    if m not in _REGISTRY:
-        _import_all_strategies()
-
-    if m not in _REGISTRY:
-        available = sorted(_REGISTRY.keys())
-        raise ValueError(
-            f"Unknown method '{method}'. Available: {available}")
+    m = validate_strategy_method(method)
 
     cls = _REGISTRY[m]
     cfg = config or DEFAULT_CONFIG
@@ -548,8 +523,19 @@ def _import_all_strategies():
     from pyscarcopula.strategy import mle       # noqa: F401
     from pyscarcopula.strategy import scar_tm   # noqa: F401
     from pyscarcopula.strategy import scar_jacobi  # noqa: F401
-    from pyscarcopula.strategy import scar_mc   # noqa: F401
     from pyscarcopula.strategy import gas       # noqa: F401
+
+
+def validate_strategy_method(method: str) -> str:
+    """Return the canonical registered name or reject it before execution."""
+    normalized = method.upper()
+    if normalized not in _REGISTRY:
+        _import_all_strategies()
+    if normalized not in _REGISTRY:
+        available = sorted(_REGISTRY)
+        raise ValueError(
+            f"Unknown method '{method}'. Available: {available}")
+    return normalized
 
 
 def list_methods() -> list[str]:

@@ -22,13 +22,12 @@ pyscarcopula/
 |-- strategy/
 |   |-- _base.py             # Strategy registry and capability validation
 |   |-- mle.py, gas.py, scar_tm.py
-|   `-- scar_jacobi.py, scar_mc.py
+|   `-- scar_jacobi.py
 |-- numerical/
 |   |-- copula_native.py, multivariate_native.py
 |   |-- static_likelihood.py, gas_filter.py
 |   |-- _cpp_scar_ou.py, _cpp_gas.py, _cpp_gas_rvine.py
-|   |-- jacobi_tm.py         # Retained Python Jacobi orchestration
-|   `-- mc_samplers.py       # Retained Python SCAR-MC/EIS orchestration
+|   `-- jacobi_tm.py         # Retained Python Jacobi orchestration
 |-- vine/
 |   |-- vine.py               # Canonical generic VineCopula runtime
 |   |-- rvine.py              # RVineCopula compatibility module alias
@@ -253,7 +252,6 @@ Python remains responsible for:
 - correlation parameterization and chain rules around native evaluators;
 - RNG and generation of fixed draws used by native conditional sampling;
 - Jacobi filtering orchestration;
-- SCAR-MC/EIS orchestration;
 - goodness-of-fit and contribution analytics.
 
 For dense static and GAS Student GoF, Python owns dispatch and the `df`

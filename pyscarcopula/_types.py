@@ -207,10 +207,6 @@ class NumericalConfig:
     gas_gamma_bound: float = 20.0
     gas_beta_bound: float = 0.999
 
-    # MC samplers
-    default_n_tr: int = 500
-    default_M_iterations: int = 3
-
     def __post_init__(self) -> None:
         resolved_threads = validate_n_threads(self.n_threads)
         object.__setattr__(self, 'n_threads', resolved_threads)
@@ -640,8 +636,6 @@ class LatentResult(FitResultBase):
     spectral_basis_order: int | str | None = None  # Hermite basis size/mode
     spectral_quad_order: int | None = None   # Hermite quadrature size
     diagnostics: dict[str, Any] = field(default_factory=dict)
-    n_tr: int | None = None                  # MC trajectory count
-    M_iterations: int | None = None          # EIS iterations
     parameter_count: int | None = None        # latent plus fitted static params
     # Jacobi options that change likelihood, prediction, or admissibility.
     # Appended to preserve positional compatibility of older result fields.
@@ -709,10 +703,6 @@ class LatentResult(FitResultBase):
             lines.append(f"spectral_basis_order: {self.spectral_basis_order}")
         if self.spectral_quad_order is not None:
             lines.append(f"spectral_quad_order: {self.spectral_quad_order}")
-        if self.n_tr is not None:
-            lines.append(f"           n_tr: {self.n_tr}")
-        if self.M_iterations is not None:
-            lines.append(f"   M_iterations: {self.M_iterations}")
         return lines
 
 

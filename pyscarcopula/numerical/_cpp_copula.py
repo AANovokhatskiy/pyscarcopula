@@ -141,37 +141,6 @@ def supported_for_static_likelihood(copula) -> bool:
     return _cpp_extension.available()
 
 
-def supported_for_mc(copula) -> bool:
-    """Return whether ``copula`` has native SCAR-MC trajectory density."""
-    try:
-        ensure_supported_for_mc(copula)
-    except CppUnsupported:
-        return False
-    return _cpp_extension.available()
-
-
-def ensure_supported_for_mc(copula) -> None:
-    """Validate support for native SCAR-MC trajectory density."""
-    from pyscarcopula.copula.multivariate.stochastic_student import (
-        StochasticStudentCopula,
-    )
-
-    if isinstance(copula, StochasticStudentCopula):
-        if copula.corr_mode == "factor":
-            try:
-                copula.correlation_operator_
-            except (AttributeError, ValueError) as exc:
-                raise CppUnsupported(
-                    "StochasticStudentCopula requires initialized "
-                    "factor correlation") from exc
-            return
-        if copula.R is None:
-            raise CppUnsupported(
-                "StochasticStudentCopula requires initialized R")
-        return
-    ensure_supported_for_copula_ops(copula)
-
-
 def ensure_supported_for_static_likelihood(copula) -> None:
     """Validate support for native static likelihood evaluation."""
     from pyscarcopula.copula.multivariate.equicorr import (
@@ -375,18 +344,6 @@ def ensure_supported_for_gas(copula) -> None:
 def make_copula_ops_spec(module, copula):
     """Build a C++ ``CopulaSpec`` for shared point/grid operations."""
     return _make_native_pair_spec(module, copula)
-
-
-def make_mc_spec(module, copula, u=None):
-    """Build a native spec for SCAR-MC trajectory density evaluation."""
-    ensure_supported_for_mc(copula)
-    from pyscarcopula.copula.multivariate.stochastic_student import (
-        StochasticStudentCopula,
-    )
-
-    if isinstance(copula, StochasticStudentCopula):
-        return make_spec(module, copula, u=u)
-    return make_copula_ops_spec(module, copula)
 
 
 def make_gas_spec(module, copula, u=None, *, use_student_cache=True):

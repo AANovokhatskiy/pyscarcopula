@@ -332,8 +332,6 @@ def _config_mappings() -> list[dict[str, Any]]:
         "gas_score_eps": ("gas::GasConfig", "score_eps"),
         "gas_gamma_bound": ("Python GAS parameter bounds", "gamma_bound"),
         "gas_beta_bound": ("Python GAS parameter bounds", "beta_bound"),
-        "default_n_tr": ("Python SCAR-MC orchestration", "n_trajectories"),
-        "default_M_iterations": ("Python SCAR-MC orchestration", "m_iterations"),
     }
     records = []
     for field in fields(NumericalConfig):
@@ -375,11 +373,11 @@ def _named_constant_mappings() -> list[dict[str, Any]]:
 
 def _model_operation_matrix() -> list[dict[str, Any]]:
     return [
-        {"model":"pair built-ins","families":["independent","clayton","frank","gumbel","joe","gaussian"],"dynamics":["static","GAS","SCAR-OU","SCAR-MC"],"corr_modes":["n/a"],"operations":["transform","density","gradient","h","inverse-h","row/grid","static likelihood","sampling"]},
+        {"model":"pair built-ins","families":["independent","clayton","frank","gumbel","joe","gaussian"],"dynamics":["static","GAS","SCAR-OU"],"corr_modes":["n/a"],"operations":["transform","density","gradient","h","inverse-h","row/grid","static likelihood","sampling"]},
         {"model":"GaussianCopula","families":["multivariate gaussian"],"dynamics":["static"],"corr_modes":["fixed","shrinkage","cholesky","factor"],"operations":["fit","density","correlation gradient","sampling","conditional sampling"]},
-        {"model":"EquicorrGaussianCopula","families":["equicorrelation gaussian"],"dynamics":["static","GAS","SCAR-OU","SCAR-MC"],"corr_modes":["equicorrelation"],"operations":["row/grid density and gradient","prepared sufficient statistics","likelihood","Rosenblatt","sampling"]},
+        {"model":"EquicorrGaussianCopula","families":["equicorrelation gaussian"],"dynamics":["static","GAS","SCAR-OU"],"corr_modes":["equicorrelation"],"operations":["row/grid density and gradient","prepared sufficient statistics","likelihood","Rosenblatt","sampling"]},
         {"model":"StudentCopula","families":["static student"],"dynamics":["static"],"corr_modes":["fixed","shrinkage","cholesky","factor"],"operations":["fit","density","correlation gradient","sampling","conditional sampling"]},
-        {"model":"StochasticStudentCopula","families":["dynamic student"],"dynamics":["static","GAS","SCAR-OU","SCAR-MC"],"corr_modes":["fixed","shrinkage","cholesky","factor"],"operations":["cached/exact row-grid density and gradient","factor tiled density","likelihood","Rosenblatt","sampling","conditional sampling"]},
+        {"model":"StochasticStudentCopula","families":["dynamic student"],"dynamics":["static","GAS","SCAR-OU"],"corr_modes":["fixed","shrinkage","cholesky","factor"],"operations":["cached/exact row-grid density and gradient","factor tiled density","likelihood","Rosenblatt","sampling","conditional sampling"]},
         {"model":"R-vine","families":["mixed built-in pair edges"],"dynamics":["static","GAS edge composition","SCAR edge composition"],"corr_modes":["n/a"],"operations":["density","Rosenblatt","unconditional sampling","conditional DAG sampling","conditional MCMC"]}
     ]
 

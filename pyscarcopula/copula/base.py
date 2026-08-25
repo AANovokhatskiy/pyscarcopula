@@ -37,7 +37,6 @@ class CopulaCapabilities:
     supports_native_mle: bool = False
     supports_gas: bool = False
     supports_scar_ou: bool = False
-    supports_scar_mc: bool = False
     supports_latent_grid: bool = False
     supports_conditional_sampling: bool = False
     has_dynamic_scalar_parameter: bool = False
@@ -288,7 +287,6 @@ class BivariateCopula(CopulaBase):
         'scar-tm-ou' — transfer matrix (3 params: kappa, mu, nu)
         'scar-tm-jacobi' - TM for Jacobi Kendall-tau dynamics
         'gas'        — GAS score-driven (3 params: omega, gamma, beta)
-        'scar-p-ou'  — MC p-sampler, 'scar-m-ou' — MC m-sampler with EIS
 
     Parameters
     ----------
@@ -307,7 +305,6 @@ class BivariateCopula(CopulaBase):
         supports_native_point_ops=True,
         supports_gas=True,
         supports_scar_ou=True,
-        supports_scar_mc=True,
         supports_latent_grid=True,
         supports_conditional_sampling=True,
         has_dynamic_scalar_parameter=True,
@@ -541,7 +538,7 @@ class BivariateCopula(CopulaBase):
         """Sample n observations for next-step prediction.
 
         Delegates to api.predict() which dispatches to the correct
-        strategy (MLE/SCAR-TM/GAS/SCAR-MC). For bivariate copulas,
+        strategy (MLE/SCAR-TM/GAS). For bivariate copulas,
         ``given`` may fix coordinate 0 or 1 in pseudo-observation space;
         the remaining coordinate is sampled conditionally through the
         fitted copula h-function.

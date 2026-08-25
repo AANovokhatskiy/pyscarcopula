@@ -53,7 +53,7 @@ validation. Numerical adapters are transitional callers of that facade.
 | Capability metadata | Explicit strategy support |
 | Strategy | Optimization and fit-result construction |
 | Native evaluator | Density, likelihood, gradient, filtering, multivariate conditional linear algebra |
-| Python coordination | RNG and fixed draws, Jacobi, MC/EIS, GoF, persistence |
+| Python coordination | RNG and fixed draws, Jacobi, GoF, persistence |
 
 The retained `pyscarcopula.numerical.TMGrid` class is a manual low-level
 NumPy/SciPy reference implementation. Production OU likelihood, prediction,

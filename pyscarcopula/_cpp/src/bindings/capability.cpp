@@ -73,9 +73,7 @@ void bind_capability(py::module_& m) {
         .value("Mle", scar::DynamicsKind::Mle)
         .value("Gas", scar::DynamicsKind::Gas)
         .value("ScarTmOu", scar::DynamicsKind::ScarTmOu)
-        .value("ScarTmJacobi", scar::DynamicsKind::ScarTmJacobi)
-        .value("ScarPOu", scar::DynamicsKind::ScarPOu)
-        .value("ScarMOu", scar::DynamicsKind::ScarMOu);
+        .value("ScarTmJacobi", scar::DynamicsKind::ScarTmJacobi);
 
     py::class_<scar::TypedModelDescriptor>(
         m,

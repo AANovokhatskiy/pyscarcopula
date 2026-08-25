@@ -66,8 +66,6 @@ _MODEL_PATTERNS = (
 _METHOD_PATTERNS = (
     ("SCAR-TM-JACOBI", ("scar-tm-jacobi", "scar_tm_jacobi", "jacobi")),
     ("SCAR-TM-OU", ("scar-tm-ou", "scar_tm_ou", "scar tm")),
-    ("SCAR-P-OU", ("scar-p-ou", "scar_p_ou")),
-    ("SCAR-M-OU", ("scar-m-ou", "scar_m_ou")),
     ("GAS", ("gas",)),
     ("MLE", ("mle",)),
 )

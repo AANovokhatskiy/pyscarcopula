@@ -26,8 +26,6 @@ from pyscarcopula.copula.multivariate.stochastic_student import (
 from pyscarcopula.numerical import _cpp_scar_ou
 from pyscarcopula.numerical import static_likelihood
 from pyscarcopula.numerical.jacobi_tm import _emission_grid
-from pyscarcopula.numerical.mc_samplers import p_sampler_loglik
-from pyscarcopula.numerical.ou_kernels import calculate_dwt
 from pyscarcopula.strategy.mle import MLEStrategy
 
 
@@ -301,28 +299,6 @@ def test_jacobi_emission_construction_benchmark_report():
         elapsed,
         workload={"T": len(u), "K": len(tau), "family": "gumbel"},
         cache_state="warm",
-    )
-
-
-@pytest.mark.benchmark
-def test_mc_copula_density_accumulation_benchmark_report():
-    _enabled()
-    T = 200
-    n_tr = 2_000
-    u = np.random.default_rng(20260625).uniform(0.01, 0.99, (T, 2))
-    dwt = calculate_dwt(T, n_tr, seed=20260625)
-    copula = GumbelCopula(rotate=180)
-    call = lambda: p_sampler_loglik(1.1, 0.3, 0.8, u, dwt, copula, True)
-    call()
-
-    elapsed, value = _median_elapsed(call, repeats=3)
-
-    assert np.isfinite(value)
-    _report(
-        "mc_copula_density_accumulation",
-        elapsed,
-        workload={"T": T, "n_tr": n_tr, "family": "gumbel"},
-        cache_state="warm_fixed_dwt",
     )
 
 

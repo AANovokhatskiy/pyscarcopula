@@ -1,8 +1,7 @@
 """
 Risk metrics: VaR, CVaR, portfolio optimization.
 
-Pipeline (all methods: MLE, SCAR-P-OU, SCAR-M-OU, SCAR-TM-OU,
-SCAR-TM-JACOBI, GAS):
+Pipeline (all methods: MLE, SCAR-TM-OU, SCAR-TM-JACOBI, GAS):
   copula.fit() -> copula.predict(N_mc) / copula.sample(N_mc)
   -> marginal ppf -> loss -> minimize F_gamma -> VaR, CVaR
 
@@ -457,9 +456,8 @@ def _calculate_cvar_optimal(copula, data, method, marginal_model,
 def risk_metrics(copula, data, window_len,
                  gamma=0.95, N_mc=100000,
                  marginals_method='johnsonsu',
-                 method: Literal['mle', 'scar-p-ou', 'scar-m-ou',
-                                        'scar-tm-ou', 'scar-tm-jacobi',
-                                        'gas'] = 'mle',
+                 method: Literal['mle', 'scar-tm-ou', 'scar-tm-jacobi',
+                                 'gas'] = 'mle',
                  optimize_portfolio=True,
                  portfolio_weight=None,
                  n_jobs=1,
@@ -479,8 +477,7 @@ def risk_metrics(copula, data, window_len,
     gamma : float or list — confidence level(s)
     N_mc : int or list — MC sample sizes
     marginals_method : str — 'normal', 'johnsonsu', etc.
-    method : str — 'mle', 'scar-p-ou', 'scar-m-ou', 'scar-tm-ou',
-        'scar-tm-jacobi', 'gas'
+    method : str — 'mle', 'scar-tm-ou', 'scar-tm-jacobi', 'gas'
         Ignored for multivariate elliptical copulas (GaussianCopula,
         StudentCopula), which always use their own MLE fit.
     optimize_portfolio : bool

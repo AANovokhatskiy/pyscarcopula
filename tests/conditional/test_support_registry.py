@@ -169,8 +169,6 @@ def _unsupported_probe(case: UnsupportedCase) -> None:
         ensure_strategy_supported(
             StudentCopula(d=3, R=_correlation()), "SCAR-TM-OU"
         )
-    elif case.probe == "equicorr_scar_p_ou":
-        ensure_strategy_supported(EquicorrGaussianCopula(3), "SCAR-P-OU")
     elif case.probe == "equicorr_scar_tm_jacobi":
         ensure_strategy_supported(
             EquicorrGaussianCopula(3), "SCAR-TM-JACOBI"
@@ -197,9 +195,6 @@ def _unsupported_probe(case: UnsupportedCase) -> None:
     elif case.probe == "stochastic_student_estimated_cholesky_gas":
         model = StochasticStudentCopula(d=4, corr_mode="cholesky")
         ensure_strategy_supported(model, "GAS")
-    elif case.probe == "stochastic_student_shrinkage_scar_p_ou":
-        model = StochasticStudentCopula(d=4, corr_mode="shrinkage")
-        ensure_strategy_supported(model, "SCAR-P-OU")
     else:
         raise AssertionError(f"missing unsupported probe {case.probe}")
 

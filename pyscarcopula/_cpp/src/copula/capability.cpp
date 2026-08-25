@@ -97,10 +97,6 @@ const char* dynamics_name(DynamicsKind dynamics) noexcept {
             return "SCAR-TM-OU";
         case DynamicsKind::ScarTmJacobi:
             return "SCAR-TM-JACOBI";
-        case DynamicsKind::ScarPOu:
-            return "SCAR-P-OU";
-        case DynamicsKind::ScarMOu:
-            return "SCAR-M-OU";
     }
     return "unknown dynamics";
 }
@@ -251,9 +247,7 @@ CapabilityInfo query_capability(const CapabilityRequest& request) {
         const bool supported_dynamics =
             request.dynamics == DynamicsKind::Mle
             || request.dynamics == DynamicsKind::Gas
-            || request.dynamics == DynamicsKind::ScarTmOu
-            || request.dynamics == DynamicsKind::ScarPOu
-            || request.dynamics == DynamicsKind::ScarMOu;
+            || request.dynamics == DynamicsKind::ScarTmOu;
         if (!supported_dynamics) {
             return unsupported(
                 "StochasticStudentCopula does not support "

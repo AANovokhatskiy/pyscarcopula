@@ -850,7 +850,6 @@ def check_prepared_application_modules(root: Path) -> list[Violation]:
             "evaluator.cpp",
             "evaluator_internal.hpp",
             "likelihood.cpp",
-            "monte_carlo.cpp",
             "prediction.cpp",
             "state_distribution.cpp",
             "transition.cpp",
@@ -1031,7 +1030,7 @@ def check_public_cpp_api(root: Path) -> list[Violation]:
         include / "scar_ou" / "result.hpp": (
             "ScarOuVectorResult", "LogLikResult", "GradLogLikResult",
             "StateDistribution", "SmoothedStateDistribution",
-            "OuGridFilterResult", "TrajectoryLogPdfResult"),
+            "OuGridFilterResult",),
         include / "copula" / "result.hpp": (
             "MultivariateRowsResult", "MultivariateGridResult",
             "EquicorrPreparationResult"),
@@ -1413,7 +1412,7 @@ def check_thin_bindings(root: Path) -> list[Violation]:
         "scar_ou.cpp": (
             "ScarOuVectorResult", "LogLikResult", "GradLogLikResult",
             "StateDistribution", "SmoothedStateDistribution",
-            "OuGridFilterResult", "TrajectoryLogPdfResult"),
+            "OuGridFilterResult",),
         "factor.cpp": (
             "FactorStudentRowsResult", "FactorStudentJointResult",
             "FactorStudentGridResult"),

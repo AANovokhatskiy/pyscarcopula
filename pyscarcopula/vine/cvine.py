@@ -150,7 +150,8 @@ class CVineCopula:
         -------
         self
         """
-        method = method.upper()
+        from pyscarcopula.strategy._base import validate_strategy_method
+        method = validate_strategy_method(method)
         u = np.asarray(data, dtype=np.float64)
         if u.ndim != 2:
             raise ValueError(f"CVineCopula.fit: data must be 2D, got shape {u.shape}")

@@ -222,8 +222,8 @@ Parallel threads do not change the asymptotic representation of a model.
 - Its `corr_mode="factor"` adapter stores `O(d*k + k^2)` state and routes
   static row and tiled latent-grid evaluation through the factor kernels.
   Supplied loadings or explicit two-stage initialization never build a dense
-  covariance matrix. Static MLE, GAS, SCAR-TM-OU and SCAR-MC trajectory
-  likelihood consume the same immutable operator. SCAR emission selects
+  covariance matrix. Static MLE, GAS, and SCAR-TM-OU likelihood consume the
+  same immutable operator. SCAR emission selects
   independent cells or dimension tiles according to the workload.
   Unconditional and conditional Student generation uses the same operator;
   conditioning builds only a `k*k` factor system. Row batches bound the

@@ -1,8 +1,8 @@
 """Numerical adapters and retained Python orchestration.
 
 SCAR-TM-OU and GAS likelihood, gradient, filtering, and forward operations
-are native-only. Python retains Jacobi algorithms, SCAR-MC/EIS, sampling,
-goodness-of-fit orchestration, and explicit native adapters.
+are native-only. Python retains Jacobi algorithms, sampling, goodness-of-fit
+orchestration, and explicit native adapters.
 """
 
 from pyscarcopula.numerical.tm_grid import TMGrid
@@ -60,7 +60,6 @@ from pyscarcopula.numerical._scar_ou_config import (
     AutoTMConfig,
     select_auto_backend,
 )
-from pyscarcopula.numerical.ou_kernels import calculate_dwt
 from pyscarcopula.numerical.predictive_tm import sample_grid_distribution
 from pyscarcopula.numerical.gas_filter import (
     gas_filter, gas_loglik, gas_predict_param, gas_negloglik, gas_rosenblatt,
@@ -104,7 +103,7 @@ __all__ = [
     'tm_forward_predictive_mean',
     'tm_forward_rosenblatt', 'tm_forward_mixture_h',
     'tm_xT_distribution',
-    'calculate_dwt', 'sample_grid_distribution',
+    'sample_grid_distribution',
     'gas_filter', 'gas_loglik', 'gas_predict_param', 'gas_negloglik',
     'gas_rosenblatt',
     'gas_mixture_h',

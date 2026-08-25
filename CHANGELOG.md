@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Remove the discontinued SCAR Monte Carlo estimators from strategy,
+  capability, conditional/vine, persistence, documentation, and benchmark
+  surfaces. Legacy persisted artifacts now fail with an explicit unsupported
+  format error and have no execution fallback.
+
 ## 0.21.0 - 2026-08-22
 
 Version: `0.20.2` -> `0.21.0`

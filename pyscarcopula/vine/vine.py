@@ -659,15 +659,16 @@ class VineCopula:
             pair-copula strategy. Common strategy options include ``alpha0``,
             ``gtol``, ``ftol``, ``maxfun``, ``maxiter``, ``maxls``, ``eps``,
             ``verbose``, ``scaling``, ``K``, ``grid_range``, ``grid_method``,
-            ``adaptive``, ``pts_per_sigma``, ``analytical_grad``,
-            ``smart_init``, ``n_tr`` and ``M_iterations``.
+            ``adaptive``, ``pts_per_sigma``, ``analytical_grad`` and
+            ``smart_init``.
 
         Returns
         -------
         self : VineCopula
             Enables chained calls, e.g. ``VineCopula().fit(u).summary()``.
         """
-        method = method.upper()
+        from pyscarcopula.strategy._base import validate_strategy_method
+        method = validate_strategy_method(method)
         u = _as_rvine_observations(
             data, operation="fit", to_pobs=to_pobs)
 

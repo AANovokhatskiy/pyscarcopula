@@ -389,7 +389,6 @@ def test_stage5_application_modules_use_prepared_copula_interfaces():
     for name in (
         "evaluator.cpp",
         "likelihood.cpp",
-        "monte_carlo.cpp",
         "prediction.cpp",
         "state_distribution.cpp",
         "transition.cpp",
@@ -528,7 +527,7 @@ def test_stage6_checker_rejects_workspace_and_caller_leaks(tmp_path):
         "scar_ou/result.hpp": (
             "ScarOuVectorResult", "LogLikResult", "GradLogLikResult",
             "StateDistribution", "SmoothedStateDistribution",
-            "OuGridFilterResult", "TrajectoryLogPdfResult"),
+            "OuGridFilterResult",),
         "copula/result.hpp": (
             "MultivariateRowsResult", "MultivariateGridResult",
             "EquicorrPreparationResult"),
@@ -686,8 +685,7 @@ def test_stage7_bindings_are_thin_and_domain_scoped():
         "gas.cpp": ("GasLogLikResult", "GasFilterResult"),
         "scar_ou.cpp": (
             "LogLikResult", "GradLogLikResult",
-            "SmoothedStateDistribution", "OuGridFilterResult",
-            "TrajectoryLogPdfResult"),
+            "SmoothedStateDistribution", "OuGridFilterResult"),
         "factor.cpp": (
             "FactorStudentRowsResult", "FactorStudentJointResult",
             "FactorStudentGridResult"),
@@ -851,7 +849,7 @@ def test_stateless_scar_bindings_release_gil_after_array_validation():
     ).read_text(encoding="utf-8")
 
     assert "with_observation_view_without_gil" in source
-    assert source.count("observation_view_from_array(") == 3
+    assert source.count("observation_view_from_array(") == 2
     helper = source.index("with_observation_view_without_gil")
     view = source.index("observation_view_from_array(", helper)
     release = source.index("py::gil_scoped_release release", view)
@@ -1006,11 +1004,6 @@ def test_rvine_mcmc_binding_keeps_arrays_alive_and_releases_gil():
         (
             "pyscarcopula/_cpp/src/scar_ou/gradient.cpp",
             "&prepared->compatibility_spec() == &copula;\n",
-            "prepared-application-modules",
-        ),
-        (
-            "pyscarcopula/_cpp/src/scar_ou/monte_carlo.cpp",
-            "spec.student_ppf_nodes();\n",
             "prepared-application-modules",
         ),
         (

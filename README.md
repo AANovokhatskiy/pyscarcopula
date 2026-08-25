@@ -30,7 +30,6 @@ Supported estimation methods:
 | Maximum likelihood | `mle` | Static/constant model parameters |
 | SCAR transfer matrix | `scar-tm-ou` | Deterministic OU latent-state likelihood |
 | SCAR Jacobi transfer matrix | `scar-tm-jacobi` | Deterministic Kendall-tau diffusion likelihood |
-| SCAR Monte Carlo | `scar-p-ou`, `scar-m-ou` | Monte Carlo alternatives |
 | GAS | `gas` | Observation-driven score model |
 
 ## Install

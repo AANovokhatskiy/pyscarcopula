@@ -1461,54 +1461,6 @@ def test_fixed_kendall_plugin_correlation_supports_gas():
     assert api_result.diagnostics["corr_mode"] == "fixed"
 
 
-@pytest.mark.parametrize(
-    "factory",
-    [
-        lambda: StochasticStudentCopula(d=3, corr_mode="shrinkage"),
-        lambda: StochasticStudentCopula(d=3, corr_mode="cholesky"),
-    ],
-)
-@pytest.mark.parametrize("method", ["scar-p-ou", "scar-m-ou"])
-def test_data_estimated_corr_is_limited_to_mle_and_scar_tm_ou(
-        factory, method):
-    u = _u(T=20)
-    kwargs = {
-        "maxiter": 1,
-        "maxfun": 5,
-        "smart_init": False,
-        "alpha0": np.array([1.0, 0.5, 0.8]),
-        "gamma0": np.array([0.1, 0.05, 0.5]),
-        "n_tr": 4,
-        "seed": 7,
-    }
-
-    with pytest.raises(NotImplementedError, match="MLE and SCAR-TM-OU only"):
-        factory().fit(u, method=method, **kwargs)
-
-    with pytest.raises(NotImplementedError, match="MLE and SCAR-TM-OU only"):
-        fit(factory(), u, method=method, **kwargs)
-
-
-@pytest.mark.parametrize("method", ["scar-p-ou", "scar-m-ou"])
-def test_fixed_data_estimated_corr_is_still_limited_for_mc_methods(method):
-    u = _u(T=20)
-    kwargs = {
-        "maxiter": 1,
-        "maxfun": 5,
-        "smart_init": False,
-        "alpha0": np.array([1.0, 0.5, 0.8]),
-        "gamma0": np.array([0.1, 0.05, 0.5]),
-        "n_tr": 4,
-        "seed": 7,
-    }
-
-    with pytest.raises(NotImplementedError, match="MLE and SCAR-TM-OU only"):
-        StochasticStudentCopula(d=3).fit(u, method=method, **kwargs)
-
-    with pytest.raises(NotImplementedError, match="MLE and SCAR-TM-OU only"):
-        fit(StochasticStudentCopula(d=3), u, method=method, **kwargs)
-
-
 def test_posterior_state_weights_with_joint_params_does_not_mutate_model():
     """M3 regression: joint params must not overwrite the model's
     correlation state in a query method."""

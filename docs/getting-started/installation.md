@@ -114,7 +114,7 @@ pytest tests/test_cpp.py
 | Package | Min version | Purpose |
 |---------|-------------|---------|
 | numpy | 1.22 | Arrays, linear algebra |
-| numba | 0.56 | Python analytics, GoF, and MC/EIS helpers |
+| numba | 0.56 | Python analytics, GoF, and dynamic sampling helpers |
 | scipy | 1.9 | Optimization (L-BFGS-B), sparse matrices |
 | joblib | 1.0 | Parallel computation |
 | tqdm | 4.0 | Progress bars |

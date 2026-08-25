@@ -1,6 +1,5 @@
 #pragma once
 
-#include "scar/copula/grid_values.hpp"
 #include "scar/core/result.hpp"
 #include "scar/scar_ou/types.hpp"
 #include "scar/status.hpp"
@@ -94,18 +93,6 @@ struct OuGridFilterResult {
     bool sparse = false;
     Status status = Status::Ok;
     FailureContext failure{};
-
-    bool is_ok() const noexcept {
-        return ok(status);
-    }
-};
-
-struct TrajectoryLogPdfResult {
-    GridValues log_pdf;
-    Status status = Status::Ok;
-    FailureContext failure{};
-    int n_threads_requested = 1;
-    int parallel_blocks = 0;
 
     bool is_ok() const noexcept {
         return ok(status);

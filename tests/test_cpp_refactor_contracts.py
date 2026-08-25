@@ -288,21 +288,25 @@ def test_pair_kernel_golden_tolerances_cannot_be_widened(tmp_path):
         capture_cpp_refactor_goldens.check_fixture(modified)
 
 
-def test_inventory_matches_current_public_and_native_configs():
-    write_cpp_refactor_inventory.main([
-        "--check", "--output", str(INVENTORY_PATH),
-    ])
+def test_stage0_inventory_is_frozen_and_current_config_mapping_is_complete():
     inventory = _json(INVENTORY_PATH)
-    mappings = inventory["configuration_contracts"]["numerical_config_mappings"]
+    assert inventory["inventory_id"] == "cpp-architecture-refactor-v1"
+    assert inventory["source_commit"] == (
+        "88560231c5208d6282128cfb3b68af33c2310319")
+    assert inventory["compute_source_sha256"] == (
+        "037a1d762fae997e274b6afe1c9d2ac8373dcd4a4c68fab0c50cb8ff3aea4360")
+
+    current = write_cpp_refactor_inventory.build_payload()
+    mappings = current["configuration_contracts"]["numerical_config_mappings"]
     assert {entry["old_field"] for entry in mappings} == {
         field.name for field in fields(NumericalConfig)
     }
     assert all(entry["target_owner"] for entry in mappings)
     assert all(entry["target_field_or_constant"] for entry in mappings)
-    constants = inventory["configuration_contracts"]["named_constant_mappings"]
+    constants = current["configuration_contracts"]["named_constant_mappings"]
     assert len({entry["old"] for entry in constants}) == len(constants)
     assert all(entry["target_owner"] and entry["semantic"] for entry in constants)
-    contracts = inventory["configuration_contracts"]
+    contracts = current["configuration_contracts"]
     complete = contracts["complete_constant_mappings"]
     assert len(complete) == (
         len(contracts["discovered_python_constants"])
@@ -314,7 +318,6 @@ def test_inventory_matches_current_public_and_native_configs():
         entry["target_owner"] and entry["target"] and entry["semantic"]
         for entry in complete)
 
-    current = write_cpp_refactor_inventory.build_payload()
     changed_constant = copy.deepcopy(current)
     frozen_name = (
         "pyscarcopula.numerical.multivariate_native."
@@ -328,16 +331,16 @@ def test_inventory_matches_current_public_and_native_configs():
     else:  # pragma: no cover - inventory construction contract
         raise AssertionError(f"missing frozen constant {frozen_name}")
     assert write_cpp_refactor_inventory._gate3_drift(
-        inventory, changed_constant
+        current, changed_constant
     ) == [
         "Python constant "
         f"{frozen_name} changed from 0.1 to 0.2"
     ]
 
-    changed = copy.deepcopy(inventory)
+    changed = copy.deepcopy(current)
     changed["dependencies"]["include_graph"] = {}
     assert (
-        write_cpp_refactor_inventory._contract_view(inventory)
+        write_cpp_refactor_inventory._contract_view(current)
         != write_cpp_refactor_inventory._contract_view(changed)
     )
 

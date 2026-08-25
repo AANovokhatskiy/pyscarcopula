@@ -102,8 +102,7 @@ def fit(
         two columns; multivariate and vine models determine their own width.
     method : str
         Estimation strategy name, such as ``"mle"``, ``"scar-tm-ou"``,
-        ``"scar-tm-jacobi"``, ``"scar-p-ou"``, ``"scar-m-ou"``, or
-        ``"gas"``.
+        ``"scar-tm-jacobi"``, or ``"gas"``.
     to_pobs : bool
         If true, rank-transform each data column before fitting.
     config : NumericalConfig or None

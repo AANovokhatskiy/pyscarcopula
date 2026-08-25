@@ -87,7 +87,6 @@ SCAR_COMPUTE_SOURCES = (
     "vine/mcmc.cpp",
     "vine/rosenblatt.cpp",
     "gas/rvine_sampler.cpp",
-    "scar_ou/monte_carlo.cpp",
     "scar_ou/validation.cpp",
     "scar_ou/likelihood.cpp",
     "scar_ou/gradient.cpp",

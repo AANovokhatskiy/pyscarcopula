@@ -14,13 +14,6 @@
 
 namespace scar {
 
-TrajectoryLogPdfResult copula_log_pdf_trajectory_grid(
-    const CopulaSpec& copula,
-    ObservationView u,
-    const double* latent_paths,
-    std::size_t n_trajectories,
-    int n_threads = 1);
-
 OuGridFilterResult filter_ou_grid_emissions(
     const OuParams& params,
     DoubleView emissions,

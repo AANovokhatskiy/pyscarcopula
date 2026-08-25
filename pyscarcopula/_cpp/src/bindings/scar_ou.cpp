@@ -86,21 +86,6 @@ py::dict smoothed_state_distribution_to_dict(
     return output;
 }
 
-py::dict trajectory_log_pdf_result_to_dict(
-    const scar::TrajectoryLogPdfResult& result) {
-
-    py::dict output;
-    output["log_pdf"] = matrix_to_array(
-        result.log_pdf.values,
-        static_cast<std::size_t>(result.log_pdf.n_obs),
-        static_cast<std::size_t>(result.log_pdf.n_grid));
-    output["status"] = static_cast<int>(result.status);
-    output["failure_index"] = result.failure.index;
-    output["n_threads_requested"] = result.n_threads_requested;
-    output["parallel_blocks"] = result.parallel_blocks;
-    return output;
-}
-
 py::dict hermite_rule_cache_info_to_dict(
     const scar_internal::HermiteRuleCacheInfo& info) {
 
@@ -308,40 +293,6 @@ py::dict run_ou_grid_filter_engine(
 }  // namespace
 
 void bind_scar_ou(py::module_& m) {
-    m.def(
-        "copula_log_pdf_trajectory_grid",
-        [](const scar::CopulaSpec& copula,
-           Float64Array u,
-           Float64Array latent_paths,
-           int n_threads) {
-            const scar::ObservationView observations =
-                observation_view_from_array(
-                    copula.model_descriptor().expected_dimension(), u);
-            const py::buffer_info paths_info = latent_paths.request();
-            if (paths_info.ndim != 2
-                || paths_info.shape[0]
-                    != static_cast<py::ssize_t>(observations.n_obs)
-                || paths_info.shape[1] <= 0) {
-                throw std::invalid_argument(
-                    "latent_paths must have shape (n_obs, n_trajectories)");
-            }
-            scar::TrajectoryLogPdfResult result;
-            {
-                py::gil_scoped_release release;
-                result = scar::copula_log_pdf_trajectory_grid(
-                    copula,
-                    observations,
-                    static_cast<const double*>(paths_info.ptr),
-                    static_cast<std::size_t>(paths_info.shape[1]),
-                    n_threads);
-            }
-            return trajectory_log_pdf_result_to_dict(result);
-        },
-        py::arg("copula"),
-        py::arg("u"),
-        py::arg("latent_paths"),
-        py::arg("n_threads") = 1);
-
     m.def(
         "_hermite_rule_cache_info",
         []() {
