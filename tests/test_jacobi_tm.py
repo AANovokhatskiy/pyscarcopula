@@ -133,7 +133,7 @@ def test_jacobi_grid_sampler_one_draw_is_stationary_grid_atom():
         1.2,
         0.4,
         0.25,
-        n_obs=1,
+        n_obs=2,
         basis_order=4,
         quad_order=24,
         transition_method="local_fixed",
@@ -261,7 +261,7 @@ def test_jacobi_spectral_transition_matrix_is_row_stochastic():
         kappa=1.5,
         m=0.4,
         xi=0.35,
-        dt=0.25,
+        n_obs=5,
         basis_order=8,
         quad_order=32,
         return_diagnostics=True,
@@ -276,17 +276,17 @@ def test_jacobi_spectral_transition_matrix_is_row_stochastic():
 
 
 def test_jacobi_spectral_transition_preserves_conditional_first_moment():
-    kappa, m, dt = 1.2, 0.4, 1.0
+    kappa, m, n_obs = 1.2, 0.4, 2
     tau, _, transition = jacobi_transition_matrix(
         kappa=kappa,
         m=m,
         xi=0.25,
-        dt=dt,
+        n_obs=n_obs,
         basis_order=24,
         quad_order=64,
         transition_method="spectral_matrix",
     )
-    expected = m + (tau - m) * np.exp(-kappa * dt)
+    expected = m + (tau - m) * np.exp(-kappa / (n_obs - 1))
 
     np.testing.assert_allclose(
         transition @ tau, expected, rtol=1e-12, atol=1e-12)
@@ -297,7 +297,7 @@ def test_jacobi_spectral_transition_order_one_is_stationary_kernel():
         kappa=1.5,
         m=0.4,
         xi=0.35,
-        dt=0.25,
+        n_obs=5,
         basis_order=1,
         quad_order=24,
     )
@@ -311,7 +311,7 @@ def test_jacobi_local_transition_matrix_is_nonnegative_and_stochastic():
         kappa=1.5,
         m=0.4,
         xi=0.35,
-        dt=1e-3,
+        n_obs=1001,
         quad_order=40,
         gh_order=5,
         return_diagnostics=True,
@@ -331,7 +331,7 @@ def test_jacobi_local_transition_is_local_for_small_dt():
         kappa=1.5,
         m=0.4,
         xi=0.35,
-        dt=1e-6,
+        n_obs=1_000_001,
         quad_order=40,
         gh_order=5,
     )
@@ -345,7 +345,7 @@ def test_jacobi_transition_matrix_auto_falls_back_on_truncated_negativity():
         kappa=1.5,
         m=0.4,
         xi=0.35,
-        dt=1e-6,
+        n_obs=1_000_001,
         basis_order=6,
         quad_order=40,
         transition_method="auto",

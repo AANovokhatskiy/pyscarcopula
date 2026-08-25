@@ -201,8 +201,364 @@ def lamperti_drift(tau, kappa, m, xi, interior_eps=0.0):
     return np.asarray(result["values"], dtype=np.float64).reshape(values.shape)
 
 
+_METHOD_NAMES = {
+    0: "auto",
+    1: "spectral_matrix",
+    2: "local",
+    3: "local_fixed",
+    4: "spectral_coeff",
+}
+_STORAGE_NAMES = {0: "dense", 1: "sparse"}
+_CORRECTION_NAMES = {0: "none", 1: "mh", 2: "ipfp"}
+
+
+def resolve_dt(n_obs):
+    result = load().jacobi_resolve_dt(int(n_obs))
+    _raise(result, "transition time-grid resolution")
+    return float(result["value"])
+
+
+def transition_powers(kappa, xi, n_obs, basis_order):
+    result = load().jacobi_transition_powers(
+        _params(kappa, 0.5, xi), int(n_obs), int(basis_order))
+    _raise(result, "spectral transition powers")
+    return np.asarray(result["values"], dtype=np.float64)
+
+
+def default_quad_order(basis_order):
+    result = load().jacobi_default_quad_order(int(basis_order))
+    _raise(result, "default quadrature-order selection")
+    return int(result["value"])
+
+
+def estimate_sparse_workspace(
+        *, quad_order, gh_order, correction="none",
+        memory_budget_bytes=1024**3):
+    config = _transition_config(
+        n_obs=2,
+        quad_order=quad_order,
+        basis_order=1,
+        gh_order=gh_order,
+        method="local",
+        storage="sparse",
+        correction=correction,
+        memory_budget_bytes=memory_budget_bytes,
+    )
+    result = load().jacobi_estimate_sparse_workspace(config)
+    if int(result["status"]) == 2 and not result["within_budget"]:
+        raise MemoryError(
+            "sparse Jacobi transition workspace requires an estimated "
+            f"{int(result['bytes'])} bytes, exceeding "
+            f"memory_budget_bytes={int(result['budget_bytes'])}")
+    _raise(result, "sparse transition workspace preflight")
+    return int(result["bytes"])
+
+
+def estimate_sparse_storage(
+        *, quad_order, gh_order, correction="none",
+        memory_budget_bytes=1024**3):
+    """Return the retained sparse-storage estimate used by legacy callers."""
+    config = _transition_config(
+        n_obs=2,
+        quad_order=quad_order,
+        basis_order=1,
+        gh_order=gh_order,
+        method="local",
+        storage="sparse",
+        correction=correction,
+        memory_budget_bytes=memory_budget_bytes,
+    )
+    result = load().jacobi_estimate_sparse_storage(config)
+    if int(result["status"]) == 2 and not result["within_budget"]:
+        raise MemoryError(
+            "sparse Jacobi transition workspace requires an estimated "
+            f"{int(result['bytes'])} bytes, exceeding "
+            f"memory_budget_bytes={int(result['budget_bytes'])}")
+    _raise(result, "sparse transition storage preflight")
+    return int(result["bytes"])
+
+
+def _transition_config(
+        *, n_obs, quad_order, basis_order, gh_order, method,
+        storage="dense", correction="none", clip_negative=False,
+        negative_mass_tol=1e-5, return_grad=False,
+        memory_budget_bytes=1024**3, ipfp_tolerance=1e-15,
+        ipfp_max_iterations=10_000):
+    module = load()
+    numerical = module.JacobiNumericalConfig()
+    numerical.quad_order = int(quad_order)
+    numerical.basis_order = int(basis_order)
+    numerical.gh_order = int(gh_order)
+    numerical.n_obs = int(n_obs)
+    numerical.matrix = storage == "dense"
+    numerical.gradient = bool(return_grad)
+    numerical.memory_budget_bytes = int(memory_budget_bytes)
+
+    config = module.JacobiTransitionConfig()
+    config.numerical = numerical
+    config.method = {
+        "auto": module.JacobiTransitionMethod.Auto,
+        "spectral_matrix": module.JacobiTransitionMethod.SpectralMatrix,
+        "local": module.JacobiTransitionMethod.Local,
+        "local_fixed": module.JacobiTransitionMethod.LocalFixed,
+        "spectral_coeff": module.JacobiTransitionMethod.SpectralCoeff,
+    }[method]
+    config.storage = {
+        "dense": module.JacobiTransitionStorage.Dense,
+        "sparse": module.JacobiTransitionStorage.Sparse,
+    }[storage]
+    config.correction = {
+        "none": module.JacobiStationarityCorrection.None_,
+        "mh": module.JacobiStationarityCorrection.MetropolisHastings,
+        "ipfp": module.JacobiStationarityCorrection.IpFp,
+    }[correction]
+    config.negative_mass_tolerance = float(negative_mass_tol)
+    config.clip_negative = bool(clip_negative)
+    config.derivatives = bool(return_grad)
+    config.ipfp_tolerance = float(ipfp_tolerance)
+    config.ipfp_max_iterations = int(ipfp_max_iterations)
+    return config
+
+
+def _transition_raise(result, operation):
+    diagnostics = dict(result.get("diagnostics", {}))
+    estimated = int(diagnostics.get("estimated_workspace_bytes", 0))
+    budget = int(diagnostics.get("memory_budget_bytes", 0))
+    if int(result["status"]) == 2 and estimated > budget:
+        raise MemoryError(
+            "Jacobi numerical workspace requires an estimated "
+            f"{estimated} bytes, exceeding memory_budget_bytes={budget}; "
+            "reduce quad_order, basis_order, or the observation count, or "
+            "increase memory_budget_bytes")
+    native_operation = int(result.get("failure_operation", -1))
+    if int(result["status"]) == 7 and native_operation == 3:
+        raise FloatingPointError(
+            "sparse IPFP support cannot reach every stationary node")
+    if int(result["status"]) == 7 and native_operation == 5:
+        raise FloatingPointError(
+            "sparse IPFP did not converge within max_iterations")
+    if int(result["status"]) == 7 and native_operation == 6:
+        raise FloatingPointError(
+            "spectral transition contains material negative probability mass")
+    _raise(result, operation)
+
+
+def _transition_diagnostics(values):
+    diagnostics = dict(values)
+    diagnostics["transition_method_requested"] = _METHOD_NAMES[
+        int(diagnostics.pop("method_requested"))]
+    diagnostics["transition_method"] = _METHOD_NAMES[
+        int(diagnostics.pop("method_used"))]
+    diagnostics["transition_storage"] = _STORAGE_NAMES[
+        int(diagnostics.pop("storage"))]
+    diagnostics["correction"] = _CORRECTION_NAMES[
+        int(diagnostics["correction"])]
+    return diagnostics
+
+
+def dense_transition(
+        kappa, m, xi, *, n_obs, quad_order, basis_order,
+        gh_order, method, raw_backend=None, clip_negative=False,
+        negative_mass_tol=1e-5, return_grad=False,
+        memory_budget_bytes=1024**3):
+    module = load()
+    config = _transition_config(
+        n_obs=n_obs,
+        quad_order=quad_order,
+        basis_order=basis_order,
+        gh_order=gh_order,
+        method=method,
+        clip_negative=clip_negative,
+        negative_mass_tol=negative_mass_tol,
+        return_grad=return_grad,
+        memory_budget_bytes=memory_budget_bytes,
+    )
+    function = {
+        "spectral": module.jacobi_build_spectral_transition,
+        "local": module.jacobi_build_local_transition,
+        "local_fixed": module.jacobi_build_fixed_transition,
+        None: module.jacobi_build_dense_transition,
+    }[raw_backend]
+    result = function(_params(kappa, m, xi), config)
+    _transition_raise(result, "dense transition construction")
+    derivatives = np.asarray(result["derivatives"], dtype=np.float64)
+    if derivatives.size == 0:
+        derivatives = None
+    return (
+        np.asarray(result["tau"], dtype=np.float64),
+        np.asarray(result["weights"], dtype=np.float64),
+        np.asarray(result["probabilities"], dtype=np.float64),
+        derivatives,
+        np.asarray(result["spectral_powers"], dtype=np.float64),
+        _transition_diagnostics(result["diagnostics"]),
+    )
+
+
+def coefficient_transition(
+        kappa, m, xi, *, n_obs, quad_order, basis_order,
+        memory_budget_bytes=1024**3):
+    config = _transition_config(
+        n_obs=n_obs,
+        quad_order=quad_order,
+        basis_order=basis_order,
+        gh_order=1,
+        method="spectral_coeff",
+        storage="dense",
+        memory_budget_bytes=memory_budget_bytes,
+    )
+    result = load().jacobi_build_coefficient_transition(
+        _params(kappa, m, xi), config)
+    _transition_raise(result, "spectral-coefficient transition setup")
+    return (
+        np.asarray(result["tau"], dtype=np.float64),
+        np.asarray(result["weights"], dtype=np.float64),
+        np.asarray(result["basis"], dtype=np.float64),
+        np.asarray(result["spectral_powers"], dtype=np.float64),
+        _transition_diagnostics(result["diagnostics"]),
+    )
+
+
+def apply_coefficient_transition(powers, coefficients):
+    result = load().jacobi_apply_coefficient_transition(
+        np.asarray(powers, dtype=np.float64),
+        np.asarray(coefficients, dtype=np.float64),
+    )
+    _raise(result, "spectral-coefficient propagation")
+    return np.asarray(result["values"], dtype=np.float64)
+
+
+def sparse_transition(
+        kappa, m, xi, *, n_obs, quad_order, basis_order,
+        gh_order, method, correction="none", return_grad=False,
+        memory_budget_bytes=1024**3):
+    config = _transition_config(
+        n_obs=n_obs,
+        quad_order=quad_order,
+        basis_order=basis_order,
+        gh_order=gh_order,
+        method=method,
+        storage="sparse",
+        correction=correction,
+        return_grad=return_grad,
+        memory_budget_bytes=memory_budget_bytes,
+    )
+    result = load().jacobi_build_sparse_transition(
+        _params(kappa, m, xi), config)
+    _transition_raise(result, "sparse transition construction")
+    derivatives = np.asarray(result["derivatives"], dtype=np.float64)
+    if derivatives.size == 0:
+        derivatives = None
+    return (
+        np.asarray(result["tau"], dtype=np.float64),
+        np.asarray(result["weights"], dtype=np.float64),
+        np.asarray(result["indices"], dtype=np.intp),
+        np.asarray(result["probabilities"], dtype=np.float64),
+        np.asarray(result["counts"], dtype=np.intp),
+        derivatives,
+        _transition_diagnostics(result["diagnostics"]),
+    )
+
+
+def sparse_left_multiply(indices, probabilities, counts, values):
+    result = load().jacobi_sparse_left_multiply(
+        np.asarray(indices, dtype=np.int64),
+        np.asarray(probabilities, dtype=np.float64),
+        np.asarray(counts, dtype=np.int64),
+        np.asarray(values, dtype=np.float64),
+    )
+    _raise(result, "sparse transition matvec")
+    return np.asarray(result["values"], dtype=np.float64)
+
+
+def sparse_full_horizon_diagnostics(
+        kappa, m, xi, tau, weights, indices, probabilities, counts, steps):
+    result = load().jacobi_sparse_full_horizon_diagnostics(
+        _params(kappa, m, xi),
+        np.asarray(tau, dtype=np.float64),
+        np.asarray(weights, dtype=np.float64),
+        np.asarray(indices, dtype=np.int64),
+        np.asarray(probabilities, dtype=np.float64),
+        np.asarray(counts, dtype=np.int64),
+        int(steps),
+    )
+    _raise(result, "full-horizon transition diagnostics")
+    return dict(result["diagnostics"])
+
+
+def select_sparse_order(
+        kappa, m, xi, *, n_obs, quad_orders, basis_order, gh_order,
+        max_full_horizon_tv, max_relative_variance_error,
+        max_conditional_mean_rmse, max_lag_one_correlation_error,
+        memory_budget_bytes=1024**3, require_pass=False):
+    module = load()
+    config = _transition_config(
+        n_obs=n_obs,
+        quad_order=quad_orders[0],
+        basis_order=min(basis_order, quad_orders[0]),
+        gh_order=gh_order,
+        method="local",
+        storage="sparse",
+        memory_budget_bytes=memory_budget_bytes,
+    )
+    thresholds = module.JacobiAdaptiveThresholds()
+    thresholds.max_full_horizon_tv = float(max_full_horizon_tv)
+    thresholds.max_relative_variance_error = float(
+        max_relative_variance_error)
+    thresholds.max_conditional_mean_rmse = float(
+        max_conditional_mean_rmse)
+    thresholds.max_lag_one_correlation_error = float(
+        max_lag_one_correlation_error)
+    result = module.jacobi_select_sparse_order(
+        _params(kappa, m, xi),
+        config,
+        [int(order) for order in quad_orders],
+        thresholds,
+        bool(require_pass),
+    )
+    if int(result["status"]) == 7 and int(
+            result.get("failure_operation", -1)) == 6:
+        raise RuntimeError(
+            "no sparse Jacobi quad_order satisfied the full-horizon gates")
+    if int(result["status"]) == 2 and int(
+            result.get("failure_operation", -1)) == 7:
+        raise MemoryError(
+            "memory budget prevented every sparse Jacobi candidate")
+    _raise(result, "adaptive sparse-order selection")
+    transition = result["transition"]
+    diagnostics = _transition_diagnostics(transition["diagnostics"])
+    candidates = []
+    for raw in result["candidates"]:
+        record = {
+            "quad_order": int(raw["quad_order"]),
+            "passed": bool(raw["passed"]),
+            "memory_limited": bool(raw["memory_limited"]),
+        }
+        if int(raw["status"]) == 0:
+            record["retained_bytes"] = int(raw["retained_bytes"])
+            record.update(dict(raw["diagnostics"]))
+        candidates.append(record)
+    return (
+        np.asarray(transition["tau"], dtype=np.float64),
+        np.asarray(transition["weights"], dtype=np.float64),
+        np.asarray(transition["indices"], dtype=np.intp),
+        np.asarray(transition["probabilities"], dtype=np.float64),
+        np.asarray(transition["counts"], dtype=np.intp),
+        diagnostics,
+        {
+            "selected_quad_order": int(result["selected_quad_order"]),
+            "passed": bool(result["passed"]),
+            "exhausted": bool(result["exhausted"]),
+            "candidates": candidates,
+        },
+    )
+
+
 __all__ = [
+    "apply_coefficient_transition",
+    "coefficient_transition",
     "estimate_sampling_workspace",
+    "estimate_sparse_storage",
+    "estimate_sparse_workspace",
     "estimate_workspace",
     "fixed_tau_rule",
     "fixed_shape_rule",
@@ -211,6 +567,14 @@ __all__ = [
     "jacobi_rule",
     "lamperti",
     "lamperti_drift",
+    "dense_transition",
+    "default_quad_order",
+    "resolve_dt",
+    "select_sparse_order",
+    "sparse_full_horizon_diagnostics",
+    "sparse_left_multiply",
+    "sparse_transition",
+    "transition_powers",
     "physical_to_raw",
     "raw_bounds",
     "raw_to_physical",

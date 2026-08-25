@@ -101,6 +101,7 @@ SCAR_COMPUTE_SOURCES = (
     "scar_ou/transition.cpp",
     "scar_jacobi/domain.cpp",
     "scar_jacobi/quadrature.cpp",
+    "scar_jacobi/transition.cpp",
 )
 
 PYTHON_BINDING_SOURCES = (

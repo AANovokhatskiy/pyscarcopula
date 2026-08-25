@@ -16,6 +16,25 @@ enum class JacobiBoundaryPolicy : int {
     Clip = 1,
 };
 
+enum class JacobiTransitionMethod : int {
+    Auto = 0,
+    SpectralMatrix = 1,
+    Local = 2,
+    LocalFixed = 3,
+    SpectralCoeff = 4,
+};
+
+enum class JacobiTransitionStorage : int {
+    Dense = 0,
+    Sparse = 1,
+};
+
+enum class JacobiStationarityCorrection : int {
+    None = 0,
+    MetropolisHastings = 1,
+    IpFp = 2,
+};
+
 /// Physical Jacobi diffusion parameters `(kappa, m, xi)`.
 struct JacobiParams {
     double kappa = 1.0;
@@ -47,6 +66,29 @@ struct JacobiNumericalConfig {
     double stationary_shape_max = 500.0;
     double lamperti_eps = 1e-10;
     JacobiBoundaryPolicy boundary = JacobiBoundaryPolicy::Reflect;
+};
+
+/// Complete native transition-construction policy.  Transition construction
+/// requires at least two observations and always uses the fixed product grid
+/// step `1 / (numerical.n_obs - 1)` on `[0, 1]`.
+struct JacobiTransitionConfig {
+    JacobiNumericalConfig numerical{};
+    JacobiTransitionMethod method = JacobiTransitionMethod::Auto;
+    JacobiTransitionStorage storage = JacobiTransitionStorage::Dense;
+    JacobiStationarityCorrection correction =
+        JacobiStationarityCorrection::None;
+    double negative_mass_tolerance = 1e-5;
+    bool clip_negative = false;
+    bool derivatives = false;
+    double ipfp_tolerance = 1e-15;
+    int ipfp_max_iterations = 10000;
+};
+
+struct JacobiAdaptiveThresholds {
+    double max_full_horizon_tv = 0.02;
+    double max_relative_variance_error = 0.10;
+    double max_conditional_mean_rmse = 1e-3;
+    double max_lag_one_correlation_error = 1e-2;
 };
 
 }  // namespace scar

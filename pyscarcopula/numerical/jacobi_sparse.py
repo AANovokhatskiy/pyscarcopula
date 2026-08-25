@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import numpy as np
 from numba import njit
 
+from pyscarcopula._native import jacobi as jacobi_native
 from pyscarcopula._utils import clip_h_function_values
 from pyscarcopula.numerical._arrays import (
     validate_float64_allocation,
@@ -17,19 +18,13 @@ from pyscarcopula.numerical._transition_methods import (
 )
 from pyscarcopula.numerical.jacobi_tm import (
     DEFAULT_JACOBI_MEMORY_BUDGET_BYTES,
-    _jacobi_lamperti,
-    _jacobi_lamperti_drift_from_tau,
-    _jacobi_stationary_shape,
     _emission_grid,
-    _fixed_tau_rule,
     _fixed_tau_weight_derivatives,
     _h_grid_on_theta,
     _h_pair_grids_on_theta,
-    _normal_hermite_rule,
-    _resolve_dt,
     _validate_jacobi_order,
     _validate_nonnegative_int,
-    jacobi_rule,
+    _validate_transition_count,
 )
 
 
@@ -102,8 +97,8 @@ class SparseJacobiTransition:
         if vector.shape != (self.shape[0],):
             raise ValueError(
                 f"vector must have shape ({self.shape[0]},)")
-        return _sparse_left_multiply(
-            vector, self.indices, self.probabilities, self.counts)
+        return jacobi_native.sparse_left_multiply(
+            self.indices, self.probabilities, self.counts, vector)
 
     def to_dense(self, *, memory_budget_bytes=None):
         """Materialize a guarded dense matrix for diagnostics."""
@@ -115,294 +110,6 @@ class SparseJacobiTransition:
         )
         return _sparse_to_dense(
             self.indices, self.probabilities, self.counts)
-
-
-@njit(cache=True, nogil=True)
-def _insert_sparse_mass(row_indices, row_probabilities, count, index, mass):
-    for slot in range(count):
-        if row_indices[slot] == index:
-            row_probabilities[slot] += mass
-            return count
-    row_indices[count] = index
-    row_probabilities[count] = mass
-    return count + 1
-
-
-@njit(cache=True, nogil=True)
-def _insert_sparse_mass_with_grad(
-        row_indices,
-        row_probabilities,
-        row_derivatives,
-        count,
-        index,
-        mass,
-        derivative):
-    for slot in range(count):
-        if row_indices[slot] == index:
-            row_probabilities[slot] += mass
-            for parameter in range(3):
-                row_derivatives[parameter, slot] += derivative[parameter]
-            return count
-    row_indices[count] = index
-    row_probabilities[count] = mass
-    for parameter in range(3):
-        row_derivatives[parameter, count] = derivative[parameter]
-    return count + 1
-
-
-@njit(cache=True, nogil=True)
-def _sort_sparse_row(row_indices, row_probabilities, count):
-    for position in range(1, count):
-        index = row_indices[position]
-        probability = row_probabilities[position]
-        cursor = position - 1
-        while cursor >= 0 and row_indices[cursor] > index:
-            row_indices[cursor + 1] = row_indices[cursor]
-            row_probabilities[cursor + 1] = row_probabilities[cursor]
-            cursor -= 1
-        row_indices[cursor + 1] = index
-        row_probabilities[cursor + 1] = probability
-
-
-@njit(cache=True, nogil=True)
-def _sort_sparse_row_with_grad(
-        row_indices, row_probabilities, row_derivatives, count):
-    for position in range(1, count):
-        index = row_indices[position]
-        probability = row_probabilities[position]
-        derivative = row_derivatives[:, position].copy()
-        cursor = position - 1
-        while cursor >= 0 and row_indices[cursor] > index:
-            row_indices[cursor + 1] = row_indices[cursor]
-            row_probabilities[cursor + 1] = row_probabilities[cursor]
-            row_derivatives[:, cursor + 1] = row_derivatives[:, cursor]
-            cursor -= 1
-        row_indices[cursor + 1] = index
-        row_probabilities[cursor + 1] = probability
-        row_derivatives[:, cursor + 1] = derivative
-
-
-@njit(cache=True, nogil=True)
-def _build_sparse_local_kernel(
-        tau, y_grid, drift, offsets, gh_weights, xi):
-    n_rows = tau.size
-    max_width = 2 * gh_weights.size
-    indices = np.full((n_rows, max_width), -1, dtype=np.int64)
-    probabilities = np.zeros((n_rows, max_width), dtype=np.float64)
-    counts = np.zeros(n_rows, dtype=np.int64)
-    y_max = np.pi / xi
-
-    for row in range(n_rows):
-        center = y_grid[row] + drift[row]
-        # ``drift`` already contains the dt multiplier supplied by Python.
-        count = 0
-        for node in range(gh_weights.size):
-            y_next = center + offsets[node]
-            if y_next < 0.0:
-                y_next = 0.0
-            elif y_next > y_max:
-                y_next = y_max
-            tau_y = np.sin(0.5 * xi * y_next) ** 2
-            weight = gh_weights[node]
-            if tau_y <= tau[0]:
-                count = _insert_sparse_mass(
-                    indices[row], probabilities[row], count, 0, weight)
-                continue
-            if tau_y >= tau[-1]:
-                count = _insert_sparse_mass(
-                    indices[row],
-                    probabilities[row],
-                    count,
-                    n_rows - 1,
-                    weight,
-                )
-                continue
-            right = np.searchsorted(tau, tau_y, side="right")
-            left = right - 1
-            width = tau[right] - tau[left]
-            if width <= 0.0:
-                count = _insert_sparse_mass(
-                    indices[row],
-                    probabilities[row],
-                    count,
-                    left,
-                    weight,
-                )
-                continue
-            fraction = (tau_y - tau[left]) / width
-            count = _insert_sparse_mass(
-                indices[row],
-                probabilities[row],
-                count,
-                left,
-                weight * (1.0 - fraction),
-            )
-            count = _insert_sparse_mass(
-                indices[row],
-                probabilities[row],
-                count,
-                right,
-                weight * fraction,
-            )
-
-        _sort_sparse_row(indices[row], probabilities[row], count)
-        row_sum = 0.0
-        for slot in range(count):
-            row_sum += probabilities[row, slot]
-        for slot in range(count):
-            probabilities[row, slot] /= row_sum
-        counts[row] = count
-    return indices, probabilities, counts
-
-
-@njit(cache=True, nogil=True)
-def _build_sparse_fixed_kernel(
-        tau,
-        y_grid,
-        drift_dt,
-        dcenter,
-        offsets,
-        gh_weights,
-        xi):
-    n_rows = tau.size
-    max_width = 2 * gh_weights.size
-    indices = np.full((n_rows, max_width), -1, dtype=np.int64)
-    probabilities = np.zeros((n_rows, max_width), dtype=np.float64)
-    derivatives = np.zeros(
-        (3, n_rows, max_width), dtype=np.float64)
-    counts = np.zeros(n_rows, dtype=np.int64)
-    y_max = np.pi / xi
-    zero_derivative = np.zeros(3, dtype=np.float64)
-
-    for row in range(n_rows):
-        center = y_grid[row] + drift_dt[row]
-        count = 0
-        for node in range(gh_weights.size):
-            y_next = center + offsets[node]
-            weight = gh_weights[node]
-            if y_next <= 0.0:
-                count = _insert_sparse_mass_with_grad(
-                    indices[row],
-                    probabilities[row],
-                    derivatives[:, row],
-                    count,
-                    0,
-                    weight,
-                    zero_derivative,
-                )
-                continue
-            if y_next >= y_max:
-                count = _insert_sparse_mass_with_grad(
-                    indices[row],
-                    probabilities[row],
-                    derivatives[:, row],
-                    count,
-                    n_rows - 1,
-                    weight,
-                    zero_derivative,
-                )
-                continue
-
-            phase = 0.5 * xi * y_next
-            tau_y = np.sin(phase) ** 2
-            dtau_y = np.empty(3, dtype=np.float64)
-            common = 0.5 * np.sin(xi * y_next)
-            dtau_y[0] = common * xi * dcenter[0, row]
-            dtau_y[1] = common * xi * dcenter[1, row]
-            dtau_y[2] = common * (
-                y_next + xi * dcenter[2, row])
-
-            if tau_y <= tau[0]:
-                count = _insert_sparse_mass_with_grad(
-                    indices[row],
-                    probabilities[row],
-                    derivatives[:, row],
-                    count,
-                    0,
-                    weight,
-                    zero_derivative,
-                )
-                continue
-            if tau_y >= tau[-1]:
-                count = _insert_sparse_mass_with_grad(
-                    indices[row],
-                    probabilities[row],
-                    derivatives[:, row],
-                    count,
-                    n_rows - 1,
-                    weight,
-                    zero_derivative,
-                )
-                continue
-
-            right = np.searchsorted(tau, tau_y, side="right")
-            left = right - 1
-            width = tau[right] - tau[left]
-            if width <= 0.0:
-                count = _insert_sparse_mass_with_grad(
-                    indices[row],
-                    probabilities[row],
-                    derivatives[:, row],
-                    count,
-                    left,
-                    weight,
-                    zero_derivative,
-                )
-                continue
-            fraction = (tau_y - tau[left]) / width
-            derivative = weight * dtau_y / width
-            count = _insert_sparse_mass_with_grad(
-                indices[row],
-                probabilities[row],
-                derivatives[:, row],
-                count,
-                left,
-                weight * (1.0 - fraction),
-                -derivative,
-            )
-            count = _insert_sparse_mass_with_grad(
-                indices[row],
-                probabilities[row],
-                derivatives[:, row],
-                count,
-                right,
-                weight * fraction,
-                derivative,
-            )
-
-        _sort_sparse_row_with_grad(
-            indices[row],
-            probabilities[row],
-            derivatives[:, row],
-            count,
-        )
-        row_sum = 0.0
-        drow_sum = np.zeros(3, dtype=np.float64)
-        for slot in range(count):
-            row_sum += probabilities[row, slot]
-            for parameter in range(3):
-                drow_sum[parameter] += derivatives[parameter, row, slot]
-        for slot in range(count):
-            raw_probability = probabilities[row, slot]
-            probabilities[row, slot] = raw_probability / row_sum
-            for parameter in range(3):
-                derivatives[parameter, row, slot] = (
-                    derivatives[parameter, row, slot] * row_sum
-                    - raw_probability * drow_sum[parameter]
-                ) / (row_sum * row_sum)
-        counts[row] = count
-    return indices, probabilities, derivatives, counts
-
-
-@njit(cache=True, nogil=True)
-def _sparse_left_multiply(vector, indices, probabilities, counts):
-    output = np.zeros(vector.size, dtype=np.float64)
-    for row in range(vector.size):
-        source_mass = vector[row]
-        for slot in range(counts[row]):
-            output[indices[row, slot]] += (
-                source_mass * probabilities[row, slot])
-    return output
 
 
 @njit(cache=True, nogil=True)
@@ -551,31 +258,6 @@ def _sample_sparse_path_kernel(
     return path
 
 
-def _validate_sparse_workspace(
-        *,
-        quad_order,
-        gh_order,
-        correction="none",
-        memory_budget_bytes=None):
-    if memory_budget_bytes is None:
-        memory_budget_bytes = DEFAULT_JACOBI_MEMORY_BUDGET_BYTES
-    width = 2 * gh_order
-    # Counts and indices use intp, conservatively charged as float64 arrays.
-    width_arrays = {
-        "none": 2,
-        "mh": 4,
-        "ipfp": 5,
-    }[correction]
-    elements = (
-        8 * quad_order
-        + width_arrays * quad_order * width)
-    return validate_float64_allocation(
-        (elements,),
-        name="sparse Jacobi transition workspace",
-        memory_budget_bytes=memory_budget_bytes,
-    )
-
-
 def _validate_sparse_filter_workspace(
         *,
         n_obs,
@@ -609,13 +291,29 @@ def _validate_sparse_filter_workspace(
     )
 
 
+def _validate_sparse_workspace(
+        *,
+        quad_order,
+        gh_order,
+        correction="none",
+        memory_budget_bytes=None):
+    """Compatibility facade for the native sparse-storage preflight."""
+    if memory_budget_bytes is None:
+        memory_budget_bytes = DEFAULT_JACOBI_MEMORY_BUDGET_BYTES
+    return jacobi_native.estimate_sparse_storage(
+        quad_order=quad_order,
+        gh_order=gh_order,
+        correction=correction,
+        memory_budget_bytes=memory_budget_bytes,
+    )
+
+
 def jacobi_sparse_local_transition(
         kappa,
         m,
         xi,
         *,
-        dt=None,
-        n_obs=None,
+        n_obs,
         quad_order=128,
         basis_order=1,
         gh_order=5,
@@ -623,75 +321,80 @@ def jacobi_sparse_local_transition(
         memory_budget_bytes=None,
         return_diagnostics=False):
     """Build a direct sparse local-GH Jacobi transition."""
-    shapes = _jacobi_stationary_shape(kappa, m, xi)
-    if shapes is None:
-        raise ValueError("invalid Jacobi parameters")
-    alpha, beta = shapes
     quad_order = _validate_jacobi_order(quad_order, "quad_order")
     basis_order = _validate_jacobi_order(basis_order, "basis_order")
     gh_order = _validate_jacobi_order(gh_order, "gh_order")
     if correction not in {"none", "mh", "ipfp"}:
         raise ValueError("correction must be 'none', 'mh', or 'ipfp'")
-    _validate_sparse_workspace(
-        quad_order=quad_order,
-        gh_order=gh_order,
-        correction=correction,
-        memory_budget_bytes=memory_budget_bytes,
-    )
-    dt = _resolve_dt(dt, n_obs)
-    tau, weights, _ = jacobi_rule(
-        alpha,
-        beta,
-        quad_order,
-        basis_order=1,
-        memory_budget_bytes=memory_budget_bytes,
-    )
-    y_grid = _jacobi_lamperti(tau, xi)
-    drift_dt = (
-        _jacobi_lamperti_drift_from_tau(tau, kappa, m, xi) * dt)
-    gh_nodes, gh_weights = _normal_hermite_rule(gh_order)
-    offsets = np.sqrt(2.0 * dt) * gh_nodes
-    indices, probabilities, counts = _build_sparse_local_kernel(
+    n_obs = _validate_transition_count(n_obs)
+    budget = (
+        DEFAULT_JACOBI_MEMORY_BUDGET_BYTES
+        if memory_budget_bytes is None else memory_budget_bytes)
+    (
         tau,
-        y_grid,
-        drift_dt,
-        offsets,
-        gh_weights,
-        float(xi),
+        weights,
+        indices,
+        probabilities,
+        counts,
+        _,
+        native,
+    ) = jacobi_native.sparse_transition(
+        kappa,
+        m,
+        xi,
+        n_obs=n_obs,
+        quad_order=quad_order,
+        basis_order=basis_order,
+        gh_order=gh_order,
+        method="local",
+        correction=correction,
+        memory_budget_bytes=budget,
     )
     transition = SparseJacobiTransition(
         indices=indices,
         probabilities=probabilities,
         counts=counts,
     )
-    correction_diagnostics = {}
-    if correction == "mh":
-        transition, correction_diagnostics = _mh_correct_sparse_transition(
-            transition, weights)
-    elif correction == "ipfp":
-        transition, correction_diagnostics = (
-            _ipfp_correct_sparse_transition(transition, weights))
-    propagated = transition.left_multiply(weights)
     diagnostics = {
-        "dt": float(dt),
-        "alpha": float(alpha),
-        "beta": float(beta),
-        "gh_order": int(gh_order),
+        "dt": native["dt"],
+        "alpha": native["alpha"],
+        "beta": native["beta"],
+        "gh_order": native["gh_order"],
         "transition_method": "local_sparse",
         "correction": correction,
-        "nnz": transition.nnz,
-        "max_width": transition.max_width,
-        "retained_bytes": transition.retained_bytes,
-        "dense_bytes": int(quad_order * quad_order * 8),
-        "max_row_sum_error": float(np.max(np.abs(
-            np.array([
-                np.sum(transition.probabilities[row, :transition.counts[row]])
-                for row in range(quad_order)
-            ]) - 1.0))),
-        "stationary_error": float(
-            np.max(np.abs(propagated - weights))),
-        **correction_diagnostics,
+        "nnz": int(native["nnz"]),
+        "max_width": int(native["max_width"]),
+        "retained_bytes": int(native["retained_bytes"]),
+        "dense_bytes": int(native["dense_bytes"]),
+        "max_row_sum_error": native["max_row_sum_error"],
+        "stationary_error": native["stationary_error"],
     }
+    if correction == "mh":
+        diagnostics.update({
+            "mean_accepted_off_diagonal_mass": native[
+                "mean_accepted_off_diagonal_mass"],
+            "mean_proposed_off_diagonal_mass": native[
+                "mean_proposed_off_diagonal_mass"],
+            "acceptance_mass_ratio": native["acceptance_mass_ratio"],
+            "min_row_acceptance_ratio": native[
+                "min_row_acceptance_ratio"],
+            "mean_stay_probability": native["mean_stay_probability"],
+            "max_stay_probability": native["max_stay_probability"],
+            "reverse_missing_edge_fraction": native[
+                "reverse_missing_edge_fraction"],
+            "detailed_balance_error": native["detailed_balance_error"],
+        })
+    elif correction == "ipfp":
+        diagnostics.update({
+            "ipfp_iterations": int(native["ipfp_iterations"]),
+            "ipfp_stationary_residual": native[
+                "ipfp_stationary_residual"],
+            "ipfp_kl_divergence": native["ipfp_kl_divergence"],
+            "ipfp_max_probability_change": native[
+                "ipfp_max_probability_change"],
+            "mean_stay_probability": native["mean_stay_probability"],
+            "max_stay_probability": native["max_stay_probability"],
+        })
     if return_diagnostics:
         return tau, weights, transition, diagnostics
     return tau, weights, transition
@@ -702,96 +405,56 @@ def jacobi_sparse_fixed_grid_transition(
         m,
         xi,
         *,
-        dt=None,
-        n_obs=None,
+        n_obs,
         quad_order=128,
         gh_order=5,
         return_grad=False,
         memory_budget_bytes=None,
         return_diagnostics=False):
     """Build a sparse fixed-grid local-GH transition and derivatives."""
-    shapes = _jacobi_stationary_shape(kappa, m, xi)
-    if shapes is None:
-        raise ValueError("invalid Jacobi parameters")
-    alpha, beta = shapes
     quad_order = _validate_jacobi_order(quad_order, "quad_order")
     gh_order = _validate_jacobi_order(gh_order, "gh_order")
-    width = 2 * gh_order
-    gradient_factor = 3 if return_grad else 0
-    validate_float64_allocation(
-        (
-            (2 + gradient_factor) * quad_order * width
-            + 15 * quad_order,
-        ),
-        name="sparse fixed-grid Jacobi transition workspace",
-        memory_budget_bytes=memory_budget_bytes,
+    n_obs = _validate_transition_count(n_obs)
+    budget = (
+        DEFAULT_JACOBI_MEMORY_BUDGET_BYTES
+        if memory_budget_bytes is None else memory_budget_bytes)
+    (
+        tau,
+        weights,
+        indices,
+        probabilities,
+        counts,
+        dprobabilities,
+        native,
+    ) = jacobi_native.sparse_transition(
+        kappa,
+        m,
+        xi,
+        n_obs=n_obs,
+        quad_order=quad_order,
+        basis_order=1,
+        gh_order=gh_order,
+        method="local_fixed",
+        return_grad=return_grad,
+        memory_budget_bytes=budget,
     )
-    dt = _resolve_dt(dt, n_obs)
-    tau, weights = _fixed_tau_rule(alpha, beta, quad_order)
-    gh_nodes, gh_weights = _normal_hermite_rule(gh_order)
-    y_grid = _jacobi_lamperti(tau, xi)
-    drift = _jacobi_lamperti_drift_from_tau(tau, kappa, m, xi)
-    denom = np.sqrt(np.maximum(tau * (1.0 - tau), 1e-300))
-    asin_sqrt = np.arcsin(np.sqrt(tau))
-
-    dcenter = np.empty((3, quad_order), dtype=np.float64)
-    dcenter[0] = (
-        (float(m) - tau) / (float(xi) * denom) * dt)
-    dcenter[1] = (
-        float(kappa) / (float(xi) * denom) * dt)
-    dcenter[2] = (
-        -2.0 * asin_sqrt / (float(xi) ** 2)
-        + (
-            -float(kappa) * (float(m) - tau)
-            / (float(xi) ** 2 * denom)
-            - (1.0 - 2.0 * tau) / (4.0 * denom)
-        ) * dt
-    )
-    offsets = np.sqrt(2.0 * dt) * gh_nodes
-    if return_grad:
-        indices, probabilities, dprobabilities, counts = (
-            _build_sparse_fixed_kernel(
-                tau,
-                y_grid,
-                drift * dt,
-                dcenter,
-                offsets,
-                gh_weights,
-                float(xi),
-            )
-        )
-    else:
-        indices, probabilities, counts = _build_sparse_local_kernel(
-            tau,
-            y_grid,
-            drift * dt,
-            offsets,
-            gh_weights,
-            float(xi),
-        )
-        dprobabilities = None
     transition = SparseJacobiTransition(
         indices=indices,
         probabilities=probabilities,
         counts=counts,
     )
     diagnostics = {
-        "dt": float(dt),
-        "alpha": float(alpha),
-        "beta": float(beta),
-        "gh_order": int(gh_order),
+        "dt": native["dt"],
+        "alpha": native["alpha"],
+        "beta": native["beta"],
+        "gh_order": native["gh_order"],
         "transition_method": "local_fixed_sparse",
         "correction": "none",
-        "nnz": transition.nnz,
-        "max_width": transition.max_width,
-        "retained_bytes": int(
-            transition.retained_bytes
-            + (dprobabilities.nbytes if dprobabilities is not None else 0)),
-        "dense_bytes": int(
-            quad_order * quad_order * 8
-            * (4 if return_grad else 1)),
-        "stationary_error": float(np.max(np.abs(
-            transition.left_multiply(weights) - weights))),
+        "nnz": int(native["nnz"]),
+        "max_width": int(native["max_width"]),
+        "retained_bytes": int(native["retained_bytes"]),
+        "dense_bytes": int(native["dense_bytes"]),
+        "stationary_error": native["stationary_error"],
     }
     if return_grad and return_diagnostics:
         return (
@@ -808,263 +471,21 @@ def jacobi_sparse_fixed_grid_transition(
     return tau, weights, transition
 
 
-def _reverse_probability(transition, source, target):
-    count = int(transition.counts[source])
-    indices = transition.indices[source, :count]
-    slot = int(np.searchsorted(indices, target))
-    if slot < count and int(indices[slot]) == target:
-        return float(transition.probabilities[source, slot])
-    return 0.0
-
-
-def _mh_correct_sparse_transition(transition, weights):
-    n_rows = transition.shape[0]
-    max_width = transition.max_width + 1
-    indices = np.full((n_rows, max_width), -1, dtype=np.intp)
-    probabilities = np.zeros((n_rows, max_width), dtype=np.float64)
-    counts = np.zeros(n_rows, dtype=np.intp)
-    accepted_mass = 0.0
-    proposed_off_diagonal = 0.0
-    reverse_missing = 0
-    off_diagonal_edges = 0
-    row_acceptance_ratios = []
-
-    for row in range(n_rows):
-        entries = {}
-        row_proposed = 0.0
-        row_accepted = 0.0
-        count = int(transition.counts[row])
-        for slot in range(count):
-            target = int(transition.indices[row, slot])
-            proposal = float(transition.probabilities[row, slot])
-            if target == row:
-                continue
-            off_diagonal_edges += 1
-            proposed_off_diagonal += weights[row] * proposal
-            row_proposed += proposal
-            reverse = _reverse_probability(transition, target, row)
-            if reverse <= 0.0:
-                reverse_missing += 1
-                accepted = 0.0
-            else:
-                ratio = (
-                    weights[target] * reverse
-                    / (weights[row] * proposal))
-                accepted = proposal * min(1.0, ratio)
-            if accepted > 0.0:
-                entries[target] = accepted
-                accepted_mass += weights[row] * accepted
-                row_accepted += accepted
-        if row_proposed > 0.0:
-            row_acceptance_ratios.append(row_accepted / row_proposed)
-        off_sum = float(sum(entries.values()))
-        entries[row] = 1.0 - off_sum
-        ordered = sorted(entries.items())
-        counts[row] = len(ordered)
-        for slot, (target, probability) in enumerate(ordered):
-            indices[row, slot] = target
-            probabilities[row, slot] = probability
-
-    corrected = SparseJacobiTransition(indices, probabilities, counts)
-    balance_error = 0.0
-    for row in range(n_rows):
-        for slot in range(corrected.counts[row]):
-            target = int(corrected.indices[row, slot])
-            reverse = _reverse_probability(corrected, target, row)
-            balance_error = max(
-                balance_error,
-                abs(
-                    weights[row] * corrected.probabilities[row, slot]
-                    - weights[target] * reverse),
-            )
-    return corrected, {
-        "mean_accepted_off_diagonal_mass": float(accepted_mass),
-        "mean_proposed_off_diagonal_mass": float(
-            proposed_off_diagonal),
-        "acceptance_mass_ratio": float(
-            accepted_mass / proposed_off_diagonal
-            if proposed_off_diagonal > 0.0 else 1.0),
-        "min_row_acceptance_ratio": float(
-            min(row_acceptance_ratios)
-            if row_acceptance_ratios else 1.0),
-        "mean_stay_probability": float(np.sum(
-            weights * np.array([
-                _reverse_probability(corrected, row, row)
-                for row in range(n_rows)
-            ]))),
-        "max_stay_probability": float(max(
-            _reverse_probability(corrected, row, row)
-            for row in range(n_rows))),
-        "reverse_missing_edge_fraction": float(
-            reverse_missing / off_diagonal_edges
-            if off_diagonal_edges else 0.0),
-        "detailed_balance_error": float(balance_error),
-    }
-
-
-def _ipfp_correct_sparse_transition(
-        transition, weights, *, tolerance=1e-15, max_iterations=10_000):
-    """Balance stationary joint flux on the existing sparse support."""
-    weights = np.asarray(weights, dtype=np.float64)
-    if (
-            weights.shape != (transition.shape[0],)
-            or np.any(~np.isfinite(weights))
-            or np.any(weights <= 0.0)):
-        raise ValueError("IPFP weights must be finite and strictly positive")
-    tolerance = float(tolerance)
-    if not np.isfinite(tolerance) or tolerance <= 0.0:
-        raise ValueError("IPFP tolerance must be finite and positive")
-    max_iterations = validate_positive_int(
-        max_iterations, "max_iterations")
-
-    flux = transition.probabilities.copy()
-    proposal_flux = transition.probabilities.copy()
-    for row in range(transition.shape[0]):
-        count = int(transition.counts[row])
-        flux[row, :count] *= weights[row]
-        proposal_flux[row, :count] *= weights[row]
-
-    converged = False
-    residual = np.inf
-    iterations = 0
-    for iteration in range(1, max_iterations + 1):
-        column_sums = np.zeros(transition.shape[0], dtype=np.float64)
-        for row in range(transition.shape[0]):
-            count = int(transition.counts[row])
-            np.add.at(
-                column_sums,
-                transition.indices[row, :count],
-                flux[row, :count],
-            )
-        if np.any(~np.isfinite(column_sums)) or np.any(column_sums <= 0.0):
-            raise FloatingPointError(
-                "sparse IPFP support cannot reach every stationary node")
-        column_scale = weights / column_sums
-        for row in range(transition.shape[0]):
-            count = int(transition.counts[row])
-            targets = transition.indices[row, :count]
-            flux[row, :count] *= column_scale[targets]
-
-        row_sums = np.zeros(transition.shape[0], dtype=np.float64)
-        for row in range(transition.shape[0]):
-            count = int(transition.counts[row])
-            row_sums[row] = np.sum(flux[row, :count])
-        if np.any(~np.isfinite(row_sums)) or np.any(row_sums <= 0.0):
-            raise FloatingPointError("sparse IPFP produced an invalid row")
-        for row in range(transition.shape[0]):
-            count = int(transition.counts[row])
-            flux[row, :count] *= weights[row] / row_sums[row]
-
-        column_sums.fill(0.0)
-        for row in range(transition.shape[0]):
-            count = int(transition.counts[row])
-            np.add.at(
-                column_sums,
-                transition.indices[row, :count],
-                flux[row, :count],
-            )
-        residual = float(np.max(np.abs(column_sums - weights)))
-        iterations = iteration
-        if residual <= tolerance:
-            converged = True
-            break
-    if not converged:
-        raise FloatingPointError(
-            "sparse IPFP did not converge within max_iterations")
-
-    probabilities = np.zeros_like(transition.probabilities)
-    for row in range(transition.shape[0]):
-        count = int(transition.counts[row])
-        probabilities[row, :count] = (
-            flux[row, :count] / weights[row])
-    corrected = SparseJacobiTransition(
-        transition.indices.copy(),
-        probabilities,
-        transition.counts.copy(),
-    )
-    positive = proposal_flux > 0.0
-    kl_divergence = float(np.sum(
-        flux[positive] * np.log(
-            flux[positive] / proposal_flux[positive])))
-    max_probability_change = 0.0
-    for row in range(transition.shape[0]):
-        count = int(transition.counts[row])
-        max_probability_change = max(
-            max_probability_change,
-            float(np.max(np.abs(
-                corrected.probabilities[row, :count]
-                - transition.probabilities[row, :count]))),
-        )
-    return corrected, {
-        "ipfp_iterations": iterations,
-        "ipfp_stationary_residual": residual,
-        "ipfp_kl_divergence": kl_divergence,
-        "ipfp_max_probability_change": max_probability_change,
-        "mean_stay_probability": float(np.sum(
-            weights * np.array([
-                _reverse_probability(corrected, row, row)
-                for row in range(corrected.shape[0])
-            ]))),
-        "max_stay_probability": float(max(
-            _reverse_probability(corrected, row, row)
-            for row in range(corrected.shape[0]))),
-    }
-
-
 def sparse_jacobi_full_horizon_diagnostics(
         tau, weights, transition, *, steps, kappa, m):
     """Return deterministic stationarity and first-moment diagnostics."""
     steps = _validate_nonnegative_int(steps, "steps")
-    propagated = np.asarray(weights, dtype=np.float64).copy()
-    one_step = transition.left_multiply(propagated)
-    for _ in range(steps):
-        propagated = transition.left_multiply(propagated)
-    target_mean = float(np.sum(weights * tau))
-    target_variance = float(
-        np.sum(weights * (tau - target_mean) ** 2))
-    propagated_mean = float(np.sum(propagated * tau))
-    propagated_variance = float(
-        np.sum(propagated * (tau - propagated_mean) ** 2))
-    conditional = np.empty_like(tau)
-    for row in range(transition.shape[0]):
-        count = int(transition.counts[row])
-        conditional[row] = np.sum(
-            transition.probabilities[row, :count]
-            * tau[transition.indices[row, :count]])
-    dt = 1.0 / steps if steps > 0 else 0.0
-    expected_conditional = (
-        m + (tau - m) * np.exp(-kappa * dt)
-        if steps > 0 else tau)
-    conditional_error = conditional - expected_conditional
-    lag_one_covariance = float(np.sum(
-        weights * (tau - target_mean) * (conditional - target_mean)))
-    lag_one_correlation = (
-        lag_one_covariance / target_variance
-        if target_variance > 0.0 else 0.0)
-    target_lag_one_correlation = (
-        float(np.exp(-kappa * dt)) if steps > 0 else 1.0)
-    return {
-        "steps": steps,
-        "one_step_stationary_tv": float(
-            0.5 * np.sum(np.abs(one_step - weights))),
-        "full_horizon_stationary_tv": float(
-            0.5 * np.sum(np.abs(propagated - weights))),
-        "target_mean": target_mean,
-        "propagated_mean": propagated_mean,
-        "target_variance": target_variance,
-        "propagated_variance": propagated_variance,
-        "relative_variance_error": float(
-            abs(propagated_variance - target_variance) / target_variance
-            if target_variance > 0.0 else 0.0),
-        "conditional_mean_rmse": float(
-            np.sqrt(np.sum(weights * conditional_error ** 2))),
-        "conditional_mean_max_error": float(
-            np.max(np.abs(conditional_error))),
-        "lag_one_correlation": float(lag_one_correlation),
-        "target_lag_one_correlation": target_lag_one_correlation,
-        "lag_one_correlation_error": float(
-            lag_one_correlation - target_lag_one_correlation),
-    }
+    return jacobi_native.sparse_full_horizon_diagnostics(
+        kappa,
+        m,
+        1.0,
+        tau,
+        weights,
+        transition.indices,
+        transition.probabilities,
+        transition.counts,
+        steps,
+    )
 
 
 def select_sparse_jacobi_order(
@@ -1123,82 +544,34 @@ def select_sparse_jacobi_order(
         raise ValueError(
             "adaptive Jacobi thresholds must be finite and non-negative")
 
-    candidates = []
-    selected = None
-    last_successful = None
-    for order in orders:
-        try:
-            tau, weights, transition, construction = (
-                jacobi_sparse_local_transition(
-                    kappa,
-                    m,
-                    xi,
-                    n_obs=n_obs,
-                    quad_order=order,
-                    basis_order=min(basis_order, order),
-                    gh_order=gh_order,
-                    memory_budget_bytes=memory_budget_bytes,
-                    return_diagnostics=True,
-                )
-            )
-        except MemoryError as exc:
-            candidates.append({
-                "quad_order": order,
-                "passed": False,
-                "memory_limited": True,
-                "error": str(exc),
-            })
-            break
-        horizon = sparse_jacobi_full_horizon_diagnostics(
-            tau,
-            weights,
-            transition,
-            steps=steps,
-            kappa=kappa,
-            m=m,
-        )
-        passed = (
-            horizon["full_horizon_stationary_tv"]
-            <= thresholds["full_horizon_stationary_tv"]
-            and horizon["relative_variance_error"]
-            <= thresholds["relative_variance_error"]
-            and horizon["conditional_mean_rmse"]
-            <= thresholds["conditional_mean_rmse"]
-            and abs(horizon["lag_one_correlation_error"])
-            <= thresholds["absolute_lag_one_correlation_error"]
-        )
-        candidates.append({
-            "quad_order": order,
-            "passed": bool(passed),
-            "memory_limited": False,
-            "retained_bytes": construction["retained_bytes"],
-            **horizon,
-        })
-        last_successful = (tau, weights, transition)
-        if passed:
-            selected = last_successful
-            break
-
-    if selected is None:
-        if require_pass:
-            raise RuntimeError(
-                "no sparse Jacobi quad_order satisfied the full-horizon gates")
-        if last_successful is None:
-            raise MemoryError(
-                "memory budget prevented every sparse Jacobi candidate")
-        selected = last_successful
-    tau, weights, transition = selected
-    selected_order = transition.shape[0]
-    selected_record = next(
-        record for record in candidates
-        if record.get("quad_order") == selected_order)
-    report = {
-        "selected_quad_order": selected_order,
-        "passed": bool(selected_record["passed"]),
-        "exhausted": not bool(selected_record["passed"]),
-        "thresholds": thresholds,
-        "candidates": candidates,
-    }
+    budget = (
+        DEFAULT_JACOBI_MEMORY_BUDGET_BYTES
+        if memory_budget_bytes is None else memory_budget_bytes)
+    (
+        tau,
+        weights,
+        indices,
+        probabilities,
+        counts,
+        _,
+        report,
+    ) = jacobi_native.select_sparse_order(
+        kappa,
+        m,
+        xi,
+        n_obs=n_obs,
+        quad_orders=orders,
+        basis_order=basis_order,
+        gh_order=gh_order,
+        max_full_horizon_tv=max_full_horizon_tv,
+        max_relative_variance_error=max_relative_variance_error,
+        max_conditional_mean_rmse=max_conditional_mean_rmse,
+        max_lag_one_correlation_error=max_lag_one_correlation_error,
+        memory_budget_bytes=budget,
+        require_pass=require_pass,
+    )
+    transition = SparseJacobiTransition(indices, probabilities, counts)
+    report["thresholds"] = thresholds
     return tau, weights, transition, report
 
 

@@ -273,13 +273,11 @@ JacobiShapeResult jacobi_stationary_shape(
 }
 
 JacobiScalarResult jacobi_resolve_dt(std::int64_t n_obs) noexcept {
-    if (n_obs < 0) {
+    if (n_obs < 2) {
         return failure<JacobiScalarResult>(Status::InvalidSize);
     }
     JacobiScalarResult result;
-    result.value = n_obs > 1
-        ? 1.0 / static_cast<double>(n_obs - 1)
-        : 1.0;
+    result.value = 1.0 / static_cast<double>(n_obs - 1);
     return result;
 }
 

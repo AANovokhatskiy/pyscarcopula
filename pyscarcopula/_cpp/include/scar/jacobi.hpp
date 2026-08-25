@@ -112,4 +112,66 @@ JacobiVectorResult evaluate_jacobi_polynomials(
     int order,
     bool derivative = false);
 
+Status validate_jacobi_transition_config(
+    const JacobiTransitionConfig& config) noexcept;
+
+JacobiMemoryResult estimate_jacobi_sparse_workspace(
+    const JacobiTransitionConfig& config) noexcept;
+
+JacobiMemoryResult estimate_jacobi_sparse_storage(
+    const JacobiTransitionConfig& config) noexcept;
+
+JacobiIntResult default_jacobi_quad_order(int basis_order) noexcept;
+
+JacobiVectorResult jacobi_transition_powers(
+    const JacobiParams& params,
+    std::int64_t n_obs,
+    int basis_order);
+
+JacobiCoefficientTransitionResult build_jacobi_coefficient_transition(
+    const JacobiParams& params,
+    const JacobiTransitionConfig& config);
+
+JacobiVectorResult apply_jacobi_coefficient_transition(
+    const JacobiCoefficientTransition& transition,
+    const std::vector<double>& coefficients);
+
+JacobiDenseTransitionResult build_jacobi_spectral_transition(
+    const JacobiParams& params,
+    const JacobiTransitionConfig& config);
+
+JacobiDenseTransitionResult build_jacobi_local_transition(
+    const JacobiParams& params,
+    const JacobiTransitionConfig& config);
+
+JacobiDenseTransitionResult build_jacobi_fixed_transition(
+    const JacobiParams& params,
+    const JacobiTransitionConfig& config);
+
+JacobiDenseTransitionResult build_jacobi_dense_transition(
+    const JacobiParams& params,
+    const JacobiTransitionConfig& config);
+
+JacobiSparseTransitionResult build_jacobi_sparse_transition(
+    const JacobiParams& params,
+    const JacobiTransitionConfig& config);
+
+JacobiVectorResult jacobi_sparse_left_multiply(
+    const JacobiSparseTransition& transition,
+    const std::vector<double>& values);
+
+JacobiHorizonResult jacobi_sparse_full_horizon_diagnostics(
+    const JacobiParams& params,
+    const std::vector<double>& tau,
+    const std::vector<double>& weights,
+    const JacobiSparseTransition& transition,
+    std::int64_t steps);
+
+JacobiAdaptiveSelectionResult select_sparse_jacobi_order(
+    const JacobiParams& params,
+    const JacobiTransitionConfig& config,
+    const std::vector<int>& quad_orders,
+    const JacobiAdaptiveThresholds& thresholds,
+    bool require_pass);
+
 }  // namespace scar

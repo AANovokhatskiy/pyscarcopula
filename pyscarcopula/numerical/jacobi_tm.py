@@ -116,13 +116,8 @@ def _jacobi_stationary_shape(kappa, m, xi):
 def default_quad_order(basis_order: int) -> int:
     """Conservative quadrature order for Jacobi projected multiplication."""
     basis_order = _validate_jacobi_order(basis_order, "basis_order")
-    quad_order = max(2 * basis_order + 16, 48)
+    quad_order = jacobi_native.default_quad_order(basis_order)
     return _validate_jacobi_order(quad_order, "quad_order")
-
-
-def _normal_hermite_rule(order):
-    order = _validate_jacobi_order(order, "gh_order")
-    return jacobi_native.gauss_hermite_rule(order)
 
 
 def _fixed_tau_rule(alpha, beta, quad_order):
@@ -199,29 +194,20 @@ def jacobi_rule(
 
 
 def _jacobi_powers(kappa, xi, n_obs, basis_order):
-    dt = 1.0 / (n_obs - 1) if n_obs > 1 else 1.0
-    return _jacobi_transition_powers(kappa, xi, dt, basis_order)
+    return _jacobi_transition_powers(kappa, xi, n_obs, basis_order)
 
 
-def _jacobi_transition_powers(kappa, xi, dt, basis_order):
-    dt = float(dt)
-    if not np.isfinite(dt) or dt <= 0.0:
-        raise ValueError("dt must be finite and positive")
-    n = np.arange(basis_order, dtype=np.float64)
-    eig = n * float(kappa) + 0.5 * float(xi) ** 2 * n * (n - 1.0)
-    return np.exp(-eig * dt)
+def _validate_transition_count(n_obs):
+    n_obs = _validate_positive_int(n_obs, "n_obs")
+    if n_obs < 2:
+        raise ValueError("n_obs must be at least 2")
+    return n_obs
 
 
-def _resolve_dt(dt, n_obs):
-    if dt is None:
-        if n_obs is None:
-            raise ValueError("either dt or n_obs must be provided")
-        n_obs = int(n_obs)
-        dt = 1.0 / (n_obs - 1) if n_obs > 1 else 1.0
-    dt = float(dt)
-    if dt <= 0.0:
-        raise ValueError("dt must be positive")
-    return dt
+def _jacobi_transition_powers(kappa, xi, n_obs, basis_order):
+    n_obs = _validate_transition_count(n_obs)
+    basis_order = _validate_jacobi_order(basis_order, "basis_order")
+    return jacobi_native.transition_powers(kappa, xi, n_obs, basis_order)
 
 
 def jacobi_spectral_transition_matrix(
@@ -229,8 +215,7 @@ def jacobi_spectral_transition_matrix(
         m,
         xi,
         *,
-        dt=None,
-        n_obs=None,
+        n_obs,
         basis_order=32,
         quad_order=None,
         clip_negative=False,
@@ -238,68 +223,52 @@ def jacobi_spectral_transition_matrix(
         return_diagnostics=False):
     """Build a node-space transition matrix from the Jacobi spectral density.
 
-    The truncated transition density is
+    For ``T = n_obs`` observations on ``[0, 1]``, the transition step is
+    always ``delta_t = 1 / (T - 1)``. The truncated transition density is
 
-    ``p_dt(y | x) = pi(y) * sum_n exp(-lambda_n * dt) q_n(x) q_n(y)``.
+    ``p_delta_t(y | x) = pi(y) * sum_n exp(-lambda_n * delta_t) q_n(x) q_n(y)``.
 
     With Gauss-Jacobi nodes and probability weights for ``pi``, the returned
     row-stochastic mass matrix is
 
-    ``T[i, j] = w[j] * sum_n exp(-lambda_n * dt) q_n(tau[i]) q_n(tau[j])``.
+    ``T[i, j] = w[j] * sum_n exp(-lambda_n * delta_t) q_n(tau[i]) q_n(tau[j])``.
 
     Negative entries are possible when the spectral series is truncated,
-    especially for small ``dt``.  By default they are left untouched and
+    especially for small ``delta_t``. By default they are left untouched and
     reported in diagnostics.  Set ``clip_negative=True`` only for exploratory
     node-space filtering with explicit renormalization.
     """
-    shapes = _jacobi_stationary_shape(kappa, m, xi)
-    if shapes is None:
-        raise ValueError("invalid Jacobi parameters")
-    alpha, beta = shapes
-
     basis_order = _validate_jacobi_order(basis_order, "basis_order")
     if quad_order is None:
         quad_order = default_quad_order(basis_order)
     quad_order = _validate_jacobi_order(quad_order, "quad_order")
-    _validate_jacobi_workspace(
+    n_obs = _validate_transition_count(n_obs)
+    budget = (
+        DEFAULT_JACOBI_MEMORY_BUDGET_BYTES
+        if memory_budget_bytes is None else memory_budget_bytes)
+    tau, weights, transition, _, _, native = jacobi_native.dense_transition(
+        kappa,
+        m,
+        xi,
+        n_obs=n_obs,
         quad_order=quad_order,
         basis_order=basis_order,
-        matrix=True,
-        memory_budget_bytes=memory_budget_bytes,
+        gh_order=1,
+        method="spectral_matrix",
+        raw_backend="spectral",
+        clip_negative=clip_negative,
+        memory_budget_bytes=budget,
     )
-
-    dt = _resolve_dt(dt, n_obs)
-
-    tau, weights, basis = jacobi_rule(
-        alpha, beta, quad_order, basis_order,
-        memory_budget_bytes=memory_budget_bytes)
-    powers = _jacobi_transition_powers(kappa, xi, dt, basis_order)
-
-    kernel = (basis * powers[np.newaxis, :]) @ basis.T
-    transition = kernel * weights[np.newaxis, :]
-    raw_min = float(np.min(transition))
-    raw_negative_mass = float(-np.sum(transition[transition < 0.0]))
-
-    if clip_negative:
-        transition = np.where(transition > 0.0, transition, 0.0)
-
-    row_sums = np.sum(transition, axis=1)
-    valid = np.isfinite(row_sums) & (row_sums > 0.0)
-    if not np.all(valid):
-        raise FloatingPointError("invalid transition row normalization")
-    transition = transition / row_sums[:, np.newaxis]
-
     diagnostics = {
-        "dt": float(dt),
-        "alpha": float(alpha),
-        "beta": float(beta),
-        "raw_min_entry": raw_min,
-        "raw_negative_mass": raw_negative_mass,
-        "max_row_sum_error_before_normalization": float(
-            np.max(np.abs(row_sums - 1.0))),
-        "stationary_error": float(
-            np.max(np.abs(weights @ transition - weights))),
-        "clipped_negative": bool(clip_negative),
+        "dt": native["dt"],
+        "alpha": native["alpha"],
+        "beta": native["beta"],
+        "raw_min_entry": native["raw_min_entry"],
+        "raw_negative_mass": native["raw_negative_mass"],
+        "max_row_sum_error_before_normalization": native[
+            "max_row_sum_error_before_normalization"],
+        "stationary_error": native["stationary_error"],
+        "clipped_negative": native["clipped_negative"],
     }
 
     if return_diagnostics:
@@ -307,68 +276,12 @@ def jacobi_spectral_transition_matrix(
     return tau, weights, transition
 
 
-def _jacobi_lamperti(tau, xi):
-    return jacobi_native.lamperti(tau, xi)
-
-
-def _jacobi_lamperti_inverse(y, xi):
-    return jacobi_native.inverse_lamperti(y, xi)
-
-
-def _jacobi_lamperti_drift_from_tau(tau, kappa, m, xi):
-    return jacobi_native.lamperti_drift(tau, kappa, m, xi)
-
-
-def _add_interpolated_mass(row, tau_grid, y, weight, xi):
-    tau_y = float(_jacobi_lamperti_inverse(y, xi))
-    if tau_y <= tau_grid[0]:
-        row[0] += weight
-        return
-    if tau_y >= tau_grid[-1]:
-        row[-1] += weight
-        return
-
-    right = int(np.searchsorted(tau_grid, tau_y, side="right"))
-    left = right - 1
-    width = tau_grid[right] - tau_grid[left]
-    if width <= 0.0:
-        row[left] += weight
-        return
-    lam = (tau_y - tau_grid[left]) / width
-    row[left] += weight * (1.0 - lam)
-    row[right] += weight * lam
-
-
-def _add_interpolated_mass_with_grad(
-        row, drow, tau_grid, tau_y, dtau_y, weight):
-    if tau_y <= tau_grid[0]:
-        row[0] += weight
-        return
-    if tau_y >= tau_grid[-1]:
-        row[-1] += weight
-        return
-
-    right = int(np.searchsorted(tau_grid, tau_y, side="right"))
-    left = right - 1
-    width = tau_grid[right] - tau_grid[left]
-    if width <= 0.0:
-        row[left] += weight
-        return
-    lam = (tau_y - tau_grid[left]) / width
-    dlam = dtau_y / width
-    row[left] += weight * (1.0 - lam)
-    row[right] += weight * lam
-    drow[:, left] -= weight * dlam
-    drow[:, right] += weight * dlam
-
-
 def jacobi_fixed_grid_transition_matrix(
         kappa,
         m,
         xi,
         *,
-        dt=None,
-        n_obs=None,
+        n_obs,
         quad_order=128,
         gh_order=5,
         return_grad=False,
@@ -381,88 +294,35 @@ def jacobi_fixed_grid_transition_matrix(
     of the discrete likelihood are explicit: beta initial masses, Lamperti
     drift, inverse Lamperti map, and linear interpolation weights.
     """
-    shapes = _jacobi_stationary_shape(kappa, m, xi)
-    if shapes is None:
-        raise ValueError("invalid Jacobi parameters")
-    alpha, beta = shapes
-    dt = _resolve_dt(dt, n_obs)
+    n_obs = _validate_transition_count(n_obs)
     quad_order = _validate_jacobi_order(quad_order, "quad_order")
     gh_order = _validate_jacobi_order(gh_order, "gh_order")
-    _validate_jacobi_workspace(
-        quad_order=quad_order,
-        matrix=True,
-        gradient=return_grad,
-        gh_order=gh_order,
-        memory_budget_bytes=memory_budget_bytes,
+    budget = (
+        DEFAULT_JACOBI_MEMORY_BUDGET_BYTES
+        if memory_budget_bytes is None else memory_budget_bytes)
+    tau, weights, transition, dtransition, _, native = (
+        jacobi_native.dense_transition(
+            kappa,
+            m,
+            xi,
+            n_obs=n_obs,
+            quad_order=quad_order,
+            basis_order=1,
+            gh_order=gh_order,
+            method="local_fixed",
+            raw_backend="local_fixed",
+            return_grad=return_grad,
+            memory_budget_bytes=budget,
+        )
     )
-
-    tau, weights = _fixed_tau_rule(alpha, beta, quad_order)
-    gh_nodes, gh_weights = _normal_hermite_rule(gh_order)
-
-    transition = np.zeros((quad_order, quad_order), dtype=np.float64)
-    dtransition = np.zeros((3, quad_order, quad_order), dtype=np.float64)
-    y_grid = _jacobi_lamperti(tau, xi)
-    drift = _jacobi_lamperti_drift_from_tau(tau, kappa, m, xi)
-    denom = np.sqrt(np.maximum(tau * (1.0 - tau), 1e-300))
-    asin_sqrt = np.arcsin(np.sqrt(tau))
-    y_min = 0.0
-    y_max = np.pi / float(xi)
-
-    d_y_grid = np.zeros((3, quad_order), dtype=np.float64)
-    d_y_grid[2] = -2.0 * asin_sqrt / (float(xi) * float(xi))
-
-    d_drift = np.empty((3, quad_order), dtype=np.float64)
-    d_drift[0] = (float(m) - tau) / (float(xi) * denom)
-    d_drift[1] = float(kappa) / (float(xi) * denom)
-    d_drift[2] = (
-        -float(kappa) * (float(m) - tau) / (float(xi) ** 2 * denom)
-        - (1.0 - 2.0 * tau) / (4.0 * denom)
-    )
-
-    offsets = np.sqrt(2.0 * dt) * gh_nodes
-    for i in range(quad_order):
-        center = y_grid[i] + drift[i] * dt
-        dcenter = d_y_grid[:, i] + d_drift[:, i] * dt
-        for offset, weight in zip(offsets, gh_weights):
-            y_next = center + offset
-            if y_next <= y_min:
-                transition[i, 0] += weight
-                continue
-            if y_next >= y_max:
-                transition[i, -1] += weight
-                continue
-
-            phase = 0.5 * float(xi) * y_next
-            tau_y = np.sin(phase) ** 2
-            dtau_y = 0.5 * np.sin(float(xi) * y_next) * (
-                np.array([0.0, 0.0, 1.0], dtype=np.float64) * y_next
-                + float(xi) * dcenter
-            )
-            _add_interpolated_mass_with_grad(
-                transition[i], dtransition[:, i], tau, tau_y, dtau_y, weight)
-
-    row_sums = np.sum(transition, axis=1)
-    valid = np.isfinite(row_sums) & (row_sums > 0.0)
-    if not np.all(valid):
-        raise FloatingPointError("invalid fixed-grid transition row normalization")
-    transition /= row_sums[:, np.newaxis]
-    for p in range(3):
-        drow_sum = np.sum(dtransition[p], axis=1)
-        dtransition[p] = (
-            dtransition[p] * row_sums[:, np.newaxis]
-            - transition * row_sums[:, np.newaxis] * drow_sum[:, np.newaxis]
-        ) / (row_sums[:, np.newaxis] * row_sums[:, np.newaxis])
-
     diagnostics = {
-        "dt": dt,
-        "alpha": float(alpha),
-        "beta": float(beta),
-        "gh_order": int(gh_order),
-        "min_entry": float(np.min(transition)),
-        "max_row_sum_error": float(
-            np.max(np.abs(np.sum(transition, axis=1) - 1.0))),
-        "stationary_error": float(
-            np.max(np.abs(weights @ transition - weights))),
+        "dt": native["dt"],
+        "alpha": native["alpha"],
+        "beta": native["beta"],
+        "gh_order": native["gh_order"],
+        "min_entry": native["min_entry"],
+        "max_row_sum_error": native["max_row_sum_error"],
+        "stationary_error": native["stationary_error"],
         "transition_method": "local_fixed",
     }
     if return_grad and return_diagnostics:
@@ -479,8 +339,7 @@ def jacobi_local_transition_matrix(
         m,
         xi,
         *,
-        dt=None,
-        n_obs=None,
+        n_obs,
         quad_order=128,
         basis_order=1,
         gh_order=5,
@@ -497,99 +356,39 @@ def jacobi_local_transition_matrix(
     the Jacobi quadrature grid.  Rows are source nodes and columns are target
     nodes; rows are nonnegative and normalized.
     """
-    shapes = _jacobi_stationary_shape(kappa, m, xi)
-    if shapes is None:
-        raise ValueError("invalid Jacobi parameters")
-    alpha, beta = shapes
-
     quad_order = _validate_jacobi_order(quad_order, "quad_order")
     # ``basis_order`` is accepted so callers can use the same constructor
     # signature as the spectral matrix path; only the grid order matters here.
     basis_order = _validate_jacobi_order(basis_order, "basis_order")
     gh_order = _validate_jacobi_order(gh_order, "gh_order")
-    _validate_jacobi_workspace(
+    n_obs = _validate_transition_count(n_obs)
+    budget = (
+        DEFAULT_JACOBI_MEMORY_BUDGET_BYTES
+        if memory_budget_bytes is None else memory_budget_bytes)
+    tau, weights, transition, _, _, native = jacobi_native.dense_transition(
+        kappa,
+        m,
+        xi,
+        n_obs=n_obs,
         quad_order=quad_order,
         basis_order=basis_order,
-        matrix=True,
         gh_order=gh_order,
-        memory_budget_bytes=memory_budget_bytes,
+        method="local",
+        raw_backend="local",
+        memory_budget_bytes=budget,
     )
-
-    dt = _resolve_dt(dt, n_obs)
-
-    tau, weights, _ = jacobi_rule(
-        alpha, beta, quad_order, basis_order=1,
-        memory_budget_bytes=memory_budget_bytes)
-    y_grid = _jacobi_lamperti(tau, xi)
-    drift = _jacobi_lamperti_drift_from_tau(tau, kappa, m, xi)
-    gh_nodes, gh_weights = _normal_hermite_rule(gh_order)
-    offsets = np.sqrt(2.0 * dt) * gh_nodes
-
-    transition = np.zeros((quad_order, quad_order), dtype=np.float64)
-    y_min = 0.0
-    y_max = np.pi / float(xi)
-    for i in range(quad_order):
-        center = y_grid[i] + drift[i] * dt
-        for offset, weight in zip(offsets, gh_weights):
-            y_next = np.clip(center + offset, y_min, y_max)
-            _add_interpolated_mass(
-                transition[i], tau, y_next, float(weight), xi)
-
-    row_sums = np.sum(transition, axis=1)
-    valid = np.isfinite(row_sums) & (row_sums > 0.0)
-    if not np.all(valid):
-        raise FloatingPointError("invalid local GH transition row normalization")
-    transition /= row_sums[:, np.newaxis]
-
     diagnostics = {
-        "dt": dt,
-        "alpha": float(alpha),
-        "beta": float(beta),
-        "gh_order": int(gh_order),
-        "min_entry": float(np.min(transition)),
-        "max_row_sum_error": float(
-            np.max(np.abs(np.sum(transition, axis=1) - 1.0))),
-        "stationary_error": float(
-            np.max(np.abs(weights @ transition - weights))),
+        "dt": native["dt"],
+        "alpha": native["alpha"],
+        "beta": native["beta"],
+        "gh_order": native["gh_order"],
+        "min_entry": native["min_entry"],
+        "max_row_sum_error": native["max_row_sum_error"],
+        "stationary_error": native["stationary_error"],
     }
     if return_diagnostics:
         return tau, weights, transition, diagnostics
     return tau, weights, transition
-
-
-def _probability_transition_matrix(transition, negative_mass_tol):
-    """Return a finite row-stochastic matrix with no signed probability mass."""
-    transition = np.asarray(transition, dtype=np.float64)
-    negative_mass_tol = float(negative_mass_tol)
-    if not np.isfinite(negative_mass_tol) or negative_mass_tol < 0.0:
-        raise ValueError("negative_mass_tol must be finite and non-negative")
-    if transition.ndim != 2 or transition.shape[0] != transition.shape[1]:
-        raise ValueError("transition must be a square matrix")
-    if np.any(~np.isfinite(transition)):
-        raise FloatingPointError("transition contains non-finite values")
-
-    negative = transition < 0.0
-    negative_mass = float(-np.sum(transition[negative]))
-    min_entry = float(np.min(transition))
-    if (
-            min_entry < -negative_mass_tol
-            or negative_mass > negative_mass_tol):
-        raise FloatingPointError(
-            "spectral transition contains material negative probability mass")
-
-    cleaned = bool(np.any(negative))
-    if cleaned:
-        transition = np.where(transition > 0.0, transition, 0.0)
-
-    row_sums = np.sum(transition, axis=1)
-    if np.any(~np.isfinite(row_sums)) or np.any(row_sums <= 0.0):
-        raise FloatingPointError("invalid transition row normalization")
-    transition = transition / row_sums[:, np.newaxis]
-    return transition, {
-        "probability_cleanup_applied": cleaned,
-        "probability_cleanup_negative_mass": negative_mass,
-        "probability_min_entry_before_cleanup": min_entry,
-    }
 
 
 def jacobi_transition_matrix(
@@ -597,8 +396,7 @@ def jacobi_transition_matrix(
         m,
         xi,
         *,
-        dt=None,
-        n_obs=None,
+        n_obs,
         basis_order=32,
         quad_order=None,
         transition_method="auto",
@@ -616,106 +414,68 @@ def jacobi_transition_matrix(
     """
     method_requested = normalize_jacobi_matrix_transition_method(
         transition_method)
-    dt = _resolve_dt(dt, n_obs)
+    if _jacobi_stationary_shape(kappa, m, xi) is None:
+        raise ValueError("invalid Jacobi parameters")
+    n_obs = _validate_transition_count(n_obs)
     if quad_order is None:
         quad_order = default_quad_order(basis_order)
     basis_order = _validate_jacobi_order(basis_order, "basis_order")
     quad_order = _validate_jacobi_order(quad_order, "quad_order")
     gh_order = _validate_jacobi_order(gh_order, "gh_order")
-    _validate_jacobi_workspace(
-        quad_order=quad_order,
-        basis_order=basis_order,
-        matrix=True,
-        gh_order=gh_order,
-        memory_budget_bytes=memory_budget_bytes,
-    )
-
-    if method_requested == "local_fixed":
-        tau, weights, transition, diagnostics = (
-            jacobi_fixed_grid_transition_matrix(
-                kappa,
-                m,
-                xi,
-                dt=dt,
-                quad_order=quad_order,
-                gh_order=gh_order,
-                memory_budget_bytes=memory_budget_bytes,
-                return_diagnostics=True,
-            )
-        )
-        diagnostics = dict(diagnostics)
-        diagnostics["transition_method_requested"] = method_requested
-        if return_diagnostics:
-            return tau, weights, transition, diagnostics
-        return tau, weights, transition
-
-    spectral_error = None
-    if method_requested in {"auto", "spectral_matrix"}:
-        try:
-            tau, weights, transition, diagnostics = (
-                jacobi_spectral_transition_matrix(
-                    kappa,
-                    m,
-                    xi,
-                    dt=dt,
-                    basis_order=basis_order,
-                    quad_order=quad_order,
-                    clip_negative=clip_negative,
-                    memory_budget_bytes=memory_budget_bytes,
-                    return_diagnostics=True,
-                )
-            )
-        except Exception as exc:
-            if method_requested != "auto":
-                raise
-            spectral_error = exc
-        else:
-            diagnostics = dict(diagnostics)
-            diagnostics["transition_method_requested"] = method_requested
-            diagnostics["transition_method"] = "spectral_matrix"
-            has_bad_negative_mass = (
-                diagnostics["raw_min_entry"] < -float(negative_mass_tol)
-                or diagnostics["raw_negative_mass"] > float(negative_mass_tol)
-            )
-            if (
-                    method_requested == "spectral_matrix"
-                    and has_bad_negative_mass
-                    and not clip_negative):
-                raise FloatingPointError(
-                    "spectral transition contains material negative "
-                    "probability mass")
-            if method_requested != "auto" or not has_bad_negative_mass:
-                transition, probability_diagnostics = (
-                    _probability_transition_matrix(
-                        transition,
-                        0.0 if clip_negative else negative_mass_tol,
-                    )
-                )
-                diagnostics.update(probability_diagnostics)
-                diagnostics["stationary_error"] = float(
-                    np.max(np.abs(weights @ transition - weights)))
-                if return_diagnostics:
-                    return tau, weights, transition, diagnostics
-                return tau, weights, transition
-
-    tau, weights, transition, diagnostics = jacobi_local_transition_matrix(
+    budget = (
+        DEFAULT_JACOBI_MEMORY_BUDGET_BYTES
+        if memory_budget_bytes is None else memory_budget_bytes)
+    tau, weights, transition, _, _, native = jacobi_native.dense_transition(
         kappa,
         m,
         xi,
-        dt=dt,
+        n_obs=n_obs,
         quad_order=quad_order,
         basis_order=basis_order,
-            gh_order=gh_order,
-            memory_budget_bytes=memory_budget_bytes,
-            return_diagnostics=True,
+        gh_order=gh_order,
+        method=method_requested,
+        clip_negative=clip_negative,
+        negative_mass_tol=negative_mass_tol,
+        memory_budget_bytes=budget,
     )
-    diagnostics = dict(diagnostics)
-    diagnostics["transition_method_requested"] = method_requested
-    diagnostics["transition_method"] = "local"
-    if spectral_error is not None:
-        diagnostics["spectral_error"] = (
-            f"{type(spectral_error).__name__}: {spectral_error}"
-        )
+    method_used = native["transition_method"]
+    if method_used == "spectral_matrix":
+        diagnostics = {
+            "dt": native["dt"],
+            "alpha": native["alpha"],
+            "beta": native["beta"],
+            "raw_min_entry": native["raw_min_entry"],
+            "raw_negative_mass": native["raw_negative_mass"],
+            "max_row_sum_error_before_normalization": native[
+                "max_row_sum_error_before_normalization"],
+            "stationary_error": native["stationary_error"],
+            "clipped_negative": native["clipped_negative"],
+            "transition_method_requested": method_requested,
+            "transition_method": method_used,
+            "probability_cleanup_applied": native[
+                "probability_cleanup_applied"],
+            "probability_cleanup_negative_mass": native[
+                "probability_cleanup_negative_mass"],
+            "probability_min_entry_before_cleanup": native[
+                "probability_min_entry_before_cleanup"],
+        }
+    else:
+        diagnostics = {
+            "dt": native["dt"],
+            "alpha": native["alpha"],
+            "beta": native["beta"],
+            "gh_order": native["gh_order"],
+            "min_entry": native["min_entry"],
+            "max_row_sum_error": native["max_row_sum_error"],
+            "stationary_error": native["stationary_error"],
+            "transition_method_requested": method_requested,
+            "transition_method": method_used,
+        }
+        if method_used == "local_fixed":
+            diagnostics["transition_method"] = "local_fixed"
+        if int(native["spectral_status"]) != 0:
+            diagnostics["spectral_error"] = (
+                "FloatingPointError: C++ Jacobi spectral transition failed")
     if return_diagnostics:
         return tau, weights, transition, diagnostics
     return tau, weights, transition
@@ -1582,7 +1342,6 @@ def _setup(
     shapes = _jacobi_stationary_shape(kappa, m, xi)
     if shapes is None:
         return None
-    alpha, beta = shapes
 
     u = np.asarray(u, dtype=np.float64)
     if u.ndim != 2 or u.shape[1] != 2 or len(u) < 1:
@@ -1592,18 +1351,20 @@ def _setup(
     if quad_order is None:
         quad_order = default_quad_order(basis_order)
     quad_order = _validate_jacobi_order(quad_order, "quad_order")
-    _validate_jacobi_workspace(
-        quad_order=quad_order,
-        basis_order=basis_order,
-        n_obs=len(u),
-        matrix=False,
-        memory_budget_bytes=memory_budget_bytes,
+    budget = (
+        DEFAULT_JACOBI_MEMORY_BUDGET_BYTES
+        if memory_budget_bytes is None else memory_budget_bytes)
+    tau, weights, basis, powers, _ = (
+        jacobi_native.coefficient_transition(
+            kappa,
+            m,
+            xi,
+            n_obs=len(u),
+            quad_order=quad_order,
+            basis_order=basis_order,
+            memory_budget_bytes=budget,
+        )
     )
-
-    tau, weights, basis = jacobi_rule(
-        alpha, beta, quad_order, basis_order,
-        memory_budget_bytes=memory_budget_bytes)
-    powers = _jacobi_powers(kappa, xi, len(u), basis_order)
     fi_grid, theta = _emission_grid(u, copula, tau, theta_cap=theta_cap)
     return u, tau, weights, basis, powers, fi_grid, theta
 
@@ -1621,7 +1382,8 @@ def _iter_coeff_filter(powers, fi_grid, weights, basis):
     coeff = np.zeros(basis.shape[1], dtype=np.float64)
     coeff[0] = 1.0
     for t in range(fi_grid.shape[0]):
-        predicted_coeff = powers * coeff
+        predicted_coeff = jacobi_native.apply_coefficient_transition(
+            powers, coeff)
         coeff, scale = _project_update(
             predicted_coeff, fi_grid[t], weights, basis)
         if coeff is None:
@@ -1805,6 +1567,6 @@ def jacobi_state_distribution(
         pass
 
     if horizon == "next":
-        coeff = powers * coeff
+        coeff = jacobi_native.apply_coefficient_transition(powers, coeff)
 
     return tau.copy(), _coeff_to_prob(coeff, weights, basis)

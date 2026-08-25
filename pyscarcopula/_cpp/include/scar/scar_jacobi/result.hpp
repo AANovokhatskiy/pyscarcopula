@@ -59,16 +59,136 @@ struct JacobiFixedRule {
     int quad_order = 0;
 };
 
+struct JacobiTransitionDiagnostics {
+    double dt = 0.0;
+    double alpha = 0.0;
+    double beta = 0.0;
+    double raw_min_entry = 0.0;
+    double raw_negative_mass = 0.0;
+    double min_entry = 0.0;
+    double max_row_sum_error_before_normalization = 0.0;
+    double max_row_sum_error = 0.0;
+    double stationary_error = 0.0;
+    double probability_cleanup_negative_mass = 0.0;
+    double probability_min_entry_before_cleanup = 0.0;
+    bool clipped_negative = false;
+    bool probability_cleanup_applied = false;
+    int gh_order = 0;
+    JacobiTransitionMethod method_requested = JacobiTransitionMethod::Auto;
+    JacobiTransitionMethod method_used = JacobiTransitionMethod::Auto;
+    JacobiTransitionStorage storage = JacobiTransitionStorage::Dense;
+    JacobiStationarityCorrection correction =
+        JacobiStationarityCorrection::None;
+    Status spectral_status = Status::Ok;
+    std::size_t nnz = 0;
+    int max_width = 0;
+    std::uint64_t retained_bytes = 0;
+    std::uint64_t dense_bytes = 0;
+    std::uint64_t estimated_workspace_bytes = 0;
+    std::uint64_t memory_budget_bytes = 0;
+    double mean_accepted_off_diagonal_mass = 0.0;
+    double mean_proposed_off_diagonal_mass = 0.0;
+    double acceptance_mass_ratio = 1.0;
+    double min_row_acceptance_ratio = 1.0;
+    double mean_stay_probability = 0.0;
+    double max_stay_probability = 0.0;
+    double reverse_missing_edge_fraction = 0.0;
+    double detailed_balance_error = 0.0;
+    int ipfp_iterations = 0;
+    double ipfp_stationary_residual = 0.0;
+    double ipfp_kl_divergence = 0.0;
+    double ipfp_max_probability_change = 0.0;
+};
+
+struct JacobiDenseTransition {
+    std::vector<double> tau;
+    std::vector<double> weights;
+    std::vector<double> probabilities;
+    std::vector<double> derivatives;
+    std::vector<double> spectral_powers;
+    int order = 0;
+    JacobiTransitionDiagnostics diagnostics{};
+};
+
+/// Spectral-coefficient transition setup.  The basis is row-major with
+/// `(quad_order, basis_order)` shape; propagation is diagonal in coefficient
+/// space through `spectral_powers`.
+struct JacobiCoefficientTransition {
+    std::vector<double> tau;
+    std::vector<double> weights;
+    std::vector<double> basis;
+    std::vector<double> spectral_powers;
+    int quad_order = 0;
+    int basis_order = 0;
+    JacobiTransitionDiagnostics diagnostics{};
+};
+
+/// Fixed-width row storage.  Inactive indices are -1 and all arrays are
+/// row-major; derivatives use `(parameter, row, slot)` ordering.
+struct JacobiSparseTransition {
+    std::vector<double> tau;
+    std::vector<double> weights;
+    std::vector<std::int64_t> indices;
+    std::vector<double> probabilities;
+    std::vector<std::int64_t> counts;
+    std::vector<double> derivatives;
+    int order = 0;
+    int max_width = 0;
+    JacobiTransitionDiagnostics diagnostics{};
+};
+
+struct JacobiHorizonDiagnostics {
+    std::int64_t steps = 0;
+    double one_step_stationary_tv = 0.0;
+    double full_horizon_stationary_tv = 0.0;
+    double target_mean = 0.0;
+    double propagated_mean = 0.0;
+    double target_variance = 0.0;
+    double propagated_variance = 0.0;
+    double relative_variance_error = 0.0;
+    double conditional_mean_rmse = 0.0;
+    double conditional_mean_max_error = 0.0;
+    double lag_one_correlation = 0.0;
+    double target_lag_one_correlation = 0.0;
+    double lag_one_correlation_error = 0.0;
+};
+
+struct JacobiAdaptiveCandidate {
+    int quad_order = 0;
+    bool passed = false;
+    bool memory_limited = false;
+    Status status = Status::Ok;
+    std::uint64_t retained_bytes = 0;
+    JacobiHorizonDiagnostics diagnostics{};
+};
+
+struct JacobiAdaptiveSelection {
+    JacobiSparseTransition transition{};
+    std::vector<double> tau;
+    std::vector<double> weights;
+    int selected_quad_order = 0;
+    bool passed = false;
+    bool exhausted = false;
+    std::vector<JacobiAdaptiveCandidate> candidates;
+};
+
 using JacobiParamsResult = Result<JacobiParams>;
 using JacobiRawParamsResult = Result<std::array<double, 3>>;
 using JacobiRawBoundsResult = Result<JacobiRawBounds>;
 using JacobiShapeResult = Result<JacobiStationaryShape>;
 using JacobiScalarResult = Result<double>;
+using JacobiIntResult = Result<int>;
 using JacobiVectorResult = Result<std::vector<double>>;
 using JacobiBoundaryResult = Result<JacobiBoundaryValue>;
 using JacobiMemoryResult = Result<JacobiMemoryEstimate>;
 using JacobiQuadratureResult = Result<JacobiQuadratureRule>;
 using JacobiBasisResult = Result<JacobiBasisRule>;
 using JacobiFixedRuleResult = Result<JacobiFixedRule>;
+using JacobiDenseTransitionResult = Result<JacobiDenseTransition>;
+using JacobiCoefficientTransitionResult =
+    Result<JacobiCoefficientTransition>;
+using JacobiSparseTransitionResult = Result<JacobiSparseTransition>;
+using JacobiHorizonResult = Result<JacobiHorizonDiagnostics>;
+using JacobiAdaptiveSelectionResult = Result<JacobiAdaptiveSelection>;
 
 }  // namespace scar

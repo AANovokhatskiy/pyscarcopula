@@ -24,11 +24,16 @@
 #include <vector>
 
 int run_jacobi_domain_tests();
+int run_jacobi_transition_tests();
 
 int main() {
     const int jacobi_status = run_jacobi_domain_tests();
     if (jacobi_status != 0) {
         return 100 + jacobi_status;
+    }
+    const int jacobi_transition_status = run_jacobi_transition_tests();
+    if (jacobi_transition_status != 0) {
+        return 200 + jacobi_transition_status;
     }
     const double span_values[] = {0.25, 0.75};
     const scar::DoubleView span{span_values, 2};
