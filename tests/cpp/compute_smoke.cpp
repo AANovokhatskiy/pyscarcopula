@@ -25,6 +25,7 @@
 
 int run_jacobi_domain_tests();
 int run_jacobi_transition_tests();
+int run_jacobi_evaluator_tests();
 
 int main() {
     const int jacobi_status = run_jacobi_domain_tests();
@@ -34,6 +35,10 @@ int main() {
     const int jacobi_transition_status = run_jacobi_transition_tests();
     if (jacobi_transition_status != 0) {
         return 200 + jacobi_transition_status;
+    }
+    const int jacobi_evaluator_status = run_jacobi_evaluator_tests();
+    if (jacobi_evaluator_status != 0) {
+        return 300 + jacobi_evaluator_status;
     }
     const double span_values[] = {0.25, 0.75};
     const scar::DoubleView span{span_values, 2};

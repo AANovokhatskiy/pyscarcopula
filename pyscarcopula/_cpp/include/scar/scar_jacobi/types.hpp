@@ -35,6 +35,11 @@ enum class JacobiStationarityCorrection : int {
     IpFp = 2,
 };
 
+enum class JacobiStateHorizon : int {
+    Current = 0,
+    Next = 1,
+};
+
 /// Physical Jacobi diffusion parameters `(kappa, m, xi)`.
 struct JacobiParams {
     double kappa = 1.0;
@@ -89,6 +94,14 @@ struct JacobiAdaptiveThresholds {
     double max_relative_variance_error = 0.10;
     double max_conditional_mean_rmse = 1e-3;
     double max_lag_one_correlation_error = 1e-2;
+};
+
+/// Numerical policy owned by the prepared evaluator.  Transition setup and
+/// filtering share one memory budget; moving-grid setup derivatives use the
+/// central relative step below and are evaluated wholly inside C++.
+struct JacobiEvaluatorConfig {
+    JacobiTransitionConfig transition{};
+    double finite_difference_relative_step = 1e-5;
 };
 
 }  // namespace scar

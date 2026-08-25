@@ -102,6 +102,7 @@ SCAR_COMPUTE_SOURCES = (
     "scar_jacobi/domain.cpp",
     "scar_jacobi/quadrature.cpp",
     "scar_jacobi/transition.cpp",
+    "scar_jacobi/evaluator.cpp",
 )
 
 PYTHON_BINDING_SOURCES = (

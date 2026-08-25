@@ -941,36 +941,32 @@ class SCARJacobiStrategy:
 
         tau_grid = np.asarray(state.z_grid, dtype=np.float64)
         prob = np.asarray(state.prob, dtype=np.float64)
-        native = copula_native.supported(copula)
-        if native:
-            theta = copula_native.tau_to_param(copula, tau_grid)
-        else:
-            theta = copula.tau_to_param(tau_grid)
-        if self.theta_cap is not None:
-            theta = np.minimum(theta, float(self.theta_cap))
-        u1 = np.full(len(theta), float(u[0, 0]), dtype=np.float64)
-        u2 = np.full(len(theta), float(u[0, 1]), dtype=np.float64)
-        if native:
-            log_w = copula_native.log_pdf(copula, u1, u2, theta)
-        else:
-            log_w = np.asarray(
-                copula.log_pdf(u1, u2, theta), dtype=np.float64)
-        finite = np.isfinite(log_w)
-        if not np.any(finite):
-            return state
-
-        weights = np.zeros_like(prob)
-        weights[finite] = prob[finite] * np.exp(
-            log_w[finite] - np.max(log_w[finite]))
-        total = np.sum(weights)
-        if total <= 0.0:
-            return state
-        weights /= total
+        evaluator = jacobi_native.PreparedScarJacobiEvaluator(
+            u[:1],
+            copula,
+            basis_order=self.basis_order,
+            quad_order=self.quad_order,
+            theta_cap=self.theta_cap,
+            transition_method=self.transition_method,
+            storage=self.transition_storage,
+            correction=self.stationarity_correction,
+            clip_negative=self.clip_negative,
+            negative_mass_tol=self.negative_mass_tol,
+            gh_order=self.gh_order,
+            memory_budget_bytes=self.memory_budget_bytes,
+            stationary_shape_max=self.stationary_shape_max,
+        )
+        conditioned_tau, weights = evaluator.condition_state(
+            tau_grid,
+            prob,
+            u[0],
+            horizon=state.horizon,
+        )
         return PredictiveState(
             method=state.method,
             horizon=state.horizon,
             kind=state.kind,
-            z_grid=tau_grid,
+            z_grid=conditioned_tau,
             prob=weights,
             metadata=dict(state.metadata),
         )

@@ -25,7 +25,7 @@ from pyscarcopula.copula.multivariate.stochastic_student import (
 )
 from pyscarcopula.numerical import _cpp_scar_ou
 from pyscarcopula.numerical import static_likelihood
-from pyscarcopula.numerical.jacobi_tm import _emission_grid
+from pyscarcopula._native import jacobi as jacobi_native
 from pyscarcopula.strategy.mle import MLEStrategy
 
 
@@ -282,23 +282,34 @@ def test_static_factor_large_dimension_benchmark_report(family):
 
 
 @pytest.mark.benchmark
-def test_jacobi_emission_construction_benchmark_report():
+def test_jacobi_prepared_evaluator_setup_benchmark_report():
     _enabled()
     u = np.random.default_rng(20260624).uniform(0.01, 0.99, (1_000, 2))
-    tau = np.linspace(0.01, 0.95, 64)
     copula = GumbelCopula(rotate=180)
-    _emission_grid(u[:8], copula, tau)
+
+    def prepare_and_filter(observations):
+        evaluator = jacobi_native.PreparedScarJacobiEvaluator(
+            observations,
+            copula,
+            basis_order=4,
+            quad_order=64,
+            transition_method="local",
+            gh_order=3,
+        )
+        return evaluator.filter(1.2, 0.4, 0.25)
+
+    prepare_and_filter(u[:8])
 
     elapsed, result = _median_elapsed(
-        lambda: _emission_grid(u, copula, tau)
+        lambda: prepare_and_filter(u)
     )
 
-    assert result[0].shape == (len(u), len(tau))
+    assert result["emissions"].shape == (len(u), 64)
     _report(
-        "jacobi_emission_construction",
+        "jacobi_prepared_evaluator_setup",
         elapsed,
-        workload={"T": len(u), "K": len(tau), "family": "gumbel"},
-        cache_state="warm",
+        workload={"T": len(u), "K": 64, "family": "gumbel"},
+        cache_state="cold_preparation",
     )
 
 

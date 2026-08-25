@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 from pyscarcopula import GumbelCopula
+from pyscarcopula._native import jacobi as jacobi_native
 from pyscarcopula.numerical import jacobi_tm
 from pyscarcopula.numerical.jacobi_tm import (
     DEFAULT_JACOBI_MEMORY_BUDGET_BYTES,
@@ -416,7 +417,7 @@ def test_jacobi_transition_matrix_respects_soft_negative_mass_tol():
         np.sum(soft_transition, axis=1), 1.0, rtol=1e-12, atol=1e-12)
 
 
-def test_jacobi_loglik_unit_emission_is_zero():
+def test_jacobi_loglik_rejects_custom_python_emission():
     u = np.array([[0.2, 0.3], [0.4, 0.7], [0.8, 0.6]])
 
     ll = jacobi_loglik(
@@ -429,10 +430,10 @@ def test_jacobi_loglik_unit_emission_is_zero():
         quad_order=32,
     )
 
-    np.testing.assert_allclose(ll, 0.0, rtol=0.0, atol=1e-12)
+    assert ll == -np.inf
 
 
-def test_jacobi_matrix_loglik_unit_emission_is_zero():
+def test_jacobi_matrix_loglik_rejects_custom_python_emission():
     u = np.array([[0.2, 0.3], [0.4, 0.7], [0.8, 0.6]])
 
     ll = jacobi_matrix_loglik(
@@ -446,7 +447,7 @@ def test_jacobi_matrix_loglik_unit_emission_is_zero():
         transition_method="local",
     )
 
-    np.testing.assert_allclose(ll, 0.0, rtol=0.0, atol=1e-12)
+    assert ll == -np.inf
 
 
 def test_jacobi_fixed_grid_gradient_matches_finite_difference():
@@ -573,17 +574,7 @@ def test_jacobi_explicit_spectral_rejects_material_negative_mass():
         )
 
 
-def test_jacobi_auto_gradient_freezes_selected_backend(monkeypatch):
-    from pyscarcopula.numerical import jacobi_tm
-
-    original = jacobi_tm.jacobi_transition_matrix
-    requested_methods = []
-
-    def recorded(*args, **kwargs):
-        requested_methods.append(kwargs.get("transition_method"))
-        return original(*args, **kwargs)
-
-    monkeypatch.setattr(jacobi_tm, "jacobi_transition_matrix", recorded)
+def test_jacobi_auto_gradient_freezes_selected_backend_in_native_evaluator():
     u = np.array([
         [0.18, 0.31],
         [0.34, 0.42],
@@ -592,21 +583,20 @@ def test_jacobi_auto_gradient_freezes_selected_backend(monkeypatch):
         [0.22, 0.89],
     ], dtype=np.float64)
 
-    value, gradient = jacobi_matrix_neg_loglik_with_grad(
-        0.08,
-        0.15,
-        0.3,
+    evaluator = jacobi_native.PreparedScarJacobiEvaluator(
         u,
         GumbelCopula(),
         basis_order=8,
         quad_order=48,
         transition_method="auto",
     )
+    state = evaluator.filter(0.08, 0.15, 0.3)
+    value, gradient = evaluator.neg_loglik_with_grad(0.08, 0.15, 0.3)
 
     assert np.isfinite(value)
     assert np.all(np.isfinite(gradient))
-    assert requested_methods[0] == "auto"
-    assert set(requested_methods[1:]) == {"local"}
+    assert state["diagnostics"]["transition_method_requested"] == "auto"
+    assert state["diagnostics"]["transition_method"] == "local"
 
 
 def test_jacobi_basis_order_one_matches_stationary_mixture():

@@ -283,16 +283,22 @@ def _transition_config(
         storage="dense", correction="none", clip_negative=False,
         negative_mass_tol=1e-5, return_grad=False,
         memory_budget_bytes=1024**3, ipfp_tolerance=1e-15,
-        ipfp_max_iterations=10_000):
+        ipfp_max_iterations=10_000, theta_cap=None,
+        stationary_shape_max=None):
     module = load()
     numerical = module.JacobiNumericalConfig()
     numerical.quad_order = int(quad_order)
     numerical.basis_order = int(basis_order)
     numerical.gh_order = int(gh_order)
     numerical.n_obs = int(n_obs)
-    numerical.matrix = storage == "dense"
+    numerical.matrix = storage == "dense" and method != "spectral_coeff"
     numerical.gradient = bool(return_grad)
     numerical.memory_budget_bytes = int(memory_budget_bytes)
+    numerical.theta_cap = (
+        math.nan if theta_cap is None else float(theta_cap))
+    numerical.stationary_shape_max = (
+        math.inf if stationary_shape_max is None
+        else float(stationary_shape_max))
 
     config = module.JacobiTransitionConfig()
     config.numerical = numerical
@@ -318,6 +324,176 @@ def _transition_config(
     config.ipfp_tolerance = float(ipfp_tolerance)
     config.ipfp_max_iterations = int(ipfp_max_iterations)
     return config
+
+
+def _evaluator_raise(result, operation):
+    diagnostics = dict(result.get("diagnostics", {}))
+    estimated = int(diagnostics.get("estimated_workspace_bytes", 0))
+    budget = int(diagnostics.get("memory_budget_bytes", 0))
+    if int(result["status"]) == 2 and estimated > budget:
+        raise MemoryError(
+            "Jacobi numerical workspace requires an estimated "
+            f"{estimated} bytes, exceeding memory_budget_bytes={budget}; "
+            "reduce quad_order, basis_order, or the observation count, or "
+            "increase memory_budget_bytes")
+    _raise(result, operation)
+
+
+class PreparedScarJacobiEvaluator:
+    """Prepared native Jacobi objective/filter/state facade.
+
+    One instance owns the immutable copula descriptor and observations.  Its
+    native peer caches the latest transition, transformed grid, emissions,
+    filter, and smoother for repeated calls at the same physical parameters.
+    """
+
+    def __init__(
+            self, u, copula, *, basis_order=32, quad_order=None,
+            theta_cap=None, transition_method="auto", storage="dense",
+            correction="none", clip_negative=False,
+            negative_mass_tol=1e-5, gh_order=5,
+            memory_budget_bytes=1024**3, fd_rel_step=1e-5,
+            stationary_shape_max=None):
+        from pyscarcopula.numerical import _cpp_copula
+
+        module = load()
+        observations = np.ascontiguousarray(u, dtype=np.float64)
+        if (
+                observations.ndim != 2
+                or observations.shape[1] != 2
+                or len(observations) < 1):
+            raise ValueError(
+                "u must be a 2D float64 array with shape (n, 2), n >= 1")
+        if quad_order is None:
+            quad_order = default_quad_order(basis_order)
+        method = str(transition_method)
+        transition = _transition_config(
+            n_obs=len(observations),
+            quad_order=quad_order,
+            basis_order=basis_order,
+            gh_order=gh_order,
+            method=method,
+            storage=storage,
+            correction=correction,
+            clip_negative=clip_negative,
+            negative_mass_tol=negative_mass_tol,
+            memory_budget_bytes=memory_budget_bytes,
+            theta_cap=theta_cap,
+            stationary_shape_max=stationary_shape_max,
+        )
+        config = module.JacobiEvaluatorConfig()
+        config.transition = transition
+        config.finite_difference_relative_step = float(fd_rel_step)
+        spec = _cpp_copula.make_copula_ops_spec(module, copula)
+        self._module = module
+        self._native = module.PreparedScarJacobiEvaluator(
+            spec, observations, config)
+
+    @property
+    def preparation_count(self):
+        return int(self._native.preparation_count)
+
+    def filter(self, kappa, m, xi):
+        result = self._native.filter(_params(kappa, m, xi))
+        _evaluator_raise(result, "prepared filter/smoother")
+        return {
+            "tau": np.asarray(result["tau"], dtype=np.float64),
+            "theta": np.asarray(result["theta"], dtype=np.float64),
+            "emissions": np.asarray(result["emissions"], dtype=np.float64),
+            "predicted": np.asarray(result["predicted"], dtype=np.float64),
+            "filtered": np.asarray(result["filtered"], dtype=np.float64),
+            "smoothed": np.asarray(result["smoothed"], dtype=np.float64),
+            "scales": np.asarray(result["scales"], dtype=np.float64),
+            "current_probability": np.asarray(
+                result["current_probability"], dtype=np.float64),
+            "next_probability": np.asarray(
+                result["next_probability"], dtype=np.float64),
+            "diagnostics": _transition_diagnostics(result["diagnostics"]),
+        }
+
+    def loglik(self, kappa, m, xi):
+        result = self._native.loglik(_params(kappa, m, xi))
+        _evaluator_raise(result, "prepared log-likelihood")
+        return float(result["log_likelihood"])
+
+    def neg_loglik(self, kappa, m, xi):
+        result = self._native.loglik(_params(kappa, m, xi))
+        _evaluator_raise(result, "prepared objective")
+        return float(result["objective"])
+
+    def neg_loglik_with_grad(self, kappa, m, xi):
+        result = self._native.neg_loglik_with_grad(_params(kappa, m, xi))
+        _evaluator_raise(result, "prepared objective gradient")
+        return (
+            float(result["objective"]),
+            np.asarray(result["gradient"], dtype=np.float64),
+        )
+
+    def predictive_mean(self, kappa, m, xi):
+        result = self._native.predictive_mean(_params(kappa, m, xi))
+        _evaluator_raise(result, "prepared predictive mean")
+        return np.asarray(result["values"], dtype=np.float64)
+
+    def mixture_h(self, kappa, m, xi):
+        result = self._native.mixture_h(_params(kappa, m, xi))
+        _evaluator_raise(result, "prepared mixture-h")
+        return np.asarray(result["values"], dtype=np.float64)
+
+    def mixture_h_pair(self, kappa, m, xi):
+        result = self._native.mixture_h_pair(_params(kappa, m, xi))
+        _evaluator_raise(result, "prepared mixture-h pair")
+        return (
+            np.asarray(result["first"], dtype=np.float64),
+            np.asarray(result["second"], dtype=np.float64),
+        )
+
+    def rosenblatt(self, kappa, m, xi, *, gaussian=False):
+        operation = (
+            self._native.gaussian_rosenblatt if gaussian
+            else self._native.rosenblatt)
+        result = operation(_params(kappa, m, xi))
+        _evaluator_raise(result, "prepared Rosenblatt residual")
+        return np.column_stack((
+            np.asarray(result["first"], dtype=np.float64),
+            np.asarray(result["second"], dtype=np.float64),
+        ))
+
+    def state_distribution(self, kappa, m, xi, *, horizon="current"):
+        normalized = str(horizon).lower()
+        if normalized not in {"current", "next"}:
+            raise ValueError("horizon must be 'current' or 'next'")
+        native_horizon = {
+            "current": self._module.JacobiStateHorizon.Current,
+            "next": self._module.JacobiStateHorizon.Next,
+        }[normalized]
+        result = self._native.state_distribution(
+            _params(kappa, m, xi), native_horizon)
+        _evaluator_raise(result, "prepared state distribution")
+        return (
+            np.asarray(result["tau"], dtype=np.float64),
+            np.asarray(result["probability"], dtype=np.float64),
+        )
+
+    def condition_state(
+            self, tau, probability, observation, *, horizon="current"):
+        normalized = str(horizon).lower()
+        if normalized not in {"current", "next"}:
+            raise ValueError("horizon must be 'current' or 'next'")
+        native_horizon = {
+            "current": self._module.JacobiStateHorizon.Current,
+            "next": self._module.JacobiStateHorizon.Next,
+        }[normalized]
+        result = self._native.condition_state(
+            np.asarray(tau, dtype=np.float64),
+            np.asarray(probability, dtype=np.float64),
+            np.asarray(observation, dtype=np.float64),
+            native_horizon,
+        )
+        _evaluator_raise(result, "prepared state conditioning")
+        return (
+            np.asarray(result["tau"], dtype=np.float64),
+            np.asarray(result["probability"], dtype=np.float64),
+        )
 
 
 def _transition_raise(result, operation):
@@ -554,6 +730,7 @@ def select_sparse_order(
 
 
 __all__ = [
+    "PreparedScarJacobiEvaluator",
     "apply_coefficient_transition",
     "coefficient_transition",
     "estimate_sampling_workspace",

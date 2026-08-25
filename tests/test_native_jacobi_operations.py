@@ -11,10 +11,9 @@ from pyscarcopula import (
     JoeCopula,
 )
 from pyscarcopula._types import PredictiveState
+from pyscarcopula._native import jacobi as jacobi_native
 from pyscarcopula.numerical import _cpp_extension, copula_native
 from pyscarcopula.numerical.jacobi_tm import (
-    _emission_grid,
-    _h_grid_on_theta,
     jacobi_forward_mixture_h,
     jacobi_loglik,
     jacobi_matrix_forward_mixture_h,
@@ -110,7 +109,6 @@ def test_native_parameter_grids_match_point_operations(copula):
 
 def test_builtin_jacobi_grid_does_not_call_python_family_methods(monkeypatch):
     copula = GumbelCopula(rotate=180)
-    tau = np.linspace(0.05, 0.9, 12)
 
     def fail(*args, **kwargs):
         raise AssertionError("Python family method was called")
@@ -119,71 +117,21 @@ def test_builtin_jacobi_grid_does_not_call_python_family_methods(monkeypatch):
     monkeypatch.setattr(copula, "pdf", fail)
     monkeypatch.setattr(copula, "h", fail)
 
-    emissions, theta = _emission_grid(_U, copula, tau)
-    h_grid = _h_grid_on_theta(copula, _U, theta)
+    evaluator = jacobi_native.PreparedScarJacobiEvaluator(
+        _U,
+        copula,
+        basis_order=4,
+        quad_order=16,
+        transition_method="local",
+        gh_order=3,
+    )
+    state = evaluator.filter(1.2, 0.4, 0.25)
+    h_grid = evaluator.mixture_h(1.2, 0.4, 0.25)
 
-    assert emissions.shape == h_grid.shape == (len(_U), len(tau))
-    assert np.all(np.isfinite(emissions))
+    assert state["emissions"].shape == (len(_U), 16)
+    assert np.all(np.isfinite(state["emissions"]))
     assert np.all((h_grid > 0.0) & (h_grid < 1.0))
-
-
-@pytest.mark.parametrize("n_obs", [2, 9])
-def test_emission_grid_uses_one_pybind_call_independent_of_t(
-        monkeypatch, n_obs):
-    module = _cpp_extension.load()
-    original = module.copula_pdf_parameter_grid
-    calls = 0
-
-    def counted(*args, **kwargs):
-        nonlocal calls
-        calls += 1
-        return original(*args, **kwargs)
-
-    monkeypatch.setattr(module, "copula_pdf_parameter_grid", counted)
-    tau = np.linspace(0.05, 0.9, 17)
-    _emission_grid(np.resize(_U, (n_obs, 2)), GumbelCopula(), tau)
-
-    assert calls == 1
-
-
-@pytest.mark.parametrize("n_obs", [2, 9])
-def test_h_grid_uses_one_pybind_call_independent_of_t(monkeypatch, n_obs):
-    module = _cpp_extension.load()
-    original = module.copula_h_parameter_grid
-    calls = 0
-
-    def counted(*args, **kwargs):
-        nonlocal calls
-        calls += 1
-        return original(*args, **kwargs)
-
-    monkeypatch.setattr(module, "copula_h_parameter_grid", counted)
-    tau = np.linspace(0.05, 0.9, 17)
-    copula = GumbelCopula()
-    theta = copula_native.tau_to_param(copula, tau)
-    _h_grid_on_theta(copula, np.resize(_U, (n_obs, 2)), theta)
-
-    assert calls == 1
-
-
-def test_synthetic_jacobi_copula_retains_python_fallback():
-    class SyntheticCopula:
-        def tau_to_param(self, tau):
-            return np.asarray(tau, dtype=np.float64)
-
-        def pdf(self, u1, u2, r):
-            return np.ones_like(np.asarray(r, dtype=np.float64))
-
-        def h(self, u_conditioned, u_given, r):
-            return np.full_like(np.asarray(r, dtype=np.float64), 0.25)
-
-    copula = SyntheticCopula()
-    tau = np.linspace(0.1, 0.9, 5)
-    emissions, theta = _emission_grid(_U[:2], copula, tau)
-    h_grid = _h_grid_on_theta(copula, _U[:2], theta)
-
-    np.testing.assert_array_equal(emissions, np.ones((2, 5)))
-    np.testing.assert_array_equal(h_grid, np.full((2, 5), 0.25))
+    assert evaluator.preparation_count == 1
 
 
 def test_condition_state_uses_native_log_density(monkeypatch):

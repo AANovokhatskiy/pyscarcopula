@@ -172,6 +172,66 @@ struct JacobiAdaptiveSelection {
     std::vector<JacobiAdaptiveCandidate> candidates;
 };
 
+struct JacobiFilterDiagnostics {
+    JacobiTransitionDiagnostics transition{};
+    std::int64_t n_obs = 0;
+    int order = 0;
+    double log_likelihood = 0.0;
+    double minimum_scale = 0.0;
+    double maximum_scale = 0.0;
+    double max_predictive_mass_error = 0.0;
+    double max_filtered_mass_error = 0.0;
+    double max_smoothed_mass_error = 0.0;
+    std::uint64_t preparation_generation = 0;
+};
+
+/// Complete forward/backward evaluator payload.  Observation-grid arrays are
+/// row-major with shape `(n_obs, order)`.
+struct JacobiFilterState {
+    std::vector<double> tau;
+    std::vector<double> theta;
+    std::vector<double> emissions;
+    std::vector<double> predicted;
+    std::vector<double> filtered;
+    std::vector<double> smoothed;
+    std::vector<double> scales;
+    std::vector<double> current_probability;
+    std::vector<double> next_probability;
+    std::int64_t n_obs = 0;
+    int order = 0;
+    JacobiFilterDiagnostics diagnostics{};
+};
+
+struct JacobiObjectiveValue {
+    double log_likelihood = 0.0;
+    double objective = 0.0;
+    JacobiFilterDiagnostics diagnostics{};
+};
+
+struct JacobiObjectiveGradient {
+    double objective = 0.0;
+    std::array<double, 3> gradient{};
+    JacobiFilterDiagnostics diagnostics{};
+};
+
+struct JacobiEvaluatorVector {
+    std::vector<double> values;
+    JacobiFilterDiagnostics diagnostics{};
+};
+
+struct JacobiEvaluatorPair {
+    std::vector<double> first;
+    std::vector<double> second;
+    JacobiFilterDiagnostics diagnostics{};
+};
+
+struct JacobiStateDistribution {
+    std::vector<double> tau;
+    std::vector<double> probability;
+    JacobiStateHorizon horizon = JacobiStateHorizon::Current;
+    JacobiFilterDiagnostics diagnostics{};
+};
+
 using JacobiParamsResult = Result<JacobiParams>;
 using JacobiRawParamsResult = Result<std::array<double, 3>>;
 using JacobiRawBoundsResult = Result<JacobiRawBounds>;
@@ -190,5 +250,11 @@ using JacobiCoefficientTransitionResult =
 using JacobiSparseTransitionResult = Result<JacobiSparseTransition>;
 using JacobiHorizonResult = Result<JacobiHorizonDiagnostics>;
 using JacobiAdaptiveSelectionResult = Result<JacobiAdaptiveSelection>;
+using JacobiFilterResult = Result<JacobiFilterState>;
+using JacobiObjectiveResult = Result<JacobiObjectiveValue>;
+using JacobiGradientResult = Result<JacobiObjectiveGradient>;
+using JacobiEvaluatorVectorResult = Result<JacobiEvaluatorVector>;
+using JacobiEvaluatorPairResult = Result<JacobiEvaluatorPair>;
+using JacobiStateDistributionResult = Result<JacobiStateDistribution>;
 
 }  // namespace scar

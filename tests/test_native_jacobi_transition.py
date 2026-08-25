@@ -206,7 +206,7 @@ def test_production_python_has_no_stage833_transition_kernels():
             "def _sparse_left_multiply"):
         assert marker not in sparse
     assert "jacobi_native.dense_transition" in dense
-    assert "jacobi_native.apply_coefficient_transition" in dense
+    assert "jacobi_native.PreparedScarJacobiEvaluator" in dense
     assert "jacobi_native.sparse_transition" in sparse
     assert "jacobi_native.select_sparse_order" in sparse
 

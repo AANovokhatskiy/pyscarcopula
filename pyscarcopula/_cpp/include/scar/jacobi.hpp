@@ -2,9 +2,11 @@
 
 #include "scar/scar_jacobi/result.hpp"
 #include "scar/scar_jacobi/types.hpp"
+#include "scar/copula/spec.hpp"
 
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 namespace scar {
@@ -173,5 +175,55 @@ JacobiAdaptiveSelectionResult select_sparse_jacobi_order(
     const std::vector<int>& quad_orders,
     const JacobiAdaptiveThresholds& thresholds,
     bool require_pass);
+
+/// Reusable SCAR-TM-Jacobi evaluator for one immutable copula/observation
+/// cell.  The implementation owns observation caches, transformed grids,
+/// emissions, transitions, filter/smoother states, and reusable workspaces.
+class PreparedScarJacobiEvaluator {
+public:
+    PreparedScarJacobiEvaluator(
+        CopulaSpec copula,
+        std::vector<double> observations,
+        std::int64_t n_obs,
+        int dim,
+        JacobiEvaluatorConfig config);
+    ~PreparedScarJacobiEvaluator();
+
+    PreparedScarJacobiEvaluator(const PreparedScarJacobiEvaluator&) = delete;
+    PreparedScarJacobiEvaluator& operator=(
+        const PreparedScarJacobiEvaluator&) = delete;
+    PreparedScarJacobiEvaluator(PreparedScarJacobiEvaluator&&) noexcept;
+    PreparedScarJacobiEvaluator& operator=(
+        PreparedScarJacobiEvaluator&&) noexcept;
+
+    JacobiFilterResult filter(const JacobiParams& params) const;
+    JacobiObjectiveResult loglik(const JacobiParams& params) const;
+    JacobiGradientResult neg_loglik_with_grad(
+        const JacobiParams& params) const;
+    JacobiEvaluatorVectorResult predictive_mean(
+        const JacobiParams& params) const;
+    JacobiEvaluatorVectorResult mixture_h(
+        const JacobiParams& params) const;
+    JacobiEvaluatorPairResult mixture_h_pair(
+        const JacobiParams& params) const;
+    JacobiEvaluatorPairResult rosenblatt(
+        const JacobiParams& params) const;
+    JacobiEvaluatorPairResult gaussian_rosenblatt(
+        const JacobiParams& params) const;
+    JacobiStateDistributionResult state_distribution(
+        const JacobiParams& params,
+        JacobiStateHorizon horizon) const;
+    JacobiStateDistributionResult condition_state(
+        const std::vector<double>& tau,
+        const std::vector<double>& probability,
+        const std::array<double, 2>& observation,
+        JacobiStateHorizon horizon = JacobiStateHorizon::Current) const;
+
+    std::uint64_t preparation_count() const noexcept;
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
 
 }  // namespace scar

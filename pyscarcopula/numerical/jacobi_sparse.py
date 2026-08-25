@@ -8,7 +8,6 @@ import numpy as np
 from numba import njit
 
 from pyscarcopula._native import jacobi as jacobi_native
-from pyscarcopula._utils import clip_h_function_values
 from pyscarcopula.numerical._arrays import (
     validate_float64_allocation,
     validate_positive_int,
@@ -18,10 +17,6 @@ from pyscarcopula.numerical._transition_methods import (
 )
 from pyscarcopula.numerical.jacobi_tm import (
     DEFAULT_JACOBI_MEMORY_BUDGET_BYTES,
-    _emission_grid,
-    _fixed_tau_weight_derivatives,
-    _h_grid_on_theta,
-    _h_pair_grids_on_theta,
     _validate_jacobi_order,
     _validate_nonnegative_int,
     _validate_transition_count,
@@ -113,122 +108,6 @@ class SparseJacobiTransition:
 
 
 @njit(cache=True, nogil=True)
-def _sparse_filter_loglik_kernel(
-        weights, indices, probabilities, counts, fi_grid):
-    predicted = weights.copy()
-    posterior = np.empty_like(predicted)
-    log_likelihood = 0.0
-    for observation in range(fi_grid.shape[0]):
-        scale = 0.0
-        for node in range(predicted.size):
-            value = predicted[node] * fi_grid[observation, node]
-            posterior[node] = value
-            scale += value
-        if not np.isfinite(scale) or scale <= 0.0:
-            return -np.inf
-        inverse_scale = 1.0 / scale
-        for node in range(predicted.size):
-            posterior[node] *= inverse_scale
-        log_likelihood += np.log(scale)
-        if observation < fi_grid.shape[0] - 1:
-            predicted.fill(0.0)
-            for row in range(posterior.size):
-                source_mass = posterior[row]
-                for slot in range(counts[row]):
-                    predicted[indices[row, slot]] += (
-                        source_mass * probabilities[row, slot])
-            total = 0.0
-            for node in range(predicted.size):
-                total += predicted[node]
-            if not np.isfinite(total) or total <= 0.0:
-                return -np.inf
-            inverse_total = 1.0 / total
-            for node in range(predicted.size):
-                predicted[node] *= inverse_total
-    return log_likelihood
-
-
-@njit(cache=True, nogil=True)
-def _sparse_neg_loglik_grad_kernel(
-        weights,
-        dweights,
-        indices,
-        probabilities,
-        dprobabilities,
-        counts,
-        fi_grid):
-    predicted = weights.copy()
-    dpredicted = dweights.copy()
-    posterior = np.empty_like(predicted)
-    dposterior = np.empty_like(dpredicted)
-    next_predicted = np.empty_like(predicted)
-    next_dpredicted = np.empty_like(dpredicted)
-    log_likelihood = 0.0
-    gradient = np.zeros(3, dtype=np.float64)
-
-    for observation in range(fi_grid.shape[0]):
-        scale = 0.0
-        dscale = np.zeros(3, dtype=np.float64)
-        for node in range(predicted.size):
-            emission = fi_grid[observation, node]
-            posterior[node] = predicted[node] * emission
-            scale += posterior[node]
-            for parameter in range(3):
-                dposterior[parameter, node] = (
-                    dpredicted[parameter, node] * emission)
-                dscale[parameter] += dposterior[parameter, node]
-        if not np.isfinite(scale) or scale <= 0.0:
-            return 1e10, np.zeros(3, dtype=np.float64)
-        for node in range(predicted.size):
-            raw_probability = posterior[node]
-            posterior[node] = raw_probability / scale
-            for parameter in range(3):
-                dposterior[parameter, node] = (
-                    dposterior[parameter, node] * scale
-                    - raw_probability * dscale[parameter]
-                ) / (scale * scale)
-        log_likelihood += np.log(scale)
-        gradient += dscale / scale
-
-        if observation < fi_grid.shape[0] - 1:
-            next_predicted.fill(0.0)
-            next_dpredicted.fill(0.0)
-            for row in range(posterior.size):
-                for slot in range(counts[row]):
-                    target = indices[row, slot]
-                    probability = probabilities[row, slot]
-                    next_predicted[target] += (
-                        posterior[row] * probability)
-                    for parameter in range(3):
-                        next_dpredicted[parameter, target] += (
-                            dposterior[parameter, row] * probability
-                            + posterior[row]
-                            * dprobabilities[parameter, row, slot]
-                        )
-            total = 0.0
-            dtotal = np.zeros(3, dtype=np.float64)
-            for node in range(next_predicted.size):
-                total += next_predicted[node]
-                for parameter in range(3):
-                    dtotal[parameter] += next_dpredicted[parameter, node]
-            if not np.isfinite(total) or total <= 0.0:
-                return 1e10, np.zeros(3, dtype=np.float64)
-            for node in range(next_predicted.size):
-                raw_probability = next_predicted[node]
-                predicted[node] = raw_probability / total
-                for parameter in range(3):
-                    dpredicted[parameter, node] = (
-                        next_dpredicted[parameter, node] * total
-                        - raw_probability * dtotal[parameter]
-                    ) / (total * total)
-    if (
-            not np.isfinite(log_likelihood)
-            or np.any(~np.isfinite(gradient))):
-        return 1e10, np.zeros(3, dtype=np.float64)
-    return -log_likelihood, -gradient
-
-
-@njit(cache=True, nogil=True)
 def _sparse_to_dense(indices, probabilities, counts):
     n_rows = indices.shape[0]
     dense = np.zeros((n_rows, n_rows), dtype=np.float64)
@@ -256,39 +135,6 @@ def _sample_sparse_path_kernel(
         index = indices[index, selected]
         path[observation] = tau[index]
     return path
-
-
-def _validate_sparse_filter_workspace(
-        *,
-        n_obs,
-        quad_order,
-        gh_order,
-        gradient=False,
-        correction="none",
-        memory_budget_bytes=None):
-    if memory_budget_bytes is None:
-        memory_budget_bytes = DEFAULT_JACOBI_MEMORY_BUDGET_BYTES
-    width = 2 * gh_order + 1
-    # Transition indices/probabilities/counts, filter vectors, and the
-    # emission plus two directional h grids used by the largest operation.
-    transition_arrays = {
-        "none": 2,
-        "mh": 4,
-        "ipfp": 5,
-    }[correction]
-    elements = (
-        transition_arrays * quad_order * width
-        + 7 * quad_order
-        + 3 * n_obs * quad_order)
-    if gradient:
-        elements += (
-            3 * quad_order * width
-            + 8 * quad_order)
-    return validate_float64_allocation(
-        (elements,),
-        name="sparse Jacobi filtering workspace",
-        memory_budget_bytes=memory_budget_bytes,
-    )
 
 
 def _validate_sparse_workspace(
@@ -639,97 +485,6 @@ def compare_sparse_jacobi_corrections(
     return records
 
 
-def _iter_sparse_filter(weights, transition, fi_grid):
-    predicted = np.asarray(weights, dtype=np.float64).copy()
-    for observation in range(fi_grid.shape[0]):
-        weighted = predicted * fi_grid[observation]
-        scale = float(np.sum(weighted))
-        if not np.isfinite(scale) or scale <= 0.0:
-            raise FloatingPointError("sparse Jacobi filter update failed")
-        posterior = weighted / scale
-        posterior_total = float(np.sum(posterior))
-        if not np.isfinite(posterior_total) or posterior_total <= 0.0:
-            raise FloatingPointError("sparse Jacobi posterior is invalid")
-        posterior /= posterior_total
-        yield observation, predicted, posterior, scale
-        if observation < fi_grid.shape[0] - 1:
-            predicted = transition.left_multiply(posterior)
-            total = float(np.sum(predicted))
-            if not np.isfinite(total) or total <= 0.0:
-                raise FloatingPointError("sparse Jacobi prediction failed")
-            predicted /= total
-
-
-def _sparse_filter_setup(
-        kappa,
-        m,
-        xi,
-        u,
-        copula,
-        *,
-        basis_order=32,
-        quad_order=None,
-        theta_cap=None,
-        transition_method="local",
-        gh_order=5,
-        correction="none",
-        memory_budget_bytes=None):
-    u = np.asarray(u, dtype=np.float64)
-    if u.ndim != 2 or u.shape[1] != 2 or len(u) < 1:
-        return None
-    basis_order = _validate_jacobi_order(basis_order, "basis_order")
-    if quad_order is None:
-        from pyscarcopula.numerical.jacobi_tm import default_quad_order
-
-        quad_order = default_quad_order(basis_order)
-    quad_order = _validate_jacobi_order(quad_order, "quad_order")
-    gh_order = _validate_jacobi_order(gh_order, "gh_order")
-    transition_method = normalize_jacobi_matrix_transition_method(
-        transition_method)
-    if transition_method not in {"local", "local_fixed"}:
-        raise ValueError(
-            "sparse filtering requires transition_method='local' "
-            "or 'local_fixed'")
-    if transition_method == "local_fixed" and correction != "none":
-        raise ValueError(
-            "stationarity correction is not supported for sparse "
-            "local_fixed")
-    _validate_sparse_filter_workspace(
-        n_obs=len(u),
-        quad_order=quad_order,
-        gh_order=gh_order,
-        correction=correction,
-        memory_budget_bytes=memory_budget_bytes,
-    )
-    if transition_method == "local_fixed":
-        tau, weights, transition = (
-            jacobi_sparse_fixed_grid_transition(
-                kappa,
-                m,
-                xi,
-                n_obs=len(u),
-                quad_order=quad_order,
-                gh_order=gh_order,
-                memory_budget_bytes=memory_budget_bytes,
-            )
-        )
-    else:
-        tau, weights, transition = jacobi_sparse_local_transition(
-            kappa,
-            m,
-            xi,
-            n_obs=len(u),
-            basis_order=basis_order,
-            quad_order=quad_order,
-            gh_order=gh_order,
-            correction=correction,
-            memory_budget_bytes=memory_budget_bytes,
-        )
-    fi_grid, theta = _emission_grid(
-        u, copula, tau, theta_cap=theta_cap)
-    return u, tau, weights, transition, fi_grid, theta
-
-
 def jacobi_sparse_matrix_loglik(
         kappa,
         m,
@@ -746,34 +501,25 @@ def jacobi_sparse_matrix_loglik(
         memory_budget_bytes=None):
     """Evaluate a local-GH Jacobi likelihood with sparse filtering."""
     try:
-        setup = _sparse_filter_setup(
-            kappa,
-            m,
-            xi,
+        evaluator = jacobi_native.PreparedScarJacobiEvaluator(
             u,
             copula,
             basis_order=basis_order,
             quad_order=quad_order,
             theta_cap=theta_cap,
             transition_method=transition_method,
-            gh_order=gh_order,
+            storage="sparse",
             correction=correction,
-            memory_budget_bytes=memory_budget_bytes,
+            gh_order=gh_order,
+            memory_budget_bytes=(
+                DEFAULT_JACOBI_MEMORY_BUDGET_BYTES
+                if memory_budget_bytes is None else memory_budget_bytes),
         )
+        return evaluator.loglik(kappa, m, xi)
     except MemoryError:
         raise
     except Exception:
         return -np.inf
-    if setup is None:
-        return -np.inf
-    _, _, weights, transition, fi_grid, _ = setup
-    return float(_sparse_filter_loglik_kernel(
-        weights,
-        transition.indices,
-        transition.probabilities,
-        transition.counts,
-        fi_grid,
-    ))
 
 
 def jacobi_sparse_matrix_neg_loglik_with_grad(
@@ -806,45 +552,26 @@ def jacobi_sparse_matrix_neg_loglik_with_grad(
         quad_order = default_quad_order(basis_order)
     quad_order = _validate_jacobi_order(quad_order, "quad_order")
     gh_order = _validate_jacobi_order(gh_order, "gh_order")
-    _validate_sparse_filter_workspace(
-        n_obs=len(u),
-        quad_order=quad_order,
-        gh_order=gh_order,
-        gradient=True,
-        correction="none",
-        memory_budget_bytes=memory_budget_bytes,
-    )
     try:
-        tau, weights, transition, dprobabilities = (
-            jacobi_sparse_fixed_grid_transition(
-                kappa,
-                m,
-                xi,
-                n_obs=len(u),
-                quad_order=quad_order,
-                gh_order=gh_order,
-                return_grad=True,
-                memory_budget_bytes=memory_budget_bytes,
-            )
+        evaluator = jacobi_native.PreparedScarJacobiEvaluator(
+            u,
+            copula,
+            basis_order=basis_order,
+            quad_order=quad_order,
+            theta_cap=theta_cap,
+            transition_method=transition_method,
+            storage="sparse",
+            correction=correction,
+            gh_order=gh_order,
+            memory_budget_bytes=(
+                DEFAULT_JACOBI_MEMORY_BUDGET_BYTES
+                if memory_budget_bytes is None else memory_budget_bytes),
         )
-        dweights = _fixed_tau_weight_derivatives(
-            kappa, m, xi, tau, weights)
-        fi_grid, _ = _emission_grid(
-            u, copula, tau, theta_cap=theta_cap)
+        return evaluator.neg_loglik_with_grad(kappa, m, xi)
     except MemoryError:
         raise
     except Exception:
         return fail
-    value, gradient = _sparse_neg_loglik_grad_kernel(
-        weights,
-        dweights,
-        transition.indices,
-        transition.probabilities,
-        dprobabilities,
-        transition.counts,
-        fi_grid,
-    )
-    return float(value), np.asarray(gradient, dtype=np.float64)
 
 
 def jacobi_sparse_matrix_forward_predictive_mean(
@@ -862,28 +589,14 @@ def jacobi_sparse_matrix_forward_predictive_mean(
         correction="none",
         memory_budget_bytes=None):
     """Return sparse local-GH predictive copula-parameter means."""
-    setup = _sparse_filter_setup(
-        kappa,
-        m,
-        xi,
-        u,
-        copula,
-        basis_order=basis_order,
-        quad_order=quad_order,
-        theta_cap=theta_cap,
-        transition_method=transition_method,
-        gh_order=gh_order,
-        correction=correction,
-        memory_budget_bytes=memory_budget_bytes,
-    )
-    if setup is None:
-        raise ValueError("invalid Jacobi parameters or observations")
-    _, _, weights, transition, fi_grid, theta = setup
-    output = np.empty(len(fi_grid), dtype=np.float64)
-    for observation, predicted, _, _ in _iter_sparse_filter(
-            weights, transition, fi_grid):
-        output[observation] = np.sum(predicted * theta)
-    return output
+    evaluator = jacobi_native.PreparedScarJacobiEvaluator(
+        u, copula, basis_order=basis_order, quad_order=quad_order,
+        theta_cap=theta_cap, transition_method=transition_method,
+        storage="sparse", correction=correction, gh_order=gh_order,
+        memory_budget_bytes=(
+            DEFAULT_JACOBI_MEMORY_BUDGET_BYTES
+            if memory_budget_bytes is None else memory_budget_bytes))
+    return evaluator.predictive_mean(kappa, m, xi)
 
 
 def jacobi_sparse_matrix_forward_mixture_h(
@@ -901,30 +614,14 @@ def jacobi_sparse_matrix_forward_mixture_h(
         correction="none",
         memory_budget_bytes=None):
     """Return sparse local-GH predictive h-function mixtures."""
-    setup = _sparse_filter_setup(
-        kappa,
-        m,
-        xi,
-        u,
-        copula,
-        basis_order=basis_order,
-        quad_order=quad_order,
-        theta_cap=theta_cap,
-        transition_method=transition_method,
-        gh_order=gh_order,
-        correction=correction,
-        memory_budget_bytes=memory_budget_bytes,
-    )
-    if setup is None:
-        raise ValueError("invalid Jacobi parameters or observations")
-    u, _, weights, transition, fi_grid, theta = setup
-    h_grid = _h_grid_on_theta(copula, u, theta)
-    output = np.empty(len(fi_grid), dtype=np.float64)
-    for observation, predicted, _, _ in _iter_sparse_filter(
-            weights, transition, fi_grid):
-        output[observation] = np.sum(
-            predicted * h_grid[observation])
-    return clip_h_function_values(output)
+    evaluator = jacobi_native.PreparedScarJacobiEvaluator(
+        u, copula, basis_order=basis_order, quad_order=quad_order,
+        theta_cap=theta_cap, transition_method=transition_method,
+        storage="sparse", correction=correction, gh_order=gh_order,
+        memory_budget_bytes=(
+            DEFAULT_JACOBI_MEMORY_BUDGET_BYTES
+            if memory_budget_bytes is None else memory_budget_bytes))
+    return evaluator.mixture_h(kappa, m, xi)
 
 
 def jacobi_sparse_matrix_forward_mixture_h_pair(
@@ -942,36 +639,14 @@ def jacobi_sparse_matrix_forward_mixture_h_pair(
         correction="none",
         memory_budget_bytes=None):
     """Return both sparse local-GH predictive h-function directions."""
-    setup = _sparse_filter_setup(
-        kappa,
-        m,
-        xi,
-        u,
-        copula,
-        basis_order=basis_order,
-        quad_order=quad_order,
-        theta_cap=theta_cap,
-        transition_method=transition_method,
-        gh_order=gh_order,
-        correction=correction,
-        memory_budget_bytes=memory_budget_bytes,
-    )
-    if setup is None:
-        raise ValueError("invalid Jacobi parameters or observations")
-    u, _, weights, transition, fi_grid, theta = setup
-    first_grid, second_grid = _h_pair_grids_on_theta(copula, u, theta)
-    first = np.empty(len(fi_grid), dtype=np.float64)
-    second = np.empty(len(fi_grid), dtype=np.float64)
-    for observation, predicted, _, _ in _iter_sparse_filter(
-            weights, transition, fi_grid):
-        first[observation] = np.sum(
-            predicted * first_grid[observation])
-        second[observation] = np.sum(
-            predicted * second_grid[observation])
-    return (
-        clip_h_function_values(first),
-        clip_h_function_values(second),
-    )
+    evaluator = jacobi_native.PreparedScarJacobiEvaluator(
+        u, copula, basis_order=basis_order, quad_order=quad_order,
+        theta_cap=theta_cap, transition_method=transition_method,
+        storage="sparse", correction=correction, gh_order=gh_order,
+        memory_budget_bytes=(
+            DEFAULT_JACOBI_MEMORY_BUDGET_BYTES
+            if memory_budget_bytes is None else memory_budget_bytes))
+    return evaluator.mixture_h_pair(kappa, m, xi)
 
 
 def jacobi_sparse_matrix_state_distribution(
@@ -993,32 +668,14 @@ def jacobi_sparse_matrix_state_distribution(
     horizon = str(horizon).lower()
     if horizon not in {"current", "next"}:
         raise ValueError("horizon must be 'current' or 'next'")
-    setup = _sparse_filter_setup(
-        kappa,
-        m,
-        xi,
-        u,
-        copula,
-        basis_order=basis_order,
-        quad_order=quad_order,
-        theta_cap=theta_cap,
-        transition_method=transition_method,
-        gh_order=gh_order,
-        correction=correction,
-        memory_budget_bytes=memory_budget_bytes,
-    )
-    if setup is None:
-        raise ValueError("invalid Jacobi parameters or observations")
-    _, tau, weights, transition, fi_grid, _ = setup
-    posterior = None
-    for _, _, posterior, _ in _iter_sparse_filter(
-            weights, transition, fi_grid):
-        pass
-    probability = posterior
-    if horizon == "next":
-        probability = transition.left_multiply(probability)
-        probability /= np.sum(probability)
-    return tau.copy(), probability
+    evaluator = jacobi_native.PreparedScarJacobiEvaluator(
+        u, copula, basis_order=basis_order, quad_order=quad_order,
+        theta_cap=theta_cap, transition_method=transition_method,
+        storage="sparse", correction=correction, gh_order=gh_order,
+        memory_budget_bytes=(
+            DEFAULT_JACOBI_MEMORY_BUDGET_BYTES
+            if memory_budget_bytes is None else memory_budget_bytes))
+    return evaluator.state_distribution(kappa, m, xi, horizon=horizon)
 
 
 def sample_sparse_jacobi_trajectory(

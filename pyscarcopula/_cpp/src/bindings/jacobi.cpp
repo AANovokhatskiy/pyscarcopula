@@ -8,6 +8,7 @@
 #include <array>
 #include <algorithm>
 #include <cstdint>
+#include <memory>
 #include <stdexcept>
 #include <vector>
 
@@ -333,6 +334,117 @@ scar::JacobiSparseTransition sparse_transition_from_arrays(
     return transition;
 }
 
+py::dict filter_diagnostics_to_dict(
+    const scar::JacobiFilterDiagnostics& value) {
+    py::dict output = transition_diagnostics_to_dict(value.transition);
+    output["n_obs"] = value.n_obs;
+    output["order"] = value.order;
+    output["log_likelihood"] = value.log_likelihood;
+    output["minimum_scale"] = value.minimum_scale;
+    output["maximum_scale"] = value.maximum_scale;
+    output["max_predictive_mass_error"] =
+        value.max_predictive_mass_error;
+    output["max_filtered_mass_error"] = value.max_filtered_mass_error;
+    output["max_smoothed_mass_error"] = value.max_smoothed_mass_error;
+    output["preparation_generation"] = value.preparation_generation;
+    return output;
+}
+
+py::dict filter_result_to_dict(const scar::JacobiFilterResult& result) {
+    py::dict output = status_dict(result);
+    const std::size_t rows = result.value.n_obs > 0
+        ? static_cast<std::size_t>(result.value.n_obs) : 0;
+    const std::size_t columns = result.value.order > 0
+        ? static_cast<std::size_t>(result.value.order) : 0;
+    output["tau"] = vector_to_array(result.value.tau);
+    output["theta"] = vector_to_array(result.value.theta);
+    output["emissions"] = matrix_to_array(
+        result.value.emissions, rows, columns);
+    output["predicted"] = matrix_to_array(
+        result.value.predicted, rows, columns);
+    output["filtered"] = matrix_to_array(
+        result.value.filtered, rows, columns);
+    output["smoothed"] = matrix_to_array(
+        result.value.smoothed, rows, columns);
+    output["scales"] = vector_to_array(result.value.scales);
+    output["current_probability"] =
+        vector_to_array(result.value.current_probability);
+    output["next_probability"] =
+        vector_to_array(result.value.next_probability);
+    output["diagnostics"] =
+        filter_diagnostics_to_dict(result.value.diagnostics);
+    return output;
+}
+
+py::dict objective_result_to_dict(const scar::JacobiObjectiveResult& result) {
+    py::dict output = status_dict(result);
+    output["log_likelihood"] = result.value.log_likelihood;
+    output["objective"] = result.value.objective;
+    output["diagnostics"] =
+        filter_diagnostics_to_dict(result.value.diagnostics);
+    return output;
+}
+
+py::dict gradient_result_to_dict(const scar::JacobiGradientResult& result) {
+    py::dict output = status_dict(result);
+    output["objective"] = result.value.objective;
+    output["gradient"] = result.value.gradient;
+    output["diagnostics"] =
+        filter_diagnostics_to_dict(result.value.diagnostics);
+    return output;
+}
+
+py::dict evaluator_vector_to_dict(
+    const scar::JacobiEvaluatorVectorResult& result) {
+    py::dict output = status_dict(result);
+    output["values"] = vector_to_array(result.value.values);
+    output["diagnostics"] =
+        filter_diagnostics_to_dict(result.value.diagnostics);
+    return output;
+}
+
+py::dict evaluator_pair_to_dict(
+    const scar::JacobiEvaluatorPairResult& result) {
+    py::dict output = status_dict(result);
+    output["first"] = vector_to_array(result.value.first);
+    output["second"] = vector_to_array(result.value.second);
+    output["diagnostics"] =
+        filter_diagnostics_to_dict(result.value.diagnostics);
+    return output;
+}
+
+py::dict state_result_to_dict(
+    const scar::JacobiStateDistributionResult& result) {
+    py::dict output = status_dict(result);
+    output["tau"] = vector_to_array(result.value.tau);
+    output["probability"] = vector_to_array(result.value.probability);
+    output["horizon"] = static_cast<int>(result.value.horizon);
+    output["diagnostics"] =
+        filter_diagnostics_to_dict(result.value.diagnostics);
+    return output;
+}
+
+std::unique_ptr<scar::PreparedScarJacobiEvaluator>
+make_prepared_scar_jacobi_evaluator(
+    scar::CopulaSpec copula,
+    Float64Array observations,
+    const scar::JacobiEvaluatorConfig& config) {
+
+    const py::buffer_info info = observations.request();
+    if (info.ndim != 2 || info.shape[1] != 2 || info.shape[0] < 1) {
+        throw std::invalid_argument(
+            "u must be a 2D float64 array with shape (n, 2), n >= 1");
+    }
+    const auto n_obs = static_cast<std::int64_t>(info.shape[0]);
+    std::vector<double> values = flat_vector_from_array(observations, "u");
+    return std::make_unique<scar::PreparedScarJacobiEvaluator>(
+        std::move(copula),
+        std::move(values),
+        n_obs,
+        2,
+        config);
+}
+
 }  // namespace
 
 void bind_jacobi(py::module_& m) {
@@ -358,6 +470,10 @@ void bind_jacobi(py::module_& m) {
             "MetropolisHastings",
             scar::JacobiStationarityCorrection::MetropolisHastings)
         .value("IpFp", scar::JacobiStationarityCorrection::IpFp);
+
+    py::enum_<scar::JacobiStateHorizon>(m, "JacobiStateHorizon")
+        .value("Current", scar::JacobiStateHorizon::Current)
+        .value("Next", scar::JacobiStateHorizon::Next);
 
     py::class_<scar::JacobiParams>(m, "JacobiParams")
         .def(py::init<>())
@@ -431,6 +547,135 @@ void bind_jacobi(py::module_& m) {
             "max_lag_one_correlation_error",
             &scar::JacobiAdaptiveThresholds::
                 max_lag_one_correlation_error);
+
+    py::class_<scar::JacobiEvaluatorConfig>(m, "JacobiEvaluatorConfig")
+        .def(py::init<>())
+        .def_readwrite(
+            "transition", &scar::JacobiEvaluatorConfig::transition)
+        .def_readwrite(
+            "finite_difference_relative_step",
+            &scar::JacobiEvaluatorConfig::finite_difference_relative_step);
+
+    py::class_<scar::PreparedScarJacobiEvaluator>(
+            m,
+            "PreparedScarJacobiEvaluator",
+            "Prepared native Jacobi objective/filter/state evaluator.")
+        .def(py::init(&make_prepared_scar_jacobi_evaluator))
+        .def(
+            "filter",
+            [](const scar::PreparedScarJacobiEvaluator& evaluator,
+               const scar::JacobiParams& params) {
+                scar::JacobiFilterResult result;
+                { py::gil_scoped_release release;
+                  result = evaluator.filter(params); }
+                return filter_result_to_dict(result);
+            })
+        .def(
+            "loglik",
+            [](const scar::PreparedScarJacobiEvaluator& evaluator,
+               const scar::JacobiParams& params) {
+                scar::JacobiObjectiveResult result;
+                { py::gil_scoped_release release;
+                  result = evaluator.loglik(params); }
+                return objective_result_to_dict(result);
+            })
+        .def(
+            "neg_loglik_with_grad",
+            [](const scar::PreparedScarJacobiEvaluator& evaluator,
+               const scar::JacobiParams& params) {
+                scar::JacobiGradientResult result;
+                { py::gil_scoped_release release;
+                  result = evaluator.neg_loglik_with_grad(params); }
+                return gradient_result_to_dict(result);
+            })
+        .def(
+            "predictive_mean",
+            [](const scar::PreparedScarJacobiEvaluator& evaluator,
+               const scar::JacobiParams& params) {
+                scar::JacobiEvaluatorVectorResult result;
+                { py::gil_scoped_release release;
+                  result = evaluator.predictive_mean(params); }
+                return evaluator_vector_to_dict(result);
+            })
+        .def(
+            "mixture_h",
+            [](const scar::PreparedScarJacobiEvaluator& evaluator,
+               const scar::JacobiParams& params) {
+                scar::JacobiEvaluatorVectorResult result;
+                { py::gil_scoped_release release;
+                  result = evaluator.mixture_h(params); }
+                return evaluator_vector_to_dict(result);
+            })
+        .def(
+            "mixture_h_pair",
+            [](const scar::PreparedScarJacobiEvaluator& evaluator,
+               const scar::JacobiParams& params) {
+                scar::JacobiEvaluatorPairResult result;
+                { py::gil_scoped_release release;
+                  result = evaluator.mixture_h_pair(params); }
+                return evaluator_pair_to_dict(result);
+            })
+        .def(
+            "rosenblatt",
+            [](const scar::PreparedScarJacobiEvaluator& evaluator,
+               const scar::JacobiParams& params) {
+                scar::JacobiEvaluatorPairResult result;
+                { py::gil_scoped_release release;
+                  result = evaluator.rosenblatt(params); }
+                return evaluator_pair_to_dict(result);
+            })
+        .def(
+            "gaussian_rosenblatt",
+            [](const scar::PreparedScarJacobiEvaluator& evaluator,
+               const scar::JacobiParams& params) {
+                scar::JacobiEvaluatorPairResult result;
+                { py::gil_scoped_release release;
+                  result = evaluator.gaussian_rosenblatt(params); }
+                return evaluator_pair_to_dict(result);
+            })
+        .def(
+            "state_distribution",
+            [](const scar::PreparedScarJacobiEvaluator& evaluator,
+               const scar::JacobiParams& params,
+               scar::JacobiStateHorizon horizon) {
+                scar::JacobiStateDistributionResult result;
+                { py::gil_scoped_release release;
+                  result = evaluator.state_distribution(params, horizon); }
+                return state_result_to_dict(result);
+            })
+        .def(
+            "condition_state",
+            [](const scar::PreparedScarJacobiEvaluator& evaluator,
+               Float64Array tau,
+               Float64Array probability,
+               Float64Array observation,
+               scar::JacobiStateHorizon horizon) {
+                const std::vector<double> tau_values =
+                    flat_vector_from_array(tau, "tau");
+                const std::vector<double> probability_values =
+                    flat_vector_from_array(probability, "probability");
+                const std::vector<double> observation_values =
+                    flat_vector_from_array(observation, "observation");
+                if (observation_values.size() != 2) {
+                    throw std::invalid_argument(
+                        "observation must contain exactly two values");
+                }
+                scar::JacobiStateDistributionResult result;
+                { py::gil_scoped_release release;
+                  result = evaluator.condition_state(
+                      tau_values,
+                      probability_values,
+                      {observation_values[0], observation_values[1]},
+                      horizon); }
+                return state_result_to_dict(result);
+            },
+            py::arg("tau"),
+            py::arg("probability"),
+            py::arg("observation"),
+            py::arg("horizon") = scar::JacobiStateHorizon::Current)
+        .def_property_readonly(
+            "preparation_count",
+            &scar::PreparedScarJacobiEvaluator::preparation_count);
 
     m.def("jacobi_raw_to_physical", [](
             const std::array<double, 3>& raw) {
