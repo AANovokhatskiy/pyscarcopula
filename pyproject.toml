@@ -68,7 +68,7 @@ pyscarcopula = ["py.typed"]
 
 [tool.setuptools.packages.find]
 include = ["pyscarcopula*"]
-exclude = ["tests*", "data*"]
+exclude = ["tests*", "data*", "pyscarcopula._cpp*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

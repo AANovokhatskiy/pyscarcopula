@@ -388,6 +388,7 @@ def _build_matrix() -> dict[str, Any]:
         ".github/workflows/wheels.yml",
         "setup.py",
         "pyproject.toml",
+        "pyscarcopula/_cpp/build_support/build_parallel.py",
         "pyscarcopula/_cpp/build_support/sources.py",
         "pyscarcopula/_cpp/build_support/toolchain.py",
         "tools/build_cpp_tests.py",

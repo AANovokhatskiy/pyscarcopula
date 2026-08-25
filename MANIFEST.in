@@ -25,7 +25,7 @@ include benchmark_artifacts/cpp_refactor_candidate.md
 recursive-include docs *.md
 recursive-exclude data *.csv
 include data/crypto_prices.csv
-recursive-include pyscarcopula/_cpp *.cpp *.hpp
+recursive-include pyscarcopula/_cpp *.cpp *.hpp *.def
 recursive-include pyscarcopula/_cpp/build_support *.py
 
 # Exclude generated/cache files

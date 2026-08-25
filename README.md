@@ -58,6 +58,18 @@ python setup.py build_ext --compiler=mingw32 --inplace
 The GCC runtime is linked statically, so the resulting extension does not need
 MSYS2 DLLs at runtime. MSVC remains the default Windows toolchain.
 
+C++ source compilation uses one build job by default. Source and editable
+installs can opt into parallel compilation without additional build tools:
+
+```bash
+PYSCA_CPP_BUILD_JOBS=4 pip install .
+# or, from the source tree:
+python setup.py build_ext --parallel 4 --inplace
+```
+
+`PYSCA_CPP_BUILD_JOBS` must be a positive integer. It controls compilation
+only; linking remains sequential and installed runtime threading is unchanged.
+
 For local development:
 
 ```bash

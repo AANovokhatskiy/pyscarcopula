@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Add dependency-free, opt-in source-level parallel compilation for the
+  pybind11 extension and Python-free C++ boundary build. Both paths share one
+  validated `PYSCA_CPP_BUILD_JOBS` policy and remain sequential by default.
+- Include the pair-family registry definition in source distributions so
+  PEP 517 metadata and wheel builds from the sdist can resolve C++ sources,
+  while keeping build-only support modules out of installed wheels.
+- Keep standalone header-unit objects beside their flattened generated sources
+  so MSVC builds do not duplicate absolute paths beyond Windows path limits.
 - Move the SCAR-TM-Jacobi parameter, validation, checked-memory, Lamperti,
   special-function, Gauss-Jacobi/Gauss-Hermite, and orthonormal-basis domain
   core to dependency-free C++17. Production Python now delegates these paths

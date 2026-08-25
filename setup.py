@@ -24,12 +24,13 @@ def _load_build_support(name: str):
 
 _sources = _load_build_support("sources")
 _toolchain = _load_build_support("toolchain")
+_build_parallel = _load_build_support("build_parallel")
 SCAR_COMPUTE_SOURCES = _sources.SCAR_COMPUTE_SOURCES
 PYTHON_BINDING_SOURCES = _sources.PYTHON_BINDING_SOURCES
 
 
 class build_ext(_build_ext):
-    """Support building the extension with MinGW GCC on Windows.
+    """Support opt-in source parallelism and MinGW GCC on Windows.
 
     MSVC remains the default Windows toolchain. To use GCC instead:
 
@@ -38,6 +39,9 @@ class build_ext(_build_ext):
     or, for pip/PEP 517 builds, set the environment variable:
 
         PYSCA_CPP_COMPILER=mingw32
+
+    C++ source compilation remains sequential unless ``--parallel N`` or
+    ``PYSCA_CPP_BUILD_JOBS=N`` is supplied explicitly.
     """
 
     def finalize_options(self):
@@ -50,6 +54,19 @@ class build_ext(_build_ext):
         if self.compiler.compiler_type == "mingw32":
             _toolchain.prepare_mingw_extension(ext)
         super().build_extension(ext)
+
+    def build_extensions(self):
+        build_jobs = _build_parallel.resolve_build_jobs(self.parallel)
+        self.announce(
+            f"C++ source compilation jobs: {build_jobs}", level=2)
+        extension_parallel = self.parallel
+        self.parallel = None
+        try:
+            with _build_parallel.parallel_compilation(
+                    self.compiler, build_jobs):
+                super().build_extensions()
+        finally:
+            self.parallel = extension_parallel
 
 
 ext_modules = [

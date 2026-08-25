@@ -53,6 +53,7 @@ def build_cpp_tests(
     *,
     build_dir: Path,
     compiler_name: str | None,
+    build_jobs: int | None = None,
     debug: bool,
     force: bool,
     check_headers: bool,
@@ -60,7 +61,9 @@ def build_cpp_tests(
 ) -> Path:
     sources = _load_build_support("sources")
     toolchain = _load_build_support("toolchain")
+    build_parallel = _load_build_support("build_parallel")
     compiler_name = compiler_name or toolchain.requested_compiler()
+    build_jobs = build_parallel.resolve_build_jobs(build_jobs)
 
     compiler = new_compiler(compiler=compiler_name, force=force)
     customize_compiler(compiler)
@@ -89,33 +92,38 @@ def build_cpp_tests(
 
     print(
         f"Building {len(compute_sources)} computational sources with "
-        f"setuptools compiler '{compiler_type}' (C++17)"
+        f"setuptools compiler '{compiler_type}' (C++17, "
+        f"build jobs: {build_jobs})"
     )
-    compute_objects = compiler.compile(
-        [str(path) for path in compute_sources],
-        output_dir=str(object_dir),
-        include_dirs=[str(CPP_INCLUDE_ROOT)],
-        debug=debug,
-        extra_postargs=compile_args,
-    )
-    smoke_objects = compiler.compile(
-        [str(path) for path in CPP_TEST_SOURCES],
-        output_dir=str(object_dir),
-        include_dirs=[str(CPP_INCLUDE_ROOT)],
-        debug=debug,
-        extra_postargs=compile_args,
-    )
-
-    if check_headers:
-        header_units = _write_header_units(header_dir)
-        print(f"Compiling {len(header_units)} self-contained header units")
-        compiler.compile(
-            [str(path) for path in header_units],
-            output_dir=str(object_dir / "headers"),
+    with build_parallel.parallel_compilation(compiler, build_jobs):
+        compute_objects = compiler.compile(
+            [str(path) for path in compute_sources],
+            output_dir=str(object_dir),
             include_dirs=[str(CPP_INCLUDE_ROOT)],
             debug=debug,
             extra_postargs=compile_args,
         )
+        smoke_objects = compiler.compile(
+            [str(path) for path in CPP_TEST_SOURCES],
+            output_dir=str(object_dir),
+            include_dirs=[str(CPP_INCLUDE_ROOT)],
+            debug=debug,
+            extra_postargs=compile_args,
+        )
+
+        if check_headers:
+            header_units = _write_header_units(header_dir)
+            print(f"Compiling {len(header_units)} self-contained header units")
+            # Generated names are already flattened and unique.  Keep their
+            # objects beside them instead of expanding each absolute source
+            # path below output_dir, which can exceed Windows path limits.
+            compiler.compile(
+                [str(path) for path in header_units],
+                output_dir=None,
+                include_dirs=[str(CPP_INCLUDE_ROOT)],
+                debug=debug,
+                extra_postargs=compile_args,
+            )
 
     compiler.link_executable(
         [*compute_objects, *smoke_objects],
@@ -151,6 +159,13 @@ def main(argv: list[str] | None = None) -> int:
             "PYSCA_CPP_COMPILER or the platform compiler"
         ),
     )
+    parser.add_argument(
+        "-j", "--build-jobs", type=int,
+        help=(
+            "number of parallel C++ compilation jobs; defaults to "
+            "PYSCA_CPP_BUILD_JOBS or 1"
+        ),
+    )
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--force", action="store_true")
     parser.add_argument(
@@ -165,6 +180,7 @@ def main(argv: list[str] | None = None) -> int:
     build_cpp_tests(
         build_dir=args.build_dir,
         compiler_name=args.compiler,
+        build_jobs=args.build_jobs,
         debug=args.debug,
         force=args.force,
         check_headers=not args.skip_header_checks,

@@ -242,6 +242,14 @@ Python, NumPy, or pybind11 include paths or libraries. Compiler provisioning is
 the responsibility of the local environment or CI runner; `setup.py` does not
 modify `PATH`.
 
+`pyscarcopula/_cpp/build_support/build_parallel.py` owns the shared build-job
+policy for both the extension and this standalone boundary. Compilation is
+strictly sequential by default. `PYSCA_CPP_BUILD_JOBS=N` opts both entry points
+into pybind11's source-level compilation pool; `build_ext --parallel N` and
+`build_cpp_tests.py --build-jobs N` are their respective CLI overrides.
+Values must be positive integers. Linking remains sequential, and this build
+policy is independent of the extension's runtime `n_threads` contract.
+
 The native foundation has explicit, model-independent owners under
 `include/scar/core`, `include/scar/math`, and the common `include/scar/copula`
 wrappers. It owns C++17 `Span`/`DoubleView`/`MatrixView`, checked shape and byte

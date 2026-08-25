@@ -37,6 +37,21 @@ python setup.py build_ext --compiler=mingw32 --inplace
 MinGW builds link the GCC and winpthreads runtimes statically, so the resulting
 extension does not require MSYS2 runtime DLLs when imported.
 
+### C++ build parallelism
+
+C++ source compilation is sequential by default (`1` build job). For a source
+or editable install, opt into an explicit positive number of jobs with:
+
+```bash
+PYSCA_CPP_BUILD_JOBS=4 pip install .
+# or, from the source tree:
+python setup.py build_ext --parallel 4 --inplace
+```
+
+This uses the existing pybind11 build helper and does not require CMake, Ninja,
+OpenMP, or another package. It changes compilation only: linking remains
+sequential and the installed extension's runtime thread policy is unaffected.
+
 SCAR-TM-OU and GAS require compiled support for the selected family. Custom
 Python copulas may still be used by custom Python strategies and utilities.
 
@@ -107,6 +122,13 @@ For a source-tree C++ check, build the extension in place first:
 ```bash
 python setup.py build_ext --inplace
 pytest tests/test_cpp.py
+```
+
+The standalone Python-free C++ boundary check uses the same default and
+environment variable, and also accepts a command-line override:
+
+```bash
+python tools/build_cpp_tests.py --build-jobs 4
 ```
 
 ## Dependencies
