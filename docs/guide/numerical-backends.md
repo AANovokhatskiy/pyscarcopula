@@ -550,11 +550,18 @@ are rejected instead of being silently converted. Empty data, non-finite
 options, non-positive `theta_cap`, and invalid physical
 `alpha0=[kappa, m, xi]` are rejected before optimization. All Jacobi orders
 have a safety cap of `2048`; the default adaptive candidate ladder spans
-orders `48` through `768`. Before `roots_jacobi` or quadratic transition arrays
-are allocated, the implementation estimates the simultaneous float64
-workspace. If `memory_budget_bytes` is too small, it raises `MemoryError` with
-the required-byte estimate and guidance to reduce the grid/basis order. The
-same 1 GiB default guard applies to direct numerical Jacobi entry points.
+orders `48` through `768`. Before the native Gauss-Jacobi eigensolver or
+quadratic transition arrays are allocated, the native domain core performs
+checked arithmetic for the simultaneous float64 workspace. The estimate
+includes the full Golub--Welsch eigenvector peak for both the Jacobi grid and
+the configured Gauss-Hermite order, less any larger dense transition/gradient
+workspace already included in the same conservative peak. If
+`memory_budget_bytes` is too small, it raises `MemoryError` with the
+required-byte estimate and guidance to reduce the grid/basis order. The same
+1 GiB default guard applies to direct numerical Jacobi entry points. Jacobi
+parameter transforms, stationary Beta shapes, Gauss-Jacobi/Gauss-Hermite
+rules, normalized basis recurrence, and Lamperti transforms are C++17-owned;
+SciPy is not used on these production paths.
 
 #### Jacobi transfer methods
 

@@ -99,6 +99,8 @@ SCAR_COMPUTE_SOURCES = (
     "scar_ou/grid.cpp",
     "scar_ou/quadrature.cpp",
     "scar_ou/transition.cpp",
+    "scar_jacobi/domain.cpp",
+    "scar_jacobi/quadrature.cpp",
 )
 
 PYTHON_BINDING_SOURCES = (
@@ -110,6 +112,7 @@ PYTHON_BINDING_SOURCES = (
     "bindings/factor.cpp",
     "bindings/multivariate.cpp",
     "bindings/scar_ou_types.cpp",
+    "bindings/jacobi.cpp",
     "bindings/rvine.cpp",
     "bindings/gas.cpp",
     "bindings/scar_ou.cpp",

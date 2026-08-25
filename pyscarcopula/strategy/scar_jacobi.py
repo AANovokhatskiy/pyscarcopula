@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import numpy as np
 from scipy.optimize import Bounds, minimize
-from scipy.special import expit
 
+from pyscarcopula._native import jacobi as jacobi_native
 from pyscarcopula._types import (
     DEFAULT_CONFIG,
     LatentResult,
@@ -86,28 +86,12 @@ _DEFAULT_KAPPA_BOUNDS = (1e-3, 100.0)
 _DEFAULT_XI_BOUNDS = (1e-3, 5.0)
 
 
-def _logit(x):
-    x = np.asarray(x, dtype=np.float64)
-    return np.log(x / (1.0 - x))
-
-
 def _raw_to_physical(raw):
-    raw = np.asarray(raw, dtype=np.float64)
-    clipped = np.clip(raw, -50.0, 50.0)
-    return np.array([
-        np.exp(clipped[0]),
-        expit(clipped[1]),
-        np.exp(clipped[2]),
-    ], dtype=np.float64)
+    return jacobi_native.raw_to_physical(raw)
 
 
 def _physical_to_raw(alpha, tau_eps):
-    alpha = np.asarray(alpha, dtype=np.float64)
-    return np.array([
-        np.log(max(alpha[0], 1e-300)),
-        _logit(np.clip(alpha[1], tau_eps, 1.0 - tau_eps)),
-        np.log(max(alpha[2], 1e-300)),
-    ], dtype=np.float64)
+    return jacobi_native.physical_to_raw(alpha, tau_eps)
 
 
 def _validate_positive_bounds(bounds, name):
@@ -354,32 +338,13 @@ class SCARJacobiStrategy:
         return self.transition_storage == "sparse"
 
     def _raw_bounds(self):
-        return Bounds(
-            [
-                np.log(self.kappa_bounds[0]),
-                _logit(self.tau_eps),
-                np.log(self.xi_bounds[0]),
-            ],
-            [
-                np.log(self.kappa_bounds[1]),
-                _logit(1.0 - self.tau_eps),
-                np.log(self.xi_bounds[1]),
-            ],
-        )
+        lower, upper = jacobi_native.raw_bounds(
+            self.kappa_bounds, self.xi_bounds, self.tau_eps)
+        return Bounds(lower, upper)
 
     def _shape_is_supported(self, kappa, m, xi):
-        shapes = _jacobi_stationary_shape(kappa, m, xi)
-        if shapes is None:
-            return False
-        if self.stationary_shape_max is None:
-            return True
-        alpha, beta = shapes
-        return (
-            np.isfinite(alpha)
-            and np.isfinite(beta)
-            and alpha <= self.stationary_shape_max
-            and beta <= self.stationary_shape_max
-        )
+        return jacobi_native.shape_is_supported(
+            kappa, m, xi, self.stationary_shape_max)
 
     def _backend_kwargs(self):
         return {

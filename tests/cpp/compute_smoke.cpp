@@ -11,6 +11,7 @@
 #include "scar/gas.hpp"
 #include "scar/gas/result.hpp"
 #include "scar/gas_rvine/result.hpp"
+#include "scar/jacobi.hpp"
 #include "scar/math/normal.hpp"
 #include "scar/ou.hpp"
 #include "scar/scar_ou/result.hpp"
@@ -22,7 +23,13 @@
 #include <variant>
 #include <vector>
 
+int run_jacobi_domain_tests();
+
 int main() {
+    const int jacobi_status = run_jacobi_domain_tests();
+    if (jacobi_status != 0) {
+        return 100 + jacobi_status;
+    }
     const double span_values[] = {0.25, 0.75};
     const scar::DoubleView span{span_values, 2};
     const scar::DoubleMatrixView matrix{span_values, 1, 2};

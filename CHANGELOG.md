@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Move the SCAR-TM-Jacobi parameter, validation, checked-memory, Lamperti,
+  special-function, Gauss-Jacobi/Gauss-Hermite, and orthonormal-basis domain
+  core to dependency-free C++17. Production Python now delegates these paths
+  through a typed native facade and no longer imports SciPy special functions
+  for Jacobi construction. The memory guard includes the full Golub--Welsch
+  eigenvector peak and the configured Hermite order, including direct
+  quadrature entry points.
 - Remove the discontinued SCAR Monte Carlo estimators from strategy,
   capability, conditional/vine, persistence, documentation, and benchmark
   surfaces. Legacy persisted artifacts now fail with an explicit unsupported

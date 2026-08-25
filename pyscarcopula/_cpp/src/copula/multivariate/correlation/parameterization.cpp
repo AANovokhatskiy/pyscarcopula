@@ -43,104 +43,6 @@ bool valid_square(
         && finite_view(values);
 }
 
-bool symmetric_eigen_jacobi(
-    const std::vector<double>& input,
-    std::size_t dimension,
-    std::vector<double>& eigenvalues,
-    std::vector<double>& eigenvectors) {
-
-    std::vector<double> matrix(input);
-    eigenvectors.assign(dimension * dimension, 0.0);
-    for (std::size_t index = 0; index < dimension; ++index) {
-        eigenvectors[index * dimension + index] = 1.0;
-    }
-    const std::size_t maximum_iterations =
-        std::max<std::size_t>(64, 64 * dimension * dimension);
-    const double tolerance =
-        8.0 * std::numeric_limits<double>::epsilon();
-
-    for (std::size_t iteration = 0;
-         iteration < maximum_iterations;
-         ++iteration) {
-        std::size_t pivot_row = 0;
-        std::size_t pivot_column = 1;
-        double maximum = 0.0;
-        double diagonal_scale = 1.0;
-        for (std::size_t row = 0; row < dimension; ++row) {
-            diagonal_scale = std::max(
-                diagonal_scale,
-                std::abs(matrix[row * dimension + row]));
-            for (std::size_t column = row + 1;
-                 column < dimension;
-                 ++column) {
-                const double value =
-                    std::abs(matrix[row * dimension + column]);
-                if (value > maximum) {
-                    maximum = value;
-                    pivot_row = row;
-                    pivot_column = column;
-                }
-            }
-        }
-        if (maximum <= tolerance * diagonal_scale) {
-            eigenvalues.resize(dimension);
-            for (std::size_t index = 0; index < dimension; ++index) {
-                eigenvalues[index] = matrix[index * dimension + index];
-            }
-            return std::all_of(
-                eigenvalues.begin(),
-                eigenvalues.end(),
-                [](double value) { return std::isfinite(value); });
-        }
-
-        const double app =
-            matrix[pivot_row * dimension + pivot_row];
-        const double aqq =
-            matrix[pivot_column * dimension + pivot_column];
-        const double apq =
-            matrix[pivot_row * dimension + pivot_column];
-        const double angle = 0.5 * std::atan2(2.0 * apq, aqq - app);
-        const double cosine = std::cos(angle);
-        const double sine = std::sin(angle);
-
-        for (std::size_t index = 0; index < dimension; ++index) {
-            if (index == pivot_row || index == pivot_column) {
-                continue;
-            }
-            const double aip = matrix[index * dimension + pivot_row];
-            const double aiq = matrix[index * dimension + pivot_column];
-            const double rotated_p = cosine * aip - sine * aiq;
-            const double rotated_q = sine * aip + cosine * aiq;
-            matrix[index * dimension + pivot_row] = rotated_p;
-            matrix[pivot_row * dimension + index] = rotated_p;
-            matrix[index * dimension + pivot_column] = rotated_q;
-            matrix[pivot_column * dimension + index] = rotated_q;
-        }
-        matrix[pivot_row * dimension + pivot_row] =
-            cosine * cosine * app
-            - 2.0 * sine * cosine * apq
-            + sine * sine * aqq;
-        matrix[pivot_column * dimension + pivot_column] =
-            sine * sine * app
-            + 2.0 * sine * cosine * apq
-            + cosine * cosine * aqq;
-        matrix[pivot_row * dimension + pivot_column] = 0.0;
-        matrix[pivot_column * dimension + pivot_row] = 0.0;
-
-        for (std::size_t row = 0; row < dimension; ++row) {
-            const double vip =
-                eigenvectors[row * dimension + pivot_row];
-            const double viq =
-                eigenvectors[row * dimension + pivot_column];
-            eigenvectors[row * dimension + pivot_row] =
-                cosine * vip - sine * viq;
-            eigenvectors[row * dimension + pivot_column] =
-                sine * vip + cosine * viq;
-        }
-    }
-    return false;
-}
-
 CorrelationPreprocessingResult invalid_preprocessing(Status status) {
     CorrelationPreprocessingResult result;
     result.status = status;
@@ -280,7 +182,7 @@ CorrelationPreprocessingResult preprocess_correlation(
 
     std::vector<double> eigenvalues;
     std::vector<double> eigenvectors;
-    if (!symmetric_eigen_jacobi(
+    if (!scar_internal::linalg::symmetric_eigen_jacobi(
             symmetric, dimension, eigenvalues, eigenvectors)) {
         return invalid_preprocessing(Status::NumericalFailure);
     }
@@ -338,7 +240,7 @@ CorrelationPreprocessingResult preprocess_correlation(
 
     std::vector<double> final_eigenvalues;
     std::vector<double> ignored_vectors;
-    if (!symmetric_eigen_jacobi(
+    if (!scar_internal::linalg::symmetric_eigen_jacobi(
             result.correlation,
             dimension,
             final_eigenvalues,

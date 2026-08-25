@@ -52,11 +52,11 @@ def test_jacobi_rule_returns_orthonormal_basis():
     )
 
 
-def test_jacobi_rule_rejects_hard_cap_before_roots(monkeypatch):
+def test_jacobi_rule_rejects_hard_cap_before_native_rule(monkeypatch):
     monkeypatch.setattr(
-        jacobi_tm,
-        "roots_jacobi",
-        lambda *args, **kwargs: pytest.fail("roots_jacobi must not be called"),
+        jacobi_tm.jacobi_native,
+        "jacobi_rule",
+        lambda *args, **kwargs: pytest.fail("native rule must not be called"),
     )
     with pytest.raises(ValueError, match=f"<= {MAX_JACOBI_ORDER}"):
         jacobi_rule(
@@ -67,11 +67,11 @@ def test_jacobi_rule_rejects_hard_cap_before_roots(monkeypatch):
         )
 
 
-def test_jacobi_rule_checks_memory_budget_before_roots(monkeypatch):
+def test_jacobi_rule_checks_memory_budget_before_native_rule(monkeypatch):
     monkeypatch.setattr(
-        jacobi_tm,
-        "roots_jacobi",
-        lambda *args, **kwargs: pytest.fail("roots_jacobi must not be called"),
+        jacobi_tm.jacobi_native,
+        "jacobi_rule",
+        lambda *args, **kwargs: pytest.fail("native rule must not be called"),
     )
     with pytest.raises(MemoryError, match="memory_budget_bytes"):
         jacobi_rule(

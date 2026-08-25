@@ -1,8 +1,9 @@
 """Numerical adapters and retained Python orchestration.
 
 SCAR-TM-OU and GAS likelihood, gradient, filtering, and forward operations
-are native-only. Python retains Jacobi algorithms, sampling, goodness-of-fit
-orchestration, and explicit native adapters.
+are native-only. The Jacobi parameter, quadrature, basis, memory, and
+Lamperti domain core is native; Python temporarily retains transition,
+filtering, sampling, goodness-of-fit orchestration, and explicit adapters.
 """
 
 from pyscarcopula.numerical.tm_grid import TMGrid

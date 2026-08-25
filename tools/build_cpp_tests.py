@@ -17,6 +17,7 @@ CPP_SOURCE_ROOT = CPP_ROOT / "src"
 CPP_INCLUDE_ROOT = CPP_ROOT / "include"
 DEFAULT_BUILD_DIR = ROOT / "build" / "cpp-tests"
 SMOKE_SOURCE = ROOT / "tests" / "cpp" / "compute_smoke.cpp"
+CPP_TEST_SOURCES = tuple(sorted((ROOT / "tests" / "cpp").glob("*.cpp")))
 
 
 def _load_build_support(name: str):
@@ -78,7 +79,7 @@ def build_cpp_tests(
         CPP_SOURCE_ROOT / relative
         for relative in sources.SCAR_COMPUTE_SOURCES
     ]
-    missing = [path for path in [*compute_sources, SMOKE_SOURCE]
+    missing = [path for path in [*compute_sources, *CPP_TEST_SOURCES]
                if not path.is_file()]
     if missing:
         raise FileNotFoundError(
@@ -98,7 +99,7 @@ def build_cpp_tests(
         extra_postargs=compile_args,
     )
     smoke_objects = compiler.compile(
-        [str(SMOKE_SOURCE)],
+        [str(path) for path in CPP_TEST_SOURCES],
         output_dir=str(object_dir),
         include_dirs=[str(CPP_INCLUDE_ROOT)],
         debug=debug,
@@ -174,4 +175,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

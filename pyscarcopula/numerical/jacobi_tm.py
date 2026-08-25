@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import numpy as np
-from scipy.special import betaln, digamma, eval_jacobi, roots_jacobi
 
+from pyscarcopula._native import jacobi as jacobi_native
 from pyscarcopula._utils import clip_h_function_values
 from pyscarcopula.numerical._arrays import (
     validate_float64_allocation,
@@ -50,10 +50,11 @@ def _raise_jacobi_memory_error(exc):
 
 def _validate_jacobi_workspace(
         *, quad_order, basis_order=1, n_obs=0, gradient=False,
-        matrix=True, memory_budget_bytes=None):
+        matrix=True, gh_order=1, memory_budget_bytes=None):
     """Preflight a conservative upper bound for simultaneous float64 arrays."""
     quad_order = _validate_jacobi_order(quad_order, "quad_order")
     basis_order = _validate_jacobi_order(basis_order, "basis_order")
+    gh_order = _validate_jacobi_order(gh_order, "gh_order")
     if basis_order > quad_order:
         raise ValueError("quad_order must be >= basis_order")
     if isinstance(n_obs, (bool, np.bool_)) or not isinstance(
@@ -68,19 +69,14 @@ def _validate_jacobi_workspace(
     if memory_budget_bytes is None:
         memory_budget_bytes = DEFAULT_JACOBI_MEMORY_BUDGET_BYTES
 
-    rule_elements = 2 * k * b + b * b + 12 * k + 4 * b
-    if matrix:
-        # Covers the spectral kernel plus transition and retained emissions.
-        elements = rule_elements + 3 * k * k + 5 * n_obs * k
-        if gradient:
-            # Base, three derivatives and a temporary perturbed setup.
-            elements += 4 * k * k + 4 * n_obs * k
-    else:
-        elements = rule_elements + 5 * n_obs * k
     try:
-        return validate_float64_allocation(
-            (elements,),
-            name="Jacobi numerical workspace",
+        return jacobi_native.estimate_workspace(
+            quad_order=k,
+            basis_order=b,
+            n_obs=n_obs,
+            gradient=gradient,
+            matrix=matrix,
+            gh_order=gh_order,
             memory_budget_bytes=memory_budget_bytes,
         )
     except MemoryError as exc:
@@ -88,30 +84,25 @@ def _validate_jacobi_workspace(
 
 
 def _validate_jacobi_sampling_workspace(
-        *, n, quad_order, basis_order, memory_budget_bytes=None):
+        *, n, quad_order, basis_order, gh_order=1,
+        memory_budget_bytes=None):
     """Preflight transition construction, in-place CDF, and the tau path."""
     n = _validate_nonnegative_int(n, "n")
     quad_order = _validate_jacobi_order(quad_order, "quad_order")
     basis_order = _validate_jacobi_order(basis_order, "basis_order")
+    gh_order = _validate_jacobi_order(gh_order, "gh_order")
     if basis_order > quad_order:
         raise ValueError("quad_order must be >= basis_order")
     if memory_budget_bytes is None:
         memory_budget_bytes = DEFAULT_JACOBI_MEMORY_BUDGET_BYTES
     k = quad_order
     b = basis_order
-    transition_elements = 3 * k * k if n > 1 else 0
-    elements = (
-        transition_elements
-        + 2 * k * b
-        + b * b
-        + 12 * k
-        + 4 * b
-        + n
-    )
     try:
-        return validate_float64_allocation(
-            (elements,),
-            name="Jacobi sampling workspace",
+        return jacobi_native.estimate_sampling_workspace(
+            n=n,
+            quad_order=k,
+            basis_order=b,
+            gh_order=gh_order,
             memory_budget_bytes=memory_budget_bytes,
         )
     except MemoryError as exc:
@@ -119,20 +110,7 @@ def _validate_jacobi_sampling_workspace(
 
 
 def _jacobi_stationary_shape(kappa, m, xi):
-    kappa = float(kappa)
-    m = float(m)
-    xi = float(xi)
-    if (
-            not np.all(np.isfinite([kappa, m, xi]))
-            or kappa <= 0.0
-            or xi <= 0.0
-            or not (0.0 < m < 1.0)):
-        return None
-    alpha = 2.0 * kappa * m / (xi * xi)
-    beta = 2.0 * kappa * (1.0 - m) / (xi * xi)
-    if alpha <= 0.0 or beta <= 0.0:
-        return None
-    return alpha, beta
+    return jacobi_native.stationary_shape(kappa, m, xi)
 
 
 def default_quad_order(basis_order: int) -> int:
@@ -144,8 +122,7 @@ def default_quad_order(basis_order: int) -> int:
 
 def _normal_hermite_rule(order):
     order = _validate_jacobi_order(order, "gh_order")
-    nodes, weights = np.polynomial.hermite.hermgauss(order)
-    return nodes.astype(np.float64), (weights / np.sqrt(np.pi)).astype(np.float64)
+    return jacobi_native.gauss_hermite_rule(order)
 
 
 def _fixed_tau_rule(alpha, beta, quad_order):
@@ -153,47 +130,26 @@ def _fixed_tau_rule(alpha, beta, quad_order):
     quad_order = _validate_jacobi_order(quad_order, "quad_order")
     if quad_order < 2:
         raise ValueError("quad_order must be >= 2")
-    eps = 0.5 / (quad_order + 1.0)
-    tau = np.linspace(eps, 1.0 - eps, quad_order, dtype=np.float64)
-    width = np.empty(quad_order, dtype=np.float64)
-    width[1:-1] = tau[2:] - tau[:-2]
-    width[1:-1] *= 0.5
-    width[0] = tau[1] - tau[0]
-    width[-1] = tau[-1] - tau[-2]
-
-    log_density = (
-        (float(alpha) - 1.0) * np.log(tau)
-        + (float(beta) - 1.0) * np.log1p(-tau)
-        - betaln(float(alpha), float(beta))
+    tau, weights, _ = jacobi_native.fixed_shape_rule(
+        alpha,
+        beta,
+        quad_order,
+        DEFAULT_JACOBI_MEMORY_BUDGET_BYTES,
     )
-    log_mass = log_density + np.log(width)
-    log_mass -= np.max(log_mass)
-    weights = np.exp(log_mass)
-    weights /= np.sum(weights)
     return tau, weights
 
 
 def _fixed_tau_weight_derivatives(kappa, m, xi, tau, weights):
     """Derivatives of normalized stationary beta masses."""
-    alpha, beta = _jacobi_stationary_shape(kappa, m, xi)
-    xi2 = float(xi) * float(xi)
-    dalpha = np.array([
-        2.0 * float(m) / xi2,
-        2.0 * float(kappa) / xi2,
-        -4.0 * float(kappa) * float(m) / (xi2 * float(xi)),
-    ], dtype=np.float64)
-    dbeta = np.array([
-        2.0 * (1.0 - float(m)) / xi2,
-        -2.0 * float(kappa) / xi2,
-        -4.0 * float(kappa) * (1.0 - float(m)) / (xi2 * float(xi)),
-    ], dtype=np.float64)
-
-    dlog_dalpha = np.log(tau) - digamma(alpha) + digamma(alpha + beta)
-    dlog_dbeta = np.log1p(-tau) - digamma(beta) + digamma(alpha + beta)
-    dweights = np.empty((3, len(tau)), dtype=np.float64)
-    for p in range(3):
-        score = dalpha[p] * dlog_dalpha + dbeta[p] * dlog_dbeta
-        dweights[p] = weights * (score - np.sum(weights * score))
+    _, native_weights, dweights = jacobi_native.fixed_tau_rule(
+        kappa,
+        m,
+        xi,
+        len(tau),
+        DEFAULT_JACOBI_MEMORY_BUDGET_BYTES,
+    )
+    if not np.allclose(native_weights, weights, rtol=5e-14, atol=5e-15):
+        raise FloatingPointError("fixed Jacobi stationary weights are inconsistent")
     return dweights
 
 
@@ -234,22 +190,12 @@ def jacobi_rule(
         memory_budget_bytes=memory_budget_bytes,
     )
 
-    # scipy's roots_jacobi(a, b) uses weight (1-x)**a * (1+x)**b.
-    # For tau=(x+1)/2 and Beta(alpha, beta), this is a=beta-1,
-    # b=alpha-1.
-    x, raw_weights = roots_jacobi(quad_order, beta - 1.0, alpha - 1.0)
-    tau = 0.5 * (x + 1.0)
-    weights = raw_weights / np.sum(raw_weights)
-
-    poly = np.empty((quad_order, basis_order), dtype=np.float64)
-    for n in range(basis_order):
-        poly[:, n] = eval_jacobi(n, beta - 1.0, alpha - 1.0, x)
-
-    gram = poly.T @ (weights[:, np.newaxis] * poly)
-    chol = np.linalg.cholesky(gram)
-    basis = poly @ np.linalg.inv(chol.T)
-
-    return tau.astype(np.float64), weights.astype(np.float64), basis
+    budget = (
+        DEFAULT_JACOBI_MEMORY_BUDGET_BYTES
+        if memory_budget_bytes is None
+        else memory_budget_bytes)
+    return jacobi_native.jacobi_rule(
+        alpha, beta, quad_order, basis_order, budget)
 
 
 def _jacobi_powers(kappa, xi, n_obs, basis_order):
@@ -362,29 +308,15 @@ def jacobi_spectral_transition_matrix(
 
 
 def _jacobi_lamperti(tau, xi):
-    tau = np.asarray(tau, dtype=np.float64)
-    tau = np.clip(tau, 0.0, 1.0)
-    return (2.0 / float(xi)) * np.arcsin(np.sqrt(tau))
+    return jacobi_native.lamperti(tau, xi)
 
 
 def _jacobi_lamperti_inverse(y, xi):
-    y = np.asarray(y, dtype=np.float64)
-    xi = float(xi)
-    y = np.clip(y, 0.0, np.pi / xi)
-    s = np.sin(0.5 * xi * y)
-    return s * s
+    return jacobi_native.inverse_lamperti(y, xi)
 
 
 def _jacobi_lamperti_drift_from_tau(tau, kappa, m, xi):
-    tau = np.asarray(tau, dtype=np.float64)
-    kappa = float(kappa)
-    m = float(m)
-    xi = float(xi)
-    denom = np.sqrt(np.maximum(tau * (1.0 - tau), 1e-300))
-    return (
-        kappa * (m - tau) / (xi * denom)
-        - xi * (1.0 - 2.0 * tau) / (4.0 * denom)
-    )
+    return jacobi_native.lamperti_drift(tau, kappa, m, xi)
 
 
 def _add_interpolated_mass(row, tau_grid, y, weight, xi):
@@ -460,6 +392,7 @@ def jacobi_fixed_grid_transition_matrix(
         quad_order=quad_order,
         matrix=True,
         gradient=return_grad,
+        gh_order=gh_order,
         memory_budget_bytes=memory_budget_bytes,
     )
 
@@ -578,6 +511,7 @@ def jacobi_local_transition_matrix(
         quad_order=quad_order,
         basis_order=basis_order,
         matrix=True,
+        gh_order=gh_order,
         memory_budget_bytes=memory_budget_bytes,
     )
 
@@ -692,6 +626,7 @@ def jacobi_transition_matrix(
         quad_order=quad_order,
         basis_order=basis_order,
         matrix=True,
+        gh_order=gh_order,
         memory_budget_bytes=memory_budget_bytes,
     )
 
@@ -922,6 +857,7 @@ def sample_jacobi_grid_trajectory(
         n=n,
         quad_order=quad_order,
         basis_order=basis_order,
+        gh_order=gh_order,
         memory_budget_bytes=memory_budget_bytes,
     )
     if rng is None:
@@ -1106,6 +1042,7 @@ def _matrix_setup(
         basis_order=basis_order,
         n_obs=len(u),
         matrix=True,
+        gh_order=gh_order,
         memory_budget_bytes=memory_budget_bytes,
     )
 
@@ -1231,6 +1168,7 @@ def jacobi_matrix_loglik(
         basis_order=basis_order,
         n_obs=len(u),
         matrix=True,
+        gh_order=gh_order,
         memory_budget_bytes=memory_budget_bytes,
     )
     setup = _matrix_filter_setup(
@@ -1341,6 +1279,7 @@ def _matrix_setup_fd_derivatives(
         n_obs=len(u),
         matrix=True,
         gradient=True,
+        gh_order=gh_order,
         memory_budget_bytes=memory_budget_bytes,
     )
     base = _matrix_setup(
@@ -1448,6 +1387,7 @@ def jacobi_matrix_neg_loglik_with_grad(
         n_obs=len(u),
         matrix=True,
         gradient=True,
+        gh_order=gh_order,
         memory_budget_bytes=memory_budget_bytes,
     )
 

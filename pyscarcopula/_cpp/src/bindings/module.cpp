@@ -8,6 +8,7 @@ PYBIND11_MODULE(_scar_cpp, module, pybind11::multiple_interpreters::not_supporte
     pyscarcopula::bindings::bind_capability(module);
     pyscarcopula::bindings::bind_multivariate(module);
     pyscarcopula::bindings::bind_scar_ou_types(module);
+    pyscarcopula::bindings::bind_jacobi(module);
     pyscarcopula::bindings::bind_rvine(module);
     pyscarcopula::bindings::bind_gas(module);
     pyscarcopula::bindings::bind_scar_ou(module);
