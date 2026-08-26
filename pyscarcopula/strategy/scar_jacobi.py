@@ -13,45 +13,6 @@ from pyscarcopula._types import (
     PredictiveState,
     jacobi_params,
 )
-from pyscarcopula.numerical.jacobi_tm import (
-    DEFAULT_JACOBI_MEMORY_BUDGET_BYTES,
-    MAX_JACOBI_ORDER,
-    _validate_jacobi_workspace,
-    default_quad_order,
-    _jacobi_stationary_shape,
-    jacobi_forward_mixture_h,
-    jacobi_forward_mixture_h_pair,
-    jacobi_forward_predictive_mean,
-    jacobi_loglik,
-    jacobi_matrix_forward_mixture_h,
-    jacobi_matrix_forward_mixture_h_pair,
-    jacobi_matrix_forward_predictive_mean,
-    jacobi_matrix_loglik,
-    jacobi_matrix_neg_loglik,
-    jacobi_matrix_neg_loglik_with_grad,
-    jacobi_matrix_state_distribution,
-    jacobi_neg_loglik,
-    jacobi_state_distribution,
-    jacobi_transition_matrix,
-    sample_jacobi_grid_trajectory,
-)
-from pyscarcopula.numerical.jacobi_sampling import (
-    DEFAULT_LAMPERTI_CHUNK_OBSERVATIONS,
-    normalize_jacobi_sampling_method,
-    normalize_lamperti_boundary,
-    normalize_lamperti_engine,
-    sample_jacobi_lamperti_trajectory,
-    validate_lamperti_eps,
-)
-from pyscarcopula.numerical.jacobi_sparse import (
-    jacobi_sparse_matrix_forward_mixture_h,
-    jacobi_sparse_matrix_forward_mixture_h_pair,
-    jacobi_sparse_matrix_forward_predictive_mean,
-    jacobi_sparse_matrix_loglik,
-    jacobi_sparse_matrix_neg_loglik_with_grad,
-    jacobi_sparse_matrix_state_distribution,
-    select_sparse_jacobi_order,
-)
 from pyscarcopula.numerical._arrays import (
     validate_float64_allocation,
     validate_positive_int,
@@ -61,7 +22,6 @@ from pyscarcopula.numerical._transition_methods import (
     normalize_jacobi_strategy_transition_method,
     normalize_jacobi_transition_storage,
 )
-from pyscarcopula.numerical import copula_native
 from pyscarcopula.strategy._base import (
     copula_dimension,
     lbfgsb_options,
@@ -84,6 +44,11 @@ from pyscarcopula.strategy.initial_point import (
 _INVALID_OBJECTIVE_THRESHOLD = 1e9
 _DEFAULT_KAPPA_BOUNDS = (1e-3, 100.0)
 _DEFAULT_XI_BOUNDS = (1e-3, 5.0)
+DEFAULT_JACOBI_MEMORY_BUDGET_BYTES = (
+    jacobi_native.DEFAULT_JACOBI_MEMORY_BUDGET_BYTES)
+DEFAULT_LAMPERTI_CHUNK_OBSERVATIONS = (
+    jacobi_native.DEFAULT_LAMPERTI_CHUNK_OBSERVATIONS)
+MAX_JACOBI_ORDER = jacobi_native.MAX_JACOBI_ORDER
 
 
 def _raw_to_physical(raw):
@@ -162,9 +127,9 @@ class SCARJacobiStrategy:
         Pass a model-provided Jacobian to the optimizer.  ``local_fixed``
         supplies fully analytical setup and filtering derivatives.  ``local``
         and ``spectral_matrix`` (including either backend selected by
-        ``auto``) use finite differences for setup arrays followed by
-        analytical filtering derivatives.  ``spectral_coeff`` does not
-        support this option.
+        ``auto``) use native finite differences for setup arrays followed by
+        analytical filtering derivatives.  ``spectral_coeff`` uses a complete
+        physical central-difference objective inside the native evaluator.
     """
 
     def __init__(self, config: NumericalConfig | None = None,
@@ -269,14 +234,15 @@ class SCARJacobiStrategy:
         )
         self.memory_budget_bytes = _validate_optional_memory_budget(
             memory_budget_bytes)
-        self.sampling_method = normalize_jacobi_sampling_method(
+        self.sampling_method = jacobi_native.normalize_sampling_method(
             sampling_method)
         self.lamperti_substeps = validate_positive_int(
             lamperti_substeps, "lamperti_substeps")
-        self.lamperti_boundary = normalize_lamperti_boundary(
+        self.lamperti_boundary = jacobi_native.normalize_lamperti_boundary(
             lamperti_boundary)
-        self.lamperti_eps = validate_lamperti_eps(lamperti_eps)
-        self.lamperti_engine = normalize_lamperti_engine(lamperti_engine)
+        self.lamperti_eps = jacobi_native.validate_lamperti_eps(lamperti_eps)
+        self.lamperti_engine = jacobi_native.normalize_lamperti_engine(
+            lamperti_engine)
         self.lamperti_chunk_observations = validate_positive_int(
             lamperti_chunk_observations,
             "lamperti_chunk_observations",
@@ -346,60 +312,60 @@ class SCARJacobiStrategy:
         return jacobi_native.shape_is_supported(
             kappa, m, xi, self.stationary_shape_max)
 
-    def _backend_kwargs(self):
-        return {
-            'basis_order': self.basis_order,
-            'quad_order': self.quad_order,
-            'theta_cap': self.theta_cap,
-            'memory_budget_bytes': self.memory_budget_bytes,
-        }
+    def _resolved_quad_order(self):
+        return (
+            jacobi_native.default_quad_order(self.basis_order)
+            if self.quad_order is None else self.quad_order)
 
-    def _matrix_backend_kwargs(self):
+    def _resolved_memory_budget(self):
+        return (
+            DEFAULT_JACOBI_MEMORY_BUDGET_BYTES
+            if self.memory_budget_bytes is None
+            else self.memory_budget_bytes)
+
+    def _evaluator_kwargs(self):
         return {
             'basis_order': self.basis_order,
             'quad_order': self.quad_order,
             'theta_cap': self.theta_cap,
             'transition_method': self.transition_method,
+            'storage': self.transition_storage,
+            'correction': self.stationarity_correction,
             'clip_negative': self.clip_negative,
             'negative_mass_tol': self.negative_mass_tol,
             'gh_order': self.gh_order,
-            'memory_budget_bytes': self.memory_budget_bytes,
+            'memory_budget_bytes': self._resolved_memory_budget(),
+            'stationary_shape_max': self.stationary_shape_max,
         }
 
-    def _sparse_backend_kwargs(self):
-        return {
-            'basis_order': self.basis_order,
-            'quad_order': self.quad_order,
-            'theta_cap': self.theta_cap,
-            'transition_method': self.transition_method,
-            'gh_order': self.gh_order,
-            'correction': self.stationarity_correction,
-            'memory_budget_bytes': self.memory_budget_bytes,
-        }
+    def _prepared_evaluator(self, u, copula):
+        return jacobi_native.PreparedScarJacobiEvaluator(
+            u, copula, **self._evaluator_kwargs())
 
-    def _neg_loglik(self, kappa, m, xi, u, copula):
+    def _neg_loglik(self, kappa, m, xi, u, copula, *, evaluator=None):
         if not self._shape_is_supported(kappa, m, xi):
             return 1e10
-        if self._uses_sparse_backend():
-            value = jacobi_sparse_matrix_loglik(
-                kappa, m, xi, u, copula, **self._sparse_backend_kwargs())
-            return -value if np.isfinite(value) else 1e10
-        if self._uses_matrix_backend():
-            return jacobi_matrix_neg_loglik(
-                kappa, m, xi, u, copula, **self._matrix_backend_kwargs())
-        return jacobi_neg_loglik(
-            kappa, m, xi, u, copula, **self._backend_kwargs())
+        try:
+            evaluator = evaluator or self._prepared_evaluator(u, copula)
+            value = evaluator.neg_loglik(kappa, m, xi)
+            return float(value) if np.isfinite(value) else 1e10
+        except MemoryError:
+            raise
+        except Exception:
+            return 1e10
 
-    def _neg_loglik_with_grad(self, kappa, m, xi, u, copula):
+    def _neg_loglik_with_grad(
+            self, kappa, m, xi, u, copula, *, evaluator=None):
         if not self._shape_is_supported(kappa, m, xi):
             return 1e10, np.zeros(3, dtype=np.float64)
-        if not self._uses_matrix_backend():
-            return 1e10, np.zeros(3, dtype=np.float64)
-        if self._uses_sparse_backend():
-            return jacobi_sparse_matrix_neg_loglik_with_grad(
-                kappa, m, xi, u, copula, **self._sparse_backend_kwargs())
-        return jacobi_matrix_neg_loglik_with_grad(
-            kappa, m, xi, u, copula, **self._matrix_backend_kwargs())
+        fail = (1e10, np.zeros(3, dtype=np.float64))
+        try:
+            evaluator = evaluator or self._prepared_evaluator(u, copula)
+            return evaluator.neg_loglik_with_grad(kappa, m, xi)
+        except MemoryError:
+            raise
+        except Exception:
+            return fail
 
     def _selected_transition_backend(self, kappa, m, xi, n_obs):
         if not self._uses_matrix_backend():
@@ -410,19 +376,18 @@ class SCARJacobiStrategy:
                 if self.stationarity_correction != "none" else "")
             return f"{self.transition_method}_sparse{suffix}"
         try:
-            _, _, _, diagnostics = jacobi_transition_matrix(
+            _, _, _, _, _, diagnostics = jacobi_native.dense_transition(
                 kappa,
                 m,
                 xi,
                 n_obs=n_obs,
                 basis_order=self.basis_order,
-                quad_order=self.quad_order,
-                transition_method=self.transition_method,
+                quad_order=self._resolved_quad_order(),
+                method=self.transition_method,
                 clip_negative=self.clip_negative,
                 negative_mass_tol=self.negative_mass_tol,
                 gh_order=self.gh_order,
-                memory_budget_bytes=self.memory_budget_bytes,
-                return_diagnostics=True,
+                memory_budget_bytes=self._resolved_memory_budget(),
             )
         except Exception:
             return self.transition_method
@@ -448,6 +413,7 @@ class SCARJacobiStrategy:
 
         fully_analytical = selected_backend in {
             "local_fixed", "local_fixed_sparse"}
+        coefficient_fd = selected_backend == "spectral_coeff"
         return {
             "gradient_requested": True,
             "gradient_used": True,
@@ -456,100 +422,62 @@ class SCARJacobiStrategy:
             "model_score": "not_applicable",
             "optimizer_gradient": "model_provided",
             "gradient_kind": (
-                "analytical" if fully_analytical else "semi_analytical"),
+                "analytical" if fully_analytical
+                else (
+                    "native_finite_difference"
+                    if coefficient_fd else "semi_analytical")),
             "setup_derivative": (
                 "analytical" if fully_analytical
                 else "numerical_finite_difference"),
-            "filter_derivative": "analytical",
+            "filter_derivative": (
+                "numerical_finite_difference"
+                if coefficient_fd else "analytical"),
             "transition_backend_requested": self.transition_method,
             "transition_backend": selected_backend,
         }
 
-    def _loglik(self, kappa, m, xi, u, copula):
+    def _loglik(self, kappa, m, xi, u, copula, *, evaluator=None):
         if not self._shape_is_supported(kappa, m, xi):
             return -np.inf
-        if self._uses_sparse_backend():
-            return jacobi_sparse_matrix_loglik(
-                kappa, m, xi, u, copula, **self._sparse_backend_kwargs())
-        if self._uses_matrix_backend():
-            return jacobi_matrix_loglik(
-                kappa, m, xi, u, copula, **self._matrix_backend_kwargs())
-        return jacobi_loglik(
-            kappa, m, xi, u, copula, **self._backend_kwargs())
+        try:
+            evaluator = evaluator or self._prepared_evaluator(u, copula)
+            return evaluator.loglik(kappa, m, xi)
+        except MemoryError:
+            raise
+        except Exception:
+            return -np.inf
 
-    def _predictive_mean(self, kappa, m, xi, u, copula):
+    def _predictive_mean(
+            self, kappa, m, xi, u, copula, *, evaluator=None):
         if not self._shape_is_supported(kappa, m, xi):
             raise ValueError("Jacobi stationary shape is outside supported range")
-        if self._uses_sparse_backend():
-            return jacobi_sparse_matrix_forward_predictive_mean(
-                kappa, m, xi, u, copula, **self._sparse_backend_kwargs())
-        if self._uses_matrix_backend():
-            return jacobi_matrix_forward_predictive_mean(
-                kappa, m, xi, u, copula, **self._matrix_backend_kwargs())
-        return jacobi_forward_predictive_mean(
-            kappa, m, xi, u, copula, **self._backend_kwargs())
+        evaluator = evaluator or self._prepared_evaluator(u, copula)
+        return evaluator.predictive_mean(kappa, m, xi)
 
-    def _mixture_h(self, kappa, m, xi, u, copula):
+    def _mixture_h(
+            self, kappa, m, xi, u, copula, *, evaluator=None):
         if not self._shape_is_supported(kappa, m, xi):
             raise ValueError("Jacobi stationary shape is outside supported range")
-        if self._uses_sparse_backend():
-            return jacobi_sparse_matrix_forward_mixture_h(
-                kappa, m, xi, u, copula, **self._sparse_backend_kwargs())
-        if self._uses_matrix_backend():
-            return jacobi_matrix_forward_mixture_h(
-                kappa, m, xi, u, copula, **self._matrix_backend_kwargs())
-        return jacobi_forward_mixture_h(
-            kappa, m, xi, u, copula, **self._backend_kwargs())
+        evaluator = evaluator or self._prepared_evaluator(u, copula)
+        return evaluator.mixture_h(kappa, m, xi)
 
-    def _mixture_h_pair(self, kappa, m, xi, u, copula):
+    def _mixture_h_pair(
+            self, kappa, m, xi, u, copula, *, evaluator=None):
         if not self._shape_is_supported(kappa, m, xi):
             raise ValueError("Jacobi stationary shape is outside supported range")
-        if self._uses_sparse_backend():
-            return jacobi_sparse_matrix_forward_mixture_h_pair(
-                kappa, m, xi, u, copula, **self._sparse_backend_kwargs())
-        if self._uses_matrix_backend():
-            return jacobi_matrix_forward_mixture_h_pair(
-                kappa, m, xi, u, copula, **self._matrix_backend_kwargs())
-        return jacobi_forward_mixture_h_pair(
-            kappa, m, xi, u, copula, **self._backend_kwargs())
+        evaluator = evaluator or self._prepared_evaluator(u, copula)
+        return evaluator.mixture_h_pair(kappa, m, xi)
 
-    def _state_distribution(self, kappa, m, xi, u, copula, horizon):
+    def _state_distribution(
+            self, kappa, m, xi, u, copula, horizon, *, evaluator=None):
         if not self._shape_is_supported(kappa, m, xi):
             raise ValueError("Jacobi stationary shape is outside supported range")
-        if self._uses_sparse_backend():
-            return jacobi_sparse_matrix_state_distribution(
-                kappa, m, xi, u, copula,
-                **self._sparse_backend_kwargs(),
-                horizon=horizon,
-            )
-        if self._uses_matrix_backend():
-            return jacobi_matrix_state_distribution(
-                kappa, m, xi, u, copula,
-                **self._matrix_backend_kwargs(),
-                horizon=horizon,
-            )
-        return jacobi_state_distribution(
-            kappa, m, xi, u, copula,
-            **self._backend_kwargs(),
-            horizon=horizon,
-        )
+        evaluator = evaluator or self._prepared_evaluator(u, copula)
+        return evaluator.state_distribution(kappa, m, xi, horizon=horizon)
 
     @staticmethod
     def _check_kendall_mapping(copula):
-        try:
-            if copula_native.supported(copula):
-                copula_native.tau_to_param(
-                    copula, np.array([0.5], dtype=np.float64))
-            else:
-                copula.tau_to_param(np.array([0.5], dtype=np.float64))
-            return
-        except NotImplementedError:
-            raise
-        except Exception as exc:
-            raise ValueError(
-                f"{type(copula).__name__} does not provide a usable "
-                "tau_to_param mapping"
-            ) from exc
+        jacobi_native.validate_copula_mapping(copula)
 
     def _initial_point(self, copula, u, initial_mle_result=None):
         if not self.smart_init:
@@ -569,12 +497,8 @@ class SCARJacobiStrategy:
                 from pyscarcopula.strategy.mle import MLEStrategy
                 mle_result = MLEStrategy(config=self.config).fit(copula, u)
             parameter = np.array([mle_result.copula_param])
-            if copula_native.supported(copula):
-                tau_hat = float(
-                    copula_native.param_to_tau(copula, parameter)[0])
-            else:
-                tau_hat = float(np.asarray(
-                    copula.param_to_tau(parameter))[0])
+            tau_hat = float(
+                jacobi_native.parameter_to_tau(copula, parameter)[0])
             m0 = float(np.clip(tau_hat, self.tau_eps, 1.0 - self.tau_eps))
             mle_attempt = _initialization_attempt(
                 'static_mle_tau', success=True)
@@ -600,6 +524,38 @@ class SCARJacobiStrategy:
             else 'strategy_fit')
         return alpha0, diagnostics
 
+    def _adaptive_order_report(self, kappa, m, xi, n_obs, quad_orders, *,
+                               require_pass):
+        *_, report = jacobi_native.select_sparse_order(
+            kappa,
+            m,
+            xi,
+            n_obs=n_obs,
+            quad_orders=quad_orders,
+            basis_order=self.basis_order,
+            gh_order=self.gh_order,
+            max_full_horizon_tv=self.adaptive_max_full_horizon_tv,
+            max_relative_variance_error=(
+                self.adaptive_max_relative_variance_error),
+            max_conditional_mean_rmse=(
+                self.adaptive_max_conditional_mean_rmse),
+            max_lag_one_correlation_error=(
+                self.adaptive_max_lag_one_correlation_error),
+            memory_budget_bytes=self._resolved_memory_budget(),
+            require_pass=require_pass,
+        )
+        report["thresholds"] = {
+            "full_horizon_stationary_tv": (
+                self.adaptive_max_full_horizon_tv),
+            "relative_variance_error": (
+                self.adaptive_max_relative_variance_error),
+            "conditional_mean_rmse": (
+                self.adaptive_max_conditional_mean_rmse),
+            "absolute_lag_one_correlation_error": (
+                self.adaptive_max_lag_one_correlation_error),
+        }
+        return report
+
     def fit(self, copula, u: np.ndarray,
             alpha0: np.ndarray | None = None,
             gtol: float | None = None,
@@ -614,12 +570,6 @@ class SCARJacobiStrategy:
             initial_mle_result=None,
             **kwargs) -> LatentResult:
         reject_legacy_tol(kwargs)
-        if self.analytical_grad:
-            if not self._uses_matrix_backend():
-                raise NotImplementedError(
-                    "analytical_grad is not implemented for the "
-                    "spectral_coeff Jacobi backend")
-
         self._check_kendall_mapping(copula)
         u = validate_copula_data(copula, u)
         if alpha0 is None:
@@ -630,38 +580,26 @@ class SCARJacobiStrategy:
         alpha0 = _validate_alpha0(alpha0)
         adaptive_initial = None
         if self.adaptive_quad_order:
-            _, _, _, adaptive_initial = select_sparse_jacobi_order(
+            adaptive_initial = self._adaptive_order_report(
                 alpha0[0],
                 alpha0[1],
                 alpha0[2],
-                n_obs=len(u),
-                quad_orders=self.adaptive_quad_orders,
-                basis_order=self.basis_order,
-                gh_order=self.gh_order,
-                max_full_horizon_tv=(
-                    self.adaptive_max_full_horizon_tv),
-                max_relative_variance_error=(
-                    self.adaptive_max_relative_variance_error),
-                max_conditional_mean_rmse=(
-                    self.adaptive_max_conditional_mean_rmse),
-                max_lag_one_correlation_error=(
-                    self.adaptive_max_lag_one_correlation_error),
-                memory_budget_bytes=self.memory_budget_bytes,
+                len(u),
+                self.adaptive_quad_orders,
                 require_pass=self.adaptive_require_pass,
             )
             self.quad_order = int(
                 adaptive_initial["selected_quad_order"])
-        resolved_quad_order = (
-            default_quad_order(self.basis_order)
-            if self.quad_order is None else self.quad_order)
-        _validate_jacobi_workspace(
-            quad_order=resolved_quad_order,
+        jacobi_native.estimate_workspace(
+            quad_order=self._resolved_quad_order(),
             basis_order=self.basis_order,
             n_obs=len(u),
             matrix=self._uses_matrix_backend(),
             gradient=self.analytical_grad,
-            memory_budget_bytes=self.memory_budget_bytes,
+            gh_order=self.gh_order,
+            memory_budget_bytes=self._resolved_memory_budget(),
         )
+        evaluator = self._prepared_evaluator(u, copula)
         raw0 = _physical_to_raw(alpha0, self.tau_eps)
         bounds = self._raw_bounds()
         raw0 = np.clip(raw0, bounds.lb, bounds.ub)
@@ -684,7 +622,8 @@ class SCARJacobiStrategy:
             alpha = _raw_to_physical(raw)
             try:
                 return self._neg_loglik(
-                    alpha[0], alpha[1], alpha[2], u, copula)
+                    alpha[0], alpha[1], alpha[2], u, copula,
+                    evaluator=evaluator)
             except Exception as exc:
                 if verbose:
                     print(f"  error at alpha={alpha}: {exc}")
@@ -694,7 +633,8 @@ class SCARJacobiStrategy:
             alpha = _raw_to_physical(raw)
             try:
                 val, grad = self._neg_loglik_with_grad(
-                    alpha[0], alpha[1], alpha[2], u, copula)
+                    alpha[0], alpha[1], alpha[2], u, copula,
+                    evaluator=evaluator)
                 raw_grad = grad * np.array([
                     alpha[0],
                     alpha[1] * (1.0 - alpha[1]),
@@ -759,8 +699,17 @@ class SCARJacobiStrategy:
         if verbose:
             print(f"SCAR-TM-JACOBI alpha={alpha}, logL={-final_fun:.4f}")
 
-        selected_backend = self._selected_transition_backend(
-            alpha[0], alpha[1], alpha[2], len(u))
+        try:
+            native_diagnostics = evaluator.filter(
+                alpha[0], alpha[1], alpha[2])["diagnostics"]
+            selected_backend = str(native_diagnostics["transition_method"])
+            if self._uses_sparse_backend():
+                selected_backend += "_sparse"
+                if self.stationarity_correction != "none":
+                    selected_backend += f"_{self.stationarity_correction}"
+        except Exception:
+            selected_backend = self._selected_transition_backend(
+                alpha[0], alpha[1], alpha[2], len(u))
         diagnostics = self._gradient_diagnostics(selected_backend)
         diagnostics["initialization"] = initialization
         diagnostics["final_objective_value"] = float(final_fun)
@@ -776,23 +725,12 @@ class SCARJacobiStrategy:
             self.stationarity_correction)
         if adaptive_initial is not None:
             diagnostics["adaptive_quad_order_initial"] = adaptive_initial
-            _, _, _, adaptive_final = select_sparse_jacobi_order(
+            adaptive_final = self._adaptive_order_report(
                 alpha[0],
                 alpha[1],
                 alpha[2],
-                n_obs=len(u),
-                quad_orders=(self.quad_order,),
-                basis_order=self.basis_order,
-                gh_order=self.gh_order,
-                max_full_horizon_tv=(
-                    self.adaptive_max_full_horizon_tv),
-                max_relative_variance_error=(
-                    self.adaptive_max_relative_variance_error),
-                max_conditional_mean_rmse=(
-                    self.adaptive_max_conditional_mean_rmse),
-                max_lag_one_correlation_error=(
-                    self.adaptive_max_lag_one_correlation_error),
-                memory_budget_bytes=self.memory_budget_bytes,
+                len(u),
+                (self.quad_order,),
                 require_pass=False,
             )
             diagnostics["adaptive_quad_order_final"] = adaptive_final
@@ -844,7 +782,9 @@ class SCARJacobiStrategy:
     def mixture_h(self, copula, u: np.ndarray,
                   result: LatentResult, **kwargs) -> np.ndarray:
         p = result.params
-        h_mix = self._mixture_h(p.kappa, p.m, p.xi, u, copula)
+        evaluator = self._prepared_evaluator(u, copula)
+        h_mix = self._mixture_h(
+            p.kappa, p.m, p.xi, u, copula, evaluator=evaluator)
 
         state_cache = kwargs.get('state_cache')
         current_cache_key = kwargs.get('current_cache_key')
@@ -852,10 +792,12 @@ class SCARJacobiStrategy:
         if state_cache is not None:
             if current_cache_key is not None:
                 state_cache[current_cache_key] = self._state_distribution(
-                    p.kappa, p.m, p.xi, u, copula, horizon='current')
+                    p.kappa, p.m, p.xi, u, copula, horizon='current',
+                    evaluator=evaluator)
             if next_cache_key is not None:
                 state_cache[next_cache_key] = self._state_distribution(
-                    p.kappa, p.m, p.xi, u, copula, horizon='next')
+                    p.kappa, p.m, p.xi, u, copula, horizon='next',
+                    evaluator=evaluator)
 
         return h_mix
 
@@ -863,7 +805,9 @@ class SCARJacobiStrategy:
                        result: LatentResult, **kwargs):
         """Both h-directions from one Jacobi posterior pass."""
         p = result.params
-        h_pair = self._mixture_h_pair(p.kappa, p.m, p.xi, u, copula)
+        evaluator = self._prepared_evaluator(u, copula)
+        h_pair = self._mixture_h_pair(
+            p.kappa, p.m, p.xi, u, copula, evaluator=evaluator)
 
         state_cache = kwargs.get('state_cache')
         current_cache_key = kwargs.get('current_cache_key')
@@ -871,10 +815,12 @@ class SCARJacobiStrategy:
         if state_cache is not None:
             if current_cache_key is not None:
                 state_cache[current_cache_key] = self._state_distribution(
-                    p.kappa, p.m, p.xi, u, copula, horizon='current')
+                    p.kappa, p.m, p.xi, u, copula, horizon='current',
+                    evaluator=evaluator)
             if next_cache_key is not None:
                 state_cache[next_cache_key] = self._state_distribution(
-                    p.kappa, p.m, p.xi, u, copula, horizon='next')
+                    p.kappa, p.m, p.xi, u, copula, horizon='next',
+                    evaluator=evaluator)
 
         return h_pair
 
@@ -900,7 +846,7 @@ class SCARJacobiStrategy:
         horizon = str(kwargs.get('horizon', 'next')).lower()
         p = result.params
         if u is None:
-            shapes = _jacobi_stationary_shape(p.kappa, p.m, p.xi)
+            shapes = jacobi_native.stationary_shape(p.kappa, p.m, p.xi)
             if shapes is None:
                 raise ValueError("invalid Jacobi parameters")
             alpha, beta = shapes
@@ -918,8 +864,10 @@ class SCARJacobiStrategy:
             cached = state_cache.get(cache_key)
 
         if cached is None:
+            evaluator = self._prepared_evaluator(u, copula)
             cached = self._state_distribution(
-                p.kappa, p.m, p.xi, u, copula, horizon=horizon)
+                p.kappa, p.m, p.xi, u, copula, horizon=horizon,
+                evaluator=evaluator)
             if state_cache is not None and cache_key is not None:
                 state_cache[cache_key] = cached
 
@@ -941,21 +889,7 @@ class SCARJacobiStrategy:
 
         tau_grid = np.asarray(state.z_grid, dtype=np.float64)
         prob = np.asarray(state.prob, dtype=np.float64)
-        evaluator = jacobi_native.PreparedScarJacobiEvaluator(
-            u[:1],
-            copula,
-            basis_order=self.basis_order,
-            quad_order=self.quad_order,
-            theta_cap=self.theta_cap,
-            transition_method=self.transition_method,
-            storage=self.transition_storage,
-            correction=self.stationarity_correction,
-            clip_negative=self.clip_negative,
-            negative_mass_tol=self.negative_mass_tol,
-            gh_order=self.gh_order,
-            memory_budget_bytes=self.memory_budget_bytes,
-            stationary_shape_max=self.stationary_shape_max,
-        )
+        evaluator = self._prepared_evaluator(u[:1], copula)
         conditioned_tau, weights = evaluator.condition_state(
             tau_grid,
             prob,
@@ -976,17 +910,9 @@ class SCARJacobiStrategy:
             rng = np.random.default_rng()
         if state.kind == 'stationary_jacobi':
             tau = rng.beta(state.metadata['alpha'], state.metadata['beta'], n)
-            if not copula_native.supported(copula):
-                raise ValueError(
-                    "Jacobi predictive sampling requires a native pair copula")
-            theta = copula_native.tau_to_param(copula, tau)
-            if self.theta_cap is not None:
-                theta = np.minimum(theta, float(self.theta_cap))
-            return theta
+            return jacobi_native.tau_to_parameter(
+                copula, tau, theta_cap=self.theta_cap)
 
-        if not copula_native.supported(copula):
-            raise ValueError(
-                "Jacobi predictive sampling requires a native pair copula")
         mode = kwargs.get('predictive_r_mode')
         mode = 'grid' if mode is None else str(mode).lower()
         if mode not in {'grid', 'histogram'}:
@@ -1001,10 +927,8 @@ class SCARJacobiStrategy:
             left, right = jacobi_native.state_histogram_cells(
                 tau_grid, indices)
             tau = rng.uniform(left, right)
-        theta = copula_native.tau_to_param(copula, tau)
-        if self.theta_cap is not None:
-            theta = np.minimum(theta, float(self.theta_cap))
-        return theta
+        return jacobi_native.tau_to_parameter(
+            copula, tau, theta_cap=self.theta_cap)
 
     def sample(self, copula, u, result, n, rng=None, **kwargs):
         """Sample the fitted discrete Jacobi Markov model unconditionally."""
@@ -1047,7 +971,7 @@ class SCARJacobiStrategy:
                 "sampling_diagnostics must be a mutable mapping")
         p = result.params
         if self.sampling_method == "lamperti_euler":
-            tau, sampling_diagnostics = sample_jacobi_lamperti_trajectory(
+            tau, sampling_diagnostics = jacobi_native.sample_lamperti_trajectory(
                 p.kappa,
                 p.m,
                 p.xi,
@@ -1062,7 +986,7 @@ class SCARJacobiStrategy:
                 return_diagnostics=True,
             )
         else:
-            tau, sampling_diagnostics = sample_jacobi_grid_trajectory(
+            tau, sampling_diagnostics = jacobi_native.sample_grid_trajectory(
                 p.kappa,
                 p.m,
                 p.xi,
@@ -1085,16 +1009,8 @@ class SCARJacobiStrategy:
             diagnostics_out.update(sampling_diagnostics)
         if tau.size == 0:
             return np.empty(0, dtype=np.float64)
-        if not copula_native.supported(copula):
-            raise ValueError(
-                "Jacobi trajectory sampling requires a native pair copula")
-        theta = copula_native.tau_to_param(copula, tau)
-        if self.theta_cap is not None:
-            theta = np.minimum(theta, float(self.theta_cap))
-        if np.any(~np.isfinite(theta)):
-            raise FloatingPointError(
-                "tau_to_param produced non-finite sampling parameters")
-        return np.asarray(theta, dtype=np.float64)
+        return jacobi_native.tau_to_parameter(
+            copula, tau, theta_cap=self.theta_cap)
 
     def model_sample_state(self, copula, result, **kwargs):
         return None

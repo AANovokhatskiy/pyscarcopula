@@ -10,6 +10,7 @@ from pyscarcopula import (
     GumbelCopula,
     JoeCopula,
 )
+from pyscarcopula._native import jacobi as jacobi_native
 from pyscarcopula._types import LatentResult, jacobi_params
 from pyscarcopula.api import (
     fit,
@@ -454,8 +455,8 @@ def test_scar_jacobi_final_validation_uses_plain_objective(monkeypatch):
         return 123.0, np.zeros(3, dtype=np.float64)
 
     monkeypatch.setattr(
-        scar_jacobi,
-        "jacobi_matrix_neg_loglik_with_grad",
+        jacobi_native.PreparedScarJacobiEvaluator,
+        "neg_loglik_with_grad",
         inconsistent_gradient,
     )
     copula = GumbelCopula()
@@ -473,20 +474,50 @@ def test_scar_jacobi_final_validation_uses_plain_objective(monkeypatch):
         maxfun=12,
     )
 
-    expected = scar_jacobi.jacobi_matrix_loglik(
-        result.params.kappa,
-        result.params.m,
-        result.params.xi,
+    expected = jacobi_native.PreparedScarJacobiEvaluator(
         u,
         copula,
         basis_order=3,
         quad_order=18,
         transition_method="local_fixed",
+    ).loglik(
+        result.params.kappa,
+        result.params.m,
+        result.params.xi,
     )
     assert result.log_likelihood == pytest.approx(expected)
     assert not result.success
     assert not result.diagnostics["final_objective_consistent"]
     assert "inconsistent gradient objective" in result.message
+
+
+def test_scar_jacobi_fit_reuses_one_prepared_native_evaluator(monkeypatch):
+    original = jacobi_native.PreparedScarJacobiEvaluator
+    constructed = []
+
+    class CountingEvaluator(original):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            constructed.append(self)
+
+    monkeypatch.setattr(
+        jacobi_native, "PreparedScarJacobiEvaluator", CountingEvaluator)
+    result = fit(
+        GumbelCopula(),
+        _u_sample(),
+        method="scar-tm-jacobi",
+        analytical_grad=True,
+        transition_method="local_fixed",
+        basis_order=3,
+        quad_order=18,
+        alpha0=np.array([1.0, 0.35, 0.5]),
+        maxiter=2,
+        maxfun=12,
+    )
+
+    assert np.isfinite(result.log_likelihood)
+    assert len(constructed) == 1
+    assert constructed[0].preparation_count >= 1
 
 
 def test_scar_jacobi_local_fixed_reports_fully_analytical_gradient():
@@ -533,18 +564,28 @@ def test_scar_jacobi_local_reports_semi_analytical_gradient():
     assert result.diagnostics["transition_backend"] == "local"
 
 
-def test_scar_jacobi_spectral_coeff_rejects_requested_gradient():
-    with pytest.raises(
-            NotImplementedError,
-            match="spectral_coeff Jacobi backend"):
-        fit(
-            GumbelCopula(),
-            _u_sample(),
-            method='scar-tm-jacobi',
-            analytical_grad=True,
-            transition_method='spectral_coeff',
-            smart_init=False,
-        )
+def test_scar_jacobi_spectral_coeff_uses_native_objective_gradient():
+    result = fit(
+        GumbelCopula(),
+        _u_sample(),
+        method='scar-tm-jacobi',
+        analytical_grad=True,
+        transition_method='spectral_coeff',
+        basis_order=3,
+        quad_order=16,
+        alpha0=np.array([1.0, 0.35, 0.5]),
+        maxiter=1,
+        maxfun=8,
+        smart_init=False,
+    )
+
+    assert np.isfinite(result.log_likelihood)
+    assert result.diagnostics["gradient_kind"] == "native_finite_difference"
+    assert result.diagnostics["setup_derivative"] == (
+        "numerical_finite_difference")
+    assert result.diagnostics["filter_derivative"] == (
+        "numerical_finite_difference")
+    assert result.diagnostics["transition_backend"] == "spectral_coeff"
 
 
 def test_scar_jacobi_fit_clips_initial_point_to_bounds():
@@ -861,13 +902,17 @@ def test_scar_jacobi_predictive_state_cache_reused(monkeypatch):
     )
     strategy = get_strategy_for_result(result)
     calls = {'n': 0}
-    original = scar_jacobi.jacobi_matrix_state_distribution
+    original = jacobi_native.PreparedScarJacobiEvaluator.state_distribution
 
-    def counted(*args, **kwargs):
+    def counted(self, *args, **kwargs):
         calls['n'] += 1
-        return original(*args, **kwargs)
+        return original(self, *args, **kwargs)
 
-    monkeypatch.setattr(scar_jacobi, 'jacobi_matrix_state_distribution', counted)
+    monkeypatch.setattr(
+        jacobi_native.PreparedScarJacobiEvaluator,
+        'state_distribution',
+        counted,
+    )
     cache = {}
 
     first = strategy.predictive_state(

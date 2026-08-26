@@ -380,6 +380,8 @@ def test_lamperti_chunk_size_does_not_change_path_or_rng(engine):
         == large_diagnostics["boundary_interventions"])
     assert small_diagnostics["chunk_observations"] == 1
     assert large_diagnostics["chunk_observations"] == 36
+    assert small_diagnostics["sampling_engine"] == engine
+    assert large_diagnostics["sampling_engine"] == engine
     np.testing.assert_array_equal(
         small_rng.random(8), large_rng.random(8))
 

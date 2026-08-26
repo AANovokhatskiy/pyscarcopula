@@ -90,6 +90,41 @@ def test_jacobi_python_sampling_kernel_is_rejected(tmp_path):
     assert "jacobi-native-sampling-ownership" in _rules(root)
 
 
+def test_jacobi_strategy_legacy_numerical_dispatch_is_rejected(tmp_path):
+    root = _minimal_repository(tmp_path)
+    _write(
+        root,
+        "pyscarcopula/strategy/scar_jacobi.py",
+        "from pyscarcopula.numerical.jacobi_tm import jacobi_matrix_loglik\n"
+        "jacobi_native.PreparedScarJacobiEvaluator([], object())\n",
+    )
+
+    assert "jacobi-native-strategy-facade" in _rules(root)
+
+
+def test_jacobi_strategy_module_alias_bypass_is_rejected(tmp_path):
+    root = _minimal_repository(tmp_path)
+    _write(
+        root,
+        "pyscarcopula/strategy/scar_jacobi.py",
+        "from pyscarcopula.numerical import jacobi_tm\n"
+        "jacobi_native.PreparedScarJacobiEvaluator([], object())\n",
+    )
+
+    assert "jacobi-native-strategy-facade" in _rules(root)
+
+
+def test_jacobi_strategy_requires_actual_prepared_evaluator_call(tmp_path):
+    root = _minimal_repository(tmp_path)
+    _write(
+        root,
+        "pyscarcopula/strategy/scar_jacobi.py",
+        "jacobi_native.PreparedScarJacobiEvaluator\n",
+    )
+
+    assert "jacobi-native-strategy-facade" in _rules(root)
+
+
 def test_stage2_foundation_helpers_have_single_canonical_owners():
     include = ROOT / "pyscarcopula" / "_cpp" / "include" / "scar"
     source = ROOT / "pyscarcopula" / "_cpp" / "src"

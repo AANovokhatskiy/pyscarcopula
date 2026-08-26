@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 from dataclasses import dataclass
 import importlib.util
 from pathlib import Path
@@ -1640,6 +1641,103 @@ def check_jacobi_sampling_ownership(root: Path) -> list[Violation]:
     return violations
 
 
+def check_jacobi_strategy_facade(root: Path) -> list[Violation]:
+    """Keep Stage 8.3.6 model/state dispatch behind the native facade."""
+    rule = "jacobi-native-strategy-facade"
+    path = root / "pyscarcopula" / "strategy" / "scar_jacobi.py"
+    if not path.is_file():
+        return []
+    text = path.read_text(encoding="utf-8")
+    forbidden_calls = (
+        "jacobi_matrix_loglik(",
+        "jacobi_sparse_matrix_loglik(",
+        "jacobi_transition_matrix(",
+        "sample_jacobi_grid_trajectory(",
+        "sample_jacobi_lamperti_trajectory(",
+        "copula_native.",
+    )
+    violations = []
+    for marker in forbidden_calls:
+        index = text.find(marker)
+        if index >= 0:
+            violations.append(Violation(
+                rule,
+                path,
+                "SCARJacobiStrategy bypasses the native facade: " + marker,
+                text.count("\n", 0, index) + 1,
+            ))
+
+    tree = ast.parse(text, filename=str(path))
+    legacy_modules = {
+        "pyscarcopula.numerical.jacobi_tm",
+        "pyscarcopula.numerical.jacobi_sparse",
+        "pyscarcopula.numerical.jacobi_sampling",
+        "pyscarcopula.numerical.copula_native",
+    }
+    legacy_names = {
+        "jacobi_tm",
+        "jacobi_sparse",
+        "jacobi_sampling",
+        "copula_native",
+    }
+    constructs_prepared_evaluator = False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if (
+                        alias.name in legacy_modules
+                        or any(
+                            alias.name.endswith("." + name)
+                            for name in legacy_names)):
+                    violations.append(Violation(
+                        rule,
+                        path,
+                        "SCARJacobiStrategy imports a legacy numerical module: "
+                        + alias.name,
+                        node.lineno,
+                    ))
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if (
+                    module in legacy_modules
+                    or any(
+                        module == name or module.endswith("." + name)
+                        for name in legacy_names)):
+                violations.append(Violation(
+                    rule,
+                    path,
+                    "SCARJacobiStrategy imports a legacy numerical module: "
+                    + module,
+                    node.lineno,
+                ))
+            elif module.endswith("numerical"):
+                for alias in node.names:
+                    if alias.name in legacy_names:
+                        violations.append(Violation(
+                            rule,
+                            path,
+                            "SCARJacobiStrategy imports a legacy numerical "
+                            "module: " + alias.name,
+                            node.lineno,
+                        ))
+        elif isinstance(node, ast.Call):
+            function = node.func
+            if (
+                    isinstance(function, ast.Attribute)
+                    and function.attr == "PreparedScarJacobiEvaluator"
+                    and isinstance(function.value, ast.Name)
+                    and function.value.id == "jacobi_native"):
+                constructs_prepared_evaluator = True
+
+    if not constructs_prepared_evaluator:
+        violations.append(Violation(
+            rule,
+            path,
+            "SCARJacobiStrategy must construct the prepared native evaluator",
+        ))
+    return violations
+
+
 def check_repository(root: Path) -> list[Violation]:
     root = root.resolve()
     checks = (
@@ -1655,6 +1753,7 @@ def check_repository(root: Path) -> list[Violation]:
         check_thin_bindings,
         check_public_header_cycles,
         check_jacobi_sampling_ownership,
+        check_jacobi_strategy_facade,
     )
     return [
         violation

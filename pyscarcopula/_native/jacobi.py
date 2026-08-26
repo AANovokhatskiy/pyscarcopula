@@ -8,6 +8,22 @@ import numpy as np
 
 from pyscarcopula._native._extension import load
 from pyscarcopula._native.errors import raise_for_status
+from pyscarcopula.numerical._arrays import (
+    validate_float64_allocation,
+    validate_positive_int,
+)
+from pyscarcopula.numerical._transition_methods import (
+    normalize_jacobi_stationarity_correction,
+    normalize_jacobi_strategy_transition_method,
+    normalize_jacobi_transition_storage,
+)
+
+
+MAX_JACOBI_ORDER = 2048
+DEFAULT_JACOBI_MEMORY_BUDGET_BYTES = 1024 ** 3
+DEFAULT_LAMPERTI_CHUNK_OBSERVATIONS = 4096
+_LAMPERTI_BOUNDARIES = frozenset({"reflect", "clip"})
+_LAMPERTI_ENGINES = frozenset({"native", "numba", "python"})
 
 
 def _params(kappa, m, xi):
@@ -21,6 +37,79 @@ def _params(kappa, m, xi):
 
 def _raise(result, operation):
     raise_for_status(result, operation, prefix="C++ Jacobi")
+
+
+def _memory_budget(value):
+    return (
+        DEFAULT_JACOBI_MEMORY_BUDGET_BYTES
+        if value is None else int(value))
+
+
+def _validate_order(value, name):
+    value = validate_positive_int(value, name)
+    if value > MAX_JACOBI_ORDER:
+        raise ValueError(
+            f"{name} must be <= {MAX_JACOBI_ORDER}; larger Jacobi grids "
+            "are disabled to prevent unsafe quadratic allocations")
+    return value
+
+
+def _validate_nonnegative_int(value, name):
+    if isinstance(value, (bool, np.bool_)) or not isinstance(
+            value, (int, np.integer)):
+        raise TypeError(f"{name} must be a non-negative integer")
+    value = int(value)
+    if value < 0:
+        raise ValueError(f"{name} must be non-negative")
+    return value
+
+
+def normalize_sampling_method(value):
+    """Normalize the public unconditional Jacobi sampling backend."""
+    if not isinstance(value, str):
+        raise TypeError("sampling_method must be a string")
+    method = value.strip().lower()
+    if method not in {"tm_grid", "lamperti_euler"}:
+        raise ValueError(
+            "sampling_method must be 'tm_grid' or 'lamperti_euler'")
+    return method
+
+
+def normalize_lamperti_boundary(value):
+    """Normalize the native Lamperti boundary policy."""
+    if not isinstance(value, str):
+        raise TypeError("lamperti_boundary must be a string")
+    boundary = value.strip().lower()
+    if boundary not in _LAMPERTI_BOUNDARIES:
+        raise ValueError(
+            "lamperti_boundary must be 'reflect' or 'clip'")
+    return boundary
+
+
+def normalize_lamperti_engine(value):
+    """Normalize historical engine labels to the mandatory native engine."""
+    if not isinstance(value, str):
+        raise TypeError("lamperti_engine must be a string")
+    engine = value.strip().lower()
+    if engine not in _LAMPERTI_ENGINES:
+        raise ValueError("lamperti_engine must be 'native'")
+    return "native"
+
+
+def validate_lamperti_eps(value):
+    """Validate the interior epsilon used for native drift evaluation."""
+    if isinstance(value, (bool, np.bool_)):
+        raise TypeError("lamperti_eps must be a finite real number")
+    try:
+        eps = float(value)
+    except (TypeError, ValueError) as exc:
+        raise TypeError(
+            "lamperti_eps must be a finite real number") from exc
+    if not np.isfinite(eps):
+        raise ValueError("lamperti_eps must be finite")
+    if not (0.0 < eps < 0.5):
+        raise ValueError("lamperti_eps must be in (0, 0.5)")
+    return eps
 
 
 def raw_to_physical(raw):
@@ -70,6 +159,60 @@ def shape_is_supported(kappa, m, xi, stationary_shape_max):
         else float(stationary_shape_max))
     status = load().jacobi_validate_params(_params(kappa, m, xi), limit)
     return int(status) == 0
+
+
+def copula_supported(copula):
+    """Return whether the pair copula has the native Jacobi kernel contract."""
+    from pyscarcopula.numerical import _cpp_copula
+
+    return _cpp_copula.supported_for_copula_ops(copula)
+
+
+def _copula_spec(copula):
+    from pyscarcopula.numerical import _cpp_copula
+
+    module = load()
+    return module, _cpp_copula.make_copula_ops_spec(module, copula)
+
+
+def tau_to_parameter(copula, tau, *, theta_cap=None):
+    """Map Jacobi tau values through the native prepared pair contract."""
+    module, spec = _copula_spec(copula)
+    values = np.ascontiguousarray(
+        np.atleast_1d(np.asarray(tau, dtype=np.float64)).ravel())
+    result = np.asarray(
+        module.copula_tau_to_param(spec, values), dtype=np.float64)
+    if np.any(~np.isfinite(result)):
+        raise FloatingPointError(
+            "native tau_to_param produced non-finite sampling parameters")
+    if theta_cap is not None:
+        result = np.minimum(result, float(theta_cap))
+    return result
+
+
+def parameter_to_tau(copula, parameter):
+    """Map pair parameters to Kendall tau through the native pair contract."""
+    module, spec = _copula_spec(copula)
+    values = np.ascontiguousarray(
+        np.atleast_1d(np.asarray(parameter, dtype=np.float64)).ravel())
+    result = np.asarray(
+        module.copula_param_to_tau(spec, values), dtype=np.float64)
+    if np.any(~np.isfinite(result)):
+        raise FloatingPointError(
+            "native param_to_tau produced non-finite values")
+    return result
+
+
+def validate_copula_mapping(copula):
+    """Fail before numerical work when the native tau mapping is unavailable."""
+    try:
+        tau_to_parameter(copula, np.array([0.5], dtype=np.float64))
+    except NotImplementedError:
+        raise
+    except Exception as exc:
+        raise ValueError(
+            f"{type(copula).__name__} does not provide a usable "
+            "tau_to_param mapping") from exc
 
 
 def estimate_workspace(
@@ -366,6 +509,7 @@ class PreparedScarJacobiEvaluator:
                 "u must be a 2D float64 array with shape (n, 2), n >= 1")
         if quad_order is None:
             quad_order = default_quad_order(basis_order)
+        memory_budget_bytes = _memory_budget(memory_budget_bytes)
         method = str(transition_method)
         transition = _transition_config(
             n_obs=len(observations),
@@ -602,6 +746,373 @@ def sample_lamperti_chunk_fixed_draws(
         "euler_steps": int(result["euler_steps"]),
         "boundary_interventions": int(result["boundary_interventions"]),
     }
+
+
+def _sampling_memory_error(exc):
+    raise MemoryError(
+        f"{exc}; reduce quad_order, basis_order, or the observation "
+        "count, or increase memory_budget_bytes") from exc
+
+
+def _validate_sampling_workspace(
+        *, n, quad_order, basis_order, gh_order, memory_budget_bytes):
+    try:
+        native_peak_bytes = estimate_sampling_workspace(
+            n=n,
+            quad_order=quad_order,
+            basis_order=basis_order,
+            gh_order=gh_order,
+            memory_budget_bytes=memory_budget_bytes,
+        )
+        boundary_bytes = validate_float64_allocation(
+            (3, n), name="Jacobi fixed-draw boundary buffers")
+        required_bytes = native_peak_bytes + boundary_bytes
+        validate_float64_allocation(
+            (required_bytes // np.dtype(np.float64).itemsize,),
+            name="Jacobi sampling workspace",
+            memory_budget_bytes=memory_budget_bytes,
+        )
+        return required_bytes
+    except MemoryError as exc:
+        _sampling_memory_error(exc)
+
+
+def _legacy_grid_sampling_diagnostics(
+        native, *, sampling_method, requested_method, storage, correction, n):
+    """Preserve frozen public diagnostics while native C++ owns execution."""
+    method_used = native["transition_method"]
+    if n == 1:
+        return {
+            "transition_method_requested": requested_method,
+            "sampling_transition_method_requested": sampling_method,
+            "transition_method": "stationary_only",
+            "n": 1,
+        }
+    if storage == "sparse":
+        diagnostics = {
+            "dt": native["dt"],
+            "alpha": native["alpha"],
+            "beta": native["beta"],
+            "gh_order": native["gh_order"],
+            "transition_method": sampling_method,
+            "correction": correction,
+            "nnz": int(native["nnz"]),
+            "max_width": int(native["max_width"]),
+            "retained_bytes": int(native["retained_bytes"]),
+            "dense_bytes": int(native["dense_bytes"]),
+            "stationary_error": native["stationary_error"],
+        }
+        if sampling_method == "local":
+            diagnostics["max_row_sum_error"] = native[
+                "max_row_sum_error"]
+        if correction == "mh":
+            for name in (
+                    "mean_accepted_off_diagonal_mass",
+                    "mean_proposed_off_diagonal_mass",
+                    "acceptance_mass_ratio",
+                    "min_row_acceptance_ratio",
+                    "mean_stay_probability",
+                    "max_stay_probability",
+                    "reverse_missing_edge_fraction",
+                    "detailed_balance_error"):
+                diagnostics[name] = native[name]
+        elif correction == "ipfp":
+            diagnostics.update({
+                "ipfp_iterations": int(native["ipfp_iterations"]),
+                "ipfp_stationary_residual": native[
+                    "ipfp_stationary_residual"],
+                "ipfp_kl_divergence": native["ipfp_kl_divergence"],
+                "ipfp_max_probability_change": native[
+                    "ipfp_max_probability_change"],
+                "mean_stay_probability": native["mean_stay_probability"],
+                "max_stay_probability": native["max_stay_probability"],
+            })
+        diagnostics.update({
+            "transition_method_requested": requested_method,
+            "sampling_transition_method_requested": sampling_method,
+            "model_transition_method_requested": requested_method,
+            "transition_storage": "sparse",
+            "n": n,
+        })
+        return diagnostics
+    if method_used == "spectral_matrix":
+        diagnostics = {
+            "dt": native["dt"],
+            "alpha": native["alpha"],
+            "beta": native["beta"],
+            "raw_min_entry": native["raw_min_entry"],
+            "raw_negative_mass": native["raw_negative_mass"],
+            "max_row_sum_error_before_normalization": native[
+                "max_row_sum_error_before_normalization"],
+            "stationary_error": native["stationary_error"],
+            "clipped_negative": native["clipped_negative"],
+            "transition_method_requested": sampling_method,
+            "transition_method": method_used,
+            "probability_cleanup_applied": native[
+                "probability_cleanup_applied"],
+            "probability_cleanup_negative_mass": native[
+                "probability_cleanup_negative_mass"],
+            "probability_min_entry_before_cleanup": native[
+                "probability_min_entry_before_cleanup"],
+        }
+    else:
+        diagnostics = {
+            "dt": native["dt"],
+            "alpha": native["alpha"],
+            "beta": native["beta"],
+            "gh_order": native["gh_order"],
+            "min_entry": native["min_entry"],
+            "max_row_sum_error": native["max_row_sum_error"],
+            "stationary_error": native["stationary_error"],
+            "transition_method_requested": sampling_method,
+            "transition_method": method_used,
+        }
+        if int(native["spectral_status"]) != 0:
+            diagnostics["spectral_error"] = (
+                "FloatingPointError: C++ Jacobi spectral transition failed")
+    diagnostics["sampling_transition_method_requested"] = sampling_method
+    diagnostics["model_transition_method_requested"] = requested_method
+    diagnostics["n"] = n
+    return diagnostics
+
+
+def sample_grid_trajectory(
+        kappa, m, xi, n, *, rng=None, basis_order=32, quad_order=None,
+        transition_method="auto", clip_negative=False,
+        negative_mass_tol=1e-5, gh_order=5, transition_storage="dense",
+        stationarity_correction="none", memory_budget_bytes=None,
+        return_diagnostics=False):
+    """Run the public fixed-draw TM-grid protocol through the native facade."""
+    n = _validate_nonnegative_int(n, "n")
+    stationarity_correction = normalize_jacobi_stationarity_correction(
+        stationarity_correction)
+    transition_storage = normalize_jacobi_transition_storage(
+        transition_storage)
+    if n == 0:
+        empty = np.empty(0, dtype=np.float64)
+        if return_diagnostics:
+            return empty, {
+                "transition_method_requested": str(transition_method),
+                "transition_method": "not_built",
+                "n": 0,
+            }
+        return empty
+    if stationary_shape(kappa, m, xi) is None:
+        raise ValueError("invalid Jacobi parameters")
+    basis_order = _validate_order(basis_order, "basis_order")
+    if quad_order is None:
+        quad_order = default_quad_order(basis_order)
+    quad_order = _validate_order(quad_order, "quad_order")
+    gh_order = _validate_order(gh_order, "gh_order")
+    if basis_order > quad_order:
+        raise ValueError("quad_order must be >= basis_order")
+
+    requested_method = normalize_jacobi_strategy_transition_method(
+        transition_method)
+    sampling_method = (
+        "auto" if requested_method == "spectral_coeff"
+        else requested_method)
+    use_sparse_sampling = (
+        n > 1
+        and (
+            sampling_method == "local"
+            or (
+                sampling_method == "local_fixed"
+                and transition_storage == "sparse"
+            )
+        )
+    )
+    sampling_storage = "sparse" if use_sparse_sampling else "dense"
+    if stationarity_correction != "none" and sampling_method != "local":
+        raise ValueError(
+            "stationarity_correction currently requires "
+            "transition_method='local'")
+    validate_float64_allocation(
+        (0,), name="Jacobi sampling memory budget",
+        memory_budget_bytes=memory_budget_bytes)
+    budget = _memory_budget(memory_budget_bytes)
+    if sampling_storage == "sparse" and n > 1:
+        try:
+            sparse_workspace_bytes = estimate_sparse_workspace(
+                quad_order=quad_order,
+                gh_order=gh_order,
+                correction=stationarity_correction,
+                memory_budget_bytes=budget,
+            )
+            retained = estimate_sparse_storage(
+                quad_order=quad_order,
+                gh_order=gh_order,
+                correction=stationarity_correction,
+                memory_budget_bytes=budget,
+            )
+            native_peak_bytes = max(
+                sparse_workspace_bytes,
+                retained + (2 * quad_order + n) * 8,
+            )
+            boundary_bytes = validate_float64_allocation(
+                (3, n), name="sparse Jacobi fixed-draw boundary buffers")
+            required_bytes = native_peak_bytes + boundary_bytes
+            validate_float64_allocation(
+                (required_bytes // np.dtype(np.float64).itemsize,),
+                name="sparse Jacobi sampling workspace",
+                memory_budget_bytes=budget,
+            )
+        except MemoryError as exc:
+            _sampling_memory_error(exc)
+    else:
+        _validate_sampling_workspace(
+            n=n,
+            quad_order=quad_order,
+            basis_order=basis_order,
+            gh_order=gh_order,
+            memory_budget_bytes=budget,
+        )
+    if rng is None:
+        rng = np.random.default_rng()
+    uniforms = np.asarray(rng.random(n), dtype=np.float64)
+    path, diagnostics = sample_grid_trajectory_fixed_draws(
+        kappa,
+        m,
+        xi,
+        uniforms,
+        basis_order=basis_order,
+        quad_order=quad_order,
+        method=sampling_method,
+        storage=sampling_storage,
+        correction=stationarity_correction,
+        clip_negative=clip_negative,
+        negative_mass_tol=negative_mass_tol,
+        gh_order=gh_order,
+        memory_budget_bytes=budget,
+    )
+    if return_diagnostics:
+        diagnostics = _legacy_grid_sampling_diagnostics(
+            diagnostics,
+            sampling_method=sampling_method,
+            requested_method=requested_method,
+            storage=sampling_storage,
+            correction=stationarity_correction,
+            n=n,
+        )
+        return path, diagnostics
+    return path
+
+
+def _effective_lamperti_chunk(
+        *, n, substeps, requested, memory_budget_bytes):
+    if n <= 1:
+        validate_float64_allocation(
+            (n,),
+            name="Lamperti-Euler Jacobi path",
+            memory_budget_bytes=memory_budget_bytes,
+        )
+        return 0
+    elements_per_interval = 2 * substeps + 2
+    validate_float64_allocation(
+        (n + elements_per_interval,),
+        name="Lamperti-Euler native chunk peak",
+        memory_budget_bytes=memory_budget_bytes,
+    )
+    max_elements = memory_budget_bytes // np.dtype(np.float64).itemsize
+    max_chunk = (max_elements - n) // elements_per_interval
+    effective = min(requested, n - 1, max_chunk)
+    validate_float64_allocation(
+        (n + effective * elements_per_interval,),
+        name="Lamperti-Euler native chunk peak",
+        memory_budget_bytes=memory_budget_bytes,
+    )
+    return int(effective)
+
+
+def sample_lamperti_trajectory(
+        kappa, m, xi, n, *, rng=None, substeps=8, boundary="reflect",
+        eps=1e-10, engine="native",
+        chunk_observations=DEFAULT_LAMPERTI_CHUNK_OBSERVATIONS,
+        memory_budget_bytes=None, return_diagnostics=False):
+    """Run chunked Lamperti--Euler sampling through fixed-draw native calls."""
+    n = _validate_nonnegative_int(n, "n")
+    substeps = validate_positive_int(substeps, "lamperti_substeps")
+    boundary = normalize_lamperti_boundary(boundary)
+    eps = validate_lamperti_eps(eps)
+    engine = normalize_lamperti_engine(engine)
+    chunk_observations = validate_positive_int(
+        chunk_observations, "lamperti_chunk_observations")
+    shapes = stationary_shape(kappa, m, xi)
+    if shapes is None:
+        raise ValueError("invalid Jacobi parameters")
+    kappa = float(kappa)
+    m = float(m)
+    xi = float(xi)
+    alpha, beta = shapes
+
+    validate_float64_allocation(
+        (0,), name="Lamperti-Euler memory budget",
+        memory_budget_bytes=memory_budget_bytes)
+    budget = _memory_budget(memory_budget_bytes)
+    effective_chunk = _effective_lamperti_chunk(
+        n=n,
+        substeps=substeps,
+        requested=chunk_observations,
+        memory_budget_bytes=budget,
+    )
+    diagnostics = {
+        "sampling_method": "lamperti_euler",
+        "sampling_engine": engine,
+        "boundary_policy": boundary,
+        "substeps": substeps,
+        "drift_eps": eps,
+        "stationary_alpha": alpha,
+        "stationary_beta": beta,
+        "stationary_boundary_singular": bool(alpha < 1.0 or beta < 1.0),
+        "chunk_observations_requested": chunk_observations,
+        "chunk_observations": effective_chunk,
+        "n": n,
+        "boundary_interventions": 0,
+        "boundary_intervention_rate": 0.0,
+        "euler_steps": max(n - 1, 0) * substeps,
+    }
+    if n == 0:
+        path = np.empty(0, dtype=np.float64)
+        return (path, diagnostics) if return_diagnostics else path
+    if rng is None:
+        rng = np.random.default_rng()
+
+    path = np.empty(n, dtype=np.float64)
+    path[0] = float(rng.beta(alpha, beta))
+    if n == 1:
+        return (path, diagnostics) if return_diagnostics else path
+
+    y = float(lamperti(np.array([path[0]], dtype=np.float64), xi)[0])
+    interventions = 0
+    output_offset = 1
+    while output_offset < n:
+        block = min(effective_chunk, n - output_offset)
+        innovations = np.asarray(
+            rng.standard_normal((block, substeps)), dtype=np.float64)
+        native = sample_lamperti_chunk_fixed_draws(
+            kappa,
+            m,
+            xi,
+            y,
+            innovations,
+            n_obs=n,
+            substeps=substeps,
+            boundary=boundary,
+            interior_eps=eps,
+        )
+        used = int(native["normal_draws_used"])
+        if used != block * substeps:
+            raise RuntimeError(
+                "native Lamperti sampler returned an invalid draw count")
+        path[output_offset:output_offset + block] = native["tau"]
+        y = float(native["final_lamperti_value"])
+        interventions += int(native["boundary_interventions"])
+        output_offset += block
+
+    diagnostics["boundary_interventions"] = interventions
+    diagnostics["boundary_intervention_rate"] = (
+        interventions / diagnostics["euler_steps"])
+    return (path, diagnostics) if return_diagnostics else path
 
 
 def sample_prepared_sparse_trajectory_fixed_draws(
@@ -881,9 +1392,13 @@ def select_sparse_order(
 
 
 __all__ = [
+    "DEFAULT_JACOBI_MEMORY_BUDGET_BYTES",
+    "DEFAULT_LAMPERTI_CHUNK_OBSERVATIONS",
+    "MAX_JACOBI_ORDER",
     "PreparedScarJacobiEvaluator",
     "apply_coefficient_transition",
     "coefficient_transition",
+    "copula_supported",
     "estimate_sampling_workspace",
     "estimate_sparse_storage",
     "estimate_sparse_workspace",
@@ -895,8 +1410,12 @@ __all__ = [
     "jacobi_rule",
     "lamperti",
     "lamperti_drift",
+    "normalize_lamperti_boundary",
+    "normalize_lamperti_engine",
+    "normalize_sampling_method",
     "dense_transition",
     "default_quad_order",
+    "parameter_to_tau",
     "resolve_dt",
     "select_sparse_order",
     "sparse_full_horizon_diagnostics",
@@ -907,10 +1426,15 @@ __all__ = [
     "raw_bounds",
     "raw_to_physical",
     "sample_grid_trajectory_fixed_draws",
+    "sample_grid_trajectory",
     "sample_lamperti_chunk_fixed_draws",
+    "sample_lamperti_trajectory",
     "sample_prepared_sparse_trajectory_fixed_draws",
     "sample_state_distribution_fixed_draws",
     "state_histogram_cells",
     "shape_is_supported",
     "stationary_shape",
+    "tau_to_parameter",
+    "validate_copula_mapping",
+    "validate_lamperti_eps",
 ]
