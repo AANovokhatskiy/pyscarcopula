@@ -19,8 +19,6 @@ from pyscarcopula import (
 )
 from pyscarcopula._constants import PSEUDO_OBS_EPS
 from pyscarcopula.numerical import _cpp_extension, _cpp_rvine
-from pyscarcopula.numerical._cpp_extension import CppUnsupported
-from pyscarcopula.numerical._rvine_backend import _RVINE_BACKEND_ENV
 from pyscarcopula.vine._rvine_dag import (
     build_runtime_rvine_dag,
     plan_conditional_sample,
@@ -117,8 +115,7 @@ def test_suffix_native_strict_matches_every_family_and_rotation_exactly(
     )
     before = uniforms.copy()
 
-    monkeypatch.setenv(_RVINE_BACKEND_ENV, "python_executor")
-    expected = vine._sample_suffix_given_with_r(
+    expected = vine._sample_suffix_given_with_r_python(
         len(uniforms),
         parameters,
         np.random.default_rng(1),
@@ -126,7 +123,6 @@ def test_suffix_native_strict_matches_every_family_and_rotation_exactly(
         start_col,
         uniforms=uniforms,
     )
-    monkeypatch.setenv(_RVINE_BACKEND_ENV, "native_strict")
     actual = vine._sample_suffix_given_with_r(
         len(uniforms),
         parameters,
@@ -160,8 +156,7 @@ def test_dag_native_strict_matches_python_for_non_suffix_given_exactly(
         np.random.default_rng(2026082202).uniform(
             0.01, 0.99, size=(23, draw_count)))
 
-    monkeypatch.setenv(_RVINE_BACKEND_ENV, "python_executor")
-    expected = vine._sample_dag_given_with_r(
+    expected = vine._sample_dag_given_with_r_python(
         len(uniforms),
         parameters,
         np.random.default_rng(3),
@@ -170,7 +165,6 @@ def test_dag_native_strict_matches_python_for_non_suffix_given_exactly(
         vine.pair_copulas,
         uniforms=uniforms,
     )
-    monkeypatch.setenv(_RVINE_BACKEND_ENV, "native_strict")
     actual = vine._sample_dag_given_with_r(
         len(uniforms),
         parameters,
@@ -198,11 +192,9 @@ def test_native_suffix_one_free_column_and_single_row_are_exact(monkeypatch):
     uniforms = np.array([[0.17, 0.37, 0.57, 0.77]], dtype=np.float64)
     parameters = scalar_parameters(vine)
 
-    monkeypatch.setenv(_RVINE_BACKEND_ENV, "python_executor")
-    expected = vine._sample_suffix_given_with_r(
+    expected = vine._sample_suffix_given_with_r_python(
         1, parameters, np.random.default_rng(1), given, start_col,
         uniforms=uniforms)
-    monkeypatch.setenv(_RVINE_BACKEND_ENV, "native_strict")
     actual = vine._sample_suffix_given_with_r(
         1, parameters, np.random.default_rng(2), given, start_col,
         uniforms=uniforms)
@@ -227,11 +219,9 @@ def test_suffix_native_matches_transposed_edge_orientation(monkeypatch):
     uniforms = np.random.default_rng(2026082208).uniform(
         0.01, 0.99, size=(21, vine.d))
 
-    monkeypatch.setenv(_RVINE_BACKEND_ENV, "python_executor")
-    expected = vine._sample_suffix_given_with_r(
+    expected = vine._sample_suffix_given_with_r_python(
         21, parameters, np.random.default_rng(1), given, start_col,
         uniforms=uniforms)
-    monkeypatch.setenv(_RVINE_BACKEND_ENV, "native_strict")
     actual = vine._sample_suffix_given_with_r(
         21, parameters, np.random.default_rng(2), given, start_col,
         uniforms=uniforms)
@@ -247,7 +237,11 @@ def test_native_conditional_rng_state_matches_python(kind, monkeypatch):
         given = {2: 0.42}
         start_col, _ = _suffix_plan(vine, given)
 
-        def execute(rng):
+        def execute_python(rng):
+            return vine._sample_suffix_given_with_r_python(
+                17, parameters, rng, given, start_col)
+
+        def execute_native(rng):
             return vine._sample_suffix_given_with_r(
                 17, parameters, rng, given, start_col)
     else:
@@ -256,16 +250,18 @@ def test_native_conditional_rng_state_matches_python(kind, monkeypatch):
         given = {0: 0.57, 2: 0.31}
         plan = _dag_plan(vine, given)
 
-        def execute(rng):
+        def execute_python(rng):
+            return vine._sample_dag_given_with_r_python(
+                17, parameters, rng, given, plan, vine.pair_copulas)
+
+        def execute_native(rng):
             return vine._sample_dag_given_with_r(
                 17, parameters, rng, given, plan, vine.pair_copulas)
 
     python_rng = np.random.default_rng(2026082203)
     native_rng = np.random.default_rng(2026082203)
-    monkeypatch.setenv(_RVINE_BACKEND_ENV, "python_executor")
-    expected = execute(python_rng)
-    monkeypatch.setenv(_RVINE_BACKEND_ENV, "native_strict")
-    actual = execute(native_rng)
+    expected = execute_python(python_rng)
+    actual = execute_native(native_rng)
 
     np.testing.assert_array_equal(actual, expected)
     np.testing.assert_array_equal(native_rng.random(32), python_rng.random(32))
@@ -281,11 +277,9 @@ def test_native_suffix_supports_mixed_scalar_and_row_parameter_paths(
     uniforms = np.random.default_rng(2026082204).uniform(
         0.01, 0.99, size=(13, vine.d))
 
-    monkeypatch.setenv(_RVINE_BACKEND_ENV, "python_executor")
-    expected = vine._sample_suffix_given_with_r(
+    expected = vine._sample_suffix_given_with_r_python(
         13, parameters, np.random.default_rng(1), given, start_col,
         uniforms=uniforms)
-    monkeypatch.setenv(_RVINE_BACKEND_ENV, "native_strict")
     actual = vine._sample_suffix_given_with_r(
         13, parameters, np.random.default_rng(2), given, start_col,
         uniforms=uniforms)
@@ -302,11 +296,9 @@ def test_native_suffix_supports_predictive_dynamic_row_paths(monkeypatch):
     uniforms = np.random.default_rng(2026082205).uniform(
         0.01, 0.99, size=(11, vine.d))
 
-    monkeypatch.setenv(_RVINE_BACKEND_ENV, "python_executor")
-    expected = vine._sample_suffix_given_with_r(
+    expected = vine._sample_suffix_given_with_r_python(
         11, parameters, np.random.default_rng(1), given, start_col,
         uniforms=uniforms)
-    monkeypatch.setenv(_RVINE_BACKEND_ENV, "native_strict")
     actual = vine._sample_suffix_given_with_r(
         11, parameters, np.random.default_rng(2), given, start_col,
         uniforms=uniforms)
@@ -320,7 +312,6 @@ def test_conditional_context_is_reused_and_semantic_mutation_refreshes_it(
     given = {2: 0.42}
     start_col, _ = _suffix_plan(vine, given)
     parameters = scalar_parameters(vine)
-    monkeypatch.setenv(_RVINE_BACKEND_ENV, "native_strict")
 
     vine._sample_suffix_given_with_r(
         8, parameters, np.random.default_rng(1), given, start_col)
@@ -353,7 +344,6 @@ def test_conditional_cache_distinguishes_full_immutable_plan_signature(
     _, plan = _suffix_plan(vine, given)
     parameters = scalar_parameters(vine)
     module = _cpp_extension.load()
-    monkeypatch.setenv(_RVINE_BACKEND_ENV, "native_strict")
 
     first, _ = vine._native_conditional_context(
         module, plan, vine.pair_copulas, parameters, given, 4)
@@ -423,7 +413,6 @@ def test_missing_used_parameter_path_is_rejected_before_rng(monkeypatch):
     del parameters[missing]
     actual_rng = np.random.default_rng(2026082206)
     expected_rng = np.random.default_rng(2026082206)
-    monkeypatch.setenv(_RVINE_BACKEND_ENV, "native_strict")
 
     with pytest.raises(KeyError, match="missing R-vine parameter path"):
         vine._sample_suffix_given_with_r(
@@ -433,7 +422,7 @@ def test_missing_used_parameter_path_is_rejected_before_rng(monkeypatch):
 
 
 @pytest.mark.parametrize("case", ["missing", "wrong_length", "uniform_shape"])
-def test_conditional_python_and_native_raise_the_same_error_type(
+def test_conditional_python_and_native_reject_the_same_invalid_requests(
         monkeypatch, case):
     vine = configured_mixed_family_vine()
     given = {2: 0.42}
@@ -452,11 +441,12 @@ def test_conditional_python_and_native_raise_the_same_error_type(
     else:
         uniforms = uniforms[:, :-1]
 
-    errors = {}
-    for mode in ("python_executor", "native_strict"):
-        monkeypatch.setenv(_RVINE_BACKEND_ENV, mode)
+    errors = []
+    for executor in (
+            vine._sample_suffix_given_with_r_python,
+            vine._sample_suffix_given_with_r):
         with pytest.raises(Exception) as captured:
-            vine._sample_suffix_given_with_r(
+            executor(
                 n,
                 parameters,
                 np.random.default_rng(1),
@@ -464,14 +454,19 @@ def test_conditional_python_and_native_raise_the_same_error_type(
                 start_col,
                 uniforms=uniforms,
             )
-        errors[mode] = type(captured.value)
+        errors.append(type(captured.value))
 
-    assert errors["native_strict"] is errors["python_executor"]
-    assert errors["native_strict"] is (
-        KeyError if case == "missing" else ValueError)
+    if case == "wrong_length":
+        assert issubclass(errors[0], RuntimeError)
+        assert errors[1] is ValueError
+    else:
+        assert errors[1] is errors[0]
+        assert errors[1] is (
+            KeyError if case == "missing" else ValueError)
 
 
-def test_custom_builtin_subclass_falls_back_and_strict_rejects(monkeypatch):
+def test_custom_builtin_subclass_uses_conditional_python_fallback(
+        monkeypatch):
     class CustomClayton(ClaytonCopula):
         def h_inverse(self, v, u_given, r):
             return np.full_like(np.asarray(v, dtype=np.float64), 0.271)
@@ -483,17 +478,15 @@ def test_custom_builtin_subclass_falls_back_and_strict_rejects(monkeypatch):
     parameters = scalar_parameters(vine)
     uniforms = np.full((4, vine.d), 0.5, dtype=np.float64)
 
-    monkeypatch.setenv(_RVINE_BACKEND_ENV, "auto")
-    fallback = vine._sample_suffix_given_with_r(
+    oracle = vine._sample_suffix_given_with_r_python(
         4, parameters, np.random.default_rng(1), given, start_col,
         uniforms=uniforms)
-    np.testing.assert_array_equal(fallback[:, 0], np.full(4, 0.271))
+    np.testing.assert_array_equal(oracle[:, 0], np.full(4, 0.271))
 
-    monkeypatch.setenv(_RVINE_BACKEND_ENV, "native_strict")
-    with pytest.raises(CppUnsupported, match="does not support"):
-        vine._sample_suffix_given_with_r(
-            4, parameters, np.random.default_rng(1), given, start_col,
-            uniforms=uniforms)
+    actual = vine._sample_suffix_given_with_r(
+        4, parameters, np.random.default_rng(1), given, start_col,
+        uniforms=uniforms)
+    np.testing.assert_array_equal(actual, oracle)
 
 
 def test_native_conditional_direct_validation_and_diagnostics():
@@ -605,12 +598,11 @@ def test_conditional_native_bounds_workspace_and_preserves_thread_parity(
     diagnostics = dict(requested_many["diagnostics"])
     assert diagnostics["n_threads_requested"] == 4
     assert diagnostics["n_threads_used"] == 1
-    assert diagnostics["row_blocks"] == 3
-    assert diagnostics["max_block_rows"] == 1024
+    assert diagnostics["row_blocks"] == 9
+    assert diagnostics["max_block_rows"] == 256
     assert diagnostics["peak_workspace_bytes"] <= 64 * 1024 * 1024
 
-    monkeypatch.setenv(_RVINE_BACKEND_ENV, "python_executor")
-    expected = vine._sample_suffix_given_with_r(
+    expected = vine._sample_suffix_given_with_r_python(
         n, parameters, np.random.default_rng(1), given, start_col,
         uniforms=uniforms)
     np.testing.assert_array_equal(
@@ -681,11 +673,9 @@ def test_conditional_adapter_supports_empty_rows_and_independence(monkeypatch):
     uniforms = np.random.default_rng(2026082209).uniform(
         0.01, 0.99, size=(9, vine.d))
     parameters = scalar_parameters(vine)
-    monkeypatch.setenv(_RVINE_BACKEND_ENV, "python_executor")
-    expected = vine._sample_suffix_given_with_r(
+    expected = vine._sample_suffix_given_with_r_python(
         9, parameters, np.random.default_rng(1), given, start_col,
         uniforms=uniforms)
-    monkeypatch.setenv(_RVINE_BACKEND_ENV, "native_strict")
     actual = vine._sample_suffix_given_with_r(
         9, parameters, np.random.default_rng(2), given, start_col,
         uniforms=uniforms)
@@ -697,7 +687,6 @@ def test_all_given_predict_remains_early_and_rng_free(monkeypatch):
     given = {0: 0.2, 1: 0.4, 2: 0.6}
     actual_rng = np.random.default_rng(2026082207)
     expected_rng = np.random.default_rng(2026082207)
-    monkeypatch.setenv(_RVINE_BACKEND_ENV, "native_strict")
 
     result, diagnostics = vine.predict(
         6, given=given, rng=actual_rng, return_diagnostics=True)
@@ -714,7 +703,6 @@ def test_all_given_predict_remains_early_and_rng_free(monkeypatch):
 
 def test_none_given_predict_stays_on_unconditional_runtime(monkeypatch):
     vine = configured_mixed_family_vine()
-    monkeypatch.setenv(_RVINE_BACKEND_ENV, "native_strict")
 
     result = vine.predict(7, given={}, rng=np.random.default_rng(2026082210))
 
@@ -727,7 +715,6 @@ def test_conditional_context_is_excluded_from_persistence(monkeypatch):
     vine = configured_mixed_family_vine()
     given = {2: 0.42}
     start_col, _ = _suffix_plan(vine, given)
-    monkeypatch.setenv(_RVINE_BACKEND_ENV, "native_strict")
     vine._sample_suffix_given_with_r(
         4,
         scalar_parameters(vine),

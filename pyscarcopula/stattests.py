@@ -49,7 +49,8 @@ from pyscarcopula.numerical._arrays import (
     validate_float64_allocation,
     validate_positive_int,
 )
-from pyscarcopula.numerical._rvine_backend import dispatch_rvine_backend
+from pyscarcopula.numerical import _cpp_extension
+from pyscarcopula.numerical._cpp_extension import CppUnsupported
 
 
 @dataclass(frozen=True)
@@ -1355,19 +1356,31 @@ def _prepare_rvine_rosenblatt_observations(vine, u):
     return clip_pseudo_observations(observations)
 
 
-def _rvine_rosenblatt_transform_native(module, vine, u):
-    """Run the scalar-only Stage 5 native capability when supported."""
+def _rvine_rosenblatt_transform_native(
+        module, vine, u, *, K=300, grid_range=5.0):
+    """Run supported static or dynamic edges through the native traversal."""
     from pyscarcopula.numerical import _cpp_rvine
 
     active_keys = _cpp_rvine.density_active_keys(
         vine._trees, vine._edge_map)
     if not _cpp_rvine.native_edges_supported(
             vine.pair_copulas, active_keys):
-        return None
+        return _rvine_rosenblatt_transform_python(
+            vine, u, K=K, grid_range=grid_range)
     layout = _cpp_rvine.static_rosenblatt_parameter_layout(
         vine.pair_copulas, active_keys)
     if layout is None:
-        return None
+        return _cpp_rvine.rosenblatt(
+            module,
+            vine.pair_copulas,
+            vine.d,
+            vine._trees,
+            vine._edge_map,
+            vine.matrix,
+            u,
+            active_keys=active_keys,
+            dynamic_strategy_kwargs={"K": K, "grid_range": grid_range},
+        )
     parameter_paths, parameter_sources = layout
     observations = _cpp_rvine._rvine_observations(
         u, vine.d, "Rosenblatt")
@@ -1386,7 +1399,8 @@ def _rvine_rosenblatt_transform_native(module, vine, u):
         cache_slot='rosenblatt',
     )
     if context is None:
-        return None
+        raise CppUnsupported(
+            "native R-vine Rosenblatt could not compile the edge context")
     residuals = _cpp_rvine.rosenblatt(
         module,
         vine.pair_copulas,
@@ -1403,14 +1417,12 @@ def _rvine_rosenblatt_transform_native(module, vine, u):
         native_edges=context['edges'],
         parameter_pack=parameters,
     )
-    if residuals is None:
-        return None
     return clip_rosenblatt_output(residuals)
 
 
 def rvine_rosenblatt_transform(
         vine, u, K=300, grid_range=5.0, *, vine_type=None):
-    """Dispatch the R-vine transform while preserving the Python oracle."""
+    """Apply native traversal, preserving unsupported custom-edge fallback."""
     if vine_type is None:
         vine_type = getattr(vine, "vine_type", "rvine")
     if vine_type not in {"cvine", "dvine", "rvine"}:
@@ -1420,19 +1432,25 @@ def rvine_rosenblatt_transform(
     if getattr(vine, 'matrix', None) is None:
         raise ValueError("Fit the vine first")
     observations = _prepare_rvine_rosenblatt_observations(vine, u)
-    return dispatch_rvine_backend(
-        capability="rosenblatt_transform",
-        native_symbol="rvine_rosenblatt_transform",
-        python_executor=lambda: _rvine_rosenblatt_transform_python(
+    from pyscarcopula.numerical import _cpp_rvine
+    active_keys = _cpp_rvine.density_active_keys(
+        vine._trees, vine._edge_map)
+    if not _cpp_rvine.native_edges_supported(
+            vine.pair_copulas, active_keys):
+        return _rvine_rosenblatt_transform_python(
             vine,
             observations,
             K=K,
             grid_range=grid_range,
             vine_type=vine_type,
-        ),
-        native_executor=lambda module: _rvine_rosenblatt_transform_native(
-            module, vine, observations),
-    )
+        )
+    module = _cpp_extension.load()
+    if not hasattr(module, "rvine_rosenblatt_transform"):
+        raise CppUnsupported(
+            "native R-vine Rosenblatt requires "
+            "_scar_cpp.rvine_rosenblatt_transform")
+    return _rvine_rosenblatt_transform_native(
+        module, vine, observations, K=K, grid_range=grid_range)
 
 
 def rvine_gof_test(

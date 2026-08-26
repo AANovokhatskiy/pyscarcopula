@@ -295,8 +295,7 @@ def test_oracle_fixture_has_immutable_provenance(golden):
         golden["provenance"]["extension_oracle"])
 
 
-def test_python_oracles_match_runtime_golden(monkeypatch, golden):
-    monkeypatch.setenv(_RVINE_BACKEND_ENV, "python_executor")
+def test_preserved_python_oracles_match_runtime_golden(golden):
     vine = configured_mixed_family_vine()
     inputs = golden["inputs"]
     expected = golden["expected"]
@@ -304,7 +303,7 @@ def test_python_oracles_match_runtime_golden(monkeypatch, golden):
     r_all = _fixture_parameters(golden)
     observations = np.asarray(inputs["observations"], dtype=np.float64)
 
-    unconditional = vine._sample_with_r(
+    unconditional = vine._sample_with_r_python(
         len(uniforms),
         r_all,
         np.random.default_rng(1),
@@ -315,7 +314,7 @@ def test_python_oracles_match_runtime_golden(monkeypatch, golden):
     suffix_given = {
         int(key): value for key, value in inputs["suffix_given"].items()
     }
-    suffix = vine._sample_suffix_given_with_r(
+    suffix = vine._sample_suffix_given_with_r_python(
         len(uniforms),
         r_all,
         np.random.default_rng(2),
@@ -330,7 +329,7 @@ def test_python_oracles_match_runtime_golden(monkeypatch, golden):
     }
     dag = build_runtime_rvine_dag(vine.matrix, vine._edge_map)
     plan = plan_conditional_sample(dag, dag_given, vine.d)
-    dag_sample = vine._sample_dag_given_with_r(
+    dag_sample = vine._sample_dag_given_with_r_python(
         len(uniforms),
         r_all,
         np.random.default_rng(3),
@@ -341,10 +340,10 @@ def test_python_oracles_match_runtime_golden(monkeypatch, golden):
     )
     _assert_golden_close(dag_sample, expected["dag_sample"])
 
-    log_pdf = vine._log_pdf_rows_with_r(observations, r_all)
+    log_pdf = vine._log_pdf_rows_with_r_python(observations, r_all)
     _assert_golden_close(log_pdf, expected["log_pdf_rows"])
 
-    transformed = rvine_rosenblatt_transform(vine, observations)
+    transformed = _rvine_rosenblatt_transform_python(vine, observations)
     _assert_golden_close(transformed, expected["rvine_rosenblatt"])
 
     student = student_rosenblatt_transform(
@@ -370,7 +369,7 @@ def test_python_oracles_match_runtime_golden(monkeypatch, golden):
     _assert_scipy_golden_close(
         student_low_df, expected["student_rosenblatt_low_df"])
 
-    mcmc, diagnostics = vine._sample_arbitrary_given_mcmc(
+    mcmc, diagnostics = vine._sample_arbitrary_given_mcmc_python(
         len(uniforms),
         r_all,
         np.random.default_rng(4),
@@ -434,7 +433,6 @@ def test_replay_inputs_are_owned_contiguous_and_do_not_mutate_or_consume_rng(
 
 
 def test_sampling_rng_state_and_output_match_across_batch_sizes(monkeypatch):
-    monkeypatch.setenv(_RVINE_BACKEND_ENV, "python_executor")
     vine = configured_mixed_family_vine()
     one_rng = np.random.default_rng(20260814)
     many_rng = np.random.default_rng(20260814)
@@ -445,7 +443,7 @@ def test_sampling_rng_state_and_output_match_across_batch_sizes(monkeypatch):
 
 
 @pytest.mark.rvine_native
-def test_existing_gas_native_and_python_selector_consume_identical_rng(
+def test_existing_gas_sampling_ignores_legacy_selector_and_preserves_rng(
         monkeypatch):
     if not native_rvine_symbol_available("gas_rvine_sample"):
         pytest.skip("existing _scar_cpp.gas_rvine_sample is unavailable")
@@ -461,7 +459,6 @@ def test_existing_gas_native_and_python_selector_consume_identical_rng(
 
 
 def test_memory_budget_rejection_precedes_rng_consumption(monkeypatch):
-    monkeypatch.setenv(_RVINE_BACKEND_ENV, "python_executor")
     vine = configured_mixed_family_vine()
     actual_rng = np.random.default_rng(118)
     expected_rng = np.random.default_rng(118)
@@ -697,26 +694,32 @@ def test_mixed_scalar_and_row_paths_are_not_expanded_by_oracle(golden):
         np.testing.assert_array_equal(r_all[key], snapshots[key])
 
 
-def test_custom_builtin_subclass_keeps_python_override(monkeypatch, golden):
+def test_custom_builtin_subclass_override_remains_public_fallback(
+        monkeypatch, golden):
     class CustomClayton(ClaytonCopula):
         def h_inverse(self, v, u_given, r):
             return np.full_like(np.asarray(v, dtype=np.float64), 0.314)
 
-    monkeypatch.setenv(_RVINE_BACKEND_ENV, "auto")
     vine = configured_mixed_family_vine()
     vine.pair_copulas[(0, 0)] = fitted_pair(CustomClayton(rotate=0), 0.8)
     r_all = _fixture_parameters(golden)
-    result = vine._sample_with_r(
+    result = vine._sample_with_r_python(
         4,
         r_all,
         np.random.default_rng(1),
         uniforms=np.asarray(golden["inputs"]["uniforms"]),
     )
     np.testing.assert_array_equal(result[:, 0], np.full(4, 0.314))
+    actual = vine._sample_with_r(
+        4,
+        r_all,
+        np.random.default_rng(1),
+        uniforms=np.asarray(golden["inputs"]["uniforms"]),
+    )
+    np.testing.assert_array_equal(actual, result)
 
 
 def test_public_predict_diagnostics_contract(monkeypatch):
-    monkeypatch.setenv(_RVINE_BACKEND_ENV, "python_executor")
     vine = configured_mixed_family_vine()
     given = {2: 0.42}
     samples, diagnostics = vine.predict(
@@ -767,7 +770,7 @@ def test_oracle_names_are_stable_and_independent():
         "dense_student_rosenblatt_transform",
     ],
 )
-def test_native_strict_differential_harness_reserved_for_future_entry_points(
+def test_native_differential_harness_uses_explicit_python_oracles(
         monkeypatch, native_symbol, golden):
     if not native_rvine_symbol_available(native_symbol):
         pytest.skip(f"_scar_cpp.{native_symbol} is not implemented yet")
@@ -777,16 +780,22 @@ def test_native_strict_differential_harness_reserved_for_future_entry_points(
     observations = np.asarray(golden["inputs"]["observations"])
     uniforms = np.asarray(golden["inputs"]["uniforms"])
 
-    def run():
+    def run(native):
         if native_symbol == "rvine_sample":
-            return vine._sample_with_r(
+            method = (
+                vine._sample_with_r
+                if native else vine._sample_with_r_python)
+            return method(
                 4, r_all, np.random.default_rng(1), uniforms=uniforms)
         if native_symbol == "rvine_conditional_sample":
             given = {
                 int(key): value
                 for key, value in golden["inputs"]["suffix_given"].items()
             }
-            return vine._sample_suffix_given_with_r(
+            method = (
+                vine._sample_suffix_given_with_r
+                if native else vine._sample_suffix_given_with_r_python)
+            return method(
                 4,
                 r_all,
                 np.random.default_rng(2),
@@ -795,13 +804,19 @@ def test_native_strict_differential_harness_reserved_for_future_entry_points(
                 uniforms=uniforms,
             )
         if native_symbol == "rvine_log_pdf_rows":
-            return vine._log_pdf_rows_with_r(observations, r_all)
+            method = (
+                vine._log_pdf_rows_with_r
+                if native else vine._log_pdf_rows_with_r_python)
+            return method(observations, r_all)
         if native_symbol == "rvine_mcmc_chunk":
             given = {
                 int(key): value
                 for key, value in golden["inputs"]["dag_given"].items()
             }
-            return vine._sample_arbitrary_given_mcmc(
+            method = (
+                vine._sample_arbitrary_given_mcmc
+                if native else vine._sample_arbitrary_given_mcmc_python)
+            return method(
                 4,
                 r_all,
                 np.random.default_rng(4),
@@ -813,8 +828,13 @@ def test_native_strict_differential_harness_reserved_for_future_entry_points(
                     golden["inputs"]["mcmc_random_draws"]),
             )[0]
         if native_symbol == "rvine_rosenblatt_transform":
-            return rvine_rosenblatt_transform(vine, observations)
+            method = (
+                rvine_rosenblatt_transform
+                if native else _rvine_rosenblatt_transform_python)
+            return method(vine, observations)
         if native_symbol == "dense_student_rosenblatt_transform":
+            if not native:
+                return np.asarray(golden["expected"]["student_rosenblatt"])
             return student_rosenblatt_transform(
                 np.asarray(golden["inputs"]["student_correlation"]),
                 golden["inputs"]["student_df"],
@@ -822,10 +842,8 @@ def test_native_strict_differential_harness_reserved_for_future_entry_points(
             )
         raise AssertionError(f"unhandled native symbol {native_symbol}")
 
-    monkeypatch.setenv(_RVINE_BACKEND_ENV, "python_executor")
-    expected = deepcopy(run())
-    monkeypatch.setenv(_RVINE_BACKEND_ENV, "native_strict")
-    actual = run()
+    expected = deepcopy(run(False))
+    actual = run(True)
     if native_symbol == "dense_student_rosenblatt_transform":
         np.testing.assert_allclose(
             actual, expected, rtol=5e-12, atol=5e-13)

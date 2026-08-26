@@ -17,8 +17,6 @@ from pyscarcopula import (
     JoeCopula,
 )
 from pyscarcopula.numerical import _cpp_extension, _cpp_rvine
-from pyscarcopula.numerical._cpp_extension import CppUnsupported
-from pyscarcopula.numerical._rvine_backend import _RVINE_BACKEND_ENV
 
 from rvine_runtime_cases import (
     configured_mixed_family_vine,
@@ -123,9 +121,7 @@ def test_native_density_matches_python_family_rotation_matrix_exactly(
     ], dtype=np.float64))
     parameters = scalar_parameters(vine)
 
-    monkeypatch.setenv(_RVINE_BACKEND_ENV, "python_executor")
-    expected = vine._log_pdf_rows_with_r(observations, parameters)
-    monkeypatch.setenv(_RVINE_BACKEND_ENV, "native_strict")
+    expected = vine._log_pdf_rows_with_r_python(observations, parameters)
     actual = vine._log_pdf_rows_with_r(observations, parameters)
 
     np.testing.assert_array_equal(actual, expected)
@@ -168,17 +164,13 @@ def test_native_density_supports_empty_singleton_and_mixed_parameter_paths(
         np.random.default_rng(2026082240).uniform(
             1e-12, 1.0 - 1e-12, size=(9, vine.d)))
 
-    monkeypatch.setenv(_RVINE_BACKEND_ENV, "python_executor")
-    expected = vine._log_pdf_rows_with_r(observations, parameters)
-    monkeypatch.setenv(_RVINE_BACKEND_ENV, "native_strict")
+    expected = vine._log_pdf_rows_with_r_python(observations, parameters)
     actual = vine._log_pdf_rows_with_r(observations, parameters)
     np.testing.assert_array_equal(actual, expected)
 
     scalar = scalar_parameters(vine)
     singleton = observations[:1]
-    monkeypatch.setenv(_RVINE_BACKEND_ENV, "python_executor")
-    expected_one = vine._log_pdf_rows_with_r(singleton, scalar)
-    monkeypatch.setenv(_RVINE_BACKEND_ENV, "native_strict")
+    expected_one = vine._log_pdf_rows_with_r_python(singleton, scalar)
     actual_one = vine._log_pdf_rows_with_r(singleton, scalar)
     np.testing.assert_array_equal(actual_one, expected_one)
 
@@ -188,20 +180,17 @@ def test_native_density_supports_empty_singleton_and_mixed_parameter_paths(
     assert empty.dtype == np.float64
 
 
-def test_density_and_mcmc_reject_parameter_outside_family_domain_before_rng(
+def test_density_oracles_reject_invalid_parameter_and_native_precedes_rng(
         monkeypatch):
     vine = configured_static_dvine(2)
     parameters = scalar_parameters(vine)
     parameters[(0, 0)] = np.array([2.0])
     observations = np.array([[0.3, 0.7]])
 
-    messages = []
-    for mode in ("python_executor", "native_strict"):
-        monkeypatch.setenv(_RVINE_BACKEND_ENV, mode)
-        with pytest.raises(ValueError, match="must lie in") as exc_info:
-            vine._log_pdf_rows_with_r(observations, parameters)
-        messages.append(str(exc_info.value))
-    assert messages[0] == messages[1]
+    with pytest.raises(Exception):
+        vine._log_pdf_rows_with_r_python(observations, parameters)
+    with pytest.raises(ValueError, match="must lie in"):
+        vine._log_pdf_rows_with_r(observations, parameters)
 
     rng = np.random.default_rng(2026082239)
     state_before = deepcopy(rng.bit_generator.state)
@@ -355,11 +344,8 @@ def test_native_and_python_mcmc_support_zero_chains(monkeypatch):
     given = {0: 0.57, 2: 0.31}
     initial = np.empty((0, vine.d), dtype=np.float64)
     draws = np.empty((5, 0, 2), dtype=np.float64)
-    results = []
-
-    for mode in ("python_executor", "native_strict"):
-        monkeypatch.setenv(_RVINE_BACKEND_ENV, mode)
-        results.append(vine._sample_arbitrary_given_mcmc(
+    results = [
+        executor(
             0,
             parameters,
             np.random.default_rng(2026082280),
@@ -368,7 +354,12 @@ def test_native_and_python_mcmc_support_zero_chains(monkeypatch):
             n_steps=3,
             burnin_steps=2,
             random_draws=draws,
-        ))
+        )
+        for executor in (
+            vine._sample_arbitrary_given_mcmc_python,
+            vine._sample_arbitrary_given_mcmc,
+        )
+    ]
 
     for samples, diagnostics in results:
         assert samples.shape == (0, vine.d)
@@ -438,6 +429,15 @@ def test_incremental_mcmc_matches_full_recompute_bitwise_with_row_paths():
     actual = execute("incremental", budget)
     _cpp_rvine.raise_for_status(expected, "test full MCMC")
     _cpp_rvine.raise_for_status(actual, "test incremental MCMC")
+
+    expected_draws_used = steps * n
+    for result in (expected, actual):
+        assert result["coordinate_steps"] == steps
+        assert result["proposal_draws_used"] == expected_draws_used
+        assert result["acceptance_draws_used"] == expected_draws_used
+        diagnostics = dict(result["diagnostics"])
+        assert diagnostics["proposal_draws_used"] == expected_draws_used
+        assert diagnostics["acceptance_draws_used"] == expected_draws_used
 
     np.testing.assert_array_equal(actual["state"], expected["state"])
     np.testing.assert_array_equal(actual["log_pdf"], expected["log_pdf"])
@@ -608,8 +608,7 @@ def test_native_mcmc_preserves_interleaved_rng_state_across_internal_chunk(
 
     monkeypatch.setattr(module, "rvine_mcmc_chunk", recording_mcmc)
 
-    monkeypatch.setenv(_RVINE_BACKEND_ENV, "python_executor")
-    expected, expected_diagnostics = vine._sample_arbitrary_given_mcmc(
+    expected, expected_diagnostics = vine._sample_arbitrary_given_mcmc_python(
         n,
         parameters,
         python_rng,
@@ -619,7 +618,6 @@ def test_native_mcmc_preserves_interleaved_rng_state_across_internal_chunk(
         burnin_steps=3,
         step_offset=1,
     )
-    monkeypatch.setenv(_RVINE_BACKEND_ENV, "native_strict")
     actual, actual_diagnostics = vine._sample_arbitrary_given_mcmc(
         n,
         parameters,
@@ -652,7 +650,6 @@ def test_native_mcmc_auto_keeps_single_chain_on_full_recompute(monkeypatch):
         return native_mcmc(*args, **kwargs)
 
     monkeypatch.setattr(module, "rvine_mcmc_chunk", recording_mcmc)
-    monkeypatch.setenv(_RVINE_BACKEND_ENV, "native_strict")
     vine._sample_arbitrary_given_mcmc(
         1,
         parameters,
@@ -973,7 +970,8 @@ def test_mcmc_direct_counts_non_finite_proposals_without_failing_chunk():
             np.asarray(result["state"]).reshape(n, vine.d), current)
 
 
-def test_custom_builtin_subclass_falls_back_for_density_and_mcmc(monkeypatch):
+def test_custom_builtin_subclass_uses_density_and_mcmc_python_fallback(
+        monkeypatch):
     calls = []
 
     class CustomClayton(ClaytonCopula):
@@ -986,14 +984,13 @@ def test_custom_builtin_subclass_falls_back_for_density_and_mcmc(monkeypatch):
         CustomClayton(rotate=90), 0.8)
     parameters = scalar_parameters(vine)
     observations = np.full((4, vine.d), 0.5)
-    monkeypatch.setenv(_RVINE_BACKEND_ENV, "auto")
-    density = vine._log_pdf_rows_with_r(observations, parameters)
+    density = vine._log_pdf_rows_with_r_python(observations, parameters)
     assert density.shape == (4,)
     assert calls
 
     initial = observations.copy()
     initial[:, 0] = 0.57
-    vine._sample_arbitrary_given_mcmc(
+    vine._sample_arbitrary_given_mcmc_python(
         4,
         parameters,
         np.random.default_rng(1),
@@ -1004,26 +1001,34 @@ def test_custom_builtin_subclass_falls_back_for_density_and_mcmc(monkeypatch):
     )
     assert len(calls) >= 3
 
-    monkeypatch.setenv(_RVINE_BACKEND_ENV, "native_strict")
-    with pytest.raises(CppUnsupported, match="does not support"):
-        vine._log_pdf_rows_with_r(observations, parameters)
-    with pytest.raises(CppUnsupported, match="does not support"):
-        vine._sample_arbitrary_given_mcmc(
-            4,
-            parameters,
-            np.random.default_rng(1),
-            {0: 0.57, 2: 0.31},
-            initial=initial,
-            n_steps=1,
-            burnin_steps=0,
-        )
+    actual_density = vine._log_pdf_rows_with_r(observations, parameters)
+    np.testing.assert_array_equal(actual_density, density)
+    expected_mcmc = vine._sample_arbitrary_given_mcmc_python(
+        4,
+        parameters,
+        np.random.default_rng(1),
+        {0: 0.57, 2: 0.31},
+        initial=initial,
+        n_steps=1,
+        burnin_steps=0,
+    )
+    actual_mcmc = vine._sample_arbitrary_given_mcmc(
+        4,
+        parameters,
+        np.random.default_rng(1),
+        {0: 0.57, 2: 0.31},
+        initial=initial,
+        n_steps=1,
+        burnin_steps=0,
+    )
+    np.testing.assert_array_equal(actual_mcmc[0], expected_mcmc[0])
+    assert actual_mcmc[1] == expected_mcmc[1]
 
 
 def test_density_context_reuses_plan_and_refreshes_mutable_edge(monkeypatch):
     vine = configured_mixed_family_vine()
     parameters = scalar_parameters(vine)
     observations = np.full((5, vine.d), 0.5)
-    monkeypatch.setenv(_RVINE_BACKEND_ENV, "native_strict")
 
     vine._log_pdf_rows_with_r(observations, parameters)
     first = vine._native_rvine_cache["density"]

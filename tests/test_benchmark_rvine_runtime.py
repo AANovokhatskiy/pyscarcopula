@@ -50,9 +50,50 @@ def test_extended_disabled_workloads_remain_visible():
     }
 
 
-def test_extended_python_smoke_records_cover_candidates(monkeypatch):
-    monkeypatch.setenv(
-        benchmark_rvine_runtime.BACKEND_ENV, "python_executor")
+def test_backend_method_selects_explicit_reference_and_native_callables():
+    class Runtime:
+        def native(self):
+            return "native"
+
+        def oracle(self):
+            return "oracle"
+
+    runtime = Runtime()
+    assert benchmark_rvine_runtime._backend_method(
+        runtime, "python_executor", "native", "oracle")() == "oracle"
+    assert benchmark_rvine_runtime._backend_method(
+        runtime, "native_strict", "native", "oracle")() == "native"
+
+
+def test_dynamic_benchmark_pairs_reference_and_native_on_identical_inputs():
+    options = dict(
+        profile="smoke",
+        repeats=1,
+        warmups=0,
+        enabled=True,
+        seed=202610777,
+    )
+    reference, reference_seed = (
+        benchmark_rvine_runtime._extended_dynamic_records(
+            backend="python_executor", **options))
+    native, native_seed = benchmark_rvine_runtime._extended_dynamic_records(
+        backend="native_strict", **options)
+
+    assert native_seed == reference_seed
+    reference_checksums = {
+        (record["dynamic_strategy"], record["dynamic_edge_coverage"]):
+        record["output_checksum"]
+        for record in reference
+    }
+    native_checksums = {
+        (record["dynamic_strategy"], record["dynamic_edge_coverage"]):
+        record["output_checksum"]
+        for record in native
+    }
+    assert native_checksums == reference_checksums
+
+
+def test_extended_python_smoke_records_cover_candidates():
     records = benchmark_rvine_runtime._extended_workload_records(
         profile="smoke",
         backend="python_executor",
@@ -107,10 +148,7 @@ def test_extended_python_smoke_records_cover_candidates(monkeypatch):
         assert record["incremental_cache_bytes_estimate"] > 0
 
 
-def test_extended_native_strict_keeps_unimplemented_references_explicit(
-        monkeypatch):
-    monkeypatch.setenv(
-        benchmark_rvine_runtime.BACKEND_ENV, "native_strict")
+def test_extended_native_strict_keeps_unimplemented_references_explicit():
     records = benchmark_rvine_runtime._extended_workload_records(
         profile="smoke",
         backend="native_strict",
@@ -122,7 +160,6 @@ def test_extended_native_strict_keeps_unimplemented_references_explicit(
     reference_candidates = {
         "factor_student_rosenblatt",
         "equicorr_rosenblatt",
-        "dynamic_rvine_rosenblatt",
     }
     references = [
         record for record in records
@@ -132,6 +169,15 @@ def test_extended_native_strict_keeps_unimplemented_references_explicit(
     assert all(record["status"] == "not_run" for record in references)
     assert all(
         "not implemented" in record["reason"] for record in references)
+    dynamic_records = [
+        record for record in records
+        if record["candidate"] == "dynamic_rvine_rosenblatt"
+    ]
+    assert dynamic_records
+    assert all(record["status"] == "measured" for record in dynamic_records)
+    assert all(
+        record["implementation"] == "native_dynamic_rvine"
+        for record in dynamic_records)
     mcmc_records = [
         record for record in records
         if record["candidate"] == "incremental_mcmc_density"

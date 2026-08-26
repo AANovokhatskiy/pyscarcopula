@@ -103,6 +103,8 @@ struct MCMCResult {
     std::int64_t n_rows = 0;
     int dimension = 0;
     std::int64_t coordinate_steps = 0;
+    std::uint64_t proposal_draws_used = 0;
+    std::uint64_t acceptance_draws_used = 0;
     Status status = Status::Ok;
     FailureContext failure{};
     int n_threads_requested = 1;

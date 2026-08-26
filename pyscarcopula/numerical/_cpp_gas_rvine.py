@@ -56,7 +56,8 @@ def sample(
     """Return a native GAS R-vine sample, or ``None`` when unsupported."""
     module = _cpp_extension.load()
     if not hasattr(module, "gas_rvine_sample"):
-        return None
+        raise CppUnsupported(
+            "native extension does not expose gas_rvine_sample")
     for key in active_keys:
         edge = vine.pair_copulas[key]
         if (

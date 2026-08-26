@@ -482,6 +482,37 @@ def _evaluator_raise(result, operation):
     _raise(result, operation)
 
 
+def _evaluator_config(
+        module, *, n_obs, basis_order=32, quad_order=None,
+        theta_cap=None, transition_method="auto", storage="dense",
+        correction="none", clip_negative=False,
+        negative_mass_tol=1e-5, gh_order=5,
+        memory_budget_bytes=1024**3, fd_rel_step=1e-5,
+        stationary_shape_max=None):
+    """Build the native evaluator policy shared by pair and vine adapters."""
+    if quad_order is None:
+        quad_order = default_quad_order(basis_order)
+    memory_budget_bytes = _memory_budget(memory_budget_bytes)
+    transition = _transition_config(
+        n_obs=int(n_obs),
+        quad_order=quad_order,
+        basis_order=basis_order,
+        gh_order=gh_order,
+        method=str(transition_method),
+        storage=storage,
+        correction=correction,
+        clip_negative=clip_negative,
+        negative_mass_tol=negative_mass_tol,
+        memory_budget_bytes=memory_budget_bytes,
+        theta_cap=theta_cap,
+        stationary_shape_max=stationary_shape_max,
+    )
+    config = module.JacobiEvaluatorConfig()
+    config.transition = transition
+    config.finite_difference_relative_step = float(fd_rel_step)
+    return config
+
+
 class PreparedScarJacobiEvaluator:
     """Prepared native Jacobi objective/filter/state facade.
 
@@ -507,27 +538,22 @@ class PreparedScarJacobiEvaluator:
                 or len(observations) < 1):
             raise ValueError(
                 "u must be a 2D float64 array with shape (n, 2), n >= 1")
-        if quad_order is None:
-            quad_order = default_quad_order(basis_order)
-        memory_budget_bytes = _memory_budget(memory_budget_bytes)
-        method = str(transition_method)
-        transition = _transition_config(
+        config = _evaluator_config(
+            module,
             n_obs=len(observations),
-            quad_order=quad_order,
             basis_order=basis_order,
-            gh_order=gh_order,
-            method=method,
+            quad_order=quad_order,
+            theta_cap=theta_cap,
+            transition_method=transition_method,
             storage=storage,
             correction=correction,
             clip_negative=clip_negative,
             negative_mass_tol=negative_mass_tol,
+            gh_order=gh_order,
             memory_budget_bytes=memory_budget_bytes,
-            theta_cap=theta_cap,
+            fd_rel_step=fd_rel_step,
             stationary_shape_max=stationary_shape_max,
         )
-        config = module.JacobiEvaluatorConfig()
-        config.transition = transition
-        config.finite_difference_relative_step = float(fd_rel_step)
         spec = _cpp_copula.make_copula_ops_spec(module, copula)
         self._module = module
         self._native = module.PreparedScarJacobiEvaluator(

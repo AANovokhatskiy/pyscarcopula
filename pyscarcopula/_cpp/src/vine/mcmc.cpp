@@ -793,6 +793,9 @@ MCMCResult mcmc_chunk(
                 }
             }
         }
+        out.proposal_draws_used = static_cast<std::uint64_t>(draw_value_count);
+        out.acceptance_draws_used =
+            static_cast<std::uint64_t>(draw_value_count);
         return out;
     }
 
@@ -862,6 +865,8 @@ MCMCResult mcmc_chunk(
             }
         }
     }
+    out.proposal_draws_used = static_cast<std::uint64_t>(draw_value_count);
+    out.acceptance_draws_used = static_cast<std::uint64_t>(draw_value_count);
     return out;
 }
 

@@ -54,6 +54,7 @@ from pyscarcopula.copula.multivariate.factor_correlation import (
 )
 from pyscarcopula.numerical import _cpp_extension
 from pyscarcopula.stattests import (
+    _rvine_rosenblatt_transform_python,
     equicorr_rosenblatt_transform,
     factor_student_rosenblatt_transform,
     rvine_rosenblatt_transform,
@@ -76,7 +77,6 @@ from rvine_runtime_cases import (
 DEFAULT_OUTPUT = (
     ROOT / "benchmark_artifacts" / "rvine_runtime_python_baseline.json"
 )
-BACKEND_ENV = "PYSCARCOPULA_TEST_RVINE_BACKEND"
 
 
 def _git_commit() -> str | None:
@@ -239,8 +239,39 @@ def _ar1_correlation(dimension: int, rho: float = 0.35) -> np.ndarray:
     return rho ** np.abs(index[:, None] - index[None, :])
 
 
+def _backend_method(vine, backend, native_name, python_name):
+    """Select an explicit implementation; never depend on process state."""
+    return getattr(
+        vine,
+        python_name if backend == "python_executor" else native_name,
+    )
+
+
+def _run_backend_mcmc(
+        vine, backend, n, parameters, rng, given, *, density_algorithm,
+        chunk_steps, **kwargs):
+    method = _backend_method(
+        vine,
+        backend,
+        "_sample_arbitrary_given_mcmc",
+        "_sample_arbitrary_given_mcmc_python",
+    )
+    if backend == "python_executor":
+        return method(n, parameters, rng, given, **kwargs)
+    return method(
+        n,
+        parameters,
+        rng,
+        given,
+        density_algorithm=density_algorithm,
+        chunk_steps=chunk_steps,
+        **kwargs,
+    )
+
+
 def _vine_records(
-        dimensions, row_counts, repeats, warmups, include_mcmc, profile):
+        dimensions, row_counts, repeats, warmups, include_mcmc, profile,
+        backend):
     records = []
     seed = 202608140
     for dimension in dimensions:
@@ -254,31 +285,48 @@ def _vine_records(
         dag_given = {peel[0]: 0.57}
         dag = build_runtime_rvine_dag(vine.matrix, vine._edge_map)
         dag_plan = plan_conditional_sample(dag, dag_given, dimension)
+        parameters = scalar_parameters(vine)
+        independent_parameters = scalar_parameters(independent)
+        suffix_start_col = vine._given_suffix_start_col(suffix_given)
+        sample = _backend_method(
+            vine, backend, "_sample_with_r", "_sample_with_r_python")
+        independent_sample = _backend_method(
+            independent, backend, "_sample_with_r", "_sample_with_r_python")
+        suffix_sample = _backend_method(
+            vine,
+            backend,
+            "_sample_suffix_given_with_r",
+            "_sample_suffix_given_with_r_python",
+        )
+        dag_sample = _backend_method(
+            vine,
+            backend,
+            "_sample_dag_given_with_r",
+            "_sample_dag_given_with_r_python",
+        )
         for rows in row_counts:
             cases = [
                 (
                     "unconditional",
                     "scalar",
-                    lambda rng, vine=vine, rows=rows: vine.sample(
-                        rows,
-                        rng=rng,
-                        batch_rows=min(rows, 8192),
-                    ),
+                    lambda rng, sample=sample, rows=rows,
+                    parameters=parameters:
+                    sample(rows, parameters, rng),
                 ),
                 (
                     "unconditional_independence_heavy",
                     "none",
-                    lambda rng, vine=independent, rows=rows: vine.sample(
-                        rows,
-                        rng=rng,
-                        batch_rows=min(rows, 8192),
-                    ),
+                    lambda rng, sample=independent_sample, rows=rows,
+                    parameters=independent_parameters:
+                    sample(rows, parameters, rng),
                 ),
                 (
                     "suffix_conditional",
                     "scalar",
-                    lambda rng, vine=vine, rows=rows, given=suffix_given:
-                    vine.predict(rows, given=given, rng=rng),
+                    lambda rng, sample=suffix_sample, rows=rows,
+                    parameters=parameters, given=suffix_given,
+                    start_col=suffix_start_col:
+                    sample(rows, parameters, rng, given, start_col),
                 ),
             ]
             for operation, parameter_mode, call in cases:
@@ -317,8 +365,8 @@ def _vine_records(
                     repeats=repeats,
                     warmups=warmups,
                     seed=seed,
-                    call=lambda rng, vine=vine, rows=rows, paths=paths:
-                    vine._sample_with_r(rows, paths, rng),
+                    call=lambda rng, sample=sample, rows=rows, paths=paths:
+                    sample(rows, paths, rng),
                 ))
                 seed += 10
 
@@ -332,9 +380,9 @@ def _vine_records(
                     repeats=repeats,
                     warmups=warmups,
                     seed=seed,
-                    call=lambda rng, vine=vine, rows=rows,
+                    call=lambda rng, sample=dag_sample, rows=rows,
                     parameters=dag_parameters, given=dag_given, plan=dag_plan:
-                    vine._sample_dag_given_with_r(
+                    sample(
                         rows,
                         parameters,
                         rng,
@@ -380,13 +428,17 @@ def _vine_records(
                     repeats=1,
                     warmups=0,
                     seed=seed,
-                    call=lambda rng, vine=vine, rows=rows,
+                    call=lambda rng, vine=vine, rows=rows, backend=backend,
                     parameters=parameters, given=dag_given, initial=initial:
-                    vine._sample_arbitrary_given_mcmc(
+                    _run_backend_mcmc(
+                        vine,
+                        backend,
                         rows,
                         parameters,
                         rng,
                         given,
+                        density_algorithm="full_recompute",
+                        chunk_steps=256,
                         initial=initial,
                         n_steps=max(8, 2 * (dimension - 1)),
                         burnin_steps=max(4, dimension - 1),
@@ -396,8 +448,10 @@ def _vine_records(
     return records
 
 
-def _rotation_records(repeats, warmups):
+def _rotation_records(repeats, warmups, backend):
     vine = configured_mixed_family_vine()
+    sample = _backend_method(
+        vine, backend, "_sample_with_r", "_sample_with_r_python")
     records = [_measure(
         operation="unconditional_rotated_transposed_mixed_family",
         dimension=vine.d,
@@ -406,7 +460,7 @@ def _rotation_records(repeats, warmups):
         repeats=repeats,
         warmups=warmups,
         seed=202608999,
-        call=lambda rng: vine._sample_with_r(
+        call=lambda rng: sample(
             1_000,
             _path_parameters(vine, 1_000, mixed=True),
             rng,
@@ -427,6 +481,9 @@ def _rotation_records(repeats, warmups):
             if family is IndependentCopula else family(rotate=rotation)
         )
         pair_vine.pair_copulas[(0, 0)] = fitted_pair(copula, parameter)
+        pair_sample = _backend_method(
+            pair_vine, backend, "_sample_with_r", "_sample_with_r_python")
+        pair_parameters = scalar_parameters(pair_vine)
         records.append(_measure(
             operation="unconditional_public_pair_family",
             dimension=2,
@@ -437,8 +494,9 @@ def _rotation_records(repeats, warmups):
             repeats=repeats,
             warmups=warmups,
             seed=202609000 + 10 * index,
-            call=lambda rng, pair_vine=pair_vine:
-            pair_vine.sample(1_000, rng=rng),
+            call=lambda rng, pair_sample=pair_sample,
+            pair_parameters=pair_parameters:
+            pair_sample(1_000, pair_parameters, rng),
         ))
     return records
 
@@ -690,6 +748,7 @@ def _extended_factor_records(
                     reason,
                     **metadata,
                 ))
+                seed += 10
                 continue
 
             rng = np.random.default_rng(seed)
@@ -749,6 +808,7 @@ def _extended_equicorr_records(
                     reason,
                     **metadata,
                 ))
+                seed += 10
                 continue
 
             rng = np.random.default_rng(seed)
@@ -837,11 +897,7 @@ def _configured_extended_dynamic_vine(dimension, strategy, coverage):
 def _extended_dynamic_records(
         profile, backend, repeats, warmups, enabled, seed):
     records = []
-    reason = (
-        "pass --include-extended-workloads to measure optional candidates"
-        if not enabled else
-        "native dynamic R-vine Rosenblatt candidate is not implemented"
-    )
+    reason = "pass --include-extended-workloads to measure optional candidates"
     for strategy, dimension, rows, coverage in _extended_dynamic_workloads(
             profile):
         vine, dynamic_edges = _configured_extended_dynamic_vine(
@@ -855,10 +911,14 @@ def _extended_dynamic_records(
             "dynamic_edge_coverage": coverage,
             "dynamic_edges": dynamic_edges,
             "total_edges": len(vine.pair_copulas),
-            "implementation": "python_executor_reference",
+            "implementation": (
+                "python_executor_reference"
+                if backend == "python_executor" else
+                "native_dynamic_rvine"
+            ),
         }
         parameter_mode = f"{strategy}_{coverage}_dynamic_edges"
-        if not enabled or backend != "python_executor":
+        if not enabled:
             records.append(_extended_reference_not_run(
                 "extended_dynamic_rvine_rosenblatt",
                 vine.d,
@@ -867,10 +927,16 @@ def _extended_dynamic_records(
                 reason,
                 **metadata,
             ))
+            seed += 10
             continue
 
         observations = np.random.default_rng(seed).uniform(
             0.02, 0.98, size=(rows, vine.d))
+        transform = (
+            _rvine_rosenblatt_transform_python
+            if backend == "python_executor" else
+            rvine_rosenblatt_transform
+        )
         record = _measure(
             operation="extended_dynamic_rvine_rosenblatt",
             dimension=vine.d,
@@ -879,8 +945,9 @@ def _extended_dynamic_records(
             repeats=repeats,
             warmups=warmups,
             seed=seed,
-            call=lambda _rng, vine=vine, observations=observations:
-            rvine_rosenblatt_transform(vine, observations),
+            call=lambda _rng, vine=vine, observations=observations,
+            transform=transform:
+            transform(vine, observations),
         )
         records.append(_with_metadata(
             record,
@@ -976,7 +1043,9 @@ def _extended_incremental_mcmc_records(
             dependency_profile = _density_dependency_profile(
                 vine, parameters, rows, given)
             _probe_samples, probe_diagnostics = (
-                vine._sample_arbitrary_given_mcmc(
+                _run_backend_mcmc(
+                    vine,
+                    backend,
                     rows,
                     parameters,
                     np.random.default_rng(seed + 1_000_000),
@@ -986,6 +1055,7 @@ def _extended_incremental_mcmc_records(
                     burnin_steps=0,
                     random_draws=random_draws,
                     density_algorithm="full_recompute",
+                    chunk_steps=draw_chunk_steps,
                 )
             )
             total_proposed = sum(probe_diagnostics["proposed"].values())
@@ -995,7 +1065,9 @@ def _extended_incremental_mcmc_records(
             for algorithm in algorithms:
                 validation_rng = np.random.default_rng(seed + 2_000_000)
                 validation_samples, validation_diagnostics = (
-                    vine._sample_arbitrary_given_mcmc(
+                    _run_backend_mcmc(
+                        vine,
+                        backend,
                         rows,
                         parameters,
                         validation_rng,
@@ -1008,14 +1080,21 @@ def _extended_incremental_mcmc_records(
                         chunk_steps=draw_chunk_steps,
                     )
                 )
-                final_log_pdf = vine._log_pdf_rows_with_r(
-                    validation_samples, parameters)
+                density = _backend_method(
+                    vine,
+                    backend,
+                    "_log_pdf_rows_with_r",
+                    "_log_pdf_rows_with_r_python",
+                )
+                final_log_pdf = density(validation_samples, parameters)
 
                 generated_rng = np.random.default_rng(seed + 3_000_000)
                 generated_initial_rng_state_checksum = _rng_checksum(
                     generated_rng)
                 generated_samples, generated_diagnostics = (
-                    vine._sample_arbitrary_given_mcmc(
+                    _run_backend_mcmc(
+                        vine,
+                        backend,
                         rows,
                         parameters,
                         generated_rng,
@@ -1037,10 +1116,13 @@ def _extended_incremental_mcmc_records(
                     warmups=warmups,
                     seed=seed,
                     call=lambda call_rng, vine=vine, rows=rows,
+                    backend=backend,
                     parameters=parameters, given=given, initial=initial,
                     coordinate_steps=coordinate_steps,
                     random_draws=random_draws, algorithm=algorithm:
-                    vine._sample_arbitrary_given_mcmc(
+                    _run_backend_mcmc(
+                        vine,
+                        backend,
                         rows,
                         parameters,
                         call_rng,
@@ -1123,7 +1205,6 @@ def run_benchmark(
         raise ValueError("backend must be python_executor or native_strict")
     if repeats <= 0 or warmups < 0:
         raise ValueError("repeats must be positive and warmups non-negative")
-    os.environ[BACKEND_ENV] = backend
     dimensions = (5,) if profile == "smoke" else (5, 10, 50)
     row_counts = (1, 32) if profile == "smoke" else (1, 32, 1_000, 10_000)
     started = time.perf_counter()
@@ -1134,8 +1215,9 @@ def run_benchmark(
         warmups,
         include_mcmc,
         profile,
+        backend,
     )
-    records.extend(_rotation_records(repeats, warmups))
+    records.extend(_rotation_records(repeats, warmups, backend))
     records.extend(_student_records(
         dimensions, row_counts, repeats, warmups, profile))
     records.extend(_extended_workload_records(

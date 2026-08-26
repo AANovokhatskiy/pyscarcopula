@@ -86,6 +86,7 @@ SCAR_COMPUTE_SOURCES = (
     "vine/density.cpp",
     "vine/mcmc.cpp",
     "vine/rosenblatt.cpp",
+    "vine_dynamic/rosenblatt.cpp",
     "gas/rvine_sampler.cpp",
     "scar_ou/validation.cpp",
     "scar_ou/likelihood.cpp",

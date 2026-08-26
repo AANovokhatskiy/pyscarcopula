@@ -79,6 +79,18 @@ def test_current_repository_satisfies_cpp_architecture_contract():
     assert check_repository(ROOT) == []
 
 
+def test_vine_production_python_backend_dispatch_is_rejected(tmp_path):
+    root = _minimal_repository(tmp_path)
+    _write(
+        root,
+        "pyscarcopula/vine/vine.py",
+        "from pyscarcopula.numerical._rvine_backend import "
+        "dispatch_rvine_backend\n",
+    )
+
+    assert "vine-native-boundary" in _rules(root)
+
+
 def test_jacobi_python_sampling_kernel_is_rejected(tmp_path):
     root = _minimal_repository(tmp_path)
     _write(
@@ -980,6 +992,22 @@ def test_rvine_rosenblatt_binding_keeps_arrays_alive_and_releases_gil():
     release = source.index("py::gil_scoped_release release", request)
     native_call = source.index(
         "scar::rvine::rosenblatt_transform(", release)
+    result_dict = source.index("py::dict diagnostics", native_call)
+    assert request < release < native_call < result_dict
+    for name in (
+            "scalar_parameters", "row_parameters", "observations"):
+        assert name in source[request:release]
+
+
+def test_dynamic_rvine_rosenblatt_binding_releases_gil():
+    source = (
+        ROOT / "pyscarcopula/_cpp/src/bindings/rvine.cpp"
+    ).read_text(encoding="utf-8")
+
+    request = source.index('"dynamic_rvine_rosenblatt_transform"')
+    release = source.index("py::gil_scoped_release release", request)
+    native_call = source.index(
+        "scar::dynamic_rvine_rosenblatt_transform(", release)
     result_dict = source.index("py::dict diagnostics", native_call)
     assert request < release < native_call < result_dict
     for name in (

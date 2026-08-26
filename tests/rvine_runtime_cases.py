@@ -16,6 +16,7 @@ from pyscarcopula._types import (
     LatentResult,
     MLEResult,
     gas_params,
+    jacobi_params,
     ou_params,
 )
 from pyscarcopula.vine._pair_copula import PairCopula
@@ -159,6 +160,33 @@ def configured_mixed_scar_vine() -> RVineCopula:
         params=ou_params(1.0, 0.0, 0.4),
         K=20,
         grid_range=3.0,
+    )
+    vine.pair_copulas[(0, 1)] = PairCopula(
+        copula=copula,
+        param=0.0,
+        log_likelihood=0.0,
+        nfev=0,
+        tau=0.0,
+        fit_result=result,
+    )
+    vine.method = "MIXED"
+    return vine
+
+
+def configured_mixed_jacobi_vine() -> RVineCopula:
+    """Return a mixed static/SCAR-Jacobi model for native traversal tests."""
+    vine = configured_mixed_family_vine()
+    copula = BivariateGaussianCopula()
+    result = LatentResult(
+        log_likelihood=0.0,
+        method="SCAR-TM-JACOBI",
+        copula_name=copula.name,
+        success=True,
+        params=jacobi_params(1.2, 0.4, 0.25),
+        transition_method="local",
+        gh_order=5,
+        spectral_basis_order=8,
+        spectral_quad_order=32,
     )
     vine.pair_copulas[(0, 1)] = PairCopula(
         copula=copula,

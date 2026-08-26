@@ -1,6 +1,7 @@
 #include "array.hpp"
 #include "module.hpp"
 
+#include "scar/dynamic_rvine.hpp"
 #include "scar/rvine.hpp"
 
 #include <pybind11/stl.h>
@@ -113,6 +114,15 @@ void bind_rvine(py::module_& m) {
         .value("SCALAR", scar::rvine::ParameterSource::Scalar)
         .value("ROW_PATH", scar::rvine::ParameterSource::RowPath);
 
+    py::enum_<scar::DynamicRvineKind>(
+        m,
+        "DynamicRvineKind",
+        "Dynamics owned by one edge in the native R-vine composition.")
+        .value("STATIC", scar::DynamicRvineKind::Static)
+        .value("GAS", scar::DynamicRvineKind::Gas)
+        .value("SCAR_OU", scar::DynamicRvineKind::ScarOu)
+        .value("SCAR_JACOBI", scar::DynamicRvineKind::ScarJacobi);
+
     py::class_<scar::rvine::EdgeSpec>(
         m, "RVineEdgeSpec", "Model-independent native R-vine edge metadata.")
         .def(py::init<>())
@@ -124,6 +134,23 @@ void bind_rvine(py::module_& m) {
             "parameter_index", &scar::rvine::EdgeSpec::parameter_index)
         .def_readwrite(
             "parameter_free", &scar::rvine::EdgeSpec::parameter_free);
+
+    py::class_<scar::DynamicRvineEdge>(
+        m,
+        "DynamicRvineEdge",
+        "Typed edge descriptor for dynamic R-vine traversal.")
+        .def(py::init<>())
+        .def_readwrite("edge", &scar::DynamicRvineEdge::edge)
+        .def_readwrite("dynamics", &scar::DynamicRvineEdge::dynamics)
+        .def_readwrite("gas_params", &scar::DynamicRvineEdge::gas_params)
+        .def_readwrite("gas_config", &scar::DynamicRvineEdge::gas_config)
+        .def_readwrite("ou_params", &scar::DynamicRvineEdge::ou_params)
+        .def_readwrite("ou_config", &scar::DynamicRvineEdge::ou_config)
+        .def_readwrite("ou_method", &scar::DynamicRvineEdge::ou_method)
+        .def_readwrite(
+            "jacobi_params", &scar::DynamicRvineEdge::jacobi_params)
+        .def_readwrite(
+            "jacobi_config", &scar::DynamicRvineEdge::jacobi_config);
 
     py::class_<scar::RVineTraversalPlan>(
         m,
@@ -478,6 +505,57 @@ void bind_rvine(py::module_& m) {
         py::arg("observations"),
         py::arg("n_threads") = 1);
 
+    m.def(
+        "dynamic_rvine_rosenblatt_transform",
+        [](const scar::RVineDensityPlan& plan,
+           const std::vector<scar::DynamicRvineEdge>& edges,
+           py::array_t<
+               double,
+               py::array::c_style | py::array::forcecast> scalar_parameters,
+           py::array_t<
+               double,
+               py::array::c_style | py::array::forcecast> row_parameters,
+           py::array_t<
+               double,
+               py::array::c_style | py::array::forcecast> observations,
+           int n_threads) {
+            const RVineMatrixRequest request = prepare_matrix_request(
+                scalar_parameters,
+                row_parameters,
+                observations,
+                "observations");
+            scar::rvine::RosenblattResult result;
+            {
+                py::gil_scoped_release release;
+                result = scar::dynamic_rvine_rosenblatt_transform(
+                    plan,
+                    edges,
+                    request.parameters,
+                    request.values,
+                    request.rows,
+                    request.columns,
+                    n_threads);
+            }
+            py::dict diagnostics;
+            diagnostics["n_threads_requested"] = result.n_threads_requested;
+            diagnostics["n_threads_used"] = result.n_threads_used;
+            diagnostics["h_pair_operations"] = result.h_pair_operations;
+            diagnostics["independence_fast_paths"] =
+                result.independence_fast_paths;
+
+            return rvine_vector_result_to_dict(
+                result,
+                "residuals",
+                result.residuals,
+                std::move(diagnostics));
+        },
+        py::arg("plan"),
+        py::arg("edges"),
+        py::arg("scalar_parameters"),
+        py::arg("row_parameters"),
+        py::arg("observations"),
+        py::arg("n_threads") = 1);
+
     const auto mcmc_binding = [](
         const scar::RVineDensityPlan& plan,
         const std::vector<scar::rvine::EdgeSpec>& edges,
@@ -580,6 +658,8 @@ void bind_rvine(py::module_& m) {
         diagnostics["accepted"] = result.accepted;
         diagnostics["non_finite_proposals"] =
             result.non_finite_proposals;
+        diagnostics["proposal_draws_used"] = result.proposal_draws_used;
+        diagnostics["acceptance_draws_used"] = result.acceptance_draws_used;
         diagnostics["mcmc_density_algorithm"] =
             result.density_algorithm
                 == scar::rvine::MCMCDensityAlgorithm::Incremental
@@ -601,6 +681,8 @@ void bind_rvine(py::module_& m) {
         out["n_rows"] = result.n_rows;
         out["dimension"] = result.dimension;
         out["coordinate_steps"] = result.coordinate_steps;
+        out["proposal_draws_used"] = result.proposal_draws_used;
+        out["acceptance_draws_used"] = result.acceptance_draws_used;
         out["status"] = static_cast<int>(result.status);
         out["failure_row"] = result.failure.row;
         out["failure_edge"] = result.failure.edge;

@@ -1392,6 +1392,51 @@ class TestSampling:
         assert isinstance(captured[0], RVineTraversalPlan)
         assert captured[0].active_keys == vine._sample_active_edge_keys()
 
+    @pytest.mark.rvine_native
+    def test_unsupported_stepwise_edge_uses_compatibility_fallback(
+            self, monkeypatch):
+        from pyscarcopula.numerical import _cpp_gas_rvine
+
+        vine = _manual_suffix_stateful_rvine()
+        expected = np.full((7, vine.d), 0.314, dtype=np.float64)
+        calls = []
+
+        monkeypatch.setattr(
+            _cpp_gas_rvine, "sample", lambda *args, **kwargs: None)
+
+        def compatibility_fallback(*args, **kwargs):
+            calls.append((args, kwargs))
+            return expected
+
+        monkeypatch.setattr(
+            vine, "_sample_stepwise_stateful", compatibility_fallback)
+
+        actual = vine.sample(7, rng=np.random.default_rng(2026082701))
+
+        assert actual is expected
+        assert len(calls) == 1
+
+    @pytest.mark.rvine_native
+    def test_missing_gas_rvine_symbol_is_not_a_compatibility_fallback(
+            self, monkeypatch):
+        from pyscarcopula.numerical import _cpp_gas_rvine
+        from pyscarcopula.numerical._cpp_extension import CppUnsupported
+
+        monkeypatch.setattr(
+            _cpp_gas_rvine._cpp_extension,
+            "load",
+            lambda: SimpleNamespace(),
+        )
+
+        with pytest.raises(CppUnsupported, match="gas_rvine_sample"):
+            _cpp_gas_rvine.sample(
+                None,
+                1,
+                np.random.default_rng(2026082702),
+                (),
+                -1,
+            )
+
     @pytest.mark.parametrize('rotation', [90, 270])
     @pytest.mark.rvine_native
     def test_native_gas_sample_matches_python_for_transposed_rotated_mle_edge(

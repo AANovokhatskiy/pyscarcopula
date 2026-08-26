@@ -662,7 +662,7 @@ def density_parameter_layout(
 
 
 def static_rosenblatt_parameter_layout(pair_copulas, active_keys):
-    """Return scalar parameters or ``None`` for a Stage 5 fallback model."""
+    """Return scalar parameters or ``None`` for a dynamic fitted model."""
     from pyscarcopula._types import IndependentResult, MLEResult
 
     parameters = {}
@@ -688,6 +688,122 @@ def static_rosenblatt_parameter_layout(pair_copulas, active_keys):
         parameters[key] = float(path[0])
         sources[key] = "scalar"
     return parameters, sources
+
+
+def compile_dynamic_rosenblatt_edges(
+        module, pair_copulas, active_keys, n_rows, *, strategy_kwargs=None):
+    """Compile static/GAS/OU/Jacobi edges for one native traversal."""
+    from pyscarcopula._native import jacobi as jacobi_native
+    from pyscarcopula._types import (
+        GASResult,
+        IndependentResult,
+        LatentResult,
+        MLEResult,
+    )
+    from pyscarcopula.numerical import _cpp_gas, _cpp_scar_ou
+    from pyscarcopula.numerical._transition_methods import (
+        normalize_ou_transition_method,
+    )
+    from pyscarcopula.vine._edge_adapter import strategy_for_result
+
+    n_rows = int(n_rows)
+    strategy_kwargs = dict(strategy_kwargs or {})
+    scalar_parameters = []
+    native_edges = []
+    for raw_key in active_keys:
+        key = tuple(int(value) for value in raw_key)
+        edge = pair_copulas[key]
+        copula = edge_copula(edge)
+        result = edge_result(edge)
+
+        base = module.RVineEdgeSpec()
+        base.copula = compile_copula_spec(module, copula)
+        native = module.DynamicRvineEdge()
+        native.edge = base
+
+        if edge_is_independent(edge) or type(result) is IndependentResult:
+            base.parameter_free = True
+            base.parameter_source = module.RVineParameterSource.NONE
+            base.parameter_index = -1
+            native.edge = base
+            native.dynamics = module.DynamicRvineKind.STATIC
+        elif result is None or type(result) is MLEResult:
+            parameter = (
+                edge_param(edge)
+                if result is None else result.copula_param
+            )
+            if parameter is None:
+                raise CppUnsupported(
+                    f"static R-vine edge {key} has no fitted parameter")
+            path = np.asarray([parameter], dtype=np.float64)
+            _validate_parameter_domain(copula, path, key)
+            base.parameter_free = False
+            base.parameter_source = module.RVineParameterSource.SCALAR
+            base.parameter_index = len(scalar_parameters)
+            scalar_parameters.append(float(path[0]))
+            native.edge = base
+            native.dynamics = module.DynamicRvineKind.STATIC
+        elif type(result) is GASResult:
+            strategy = strategy_for_result(result, **strategy_kwargs)
+            params = result.params
+            base.parameter_free = False
+            base.parameter_source = module.RVineParameterSource.NONE
+            base.parameter_index = -1
+            native.edge = base
+            native.dynamics = module.DynamicRvineKind.GAS
+            native.gas_params = _cpp_gas._params(
+                module, params.omega, params.gamma, params.beta)
+            native.gas_config = _cpp_gas._config(
+                module, result.scaling, strategy._score_eps(result))
+        elif type(result) is LatentResult and result.method == "SCAR-TM-OU":
+            strategy = strategy_for_result(result, **strategy_kwargs)
+            params = result.params
+            cfg = strategy._auto_config(
+                strategy._grid_transition_method(),
+                kappa=params.kappa,
+                n_obs=n_rows,
+            )
+            method = normalize_ou_transition_method(cfg.transition_method)
+            _cpp_scar_ou.validate_cpp_config(
+                cfg, transition_method=method)
+            base.parameter_free = False
+            base.parameter_source = module.RVineParameterSource.NONE
+            base.parameter_index = -1
+            native.edge = base
+            native.dynamics = module.DynamicRvineKind.SCAR_OU
+            native.ou_params = _cpp_scar_ou._params(
+                module, params.kappa, params.mu, params.nu)
+            native.ou_config = _cpp_scar_ou._config(module, cfg)
+            native.ou_method = method
+        elif (
+                type(result) is LatentResult
+                and result.method == "SCAR-TM-JACOBI"):
+            strategy = strategy_for_result(result, **strategy_kwargs)
+            params = result.params
+            base.parameter_free = False
+            base.parameter_source = module.RVineParameterSource.NONE
+            base.parameter_index = -1
+            native.edge = base
+            native.dynamics = module.DynamicRvineKind.SCAR_JACOBI
+            native.jacobi_params = jacobi_native._params(
+                params.kappa, params.m, params.xi)
+            native.jacobi_config = jacobi_native._evaluator_config(
+                module,
+                n_obs=n_rows,
+                **strategy._evaluator_kwargs(),
+            )
+        else:
+            raise CppUnsupported(
+                "native R-vine Rosenblatt traversal does not support edge "
+                f"{key} with result type {type(result).__name__}")
+        native_edges.append(native)
+
+    return native_edges, RVineParameterPack(
+        scalar_parameters=np.ascontiguousarray(
+            scalar_parameters, dtype=np.float64),
+        row_parameters=np.empty((n_rows, 0), dtype=np.float64),
+        n_rows=n_rows,
+    )
 
 
 def _conditional_given_values(dimension, given, expected_variables):
@@ -1030,6 +1146,38 @@ def _execute_rosenblatt(
     return np.ascontiguousarray(residuals)
 
 
+def _execute_dynamic_rosenblatt(
+        module, native_plan, native_edges, parameters, observations,
+        n_threads):
+    """Execute one native traversal containing dynamic edge evaluators."""
+    result = module.dynamic_rvine_rosenblatt_transform(
+        native_plan,
+        list(native_edges),
+        parameters.scalar_parameters,
+        parameters.row_parameters,
+        observations,
+        int(n_threads),
+    )
+    raise_for_status(result, "dynamic R-vine Rosenblatt transform")
+    n_rows, dimension = observations.shape
+    if (
+            int(result["n_rows"]) != n_rows
+            or int(result["dimension"]) != dimension):
+        raise CppError(
+            "C++ dynamic R-vine Rosenblatt transform returned inconsistent "
+            "dimensions")
+    residuals = np.asarray(result["residuals"], dtype=np.float64)
+    if residuals.size != n_rows * dimension:
+        raise CppError(
+            "C++ dynamic R-vine Rosenblatt transform returned an invalid "
+            "buffer")
+    residuals = residuals.reshape(n_rows, dimension)
+    if not np.all(np.isfinite(residuals)):
+        raise CppError(
+            "C++ dynamic R-vine Rosenblatt transform returned invalid values")
+    return np.ascontiguousarray(residuals)
+
+
 def rosenblatt(
         module,
         pair_copulas,
@@ -1046,8 +1194,9 @@ def rosenblatt(
         native_plan=None,
         native_edges=None,
         parameter_pack=None,
+        dynamic_strategy_kwargs=None,
         n_threads=1):
-    """Execute the scalar-only static R-vine Rosenblatt traversal."""
+    """Execute static or dynamic R-vine Rosenblatt in the native runtime."""
     if not isinstance(n_threads, (int, np.integer)) or int(n_threads) <= 0:
         raise ValueError(
             "R-vine Rosenblatt n_threads must be a positive integer")
@@ -1058,26 +1207,48 @@ def rosenblatt(
         tuple(tuple(int(value) for value in key) for key in active_keys)
     )
     if not native_edges_supported(pair_copulas, active_keys):
-        return None
+        raise CppUnsupported(
+            "native R-vine Rosenblatt requires exact built-in edge copulas")
+    prepared_observations = _rvine_observations(
+        observations, dimension, "Rosenblatt")
+    n_rows = len(prepared_observations)
     if parameter_paths is None or parameter_sources is None:
         layout = static_rosenblatt_parameter_layout(
             pair_copulas, active_keys)
         if layout is None:
-            return None
+            dynamic_edges, dynamic_parameters = (
+                compile_dynamic_rosenblatt_edges(
+                    module,
+                    pair_copulas,
+                    active_keys,
+                    n_rows,
+                    strategy_kwargs=dynamic_strategy_kwargs,
+                )
+            )
+            residual_node_keys = (
+                rosenblatt_residual_node_keys(matrix)
+                if residual_node_keys is None else tuple(residual_node_keys)
+            )
+            plan = (
+                compile_density_plan(
+                    module,
+                    dimension,
+                    trees,
+                    edge_map,
+                    active_keys,
+                    residual_node_keys=residual_node_keys,
+                )
+                if native_plan is None else native_plan
+            )
+            return _execute_dynamic_rosenblatt(
+                module,
+                plan,
+                dynamic_edges,
+                dynamic_parameters,
+                prepared_observations,
+                int(n_threads),
+            )
         parameter_paths, parameter_sources = layout
-    scalar_sources = {
-        "scalar",
-        "SCALAR",
-        module.RVineParameterSource.SCALAR,
-    }
-    if any(
-            source not in scalar_sources
-            for source in parameter_sources.values()):
-        return None
-
-    prepared_observations = _rvine_observations(
-        observations, dimension, "Rosenblatt")
-    n_rows = len(prepared_observations)
     if parameter_pack is None:
         try:
             edges, parameters = compile_edge_specs(
@@ -1090,7 +1261,7 @@ def rosenblatt(
                 native_edges=native_edges,
             )
         except CppUnsupported:
-            return None
+            raise
     else:
         if native_edges is None:
             raise ValueError(
@@ -1613,6 +1784,14 @@ def mcmc(
                 or int(result["coordinate_steps"]) != count):
             raise CppError(
                 "C++ R-vine MCMC returned inconsistent dimensions")
+        proposal_draws_used = int(result["proposal_draws_used"])
+        acceptance_draws_used = int(result["acceptance_draws_used"])
+        expected_draws_used = count * n
+        if (
+                proposal_draws_used != expected_draws_used
+                or acceptance_draws_used != expected_draws_used):
+            raise CppError(
+                "C++ R-vine MCMC returned inconsistent draw accounting")
         state = np.asarray(result["state"], dtype=np.float64)
         log_pdf = np.asarray(result["log_pdf"], dtype=np.float64)
         if state.size != n * dimension or log_pdf.shape != (n,):
@@ -1638,7 +1817,14 @@ def mcmc(
         for index, variable in enumerate(free_vars):
             proposed[variable] += int(chunk_proposed[index])
             accepted[variable] += int(chunk_accepted[index])
-        offset += count
+        # The native result, rather than the requested chunk size, advances
+        # the deterministic proposal stream.  The zero-row case has no draw
+        # values, so its explicit coordinate-step count remains authoritative.
+        draws_used_steps = (
+            int(result["coordinate_steps"])
+            if n == 0 else proposal_draws_used // n
+        )
+        offset += draws_used_steps
 
     return clip_pseudo_observations(current), _mcmc_diagnostics(
         free_vars,

@@ -1641,6 +1641,88 @@ def check_jacobi_sampling_ownership(root: Path) -> list[Violation]:
     return violations
 
 
+def check_vine_native_boundary(root: Path) -> list[Violation]:
+    """Keep supported Stage 8.4 built-ins on an unselectable native path."""
+    rule = "vine-native-boundary"
+    violations = []
+    production_callers = (
+        root / "pyscarcopula" / "vine" / "vine.py",
+        root / "pyscarcopula" / "stattests.py",
+    )
+    forbidden_dispatch = (
+        "dispatch_rvine_backend",
+        "_rvine_backend",
+        "_RVINE_BACKEND_ENV",
+        "python_executor",
+        "native_strict",
+    )
+    for path in production_callers:
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        for marker in forbidden_dispatch:
+            index = text.find(marker)
+            if index >= 0:
+                violations.append(Violation(
+                    rule,
+                    path,
+                    "supported production R-vine execution must not select "
+                    "a Python backend: " + marker,
+                    text.count("\n", 0, index) + 1,
+                ))
+
+    adapter = root / "pyscarcopula" / "numerical" / "_cpp_rvine.py"
+    if adapter.is_file():
+        text = adapter.read_text(encoding="utf-8")
+        for marker in (
+                "compile_dynamic_rosenblatt_edges(",
+                "DynamicRvineKind.GAS",
+                "DynamicRvineKind.SCAR_OU",
+                "DynamicRvineKind.SCAR_JACOBI",
+                "module.dynamic_rvine_rosenblatt_transform(",
+                'result["proposal_draws_used"]',
+                'result["acceptance_draws_used"]'):
+            if marker not in text:
+                violations.append(Violation(
+                    rule,
+                    adapter,
+                    "native R-vine adapter is missing Stage 8.4 contract: "
+                    + marker,
+                ))
+
+        cpp = root / "pyscarcopula" / "_cpp"
+        composition_files = {
+            cpp / "include" / "scar" / "dynamic_rvine.hpp": (
+                "DynamicRvineEdge",
+                "dynamic_rvine_rosenblatt_transform("),
+            cpp / "src" / "vine_dynamic" / "rosenblatt.cpp": (
+                "GasEvaluator",
+                "PreparedScarOuEvaluator",
+                "PreparedScarJacobiEvaluator"),
+            cpp / "include" / "scar" / "vine" / "result.hpp": (
+                "proposal_draws_used",
+                "acceptance_draws_used"),
+        }
+        for path, markers in composition_files.items():
+            if not path.is_file():
+                violations.append(Violation(
+                    rule,
+                    path,
+                    "Stage 8.4 native R-vine contract is missing",
+                ))
+                continue
+            source = path.read_text(encoding="utf-8")
+            for marker in markers:
+                if marker not in source:
+                    violations.append(Violation(
+                        rule,
+                        path,
+                        "Stage 8.4 native R-vine contract is missing: "
+                        + marker,
+                    ))
+    return violations
+
+
 def check_jacobi_python_cleanup(root: Path) -> list[Violation]:
     """Keep the completed Jacobi boundary free of Python/Numba kernels."""
     rule = "jacobi-python-cleanup"
@@ -1832,6 +1914,7 @@ def check_repository(root: Path) -> list[Violation]:
         check_public_cpp_api,
         check_thin_bindings,
         check_public_header_cycles,
+        check_vine_native_boundary,
         check_jacobi_sampling_ownership,
         check_jacobi_python_cleanup,
         check_jacobi_strategy_facade,

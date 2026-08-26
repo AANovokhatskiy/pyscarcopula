@@ -1017,7 +1017,10 @@ ConditionalSampleResult conditional_sample(
     if (rows == 0) {
         return out;
     }
-    constexpr std::size_t conditional_max_block_rows = 1024;
+    // Keep the node/quantile/validity planes inside ordinary CPU caches.  A
+    // 1024-row block makes medium DAG programs memory-bandwidth bound even
+    // though every opcode only needs two input planes and one or two outputs.
+    constexpr std::size_t conditional_max_block_rows = 256;
     constexpr std::size_t conditional_workspace_budget =
         64U * 1024U * 1024U;
     constexpr std::size_t bytes_per_node_value =
