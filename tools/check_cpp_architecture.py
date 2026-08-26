@@ -1641,6 +1641,86 @@ def check_jacobi_sampling_ownership(root: Path) -> list[Violation]:
     return violations
 
 
+def check_jacobi_python_cleanup(root: Path) -> list[Violation]:
+    """Keep the completed Jacobi boundary free of Python/Numba kernels."""
+    rule = "jacobi-python-cleanup"
+    numerical = root / "pyscarcopula" / "numerical"
+    paths = tuple(sorted(numerical.glob("jacobi*.py")))
+    forbidden_names = {
+        "_add_interpolated_mass",
+        "_build_sparse_fixed_kernel",
+        "_build_sparse_local_kernel",
+        "_iter_coeff_filter",
+        "_iter_matrix_filter",
+        "_iter_sparse_filter",
+        "_lamperti_chunk_kernel",
+        "_matrix_setup_fd_derivatives",
+        "_mh_correct_sparse_transition",
+        "_ipfp_correct_sparse_transition",
+        "_sample_sparse_path_kernel",
+        "_sparse_filter_loglik_kernel",
+        "_sparse_filter_setup",
+        "_sparse_neg_loglik_grad_kernel",
+        "_sparse_to_dense",
+    }
+    forbidden_numpy_calls = {
+        "arcsin",
+        "cos",
+        "cumsum",
+        "exp",
+        "fromiter",
+        "log",
+        "searchsorted",
+        "sin",
+        "sqrt",
+    }
+    violations = []
+    for path in paths:
+        text = path.read_text(encoding="utf-8")
+        tree = ast.parse(text, filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                modules = (
+                    [alias.name for alias in node.names]
+                    if isinstance(node, ast.Import)
+                    else [node.module or ""]
+                )
+                for module in modules:
+                    if (
+                            module in {"numba", "scipy"}
+                            or module.startswith(("numba.", "scipy."))):
+                        violations.append(Violation(
+                            rule,
+                            path,
+                            "production Jacobi modules must not import "
+                            "Python numerical kernels",
+                            node.lineno,
+                        ))
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if node.name in forbidden_names:
+                    violations.append(Violation(
+                        rule,
+                        path,
+                        "retired Python Jacobi kernel returned: " + node.name,
+                        node.lineno,
+                    ))
+            elif isinstance(node, ast.Call):
+                function = node.func
+                if (
+                        isinstance(function, ast.Attribute)
+                        and isinstance(function.value, ast.Name)
+                        and function.value.id == "np"
+                        and function.attr in forbidden_numpy_calls):
+                    violations.append(Violation(
+                        rule,
+                        path,
+                        "Jacobi model formula must remain native: np."
+                        + function.attr,
+                        node.lineno,
+                    ))
+    return violations
+
+
 def check_jacobi_strategy_facade(root: Path) -> list[Violation]:
     """Keep Stage 8.3.6 model/state dispatch behind the native facade."""
     rule = "jacobi-native-strategy-facade"
@@ -1753,6 +1833,7 @@ def check_repository(root: Path) -> list[Violation]:
         check_thin_bindings,
         check_public_header_cycles,
         check_jacobi_sampling_ownership,
+        check_jacobi_python_cleanup,
         check_jacobi_strategy_facade,
     )
     return [

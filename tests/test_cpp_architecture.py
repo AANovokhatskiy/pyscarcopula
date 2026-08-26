@@ -90,6 +90,28 @@ def test_jacobi_python_sampling_kernel_is_rejected(tmp_path):
     assert "jacobi-native-sampling-ownership" in _rules(root)
 
 
+def test_jacobi_numba_kernel_is_rejected_after_cleanup(tmp_path):
+    root = _minimal_repository(tmp_path)
+    _write(
+        root,
+        "pyscarcopula/numerical/jacobi_sparse.py",
+        "from numba import njit\n\n@njit\ndef _sparse_to_dense():\n    pass\n",
+    )
+
+    assert "jacobi-python-cleanup" in _rules(root)
+
+
+def test_jacobi_numpy_model_formula_is_rejected_after_cleanup(tmp_path):
+    root = _minimal_repository(tmp_path)
+    _write(
+        root,
+        "pyscarcopula/numerical/jacobi_tm.py",
+        "import numpy as np\n\ndef transition(x):\n    return np.exp(-x)\n",
+    )
+
+    assert "jacobi-python-cleanup" in _rules(root)
+
+
 def test_jacobi_strategy_legacy_numerical_dispatch_is_rejected(tmp_path):
     root = _minimal_repository(tmp_path)
     _write(

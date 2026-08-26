@@ -971,6 +971,26 @@ void bind_jacobi(py::module_& m) {
           result = scar::jacobi_sparse_left_multiply(transition, vector); }
         return vector_to_dict(result);
     });
+    m.def("jacobi_sparse_to_dense", [](
+            py::array_t<std::int64_t,
+                py::array::c_style | py::array::forcecast> indices,
+            Float64Array probabilities,
+            py::array_t<std::int64_t,
+                py::array::c_style | py::array::forcecast> counts) {
+        const scar::JacobiSparseTransition transition =
+            sparse_transition_from_arrays(indices, probabilities, counts);
+        scar::JacobiVectorResult result;
+        { py::gil_scoped_release release;
+          result = scar::jacobi_sparse_to_dense(transition); }
+        py::dict output = status_dict(result);
+        output["values"] = result.is_ok()
+            ? matrix_to_array(
+                result.value,
+                static_cast<std::size_t>(transition.order),
+                static_cast<std::size_t>(transition.order))
+            : vector_to_array(result.value);
+        return output;
+    });
     m.def("jacobi_sparse_full_horizon_diagnostics", [](
             const scar::JacobiParams& params,
             Float64Array tau,

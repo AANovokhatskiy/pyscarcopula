@@ -30,6 +30,7 @@ def test_pybind_exports_typed_jacobi_transition_contract():
         "jacobi_select_sparse_order",
         "jacobi_sparse_full_horizon_diagnostics",
         "jacobi_sparse_left_multiply",
+        "jacobi_sparse_to_dense",
         "jacobi_transition_powers",
     }
     assert expected <= set(dir(module))
@@ -153,6 +154,15 @@ def test_sparse_corrections_and_matvec_execute_through_native(correction):
         np.testing.assert_allclose(propagated, weights, atol=2e-13)
 
 
+def test_native_sparse_to_dense_rejects_invalid_rows_safely():
+    with pytest.raises(ValueError, match="sparse transition dense"):
+        jacobi_native.sparse_to_dense(
+            np.array([[0]], dtype=np.int64),
+            np.array([[1.0]], dtype=np.float64),
+            np.array([2], dtype=np.int64),
+        )
+
+
 def test_native_fixed_sparse_derivatives_match_dense():
     dense = jacobi_tm.jacobi_fixed_grid_transition_matrix(
         1.2,
@@ -209,6 +219,9 @@ def test_production_python_has_no_stage833_transition_kernels():
     assert "jacobi_native.PreparedScarJacobiEvaluator" in dense
     assert "jacobi_native.sparse_transition" in sparse
     assert "jacobi_native.select_sparse_order" in sparse
+    assert "numba" not in sparse
+    assert "def _sparse_to_dense" not in sparse
+    assert "jacobi_native.sparse_to_dense" in sparse
 
 
 def test_native_transition_memory_budget_fails_before_result_allocation():

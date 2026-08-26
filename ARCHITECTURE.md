@@ -27,7 +27,7 @@ pyscarcopula/
 |   |-- copula_native.py, multivariate_native.py
 |   |-- static_likelihood.py, gas_filter.py
 |   |-- _cpp_scar_ou.py, _cpp_gas.py, _cpp_gas_rvine.py
-|   `-- jacobi_tm.py         # Jacobi orchestration over the native domain core
+|   `-- jacobi_*.py         # Compatibility facades over native Jacobi math
 |-- vine/
 |   |-- vine.py               # Canonical generic VineCopula runtime
 |   |-- rvine.py              # RVineCopula compatibility module alias
@@ -157,17 +157,17 @@ run an eigendecomposition or reconstruct the projected matrix. The numerical
 baseline was explicitly refrozen when this owner changed; LAPACK, OpenBLAS,
 and other external linear-algebra runtimes are not build dependencies.
 
-The SCAR-TM-Jacobi domain foundation is also native C++17. Typed parameter,
-configuration, result, and status objects own raw/physical transforms,
-stationary Beta shapes and derivatives, checked workspace arithmetic,
-Lamperti transforms and boundary rules, special functions, Gauss-Jacobi and
-Gauss-Hermite rules, and the normalized Jacobi basis recurrence. The
-Golub--Welsch rules reuse the dependency-free symmetric eigensolver family;
-the workspace contract charges the maximum Jacobi/Hermite eigenvector peak
-not already covered by retained dense transition or gradient matrices.
-Production Python and SciPy do not duplicate these formulas. Transition,
-filter/evaluator, and fixed-draw sampling ownership moves in the subsequent
-Stage 8.3 slices.
+The complete SCAR-TM-Jacobi numerical boundary is native C++17. Typed
+parameter, configuration, result, and status objects own raw/physical
+transforms, stationary Beta shapes and derivatives, checked workspace
+arithmetic, transition construction, adaptive backend selection,
+filtering/smoothing, objective/gradient, residual/state operations, Lamperti
+transforms and fixed-draw sampling. Gauss-Jacobi/Gauss-Hermite construction and
+the normalized Jacobi basis reuse the dependency-free symmetric eigensolver
+family. The workspace contract charges the maximum Jacobi/Hermite eigenvector
+peak not already covered by retained dense transition or gradient matrices.
+Production Python and SciPy do not duplicate these formulas; Python owns fit,
+RNG, chunk, and result orchestration only.
 
 The extension build has one canonical source manifest at
 `pyscarcopula/_cpp/build_support/sources.py`. `SCAR_COMPUTE_SOURCES` contains
@@ -271,8 +271,8 @@ Python remains responsible for:
 - optimizer orchestration and result construction;
 - correlation parameterization and chain rules around native evaluators;
 - RNG and generation of fixed draws used by native conditional sampling;
-- Jacobi transition, filtering, and sampling orchestration over the native
-  domain core;
+- Jacobi fit, fixed-draw generation, chunk, and result orchestration around the
+  mandatory native evaluator and sampling operations;
 - goodness-of-fit and contribution analytics.
 
 For dense static and GAS Student GoF, Python owns dispatch and the `df`

@@ -162,6 +162,11 @@ JacobiVectorResult jacobi_sparse_left_multiply(
     const JacobiSparseTransition& transition,
     const std::vector<double>& values);
 
+/// Materialize a validated sparse transition as a row-major dense matrix.
+/// This diagnostic conversion remains inside the native numerical boundary.
+JacobiVectorResult jacobi_sparse_to_dense(
+    const JacobiSparseTransition& transition);
+
 JacobiHorizonResult jacobi_sparse_full_horizon_diagnostics(
     const JacobiParams& params,
     const std::vector<double>& tau,

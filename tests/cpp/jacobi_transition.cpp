@@ -31,24 +31,6 @@ scar::JacobiTransitionConfig config(
     return value;
 }
 
-std::vector<double> sparse_to_dense(
-    const scar::JacobiSparseTransition& transition) {
-    const std::size_t order = static_cast<std::size_t>(transition.order);
-    const std::size_t width = static_cast<std::size_t>(transition.max_width);
-    std::vector<double> dense(order * order, 0.0);
-    for (std::size_t row = 0; row < order; ++row) {
-        const std::size_t count = static_cast<std::size_t>(
-            transition.counts[row]);
-        for (std::size_t slot = 0; slot < count; ++slot) {
-            const std::size_t offset = row * width + slot;
-            dense[row * order
-                + static_cast<std::size_t>(transition.indices[offset])] =
-                transition.probabilities[offset];
-        }
-    }
-    return dense;
-}
-
 }  // namespace
 
 int run_jacobi_transition_tests() {
@@ -188,8 +170,12 @@ int run_jacobi_transition_tests() {
         || local_sparse.value.diagnostics.nnz > 480) {
         return 5;
     }
-    const std::vector<double> reconstructed =
-        sparse_to_dense(local_sparse.value);
+    const scar::JacobiVectorResult reconstructed_result =
+        scar::jacobi_sparse_to_dense(local_sparse.value);
+    if (!reconstructed_result.is_ok()) {
+        return 25;
+    }
+    const std::vector<double>& reconstructed = reconstructed_result.value;
     for (std::size_t index = 0; index < reconstructed.size(); ++index) {
         if (!close(
                 reconstructed[index],
@@ -204,6 +190,11 @@ int run_jacobi_transition_tests() {
     if (!propagated.is_ok()
         || propagated.value.size() != local_sparse.value.weights.size()) {
         return 7;
+    }
+    scar::JacobiSparseTransition invalid_sparse = local_sparse.value;
+    invalid_sparse.counts[0] = invalid_sparse.max_width + 1;
+    if (scar::jacobi_sparse_to_dense(invalid_sparse).is_ok()) {
+        return 26;
     }
 
     scar::JacobiTransitionConfig fixed_dense_config = config(

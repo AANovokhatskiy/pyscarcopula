@@ -1308,6 +1308,17 @@ def sparse_left_multiply(indices, probabilities, counts, values):
     return np.asarray(result["values"], dtype=np.float64)
 
 
+def sparse_to_dense(indices, probabilities, counts):
+    """Materialize sparse transition rows through the native boundary."""
+    result = load().jacobi_sparse_to_dense(
+        np.asarray(indices, dtype=np.int64),
+        np.asarray(probabilities, dtype=np.float64),
+        np.asarray(counts, dtype=np.int64),
+    )
+    _raise(result, "sparse transition dense materialization")
+    return np.asarray(result["values"], dtype=np.float64)
+
+
 def sparse_full_horizon_diagnostics(
         kappa, m, xi, tau, weights, indices, probabilities, counts, steps):
     result = load().jacobi_sparse_full_horizon_diagnostics(
@@ -1420,6 +1431,7 @@ __all__ = [
     "select_sparse_order",
     "sparse_full_horizon_diagnostics",
     "sparse_left_multiply",
+    "sparse_to_dense",
     "sparse_transition",
     "transition_powers",
     "physical_to_raw",

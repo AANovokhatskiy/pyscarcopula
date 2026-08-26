@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
-from numba import njit
 
 from pyscarcopula._native import jacobi as jacobi_native
 from pyscarcopula.numerical._arrays import (
@@ -103,18 +102,8 @@ class SparseJacobiTransition:
             name="dense Jacobi transition diagnostic",
             memory_budget_bytes=memory_budget_bytes,
         )
-        return _sparse_to_dense(
+        return jacobi_native.sparse_to_dense(
             self.indices, self.probabilities, self.counts)
-
-
-@njit(cache=True, nogil=True)
-def _sparse_to_dense(indices, probabilities, counts):
-    n_rows = indices.shape[0]
-    dense = np.zeros((n_rows, n_rows), dtype=np.float64)
-    for row in range(n_rows):
-        for slot in range(counts[row]):
-            dense[row, indices[row, slot]] = probabilities[row, slot]
-    return dense
 
 
 def _validate_sparse_workspace(

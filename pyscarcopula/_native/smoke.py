@@ -1,10 +1,14 @@
-"""Smoke test for the bundled native extension and GAS evaluator."""
+"""Smoke test for the bundled native dynamic-model evaluators."""
 
 from __future__ import annotations
+
+import argparse
+import json
 
 import numpy as np
 
 from pyscarcopula._native import _extension
+from pyscarcopula._native.threads import validate_n_threads
 
 
 def parallel_runtime_child_probe(queue, n_threads: int) -> None:
@@ -14,12 +18,16 @@ def parallel_runtime_child_probe(queue, n_threads: int) -> None:
     queue.put(dict(module._parallel_runtime_info()))
 
 
-def run_native_smoke() -> None:
+def run_native_smoke(n_threads: int = 1) -> dict:
+    """Exercise native dynamic models and the requested parallel runtime."""
     from pyscarcopula.api import fit
     from pyscarcopula.copula.elliptical import BivariateGaussianCopula
-    from pyscarcopula._native import gas
+    from pyscarcopula._native import gas, jacobi
 
-    _extension.load()
+    n_threads = validate_n_threads(n_threads)
+    module = _extension.load()
+    parallel = dict(module._parallel_for_blocks_probe(
+        max(32, 4 * n_threads), 1, n_threads))
     if not gas.available():
         raise RuntimeError("pyscarcopula native GAS evaluator is unavailable")
 
@@ -42,6 +50,58 @@ def run_native_smoke() -> None:
     if not np.isfinite(result.log_likelihood):
         raise RuntimeError("native GAS fit returned non-finite logL")
 
+    evaluator = jacobi.PreparedScarJacobiEvaluator(
+        u,
+        BivariateGaussianCopula(),
+        basis_order=4,
+        quad_order=16,
+        gh_order=3,
+        transition_method="local_fixed",
+    )
+    objective, gradient = evaluator.neg_loglik_with_grad(1.2, 0.4, 0.25)
+    state = evaluator.filter(1.2, 0.4, 0.25)
+    residual = evaluator.rosenblatt(1.2, 0.4, 0.25)
+    sampled, diagnostics = jacobi.sample_grid_trajectory_fixed_draws(
+        1.2,
+        0.4,
+        0.25,
+        np.array([0.13, 0.37, 0.61, 0.89], dtype=np.float64),
+        basis_order=4,
+        quad_order=16,
+        gh_order=3,
+        method="local_fixed",
+    )
+    if not np.isfinite(objective) or not np.all(np.isfinite(gradient)):
+        raise RuntimeError("native Jacobi evaluator returned non-finite output")
+    if state["smoothed"].shape != (len(u), 16):
+        raise RuntimeError("native Jacobi smoother returned an invalid shape")
+    if residual.shape != u.shape or sampled.shape != (len(u),):
+        raise RuntimeError("native Jacobi residual/sampler shape is invalid")
+    if diagnostics["draws_used"] != len(u):
+        raise RuntimeError("native Jacobi fixed-draw contract was violated")
+    return {
+        "n_threads_requested": n_threads,
+        "parallel_runtime": dict(parallel["runtime"]),
+        "parallel_block_count": len(parallel["block_ids"]),
+        "jacobi": {
+            "objective": float(objective),
+            "gradient_size": int(np.asarray(gradient).size),
+            "state_rows": int(state["smoothed"].shape[0]),
+            "draws_used": int(diagnostics["draws_used"]),
+        },
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--n-threads", type=int, default=1)
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args(argv)
+    result = run_native_smoke(args.n_threads)
+    if args.json:
+        print(json.dumps(result, sort_keys=True))
+    return 0
+
 
 if __name__ == "__main__":
-    run_native_smoke()
+    raise SystemExit(main())

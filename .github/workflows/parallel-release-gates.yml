@@ -194,6 +194,11 @@ jobs:
             tests/test_external_parallel_fit.py \
             tests/test_equicorr_prepared.py \
             tests/test_linalg_backend.py \
+            tests/test_native_jacobi_domain.py \
+            tests/test_native_jacobi_transition.py \
+            tests/test_native_jacobi_evaluator.py \
+            tests/test_native_jacobi_sampling.py \
+            tests/test_native_jacobi_operations.py \
             -m "not benchmark and not sanitizer_numerical"
       - name: Write sanitizer metadata
         env:
@@ -242,6 +247,8 @@ jobs:
             tests/test_sampling_parallelization.py \
             tests/test_external_parallel_fit.py \
             tests/test_equicorr_prepared.py \
+            tests/test_native_jacobi_evaluator.py \
+            tests/test_native_jacobi_sampling.py \
             -m "not benchmark and not sanitizer_numerical and not tsan_incompatible"
       - name: Write sanitizer metadata
         env:

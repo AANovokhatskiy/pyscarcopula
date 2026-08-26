@@ -1636,6 +1636,33 @@ JacobiVectorResult jacobi_sparse_left_multiply(
     }
 }
 
+JacobiVectorResult jacobi_sparse_to_dense(
+    const JacobiSparseTransition& transition) {
+    if (!validate_sparse_transition(transition)) {
+        return failure<JacobiVectorResult>(Status::InvalidParameter);
+    }
+    try {
+        const std::size_t order = static_cast<std::size_t>(transition.order);
+        const std::size_t width = static_cast<std::size_t>(
+            transition.max_width);
+        std::vector<double> dense(order * order, 0.0);
+        for (std::size_t row = 0; row < order; ++row) {
+            const std::size_t count = static_cast<std::size_t>(
+                transition.counts[row]);
+            for (std::size_t slot = 0; slot < count; ++slot) {
+                const std::size_t sparse_offset = row * width + slot;
+                const std::size_t column = static_cast<std::size_t>(
+                    transition.indices[sparse_offset]);
+                dense[row * order + column] =
+                    transition.probabilities[sparse_offset];
+            }
+        }
+        return success(std::move(dense));
+    } catch (const std::bad_alloc&) {
+        return failure<JacobiVectorResult>(Status::InvalidSize);
+    }
+}
+
 JacobiHorizonResult jacobi_sparse_full_horizon_diagnostics(
     const JacobiParams& params,
     const std::vector<double>& tau,
