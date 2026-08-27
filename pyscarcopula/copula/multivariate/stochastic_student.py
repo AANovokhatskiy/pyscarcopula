@@ -33,7 +33,6 @@ from typing import Any
 import numpy as np
 from numpy.typing import ArrayLike
 
-from pyscarcopula.copula.base import CopulaCapabilities
 from pyscarcopula.copula.multivariate.base import (
     MultivariateCopula,
     model_state_locked,
@@ -189,14 +188,6 @@ class StochasticStudentCopula(MultivariateCopula):
     _scar_log_stationary_scale_optimization = True
     _scar_stationary_scale_bounds = (0.001, 10_000.0)
     _supports_scar_mixture_h = False
-    _capabilities = CopulaCapabilities(
-        supports_gas=True,
-        supports_scar_ou=True,
-        supports_latent_grid=True,
-        supports_conditional_sampling=True,
-        has_dynamic_scalar_parameter=True,
-    )
-
     def __init__(
             self,
             d: int,

@@ -438,7 +438,7 @@ def _breaking_changes() -> dict[str, Any]:
         "target_release":"next explicitly documented breaking release after native adapters are complete",
         "public_imports_and_protocols":[
             {"surface":"Subclassing CopulaBase/BivariateCopula as a user-defined numerical copula","paths":["pyscarcopula/copula/base.py","pyscarcopula/copula/_protocol.py"],"replacement":"Implement and register a native C++ model"},
-            {"surface":"CopulaCapabilities flags as a custom-backend protocol","paths":["pyscarcopula/copula/base.py","pyscarcopula/strategy/_base.py","pyscarcopula/vine/_selection.py"],"replacement":"Native descriptor capability query; flags may remain only for user-level strategy selection"},
+            {"surface":"CopulaCapabilities flags as a custom-backend protocol","paths":["pyscarcopula/copula/base.py","pyscarcopula/strategy/_base.py","pyscarcopula/vine/_selection.py"],"replacement":"Native descriptor capability query; public flags are removed"},
             {"surface":"__pyscarcopula_native_rvine__ subclass opt-in","paths":["pyscarcopula/numerical/_cpp_rvine.py"],"replacement":"Exact registered native model descriptor"}
         ],
         "backend_selectors":[

@@ -6,9 +6,9 @@ import numpy as np
 import pytest
 from scipy.stats import norm
 
+import pyscarcopula.io as persistence
 from pyscarcopula import (
     BivariateGaussianCopula,
-    CVineCopula,
     GaussianCopula,
     GumbelCopula,
     RVineCopula,
@@ -24,6 +24,28 @@ from pyscarcopula._types import (
 )
 from pyscarcopula.api import log_likelihood, predict, predictive_mean, sample
 from pyscarcopula.io import _from_jsonable, _to_jsonable
+
+
+def test_removed_cvine_artifact_is_rejected_before_class_import(
+        tmp_path, monkeypatch):
+    artifact = tmp_path / "removed-cvine.json"
+    artifact.write_text(json.dumps({
+        "format": persistence.MODEL_FORMAT,
+        "class": "pyscarcopula.vine.cvine.CVineCopula",
+        "include_data": False,
+        "state": {"class": "pyscarcopula.vine.cvine.CVineCopula"},
+    }), encoding="utf-8")
+
+    imported = []
+
+    def fail_import(name):
+        imported.append(name)
+        raise AssertionError("removed artifact must fail before import")
+
+    monkeypatch.setattr(persistence.importlib, "import_module", fail_import)
+    with pytest.raises(ValueError, match="no migration execution path"):
+        persistence.load_model(artifact)
+    assert imported == []
 
 
 def test_bivariate_save_load_roundtrip(tmp_path, random_u2):
@@ -315,8 +337,8 @@ def test_top_level_load_rejects_wrong_expected_type(tmp_path, random_u2):
     path = tmp_path / "gumbel.json"
     cop.save(path)
 
-    with pytest.raises(TypeError, match="Expected CVineCopula"):
-        CVineCopula.load(path)
+    with pytest.raises(TypeError, match="Expected GaussianCopula"):
+        load_model(path, expected_type=GaussianCopula)
     assert isinstance(load_model(path), GumbelCopula)
 
 
@@ -333,31 +355,6 @@ def test_gaussian_copula_save_load_roundtrip(tmp_path):
     np.testing.assert_allclose(
         loaded.sample(5, rng=np.random.default_rng(7)),
         cop.sample(5, rng=np.random.default_rng(7)),
-    )
-
-
-def test_cvine_save_load_roundtrip(tmp_path):
-    u = pobs(np.random.default_rng(2).standard_normal((120, 4)))
-    vine = CVineCopula().fit(u, method="mle")
-
-    path = tmp_path / "cvine.json"
-    vine.save(path)
-    loaded = CVineCopula.load(path)
-
-    assert loaded.d == vine.d
-    assert loaded.method == vine.method
-    assert loaded.fit_result.log_likelihood == vine.fit_result.log_likelihood
-    assert len(loaded.edges) == len(vine.edges)
-    assert [
-        [type(edge.copula).__name__ for edge in level]
-        for level in loaded.edges
-    ] == [
-        [type(edge.copula).__name__ for edge in level]
-        for level in vine.edges
-    ]
-    np.testing.assert_allclose(
-        loaded.sample(5, rng=np.random.default_rng(3)),
-        vine.sample(5, rng=np.random.default_rng(3)),
     )
 
 

@@ -1170,6 +1170,23 @@ def test_stage85_retired_surfaces_produce_clear_rule(
     assert "stage85-mandatory-dispatch" in _rules(root)
 
 
+@pytest.mark.parametrize(
+    ("relative", "content"),
+    [
+        ("pyscarcopula/copula/_protocol.py", "class CopulaProtocol: pass\n"),
+        ("pyscarcopula/vine/cvine.py", "class CVineCopula: pass\n"),
+        ("pyscarcopula/vine/_conditional_cvine.py", "def sample(): pass\n"),
+        ("pyscarcopula/numerical/tm_grid.py", "class TMGrid: pass\n"),
+        ("pyscarcopula/__init__.py", "CopulaCapabilities = object\n"),
+    ],
+)
+def test_stage86_removed_surfaces_produce_clear_rule(
+        tmp_path, relative, content):
+    root = _minimal_repository(tmp_path)
+    _write(root, relative, content)
+    assert "stage86-breaking-cleanup" in _rules(root)
+
+
 def test_source_manifest_detects_unlisted_cpp(tmp_path):
     root = _minimal_repository(tmp_path)
     _write(root, "pyscarcopula/_cpp/src/gas/unlisted.cpp")

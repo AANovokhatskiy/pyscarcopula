@@ -7,12 +7,11 @@ import json
 import numpy as np
 import pytest
 
-from pyscarcopula import CVineCopula, GumbelCopula, VineCopula, load_model
+from pyscarcopula import GumbelCopula, VineCopula, load_model
 from pyscarcopula._native import _extension
 from pyscarcopula._native.registry import STRATEGY_REQUIREMENTS
 from pyscarcopula._types import LatentResult, NumericalConfig, ou_params
 from pyscarcopula.api import fit
-from pyscarcopula.copula.base import CopulaCapabilities
 from pyscarcopula.io import MODEL_FORMAT, _from_jsonable, _to_jsonable
 from pyscarcopula.strategy._base import (
     ensure_strategy_supported,
@@ -50,9 +49,6 @@ def test_removed_modules_and_public_fields_do_not_exist():
     assert importlib.util.find_spec("pyscarcopula.numerical.mc_samplers") is None
     assert importlib.util.find_spec("pyscarcopula.numerical.mc_native") is None
 
-    assert "supports_scar_mc" not in {
-        field.name for field in fields(CopulaCapabilities)
-    }
     assert {"default_n_tr", "default_M_iterations"}.isdisjoint(
         field.name for field in fields(NumericalConfig)
     )
@@ -76,17 +72,14 @@ def test_removed_aliases_are_rejected_without_strategy_fallback(method):
 
 
 @pytest.mark.parametrize("method", ("scar-p-ou", "scar_m_ou"))
-@pytest.mark.parametrize("factory", (
-    lambda: VineCopula.cvine(d=3, order=[0, 1, 2]),
-    CVineCopula,
-))
-def test_vines_reject_removed_methods_before_edge_selection(factory, method):
+def test_vines_reject_removed_methods_before_edge_selection(method):
     observations = np.random.default_rng(20260826).uniform(
         0.1, 0.9, size=(12, 3)
     )
 
     with pytest.raises(ValueError, match="Unknown method"):
-        factory().fit(observations, method=method)
+        VineCopula.cvine(d=3, order=[0, 1, 2]).fit(
+            observations, method=method)
 
 
 @pytest.mark.parametrize("method", ("SCAR-P-OU", "scar_m_ou"))

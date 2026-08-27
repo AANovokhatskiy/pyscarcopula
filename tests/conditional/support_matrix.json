@@ -368,31 +368,6 @@
         ]
       },
       "notes": "RVineCopula is an alias of this runtime. Diagnostics distinguish suffix from dag_mcmc."
-    },
-    {
-      "id": "vine-legacy-cvine",
-      "class_module": "pyscarcopula",
-      "class_name": "CVineCopula",
-      "category": "vine_legacy",
-      "dimension": "d>=2_after_fit",
-      "conditional_entrypoints": ["predict", "api.predict"],
-      "exactness": "cvine_specific_prefix_and_general",
-      "methods": [
-        "MLE", "GAS", "SCAR-TM-OU", "SCAR-TM-JACOBI"
-      ],
-      "rotations": [],
-      "correlation_modes": [],
-      "factor_estimation_modes": [],
-      "structures": ["cvine"],
-      "oracles": ["conditional_mvn", "independent", "reference_cvine"],
-      "capability_flags": {},
-      "signatures": {
-        "predict": [
-          "n", "u", "rng", "given", "horizon",
-          "predictive_r_mode", "predict_config", "kwargs"
-        ]
-      },
-      "notes": "Legacy runtime intentionally has different conditional algorithms and diagnostics from VineCopula.cvine."
     }
   ],
   "unsupported_cases": [

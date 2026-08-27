@@ -6,13 +6,62 @@ import inspect
 import numpy as np
 import pytest
 
-from pyscarcopula import GumbelCopula
+import pyscarcopula
+from pyscarcopula import ClaytonCopula, GumbelCopula, VineCopula
+from pyscarcopula._native.errors import NativeUnsupported
 from pyscarcopula._types import LatentResult, ou_params
+from pyscarcopula.api import fit
 from pyscarcopula.copula.multivariate import StochasticStudentCopula
 from pyscarcopula.strategy.scar_jacobi import SCARJacobiStrategy
 from pyscarcopula.strategy.scar_tm import SCARTMStrategy
-from pyscarcopula.vine.cvine import CVineCopula
 from pyscarcopula.vine.rvine import RVineCopula
+
+
+REMOVED_STAGE86_MODULES = (
+    "pyscarcopula.copula._protocol",
+    "pyscarcopula.vine.cvine",
+    "pyscarcopula.vine._conditional_cvine",
+    "pyscarcopula.numerical.tm_grid",
+)
+REMOVED_STAGE86_NAMES = (
+    "CVineCopula",
+    "TMGrid",
+    "CopulaCapabilities",
+    "CopulaProtocol",
+    "CommonCopulaProtocol",
+    "BivariateCopulaProtocol",
+    "MultivariateCopulaProtocol",
+)
+
+
+def test_stage86_modules_and_public_names_are_physically_absent():
+    for module_name in REMOVED_STAGE86_MODULES:
+        assert importlib.util.find_spec(module_name) is None
+
+    for namespace in (
+            pyscarcopula,
+            pyscarcopula.copula,
+            pyscarcopula.numerical,
+            pyscarcopula.vine):
+        for name in REMOVED_STAGE86_NAMES:
+            assert not hasattr(namespace, name), (
+                f"{namespace.__name__}.{name} must not be an alias")
+
+
+def test_unknown_copula_subclass_is_rejected_before_callback_execution():
+    calls = []
+
+    class CallbackCopula(ClaytonCopula):
+        def pdf(self, *args, **kwargs):
+            calls.append("pdf")
+            return super().pdf(*args, **kwargs)
+
+    data = np.random.default_rng(86).uniform(0.01, 0.99, size=(20, 2))
+    with pytest.raises(NativeUnsupported, match="exact registered"):
+        fit(CallbackCopula(), data, method="mle")
+    with pytest.raises(NativeUnsupported, match="exact registered"):
+        VineCopula.cvine(2, candidates=[CallbackCopula])
+    assert calls == []
 
 
 def test_removed_numerical_facade_modules_are_absent():
@@ -49,11 +98,6 @@ def test_jacobi_transition_aliases_are_rejected(alias):
 def test_adaptive_spectral_basis_alias_is_rejected():
     with pytest.raises(ValueError, match="spectral_basis_order"):
         SCARTMStrategy(spectral_basis_order="adaptive")
-
-
-def test_cvine_sample_has_no_legacy_arguments_or_alias():
-    assert not hasattr(CVineCopula, "sample_model")
-    assert "u_train" not in inspect.signature(CVineCopula.sample).parameters
 
 
 def test_rvine_predict_has_no_u_train_alias():

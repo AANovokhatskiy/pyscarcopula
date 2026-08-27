@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Remove `CopulaProtocol`, `CommonCopulaProtocol`,
+  `BivariateCopulaProtocol`, `MultivariateCopulaProtocol`, custom-copula
+  callback execution, and `CopulaCapabilities`. Native operations now accept
+  exact registered built-in copula types only.
+- Remove `CVineCopula` and its persistence loader. Fixed C-vines use
+  `VineCopula.cvine(...)`; persisted legacy C-vine artifacts fail before class
+  import and have no automatic migration path.
+- Remove `TMGrid` and `pyscarcopula.numerical.tm_grid` from the package. SCAR-OU
+  likelihood, prediction, smoothing, and goodness-of-fit use the compiled
+  evaluator. No compatibility aliases are provided for these removals.
 - Add dependency-free, opt-in source-level parallel compilation for the
   pybind11 extension and Python-free C++ boundary build. Both paths share one
   validated `PYSCA_CPP_BUILD_JOBS` policy and remain sequential by default.

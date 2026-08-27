@@ -19,7 +19,6 @@ from pyscarcopula import (
     VineCopula,
 )
 from pyscarcopula.copula.base import BivariateCopula
-from pyscarcopula.vine.cvine import CVineCopula
 
 
 def _positive_n_draws(value: Any) -> int:
@@ -38,7 +37,7 @@ def _reject_unsupported_controls(
         n_threads: int,
         return_diagnostics: bool) -> None:
     if n_threads != 1 and isinstance(
-            model, (BivariateCopula, VineCopula, CVineCopula)):
+            model, (BivariateCopula, VineCopula)):
         raise TypeError(
             f"{type(model).__name__} direct predict does not expose "
             "n_threads"
@@ -116,7 +115,7 @@ def draw_conditional(
             return_diagnostics=return_diagnostics,
         )
 
-    if isinstance(model, (BivariateCopula, CVineCopula)):
+    if isinstance(model, BivariateCopula):
         return model.predict(
             n_draws, u=u_train, given=given, rng=rng
         )

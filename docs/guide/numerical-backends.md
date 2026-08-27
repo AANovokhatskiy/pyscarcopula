@@ -254,32 +254,6 @@ artificially capped, with one exception: the multivariate Student PPF table
 (see below). Their memory and runtime cost depend on the data size and
 chosen numerical options.
 
-#### Manual Python reference grid
-
-`TMGrid` remains a supported low-level API for manual diagnostics,
-experiments, and numerical comparisons:
-
-```python
-from pyscarcopula.numerical import TMGrid
-
-grid = TMGrid(
-    kappa=0.8,
-    mu=0.0,
-    nu=1.0,
-    n=250,
-    K=300,
-    grid_method="sparse",
-    transition_method="matrix",
-)
-diagnostics = grid.diagnostics()
-```
-
-It is an independent NumPy/SciPy implementation, not a wrapper around the
-compiled SCAR evaluator. Built-in likelihood, prediction, smoothing, and
-goodness-of-fit operations use the C++ backend directly and do not construct
-`TMGrid`. The class is intended for explicit manual use and as a reference
-oracle; it is not deprecated.
-
 #### Student PPF table memory cap
 
 Multivariate Student models normally precompute a quantile (inverse-CDF) table
@@ -913,72 +887,6 @@ cfg = NumericalConfig(
 )
 ```
 
-## Legacy C-Vines
-
-`CVineCopula.fit` selects a family for each edge using an MLE screening/refine
-step, then optionally refits selected edges with the requested dynamic method.
-All remaining keyword arguments are forwarded to the pair-copula strategy for
-the dynamic refit.
-
-```python
-from pyscarcopula import CVineCopula
-from pyscarcopula import LBFGSBConfig, NumericalConfig
-
-cfg = NumericalConfig(
-    gas_optimizer=LBFGSBConfig(ftol=1e-12, maxfun=3000, maxiter=3000))
-
-vine = CVineCopula()
-vine.fit(
-    u,
-    method='gas',
-    config=cfg,
-    gamma_bound=30.0,
-    ftol=1e-12,
-    truncation_level=2,
-    min_edge_logL=10.0,
-)
-```
-
-For `method='mle'`, the edge stays at the MLE selection result. For dynamic
-methods such as `'gas'` or `'scar-tm-ou'`, these controls are forwarded to each
-dynamic edge fit:
-
-- GAS: `gamma0`, `gtol`, `ftol`, `maxfun`, `maxiter`, `maxls`, `eps`, `score_eps`,
-  `gamma_bound`, `beta_bound`, `scaling`, `verbose`
-- SCAR-TM-OU: `alpha0`, `gtol`, `ftol`, `maxfun`, `maxiter`, `maxls`, `eps`, `K`, `grid_range`, `grid_method`, `adaptive`,
-  `pts_per_sigma`, `transition_method`, `max_K`, `r_gh`, `gh_order`,
-  `auto_small_kdt`,
-  `spectral_basis_order`, `spectral_quad_order`, `analytical_grad`,
-  `smart_init`, `verbose`
-- SCAR-TM-JACOBI: `alpha0`, `gtol`, `ftol`, `maxfun`, `maxiter`, `maxls`,
-  `eps`, `transition_method`, `basis_order`, `quad_order`,
-  `spectral_basis_order`, `spectral_quad_order`, `transition_storage`,
-  `stationarity_correction`, `adaptive_quad_order`, `adaptive_quad_orders`,
-  `adaptive_max_full_horizon_tv`, `adaptive_max_relative_variance_error`,
-  `adaptive_max_conditional_mean_rmse`,
-  `adaptive_max_lag_one_correlation_error`, `adaptive_require_pass`,
-  `negative_mass_tol`, `gh_order`, `theta_cap`, `clip_negative`,
-  `kappa_bounds`, `xi_bounds`, `stationary_shape_max`,
-  `memory_budget_bytes`, `sampling_method`, `lamperti_substeps`,
-  `lamperti_boundary`, `lamperti_eps`, `lamperti_engine`,
-  `lamperti_chunk_observations`, `tau_eps`, `analytical_grad`, `smart_init`,
-  `verbose`
-
-Vine-level pruning controls reduce the number of dynamic edge fits:
-
-| Parameter | Default | Effect |
-|-----------|---------|--------|
-| `truncation_level` | `None` | Tree levels $\ge$ `truncation_level` stay MLE. Useful for high-dimensional vines. |
-| `min_edge_logL` | `None` | Edges with MLE log-likelihood below the threshold stay MLE. |
-| `transform_type` | `'softplus'` | Parameter transform used for Archimedean candidate copulas. |
-
-In C-vines, `config` is accepted through `**kwargs` and is passed to the
-dynamic edge refit. The initial MLE family-selection stage uses its own fast
-MLE path.
-
-This section documents the retained legacy implementation. New fixed C-vines
-should use `VineCopula.cvine(...)` and the generic controls below.
-
 ## Generic VineCopula
 
 `VineCopula.fit` has an explicit `config` argument and forwards strategy
@@ -1009,7 +917,7 @@ vine.fit(
 )
 ```
 
-The same strategy options listed for legacy C-vines are forwarded to every
+Strategy-specific optimizer and numerical options are forwarded to every
 non-independent, non-truncated edge selected for dynamic fitting. R-vine
 structure controls are:
 
@@ -1023,10 +931,10 @@ structure controls are:
 | `beam_width` | `4` | Number of partial candidate structures retained by beam search. |
 | `transform_type` | instance value / `'softplus'` | Parameter transform used for Archimedean candidate copulas. |
 
-As with C-vines, automatic family selection is MLE-based. `gtol`, `ftol`,
-`gamma_bound`, `K`, and similar strategy controls affect the dynamic edge refit
-after a family has been selected. If `method='gas'`, a too-loose `ftol` can make
-some edges stop early with `success=True`; set `ftol=1e-12` and increase
+For every vine structure, automatic family selection is MLE-based. `gtol`,
+`ftol`, `gamma_bound`, `K`, and similar strategy controls affect the dynamic
+edge refit after a family has been selected. If `method='gas'`, a too-loose
+`ftol` can make some edges stop early with `success=True`; set `ftol=1e-12` and increase
 `maxfun` for difficult edges.
 
 Fitted generic vines use sequential native hot paths where the model contract permits
@@ -1045,17 +953,15 @@ public `VineCopula` API:
 
 | Operation | Native capability | Production fallback |
 |-----------|-------------------|---------------------|
-| Static unconditional sampling | Fixed C-, D-, or R-vine; exact built-in Independent, Clayton, Gumbel, Joe, Frank, or bivariate Gaussian edges; scalar parameters | Dynamic edges, custom copulas, and non-opted-in subclasses use the Python executor |
-| Suffix/DAG conditional execution | The same exact built-in families, including supported rotations/orientations and scalar or row-specific parameter paths | An unsupported active edge uses the Python conditional executor |
-| Row log-density and conditional MCMC | The same exact built-in families with scalar, row-specific, or mixed parameter storage; MCMC selects bounded incremental or full recomputation before consuming RNG | Unsupported active edges use the preserved Python density/MCMC executor |
-| R-vine Rosenblatt and GoF | Static scalar fitted edges from the exact built-in family set | Dynamic edges, custom copulas, and unsupported subclasses use the Python Rosenblatt executor |
+| Static unconditional sampling | Fixed C-, D-, or R-vine; exact built-in Independent, Clayton, Gumbel, Joe, Frank, or bivariate Gaussian edges; scalar parameters | Unsupported exact-type combinations are rejected |
+| Suffix/DAG conditional execution | The same exact built-in families, including supported rotations/orientations and scalar or row-specific parameter paths | Unsupported active edges are rejected |
+| Row log-density and conditional MCMC | The same exact built-in families with scalar, row-specific, or mixed parameter storage; MCMC selects bounded incremental or full recomputation before consuming RNG | Unsupported active edges are rejected |
+| R-vine Rosenblatt and GoF | Static scalar fitted edges from the exact built-in family set | Unsupported exact-type combinations are rejected |
 
-An explicitly native-equivalent subclass may opt in on its own class body.
-Inherited opt-in is intentionally ignored so that an overridden pair operation
-cannot silently bypass the Python implementation. Missing operation-specific
-extension symbols and unsupported capability combinations fall back only in
-the default dispatcher; validation or numerical failures after entering a
-supported native call are reported and never retried in Python.
+Support is exact-type only. Unknown subclasses cannot opt in through class
+flags or similarly named Python methods. Validation or numerical failures
+after entering a supported native call are reported and never retried in
+Python.
 
 `gof_test(..., bootstrap=True)` also supports fitted `VineCopula` models. Each
 replication simulates from the captured fitted vine, optionally refits an

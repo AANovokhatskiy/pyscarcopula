@@ -29,7 +29,7 @@ def _removed_method_identity(value: object) -> bool:
 
 
 def _reject_removed_persistence(payload: Any) -> None:
-    """Reject removed Monte Carlo strategy artifacts without importing them."""
+    """Reject removed model artifacts before resolving any persisted class."""
     if isinstance(payload, list):
         for item in payload:
             _reject_removed_persistence(item)
@@ -43,6 +43,10 @@ def _reject_removed_persistence(payload: Any) -> None:
             "Unsupported persisted model method: legacy SCAR Monte Carlo "
             "artifacts have no migration execution path")
     class_path = payload.get("class")
+    if class_path == "pyscarcopula.vine.cvine.CVineCopula":
+        raise ValueError(
+            "Unsupported persisted model format: legacy CVineCopula "
+            "artifacts have no migration execution path")
     if (
         isinstance(class_path, str)
         and class_path.startswith("pyscarcopula.strategy.scar_mc.")
@@ -337,7 +341,8 @@ def load_model(
     if not isinstance(envelope, dict) or envelope.get("format") != MODEL_FORMAT:
         raise ValueError("Not a pyscarcopula model file")
 
-    model = _from_jsonable(envelope.get("state"))
+    _reject_removed_persistence(envelope)
+    model = _from_jsonable(envelope.get("state"), True)
     declared_path = envelope.get("class")
     if not isinstance(declared_path, str):
         raise ValueError("Persisted model class must be a qualified name")

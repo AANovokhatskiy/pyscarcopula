@@ -31,7 +31,6 @@ from pyscarcopula.copula.frank import FrankCopula
 from pyscarcopula.copula.joe import JoeCopula
 from pyscarcopula.copula.clayton import ClaytonCopula
 from pyscarcopula.copula.independent import IndependentCopula
-from pyscarcopula.vine.cvine import CVineCopula
 from pyscarcopula.vine.vine import VineCopula
 from pyscarcopula.vine.rvine import RVineCopula
 
@@ -57,7 +56,6 @@ from pyscarcopula.copula.multivariate import (
 from pyscarcopula.copula.base import (
     BivariateCopula,
     CopulaBase,
-    CopulaCapabilities,
 )
 from pyscarcopula.copula.multivariate import MultivariateCopula
 from pyscarcopula._types import (
@@ -91,11 +89,9 @@ __all__ = (
     'CorrelationPolicy',
     'FactorEstimation',
     'FloatArray',
-    # Base hierarchy and capability contract
+    # Base hierarchy
     'CopulaBase', 'BivariateCopula', 'MultivariateCopula',
-    'CopulaCapabilities',
     # Vine
-    'CVineCopula',
     'VineCopula',
     'RVineCopula',
     # Prediction options

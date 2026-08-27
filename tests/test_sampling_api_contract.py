@@ -5,7 +5,6 @@ import inspect
 import numpy as np
 
 from pyscarcopula import (
-    CVineCopula,
     EquicorrGaussianCopula,
     GaussianCopula,
     GumbelCopula,
@@ -36,7 +35,6 @@ def test_sample_has_one_fitted_model_signature_across_model_types():
         StudentCopula,
         EquicorrGaussianCopula,
         StochasticStudentCopula,
-        CVineCopula,
         RVineCopula,
     )
 
@@ -56,7 +54,6 @@ def test_predict_has_common_arguments_in_common_order():
         StudentCopula,
         EquicorrGaussianCopula,
         StochasticStudentCopula,
-        CVineCopula,
         RVineCopula,
     )
 

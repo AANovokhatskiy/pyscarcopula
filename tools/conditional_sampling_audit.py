@@ -285,8 +285,6 @@ def build_inventory(
         models = _regex_tags(audit_text, _MODEL_PATTERNS)
         if not models and test.relative_file.startswith("tests/test_rvine"):
             models = ["vine-generic"]
-        if not models and test.relative_file == "tests/test_vine.py":
-            models = ["vine-legacy-cvine"]
         conditional_nodes.append({
             "node_id": node_id,
             "source_test": base,

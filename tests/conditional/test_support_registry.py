@@ -12,7 +12,6 @@ from scipy.stats import norm
 from pyscarcopula import (
     BivariateGaussianCopula,
     ClaytonCopula,
-    CVineCopula,
     EquicorrGaussianCopula,
     FrankCopula,
     GaussianCopula,
@@ -25,7 +24,13 @@ from pyscarcopula import (
     VineCopula,
 )
 from pyscarcopula._types import IndependentResult, MLEResult
-from pyscarcopula.strategy._base import ensure_strategy_supported
+from pyscarcopula._native.registry import query_capability, strategy_support
+from pyscarcopula.strategy._base import (
+    ensure_strategy_supported,
+    has_dynamic_scalar_parameter,
+    is_pair_copula,
+    supports_conditional_sampling,
+)
 
 from ._registry import (
     REGISTRY,
@@ -73,8 +78,6 @@ def _construct_for_capabilities(case: ModelCase):
         return cls(d=3, R=_correlation())
     if case.id == "vine-generic":
         return cls.cvine(d=3, order=[0, 1, 2])
-    if case.id == "vine-legacy-cvine":
-        return cls()
     raise AssertionError(f"missing constructor for {case.id}")
 
 
@@ -139,11 +142,6 @@ def _minimal_conditional_draw(case: ModelCase) -> np.ndarray:
             observations, method="mle", copulas=specs
         )
         return model.predict(4, given={2: 0.3}, rng=rng)
-    if case.id == "vine-legacy-cvine":
-        model = CVineCopula().fit(
-            observations, method="mle", copulas=specs
-        )
-        return model.predict(4, given={0: 0.3}, rng=rng)
     raise AssertionError(f"missing minimal draw for {case.id}")
 
 
@@ -201,14 +199,13 @@ def _unsupported_probe(case: UnsupportedCase) -> None:
 
 def test_registry_has_all_canonical_runtimes_and_unique_ids():
     assert REGISTRY.schema_version == 1
-    assert len(REGISTRY.models) == 12
+    assert len(REGISTRY.models) == 11
     assert len(REGISTRY.by_id) == len(REGISTRY.models)
     assert {case.category for case in REGISTRY.models} == {
         "bivariate",
         "multivariate_static",
         "multivariate_dynamic",
         "vine",
-        "vine_legacy",
     }
 
 
@@ -257,11 +254,23 @@ def test_registry_matches_public_signatures(case: ModelCase):
 def test_registry_matches_declared_capabilities(case: ModelCase):
     model = _construct_for_capabilities(case)
     if not case.capability_flags:
-        assert case.category in {"vine", "vine_legacy"}
+        assert case.category == "vine"
         return
-    capabilities = model.capabilities
+    pair = is_pair_copula(model)
+    gas = strategy_support(model, "GAS")
+    scar_ou = strategy_support(model, "SCAR-TM-OU")
+    capabilities = {
+        "supports_pair_ops": pair,
+        "supports_native_point_ops": pair,
+        "supports_gas": bool(gas and gas.supported),
+        "supports_scar_ou": bool(scar_ou and scar_ou.supported),
+        "supports_latent_grid": bool(query_capability(
+            model, "row_grid_density_gradient", "SCAR-TM-OU").supported),
+        "supports_conditional_sampling": supports_conditional_sampling(model),
+        "has_dynamic_scalar_parameter": has_dynamic_scalar_parameter(model),
+    }
     for name, expected in case.capability_flags.items():
-        assert getattr(capabilities, name) is expected, (
+        assert capabilities[name] is expected, (
             f"{case.id}: capability {name} drifted from the support registry"
         )
 

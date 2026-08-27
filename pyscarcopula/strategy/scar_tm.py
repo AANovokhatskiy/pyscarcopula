@@ -14,7 +14,7 @@ from pyscarcopula._types import (
 )
 from pyscarcopula.strategy._base import (
     copula_dimension,
-    get_copula_capabilities,
+    is_multivariate_copula,
     lbfgsb_options,
     lbfgsb_overrides,
     register_strategy,
@@ -1418,7 +1418,7 @@ class SCARTMStrategy:
 
         Parameters
         ----------
-        copula : CopulaProtocol
+        copula : exact registered built-in copula
         u : (T, 2) pseudo-observations
         alpha0 : (3,) or (3 + n_corr,)
             Initial ``[kappa, mu, nu]`` with model correlation defaults, a
@@ -1790,8 +1790,7 @@ class SCARTMStrategy:
                   current_cache_key=None, next_cache_key=None,
                   posterior_cache=None) -> np.ndarray:
         """Mixture h-function for vine pseudo-obs propagation."""
-        capabilities = get_copula_capabilities(copula)
-        if capabilities is not None and not capabilities.supports_pair_ops:
+        if is_multivariate_copula(copula):
             raise NotImplementedError(
                 "mixture_h is not defined for multivariate "
                 "StochasticStudent-compatible copulas")
@@ -1857,8 +1856,7 @@ class SCARTMStrategy:
                        current_cache_key=None, next_cache_key=None,
                        posterior_cache=None):
         """Both vine h-directions from one SCAR posterior pass."""
-        capabilities = get_copula_capabilities(copula)
-        if capabilities is not None and not capabilities.supports_pair_ops:
+        if is_multivariate_copula(copula):
             raise NotImplementedError(
                 "mixture_h_pair is not defined for multivariate "
                 "StochasticStudent-compatible copulas")

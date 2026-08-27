@@ -46,41 +46,14 @@ vine.fit(u, method='scar-tm-ou',
 vine.summary()
 ```
 
-### Legacy `CVineCopula`
-
-`CVineCopula` remains available for compatibility with existing code and
-persisted models. It is not removed, renamed, or accompanied by a runtime
-`DeprecationWarning`. New code should use the generic runtime:
-
-```python
-from pyscarcopula import CVineCopula, VineCopula
-from pyscarcopula.vine import cvine_structure
-
-# Existing supported API
-old = CVineCopula()
-
-# Preferred generic equivalents
-new = VineCopula.cvine(d=u.shape[1], order=range(u.shape[1]))
-new_explicit = VineCopula(
-    structure=cvine_structure(
-        d=u.shape[1],
-        order=range(u.shape[1]),
-    )
-)
-```
-
 Static MLE models fitted to the same C-vine structure and fixed edge families
 have equivalent edge semantics and likelihood. Internal edge ordering and
 seeded sampling trajectories are not an API parity guarantee.
 
-Conditional sampling intentionally follows different runtime paths:
-
-- legacy `CVineCopula` uses its C-vine-specific prefix/general algorithms;
-- generic `VineCopula` uses matrix-based suffix conditioning and a DAG+MCMC
+Conditional sampling uses matrix-based suffix conditioning and a DAG+MCMC
   fallback for arbitrary conditioning sets;
-- generic prediction supports `return_diagnostics`, MCMC controls, and
-  `dynamic_conditioning`; the legacy top-level adapter rejects these options
-  instead of silently ignoring them.
+prediction supports `return_diagnostics`, MCMC controls, and
+`dynamic_conditioning`.
 
 ## Auto-selected R-vine
 

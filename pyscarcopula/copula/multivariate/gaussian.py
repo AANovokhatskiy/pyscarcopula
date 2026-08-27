@@ -13,7 +13,6 @@ from pyscarcopula._types import (
     MultivariateMLEResult,
     NumericalConfig,
 )
-from pyscarcopula.copula.base import CopulaCapabilities
 from pyscarcopula.copula.multivariate.base import (
     MultivariateCopula,
     model_state_locked,
@@ -110,10 +109,6 @@ def _gaussian_score_correlation(u):
 
 class GaussianCopula(MultivariateCopula):
     """Static Gaussian copula with dense or compact factor correlation."""
-
-    _capabilities = CopulaCapabilities(
-        supports_conditional_sampling=True,
-    )
 
     def __init__(
             self,

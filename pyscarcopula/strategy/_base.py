@@ -8,7 +8,12 @@ from __future__ import annotations
 from typing import Protocol, runtime_checkable
 import numpy as np
 from pyscarcopula.numerical._arrays import as_pseudo_observation_array
-from pyscarcopula._native.registry import strategy_support
+from pyscarcopula._native.registry import (
+    native_id_for,
+    query_capability,
+    registry_entry_for,
+    strategy_support,
+)
 
 from pyscarcopula._types import (
     FitResult,
@@ -16,7 +21,6 @@ from pyscarcopula._types import (
     DEFAULT_CONFIG,
     PredictiveState,
 )
-from pyscarcopula.copula.base import CopulaCapabilities
 
 
 def reject_legacy_tol(kwargs):
@@ -53,22 +57,55 @@ def lbfgsb_options(optimizer_config, **overrides):
     return optimizer_config.options(**overrides)
 
 
-def get_copula_capabilities(copula) -> CopulaCapabilities | None:
-    """Return an explicit capability descriptor, or None for legacy objects."""
-    descriptor = getattr(copula, "capabilities", None)
-    if isinstance(descriptor, CopulaCapabilities):
-        return descriptor
-    descriptor = getattr(copula, "_capabilities", None)
-    if isinstance(descriptor, CopulaCapabilities):
-        return descriptor
-    return None
+_PAIR_NATIVE_IDS = frozenset({
+    "Independent",
+    "Clayton",
+    "Frank",
+    "Gumbel",
+    "Joe",
+    "BivariateGaussian",
+})
+_MULTIVARIATE_NATIVE_IDS = frozenset({
+    "Gaussian",
+    "Student",
+    "EquicorrGaussian",
+    "StochasticStudent",
+})
+
+
+def is_pair_copula(copula) -> bool:
+    """Whether an exact registered model is a built-in pair copula."""
+    return native_id_for(copula) in _PAIR_NATIVE_IDS
+
+
+def has_dynamic_scalar_parameter(copula) -> bool:
+    """Query native transform support for the retained dynamic families."""
+    return any(
+        query_capability(
+            copula,
+            "parameter_transform_bounds_initialization",
+            dynamics,
+        ).supported
+        for dynamics in ("GAS", "SCAR-TM-OU", "SCAR-TM-JACOBI")
+    )
+
+
+def supports_conditional_sampling(copula) -> bool:
+    """Query the native conditional-sampling capability."""
+    return bool(query_capability(
+        copula, "conditional_sampling_transform").supported)
 
 
 def copula_dimension(copula, u=None) -> int | None:
-    """Resolve declared dimension, using data only when it is still unknown."""
-    capabilities = get_copula_capabilities(copula)
-    if capabilities is not None and capabilities.dimension is not None:
-        return capabilities.dimension
+    """Resolve the dimension of an exact registered built-in model."""
+    native_id = native_id_for(copula)
+    if native_id in _PAIR_NATIVE_IDS:
+        return 2
+    dimension = getattr(copula, "dimension", None)
+    if dimension is None:
+        dimension = getattr(copula, "d", None)
+    if dimension is not None:
+        return int(dimension)
     if u is not None:
         array = np.asarray(u)
         if array.ndim == 2:
@@ -78,13 +115,13 @@ def copula_dimension(copula, u=None) -> int | None:
 
 def validate_copula_data(copula, u):
     """Validate 2D data against an explicit, known copula dimension."""
+    registry_entry_for(copula)
     array = as_pseudo_observation_array(u)
     if array.ndim != 2:
         raise ValueError(f"copula data must be 2D, got shape {array.shape}")
     if array.shape[0] == 0:
         raise ValueError("copula data must contain at least one observation")
-    capabilities = get_copula_capabilities(copula)
-    dimension = None if capabilities is None else capabilities.dimension
+    dimension = copula_dimension(copula)
     if dimension is not None and array.shape[1] != dimension:
         raise ValueError(
             f"{type(copula).__name__} expects {dimension} columns, "
@@ -93,9 +130,8 @@ def validate_copula_data(copula, u):
 
 
 def is_multivariate_copula(copula) -> bool:
-    """Whether an explicitly declared copula lacks the pair-copula contract."""
-    capabilities = get_copula_capabilities(copula)
-    return capabilities is not None and not capabilities.supports_pair_ops
+    """Whether an exact registered model is a non-vine multivariate copula."""
+    return native_id_for(copula) in _MULTIVARIATE_NATIVE_IDS
 
 
 def _uses_data_estimated_correlation(copula) -> bool:
@@ -129,15 +165,8 @@ def _allows_gas_static_correlation(copula, method) -> bool:
 
 def ensure_strategy_supported(copula, method):
     """Reject incompatible built-in strategy selections deterministically."""
+    registry_entry_for(copula)
     normalized = validate_strategy_method(str(method))
-    capabilities = get_copula_capabilities(copula)
-    if capabilities is None:
-        return
-    dynamic_methods = {
-        "GAS",
-        "SCAR-TM-OU",
-        "SCAR-TM-JACOBI",
-    }
     joint_factor_dynamic_methods = {
         "GAS",
         "SCAR-TM-OU",
@@ -166,23 +195,12 @@ def ensure_strategy_supported(copula, method):
         raise TypeError(
             f"{type(copula).__name__} does not support {normalized}")
     if (
-            normalized in dynamic_methods
-            and not capabilities.has_dynamic_scalar_parameter):
-        raise TypeError(f"{type(copula).__name__} does not support {normalized}")
-    if normalized == "GAS" and not capabilities.supports_gas:
-        raise TypeError(f"{type(copula).__name__} does not support GAS")
-    if (
             normalized == "GAS"
             and getattr(copula, "_corr_mode", None) == "cholesky"
             and _uses_data_estimated_correlation(copula)):
         raise NotImplementedError(
             "GAS joint static correlation currently supports only "
             "corr_mode='shrinkage'")
-    if normalized == "SCAR-TM-OU" and not capabilities.supports_scar_ou:
-        raise TypeError(f"{type(copula).__name__} does not support SCAR-TM-OU")
-    if normalized == "SCAR-TM-JACOBI" and not capabilities.supports_pair_ops:
-        raise TypeError(
-            f"{type(copula).__name__} does not support pair Jacobi dynamics")
     if (
             normalized not in {"MLE", "SCAR-TM-OU"}
             and not _allows_gas_static_correlation(copula, normalized)
@@ -219,7 +237,7 @@ class FitStrategy(Protocol):
 
         Parameters
         ----------
-        copula : CopulaProtocol
+        copula : exact registered built-in copula
         u : (T, 2) pseudo-observations
 
         Returns
@@ -288,7 +306,7 @@ class FitStrategy(Protocol):
 
         Parameters
         ----------
-        copula : CopulaProtocol
+        copula : exact registered built-in copula
         u : (T, 2) pseudo-observations
         alpha : (n_params,) raw parameters
 
@@ -313,7 +331,7 @@ class FitStrategy(Protocol):
 
         Parameters
         ----------
-        copula : CopulaProtocol
+        copula : exact registered built-in copula
         u : (T, 2)
             Not used by all methods, but needed for GAS initialization.
         result : FitResult from fit()
@@ -340,7 +358,7 @@ class FitStrategy(Protocol):
 
         Parameters
         ----------
-        copula : CopulaProtocol
+        copula : exact registered built-in copula
         u : (T, 2) pseudo-observations (conditioning data)
         result : FitResult from fit()
         n : int

@@ -21,7 +21,7 @@ U[0,1].  It is not a separate omnibus test of componentwise or serial
 independence.
 
 Usage:
-    from pyscarcopula.stattests import gof_test, vine_gof_test
+    from pyscarcopula.stattests import gof_test, rvine_gof_test
 """
 
 import numpy as np
@@ -212,14 +212,12 @@ def gof_test(model, data, to_pobs=True, K=300, grid_range=5.0,
     Dispatches based on model type:
       - BivariateCopula  -> bivariate Rosenblatt (MLE or SCAR mixture)
       - VineCopula       -> generic regular-vine Rosenblatt
-      - CVineCopula      -> legacy C-vine Rosenblatt
       - GaussianCopula   -> Cholesky-based Rosenblatt
       - StudentCopula    -> conditional t-distribution Rosenblatt
 
     Parameters
     ----------
-    model : BivariateCopula, VineCopula, CVineCopula, GaussianCopula,
-        or StudentCopula
+    model : BivariateCopula, VineCopula, GaussianCopula, or StudentCopula
     data : (T, d) array
     to_pobs : bool
     K : int — grid size (SCAR only)
@@ -251,7 +249,6 @@ def gof_test(model, data, to_pobs=True, K=300, grid_range=5.0,
     """
     from pyscarcopula.copula.base import BivariateCopula
     from pyscarcopula.copula.multivariate import GaussianCopula, StudentCopula
-    from pyscarcopula.vine.cvine import CVineCopula
     from pyscarcopula.vine.vine import VineCopula
     from pyscarcopula.copula.multivariate import (
         EquicorrGaussianCopula,
@@ -339,11 +336,6 @@ def gof_test(model, data, to_pobs=True, K=300, grid_range=5.0,
             rng=rng,
             n_jobs=n_jobs,
         )
-    elif isinstance(model, CVineCopula):
-        if bootstrap:
-            raise NotImplementedError(
-                "Bootstrap GoF is not implemented for CVineCopula.")
-        return vine_gof_test(model, data, to_pobs, K, grid_range)
     elif isinstance(model, GaussianCopula):
         if bootstrap:
             return _gof_static_multivariate(
@@ -1133,113 +1125,9 @@ def _gof_dynamic_multivariate(
 # Vine Rosenblatt transform
 # ══════════════════════════════════════════════════════════════════
 
-def _vine_edge_h(edge, u2, u1, u_pair, K=300, grid_range=5.0):
-    """Delegate to the shared pair-edge runtime."""
-    from pyscarcopula.vine._rvine_edges import _edge_h
-    return _edge_h(
-        edge,
-        u2,
-        u1,
-        u_pair=u_pair,
-        K=K,
-        grid_range=grid_range,
-    )
-
-
-def vine_rosenblatt_transform(vine, u, K=300, grid_range=5.0):
-    """
-    Rosenblatt transform for a fitted C-vine copula.
-
-    Each edge in the vine is an independent bivariate copula
-    (possibly with its own latent OU process). The vine Rosenblatt
-    simply applies h-functions level by level, reusing the bivariate
-    approach on every edge — no vine-specific modifications needed.
-
-    ```
-    v[0][i] = u_i
-    v[j+1][i] = h(v[j][i+1] | v[j][0]; edge_{j,i})
-    e_0 = u_0
-    e_{j+1} = h(v[j][1] | v[j][0]; edge_{j,0})
-    ```
-
-    Parameters
-    ----------
-    vine : CVineCopula (fitted)
-    u : (T, d) pseudo-observations
-    K : int — grid size for SCAR mixture
-    grid_range : float
-
-    Returns
-    -------
-    e : (T, d) — should be iid U[0,1]^d under correct model
-    """
-    T, d = u.shape
-    v = [[None] * d for _ in range(d)]
-    for i in range(d):
-        v[0][i] = clip_pseudo_observations(u[:, i].copy())
-
-    e = np.empty((T, d))
-    e[:, 0] = v[0][0]
-
-    for j in range(d - 1):
-        n_edges = d - j - 1
-
-        # e_{j+1}: first edge of tree j
-        u1 = clip_pseudo_observations(v[j][0])
-        u2 = clip_pseudo_observations(v[j][1])
-        u_pair = np.column_stack((u1, u2))
-        edge = vine.edges[j][0]
-        e[:, j + 1] = clip_pseudo_observations(
-            _vine_edge_h(edge, u2, u1, u_pair, K, grid_range))
-
-        # Propagate v to next level (all edges, same approach)
-        if j < d - 2:
-            for i in range(n_edges):
-                u1 = clip_pseudo_observations(v[j][0])
-                u2 = clip_pseudo_observations(v[j][i + 1])
-                u_pair = np.column_stack((u1, u2))
-                edge_i = vine.edges[j][i]
-                v[j + 1][i] = clip_pseudo_observations(
-                    _vine_edge_h(edge_i, u2, u1, u_pair, K, grid_range))
-
-    return clip_rosenblatt_output(e)
-
-
 # ══════════════════════════════════════════════════════════════════
 # Vine gof_test
 # ══════════════════════════════════════════════════════════════════
-
-def vine_gof_test(vine, data, to_pobs=True, K=500, grid_range=7.0):
-    """
-    Goodness-of-fit test for a fitted C-vine copula.
-
-    Applies the d-dimensional Rosenblatt transform through the vine
-    tree structure, then tests e ~ iid U[0,1]^d via CvM.
-
-    For SCAR edges: uses mixture h-function (avoids Jensen bias).
-    For MLE edges: uses constant parameter h-function.
-
-    Parameters
-    ----------
-    vine : CVineCopula (fitted)
-    data : (T, d)
-    to_pobs : bool
-    K : int — grid size for SCAR mixture Rosenblatt
-    grid_range : float
-
-    Returns
-    -------
-    CramérVonMisesResult with .statistic and .pvalue
-    """
-    u = _prepare_gof_data(
-        data, expected_dim=getattr(vine, "d", None), to_pobs=to_pobs)
-
-    if vine.edges is None:
-        raise ValueError("Fit the vine first")
-
-    e = vine_rosenblatt_transform(vine, u, K=K, grid_range=grid_range)
-    return cvm_test(e)
-
 
 def _prepare_rvine_rosenblatt_observations(vine, u):
     """Preserve the characterized public input contract before dispatch."""
@@ -1546,7 +1434,7 @@ def _tm_grid_kwargs_from_result(fit_result):
 
 
 def _native_grid_config_from_result(fit_result, K, grid_range):
-    """Build the native grid config with legacy TMGrid default semantics."""
+    """Build the native grid config with the preserved OU-grid defaults."""
     from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
 
     options = _tm_grid_kwargs_from_result(fit_result)

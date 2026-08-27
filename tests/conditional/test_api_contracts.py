@@ -355,7 +355,6 @@ def test_conditional_contract_survives_save_load(tmp_path, model_id):
     [
         "bivariate-gaussian",
         "multivariate-gaussian",
-        "vine-legacy-cvine",
     ],
 )
 def test_adapter_rejects_diagnostics_for_unsupported_direct_apis(model_id):

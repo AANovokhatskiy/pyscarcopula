@@ -11,6 +11,7 @@ from pyscarcopula._types import (
     MLEResult, LatentResult, GASResult, NumericalConfig, LBFGSBConfig,
 )
 from pyscarcopula._native import scar_ou as _cpp_scar_ou
+from pyscarcopula._native.errors import NativeUnsupported
 from pyscarcopula.strategy import scar_tm
 from pyscarcopula.strategy.scar_tm import SCARTMStrategy
 
@@ -451,7 +452,7 @@ class TestSmartInit:
         copula = StudentSubclass(d=2, R=np.eye(2))
         strategy = SCARTMStrategy()
 
-        with pytest.raises(NotImplementedError, match="StochasticStudent"):
+        with pytest.raises(NativeUnsupported, match="exact registered"):
             strategy.mixture_h(
                 copula,
                 np.full((3, 2), 0.5),

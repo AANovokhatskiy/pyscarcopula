@@ -7,7 +7,6 @@ Kendall-tau helpers where needed.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
 from os import PathLike
 from typing import Any, TypeVar
 
@@ -20,26 +19,6 @@ from pyscarcopula._utils import pobs, broadcast as _broadcast  # noqa: F401
 
 FloatArray = NDArray[np.float64]
 CopulaT = TypeVar("CopulaT", bound="CopulaBase")
-
-
-@dataclass(frozen=True)
-class CopulaCapabilities:
-    """Immutable strategy and numerical capability descriptor.
-
-    Capability flags are consumed by validation and strategy dispatch. They
-    describe supported operations; they do not imply that a model has already
-    been fitted.
-    """
-
-    dimension: int | None = None
-    supports_pair_ops: bool = False
-    supports_native_point_ops: bool = False
-    supports_native_mle: bool = False
-    supports_gas: bool = False
-    supports_scar_ou: bool = False
-    supports_latent_grid: bool = False
-    supports_conditional_sampling: bool = False
-    has_dynamic_scalar_parameter: bool = False
 
 
 class CopulaBase:
@@ -55,8 +34,6 @@ class CopulaBase:
         Human-readable model name used in results and diagnostics.
     """
 
-    _capabilities = CopulaCapabilities()
-
     def __init__(self, *, name: str = "Copula") -> None:
         self._name = name
         self.fit_result: FitResult | None = None
@@ -70,21 +47,6 @@ class CopulaBase:
     def dimension(self) -> int | None:
         """Required data width, or ``None`` when not fixed by the class."""
         return None
-
-    @property
-    def capabilities(self) -> CopulaCapabilities:
-        """Capabilities used for strategy and numerical dispatch."""
-        from pyscarcopula._native.registry import (
-            compatibility_capability_flags,
-        )
-
-        projected = compatibility_capability_flags(self)
-        if projected is not None:
-            return CopulaCapabilities(
-                dimension=self.dimension,
-                **projected,
-            )
-        return replace(self._capabilities, dimension=self.dimension)
 
     def validate_dimension(self, data: ArrayLike) -> np.ndarray:
         """Validate and return a two-dimensional data array.
@@ -299,17 +261,6 @@ class BivariateCopula(CopulaBase):
     _scar_stationary_scale_bounds = (0.001, 10_000.0)
     _scar_static_df_mle_initialization = False
     _supports_scar_mixture_h = True
-    _capabilities = CopulaCapabilities(
-        dimension=2,
-        supports_pair_ops=True,
-        supports_native_point_ops=True,
-        supports_gas=True,
-        supports_scar_ou=True,
-        supports_latent_grid=True,
-        supports_conditional_sampling=True,
-        has_dynamic_scalar_parameter=True,
-    )
-
     def __init__(self, rotate: int = 0):
         if rotate not in (0, 90, 180, 270):
             raise ValueError(f"rotate must be 0/90/180/270, got {rotate}")

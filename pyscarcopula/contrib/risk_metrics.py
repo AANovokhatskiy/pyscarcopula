@@ -153,11 +153,6 @@ def _risk_predict_kwargs(copula, kwargs):
         if name in kwargs:
             out[name] = kwargs[name]
 
-    from pyscarcopula.vine.cvine import CVineCopula
-    if isinstance(copula, CVineCopula):
-        for name in ('K', 'grid_range'):
-            if name in kwargs:
-                out[name] = kwargs[name]
     return out
 
 
@@ -471,7 +466,7 @@ def risk_metrics(copula, data, window_len,
     Parameters
     ----------
     copula : BivariateCopula, GaussianCopula, StudentCopula, VineCopula,
-        or legacy CVineCopula
+        or a fitted regular vine
     data : (T, dim) log-returns
     window_len : int
     gamma : float or list — confidence level(s)

@@ -18,7 +18,6 @@ DOC_FILES = (
     ROOT / "ARCHITECTURE.md",
     *sorted((ROOT / "docs").rglob("*.md")),
 )
-MIGRATION_NOTES = ROOT / "docs/release-notes/native-core-migration.md"
 WORKFLOW_FILES = sorted((ROOT / ".github/workflows").glob("*.yml"))
 OPTIONAL_DOCUMENTATION_MODULES = {"pyvinecopulib"}
 
@@ -49,8 +48,6 @@ def test_documented_python_blocks_compile_import_and_bind_public_calls():
             filename = f"{path}:{index}"
             compile(source, filename=filename, mode="exec")
             tree = ast.parse(source, filename=filename)
-            if path == MIGRATION_NOTES and "# Removed" in source:
-                continue
             imports = [
                 node for node in tree.body
                 if isinstance(node, (ast.Import, ast.ImportFrom))
@@ -107,16 +104,12 @@ def test_mkdocstrings_targets_are_importable():
 def test_obsolete_namespace_is_confined_to_migration_notes():
     obsolete = "pyscarcopula.copula.experimental"
     for path in DOC_FILES:
-        if path == MIGRATION_NOTES:
-            continue
         assert obsolete not in path.read_text(encoding="utf-8")
 
 
 def test_removed_native_backend_examples_do_not_return():
     forbidden = re.compile(r"\bbackend\s*=")
     for path in DOC_FILES:
-        if path == MIGRATION_NOTES:
-            continue
         assert forbidden.search(path.read_text(encoding="utf-8")) is None
 
 
@@ -126,12 +119,16 @@ def test_removed_public_aliases_do_not_return_to_docs_or_examples():
         "LatentResult.alpha",
         "pyscarcopula.numerical.auto_tm",
         "pyscarcopula.numerical.tm_gradient",
+        "pyscarcopula.numerical.tm_grid",
+        "TMGrid",
+        "CVineCopula",
+        "pyscarcopula.vine.cvine",
+        "CopulaCapabilities",
+        "CopulaProtocol",
         "spectral_basis_order='adaptive'",
         'spectral_basis_order="adaptive"',
     )
     for path in DOC_FILES:
-        if path == MIGRATION_NOTES:
-            continue
         text = path.read_text(encoding="utf-8")
         for value in forbidden:
             assert value not in text, (
@@ -141,6 +138,23 @@ def test_removed_public_aliases_do_not_return_to_docs_or_examples():
     for path in sorted((ROOT / "examples").glob("*.ipynb")):
         text = path.read_text(encoding="utf-8")
         assert "u_train=" not in text
+
+
+def test_breaking_removal_migration_notes_are_in_changelog():
+    changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    for removed_name in (
+        "CopulaProtocol",
+        "CommonCopulaProtocol",
+        "BivariateCopulaProtocol",
+        "MultivariateCopulaProtocol",
+        "CopulaCapabilities",
+        "CVineCopula",
+        "TMGrid",
+    ):
+        assert removed_name in changelog
+    assert "VineCopula.cvine" in changelog
+    assert "no automatic migration path" in " ".join(changelog.split())
+    assert "No compatibility aliases" in changelog
 
 
 def test_workflows_reference_existing_test_files():
@@ -156,39 +170,9 @@ def test_removed_experimental_namespace_is_physically_absent():
     assert not (ROOT / "pyscarcopula/copula/experimental").exists()
 
 
-def test_tmgrid_remains_an_independent_manual_reference_api():
-    from pyscarcopula.numerical import TMGrid
-    from pyscarcopula.numerical.tm_grid import TMGrid as DirectTMGrid
-
-    assert TMGrid is DirectTMGrid
-
-    source = (
-        ROOT / "pyscarcopula/numerical/tm_grid.py"
-    ).read_text(encoding="utf-8")
-    assert "_cpp_extension" not in source
-    assert "_cpp_scar_ou" not in source
-    assert "deprecated" not in source.lower()
-
-    forbidden_import = "pyscarcopula.numerical.tm_grid import TMGrid"
-    numerical_root = ROOT / "pyscarcopula"
-    for path in numerical_root.rglob("*.py"):
-        relative = path.relative_to(ROOT).as_posix()
-        if relative in {
-                "pyscarcopula/numerical/tm_grid.py",
-                "pyscarcopula/numerical/__init__.py"}:
-            continue
-        assert forbidden_import not in path.read_text(encoding="utf-8"), (
-            f"production module imports TMGrid: {relative}"
-        )
-
-    docs = (
-        ROOT / "docs/guide/numerical-backends.md"
-    ).read_text(encoding="utf-8")
-    assert "Manual Python reference grid" in docs
-    assert (
-        "not a wrapper around the compiled SCAR evaluator"
-        in " ".join(docs.split())
-    )
+def test_tmgrid_is_physically_absent_from_the_package():
+    assert not (ROOT / "pyscarcopula/numerical/tm_grid.py").exists()
+    assert not hasattr(pyscarcopula.numerical, "TMGrid")
 
 
 def test_public_docs_exclude_development_plans_and_phase_reports():
@@ -235,7 +219,7 @@ def test_vinecopula_is_the_discoverable_canonical_vine_api():
     api = (ROOT / "docs/api/vine.md").read_text(encoding="utf-8")
     assert api.index("## VineCopula") < api.index("## RVineCopula")
     assert "RVineCopula is VineCopula" in api
-    assert "legacy" in api.lower()
+    assert "compatibility name" in api.lower()
 
 
 def test_complete_public_documentation_examples_execute():
@@ -384,14 +368,14 @@ def test_documented_dynamic_predictive_mean_examples_execute():
 
 
 def test_documented_prediction_defaults_match_runtime():
-    from pyscarcopula import CVineCopula, VineCopula
+    from pyscarcopula import VineCopula
     from pyscarcopula.api import predict
 
-    for callable_ in (predict, CVineCopula.predict, VineCopula.predict):
+    for callable_ in (predict, VineCopula.predict):
         parameters = inspect.signature(callable_).parameters
         assert parameters["horizon"].default == "next"
 
-    for callable_ in (CVineCopula.predict, VineCopula.predict):
+    for callable_ in (VineCopula.predict,):
         parameters = inspect.signature(callable_).parameters
         assert parameters["predictive_r_mode"].default is None
 
@@ -444,7 +428,6 @@ def test_documented_public_imports():
     from pyscarcopula import (
         BivariateCopula,
         CopulaBase,
-        CopulaCapabilities,
         EquicorrGaussianCopula,
         MultivariateCopula,
         StochasticStudentCopula,
@@ -461,7 +444,6 @@ def test_documented_public_imports():
     assert StochasticStudentCopula is NamespacedStudent
     assert issubclass(BivariateCopula, CopulaBase)
     assert issubclass(MultivariateCopula, CopulaBase)
-    assert CopulaCapabilities().supports_gas is False
 
 
 def test_top_level_api_exposes_docstrings_and_complete_annotations():
@@ -491,10 +473,10 @@ def test_distribution_declares_pep561_typing_marker():
 
 
 def test_documented_vine_signatures_match_runtime():
-    from pyscarcopula import CVineCopula, RVineCopula, VineCopula
+    from pyscarcopula import RVineCopula, VineCopula
 
     assert RVineCopula is VineCopula
-    for cls in (CVineCopula, VineCopula):
+    for cls in (VineCopula,):
         sample_parameters = inspect.signature(cls.sample).parameters
         assert "n" in sample_parameters
         assert "u" in sample_parameters

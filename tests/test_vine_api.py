@@ -1,4 +1,4 @@
-"""Permanent top-level API contracts for generic and legacy vines."""
+"""Permanent top-level API contracts for native-backed vines."""
 
 import numpy as np
 import pytest
@@ -6,7 +6,6 @@ import pytest
 import pyscarcopula.api as api
 import pyscarcopula.stattests as stattests
 from pyscarcopula import (
-    CVineCopula,
     IndependentCopula,
     PredictConfig,
     VineCopula,
@@ -86,39 +85,13 @@ def test_generic_dispatch_is_type_based_not_structure_label():
         (VineCopula.rvine(), "rvine"),
     ):
         assert api._is_generic_vine(vine)
-        assert not api._is_legacy_cvine(vine)
         assert vine.vine_type == expected_type
-
-
-def test_legacy_cvine_keeps_its_top_level_adapter():
-    data = _data(dimension=3)
-    vine = CVineCopula(candidates=[IndependentCopula])
-    result = api.fit(vine, data, method="mle")
-
-    direct_sample = vine.sample(8, rng=np.random.default_rng(21))
-    api_sample = api.sample(
-        vine, data, result, 8, rng=np.random.default_rng(21))
-    np.testing.assert_array_equal(api_sample, direct_sample)
-
-    direct_predict = vine.predict(
-        8, u=data, rng=np.random.default_rng(22), horizon="current")
-    api_predict = api.predict(
-        vine,
-        data,
-        result,
-        8,
-        rng=np.random.default_rng(22),
-        horizon="current",
-    )
-    np.testing.assert_array_equal(api_predict, direct_predict)
 
 
 def test_unsupported_vine_kwargs_are_rejected_instead_of_dropped():
     data = _data(dimension=3)
     generic = VineCopula.dvine(
         3, candidates=[IndependentCopula]).fit(data)
-    legacy = CVineCopula(
-        candidates=[IndependentCopula]).fit(data)
 
     with pytest.raises(TypeError, match="unexpected_keyword"):
         api.sample(
@@ -128,14 +101,6 @@ def test_unsupported_vine_kwargs_are_rejected_instead_of_dropped():
         api.predict(
             generic, data, generic.fit_result, 4,
             unexpected_keyword=True)
-    with pytest.raises(TypeError, match="return_diagnostics"):
-        api.predict(
-            legacy,
-            data,
-            legacy.fit_result,
-            4,
-            predict_config=PredictConfig(return_diagnostics=True),
-        )
 
 
 @pytest.mark.parametrize(

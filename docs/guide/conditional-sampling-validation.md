@@ -17,8 +17,6 @@ runtimes:
 | Gaussian and Student copulas | dense and factor exact kernels |
 | Equicorr Gaussian and Stochastic Student | MLE, GAS, and supported latent predictive paths |
 | Generic `VineCopula` | direct suffix, rebuilt suffix, and DAG+MCMC routing for C-, D-, and R-vines |
-| Legacy `CVineCopula` | prefix/general legacy conditional algorithms |
-
 `RVineCopula` is a compatibility alias for `VineCopula`, not a thirteenth
 runtime.  Unsupported method/correlation combinations are explicit negative
 contract cases in the registry.

@@ -12,7 +12,9 @@ from typing import NamedTuple
 
 import numpy as np
 
-from pyscarcopula.copula.base import CopulaCapabilities
+from pyscarcopula._native.errors import NativeUnsupported
+from pyscarcopula._native.registry import is_registered_type
+from pyscarcopula.copula.base import BivariateCopula
 
 
 class SelectedCopula(NamedTuple):
@@ -27,14 +29,18 @@ class SelectedCopula(NamedTuple):
 
 
 def validate_pair_candidates(candidates):
-    """Reject explicitly multivariate classes from vine family pools."""
+    """Require exact registered built-in pair classes in vine family pools."""
     if candidates is None:
         return
     for candidate in candidates:
-        capabilities = getattr(candidate, "_capabilities", None)
-        if (
-                isinstance(capabilities, CopulaCapabilities)
-                and not capabilities.supports_pair_ops):
+        if not isinstance(candidate, type):
+            raise TypeError(
+                "vine candidates must be exact registered copula classes")
+        if not is_registered_type(candidate):
+            name = getattr(candidate, "__name__", type(candidate).__name__)
+            raise NativeUnsupported(
+                f"{name} is not an exact registered native model")
+        if not issubclass(candidate, BivariateCopula):
             name = getattr(candidate, "__name__", type(candidate).__name__)
             hint = ""
             if name == "GaussianCopula":
@@ -318,14 +324,11 @@ def _screen_log_likelihood(copula, u_pair, parameter):
 
     registry_entry_for(copula)
 
-    uses_native_base = (
-        getattr(type(copula), "log_likelihood", None)
-        is BivariateCopula.log_likelihood
-    )
-    if uses_native_base and static_likelihood.supported(copula):
+    if static_likelihood.supported(copula):
         evaluator = static_likelihood.prepare(copula, u_pair)
         return float(evaluator.log_likelihood(parameter)), evaluator
-    return float(copula.log_likelihood(u_pair, parameter)), None
+    raise NativeUnsupported(
+        f"{type(copula).__name__} has no registered native static likelihood")
 
 
 def _retain_top_prepared_evaluators(candidates, limit):

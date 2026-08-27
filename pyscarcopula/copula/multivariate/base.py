@@ -8,7 +8,7 @@ from typing import Callable, ParamSpec, TypeVar
 
 import numpy as np
 
-from pyscarcopula.copula.base import CopulaBase, CopulaCapabilities
+from pyscarcopula.copula.base import CopulaBase
 
 
 _P = ParamSpec("_P")
@@ -27,8 +27,6 @@ def model_state_locked(method: Callable[_P, _R]) -> Callable[_P, _R]:
 
 class MultivariateCopula(CopulaBase):
     """Common contract for copulas that are not vine pair copulas."""
-
-    _capabilities = CopulaCapabilities()
 
     def __init__(
             self, dimension: int | None = None, *, name: str = "Copula") -> None:

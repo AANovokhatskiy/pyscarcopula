@@ -9,8 +9,9 @@ from scipy.stats import chi2, norm
 from pyscarcopula import (
     BivariateGaussianCopula,
     GumbelCopula, ClaytonCopula, FrankCopula, JoeCopula,
-    IndependentCopula, CVineCopula, EquicorrGaussianCopula,
+    IndependentCopula, EquicorrGaussianCopula,
     GaussianCopula, StudentCopula, StochasticStudentCopula,
+    VineCopula,
 )
 from pyscarcopula.api import (
     fit, log_likelihood, mixture_h, predict, predictive_mean, sample,
@@ -97,22 +98,22 @@ class TestFitResultTypes:
 
     def test_vine_fit_result(self):
         u4 = pobs(np.random.default_rng(0).standard_normal((200, 4)))
-        vine = CVineCopula()
+        vine = VineCopula.cvine(d=4)
         vine.fit(u4, method='mle')
         assert vine.fit_result.log_likelihood is not None
         assert vine.fit_result.success
 
     def test_vine_logL_equals_edge_sum(self):
         u4 = pobs(np.random.default_rng(1).standard_normal((200, 4)))
-        vine = CVineCopula()
+        vine = VineCopula.cvine(d=4)
         vine.fit(u4, method='mle')
         edge_sum = sum(e.fit_result.log_likelihood
-                       for tree in vine.edges for e in tree)
+                       for e in vine.pair_copulas.values())
         assert abs(vine.fit_result.log_likelihood - edge_sum) < 1e-8
 
     def test_top_level_vine_log_likelihood_dispatches_to_vine(self):
         u4 = pobs(np.random.default_rng(30).standard_normal((80, 4)))
-        vine = CVineCopula()
+        vine = VineCopula.cvine(d=4)
         result = fit(vine, u4, method='mle')
 
         assert log_likelihood(vine, u4, result) == pytest.approx(
@@ -510,7 +511,7 @@ class TestTransformType:
 
     def test_vine_softplus(self):
         u4 = pobs(np.random.default_rng(0).standard_normal((150, 4)))
-        vine = CVineCopula()
+        vine = VineCopula.cvine(d=4)
         vine.fit(u4, method='mle', transform_type='softplus')
         assert vine.fit_result.log_likelihood is not None
 

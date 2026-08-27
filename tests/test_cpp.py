@@ -28,7 +28,6 @@ from pyscarcopula.numerical.tm_functions import (
     tm_forward_mixture_h,
     tm_forward_predictive_mean,
 )
-from pyscarcopula.numerical.tm_grid import TMGrid
 from pyscarcopula.numerical.predictive_tm import tm_state_distribution
 from pyscarcopula._native import scar_ou as _cpp_scar_ou
 from pyscarcopula.strategy.scar_tm import SCARTMStrategy
@@ -1278,91 +1277,6 @@ def test_cpp_sparse_matrix_backend_covers_filtering_and_gradient():
         ) / 2e-5
     np.testing.assert_allclose(
         gradient, finite_difference, rtol=0.0, atol=1e-6)
-
-
-@pytest.mark.parametrize(
-    ("transition_method", "grid_method", "backend_name"),
-    [
-        ("matrix", "dense", "Matrix"),
-        ("matrix", "sparse", "Matrix"),
-        ("local", "auto", "LocalGh"),
-    ],
-)
-def test_cpp_grid_filter_engine_matches_tmgrid(
-        transition_method, grid_method, backend_name):
-    rng = np.random.default_rng(20260731)
-    n_obs = 11
-    K = 41
-    alpha = (0.85, -0.12, 1.05)
-    emissions = np.exp(rng.normal(scale=0.7, size=(n_obs, K)))
-    grid = TMGrid(
-        *alpha,
-        n_obs,
-        K=K,
-        grid_range=3.5,
-        grid_method=grid_method,
-        adaptive=False,
-        transition_method=transition_method,
-        gh_order=7,
-    )
-
-    predictive = grid.forward_weights(emissions)
-    filtered = predictive * emissions
-    filtered /= filtered.sum(axis=1, keepdims=True)
-
-    backward = np.ones((n_obs, K), dtype=np.float64)
-    for t in range(n_obs - 2, -1, -1):
-        backward[t] = grid.matvec(emissions[t + 1] * backward[t + 1])
-        backward[t] /= np.max(np.abs(backward[t]))
-
-    smoothed = predictive * emissions * backward
-    smoothed /= smoothed.sum(axis=1, keepdims=True)
-
-    module = _cpp_scar_ou._extension.load()
-    config = AutoTMConfig(
-        transition_method=transition_method,
-        grid_method=grid_method,
-        K=K,
-        grid_range=3.5,
-        adaptive=False,
-        gh_order=7,
-    )
-    result = module._ou_grid_filter_engine(
-        _cpp_scar_ou._params(module, *alpha),
-        emissions,
-        _cpp_scar_ou._config(module, config),
-        getattr(module.OuBackend, backend_name),
-    )
-    assert result["status"] == module.SCAR_OK
-    tolerance = 2e-8 if grid_method == "sparse" else 2e-13
-
-    np.testing.assert_allclose(
-        result["z_grid"], grid.z + grid.mu, rtol=0.0, atol=2e-15)
-    np.testing.assert_allclose(
-        result["predictive_weights"], predictive, rtol=0.0, atol=tolerance)
-    np.testing.assert_allclose(
-        result["filtered_weights"], filtered, rtol=0.0, atol=tolerance)
-    np.testing.assert_allclose(
-        result["backward_messages"], backward, rtol=0.0, atol=tolerance)
-    np.testing.assert_allclose(
-        result["smoothed_weights"], smoothed, rtol=0.0, atol=tolerance)
-    np.testing.assert_allclose(
-        np.sum(result["predictive_weights"], axis=1),
-        1.0,
-        rtol=0.0,
-        atol=2e-15,
-    )
-    np.testing.assert_allclose(
-        np.sum(result["smoothed_weights"], axis=1),
-        1.0,
-        rtol=0.0,
-        atol=2e-15,
-    )
-    final_probability = (
-        result["final_filtered_density"] * grid.trap_w)
-    final_probability /= final_probability.sum()
-    np.testing.assert_allclose(
-        final_probability, filtered[-1], rtol=0.0, atol=tolerance)
 
 
 def test_cpp_grid_filter_engine_can_skip_history_storage():

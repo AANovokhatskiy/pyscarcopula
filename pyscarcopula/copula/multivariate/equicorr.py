@@ -4,7 +4,6 @@ import numpy as np
 from scipy.optimize import minimize
 
 from pyscarcopula._types import DEFAULT_CONFIG, NumericalConfig
-from pyscarcopula.copula.base import CopulaCapabilities
 from pyscarcopula.copula.multivariate.base import (
     MultivariateCopula,
     model_state_locked,
@@ -29,14 +28,6 @@ _LBFGSB_FIT_KEYS = (
 
 class EquicorrGaussianCopula(MultivariateCopula):
     """Gaussian copula controlled by one equicorrelation parameter."""
-
-    _capabilities = CopulaCapabilities(
-        supports_gas=True,
-        supports_scar_ou=True,
-        supports_latent_grid=True,
-        supports_conditional_sampling=True,
-        has_dynamic_scalar_parameter=True,
-    )
 
     def __init__(self, d, rotate=0):
         if d < 2:

@@ -5,7 +5,6 @@ residual, and sampling math is native-only. Python retains public argument,
 fit, result, and NumPy RNG orchestration plus compatibility wrappers.
 """
 
-from pyscarcopula.numerical.tm_grid import TMGrid
 from pyscarcopula.numerical.tm_functions import (
     tm_loglik,
     tm_forward_predictive_mean,
@@ -68,7 +67,6 @@ from pyscarcopula.numerical.gas_filter import (
 )
 
 __all__ = [
-    'TMGrid',
     'tm_loglik',
     'hermite_loglik', 'hermite_loglik_with_grad', 'hermite_neg_loglik',
     'jacobi_rule', 'jacobi_transition_matrix',

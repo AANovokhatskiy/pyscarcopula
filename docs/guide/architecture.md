@@ -20,22 +20,11 @@ CopulaBase
 and inverse-`h`. `MultivariateCopula` exposes row-density and sampling
 behavior without presenting a pair-copula API.
 
-## Capabilities
+## Native capabilities
 
-Inheritance describes model shape. `CopulaCapabilities` describes which
-strategies and compiled operations a built-in model supports.
-
-```python
-from pyscarcopula import EquicorrGaussianCopula
-
-copula = EquicorrGaussianCopula(d=6)
-print(copula.capabilities.supports_gas)
-print(copula.capabilities.supports_scar_ou)
-```
-
-For exact built-in model types, these public flags are projected from the
-opaque C++ descriptor and operation-level capability query. The strategy layer
-validates named native requirements before optimization. A multivariate
+For exact built-in model types, the opaque C++ descriptor and operation-level
+capability query are the only support contract. The strategy layer validates
+named native requirements before optimization. A multivariate
 model is therefore not accepted by a pair-only strategy merely because it has
 similarly named methods.
 
@@ -51,16 +40,10 @@ adapter names are not dispatch surfaces.
 | Layer | Main responsibility |
 |-------|---------------------|
 | Copula class | Model identity, parameter domain, sampling |
-| Capability metadata | Explicit strategy support |
+| Native descriptor registry | Explicit strategy support |
 | Strategy | Optimization and fit-result construction |
 | Native evaluator | Density, likelihood, gradient, filtering, multivariate conditional linear algebra |
 | Python coordination | Fit/RNG orchestration, fixed draws, GoF reporting, persistence |
-
-The retained `pyscarcopula.numerical.TMGrid` class is a manual low-level
-NumPy/SciPy reference implementation. Production OU likelihood, prediction,
-smoothing, and GoF paths do not call it. Keeping the reference grid independent
-from the native evaluator provides an implementation oracle for parity tests;
-it is not a compatibility wrapper or a deprecated alias.
 
 ## Native Thread Runtime
 
@@ -144,27 +127,14 @@ The final Rosenblatt boundary remains `1e-6` because it protects GoF normal
 quantiles and must not be reused inside vine recursion. Vine code uses the
 shared pseudo-observation helper; it does not define local `_EPS` constants.
 
-## Custom Python Copulas
-
-Custom Python copulas can be paired with custom strategies, sampling,
-diagnostics, and other Python workflows. This does not add a family to the
-compiled support matrix.
-
-Built-in GAS and SCAR-TM-OU reject unknown classes before optimization. They do
-not silently call arbitrary Python density methods as a fallback.
-
-Custom estimation methods remain a Python extension point through
-`register_strategy`.
-
 ## Public Imports
 
-Base classes and capabilities are available at the package top level:
+Base classes are available at the package top level:
 
 ```python
 from pyscarcopula import (
     BivariateCopula,
     CopulaBase,
-    CopulaCapabilities,
     MultivariateCopula,
 )
 ```

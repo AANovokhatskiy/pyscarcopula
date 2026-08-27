@@ -27,8 +27,6 @@ from ._high_dimensional import (
     factor_loadings,
     high_dimensional_gaussian_vine,
     high_dimensional_mixed_truncated_vine,
-    legacy_cvine,
-    legacy_prefix_given,
     regular_vine_structure,
     scattered_given,
     suffix_given,
@@ -454,47 +452,6 @@ def test_d50_mixed_rotated_truncated_rvine_exact_suffix_contract(k_free):
     assert diagnostics["conditional_method"] == "suffix"
     assert diagnostics["matrix_rebuilt"] is False
     assert "mcmc" not in diagnostics
-    _assert_fixed_bit_exact(samples, given)
-
-
-def _legacy_gaussian_correlation(vine) -> np.ndarray:
-    correlation = np.eye(DIMENSION, dtype=np.float64)
-    root_correlations = np.array(
-        [float(edge.param) for edge in vine.edges[0]], dtype=np.float64
-    )
-    correlation[0, 1:] = root_correlations
-    correlation[1:, 0] = root_correlations
-    correlation[1:, 1:] = np.outer(root_correlations, root_correlations)
-    np.fill_diagonal(correlation, 1.0)
-    np.linalg.cholesky(correlation)
-    return correlation
-
-
-@pytest.mark.validation
-@pytest.mark.high_dimensional
-@pytest.mark.parametrize("k_free", FREE_COUNTS, ids=lambda value: f"k_free={value}")
-def test_d50_legacy_gaussian_cvine_matches_mvn(k_free):
-    vine = legacy_cvine("gaussian")
-    given = legacy_prefix_given(k_free)
-    samples = vine.predict(
-        3_000,
-        given=given,
-        rng=np.random.default_rng(20267120 + k_free),
-    )
-    _assert_gaussian_oracle(samples, _legacy_gaussian_correlation(vine), given)
-
-
-@pytest.mark.validation
-@pytest.mark.high_dimensional
-@pytest.mark.parametrize("k_free", FREE_COUNTS, ids=lambda value: f"k_free={value}")
-def test_d50_legacy_rotated_archimedean_cvine_contract(k_free):
-    vine = legacy_cvine("rotated-clayton")
-    given = legacy_prefix_given(k_free)
-    samples = vine.predict(
-        257,
-        given=given,
-        rng=np.random.default_rng(20267130 + k_free),
-    )
     _assert_fixed_bit_exact(samples, given)
 
 

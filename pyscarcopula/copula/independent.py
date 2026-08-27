@@ -11,7 +11,7 @@ is set to independent, saving all fit/TM/GAS computation.
 """
 
 import numpy as np
-from pyscarcopula.copula.base import BivariateCopula, CopulaCapabilities
+from pyscarcopula.copula.base import BivariateCopula
 
 
 class IndependentCopula(BivariateCopula):
@@ -129,9 +129,3 @@ class IndependentCopula(BivariateCopula):
         self.fit_result = result
         self._last_u = u
         return result
-    _capabilities = CopulaCapabilities(
-        dimension=2,
-        supports_pair_ops=True,
-        supports_native_point_ops=True,
-        supports_conditional_sampling=True,
-    )

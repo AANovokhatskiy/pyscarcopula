@@ -14,8 +14,7 @@ pyscarcopula/
 |-- io.py                    # JSON model persistence
 |-- stattests.py             # Goodness-of-fit orchestration
 |-- copula/
-|   |-- _protocol.py         # Common, bivariate, multivariate protocols
-|   |-- base.py              # CopulaBase, BivariateCopula, capabilities
+|   |-- base.py              # CopulaBase and BivariateCopula
 |   |-- gumbel.py, frank.py, joe.py, clayton.py
 |   |-- elliptical.py        # Bivariate Gaussian copula
 |   `-- multivariate/
@@ -26,13 +25,11 @@ pyscarcopula/
 |   |-- _base.py             # Strategy registry and capability validation
 |   |-- mle.py, gas.py, scar_tm.py
 |   `-- scar_jacobi.py
-|-- numerical/
-|   |-- _arrays.py, _scar_ou_config.py, _transition_methods.py
-|   `-- retained Stage 8.6 compatibility/reference modules
+|-- numerical/               # Public numerical configuration helpers
+|   `-- _arrays.py, _scar_ou_config.py, _transition_methods.py
 |-- vine/
 |   |-- vine.py               # Canonical generic VineCopula runtime
 |   |-- rvine.py              # RVineCopula compatibility module alias
-|   |-- cvine.py              # Legacy CVineCopula implementation
 |   |-- _structure.py         # RVineMatrix and C/D structure factories
 |   |-- _vine_fit.py          # Shared fixed-structure edge fitting
 |   |-- _rvine_sampling_plan.py # Canonical unconditional traversal plan
@@ -61,23 +58,12 @@ inverse-`h`, rotation handling, and scalar-parameter transforms.
 `MultivariateCopula` supplies row-density and sampling contracts without
 pretending to be a vine pair copula.
 
-The runtime-checkable protocols in `copula/_protocol.py` describe structural
-typing. They do not grant native support by themselves.
-
 ## Capabilities And Strategies
 
 Class hierarchy answers what a model is. For exact built-in model types, the
 opaque C++ `TypedModelDescriptor` and `query_capability` operation matrix are
-the authoritative support contract. `CopulaCapabilities` is a temporary public
-projection of that contract during the Stage 8 migration:
-
-- `supports_pair_ops`
-- `supports_native_mle`
-- `supports_gas`
-- `supports_scar_ou`
-- `supports_latent_grid`
-- `supports_conditional_sampling`
-- `has_dynamic_scalar_parameter`
+the authoritative support contract. There is no parallel public flag layer or
+structural protocol that can opt an unknown Python class into native execution.
 
 The strategy registry in `strategy/_base.py` checks named
 `StrategyRequirements` through the native query before fitting. Custom Python
@@ -336,30 +322,6 @@ the public MCMC diagnostics schema remains unchanged. Single-chain calls
 retain full recomputation because the incremental cache setup does not
 amortize there.
 
-## Custom Python Extensions
-
-User-defined Python copulas may implement the public protocols for their own
-sampling, diagnostics, custom strategies, or other Python workflows. This
-does not make them executable by native production strategies.
-
-Built-in GAS and SCAR-TM-OU accept only copula families explicitly represented
-by the native support matrix. Unknown classes fail before optimization instead
-of calling arbitrary Python density methods from the native evaluator.
-
-New estimation methods can still be registered in Python:
-
-```python
-from pyscarcopula.strategy._base import register_strategy
-
-@register_strategy("MY-METHOD")
-class MyStrategy:
-    def __init__(self, config=None, **kwargs):
-        self.config = config
-
-    def fit(self, copula, u, **kwargs):
-        ...
-```
-
 ## State And Persistence
 
 The top-level API can be used directly:
@@ -387,7 +349,6 @@ VineCopula.cvine(...) / .dvine(...) -> fixed RVineMatrix factories
 ```
 
 `RVineCopula` is the same runtime type as `VineCopula`.
-`CVineCopula` remains a separate legacy implementation.
 
 ## BLAS Thread Policy
 

@@ -7,7 +7,6 @@ import pytest
 from pyscarcopula import (
     BivariateGaussianCopula,
     ClaytonCopula,
-    CVineCopula,
     FrankCopula,
     GumbelCopula,
     IndependentCopula,
@@ -184,18 +183,6 @@ def test_vine_include_data_false_preserves_fit_but_drops_history(tmp_path):
         5, u=data, rng=np.random.default_rng(3)).shape == (5, 4)
 
 
-def test_cvine_roundtrip_preserves_runtime_type(tmp_path):
-    data = _data(dimension=3)
-    legacy = CVineCopula(
-        candidates=[IndependentCopula]).fit(data, method="mle")
-    path = tmp_path / "cvine.json"
-    legacy.save(path, include_data=True)
-
-    loaded = load_model(path)
-    assert type(loaded) is CVineCopula
-    assert not isinstance(loaded, VineCopula)
-
-
 @pytest.mark.parametrize(
     ("field", "replacement", "message"),
     (
@@ -227,7 +214,7 @@ def test_rejects_mismatched_persisted_structure_state(
         load_model(path)
 
 
-def test_vine_expected_type_accepts_alias_and_rejects_legacy_cvine(tmp_path):
+def test_vine_expected_type_accepts_rvine_alias(tmp_path):
     vine = VineCopula.cvine(
         3, candidates=[IndependentCopula]).fit(
             _data(dimension=3))
@@ -235,5 +222,3 @@ def test_vine_expected_type_accepts_alias_and_rejects_legacy_cvine(tmp_path):
     vine.save(path)
 
     assert isinstance(load_model(path, expected_type=RVineCopula), VineCopula)
-    with pytest.raises(TypeError, match="Expected CVineCopula"):
-        load_model(path, expected_type=CVineCopula)

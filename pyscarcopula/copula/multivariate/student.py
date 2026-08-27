@@ -13,7 +13,6 @@ from pyscarcopula._types import (
     NumericalConfig,
 )
 from pyscarcopula._utils import pobs
-from pyscarcopula.copula.base import CopulaCapabilities
 from pyscarcopula.copula.multivariate.base import (
     MultivariateCopula,
     model_state_locked,
@@ -104,8 +103,6 @@ def _validate_student_fit_data(u: np.ndarray) -> None:
 
 class StudentCopula(MultivariateCopula):
     """Static Student-t copula with configurable correlation estimation."""
-
-    _capabilities = CopulaCapabilities(supports_conditional_sampling=True)
 
     def __init__(
             self,

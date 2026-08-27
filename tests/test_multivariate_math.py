@@ -40,7 +40,6 @@ from pyscarcopula.copula.multivariate.student_ppf_cache import (
 from pyscarcopula.copula.multivariate.stochastic_student import (
     StochasticStudentCopula,
 )
-from pyscarcopula.numerical.tm_grid import TMGrid
 from pyscarcopula._native import gas as _cpp_gas, scar_ou as _cpp_scar_ou
 from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
 from pyscarcopula.numerical.gas_filter import gas_filter
@@ -83,47 +82,6 @@ def _R():
         ],
         dtype=np.float64,
     )
-
-
-def _materialized_equicorr_scar_rosenblatt(
-        copula, u, fit_result, K, grid_range, config=None):
-    eps = 1e-10
-    u_c = np.clip(u, eps, 1.0 - eps)
-    x_norm = norm.ppf(u_c)
-    T, d = u.shape
-    kappa, mu, nu = fit_result.params.values
-    grid_kwargs = {}
-    if config is not None:
-        grid_kwargs = {
-            "grid_method": config.grid_method,
-            "adaptive": config.adaptive,
-            "pts_per_sigma": config.pts_per_sigma,
-            "transition_method": config.transition_method,
-            "max_K": config.max_K,
-            "r_gh": config.r_gh,
-            "gh_order": config.gh_order,
-        }
-    grid = TMGrid(
-        kappa, mu, nu, T, K, grid_range, **grid_kwargs)
-    x_grid = grid.z + grid.mu
-    rho_grid = copula.transform(x_grid)
-    fi_grid = grid.copula_grid(u, copula)
-    weights = grid.forward_weights(fi_grid)
-
-    e = np.empty((T, d))
-    e[:, 0] = u[:, 0]
-    for k in range(T):
-        for i in range(1, d):
-            sx = np.sum(x_norm[k, :i])
-            denom = 1.0 + (i - 1) * rho_grid
-            cond_mean = rho_grid * sx / denom
-            cond_var = np.maximum(1.0 - i * rho_grid ** 2 / denom, 1e-10)
-            z_i = (x_norm[k, i] - cond_mean) / np.sqrt(cond_var)
-            prefix_density = _equicorr_leading_density(
-                x_norm[k, :i], rho_grid)
-            state_weights = _prefix_reweighted(weights[k], prefix_density)
-            e[k, i] = np.sum(state_weights * norm.cdf(z_i))
-    return np.clip(e, eps, 1.0 - eps)
 
 
 def _prefix_reweighted(weights, prefix_density):
@@ -195,112 +153,6 @@ def _student_leading_density(x_prefix_grid, df_grid, R_inv, log_det):
             )
         out[idx] = math.exp(joint - marginal)
     return out
-
-
-def _materialized_student_scar_rosenblatt(
-        copula, u, fit_result, K, grid_range, config=None):
-    eps = 1e-10
-    T, d = u.shape
-    kappa, mu, nu = fit_result.params.values
-    grid_kwargs = {}
-    if config is not None:
-        grid_kwargs = {
-            "grid_method": config.grid_method,
-            "adaptive": config.adaptive,
-            "pts_per_sigma": config.pts_per_sigma,
-            "transition_method": config.transition_method,
-            "max_K": config.max_K,
-            "r_gh": config.r_gh,
-            "gh_order": config.gh_order,
-        }
-    grid = TMGrid(
-        kappa, mu, nu, T, K, grid_range, **grid_kwargs)
-    x_grid = grid.z + grid.mu
-    df_grid = copula.transform(x_grid)
-    fi_grid = grid.copula_grid(u, copula)
-    weights = grid.forward_weights(fi_grid)
-    beta_sub, sigma_cond_sub, R_inv_sub = _student_scar_static_terms(copula.R, d)
-    log_det_sub = [0.0]
-    for i in range(2, d):
-        sign, log_det = np.linalg.slogdet(copula.R[:i, :i])
-        assert sign > 0
-        log_det_sub.append(float(log_det))
-    u_c = np.clip(u, eps, 1.0 - eps)
-
-    e = np.empty((T, d))
-    e[:, 0] = u[:, 0]
-    for k in range(T):
-        x_all = np.empty((grid.K, d), dtype=np.float64)
-        for dim in range(d):
-            x_all[:, dim] = t_dist.ppf(u_c[k, dim], df=df_grid)
-        for i in range(1, d):
-            x_prev = x_all[:, :i]
-            mu_cond = x_prev @ beta_sub[i - 1]
-            quad = np.sum(x_prev @ R_inv_sub[i - 1] * x_prev, axis=1)
-            df_cond = df_grid + i
-            scale = (df_grid + quad) / df_cond
-            z_i = (x_all[:, i] - mu_cond) / (
-                sigma_cond_sub[i - 1] * np.sqrt(np.maximum(scale, 1e-12)))
-            prefix_density = _student_leading_density(
-                x_all[:, :i], df_grid, R_inv_sub[i - 1], log_det_sub[i - 1])
-            state_weights = _prefix_reweighted(weights[k], prefix_density)
-            e[k, i] = np.sum(state_weights * t_dist.cdf(z_i, df=df_cond))
-    return np.clip(e, eps, 1.0 - eps)
-
-
-def _equicorr_scar_rosenblatt_predictive_only(copula, u, fit_result, K, grid_range):
-    eps = 1e-10
-    u_c = np.clip(u, eps, 1.0 - eps)
-    x_norm = norm.ppf(u_c)
-    T, d = u.shape
-    kappa, mu, nu = fit_result.params.values
-    grid = TMGrid(kappa, mu, nu, T, K, grid_range)
-    x_grid = grid.z + grid.mu
-    rho_grid = copula.transform(x_grid)
-    fi_grid = grid.copula_grid(u, copula)
-    weights = grid.forward_weights(fi_grid)
-
-    e = np.empty((T, d))
-    e[:, 0] = u[:, 0]
-    for k in range(T):
-        for i in range(1, d):
-            sx = np.sum(x_norm[k, :i])
-            denom = 1.0 + (i - 1) * rho_grid
-            cond_mean = rho_grid * sx / denom
-            cond_var = np.maximum(1.0 - i * rho_grid ** 2 / denom, 1e-10)
-            z_i = (x_norm[k, i] - cond_mean) / np.sqrt(cond_var)
-            e[k, i] = np.sum(weights[k] * norm.cdf(z_i))
-    return np.clip(e, eps, 1.0 - eps)
-
-
-def _student_scar_rosenblatt_predictive_only(copula, u, fit_result, K, grid_range):
-    eps = 1e-10
-    T, d = u.shape
-    kappa, mu, nu = fit_result.params.values
-    grid = TMGrid(kappa, mu, nu, T, K, grid_range)
-    x_grid = grid.z + grid.mu
-    df_grid = copula.transform(x_grid)
-    fi_grid = grid.copula_grid(u, copula)
-    weights = grid.forward_weights(fi_grid)
-    beta_sub, sigma_cond_sub, R_inv_sub = _student_scar_static_terms(copula.R, d)
-    u_c = np.clip(u, eps, 1.0 - eps)
-
-    e = np.empty((T, d))
-    e[:, 0] = u[:, 0]
-    for k in range(T):
-        x_all = np.empty((grid.K, d), dtype=np.float64)
-        for dim in range(d):
-            x_all[:, dim] = t_dist.ppf(u_c[k, dim], df=df_grid)
-        for i in range(1, d):
-            x_prev = x_all[:, :i]
-            mu_cond = x_prev @ beta_sub[i - 1]
-            quad = np.sum(x_prev @ R_inv_sub[i - 1] * x_prev, axis=1)
-            df_cond = df_grid + i
-            scale = (df_grid + quad) / df_cond
-            z_i = (x_all[:, i] - mu_cond) / (
-                sigma_cond_sub[i - 1] * np.sqrt(np.maximum(scale, 1e-12)))
-            e[k, i] = np.sum(weights[k] * t_dist.cdf(z_i, df=df_cond))
-    return np.clip(e, eps, 1.0 - eps)
 
 
 def test_equicorr_log_pdf_matches_gaussian_copula_formula():
@@ -697,137 +549,6 @@ def test_multivariate_mle_loglik_and_gof_contracts():
         assert 0.0 <= gof.pvalue <= 1.0
 
 
-def test_multivariate_scar_gof_does_not_materialize_forward_weights(monkeypatch):
-    u = pobs(np.random.default_rng(20260519).standard_normal((20, 3)))
-    R = np.array(
-        [
-            [1.0, 0.25, -0.10],
-            [0.25, 1.0, 0.15],
-            [-0.10, 0.15, 1.0],
-        ],
-        dtype=np.float64,
-    )
-    models = [
-        EquicorrGaussianCopula(d=3),
-        StochasticStudentCopula(d=3, R=R),
-    ]
-
-    def fail_forward_weights(self, fi_grid):
-        raise AssertionError("forward_weights should not be called")
-
-    monkeypatch.setattr(TMGrid, "forward_weights", fail_forward_weights)
-
-    for copula in models:
-        result = _scar_result(K=15, grid_range=3.0)
-        gof = gof_test(copula, u, to_pobs=False, fit_result=result, K=15,
-                       grid_range=3.0)
-        assert np.isfinite(gof.statistic)
-        assert 0.0 <= gof.pvalue <= 1.0
-
-
-def test_multivariate_scar_gof_matches_materialized_reference():
-    u = pobs(np.random.default_rng(20260521).standard_normal((14, 3)))
-    R0 = np.array(
-        [
-            [1.0, 0.25, -0.10],
-            [0.25, 1.0, 0.15],
-            [-0.10, 0.15, 1.0],
-        ],
-        dtype=np.float64,
-    )
-    result = _scar_result(K=13, grid_range=3.0)
-
-    equicorr = EquicorrGaussianCopula(d=3)
-    eq_ref = _materialized_equicorr_scar_rosenblatt(
-        equicorr, u, result, K=13, grid_range=3.0)
-    eq_got = equicorr_rosenblatt_transform(
-        equicorr, u, result, K=13, grid_range=3.0)
-    np.testing.assert_allclose(eq_got, eq_ref, atol=1e-12, rtol=1e-12)
-
-    student = StochasticStudentCopula(d=3, R=R0)
-    st_ref = _materialized_student_scar_rosenblatt(
-        student, u, result, K=13, grid_range=3.0)
-    st_got = stochastic_student_rosenblatt_transform(
-        student, u, result, K=13, grid_range=3.0)
-    np.testing.assert_allclose(st_got, st_ref, atol=8e-4, rtol=8e-4)
-
-
-@pytest.mark.parametrize(
-    ("transition_method", "grid_method", "atol"),
-    [
-        ("matrix", "dense", 2e-13),
-        ("matrix", "sparse", 2e-8),
-        ("local", "auto", 2e-13),
-    ],
-)
-def test_native_equicorr_gaussian_rosenblatt_matches_tmgrid_oracle(
-        transition_method, grid_method, atol):
-    u = pobs(np.random.default_rng(20260730).standard_normal((19, 4)))
-    copula = EquicorrGaussianCopula(d=4)
-    result = _scar_result(K=35, grid_range=3.25)
-    config = AutoTMConfig(
-        K=35,
-        grid_range=3.25,
-        grid_method=grid_method,
-        adaptive=False,
-        transition_method=transition_method,
-        max_K=None,
-        gh_order=7,
-    )
-
-    expected = _materialized_equicorr_scar_rosenblatt(
-        copula,
-        u,
-        result,
-        K=35,
-        grid_range=3.25,
-        config=config,
-    )
-    actual = _cpp_scar_ou.gaussian_rosenblatt(
-        *result.params.values, u, copula, config)
-
-    np.testing.assert_allclose(
-        actual, expected, rtol=0.0, atol=atol)
-
-
-@pytest.mark.parametrize(
-    ("transition_method", "grid_method", "atol"),
-    [
-        ("matrix", "dense", 5e-8),
-        ("matrix", "sparse", 5e-8),
-        ("local", "auto", 5e-8),
-    ],
-)
-def test_native_student_rosenblatt_matches_tmgrid_oracle(
-        transition_method, grid_method, atol):
-    u = pobs(np.random.default_rng(20260730).standard_normal((19, 4)))
-    copula = StochasticStudentCopula(d=4, R=_R())
-    result = _scar_result(K=35, grid_range=3.25)
-    config = AutoTMConfig(
-        K=35,
-        grid_range=3.25,
-        grid_method=grid_method,
-        adaptive=False,
-        transition_method=transition_method,
-        max_K=None,
-        gh_order=7,
-    )
-
-    expected = _materialized_student_scar_rosenblatt(
-        copula,
-        u,
-        result,
-        K=35,
-        grid_range=3.25,
-        config=config,
-    )
-    actual = _cpp_scar_ou.student_rosenblatt(
-        *result.params.values, u, copula, config)
-
-    np.testing.assert_allclose(
-        actual, expected, rtol=0.0, atol=atol)
-
-
 @pytest.mark.parametrize(
     ("copula", "native_name", "transform"),
     [
@@ -890,43 +611,6 @@ def test_multivariate_scar_gof_preserves_stored_grid_options(
     }
 
 
-def test_multivariate_scar_gof_reweights_state_by_observed_prefix():
-    u = pobs(np.random.default_rng(20260625).standard_normal((12, 3)))
-    R = np.array(
-        [
-            [1.0, 0.42, -0.18],
-            [0.42, 1.0, 0.27],
-            [-0.18, 0.27, 1.0],
-        ],
-        dtype=np.float64,
-    )
-    result = _scar_result(K=15, grid_range=3.25)
-
-    equicorr = EquicorrGaussianCopula(d=3)
-    eq_expected = _materialized_equicorr_scar_rosenblatt(
-        equicorr, u, result, K=15, grid_range=3.25)
-    eq_predictive_only = _equicorr_scar_rosenblatt_predictive_only(
-        equicorr, u, result, K=15, grid_range=3.25)
-    eq_got = equicorr_rosenblatt_transform(
-        equicorr, u, result, K=15, grid_range=3.25)
-
-    np.testing.assert_allclose(eq_got, eq_expected, atol=1e-12, rtol=1e-12)
-    assert not np.allclose(
-        eq_expected[:, 2], eq_predictive_only[:, 2], atol=1e-5, rtol=1e-5)
-
-    student = StochasticStudentCopula(d=3, R=R)
-    st_expected = _materialized_student_scar_rosenblatt(
-        student, u, result, K=15, grid_range=3.25)
-    st_predictive_only = _student_scar_rosenblatt_predictive_only(
-        student, u, result, K=15, grid_range=3.25)
-    st_got = stochastic_student_rosenblatt_transform(
-        student, u, result, K=15, grid_range=3.25)
-
-    np.testing.assert_allclose(st_got, st_expected, atol=8e-4, rtol=8e-4)
-    assert not np.allclose(
-        st_expected[:, 2], st_predictive_only[:, 2], atol=1e-5, rtol=1e-5)
-
-
 def test_equicorr_scar_gof_uses_block_batch_emissions(monkeypatch):
     u = pobs(np.random.default_rng(20260520).standard_normal((18, 3)))
     copula = EquicorrGaussianCopula(d=3)
@@ -942,24 +626,6 @@ def test_equicorr_scar_gof_uses_block_batch_emissions(monkeypatch):
     assert e.shape == u.shape
     assert np.all(np.isfinite(e))
     assert np.all((e > 0.0) & (e < 1.0))
-
-
-def test_equicorr_scar_gof_native_path_does_not_construct_tmgrid(
-        monkeypatch):
-    u = pobs(np.random.default_rng(20260731).standard_normal((18, 4)))
-    copula = EquicorrGaussianCopula(d=4)
-    result = _scar_result(K=31, grid_range=3.0)
-
-    def fail_tmgrid(*args, **kwargs):
-        raise AssertionError(
-            "equicorrelation Gaussian GoF must not construct TMGrid")
-
-    monkeypatch.setattr(TMGrid, "__init__", fail_tmgrid)
-    transformed = equicorr_rosenblatt_transform(
-        copula, u, result, K=31, grid_range=3.0)
-
-    assert transformed.shape == u.shape
-    assert np.all(np.isfinite(transformed))
 
 
 def test_stochastic_student_scar_gof_uses_block_batch_emissions(monkeypatch):
@@ -985,53 +651,6 @@ def test_stochastic_student_scar_gof_uses_block_batch_emissions(monkeypatch):
     assert e.shape == u.shape
     assert np.all(np.isfinite(e))
     assert np.all((e > 0.0) & (e < 1.0))
-
-
-def test_student_scar_gof_native_path_does_not_construct_tmgrid(
-        monkeypatch):
-    u = pobs(np.random.default_rng(20260801).standard_normal((18, 4)))
-    copula = StochasticStudentCopula(d=4, R=_R())
-    result = _scar_result(K=31, grid_range=3.0)
-
-    def fail_tmgrid(*args, **kwargs):
-        raise AssertionError("Student GoF must not construct TMGrid")
-
-    monkeypatch.setattr(TMGrid, "__init__", fail_tmgrid)
-    transformed = stochastic_student_rosenblatt_transform(
-        copula, u, result, K=31, grid_range=3.0)
-
-    assert transformed.shape == u.shape
-    assert np.all(np.isfinite(transformed))
-
-
-def test_forward_weight_block_arrays_match_row_iterator():
-    from pyscarcopula.numerical.gof_blocks import (
-        iter_forward_weight_block_arrays,
-        iter_forward_weight_blocks,
-    )
-
-    u = pobs(np.random.default_rng(20260525).standard_normal((17, 3)))
-    copula = EquicorrGaussianCopula(d=3)
-    grid = TMGrid(0.8, 0.0, 1.0, len(u), 9, 3.0)
-    x_grid = grid.z + grid.mu
-
-    row_weights = []
-    row_fi = []
-    for _k, _local, weights, fi_block in iter_forward_weight_blocks(
-            grid, u, copula, x_grid=x_grid, block_size=4):
-        row_weights.append(weights.copy())
-        row_fi.append(fi_block[_local].copy())
-
-    block_weights = []
-    block_fi = []
-    for _start, _stop, weights_block, fi_block, _u_block in (
-            iter_forward_weight_block_arrays(
-                grid, u, copula, x_grid=x_grid, block_size=4)):
-        block_weights.extend(weights_block)
-        block_fi.extend(fi_block)
-
-    np.testing.assert_allclose(block_weights, row_weights, atol=0.0, rtol=0.0)
-    np.testing.assert_allclose(block_fi, row_fi, atol=0.0, rtol=0.0)
 
 
 def test_student_scar_gof_bypasses_python_block_sizing(monkeypatch):

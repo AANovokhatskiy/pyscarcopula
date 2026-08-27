@@ -121,9 +121,6 @@ fitted or predictive parameter path before sampling the free coordinates.
 For every multivariate model, fixing all variables returns constant rows equal
 to the supplied values.
 
-Legacy `CVineCopula` prediction uses C-vine-specific prefix and general
-conditional paths.
-
 For generic `VineCopula` models, including fixed C-vine, fixed D-vine, and
 auto-selected R-vine structures, `predict` uses two paths:
 

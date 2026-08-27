@@ -8,7 +8,7 @@ from scipy.stats import kstest, norm
 
 from pyscarcopula import (
     GumbelCopula, ClaytonCopula, FrankCopula, JoeCopula,
-    IndependentCopula, BivariateGaussianCopula, RVineCopula,
+    IndependentCopula, BivariateGaussianCopula, RVineCopula, VineCopula,
 )
 from pyscarcopula._types import (
     GASResult,
@@ -23,9 +23,7 @@ from pyscarcopula.api import sample as api_sample
 from pyscarcopula.stattests import (
     gof_test,
     rvine_rosenblatt_transform,
-    vine_rosenblatt_transform,
 )
-from pyscarcopula.vine.cvine import CVineCopula
 from pyscarcopula.vine._structure import RVineMatrix
 from pyscarcopula.vine import _rvine_dissmann as dissmann_module
 from pyscarcopula.vine import rvine as rvine_module
@@ -2714,11 +2712,12 @@ class TestGoF:
         assert np.isfinite(result.statistic)
         assert np.isfinite(result.pvalue)
 
-    def test_two_dimensional_rvine_gof_matches_cvine_order(self):
+    def test_two_dimensional_auto_and_fixed_cvine_gof_match(self):
         rng = np.random.default_rng(123)
         u = GumbelCopula().sample_at_parameter(500, 2.0, rng=rng)
 
-        cvine = CVineCopula(
+        cvine = VineCopula.cvine(
+            d=2,
             candidates=[GumbelCopula],
             allow_rotations=False,
         ).fit(u, method='mle')
@@ -2729,7 +2728,7 @@ class TestGoF:
 
         np.testing.assert_allclose(
             rvine_rosenblatt_transform(rvine, u),
-            vine_rosenblatt_transform(cvine, u),
+            rvine_rosenblatt_transform(cvine, u),
             rtol=1e-12,
             atol=1e-12,
         )

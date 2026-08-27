@@ -6,7 +6,9 @@ import numpy as np
 
 from pyscarcopula.strategy._base import (
     copula_dimension,
-    get_copula_capabilities,
+    has_dynamic_scalar_parameter,
+    is_pair_copula,
+    supports_conditional_sampling,
 )
 
 
@@ -91,26 +93,22 @@ def sample_predictive(copula, n, r, given=None, rng=None, d=None):
     from pyscarcopula._native.registry import registry_entry_for
 
     registry_entry_for(copula)
-    capabilities = get_copula_capabilities(copula)
-
     if given is None and d is not None and int(d) != 2 and hasattr(copula, "_R_path"):
         return copula.sample(n=n, df_path=r, rng=rng)
 
     if given is None:
-        if capabilities is not None and capabilities.supports_pair_ops:
+        if is_pair_copula(copula):
             return copula.sample_at_parameter(n, r, rng=rng)
-        if (
-                capabilities is not None
-                and not capabilities.has_dynamic_scalar_parameter):
+        if not has_dynamic_scalar_parameter(copula):
             return copula.sample(n, rng=rng)
         return copula.sample_at_parameter(n, r, rng=rng)
 
-    if capabilities is not None and capabilities.supports_pair_ops:
+    if is_pair_copula(copula):
         return conditional_sample_bivariate(
             copula, n, r, given=given, rng=rng)
 
-    if capabilities is not None and capabilities.supports_conditional_sampling:
-        if not capabilities.has_dynamic_scalar_parameter:
+    if supports_conditional_sampling(copula):
+        if not has_dynamic_scalar_parameter(copula):
             return copula.sample_conditional(
                 n, given=given, rng=rng)
         return copula.sample_conditional(n, r=r, given=given, rng=rng)

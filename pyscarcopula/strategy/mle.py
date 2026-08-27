@@ -16,7 +16,7 @@ from pyscarcopula._types import (
 )
 from pyscarcopula.strategy._base import (
     copula_dimension,
-    get_copula_capabilities,
+    has_dynamic_scalar_parameter,
     is_multivariate_copula,
     lbfgsb_options,
     lbfgsb_overrides,
@@ -80,7 +80,7 @@ class MLEStrategy:
 
         Parameters
         ----------
-        copula : CopulaProtocol
+        copula : exact registered built-in copula
         u : (T, 2) pseudo-observations
         alpha0 : (1,) array_like or None
             Initial point in the copula's natural parameter space. When
@@ -108,10 +108,7 @@ class MLEStrategy:
             finite_diff_rel_step=finite_diff_rel_step,
         )
 
-        capabilities = get_copula_capabilities(copula)
-        if (
-                capabilities is not None
-                and not capabilities.has_dynamic_scalar_parameter):
+        if not has_dynamic_scalar_parameter(copula):
             direct_fit = getattr(copula, 'fit', None)
             if direct_fit is not None:
                 result = direct_fit(

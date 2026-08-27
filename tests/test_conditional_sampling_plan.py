@@ -13,7 +13,6 @@ from scipy.stats import (
 from pyscarcopula import (
     BivariateGaussianCopula,
     ClaytonCopula,
-    CVineCopula,
     FrankCopula,
     GumbelCopula,
     IndependentCopula,
@@ -1263,109 +1262,6 @@ class TestConditionalSamplingPlanLayer:
         assert gas_params_refit
         assert np.isfinite(refit.log_likelihood())
         assert any(abs(p.gamma) > 0.2 for p in gas_params_refit)
-
-    @pytest.mark.validation
-    def test_cvine_dynamic_prefix_conditional_matches_predictive_edge_state(self):
-        copula = BivariateGaussianCopula()
-        target_r = 0.85
-        gas_edge = _vine_edge(
-            0,
-            0,
-            copula,
-            GASResult(
-                log_likelihood=0.0,
-                method='GAS',
-                copula_name=copula.name,
-                success=True,
-                params=gas_params(0.0, 0.0, 0.0),
-                scaling='unit',
-                r_last=target_r,
-            ),
-        )
-
-        vine = CVineCopula(candidates=[BivariateGaussianCopula])
-        vine.d = 4
-        vine.method = 'MIXED'
-        vine.edges = [
-            [gas_edge, _mle_gaussian_edge(0, 1, 0.15), _independent_edge(0, 2)],
-            [_independent_edge(1, 0), _independent_edge(1, 1)],
-            [_independent_edge(2, 0)],
-        ]
-
-        samples = vine.predict(
-            2000,
-            given={0: 0.95},
-            rng=np.random.default_rng(121),
-        )
-
-        expected = _gaussian_conditional_u_mean(target_r, 0.95)
-        sample_mean = float(np.mean(samples[:, 1]))
-        assert np.allclose(samples[:, 0], 0.95)
-        assert sample_mean > 0.70
-        assert abs(sample_mean - expected) < 0.04
-        assert abs(np.mean(samples[:, 3]) - 0.5) < 0.04
-
-    def test_cvine_scar_tm_train_pseudo_obs_use_mixture_h(self, monkeypatch):
-        u_train = _mvn_pobs(np.eye(3), 12, seed=122)
-        copula = BivariateGaussianCopula()
-        scar_edge = _vine_edge(
-            0,
-            0,
-            copula,
-            LatentResult(
-                log_likelihood=0.0,
-                method='SCAR-TM-OU',
-                copula_name=copula.name,
-                success=True,
-                params=ou_params(1.0, 0.0, 0.5),
-                K=5,
-                grid_range=3.0,
-            ),
-        )
-        vine = CVineCopula(candidates=[BivariateGaussianCopula])
-        vine.d = 3
-        vine.method = 'MIXED'
-        vine.edges = [
-            [scar_edge, _mle_gaussian_edge(0, 1, 0.0)],
-            [_mle_gaussian_edge(1, 0, 0.0)],
-        ]
-        h_calls = []
-        r_calls = []
-
-        def fake_edge_h(edge, u2, u1, u_pair, K=300, grid_range=5.0):
-            h_calls.append((edge.fit_result.method, u_pair.copy(), K, grid_range))
-            if edge is scar_edge:
-                return np.full(len(u2), 0.73)
-            return np.asarray(u2, dtype=np.float64)
-
-        def fake_edge_r_for_predict(edge, n, u_train_pair=None,
-                                    horizon='next', **kwargs):
-            r_calls.append((edge.fit_result.method, u_train_pair, horizon))
-            return np.full(n, 0.0)
-
-        monkeypatch.setattr('pyscarcopula.vine.cvine._edge_h', fake_edge_h)
-        monkeypatch.setattr(
-            'pyscarcopula.vine.cvine._edge_r_for_predict',
-            fake_edge_r_for_predict,
-        )
-
-        samples = vine.predict(
-            5,
-            u=u_train,
-            given={0: 0.4},
-            K=5,
-            grid_range=3.0,
-            rng=np.random.default_rng(123),
-        )
-
-        assert samples.shape == (5, 3)
-        assert any(method == 'SCAR-TM-OU' for method, *_ in h_calls)
-        assert any(
-            method == 'MLE'
-            and v_pair is not None
-            and np.allclose(v_pair[:, 0], 0.73)
-            for method, v_pair, *_ in r_calls
-        )
 
     def test_rvine_arbitrary_conditioning_uses_dag_mcmc_fallback(self):
         u_train = _mvn_pobs(np.eye(4), 400, seed=120)

@@ -1294,7 +1294,7 @@ class VineCopula:
     def summary(self, as_string: bool = False) -> str | None:
         """Print R-vine structure summary.
 
-        Matches ``CVineCopula.summary()`` behavior: by default the summary is
+        By default the summary is
         printed and ``None`` is returned. Use ``summary(as_string=True)`` when
         a string value is needed.
 

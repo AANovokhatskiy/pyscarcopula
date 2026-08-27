@@ -125,18 +125,8 @@ def get_copula_constructor(copula):
         StochasticStudentCopula,
         StudentCopula,
     )
-    from pyscarcopula.vine.cvine import CVineCopula
     from pyscarcopula.vine.vine import VineCopula
 
-    if isinstance(copula, CVineCopula):
-        return (
-            CVineCopula,
-            dict(
-                candidates=copula.candidates,
-                allow_rotations=copula.allow_rotations,
-                criterion=copula.criterion,
-            ),
-        )
     if isinstance(copula, VineCopula):
         structure = (
             copula.structure

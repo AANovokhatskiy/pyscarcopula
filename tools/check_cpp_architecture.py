@@ -2104,6 +2104,67 @@ def check_jacobi_strategy_facade(root: Path) -> list[Violation]:
     return violations
 
 
+def check_stage86_breaking_cleanup(root: Path) -> list[Violation]:
+    """Keep removed Python compatibility surfaces physically absent."""
+    rule = "stage86-breaking-cleanup"
+    package = root / "pyscarcopula"
+    io_path = package / "io.py"
+    removed_files = (
+        package / "copula" / "_protocol.py",
+        package / "vine" / "cvine.py",
+        package / "vine" / "_conditional_cvine.py",
+        package / "numerical" / "tm_grid.py",
+    )
+    violations = []
+    for path in removed_files:
+        if path.exists():
+            violations.append(Violation(
+                rule,
+                path,
+                "removed Stage 8.6 module must be physically absent",
+            ))
+
+    forbidden = (
+        "CopulaCapabilities",
+        "CommonCopulaProtocol",
+        "BivariateCopulaProtocol",
+        "MultivariateCopulaProtocol",
+        "CopulaProtocol",
+        "CVineCopula",
+        "TMGrid",
+        "compatibility_capability_flags",
+        "__pyscarcopula_native_rvine__",
+    )
+    if package.is_dir():
+        for path in sorted(package.rglob("*.py")):
+            text = path.read_text(encoding="utf-8")
+            for marker in forbidden:
+                if path == io_path and marker == "CVineCopula":
+                    continue
+                if marker not in text:
+                    continue
+                violations.append(Violation(
+                    rule,
+                    path,
+                    "removed compatibility symbol returned: " + marker,
+                    text.count("\n", 0, text.index(marker)) + 1,
+                ))
+
+    if io_path.is_file():
+        text = io_path.read_text(encoding="utf-8")
+        reject_at = text.find("_reject_removed_persistence(envelope)")
+        restore_at = text.find(
+            "_from_jsonable(envelope.get(\"state\"), True)")
+        if reject_at < 0 or restore_at < 0 or reject_at > restore_at:
+            violations.append(Violation(
+                rule,
+                io_path,
+                "removed persisted formats must be rejected before restore",
+            ))
+
+    return violations
+
+
 def check_repository(root: Path) -> list[Violation]:
     root = root.resolve()
     checks = (
@@ -2123,6 +2184,7 @@ def check_repository(root: Path) -> list[Violation]:
         check_jacobi_sampling_ownership,
         check_jacobi_python_cleanup,
         check_jacobi_strategy_facade,
+        check_stage86_breaking_cleanup,
     )
     return [
         violation

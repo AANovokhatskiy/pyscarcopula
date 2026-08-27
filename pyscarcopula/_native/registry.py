@@ -304,39 +304,10 @@ def strategy_support(model, method):
     return last
 
 
-def compatibility_capability_flags(model) -> dict[str, bool] | None:
-    """Project legacy public flags from authoritative C++ operation queries."""
-    if not is_registered_type(model):
-        return None
-
-    def supports(operation, dynamics="MLE"):
-        return bool(query_capability(model, operation, dynamics).supported)
-
-    gas = strategy_support(model, "GAS")
-    scar_ou = strategy_support(model, "SCAR-TM-OU")
-    dynamic_kinds = ("GAS", "SCAR-TM-OU", "SCAR-TM-JACOBI")
-    return {
-        "supports_pair_ops": supports("point_density_derivatives"),
-        "supports_native_point_ops": supports("point_density_derivatives"),
-        "supports_native_mle": supports("likelihood_objective_gradient"),
-        "supports_gas": bool(gas and gas.supported),
-        "supports_scar_ou": bool(scar_ou and scar_ou.supported),
-        "supports_latent_grid": supports(
-            "row_grid_density_gradient", "SCAR-TM-OU"),
-        "supports_conditional_sampling": supports(
-            "conditional_sampling_transform"),
-        "has_dynamic_scalar_parameter": any(
-            supports("parameter_transform_bounds_initialization", dynamics)
-            for dynamics in dynamic_kinds
-        ),
-    }
-
-
 __all__ = [
     "RegistryEntry",
     "STRATEGY_REQUIREMENTS",
     "StrategyRequirements",
-    "compatibility_capability_flags",
     "descriptor_for",
     "ensure_capability",
     "is_registered_type",

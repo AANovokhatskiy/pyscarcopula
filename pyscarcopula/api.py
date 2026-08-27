@@ -35,15 +35,14 @@ from pyscarcopula._types import (
     NumericalConfig,
     PredictConfig,
 )
-from pyscarcopula.copula._protocol import CommonCopulaProtocol
 from pyscarcopula._native.registry import registry_entry_for
 from pyscarcopula._utils import pobs as _pobs
 from pyscarcopula.numerical._arrays import as_float64_array
 from pyscarcopula.strategy._base import (
     ensure_strategy_supported,
-    get_copula_capabilities,
     get_strategy,
     get_strategy_for_result,
+    is_multivariate_copula,
     validate_copula_data,
 )
 
@@ -84,7 +83,7 @@ def _prepared_equicorr_or_none(copula, data):
 
 
 def fit(
-    copula: CommonCopulaProtocol,
+    copula: object,
     data: ArrayLike,
     method: str = 'scar-tm-ou',
     to_pobs: bool = False,
@@ -95,9 +94,10 @@ def fit(
 
     Parameters
     ----------
-    copula : CommonCopulaProtocol
-        Copula instance to fit. The fitted result and training data are also
-        stored on the instance for its stateful convenience methods.
+    copula : object
+        Exact registered built-in copula to fit. The fitted result and training
+        data are also stored on the instance for its stateful convenience
+        methods.
     data : array_like of shape (n_observations, n_dimensions)
         Raw observations or pseudo-observations. Bivariate strategies require
         two columns; multivariate and vine models determine their own width.
@@ -126,7 +126,8 @@ def fit(
         If the requested strategy/model combination is recognized but not
         implemented.
     """
-    if _is_vine_copula(copula):
+    registry_entry_for(copula)
+    if _is_generic_vine(copula):
         fitted = copula.fit(
             data,
             method=method,
@@ -177,7 +178,7 @@ def fit(
 
 
 def log_likelihood(
-    copula: CommonCopulaProtocol,
+    copula: object,
     data: ArrayLike,
     result: FitResult,
     config: NumericalConfig | None = None,
@@ -187,7 +188,7 @@ def log_likelihood(
 
     Parameters
     ----------
-    copula : CommonCopulaProtocol
+    copula : object
         Copula associated with ``result``.
     data : array_like of shape (n_observations, n_dimensions)
         Pseudo-observations at which to evaluate the fitted model.
@@ -203,11 +204,6 @@ def log_likelihood(
     float
         Total log-likelihood over all observations.
     """
-    # CVineCopula is an approved breaking removal for Stage 8.6.  Until that
-    # stage it retains its legacy runtime and is intentionally outside the
-    # exact-type native registry introduced for the generic VineCopula.
-    if _is_legacy_cvine(copula):
-        return float(copula.log_likelihood(data, **kwargs))
     registry_entry_for(copula)
     if _is_generic_vine(copula):
         return float(copula.log_likelihood(data, **kwargs))
@@ -223,7 +219,7 @@ def log_likelihood(
 
 
 def predictive_mean(
-    copula: CommonCopulaProtocol,
+    copula: object,
     data: ArrayLike,
     result: FitResult,
     config: NumericalConfig | None = None,
@@ -238,7 +234,7 @@ def predictive_mean(
 
     Parameters
     ----------
-    copula : CommonCopulaProtocol
+    copula : object
         Fitted copula family.
     data : array_like of shape (n_observations, n_dimensions)
         Prediction history in pseudo-observation space.
@@ -252,6 +248,7 @@ def predictive_mean(
     ndarray
         Predictive parameter path of shape ``(n_observations,)``.
     """
+    registry_entry_for(copula)
     prepared = _prepared_equicorr_or_none(copula, data)
     if prepared is None:
         u = _as_float64_array_no_copy(data)
@@ -264,7 +261,7 @@ def predictive_mean(
 
 
 def mixture_h(
-    copula: CommonCopulaProtocol,
+    copula: object,
     data: ArrayLike,
     result: FitResult,
     config: NumericalConfig | None = None,
@@ -278,7 +275,7 @@ def mixture_h(
 
     Parameters
     ----------
-    copula : CommonCopulaProtocol
+    copula : object
         Fitted bivariate copula family.
     data : array_like of shape (n_observations, 2)
         Pair pseudo-observations.
@@ -304,8 +301,7 @@ def mixture_h(
         validate_copula_data(copula, u)
     else:
         u = prepared
-    capabilities = get_copula_capabilities(copula)
-    if capabilities is not None and not capabilities.supports_pair_ops:
+    if is_multivariate_copula(copula):
         raise NotImplementedError(
             f"{type(copula).__name__} does not expose pair h-functions")
     _reject_public_posterior_cache(kwargs)
@@ -325,7 +321,7 @@ def mixture_h(
 
 
 def sample(
-    copula: CommonCopulaProtocol,
+    copula: object,
     data: ArrayLike,
     result: FitResult,
     n: int,
@@ -344,7 +340,7 @@ def sample(
 
     Parameters
     ----------
-    copula : CommonCopulaProtocol
+    copula : object
         Fitted copula family or vine model.
     data : array_like of shape (n_observations, n_dimensions)
         Used by non-vine strategies where model reproduction requires fitted
@@ -361,9 +357,8 @@ def sample(
     ndarray
         Simulated pseudo-observations of shape ``(n, n_dimensions)``.
     """
+    registry_entry_for(copula)
     if _is_generic_vine(copula):
-        return copula.sample(n, **kwargs)
-    if _is_legacy_cvine(copula):
         return copula.sample(n, **kwargs)
 
     prepared = _prepared_equicorr_or_none(copula, data)
@@ -419,7 +414,7 @@ def _resolve_predict_config(
 
 
 def predict(
-    copula: CommonCopulaProtocol,
+    copula: object,
     data: ArrayLike,
     result: FitResult,
     n: int,
@@ -447,11 +442,11 @@ def predict(
 
     Parameters
     ----------
-    copula : CommonCopulaProtocol
+    copula : object
         Fitted copula family or vine model.
     data : array_like
         Pseudo-observations used as prediction history.
-        Passed to both C-vines and R-vines as their canonical ``u`` history.
+        Passed to regular-vine runtimes as their canonical ``u`` history.
     result : FitResult
         Ignored for vine copulas, which hold fitted edge state internally.
     given : dict[int, float] or None
@@ -476,32 +471,10 @@ def predict(
         samples together with a diagnostics mapping.
     """
     pcfg = _resolve_predict_config(predict_config, given, horizon, kwargs)
+    registry_entry_for(copula)
     if _is_generic_vine(copula):
         return copula.predict(
             n, u=data, predict_config=pcfg, **kwargs)
-    if _is_legacy_cvine(copula):
-        unsupported = []
-        if pcfg.dynamic_conditioning != 'ignore':
-            unsupported.append('dynamic_conditioning')
-        if pcfg.return_diagnostics:
-            unsupported.append('return_diagnostics')
-        if pcfg.mcmc_steps is not None:
-            unsupported.append('mcmc_steps')
-        if pcfg.mcmc_burnin is not None:
-            unsupported.append('mcmc_burnin')
-        if unsupported:
-            names = ', '.join(unsupported)
-            raise TypeError(
-                "legacy CVineCopula.predict does not support: "
-                f"{names}")
-        return copula.predict(
-            n,
-            u=data,
-            given=pcfg.given,
-            horizon=pcfg.horizon,
-            predictive_r_mode=pcfg.predictive_r_mode,
-            **kwargs,
-        )
 
     prepared = _prepared_equicorr_or_none(copula, data)
     if prepared is None:
@@ -522,23 +495,9 @@ def predict(
     )
 
 
-def _is_vine_copula(obj: object) -> bool:
-    return _is_generic_vine(obj) or _is_legacy_cvine(obj)
-
-
 def _is_generic_vine(obj: object) -> bool:
     try:
         from pyscarcopula.vine.vine import VineCopula
     except ImportError:
         return False
     return isinstance(obj, VineCopula)
-
-
-def _is_legacy_cvine(obj: object) -> bool:
-    try:
-        from pyscarcopula.vine.cvine import CVineCopula
-    except ImportError:
-        return False
-    if isinstance(obj, CVineCopula):
-        return True
-    return False

@@ -52,8 +52,8 @@ This uses the existing pybind11 build helper and does not require CMake, Ninja,
 OpenMP, or another package. It changes compilation only: linking remains
 sequential and the installed extension's runtime thread policy is unaffected.
 
-SCAR-TM-OU and GAS require compiled support for the selected family. Custom
-Python copulas may still be used by custom Python strategies and utilities.
+SCAR-TM-OU and GAS require compiled support for the selected built-in family.
+Unknown Python subclasses are rejected by exact-type native dispatch.
 
 Verify the installed wheel or source build:
 
