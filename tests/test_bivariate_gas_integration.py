@@ -9,7 +9,7 @@ from pyscarcopula.copula.elliptical import BivariateGaussianCopula
 from pyscarcopula.copula.frank import FrankCopula
 from pyscarcopula.copula.gumbel import GumbelCopula
 from pyscarcopula.copula.joe import JoeCopula
-from pyscarcopula.numerical import _cpp_gas
+from pyscarcopula._native import gas as _cpp_gas
 from pyscarcopula.stattests import gof_test
 from pyscarcopula.strategy.gas import GASStrategy
 from pyscarcopula._types import GASResult, gas_params

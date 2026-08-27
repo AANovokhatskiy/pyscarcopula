@@ -23,8 +23,8 @@ from pyscarcopula.copula.multivariate.correlation_policy import (
 from pyscarcopula.copula.multivariate.stochastic_student import (
     StochasticStudentCopula,
 )
-from pyscarcopula.numerical import _cpp_scar_ou
-from pyscarcopula.numerical import static_likelihood
+from pyscarcopula._native import scar_ou as _cpp_scar_ou
+from pyscarcopula._native import static as static_likelihood
 from pyscarcopula._native import jacobi as jacobi_native
 from pyscarcopula.strategy.mle import MLEStrategy
 
@@ -55,7 +55,7 @@ def _report(name, elapsed, *, workload, cache_state):
         "platform": platform.platform(),
         "numpy": np.__version__,
         "scipy": scipy.__version__,
-        "native_extension": _cpp_scar_ou.available(),
+        "native_extension": "required",
         "timer": "perf_counter median",
     }
     print("WP0_BENCH " + json.dumps(payload, sort_keys=True), flush=True)

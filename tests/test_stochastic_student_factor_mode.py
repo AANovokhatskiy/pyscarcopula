@@ -8,7 +8,7 @@ import pytest
 from pyscarcopula import FactorStudentEvaluator, StochasticStudentCopula
 from pyscarcopula._types import MLEResult
 from pyscarcopula.contrib.risk_metrics import _get_copula_constructor
-from pyscarcopula.numerical import _cpp_scar_ou
+from pyscarcopula._native import scar_ou as _cpp_scar_ou
 from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
 from pyscarcopula.stattests import (
     factor_student_rosenblatt_transform,

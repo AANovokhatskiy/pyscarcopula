@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from pyscarcopula.copula.gumbel import GumbelCopula
-from pyscarcopula.numerical import _cpp_gas
+from pyscarcopula._native import gas as _cpp_gas
 
 
 @pytest.mark.benchmark

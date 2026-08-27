@@ -239,11 +239,11 @@ def _complete_constant_mappings(
         cpp_constants: list[dict[str, Any]]) -> list[dict[str, Any]]:
     curated = {entry["old"]: entry for entry in _named_constant_mappings()}
     retired_python_constants = {
-        "pyscarcopula.numerical.multivariate_native."
+        "pyscarcopula._native.multivariate."
         "_DENSE_STUDENT_NATIVE_MIN_DF",
-        "pyscarcopula.numerical.multivariate_native."
+        "pyscarcopula._native.multivariate."
         "_DENSE_STUDENT_NATIVE_MAX_CONDITION",
-        "pyscarcopula.numerical.multivariate_native."
+        "pyscarcopula._native.multivariate."
         "_DENSE_STUDENT_CORRELATION_TOLERANCE",
     }
     records = []
@@ -357,9 +357,9 @@ def _named_constant_mappings() -> list[dict[str, Any]]:
         {"old":"pyscarcopula.numerical._scar_ou_config.CPP_MAX_GRID_SIZE","value":100000,"target_owner":"scar_ou::validation","target":"kMaxGridSize","semantic":"non-dense grid upper bound"},
         {"old":"pyscarcopula.numerical._scar_ou_config.CPP_MAX_DENSE_GRID_SIZE","value":10000,"target_owner":"scar_ou::validation","target":"kMaxDenseGridSize","semantic":"dense matrix grid upper bound"},
         {"old":"pyscarcopula.numerical._scar_ou_config.CPP_MAX_SPECTRAL_ORDER","value":1024,"target_owner":"scar_ou::spectral validation","target":"kMaxSpectralOrder","semantic":"basis/quadrature/GH order upper bound"},
-        {"old":"pyscarcopula.numerical.multivariate_native._DENSE_STUDENT_NATIVE_MIN_DF","value":0.1,"target_owner":"copula::multivariate::student validation","target":"kMinDegreesOfFreedom","semantic":"dense native Student lower df bound"},
-        {"old":"pyscarcopula.numerical.multivariate_native._DENSE_STUDENT_NATIVE_MAX_CONDITION","value":10000.0,"target_owner":"copula::multivariate::student correlation","target":"kMaxCondition","semantic":"accepted dense Student correlation condition"},
-        {"old":"pyscarcopula.numerical.multivariate_native._DENSE_STUDENT_CORRELATION_TOLERANCE","value":1e-12,"target_owner":"copula::multivariate::student correlation","target":"kCorrelationTolerance","semantic":"correlation validation tolerance"},
+        {"old":"pyscarcopula._native.multivariate._DENSE_STUDENT_NATIVE_MIN_DF","value":0.1,"target_owner":"copula::multivariate::student validation","target":"kMinDegreesOfFreedom","semantic":"dense native Student lower df bound"},
+        {"old":"pyscarcopula._native.multivariate._DENSE_STUDENT_NATIVE_MAX_CONDITION","value":10000.0,"target_owner":"copula::multivariate::student correlation","target":"kMaxCondition","semantic":"accepted dense Student correlation condition"},
+        {"old":"pyscarcopula._native.multivariate._DENSE_STUDENT_CORRELATION_TOLERANCE","value":1e-12,"target_owner":"copula::multivariate::student correlation","target":"kCorrelationTolerance","semantic":"correlation validation tolerance"},
         {"old":"pyscarcopula.copula.multivariate.stochastic_student._DF_OFFSET","value":2.000001,"target_owner":"copula::multivariate::student model","target":"kDynamicDfOffset","semantic":"dynamic df transform offset"},
         {"old":"scar::GasConfig.score_eps","value":0.0001,"target_owner":"gas::GasConfig","target":"score_eps","semantic":"score finite-difference safeguard"},
         {"old":"scar::GasConfig.g_clip","value":50.0,"target_owner":"gas::GasConfig","target":"g_clip","semantic":"latent GAS state clipping"},
@@ -367,7 +367,7 @@ def _named_constant_mappings() -> list[dict[str, Any]]:
         {"old":"scar::GasConfig.fisher_floor","value":1e-6,"target_owner":"gas::GasConfig","target":"fisher_floor","semantic":"Fisher scaling floor"},
         {"old":"scar::GasConfig.stationary_beta_tol","value":1e-8,"target_owner":"gas::GasConfig","target":"stationary_beta_tol","semantic":"stationary initialization tolerance"},
         {"old":"scar::OuNumericalConfig.auto_small_kdt","value":0.01,"target_owner":"scar_ou::OuNumericalConfig","target":"auto_small_kdt","semantic":"auto backend threshold"},
-        {"old":"pyscarcopula.numerical._cpp_rvine._DEFAULT_MCMC_DRAW_MEMORY_BUDGET_BYTES","value":67108864,"target_owner":"vine::McmcConfig/Python RNG adapter","target":"draw_memory_budget_bytes","semantic":"bounded proposal draw buffer"}
+        {"old":"pyscarcopula._native.vine._DEFAULT_MCMC_DRAW_MEMORY_BUDGET_BYTES","value":67108864,"target_owner":"vine::McmcConfig/Python RNG adapter","target":"draw_memory_budget_bytes","semantic":"bounded proposal draw buffer"}
     ]
 
 
@@ -595,11 +595,11 @@ def _gate3_contract_view(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 _GATE3_PYTHON_CONSTANT_RELOCATIONS = {
-    "pyscarcopula.numerical._cpp_extension._CPP_STATUS_NAMES":
+    "pyscarcopula._native._extension._CPP_STATUS_NAMES":
         "pyscarcopula._native.errors._STATUS_NAMES",
-    "pyscarcopula.numerical._cpp_extension._MODULE":
+    "pyscarcopula._native._extension._MODULE":
         "pyscarcopula._native._extension._MODULE",
-    "pyscarcopula.numerical._cpp_extension._MODULE_ERROR":
+    "pyscarcopula._native._extension._MODULE_ERROR":
         "pyscarcopula._native._extension._MODULE_ERROR",
 }
 

@@ -466,7 +466,7 @@ def _prepare_transform(case: dict[str, Any], _: int) -> PreparedCase:
 
 def _prepare_static_dense_gaussian(
         case: dict[str, Any], threads: int) -> PreparedCase:
-    from pyscarcopula.numerical import static_likelihood
+    from pyscarcopula._native import static as static_likelihood
 
     dimension = int(case["dimension"])
     observations = np.random.default_rng(case["seed"]).uniform(
@@ -482,7 +482,7 @@ def _prepare_static_dense_gaussian(
 def _prepare_static_factor_gaussian(
         case: dict[str, Any], threads: int) -> PreparedCase:
     from pyscarcopula import GaussianCopula
-    from pyscarcopula.numerical import static_likelihood
+    from pyscarcopula._native import static as static_likelihood
 
     dimension = int(case["dimension"])
     rank = int(case["shape"]["rank"])
@@ -509,7 +509,7 @@ def _prepare_static_factor_gaussian(
 def _prepare_equicorr_grid(
         case: dict[str, Any], threads: int) -> PreparedCase:
     from pyscarcopula import EquicorrGaussianCopula
-    from pyscarcopula.numerical import multivariate_native
+    from pyscarcopula._native import multivariate as multivariate_native
 
     dimension = int(case["dimension"])
     observations = np.random.default_rng(case["seed"]).uniform(
@@ -532,7 +532,7 @@ def _prepare_student_grid(
         FactorStudentEvaluator,
         StochasticStudentCopula,
     )
-    from pyscarcopula.numerical import multivariate_native
+    from pyscarcopula._native import multivariate as multivariate_native
 
     dimension = int(case["dimension"])
     shape = case["shape"]
@@ -585,7 +585,7 @@ def _prepare_student_factor_grid(
 
 def _prepare_gas_pair(case: dict[str, Any], _: int) -> PreparedCase:
     from pyscarcopula import GumbelCopula
-    from pyscarcopula.numerical import _cpp_gas
+    from pyscarcopula._native import gas as _cpp_gas
 
     observations = np.random.default_rng(case["seed"]).uniform(
         0.01, 0.99, size=(case["shape"]["n_obs"], 2))
@@ -599,7 +599,7 @@ def _prepare_gas_pair(case: dict[str, Any], _: int) -> PreparedCase:
 
 def _prepare_gas_student(case: dict[str, Any], _: int) -> PreparedCase:
     from pyscarcopula import StochasticStudentCopula
-    from pyscarcopula.numerical import _cpp_gas
+    from pyscarcopula._native import gas as _cpp_gas
 
     dimension = int(case["dimension"])
     observations = np.random.default_rng(case["seed"]).uniform(
@@ -633,7 +633,7 @@ def _scar_fixture(case: dict[str, Any], threads: int):
 
 
 def _prepare_scar_ou(case: dict[str, Any], threads: int) -> PreparedCase:
-    from pyscarcopula.numerical import _cpp_scar_ou
+    from pyscarcopula._native import scar_ou as _cpp_scar_ou
     import pyscarcopula._scar_cpp as native
 
     observations, copula, config = _scar_fixture(case, threads)
@@ -654,7 +654,7 @@ def _prepare_scar_ou(case: dict[str, Any], threads: int) -> PreparedCase:
 
 def _prepare_scar_ou_prepared(
         case: dict[str, Any], threads: int) -> PreparedCase:
-    from pyscarcopula.numerical import _cpp_scar_ou
+    from pyscarcopula._native import scar_ou as _cpp_scar_ou
 
     observations, copula, config = _scar_fixture(case, threads)
     evaluator = _cpp_scar_ou.prepare_objective(observations, copula, config)
@@ -675,7 +675,7 @@ def _rvine_fixture(case: dict[str, Any], threads: int):
     if str(TESTS) not in sys.path:
         sys.path.insert(0, str(TESTS))
     from rvine_runtime_cases import configured_static_dvine, scalar_parameters
-    from pyscarcopula.numerical import _cpp_extension, _cpp_rvine
+    from pyscarcopula._native import _extension as _cpp_extension, vine as _cpp_rvine
 
     vine = configured_static_dvine(int(case["dimension"]))
     parameters = scalar_parameters(vine)
@@ -889,7 +889,7 @@ def _prepare_vine_mcmc(
 
 def _prepare_gaussian_conditional(
         case: dict[str, Any], threads: int) -> PreparedCase:
-    from pyscarcopula.numerical import multivariate_native
+    from pyscarcopula._native import multivariate as multivariate_native
 
     dimension = int(case["dimension"])
     n_given = int(case["shape"]["n_given"])
@@ -915,7 +915,7 @@ def _prepare_gaussian_conditional(
 
 def _prepare_student_conditional(
         case: dict[str, Any], threads: int) -> PreparedCase:
-    from pyscarcopula.numerical import multivariate_native
+    from pyscarcopula._native import multivariate as multivariate_native
 
     dimension = int(case["dimension"])
     n_given = int(case["shape"]["n_given"])

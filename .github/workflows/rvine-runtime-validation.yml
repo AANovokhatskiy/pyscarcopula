@@ -6,15 +6,14 @@ on:
       - ".github/workflows/rvine-runtime-validation.yml"
       - "pyscarcopula/vine/**"
       - "pyscarcopula/_cpp/**"
-      - "pyscarcopula/numerical/_cpp_rvine.py"
-      - "pyscarcopula/numerical/multivariate_native.py"
+      - "pyscarcopula/_native/**"
       - "pyscarcopula/stattests.py"
-      - "pyscarcopula/numerical/_rvine_backend.py"
       - "tests/test_rvine_runtime_contracts.py"
       - "tests/test_cpp_rvine_density_mcmc.py"
       - "tests/test_cpp_rvine_rosenblatt.py"
       - "tests/test_cpp_dense_student_rosenblatt.py"
       - "tests/rvine_runtime_cases.py"
+      - "tests/rvine_candidate_harness.py"
       - "tests/test_rvine_copula.py"
       - "tests/test_vine_performance.py"
       - "tests/fixtures/rvine_runtime_oracle_v1.json"
@@ -32,15 +31,14 @@ on:
       - ".github/workflows/rvine-runtime-validation.yml"
       - "pyscarcopula/vine/**"
       - "pyscarcopula/_cpp/**"
-      - "pyscarcopula/numerical/_cpp_rvine.py"
-      - "pyscarcopula/numerical/multivariate_native.py"
+      - "pyscarcopula/_native/**"
       - "pyscarcopula/stattests.py"
-      - "pyscarcopula/numerical/_rvine_backend.py"
       - "tests/test_rvine_runtime_contracts.py"
       - "tests/test_cpp_rvine_density_mcmc.py"
       - "tests/test_cpp_rvine_rosenblatt.py"
       - "tests/test_cpp_dense_student_rosenblatt.py"
       - "tests/rvine_runtime_cases.py"
+      - "tests/rvine_candidate_harness.py"
       - "tests/test_rvine_copula.py"
       - "tests/test_vine_performance.py"
       - "tests/fixtures/rvine_runtime_oracle_v1.json"
@@ -62,12 +60,11 @@ env:
   PYTHONFAULTHANDLER: "1"
 
 jobs:
-  python-oracle:
-    name: Python traversal oracle and baseline contracts
+  mandatory-native:
+    name: Mandatory native runtime and reference contracts
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      PYSCARCOPULA_TEST_RVINE_BACKEND: python_executor
       OMP_NUM_THREADS: "1"
       OPENBLAS_NUM_THREADS: "1"
       MKL_NUM_THREADS: "1"
@@ -85,32 +82,32 @@ jobs:
           python -m pytest -q tests/test_rvine_runtime_contracts.py
           --strict-markers
           --junitxml=build/rvine-runtime-validation/characterization.xml
-      - name: Run full non-benchmark suite through Python traversal oracles
+      - name: Run full non-benchmark suite through mandatory native dispatch
         run: >-
           python -m pytest -q tests
           --strict-markers
           -m "not benchmark"
           --basetemp=build/rvine-runtime-validation/pytest-tmp
-          --junitxml=build/rvine-runtime-validation/python-oracle-suite.xml
+          --junitxml=build/rvine-runtime-validation/native-suite.xml
       - name: Record environment and existing skips
         run: >-
           python tools/write_rvine_test_inventory.py
-          --junit build/rvine-runtime-validation/python-oracle-suite.xml
+          --junit build/rvine-runtime-validation/native-suite.xml
           --command 'python -m pytest -q tests --strict-markers -m "not benchmark" --basetemp=build/rvine-runtime-validation/pytest-tmp'
           --output build/rvine-runtime-validation/suite-inventory.json
       - name: Reproduce smoke baseline
         run: >-
           python tools/benchmark_rvine_runtime.py
-          --profile smoke --backend python_executor
+          --profile smoke --backend reference
           --repeats 3 --warmups 1 --include-mcmc
           --output build/rvine-runtime-validation/baseline.json
       - name: Check native source architecture
         run: python tools/check_cpp_architecture.py
-      - name: Upload Python oracle evidence
+      - name: Upload native and reference evidence
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: rvine-runtime-python-oracle
+          name: rvine-runtime-native-reference
           path: build/rvine-runtime-validation/*
           if-no-files-found: warn
           retention-days: 30
@@ -119,8 +116,6 @@ jobs:
     name: Native R-vine and dense Student Rosenblatt parity
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    env:
-      PYSCARCOPULA_TEST_RVINE_BACKEND: auto
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6

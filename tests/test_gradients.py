@@ -7,7 +7,7 @@ from pyscarcopula import (
     GumbelCopula, ClaytonCopula, FrankCopula, JoeCopula,
 )
 from pyscarcopula._utils import broadcast
-from pyscarcopula.numerical import _cpp_scar_ou
+from pyscarcopula._native import scar_ou as _cpp_scar_ou
 from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
 from pyscarcopula.numerical.tm_functions import tm_loglik
 

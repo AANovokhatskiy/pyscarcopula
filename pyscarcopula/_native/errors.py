@@ -44,12 +44,6 @@ class NativeUnsupported(NativeError):
         super().__init__(message)
 
 
-# Transitional names retained for internal callers until Stage 8.5.
-CppError = NativeError
-CppUnavailable = NativeUnavailable
-CppUnsupported = NativeUnsupported
-
-
 _STATUS_NAMES = {
     0: "ok",
     1: "null_pointer",
@@ -89,20 +83,17 @@ DEFAULT_STATUS_EXCEPTION_POLICY = StatusExceptionPolicy(
     numerical=FloatingPointError,
     other=NativeError,
 )
-LEGACY_CPP_STATUS_EXCEPTION_POLICY = StatusExceptionPolicy(
-    invalid=CppError,
-    unsupported=CppError,
-    numerical=CppError,
-    other=CppError,
+NATIVE_ADAPTER_STATUS_EXCEPTION_POLICY = StatusExceptionPolicy(
+    invalid=NativeError,
+    unsupported=NativeError,
+    numerical=NativeError,
+    other=NativeError,
 )
 
 
 def native_status_name(status: int) -> str:
     """Return the stable name for a native status code."""
     return _STATUS_NAMES.get(int(status), "unknown")
-
-
-cpp_status_name = native_status_name
 
 
 def _mapping_value(result: Any, name: str, default: Any = None) -> Any:
@@ -256,17 +247,13 @@ def raise_for_status(
 
 
 __all__ = [
-    "CppError",
-    "CppUnavailable",
-    "CppUnsupported",
     "DEFAULT_STATUS_EXCEPTION_POLICY",
     "FailureContext",
-    "LEGACY_CPP_STATUS_EXCEPTION_POLICY",
+    "NATIVE_ADAPTER_STATUS_EXCEPTION_POLICY",
     "NativeError",
     "NativeUnavailable",
     "NativeUnsupported",
     "StatusExceptionPolicy",
-    "cpp_status_name",
     "native_status_name",
     "raise_for_status",
 ]

@@ -27,7 +27,9 @@ from pyscarcopula.strategy.predict_helpers import (
     predict_from_strategy,
     sample_predictive,
 )
-from pyscarcopula.numerical import static_likelihood
+from pyscarcopula._native import pair as pair_native
+from pyscarcopula._native import static as static_likelihood
+from pyscarcopula._native.registry import registry_entry_for
 from pyscarcopula.numerical._arrays import as_float64_array
 
 
@@ -93,6 +95,7 @@ class MLEStrategy:
         -------
         MLEResult
         """
+        registry_entry_for(copula)
         reject_legacy_tol(kwargs)
         optimizer_overrides = lbfgsb_overrides(
             gtol=gtol,
@@ -185,6 +188,7 @@ class MLEStrategy:
     def log_likelihood(self, copula, u: np.ndarray,
                        result: MLEResult) -> float:
         """sum log c(u1, u2; r_mle)."""
+        registry_entry_for(copula)
         if is_multivariate_copula(copula):
             try:
                 return float(copula.log_likelihood(u, result.copula_param))
@@ -197,13 +201,15 @@ class MLEStrategy:
     def predictive_mean(self, copula, u: np.ndarray,
                         result: MLEResult) -> np.ndarray:
         """Constant parameter for all time steps."""
+        registry_entry_for(copula)
         return np.full(len(u), result.copula_param)
 
     def rosenblatt_e2(self, copula, u: np.ndarray,
                       result: MLEResult) -> np.ndarray:
         """e2 = h(u2, u1; r_mle)."""
+        registry_entry_for(copula)
         r = np.full(len(u), result.copula_param)
-        return copula.h(u[:, 1], u[:, 0], r)
+        return pair_native.h(copula, u[:, 1], u[:, 0], r)
 
     def mixture_h(self, copula, u: np.ndarray,
                   result: MLEResult) -> np.ndarray:
@@ -214,14 +220,16 @@ class MLEStrategy:
                        result: MLEResult,
                        **kwargs) -> tuple[np.ndarray, np.ndarray]:
         """Both conditional directions at the constant MLE parameter."""
+        registry_entry_for(copula)
         r = np.full(len(u), result.copula_param)
-        first_given_second, second_given_first = copula.h_pair(
-            u[:, 0], u[:, 1], r)
+        first_given_second, second_given_first = pair_native.h_pair(
+            copula, u[:, 0], u[:, 1], r)
         return second_given_first, first_given_second
 
     def objective(self, copula, u: np.ndarray,
                   alpha: np.ndarray, **kwargs) -> float:
         """Minus log-likelihood: -sum log c(u1, u2; alpha[0])."""
+        registry_entry_for(copula)
         try:
             if is_multivariate_copula(copula):
                 try:

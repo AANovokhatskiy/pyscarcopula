@@ -22,14 +22,12 @@ def run_native_smoke(n_threads: int = 1) -> dict:
     """Exercise native dynamic models and the requested parallel runtime."""
     from pyscarcopula.api import fit
     from pyscarcopula.copula.elliptical import BivariateGaussianCopula
-    from pyscarcopula._native import gas, jacobi
+    from pyscarcopula._native import jacobi
 
     n_threads = validate_n_threads(n_threads)
     module = _extension.load()
     parallel = dict(module._parallel_for_blocks_probe(
         max(32, 4 * n_threads), 1, n_threads))
-    if not gas.available():
-        raise RuntimeError("pyscarcopula native GAS evaluator is unavailable")
 
     u = np.array([
         [0.20, 0.70],

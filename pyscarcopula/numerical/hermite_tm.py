@@ -57,7 +57,7 @@ def hermite_loglik(
         block_size=None):
     """Return native spectral log-likelihood."""
     del block_size
-    from pyscarcopula.numerical import _cpp_scar_ou
+    from pyscarcopula._native import scar_ou as _cpp_scar_ou
     return _cpp_scar_ou.loglik(
         kappa, mu, nu, u, copula,
         _config(basis_order, quad_order))[0]
@@ -68,7 +68,7 @@ def hermite_loglik_with_grad(
         block_size=None):
     """Return native spectral negative log-likelihood and gradient."""
     del block_size
-    from pyscarcopula.numerical import _cpp_scar_ou
+    from pyscarcopula._native import scar_ou as _cpp_scar_ou
     return _cpp_scar_ou.neg_loglik_with_grad(
         kappa, mu, nu, u, copula,
         _config(basis_order, quad_order))

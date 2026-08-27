@@ -496,7 +496,7 @@ class StochasticStudentCopula(MultivariateCopula):
         if (
                 getattr(self, "_corr_mode", None) != "factor"
                 and self._R is not None):
-            from pyscarcopula.numerical import multivariate_native
+            from pyscarcopula._native import multivariate as multivariate_native
             self._L_inv, self._log_det = (
                 multivariate_native.prepare_dense_correlation(self._R))
         else:
@@ -614,7 +614,7 @@ class StochasticStudentCopula(MultivariateCopula):
                 f"R must be ({self._d}, {self._d}), got {R.shape}")
         if not np.all(np.isfinite(R)):
             raise ValueError("R must contain only finite values")
-        from pyscarcopula.numerical import multivariate_native
+        from pyscarcopula._native import multivariate as multivariate_native
         inverse_cholesky, log_determinant = (
             multivariate_native.prepare_dense_correlation(R))
         self._R = np.ascontiguousarray(R)
@@ -788,7 +788,7 @@ class StochasticStudentCopula(MultivariateCopula):
 
     def transform(self, x):
         """Map latent values to degrees of freedom above the finite-variance bound."""
-        from pyscarcopula.numerical import multivariate_native
+        from pyscarcopula._native import multivariate as multivariate_native
         return multivariate_native.transform(self, x)
 
     def transform_scalar(self, x):
@@ -796,12 +796,12 @@ class StochasticStudentCopula(MultivariateCopula):
 
     def inv_transform(self, df):
         """Map degrees of freedom above the model offset to latent values."""
-        from pyscarcopula.numerical import multivariate_native
+        from pyscarcopula._native import multivariate as multivariate_native
         return multivariate_native.inverse_transform(self, df)
 
     def dtransform(self, x):
         """d(Psi)/dx = sigmoid(x)."""
-        from pyscarcopula.numerical import multivariate_native
+        from pyscarcopula._native import multivariate as multivariate_native
         return multivariate_native.dtransform(self, x)
 
     def dtransform_scalar(self, x):
@@ -865,7 +865,7 @@ class StochasticStudentCopula(MultivariateCopula):
                 self._factor_operator, u).evaluate(
                     float(r), n_threads=n_threads).log_likelihood
 
-        from pyscarcopula.numerical import static_likelihood
+        from pyscarcopula._native import static as static_likelihood
         return static_likelihood.prepare(
             self, u, n_threads=n_threads).log_likelihood(float(r))
 
@@ -882,7 +882,7 @@ class StochasticStudentCopula(MultivariateCopula):
                     r, n_threads=n_threads)
         if self._R is None:
             raise ValueError("Correlation matrix R not set. Call fit() first.")
-        from pyscarcopula.numerical import multivariate_native
+        from pyscarcopula._native import multivariate as multivariate_native
         values, _ = multivariate_native.log_pdf_and_dlog_rows(
             self, u, r, t_index=t_index, cache=cache,
             n_threads=n_threads)
@@ -902,7 +902,7 @@ class StochasticStudentCopula(MultivariateCopula):
         if self._R is None:
             raise ValueError("Correlation matrix R not set. Call fit() first.")
 
-        from pyscarcopula.numerical import multivariate_native
+        from pyscarcopula._native import multivariate as multivariate_native
         _, values = multivariate_native.log_pdf_and_dlog_rows(
             self, u, r, t_index=t_index, cache=cache,
             n_threads=n_threads)
@@ -922,7 +922,7 @@ class StochasticStudentCopula(MultivariateCopula):
         if self._R is None:
             raise ValueError("Correlation matrix R not set. Call fit() first.")
 
-        from pyscarcopula.numerical import multivariate_native
+        from pyscarcopula._native import multivariate as multivariate_native
         return multivariate_native.log_pdf_and_dlog_rows(
             self, u, r, t_index=t_index, cache=cache,
             n_threads=n_threads)
@@ -950,7 +950,7 @@ class StochasticStudentCopula(MultivariateCopula):
             )
             return fi[0]
 
-        from pyscarcopula.numerical import multivariate_native
+        from pyscarcopula._native import multivariate as multivariate_native
         fi, _ = multivariate_native.pdf_and_grad_grid(
             self,
             np.asarray(u_row, dtype=np.float64)[None, :],
@@ -984,7 +984,7 @@ class StochasticStudentCopula(MultivariateCopula):
             )
             return fi[0], dfi[0]
 
-        from pyscarcopula.numerical import multivariate_native
+        from pyscarcopula._native import multivariate as multivariate_native
         fi, dfi = multivariate_native.pdf_and_grad_grid(
             self,
             np.asarray(u_row, dtype=np.float64)[None, :],
@@ -1031,7 +1031,7 @@ class StochasticStudentCopula(MultivariateCopula):
                     np.asarray(x_grid, dtype=np.float64))[None, :],
             )
 
-        from pyscarcopula.numerical import multivariate_native
+        from pyscarcopula._native import multivariate as multivariate_native
         return multivariate_native.pdf_and_grad_grid(
             self,
             u,
@@ -1061,7 +1061,7 @@ class StochasticStudentCopula(MultivariateCopula):
             )
             return fi
 
-        from pyscarcopula.numerical import multivariate_native
+        from pyscarcopula._native import multivariate as multivariate_native
         fi, _ = multivariate_native.pdf_and_grad_grid(
             self,
             u,
@@ -1270,7 +1270,7 @@ class StochasticStudentCopula(MultivariateCopula):
     def _fit_mle_shared(
             self, u, config: NumericalConfig, optimizer_options):
         """Build and run an unpublished static Student candidate."""
-        from pyscarcopula.numerical import static_likelihood
+        from pyscarcopula._native import static as static_likelihood
         from pyscarcopula.strategy.multivariate_mle import (
             StaticMLEEvaluation,
             StaticMLEProblem,
@@ -1687,7 +1687,7 @@ class StochasticStudentCopula(MultivariateCopula):
         r_arr = _validated_student_sampling_parameters(r, n)
         if rng is None:
             rng = np.random.default_rng()
-        from pyscarcopula.numerical import multivariate_native
+        from pyscarcopula._native import multivariate as multivariate_native
         if self._corr_mode == 'factor':
             if self._factor_operator is None:
                 raise ValueError(
@@ -2167,7 +2167,7 @@ class StochasticStudentCopula(MultivariateCopula):
         if self.fit_result is None:
             raise ValueError("Fit with SCAR first")
         kappa, mu, nu_ou = self.fit_result.params.values
-        from pyscarcopula.numerical import _cpp_scar_ou
+        from pyscarcopula._native import scar_ou as _cpp_scar_ou
         from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
         return _cpp_scar_ou.state_distribution(
             kappa,
@@ -2260,7 +2260,7 @@ class StochasticStudentCopula(MultivariateCopula):
             config.default_pts_per_sigma if pts_per_sigma is None
             else int(pts_per_sigma))
 
-        from pyscarcopula.numerical import _cpp_scar_ou
+        from pyscarcopula._native import scar_ou as _cpp_scar_ou
         from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
         _, weights = _cpp_scar_ou.smoothed_state_distribution(
             latent_params[0],

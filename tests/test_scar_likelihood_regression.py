@@ -7,7 +7,7 @@ from pyscarcopula.copula.clayton import ClaytonCopula
 from pyscarcopula.copula.multivariate.stochastic_student import (
     StochasticStudentCopula,
 )
-from pyscarcopula.numerical import _cpp_scar_ou
+from pyscarcopula._native import scar_ou as _cpp_scar_ou
 from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
 
 
@@ -45,9 +45,6 @@ def _assert_close(actual, expected):
     np.testing.assert_allclose(actual, expected, rtol=2e-7, atol=2e-8)
 
 
-@pytest.mark.skipif(
-    not _cpp_scar_ou.available(), reason="requires bundled C++ extension"
-)
 def test_bivariate_scar_matrix_matches_regression_values():
     observations = np.array(
         [
@@ -155,9 +152,6 @@ def test_bivariate_scar_matrix_matches_regression_values():
     )
 
 
-@pytest.mark.skipif(
-    not _cpp_scar_ou.available(), reason="requires bundled C++ extension"
-)
 def test_multivariate_student_scar_matrix_matches_regression_values():
     observations = np.array(
         [

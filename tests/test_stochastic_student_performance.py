@@ -15,7 +15,7 @@ from pyscarcopula.copula.multivariate.stochastic_student import (
 from pyscarcopula.copula.multivariate.corr_param import (
     _shrinkage_raw_corr_direction,
 )
-from pyscarcopula.numerical import _cpp_scar_ou
+from pyscarcopula._native import scar_ou as _cpp_scar_ou
 from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
 from pyscarcopula.numerical.gas_filter import gas_filter
 
@@ -58,11 +58,6 @@ def _skip_unless_large_enabled():
     if os.environ.get("PYSCA_RUN_LARGE_BENCHMARKS") != "1":
         pytest.skip(
             "set PYSCA_RUN_LARGE_BENCHMARKS=1 to run large benchmark checks")
-
-
-def _skip_unless_cpp_available():
-    if not _cpp_scar_ou.available():
-        pytest.skip("StochasticStudent SCAR benchmarks require the C++ extension")
 
 
 def _example_student(d=10, T=600, corr_mode="fixed"):
@@ -126,7 +121,6 @@ def test_stochastic_student_gas_cpp_fast_path_benchmark_report():
 @pytest.mark.parametrize(("T", "d", "K"), _COLD_CACHE_WORKLOADS)
 def test_stochastic_student_cpp_cold_cache_benchmark(T, d, K):
     _skip_unless_enabled()
-    _skip_unless_cpp_available()
     _, u = _example_student(d=d, T=T)
     R = np.full((d, d), 0.35)
     np.fill_diagonal(R, 1.0)
@@ -180,7 +174,6 @@ def test_stochastic_student_cpp_cold_cache_benchmark(T, d, K):
 def test_stochastic_student_warm_likelihood_benchmark(
         T, d, K, transition_method):
     _skip_unless_enabled()
-    _skip_unless_cpp_available()
     copula, u = _example_student(d=d, T=T)
     config = AutoTMConfig(
         K=K,
@@ -231,7 +224,6 @@ def test_stochastic_student_warm_likelihood_benchmark(
 def test_stochastic_student_warm_gradient_benchmark(
         T, d, K, transition_method):
     _skip_unless_enabled()
-    _skip_unless_cpp_available()
     copula, u = _example_student(d=d, T=T)
     config = AutoTMConfig(
         K=K,
@@ -283,7 +275,6 @@ def test_stochastic_student_warm_gradient_benchmark(
 @pytest.mark.benchmark
 def test_stochastic_student_prepared_spectral_directional_benchmark():
     _skip_unless_enabled()
-    _skip_unless_cpp_available()
     d = 10
     T = 120
     n_calls = 20
@@ -357,7 +348,6 @@ def test_stochastic_student_prepared_spectral_directional_benchmark():
 @pytest.mark.parametrize(("corr_mode", "d"), _JOINT_WORKLOADS)
 def test_stochastic_student_joint_fit_benchmark(corr_mode, d):
     _skip_unless_enabled()
-    _skip_unless_cpp_available()
     _, u = _example_student(d=d, T=80)
     fit_kwargs = {
         "method": "scar-tm-ou",
@@ -409,7 +399,6 @@ def test_stochastic_student_joint_fit_benchmark(corr_mode, d):
 def test_stochastic_student_large_cholesky_native_gradient_benchmark(
         T, d, K, monkeypatch):
     _skip_unless_large_enabled()
-    _skip_unless_cpp_available()
     _, u = _example_student(d=d, T=T)
     fallback_totals = {
         "fd_seconds": 0.0,
@@ -441,10 +430,10 @@ def test_stochastic_student_large_cholesky_native_gradient_benchmark(
             fallback_totals["ou_gradient_calls"] += 1
 
     def unsupported_native(*args, **kwargs):
-        raise _cpp_scar_ou.CppUnsupported("benchmark finite-difference path")
+        raise _cpp_scar_ou.NativeUnsupported("benchmark finite-difference path")
 
     def unsupported_prepare(*args, **kwargs):
-        raise _cpp_scar_ou.CppUnsupported("benchmark module-level path")
+        raise _cpp_scar_ou.NativeUnsupported("benchmark module-level path")
 
     def timed_native(*args, **kwargs):
         start = time.perf_counter()

@@ -1,9 +1,8 @@
-"""Runtime DAG conditional sampler for natural-order R-vines.
+"""DAG conditional-plan builder for natural-order R-vines.
 
 The sampler works on pseudo-observation nodes ``(var, conditioning_set)``.
-Known endpoints propagate through h-functions; unknown reachable nodes are
-sampled with uniform noise and inverted back to base variables through
-available inverse h-chains.
+Known endpoints define an executor-neutral action plan consumed by the native
+R-vine runtime.
 """
 
 from __future__ import annotations
@@ -15,12 +14,6 @@ import numpy as np
 from pyscarcopula.vine._rvine_conditional_plan import (
     FrozenConditionalPlan,
     _node_key,
-)
-from pyscarcopula.vine._rvine_edges import _edge_h, _edge_h_inverse
-from pyscarcopula.vine._helpers import (
-    _clip_unit,
-    _open_unit_uniform,
-    _prepared_open_unit_draws,
 )
 
 
@@ -259,112 +252,3 @@ def plan_conditional_sample(dag, given, d):
         )
 
     return ConditionalSamplePlan(steps, d)
-
-
-def _edge_payload(step, r_all):
-    edge_key = tuple(step['edge'])
-    payload = r_all[edge_key]
-    if not isinstance(payload, dict):
-        raise TypeError(
-            "execute_conditional_plan expects r_all edge payloads as "
-            "{'edge': pair_copula, 'r': parameter_values} dicts"
-        )
-    edge = payload['edge']
-    r = payload['r']
-    return edge, np.asarray(r, dtype=np.float64)
-
-
-def _execute_conditional_plan_python(
-        plan, r_all, given, n, rng, *, uniforms=None):
-    """Python traversal oracle for a conditional DAG execution plan."""
-    n = int(n)
-    replay_uniforms = None
-    replay_by_variable = False
-    if uniforms is not None:
-        uniform_count = sum(
-            step.get('action') == 'sample_uniform' for step in plan)
-        supplied = np.asarray(uniforms)
-        if supplied.shape == (n, uniform_count):
-            replay_uniforms = _prepared_open_unit_draws(
-                supplied,
-                (n, uniform_count),
-                name="conditional DAG uniforms",
-            )
-        elif supplied.shape == (n, int(plan.d)):
-            # Kept for fixtures created before compact DAG replay was
-            # introduced. New differential tests use one column per draw op.
-            replay_uniforms = _prepared_open_unit_draws(
-                supplied,
-                (n, int(plan.d)),
-                name="conditional DAG uniforms",
-            )
-            replay_by_variable = True
-        else:
-            raise ValueError(
-                "conditional DAG uniforms must have shape "
-                f"{(n, uniform_count)} (draw order) or "
-                f"{(n, int(plan.d))} (variable columns), got "
-                f"{supplied.shape}"
-            )
-    replay_index = 0
-    pseudo_obs = {}
-    for var, value in given.items():
-        pseudo_obs[_node_key(var)] = np.full(
-            n, float(value), dtype=np.float64)
-
-    for step in plan:
-        action = step['action']
-
-        if action == 'sample_uniform':
-            if replay_uniforms is None:
-                values = _open_unit_uniform(rng, size=n)
-            elif replay_by_variable:
-                values = replay_uniforms[:, int(step['var'])].copy()
-            else:
-                values = replay_uniforms[:, replay_index].copy()
-                replay_index += 1
-            pseudo_obs[step['node']] = values
-            continue
-
-        edge, r = _edge_payload(step, r_all)
-        source = step['from'] if action == 'h_inv' else _node_key(
-            step['leaf'], step['cond'])
-        known = step['known'] if action == 'h_inv' else _node_key(
-            step['partner'], step['cond'])
-
-        if action == 'h_prop':
-            pseudo_obs[step['to']] = _clip_unit(_edge_h(
-                edge,
-                pseudo_obs[source],
-                pseudo_obs[known],
-                config={'r': r},
-            ))
-        elif action == 'h_inv':
-            pseudo_obs[step['to']] = _clip_unit(_edge_h_inverse(
-                edge,
-                pseudo_obs[source],
-                pseudo_obs[known],
-                config={'r': r},
-            ))
-        else:
-            raise ValueError(f"execute_conditional_plan: unknown action {action!r}")
-
-    out = np.empty((n, int(plan.d)), dtype=np.float64)
-    missing = []
-    for var in range(int(plan.d)):
-        node = _node_key(var)
-        if node not in pseudo_obs:
-            missing.append(var)
-            continue
-        out[:, var] = pseudo_obs[node]
-    if missing:
-        raise RuntimeError(
-            f"execute_conditional_plan: plan did not produce base variables {missing}"
-        )
-    return out
-
-
-def execute_conditional_plan(plan, r_all, given, n, rng, *, uniforms=None):
-    """Compatibility name for the preserved Python DAG traversal oracle."""
-    return _execute_conditional_plan_python(
-        plan, r_all, given, n, rng, uniforms=uniforms)

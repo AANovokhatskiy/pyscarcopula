@@ -163,16 +163,16 @@ def shape_is_supported(kappa, m, xi, stationary_shape_max):
 
 def copula_supported(copula):
     """Return whether the pair copula has the native Jacobi kernel contract."""
-    from pyscarcopula.numerical import _cpp_copula
+    from pyscarcopula._native import _descriptors
 
-    return _cpp_copula.supported_for_copula_ops(copula)
+    return _descriptors.supported_for_copula_ops(copula)
 
 
 def _copula_spec(copula):
-    from pyscarcopula.numerical import _cpp_copula
+    from pyscarcopula._native import _descriptors
 
     module = load()
-    return module, _cpp_copula.make_copula_ops_spec(module, copula)
+    return module, _descriptors.make_copula_ops_spec(module, copula)
 
 
 def tau_to_parameter(copula, tau, *, theta_cap=None):
@@ -528,7 +528,7 @@ class PreparedScarJacobiEvaluator:
             negative_mass_tol=1e-5, gh_order=5,
             memory_budget_bytes=1024**3, fd_rel_step=1e-5,
             stationary_shape_max=None):
-        from pyscarcopula.numerical import _cpp_copula
+        from pyscarcopula._native import _descriptors
 
         module = load()
         observations = np.ascontiguousarray(u, dtype=np.float64)
@@ -554,7 +554,7 @@ class PreparedScarJacobiEvaluator:
             fd_rel_step=fd_rel_step,
             stationary_shape_max=stationary_shape_max,
         )
-        spec = _cpp_copula.make_copula_ops_spec(module, copula)
+        spec = _descriptors.make_copula_ops_spec(module, copula)
         self._module = module
         self._native = module.PreparedScarJacobiEvaluator(
             spec, observations, config)
@@ -1166,7 +1166,7 @@ def sample_state_distribution_fixed_draws(
         copula, tau, probability, selection_draws, jitter_draws, *,
         mode="grid", theta_cap=None):
     """Sample a native filtered/conditioned state and map tau to theta."""
-    from pyscarcopula.numerical import _cpp_copula
+    from pyscarcopula._native import _descriptors
 
     module = load()
     normalized = str(mode).lower()
@@ -1176,7 +1176,7 @@ def sample_state_distribution_fixed_draws(
     }.get(normalized)
     if native_mode is None:
         raise ValueError("predictive_r_mode must be 'grid' or 'histogram'")
-    spec = _cpp_copula.make_copula_ops_spec(module, copula)
+    spec = _descriptors.make_copula_ops_spec(module, copula)
     selection = np.ascontiguousarray(
         np.asarray(selection_draws, dtype=np.float64).ravel())
     jitter = np.ascontiguousarray(

@@ -485,7 +485,7 @@ class StudentCopula(MultivariateCopula):
         if self._corr_mode == "factor":
             return self._fit_factor(u, config, options)
 
-        from pyscarcopula.numerical import static_likelihood
+        from pyscarcopula._native import static as static_likelihood
         d = u.shape[1]
         initial_correlation, preprocessing = self._initial_dense_correlation(u)
         estimator: CorrelationEstimator = (
@@ -782,7 +782,7 @@ class StudentCopula(MultivariateCopula):
             return FactorStudentEvaluator(
                 self.correlation_operator_, u).log_pdf_rows(
                     df, n_threads=n_threads)
-        from pyscarcopula.numerical import static_likelihood
+        from pyscarcopula._native import static as static_likelihood
         return static_likelihood.prepare_student(
             self._correlation, u, n_threads=n_threads).log_pdf_rows(df)
 
@@ -793,13 +793,13 @@ class StudentCopula(MultivariateCopula):
             return FactorStudentEvaluator(
                 self.correlation_operator_, u).evaluate(
                     self.df, n_threads=n_threads).log_likelihood
-        from pyscarcopula.numerical import static_likelihood
+        from pyscarcopula._native import static as static_likelihood
         return static_likelihood.prepare_student(
             self._correlation, u,
             n_threads=n_threads).log_likelihood(self.df)
 
     def _nll_with_params(self, u, R, df):
-        from pyscarcopula.numerical import static_likelihood
+        from pyscarcopula._native import static as static_likelihood
         try:
             return static_likelihood.prepare_student(
                 R, u).objective_and_gradient(df)[0]
@@ -815,7 +815,7 @@ class StudentCopula(MultivariateCopula):
     def sample(self, n, u=None, rng=None):
         if rng is None:
             rng = np.random.default_rng()
-        from pyscarcopula.numerical import multivariate_native
+        from pyscarcopula._native import multivariate as multivariate_native
         if self._corr_mode == "factor":
             if self.df is None:
                 raise ValueError("Fit first")

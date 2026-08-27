@@ -523,7 +523,7 @@ def check_pair_verticalization(root: Path) -> list[Violation]:
                     f"pair family {enum_name} is hard-coded in generic binding",
                 ))
 
-    adapter = root / "pyscarcopula" / "numerical" / "_cpp_copula.py"
+    adapter = root / "pyscarcopula" / "_native" / "_descriptors.py"
     if adapter.is_file():
         text = adapter.read_text(encoding="utf-8")
         for enum_name, _, _ in entries:
@@ -534,16 +534,17 @@ def check_pair_verticalization(root: Path) -> list[Violation]:
                     f"pair family {enum_name} is hard-coded in generic adapter",
                 ))
 
-    rvine_adapter = root / "pyscarcopula" / "numerical" / "_cpp_rvine.py"
+    rvine_adapter = root / "pyscarcopula" / "_native" / "vine.py"
     if rvine_adapter.is_file():
         text = rvine_adapter.read_text(encoding="utf-8")
         if (
                 "_builtin_copula_types" in text
+                or "__pyscarcopula_native_rvine__" in text
                 or "from pyscarcopula.copula." in text):
             violations.append(Violation(
                 "pair-copula-verticalization",
                 rvine_adapter,
-                "generic R-vine adapter must discover pair families by marker",
+                "generic R-vine adapter must use the exact-type registry",
             ))
     return violations
 
@@ -1642,19 +1643,27 @@ def check_jacobi_sampling_ownership(root: Path) -> list[Violation]:
 
 
 def check_vine_native_boundary(root: Path) -> list[Violation]:
-    """Keep supported Stage 8.4 built-ins on an unselectable native path."""
+    """Keep Stage 8.5 production execution on the mandatory native path."""
     rule = "vine-native-boundary"
     violations = []
-    production_callers = (
-        root / "pyscarcopula" / "vine" / "vine.py",
-        root / "pyscarcopula" / "stattests.py",
-    )
+    production_callers = tuple(
+        sorted((root / "pyscarcopula").rglob("*.py")))
     forbidden_dispatch = (
         "dispatch_rvine_backend",
         "_rvine_backend",
         "_RVINE_BACKEND_ENV",
         "python_executor",
         "native_strict",
+        "__pyscarcopula_native_rvine__",
+        "_sample_stepwise_stateful",
+        "_sample_with_r_python",
+        "_sample_suffix_given_with_r_python",
+        "_sample_dag_given_with_r_python",
+        "_log_pdf_rows_with_r_python",
+        "_sample_arbitrary_given_mcmc_python",
+        "_rvine_rosenblatt_transform_python",
+        "def available(",
+        "try_native",
     )
     for path in production_callers:
         if not path.is_file():
@@ -1671,7 +1680,39 @@ def check_vine_native_boundary(root: Path) -> list[Violation]:
                     text.count("\n", 0, index) + 1,
                 ))
 
-    adapter = root / "pyscarcopula" / "numerical" / "_cpp_rvine.py"
+    legacy_adapters = (
+        "_cpp_extension.py",
+        "_cpp_copula.py",
+        "_cpp_gas.py",
+        "_cpp_gas_rvine.py",
+        "_cpp_rvine.py",
+        "_cpp_scar_ou.py",
+        "_rvine_backend.py",
+        "copula_native.py",
+        "multivariate_native.py",
+        "static_likelihood.py",
+    )
+    numerical = root / "pyscarcopula" / "numerical"
+    for name in legacy_adapters:
+        path = numerical / name
+        if path.exists():
+            violations.append(Violation(
+                rule,
+                path,
+                "legacy numerical adapter must be removed in Stage 8.5",
+            ))
+
+    package_init = root / "pyscarcopula" / "__init__.py"
+    if (
+            package_init.is_file()
+            and "_load_native()" not in package_init.read_text(encoding="utf-8")):
+        violations.append(Violation(
+            rule,
+            package_init,
+            "top-level package import must fail fast without the extension",
+        ))
+
+    adapter = root / "pyscarcopula" / "_native" / "vine.py"
     if adapter.is_file():
         text = adapter.read_text(encoding="utf-8")
         for marker in (
@@ -1698,10 +1739,14 @@ def check_vine_native_boundary(root: Path) -> list[Violation]:
             cpp / "src" / "vine_dynamic" / "rosenblatt.cpp": (
                 "GasEvaluator",
                 "PreparedScarOuEvaluator",
-                "PreparedScarJacobiEvaluator"),
+                "PreparedScarJacobiEvaluator",
+                "out.log_likelihood"),
             cpp / "include" / "scar" / "vine" / "result.hpp": (
                 "proposal_draws_used",
-                "acceptance_draws_used"),
+                "acceptance_draws_used",
+                "double log_likelihood"),
+            cpp / "src" / "bindings" / "rvine.cpp": (
+                'diagnostics["log_likelihood"] = result.log_likelihood;',),
         }
         for path, markers in composition_files.items():
             if not path.is_file():
@@ -1720,6 +1765,165 @@ def check_vine_native_boundary(root: Path) -> list[Violation]:
                         "Stage 8.4 native R-vine contract is missing: "
                         + marker,
                     ))
+    return violations
+
+
+def check_stage85_mandatory_dispatch(root: Path) -> list[Violation]:
+    """Reject retired adapters, selectors, formulas, and Python model paths."""
+    rule = "stage85-mandatory-dispatch"
+    violations = []
+
+    retired_modules = (
+        root / "pyscarcopula" / "_native" / "gof.py",
+        root / "pyscarcopula" / "numerical" / "student_gof.py",
+    )
+    for path in retired_modules:
+        if path.exists():
+            violations.append(Violation(
+                rule,
+                path,
+                "retired Python numerical formula module must stay removed",
+            ))
+
+    forbidden_surfaces = {
+        "python_executor": "removed Python R-vine backend selector",
+        "native_strict": "removed R-vine backend selector",
+        "PYSCARCOPULA_TEST_RVINE_BACKEND": "removed backend environment switch",
+        "pyscarcopula/numerical/_cpp_rvine.py": "removed numerical adapter path",
+        "pyscarcopula/numerical/multivariate_native.py":
+            "removed numerical adapter path",
+        "pyscarcopula/numerical/_rvine_backend.py":
+            "removed numerical adapter path",
+    }
+    workflow_root = root / ".github" / "workflows"
+    for path in sorted((*workflow_root.glob("*.yml"), *workflow_root.glob("*.yaml"))):
+        text = path.read_text(encoding="utf-8")
+        for marker, message in forbidden_surfaces.items():
+            index = text.find(marker)
+            if index >= 0:
+                violations.append(Violation(
+                    rule,
+                    path,
+                    f"{message}: {marker}",
+                    text.count("\n", 0, index) + 1,
+                ))
+
+    documentation_markers = (
+        "copula_native.py",
+        "multivariate_native.py",
+        "static_likelihood.py",
+        "_cpp_scar_ou.py",
+        "_cpp_gas.py",
+        "_cpp_gas_rvine.py",
+    )
+    for path in (
+            root / "ARCHITECTURE.md",
+            root / "docs" / "guide" / "architecture.md"):
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        for marker in documentation_markers:
+            index = text.find(marker)
+            if index >= 0:
+                violations.append(Violation(
+                    rule,
+                    path,
+                    "architecture documentation names a retired adapter: "
+                    + marker,
+                    text.count("\n", 0, index) + 1,
+                ))
+
+    conftest = root / "tests" / "conftest.py"
+    if conftest.is_file():
+        text = conftest.read_text(encoding="utf-8")
+        index = text.find("install_reference_oracles")
+        if index >= 0:
+            violations.append(Violation(
+                rule,
+                conftest,
+                "tests must not monkeypatch reference methods onto production",
+                text.count("\n", 0, index) + 1,
+            ))
+
+    reference_root = root / "tests" / "reference"
+    for path in sorted(reference_root.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            module = None
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                names = [node.module or ""]
+            else:
+                continue
+            for module in names:
+                if module == "pyscarcopula" or module.startswith("pyscarcopula."):
+                    violations.append(Violation(
+                        rule,
+                        path,
+                        "reference modules must not import production code: "
+                        + module,
+                        node.lineno,
+                    ))
+
+    vine_path = root / "pyscarcopula" / "vine" / "vine.py"
+    if vine_path.is_file():
+        source = vine_path.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(vine_path))
+        likelihood = next((
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == "log_likelihood"
+            and any(
+                isinstance(parent, ast.ClassDef)
+                and parent.name == "VineCopula"
+                and node in parent.body
+                for parent in ast.walk(tree)
+            )
+        ), None)
+        if likelihood is not None:
+            segment = ast.get_source_segment(source, likelihood) or ""
+            for marker in (
+                    "copula.log_likelihood(",
+                    "_edge_h_pair(",
+                    "for t, level in enumerate("):
+                index = segment.find(marker)
+                if index >= 0:
+                    violations.append(Violation(
+                        rule,
+                        vine_path,
+                        "VineCopula.log_likelihood must remain a native "
+                        "dispatch: " + marker,
+                        likelihood.lineno + segment.count("\n", 0, index),
+                    ))
+            if "return_log_likelihood=True" not in segment:
+                violations.append(Violation(
+                    rule,
+                    vine_path,
+                    "dynamic R-vine likelihood must request the native result",
+                    likelihood.lineno,
+                ))
+
+    mle_path = root / "pyscarcopula" / "strategy" / "mle.py"
+    if mle_path.is_file():
+        source = mle_path.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(mle_path))
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if node.name not in {"rosenblatt_e2", "mixture_h_pair"}:
+                continue
+            segment = ast.get_source_segment(source, node) or ""
+            for marker in ("copula.h(", "copula.h_pair("):
+                if marker in segment:
+                    violations.append(Violation(
+                        rule,
+                        mle_path,
+                        "MLE pair operations must dispatch through _native.pair",
+                        node.lineno,
+                    ))
+
     return violations
 
 
@@ -1834,7 +2038,7 @@ def check_jacobi_strategy_facade(root: Path) -> list[Violation]:
         "pyscarcopula.numerical.jacobi_tm",
         "pyscarcopula.numerical.jacobi_sparse",
         "pyscarcopula.numerical.jacobi_sampling",
-        "pyscarcopula.numerical.copula_native",
+        "pyscarcopula._native.pair",
     }
     legacy_names = {
         "jacobi_tm",
@@ -1915,6 +2119,7 @@ def check_repository(root: Path) -> list[Violation]:
         check_thin_bindings,
         check_public_header_cycles,
         check_vine_native_boundary,
+        check_stage85_mandatory_dispatch,
         check_jacobi_sampling_ownership,
         check_jacobi_python_cleanup,
         check_jacobi_strategy_facade,

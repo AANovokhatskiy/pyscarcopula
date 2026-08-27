@@ -22,7 +22,7 @@ from pyscarcopula._types import (
     LBFGSBConfig, IndependentResult, MultivariateMLEResult,
 )
 from pyscarcopula.numerical.gas_filter import gas_predict_param
-from pyscarcopula.numerical._cpp_extension import CppUnsupported
+from pyscarcopula._native.errors import NativeUnsupported
 from pyscarcopula.numerical.predictive_tm import (
     sample_grid_distribution, tm_state_distribution,
 )
@@ -470,7 +470,7 @@ class TestTransformType:
     def test_gaussian_transform_type_is_compatibility_only(self):
         import warnings
 
-        from pyscarcopula.numerical import _cpp_copula, _cpp_extension
+        from pyscarcopula._native import _descriptors as _cpp_copula, _extension as _cpp_extension
 
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
@@ -497,7 +497,7 @@ class TestTransformType:
         assert xtanh_spec.transform == module.Transform.GaussianTanh
 
     def test_vine_constructor_flow_keeps_gaussian_transform_fixed(self):
-        from pyscarcopula.numerical import _cpp_copula, _cpp_extension
+        from pyscarcopula._native import _descriptors as _cpp_copula, _extension as _cpp_extension
         from pyscarcopula.vine._rvine_dissmann import _make_fixed_copula
 
         module = _cpp_extension.load()
@@ -950,9 +950,9 @@ class TestConditionalPredict:
             scaling='unit',
         )
 
-        with pytest.raises(CppUnsupported, match="C\\+\\+ bivariate GAS"):
+        with pytest.raises(NativeUnsupported, match="exact registered"):
             GASStrategy().predict(cop, u, result, 4, horizon='next')
-        with pytest.raises(CppUnsupported, match="C\\+\\+ bivariate GAS"):
+        with pytest.raises(NativeUnsupported, match="exact registered"):
             gas_predict_param(omega, gamma, beta, u, cop, horizon='current')
 
     def test_gas_fit_forwards_optimizer_options(self, monkeypatch):

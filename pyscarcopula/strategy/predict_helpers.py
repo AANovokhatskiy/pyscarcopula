@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import numpy as np
 
-from pyscarcopula.copula._rotation import transposed_bivariate_copula
 from pyscarcopula.strategy._base import (
     copula_dimension,
     get_copula_capabilities,
@@ -44,6 +43,9 @@ def validate_given(given):
 
 def conditional_sample_bivariate(copula, n, r, given=None, rng=None):
     """Sample from a bivariate copula with optional fixed coordinates."""
+    from pyscarcopula._native.registry import registry_entry_for
+
+    registry_entry_for(copula)
     if rng is None:
         rng = np.random.default_rng()
 
@@ -69,35 +71,26 @@ def conditional_sample_bivariate(copula, n, r, given=None, rng=None):
 
     z = rng.uniform(0.0, 1.0, size=n)
 
-    from pyscarcopula.numerical import copula_native
-    if copula_native.supported(copula):
-        given_coordinate, given_value = next(iter(given.items()))
-        return copula_native.conditional_sample_from_uniforms(
-            copula,
-            z,
-            r_arr,
-            given_coordinate=given_coordinate,
-            given_value=given_value,
-        )
-
-    if 0 in given:
-        directional_copula = transposed_bivariate_copula(copula)
-        samples[:, 1] = directional_copula.h_inverse(
-            z, samples[:, 0], r_arr
-        )
-        return samples
-
-    samples[:, 0] = copula.h_inverse(z, samples[:, 1], r_arr)
-    return samples
+    from pyscarcopula._native import pair as copula_native
+    given_coordinate, given_value = next(iter(given.items()))
+    return copula_native.conditional_sample_from_uniforms(
+        copula,
+        z,
+        r_arr,
+        given_coordinate=given_coordinate,
+        given_value=given_value,
+    )
 
 
 def sample_predictive(copula, n, r, given=None, rng=None, d=None):
     """Sample from a predictive parameter path.
 
-    Conditional ``given`` sampling is delegated to multivariate copulas that
-    expose ``sample_conditional``; otherwise it falls back to bivariate
-    h-function sampling.
+    Conditional ``given`` sampling is delegated to the registered built-in
+    model's native bivariate or multivariate implementation.
     """
+    from pyscarcopula._native.registry import registry_entry_for
+
+    registry_entry_for(copula)
     capabilities = get_copula_capabilities(copula)
 
     if given is None and d is not None and int(d) != 2 and hasattr(copula, "_R_path"):

@@ -2,11 +2,9 @@ import numpy as np
 
 from pyscarcopula import BivariateGaussianCopula, _scar_cpp
 from pyscarcopula.api import fit
-from pyscarcopula.numerical import _cpp_gas
 
 
 def test_native_distribution_smoke():
-    assert _cpp_gas.available()
     observations = np.array([
         [0.20, 0.70],
         [0.60, 0.30],

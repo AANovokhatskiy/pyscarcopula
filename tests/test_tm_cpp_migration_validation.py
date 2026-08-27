@@ -7,8 +7,8 @@ import pytest
 
 from pyscarcopula import ClaytonCopula, EquicorrGaussianCopula
 from pyscarcopula.copula.multivariate import StochasticStudentCopula
-from pyscarcopula.numerical import _cpp_scar_ou
-from pyscarcopula.numerical._cpp_extension import CppError
+from pyscarcopula._native import scar_ou as _cpp_scar_ou
+from pyscarcopula._native.errors import NativeError
 from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
 
 
@@ -46,7 +46,7 @@ def test_native_migration_endpoints_reject_single_observation(call):
         transition_method="matrix",
         max_K=None,
     )
-    with pytest.raises(CppError, match=r"invalid_size"):
+    with pytest.raises(NativeError, match=r"invalid_size"):
         call(config)
 
 

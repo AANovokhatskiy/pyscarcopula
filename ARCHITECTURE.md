@@ -7,7 +7,10 @@ pyscarcopula/
 |-- __init__.py              # Public re-exports and BLAS thread policy
 |-- api.py                   # Top-level fit/predict/sample helpers
 |-- _types.py                # Results and numerical configuration
-|-- _native/                 # Stable extension facade and support policy
+|-- _native/                 # Mandatory extension facade and support policy
+|   |-- pair.py, multivariate.py, static.py
+|   |-- gas.py, scar_ou.py, jacobi.py, vine.py
+|   `-- registry.py, errors.py, threads.py, _extension.py
 |-- io.py                    # JSON model persistence
 |-- stattests.py             # Goodness-of-fit orchestration
 |-- copula/
@@ -24,10 +27,8 @@ pyscarcopula/
 |   |-- mle.py, gas.py, scar_tm.py
 |   `-- scar_jacobi.py
 |-- numerical/
-|   |-- copula_native.py, multivariate_native.py
-|   |-- static_likelihood.py, gas_filter.py
-|   |-- _cpp_scar_ou.py, _cpp_gas.py, _cpp_gas_rvine.py
-|   `-- jacobi_*.py         # Compatibility facades over native Jacobi math
+|   |-- _arrays.py, _scar_ou_config.py, _transition_methods.py
+|   `-- retained Stage 8.6 compatibility/reference modules
 |-- vine/
 |   |-- vine.py               # Canonical generic VineCopula runtime
 |   |-- rvine.py              # RVineCopula compatibility module alias
@@ -80,8 +81,8 @@ projection of that contract during the Stage 8 migration:
 
 The strategy registry in `strategy/_base.py` checks named
 `StrategyRequirements` through the native query before fitting. Custom Python
-subclasses remain on the temporary legacy adapter and do not acquire native
-support through inheritance. Strategy classes own optimization and result
+subclasses do not acquire native support through inheritance and are rejected
+by exact-type dispatch before model methods execute. Strategy classes own optimization and result
 construction; copula classes own model metadata, parameter transforms, and
 sampling.
 
@@ -89,7 +90,6 @@ The main dependency flow is:
 
 ```text
 api.py -> strategy/ -> _native facade -> C++ extension
-                    -> transitional numerical adapters
                     -> copula model metadata
 vine/vine.py -> structure selection or fixed RVineMatrix
              -> _vine_fit.py + bivariate copula contract
@@ -125,8 +125,7 @@ JSON persistence retains fitted raw parameters and compact factor state.
 
 The pybind11 C++ extension is mandatory. `_native/_extension.py` is the sole
 owner of importing its current binary location; `_native` domain modules expose
-the stable facade while legacy numerical adapters remain as Stage 8.1
-compatibility shims. Built-in point operations, static
+the stable production facade. Built-in point operations, static
 likelihoods, GAS filtering, multivariate conditional linear algebra,
 sequential GAS R-vine sampling, dense Student Rosenblatt transforms, and
 SCAR-TM-OU likelihood/gradient/forward operations have one production
@@ -147,8 +146,7 @@ summary are owned by `copula::multivariate`. SciPy remains at the facade only
 for the final one-sample Cramér-von Mises statistic and p-value.
 Equicorrelation unconditional sampling, conditional sampling, and Rosenblatt
 transforms use specialized scalar-or-row C++ kernels without materializing a
-dense correlation matrix. Only dynamic state/filter ownership remains in the
-Stage 8.3 migration boundary.
+dense correlation matrix. Dynamic state/filter ownership is native as well.
 
 Static dense-correlation preprocessing uses the dependency-free C++17 Jacobi
 eigensolver as its canonical arithmetic path. Python performs boundary shape
@@ -281,11 +279,12 @@ symmetric unit-diagonal SPD correlation with condition number at most `1e4`),
 it transfers the complete observation matrix and either a scalar or per-row
 `df` path in one call. C++ factors the fixed correlation once, executes all
 sequential conditionals without the GIL, and may parallelize independent rows.
-Inputs outside that domain are rejected by a pre-call capability gate: `auto`
-preserves the SciPy oracle's low-`df`, invalid-input, and ill-conditioned-matrix
-semantics, while `native_strict` reports `CppUnsupported`. Native runtime
-errors are not retried. Factor-correlation and latent SCAR Rosenblatt paths
-keep their specialized native implementations.
+Inputs outside that domain are rejected by a pre-call capability gate.
+Production dispatch is mandatory native dispatch: invalid inputs, unsupported
+capabilities, an unavailable extension, and native runtime failures raise
+deterministic exceptions and never select the preserved SciPy test oracle.
+Factor-correlation and latent SCAR Rosenblatt paths keep their specialized
+native implementations.
 
 There is no GAS or SCAR-TM-OU backend selector and no Python likelihood
 fallback.

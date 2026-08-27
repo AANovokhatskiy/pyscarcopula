@@ -7,7 +7,7 @@ from scipy.stats import norm
 from pyscarcopula import GaussianCopula
 from pyscarcopula._parallel import get_copula_constructor
 from pyscarcopula._types import NumericalConfig
-from pyscarcopula.numerical import static_likelihood
+from pyscarcopula._native import static as static_likelihood
 
 
 def _sample(seed=71, n=500):

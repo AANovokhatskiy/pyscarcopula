@@ -16,7 +16,7 @@ from pyscarcopula.copula.multivariate.equicorr import (
     EquicorrGaussianCopula,
 )
 from pyscarcopula.copula.multivariate import StochasticStudentCopula
-from pyscarcopula.numerical import _cpp_scar_ou
+from pyscarcopula._native import scar_ou as _cpp_scar_ou
 from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
 from pyscarcopula import stattests
 from pyscarcopula.strategy import scar_tm

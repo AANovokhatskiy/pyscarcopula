@@ -24,7 +24,7 @@ from pyscarcopula.copula.multivariate.stochastic_student import (
     StochasticStudentCopula,
 )
 from pyscarcopula.copula.multivariate import stochastic_student
-from pyscarcopula.numerical import _cpp_scar_ou
+from pyscarcopula._native import scar_ou as _cpp_scar_ou
 from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
 from pyscarcopula.numerical.tm_grid import TMGrid
 from pyscarcopula.numerical.tm_functions import tm_loglik
@@ -1198,19 +1198,19 @@ def test_joint_hybrid_jacobian_uses_one_plus_n_corr_evaluations(
         _cpp_scar_ou,
         "neg_loglik_with_grad_and_corr_info",
         lambda *args, **kwargs: (_ for _ in ()).throw(
-            _cpp_scar_ou.CppUnsupported("test fallback")),
+            _cpp_scar_ou.NativeUnsupported("test fallback")),
     )
     monkeypatch.setattr(
         _cpp_scar_ou,
         "neg_loglik_with_grad_and_corr_directional_info",
         lambda *args, **kwargs: (_ for _ in ()).throw(
-            _cpp_scar_ou.CppUnsupported("test fallback")),
+            _cpp_scar_ou.NativeUnsupported("test fallback")),
     )
     monkeypatch.setattr(
         _cpp_scar_ou,
         "prepare_objective",
         lambda *args, **kwargs: (_ for _ in ()).throw(
-            _cpp_scar_ou.CppUnsupported("test prepared fallback")),
+            _cpp_scar_ou.NativeUnsupported("test prepared fallback")),
     )
     monkeypatch.setattr(
         _cpp_scar_ou, "neg_loglik_with_grad_info", fake_gradient)

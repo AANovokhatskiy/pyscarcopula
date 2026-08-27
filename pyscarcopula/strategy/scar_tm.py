@@ -36,7 +36,7 @@ from pyscarcopula.strategy.initial_point import (
     resolve_ou_initial_point,
     smart_initial_point,
 )
-from pyscarcopula.numerical import _cpp_scar_ou, copula_native
+from pyscarcopula._native import scar_ou as _cpp_scar_ou, pair as copula_native
 from pyscarcopula.numerical.ou_kernels import sample_ou_trajectory
 from pyscarcopula.copula.multivariate.corr_param import (
     _corr_gradient_to_raw_params,
@@ -332,7 +332,7 @@ class _PreparedScarOuFitCache:
         except AttributeError:
             self.disable("missing_api")
             return None
-        except _cpp_scar_ou.CppUnsupported:
+        except _cpp_scar_ou.NativeUnsupported:
             self.disable("unsupported")
             return None
 
@@ -344,7 +344,7 @@ class _PreparedScarOuFitCache:
                 return prepared_call(prepared)
             except AttributeError:
                 self.disable("missing_method")
-            except _cpp_scar_ou.CppUnsupported:
+            except _cpp_scar_ou.NativeUnsupported:
                 self.disable("unsupported_method")
         return fallback_call()
 
@@ -419,7 +419,7 @@ class _PreparedScarOuPosteriorCache:
             except AttributeError:
                 self.disable()
                 return None
-            except _cpp_scar_ou.CppUnsupported:
+            except _cpp_scar_ou.NativeUnsupported:
                 self.cache[key] = _POSTERIOR_WORKSPACE_UNSUPPORTED
                 return None
             self.cache[key] = prepared
@@ -429,7 +429,7 @@ class _PreparedScarOuPosteriorCache:
         except AttributeError:
             self.disable()
             return None
-        except _cpp_scar_ou.CppUnsupported:
+        except _cpp_scar_ou.NativeUnsupported:
             self.cache[key] = _POSTERIOR_WORKSPACE_UNSUPPORTED
             return None
 
@@ -440,7 +440,7 @@ class _PreparedScarOuPosteriorCache:
                 return prepared_call(prepared)
             except AttributeError:
                 self.disable()
-            except _cpp_scar_ou.CppUnsupported:
+            except _cpp_scar_ou.NativeUnsupported:
                 self.cache[(id(u), id(copula), auto_config)] = (
                     _POSTERIOR_WORKSPACE_UNSUPPORTED)
         return fallback_call()
@@ -791,7 +791,7 @@ class SCARTMStrategy:
             return prepared_call(prepared)
         except AttributeError:
             pass
-        except _cpp_scar_ou.CppUnsupported:
+        except _cpp_scar_ou.NativeUnsupported:
             pass
         return stateless_call()
 
@@ -1143,7 +1143,7 @@ class SCARTMStrategy:
                         prepared_cache.neg_loglik_with_grad_and_corr_info(
                             kappa_v, mu_v, nu_v, auto_config))
                     corr_kind = "full"
-            except _cpp_scar_ou.CppUnsupported:
+            except _cpp_scar_ou.NativeUnsupported:
                 value, grad, info = prepared_cache.neg_loglik_with_grad_info(
                     kappa_v, mu_v, nu_v, auto_config)
                 corr_grad = None
@@ -1831,7 +1831,7 @@ class SCARTMStrategy:
                             p.kappa, p.mu, p.nu, horizon='next')
             except AttributeError:
                 prepared = None
-            except _cpp_scar_ou.CppUnsupported:
+            except _cpp_scar_ou.NativeUnsupported:
                 prepared = None
             if prepared is None:
                 h_mix = _cpp_scar_ou.mixture_h(
@@ -1898,7 +1898,7 @@ class SCARTMStrategy:
                             p.kappa, p.mu, p.nu, horizon='next')
             except AttributeError:
                 prepared = None
-            except _cpp_scar_ou.CppUnsupported:
+            except _cpp_scar_ou.NativeUnsupported:
                 prepared = None
             if prepared is None:
                 h_pair = _cpp_scar_ou.mixture_h_pair(

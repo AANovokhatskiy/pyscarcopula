@@ -75,19 +75,6 @@ def pytest_collection_modifyitems(config, items):
             if "validation" in item.keywords:
                 item.add_marker(skip_validation)
 
-    if os.environ.get("PYSCARCOPULA_TEST_RVINE_BACKEND", "").lower() == (
-            "python_executor"):
-        skip_native = pytest.mark.skip(
-            reason=(
-                "native GAS R-vine assertion is run separately from the "
-                "forced python_executor characterization suite"
-            )
-        )
-        for item in items:
-            if item.get_closest_marker("rvine_native") is not None:
-                item.add_marker(skip_native)
-
-
 @pytest.fixture(scope="session")
 def crypto_data():
     """Load crypto dataset, return pseudo-obs (T, 2)."""

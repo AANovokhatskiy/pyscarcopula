@@ -30,7 +30,7 @@ from pyscarcopula._types import (
     GASResult, IndependentResult, LatentResult, MLEResult, gas_params,
     ou_params,
 )
-from pyscarcopula.numerical import _cpp_scar_ou
+from pyscarcopula._native import scar_ou as _cpp_scar_ou
 
 # ══════════════════════════════════════════════════════════════
 # Edge module tests
@@ -153,14 +153,14 @@ class TestPairCopulaEdge:
             return np.array([0.11, 0.89])
 
         monkeypatch.setattr(
-            'pyscarcopula.numerical._cpp_scar_ou.mixture_h',
+            'pyscarcopula._native.scar_ou.mixture_h',
             fake_tm_forward_mixture_h,
         )
         monkeypatch.setattr(
-            'pyscarcopula.numerical._cpp_scar_ou.prepare_objective',
+            'pyscarcopula._native.scar_ou.prepare_objective',
             lambda *args, **kwargs: (
                 (_ for _ in ()).throw(
-                    _cpp_scar_ou.CppUnsupported("test fallback"))),
+                    _cpp_scar_ou.NativeUnsupported("test fallback"))),
         )
 
         out = _edge_h(
@@ -277,7 +277,7 @@ class TestSelection:
 
     def test_selection_reuses_screening_evaluator_for_refinement(
             self, monkeypatch):
-        from pyscarcopula.numerical import static_likelihood
+        from pyscarcopula._native import static as static_likelihood
 
         rng = np.random.default_rng(20260807)
         u = pobs(rng.standard_normal((300, 2)))

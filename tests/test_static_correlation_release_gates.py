@@ -7,7 +7,7 @@ import pytest
 from scipy.stats import multivariate_t, norm, t as t_dist
 
 from pyscarcopula import GaussianCopula, StudentCopula
-from pyscarcopula.numerical import static_likelihood
+from pyscarcopula._native import static as static_likelihood
 
 
 def _valid_observations(rows=80, seed=1501):

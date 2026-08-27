@@ -11,11 +11,18 @@ import weakref
 
 import numpy as np
 
-from pyscarcopula.numerical import _cpp_extension
-from pyscarcopula.numerical._cpp_extension import CppUnsupported
+from pyscarcopula._native import _extension
+from pyscarcopula._native.errors import NativeUnsupported
 
 
 _STUDENT_SPEC_CACHE = weakref.WeakKeyDictionary()
+
+
+def _native_model_id(copula) -> str:
+    """Validate exact registration and return the stable native model id."""
+    from pyscarcopula._native.registry import native_id_for
+
+    return native_id_for(copula)
 
 
 def _set_student_ppf_cache(spec, cache) -> None:
@@ -47,33 +54,37 @@ def _native_archimedean_transform(module, transform_name):
     try:
         return mapping[transform_name]
     except KeyError as exc:
-        raise CppUnsupported(
+        raise NativeUnsupported(
             f"Unsupported Archimedean transform: {transform_name!r}"
         ) from exc
 
 
 def _native_pair_family_name(copula) -> str | None:
-    """Return the registered family used for native point operations.
-
-    Subclasses inherit the marker so Python fallback paths can still use the
-    built-in implementation for methods they do not override. Whole native
-    R-vine execution applies its stricter gate before this serializer.
-    """
-
-    value = getattr(type(copula), "_native_pair_family", None)
-    return value if isinstance(value, str) and value else None
+    """Return the pair family for an exact registered built-in type."""
+    try:
+        native_id = _native_model_id(copula)
+    except NativeUnsupported:
+        return None
+    return {
+        "Independent": "Independent",
+        "Clayton": "Clayton",
+        "Frank": "Frank",
+        "Gumbel": "Gumbel",
+        "Joe": "Joe",
+        "BivariateGaussian": "Gaussian",
+    }.get(native_id)
 
 
 def _ensure_native_pair_copula(copula) -> str:
     family_name = _native_pair_family_name(copula)
     if family_name is None:
         name = getattr(copula, "name", type(copula).__name__)
-        raise CppUnsupported(
-            f"C++ pair kernels do not support {name}; a registered native "
-            "pair family marker is required"
+        raise NativeUnsupported(
+            f"C++ pair kernels do not support {name}; an exact registered "
+            "native pair model is required"
         )
     if int(getattr(copula, "rotate", 0)) not in (0, 90, 180, 270):
-        raise CppUnsupported(
+        raise NativeUnsupported(
             f"Invalid rotation for native pair family {family_name}"
         )
     return family_name
@@ -84,7 +95,7 @@ def _make_native_pair_spec(module, copula):
     try:
         family = getattr(module.CopulaFamily, family_name)
     except AttributeError as exc:
-        raise CppUnsupported(
+        raise NativeUnsupported(
             f"Native pair family {family_name!r} is not registered"
         ) from exc
 
@@ -109,40 +120,41 @@ def supported_for_scar_ou(copula) -> bool:
     """Return whether ``copula`` can use C++ SCAR-TM-OU kernels."""
     try:
         ensure_supported_for_scar_ou(copula)
-    except CppUnsupported:
+    except NativeUnsupported:
         return False
-    return _cpp_extension.available()
+    return True
 
 
 def supported_for_copula_ops(copula) -> bool:
     """Return whether ``copula`` can use shared C++ copula operations."""
     try:
         ensure_supported_for_copula_ops(copula)
-    except CppUnsupported:
+    except NativeUnsupported:
         return False
-    return _cpp_extension.available()
+    return True
 
 
 def supported_for_gas(copula) -> bool:
     """Return whether ``copula`` can use the C++ GAS evaluator."""
     try:
         ensure_supported_for_gas(copula)
-    except CppUnsupported:
+    except NativeUnsupported:
         return False
-    return _cpp_extension.available()
+    return True
 
 
 def supported_for_static_likelihood(copula) -> bool:
     """Return whether ``copula`` has a native static likelihood kernel."""
     try:
         ensure_supported_for_static_likelihood(copula)
-    except CppUnsupported:
+    except NativeUnsupported:
         return False
-    return _cpp_extension.available()
+    return True
 
 
 def ensure_supported_for_static_likelihood(copula) -> None:
     """Validate support for native static likelihood evaluation."""
+    _native_model_id(copula)
     from pyscarcopula.copula.multivariate.equicorr import (
         EquicorrGaussianCopula,
     )
@@ -157,16 +169,16 @@ def ensure_supported_for_static_likelihood(copula) -> None:
             try:
                 copula.correlation_operator_
             except (AttributeError, ValueError) as exc:
-                raise CppUnsupported(
+                raise NativeUnsupported(
                     "GaussianCopula requires initialized "
                     "factor correlation") from exc
             return
         if copula.corr is None:
-            raise CppUnsupported("GaussianCopula requires initialized corr")
+            raise NativeUnsupported("GaussianCopula requires initialized corr")
         return
     if isinstance(copula, StudentCopula):
         if copula.shape is None:
-            raise CppUnsupported("StudentCopula requires initialized shape")
+            raise NativeUnsupported("StudentCopula requires initialized shape")
         return
     if isinstance(copula, (EquicorrGaussianCopula, StochasticStudentCopula)):
         if (
@@ -175,14 +187,14 @@ def ensure_supported_for_static_likelihood(copula) -> None:
             try:
                 copula.correlation_operator_
             except (AttributeError, ValueError) as exc:
-                raise CppUnsupported(
+                raise NativeUnsupported(
                     "StochasticStudentCopula requires initialized "
                     "factor correlation") from exc
             return
         if (
                 isinstance(copula, StochasticStudentCopula)
                 and getattr(copula, "R", None) is None):
-            raise CppUnsupported(
+            raise NativeUnsupported(
                 "StochasticStudentCopula requires initialized R")
         return
     ensure_supported_for_copula_ops(copula)
@@ -260,6 +272,7 @@ def make_static_likelihood_spec(module, copula, u=None):
 
 def ensure_supported_for_scar_ou(copula) -> None:
     """Validate that ``copula`` is implemented for C++ SCAR-TM-OU."""
+    _native_model_id(copula)
     if _native_pair_family_name(copula) is not None:
         _ensure_native_pair_copula(copula)
         return
@@ -268,7 +281,7 @@ def ensure_supported_for_scar_ou(copula) -> None:
         from pyscarcopula.copula.multivariate.equicorr import EquicorrGaussianCopula
         from pyscarcopula.copula.multivariate.stochastic_student import StochasticStudentCopula
     except ImportError as exc:
-        raise CppUnsupported("Required copula classes are not importable") from exc
+        raise NativeUnsupported("Required copula classes are not importable") from exc
 
     if isinstance(copula, EquicorrGaussianCopula):
         return
@@ -277,16 +290,16 @@ def ensure_supported_for_scar_ou(copula) -> None:
             try:
                 copula.correlation_operator_
             except (AttributeError, ValueError) as exc:
-                raise CppUnsupported(
+                raise NativeUnsupported(
                     "StochasticStudentCopula requires initialized "
                     "factor correlation") from exc
             return
         if getattr(copula, "R", None) is None:
-            raise CppUnsupported("StochasticStudentCopula requires initialized R")
+            raise NativeUnsupported("StochasticStudentCopula requires initialized R")
         return
 
     name = getattr(copula, "name", type(copula).__name__)
-    raise CppUnsupported(
+    raise NativeUnsupported(
         "C++ SCAR-OU kernels require a registered native pair family, "
         "EquicorrGaussianCopula, or StochasticStudentCopula; "
         f"got {name}"
@@ -300,6 +313,7 @@ def ensure_supported_for_copula_ops(copula) -> None:
 
 def ensure_supported_for_gas(copula) -> None:
     """Validate support for the built-in C++ GAS evaluator."""
+    _native_model_id(copula)
     try:
         from pyscarcopula.copula.multivariate.equicorr import (
             EquicorrGaussianCopula,
@@ -308,7 +322,7 @@ def ensure_supported_for_gas(copula) -> None:
             StochasticStudentCopula,
         )
     except ImportError as exc:
-        raise CppUnsupported(
+        raise NativeUnsupported(
             "Required multivariate copula classes are not importable"
         ) from exc
 
@@ -319,20 +333,20 @@ def ensure_supported_for_gas(copula) -> None:
             try:
                 copula.correlation_operator_
             except (AttributeError, ValueError) as exc:
-                raise CppUnsupported(
+                raise NativeUnsupported(
                     "StochasticStudentCopula requires initialized "
                     "factor correlation") from exc
             return
         if getattr(copula, "R", None) is None:
-            raise CppUnsupported(
+            raise NativeUnsupported(
                 "StochasticStudentCopula requires initialized R")
         return
 
     try:
         ensure_supported_for_copula_ops(copula)
-    except CppUnsupported as exc:
+    except NativeUnsupported as exc:
         name = getattr(copula, "name", type(copula).__name__)
-        raise CppUnsupported(
+        raise NativeUnsupported(
             "C++ bivariate GAS supports Clayton, Gumbel, Joe with rotations, "
             "Frank rotate=0, BivariateGaussian rotate=0, Independent, "
             "while multivariate GAS supports EquicorrGaussianCopula and "
@@ -375,6 +389,7 @@ def make_gas_spec(module, copula, u=None, *, use_student_cache=True):
 
 def make_multivariate_transform_spec(module, copula):
     """Build the minimal native spec needed by multivariate transforms."""
+    _native_model_id(copula)
     from pyscarcopula.copula.multivariate.equicorr import (
         EquicorrGaussianCopula,
     )
@@ -396,12 +411,13 @@ def make_multivariate_transform_spec(module, copula):
         spec.offset = float(copula._df_offset)
         spec.dim = int(copula.d)
         return spec
-    raise CppUnsupported(
+    raise NativeUnsupported(
         f"Unsupported multivariate copula: {type(copula).__name__}")
 
 
 def make_multivariate_spec(module, copula, cache=None):
     """Build a native dynamic multivariate spec with an optional PPF cache."""
+    _native_model_id(copula)
     state_lock = getattr(copula, "_state_lock", None)
     if state_lock is None:
         return _make_multivariate_spec_unlocked(module, copula, cache)
@@ -420,7 +436,7 @@ def _make_multivariate_spec_unlocked(module, copula, cache=None):
     if isinstance(copula, EquicorrGaussianCopula):
         return make_multivariate_transform_spec(module, copula)
     if not isinstance(copula, StochasticStudentCopula):
-        raise CppUnsupported(
+        raise NativeUnsupported(
             f"Unsupported multivariate copula: {type(copula).__name__}")
     if copula.corr_mode == "factor":
         spec = make_multivariate_transform_spec(module, copula)
@@ -431,7 +447,7 @@ def _make_multivariate_spec_unlocked(module, copula, cache=None):
         spec.log_det = float(copula.correlation_operator_.logdet)
         return spec
     if copula.R is None:
-        raise CppUnsupported(
+        raise NativeUnsupported(
             "StochasticStudentCopula requires initialized R")
 
     corr_version = int(copula._corr_cache_version)
@@ -535,5 +551,5 @@ def _make_spec_unlocked(module, copula, u=None):
             _STUDENT_SPEC_CACHE[copula] = (
                 cache.version, corr_version, spec)
     else:
-        raise CppUnsupported(f"Unsupported copula: {type(copula).__name__}")
+        raise NativeUnsupported(f"Unsupported copula: {type(copula).__name__}")
     return spec

@@ -38,7 +38,7 @@ from pyscarcopula.copula.multivariate import StochasticStudentCopula
 from pyscarcopula.strategy import scar_tm
 from pyscarcopula.strategy._base import get_strategy_for_result
 from pyscarcopula.strategy.scar_tm import SCARTMStrategy
-from pyscarcopula.numerical import _cpp_scar_ou
+from pyscarcopula._native import scar_ou as _cpp_scar_ou
 from pyscarcopula import stattests
 
 
@@ -766,7 +766,7 @@ def test_scar_tm_adaptive_spectral_basis_order_records_diagnostics(monkeypatch):
         "prepare_objective",
         lambda *args, **kwargs: (
             (_ for _ in ()).throw(
-                _cpp_scar_ou.CppUnsupported("test fallback"))),
+                _cpp_scar_ou.NativeUnsupported("test fallback"))),
     )
 
     u = np.random.default_rng(20260702).uniform(0.05, 0.95, size=(101, 2))
@@ -918,7 +918,7 @@ def test_scar_tm_failed_dispatch_objective_is_not_success(monkeypatch):
         "prepare_objective",
         lambda *args, **kwargs: (
             (_ for _ in ()).throw(
-                _cpp_scar_ou.CppUnsupported("test fallback"))),
+                _cpp_scar_ou.NativeUnsupported("test fallback"))),
     )
     u = np.random.default_rng(17).uniform(0.05, 0.95, size=(10, 2))
     copula = BivariateGaussianCopula()
@@ -1324,7 +1324,7 @@ def test_native_forward_rosenblatt_applies_final_gof_clipping():
         transition_method="matrix",
     )
 
-    module = _cpp_scar_ou._cpp_extension.load()
+    module = _cpp_scar_ou._extension.load()
     assert result[0, 0] == module.ROSENBLATT_OUTPUT_EPS
     assert result[-1, 0] == 1.0 - module.ROSENBLATT_OUTPUT_EPS
     assert np.all(result >= module.ROSENBLATT_OUTPUT_EPS)
@@ -1376,14 +1376,14 @@ def test_bivariate_gof_passes_stored_transition_options(monkeypatch):
         return u_arg[:, 1]
 
     monkeypatch.setattr(
-        "pyscarcopula.numerical._cpp_scar_ou.mixture_h",
+        "pyscarcopula._native.scar_ou.mixture_h",
         fake_rosenblatt,
     )
     monkeypatch.setattr(
-        "pyscarcopula.numerical._cpp_scar_ou.prepare_objective",
+        "pyscarcopula._native.scar_ou.prepare_objective",
         lambda *args, **kwargs: (
             (_ for _ in ()).throw(
-                _cpp_scar_ou.CppUnsupported("test fallback"))),
+                _cpp_scar_ou.NativeUnsupported("test fallback"))),
     )
 
     stattests._bivariate_rosenblatt_from_result(copula, u, result)
@@ -1422,14 +1422,14 @@ def test_top_level_api_uses_stored_scar_tm_options(monkeypatch):
         return np.zeros(len(u_arg), dtype=np.float64)
 
     monkeypatch.setattr(
-        "pyscarcopula.numerical._cpp_scar_ou.predictive_mean",
+        "pyscarcopula._native.scar_ou.predictive_mean",
         fake_predictive_mean,
     )
     monkeypatch.setattr(
-        "pyscarcopula.numerical._cpp_scar_ou.prepare_objective",
+        "pyscarcopula._native.scar_ou.prepare_objective",
         lambda *args, **kwargs: (
             (_ for _ in ()).throw(
-                _cpp_scar_ou.CppUnsupported("test fallback"))),
+                _cpp_scar_ou.NativeUnsupported("test fallback"))),
     )
 
     from pyscarcopula import api

@@ -41,7 +41,7 @@ from pyscarcopula.copula.multivariate.stochastic_student import (
     StochasticStudentCopula,
 )
 from pyscarcopula.numerical.tm_grid import TMGrid
-from pyscarcopula.numerical import _cpp_gas, _cpp_scar_ou
+from pyscarcopula._native import gas as _cpp_gas, scar_ou as _cpp_scar_ou
 from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
 from pyscarcopula.numerical.gas_filter import gas_filter
 from pyscarcopula.stattests import (
@@ -332,30 +332,26 @@ def test_equicorr_rho_derivative_matches_finite_difference():
     np.testing.assert_allclose(analytic, finite_diff, atol=1e-7, rtol=1e-7)
 
 
-def test_equicorr_gas_score_does_not_call_python_derivative():
-    class CountingEquicorr(EquicorrGaussianCopula):
-        def __init__(self, d):
-            super().__init__(d)
-            self.calls = 0
-
-        def dlog_pdf_dr_rows(self, u, r, t_index=None):
-            self.calls += 1
-            return super().dlog_pdf_dr_rows(u, r, t_index=t_index)
-
+def test_equicorr_gas_score_does_not_call_python_derivative(monkeypatch):
     u = _u()[:1]
-    copula = CountingEquicorr(d=4)
+    copula = EquicorrGaussianCopula(d=4)
     g_t = 0.2
     r_t = float(copula.transform(np.array([g_t]))[0])
     ll_t = float(copula.log_pdf_rows(u, np.array([r_t]))[0])
-
-    score = _cpp_gas.update_one(
-        0.0, 0.0, 0.0, g_t, u, copula, "unit", 1e-4).score
-
-    assert copula.calls == 0
     expected = (
         copula.dlog_pdf_dr_rows(u, np.array([r_t]))[0]
         * copula.dtransform(np.array([g_t]))[0]
     )
+
+    def fail_derivative(*args, **kwargs):
+        raise AssertionError("native GAS score called the Python derivative")
+
+    monkeypatch.setattr(
+        EquicorrGaussianCopula, "dlog_pdf_dr_rows", fail_derivative)
+
+    score = _cpp_gas.update_one(
+        0.0, 0.0, 0.0, g_t, u, copula, "unit", 1e-4).score
+
     np.testing.assert_allclose(score, expected, rtol=1e-12, atol=1e-12)
 
 
@@ -1356,7 +1352,7 @@ def test_fallback_predict_draws_independent_latent_parameter_per_sample():
 def test_mle_optimizer_failure_does_not_fake_convergence(monkeypatch):
     """M2 regression: failed likelihood evaluations must not yield a zero
     gradient that L-BFGS-B would misread as convergence."""
-    from pyscarcopula.numerical import static_likelihood
+    from pyscarcopula._native import static as static_likelihood
 
     u = _u()
     copula = StochasticStudentCopula(d=4, R=_R())
@@ -1376,7 +1372,7 @@ def test_mle_optimizer_failure_does_not_fake_convergence(monkeypatch):
 def test_mle_optimizer_unexpected_error_propagates(monkeypatch):
     """M2 regression: only expected numerical exceptions may be swallowed
     by the objective wrapper; real bugs must surface."""
-    from pyscarcopula.numerical import static_likelihood
+    from pyscarcopula._native import static as static_likelihood
 
     u = _u()
     copula = StochasticStudentCopula(d=4, R=_R())

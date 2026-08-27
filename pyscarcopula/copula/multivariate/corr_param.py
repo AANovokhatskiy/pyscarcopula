@@ -32,13 +32,13 @@ class CorrelationPreprocessingResult:
 
 def sigmoid(x: float | np.ndarray) -> np.ndarray:
     """Numerically stable native logistic transform."""
-    from pyscarcopula.numerical import multivariate_native
+    from pyscarcopula._native import multivariate as multivariate_native
     return multivariate_native.correlation_logistic(x)
 
 
 def logit(p: float | np.ndarray) -> np.ndarray:
     """Native inverse logistic transform with open-interval clipping."""
-    from pyscarcopula.numerical import multivariate_native
+    from pyscarcopula._native import multivariate as multivariate_native
     return multivariate_native.correlation_logit(p)
 
 
@@ -50,7 +50,7 @@ def project_to_corr(R: np.ndarray, eps: float = 1e-8) -> np.ndarray:
     if not np.all(np.isfinite(R)):
         raise ValueError("R must contain only finite values")
 
-    from pyscarcopula.numerical import multivariate_native
+    from pyscarcopula._native import multivariate as multivariate_native
     correlation, _ = multivariate_native.preprocess_correlation(
         R, eigenvalue_floor=eps)
     return correlation
@@ -71,7 +71,7 @@ def preprocess_correlation_matrix(
     if not np.all(np.isfinite(input_correlation)):
         raise ValueError("R must contain only finite values")
 
-    from pyscarcopula.numerical import multivariate_native
+    from pyscarcopula._native import multivariate as multivariate_native
     correlation, native = multivariate_native.preprocess_correlation(
         input_correlation, eigenvalue_floor=eps)
     return CorrelationPreprocessingResult(
@@ -103,7 +103,7 @@ def estimate_kendall_correlation(
     if observations.shape[1] < 2:
         raise ValueError("observations must contain at least two variables")
 
-    from pyscarcopula.numerical import multivariate_native
+    from pyscarcopula._native import multivariate as multivariate_native
     correlation, native = multivariate_native.estimate_kendall_correlation(
         observations, eigenvalue_floor=eps)
     return CorrelationPreprocessingResult(
@@ -124,7 +124,7 @@ def validate_corr_matrix(R: np.ndarray, eps: float = 1e-8) -> None:
         raise ValueError("R must be a square matrix")
     if not np.all(np.isfinite(R)):
         raise ValueError("R must contain only finite values")
-    from pyscarcopula.numerical import multivariate_native
+    from pyscarcopula._native import multivariate as multivariate_native
     multivariate_native.validate_correlation(R, tolerance=eps)
 
 
@@ -132,7 +132,7 @@ def _make_shrinkage_corr_from_validated(
         alpha_raw: float, R0: np.ndarray) -> np.ndarray:
     """Build a shrinkage correlation from a validated base in C++."""
     R0 = np.asarray(R0, dtype=np.float64)
-    from pyscarcopula.numerical import multivariate_native
+    from pyscarcopula._native import multivariate as multivariate_native
     return multivariate_native.make_shrinkage_correlation(alpha_raw, R0)
 
 
@@ -154,7 +154,7 @@ def cholesky_corr_n_params(d: int) -> int:
 
 def pack_cholesky_corr(R: np.ndarray) -> np.ndarray:
     """Pack native row-major unit-diagonal Cholesky coordinates."""
-    from pyscarcopula.numerical import multivariate_native
+    from pyscarcopula._native import multivariate as multivariate_native
     return multivariate_native.pack_cholesky_correlation(R)
 
 
@@ -170,7 +170,7 @@ def _corr_from_cholesky_params(params: np.ndarray, d: int) -> np.ndarray:
     if not np.all(np.isfinite(params)):
         raise ValueError("Cholesky correlation parameters must be finite")
 
-    from pyscarcopula.numerical import multivariate_native
+    from pyscarcopula._native import multivariate as multivariate_native
     return multivariate_native.unpack_cholesky_correlation(params, d)
 
 
@@ -189,7 +189,7 @@ def _corr_gradient_to_raw_params(
         corr_base: np.ndarray | None = None) -> np.ndarray:
     """Map derivatives over symmetric ``R[i, j]`` to raw parameters."""
     corr_mode = str(corr_mode).lower()
-    from pyscarcopula.numerical import multivariate_native
+    from pyscarcopula._native import multivariate as multivariate_native
     return multivariate_native.correlation_gradient_to_raw(
         corr_mode,
         np.asarray(params, dtype=np.float64).reshape(-1),
@@ -203,6 +203,6 @@ def _shrinkage_raw_corr_direction(
         params: np.ndarray,
         corr_base: np.ndarray) -> np.ndarray:
     """Return lower-triangle ``dR/draw`` for shrinkage correlation."""
-    from pyscarcopula.numerical import multivariate_native
+    from pyscarcopula._native import multivariate as multivariate_native
     return multivariate_native.shrinkage_raw_correlation_direction(
         np.asarray(params, dtype=np.float64).reshape(-1), corr_base)

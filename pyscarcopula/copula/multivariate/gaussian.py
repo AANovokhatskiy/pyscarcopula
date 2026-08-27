@@ -104,7 +104,7 @@ def _validated_correlation(value, *, name, dimension=None):
 
 
 def _gaussian_score_correlation(u):
-    from pyscarcopula.numerical import multivariate_native
+    from pyscarcopula._native import multivariate as multivariate_native
     return multivariate_native.gaussian_score_correlation(u)
 
 
@@ -662,7 +662,7 @@ class GaussianCopula(MultivariateCopula):
             shrinkage_initial=self._corr_shrinkage_init,
             initialization_source=initialization_source,
         )
-        from pyscarcopula.numerical import static_likelihood
+        from pyscarcopula._native import static as static_likelihood
         evaluator = static_likelihood.prepare_gaussian(
             initial_correlation, u, n_threads=n_threads)
 
@@ -780,13 +780,13 @@ class GaussianCopula(MultivariateCopula):
         return result
 
     def log_likelihood(self, u, *, n_threads=1):
-        from pyscarcopula.numerical import static_likelihood
+        from pyscarcopula._native import static as static_likelihood
         return static_likelihood.prepare(
             self, u, n_threads=n_threads).log_likelihood(0.0)
 
     def log_pdf_rows(
             self, u, parameter=None, *, n_threads=1, **kwargs):
-        from pyscarcopula.numerical import static_likelihood
+        from pyscarcopula._native import static as static_likelihood
         return static_likelihood.prepare(
             self, u, n_threads=n_threads).log_pdf_rows(0.0)
 
@@ -819,7 +819,7 @@ class GaussianCopula(MultivariateCopula):
         n_threads = _validated_n_threads(n_threads)
         if rng is None:
             rng = np.random.default_rng()
-        from pyscarcopula.numerical import multivariate_native
+        from pyscarcopula._native import multivariate as multivariate_native
         if self._corr_mode == "factor":
             operator = self.correlation_operator_
             _validated_budget(

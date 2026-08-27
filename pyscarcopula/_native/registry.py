@@ -213,6 +213,21 @@ def is_registered_type(model_or_type) -> bool:
     return model_type in _registry()
 
 
+def registry_entry_for(model) -> RegistryEntry:
+    """Return the exact registry entry or reject an unregistered subclass."""
+    entry = _registry().get(type(model))
+    if entry is None:
+        raise NativeUnsupported(
+            f"{type(model).__name__} is not an exact registered native model"
+        )
+    return entry
+
+
+def native_id_for(model) -> str:
+    """Return the stable native model id for an exact registered type."""
+    return registry_entry_for(model).native_id
+
+
 def registered_model_types() -> tuple[type, ...]:
     """Return exact registered built-in types in deterministic ID order."""
     return tuple(_registry())
@@ -220,11 +235,7 @@ def registered_model_types() -> tuple[type, ...]:
 
 def descriptor_for(model):
     """Build the opaque C++ descriptor for an exact built-in model type."""
-    entry = _registry().get(type(model))
-    if entry is None:
-        raise NativeUnsupported(
-            f"{type(model).__name__} is not an exact registered native model"
-        )
+    entry = registry_entry_for(model)
     module = _extension.load()
     return entry.builder(model, module)
 
@@ -275,10 +286,10 @@ def ensure_capability(model, operation, dynamics="MLE"):
 def strategy_support(model, method):
     """Return the first failed strategy requirement, or a supported result.
 
-    ``None`` means the object is on the temporary legacy/custom adapter path.
+    Unregistered model types are rejected before strategy dispatch.
     """
     if not is_registered_type(model):
-        return None
+        registry_entry_for(model)
     normalized = str(method).upper().replace("_", "-")
     requirements = STRATEGY_REQUIREMENTS.get(normalized)
     if requirements is None:
@@ -329,7 +340,9 @@ __all__ = [
     "descriptor_for",
     "ensure_capability",
     "is_registered_type",
+    "native_id_for",
     "query_capability",
+    "registry_entry_for",
     "registered_model_types",
     "strategy_support",
 ]

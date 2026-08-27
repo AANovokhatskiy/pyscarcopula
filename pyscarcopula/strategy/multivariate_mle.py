@@ -10,7 +10,7 @@ from scipy.optimize import minimize
 
 from pyscarcopula.copula.multivariate.corr_param import validate_corr_matrix
 from pyscarcopula.copula.multivariate.correlation_policy import FloatArray
-from pyscarcopula.numerical._cpp_extension import CppError
+from pyscarcopula._native.errors import NativeError
 
 
 @dataclass(frozen=True)
@@ -81,7 +81,7 @@ _EXPECTED_NUMERICAL_ERRORS = (
     OverflowError,
     ValueError,
     np.linalg.LinAlgError,
-    CppError,
+    NativeError,
 )
 
 

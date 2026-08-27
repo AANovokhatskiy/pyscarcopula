@@ -818,10 +818,11 @@ Row-specific `(n,d,d)` correlation arrays cannot share one Cholesky factor and
 retain per-row factorization cost. Near-singular Student conditional covariance
 matrices also retain the per-row jitter path to preserve numerical semantics.
 For dense Student Rosenblatt, the adapter rejects unsupported capability
-combinations before entering the kernel. In production `auto` mode, low or
-invalid `df`, legacy correlation boundaries, and ill-conditioned matrices use
-the preserved SciPy oracle; `native_strict` raises `CppUnsupported`. Native
-runtime errors after a supported call are never converted into fallback.
+combinations before entering the kernel. Production execution is always
+native: invalid inputs, unsupported capability combinations, an unavailable
+extension, and native runtime failures raise deterministic exceptions. The
+preserved SciPy implementation is a test oracle only and is never selected by
+production dispatch.
 
 ## Independent Fit Parallelism
 

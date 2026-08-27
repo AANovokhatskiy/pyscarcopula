@@ -4,8 +4,11 @@ import numpy as np
 import pytest
 from scipy.stats import multivariate_normal, norm
 
-from pyscarcopula.numerical import _cpp_copula, static_likelihood
-from pyscarcopula.numerical._cpp_extension import load
+from pyscarcopula._native import (
+    _descriptors as _cpp_copula,
+    static as static_likelihood,
+)
+from pyscarcopula._native._extension import load
 
 
 def _correlation(d: int, kind: str, seed: int) -> np.ndarray:

@@ -17,10 +17,14 @@ from pyscarcopula import (
     IndependentCopula,
     JoeCopula,
 )
-from pyscarcopula.numerical import _cpp_extension, _cpp_rvine
-from pyscarcopula.numerical._cpp_extension import CppUnsupported, load
+from pyscarcopula._native import _extension as _cpp_extension, vine as _cpp_rvine
+from pyscarcopula._native.errors import NativeUnsupported
 import pyscarcopula.stattests as stattests
 from pyscarcopula.stattests import rvine_rosenblatt_transform
+from rvine_candidate_harness import (
+    _log_likelihood_python,
+    _rvine_rosenblatt_transform_python,
+)
 
 from rvine_runtime_cases import (
     configured_mixed_family_vine,
@@ -38,7 +42,7 @@ def _python_public_rosenblatt(
         vine_type = getattr(vine, "vine_type", "rvine")
     prepared = stattests._prepare_rvine_rosenblatt_observations(
         vine, observations)
-    return stattests._rvine_rosenblatt_transform_python(
+    return _rvine_rosenblatt_transform_python(
         vine,
         prepared,
         K=K,
@@ -52,7 +56,7 @@ def _observations(n=17, d=3, seed=2026082255):
 
 
 def _native_request(vine, observations):
-    module = load()
+    module = _cpp_extension.load()
     active_keys = _cpp_rvine.density_active_keys(
         vine._trees, vine._edge_map)
     layout = _cpp_rvine.static_rosenblatt_parameter_layout(
@@ -100,7 +104,7 @@ def test_static_two_dimensional_family_rotation_matrix_is_exact(
         [0.8, 1.0 - 2e-10],
     ])
 
-    expected = stattests._rvine_rosenblatt_transform_python(
+    expected = _rvine_rosenblatt_transform_python(
         vine, observations)
     actual = rvine_rosenblatt_transform(vine, observations)
 
@@ -116,7 +120,7 @@ def test_static_nontrivial_peel_order_and_noncontiguous_input_are_exact(
     observations = base[:, ::2]
     assert not observations.flags.c_contiguous
 
-    expected = stattests._rvine_rosenblatt_transform_python(
+    expected = _rvine_rosenblatt_transform_python(
         vine, observations)
     actual = rvine_rosenblatt_transform(vine, observations)
 
@@ -128,7 +132,7 @@ def test_static_nontrivial_peel_order_and_noncontiguous_input_are_exact(
 def test_static_empty_singleton_and_batch_contract(monkeypatch, n):
     vine = configured_mixed_family_vine()
     observations = _observations(n=n, d=vine.d)
-    expected = stattests._rvine_rosenblatt_transform_python(
+    expected = _rvine_rosenblatt_transform_python(
         vine, observations)
     actual = rvine_rosenblatt_transform(vine, observations)
     np.testing.assert_array_equal(actual, expected)
@@ -209,7 +213,7 @@ def test_direct_native_rejects_missing_residuals_and_accepts_valid_row_pack():
 def test_public_native_adapter_accepts_explicit_row_path_layout():
     vine = configured_mixed_family_vine()
     observations = _observations(n=5, d=vine.d)
-    module = load()
+    module = _cpp_extension.load()
     active_keys = _cpp_rvine.density_active_keys(
         vine._trees, vine._edge_map)
     parameters = {
@@ -230,7 +234,7 @@ def test_public_native_adapter_accepts_explicit_row_path_layout():
         parameter_paths=parameters,
         parameter_sources=sources,
     )
-    expected = stattests._rvine_rosenblatt_transform_python(
+    expected = _rvine_rosenblatt_transform_python(
         vine, observations)
     np.testing.assert_array_equal(actual, expected)
 
@@ -248,22 +252,39 @@ def test_dynamic_edges_use_native_traversal_without_python_fallback(
         monkeypatch, factory):
     vine = factory()
     observations = _observations(n=13, d=vine.d)
-    expected = stattests._rvine_rosenblatt_transform_python(
+    expected = _rvine_rosenblatt_transform_python(
         vine, observations)
 
-    monkeypatch.setattr(
-        stattests,
-        "_rvine_rosenblatt_transform_python",
-        lambda *_args, **_kwargs: pytest.fail("unexpected Python fallback"),
-    )
+    assert not hasattr(stattests, "_rvine_rosenblatt_transform_python")
     actual = rvine_rosenblatt_transform(vine, observations)
     np.testing.assert_array_equal(actual, expected)
 
 
-def test_custom_builtin_subclass_uses_preserved_python_fallback(
-        monkeypatch):
+@pytest.mark.parametrize(
+    "factory",
+    [
+        configured_mixed_gas_vine,
+        configured_mixed_scar_vine,
+        configured_mixed_jacobi_vine,
+    ],
+    ids=["gas", "scar-ou", "scar-jacobi"],
+)
+def test_dynamic_log_likelihood_uses_native_traversal(factory):
+    vine = factory()
+    observations = _observations(n=13, d=vine.d, seed=2026082261)
+
+    expected = _log_likelihood_python(vine, observations)
+    actual = vine.log_likelihood(observations)
+
+    assert actual == pytest.approx(expected, rel=2e-12, abs=2e-12)
+
+
+def test_custom_builtin_subclass_is_rejected():
+    calls = []
+
     class CustomClayton(ClaytonCopula):
         def h_pair(self, u, v, r):
+            calls.append("h_pair")
             first = np.full_like(np.asarray(u, dtype=np.float64), 0.314)
             second = np.full_like(np.asarray(v, dtype=np.float64), 0.271)
             return first, second
@@ -271,16 +292,11 @@ def test_custom_builtin_subclass_uses_preserved_python_fallback(
     vine = configured_mixed_family_vine()
     vine.pair_copulas[(0, 0)] = fitted_pair(CustomClayton(rotate=90), 0.8)
     observations = _observations(n=9, d=vine.d)
-    expected = _python_public_rosenblatt(vine, observations)
-    module = _cpp_extension.load()
-    monkeypatch.setattr(
-        module,
-        "rvine_rosenblatt_transform",
-        lambda *_args, **_kwargs: pytest.fail(
-            "custom edge fallback must not enter native R-vine traversal"),
-    )
-    actual = rvine_rosenblatt_transform(vine, observations)
-    np.testing.assert_array_equal(actual, expected)
+    with pytest.raises(NativeUnsupported, match="exact registered"):
+        rvine_rosenblatt_transform(vine, observations)
+    with pytest.raises(NativeUnsupported, match="exact registered"):
+        vine.log_likelihood(observations)
+    assert calls == []
 
 
 @pytest.mark.parametrize("observations", [
@@ -331,17 +347,10 @@ def test_missing_rosenblatt_symbol_has_operation_specific_contract(
         monkeypatch):
     vine = configured_mixed_family_vine()
     observations = _observations(n=5, d=vine.d)
-    calls = []
-
     monkeypatch.setattr(_cpp_extension, "load", lambda: SimpleNamespace())
-    monkeypatch.setattr(
-        stattests,
-        "_rvine_rosenblatt_transform_python",
-        lambda *_args, **_kwargs: calls.append("python"),
-    )
-    with pytest.raises(CppUnsupported, match="rvine_rosenblatt_transform"):
+    with pytest.raises(NativeUnsupported, match="rvine_rosenblatt_transform"):
         rvine_rosenblatt_transform(vine, observations)
-    assert calls == []
+    assert not hasattr(stattests, "_rvine_rosenblatt_transform_python")
 
 
 def test_gof_result_is_exact_across_python_and_native_backends(monkeypatch):

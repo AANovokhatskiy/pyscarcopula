@@ -35,12 +35,3 @@ def load():
             f"Original import error: {exc}"
         ) from exc
     return _MODULE
-
-
-def available() -> bool:
-    """Return whether the transitional extension path can be loaded."""
-    try:
-        load()
-    except NativeUnavailable:
-        return False
-    return True

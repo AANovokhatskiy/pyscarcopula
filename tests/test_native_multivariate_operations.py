@@ -19,8 +19,8 @@ from pyscarcopula import (
 from pyscarcopula.copula.multivariate import equicorr, stochastic_student
 from pyscarcopula.copula.multivariate import conditional as conditional_module
 from pyscarcopula.copula.multivariate import gaussian as gaussian_module
-from pyscarcopula.numerical import _cpp_extension, multivariate_native
-from pyscarcopula.numerical._cpp_extension import CppError
+from pyscarcopula._native import _extension as _cpp_extension, multivariate as multivariate_native
+from pyscarcopula._native.errors import NativeError
 
 
 def _observations(n=24, d=4):
@@ -656,7 +656,7 @@ def test_native_conditional_reports_failure_index_without_python_fallback():
         [2.0, 1.0, 0.0],
         [0.0, 0.0, 1.0],
     ])
-    with pytest.raises(CppError, match="failure_index=0"):
+    with pytest.raises(NativeError, match="failure_index=0"):
         multivariate_native.gaussian_conditional_latent(
             invalid,
             np.array([0], dtype=np.int32),
@@ -846,7 +846,7 @@ def test_production_multivariate_methods_use_native_surface():
 
 def test_native_multivariate_failure_is_translated():
     copula = EquicorrGaussianCopula(d=4)
-    with pytest.raises(CppError, match="failure_index=0"):
+    with pytest.raises(NativeError, match="failure_index=0"):
         copula.log_pdf_rows(_observations(2), 1.0)
 
 

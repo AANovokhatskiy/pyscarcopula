@@ -160,7 +160,7 @@ def build_cases() -> list[dict[str, Any]]:
 
 def build_reduction_cases() -> list[dict[str, Any]]:
     """Capture thread-specific values where parallel reduction order matters."""
-    from pyscarcopula.numerical import static_likelihood
+    from pyscarcopula._native import static as static_likelihood
 
     dimension = 12
     correlation = np.full((dimension, dimension), 0.15, dtype=np.float64)

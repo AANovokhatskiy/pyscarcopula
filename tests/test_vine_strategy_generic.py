@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from pyscarcopula import api
+from pyscarcopula._native.errors import NativeUnsupported
 from pyscarcopula._types import LatentProcessParams, LatentResult
 from pyscarcopula._utils import pobs
 from pyscarcopula.copula.elliptical import BivariateGaussianCopula
@@ -210,11 +211,13 @@ def test_rvine_uses_registered_generic_strategy_for_edge_runtime(
 
     samples = vine.sample(7, rng=np.random.default_rng(1))
     predicted = vine.predict(8, u=u, rng=np.random.default_rng(2))
-    ll = vine.log_likelihood(u)
+    with pytest.raises(
+            NativeUnsupported,
+            match="does not support edge .*LatentResult"):
+        vine.log_likelihood(u)
 
     assert samples.shape == (7, 3)
     assert predicted.shape == (8, 3)
-    assert np.isfinite(ll)
     assert generic_strategy['fit'] == 3
     assert len(GenericFakeStrategy.initial_mle_results) == 3
     assert all(
@@ -224,7 +227,7 @@ def test_rvine_uses_registered_generic_strategy_for_edge_runtime(
     assert generic_strategy['mixture_h'] > 0
     assert generic_strategy['model_sample_params'] == 3
     assert generic_strategy['predictive_params'] == 3
-    assert generic_strategy['log_likelihood'] == 3
+    assert generic_strategy['log_likelihood'] == 0
 
 
 def test_rvine_prefers_strategy_mixture_h_pair(
@@ -247,8 +250,11 @@ def test_rvine_prefers_strategy_mixture_h_pair(
     assert generic_strategy['mixture_h'] == 0
 
     generic_strategy.clear()
-    vine.log_likelihood(u)
-    assert generic_strategy['mixture_h_pair'] == 2
+    with pytest.raises(
+            NativeUnsupported,
+            match="does not support edge .*LatentResult"):
+        vine.log_likelihood(u)
+    assert generic_strategy['mixture_h_pair'] == 0
     assert generic_strategy['mixture_h'] == 0
 
 

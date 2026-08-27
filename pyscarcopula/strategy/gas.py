@@ -10,7 +10,7 @@ from pyscarcopula._types import (
     PredictiveState,
     gas_params,
 )
-from pyscarcopula.numerical import _cpp_gas
+from pyscarcopula._native import gas as _cpp_gas
 from pyscarcopula.numerical._arrays import (
     validate_float64_allocation,
     validate_positive_int,

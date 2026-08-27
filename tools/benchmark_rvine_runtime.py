@@ -11,6 +11,7 @@ so the original Gate 0 baseline remains inexpensive and comparable.
 from __future__ import annotations
 
 import argparse
+from functools import partial
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -52,9 +53,8 @@ from pyscarcopula._types import (
 from pyscarcopula.copula.multivariate.factor_correlation import (
     FactorCorrelation,
 )
-from pyscarcopula.numerical import _cpp_extension
+from pyscarcopula._native import _extension as _cpp_extension
 from pyscarcopula.stattests import (
-    _rvine_rosenblatt_transform_python,
     equicorr_rosenblatt_transform,
     factor_student_rosenblatt_transform,
     rvine_rosenblatt_transform,
@@ -72,6 +72,25 @@ from rvine_runtime_cases import (
     fitted_pair,
     scalar_parameters,
 )
+from rvine_candidate_harness import (
+    _log_pdf_rows_with_r_python,
+    _rvine_rosenblatt_transform_python,
+    _sample_arbitrary_given_mcmc_python,
+    _sample_dag_given_with_r_python,
+    _sample_with_r_python,
+    _vine_sample_suffix_given_with_r_python,
+)
+
+
+_REFERENCE_METHODS = {
+    "_log_pdf_rows_with_r_python": _log_pdf_rows_with_r_python,
+    "_sample_arbitrary_given_mcmc_python":
+        _sample_arbitrary_given_mcmc_python,
+    "_sample_dag_given_with_r_python": _sample_dag_given_with_r_python,
+    "_sample_suffix_given_with_r_python":
+        _vine_sample_suffix_given_with_r_python,
+    "_sample_with_r_python": _sample_with_r_python,
+}
 
 
 DEFAULT_OUTPUT = (
@@ -241,10 +260,12 @@ def _ar1_correlation(dimension: int, rho: float = 0.35) -> np.ndarray:
 
 def _backend_method(vine, backend, native_name, python_name):
     """Select an explicit implementation; never depend on process state."""
-    return getattr(
-        vine,
-        python_name if backend == "python_executor" else native_name,
-    )
+    if backend == "reference":
+        reference = _REFERENCE_METHODS.get(python_name)
+        if reference is not None:
+            return partial(reference, vine)
+        return getattr(vine, python_name)
+    return getattr(vine, native_name)
 
 
 def _run_backend_mcmc(
@@ -256,7 +277,7 @@ def _run_backend_mcmc(
         "_sample_arbitrary_given_mcmc",
         "_sample_arbitrary_given_mcmc_python",
     )
-    if backend == "python_executor":
+    if backend == "reference":
         return method(n, parameters, rng, given, **kwargs)
     return method(
         n,
@@ -739,7 +760,7 @@ def _extended_factor_records(
                 "matrix_free_required": dimension > 2048,
                 "implementation": "python_factor_reference",
             }
-            if not enabled or backend != "python_executor":
+            if not enabled or backend != "reference":
                 records.append(_extended_reference_not_run(
                     "extended_factor_student_rosenblatt",
                     dimension,
@@ -799,7 +820,7 @@ def _extended_equicorr_records(
                 "estimation_method": method,
                 "implementation": "python_vectorized_reference",
             }
-            if not enabled or backend != "python_executor":
+            if not enabled or backend != "reference":
                 records.append(_extended_reference_not_run(
                     "extended_equicorr_rosenblatt",
                     dimension,
@@ -912,8 +933,8 @@ def _extended_dynamic_records(
             "dynamic_edges": dynamic_edges,
             "total_edges": len(vine.pair_copulas),
             "implementation": (
-                "python_executor_reference"
-                if backend == "python_executor" else
+                "reference_reference"
+                if backend == "reference" else
                 "native_dynamic_rvine"
             ),
         }
@@ -934,7 +955,7 @@ def _extended_dynamic_records(
             0.02, 0.98, size=(rows, vine.d))
         transform = (
             _rvine_rosenblatt_transform_python
-            if backend == "python_executor" else
+            if backend == "reference" else
             rvine_rosenblatt_transform
         )
         record = _measure(
@@ -1008,7 +1029,7 @@ def _extended_incremental_mcmc_records(
         }
         algorithms = (
             ("full_recompute",)
-            if backend == "python_executor" else
+            if backend == "reference" else
             ("full_recompute", "incremental")
         )
         draw_chunk_steps = 5
@@ -1201,8 +1222,8 @@ def run_benchmark(
 ) -> dict[str, object]:
     if profile not in {"smoke", "full"}:
         raise ValueError("profile must be 'smoke' or 'full'")
-    if backend not in {"python_executor", "native_strict"}:
-        raise ValueError("backend must be python_executor or native_strict")
+    if backend not in {"reference", "native"}:
+        raise ValueError("backend must be reference or native")
     if repeats <= 0 or warmups < 0:
         raise ValueError("repeats must be positive and warmups non-negative")
     dimensions = (5,) if profile == "smoke" else (5, 10, 50)
@@ -1284,8 +1305,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--profile", choices=("smoke", "full"), default="full")
     parser.add_argument(
         "--backend",
-        choices=("python_executor", "native_strict"),
-        default="python_executor",
+        choices=("reference", "native"),
+        default="reference",
     )
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--warmups", type=int, default=1)

@@ -36,6 +36,7 @@ from pyscarcopula._types import (
     PredictConfig,
 )
 from pyscarcopula.copula._protocol import CommonCopulaProtocol
+from pyscarcopula._native.registry import registry_entry_for
 from pyscarcopula._utils import pobs as _pobs
 from pyscarcopula.numerical._arrays import as_float64_array
 from pyscarcopula.strategy._base import (
@@ -202,7 +203,13 @@ def log_likelihood(
     float
         Total log-likelihood over all observations.
     """
-    if _is_vine_copula(copula):
+    # CVineCopula is an approved breaking removal for Stage 8.6.  Until that
+    # stage it retains its legacy runtime and is intentionally outside the
+    # exact-type native registry introduced for the generic VineCopula.
+    if _is_legacy_cvine(copula):
+        return float(copula.log_likelihood(data, **kwargs))
+    registry_entry_for(copula)
+    if _is_generic_vine(copula):
         return float(copula.log_likelihood(data, **kwargs))
 
     prepared = _prepared_equicorr_or_none(copula, data)
@@ -290,6 +297,7 @@ def mixture_h(
     NotImplementedError
         If ``copula`` does not provide pair-copula h-functions.
     """
+    registry_entry_for(copula)
     prepared = _prepared_equicorr_or_none(copula, data)
     if prepared is None:
         u = _as_float64_array_no_copy(data)

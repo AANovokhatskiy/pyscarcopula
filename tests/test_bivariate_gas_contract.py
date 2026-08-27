@@ -9,7 +9,7 @@ from pyscarcopula.copula.frank import FrankCopula
 from pyscarcopula.copula.gumbel import GumbelCopula
 from pyscarcopula.copula.independent import IndependentCopula
 from pyscarcopula.copula.joe import JoeCopula
-from pyscarcopula.numerical import _cpp_gas
+from pyscarcopula._native import gas as _cpp_gas
 from pyscarcopula.numerical.gas_filter import (
     gas_filter,
     gas_mixture_h,

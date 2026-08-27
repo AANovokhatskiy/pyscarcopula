@@ -7,12 +7,11 @@ import pytest
 
 from pyscarcopula import ClaytonCopula
 from pyscarcopula.copula._rotation import transposed_bivariate_copula
-from pyscarcopula.numerical import _cpp_extension, _cpp_rvine
-from pyscarcopula.numerical._cpp_extension import CppError, CppUnsupported
+from pyscarcopula._native import _extension as _cpp_extension, vine as _cpp_rvine
+from pyscarcopula._native.errors import NativeError, NativeUnsupported
 from pyscarcopula.vine._edge_adapter import edge_copula
 from pyscarcopula.vine._helpers import _clip_unit
 from pyscarcopula.vine._rvine_dag import (
-    _execute_conditional_plan_python,
     build_runtime_rvine_dag,
     plan_conditional_sample,
 )
@@ -20,9 +19,12 @@ from pyscarcopula.vine._rvine_sampling_plan import (
     build_rvine_sampling_plan,
 )
 from pyscarcopula.vine._rvine_suffix import (
-    _sample_suffix_given_with_r_python,
     build_suffix_conditional_plan,
     given_suffix_start_col,
+)
+from rvine_candidate_harness import (
+    _execute_conditional_plan_python,
+    _sample_suffix_given_with_r_python,
 )
 
 from rvine_runtime_cases import (
@@ -226,7 +228,7 @@ def test_edge_pack_rejects_invalid_paths_before_native_call(
         )
 
 
-def test_exact_type_gate_rejects_subclass_unless_class_opts_in():
+def test_exact_type_gate_rejects_all_subclasses():
     module = _cpp_extension.load()
 
     class CustomClayton(ClaytonCopula):
@@ -236,11 +238,12 @@ def test_exact_type_gate_rejects_subclass_unless_class_opts_in():
         __pyscarcopula_native_rvine__ = True
 
     assert not _cpp_rvine.native_copula_supported(CustomClayton())
-    with pytest.raises(CppUnsupported, match="exact built-in"):
+    with pytest.raises(NativeUnsupported, match="exact registered built-in"):
         _cpp_rvine.compile_copula_spec(module, CustomClayton())
     opted_in = NativeEquivalentClayton()
-    assert _cpp_rvine.native_copula_supported(opted_in)
-    assert _cpp_rvine.compile_copula_spec(module, opted_in).dim == 2
+    assert not _cpp_rvine.native_copula_supported(opted_in)
+    with pytest.raises(NativeUnsupported, match="exact registered built-in"):
+        _cpp_rvine.compile_copula_spec(module, opted_in)
 
 
 def test_conditional_and_density_compilers_emit_flat_indexed_programs():
@@ -373,9 +376,9 @@ def test_suffix_compiler_uses_common_opcodes_and_matches_python_oracle():
     ("status", "error"),
     [
         (2, ValueError),
-        (3, CppUnsupported),
+        (3, NativeUnsupported),
         (7, FloatingPointError),
-        (99, CppError),
+        (99, NativeError),
     ],
 )
 def test_common_status_mapper_preserves_failure_context(status, error):

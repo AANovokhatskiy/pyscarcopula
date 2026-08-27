@@ -19,7 +19,7 @@ from pyscarcopula import (
 from pyscarcopula._utils import pobs
 from pyscarcopula.api import fit, log_likelihood, predict
 from pyscarcopula.contrib.risk_metrics import _get_copula_constructor
-from pyscarcopula.numerical import _cpp_copula, _cpp_extension
+from pyscarcopula._native import _descriptors as _cpp_copula, _extension as _cpp_extension
 from pyscarcopula.stattests import (
     factor_gaussian_rosenblatt_transform,
     gaussian_rosenblatt_transform,
@@ -296,7 +296,7 @@ def test_default_factor_gaussian_calls_do_not_initialize_native_pool():
     code = (
         "import json, numpy as np\n"
         "from pyscarcopula import GaussianCopula\n"
-        "from pyscarcopula.numerical import _cpp_extension\n"
+        "from pyscarcopula._native import _extension as _cpp_extension\n"
         "m = _cpp_extension.load()\n"
         "before = dict(m._parallel_runtime_info())\n"
         "cop = GaussianCopula("

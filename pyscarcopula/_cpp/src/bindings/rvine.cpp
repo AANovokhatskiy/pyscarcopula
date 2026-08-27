@@ -542,6 +542,7 @@ void bind_rvine(py::module_& m) {
             diagnostics["h_pair_operations"] = result.h_pair_operations;
             diagnostics["independence_fast_paths"] =
                 result.independence_fast_paths;
+            diagnostics["log_likelihood"] = result.log_likelihood;
 
             return rvine_vector_result_to_dict(
                 result,

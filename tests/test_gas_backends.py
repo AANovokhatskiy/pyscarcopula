@@ -9,8 +9,8 @@ from pyscarcopula._types import GASResult, PredictiveState, gas_params
 from pyscarcopula.copula.elliptical import BivariateGaussianCopula
 from pyscarcopula.copula.gumbel import GumbelCopula
 from pyscarcopula.copula.multivariate import EquicorrGaussianCopula
-from pyscarcopula.numerical import _cpp_gas
-from pyscarcopula.numerical._cpp_extension import CppUnavailable, CppUnsupported
+from pyscarcopula._native import gas as _cpp_gas
+from pyscarcopula._native.errors import NativeUnavailable, NativeUnsupported
 from pyscarcopula.numerical.gas_filter import (
     gas_filter,
     gas_loglik,
@@ -103,32 +103,32 @@ def test_unsupported_copula_fails_before_optimization(observations):
         _corr_num_params=lambda: 0,
     )
 
-    with pytest.raises(CppUnsupported, match="custom-python-copula"):
+    with pytest.raises(NativeUnsupported, match="exact registered"):
         GASStrategy().fit(custom, observations, gamma0=np.asarray(PARAMS))
 
 
 def test_missing_extension_has_no_python_fallback(monkeypatch, observations):
     def unavailable():
-        raise CppUnavailable("compiled extension missing")
+        raise NativeUnavailable("compiled extension missing")
 
-    monkeypatch.setattr(_cpp_gas._cpp_extension, "load", unavailable)
+    monkeypatch.setattr(_cpp_gas._extension, "load", unavailable)
 
-    with pytest.raises(CppUnavailable, match="compiled extension missing"):
+    with pytest.raises(NativeUnavailable, match="compiled extension missing"):
         gas_filter(*PARAMS, observations, BivariateGaussianCopula())
 
 
 def test_fit_checks_extension_before_optimization(monkeypatch, observations):
     def unavailable():
-        raise CppUnavailable("compiled extension missing")
+        raise NativeUnavailable("compiled extension missing")
 
     def fail_minimize(*args, **kwargs):
         raise AssertionError("optimizer must not run without native GAS")
 
-    monkeypatch.setattr(_cpp_gas._cpp_extension, "load", unavailable)
+    monkeypatch.setattr(_cpp_gas._extension, "load", unavailable)
     monkeypatch.setattr(
         "pyscarcopula.strategy.gas.minimize", fail_minimize)
 
-    with pytest.raises(CppUnavailable, match="compiled extension missing"):
+    with pytest.raises(NativeUnavailable, match="compiled extension missing"):
         GASStrategy().fit(
             BivariateGaussianCopula(),
             observations,

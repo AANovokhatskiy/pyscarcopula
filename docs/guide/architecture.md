@@ -45,7 +45,8 @@ Strategies own optimization, filtering coordination, and result
 construction. Copulas own model metadata, transforms, and sampling behavior.
 The `pyscarcopula._native` facade owns loading the mandatory C++ extension,
 typed model descriptors, capability decisions, status translation, and thread
-validation. Numerical adapters are transitional callers of that facade.
+validation. Production callers use this facade directly; retired numerical
+adapter names are not dispatch surfaces.
 
 | Layer | Main responsibility |
 |-------|---------------------|
@@ -53,7 +54,7 @@ validation. Numerical adapters are transitional callers of that facade.
 | Capability metadata | Explicit strategy support |
 | Strategy | Optimization and fit-result construction |
 | Native evaluator | Density, likelihood, gradient, filtering, multivariate conditional linear algebra |
-| Python coordination | RNG and fixed draws, Jacobi, GoF, persistence |
+| Python coordination | Fit/RNG orchestration, fixed draws, GoF reporting, persistence |
 
 The retained `pyscarcopula.numerical.TMGrid` class is a manual low-level
 NumPy/SciPy reference implementation. Production OU likelihood, prediction,
@@ -88,13 +89,11 @@ consulted. See [CPU Parallelism](parallelism.md) for the public contract.
 
 R-vine execution uses one shared flat plan and family-operation layer. Native
 entry points cover supported static unconditional and conditional sampling,
-row log-density, coordinate-update MCMC, and static Rosenblatt transforms.
-Sequential unconditional sampling with fitted GAS edges reuses the same
-topology and family semantics while retaining its causal state-update driver.
-Python owns topology construction, capability dispatch, random draws,
-parameter trajectories, bootstrap orchestration, and the preserved reference
-executor. Unsupported custom copulas and stateful operations remain on that
-Python path.
+row log-density, coordinate-update MCMC, and static or dynamic Rosenblatt
+traversals. Python owns topology construction, exact-type capability dispatch,
+random draws, request assembly, and bootstrap orchestration. Unsupported
+custom subclasses fail before any Python model formula can run; test-only
+candidate traversal harnesses are never part of production dispatch.
 
 Compiled R-vine plans and immutable edge specifications are transient fitted
 model state. Their cache keys include the structure, exact copula type,

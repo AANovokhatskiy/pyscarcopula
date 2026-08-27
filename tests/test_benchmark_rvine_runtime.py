@@ -34,7 +34,7 @@ def test_full_incremental_mcmc_matrix_covers_stage_7_1_axes():
 def test_extended_disabled_workloads_remain_visible():
     records = benchmark_rvine_runtime._extended_workload_records(
         profile="smoke",
-        backend="python_executor",
+        backend="reference",
         repeats=1,
         warmups=0,
         enabled=False,
@@ -60,9 +60,9 @@ def test_backend_method_selects_explicit_reference_and_native_callables():
 
     runtime = Runtime()
     assert benchmark_rvine_runtime._backend_method(
-        runtime, "python_executor", "native", "oracle")() == "oracle"
+        runtime, "reference", "native", "oracle")() == "oracle"
     assert benchmark_rvine_runtime._backend_method(
-        runtime, "native_strict", "native", "oracle")() == "native"
+        runtime, "native", "native", "oracle")() == "native"
 
 
 def test_dynamic_benchmark_pairs_reference_and_native_on_identical_inputs():
@@ -75,9 +75,9 @@ def test_dynamic_benchmark_pairs_reference_and_native_on_identical_inputs():
     )
     reference, reference_seed = (
         benchmark_rvine_runtime._extended_dynamic_records(
-            backend="python_executor", **options))
+            backend="reference", **options))
     native, native_seed = benchmark_rvine_runtime._extended_dynamic_records(
-        backend="native_strict", **options)
+        backend="native", **options)
 
     assert native_seed == reference_seed
     reference_checksums = {
@@ -96,7 +96,7 @@ def test_dynamic_benchmark_pairs_reference_and_native_on_identical_inputs():
 def test_extended_python_smoke_records_cover_candidates():
     records = benchmark_rvine_runtime._extended_workload_records(
         profile="smoke",
-        backend="python_executor",
+        backend="reference",
         repeats=1,
         warmups=0,
         enabled=True,
@@ -148,10 +148,10 @@ def test_extended_python_smoke_records_cover_candidates():
         assert record["incremental_cache_bytes_estimate"] > 0
 
 
-def test_extended_native_strict_keeps_unimplemented_references_explicit():
+def test_extended_native_keeps_unimplemented_references_explicit():
     records = benchmark_rvine_runtime._extended_workload_records(
         profile="smoke",
-        backend="native_strict",
+        backend="native",
         repeats=1,
         warmups=0,
         enabled=True,

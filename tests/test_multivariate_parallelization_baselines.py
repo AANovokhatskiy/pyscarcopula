@@ -12,7 +12,7 @@ import pytest
 
 from tools.benchmark_timing import interleaved_timings
 from pyscarcopula import EquicorrGaussianCopula, StochasticStudentCopula
-from pyscarcopula.numerical import multivariate_native
+from pyscarcopula._native import multivariate as multivariate_native
 
 
 _SMALL_BENCHMARKS = [
@@ -286,7 +286,7 @@ def test_student_internal_threads_are_bitwise_equivalent():
 
 
 def test_student_small_grid_uses_sequential_fast_path():
-    from pyscarcopula.numerical import _cpp_extension
+    from pyscarcopula._native import _extension as _cpp_extension
 
     copula, u, grid, cache = _make_case(
         "student", T=8, d=6, K=9, seed=508)
@@ -323,7 +323,7 @@ def test_equicorr_internal_threads_are_bitwise_equivalent():
 
 
 def test_equicorr_small_grid_uses_sequential_fast_path():
-    from pyscarcopula.numerical import _cpp_extension
+    from pyscarcopula._native import _extension as _cpp_extension
 
     copula, u, grid, _ = _make_case(
         "equicorr", T=128, d=40, K=64, seed=511)
@@ -342,7 +342,7 @@ def test_equicorr_small_grid_uses_sequential_fast_path():
 
 
 def test_equicorr_parallel_failure_index_matches_sequential():
-    from pyscarcopula.numerical import _cpp_copula, _cpp_extension
+    from pyscarcopula._native import _descriptors as _cpp_copula, _extension as _cpp_extension
 
     T, d, K = 4_160, 40, 64
     copula = EquicorrGaussianCopula(d=d)
@@ -385,7 +385,7 @@ def test_equicorr_internal_threads_reject_invalid_values(n_threads):
 
 
 def test_student_parallel_failure_index_matches_sequential():
-    from pyscarcopula.numerical import _cpp_copula, _cpp_extension
+    from pyscarcopula._native import _descriptors as _cpp_copula, _extension as _cpp_extension
 
     T, d, K = 24, 4, 7
     copula, u, grid, _ = _make_case(
@@ -537,7 +537,7 @@ def test_student_internal_thread_scaling_benchmark():
 
 @pytest.mark.benchmark
 def test_student_scar_matrix_internal_thread_benchmark():
-    from pyscarcopula.numerical import _cpp_scar_ou
+    from pyscarcopula._native import scar_ou as _cpp_scar_ou
     from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
 
     _benchmark_enabled(large=False)
@@ -644,7 +644,7 @@ def test_equicorr_internal_thread_scaling_benchmark():
 
 @pytest.mark.benchmark
 def test_equicorr_scar_matrix_internal_thread_benchmark():
-    from pyscarcopula.numerical import _cpp_scar_ou
+    from pyscarcopula._native import scar_ou as _cpp_scar_ou
     from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
 
     _benchmark_enabled(large=False)

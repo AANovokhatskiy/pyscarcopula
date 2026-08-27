@@ -64,7 +64,7 @@ def _lifecycle_child(connection, n_threads, exercise_failure):
     import numpy as np
 
     from pyscarcopula import EquicorrGaussianCopula
-    from pyscarcopula.numerical import _cpp_extension
+    from pyscarcopula._native import _extension as _cpp_extension
 
     module = _cpp_extension.load()
     try:
@@ -102,7 +102,7 @@ def _run_lifecycle_child(start_method, n_threads, exercise_failure=False):
         # Deliberately fork after the parent has live native workers. The child
         # must ignore the inherited runtime and publish its own pool only when
         # n_threads > 1 is requested.
-        from pyscarcopula.numerical import _cpp_extension
+        from pyscarcopula._native import _extension as _cpp_extension
 
         _cpp_extension.load()._parallel_for_blocks_probe(32, 1, 4)
     context = multiprocessing.get_context(start_method)
@@ -131,7 +131,7 @@ def test_unix_start_methods_own_parallel_runtime(start_method, n_threads):
         pytest.skip(f"{start_method} is unavailable")
 
     if n_threads > 1:
-        from pyscarcopula.numerical import _cpp_extension
+        from pyscarcopula._native import _extension as _cpp_extension
 
         module = _cpp_extension.load()
         with pytest.raises(RuntimeError, match="requested failure"):
@@ -236,7 +236,7 @@ def test_repeated_native_hot_paths_have_bounded_resident_memory():
         "import numpy as np\n"
         "from pyscarcopula import EquicorrGaussianCopula, "
         "StochasticStudentCopula\n"
-        "from pyscarcopula.numerical import static_likelihood\n"
+        "from pyscarcopula._native import static as static_likelihood\n"
         "def rss():\n"
         "    with open('/proc/self/statm', encoding='ascii') as stream:\n"
         "        pages = int(stream.read().split()[1])\n"
@@ -300,7 +300,7 @@ def test_native_grid_has_no_allocation_per_grid_cell():
     import numpy as np
 
     from pyscarcopula import EquicorrGaussianCopula
-    from pyscarcopula.numerical import _cpp_copula, _cpp_extension
+    from pyscarcopula._native import _descriptors as _cpp_copula, _extension as _cpp_extension
 
     probe = _allocation_probe()
     module = _cpp_extension.load()
@@ -340,7 +340,7 @@ def test_native_grid_has_no_allocation_per_grid_cell():
 def test_equicorr_preparation_allocation_count_is_tile_bounded():
     import numpy as np
 
-    from pyscarcopula.numerical import _cpp_extension
+    from pyscarcopula._native import _extension as _cpp_extension
 
     probe = _allocation_probe()
     module = _cpp_extension.load()

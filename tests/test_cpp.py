@@ -30,16 +30,11 @@ from pyscarcopula.numerical.tm_functions import (
 )
 from pyscarcopula.numerical.tm_grid import TMGrid
 from pyscarcopula.numerical.predictive_tm import tm_state_distribution
-from pyscarcopula.numerical import _cpp_scar_ou
+from pyscarcopula._native import scar_ou as _cpp_scar_ou
 from pyscarcopula.strategy.scar_tm import SCARTMStrategy
 from pyscarcopula.vine._pair_copula import PairCopula
 from pyscarcopula.vine._rvine_edges import _edge_h, _edge_h_inverse
 
-
-pytestmark = pytest.mark.skipif(
-    not _cpp_scar_ou.available(),
-    reason="pyscarcopula C++ extension is not available",
-)
 
 auto_loglik = lambda *args, **kwargs: _cpp_scar_ou.loglik(
     *args, **kwargs)[0]
@@ -82,7 +77,7 @@ def _result(alpha=(0.9, 0.1, 1.1), copula_name="Clayton copula"):
 
 @pytest.fixture
 def hermite_cache_module():
-    module = _cpp_scar_ou._cpp_extension.load()
+    module = _cpp_scar_ou._extension.load()
     module._reset_hermite_rule_cache_limits_for_testing()
     try:
         yield module
@@ -92,7 +87,7 @@ def hermite_cache_module():
 
 @pytest.mark.parametrize("df", [2.0001, 2.1, 5.0, 30.0, 1000.0])
 def test_cpp_student_quantile_matches_scipy(df):
-    module = _cpp_scar_ou._cpp_extension.load()
+    module = _cpp_scar_ou._extension.load()
     probabilities = np.array([
         0.0,
         PSEUDO_OBS_EPS / 10.0,
@@ -125,13 +120,13 @@ def test_cpp_student_quantile_matches_scipy(df):
 
 
 def test_cpp_and_python_quantile_boundary_constants_match():
-    module = _cpp_scar_ou._cpp_extension.load()
+    module = _cpp_scar_ou._extension.load()
     assert module.PSEUDO_OBS_EPS == PSEUDO_OBS_EPS
 
 
 @pytest.mark.parametrize("df", [1000.0, 2500.0, 10000.0])
 def test_cpp_large_df_student_quantile_asymptotic_is_accurate(df):
-    module = _cpp_scar_ou._cpp_extension.load()
+    module = _cpp_scar_ou._extension.load()
     probabilities = np.array([
         PSEUDO_OBS_EPS,
         1e-6,
@@ -163,7 +158,7 @@ def test_cpp_large_df_student_quantile_asymptotic_is_accurate(df):
 
 @pytest.mark.parametrize("df", [2.0001, 2.1, 5.0, 30.0, 500.0])
 def test_cpp_exact_student_quantile_df_derivative_matches_scipy(df):
-    module = _cpp_scar_ou._cpp_extension.load()
+    module = _cpp_scar_ou._extension.load()
     probabilities = np.array([
         1e-6,
         1e-3,
@@ -234,10 +229,10 @@ def test_cpp_stochastic_student_spec_reuses_ppf_cache():
             [0.15, 0.25, 1.0],
         ]),
     )
-    module = _cpp_scar_ou._cpp_extension.load()
+    module = _cpp_scar_ou._extension.load()
 
-    spec = _cpp_scar_ou._cpp_copula.make_spec(module, copula, u)
-    repeated_spec = _cpp_scar_ou._cpp_copula.make_spec(
+    spec = _cpp_scar_ou._descriptors.make_spec(module, copula, u)
+    repeated_spec = _cpp_scar_ou._descriptors.make_spec(
         module, copula, u.copy())
     cache = copula.prepare_emission_cache(u)
 
@@ -264,15 +259,15 @@ def test_cpp_stochastic_student_mutation_refreshes_likelihood_and_gradient():
         max_K=10,
     )
     alpha = (1.1, 0.4, 0.9)
-    module = _cpp_scar_ou._cpp_extension.load()
+    module = _cpp_scar_ou._extension.load()
 
-    before_spec = _cpp_scar_ou._cpp_copula.make_spec(module, copula, u)
+    before_spec = _cpp_scar_ou._descriptors.make_spec(module, copula, u)
     before_cache = copula.prepare_emission_cache(u)
     before_value, before_grad = _cpp_scar_ou.neg_loglik_with_grad(
         *alpha, u, copula, cfg)
 
     u[0] = np.array([0.91, 0.08, 0.82])
-    after_spec = _cpp_scar_ou._cpp_copula.make_spec(module, copula, u)
+    after_spec = _cpp_scar_ou._descriptors.make_spec(module, copula, u)
     after_cache = copula.prepare_emission_cache(u)
     after_value, after_grad = _cpp_scar_ou.neg_loglik_with_grad(
         *alpha, u, copula, cfg)
@@ -306,12 +301,12 @@ def test_cpp_stochastic_student_view_mutation_refreshes_spec():
         [0.1, 0.2, 1.0],
     ])
     copula = StochasticStudentCopula(d=3, R=R)
-    module = _cpp_scar_ou._cpp_extension.load()
+    module = _cpp_scar_ou._extension.load()
 
-    first_spec = _cpp_scar_ou._cpp_copula.make_spec(module, copula, u)
+    first_spec = _cpp_scar_ou._descriptors.make_spec(module, copula, u)
     first_cache = copula.prepare_emission_cache(u)
     base[2, 2] = 0.77
-    second_spec = _cpp_scar_ou._cpp_copula.make_spec(module, copula, u)
+    second_spec = _cpp_scar_ou._descriptors.make_spec(module, copula, u)
     second_cache = copula.prepare_emission_cache(u)
 
     assert second_cache is not first_cache
@@ -320,7 +315,7 @@ def test_cpp_stochastic_student_view_mutation_refreshes_spec():
 
 
 def test_cpp_student_ppf_buffer_setter_owns_copy_and_validates_shape():
-    module = _cpp_scar_ou._cpp_extension.load()
+    module = _cpp_scar_ou._extension.load()
     spec = module.CopulaSpec()
     spec.family = module.CopulaFamily.Student
     spec.dim = 3
@@ -371,7 +366,7 @@ def test_cpp_student_ppf_buffer_setter_owns_copy_and_validates_shape():
 )
 def test_cpp_student_ppf_buffer_setter_rejects_invalid_values(
         nodes, table, message):
-    module = _cpp_scar_ou._cpp_extension.load()
+    module = _cpp_scar_ou._extension.load()
     spec = module.CopulaSpec()
     spec.family = module.CopulaFamily.Student
     spec.dim = 3
@@ -403,7 +398,7 @@ def test_cpp_stochastic_student_ppf_transfer_uses_contiguous_numpy_buffers():
         ppf_table=table_source,
     )
 
-    _cpp_scar_ou._cpp_copula._set_student_ppf_cache(BufferSpec(), cache)
+    _cpp_scar_ou._descriptors._set_student_ppf_cache(BufferSpec(), cache)
 
     assert len(calls) == 1
     nodes, table = calls[0]
@@ -421,9 +416,9 @@ def test_cpp_stochastic_student_corr_change_refreshes_spec_in_place():
     rng = np.random.default_rng(20260609)
     u = rng.uniform(0.01, 0.99, size=(20, 3))
     copula = StochasticStudentCopula(d=3, R=np.eye(3))
-    module = _cpp_scar_ou._cpp_extension.load()
+    module = _cpp_scar_ou._extension.load()
 
-    first_spec = _cpp_scar_ou._cpp_copula.make_spec(module, copula, u)
+    first_spec = _cpp_scar_ou._descriptors.make_spec(module, copula, u)
     cache = copula.prepare_emission_cache(u)
     ppf_nodes = cache.ppf_nodes
     ppf_table = cache.ppf_table
@@ -435,7 +430,7 @@ def test_cpp_stochastic_student_corr_change_refreshes_spec_in_place():
         [0.4, 1.0, 0.25],
         [0.15, 0.25, 1.0],
     ]))
-    second_spec = _cpp_scar_ou._cpp_copula.make_spec(module, copula, u)
+    second_spec = _cpp_scar_ou._descriptors.make_spec(module, copula, u)
 
     assert second_spec is first_spec
     assert copula.prepare_emission_cache(u) is cache
@@ -451,11 +446,11 @@ def test_cpp_stochastic_student_observation_then_corr_refresh_is_consistent():
     rng = np.random.default_rng(20260712)
     u = rng.uniform(0.05, 0.95, size=(18, 3))
     copula = StochasticStudentCopula(d=3, R=np.eye(3))
-    module = _cpp_scar_ou._cpp_extension.load()
+    module = _cpp_scar_ou._extension.load()
 
-    first_spec = _cpp_scar_ou._cpp_copula.make_spec(module, copula, u)
+    first_spec = _cpp_scar_ou._descriptors.make_spec(module, copula, u)
     u[1, 1] = 0.87
-    observation_spec = _cpp_scar_ou._cpp_copula.make_spec(
+    observation_spec = _cpp_scar_ou._descriptors.make_spec(
         module, copula, u)
     observation_cache = copula.prepare_emission_cache(u)
 
@@ -465,7 +460,7 @@ def test_cpp_stochastic_student_observation_then_corr_refresh_is_consistent():
         [0.1, 0.2, 1.0],
     ])
     copula._set_R(R)
-    final_spec = _cpp_scar_ou._cpp_copula.make_spec(module, copula, u)
+    final_spec = _cpp_scar_ou._descriptors.make_spec(module, copula, u)
 
     assert observation_spec is not first_spec
     assert final_spec is observation_spec
@@ -484,20 +479,20 @@ def test_cpp_stochastic_student_corr_then_observation_refresh_is_consistent():
     rng = np.random.default_rng(20260713)
     u = rng.uniform(0.05, 0.95, size=(18, 3))
     copula = StochasticStudentCopula(d=3, R=np.eye(3))
-    module = _cpp_scar_ou._cpp_extension.load()
+    module = _cpp_scar_ou._extension.load()
 
-    first_spec = _cpp_scar_ou._cpp_copula.make_spec(module, copula, u)
+    first_spec = _cpp_scar_ou._descriptors.make_spec(module, copula, u)
     R = np.array([
         [1.0, 0.28, 0.12],
         [0.28, 1.0, 0.18],
         [0.12, 0.18, 1.0],
     ])
     copula._set_R(R)
-    correlation_spec = _cpp_scar_ou._cpp_copula.make_spec(
+    correlation_spec = _cpp_scar_ou._descriptors.make_spec(
         module, copula, u)
 
     u[2, 0] = 0.93
-    final_spec = _cpp_scar_ou._cpp_copula.make_spec(module, copula, u)
+    final_spec = _cpp_scar_ou._descriptors.make_spec(module, copula, u)
     final_cache = copula.prepare_emission_cache(u)
 
     assert correlation_spec is first_spec
@@ -515,9 +510,9 @@ def test_cpp_stochastic_student_corr_then_observation_refresh_is_consistent():
 def test_cpp_stochastic_student_uses_python_df_transform_offset():
     u = np.full((4, 2), 0.5)
     copula = StochasticStudentCopula(d=2, R=np.eye(2))
-    module = _cpp_scar_ou._cpp_extension.load()
+    module = _cpp_scar_ou._extension.load()
 
-    spec = _cpp_scar_ou._cpp_copula.make_spec(module, copula, u)
+    spec = _cpp_scar_ou._descriptors.make_spec(module, copula, u)
 
     assert spec.offset == copula._df_offset
     np.testing.assert_allclose(
@@ -532,7 +527,7 @@ def test_cpp_stochastic_student_ppf_cache_has_no_derived_size_limit(
         monkeypatch):
     u = np.full((9000, 3), 0.5)
     copula = StochasticStudentCopula(d=3, R=np.eye(3))
-    module = _cpp_scar_ou._cpp_extension.load()
+    module = _cpp_scar_ou._extension.load()
     cache = SimpleNamespace(
         ppf_nodes=np.array([2.1, 10.0]),
         ppf_table=np.zeros((2, len(u), 3), dtype=np.float64),
@@ -548,7 +543,7 @@ def test_cpp_stochastic_student_ppf_cache_has_no_derived_size_limit(
 
     monkeypatch.setattr(copula, "prepare_emission_cache", prepare_cache)
 
-    spec = _cpp_scar_ou._cpp_copula.make_spec(module, copula, u)
+    spec = _cpp_scar_ou._descriptors.make_spec(module, copula, u)
 
     assert u.size * 199 > 5_000_000
     assert calls == 1
@@ -569,9 +564,9 @@ def test_cpp_stochastic_student_large_dimension_cache_is_finite():
         adaptive=False,
         max_K=6,
     )
-    module = _cpp_scar_ou._cpp_extension.load()
+    module = _cpp_scar_ou._extension.load()
 
-    spec = _cpp_scar_ou._cpp_copula.make_spec(module, copula, u)
+    spec = _cpp_scar_ou._descriptors.make_spec(module, copula, u)
     value, grad = _cpp_scar_ou.neg_loglik_with_grad(
         1.1, 0.7, 0.9, u, copula, cfg)
 
@@ -1230,7 +1225,7 @@ def test_cpp_sparse_matrix_backend_covers_filtering_and_gradient():
     dense = AutoTMConfig(grid_method="dense", **common)
     automatic = AutoTMConfig(grid_method="auto", **common)
 
-    module = _cpp_scar_ou._cpp_extension.load()
+    module = _cpp_scar_ou._extension.load()
     assert (
         _cpp_scar_ou._config(module, sparse).grid_method
         == module.OuGridMethod.Sparse
@@ -1323,7 +1318,7 @@ def test_cpp_grid_filter_engine_matches_tmgrid(
     smoothed = predictive * emissions * backward
     smoothed /= smoothed.sum(axis=1, keepdims=True)
 
-    module = _cpp_scar_ou._cpp_extension.load()
+    module = _cpp_scar_ou._extension.load()
     config = AutoTMConfig(
         transition_method=transition_method,
         grid_method=grid_method,
@@ -1371,7 +1366,7 @@ def test_cpp_grid_filter_engine_matches_tmgrid(
 
 
 def test_cpp_grid_filter_engine_can_skip_history_storage():
-    module = _cpp_scar_ou._cpp_extension.load()
+    module = _cpp_scar_ou._extension.load()
     config = AutoTMConfig(
         transition_method="matrix",
         grid_method="dense",
@@ -1401,7 +1396,7 @@ def test_cpp_grid_filter_engine_can_skip_history_storage():
 
 @pytest.mark.parametrize("bad_value", [-1.0, np.nan, np.inf])
 def test_cpp_grid_filter_engine_rejects_invalid_emissions(bad_value):
-    module = _cpp_scar_ou._cpp_extension.load()
+    module = _cpp_scar_ou._extension.load()
     config = AutoTMConfig(
         transition_method="matrix",
         K=9,
@@ -1424,7 +1419,7 @@ def test_cpp_grid_filter_engine_rejects_invalid_emissions(bad_value):
 
 
 def test_cpp_grid_filter_engine_rejects_degenerate_emission_row():
-    module = _cpp_scar_ou._cpp_extension.load()
+    module = _cpp_scar_ou._extension.load()
     config = AutoTMConfig(
         transition_method="local",
         K=9,
@@ -1601,7 +1596,7 @@ def test_cpp_state_distribution_propagates_numerical_failure(
         gh_order=5,
     )
 
-    with pytest.raises(_cpp_scar_ou.CppError, match="numerical_failure"):
+    with pytest.raises(_cpp_scar_ou.NativeError, match="numerical_failure"):
         _cpp_scar_ou.state_distribution(
             1.0, 0.0, 1.0, u, copula, cfg, horizon=horizon)
 
@@ -1623,7 +1618,7 @@ def test_cpp_forward_filter_propagates_numerical_failure(
         gh_order=5,
     )
 
-    with pytest.raises(_cpp_scar_ou.CppError, match="numerical_failure"):
+    with pytest.raises(_cpp_scar_ou.NativeError, match="numerical_failure"):
         entrypoint(1.0, 0.0, 1.0, u, copula, cfg)
 
 
@@ -1833,7 +1828,7 @@ def test_cpp_invalid_ou_parameter_raises_non_ok_status(alpha):
         max_K=None,
     )
 
-    with pytest.raises(_cpp_scar_ou.CppError, match="invalid_parameter"):
+    with pytest.raises(_cpp_scar_ou.NativeError, match="invalid_parameter"):
         _cpp_scar_ou.loglik(*alpha, u, copula, cfg)
 
 
@@ -1894,10 +1889,10 @@ def test_cpp_rejects_complex_observations_without_discarding_imaginary_part():
 
 
 def test_direct_pybind_rejects_out_of_range_pseudo_observations():
-    module = _cpp_scar_ou._cpp_extension.load()
+    module = _cpp_scar_ou._extension.load()
     u = _data(seed=20260724, n=8)
     copula = ClaytonCopula(rotate=0, transform_type="softplus")
-    spec = _cpp_scar_ou._cpp_copula.make_spec(module, copula, u)
+    spec = _cpp_scar_ou._descriptors.make_spec(module, copula, u)
     params = module.OuParams()
     config = module.OuNumericalConfig()
     config.spectral_basis_order = 16
@@ -2004,7 +1999,7 @@ def test_cpp_invalid_size_is_rejected_before_kernel_call(call):
 
 
 def test_cpp_resource_limits_match_extension_constants():
-    module = _cpp_scar_ou._cpp_extension.load()
+    module = _cpp_scar_ou._extension.load()
 
     assert module.MAX_GRID_SIZE == 100_000
     assert module.MAX_DENSE_GRID_SIZE == 10_000
@@ -2078,7 +2073,7 @@ def test_cpp_dense_matrix_storage_keeps_dense_grid_limit():
 
 
 def test_direct_cpp_accepts_student_dimension_above_old_limit():
-    module = _cpp_scar_ou._cpp_extension.load()
+    module = _cpp_scar_ou._extension.load()
     spec = module.CopulaSpec()
     spec.family = module.CopulaFamily.Student
     spec.rotation = module.Rotation.R0
@@ -2116,10 +2111,10 @@ def test_direct_cpp_accepts_student_dimension_above_old_limit():
 )
 def test_direct_pybind_rejects_unsafe_config_without_allocation(
         method, field, value):
-    module = _cpp_scar_ou._cpp_extension.load()
+    module = _cpp_scar_ou._extension.load()
     u = _data(seed=20260707, n=8)
     copula = ClaytonCopula(rotate=0, transform_type="softplus")
-    spec = _cpp_scar_ou._cpp_copula.make_spec(module, copula, u)
+    spec = _cpp_scar_ou._descriptors.make_spec(module, copula, u)
     params = module.OuParams()
     config = module.OuNumericalConfig()
     config.adaptive = False
@@ -2145,7 +2140,7 @@ def test_cpp_rejects_adaptive_grid_above_implementation_limit():
         pts_per_sigma=4,
     )
 
-    with pytest.raises(_cpp_scar_ou.CppError, match="invalid_size"):
+    with pytest.raises(_cpp_scar_ou.NativeError, match="invalid_size"):
         _cpp_scar_ou.loglik(3.5e-7, 0.0, 1.0, u, copula, cfg)
 
 
@@ -2291,7 +2286,7 @@ def test_cpp_fit_path_uses_cpp_objective_with_default_gradient_flag(monkeypatch)
         "prepare_objective",
         lambda *args, **kwargs: (
             (_ for _ in ()).throw(
-                _cpp_scar_ou.CppUnsupported("test fallback"))),
+                _cpp_scar_ou.NativeUnsupported("test fallback"))),
     )
 
     result = SCARTMStrategy(
@@ -2348,7 +2343,7 @@ def test_default_auto_fit_path_uses_cpp_for_supported_copula(monkeypatch):
         "prepare_objective",
         lambda *args, **kwargs: (
             (_ for _ in ()).throw(
-                _cpp_scar_ou.CppUnsupported("test fallback"))),
+                _cpp_scar_ou.NativeUnsupported("test fallback"))),
     )
 
     result = SCARTMStrategy(

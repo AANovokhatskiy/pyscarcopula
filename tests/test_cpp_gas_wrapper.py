@@ -10,11 +10,11 @@ from pyscarcopula.copula.multivariate import (
     EquicorrGaussianCopula,
     StochasticStudentCopula,
 )
-from pyscarcopula.numerical import _cpp_gas
-from pyscarcopula.numerical._cpp_extension import (
-    CppError,
-    CppUnavailable,
-    CppUnsupported,
+from pyscarcopula._native import gas as _cpp_gas
+from pyscarcopula._native.errors import (
+    NativeError,
+    NativeUnavailable,
+    NativeUnsupported,
 )
 from pyscarcopula.numerical.gas_filter import (
     gas_filter,
@@ -205,33 +205,33 @@ def test_cpp_gas_wrapper_rejects_custom_python_copula():
     custom = SimpleNamespace(name="custom-python-copula", rotate=0)
 
     assert not _cpp_gas.supported(custom)
-    with pytest.raises(CppUnsupported, match="custom-python-copula"):
+    with pytest.raises(NativeUnsupported, match="exact registered"):
         _cpp_gas.ensure_supported(custom)
-    with pytest.raises(CppUnsupported, match="custom-python-copula"):
+    with pytest.raises(NativeUnsupported, match="exact registered"):
         _cpp_gas.filter(*PARAMS, OBSERVATIONS, custom)
 
 
 def test_cpp_gas_wrapper_has_no_extension_fallback(monkeypatch):
     def unavailable():
-        raise CppUnavailable("compiled extension missing")
+        raise NativeUnavailable("compiled extension missing")
 
-    monkeypatch.setattr(_cpp_gas._cpp_extension, "load", unavailable)
+    monkeypatch.setattr(_cpp_gas._extension, "load", unavailable)
 
-    with pytest.raises(CppUnavailable, match="compiled extension missing"):
+    with pytest.raises(NativeUnavailable, match="compiled extension missing"):
         _cpp_gas.filter(*PARAMS, OBSERVATIONS, GumbelCopula())
 
 
 @pytest.mark.parametrize(
     ("status", "error"),
     [
-        (1, CppError),
+        (1, NativeError),
         (2, ValueError),
-        (3, CppUnsupported),
-        (4, CppUnsupported),
-        (5, CppUnsupported),
+        (3, NativeUnsupported),
+        (4, NativeUnsupported),
+        (5, NativeUnsupported),
         (6, ValueError),
         (7, FloatingPointError),
-        (999, CppError),
+        (999, NativeError),
     ],
 )
 def test_cpp_gas_wrapper_translates_status_codes(status, error):

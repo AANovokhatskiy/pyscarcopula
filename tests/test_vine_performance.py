@@ -3,6 +3,7 @@
 import os
 from collections import Counter
 from contextlib import contextmanager
+from functools import partial
 import time
 
 import numpy as np
@@ -15,9 +16,16 @@ from pyscarcopula.copula.elliptical import BivariateGaussianCopula
 from pyscarcopula.copula.independent import IndependentCopula
 from pyscarcopula.strategy.scar_tm import SCARTMStrategy
 from pyscarcopula.stattests import (
-    _rvine_rosenblatt_transform_python,
     rvine_rosenblatt_transform,
     student_rosenblatt_transform,
+)
+from rvine_candidate_harness import (
+    _log_pdf_rows_with_r_python,
+    _rvine_rosenblatt_transform_python,
+    _sample_arbitrary_given_mcmc_python,
+    _sample_dag_given_with_r_python,
+    _sample_with_r_python,
+    _vine_sample_suffix_given_with_r_python,
 )
 from pyscarcopula.vine._rvine_dag import (
     build_runtime_rvine_dag,
@@ -72,12 +80,12 @@ def _execute_repeated(execute, repetitions=1):
     return result
 
 
-def _backend_calls(python_executor, native_executor, repetitions=1):
+def _backend_calls(reference, native_executor, repetitions=1):
     """Build paired timings from explicit, independently named callables."""
     return {
-        "python_executor": lambda: _execute_repeated(
-            python_executor, repetitions),
-        "native_strict": lambda: _execute_repeated(
+        "reference": lambda: _execute_repeated(
+            reference, repetitions),
+        "native": lambda: _execute_repeated(
             native_executor, repetitions),
     }
 
@@ -502,7 +510,7 @@ def test_rvine_native_unconditional_relative_benchmark(monkeypatch):
             n, parameters, np.random.default_rng(1), uniforms=uniforms)
 
     calls = _backend_calls(
-        lambda: execute(vine._sample_with_r_python),
+        lambda: execute(partial(_sample_with_r_python, vine)),
         lambda: execute(vine._sample_with_r),
     )
     for call in calls.values():
@@ -512,14 +520,14 @@ def test_rvine_native_unconditional_relative_benchmark(monkeypatch):
     outputs = measured.results
 
     np.testing.assert_array_equal(
-        outputs["native_strict"], outputs["python_executor"])
-    speedup = measured.median_ratio("python_executor", "native_strict")
+        outputs["native"], outputs["reference"])
+    speedup = measured.median_ratio("reference", "native")
     _print_benchmark(
         "rvine_native_unconditional",
         d=d,
         n=n,
-        python_ms=f"{1e3 * elapsed['python_executor']:.3f}",
-        native_ms=f"{1e3 * elapsed['native_strict']:.3f}",
+        python_ms=f"{1e3 * elapsed['reference']:.3f}",
+        native_ms=f"{1e3 * elapsed['native']:.3f}",
         speedup=f"{speedup:.3f}",
     )
     # Formal regression decisions belong to the paired baseline/candidate
@@ -581,8 +589,9 @@ def test_rvine_native_conditional_relative_benchmark(monkeypatch, kind):
             )
 
     python_method = (
-        vine._sample_suffix_given_with_r_python
-        if kind == "suffix" else vine._sample_dag_given_with_r_python)
+        partial(_vine_sample_suffix_given_with_r_python, vine)
+        if kind == "suffix" else
+        partial(_sample_dag_given_with_r_python, vine))
     native_method = (
         vine._sample_suffix_given_with_r
         if kind == "suffix" else vine._sample_dag_given_with_r)
@@ -597,15 +606,15 @@ def test_rvine_native_conditional_relative_benchmark(monkeypatch, kind):
     outputs = measured.results
 
     np.testing.assert_array_equal(
-        outputs["native_strict"], outputs["python_executor"])
-    speedup = measured.median_ratio("python_executor", "native_strict")
+        outputs["native"], outputs["reference"])
+    speedup = measured.median_ratio("reference", "native")
     _print_benchmark(
         "rvine_native_conditional",
         kind=kind,
         d=d,
         n=n,
-        python_ms=f"{1e3 * elapsed['python_executor']:.3f}",
-        native_ms=f"{1e3 * elapsed['native_strict']:.3f}",
+        python_ms=f"{1e3 * elapsed['reference']:.3f}",
+        native_ms=f"{1e3 * elapsed['native']:.3f}",
         speedup=f"{speedup:.3f}",
     )
     assert np.isfinite(speedup) and speedup > 0.0
@@ -630,7 +639,7 @@ def test_rvine_native_density_relative_benchmark(monkeypatch):
         return method(observations, parameters)
 
     calls = _backend_calls(
-        lambda: execute(vine._log_pdf_rows_with_r_python),
+        lambda: execute(partial(_log_pdf_rows_with_r_python, vine)),
         lambda: execute(vine._log_pdf_rows_with_r),
     )
     for call in calls.values():
@@ -639,14 +648,14 @@ def test_rvine_native_density_relative_benchmark(monkeypatch):
     elapsed = measured.medians
     outputs = measured.results
     np.testing.assert_array_equal(
-        outputs["native_strict"], outputs["python_executor"])
-    speedup = measured.median_ratio("python_executor", "native_strict")
+        outputs["native"], outputs["reference"])
+    speedup = measured.median_ratio("reference", "native")
     _print_benchmark(
         "rvine_native_density",
         d=d,
         n=n,
-        python_ms=f"{1e3 * elapsed['python_executor']:.3f}",
-        native_ms=f"{1e3 * elapsed['native_strict']:.3f}",
+        python_ms=f"{1e3 * elapsed['reference']:.3f}",
+        native_ms=f"{1e3 * elapsed['native']:.3f}",
         speedup=f"{speedup:.3f}",
     )
     assert np.isfinite(speedup) and speedup > 0.0
@@ -679,14 +688,14 @@ def test_rvine_native_rosenblatt_relative_benchmark(monkeypatch):
     elapsed = measured.medians
     outputs = measured.results
     np.testing.assert_array_equal(
-        outputs["native_strict"], outputs["python_executor"])
-    speedup = measured.median_ratio("python_executor", "native_strict")
+        outputs["native"], outputs["reference"])
+    speedup = measured.median_ratio("reference", "native")
     _print_benchmark(
         "rvine_native_rosenblatt",
         d=d,
         n=n,
-        python_ms=f"{1e3 * elapsed['python_executor']:.3f}",
-        native_ms=f"{1e3 * elapsed['native_strict']:.3f}",
+        python_ms=f"{1e3 * elapsed['reference']:.3f}",
+        native_ms=f"{1e3 * elapsed['native']:.3f}",
         speedup=f"{speedup:.3f}",
     )
     assert np.isfinite(speedup) and speedup > 0.0
@@ -724,19 +733,17 @@ def test_rvine_native_rosenblatt_small_input_adapter_overhead(
     }
     outputs = measured.results
     np.testing.assert_array_equal(
-        outputs["native_strict"], outputs["python_executor"])
-    ratio = measured.median_ratio("native_strict", "python_executor")
+        outputs["native"], outputs["reference"])
+    ratio = measured.median_ratio("native", "reference")
     _print_benchmark(
         "rvine_native_rosenblatt_small_input",
         d=d,
         n=n,
-        python_us=f"{1e6 * elapsed['python_executor']:.3f}",
-        native_us=f"{1e6 * elapsed['native_strict']:.3f}",
+        python_us=f"{1e6 * elapsed['reference']:.3f}",
+        native_us=f"{1e6 * elapsed['native']:.3f}",
         native_to_python=f"{ratio:.3f}",
     )
     assert ratio <= 1.5
-
-
 @pytest.mark.benchmark
 def test_rvine_native_mcmc_relative_benchmark(monkeypatch):
     """Gate full-recompute coordinate MCMC with an identical draw replay."""
@@ -769,7 +776,8 @@ def test_rvine_native_mcmc_relative_benchmark(monkeypatch):
         )
 
     calls = _backend_calls(
-        lambda: execute(vine._sample_arbitrary_given_mcmc_python),
+        lambda: execute(partial(
+            _sample_arbitrary_given_mcmc_python, vine)),
         lambda: execute(vine._sample_arbitrary_given_mcmc),
     )
     for call in calls.values():
@@ -778,16 +786,16 @@ def test_rvine_native_mcmc_relative_benchmark(monkeypatch):
     elapsed = measured.medians
     outputs = measured.results
     np.testing.assert_array_equal(
-        outputs["native_strict"][0], outputs["python_executor"][0])
-    assert outputs["native_strict"][1] == outputs["python_executor"][1]
-    speedup = measured.median_ratio("python_executor", "native_strict")
+        outputs["native"][0], outputs["reference"][0])
+    assert outputs["native"][1] == outputs["reference"][1]
+    speedup = measured.median_ratio("reference", "native")
     _print_benchmark(
         "rvine_native_mcmc",
         d=d,
         n=n,
         coordinate_steps=coordinate_steps,
-        python_ms=f"{1e3 * elapsed['python_executor']:.3f}",
-        native_ms=f"{1e3 * elapsed['native_strict']:.3f}",
+        python_ms=f"{1e3 * elapsed['reference']:.3f}",
+        native_ms=f"{1e3 * elapsed['native']:.3f}",
         speedup=f"{speedup:.3f}",
     )
     assert np.isfinite(speedup) and speedup > 0.0
@@ -889,7 +897,7 @@ def test_rvine_native_density_small_input_adapter_overhead(
         return method(observations, parameters)
 
     calls = _backend_calls(
-        lambda: execute(vine._log_pdf_rows_with_r_python),
+        lambda: execute(partial(_log_pdf_rows_with_r_python, vine)),
         lambda: execute(vine._log_pdf_rows_with_r),
         repetitions,
     )
@@ -902,14 +910,14 @@ def test_rvine_native_density_small_input_adapter_overhead(
     }
     outputs = measured.results
     np.testing.assert_array_equal(
-        outputs["native_strict"], outputs["python_executor"])
-    ratio = measured.median_ratio("native_strict", "python_executor")
+        outputs["native"], outputs["reference"])
+    ratio = measured.median_ratio("native", "reference")
     _print_benchmark(
         "rvine_native_density_small_input",
         d=d,
         n=n,
-        python_us=f"{1e6 * elapsed['python_executor']:.3f}",
-        native_us=f"{1e6 * elapsed['native_strict']:.3f}",
+        python_us=f"{1e6 * elapsed['reference']:.3f}",
+        native_us=f"{1e6 * elapsed['native']:.3f}",
         native_to_python=f"{ratio:.3f}",
     )
     assert ratio <= 1.5
@@ -949,7 +957,8 @@ def test_rvine_native_mcmc_small_input_adapter_overhead(
         )
 
     calls = _backend_calls(
-        lambda: execute(vine._sample_arbitrary_given_mcmc_python),
+        lambda: execute(partial(
+            _sample_arbitrary_given_mcmc_python, vine)),
         lambda: execute(vine._sample_arbitrary_given_mcmc),
         repetitions,
     )
@@ -962,16 +971,16 @@ def test_rvine_native_mcmc_small_input_adapter_overhead(
     }
     outputs = measured.results
     np.testing.assert_array_equal(
-        outputs["native_strict"][0], outputs["python_executor"][0])
-    assert outputs["native_strict"][1] == outputs["python_executor"][1]
-    ratio = measured.median_ratio("native_strict", "python_executor")
+        outputs["native"][0], outputs["reference"][0])
+    assert outputs["native"][1] == outputs["reference"][1]
+    ratio = measured.median_ratio("native", "reference")
     _print_benchmark(
         "rvine_native_mcmc_small_input",
         d=d,
         n=n,
         coordinate_steps=coordinate_steps,
-        python_us=f"{1e6 * elapsed['python_executor']:.3f}",
-        native_us=f"{1e6 * elapsed['native_strict']:.3f}",
+        python_us=f"{1e6 * elapsed['reference']:.3f}",
+        native_us=f"{1e6 * elapsed['native']:.3f}",
         native_to_python=f"{ratio:.3f}",
     )
     assert ratio <= 1.5
@@ -1030,8 +1039,9 @@ def test_rvine_native_conditional_small_input_adapter_overhead(
             )
 
     python_method = (
-        vine._sample_suffix_given_with_r_python
-        if kind == "suffix" else vine._sample_dag_given_with_r_python)
+        partial(_vine_sample_suffix_given_with_r_python, vine)
+        if kind == "suffix" else
+        partial(_sample_dag_given_with_r_python, vine))
     native_method = (
         vine._sample_suffix_given_with_r
         if kind == "suffix" else vine._sample_dag_given_with_r)
@@ -1050,15 +1060,15 @@ def test_rvine_native_conditional_small_input_adapter_overhead(
     outputs = measured.results
 
     np.testing.assert_array_equal(
-        outputs["native_strict"], outputs["python_executor"])
-    ratio = measured.median_ratio("native_strict", "python_executor")
+        outputs["native"], outputs["reference"])
+    ratio = measured.median_ratio("native", "reference")
     _print_benchmark(
         "rvine_native_conditional_small_input",
         kind=kind,
         d=d,
         n=n,
-        python_us=f"{1e6 * elapsed['python_executor']:.3f}",
-        native_us=f"{1e6 * elapsed['native_strict']:.3f}",
+        python_us=f"{1e6 * elapsed['reference']:.3f}",
+        native_us=f"{1e6 * elapsed['native']:.3f}",
         native_to_python=f"{ratio:.3f}",
     )
     assert ratio <= 1.5
@@ -1088,7 +1098,7 @@ def test_rvine_native_small_input_adapter_overhead(
         )
 
     calls = _backend_calls(
-        lambda: execute(vine._sample_with_r_python),
+        lambda: execute(partial(_sample_with_r_python, vine)),
         lambda: execute(vine._sample_with_r),
         repetitions,
     )
@@ -1102,16 +1112,16 @@ def test_rvine_native_small_input_adapter_overhead(
     outputs = measured.results
 
     np.testing.assert_array_equal(
-        outputs["native_strict"], outputs["python_executor"])
-    ratio = measured.median_ratio("native_strict", "python_executor")
+        outputs["native"], outputs["reference"])
+    ratio = measured.median_ratio("native", "reference")
     _print_benchmark(
         "rvine_native_small_input",
         d=d,
         n=n,
-        python_us=f"{1e6 * elapsed['python_executor']:.3f}",
-        native_us=f"{1e6 * elapsed['native_strict']:.3f}",
+        python_us=f"{1e6 * elapsed['reference']:.3f}",
+        native_us=f"{1e6 * elapsed['native']:.3f}",
         overhead_us=(
-            f"{1e6 * (elapsed['native_strict'] - elapsed['python_executor']):.3f}"),
+            f"{1e6 * (elapsed['native'] - elapsed['reference']):.3f}"),
         native_to_python=f"{ratio:.3f}",
     )
     assert ratio <= 1.5
@@ -1142,18 +1152,18 @@ def test_dense_student_df_path_native_speedup(monkeypatch):
     measured = interleaved_timings(calls, repeats=5)
     outputs = measured.results
     np.testing.assert_allclose(
-        outputs["native_strict"],
-        outputs["python_executor"],
+        outputs["native"],
+        outputs["reference"],
         rtol=2e-10,
         atol=2e-11,
     )
-    ratio = measured.median_ratio("native_strict", "python_executor")
+    ratio = measured.median_ratio("native", "reference")
     _print_benchmark(
         "dense_student_df_path",
         d=dimension,
         n=rows,
-        python_ms=f"{1e3 * measured.medians['python_executor']:.3f}",
-        native_ms=f"{1e3 * measured.medians['native_strict']:.3f}",
+        python_ms=f"{1e3 * measured.medians['reference']:.3f}",
+        native_ms=f"{1e3 * measured.medians['native']:.3f}",
         native_to_python=f"{ratio:.3f}",
     )
     assert ratio <= 0.2
@@ -1184,12 +1194,12 @@ def test_dense_student_small_input_adapter_overhead(
         call()
     measured = interleaved_timings(calls, repeats=5)
     np.testing.assert_allclose(
-        measured.results["native_strict"],
-        measured.results["python_executor"],
+        measured.results["native"],
+        measured.results["reference"],
         rtol=2e-10,
         atol=2e-11,
     )
-    ratio = measured.median_ratio("native_strict", "python_executor")
+    ratio = measured.median_ratio("native", "reference")
     _print_benchmark(
         "dense_student_small_input",
         d=dimension,

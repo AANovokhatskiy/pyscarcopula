@@ -4,6 +4,8 @@
 #include "scar/core/threading.hpp"
 #include "scar/observation.hpp"
 
+#include "../vine/density_internal.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
@@ -230,6 +232,23 @@ rvine::RosenblattResult dynamic_rvine_rosenblatt_transform(
                         dynamic_edge.edge,
                         parameters,
                         static_cast<std::int64_t>(row));
+                    const double contribution = rvine::detail::edge_log_pdf(
+                        prepared_edge,
+                        plan.transposed[operation] != 0,
+                        first,
+                        second,
+                        parameter);
+                    if (!std::isfinite(contribution)
+                        || !std::isfinite(out.log_likelihood + contribution)) {
+                        fail_dynamic_rvine(
+                            out,
+                            SCAR_NUMERICAL_FAILURE,
+                            static_cast<std::int64_t>(row),
+                            edge_index,
+                            static_cast<int>(operation));
+                        return out;
+                    }
+                    out.log_likelihood += contribution;
                     rvine::h_pair(
                         prepared_edge,
                         plan.transposed[operation] != 0,
@@ -278,6 +297,18 @@ rvine::RosenblattResult dynamic_rvine_rosenblatt_transform(
                 out.failure.operation = static_cast<int>(operation);
                 return out;
             }
+            if (!std::isfinite(filtered.log_likelihood)
+                || !std::isfinite(
+                    out.log_likelihood + filtered.log_likelihood)) {
+                fail_dynamic_rvine(
+                    out,
+                    SCAR_NUMERICAL_FAILURE,
+                    -1,
+                    edge_index,
+                    static_cast<int>(operation));
+                return out;
+            }
+            out.log_likelihood += filtered.log_likelihood;
             if (filtered.r_path.size() != rows) {
                 fail_dynamic_rvine(
                     out,
@@ -334,6 +365,27 @@ rvine::RosenblattResult dynamic_rvine_rosenblatt_transform(
                 2,
                 dynamic_edge.ou_config,
                 dynamic_edge.ou_method);
+            const LogLikResult likelihood = evaluator.loglik(
+                dynamic_edge.ou_params);
+            if (!likelihood.is_ok()) {
+                out.status = likelihood.status;
+                out.failure = likelihood.failure;
+                out.failure.edge = edge_index;
+                out.failure.operation = static_cast<int>(operation);
+                return out;
+            }
+            if (!std::isfinite(likelihood.log_likelihood)
+                || !std::isfinite(
+                    out.log_likelihood + likelihood.log_likelihood)) {
+                fail_dynamic_rvine(
+                    out,
+                    SCAR_NUMERICAL_FAILURE,
+                    -1,
+                    edge_index,
+                    static_cast<int>(operation));
+                return out;
+            }
+            out.log_likelihood += likelihood.log_likelihood;
             const ScarOuVectorResult result = evaluator.mixture_h_pair(
                 dynamic_edge.ou_params);
             if (!result.is_ok()) {
@@ -372,6 +424,19 @@ rvine::RosenblattResult dynamic_rvine_rosenblatt_transform(
                 out.failure.operation = static_cast<int>(operation);
                 return out;
             }
+            const double log_likelihood =
+                result.value.diagnostics.log_likelihood;
+            if (!std::isfinite(log_likelihood)
+                || !std::isfinite(out.log_likelihood + log_likelihood)) {
+                fail_dynamic_rvine(
+                    out,
+                    SCAR_NUMERICAL_FAILURE,
+                    -1,
+                    edge_index,
+                    static_cast<int>(operation));
+                return out;
+            }
+            out.log_likelihood += log_likelihood;
             first_dynamic = result.value.first;
             second_dynamic = result.value.second;
         } else {

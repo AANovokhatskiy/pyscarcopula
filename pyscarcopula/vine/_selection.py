@@ -313,7 +313,10 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
 def _screen_log_likelihood(copula, u_pair, parameter):
     """Evaluate screening logL and retain reusable native state when safe."""
     from pyscarcopula.copula.base import BivariateCopula
-    from pyscarcopula.numerical import static_likelihood
+    from pyscarcopula._native import static as static_likelihood
+    from pyscarcopula._native.registry import registry_entry_for
+
+    registry_entry_for(copula)
 
     uses_native_base = (
         getattr(type(copula), "log_likelihood", None)

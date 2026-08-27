@@ -51,15 +51,15 @@ class EquicorrGaussianCopula(MultivariateCopula):
         return self._d
 
     def transform(self, x):
-        from pyscarcopula.numerical import multivariate_native
+        from pyscarcopula._native import multivariate as multivariate_native
         return multivariate_native.transform(self, x)
 
     def inv_transform(self, r):
-        from pyscarcopula.numerical import multivariate_native
+        from pyscarcopula._native import multivariate as multivariate_native
         return multivariate_native.inverse_transform(self, r)
 
     def dtransform(self, x):
-        from pyscarcopula.numerical import multivariate_native
+        from pyscarcopula._native import multivariate as multivariate_native
         return multivariate_native.dtransform(self, x)
 
     def prepare_sufficient_statistics(
@@ -79,7 +79,7 @@ class EquicorrGaussianCopula(MultivariateCopula):
         from pyscarcopula.copula.multivariate.equicorr_prepared import (
             EquicorrPreparedData,
         )
-        from pyscarcopula.numerical import multivariate_native
+        from pyscarcopula._native import multivariate as multivariate_native
 
         def positive_integer(name, value):
             if isinstance(value, (bool, np.bool_)) or not isinstance(
@@ -181,25 +181,25 @@ class EquicorrGaussianCopula(MultivariateCopula):
             else:
                 r = float(self.transform(
                     np.array([self.fit_result.params.mu]))[0])
-        from pyscarcopula.numerical import static_likelihood
+        from pyscarcopula._native import static as static_likelihood
         return static_likelihood.prepare(
             self, u, n_threads=n_threads).log_likelihood(float(r))
 
     def log_pdf_rows(self, u, r, t_index=None, *, n_threads=1):
-        from pyscarcopula.numerical import multivariate_native
+        from pyscarcopula._native import multivariate as multivariate_native
         values, _ = multivariate_native.log_pdf_and_dlog_rows(
             self, u, r, t_index=t_index, n_threads=n_threads)
         return values
 
     def dlog_pdf_dr_rows(self, u, r, t_index=None, *, n_threads=1):
-        from pyscarcopula.numerical import multivariate_native
+        from pyscarcopula._native import multivariate as multivariate_native
         _, values = multivariate_native.log_pdf_and_dlog_rows(
             self, u, r, t_index=t_index, n_threads=n_threads)
         return values
 
     def log_pdf_and_dlog_dr_rows(
             self, u, r, t_index=None, *, n_threads=1):
-        from pyscarcopula.numerical import multivariate_native
+        from pyscarcopula._native import multivariate as multivariate_native
         return multivariate_native.log_pdf_and_dlog_rows(
             self, u, r, t_index=t_index, n_threads=n_threads)
 
@@ -254,7 +254,7 @@ class EquicorrGaussianCopula(MultivariateCopula):
             n_threads=1,
             memory_budget_bytes=None):
         """Evaluate a grid batch, optionally enforcing an output budget."""
-        from pyscarcopula.numerical import multivariate_native
+        from pyscarcopula._native import multivariate as multivariate_native
         required = self._grid_output_bytes(len(u), len(x_grid))
         self._validated_memory_budget(
             memory_budget_bytes,
@@ -356,7 +356,7 @@ class EquicorrGaussianCopula(MultivariateCopula):
             maxcor=maxcor,
             finite_diff_rel_step=finite_diff_rel_step,
         )
-        from pyscarcopula.numerical import static_likelihood
+        from pyscarcopula._native import static as static_likelihood
         evaluator = static_likelihood.prepare(
             self, u, n_threads=config.n_threads)
 
@@ -506,7 +506,7 @@ class EquicorrGaussianCopula(MultivariateCopula):
             if np.all(parameters >= 0.0)
             else np.empty(0, dtype=np.float64)
         )
-        from pyscarcopula.numerical import multivariate_native
+        from pyscarcopula._native import multivariate as multivariate_native
         return multivariate_native.equicorr_gaussian_sample_from_normals(
             parameters,
             self._d,
@@ -849,7 +849,7 @@ class EquicorrGaussianCopula(MultivariateCopula):
         if self.fit_result is None:
             raise ValueError("Fit with SCAR first")
         kappa, mu, nu = self.fit_result.params.values
-        from pyscarcopula.numerical import _cpp_scar_ou
+        from pyscarcopula._native import scar_ou as _cpp_scar_ou
         from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
         from pyscarcopula.copula.multivariate.equicorr_prepared import (
             EquicorrPreparedData,

@@ -1,4 +1,6 @@
 from pathlib import Path
+import subprocess
+import sys
 
 import numpy as np
 import pytest
@@ -24,7 +26,10 @@ from pyscarcopula._native.registry import (
     strategy_support,
 )
 from pyscarcopula._native.threads import validate_n_threads
-from pyscarcopula.numerical import _cpp_extension
+from pyscarcopula._native import _extension as _cpp_extension
+from pyscarcopula._types import MLEResult
+from pyscarcopula.api import log_likelihood, mixture_h
+from pyscarcopula.strategy.mle import MLEStrategy
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -56,9 +61,43 @@ def test_stage81_native_boundary_policies_have_single_owners():
     assert thread_policy_owners == {"pyscarcopula/_native/threads.py"}
 
 
-def test_legacy_extension_adapter_resolves_to_facade_owner():
+def test_extension_loader_and_errors_have_separate_facade_owners():
+    import pyscarcopula._native as native
+    from pyscarcopula._native import gas, pair, scar_ou
+
     assert _cpp_extension.load() is _extension.load()
-    assert _cpp_extension.CppError is NativeError
+    assert not hasattr(_cpp_extension, "NativeError")
+    for module in (native, _cpp_extension, gas, pair, scar_ou):
+        assert not hasattr(module, "available")
+
+
+def test_top_level_import_fails_fast_when_extension_is_missing():
+    code = """
+import importlib.abc
+import sys
+
+class BlockNativeExtension(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == 'pyscarcopula._scar_cpp':
+            raise ImportError('synthetic missing native extension')
+        return None
+
+sys.meta_path.insert(0, BlockNativeExtension())
+try:
+    import pyscarcopula
+except ImportError as exc:
+    assert 'synthetic missing native extension' in str(exc)
+else:
+    raise AssertionError('pyscarcopula import unexpectedly succeeded')
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_exact_type_registry_builds_opaque_cpp_descriptor():
@@ -111,6 +150,70 @@ def test_registry_rejects_unregistered_subclasses():
 
     with pytest.raises(NativeUnsupported, match="exact registered"):
         descriptor_for(CustomClayton())
+    with pytest.raises(NativeUnsupported, match="exact registered"):
+        strategy_support(CustomClayton(), "MLE")
+
+
+def test_production_dispatch_rejects_subclasses_before_python_overrides():
+    from pyscarcopula.strategy.predict_helpers import sample_predictive
+    from pyscarcopula.vine._selection import _screen_log_likelihood
+
+    class CustomClayton(ClaytonCopula):
+        def sample_at_parameter(self, *args, **kwargs):
+            raise AssertionError("custom sampling math must not execute")
+
+        def log_likelihood(self, *args, **kwargs):
+            raise AssertionError("custom likelihood math must not execute")
+
+    model = CustomClayton()
+    observations = np.array([[0.2, 0.4], [0.6, 0.8]])
+
+    with pytest.raises(NativeUnsupported, match="exact registered"):
+        sample_predictive(model, 2, np.array([0.7, 0.7]))
+    with pytest.raises(NativeUnsupported, match="exact registered"):
+        _screen_log_likelihood(model, observations, 0.7)
+
+
+def test_likelihood_and_h_dispatch_reject_subclasses_before_overrides():
+    calls = []
+
+    class CustomClayton(ClaytonCopula):
+        def log_likelihood(self, *_args, **_kwargs):
+            calls.append("log_likelihood")
+            return 123.0
+
+        def h(self, *_args, **_kwargs):
+            calls.append("h")
+            return np.full(2, 0.25)
+
+        def h_pair(self, *_args, **_kwargs):
+            calls.append("h_pair")
+            return np.full(2, 0.25), np.full(2, 0.75)
+
+    model = CustomClayton()
+    observations = np.array([[0.2, 0.4], [0.6, 0.8]])
+    result = MLEResult(
+        log_likelihood=0.0,
+        method="MLE",
+        copula_name=model.name,
+        success=True,
+        copula_param=0.7,
+    )
+    strategy = MLEStrategy()
+
+    operations = (
+        lambda: log_likelihood(model, observations, result),
+        lambda: mixture_h(model, observations, result),
+        lambda: strategy.log_likelihood(model, observations, result),
+        lambda: strategy.rosenblatt_e2(model, observations, result),
+        lambda: strategy.mixture_h_pair(model, observations, result),
+        lambda: strategy.objective(model, observations, np.array([0.7])),
+    )
+    for operation in operations:
+        with pytest.raises(NativeUnsupported, match="exact registered"):
+            operation()
+
+    assert calls == []
 
 
 @pytest.mark.parametrize(

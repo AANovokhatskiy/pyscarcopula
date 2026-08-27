@@ -11,7 +11,7 @@ from pyscarcopula._native import jacobi as jacobi_native
 from pyscarcopula._native._extension import load
 from pyscarcopula._types import LatentResult, PredictiveState, jacobi_params
 from pyscarcopula.api import sample
-from pyscarcopula.numerical import copula_native
+from pyscarcopula._native import pair as copula_native
 from pyscarcopula.numerical.jacobi_sampling import (
     sample_jacobi_lamperti_trajectory,
 )

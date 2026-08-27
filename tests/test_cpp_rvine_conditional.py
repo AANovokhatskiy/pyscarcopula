@@ -18,7 +18,8 @@ from pyscarcopula import (
     JoeCopula,
 )
 from pyscarcopula._constants import PSEUDO_OBS_EPS
-from pyscarcopula.numerical import _cpp_extension, _cpp_rvine
+from pyscarcopula._native import _extension as _cpp_extension, vine as _cpp_rvine
+from pyscarcopula._native.errors import NativeUnsupported
 from pyscarcopula.vine._rvine_dag import (
     build_runtime_rvine_dag,
     plan_conditional_sample,
@@ -26,6 +27,10 @@ from pyscarcopula.vine._rvine_dag import (
 from pyscarcopula.vine._rvine_suffix import (
     SuffixConditionalPlan,
     build_suffix_conditional_plan,
+)
+from rvine_candidate_harness import (
+    _sample_dag_given_with_r_python,
+    _vine_sample_suffix_given_with_r_python,
 )
 
 from rvine_runtime_cases import (
@@ -98,7 +103,7 @@ def _native_request(vine, plan, given, parameters, n):
 
 @pytest.mark.parametrize(
     ("family", "rotation", "parameter"), _FAMILY_ROTATION_CELLS)
-def test_suffix_native_strict_matches_every_family_and_rotation_exactly(
+def test_suffix_native_matches_every_family_and_rotation_exactly(
         monkeypatch, family, rotation, parameter):
     vine = configured_mixed_family_vine()
     vine.pair_copulas[(0, 0)] = fitted_pair(
@@ -115,7 +120,7 @@ def test_suffix_native_strict_matches_every_family_and_rotation_exactly(
     )
     before = uniforms.copy()
 
-    expected = vine._sample_suffix_given_with_r_python(
+    expected = _vine_sample_suffix_given_with_r_python(vine,
         len(uniforms),
         parameters,
         np.random.default_rng(1),
@@ -137,7 +142,7 @@ def test_suffix_native_strict_matches_every_family_and_rotation_exactly(
     assert actual.flags.c_contiguous
 
 
-def test_dag_native_strict_matches_python_for_non_suffix_given_exactly(
+def test_dag_native_matches_python_for_non_suffix_given_exactly(
         monkeypatch):
     vine = configured_static_dvine(4)
     given = {0: 0.57, 2: 0.31}
@@ -156,7 +161,7 @@ def test_dag_native_strict_matches_python_for_non_suffix_given_exactly(
         np.random.default_rng(2026082202).uniform(
             0.01, 0.99, size=(23, draw_count)))
 
-    expected = vine._sample_dag_given_with_r_python(
+    expected = _sample_dag_given_with_r_python(vine,
         len(uniforms),
         parameters,
         np.random.default_rng(3),
@@ -192,7 +197,7 @@ def test_native_suffix_one_free_column_and_single_row_are_exact(monkeypatch):
     uniforms = np.array([[0.17, 0.37, 0.57, 0.77]], dtype=np.float64)
     parameters = scalar_parameters(vine)
 
-    expected = vine._sample_suffix_given_with_r_python(
+    expected = _vine_sample_suffix_given_with_r_python(vine,
         1, parameters, np.random.default_rng(1), given, start_col,
         uniforms=uniforms)
     actual = vine._sample_suffix_given_with_r(
@@ -219,7 +224,7 @@ def test_suffix_native_matches_transposed_edge_orientation(monkeypatch):
     uniforms = np.random.default_rng(2026082208).uniform(
         0.01, 0.99, size=(21, vine.d))
 
-    expected = vine._sample_suffix_given_with_r_python(
+    expected = _vine_sample_suffix_given_with_r_python(vine,
         21, parameters, np.random.default_rng(1), given, start_col,
         uniforms=uniforms)
     actual = vine._sample_suffix_given_with_r(
@@ -238,7 +243,7 @@ def test_native_conditional_rng_state_matches_python(kind, monkeypatch):
         start_col, _ = _suffix_plan(vine, given)
 
         def execute_python(rng):
-            return vine._sample_suffix_given_with_r_python(
+            return _vine_sample_suffix_given_with_r_python(vine,
                 17, parameters, rng, given, start_col)
 
         def execute_native(rng):
@@ -251,7 +256,7 @@ def test_native_conditional_rng_state_matches_python(kind, monkeypatch):
         plan = _dag_plan(vine, given)
 
         def execute_python(rng):
-            return vine._sample_dag_given_with_r_python(
+            return _sample_dag_given_with_r_python(vine,
                 17, parameters, rng, given, plan, vine.pair_copulas)
 
         def execute_native(rng):
@@ -277,7 +282,7 @@ def test_native_suffix_supports_mixed_scalar_and_row_parameter_paths(
     uniforms = np.random.default_rng(2026082204).uniform(
         0.01, 0.99, size=(13, vine.d))
 
-    expected = vine._sample_suffix_given_with_r_python(
+    expected = _vine_sample_suffix_given_with_r_python(vine,
         13, parameters, np.random.default_rng(1), given, start_col,
         uniforms=uniforms)
     actual = vine._sample_suffix_given_with_r(
@@ -296,7 +301,7 @@ def test_native_suffix_supports_predictive_dynamic_row_paths(monkeypatch):
     uniforms = np.random.default_rng(2026082205).uniform(
         0.01, 0.99, size=(11, vine.d))
 
-    expected = vine._sample_suffix_given_with_r_python(
+    expected = _vine_sample_suffix_given_with_r_python(vine,
         11, parameters, np.random.default_rng(1), given, start_col,
         uniforms=uniforms)
     actual = vine._sample_suffix_given_with_r(
@@ -443,7 +448,8 @@ def test_conditional_python_and_native_reject_the_same_invalid_requests(
 
     errors = []
     for executor in (
-            vine._sample_suffix_given_with_r_python,
+            lambda *args, **kwargs: _vine_sample_suffix_given_with_r_python(
+                vine, *args, **kwargs),
             vine._sample_suffix_given_with_r):
         with pytest.raises(Exception) as captured:
             executor(
@@ -465,8 +471,7 @@ def test_conditional_python_and_native_reject_the_same_invalid_requests(
             KeyError if case == "missing" else ValueError)
 
 
-def test_custom_builtin_subclass_uses_conditional_python_fallback(
-        monkeypatch):
+def test_custom_builtin_subclass_is_rejected_by_conditional_runtime():
     class CustomClayton(ClaytonCopula):
         def h_inverse(self, v, u_given, r):
             return np.full_like(np.asarray(v, dtype=np.float64), 0.271)
@@ -478,15 +483,10 @@ def test_custom_builtin_subclass_uses_conditional_python_fallback(
     parameters = scalar_parameters(vine)
     uniforms = np.full((4, vine.d), 0.5, dtype=np.float64)
 
-    oracle = vine._sample_suffix_given_with_r_python(
-        4, parameters, np.random.default_rng(1), given, start_col,
-        uniforms=uniforms)
-    np.testing.assert_array_equal(oracle[:, 0], np.full(4, 0.271))
-
-    actual = vine._sample_suffix_given_with_r(
-        4, parameters, np.random.default_rng(1), given, start_col,
-        uniforms=uniforms)
-    np.testing.assert_array_equal(actual, oracle)
+    with pytest.raises(NativeUnsupported, match="exact registered"):
+        vine._sample_suffix_given_with_r(
+            4, parameters, np.random.default_rng(1), given, start_col,
+            uniforms=uniforms)
 
 
 def test_native_conditional_direct_validation_and_diagnostics():
@@ -602,7 +602,7 @@ def test_conditional_native_bounds_workspace_and_preserves_thread_parity(
     assert diagnostics["max_block_rows"] == 256
     assert diagnostics["peak_workspace_bytes"] <= 64 * 1024 * 1024
 
-    expected = vine._sample_suffix_given_with_r_python(
+    expected = _vine_sample_suffix_given_with_r_python(vine,
         n, parameters, np.random.default_rng(1), given, start_col,
         uniforms=uniforms)
     np.testing.assert_array_equal(
@@ -673,7 +673,7 @@ def test_conditional_adapter_supports_empty_rows_and_independence(monkeypatch):
     uniforms = np.random.default_rng(2026082209).uniform(
         0.01, 0.99, size=(9, vine.d))
     parameters = scalar_parameters(vine)
-    expected = vine._sample_suffix_given_with_r_python(
+    expected = _vine_sample_suffix_given_with_r_python(vine,
         9, parameters, np.random.default_rng(1), given, start_col,
         uniforms=uniforms)
     actual = vine._sample_suffix_given_with_r(

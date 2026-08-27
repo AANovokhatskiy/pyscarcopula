@@ -34,7 +34,7 @@ class FactorLoadingParameterization:
         if not 1 <= rank < dimension or not np.all(np.isfinite(loadings)):
             raise ValueError(
                 "loadings must have shape (d, k), 1 <= k < d, and be finite")
-        from pyscarcopula.numerical import multivariate_native
+        from pyscarcopula._native import multivariate as multivariate_native
         native = multivariate_native.factor_parameterization_from_loadings(
             loadings, uniqueness_min)
 
@@ -55,7 +55,7 @@ class FactorLoadingParameterization:
         return int(self.free_rows.size)
 
     def loadings(self, parameters):
-        from pyscarcopula.numerical import multivariate_native
+        from pyscarcopula._native import multivariate as multivariate_native
         return multivariate_native.factor_parameterization_loadings(
             parameters,
             free_rows=self.free_rows,
@@ -67,7 +67,7 @@ class FactorLoadingParameterization:
         )
 
     def pullback(self, parameters, loading_gradient):
-        from pyscarcopula.numerical import multivariate_native
+        from pyscarcopula._native import multivariate as multivariate_native
         return multivariate_native.factor_parameterization_pullback(
             parameters,
             loading_gradient,
@@ -110,7 +110,7 @@ def estimate_factor_loadings(
     rng = np.random.default_rng(int(seed))
     random_projection = rng.standard_normal(
         (dimension, subspace_size))
-    from pyscarcopula.numerical import multivariate_native
+    from pyscarcopula._native import multivariate as multivariate_native
     loadings, native = (
         multivariate_native.estimate_factor_loadings_from_projection(
             u,

@@ -300,15 +300,16 @@ def test_stage3_pair_copulas_are_vertical_and_prepared_once():
     assert binding.count(
         '#include "scar/copula/pair/families.def"') == 1
     adapter = (
-        ROOT / "pyscarcopula" / "numerical" / "_cpp_copula.py"
+        ROOT / "pyscarcopula" / "_native" / "_descriptors.py"
     ).read_text(encoding="utf-8")
     rvine_adapter = (
-        ROOT / "pyscarcopula" / "numerical" / "_cpp_rvine.py"
+        ROOT / "pyscarcopula" / "_native" / "vine.py"
     ).read_text(encoding="utf-8")
     for enum_name, _ in entries:
         assert f'.value("{enum_name}",' not in binding
         assert f"CopulaFamily.{enum_name}" not in adapter
     assert "_builtin_copula_types" not in rvine_adapter
+    assert "__pyscarcopula_native_rvine__" not in rvine_adapter
     assert "from pyscarcopula.copula." not in rvine_adapter
 
     sources = (
@@ -1135,6 +1136,38 @@ def test_forbidden_dependencies_produce_clear_rule(
         else:
             _set_manifest(root, (source,))
     assert expected_rule in _rules(root)
+
+
+@pytest.mark.parametrize(
+    ("relative", "content"),
+    [
+        (
+            ".github/workflows/rvine.yml",
+            "env:\n  PYSCARCOPULA_TEST_RVINE_BACKEND: python_executor\n",
+        ),
+        (
+            "pyscarcopula/numerical/student_gof.py",
+            "from numba import njit\n",
+        ),
+        (
+            "tests/reference/rvine_runtime.py",
+            "from pyscarcopula._native import vine\n",
+        ),
+        (
+            "tests/conftest.py",
+            "install_reference_oracles()\n",
+        ),
+        (
+            "ARCHITECTURE.md",
+            "Production uses multivariate_native.py.\n",
+        ),
+    ],
+)
+def test_stage85_retired_surfaces_produce_clear_rule(
+        tmp_path, relative, content):
+    root = _minimal_repository(tmp_path)
+    _write(root, relative, content)
+    assert "stage85-mandatory-dispatch" in _rules(root)
 
 
 def test_source_manifest_detects_unlisted_cpp(tmp_path):

@@ -27,7 +27,7 @@ def tm_loglik(
         grid_method="auto", adaptive=True, pts_per_sigma=4,
         transition_method="matrix", max_K=None, r_gh=3.0, gh_order=5):
     """Return native negative SCAR-TM-OU log-likelihood."""
-    from pyscarcopula.numerical import _cpp_scar_ou
+    from pyscarcopula._native import scar_ou as _cpp_scar_ou
     return _cpp_scar_ou.neg_loglik(
         kappa, mu, nu, u, copula,
         _config(
@@ -40,7 +40,7 @@ def tm_forward_predictive_mean(
         grid_method="auto", adaptive=True, pts_per_sigma=4,
         transition_method="matrix", max_K=None, r_gh=3.0, gh_order=5):
     """Return native one-step predictive copula-parameter means."""
-    from pyscarcopula.numerical import _cpp_scar_ou
+    from pyscarcopula._native import scar_ou as _cpp_scar_ou
     return _cpp_scar_ou.predictive_mean(
         kappa, mu, nu, u, copula,
         _config(
@@ -54,7 +54,7 @@ def tm_forward_mixture_h(
         transition_method="matrix", max_K=None, r_gh=3.0, gh_order=5,
         state_cache=None, current_cache_key=None, next_cache_key=None):
     """Return the native mixture h-function."""
-    from pyscarcopula.numerical import _cpp_scar_ou
+    from pyscarcopula._native import scar_ou as _cpp_scar_ou
     config = _config(
         transition_method, K, grid_range, grid_method, adaptive,
         pts_per_sigma, max_K, r_gh, gh_order)
@@ -87,7 +87,7 @@ def tm_forward_rosenblatt(
         grid_method="auto", adaptive=True, pts_per_sigma=4,
         transition_method="matrix", max_K=None, r_gh=3.0, gh_order=5):
     """Return the fully native bivariate mixture Rosenblatt transform."""
-    from pyscarcopula.numerical import _cpp_scar_ou
+    from pyscarcopula._native import scar_ou as _cpp_scar_ou
     return _cpp_scar_ou.forward_rosenblatt(
         kappa, mu, nu, u, copula,
         _config(

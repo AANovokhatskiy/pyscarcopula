@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pyscarcopula.numerical import _cpp_extension
+from pyscarcopula._native import _extension as _cpp_extension
 
 
 DEFAULT_OUTPUT = (
@@ -98,8 +98,7 @@ def record_suite(junit: Path, command: str) -> dict[str, object]:
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "git_commit": _git_commit(),
         "command": command,
-        "backend": os.environ.get(
-            "PYSCARCOPULA_TEST_RVINE_BACKEND", "auto"),
+        "backend": "native",
         "counts": {
             "collected": len(cases),
             "passed": (

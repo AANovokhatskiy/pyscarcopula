@@ -101,7 +101,7 @@ class FactorStudentGridEvaluation:
 
     def pdf_and_gradient(self) -> tuple[np.ndarray, np.ndarray]:
         """Convert stable log values into density and ``d pdf / d df``."""
-        from pyscarcopula.numerical import _cpp_extension
+        from pyscarcopula._native import _extension as _cpp_extension
 
         native_result = dict(
             _cpp_extension.load()._factor_student_density_from_log_grid(
@@ -197,7 +197,7 @@ class FactorStudentEvaluator:
             self, df: Any, *, n_threads: int = 1
     ) -> FactorStudentEvaluation:
         """Evaluate row log densities and analytical df derivatives."""
-        from pyscarcopula.numerical import _cpp_extension
+        from pyscarcopula._native import _extension as _cpp_extension
 
         n_threads = _validated_n_threads(n_threads)
         df_values, common = self._df_values(df)
@@ -300,7 +300,7 @@ class FactorStudentEvaluator:
             condition_max, n_threads=1
     ) -> FactorStudentParameterizedEvaluation:
         """Evaluate the joint factor objective entirely in native code."""
-        from pyscarcopula.numerical import _cpp_extension
+        from pyscarcopula._native import _extension as _cpp_extension
 
         df_value = float(df)
         if not np.isfinite(df_value) or df_value <= 2.0:
@@ -363,7 +363,7 @@ class FactorStudentEvaluator:
             self, df: float, *, n_threads: int = 1
     ) -> FactorStudentJointEvaluation:
         """Return aggregate analytical gradients for scalar ``df`` and B."""
-        from pyscarcopula.numerical import _cpp_extension
+        from pyscarcopula._native import _extension as _cpp_extension
 
         if np.asarray(df).ndim != 0:
             raise ValueError(
@@ -462,7 +462,7 @@ class FactorStudentEvaluator:
             dimension_tile,
             n_threads,
             memory_budget_bytes):
-        from pyscarcopula.numerical import _cpp_extension
+        from pyscarcopula._native import _extension as _cpp_extension
 
         required = self._grid_peak_bytes(
             len(observations),

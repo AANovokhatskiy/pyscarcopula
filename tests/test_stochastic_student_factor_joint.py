@@ -365,7 +365,7 @@ def test_joint_evaluator_default_is_one_thread_and_does_not_start_pool():
     code = (
         "import json, numpy as np\n"
         "from pyscarcopula import FactorCorrelation, FactorStudentEvaluator\n"
-        "from pyscarcopula.numerical import _cpp_extension\n"
+        "from pyscarcopula._native import _extension as _cpp_extension\n"
         "m = _cpp_extension.load()\n"
         "before = dict(m._parallel_runtime_info())\n"
         "factor = FactorCorrelation(np.full((1024, 4), 0.01))\n"

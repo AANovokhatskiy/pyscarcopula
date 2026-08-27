@@ -56,8 +56,9 @@ from pyscarcopula.numerical._arrays import (
 from pyscarcopula._types import (
     PredictConfig,
 )
-from pyscarcopula.numerical import _cpp_extension
-from pyscarcopula.numerical._cpp_extension import CppUnsupported
+from pyscarcopula._native import _extension as _cpp_extension
+from pyscarcopula._native.errors import NativeUnsupported
+from pyscarcopula._native.registry import registry_entry_for
 from pyscarcopula.vine._conditional_rvine import (
     validate_rvine_given_vars,
     validate_rvine_given,
@@ -113,10 +114,6 @@ from pyscarcopula.vine._dynamic_conditioning import (
     predictive_given_update_r,
     predictive_state_cache_key,
 )
-from pyscarcopula.vine._rvine_conditional_runtime import (
-    _sample_arbitrary_given_mcmc_python,
-    sample_dag_given_with_r,
-)
 from pyscarcopula.vine._rvine_summary import format_rvine_summary
 from pyscarcopula.vine._helpers import (
     _clip_unit,
@@ -124,7 +121,6 @@ from pyscarcopula.vine._helpers import (
     _prepared_open_unit_draws,
 )
 from pyscarcopula.vine._rvine_suffix import (
-    _sample_suffix_given_with_r_python,
     build_suffix_conditional_plan,
     edge_pair_from_pseudo_map,
     given_suffix_start_col,
@@ -1133,12 +1129,11 @@ class VineCopula:
             self, data: Any = None, to_pobs: bool = False) -> float:
         """Total log-likelihood.
 
-        With no argument returns the cached fitted log-likelihood
-        (sum of per-edge MLE log-likelihoods). With an explicit
-        ``data`` array, walks the fitted vine and evaluates the
-        log-likelihood on the new observations using the stored pair
-        copulas and the h-function propagation rule.
+        With no argument returns the cached fitted log-likelihood. With an
+        explicit ``data`` array, evaluates the complete fitted R-vine in the
+        native traversal runtime.
         """
+        registry_entry_for(self)
         self._require_fit()
         if data is None:
             return self._log_likelihood
@@ -1150,52 +1145,35 @@ class VineCopula:
             to_pobs=to_pobs,
         )
 
-        max_active_tree = self._max_non_independent_tree_level()
-        if max_active_tree < 0:
-            return 0.0
+        from pyscarcopula._native import vine as native_vine
 
-        pseudo_obs = {(i, frozenset()): u[:, i].copy() for i in range(self.d)}
-        total = 0.0
-        for t, level in enumerate(self._trees[:max_active_tree + 1]):
-            for orig_idx, (conditioned, conditioning) in enumerate(level):
-                pc = self.pair_copulas[self._matrix_key(t, orig_idx)]
-                v1, v2 = sorted(conditioned)
-                key1 = (v1, conditioning)
-                key2 = (v2, conditioning)
-                u1 = _clip_unit(pseudo_obs[key1])
-                u2 = _clip_unit(pseudo_obs[key2])
+        active_keys = native_vine.density_active_keys(
+            self._trees, self._edge_map)
+        if not native_vine.native_edges_supported(
+                self.pair_copulas, active_keys):
+            raise NativeUnsupported(
+                "native R-vine likelihood requires exact registered "
+                "built-in edge copulas")
 
-                r_const = None
-                copula = edge_copula(pc)
-                result = edge_result(pc)
-                if result is None or not edge_has_dynamic_params(pc):
-                    r_const = edge_param(pc)
+        static_layout = native_vine.static_rosenblatt_parameter_layout(
+            self.pair_copulas, active_keys)
+        if static_layout is not None:
+            parameter_paths, _parameter_sources = static_layout
+            return float(np.sum(self._log_pdf_rows_with_r(
+                u, parameter_paths)))
 
-                if not edge_is_independent(pc):
-                    if result is not None and r_const is None:
-                        u_pair = np.column_stack((u1, u2))
-                        strategy = _strategy_for_result(result)
-                        total += strategy.log_likelihood(
-                            copula, u_pair, result)
-                    else:
-                        total += copula.log_likelihood(
-                            np.column_stack((u1, u2)), r_const)
-
-                if t < max_active_tree:
-                    if r_const is not None:
-                        r = np.full(len(u1), r_const, dtype=np.float64)
-                        u1_next, u2_next = copula.h_pair(u1, u2, r)
-                        pseudo_obs[(v2, conditioning | {v1})] = _clip_unit(
-                            u2_next)
-                        pseudo_obs[(v1, conditioning | {v2})] = _clip_unit(
-                            u1_next)
-                    else:
-                        u1_next, u2_next = _edge_h_pair(pc, u1, u2)
-                        pseudo_obs[(v2, conditioning | {v1})] = _clip_unit(
-                            u2_next)
-                        pseudo_obs[(v1, conditioning | {v2})] = _clip_unit(
-                            u1_next)
-        return total
+        module = _cpp_extension.load()
+        return float(native_vine.rosenblatt(
+            module,
+            self.pair_copulas,
+            self.d,
+            self._trees,
+            self._edge_map,
+            self.matrix,
+            u,
+            active_keys=active_keys,
+            return_log_likelihood=True,
+        ))
 
     def _matrix_key(self, tree_level, orig_idx):
         """Invert edge_map: (tree, orig_idx) -> (tree, col)."""
@@ -1423,11 +1401,11 @@ class VineCopula:
     def _native_unconditional_context(
             self, module, traversal_plan, r_all, n):
         """Compile/cache plan and edge metadata, never request-owned buffers."""
-        from pyscarcopula.numerical import _cpp_rvine
+        from pyscarcopula._native import vine as _cpp_rvine
         active_keys = tuple(traversal_plan.active_keys)
         if not _cpp_rvine.native_edges_supported(
                 self.pair_copulas, active_keys):
-            raise CppUnsupported(
+            raise NativeUnsupported(
                 "native R-vine sampling requires exact built-in edge copulas")
         parameter_sources = {}
         for key in active_keys:
@@ -1543,13 +1521,13 @@ class VineCopula:
             active_keys=None, normalized_paths=None,
             parameter_sources=None):
         """Compile/cache conditional topology and immutable edge metadata."""
-        from pyscarcopula.numerical import _cpp_rvine
+        from pyscarcopula._native import vine as _cpp_rvine
         active_keys = (
             _cpp_rvine.conditional_active_keys(plan)
             if active_keys is None else tuple(active_keys)
         )
         if not _cpp_rvine.native_edges_supported(pair_copulas, active_keys):
-            raise CppUnsupported(
+            raise NativeUnsupported(
                 "native conditional R-vine sampling requires exact built-in "
                 "edge copulas")
         if normalized_paths is None or parameter_sources is None:
@@ -1711,7 +1689,7 @@ class VineCopula:
             active_keys, normalized_paths, parameter_sources,
             native_context=None, parameter_pack=None):
         """Build one shared native callback for suffix and DAG programs."""
-        from pyscarcopula.numerical import _cpp_rvine
+        from pyscarcopula._native import vine as _cpp_rvine
 
         def execute(module):
             """Execute the compiled native conditional request."""
@@ -1800,13 +1778,13 @@ class VineCopula:
             parameter_sources=None, residual_node_keys=(),
             cache_slot='density'):
         """Compile/cache the shared density plan and immutable edge specs."""
-        from pyscarcopula.numerical import _cpp_rvine
+        from pyscarcopula._native import vine as _cpp_rvine
         active_keys = (
             _cpp_rvine.density_active_keys(self._trees, edge_map)
             if active_keys is None else tuple(active_keys)
         )
         if not _cpp_rvine.native_edges_supported(pair_copulas, active_keys):
-            raise CppUnsupported(
+            raise NativeUnsupported(
                 "native R-vine density requires exact built-in edge copulas")
         if normalized_paths is None or parameter_sources is None:
             normalized_paths, parameter_sources = (
@@ -1957,10 +1935,9 @@ class VineCopula:
             memory_budget_bytes,
         )
         if requires_stepwise:
-            from pyscarcopula.numerical._cpp_gas_rvine import (
-                sample as native_gas_rvine_sample,
-            )
-            result = native_gas_rvine_sample(
+            from pyscarcopula._native._gas_vine import sample as gas_vine_sample
+
+            return gas_vine_sample(
                 self,
                 n,
                 rng,
@@ -1968,15 +1945,6 @@ class VineCopula:
                 max_active_tree,
                 traversal_plan=traversal_plan,
             )
-            if result is None:
-                return self._sample_stepwise_stateful(
-                    n,
-                    rng,
-                    active_keys=active_keys,
-                    max_active_tree=max_active_tree,
-                    traversal_plan=traversal_plan,
-                )
-            return result
 
         if is_static:
             r_all = {
@@ -2043,102 +2011,10 @@ class VineCopula:
                 "memory_budget_bytes"
             )
 
-    def _sample_with_r_python(
-            self, n, r_all, rng, return_pseudo=False,
-            max_active_tree=None, traversal_plan=None, *, uniforms=None):
-        """Preserved Python oracle for canonical R-vine traversal."""
-        d = self.d
-        if uniforms is None:
-            w = _open_unit_uniform(rng, size=(n, d))
-        else:
-            w = _prepared_open_unit_draws(
-                uniforms, (n, d), name="R-vine sampling uniforms")
-        if max_active_tree is None:
-            max_active_tree = self._max_non_independent_tree_level()
-        if max_active_tree < 0:
-            if return_pseudo:
-                pseudo_obs = {
-                    (var, frozenset()): w[:, var].copy()
-                    for var in range(d)
-                }
-                return w, pseudo_obs
-            return w
-
-        if traversal_plan is None:
-            active_keys = self._sample_active_edge_keys(max_active_tree)
-            traversal_plan = build_rvine_sampling_plan(
-                d,
-                self._natural_order_matrix,
-                self._trees,
-                self._edge_map,
-                active_keys,
-                max_active_tree,
-            )
-        nodes = [None] * len(traversal_plan.node_keys)
-        nodes[traversal_plan.last_output_node] = w[
-            :, traversal_plan.last_uniform_column].copy()
-
-        for column, uniform_column in enumerate(
-                traversal_plan.column_uniforms):
-            current = w[:, uniform_column].copy()
-
-            for index in range(
-                    traversal_plan.inverse_offsets[column],
-                    traversal_plan.inverse_offsets[column + 1]):
-                edge_key = traversal_plan.active_keys[
-                    traversal_plan.inverse_edges[index]]
-                partner_node = traversal_plan.inverse_partner_nodes[index]
-                output_node = traversal_plan.inverse_output_nodes[index]
-                target_variable = traversal_plan.node_keys[output_node][0]
-                partner_variable = traversal_plan.node_keys[partner_node][0]
-                current = _clip_unit(_edge_h_inverse_for_variables(
-                    self.pair_copulas[edge_key],
-                    target_variable,
-                    current,
-                    partner_variable,
-                    nodes[partner_node],
-                    config={'r': r_all[edge_key]},
-                ))
-                nodes[output_node] = current
-
-            for index in range(
-                    traversal_plan.forward_offsets[column],
-                    traversal_plan.forward_offsets[column + 1]):
-                edge_key = traversal_plan.active_keys[
-                    traversal_plan.forward_edges[index]]
-                leaf_node = traversal_plan.forward_leaf_nodes[index]
-                partner_node = traversal_plan.forward_partner_nodes[index]
-                leaf_output = traversal_plan.forward_leaf_output_nodes[index]
-                partner_output = (
-                    traversal_plan.forward_partner_output_nodes[index])
-                leaf_variable = traversal_plan.node_keys[leaf_node][0]
-                partner_variable = traversal_plan.node_keys[partner_node][0]
-                leaf_next, partner_next = _edge_h_pair_for_variables(
-                    self.pair_copulas[edge_key],
-                    leaf_variable,
-                    nodes[leaf_node],
-                    partner_variable,
-                    nodes[partner_node],
-                    config={'r': r_all[edge_key]},
-                )
-                nodes[leaf_output] = _clip_unit(leaf_next)
-                nodes[partner_output] = _clip_unit(partner_next)
-
-        out = np.empty((n, d), dtype=np.float64)
-        for variable, node in enumerate(traversal_plan.output_nodes):
-            out[:, variable] = nodes[node]
-        if return_pseudo:
-            pseudo_obs = {
-                key: nodes[index]
-                for index, key in enumerate(traversal_plan.node_keys)
-            }
-            return out, pseudo_obs
-        return out
-
-    def _sample_with_r(self, n, r_all, rng, return_pseudo=False,
+    def _sample_with_r(self, n, r_all, rng,
                        max_active_tree=None, traversal_plan=None, *,
                        uniforms=None, native_request=None):
-        """Run supported sampling requests through the native runtime."""
+        """Run a sampling request through the mandatory native runtime."""
         native_max_tree = max_active_tree
         if native_max_tree is None:
             native_max_tree = self._max_non_independent_tree_level()
@@ -2154,18 +2030,13 @@ class VineCopula:
                 native_max_tree,
             )
         active_keys = tuple(native_traversal_plan.active_keys)
-        from pyscarcopula.numerical import _cpp_rvine
+        from pyscarcopula._native import vine as _cpp_rvine
 
-        if (return_pseudo or not _cpp_rvine.native_edges_supported(
-                self.pair_copulas, active_keys)):
-            return self._sample_with_r_python(
-                n,
-                r_all,
-                rng,
-                return_pseudo=return_pseudo,
-                max_active_tree=native_max_tree,
-                traversal_plan=native_traversal_plan,
-                uniforms=uniforms,
+        if not _cpp_rvine.native_edges_supported(
+                self.pair_copulas, active_keys):
+            raise NativeUnsupported(
+                "native R-vine sampling requires exact registered built-in "
+                "edge copulas"
             )
 
         module = _cpp_extension.load()
@@ -2211,45 +2082,21 @@ class VineCopula:
         cache[cache_key] = state
         return state
 
-    def _sample_suffix_given_with_r_python(
-            self, n, r_all, rng, given, start_col, matrix=None,
-            pair_copulas=None, *, uniforms=None):
-        """Run the preserved Python suffix-conditioning executor."""
-        M = self._natural_order_matrix if matrix is None else matrix
-        pair_copulas = self.pair_copulas if pair_copulas is None else pair_copulas
-        return _sample_suffix_given_with_r_python(
-            self.d,
-            n,
-            r_all,
-            rng,
-            given,
-            start_col,
-            M,
-            pair_copulas,
-            uniforms=uniforms,
-        )
-
     def _sample_suffix_given_with_r(
             self, n, r_all, rng, given, start_col, matrix=None,
             pair_copulas=None, *, uniforms=None):
         """Dispatch exact suffix conditioning with supplied edge parameters."""
         M = self._natural_order_matrix if matrix is None else matrix
         pair_copulas = self.pair_copulas if pair_copulas is None else pair_copulas
-        from pyscarcopula.numerical import _cpp_rvine
+        from pyscarcopula._native import vine as _cpp_rvine
 
         plan = self._native_suffix_conditional_plan(
             start_col, M, given)
         active_keys = _cpp_rvine.conditional_active_keys(plan)
         if not _cpp_rvine.native_edges_supported(pair_copulas, active_keys):
-            return self._sample_suffix_given_with_r_python(
-                n,
-                r_all,
-                rng,
-                given,
-                start_col,
-                matrix=M,
-                pair_copulas=pair_copulas,
-                uniforms=uniforms,
+            raise NativeUnsupported(
+                "native suffix-conditioned R-vine sampling requires exact "
+                "registered built-in edge copulas"
             )
         module = _cpp_extension.load()
         cached_layout = self._native_cached_conditional_layout(
@@ -2439,67 +2286,6 @@ class VineCopula:
 
         return updated, diagnostics
 
-    def _sample_stepwise_stateful(
-            self,
-            n,
-            rng,
-            active_keys=None,
-            max_active_tree=None,
-            traversal_plan=None):
-        """Sample while advancing stateful edge parameters after each draw."""
-        if max_active_tree is None:
-            max_active_tree = self._max_non_independent_tree_level()
-        if active_keys is None:
-            active_keys = self._sample_active_edge_keys(max_active_tree)
-        if traversal_plan is None:
-            traversal_plan = build_rvine_sampling_plan(
-                self.d,
-                self._natural_order_matrix,
-                self._trees,
-                self._edge_map,
-                active_keys,
-                max_active_tree,
-            )
-
-        edge_state = {}
-        for key in active_keys:
-            edge = self.pair_copulas[key]
-            state = _edge_initial_model_state(edge)
-            if state is not None:
-                edge_state[key] = state
-
-        vectorized_r = {
-            key: _edge_r_for_sample(self.pair_copulas[key], n, rng)
-            for key in active_keys
-            if key not in edge_state
-        }
-
-        out = np.empty((n, self.d), dtype=np.float64)
-        for i in range(n):
-            r_i = {}
-            for key in active_keys:
-                if key in edge_state:
-                    r_i[key] = np.array(
-                        [_edge_state_r(
-                            self.pair_copulas[key], edge_state[key])],
-                        dtype=np.float64)
-                else:
-                    r_i[key] = vectorized_r[key][i:i + 1]
-
-            row, pseudo_obs = self._sample_with_r_python(
-                1, r_i, rng, return_pseudo=True,
-                max_active_tree=max_active_tree,
-                traversal_plan=traversal_plan)
-            out[i, :] = row[0]
-
-            for key, state in edge_state.items():
-                edge = self.pair_copulas[key]
-                u_pair = self._edge_pair_from_pseudo(key, pseudo_obs)
-                edge_state[key] = _edge_update_model_state(
-                    edge, state, u_pair)
-
-        return out
-
     def _edge_pair_from_pseudo(self, key, pseudo_obs):
         return self._edge_pair_from_pseudo_map(key, pseudo_obs, self._edge_map)
 
@@ -2593,25 +2379,11 @@ class VineCopula:
             )
         return r_all
 
-    def _sample_dag_given_with_r_python(
-            self, n, r_all, rng, given, plan, pair_copulas, *,
-            uniforms=None):
-        """Run the preserved Python arbitrary-DAG executor."""
-        return sample_dag_given_with_r(
-            n,
-            r_all,
-            rng,
-            given,
-            plan,
-            pair_copulas,
-            uniforms=uniforms,
-        )
-
     def _sample_dag_given_with_r(
             self, n, r_all, rng, given, plan, pair_copulas, *,
             uniforms=None):
         """Dispatch an arbitrary-DAG conditional initialization program."""
-        from pyscarcopula.numerical import _cpp_rvine
+        from pyscarcopula._native import vine as _cpp_rvine
 
         missing = sorted(set(plan.edges_used) - set(r_all))
         if missing:
@@ -2621,14 +2393,9 @@ class VineCopula:
             )
         active_keys = _cpp_rvine.conditional_active_keys(plan)
         if not _cpp_rvine.native_edges_supported(pair_copulas, active_keys):
-            return self._sample_dag_given_with_r_python(
-                n,
-                r_all,
-                rng,
-                given,
-                plan,
-                pair_copulas,
-                uniforms=uniforms,
+            raise NativeUnsupported(
+                "native DAG-conditioned R-vine sampling requires exact "
+                "registered built-in edge copulas"
             )
         module = _cpp_extension.load()
         cached_layout = self._native_cached_conditional_layout(
@@ -2665,46 +2432,10 @@ class VineCopula:
 
         return native_executor(module)
 
-    def _log_pdf_rows_with_r_python(
-            self, u, r_all, pair_copulas=None, edge_map=None):
-        """Preserved Python oracle for row-wise R-vine log-density."""
-        pair_copulas = self.pair_copulas if pair_copulas is None else pair_copulas
-        edge_map = self._edge_map if edge_map is None else edge_map
-        pseudo_obs = {
-            (i, frozenset()): u[:, i].copy()
-            for i in range(self.d)
-        }
-        logp = np.zeros(len(u), dtype=np.float64)
-        for t, level in enumerate(self._trees):
-            for orig_idx, (conditioned, conditioning) in enumerate(level):
-                key = self._matrix_key_from_map(t, orig_idx, edge_map)
-                pc = pair_copulas[key]
-                v1, v2 = sorted(conditioned)
-                u1 = _clip_unit(pseudo_obs[(v1, conditioning)])
-                u2 = _clip_unit(pseudo_obs[(v2, conditioning)])
-                r = np.asarray(r_all[key], dtype=np.float64)
-                # Strategies may provide either one shared parameter or one
-                # parameter per row.
-                if len(r) == 1 and len(u) != 1:
-                    r = np.full(len(u), float(r[0]), dtype=np.float64)
-                elif len(r) != len(u):
-                    raise ValueError(
-                        "VineCopula._log_pdf_rows_with_r: parameter path "
-                        f"for edge {key} has length {len(r)}, expected 1 "
-                        f"or {len(u)}"
-                    )
-                if not edge_is_independent(pc):
-                    logp += edge_copula(pc).log_pdf(u1, u2, r)
-                if t < self.d - 2:
-                    u1_next, u2_next = edge_copula(pc).h_pair(u1, u2, r)
-                    pseudo_obs[(v2, conditioning | {v1})] = _clip_unit(u2_next)
-                    pseudo_obs[(v1, conditioning | {v2})] = _clip_unit(u1_next)
-        return logp
-
     def _log_pdf_rows_with_r(
             self, u, r_all, pair_copulas=None, edge_map=None):
         """Dispatch fused row log-density for supplied edge parameters."""
-        from pyscarcopula.numerical import _cpp_rvine
+        from pyscarcopula._native import vine as _cpp_rvine
 
         pair_copulas = (
             self.pair_copulas if pair_copulas is None else pair_copulas)
@@ -2712,8 +2443,10 @@ class VineCopula:
         active_keys = _cpp_rvine.density_active_keys(
             self._trees, edge_map)
         if not _cpp_rvine.native_edges_supported(pair_copulas, active_keys):
-            return self._log_pdf_rows_with_r_python(
-                u, r_all, pair_copulas=pair_copulas, edge_map=edge_map)
+            raise NativeUnsupported(
+                "native R-vine density requires exact registered built-in "
+                "edge copulas"
+            )
         observations = _cpp_rvine._rvine_observations(
             u, self.d, "density")
         module = _cpp_extension.load()
@@ -2764,48 +2497,20 @@ class VineCopula:
                 return key
         raise KeyError((tree_level, orig_idx))
 
-    def _sample_arbitrary_given_mcmc_python(
-            self, n, r_all, rng, given, initial=None, n_steps=None,
-            burnin_steps=None, *, initial_uniforms=None, random_draws=None,
-            step_offset=0):
-        """Run the preserved Python coordinate-update MCMC executor."""
-        return _sample_arbitrary_given_mcmc_python(
-            self.d,
-            n,
-            r_all,
-            rng,
-            given,
-            self._log_pdf_rows_with_r_python,
-            initial=initial,
-            n_steps=n_steps,
-            burnin_steps=burnin_steps,
-            initial_uniforms=initial_uniforms,
-            random_draws=random_draws,
-            step_offset=step_offset,
-        )
-
     def _sample_arbitrary_given_mcmc(
             self, n, r_all, rng, given, initial=None, n_steps=None,
             burnin_steps=None, *, initial_uniforms=None, random_draws=None,
             step_offset=0, density_algorithm="auto", chunk_steps=256):
         """Dispatch bounded coordinate-update MCMC for arbitrary given sets."""
-        from pyscarcopula.numerical import _cpp_rvine
+        from pyscarcopula._native import vine as _cpp_rvine
 
         active_keys = _cpp_rvine.density_active_keys(
             self._trees, self._edge_map)
         if not _cpp_rvine.native_edges_supported(
                 self.pair_copulas, active_keys):
-            return self._sample_arbitrary_given_mcmc_python(
-                n,
-                r_all,
-                rng,
-                given,
-                initial=initial,
-                n_steps=n_steps,
-                burnin_steps=burnin_steps,
-                initial_uniforms=initial_uniforms,
-                random_draws=random_draws,
-                step_offset=step_offset,
+            raise NativeUnsupported(
+                "native R-vine MCMC requires exact registered built-in "
+                "edge copulas"
             )
         module = _cpp_extension.load()
         cached_layout = self._native_cached_density_layout(

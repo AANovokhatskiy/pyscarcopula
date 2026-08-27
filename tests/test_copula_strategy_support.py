@@ -18,8 +18,8 @@ from pyscarcopula import (
     StudentCopula,
 )
 from pyscarcopula.api import fit
-from pyscarcopula.numerical import _cpp_copula
-from pyscarcopula.numerical._cpp_extension import CppUnsupported
+from pyscarcopula._native import _descriptors as _cpp_copula
+from pyscarcopula._native.errors import NativeUnsupported
 from pyscarcopula.strategy._base import list_methods
 
 
@@ -175,7 +175,7 @@ SUPPORT_CASES = [
 def _is_supported(check, copula):
     try:
         check(copula)
-    except CppUnsupported:
+    except NativeUnsupported:
         return False
     return True
 

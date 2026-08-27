@@ -12,7 +12,7 @@ from pyscarcopula import (
     StochasticStudentCopula,
     StudentCopula,
 )
-from pyscarcopula.numerical import _cpp_extension, multivariate_native
+from pyscarcopula._native import _extension as _cpp_extension, multivariate as multivariate_native
 
 
 def equicorr_matrix(d, rho):

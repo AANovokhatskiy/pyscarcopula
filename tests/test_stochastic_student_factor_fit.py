@@ -5,11 +5,11 @@ import pytest
 
 from pyscarcopula import NumericalConfig, StochasticStudentCopula
 from pyscarcopula.contrib.risk_metrics import _get_copula_constructor
-from pyscarcopula.numerical import (
-    _cpp_copula,
-    _cpp_extension,
-    _cpp_scar_ou,
-    static_likelihood,
+from pyscarcopula._native import (
+    _descriptors as _cpp_copula,
+    _extension as _cpp_extension,
+    scar_ou as _cpp_scar_ou,
+    static as static_likelihood,
 )
 from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
 from pyscarcopula.numerical.gas_filter import gas_loglik

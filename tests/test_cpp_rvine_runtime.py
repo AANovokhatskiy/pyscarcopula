@@ -18,9 +18,11 @@ from pyscarcopula import (
     RVineCopula,
 )
 from pyscarcopula._constants import PSEUDO_OBS_EPS
-from pyscarcopula.numerical import _cpp_extension, _cpp_rvine
+from pyscarcopula._native import _extension as _cpp_extension, vine as _cpp_rvine
+from pyscarcopula._native.errors import NativeUnsupported
 from pyscarcopula.vine._edge_adapter import edge_is_independent
 from pyscarcopula.vine._rvine_sampling_plan import build_rvine_sampling_plan
+from rvine_candidate_harness import _sample_with_r_python
 
 from rvine_runtime_cases import (
     configured_mixed_family_vine,
@@ -80,7 +82,7 @@ _FAMILY_ROTATION_CELLS = [
 
 @pytest.mark.parametrize(
     ("family", "rotation", "parameter"), _FAMILY_ROTATION_CELLS)
-def test_native_strict_matches_python_for_every_family_rotation_and_orientation(
+def test_native_matches_python_for_every_family_rotation_and_orientation(
         monkeypatch, family, rotation, parameter):
     vine = configured_mixed_family_vine()
     vine.pair_copulas[(0, 0)] = fitted_pair(
@@ -93,7 +95,7 @@ def test_native_strict_matches_python_for_every_family_rotation_and_orientation(
         size=(19, vine.d),
     )
 
-    expected = vine._sample_with_r_python(
+    expected = _sample_with_r_python(vine,
         len(uniforms),
         parameters,
         np.random.default_rng(1),
@@ -111,7 +113,7 @@ def test_native_strict_matches_python_for_every_family_rotation_and_orientation(
     np.testing.assert_array_equal(actual, expected)
 
 
-def test_native_strict_matches_python_for_transposed_edges(monkeypatch):
+def test_native_matches_python_for_transposed_edges(monkeypatch):
     vine = configured_static_dvine(3, order=(1, 0, 2))
     plan = _plan(vine)
     assert 1 in plan.inverse_transposed
@@ -120,7 +122,7 @@ def test_native_strict_matches_python_for_transposed_edges(monkeypatch):
     uniforms = np.random.default_rng(2026081511).uniform(
         0.01, 0.99, size=(23, vine.d))
 
-    expected = vine._sample_with_r_python(
+    expected = _sample_with_r_python(vine,
         len(uniforms), parameters, np.random.default_rng(1),
         traversal_plan=plan, uniforms=uniforms)
     actual = vine._sample_with_r(
@@ -140,7 +142,7 @@ def test_native_mixed_scalar_row_path_and_noncontiguous_replay_are_exact(
     uniforms = np.asfortranarray(base)
     before = uniforms.copy()
 
-    expected = vine._sample_with_r_python(
+    expected = _sample_with_r_python(vine,
         len(uniforms), parameters, np.random.default_rng(3),
         traversal_plan=plan, uniforms=uniforms)
     actual_rng = np.random.default_rng(41)
@@ -181,14 +183,14 @@ def test_native_adapter_supports_empty_and_single_row_batches(monkeypatch):
     assert empty.dtype == np.float64
 
     uniforms = np.array([[PSEUDO_OBS_EPS, 0.5, 1.0 - PSEUDO_OBS_EPS]])
-    expected = vine._sample_with_r_python(
+    expected = _sample_with_r_python(vine,
         1, parameters, np.random.default_rng(2), uniforms=uniforms)
     actual = vine._sample_with_r(
         1, parameters, np.random.default_rng(3), uniforms=uniforms)
     np.testing.assert_array_equal(actual, expected)
 
 
-def test_native_strict_supports_a_fully_independent_vine(monkeypatch):
+def test_native_supports_a_fully_independent_vine(monkeypatch):
     vine = configured_static_dvine(4, independent=True)
     plan = _plan(vine)
     assert plan.active_keys == ()
@@ -197,7 +199,7 @@ def test_native_strict_supports_a_fully_independent_vine(monkeypatch):
         [0.9, 0.7, 0.3, 0.1],
     ], dtype=np.float64)
 
-    expected = vine._sample_with_r_python(
+    expected = _sample_with_r_python(vine,
         len(uniforms), {}, np.random.default_rng(1),
         traversal_plan=plan, uniforms=uniforms)
     actual = vine._sample_with_r(
@@ -296,7 +298,7 @@ def test_native_uses_fitted_result_as_the_independence_source_of_truth(
     uniforms = np.random.default_rng(2026081512).uniform(
         0.02, 0.98, size=(17, vine.d))
 
-    expected = vine._sample_with_r_python(
+    expected = _sample_with_r_python(vine,
         len(uniforms), parameters, np.random.default_rng(1),
         traversal_plan=plan, uniforms=uniforms)
     actual = vine._sample_with_r(
@@ -467,7 +469,7 @@ def test_refit_invalidates_native_cache(monkeypatch):
     assert vine._native_rvine_generation > generation
 
 
-def test_custom_builtin_subclass_uses_preserved_python_fallback(monkeypatch):
+def test_custom_builtin_subclass_is_rejected():
     class CustomClayton(ClaytonCopula):
         def h_inverse(self, v, u_given, r):
             return np.full_like(np.asarray(v, dtype=np.float64), 0.271)
@@ -477,10 +479,6 @@ def test_custom_builtin_subclass_uses_preserved_python_fallback(monkeypatch):
     uniforms = np.full((4, vine.d), 0.5, dtype=np.float64)
     parameters = scalar_parameters(vine)
 
-    oracle = vine._sample_with_r_python(
-        4, parameters, np.random.default_rng(1), uniforms=uniforms)
-    np.testing.assert_array_equal(oracle[:, 0], np.full(4, 0.271))
-
-    actual = vine._sample_with_r(
-        4, parameters, np.random.default_rng(1), uniforms=uniforms)
-    np.testing.assert_array_equal(actual, oracle)
+    with pytest.raises(NativeUnsupported, match="exact registered"):
+        vine._sample_with_r(
+            4, parameters, np.random.default_rng(1), uniforms=uniforms)

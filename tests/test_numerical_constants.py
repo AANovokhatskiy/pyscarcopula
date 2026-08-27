@@ -18,7 +18,7 @@ from pyscarcopula._utils import (
     clip_pseudo_observations_no_copy,
     clip_rosenblatt_output,
 )
-from pyscarcopula.numerical import _cpp_scar_ou
+from pyscarcopula._native import scar_ou as _cpp_scar_ou
 from pyscarcopula.vine._helpers import _clip_unit, _open_unit_uniform
 
 
@@ -79,7 +79,7 @@ def test_vine_uniform_draws_use_shared_pseudo_observation_boundary():
 
 
 def test_python_and_cpp_safety_constants_match():
-    module = _cpp_scar_ou._cpp_extension.load()
+    module = _cpp_scar_ou._extension.load()
     assert module.PSEUDO_OBS_EPS == PSEUDO_OBS_EPS
     assert module.H_FUNCTION_EPS == H_FUNCTION_EPS
     assert module.PDF_FLOOR == PDF_FLOOR

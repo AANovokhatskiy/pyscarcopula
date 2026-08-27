@@ -23,8 +23,8 @@ from pyscarcopula.copula.multivariate.factor_student import (
 from pyscarcopula.copula.multivariate.factor_estimation import (
     FactorLoadingParameterization,
 )
-from pyscarcopula.numerical import static_likelihood
-from pyscarcopula.numerical._cpp_extension import CppError, CppUnsupported
+from pyscarcopula._native import static as static_likelihood
+from pyscarcopula._native.errors import NativeError, NativeUnsupported
 
 
 def _problem(dimension=10, rank=3, rows=24, seed=1201):
@@ -266,7 +266,7 @@ def test_default_evaluation_does_not_initialize_parallel_runtime():
     code = (
         "import json, numpy as np\n"
         "from pyscarcopula import FactorCorrelation, FactorStudentEvaluator\n"
-        "from pyscarcopula.numerical import _cpp_extension\n"
+        "from pyscarcopula._native import _extension as _cpp_extension\n"
         "m = _cpp_extension.load()\n"
         "before = dict(m._parallel_runtime_info())\n"
         "factor = FactorCorrelation(np.full((1024, 4), 0.01))\n"
@@ -457,9 +457,9 @@ def test_invalid_grid_contract_is_rejected(grid, kwargs):
     ("status", "error"),
     [
         (2, ValueError),
-        (3, CppUnsupported),
+        (3, NativeUnsupported),
         (7, FloatingPointError),
-        (1, CppError),
+        (1, NativeError),
     ],
 )
 def test_native_factor_status_is_translated_by_python_adapter(status, error):

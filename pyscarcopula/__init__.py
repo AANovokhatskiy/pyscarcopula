@@ -17,6 +17,15 @@ from importlib import metadata as _metadata
 __version__ = _metadata.version("pyscarcopula")
 del _metadata
 
+from pyscarcopula._native import load as _load_native
+from pyscarcopula._native.errors import NativeUnavailable as _NativeUnavailable
+
+try:
+    _load_native()
+except _NativeUnavailable as _native_error:
+    raise ImportError(str(_native_error)) from _native_error
+del _load_native, _NativeUnavailable
+
 from pyscarcopula.copula.gumbel import GumbelCopula
 from pyscarcopula.copula.frank import FrankCopula
 from pyscarcopula.copula.joe import JoeCopula

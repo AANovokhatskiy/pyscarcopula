@@ -49,8 +49,8 @@ from pyscarcopula.numerical._arrays import (
     validate_float64_allocation,
     validate_positive_int,
 )
-from pyscarcopula.numerical import _cpp_extension
-from pyscarcopula.numerical._cpp_extension import CppUnsupported
+from pyscarcopula._native import _extension as _cpp_extension
+from pyscarcopula._native.errors import NativeUnsupported
 
 
 @dataclass(frozen=True)
@@ -106,7 +106,7 @@ def cvm_test(e):
     if d == 0:
         raise ValueError("e must contain at least one dimension")
 
-    from pyscarcopula.numerical import multivariate_native
+    from pyscarcopula._native import multivariate as multivariate_native
     y = multivariate_native.radial_uniform_summary(e)
 
     return cramervonmises(y, "uniform")
@@ -169,7 +169,7 @@ def rosenblatt_transform_scar(copula, u, alpha, K=300, grid_range=5.0,
                               pts_per_sigma=4, transition_method='matrix',
                               max_K=None, r_gh=3.0, gh_order=5):
     """Mixture Rosenblatt for SCAR (bivariate). Returns (T, 2)."""
-    from pyscarcopula.numerical import _cpp_scar_ou
+    from pyscarcopula._native import scar_ou as _cpp_scar_ou
     from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
 
     kappa, mu, nu = alpha
@@ -1241,109 +1241,6 @@ def vine_gof_test(vine, data, to_pobs=True, K=500, grid_range=7.0):
     return cvm_test(e)
 
 
-def _rvine_rosenblatt_transform_python(
-        vine, u, K=300, grid_range=5.0, *, vine_type=None):
-    """
-    Rosenblatt transform for a fitted R-vine copula.
-
-    Mirrors ``VineCopula.sample`` for the natural-order matrix:
-    columns are traversed right-to-left, and each anti-diagonal leaf is
-    transformed by h-functions from tree 0 up to the column's top tree.
-    """
-    from pyscarcopula.vine._rvine_edges import (
-        _edge_h,
-        _edge_h_pair_for_variables,
-    )
-
-    if vine_type is None:
-        vine_type = getattr(vine, "vine_type", "rvine")
-    if vine_type not in {"cvine", "dvine", "rvine"}:
-        raise ValueError(
-            "vine_type must be 'cvine', 'dvine' or 'rvine', "
-            f"got {vine_type!r}")
-
-    if getattr(vine, 'matrix', None) is None:
-        raise ValueError("Fit the vine first")
-
-    u = np.asarray(u, dtype=np.float64)
-    T, d = u.shape
-    if d != vine.d:
-        raise ValueError(f"u has d={d}, but fitted vine has d={vine.d}")
-
-    M = vine.matrix
-
-    if d == 2:
-        edge = vine.pair_copulas[(0, 0)]
-        u1 = clip_pseudo_observations(u[:, 0])
-        u2 = clip_pseudo_observations(u[:, 1])
-        u_pair = np.column_stack((u1, u2))
-        e = np.empty((T, d), dtype=np.float64)
-        e[:, 0] = u1
-        e[:, 1] = clip_pseudo_observations(
-            _edge_h(edge, u2, u1, u_pair=u_pair, K=K,
-                    grid_range=grid_range))
-        return clip_rosenblatt_output(e)
-
-    pseudo = {
-        (var, frozenset()): clip_pseudo_observations(u[:, var].copy())
-        for var in range(d)
-    }
-
-    e = np.empty((T, d), dtype=np.float64)
-
-    last_var = int(M[0, d - 1])
-    e[:, d - 1] = pseudo[(last_var, frozenset())]
-
-    for col in range(d - 2, -1, -1):
-        leaf = int(M[d - 1 - col, col])
-        top_tree = d - 2 - col
-        cur = pseudo[(leaf, frozenset())]
-
-        for t in range(top_tree + 1):
-            row = d - 2 - col - t
-            partner = int(M[row, col])
-            conditioning = frozenset(
-                int(M[r, col])
-                for r in range(row + 1, d - 1 - col)
-            )
-            next_leaf_cond = conditioning | {partner}
-            next_partner_cond = conditioning | {leaf}
-
-            edge = vine.pair_copulas[(t, col)]
-            leaf_val = pseudo.get((leaf, conditioning))
-            partner_val = pseudo.get((partner, conditioning))
-            if leaf_val is None:
-                raise RuntimeError(
-                    "Missing leaf pseudo-observation during Rosenblatt: "
-                    f"var={leaf}, cond_set={sorted(conditioning)}, "
-                    f"column={col}, tree={t}"
-                )
-            if partner_val is None:
-                raise RuntimeError(
-                    "Missing partner pseudo-observation during Rosenblatt: "
-                    f"var={partner}, cond_set={sorted(conditioning)}, "
-                    f"column={col}, tree={t}"
-                )
-
-            leaf_next, partner_next = _edge_h_pair_for_variables(
-                edge,
-                leaf,
-                leaf_val,
-                partner,
-                partner_val,
-                K=K,
-                grid_range=grid_range,
-            )
-            cur = clip_pseudo_observations(leaf_next)
-            pseudo[(leaf, next_leaf_cond)] = cur
-            pseudo[(partner, next_partner_cond)] = (
-                clip_pseudo_observations(partner_next))
-
-        e[:, col] = cur
-
-    return clip_rosenblatt_output(e)
-
-
 def _prepare_rvine_rosenblatt_observations(vine, u):
     """Preserve the characterized public input contract before dispatch."""
     observations = np.asarray(u, dtype=np.float64)
@@ -1359,14 +1256,16 @@ def _prepare_rvine_rosenblatt_observations(vine, u):
 def _rvine_rosenblatt_transform_native(
         module, vine, u, *, K=300, grid_range=5.0):
     """Run supported static or dynamic edges through the native traversal."""
-    from pyscarcopula.numerical import _cpp_rvine
+    from pyscarcopula._native import vine as _cpp_rvine
 
     active_keys = _cpp_rvine.density_active_keys(
         vine._trees, vine._edge_map)
     if not _cpp_rvine.native_edges_supported(
             vine.pair_copulas, active_keys):
-        return _rvine_rosenblatt_transform_python(
-            vine, u, K=K, grid_range=grid_range)
+        raise NativeUnsupported(
+            "native R-vine Rosenblatt requires exact registered built-in "
+            "edge copulas"
+        )
     layout = _cpp_rvine.static_rosenblatt_parameter_layout(
         vine.pair_copulas, active_keys)
     if layout is None:
@@ -1399,7 +1298,7 @@ def _rvine_rosenblatt_transform_native(
         cache_slot='rosenblatt',
     )
     if context is None:
-        raise CppUnsupported(
+        raise NativeUnsupported(
             "native R-vine Rosenblatt could not compile the edge context")
     residuals = _cpp_rvine.rosenblatt(
         module,
@@ -1422,7 +1321,7 @@ def _rvine_rosenblatt_transform_native(
 
 def rvine_rosenblatt_transform(
         vine, u, K=300, grid_range=5.0, *, vine_type=None):
-    """Apply native traversal, preserving unsupported custom-edge fallback."""
+    """Apply the mandatory native R-vine Rosenblatt traversal."""
     if vine_type is None:
         vine_type = getattr(vine, "vine_type", "rvine")
     if vine_type not in {"cvine", "dvine", "rvine"}:
@@ -1432,21 +1331,18 @@ def rvine_rosenblatt_transform(
     if getattr(vine, 'matrix', None) is None:
         raise ValueError("Fit the vine first")
     observations = _prepare_rvine_rosenblatt_observations(vine, u)
-    from pyscarcopula.numerical import _cpp_rvine
+    from pyscarcopula._native import vine as _cpp_rvine
     active_keys = _cpp_rvine.density_active_keys(
         vine._trees, vine._edge_map)
     if not _cpp_rvine.native_edges_supported(
             vine.pair_copulas, active_keys):
-        return _rvine_rosenblatt_transform_python(
-            vine,
-            observations,
-            K=K,
-            grid_range=grid_range,
-            vine_type=vine_type,
+        raise NativeUnsupported(
+            "native R-vine Rosenblatt requires exact registered built-in "
+            "edge copulas"
         )
     module = _cpp_extension.load()
     if not hasattr(module, "rvine_rosenblatt_transform"):
-        raise CppUnsupported(
+        raise NativeUnsupported(
             "native R-vine Rosenblatt requires "
             "_scar_cpp.rvine_rosenblatt_transform")
     return _rvine_rosenblatt_transform_native(
@@ -1516,7 +1412,7 @@ def gaussian_rosenblatt_transform(R, u):
     -------
     e : (T, d)
     """
-    from pyscarcopula.numerical import multivariate_native
+    from pyscarcopula._native import multivariate as multivariate_native
     return multivariate_native.gaussian_rosenblatt(R, u)
 
 
@@ -1527,7 +1423,7 @@ def factor_gaussian_rosenblatt_transform(correlation, u):
     rank-dimensional posterior of the latent factor. Storage is
     ``O(T*k + k*k)`` and no dense correlation or Cholesky factor is formed.
     """
-    from pyscarcopula.numerical import multivariate_native
+    from pyscarcopula._native import multivariate as multivariate_native
     return multivariate_native.factor_gaussian_rosenblatt(correlation, u)
 
 
@@ -1567,7 +1463,7 @@ def gaussian_gof_test(copula, data, to_pobs=True):
 
 def student_rosenblatt_transform(R, df, u):
     """Evaluate the dense Student Rosenblatt transform natively."""
-    from pyscarcopula.numerical import multivariate_native
+    from pyscarcopula._native import multivariate as multivariate_native
     return multivariate_native.dense_student_rosenblatt(R, df, u)
 
 
@@ -1578,7 +1474,7 @@ def factor_student_rosenblatt_transform(correlation, df, u):
     Storage is ``O(T*k + k*k)`` and no dense correlation matrix is formed.
     ``df`` may be scalar or contain one value per observation.
     """
-    from pyscarcopula.numerical import multivariate_native
+    from pyscarcopula._native import multivariate as multivariate_native
     return multivariate_native.factor_student_rosenblatt(
         correlation, df, u)
 
@@ -1693,7 +1589,7 @@ def equicorr_rosenblatt_transform(copula, u, fit_result, K=300, grid_range=5.0):
     T, d = u.shape
     method = fit_result.method.upper()
     if method not in ('MLE', 'GAS'):
-        from pyscarcopula.numerical import _cpp_scar_ou
+        from pyscarcopula._native import scar_ou as _cpp_scar_ou
 
         kappa, mu, nu = fit_result.params.values
         return _cpp_scar_ou.gaussian_rosenblatt(
@@ -1713,7 +1609,7 @@ def equicorr_rosenblatt_transform(copula, u, fit_result, K=300, grid_range=5.0):
     else:
         raise AssertionError(f"unsupported equicorrelation method: {method}")
 
-    from pyscarcopula.numerical import multivariate_native
+    from pyscarcopula._native import multivariate as multivariate_native
     return multivariate_native.equicorr_gaussian_rosenblatt(rho, u)
 
 
@@ -1783,7 +1679,7 @@ def stochastic_student_rosenblatt_transform(copula, u, fit_result,
     method = fit_result.method.upper()
 
     if method not in ('MLE', 'GAS'):
-        from pyscarcopula.numerical import _cpp_scar_ou
+        from pyscarcopula._native import scar_ou as _cpp_scar_ou
 
         kappa, mu, nu_ou = fit_result.params.values
         return _cpp_scar_ou.student_rosenblatt(

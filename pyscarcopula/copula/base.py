@@ -475,7 +475,7 @@ class BivariateCopula(CopulaBase):
         """u: (T, 2), r: scalar or (T,)."""
         r_arr = np.atleast_1d(np.asarray(r, dtype=np.float64)).ravel()
         if r_arr.size == 1:
-            from pyscarcopula.numerical import static_likelihood
+            from pyscarcopula._native import static as static_likelihood
             return static_likelihood.prepare(self, u).log_likelihood(
                 float(r_arr[0]))
         return np.sum(self.log_pdf(u[:, 0], u[:, 1], r))

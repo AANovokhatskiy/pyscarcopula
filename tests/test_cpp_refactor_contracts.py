@@ -12,7 +12,10 @@ import pytest
 
 from pyscarcopula import EquicorrGaussianCopula, StochasticStudentCopula
 from pyscarcopula._types import NumericalConfig
-from pyscarcopula.numerical import multivariate_native, static_likelihood
+from pyscarcopula._native import (
+    multivariate as multivariate_native,
+    static as static_likelihood,
+)
 from tools import (
     benchmark_cpp_refactor,
     capture_cpp_refactor_goldens,
@@ -320,7 +323,7 @@ def test_stage0_inventory_is_frozen_and_current_config_mapping_is_complete():
 
     changed_constant = copy.deepcopy(current)
     frozen_name = (
-        "pyscarcopula.numerical.multivariate_native."
+        "pyscarcopula._native.multivariate."
         "_DENSE_STUDENT_NATIVE_MIN_DF"
     )
     for entry in changed_constant["configuration_contracts"][

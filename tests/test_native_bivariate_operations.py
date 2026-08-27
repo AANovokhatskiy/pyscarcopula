@@ -13,7 +13,7 @@ from pyscarcopula import (
     IndependentCopula,
     JoeCopula,
 )
-from pyscarcopula.numerical import _cpp_copula, _cpp_extension, copula_native
+from pyscarcopula._native import _descriptors as _cpp_copula, _extension as _cpp_extension, pair as copula_native
 
 
 _FAMILIES = [

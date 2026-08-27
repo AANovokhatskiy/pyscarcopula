@@ -10,7 +10,7 @@ from pyscarcopula._utils import pobs
 from pyscarcopula._types import (
     MLEResult, LatentResult, GASResult, NumericalConfig, LBFGSBConfig,
 )
-from pyscarcopula.numerical import _cpp_scar_ou
+from pyscarcopula._native import scar_ou as _cpp_scar_ou
 from pyscarcopula.strategy import scar_tm
 from pyscarcopula.strategy.scar_tm import SCARTMStrategy
 
@@ -122,7 +122,7 @@ class TestSCARNativeExecution:
             "prepare_objective",
             lambda *args, **kwargs: (
                 (_ for _ in ()).throw(
-                    _cpp_scar_ou.CppUnsupported("test fallback"))),
+                    _cpp_scar_ou.NativeUnsupported("test fallback"))),
         )
         monkeypatch.setattr(_cpp_scar_ou, "supported", lambda copula: True)
 
@@ -236,7 +236,7 @@ class TestSCARNativeExecution:
             "prepare_objective",
             lambda *args, **kwargs: (
                 (_ for _ in ()).throw(
-                    _cpp_scar_ou.CppUnsupported("test fallback"))),
+                    _cpp_scar_ou.NativeUnsupported("test fallback"))),
         )
         monkeypatch.setattr(
             _cpp_scar_ou, "neg_loglik_with_grad_info", fake_objective)
@@ -355,11 +355,8 @@ class TestSmartInit:
         from pyscarcopula.copula.multivariate import StochasticStudentCopula
         from pyscarcopula.strategy import initial_point
 
-        class StudentSubclass(StochasticStudentCopula):
-            pass
-
         u = pobs(np.random.default_rng(1).standard_normal((20, 2)))
-        copula = StudentSubclass(d=2, R=np.eye(2))
+        copula = StochasticStudentCopula(d=2, R=np.eye(2))
         df0 = 5.0
         inverse_mu0 = float(copula.inv_transform([df0])[0])
 

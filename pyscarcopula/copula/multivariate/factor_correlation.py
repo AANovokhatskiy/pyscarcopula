@@ -82,7 +82,7 @@ class FactorCorrelation:
         if not np.all(np.isfinite(loadings)):
             raise ValueError("loadings must contain only finite values")
 
-        from pyscarcopula.numerical import multivariate_native
+        from pyscarcopula._native import multivariate as multivariate_native
         try:
             validated_loadings, uniqueness = (
                 multivariate_native.factor_correlation_from_loadings(
@@ -145,7 +145,7 @@ class FactorCorrelation:
                 0.0 < float(uniqueness_min) < 1.0):
             raise ValueError(
                 "uniqueness_min must be finite and in (0, 1)")
-        from pyscarcopula.numerical import multivariate_native
+        from pyscarcopula._native import multivariate as multivariate_native
         loadings = multivariate_native.factor_correlation_from_unconstrained(
             unconstrained, uniqueness_min)
         return cls(
@@ -176,7 +176,7 @@ class FactorCorrelation:
             required,
             "increase memory_budget_bytes or use prepare()",
         )
-        from pyscarcopula.numerical import multivariate_native
+        from pyscarcopula._native import multivariate as multivariate_native
         return multivariate_native.factor_correlation_to_dense(
             self.loadings, self.uniqueness)
 
@@ -240,7 +240,7 @@ class PreparedFactorCorrelation:
     def __init__(self, factor: FactorCorrelation) -> None:
         if not isinstance(factor, FactorCorrelation):
             raise TypeError("factor must be a FactorCorrelation")
-        from pyscarcopula.numerical import _cpp_extension
+        from pyscarcopula._native import _extension as _cpp_extension
 
         native = _cpp_extension.load()._FactorCorrelationOperator(
             factor.loadings,

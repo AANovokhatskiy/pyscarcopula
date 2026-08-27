@@ -12,7 +12,7 @@ from pyscarcopula import (
 )
 from pyscarcopula._types import PredictiveState
 from pyscarcopula._native import jacobi as jacobi_native
-from pyscarcopula.numerical import _cpp_extension, copula_native
+from pyscarcopula._native import _extension as _cpp_extension, pair as copula_native
 from pyscarcopula.numerical.jacobi_tm import (
     jacobi_forward_mixture_h,
     jacobi_loglik,

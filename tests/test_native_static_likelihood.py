@@ -23,7 +23,7 @@ from pyscarcopula import (
     StudentCopula,
 )
 from pyscarcopula._constants import PSEUDO_OBS_EPS
-from pyscarcopula.numerical import _cpp_extension, static_likelihood
+from pyscarcopula._native import _extension as _cpp_extension, static as static_likelihood
 from pyscarcopula.strategy import mle as mle_module
 from pyscarcopula.strategy.mle import MLEStrategy
 

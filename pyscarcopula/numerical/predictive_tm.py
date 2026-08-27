@@ -10,7 +10,7 @@ def tm_state_distribution(kappa, mu, nu, u, copula, K=300, grid_range=5.0,
                           r_gh=3.0, gh_order=5,
                           horizon='current'):
     """Return the native posterior distribution of ``x_T`` or ``x_{T+1}``."""
-    from pyscarcopula.numerical import _cpp_scar_ou
+    from pyscarcopula._native import scar_ou as _cpp_scar_ou
     from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
 
     config = AutoTMConfig(

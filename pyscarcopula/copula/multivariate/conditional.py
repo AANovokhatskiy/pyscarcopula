@@ -102,7 +102,7 @@ def sample_gaussian_conditional(
     given_idx, free_idx = _partition_indices(d, given)
     normal_draws = rng.standard_normal((n, len(free_idx)))
 
-    from pyscarcopula.numerical import multivariate_native
+    from pyscarcopula._native import multivariate as multivariate_native
     free_values = (
         multivariate_native.equicorr_gaussian_conditional_from_uniforms(
             rho_path,
@@ -141,7 +141,7 @@ def sample_gaussian_copula_conditional(
 
     given_idx, free_idx = _partition_indices(d, given)
     normal_draws = rng.standard_normal((n, len(free_idx)))
-    from pyscarcopula.numerical import multivariate_native
+    from pyscarcopula._native import multivariate as multivariate_native
     free_values = multivariate_native.gaussian_conditional_from_uniforms(
         R,
         given_idx,
@@ -206,7 +206,7 @@ def sample_student_conditional(
             chi_square_draws[row] = rng.chisquare(
                 float(df_path[row]) + len(given_idx), size=1)[0]
 
-    from pyscarcopula.numerical import multivariate_native
+    from pyscarcopula._native import multivariate as multivariate_native
     free_values = multivariate_native.student_conditional_from_uniforms(
         R_arr,
         given_idx,
@@ -255,7 +255,7 @@ def sample_factor_gaussian_conditional(
     given_idx, free_idx = _partition_indices(d, given)
     factor_draws = rng.standard_normal((n, correlation.rank))
     residual_draws = rng.standard_normal((n, d))
-    from pyscarcopula.numerical import multivariate_native
+    from pyscarcopula._native import multivariate as multivariate_native
     free_values = (
         multivariate_native.factor_gaussian_conditional_from_uniforms(
             correlation,
@@ -324,7 +324,7 @@ def sample_factor_student_conditional(
         )
     factor_draws = rng.standard_normal((n, correlation.rank))
     residual_draws = rng.standard_normal((n, d))
-    from pyscarcopula.numerical import multivariate_native
+    from pyscarcopula._native import multivariate as multivariate_native
     free_values = (
         multivariate_native.factor_student_conditional_from_uniforms(
             correlation,

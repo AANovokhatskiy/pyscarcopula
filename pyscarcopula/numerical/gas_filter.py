@@ -8,7 +8,7 @@ state updates, prediction, and bivariate h-path evaluation.
 import numpy as np
 
 from pyscarcopula._utils import clip_rosenblatt_output
-from pyscarcopula.numerical import _cpp_gas
+from pyscarcopula._native import gas as _cpp_gas
 from pyscarcopula.numerical._arrays import as_float64_array
 
 

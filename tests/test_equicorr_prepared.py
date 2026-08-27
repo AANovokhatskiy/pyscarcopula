@@ -1,4 +1,4 @@
-﻿"""Contracts for compact equicorrelation preparation."""
+"""Contracts for compact equicorrelation preparation."""
 
 from __future__ import annotations
 
@@ -17,10 +17,10 @@ from pyscarcopula import (
 )
 from pyscarcopula import api
 from pyscarcopula._constants import PSEUDO_OBS_EPS
-from pyscarcopula.numerical import multivariate_native
-from pyscarcopula.numerical import static_likelihood
-from pyscarcopula.numerical import _cpp_gas
-from pyscarcopula.numerical import _cpp_scar_ou
+from pyscarcopula._native import multivariate as multivariate_native
+from pyscarcopula._native import static as static_likelihood
+from pyscarcopula._native import gas as _cpp_gas
+from pyscarcopula._native import scar_ou as _cpp_scar_ou
 from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
 
 
@@ -497,7 +497,7 @@ def test_default_preparation_never_initializes_parallel_runtime():
     code = (
         "import json, numpy as np\n"
         "from pyscarcopula import EquicorrGaussianCopula\n"
-        "from pyscarcopula.numerical import _cpp_extension\n"
+        "from pyscarcopula._native import _extension as _cpp_extension\n"
         "m = _cpp_extension.load()\n"
         "before = dict(m._parallel_runtime_info())\n"
         "EquicorrGaussianCopula(8192).prepare_sufficient_statistics("

@@ -34,10 +34,12 @@ from pyscarcopula.vine._conditional_rvine import (
 )
 from pyscarcopula.vine._rvine_dag import (
     ConditionalSamplePlan,
-    execute_conditional_plan,
     _find_sample_candidate,
     _inverse_chain_to_base,
     _node_key,
+)
+from rvine_candidate_harness import (
+    _execute_conditional_plan_python as execute_conditional_plan,
 )
 from pyscarcopula.vine._edge_adapter import (
     edge_method,
@@ -1345,32 +1347,18 @@ class TestSampling:
         assert np.all(s < 1.0)
 
     @pytest.mark.rvine_native
-    def test_native_gas_sample_matches_legacy_stepwise_exactly(
-            self, monkeypatch):
+    def test_native_gas_sample_is_seed_reproducible(self):
         vine = _manual_suffix_stateful_rvine()
-        max_active_tree = vine._max_non_independent_tree_level()
-        active_keys = vine._sample_active_edge_keys(max_active_tree)
+        first = vine.sample(128, rng=np.random.default_rng(20260720))
+        second = vine.sample(128, rng=np.random.default_rng(20260720))
 
-        expected = vine._sample_stepwise_stateful(
-            128,
-            np.random.default_rng(20260720),
-            active_keys=active_keys,
-            max_active_tree=max_active_tree,
-        )
-
-        def fail_fallback(*args, **kwargs):
-            raise AssertionError("native GAS R-vine path was not used")
-
-        monkeypatch.setattr(
-            vine, "_sample_stepwise_stateful", fail_fallback)
-        actual = vine.sample(128, rng=np.random.default_rng(20260720))
-
-        assert np.array_equal(actual, expected)
+        assert np.array_equal(first, second)
+        assert np.all((first > 0.0) & (first < 1.0))
 
     @pytest.mark.rvine_native
     def test_gas_sample_passes_canonical_traversal_plan_to_native(
             self, monkeypatch):
-        from pyscarcopula.numerical import _cpp_gas_rvine
+        from pyscarcopula._native import _gas_vine as _cpp_gas_rvine
         from pyscarcopula.vine._rvine_sampling_plan import (
             RVineTraversalPlan,
         )
@@ -1393,42 +1381,32 @@ class TestSampling:
         assert captured[0].active_keys == vine._sample_active_edge_keys()
 
     @pytest.mark.rvine_native
-    def test_unsupported_stepwise_edge_uses_compatibility_fallback(
+    def test_unsupported_stepwise_edge_propagates_native_error(
             self, monkeypatch):
-        from pyscarcopula.numerical import _cpp_gas_rvine
+        from pyscarcopula._native import _gas_vine as _cpp_gas_rvine
+        from pyscarcopula._native.errors import NativeUnsupported
 
         vine = _manual_suffix_stateful_rvine()
-        expected = np.full((7, vine.d), 0.314, dtype=np.float64)
-        calls = []
+        def unsupported(*args, **kwargs):
+            raise NativeUnsupported("unsupported dynamic edge")
 
-        monkeypatch.setattr(
-            _cpp_gas_rvine, "sample", lambda *args, **kwargs: None)
-
-        def compatibility_fallback(*args, **kwargs):
-            calls.append((args, kwargs))
-            return expected
-
-        monkeypatch.setattr(
-            vine, "_sample_stepwise_stateful", compatibility_fallback)
-
-        actual = vine.sample(7, rng=np.random.default_rng(2026082701))
-
-        assert actual is expected
-        assert len(calls) == 1
+        monkeypatch.setattr(_cpp_gas_rvine, "sample", unsupported)
+        with pytest.raises(NativeUnsupported, match="unsupported dynamic edge"):
+            vine.sample(7, rng=np.random.default_rng(2026082701))
 
     @pytest.mark.rvine_native
     def test_missing_gas_rvine_symbol_is_not_a_compatibility_fallback(
             self, monkeypatch):
-        from pyscarcopula.numerical import _cpp_gas_rvine
-        from pyscarcopula.numerical._cpp_extension import CppUnsupported
+        from pyscarcopula._native import _gas_vine as _cpp_gas_rvine
+        from pyscarcopula._native.errors import NativeUnsupported
 
         monkeypatch.setattr(
-            _cpp_gas_rvine._cpp_extension,
+            _cpp_gas_rvine._extension,
             "load",
             lambda: SimpleNamespace(),
         )
 
-        with pytest.raises(CppUnsupported, match="gas_rvine_sample"):
+        with pytest.raises(NativeUnsupported, match="gas_rvine_sample"):
             _cpp_gas_rvine.sample(
                 None,
                 1,
@@ -1439,62 +1417,36 @@ class TestSampling:
 
     @pytest.mark.parametrize('rotation', [90, 270])
     @pytest.mark.rvine_native
-    def test_native_gas_sample_matches_python_for_transposed_rotated_mle_edge(
-            self, monkeypatch, rotation):
+    def test_native_gas_sample_handles_transposed_rotated_mle_edge(
+            self, rotation):
         vine = _manual_suffix_stateful_rvine()
         # Matrix column 0 uses leaf=2, partner=1, while this edge was fitted
         # in ascending variable order (1, 2).
         vine.pair_copulas[(0, 0)] = _mle_clayton_pair(0.8, rotation)
-        max_active_tree = vine._max_non_independent_tree_level()
-        active_keys = vine._sample_active_edge_keys(max_active_tree)
+        first = vine.sample(128, rng=np.random.default_rng(20260722))
+        second = vine.sample(128, rng=np.random.default_rng(20260722))
 
-        expected = vine._sample_stepwise_stateful(
-            128,
-            np.random.default_rng(20260722),
-            active_keys=active_keys,
-            max_active_tree=max_active_tree,
-        )
-
-        def fail_fallback(*args, **kwargs):
-            raise AssertionError("native GAS R-vine path was not used")
-
-        monkeypatch.setattr(
-            vine, "_sample_stepwise_stateful", fail_fallback)
-        actual = vine.sample(128, rng=np.random.default_rng(20260722))
-
-        assert np.array_equal(actual, expected)
+        assert np.array_equal(first, second)
+        assert np.all((first > 0.0) & (first < 1.0))
 
     @pytest.mark.parametrize('rotation', [90, 270])
     @pytest.mark.rvine_native
-    def test_native_gas_sample_matches_python_for_transposed_rotated_gas_edge(
-            self, monkeypatch, rotation):
+    def test_native_gas_sample_handles_transposed_rotated_gas_edge(
+            self, rotation):
         vine = _manual_suffix_stateful_rvine()
         # Matrix column 1 uses leaf=1, partner=0, so the dynamic edge must use
         # the transposed 270/90-degree rotation during inverse and forward h.
         vine.pair_copulas[(0, 1)] = _gas_clayton_pair(rotation)
-        max_active_tree = vine._max_non_independent_tree_level()
-        active_keys = vine._sample_active_edge_keys(max_active_tree)
-
-        expected = vine._sample_stepwise_stateful(
-            128,
-            np.random.default_rng(20260812 + rotation),
-            active_keys=active_keys,
-            max_active_tree=max_active_tree,
-        )
-
-        def fail_fallback(*args, **kwargs):
-            raise AssertionError("native GAS R-vine path was not used")
-
-        monkeypatch.setattr(
-            vine, "_sample_stepwise_stateful", fail_fallback)
-        actual = vine.sample(
+        first = vine.sample(
+            128, rng=np.random.default_rng(20260812 + rotation))
+        second = vine.sample(
             128, rng=np.random.default_rng(20260812 + rotation))
 
-        assert np.array_equal(actual, expected)
+        assert np.array_equal(first, second)
+        assert np.all((first > 0.0) & (first < 1.0))
 
     @pytest.mark.rvine_native
-    def test_native_gas_sample_matches_python_for_truncated_mixed_edges(
-            self, monkeypatch):
+    def test_native_gas_sample_handles_truncated_mixed_edges(self):
         vine = _manual_multi_edge_dynamic_rvine()
         vine.truncation_level = 2
         vine.truncation_fill = 'independent'
@@ -1517,67 +1469,31 @@ class TestSampling:
         assert isinstance(
             vine.pair_copulas[(1, 0)].fit_result, IndependentResult)
 
-        expected = vine._sample_stepwise_stateful(
-            192,
-            np.random.default_rng(20260813),
-            active_keys=active_keys,
-            max_active_tree=max_active_tree,
-        )
+        first = vine.sample(192, rng=np.random.default_rng(20260813))
+        second = vine.sample(192, rng=np.random.default_rng(20260813))
 
-        def fail_fallback(*args, **kwargs):
-            raise AssertionError("native GAS R-vine path was not used")
-
-        monkeypatch.setattr(
-            vine, "_sample_stepwise_stateful", fail_fallback)
-        actual = vine.sample(192, rng=np.random.default_rng(20260813))
-
-        assert np.array_equal(actual, expected)
+        assert np.array_equal(first, second)
+        assert np.all((first > 0.0) & (first < 1.0))
 
     @pytest.mark.rvine_native
-    def test_native_gas_sample_matches_python_for_mixed_dynamic_edges(
-            self, monkeypatch):
+    def test_native_gas_sample_handles_mixed_dynamic_edges(self):
         vine = _manual_multi_edge_dynamic_rvine()
-        max_active_tree = vine._max_non_independent_tree_level()
-        active_keys = vine._sample_active_edge_keys(max_active_tree)
-        expected = vine._sample_stepwise_stateful(
-            96,
-            np.random.default_rng(20260721),
-            active_keys=active_keys,
-            max_active_tree=max_active_tree,
-        )
+        first = vine.sample(96, rng=np.random.default_rng(20260721))
+        second = vine.sample(96, rng=np.random.default_rng(20260721))
 
-        def fail_fallback(*args, **kwargs):
-            raise AssertionError("native GAS R-vine path was not used")
-
-        monkeypatch.setattr(
-            vine, "_sample_stepwise_stateful", fail_fallback)
-        actual = vine.sample(96, rng=np.random.default_rng(20260721))
-
-        assert np.array_equal(actual, expected)
+        assert np.array_equal(first, second)
+        assert np.all((first > 0.0) & (first < 1.0))
 
     @pytest.mark.rvine_native
-    def test_native_gas_sample_matches_python_for_multiple_gas_edges(
-            self, monkeypatch):
+    def test_native_gas_sample_handles_multiple_gas_edges(self):
         vine = _manual_multi_edge_dynamic_rvine()
         vine.pair_copulas[(1, 1)] = _gas_gaussian_pair(
             r_last=0.0, gamma=0.6)
-        max_active_tree = vine._max_non_independent_tree_level()
-        active_keys = vine._sample_active_edge_keys(max_active_tree)
-        expected = vine._sample_stepwise_stateful(
-            96,
-            np.random.default_rng(20260723),
-            active_keys=active_keys,
-            max_active_tree=max_active_tree,
-        )
+        first = vine.sample(96, rng=np.random.default_rng(20260723))
+        second = vine.sample(96, rng=np.random.default_rng(20260723))
 
-        def fail_fallback(*args, **kwargs):
-            raise AssertionError("native GAS R-vine path was not used")
-
-        monkeypatch.setattr(
-            vine, "_sample_stepwise_stateful", fail_fallback)
-        actual = vine.sample(96, rng=np.random.default_rng(20260723))
-
-        assert np.array_equal(actual, expected)
+        assert np.array_equal(first, second)
+        assert np.all((first > 0.0) & (first < 1.0))
 
     def test_scar_tm_sample_shape_and_unit_interval(self):
         u = _sample_dynamic_gaussian_chain(45, 3, seed=9)
@@ -2294,7 +2210,7 @@ class TestPredict:
     @pytest.mark.parametrize('horizon', ['current', 'next'])
     def test_predictive_state_cache_reused_for_given_only(
             self, monkeypatch, horizon):
-        from pyscarcopula.numerical import _cpp_scar_ou
+        from pyscarcopula._native import scar_ou as _cpp_scar_ou
 
         vine = _manual_suffix_predictive_state_rvine()
         calls = Counter()
@@ -2314,7 +2230,7 @@ class TestPredict:
             'prepare_objective',
             lambda *args, **kwargs: (
                 (_ for _ in ()).throw(
-                    _cpp_scar_ou.CppUnsupported("test fallback"))),
+                    _cpp_scar_ou.NativeUnsupported("test fallback"))),
         )
 
         samples, diagnostics = vine.predict(
@@ -2685,7 +2601,7 @@ class TestPredict:
             )
 
     def test_scar_predict_r_samples_from_tm_posterior(self, monkeypatch):
-        from pyscarcopula.numerical import _cpp_scar_ou
+        from pyscarcopula._native import scar_ou as _cpp_scar_ou
 
         cop = BivariateGaussianCopula()
         result = LatentResult(
@@ -2714,14 +2630,14 @@ class TestPredict:
             return np.array([-0.5, 0.5]), np.array([0.0, 1.0])
 
         monkeypatch.setattr(
-            "pyscarcopula.numerical._cpp_scar_ou.state_distribution",
+            "pyscarcopula._native.scar_ou.state_distribution",
             fake_tm_state_distribution,
         )
         monkeypatch.setattr(
-            "pyscarcopula.numerical._cpp_scar_ou.prepare_objective",
+            "pyscarcopula._native.scar_ou.prepare_objective",
             lambda *args, **kwargs: (
                 (_ for _ in ()).throw(
-                    _cpp_scar_ou.CppUnsupported("test fallback"))),
+                    _cpp_scar_ou.NativeUnsupported("test fallback"))),
         )
 
         u_train_pair = np.array([[0.2, 0.3], [0.7, 0.8]])

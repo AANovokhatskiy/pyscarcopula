@@ -6,15 +6,10 @@ from pyscarcopula.vine._conditional_rvine import (
     find_rvine_peel_order_for_given_suffix,
 )
 from pyscarcopula.vine._rvine_conditional_plan import FrozenConditionalPlan
-from pyscarcopula.vine._rvine_edges import (
-    _edge_h_inverse_for_variables,
-    _edge_h_pair_for_variables,
-)
+from pyscarcopula.vine._rvine_edges import _edge_h_pair_for_variables
 from pyscarcopula.vine._rvine_matrix_builder import build_rvine_matrix_with_edge_map
 from pyscarcopula.vine._helpers import (
     _clip_unit,
-    _open_unit_uniform,
-    _prepared_open_unit_draws,
 )
 
 
@@ -180,128 +175,6 @@ def build_suffix_conditional_plan(d, start_col, matrix, given):
             append_h_pair(col, tree)
 
     return SuffixConditionalPlan(steps, d)
-
-
-def _sample_suffix_given_with_r_python(
-        d, n, r_all, rng, given, start_col, matrix, pair_copulas, *,
-        uniforms=None):
-    """Python traversal oracle for exact suffix-conditioned sampling."""
-    M = matrix
-    w = (
-        _open_unit_uniform(rng, size=(n, d))
-        if uniforms is None else
-        _prepared_open_unit_draws(
-            uniforms, (n, d), name="suffix sampling uniforms")
-    )
-    pseudo_obs = {}
-
-    last_var = int(M[0, d - 1])
-    if d - 1 >= start_col:
-        pseudo_obs[(last_var, frozenset())] = np.full(
-            n, given[last_var], dtype=np.float64)
-    else:
-        pseudo_obs[(last_var, frozenset())] = w[:, d - 1].copy()
-
-    for col in range(d - 2, start_col - 1, -1):
-        leaf = int(M[d - 1 - col, col])
-        top_tree = d - 2 - col
-        pseudo_obs[(leaf, frozenset())] = np.full(
-            n, given[leaf], dtype=np.float64)
-        for t in range(top_tree + 1):
-            row = d - 2 - col - t
-            partner = int(M[row, col])
-            conditioning = frozenset(
-                int(M[r, col])
-                for r in range(row + 1, d - 1 - col)
-            )
-            next_leaf_cond = conditioning | {partner}
-            next_partner_cond = conditioning | {leaf}
-            edge = pair_copulas[(t, col)]
-            r = r_all[(t, col)]
-
-            leaf_val = pseudo_obs[(leaf, conditioning)]
-            partner_val = pseudo_obs[(partner, conditioning)]
-            leaf_next, partner_next = _edge_h_pair_for_variables(
-                edge,
-                leaf,
-                leaf_val,
-                partner,
-                partner_val,
-                config={'r': r},
-            )
-            pseudo_obs[(leaf, next_leaf_cond)] = _clip_unit(leaf_next)
-            pseudo_obs[(partner, next_partner_cond)] = _clip_unit(partner_next)
-
-    for col in range(start_col - 1, -1, -1):
-        leaf = int(M[d - 1 - col, col])
-        top_tree = d - 2 - col
-        current = w[:, col].copy()
-
-        for t in range(top_tree, -1, -1):
-            row = d - 2 - col - t
-            partner = int(M[row, col])
-            conditioning = frozenset(
-                int(M[r, col])
-                for r in range(row + 1, d - 1 - col)
-            )
-            partner_val = pseudo_obs[(partner, conditioning)]
-            edge = pair_copulas[(t, col)]
-            current = _clip_unit(_edge_h_inverse_for_variables(
-                edge,
-                leaf,
-                current,
-                partner,
-                partner_val,
-                config={'r': r_all[(t, col)]},
-            ))
-            pseudo_obs[(leaf, conditioning)] = current
-
-        for t in range(top_tree + 1):
-            row = d - 2 - col - t
-            partner = int(M[row, col])
-            conditioning = frozenset(
-                int(M[r, col])
-                for r in range(row + 1, d - 1 - col)
-            )
-            next_leaf_cond = conditioning | {partner}
-            next_partner_cond = conditioning | {leaf}
-            edge = pair_copulas[(t, col)]
-            r = r_all[(t, col)]
-
-            leaf_val = pseudo_obs[(leaf, conditioning)]
-            partner_val = pseudo_obs[(partner, conditioning)]
-            leaf_next, partner_next = _edge_h_pair_for_variables(
-                edge,
-                leaf,
-                leaf_val,
-                partner,
-                partner_val,
-                config={'r': r},
-            )
-            pseudo_obs[(leaf, next_leaf_cond)] = _clip_unit(leaf_next)
-            pseudo_obs[(partner, next_partner_cond)] = _clip_unit(partner_next)
-
-    out = np.empty((n, d), dtype=np.float64)
-    for var in range(d):
-        out[:, var] = pseudo_obs[(var, frozenset())]
-    return out
-
-
-def sample_suffix_given_with_r(
-        d, n, r_all, rng, given, start_col, matrix, pair_copulas, *,
-        uniforms=None):
-    """Compatibility name for the preserved Python traversal oracle."""
-    return _sample_suffix_given_with_r_python(
-        d,
-        n,
-        r_all,
-        rng,
-        given,
-        start_col,
-        matrix,
-        pair_copulas,
-        uniforms=uniforms,
-    )
 
 
 def given_suffix_edge_observations_with_r(

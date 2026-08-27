@@ -20,7 +20,7 @@ from pyscarcopula import (
     StudentCopula,
 )
 from pyscarcopula._native_smoke import parallel_runtime_child_probe
-from pyscarcopula.numerical import _cpp_extension, _cpp_scar_ou
+from pyscarcopula._native import _extension as _cpp_extension, scar_ou as _cpp_scar_ou
 from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
 
 
@@ -38,7 +38,7 @@ def _run_clean_interpreter(source):
 def test_n_threads_one_never_initializes_runtime():
     payload = _run_clean_interpreter(
         "import json\n"
-        "from pyscarcopula.numerical import _cpp_extension\n"
+        "from pyscarcopula._native import _extension as _cpp_extension\n"
         "m = _cpp_extension.load()\n"
         "before = dict(m._parallel_runtime_info())\n"
         "result = dict(m._parallel_for_blocks_probe(100, 1, 1))\n"
@@ -69,11 +69,11 @@ def test_runtime_resource_counters_track_reuse_without_worker_growth():
 def test_spawned_interpreter_n_threads_one_ignores_parent_pool():
     payload = _run_clean_interpreter(
         "import json, subprocess, sys\n"
-        "from pyscarcopula.numerical import _cpp_extension\n"
+        "from pyscarcopula._native import _extension as _cpp_extension\n"
         "m = _cpp_extension.load()\n"
         "m._parallel_for_blocks_probe(32, 1, 4)\n"
         "source = ('import json\\n' "
-        "+ 'from pyscarcopula.numerical import _cpp_extension\\n' "
+        "+ 'from pyscarcopula._native import _extension as _cpp_extension\\n' "
         "+ 'm = _cpp_extension.load()\\n' "
         "+ 'm._parallel_for_blocks_probe(16, 1, 1)\\n' "
         "+ 'print(json.dumps(dict(m._parallel_runtime_info())))\\n')\n"
@@ -140,7 +140,7 @@ def test_runtime_shutdown_is_idempotent_and_pool_can_be_recreated():
 def test_repeated_interpreter_process_teardown_after_parallel_work():
     source = (
         "import json\n"
-        "from pyscarcopula.numerical import _cpp_extension\n"
+        "from pyscarcopula._native import _extension as _cpp_extension\n"
         "m = _cpp_extension.load()\n"
         "m._parallel_for_blocks_probe(32, 1, 4)\n"
         "print(json.dumps(dict(m._parallel_runtime_info())))\n"
@@ -186,7 +186,7 @@ def test_import_time_environment_cannot_enable_parallelism():
         "os.environ['PYSCARCOPULA_NUM_THREADS'] = '8'\n"
         "from pyscarcopula import NumericalConfig\n"
         "from pyscarcopula._types import DEFAULT_CONFIG\n"
-        "from pyscarcopula.numerical import _cpp_extension\n"
+        "from pyscarcopula._native import _extension as _cpp_extension\n"
         "m = _cpp_extension.load()\n"
         "print(json.dumps({\n"
         "    'config': NumericalConfig().n_threads,\n"
@@ -466,7 +466,7 @@ def test_forked_child_n_threads_one_ignores_inherited_pool():
     # inherited std::thread handles cannot affect the pytest process.
     payload = _run_clean_interpreter(
         "import json, os\n"
-        "from pyscarcopula.numerical import _cpp_extension\n"
+        "from pyscarcopula._native import _extension as _cpp_extension\n"
         "m = _cpp_extension.load()\n"
         "m._parallel_for_blocks_probe(32, 1, 4)\n"
         "read_fd, write_fd = os.pipe()\n"
@@ -492,7 +492,7 @@ def test_forked_child_n_threads_one_ignores_inherited_pool():
 def test_forked_child_recreates_pool_for_parallel_work():
     payload = _run_clean_interpreter(
         "import json, os\n"
-        "from pyscarcopula.numerical import _cpp_extension\n"
+        "from pyscarcopula._native import _extension as _cpp_extension\n"
         "m = _cpp_extension.load()\n"
         "m._parallel_for_blocks_probe(32, 1, 4)\n"
         "parent_pid = os.getpid()\n"
