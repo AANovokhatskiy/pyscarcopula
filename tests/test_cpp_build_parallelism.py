@@ -13,6 +13,9 @@ ROOT = Path(__file__).resolve().parents[1]
 BUILD_SUPPORT_PATH = (
     ROOT / "pyscarcopula" / "_cpp" / "build_support" / "build_parallel.py"
 )
+TOOLCHAIN_PATH = (
+    ROOT / "pyscarcopula" / "_cpp" / "build_support" / "toolchain.py"
+)
 BUILD_TOOL_PATH = ROOT / "tools" / "build_cpp_tests.py"
 
 
@@ -27,6 +30,8 @@ def _load_module(name: str, path: Path):
 
 BUILD_PARALLEL = _load_module(
     "_pyscarcopula_test_build_parallel", BUILD_SUPPORT_PATH)
+TOOLCHAIN = _load_module(
+    "_pyscarcopula_test_toolchain", TOOLCHAIN_PATH)
 BUILD_CPP_TESTS = _load_module(
     "_pyscarcopula_test_build_cpp_tests", BUILD_TOOL_PATH)
 
@@ -151,6 +156,36 @@ def test_parallel_context_adapts_and_initializes_msvc_compile_override():
     assert compiler.compile.__func__ is _MsvcCompilerProbe.compile
 
 
+def test_msvc_environment_is_normalized_initialized_and_exported(monkeypatch):
+    class Compiler:
+        compiler_type = "msvc"
+        initialized = False
+
+        def initialize(self):
+            assert TOOLCHAIN.os.environ["PATH"] == "inherited-path"
+            self._paths = TOOLCHAIN.os.pathsep.join([
+                "msvc-bin", "windows-sdk-bin", "inherited-path",
+            ])
+            self.initialized = True
+
+    compiler = Compiler()
+    monkeypatch.setenv("PATH", "inherited-path")
+
+    TOOLCHAIN.prepare_compiler_environment(compiler)
+
+    assert compiler.initialized is True
+    assert TOOLCHAIN.os.environ["PATH"] == compiler._paths
+
+
+def test_non_msvc_environment_is_left_untouched(monkeypatch):
+    class Compiler:
+        compiler_type = "mingw32"
+
+    monkeypatch.setenv("PATH", "inherited-path")
+    TOOLCHAIN.prepare_compiler_environment(Compiler())
+    assert TOOLCHAIN.os.environ["PATH"] == "inherited-path"
+
+
 def test_build_cpp_tests_cli_forwards_explicit_jobs(monkeypatch, tmp_path):
     captured = {}
 
@@ -251,6 +286,7 @@ def test_extension_and_cpp_boundary_use_shared_build_support():
         assert '_load_build_support("build_parallel")' in source
         assert ".resolve_build_jobs(" in source
         assert ".parallel_compilation(" in source
+        assert ".prepare_compiler_environment(" in source
     assert "self.parallel" in setup_source
     assert '"-j", "--build-jobs"' in tool_source
 

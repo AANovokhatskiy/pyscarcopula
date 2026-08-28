@@ -104,6 +104,7 @@ def build_cpp_tests(
 
     compiler = new_compiler(compiler=compiler_name, force=force)
     customize_compiler(compiler)
+    toolchain.prepare_compiler_environment(compiler)
     compiler_type = compiler.compiler_type
     compile_args = toolchain.standalone_compile_args(compiler_type)
     link_args = toolchain.standalone_link_args(compiler_type)

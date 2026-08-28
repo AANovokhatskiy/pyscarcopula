@@ -56,6 +56,7 @@ class build_ext(_build_ext):
         super().build_extension(ext)
 
     def build_extensions(self):
+        _toolchain.prepare_compiler_environment(self.compiler)
         build_jobs = _build_parallel.resolve_build_jobs(self.parallel)
         self.announce(
             f"C++ source compilation jobs: {build_jobs}", level=2)

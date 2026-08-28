@@ -21,6 +21,35 @@ def requested_compiler() -> str | None:
     return value or None
 
 
+def prepare_compiler_environment(compiler: Any) -> None:
+    """Initialize MSVC and export its discovered toolchain ``PATH``.
+
+    Windows can pass a process both ``Path`` and ``PATH`` entries.  Although
+    environment names are case-insensitive there, ``cmd.exe`` preserves both,
+    and the vcvars capture used by setuptools can select the stale entry.  A
+    delete-and-restore collapses that malformed environment before MSVC is
+    initialized.  Setuptools then keeps the vcvars path on the compiler rather
+    than exporting it, so copy it back for tools spawned by ``link.exe`` (most
+    notably ``rc.exe`` for embedded manifests).
+    """
+
+    if getattr(compiler, "compiler_type", None) != "msvc":
+        return
+
+    inherited_path = os.environ.get("PATH")
+    if inherited_path is not None:
+        del os.environ["PATH"]
+        os.environ["PATH"] = inherited_path
+
+    initialize = getattr(compiler, "initialize", None)
+    if callable(initialize) and not getattr(compiler, "initialized", True):
+        initialize()
+
+    toolchain_path = getattr(compiler, "_paths", "")
+    if toolchain_path:
+        os.environ["PATH"] = toolchain_path
+
+
 def _sanitizer_mode() -> tuple[bool, bool]:
     sanitize = env_flag("PYSCA_CPP_SANITIZE")
     thread_sanitize = env_flag("PYSCA_CPP_THREAD_SANITIZE")
