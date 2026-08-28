@@ -13,7 +13,9 @@ from typing import Iterable
 
 
 _SCAR_INCLUDE = re.compile(
-    r'^\s*#\s*include\s+"scar/([^"]+)"', re.MULTILINE)
+    r'^\s*#\s*include\s*[<"]scar/([^>"]+)[>"]', re.MULTILINE)
+_LOCAL_INCLUDE = re.compile(
+    r'^\s*#\s*include\s*(?:"([^"]+)"|<([^>]+)>)', re.MULTILINE)
 _MODULE_LINE = re.compile(
     r"pyscarcopula::bindings::bind_[A-Za-z0-9_]+\(module\);")
 _FORBIDDEN_COMPUTE_DEPENDENCIES = (
@@ -54,6 +56,96 @@ _RAW_EXTENSION_IMPORT_ALLOWLIST = frozenset({
 _REMOVED_RAW_EXTENSION_IMPORT_ALLOWLIST = frozenset({
     "tests/test_native_facade.py",
 })
+
+
+# Logical build targets for the Python-free source tree.  These are not
+# separate library artifacts: they describe the dependency direction inside
+# the single canonical SCAR_COMPUTE_SOURCES boundary.  Keep the graph acyclic
+# and list every direct lower-layer dependency explicitly.
+_TARGET_DEPENDENCIES: dict[str, frozenset[str]] = {
+    "foundation": frozenset(),
+    "copula_models": frozenset({"foundation"}),
+    "static": frozenset({"foundation", "copula_models"}),
+    "gas": frozenset({"foundation", "copula_models"}),
+    "scar_ou": frozenset({"foundation", "copula_models"}),
+    "scar_jacobi": frozenset({"foundation", "copula_models"}),
+    "vine": frozenset({"foundation", "copula_models"}),
+    "gas_rvine_composition": frozenset({
+        "foundation", "copula_models", "gas", "vine",
+    }),
+    "vine_dynamic_composition": frozenset({
+        "foundation", "copula_models", "gas", "scar_ou",
+        "scar_jacobi", "vine",
+    }),
+    "python_bindings": frozenset({
+        "foundation", "copula_models", "static", "gas", "scar_ou",
+        "scar_jacobi", "vine", "gas_rvine_composition",
+        "vine_dynamic_composition",
+    }),
+}
+
+_FOUNDATION_HEADERS = frozenset({
+    "numerical_constants.hpp",
+    "observation.hpp",
+    "status.hpp",
+    "detail/linalg.hpp",
+    "detail/parallel.hpp",
+    "detail/safety.hpp",
+})
+
+
+def _target_for_header(relative: str) -> str | None:
+    if relative.startswith(("core/", "math/")):
+        return "foundation"
+    if relative in _FOUNDATION_HEADERS:
+        return "foundation"
+    if relative == "dynamic_rvine.hpp":
+        return "vine_dynamic_composition"
+    if relative == "gas_rvine.hpp" or relative.startswith("gas_rvine/"):
+        return "gas_rvine_composition"
+    if relative == "gas.hpp" or relative.startswith("gas/"):
+        return "gas"
+    if (
+            relative == "ou.hpp"
+            or relative.startswith(("scar_ou/", "detail/scar_ou/"))):
+        return "scar_ou"
+    if relative == "jacobi.hpp" or relative.startswith("scar_jacobi/"):
+        return "scar_jacobi"
+    if (
+            relative in {"rvine.hpp", "rvine_plan.hpp"}
+            or relative.startswith("vine/")):
+        return "vine"
+    if (
+            relative in {"copula.hpp", "factor.hpp"}
+            or relative.startswith(("copula/", "detail/copula/", "static/"))):
+        # static/result.hpp is a DTO exposed by the generic copula contract;
+        # the compiled static evaluator remains its own application target.
+        return "copula_models"
+    return None
+
+
+def _target_for_source(relative: str) -> str | None:
+    if relative.startswith("bindings/"):
+        return "python_bindings"
+    if relative.startswith(("math/", "parallel/")):
+        return "foundation"
+    if relative == "gas/rvine_sampler.cpp":
+        return "gas_rvine_composition"
+    if relative.startswith("gas/"):
+        return "gas"
+    if relative.startswith("scar_ou/"):
+        return "scar_ou"
+    if relative.startswith("scar_jacobi/"):
+        return "scar_jacobi"
+    if relative.startswith("vine_dynamic/"):
+        return "vine_dynamic_composition"
+    if relative.startswith("vine/"):
+        return "vine"
+    if relative.startswith("likelihood/"):
+        return "static"
+    if relative.startswith("copula/"):
+        return "copula_models"
+    return None
 
 
 @dataclass(frozen=True)
@@ -1843,6 +1935,122 @@ def check_public_header_cycles(root: Path) -> list[Violation]:
     )]
 
 
+def _cpp_target(root: Path, path: Path) -> str | None:
+    cpp_root = root / "pyscarcopula" / "_cpp"
+    include_root = cpp_root / "include" / "scar"
+    source_root = cpp_root / "src"
+    try:
+        relative = path.relative_to(include_root).as_posix()
+    except ValueError:
+        try:
+            relative = path.relative_to(source_root).as_posix()
+        except ValueError:
+            return None
+        return _target_for_source(relative)
+    return _target_for_header(relative)
+
+
+def _local_include_edges(
+    root: Path,
+) -> tuple[list[tuple[Path, str, Path, str, int]], list[tuple[Path, str]]]:
+    """Return resolved target edges and unclassified C++ files."""
+
+    cpp_root = root / "pyscarcopula" / "_cpp"
+    include_root = cpp_root / "include"
+    files = sorted({
+        *_source_files(cpp_root / "include"),
+        *_source_files(cpp_root / "src"),
+    })
+    targets = {path: _cpp_target(root, path) for path in files}
+    unclassified = [
+        (path, "public header" if include_root in path.parents else "source")
+        for path, target in targets.items()
+        if target is None
+    ]
+    edges = []
+    for path, owner in targets.items():
+        if owner is None:
+            continue
+        text = path.read_text(encoding="utf-8")
+        for match in _LOCAL_INCLUDE.finditer(text):
+            include = match.group(1) or match.group(2)
+            target_path = (
+                include_root / include
+                if include.startswith("scar/")
+                else path.parent / include
+            ).resolve()
+            dependency = targets.get(target_path)
+            if dependency is None:
+                continue
+            edges.append((
+                path,
+                owner,
+                target_path,
+                dependency,
+                text.count("\n", 0, match.start()) + 1,
+            ))
+    return edges, unclassified
+
+
+def check_target_dependency_graph(root: Path) -> list[Violation]:
+    """Enforce the complete allowed graph for logical C++ build targets."""
+
+    rule = "target-dependency-graph"
+    violations = []
+    declared_cycle = _find_cycle({
+        target: set(dependencies)
+        for target, dependencies in _TARGET_DEPENDENCIES.items()
+    })
+    if declared_cycle:
+        path = root / "tools" / "check_cpp_architecture.py"
+        violations.append(Violation(
+            rule,
+            path,
+            "declared target dependency graph is cyclic: "
+            + " -> ".join(declared_cycle),
+        ))
+        return violations
+
+    edges, unclassified = _local_include_edges(root)
+    for path, kind in unclassified:
+        violations.append(Violation(
+            rule,
+            path,
+            f"{kind} is not assigned to a logical C++ target",
+        ))
+    for path, owner, target_path, dependency, line in edges:
+        if dependency == owner:
+            continue
+        allowed = _TARGET_DEPENDENCIES[owner]
+        if dependency not in allowed:
+            violations.append(Violation(
+                rule,
+                path,
+                f"target {owner!r} may not depend on {dependency!r}; "
+                f"include resolves to {target_path.name}",
+                line,
+            ))
+    return violations
+
+
+def check_domain_module_cycles(root: Path) -> list[Violation]:
+    """Reject cycles formed by real includes between logical domains."""
+
+    edges, _ = _local_include_edges(root)
+    graph = {target: set() for target in _TARGET_DEPENDENCIES}
+    for _, owner, _, dependency, _ in edges:
+        if owner != dependency:
+            graph[owner].add(dependency)
+    cycle = _find_cycle(graph)
+    if not cycle:
+        return []
+    return [Violation(
+        "domain-module-cycle",
+        root / "pyscarcopula" / "_cpp",
+        f"cyclic domain-module dependency: {' -> '.join(cycle)}",
+    )]
+
+
 def check_jacobi_sampling_ownership(root: Path) -> list[Violation]:
     """Keep Stage 8.3.5 trajectory/state evolution out of Python."""
     rule = "jacobi-native-sampling-ownership"
@@ -2417,6 +2625,8 @@ def check_repository(root: Path) -> list[Violation]:
         check_public_cpp_api,
         check_thin_bindings,
         check_public_header_cycles,
+        check_target_dependency_graph,
+        check_domain_module_cycles,
         check_vine_native_boundary,
         check_stage85_mandatory_dispatch,
         check_jacobi_sampling_ownership,

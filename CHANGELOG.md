@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Complete the Stage 9 native architecture gates: validate the full logical
+  C++ target graph and domain cycles, add focused Python-free model suites,
+  compile every public header independently, run standalone ASan/UBSan and
+  TSan executables, and automate accuracy/config, pinned-runner performance,
+  cross-platform wheel numerical-parity, and import validation over the
+  canonical compute manifest. Gate 3 continues to enforce the frozen
+  conditional-vine row-chunk constant without a post-hoc exception.
 - Move the binary extension to `pyscarcopula._native._scar_cpp`. The former
   raw `pyscarcopula._scar_cpp` import path is removed without a compatibility
   alias; public and production code uses the `pyscarcopula._native` facade.

@@ -99,7 +99,13 @@ jobs:
           PYSCA_CPP_STRICT: "1"
         run: |
           python tools/check_cpp_architecture.py
-          python tools/build_cpp_tests.py --force
+          python tools/build_cpp_tests.py --force -j 8
+
+      - name: Run accuracy and config-preservation gates
+        run: >-
+          python -m pytest -n 8 -q
+          tests/test_cpp_architecture.py
+          tests/test_cpp_refactor_contracts.py
 
       - name: Build strict wheel
         env:
@@ -176,6 +182,15 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[test]"
+      - name: Run Python-free ASan and UBSan executable
+        env:
+          CC: clang
+          CXX: clang++
+          PYSCA_CPP_STRICT: "1"
+        run: >-
+          python tools/build_cpp_tests.py --force -j 8
+          --sanitize address-undefined
+          --build-dir build/cpp-tests-asan-ubsan
       - name: Run native parallel sanitizer suite
         env:
           ASAN_OPTIONS: >-
@@ -231,6 +246,18 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[test]"
+      - name: Run Python-free ThreadSanitizer executable
+        env:
+          CC: gcc
+          CXX: g++
+          PYSCA_CPP_STRICT: "1"
+          TSAN_OPTIONS: >-
+            halt_on_error=1:abort_on_error=1:
+            second_deadlock_stack=1:history_size=7
+        run: >-
+          python tools/build_cpp_tests.py --force -j 8
+          --sanitize thread
+          --build-dir build/cpp-tests-tsan
       - name: Run parallel race suite
         env:
           TSAN_OPTIONS: >-

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+import copy
 import ast
 from dataclasses import asdict, fields, is_dataclass
 import hashlib
@@ -594,13 +595,97 @@ def _gate3_contract_view(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+_GATE3_REMOVED_NUMERICAL_CONFIG_FIELDS = frozenset({
+    "default_n_tr",
+    "default_M_iterations",
+})
+
+_GATE3_NAMED_CONSTANT_RELOCATIONS = {
+    "pyscarcopula.numerical.multivariate_native.":
+        "pyscarcopula._native.multivariate.",
+    "pyscarcopula.numerical._cpp_rvine.":
+        "pyscarcopula._native.vine.",
+}
+
+
+def _normalized_gate3_contract_view(payload: dict[str, Any]) -> dict[str, Any]:
+    """Apply only approved Stage 8 breaking moves to the frozen view."""
+
+    view = copy.deepcopy(_gate3_contract_view(payload))
+    numerical_defaults = view["public_config_defaults"].get(
+        "NumericalConfig", {})
+    for field in _GATE3_REMOVED_NUMERICAL_CONFIG_FIELDS:
+        numerical_defaults.pop(field, None)
+    view["numerical_config_mappings"] = [
+        entry for entry in view["numerical_config_mappings"]
+        if entry["old_field"] not in _GATE3_REMOVED_NUMERICAL_CONFIG_FIELDS
+    ]
+
+    for config in view["native_config_defaults"].values():
+        for value in config.values():
+            if isinstance(value, dict) and isinstance(value.get("type"), str):
+                value["type"] = value["type"].replace(
+                    "pyscarcopula._scar_cpp.",
+                    "pyscarcopula._native._scar_cpp.",
+                )
+
+    for entry in view["named_constant_mappings"]:
+        for old_prefix, new_prefix in _GATE3_NAMED_CONSTANT_RELOCATIONS.items():
+            if entry["old"].startswith(old_prefix):
+                entry["old"] = new_prefix + entry["old"][len(old_prefix):]
+                break
+
+    for model in view["model_operation_matrix"]:
+        model["dynamics"] = [
+            dynamics for dynamics in model["dynamics"]
+            if dynamics != "SCAR-MC"
+        ]
+    return view
+
+
 _GATE3_PYTHON_CONSTANT_RELOCATIONS = {
+    "pyscarcopula.numerical._cpp_extension._CPP_STATUS_NAMES":
+        "pyscarcopula._native.errors._STATUS_NAMES",
+    "pyscarcopula.numerical._cpp_extension._MODULE":
+        "pyscarcopula._native._extension._MODULE",
+    "pyscarcopula.numerical._cpp_extension._MODULE_ERROR":
+        "pyscarcopula._native._extension._MODULE_ERROR",
+    "pyscarcopula.numerical.jacobi_sampling."
+    "DEFAULT_LAMPERTI_CHUNK_OBSERVATIONS":
+        "pyscarcopula._native.jacobi.DEFAULT_LAMPERTI_CHUNK_OBSERVATIONS",
+    "pyscarcopula.numerical.multivariate_native."
+    "_DENSE_STUDENT_NATIVE_MIN_DF":
+        "pyscarcopula._native.multivariate._DENSE_STUDENT_NATIVE_MIN_DF",
+    "pyscarcopula.numerical.multivariate_native."
+    "_DENSE_STUDENT_NATIVE_MAX_CONDITION":
+        "pyscarcopula._native.multivariate."
+        "_DENSE_STUDENT_NATIVE_MAX_CONDITION",
+    "pyscarcopula.numerical.multivariate_native."
+    "_DENSE_STUDENT_CORRELATION_TOLERANCE":
+        "pyscarcopula._native.multivariate."
+        "_DENSE_STUDENT_CORRELATION_TOLERANCE",
     "pyscarcopula._native._extension._CPP_STATUS_NAMES":
         "pyscarcopula._native.errors._STATUS_NAMES",
     "pyscarcopula._native._extension._MODULE":
         "pyscarcopula._native._extension._MODULE",
     "pyscarcopula._native._extension._MODULE_ERROR":
         "pyscarcopula._native._extension._MODULE_ERROR",
+}
+
+_GATE3_APPROVED_REMOVED_PYTHON_CONSTANTS = frozenset({
+    # Stage 8.3 removed the discontinued SCAR Monte Carlo estimators.
+    "pyscarcopula._types.NumericalConfig.default_n_tr",
+    "pyscarcopula._types.NumericalConfig.default_M_iterations",
+    # Stage 8.5/8.6 removed backend selection and custom-copula opt-in.
+    "pyscarcopula.numerical._cpp_rvine._NATIVE_EQUIVALENT_ATTR",
+    "pyscarcopula.numerical._rvine_backend._RVINE_BACKEND_ENV",
+})
+
+_GATE3_PYTHON_TO_CPP_ENUM_RELOCATIONS = {
+    "pyscarcopula.numerical.jacobi_sampling._BOUNDARY_REFLECT": (
+        "Reflect", 0),
+    "pyscarcopula.numerical.jacobi_sampling._BOUNDARY_CLIP": (
+        "Clip", 1),
 }
 
 _GATE3_APPROVED_ARCHITECTURE_MANIFESTS = {
@@ -645,6 +730,20 @@ def _gate3_python_constant_drift(
     for old, expected_value in frozen.items():
         if old in _GATE3_APPROVED_ARCHITECTURE_MANIFESTS:
             continue
+        if old in _GATE3_APPROVED_REMOVED_PYTHON_CONSTANTS:
+            continue
+        enum_relocation = _GATE3_PYTHON_TO_CPP_ENUM_RELOCATIONS.get(old)
+        if enum_relocation is not None:
+            header = (
+                ROOT / "pyscarcopula" / "_cpp" / "include" / "scar"
+                / "scar_jacobi" / "types.hpp"
+            ).read_text(encoding="utf-8")
+            member, value = enum_relocation
+            if re.search(
+                    rf"\b{re.escape(member)}\s*=\s*{value}\b", header) is None:
+                drift.append(
+                    f"missing C++ enum relocation {member}={value} for {old}")
+            continue
         current_name = _GATE3_PYTHON_CONSTANT_RELOCATIONS.get(old, old)
         if current_name not in current:
             relocation = _GATE3_PYTHON_TO_CPP_CONSTANT_RELOCATIONS.get(old)
@@ -675,7 +774,18 @@ def _gate3_cpp_constant_drift(
             for entry in constants
         )
 
-    missing = signatures(expected) - signatures(actual)
+    expected_signatures = signatures(expected)
+    actual_signatures = signatures(actual)
+    approved_removals = {
+        # The entire SCAR Monte Carlo source set was removed in Stage 8.3.
+        ("min_cells_student", "4096"),
+        ("min_cells_other", "262144"),
+        ("min_cells_per_block", "1024"),
+    }
+    for signature in approved_removals:
+        expected_signatures.pop(signature, None)
+
+    missing = expected_signatures - actual_signatures
     return [
         f"missing C++ constant {symbol}={value!r} (count={count})"
         for (symbol, value), count in sorted(missing.items())
@@ -685,7 +795,9 @@ def _gate3_cpp_constant_drift(
 def _gate3_drift(
         expected: dict[str, Any], actual: dict[str, Any]) -> list[str]:
     drift = []
-    if _gate3_contract_view(expected) != _gate3_contract_view(actual):
+    if (
+            _normalized_gate3_contract_view(expected)
+            != _normalized_gate3_contract_view(actual)):
         drift.append("config, mapping, or model-operation drift")
     drift.extend(_gate3_python_constant_drift(expected, actual))
     drift.extend(_gate3_cpp_constant_drift(expected, actual))

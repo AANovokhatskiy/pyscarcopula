@@ -171,6 +171,71 @@ def test_build_cpp_tests_cli_forwards_explicit_jobs(monkeypatch, tmp_path):
     assert captured["run"] is False
 
 
+@pytest.mark.parametrize(
+    ("mode", "enabled", "disabled"),
+    [
+        (
+            "address-undefined",
+            "PYSCA_CPP_SANITIZE",
+            "PYSCA_CPP_THREAD_SANITIZE",
+        ),
+        (
+            "thread",
+            "PYSCA_CPP_THREAD_SANITIZE",
+            "PYSCA_CPP_SANITIZE",
+        ),
+    ],
+)
+def test_cpp_test_sanitizer_is_standalone_and_scoped(
+    monkeypatch, tmp_path, mode, enabled, disabled,
+):
+    observed = {}
+    monkeypatch.setenv(enabled, "previous")
+    monkeypatch.setenv(disabled, "previous-other")
+
+    def fake_build_cpp_tests(**_kwargs):
+        observed[enabled] = BUILD_CPP_TESTS.os.environ.get(enabled)
+        observed[disabled] = BUILD_CPP_TESTS.os.environ.get(disabled)
+        return tmp_path / "scar_compute_smoke"
+
+    monkeypatch.setattr(
+        BUILD_CPP_TESTS, "build_cpp_tests", fake_build_cpp_tests)
+    assert BUILD_CPP_TESTS.main([
+        "--build-dir", str(tmp_path),
+        "--sanitize", mode,
+        "--skip-run",
+    ]) == 0
+    assert observed == {enabled: "1", disabled: None}
+    assert BUILD_CPP_TESTS.os.environ[enabled] == "previous"
+    assert BUILD_CPP_TESTS.os.environ[disabled] == "previous-other"
+
+
+def test_python_free_executable_has_required_model_suites():
+    names = {path.name for path in BUILD_CPP_TESTS.REQUIRED_MODEL_TEST_SOURCES}
+    assert names == {
+        "pair_models.cpp",
+        "multivariate_models.cpp",
+        "application_models.cpp",
+        "jacobi_domain.cpp",
+        "jacobi_transition.cpp",
+        "jacobi_evaluator.cpp",
+        "jacobi_sampling.cpp",
+    }
+    assert all(path.is_file() for path in BUILD_CPP_TESTS.REQUIRED_MODEL_TEST_SOURCES)
+    entrypoint = (ROOT / "tests/cpp/compute_smoke.cpp").read_text(
+        encoding="utf-8")
+    for function in (
+        "run_pair_model_tests",
+        "run_multivariate_model_tests",
+        "run_application_model_tests",
+        "run_jacobi_domain_tests",
+        "run_jacobi_transition_tests",
+        "run_jacobi_evaluator_tests",
+        "run_jacobi_sampling_tests",
+    ):
+        assert entrypoint.count(f"{function}()") == 2
+
+
 def test_header_unit_objects_avoid_absolute_output_path_expansion():
     source = BUILD_TOOL_PATH.read_text(encoding="utf-8")
     header_block = source[source.index("if check_headers:"):]

@@ -229,6 +229,21 @@ Python, NumPy, or pybind11 include paths or libraries. Compiler provisioning is
 the responsibility of the local environment or CI runner; `setup.py` does not
 modify `PATH`.
 
+The executable includes focused model suites for every pair family and
+rotation, dense/factor/equicorrelation Gaussian, Student distribution and
+sampling, static likelihood, GAS, SCAR-OU, Jacobi, and the native vine runtime.
+`build_cpp_tests.py --sanitize address-undefined` and `--sanitize thread`
+instrument this standalone executable directly; these commands do not build
+or load the Python extension.
+
+The checker also constructs the real include graph for the logical targets
+`foundation`, `copula_models`, `static`, `gas`, `scar_ou`, `scar_jacobi`,
+`vine`, the two composition layers, and `python_bindings`. Every public header
+and C++ source must belong to one target, every cross-target include must be in
+the declared downward dependency graph, and both public-header and domain
+cycles are rejected. Project includes are resolved identically for quoted and
+angle-bracket syntax, so changing include spelling cannot bypass the gate.
+
 `pyscarcopula/_cpp/build_support/build_parallel.py` owns the shared build-job
 policy for both the extension and this standalone boundary. Compilation is
 strictly sequential by default. `PYSCA_CPP_BUILD_JOBS=N` opts both entry points
@@ -236,6 +251,13 @@ into pybind11's source-level compilation pool; `build_ext --parallel N` and
 `build_cpp_tests.py --build-jobs N` are their respective CLI overrides.
 Values must be positive integers. Linking remains sequential, and this build
 policy is independent of the extension's runtime `n_threads` contract.
+
+CI runs the architecture checker, Python-free build/header/model tests,
+explicit accuracy/config contracts, strict wheel/import/parity tests, the
+compiler matrix, and standalone plus extension sanitizers. Performance timing
+runs automatically in a separate pinned-runner workflow; hosted CI does not
+pretend to provide comparable timing evidence. Manual dispatch remains
+available for controlled reruns against an explicitly selected baseline.
 
 The native foundation has explicit, model-independent owners under
 `include/scar/core`, `include/scar/math`, and the common `include/scar/copula`

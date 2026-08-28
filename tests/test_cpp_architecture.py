@@ -1004,11 +1004,48 @@ def test_gate4_workflow_covers_required_compilers_and_build_boundaries():
 
     assert "msystem: MINGW64" in source
     assert "install: mingw-w64-x86_64-gcc" in source
-    assert "python tools/build_cpp_tests.py --force" in source
+    assert "python tools/build_cpp_tests.py --force -j 8" in source
     assert "python -m pyscarcopula._native.smoke" in source
     assert "Run full non-benchmark suite against wheel" in source
     assert source.index("Verify Python-free C++ build boundary") < source.index(
         "Build strict wheel")
+
+
+def test_stage9_workflows_automate_sanitizers_and_gates_1_to_3():
+    release = (
+        ROOT / ".github/workflows/parallel-release-gates.yml"
+    ).read_text(encoding="utf-8")
+    assert "Run accuracy and config-preservation gates" in release
+    assert "tests/test_cpp_refactor_contracts.py" in release
+    assert "Run Python-free ASan and UBSan executable" in release
+    assert "--sanitize address-undefined" in release
+    assert "Run Python-free ThreadSanitizer executable" in release
+    assert "--sanitize thread" in release
+    assert release.count("tools/build_cpp_tests.py --force -j 8") >= 3
+
+    reference = (
+        ROOT / ".github/workflows/cpp-refactor-reference-gates.yml"
+    ).read_text(encoding="utf-8")
+    reference_triggers = reference[:reference.index("permissions:")]
+    assert "push:" in reference_triggers
+    assert "pull_request:" in reference_triggers
+    assert (
+        "github.event.pull_request.head.repo.full_name == github.repository"
+        in reference
+    )
+    assert "runs-on: [self-hosted, windows, x64, cpp-refactor-reference]" in reference
+    assert "python tools/capture_cpp_refactor_goldens.py --check" in reference
+    assert "python tools/write_cpp_refactor_inventory.py --check" in reference
+    assert "python tools/benchmark_cpp_refactor.py" in reference
+    assert "inputs.baseline || 'benchmark_artifacts/cpp_refactor_baseline.json'" in reference
+    assert "inputs.reference_label || 'local-msvc-reference'" in reference
+
+    wheels = (ROOT / ".github/workflows/wheels.yml").read_text(
+        encoding="utf-8")
+    assert 'CIBW_BUILD: "cp310-* cp311-* cp312-* cp313-* cp314-*"' in wheels
+    assert "python -m pyscarcopula._native.smoke" in wheels
+    assert "python {project}/tools/capture_cpp_refactor_goldens.py" in wheels
+    assert "--check" in wheels
 
 
 def test_stateless_scar_bindings_release_gil_after_array_validation():
@@ -1304,6 +1341,49 @@ def test_public_header_cycle_is_rejected(tmp_path):
         '#include "scar/copula.hpp"\n',
     )
     assert "public-header-cycle" in _rules(root)
+
+
+@pytest.mark.parametrize(
+    "include",
+    [
+        '#include "scar/gas.hpp"\n',
+        "#include <scar/gas.hpp>\n",
+        "#include<scar/gas.hpp>\n",
+    ],
+)
+def test_disallowed_logical_target_dependency_is_rejected(tmp_path, include):
+    root = _minimal_repository(tmp_path)
+    _write(
+        root,
+        "pyscarcopula/_cpp/src/scar_ou/bad.cpp",
+        include,
+    )
+    _set_manifest(root, ("scar_ou/bad.cpp",))
+
+    violations = CHECKER_MODULE.check_target_dependency_graph(root)
+    assert len(violations) == 1
+    assert violations[0].rule == "target-dependency-graph"
+    assert "'scar_ou' may not depend on 'gas'" in violations[0].message
+
+
+def test_domain_module_include_cycle_is_rejected(tmp_path):
+    root = _minimal_repository(tmp_path)
+    _write(
+        root,
+        "pyscarcopula/_cpp/src/gas/cycle.cpp",
+        '#include "scar/ou.hpp"\n',
+    )
+    _write(
+        root,
+        "pyscarcopula/_cpp/src/scar_ou/cycle.cpp",
+        '#include "scar/gas.hpp"\n',
+    )
+    _set_manifest(root, ("gas/cycle.cpp", "scar_ou/cycle.cpp"))
+
+    violations = CHECKER_MODULE.check_domain_module_cycles(root)
+    assert len(violations) == 1
+    assert violations[0].rule == "domain-module-cycle"
+    assert "gas -> scar_ou -> gas" in violations[0].message
 
 
 @pytest.mark.parametrize(

@@ -598,8 +598,8 @@ def test_conditional_native_bounds_workspace_and_preserves_thread_parity(
     diagnostics = dict(requested_many["diagnostics"])
     assert diagnostics["n_threads_requested"] == 4
     assert diagnostics["n_threads_used"] == 1
-    assert diagnostics["row_blocks"] == 9
-    assert diagnostics["max_block_rows"] == 256
+    assert diagnostics["row_blocks"] == 3
+    assert diagnostics["max_block_rows"] == 1024
     assert diagnostics["peak_workspace_bytes"] <= 64 * 1024 * 1024
 
     expected = _vine_sample_suffix_given_with_r_python(vine,

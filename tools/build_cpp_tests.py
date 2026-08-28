@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import importlib.util
+import os
 from pathlib import Path
 import subprocess
 
@@ -18,6 +20,41 @@ CPP_INCLUDE_ROOT = CPP_ROOT / "include"
 DEFAULT_BUILD_DIR = ROOT / "build" / "cpp-tests"
 SMOKE_SOURCE = ROOT / "tests" / "cpp" / "compute_smoke.cpp"
 CPP_TEST_SOURCES = tuple(sorted((ROOT / "tests" / "cpp").glob("*.cpp")))
+REQUIRED_MODEL_TEST_SOURCES = tuple(
+    ROOT / "tests" / "cpp" / name
+    for name in (
+        "pair_models.cpp",
+        "multivariate_models.cpp",
+        "application_models.cpp",
+        "jacobi_domain.cpp",
+        "jacobi_transition.cpp",
+        "jacobi_evaluator.cpp",
+        "jacobi_sampling.cpp",
+    )
+)
+
+
+@contextmanager
+def _sanitizer_environment(mode: str | None):
+    variables = ("PYSCA_CPP_SANITIZE", "PYSCA_CPP_THREAD_SANITIZE")
+    previous = {name: os.environ.get(name) for name in variables}
+    try:
+        if mode is not None:
+            for name in variables:
+                os.environ.pop(name, None)
+            selected = (
+                "PYSCA_CPP_SANITIZE"
+                if mode == "address-undefined"
+                else "PYSCA_CPP_THREAD_SANITIZE"
+            )
+            os.environ[selected] = "1"
+        yield
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
 
 def _load_build_support(name: str):
@@ -82,7 +119,11 @@ def build_cpp_tests(
         CPP_SOURCE_ROOT / relative
         for relative in sources.SCAR_COMPUTE_SOURCES
     ]
-    missing = [path for path in [*compute_sources, *CPP_TEST_SOURCES]
+    missing = [path for path in [
+        *compute_sources,
+        *CPP_TEST_SOURCES,
+        *REQUIRED_MODEL_TEST_SOURCES,
+    ]
                if not path.is_file()]
     if missing:
         raise FileNotFoundError(
@@ -169,6 +210,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--force", action="store_true")
     parser.add_argument(
+        "--sanitize",
+        choices=("address-undefined", "thread"),
+        help=(
+            "instrument the standalone Python-free executable with "
+            "ASan/UBSan or TSan; does not build the Python extension"
+        ),
+    )
+    parser.add_argument(
         "--skip-header-checks", action="store_true",
         help="do not compile each scar/*.hpp header in isolation",
     )
@@ -177,15 +226,16 @@ def main(argv: list[str] | None = None) -> int:
         help="compile and link the executable without running it",
     )
     args = parser.parse_args(argv)
-    build_cpp_tests(
-        build_dir=args.build_dir,
-        compiler_name=args.compiler,
-        build_jobs=args.build_jobs,
-        debug=args.debug,
-        force=args.force,
-        check_headers=not args.skip_header_checks,
-        run=not args.skip_run,
-    )
+    with _sanitizer_environment(args.sanitize):
+        build_cpp_tests(
+            build_dir=args.build_dir,
+            compiler_name=args.compiler,
+            build_jobs=args.build_jobs,
+            debug=args.debug,
+            force=args.force,
+            check_headers=not args.skip_header_checks,
+            run=not args.skip_run,
+        )
     return 0
 
 

@@ -40,7 +40,10 @@ jobs:
             "numpy>=1.22"
             "scipy>=1.9"
           CIBW_TEST_COMMAND: >-
-            python -m pyscarcopula._native.smoke
+            python -m pyscarcopula._native.smoke &&
+            python {project}/tools/capture_cpp_refactor_goldens.py
+            --check
+            --output {project}/tests/fixtures/cpp_refactor_goldens_v1.json
 
       - uses: actions/upload-artifact@v7
         with:

@@ -112,6 +112,17 @@ cross-backend correctness tests. Runtime paths use the portable reduction
 only for kernels whose end-to-end benchmarks pass the recorded performance
 gate.
 
+Repository validation compiles and links the complete computational source
+manifest without Python headers or libraries, compiles every public C++ header
+as a self-contained unit, and runs focused C++ model suites. The architecture
+gate validates the complete logical target dependency graph and rejects
+domain cycles. ASan/UBSan and TSan instrument the standalone computational
+executable separately from the Python extension; cross-platform wheel,
+accuracy, configuration, and pinned-runner performance workflows use the same
+canonical computational source manifest. Every supported wheel executes the
+frozen numerical golden comparison after installation, and the pinned-runner
+performance workflow is triggered automatically as well as on demand.
+
 ## Numerical Safety Boundaries
 
 Numerical boundaries are named by purpose rather than represented by a

@@ -341,6 +341,8 @@ def test_stage0_inventory_is_frozen_and_current_config_mapping_is_complete():
         "037a1d762fae997e274b6afe1c9d2ac8373dcd4a4c68fab0c50cb8ff3aea4360")
 
     current = write_cpp_refactor_inventory.build_payload()
+    assert write_cpp_refactor_inventory._gate3_drift(
+        inventory, current) == []
     mappings = current["configuration_contracts"]["numerical_config_mappings"]
     assert {entry["old_field"] for entry in mappings} == {
         field.name for field in fields(NumericalConfig)
@@ -379,6 +381,22 @@ def test_stage0_inventory_is_frozen_and_current_config_mapping_is_complete():
     ) == [
         "Python constant "
         f"{frozen_name} changed from 0.1 to 0.2"
+    ]
+
+    changed_cpp_constant = copy.deepcopy(current)
+    for entry in changed_cpp_constant["configuration_contracts"][
+            "discovered_cpp_constants"]:
+        if (
+                entry["symbol"] == "conditional_max_block_rows"
+                and entry["value_expression"] == "1024"):
+            entry["value_expression"] = "256"
+            break
+    else:  # pragma: no cover - inventory construction contract
+        raise AssertionError("missing frozen conditional row-block constant")
+    assert write_cpp_refactor_inventory._gate3_drift(
+        current, changed_cpp_constant
+    ) == [
+        "missing C++ constant conditional_max_block_rows='1024' (count=1)"
     ]
 
     changed = copy.deepcopy(current)

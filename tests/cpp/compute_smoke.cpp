@@ -27,6 +27,9 @@ int run_jacobi_domain_tests();
 int run_jacobi_transition_tests();
 int run_jacobi_evaluator_tests();
 int run_jacobi_sampling_tests();
+int run_pair_model_tests();
+int run_multivariate_model_tests();
+int run_application_model_tests();
 
 int main() {
     const int jacobi_status = run_jacobi_domain_tests();
@@ -44,6 +47,18 @@ int main() {
     const int jacobi_sampling_status = run_jacobi_sampling_tests();
     if (jacobi_sampling_status != 0) {
         return 400 + jacobi_sampling_status;
+    }
+    const int pair_model_status = run_pair_model_tests();
+    if (pair_model_status != 0) {
+        return 500 + pair_model_status;
+    }
+    const int multivariate_model_status = run_multivariate_model_tests();
+    if (multivariate_model_status != 0) {
+        return 600 + multivariate_model_status;
+    }
+    const int application_model_status = run_application_model_tests();
+    if (application_model_status != 0) {
+        return 700 + application_model_status;
     }
     const double span_values[] = {0.25, 0.75};
     const scar::DoubleView span{span_values, 2};
