@@ -157,7 +157,10 @@ The extension build has one canonical source manifest at
 `pyscarcopula/_cpp/build_support/sources.py`. `SCAR_COMPUTE_SOURCES` contains
 only Python-free computational translation units;
 `PYTHON_BINDING_SOURCES` contains the pybind adapter. `setup.py` combines both
-lists for `_scar_cpp` without creating or shipping a separate C++ library.
+lists for `pyscarcopula._native._scar_cpp` without creating or shipping a
+separate C++ library. Only `_native/_extension.py` imports the raw binary;
+production callers use the `_native` facade, and the former top-level
+`pyscarcopula._scar_cpp` path has no compatibility alias.
 
 The adapter has no umbrella binding header. `bindings/module.hpp` declares only
 the registration entry points, while `bindings/array.hpp` and `array.cpp` own

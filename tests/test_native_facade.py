@@ -1,3 +1,4 @@
+import importlib.util
 from pathlib import Path
 import subprocess
 import sys
@@ -41,7 +42,7 @@ def test_stage81_native_boundary_policies_have_single_owners():
     raw_import_owners = {
         path.relative_to(ROOT).as_posix()
         for path in production
-        if 'import_module("pyscarcopula._scar_cpp")' in path.read_text(
+        if 'import_module("pyscarcopula._native._scar_cpp")' in path.read_text(
             encoding="utf-8")
     }
     status_policy_owners = {
@@ -78,7 +79,7 @@ import sys
 
 class BlockNativeExtension(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
-        if fullname == 'pyscarcopula._scar_cpp':
+        if fullname == 'pyscarcopula._native._scar_cpp':
             raise ImportError('synthetic missing native extension')
         return None
 
@@ -98,6 +99,12 @@ else:
         text=True,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_removed_top_level_raw_extension_path_has_no_alias():
+    assert importlib.util.find_spec("pyscarcopula._scar_cpp") is None
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("pyscarcopula._scar_cpp")
 
 
 def test_exact_type_registry_builds_opaque_cpp_descriptor():
@@ -121,7 +128,10 @@ def test_registry_covers_every_python_visible_native_model_id():
         JoeCopula,
         StudentCopula,
     )
-    from pyscarcopula._native.registry import registered_model_types
+    from pyscarcopula._native.registry import (
+        registered_model_types,
+        registry_entry_for,
+    )
 
     module = _extension.load()
     models = (
@@ -142,6 +152,28 @@ def test_registry_covers_every_python_visible_native_model_id():
     assert {
         descriptor_for(model).model_id.name for model in models
     } == set(module.NativeModelId.__members__)
+    assert {
+        registry_entry_for(model).native_id for model in models
+    } == set(module.NativeModelId.__members__)
+    assert set(STRATEGY_REQUIREMENTS) == {
+        "MLE", "GAS", "SCAR-TM-OU", "SCAR-TM-JACOBI",
+    }
+    assert set(module.NativeOperation.__members__) == {
+        "ParameterTransformBoundsInitialization",
+        "PointDensityDerivatives",
+        "RowGridDensityGradient",
+        "LikelihoodObjectiveGradient",
+        "StateFilterSmoother",
+        "RosenblattResidual",
+        "RadialGofSummary",
+        "UnconditionalSamplingTransform",
+        "ConditionalSamplingTransform",
+        "ArbitraryConditionalMcmc",
+        "EdgeStructureSelectionScore",
+    }
+    assert set(module.DynamicsKind.__members__) == {
+        "Mle", "Gas", "ScarTmOu", "ScarTmJacobi",
+    }
 
 
 def test_registry_rejects_unregistered_subclasses():

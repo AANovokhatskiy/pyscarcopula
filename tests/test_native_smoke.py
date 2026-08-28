@@ -1,6 +1,7 @@
 import numpy as np
 
-from pyscarcopula import BivariateGaussianCopula, _scar_cpp
+from pyscarcopula import BivariateGaussianCopula
+from pyscarcopula._native import _scar_cpp
 from pyscarcopula.api import fit
 
 

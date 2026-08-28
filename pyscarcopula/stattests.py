@@ -1232,7 +1232,7 @@ def rvine_rosenblatt_transform(
     if not hasattr(module, "rvine_rosenblatt_transform"):
         raise NativeUnsupported(
             "native R-vine Rosenblatt requires "
-            "_scar_cpp.rvine_rosenblatt_transform")
+            "_native._scar_cpp.rvine_rosenblatt_transform")
     return _rvine_rosenblatt_transform_native(
         module, vine, observations, K=K, grid_range=grid_range)
 

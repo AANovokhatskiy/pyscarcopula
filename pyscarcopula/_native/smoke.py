@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 
 import numpy as np
@@ -26,6 +27,15 @@ def run_native_smoke(n_threads: int = 1) -> dict:
 
     n_threads = validate_n_threads(n_threads)
     module = _extension.load()
+    if module.__name__ != "pyscarcopula._native._scar_cpp":
+        raise RuntimeError(
+            "native extension loaded from an unexpected import path: "
+            f"{module.__name__}"
+        )
+    if importlib.util.find_spec("pyscarcopula._scar_cpp") is not None:
+        raise RuntimeError(
+            "removed raw extension path pyscarcopula._scar_cpp is importable"
+        )
     parallel = dict(module._parallel_for_blocks_probe(
         max(32, 4 * n_threads), 1, n_threads))
 

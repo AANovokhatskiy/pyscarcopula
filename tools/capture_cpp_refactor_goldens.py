@@ -28,7 +28,7 @@ REDUCTION_CROSS_PLATFORM_RTOL = 0.0
 
 
 def _platform_key() -> dict[str, str]:
-    import pyscarcopula._scar_cpp as extension
+    import pyscarcopula._native._scar_cpp as extension
 
     return {
         "system": platform.system(),

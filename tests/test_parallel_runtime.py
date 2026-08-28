@@ -19,8 +19,8 @@ from pyscarcopula import (
     StochasticStudentCopula,
     StudentCopula,
 )
-from pyscarcopula._native_smoke import parallel_runtime_child_probe
 from pyscarcopula._native import _extension as _cpp_extension, scar_ou as _cpp_scar_ou
+from pyscarcopula._native.smoke import parallel_runtime_child_probe
 from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
 
 

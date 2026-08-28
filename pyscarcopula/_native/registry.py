@@ -70,6 +70,20 @@ _DYNAMICS_NAMES = {
     "SCAR-TM-JACOBI": "ScarTmJacobi",
 }
 
+_REGISTERED_NATIVE_IDS = (
+    "Independent",
+    "Clayton",
+    "Frank",
+    "Gumbel",
+    "Joe",
+    "BivariateGaussian",
+    "Gaussian",
+    "Student",
+    "EquicorrGaussian",
+    "StochasticStudent",
+    "Vine",
+)
+
 
 def _dimension(model) -> int:
     value = getattr(model, "dimension", None)
@@ -204,6 +218,12 @@ def _registry() -> dict[type, RegistryEntry]:
             "StochasticStudent", _build_stochastic_student),
         VineCopula: RegistryEntry("Vine", _build_vine),
     })
+    registered_ids = tuple(entry.native_id for entry in entries.values())
+    if registered_ids != _REGISTERED_NATIVE_IDS:
+        raise RuntimeError(
+            "Python native model registry is incomplete or out of order: "
+            f"expected {_REGISTERED_NATIVE_IDS!r}, got {registered_ids!r}"
+        )
     return entries
 
 

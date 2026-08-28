@@ -37,6 +37,10 @@ typed model descriptors, capability decisions, status translation, and thread
 validation. Production callers use this facade directly; retired numerical
 adapter names are not dispatch surfaces.
 
+The binary implementation lives at `pyscarcopula._native._scar_cpp`. Only the
+facade loader imports that raw module in production code. The former
+`pyscarcopula._scar_cpp` import path is removed and has no compatibility alias.
+
 | Layer | Main responsibility |
 |-------|---------------------|
 | Copula class | Model identity, parameter domain, sampling |

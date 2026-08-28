@@ -121,7 +121,7 @@ def test_extension_loader_reports_real_import_failure(monkeypatch):
     original_import = _cpp_extension.importlib.import_module
 
     def fail_extension_import(name):
-        if name == "pyscarcopula._scar_cpp":
+        if name == "pyscarcopula._native._scar_cpp":
             raise ImportError("synthetic missing _scar_cpp")
         return original_import(name)
 
@@ -302,7 +302,7 @@ def test_sampling_rng_state_and_output_match_across_batch_sizes(monkeypatch):
 @pytest.mark.rvine_native
 def test_existing_gas_sampling_is_reproducible_on_native_path():
     if not _native_symbol_available("gas_rvine_sample"):
-        pytest.skip("existing _scar_cpp.gas_rvine_sample is unavailable")
+        pytest.skip("native gas_rvine_sample is unavailable")
     vine = configured_mixed_gas_vine()
     expected_rng = np.random.default_rng(202608141)
     actual_rng = np.random.default_rng(202608141)
@@ -619,7 +619,7 @@ def test_oracle_names_are_stable_and_independent():
 def test_native_differential_harness_uses_explicit_python_oracles(
         monkeypatch, native_symbol, golden):
     if not _native_symbol_available(native_symbol):
-        pytest.skip(f"_scar_cpp.{native_symbol} is not implemented yet")
+        pytest.skip(f"native {native_symbol} is not implemented yet")
 
     vine = configured_mixed_family_vine()
     r_all = _fixture_parameters(golden)

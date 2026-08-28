@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Move the binary extension to `pyscarcopula._native._scar_cpp`. The former
+  raw `pyscarcopula._scar_cpp` import path is removed without a compatibility
+  alias; public and production code uses the `pyscarcopula._native` facade.
 - Remove `CopulaProtocol`, `CommonCopulaProtocol`,
   `BivariateCopulaProtocol`, `MultivariateCopulaProtocol`, custom-copula
   callback execution, and `CopulaCapabilities`. Native operations now accept

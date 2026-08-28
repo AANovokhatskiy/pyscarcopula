@@ -71,7 +71,7 @@ def _pybind_defaults(cls) -> dict[str, Any]:
 
 
 def _extension_api() -> dict[str, Any]:
-    import pyscarcopula._scar_cpp as module
+    import pyscarcopula._native._scar_cpp as module
 
     symbols = sorted(name for name in dir(module) if not name.startswith("__"))
     types = {}
@@ -507,7 +507,7 @@ def _git_commit() -> str | None:
 def build_payload() -> dict[str, Any]:
     from pyscarcopula._types import LBFGSBConfig, NumericalConfig, PredictConfig
     from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
-    import pyscarcopula._scar_cpp as native
+    import pyscarcopula._native._scar_cpp as native
 
     python_constants = _python_constant_inventory()
     cpp_constants = _cpp_constant_inventory()

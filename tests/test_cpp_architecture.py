@@ -22,6 +22,8 @@ CHECKER_MODULE = importlib.util.module_from_spec(CHECKER_SPEC)
 sys.modules[CHECKER_MODULE_NAME] = CHECKER_MODULE
 CHECKER_SPEC.loader.exec_module(CHECKER_MODULE)
 check_repository = CHECKER_MODULE.check_repository
+check_raw_extension_imports = CHECKER_MODULE.check_raw_extension_imports
+check_registry_completeness = CHECKER_MODULE.check_registry_completeness
 
 
 def _write(root: Path, relative: str, text: str = "") -> Path:
@@ -77,6 +79,91 @@ def _rules(root: Path) -> set[str]:
 
 def test_current_repository_satisfies_cpp_architecture_contract():
     assert check_repository(ROOT) == []
+
+
+def test_raw_extension_import_is_private_to_facade_loader(tmp_path):
+    root = tmp_path
+    _write(
+        root,
+        "setup.py",
+        'Pybind11Extension("pyscarcopula._native._scar_cpp", [])\n',
+    )
+    _write(
+        root,
+        "pyscarcopula/_native/_extension.py",
+        "import importlib\n"
+        "module = importlib.import_module("
+        "'pyscarcopula._native._scar_cpp')\n",
+    )
+    _write(
+        root,
+        "tools/benchmark_cpp_refactor.py",
+        "import pyscarcopula._native._scar_cpp as extension\n",
+    )
+    assert check_raw_extension_imports(root) == []
+
+    bypass = _write(
+        root,
+        "pyscarcopula/api.py",
+        "from pyscarcopula._native import _scar_cpp\n",
+    )
+    violations = check_raw_extension_imports(root)
+    assert [(item.rule, item.path) for item in violations] == [
+        ("raw-extension-import", bypass),
+    ]
+
+
+def test_removed_top_level_raw_extension_import_is_rejected(tmp_path):
+    root = tmp_path
+    _write(
+        root,
+        "setup.py",
+        'Pybind11Extension("pyscarcopula._native._scar_cpp", [])\n',
+    )
+    loader = _write(
+        root,
+        "pyscarcopula/_native/_extension.py",
+        "import importlib\n"
+        "module = importlib.import_module('pyscarcopula._scar_cpp')\n",
+    )
+    violations = check_raw_extension_imports(root)
+    assert any(
+        item.path == loader and "removed raw extension path" in item.message
+        for item in violations
+    )
+
+
+def test_registry_completeness_gate_detects_python_cpp_drift(tmp_path):
+    relatives = (
+        "pyscarcopula/_cpp/include/scar/copula/model_descriptor.hpp",
+        "pyscarcopula/_cpp/include/scar/copula/capability.hpp",
+        "pyscarcopula/_cpp/src/bindings/capability.cpp",
+        "pyscarcopula/_native/registry.py",
+    )
+    for relative in relatives:
+        _write(
+            tmp_path,
+            relative,
+            (ROOT / relative).read_text(encoding="utf-8"),
+        )
+    assert check_registry_completeness(tmp_path) == []
+
+    registry = tmp_path / "pyscarcopula/_native/registry.py"
+    source = registry.read_text(encoding="utf-8")
+    registry.write_text(
+        source.replace(
+            '    "StochasticStudent",\n    "Vine",\n)',
+            '    "StochasticStudent",\n)',
+            1,
+        ),
+        encoding="utf-8",
+    )
+    violations = check_registry_completeness(tmp_path)
+    assert any(
+        item.rule == "registry-completeness"
+        and "missing=['Vine']" in item.message
+        for item in violations
+    )
 
 
 def test_vine_production_python_backend_dispatch_is_rejected(tmp_path):

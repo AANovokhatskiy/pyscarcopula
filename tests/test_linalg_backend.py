@@ -10,7 +10,7 @@ DIMENSIONS = (20, 80, 150, 300)
 
 
 def _module():
-    import pyscarcopula._scar_cpp as module
+    import pyscarcopula._native._scar_cpp as module
 
     return module
 

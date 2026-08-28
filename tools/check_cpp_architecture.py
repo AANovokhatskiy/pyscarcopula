@@ -41,6 +41,19 @@ _FORBIDDEN_COMPUTE_DEPENDENCIES = (
 )
 _CALLER_SPECIFIC_CONTRACT_TERMS = re.compile(
     r"\b(?:Python|pybind11|NumPy|PyObject)\b", re.IGNORECASE)
+_RAW_EXTENSION = "pyscarcopula._native._scar_cpp"
+_REMOVED_RAW_EXTENSION = "pyscarcopula._scar_cpp"
+_RAW_EXTENSION_IMPORT_ALLOWLIST = frozenset({
+    "pyscarcopula/_native/_extension.py",
+    "tests/test_linalg_backend.py",
+    "tests/test_native_smoke.py",
+    "tools/benchmark_cpp_refactor.py",
+    "tools/capture_cpp_refactor_goldens.py",
+    "tools/write_cpp_refactor_inventory.py",
+})
+_REMOVED_RAW_EXTENSION_IMPORT_ALLOWLIST = frozenset({
+    "tests/test_native_facade.py",
+})
 
 
 @dataclass(frozen=True)
@@ -339,6 +352,229 @@ def check_python_free_compute_boundary(root: Path) -> list[Violation]:
                     path,
                     f"computational C++ must not depend on {dependency}",
                     text.count("\n", 0, match.start()) + 1,
+                ))
+    return violations
+
+
+def _raw_imports(tree: ast.AST) -> Iterable[tuple[str, int]]:
+    """Yield literal imports of either raw extension path from one AST."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name in {_RAW_EXTENSION, _REMOVED_RAW_EXTENSION}:
+                    yield alias.name, node.lineno
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if module in {_RAW_EXTENSION, _REMOVED_RAW_EXTENSION}:
+                yield module, node.lineno
+            elif module == "pyscarcopula":
+                for alias in node.names:
+                    if alias.name == "_scar_cpp":
+                        yield _REMOVED_RAW_EXTENSION, node.lineno
+            elif module == "pyscarcopula._native":
+                for alias in node.names:
+                    if alias.name == "_scar_cpp":
+                        yield _RAW_EXTENSION, node.lineno
+        elif isinstance(node, ast.Call) and node.args:
+            function = node.func
+            is_import = (
+                isinstance(function, ast.Name)
+                and function.id == "__import__"
+            ) or (
+                isinstance(function, ast.Attribute)
+                and function.attr == "import_module"
+            )
+            if (
+                    is_import
+                    and isinstance(node.args[0], ast.Constant)
+                    and node.args[0].value
+                    in {_RAW_EXTENSION, _REMOVED_RAW_EXTENSION}):
+                yield str(node.args[0].value), node.lineno
+
+
+def check_raw_extension_imports(root: Path) -> list[Violation]:
+    """Keep the raw binary private and reject the removed top-level path."""
+    rule = "raw-extension-import"
+    package = root / "pyscarcopula"
+    loader = package / "_native" / "_extension.py"
+    violations = []
+    canonical_loader_imports = 0
+    scan_roots = (package, root / "tests", root / "tools")
+    for scan_root in scan_roots:
+        if scan_root.is_dir():
+            paths = sorted(scan_root.rglob("*.py"))
+        else:
+            paths = ()
+        for path in paths:
+            relative = path.relative_to(root).as_posix()
+            try:
+                tree = ast.parse(
+                    path.read_text(encoding="utf-8"), filename=str(path))
+            except (OSError, SyntaxError) as error:
+                violations.append(Violation(rule, path, str(error)))
+                continue
+            for imported, line in _raw_imports(tree):
+                if imported == _REMOVED_RAW_EXTENSION:
+                    if relative not in _REMOVED_RAW_EXTENSION_IMPORT_ALLOWLIST:
+                        violations.append(Violation(
+                            rule,
+                            path,
+                            "removed raw extension path is allowed only in "
+                            "its explicit removal contract: " + imported,
+                            line,
+                        ))
+                elif relative not in _RAW_EXTENSION_IMPORT_ALLOWLIST:
+                    violations.append(Violation(
+                        rule,
+                        path,
+                        "raw extension import is outside the explicit "
+                        "loader/direct-ABI allowlist",
+                        line,
+                    ))
+                elif path == loader:
+                    canonical_loader_imports += 1
+
+    if canonical_loader_imports != 1:
+        violations.append(Violation(
+            rule,
+            loader,
+            "the facade loader must import "
+            f"{_RAW_EXTENSION!r} exactly once; found "
+            f"{canonical_loader_imports}",
+        ))
+
+    setup_path = root / "setup.py"
+    try:
+        setup_text = setup_path.read_text(encoding="utf-8")
+    except OSError as error:
+        violations.append(Violation(rule, setup_path, str(error)))
+    else:
+        if f'"{_RAW_EXTENSION}"' not in setup_text:
+            violations.append(Violation(
+                rule,
+                setup_path,
+                "the extension target must be " + _RAW_EXTENSION,
+            ))
+        if f'"{_REMOVED_RAW_EXTENSION}"' in setup_text:
+            violations.append(Violation(
+                rule,
+                setup_path,
+                "setup.py still builds the removed top-level raw path",
+            ))
+    return violations
+
+
+def _cpp_enum_members(path: Path, enum_name: str) -> tuple[str, ...]:
+    text = path.read_text(encoding="utf-8")
+    match = re.search(
+        rf"enum\s+class\s+{re.escape(enum_name)}\s*:[^{{]+{{(.*?)}};",
+        text,
+        re.DOTALL,
+    )
+    if match is None:
+        raise ValueError(f"missing C++ enum {enum_name}")
+    members = []
+    for item in match.group(1).split(","):
+        item = re.sub(r"//.*", "", item).strip()
+        if not item:
+            continue
+        member = re.match(r"([A-Za-z][A-Za-z0-9_]*)", item)
+        if member is None:
+            raise ValueError(f"invalid {enum_name} member: {item!r}")
+        members.append(member.group(1))
+    if len(members) != len(set(members)):
+        raise ValueError(f"duplicate C++ enum member in {enum_name}")
+    return tuple(members)
+
+
+def _bound_enum_members(path: Path, enum_name: str) -> tuple[str, ...]:
+    text = path.read_text(encoding="utf-8")
+    start = text.find(f"py::enum_<scar::{enum_name}>")
+    if start < 0:
+        raise ValueError(f"missing pybind enum {enum_name}")
+    end = text.find(";", start)
+    if end < 0:
+        raise ValueError(f"unterminated pybind enum {enum_name}")
+    block = text[start:end]
+    pairs = re.findall(
+        rf'\.value\(\s*"([A-Za-z][A-Za-z0-9_]*)"\s*,\s*'
+        rf'scar::{re.escape(enum_name)}::([A-Za-z][A-Za-z0-9_]*)\s*\)',
+        block,
+        re.DOTALL,
+    )
+    mismatched = [
+        (exported, member)
+        for exported, member in pairs
+        if exported != member
+    ]
+    if mismatched:
+        raise ValueError(
+            f"renamed pybind {enum_name} members are forbidden: {mismatched}")
+    return tuple(exported for exported, _ in pairs)
+
+
+def _python_literal_assignment(path: Path, name: str):
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for node in tree.body:
+        value = None
+        if (
+                isinstance(node, ast.Assign)
+                and any(
+                    isinstance(target, ast.Name) and target.id == name
+                    for target in node.targets)):
+            value = node.value
+        elif (
+                isinstance(node, ast.AnnAssign)
+                and isinstance(node.target, ast.Name)
+                and node.target.id == name):
+            value = node.value
+        if value is not None:
+            return ast.literal_eval(value)
+    raise ValueError(f"missing literal Python registry declaration {name}")
+
+
+def check_registry_completeness(root: Path) -> list[Violation]:
+    """Keep C++, pybind, and exact-type Python registries in lockstep."""
+    rule = "registry-completeness"
+    cpp_include = root / "pyscarcopula" / "_cpp" / "include" / "scar"
+    model_header = cpp_include / "copula" / "model_descriptor.hpp"
+    capability_header = cpp_include / "copula" / "capability.hpp"
+    binding = (
+        root / "pyscarcopula" / "_cpp" / "src" / "bindings"
+        / "capability.cpp"
+    )
+    registry = root / "pyscarcopula" / "_native" / "registry.py"
+    violations = []
+    contracts = (
+        ("NativeModelId", model_header, "_REGISTERED_NATIVE_IDS"),
+        ("NativeOperation", capability_header, "_OPERATION_NAMES"),
+        ("DynamicsKind", capability_header, "_DYNAMICS_NAMES"),
+    )
+    for enum_name, header, python_name in contracts:
+        try:
+            cpp_members = _cpp_enum_members(header, enum_name)
+            bound_members = _bound_enum_members(binding, enum_name)
+            python_value = _python_literal_assignment(registry, python_name)
+            if isinstance(python_value, dict):
+                python_members = tuple(python_value.values())
+            else:
+                python_members = tuple(python_value)
+        except (OSError, SyntaxError, ValueError) as error:
+            violations.append(Violation(rule, registry, str(error)))
+            continue
+
+        expected = set(cpp_members)
+        for owner, actual, path in (
+                ("pybind", bound_members, binding),
+                ("Python", python_members, registry)):
+            actual_set = set(actual)
+            if actual_set != expected or len(actual) != len(expected):
+                violations.append(Violation(
+                    rule,
+                    path,
+                    f"{owner} {enum_name} registry differs from C++: "
+                    f"missing={sorted(expected - actual_set)}, "
+                    f"extra={sorted(actual_set - expected)}",
                 ))
     return violations
 
@@ -2172,6 +2408,8 @@ def check_repository(root: Path) -> list[Violation]:
         check_module_entrypoint,
         check_source_manifest,
         check_python_free_compute_boundary,
+        check_raw_extension_imports,
+        check_registry_completeness,
         check_removed_monolith,
         check_pair_verticalization,
         check_multivariate_verticalization,

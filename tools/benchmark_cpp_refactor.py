@@ -275,7 +275,7 @@ def _metadata(
             packages[package] = metadata.version(package)
         except metadata.PackageNotFoundError:
             packages[package] = None
-    import pyscarcopula._scar_cpp as extension
+    import pyscarcopula._native._scar_cpp as extension
 
     status = _git_value("status", "--short")
     compute_paths = _compute_source_paths()
@@ -634,7 +634,7 @@ def _scar_fixture(case: dict[str, Any], threads: int):
 
 def _prepare_scar_ou(case: dict[str, Any], threads: int) -> PreparedCase:
     from pyscarcopula._native import scar_ou as _cpp_scar_ou
-    import pyscarcopula._scar_cpp as native
+    import pyscarcopula._native._scar_cpp as native
 
     observations, copula, config = _scar_fixture(case, threads)
 
@@ -983,10 +983,39 @@ def _measure(call: Callable[[], Any], repetitions: int) -> tuple[float, str]:
 
 
 def _calibrate(call: Callable[[], Any], minimum_seconds: float) -> int:
-    start = time.perf_counter_ns()
-    call()
-    elapsed = max((time.perf_counter_ns() - start) / 1e9, 1e-9)
-    return max(1, int(math.ceil(minimum_seconds / elapsed)))
+    """Choose a batch size that reliably spans the timing minimum.
+
+    A single-call estimate is especially fragile for sub-millisecond parallel
+    cases: one scheduler stall can make the call appear several times slower
+    and leave every measured batch shorter than ``minimum_seconds``.  Measure
+    complete batches instead and require the selected size to clear the
+    minimum twice consecutively.  The small growth margin avoids repeatedly
+    landing just below the boundary because of ordinary timing noise.
+    """
+    repetitions = 1
+    confirmations = 0
+    # Calls may get faster while calibration warms clocks and caches.  Keep
+    # enough headroom that the subsequent measured batches still span the
+    # declared minimum after that speed-up.
+    target_seconds = minimum_seconds * 1.25
+    for _ in range(64):
+        start = time.perf_counter_ns()
+        for _ in range(repetitions):
+            call()
+        elapsed = max((time.perf_counter_ns() - start) / 1e9, 1e-9)
+        if elapsed >= target_seconds:
+            confirmations += 1
+            if confirmations == 2:
+                return repetitions
+            continue
+
+        confirmations = 0
+        estimated = int(math.ceil(
+            repetitions * target_seconds / elapsed))
+        repetitions = max(repetitions + 1, estimated)
+
+    raise RuntimeError(
+        "benchmark calibration did not converge after 64 batches")
 
 
 def _memory_probe(call: Callable[[], Any]) -> dict[str, int | None]:

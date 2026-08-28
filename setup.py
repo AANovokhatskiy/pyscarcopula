@@ -71,7 +71,7 @@ class build_ext(_build_ext):
 
 ext_modules = [
     Pybind11Extension(
-        "pyscarcopula._scar_cpp",
+        "pyscarcopula._native._scar_cpp",
         [
             str(CPP_SRC / name)
             for name in (*SCAR_COMPUTE_SOURCES, *PYTHON_BINDING_SOURCES)

@@ -40,7 +40,7 @@ jobs:
             "numpy>=1.22"
             "scipy>=1.9"
           CIBW_TEST_COMMAND: >-
-            python -m pyscarcopula._native_smoke
+            python -m pyscarcopula._native.smoke
 
       - uses: actions/upload-artifact@v7
         with:
@@ -68,7 +68,7 @@ jobs:
         run: |
           python -m pip install --force-reinstall dist/*.tar.gz
           cd "$RUNNER_TEMP"
-          python -m pyscarcopula._native_smoke
+          python -m pyscarcopula._native.smoke
 
       - uses: actions/upload-artifact@v7
         with:

@@ -117,6 +117,47 @@ def test_benchmark_manifest_has_protocol_and_unique_complete_cases():
     assert all(case["shape"]["n_obs"] <= 16 for case in latency_cases)
 
 
+def test_benchmark_calibration_measures_complete_confirmed_batches(
+        monkeypatch):
+    elapsed_ns = 0
+    calls = 0
+
+    def clock():
+        return elapsed_ns
+
+    def call():
+        nonlocal elapsed_ns, calls
+        calls += 1
+        elapsed_ns += 1_000_000
+
+    monkeypatch.setattr(
+        benchmark_cpp_refactor.time, "perf_counter_ns", clock)
+    repetitions = benchmark_cpp_refactor._calibrate(call, 0.05)
+
+    assert repetitions >= 63
+    assert calls >= 2 * repetitions
+
+
+def test_benchmark_calibration_rejects_a_single_slow_probe(monkeypatch):
+    elapsed_ns = 0
+    calls = 0
+
+    def clock():
+        return elapsed_ns
+
+    def call():
+        nonlocal elapsed_ns, calls
+        calls += 1
+        elapsed_ns += 100_000_000 if calls == 1 else 1_000_000
+
+    monkeypatch.setattr(
+        benchmark_cpp_refactor.time, "perf_counter_ns", clock)
+    repetitions = benchmark_cpp_refactor._calibrate(call, 0.05)
+
+    assert repetitions >= 63
+    assert calls > 2
+
+
 def test_benchmark_manifest_covers_models_rotations_transforms_and_threads():
     cases = _json(MANIFEST_PATH)["cases"]
     pair_cells = {
