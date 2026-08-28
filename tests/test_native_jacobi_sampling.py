@@ -1,4 +1,4 @@
-"""Stage 8.3.5 fixed-draw native Jacobi sampling contracts."""
+"""Fixed-draw native Jacobi sampling contracts."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Regressions found by the independent parallelization-plan audit."""
+"""Parallelization correctness and resource regressions."""
 
 import numpy as np
 import pytest

@@ -8,7 +8,6 @@ on:
       - "tests/conditional/**"
       - "tests/conftest.py"
       - "tools/benchmark_conditional_sampling.py"
-      - "tools/calibrate_conditional_statistical_gates.py"
       - "tools/write_release_metadata.py"
       - "pyproject.toml"
       - "setup.py"
@@ -20,7 +19,6 @@ on:
       - "tests/conditional/**"
       - "tests/conftest.py"
       - "tools/benchmark_conditional_sampling.py"
-      - "tools/calibrate_conditional_statistical_gates.py"
       - "tools/write_release_metadata.py"
       - "pyproject.toml"
       - "setup.py"
@@ -152,16 +150,6 @@ jobs:
           --strict-markers --run-validation
           -m "(external or high_dimensional) and not benchmark"
           --junitxml=build/conditional-sampling/nightly.xml
-      - name: Calibrate statistical false-failure rate on 20 oracle seeds
-        run: >-
-          python tools/calibrate_conditional_statistical_gates.py
-          --runs 20 --max-failure-rate 0.01
-          --output build/conditional-sampling/calibration.json
-      - name: Write coverage inventory
-        run: >-
-          python tools/conditional_sampling_audit.py
-          --include-conditional-contracts
-          --output build/conditional-sampling/inventory.json
       - name: Write runner metadata
         if: always()
         run: >-

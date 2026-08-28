@@ -40,11 +40,11 @@ from tests.conditional._high_dimensional import (
 
 
 DEFAULT_JSON = (
-    ROOT / "benchmark_artifacts" /
+    ROOT / "build" / "conditional-sampling" /
     "conditional_sampling_benchmark.json"
 )
 DEFAULT_CSV = (
-    ROOT / "benchmark_artifacts" /
+    ROOT / "build" / "conditional-sampling" /
     "conditional_sampling_benchmark.csv"
 )
 
@@ -444,7 +444,6 @@ def run_benchmark(
         ))
     return {
         "schema_version": 1,
-        "stage": 8,
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "git_commit": _git_commit(),
         "environment": {

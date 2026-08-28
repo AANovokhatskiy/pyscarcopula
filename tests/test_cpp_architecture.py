@@ -95,11 +95,6 @@ def test_raw_extension_import_is_private_to_facade_loader(tmp_path):
         "module = importlib.import_module("
         "'pyscarcopula._native._scar_cpp')\n",
     )
-    _write(
-        root,
-        "tools/benchmark_cpp_refactor.py",
-        "import pyscarcopula._native._scar_cpp as extension\n",
-    )
     assert check_raw_extension_imports(root) == []
 
     bypass = _write(
@@ -246,7 +241,7 @@ def test_jacobi_strategy_requires_actual_prepared_evaluator_call(tmp_path):
     assert "jacobi-native-strategy-facade" in _rules(root)
 
 
-def test_stage2_foundation_helpers_have_single_canonical_owners():
+def test_foundation_helpers_have_single_canonical_owners():
     include = ROOT / "pyscarcopula" / "_cpp" / "include" / "scar"
     source = ROOT / "pyscarcopula" / "_cpp" / "src"
     expected_headers = {
@@ -333,7 +328,7 @@ def test_stage2_foundation_helpers_have_single_canonical_owners():
         assert "output_shape.is_ok()" in consumer
 
 
-def test_stage3_pair_copulas_are_vertical_and_prepared_once():
+def test_pair_copulas_are_vertical_and_prepared_once():
     include = ROOT / "pyscarcopula" / "_cpp" / "include" / "scar"
     source = ROOT / "pyscarcopula" / "_cpp" / "src" / "copula"
     manifest = include / "copula" / "pair" / "families.def"
@@ -406,7 +401,7 @@ def test_stage3_pair_copulas_are_vertical_and_prepared_once():
     assert "*PAIR_FAMILY_SOURCES" in sources
 
 
-def test_stage4_multivariate_models_are_vertical_and_typed():
+def test_multivariate_models_are_vertical_and_typed():
     cpp = ROOT / "pyscarcopula" / "_cpp"
     include = cpp / "include" / "scar"
     source = cpp / "src" / "copula"
@@ -513,7 +508,7 @@ def test_stage4_multivariate_models_are_vertical_and_typed():
                 assert "Student" not in text
 
 
-def test_stage5_application_modules_use_prepared_copula_interfaces():
+def test_application_modules_use_prepared_copula_interfaces():
     cpp = ROOT / "pyscarcopula" / "_cpp"
     include = cpp / "include" / "scar"
     source = cpp / "src"
@@ -601,7 +596,7 @@ def test_stage5_application_modules_use_prepared_copula_interfaces():
     assert '#include "scar/copula.hpp"' not in composition_header
 
 
-def test_stage6_public_cpp_api_is_domain_scoped_and_caller_neutral():
+def test_public_cpp_api_is_domain_scoped_and_caller_neutral():
     cpp = ROOT / "pyscarcopula" / "_cpp"
     include = cpp / "include" / "scar"
     source = cpp / "src"
@@ -682,7 +677,7 @@ def test_stage6_public_cpp_api_is_domain_scoped_and_caller_neutral():
         assert caller_specific.search(path.read_text(encoding="utf-8")) is None
 
 
-def test_stage6_checker_rejects_workspace_and_caller_leaks(tmp_path):
+def test_checker_rejects_workspace_and_caller_leaks(tmp_path):
     cpp = "pyscarcopula/_cpp"
     include = f"{cpp}/include/scar"
     source = f"{cpp}/src"
@@ -832,7 +827,7 @@ def test_stage6_checker_rejects_workspace_and_caller_leaks(tmp_path):
     )
 
 
-def test_stage7_bindings_are_thin_and_domain_scoped():
+def test_bindings_are_thin_and_domain_scoped():
     bindings = ROOT / "pyscarcopula/_cpp/src/bindings"
     assert not (bindings / "common.hpp").exists()
     for name in ("module.hpp", "array.hpp", "array.cpp"):
@@ -907,7 +902,7 @@ def test_stage7_bindings_are_thin_and_domain_scoped():
     assert "struct OuGridFilterResult" in ou_result
 
 
-def test_stage7_checker_rejects_umbrella_and_cross_domain_binding_leaks(
+def test_checker_rejects_umbrella_and_cross_domain_binding_leaks(
     tmp_path,
 ):
     root = _minimal_repository(tmp_path)
@@ -939,7 +934,7 @@ def test_stage7_checker_rejects_umbrella_and_cross_domain_binding_leaks(
     assert bindings.is_dir()
 
 
-def test_stage7_checker_rejects_policy_gil_and_model_logic_in_bindings(
+def test_checker_rejects_policy_gil_and_model_logic_in_bindings(
     tmp_path,
 ):
     root = _minimal_repository(tmp_path)
@@ -1011,41 +1006,21 @@ def test_gate4_workflow_covers_required_compilers_and_build_boundaries():
         "Build strict wheel")
 
 
-def test_stage9_workflows_automate_sanitizers_and_gates_1_to_3():
+def test_release_workflows_automate_sanitizers_and_wheel_smoke():
     release = (
         ROOT / ".github/workflows/parallel-release-gates.yml"
     ).read_text(encoding="utf-8")
-    assert "Run accuracy and config-preservation gates" in release
-    assert "tests/test_cpp_refactor_contracts.py" in release
+    assert "Run architecture contracts" in release
     assert "Run Python-free ASan and UBSan executable" in release
     assert "--sanitize address-undefined" in release
     assert "Run Python-free ThreadSanitizer executable" in release
     assert "--sanitize thread" in release
     assert release.count("tools/build_cpp_tests.py --force -j 8") >= 3
 
-    reference = (
-        ROOT / ".github/workflows/cpp-refactor-reference-gates.yml"
-    ).read_text(encoding="utf-8")
-    reference_triggers = reference[:reference.index("permissions:")]
-    assert "push:" in reference_triggers
-    assert "pull_request:" in reference_triggers
-    assert (
-        "github.event.pull_request.head.repo.full_name == github.repository"
-        in reference
-    )
-    assert "runs-on: [self-hosted, windows, x64, cpp-refactor-reference]" in reference
-    assert "python tools/capture_cpp_refactor_goldens.py --check" in reference
-    assert "python tools/write_cpp_refactor_inventory.py --check" in reference
-    assert "python tools/benchmark_cpp_refactor.py" in reference
-    assert "inputs.baseline || 'benchmark_artifacts/cpp_refactor_baseline.json'" in reference
-    assert "inputs.reference_label || 'local-msvc-reference'" in reference
-
     wheels = (ROOT / ".github/workflows/wheels.yml").read_text(
         encoding="utf-8")
     assert 'CIBW_BUILD: "cp310-* cp311-* cp312-* cp313-* cp314-*"' in wheels
     assert "python -m pyscarcopula._native.smoke" in wheels
-    assert "python {project}/tools/capture_cpp_refactor_goldens.py" in wheels
-    assert "--check" in wheels
 
 
 def test_stateless_scar_bindings_release_gil_after_array_validation():
@@ -1287,11 +1262,11 @@ def test_forbidden_dependencies_produce_clear_rule(
         ),
     ],
 )
-def test_stage85_retired_surfaces_produce_clear_rule(
+def test_retired_vine_surfaces_produce_clear_rule(
         tmp_path, relative, content):
     root = _minimal_repository(tmp_path)
     _write(root, relative, content)
-    assert "stage85-mandatory-dispatch" in _rules(root)
+    assert "mandatory-vine-dispatch" in _rules(root)
 
 
 @pytest.mark.parametrize(
@@ -1304,11 +1279,11 @@ def test_stage85_retired_surfaces_produce_clear_rule(
         ("pyscarcopula/__init__.py", "CopulaCapabilities = object\n"),
     ],
 )
-def test_stage86_removed_surfaces_produce_clear_rule(
+def test_removed_compatibility_surfaces_produce_clear_rule(
         tmp_path, relative, content):
     root = _minimal_repository(tmp_path)
     _write(root, relative, content)
-    assert "stage86-breaking-cleanup" in _rules(root)
+    assert "removed-compatibility-cleanup" in _rules(root)
 
 
 def test_source_manifest_detects_unlisted_cpp(tmp_path):

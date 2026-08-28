@@ -1,4 +1,4 @@
-"""Contracts for compatibility names intentionally removed in task 15."""
+"""Permanent contracts for intentionally removed compatibility surfaces."""
 
 import importlib.util
 import inspect
@@ -17,13 +17,13 @@ from pyscarcopula.strategy.scar_tm import SCARTMStrategy
 from pyscarcopula.vine.rvine import RVineCopula
 
 
-REMOVED_STAGE86_MODULES = (
+REMOVED_COMPATIBILITY_MODULES = (
     "pyscarcopula.copula._protocol",
     "pyscarcopula.vine.cvine",
     "pyscarcopula.vine._conditional_cvine",
     "pyscarcopula.numerical.tm_grid",
 )
-REMOVED_STAGE86_NAMES = (
+REMOVED_COMPATIBILITY_NAMES = (
     "CVineCopula",
     "TMGrid",
     "CopulaCapabilities",
@@ -34,8 +34,8 @@ REMOVED_STAGE86_NAMES = (
 )
 
 
-def test_stage86_modules_and_public_names_are_physically_absent():
-    for module_name in REMOVED_STAGE86_MODULES:
+def test_removed_modules_and_public_names_are_physically_absent():
+    for module_name in REMOVED_COMPATIBILITY_MODULES:
         assert importlib.util.find_spec(module_name) is None
 
     for namespace in (
@@ -43,7 +43,7 @@ def test_stage86_modules_and_public_names_are_physically_absent():
             pyscarcopula.copula,
             pyscarcopula.numerical,
             pyscarcopula.vine):
-        for name in REMOVED_STAGE86_NAMES:
+        for name in REMOVED_COMPATIBILITY_NAMES:
             assert not hasattr(namespace, name), (
                 f"{namespace.__name__}.{name} must not be an alias")
 

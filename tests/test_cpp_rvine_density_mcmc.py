@@ -1,4 +1,4 @@
-"""Differential and native-boundary tests for R-vine stage 4."""
+"""Native-boundary tests for R-vine density and MCMC execution."""
 
 from __future__ import annotations
 
@@ -18,11 +18,6 @@ from pyscarcopula import (
 )
 from pyscarcopula._native import _extension as _cpp_extension, vine as _cpp_rvine
 from pyscarcopula._native.errors import NativeUnsupported
-from rvine_candidate_harness import (
-    _log_pdf_rows_with_r_python,
-    _sample_arbitrary_given_mcmc_python,
-)
-
 from rvine_runtime_cases import (
     configured_mixed_family_vine,
     configured_static_dvine,
@@ -98,41 +93,6 @@ def test_density_plan_precompiles_and_validates_coordinate_closures():
         plan, len(context["active_keys"]))
 
 
-@pytest.mark.parametrize(
-    ("family", "rotation", "parameter"),
-    [
-        *[(ClaytonCopula, rotation, 0.8)
-          for rotation in (0, 90, 180, 270)],
-        *[(GumbelCopula, rotation, 1.6)
-          for rotation in (0, 90, 180, 270)],
-        *[(JoeCopula, rotation, 1.7)
-          for rotation in (0, 90, 180, 270)],
-        (FrankCopula, 0, 2.5),
-        (BivariateGaussianCopula, 0, -0.4),
-        (IndependentCopula, 0, 0.0),
-    ],
-)
-def test_native_density_matches_python_family_rotation_matrix_exactly(
-        monkeypatch, family, rotation, parameter):
-    vine = configured_static_dvine(2)
-    copula = family() if family is IndependentCopula else family(
-        rotate=rotation)
-    vine.pair_copulas[(0, 0)] = fitted_pair(copula, parameter)
-    observations = np.asfortranarray(np.array([
-        [0.0, 1.0],
-        [1e-14, 1.0 - 1e-14],
-        [0.27, 0.63],
-        [0.91, 0.08],
-    ], dtype=np.float64))
-    parameters = scalar_parameters(vine)
-
-    expected = _log_pdf_rows_with_r_python(vine, observations, parameters)
-    actual = vine._log_pdf_rows_with_r(observations, parameters)
-
-    np.testing.assert_array_equal(actual, expected)
-    assert actual.flags.c_contiguous
-
-
 def test_native_density_transposed_plan_matches_transposed_rotation_exactly():
     vine = configured_static_dvine(2)
     parameter = 0.8
@@ -158,57 +118,6 @@ def test_native_density_transposed_plan_matches_transposed_rotation_exactly():
     expected = ClaytonCopula(rotate=270).log_pdf(
         observations[:, 0], observations[:, 1], np.array([parameter]))
     np.testing.assert_array_equal(result["log_pdf"], expected)
-
-
-def test_native_density_supports_empty_singleton_and_mixed_parameter_paths(
-        monkeypatch):
-    vine = configured_mixed_family_vine()
-    parameters = scalar_parameters(vine)
-    parameters[(0, 0)] = np.linspace(0.55, 1.05, 9)
-    observations = np.asfortranarray(
-        np.random.default_rng(2026082240).uniform(
-            1e-12, 1.0 - 1e-12, size=(9, vine.d)))
-
-    expected = _log_pdf_rows_with_r_python(vine, observations, parameters)
-    actual = vine._log_pdf_rows_with_r(observations, parameters)
-    np.testing.assert_array_equal(actual, expected)
-
-    scalar = scalar_parameters(vine)
-    singleton = observations[:1]
-    expected_one = _log_pdf_rows_with_r_python(vine, singleton, scalar)
-    actual_one = vine._log_pdf_rows_with_r(singleton, scalar)
-    np.testing.assert_array_equal(actual_one, expected_one)
-
-    empty = vine._log_pdf_rows_with_r(
-        np.empty((0, vine.d), dtype=np.float64), scalar)
-    assert empty.shape == (0,)
-    assert empty.dtype == np.float64
-
-
-def test_density_oracles_reject_invalid_parameter_and_native_precedes_rng(
-        monkeypatch):
-    vine = configured_static_dvine(2)
-    parameters = scalar_parameters(vine)
-    parameters[(0, 0)] = np.array([2.0])
-    observations = np.array([[0.3, 0.7]])
-
-    with pytest.raises(Exception):
-        _log_pdf_rows_with_r_python(vine, observations, parameters)
-    with pytest.raises(ValueError, match="must lie in"):
-        vine._log_pdf_rows_with_r(observations, parameters)
-
-    rng = np.random.default_rng(2026082239)
-    state_before = deepcopy(rng.bit_generator.state)
-    with pytest.raises(ValueError, match="must lie in"):
-        vine._sample_arbitrary_given_mcmc(
-            3,
-            parameters,
-            rng,
-            {0: 0.4},
-            n_steps=1,
-            burnin_steps=0,
-        )
-    assert rng.bit_generator.state == state_before
 
 
 def test_density_direct_validation_diagnostics_and_thread_parity():
@@ -286,95 +195,6 @@ def test_density_direct_validation_diagnostics_and_thread_parity():
         observations,
     )
     assert invalid_parameter_result["status"] == 6
-
-
-@pytest.mark.parametrize("chunk_steps", [1, 2, 3, 8])
-def test_native_mcmc_matches_python_across_chunk_boundaries_exactly(
-        chunk_steps):
-    vine = configured_mixed_family_vine()
-    n = 7
-    parameters = scalar_parameters(vine)
-    parameters[(0, 0)] = np.linspace(0.65, 0.95, n)
-    given = {0: 0.57, 2: 0.31}
-    initial = np.random.default_rng(2026082242).uniform(
-        0.05, 0.95, size=(n, vine.d))
-    for variable, value in given.items():
-        initial[:, variable] = value
-    draws = np.random.default_rng(2026082243).uniform(
-        0.01, 0.99, size=(11, n, 2))
-
-    expected, expected_diagnostics = _sample_arbitrary_given_mcmc_python(vine,
-        n,
-        parameters,
-        np.random.default_rng(1),
-        given,
-        initial=initial,
-        n_steps=7,
-        burnin_steps=4,
-        random_draws=draws,
-        step_offset=1,
-    )
-    module, context, pack = _density_request(vine, parameters, n)
-    actual, actual_diagnostics = _cpp_rvine.mcmc(
-        module,
-        vine.pair_copulas,
-        vine.d,
-        vine._trees,
-        vine._edge_map,
-        parameters,
-        n,
-        np.random.default_rng(2),
-        given,
-        initial=initial,
-        n_steps=7,
-        burnin_steps=4,
-        random_draws=draws,
-        step_offset=1,
-        active_keys=context["active_keys"],
-        normalized_parameter_paths=parameters,
-        parameter_sources=context["parameter_sources"],
-        native_plan=context["plan"],
-        native_edges=context["edges"],
-        parameter_pack=pack,
-        chunk_steps=chunk_steps,
-    )
-
-    np.testing.assert_array_equal(actual, expected)
-    assert actual_diagnostics == expected_diagnostics
-
-
-def test_native_and_python_mcmc_support_zero_chains(monkeypatch):
-    vine = configured_mixed_family_vine()
-    parameters = scalar_parameters(vine)
-    given = {0: 0.57, 2: 0.31}
-    initial = np.empty((0, vine.d), dtype=np.float64)
-    draws = np.empty((5, 0, 2), dtype=np.float64)
-    results = [
-        executor(
-            0,
-            parameters,
-            np.random.default_rng(2026082280),
-            given,
-            initial=initial,
-            n_steps=3,
-            burnin_steps=2,
-            random_draws=draws,
-        )
-        for executor in (
-            lambda *args, **kwargs: _sample_arbitrary_given_mcmc_python(
-                vine, *args, **kwargs),
-            vine._sample_arbitrary_given_mcmc,
-        )
-    ]
-
-    for samples, diagnostics in results:
-        assert samples.shape == (0, vine.d)
-        assert diagnostics["proposed"] == {1: 0}
-        assert diagnostics["accepted"] == {1: 0}
-        assert diagnostics["proposals_per_chain"] == {1: 0.0}
-        assert diagnostics["accepted_per_chain"] == {1: 0.0}
-        assert diagnostics["acceptance_mean"] is None
-    assert results[0][1] == results[1][1]
 
 
 def test_incremental_mcmc_matches_full_recompute_bitwise_with_row_paths():
@@ -461,72 +281,6 @@ def test_incremental_mcmc_matches_full_recompute_bitwise_with_row_paths():
         5 * (int(plan.node_count) + len(plan.edge_indices)) * item_size)
 
 
-def test_incremental_mcmc_preserves_cycle_across_non_sweep_chunks(
-        monkeypatch):
-    vine = configured_static_dvine(5)
-    n = 7
-    parameters = scalar_parameters(vine)
-    given = {0: 0.43, 2: 0.67}
-    initial = np.random.default_rng(2026082273).uniform(
-        0.04, 0.96, size=(n, vine.d))
-    for variable, value in given.items():
-        initial[:, variable] = value
-    draws = np.random.default_rng(2026082274).uniform(
-        0.01, 0.99, size=(11, n, 2))
-    expected, expected_diagnostics = _sample_arbitrary_given_mcmc_python(vine,
-        n,
-        parameters,
-        np.random.default_rng(1),
-        given,
-        initial=initial,
-        n_steps=8,
-        burnin_steps=3,
-        random_draws=draws,
-        step_offset=2,
-    )
-
-    module, context, pack = _density_request(vine, parameters, n)
-    native_mcmc = module.rvine_mcmc_chunk
-    offsets = []
-    algorithms = []
-
-    def recording_mcmc(*args, **kwargs):
-        offsets.append(args[9])
-        algorithms.append(args[13])
-        return native_mcmc(*args, **kwargs)
-
-    monkeypatch.setattr(module, "rvine_mcmc_chunk", recording_mcmc)
-    actual, actual_diagnostics = _cpp_rvine.mcmc(
-        module,
-        vine.pair_copulas,
-        vine.d,
-        vine._trees,
-        vine._edge_map,
-        parameters,
-        n,
-        np.random.default_rng(2),
-        given,
-        initial=initial,
-        n_steps=8,
-        burnin_steps=3,
-        random_draws=draws,
-        step_offset=2,
-        active_keys=context["active_keys"],
-        normalized_parameter_paths=parameters,
-        parameter_sources=context["parameter_sources"],
-        native_plan=context["plan"],
-        native_edges=context["edges"],
-        parameter_pack=pack,
-        chunk_steps=4,
-        density_algorithm="incremental",
-    )
-
-    np.testing.assert_array_equal(actual, expected)
-    assert actual_diagnostics == expected_diagnostics
-    assert offsets == [2, 6, 10]
-    assert algorithms == ["incremental"] * 3
-
-
 def test_incremental_mcmc_matches_every_full_recompute_acceptance_decision():
     vine = configured_static_dvine(5)
     n = 7
@@ -594,54 +348,6 @@ def test_incremental_mcmc_matches_every_full_recompute_acceptance_decision():
         assert actual_step[2:] == expected_step[2:]
 
 
-def test_native_mcmc_preserves_interleaved_rng_state_across_internal_chunk(
-        monkeypatch):
-    vine = configured_static_dvine(4)
-    parameters = scalar_parameters(vine)
-    n = 5
-    given = {0: 0.43, 2: 0.67}
-    initial = np.random.default_rng(2026082244).uniform(
-        0.05, 0.95, size=(n, vine.d))
-    python_rng = np.random.default_rng(2026082245)
-    native_rng = np.random.default_rng(2026082245)
-    module = _cpp_extension.load()
-    native_mcmc = module.rvine_mcmc_chunk
-    selected_algorithms = []
-
-    def recording_mcmc(*args, **kwargs):
-        selected_algorithms.append(args[13])
-        return native_mcmc(*args, **kwargs)
-
-    monkeypatch.setattr(module, "rvine_mcmc_chunk", recording_mcmc)
-
-    expected, expected_diagnostics = _sample_arbitrary_given_mcmc_python(vine,
-        n,
-        parameters,
-        python_rng,
-        given,
-        initial=initial,
-        n_steps=257,
-        burnin_steps=3,
-        step_offset=1,
-    )
-    actual, actual_diagnostics = vine._sample_arbitrary_given_mcmc(
-        n,
-        parameters,
-        native_rng,
-        given,
-        initial=initial,
-        n_steps=257,
-        burnin_steps=3,
-        step_offset=1,
-    )
-
-    np.testing.assert_array_equal(actual, expected)
-    assert actual_diagnostics == expected_diagnostics
-    np.testing.assert_array_equal(native_rng.random(32), python_rng.random(32))
-    assert selected_algorithms
-    assert set(selected_algorithms) == {"incremental"}
-
-
 def test_native_mcmc_auto_keeps_single_chain_on_full_recompute(monkeypatch):
     vine = configured_static_dvine(4)
     parameters = scalar_parameters(vine)
@@ -667,167 +373,6 @@ def test_native_mcmc_auto_keeps_single_chain_on_full_recompute(monkeypatch):
     )
 
     assert selected_algorithms == ["full_recompute"]
-
-
-def test_native_mcmc_chunk_size_obeys_memory_budget_before_rng(monkeypatch):
-    vine = configured_mixed_family_vine()
-    n = 4
-    parameters = scalar_parameters(vine)
-    given = {0: 0.43, 2: 0.67}
-    initial = np.random.default_rng(2026082248).uniform(
-        0.05, 0.95, size=(n, vine.d))
-    for variable, value in given.items():
-        initial[:, variable] = value
-    draws = np.random.default_rng(2026082249).uniform(
-        0.01, 0.99, size=(5, n, 2))
-    expected, expected_diagnostics = _sample_arbitrary_given_mcmc_python(vine,
-        n,
-        parameters,
-        np.random.default_rng(1),
-        given,
-        initial=initial,
-        n_steps=5,
-        burnin_steps=0,
-        random_draws=draws,
-    )
-    module, context, pack = _density_request(vine, parameters, n)
-    native_mcmc = module.rvine_mcmc_chunk
-    chunk_sizes = []
-    selected_algorithms = []
-    native_budgets = []
-
-    def recording_mcmc(*args, **kwargs):
-        chunk_sizes.append(np.asarray(args[10]).shape[0])
-        selected_algorithms.append(args[13])
-        native_budgets.append(args[14])
-        return native_mcmc(*args, **kwargs)
-
-    monkeypatch.setattr(module, "rvine_mcmc_chunk", recording_mcmc)
-    bytes_per_step = 2 * n * np.dtype(np.float64).itemsize
-    full_reserved = _cpp_rvine._mcmc_full_reserved_bytes(
-        context["plan"], n)
-    incremental_reserved = _cpp_rvine._mcmc_incremental_reserved_bytes(
-        context["plan"], n)
-    fallback_budget = full_reserved + bytes_per_step
-    assert fallback_budget < incremental_reserved + bytes_per_step
-    actual, actual_diagnostics = _cpp_rvine.mcmc(
-        module,
-        vine.pair_copulas,
-        vine.d,
-        vine._trees,
-        vine._edge_map,
-        parameters,
-        n,
-        np.random.default_rng(2),
-        given,
-        initial=initial,
-        n_steps=5,
-        burnin_steps=0,
-        random_draws=draws,
-        active_keys=context["active_keys"],
-        normalized_parameter_paths=parameters,
-        parameter_sources=context["parameter_sources"],
-        native_plan=context["plan"],
-        native_edges=context["edges"],
-        parameter_pack=pack,
-        memory_budget_bytes=fallback_budget,
-    )
-    np.testing.assert_array_equal(actual, expected)
-    assert actual_diagnostics == expected_diagnostics
-    assert chunk_sizes == [1] * 5
-    assert selected_algorithms == ["full_recompute"] * 5
-    adapter_state_bytes = _cpp_rvine._mcmc_adapter_state_bytes(
-        context["plan"], n)
-    assert native_budgets == [
-        fallback_budget - adapter_state_bytes
-    ] * 5
-
-    density = module.rvine_log_pdf_rows(
-        context["plan"],
-        context["edges"],
-        pack.scalar_parameters,
-        pack.row_parameters,
-        initial,
-    )
-    _cpp_rvine.raise_for_status(density, "test budget initial density")
-    direct_full = native_mcmc(
-        context["plan"],
-        context["edges"],
-        pack.scalar_parameters,
-        pack.row_parameters,
-        [0, 2],
-        np.array([0.43, 0.67]),
-        [1],
-        initial,
-        density["log_pdf"],
-        0,
-        np.ascontiguousarray(draws[:1, :, 0]),
-        np.ascontiguousarray(draws[:1, :, 1]),
-        1,
-        "full_recompute",
-        fallback_budget - adapter_state_bytes,
-    )
-    _cpp_rvine.raise_for_status(direct_full, "test bounded full MCMC")
-    assert dict(direct_full["diagnostics"])[
-        "peak_workspace_bytes"] + adapter_state_bytes <= fallback_budget
-    rejected_full = native_mcmc(
-        context["plan"],
-        context["edges"],
-        pack.scalar_parameters,
-        pack.row_parameters,
-        [0, 2],
-        np.array([0.43, 0.67]),
-        [1],
-        initial,
-        density["log_pdf"],
-        0,
-        np.ascontiguousarray(draws[:1, :, 0]),
-        np.ascontiguousarray(draws[:1, :, 1]),
-        1,
-        "full_recompute",
-        fallback_budget - adapter_state_bytes - 1,
-    )
-    assert rejected_full["status"] == 2
-
-    rng = np.random.default_rng(2026082253)
-    state_before = deepcopy(rng.bit_generator.state)
-    with pytest.raises(MemoryError, match="full-recompute fallback"):
-        _cpp_rvine.mcmc(
-            module,
-            vine.pair_copulas,
-            vine.d,
-            vine._trees,
-            vine._edge_map,
-            parameters,
-            n,
-            rng,
-            given,
-            n_steps=1,
-            burnin_steps=0,
-            memory_budget_bytes=fallback_budget - 1,
-        )
-    assert rng.bit_generator.state == state_before
-
-    incremental_rng = np.random.default_rng(2026082254)
-    incremental_state_before = deepcopy(incremental_rng.bit_generator.state)
-    with pytest.raises(MemoryError, match="incremental MCMC fixed workspace"):
-        _cpp_rvine.mcmc(
-            module,
-            vine.pair_copulas,
-            vine.d,
-            vine._trees,
-            vine._edge_map,
-            parameters,
-            n,
-            incremental_rng,
-            given,
-            n_steps=1,
-            burnin_steps=0,
-            memory_budget_bytes=(
-                incremental_reserved + bytes_per_step - 1),
-            density_algorithm="incremental",
-        )
-    assert incremental_rng.bit_generator.state == incremental_state_before
 
 
 def test_mcmc_direct_counters_offset_and_validation():

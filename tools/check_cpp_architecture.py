@@ -49,9 +49,6 @@ _RAW_EXTENSION_IMPORT_ALLOWLIST = frozenset({
     "pyscarcopula/_native/_extension.py",
     "tests/test_linalg_backend.py",
     "tests/test_native_smoke.py",
-    "tools/benchmark_cpp_refactor.py",
-    "tools/capture_cpp_refactor_goldens.py",
-    "tools/write_cpp_refactor_inventory.py",
 })
 _REMOVED_RAW_EXTENSION_IMPORT_ALLOWLIST = frozenset({
     "tests/test_native_facade.py",
@@ -1344,7 +1341,7 @@ def check_prepared_application_modules(root: Path) -> list[Violation]:
 
 
 def check_public_cpp_api(root: Path) -> list[Violation]:
-    """Enforce the Stage 6 domain contracts and opaque workspace boundary."""
+    """Enforce domain contracts and the opaque workspace boundary."""
 
     cpp = root / "pyscarcopula" / "_cpp"
     include = cpp / "include" / "scar"
@@ -1586,7 +1583,7 @@ def check_public_cpp_api(root: Path) -> list[Violation]:
 
 
 def check_thin_bindings(root: Path) -> list[Violation]:
-    """Enforce the Stage 7 pybind include and conversion boundaries."""
+    """Enforce pybind include and conversion boundaries."""
 
     bindings = (
         root / "pyscarcopula" / "_cpp" / "src" / "bindings")
@@ -2052,7 +2049,7 @@ def check_domain_module_cycles(root: Path) -> list[Violation]:
 
 
 def check_jacobi_sampling_ownership(root: Path) -> list[Violation]:
-    """Keep Stage 8.3.5 trajectory/state evolution out of Python."""
+    """Keep Jacobi trajectory and state evolution out of Python."""
     rule = "jacobi-native-sampling-ownership"
     numerical = root / "pyscarcopula" / "numerical"
     forbidden = {
@@ -2087,7 +2084,7 @@ def check_jacobi_sampling_ownership(root: Path) -> list[Violation]:
 
 
 def check_vine_native_boundary(root: Path) -> list[Violation]:
-    """Keep Stage 8.5 production execution on the mandatory native path."""
+    """Keep production vine execution on the mandatory native path."""
     rule = "vine-native-boundary"
     violations = []
     production_callers = tuple(
@@ -2143,7 +2140,7 @@ def check_vine_native_boundary(root: Path) -> list[Violation]:
             violations.append(Violation(
                 rule,
                 path,
-                "legacy numerical adapter must be removed in Stage 8.5",
+                "legacy numerical adapter must remain removed",
             ))
 
     package_init = root / "pyscarcopula" / "__init__.py"
@@ -2171,7 +2168,7 @@ def check_vine_native_boundary(root: Path) -> list[Violation]:
                 violations.append(Violation(
                     rule,
                     adapter,
-                    "native R-vine adapter is missing Stage 8.4 contract: "
+                    "native R-vine adapter is missing required contract: "
                     + marker,
                 ))
 
@@ -2197,7 +2194,7 @@ def check_vine_native_boundary(root: Path) -> list[Violation]:
                 violations.append(Violation(
                     rule,
                     path,
-                    "Stage 8.4 native R-vine contract is missing",
+                    "required native R-vine contract is missing",
                 ))
                 continue
             source = path.read_text(encoding="utf-8")
@@ -2206,15 +2203,15 @@ def check_vine_native_boundary(root: Path) -> list[Violation]:
                     violations.append(Violation(
                         rule,
                         path,
-                        "Stage 8.4 native R-vine contract is missing: "
+                        "required native R-vine contract is missing: "
                         + marker,
                     ))
     return violations
 
 
-def check_stage85_mandatory_dispatch(root: Path) -> list[Violation]:
+def check_mandatory_vine_dispatch(root: Path) -> list[Violation]:
     """Reject retired adapters, selectors, formulas, and Python model paths."""
-    rule = "stage85-mandatory-dispatch"
+    rule = "mandatory-vine-dispatch"
     violations = []
 
     retired_modules = (
@@ -2452,7 +2449,7 @@ def check_jacobi_python_cleanup(root: Path) -> list[Violation]:
 
 
 def check_jacobi_strategy_facade(root: Path) -> list[Violation]:
-    """Keep Stage 8.3.6 model/state dispatch behind the native facade."""
+    """Keep model and state dispatch behind the native facade."""
     rule = "jacobi-native-strategy-facade"
     path = root / "pyscarcopula" / "strategy" / "scar_jacobi.py"
     if not path.is_file():
@@ -2548,9 +2545,9 @@ def check_jacobi_strategy_facade(root: Path) -> list[Violation]:
     return violations
 
 
-def check_stage86_breaking_cleanup(root: Path) -> list[Violation]:
+def check_removed_compatibility_cleanup(root: Path) -> list[Violation]:
     """Keep removed Python compatibility surfaces physically absent."""
-    rule = "stage86-breaking-cleanup"
+    rule = "removed-compatibility-cleanup"
     package = root / "pyscarcopula"
     io_path = package / "io.py"
     removed_files = (
@@ -2565,7 +2562,7 @@ def check_stage86_breaking_cleanup(root: Path) -> list[Violation]:
             violations.append(Violation(
                 rule,
                 path,
-                "removed Stage 8.6 module must be physically absent",
+                "removed compatibility module must be physically absent",
             ))
 
     forbidden = (
@@ -2628,11 +2625,11 @@ def check_repository(root: Path) -> list[Violation]:
         check_target_dependency_graph,
         check_domain_module_cycles,
         check_vine_native_boundary,
-        check_stage85_mandatory_dispatch,
+        check_mandatory_vine_dispatch,
         check_jacobi_sampling_ownership,
         check_jacobi_python_cleanup,
         check_jacobi_strategy_facade,
-        check_stage86_breaking_cleanup,
+        check_removed_compatibility_cleanup,
     )
     return [
         violation

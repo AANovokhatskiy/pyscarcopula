@@ -12,10 +12,6 @@ except ModuleNotFoundError:  # pragma: no cover - Python 3.10
     import tomli as tomllib
 
 from tools.benchmark_conditional_sampling import write_artifacts
-from tools.calibrate_conditional_statistical_gates import (
-    run_calibration,
-    write_report,
-)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -46,7 +42,6 @@ def test_conditional_workflow_exposes_all_four_layers_and_exact_selections():
     assert 'not validation and not benchmark and not external' in workflow
     assert 'validation and not benchmark and not external' in workflow
     assert '(external or high_dimensional) and not benchmark' in workflow
-    assert "--runs 20 --max-failure-rate 0.01" in workflow
     assert workflow.count('--status "${{ job.status }}"') == 4
     assert "pyvinecopulib==0.7.5" not in workflow
     assert 'python -m pip install -e ".[test,external]"' in workflow
@@ -60,33 +55,6 @@ def test_conditional_validation_guide_documents_commands_and_triage():
     assert "--strict-markers --run-validation" in guide
     assert "pyvinecopulib==0.7.5" in guide
     assert "Wall time is not gated" in guide
-
-
-def test_oracle_calibration_report_has_per_gate_failure_rates(tmp_path):
-    report = run_calibration(
-        runs=2,
-        base_seed=20268900,
-        uniform_draws=64,
-        gaussian_draws=64,
-        student_draws=64,
-        dimensions=(1,),
-        student_dfs=(8.0,),
-        max_failure_rate=1.0,
-    )
-    output = tmp_path / "calibration.json"
-    write_report(report, output)
-    persisted = json.loads(output.read_text(encoding="utf-8"))
-    assert persisted["oracle_only"] is True
-    assert persisted["measurement_policy"]["production_sampler_used"] is False
-    assert persisted["passed"] is True
-    assert {gate["gate"] for gate in persisted["gates"]} == {
-        "uniform-pit",
-        "gaussian-mean-d=1",
-        "gaussian-covariance-d=1",
-        "student-mean-d=1-df=8",
-        "student-covariance-d=1-df=8",
-    }
-    assert all(gate["runs"] == 2 for gate in persisted["gates"])
 
 
 def test_benchmark_writer_preserves_reproducibility_fields(tmp_path):

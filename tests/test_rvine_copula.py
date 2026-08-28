@@ -36,9 +36,6 @@ from pyscarcopula.vine._rvine_dag import (
     _inverse_chain_to_base,
     _node_key,
 )
-from rvine_candidate_harness import (
-    _execute_conditional_plan_python as execute_conditional_plan,
-)
 from pyscarcopula.vine._edge_adapter import (
     edge_method,
     edge_n_params,
@@ -170,31 +167,6 @@ def test_dag_sample_candidate_order_is_documented_matrix_heuristic():
     assert candidate is not None
     assert candidate['edge'] == (0, 3)
     assert candidate['partner'] == 2
-
-
-def test_dag_execute_rejects_legacy_tuple_edge_payload():
-    plan = ConditionalSamplePlan([
-        {
-            'action': 'h_prop',
-            'edge': (0, 0),
-            'leaf': 0,
-            'partner': 1,
-            'cond': frozenset(),
-            'to': _node_key(0, {1}),
-        },
-    ], d=2)
-    payload = {
-        (0, 0): (_independent_pair(), np.array([0.0], dtype=np.float64))
-    }
-
-    with pytest.raises(TypeError, match="edge payloads"):
-        execute_conditional_plan(
-            plan,
-            payload,
-            given={0: 0.4, 1: 0.6},
-            n=1,
-            rng=np.random.default_rng(1),
-        )
 
 
 def test_rvine_dag_sampling_reports_missing_edge_parameters():

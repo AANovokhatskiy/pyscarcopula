@@ -1,4 +1,4 @@
-"""Stage 8.3.2 contracts for the native Jacobi domain core."""
+"""Contracts for the native Jacobi domain core."""
 
 from pathlib import Path
 
@@ -33,7 +33,7 @@ def test_pybind_exports_typed_jacobi_domain_contract():
     assert expected <= set(dir(module))
 
 
-def test_native_parameterization_matches_frozen_stage831_contract():
+def test_native_parameterization_matches_public_contract_values():
     np.testing.assert_allclose(
         jacobi_native.raw_to_physical([-3.0, -1.25, 0.8]),
         [0.049787068367863944, 0.22270013882530884, 2.225540928492468],
@@ -67,7 +67,7 @@ def test_native_parameterization_matches_frozen_stage831_contract():
     ("alpha", "beta", "quad_order", "basis_order"),
     [(2.5, 3.5, 24, 8), (15.36, 23.04, 16, 4), (0.7, 1.3, 32, 6)],
 )
-def test_native_gauss_jacobi_rule_matches_frozen_scipy_owner(
+def test_native_gauss_jacobi_rule_matches_scipy_reference(
         alpha, beta, quad_order, basis_order):
     tau, weights, basis = jacobi_tm.jacobi_rule(
         alpha, beta, quad_order, basis_order)
@@ -202,7 +202,7 @@ def test_native_quadrature_budget_covers_eigenvector_matrices():
         jacobi_native.gauss_hermite_rule(quad_order, budget)
 
 
-def test_production_python_no_longer_owns_stage832_formulas():
+def test_production_python_delegates_domain_formulas_to_native():
     root = Path(__file__).resolve().parents[1]
     numerical = (root / "pyscarcopula/numerical/jacobi_tm.py").read_text(
         encoding="utf-8")

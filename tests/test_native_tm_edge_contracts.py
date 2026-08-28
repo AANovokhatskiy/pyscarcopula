@@ -1,4 +1,4 @@
-"""Final edge and resource contracts for the native TM migration."""
+"""Edge and resource contracts for native TM execution."""
 
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ def _uniform(T, d, seed):
             _student(d=3), cfg),
     ],
 )
-def test_native_migration_endpoints_reject_single_observation(call):
+def test_native_tm_endpoints_reject_single_observation(call):
     config = AutoTMConfig(
         K=9,
         adaptive=False,
@@ -57,7 +57,7 @@ def test_native_migration_endpoints_reject_single_observation(call):
         ((80.0, 1.5, 8.0), "matrix", "sparse"),
     ],
 )
-def test_native_migration_endpoints_are_finite_at_extreme_ou_parameters(
+def test_native_tm_endpoints_are_finite_at_extreme_ou_parameters(
         params, transition_method, grid_method):
     pair_u = _uniform(48, 2, 20260810)
     multi_u = _uniform(48, 4, 20260811)
@@ -134,7 +134,7 @@ def test_adaptive_max_k_matches_explicit_capped_local_grid(factory, u):
     )
 
 
-def test_native_migration_large_t_and_k_stress_shapes_and_finiteness():
+def test_native_tm_large_t_and_k_stress_shapes_and_finiteness():
     pair_u = _uniform(1024, 2, 20260815)
     pair_config = AutoTMConfig(
         K=1025,

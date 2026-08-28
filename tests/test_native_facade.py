@@ -36,7 +36,7 @@ from pyscarcopula.strategy.mle import MLEStrategy
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_stage81_native_boundary_policies_have_single_owners():
+def test_native_boundary_policies_have_single_owners():
     production = tuple((ROOT / "pyscarcopula").rglob("*.py"))
 
     raw_import_owners = {

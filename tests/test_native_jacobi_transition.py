@@ -1,4 +1,4 @@
-"""Stage 8.3.3 native Jacobi transition ownership contracts."""
+"""Native Jacobi transition ownership contracts."""
 
 from pathlib import Path
 
@@ -195,7 +195,7 @@ def test_native_fixed_sparse_derivatives_match_dense():
     np.testing.assert_allclose(reconstructed, dense_derivatives, atol=2e-14)
 
 
-def test_production_python_has_no_stage833_transition_kernels():
+def test_production_python_delegates_transition_kernels_to_native():
     root = Path(__file__).resolve().parents[1]
     dense = (root / "pyscarcopula/numerical/jacobi_tm.py").read_text(
         encoding="utf-8")

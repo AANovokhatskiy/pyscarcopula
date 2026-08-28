@@ -202,8 +202,7 @@ def test_direct_family_operations_use_shared_native_adapter(factory, param):
         if transposed_rotation != rotation else copula
     )
     np.testing.assert_array_equal(samples[:, 0], uniforms[:, 0])
-    # Preserve the historical family kernels rather than imposing a new
-    # high-precision contract during the architectural refactor.
+    # Preserve the established family-kernel precision contract.
     np.testing.assert_allclose(
         transposed.h(samples[:, 1], uniforms[:, 0], r),
         uniforms[:, 1],
@@ -229,7 +228,7 @@ def test_direct_family_operations_use_shared_native_adapter(factory, param):
 )
 @pytest.mark.parametrize(
     "transform_type", ["softplus", "xtanh", "exp", "logistic"])
-def test_native_transforms_preserve_python_contract(
+def test_native_transforms_match_public_formula_contract(
         factory, offset, transform_type):
     copula = factory(transform_type=transform_type)
     x = np.array([-30.0, -1.0, 0.0, 1.0, 30.0])

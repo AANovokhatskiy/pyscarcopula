@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Audit every tracked `tests/` and `tools/` file for refactoring artifacts:
+  archive the frozen Python R-vine differential harness, historical provenance
+  fixture, report-only inventory/calibration tools, and generated benchmark
+  captures outside the product repository; retain direct API, numerical,
+  native-boundary, release, and performance contracts under semantic names.
+- Remove the completed C++ architecture-refactor migration harness, historical
+  source snapshots, benchmark captures, and refactor-only CI workflow from the
+  product repository and source distribution. The material remains archived
+  outside the repository; current architecture, numerical, parallel, wheel,
+  and sanitizer tests continue to validate the product directly.
 - Complete the Stage 9 native architecture gates: validate the full logical
   C++ target graph and domain cycles, add focused Python-free model suites,
   compile every public header independently, run standalone ASan/UBSan and

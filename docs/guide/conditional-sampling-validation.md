@@ -65,14 +65,6 @@ python -m pytest -q tests/conditional --strict-markers --run-validation \
   -m "(external or high_dimensional) and not benchmark"
 ```
 
-Oracle-only false-failure calibration:
-
-```bash
-python tools/calibrate_conditional_statistical_gates.py \
-  --runs 20 --max-failure-rate 0.01 \
-  --output benchmark_artifacts/conditional_sampling_calibration.json
-```
-
 Manual benchmark artifact:
 
 ```bash
@@ -86,11 +78,9 @@ Set `PYSCA_RUN_BENCHMARKS=1` only when directly running pytest cases marked
 
 ## Statistical stability policy
 
-Monte Carlo bounds are defined from sampling error and calibrated only on
-oracle-generated draws.  The calibration does not import a production model
-or call a production sampler.  With 20 replicas, the empirical rate can only
-move in increments of 5%, so the 1% acceptance threshold requires zero
-observed false failures per named gate.
+Monte Carlo bounds are defined from sampling error and verified by independent
+oracle tests. Calibration captures are development evidence rather than part
+of the product repository or CI contract.
 
 Do not loosen a tolerance after inspecting a production failure.  First
 reproduce the node ID and seed, run the same assertion on oracle draws, and

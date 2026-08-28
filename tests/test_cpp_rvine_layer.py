@@ -22,11 +22,6 @@ from pyscarcopula.vine._rvine_suffix import (
     build_suffix_conditional_plan,
     given_suffix_start_col,
 )
-from rvine_candidate_harness import (
-    _execute_conditional_plan_python,
-    _sample_suffix_given_with_r_python,
-)
-
 from rvine_runtime_cases import (
     configured_mixed_family_vine,
     scalar_parameters,
@@ -105,7 +100,7 @@ def test_common_binding_owns_plan_and_preserves_gas_alias():
     assert hasattr(module, "RVineDensityPlan")
 
 
-def test_stage_six_advertises_all_rosenblatt_entry_points():
+def test_common_binding_advertises_all_rosenblatt_entry_points():
     module = _cpp_extension.load()
     assert hasattr(module, "rvine_sample")
     assert hasattr(module, "rvine_conditional_sample")
@@ -305,71 +300,6 @@ def test_conditional_and_density_compilers_emit_flat_indexed_programs():
         native_conditional, len(active_keys))
     assert not module.validate_rvine_density_plan(
         native_density, len(active_keys))
-
-
-def test_dag_compiler_semantics_match_python_oracle():
-    module = _cpp_extension.load()
-    vine = configured_mixed_family_vine()
-    active_keys = tuple(sorted(vine.pair_copulas))
-    parameters = scalar_parameters(vine)
-    given = {2: 0.4}
-    plan = plan_conditional_sample(
-        build_runtime_rvine_dag(vine.matrix, vine._edge_map),
-        given,
-        vine.d,
-    )
-    native = _cpp_rvine.compile_conditional_plan(
-        module, plan, active_keys, given)
-    uniforms = np.random.default_rng(421).uniform(
-        0.05, 0.95, size=(7, vine.d))
-    payload = {
-        key: {"edge": vine.pair_copulas[key], "r": parameters[key]}
-        for key in active_keys
-    }
-
-    expected = _execute_conditional_plan_python(
-        plan,
-        payload,
-        given,
-        len(uniforms),
-        np.random.default_rng(0),
-        uniforms=uniforms,
-    )
-    actual = _execute_flat_conditional(
-        native, vine, active_keys, parameters, given, uniforms)
-    np.testing.assert_allclose(actual, expected, rtol=2e-13, atol=2e-13)
-
-
-def test_suffix_compiler_uses_common_opcodes_and_matches_python_oracle():
-    module = _cpp_extension.load()
-    vine = configured_mixed_family_vine()
-    active_keys = tuple(sorted(vine.pair_copulas))
-    parameters = scalar_parameters(vine)
-    given = {}
-    start_col = given_suffix_start_col(vine.d, given, vine.matrix)
-    plan = build_suffix_conditional_plan(
-        vine.d, start_col, vine.matrix, given)
-    native = _cpp_rvine.compile_conditional_plan(
-        module, plan, active_keys, given)
-    uniforms = np.random.default_rng(812).uniform(
-        0.05, 0.95, size=(8, vine.d))
-
-    assert {2, 3, 4}.issubset(set(native.opcodes))
-    assert module.validate_rvine_conditional_plan(native, len(active_keys))
-    expected = _sample_suffix_given_with_r_python(
-        vine.d,
-        len(uniforms),
-        parameters,
-        np.random.default_rng(0),
-        given,
-        start_col,
-        vine.matrix,
-        vine.pair_copulas,
-        uniforms=uniforms,
-    )
-    actual = _execute_flat_conditional(
-        native, vine, active_keys, parameters, given, uniforms)
-    np.testing.assert_allclose(actual, expected, rtol=2e-13, atol=2e-13)
 
 
 @pytest.mark.parametrize(
