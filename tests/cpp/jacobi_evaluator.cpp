@@ -113,6 +113,8 @@ int run_jacobi_evaluator_tests() {
     }
 
     const scar::JacobiObjectiveResult objective = evaluator.loglik(params);
+    const scar::JacobiObjectiveResult invalid_objective = evaluator.loglik(
+        scar::JacobiParams{-1.0, 0.4, 0.25});
     const scar::JacobiEvaluatorVectorResult mean =
         evaluator.predictive_mean(params);
     const scar::JacobiEvaluatorPairResult mixture =
@@ -122,6 +124,11 @@ int run_jacobi_evaluator_tests() {
     const scar::JacobiEvaluatorPairResult gaussian =
         evaluator.gaussian_rosenblatt(params);
     if (!objective.is_ok()
+        || !invalid_objective.is_ok()
+        || !std::isinf(invalid_objective.value.log_likelihood)
+        || !(invalid_objective.value.log_likelihood < 0.0)
+        || !std::isinf(invalid_objective.value.objective)
+        || !(invalid_objective.value.objective > 0.0)
         || !mean.is_ok() || mean.value.values.size() != 8
         || !mixture.is_ok() || mixture.value.first.size() != 8
         || mixture.value.second.size() != 8

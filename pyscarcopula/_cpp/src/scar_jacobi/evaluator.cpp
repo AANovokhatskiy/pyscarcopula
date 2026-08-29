@@ -882,6 +882,15 @@ JacobiFilterResult PreparedScarJacobiEvaluator::filter(
 JacobiObjectiveResult PreparedScarJacobiEvaluator::loglik(
     const JacobiParams& params) const {
     const std::lock_guard<std::mutex> lock(impl_->mutex);
+    if (!ok(validate_jacobi_params(
+            params,
+            impl_->config.transition.numerical.stationary_shape_max))) {
+        JacobiObjectiveResult result;
+        result.value.log_likelihood =
+            -std::numeric_limits<double>::infinity();
+        result.value.objective = std::numeric_limits<double>::infinity();
+        return result;
+    }
     const JacobiFilterResult& filtered = impl_->filter_for(params);
     if (!filtered.is_ok()) {
         JacobiObjectiveResult result = failed<JacobiObjectiveResult>(

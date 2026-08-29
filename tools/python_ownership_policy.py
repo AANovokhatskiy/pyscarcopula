@@ -32,7 +32,7 @@ _SYMBOL_REVIEWS = (
     ('pyscarcopula._native.errors:raise_for_status',
      'dadaf69a392881507afc63f7f5c974a5e3a2c8ad0c9cd6ac013cfa8b8bc5adff', 'serialization', ('arithmetic',)),
     ('pyscarcopula._native.jacobi:<module>',
-     'ea0f0622c96d5305df264495ed3acf5d659a2ebd67f21647f1ecd50e8c76a03a', 'structure', ('arithmetic',)),
+     '7d50649aa08e3f3c50218cffbaa710862a6e091e2ae7d4fcacd1fa155add08f4', 'structure', ('arithmetic',)),
     ('pyscarcopula._native.gas:ou_initial_point',
      '208dea1d5f9800442553cfe83f2040aeba8fb90d767b8b9b62a0eaf7d0250286', 'native_policy_adapter', ('model-policy',)),
     ('pyscarcopula._native.jacobi:PreparedScarJacobiEvaluator.__init__',

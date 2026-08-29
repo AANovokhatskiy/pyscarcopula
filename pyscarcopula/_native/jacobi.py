@@ -535,6 +535,15 @@ def _evaluator_raise(result, operation):
             f"{estimated} bytes, exceeding memory_budget_bytes={budget}; "
             "reduce quad_order, basis_order, or the observation count, or "
             "increase memory_budget_bytes")
+    if (
+            operation == "prepared state distribution"
+            and int(result["status"]) == 6):
+        try:
+            _raise(result, operation)
+        except ValueError as error:
+            error.args = (
+                "Jacobi stationary shape is outside supported range",)
+            raise
     _raise(result, operation)
 
 
@@ -640,11 +649,7 @@ class PreparedScarJacobiEvaluator:
     def loglik(self, kappa, m, xi):
         result = self._native.loglik(_params(kappa, m, xi))
         _evaluator_raise(result, "prepared log-likelihood")
-        value = float(result["log_likelihood"])
-        if not np.isfinite(value):
-            raise FloatingPointError(
-                "C++ prepared Jacobi log-likelihood returned a non-finite value")
-        return value
+        return float(result["log_likelihood"])
 
     def neg_loglik(self, kappa, m, xi):
         result = self._native.loglik(_params(kappa, m, xi))

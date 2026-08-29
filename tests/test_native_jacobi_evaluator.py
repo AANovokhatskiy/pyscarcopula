@@ -51,6 +51,28 @@ def test_prepared_evaluator_reuses_setup_filter_and_observation_cache():
     assert evaluator.preparation_count == 2
 
 
+def test_prepared_loglik_preserves_native_invalid_parameter_sentinel():
+    evaluator = _evaluator(
+        transition_method="local_fixed", storage="dense")
+
+    assert evaluator.loglik(-1.0, 0.4, 0.25) == -np.inf
+    assert evaluator.preparation_count == 0
+
+
+def test_prepared_state_distribution_preserves_frozen_invalid_domain_error():
+    evaluator = _evaluator(
+        transition_method="local_fixed", storage="dense")
+
+    with pytest.raises(
+            ValueError,
+            match="^Jacobi stationary shape is outside supported range$") as error:
+        evaluator.state_distribution(-1.0, 0.4, 0.25)
+    assert error.value.status == 6
+    assert error.value.operation == "prepared state distribution"
+    assert error.value.failure_index == -1
+    assert error.value.context.diagnostics["preparation_generation"] == 0
+
+
 def test_prepared_filter_smoother_state_and_diagnostics_contract():
     evaluator = _evaluator(transition_method="auto", storage="dense")
     state = evaluator.filter(*PARAMS)
