@@ -8,7 +8,10 @@ import pytest
 from pyscarcopula._types import GASResult, PredictiveState, gas_params
 from pyscarcopula.copula.elliptical import BivariateGaussianCopula
 from pyscarcopula.copula.gumbel import GumbelCopula
-from pyscarcopula.copula.multivariate import EquicorrGaussianCopula
+from pyscarcopula.copula.multivariate import (
+    EquicorrGaussianCopula,
+    StochasticStudentCopula,
+)
 from pyscarcopula._native import gas as _cpp_gas
 from pyscarcopula._native.errors import NativeUnavailable, NativeUnsupported
 from pyscarcopula.numerical.gas_filter import (
@@ -159,8 +162,10 @@ def test_gas_diagnostics_distinguish_score_from_optimizer_gradient(
         monkeypatch, observations):
     captured = {}
 
-    def fake_minimize(fun, x0, *, method, bounds, options):
-        captured["value"] = fun(np.asarray(x0, dtype=np.float64))
+    def fake_minimize(fun, x0, *, method, jac, bounds, options):
+        captured["jac"] = jac
+        captured["value"], captured["gradient"] = fun(
+            np.asarray(x0, dtype=np.float64))
         return SimpleNamespace(
             x=np.asarray(x0, dtype=np.float64),
             fun=float(captured["value"]),
@@ -180,10 +185,140 @@ def test_gas_diagnostics_distinguish_score_from_optimizer_gradient(
     )
 
     assert np.isfinite(captured["value"])
+    assert captured["jac"] is True
+    assert np.asarray(captured["gradient"]).shape == (3,)
     assert result.diagnostics["model_score"] == "native"
-    assert result.diagnostics["optimizer_gradient"] == "numerical"
-    assert result.diagnostics["gradient_kind"] == "numerical_optimizer"
+    assert result.diagnostics["optimizer_gradient"] == "native"
+    assert result.diagnostics["gradient_kind"] == "native_finite_difference"
     assert result.diagnostics["analytical_grad_used"] is False
+
+
+@pytest.mark.parametrize(
+    ("fit_kwargs", "expected_eps", "expected_relative"),
+    [
+        ({"eps": 0.123}, 0.123, False),
+        ({"finite_diff_rel_step": 0.017}, 0.017, True),
+    ],
+)
+def test_gas_optimizer_gradient_step_routes_to_native(
+    monkeypatch,
+    observations,
+    fit_kwargs,
+    expected_eps,
+    expected_relative,
+):
+    captured = {}
+
+    def fake_objective(*args, **kwargs):
+        captured["native_kwargs"] = kwargs
+        return 2.0, np.zeros(3, dtype=np.float64)
+
+    def fake_minimize(fun, x0, *, method, jac, bounds, options):
+        captured["scipy_options"] = options
+        value, gradient = fun(np.asarray(x0, dtype=np.float64))
+        return SimpleNamespace(
+            x=np.asarray(x0, dtype=np.float64),
+            fun=float(value),
+            success=True,
+            nfev=1,
+            message="ok",
+            jac=np.asarray(gradient, dtype=np.float64),
+        )
+
+    monkeypatch.setattr(
+        _cpp_gas,
+        "negative_log_likelihood_and_gradient",
+        fake_objective,
+    )
+    monkeypatch.setattr(
+        "pyscarcopula.strategy.gas.minimize", fake_minimize)
+    monkeypatch.setattr(
+        "pyscarcopula.strategy.gas.gas_loglik",
+        lambda *args, **kwargs: -2.0,
+    )
+    monkeypatch.setattr(
+        "pyscarcopula.strategy.gas.gas_predict_param",
+        lambda *args, **kwargs: 0.25,
+    )
+
+    result = GASStrategy().fit(
+        BivariateGaussianCopula(),
+        observations,
+        gamma0=np.asarray(PARAMS),
+        ftol=1e-9,
+        **fit_kwargs,
+    )
+
+    assert "eps" not in captured["scipy_options"]
+    assert "finite_diff_rel_step" not in captured["scipy_options"]
+    assert captured["native_kwargs"] == {
+        "optimizer_gradient_eps": expected_eps,
+        "optimizer_gradient_relative": expected_relative,
+    }
+    assert result.diagnostics["optimizer_gradient_eps"] == pytest.approx(
+        expected_eps)
+    assert (
+        result.diagnostics["optimizer_gradient_relative"]
+        is expected_relative
+    )
+
+
+def test_joint_shrinkage_gradient_step_routes_to_native(
+    monkeypatch,
+):
+    captured = {}
+    observations = np.full((4, 3), 0.5, dtype=np.float64)
+    model = StochasticStudentCopula(d=3, corr_mode="shrinkage")
+
+    def fake_objective(*args, **kwargs):
+        captured["native_kwargs"] = kwargs
+        return 3.0, np.zeros(4, dtype=np.float64)
+
+    def fake_minimize(fun, x0, *, method, jac, bounds, options):
+        captured["scipy_options"] = options
+        value, gradient = fun(np.asarray(x0, dtype=np.float64))
+        return SimpleNamespace(
+            x=np.asarray(x0, dtype=np.float64),
+            fun=float(value),
+            success=True,
+            nfev=1,
+            message="ok",
+            jac=np.asarray(gradient, dtype=np.float64),
+        )
+
+    monkeypatch.setattr(
+        _cpp_gas,
+        "negative_log_likelihood_and_gradient_shrinkage",
+        fake_objective,
+    )
+    monkeypatch.setattr(
+        "pyscarcopula.strategy.gas.minimize", fake_minimize)
+    monkeypatch.setattr(
+        "pyscarcopula.strategy.gas.gas_loglik",
+        lambda *args, **kwargs: -3.0,
+    )
+    monkeypatch.setattr(
+        "pyscarcopula.strategy.gas.gas_predict_param",
+        lambda *args, **kwargs: 0.25,
+    )
+
+    result = GASStrategy().fit(
+        model,
+        observations,
+        gamma0=np.asarray(PARAMS),
+        ftol=1e-9,
+        eps=0.031,
+    )
+
+    assert "eps" not in captured["scipy_options"]
+    assert "finite_diff_rel_step" not in captured["scipy_options"]
+    assert captured["native_kwargs"] == {
+        "optimizer_gradient_eps": 0.031,
+        "optimizer_gradient_relative": False,
+    }
+    assert result.diagnostics["optimizer_gradient_eps"] == pytest.approx(
+        0.031)
+    assert result.diagnostics["optimizer_gradient_relative"] is False
 
 
 def test_optimizer_objective_propagates_native_failure(

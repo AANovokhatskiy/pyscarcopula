@@ -32,6 +32,8 @@ struct GasConfig {
     double score_clip = 100.0;
     double fisher_floor = 1e-6;
     double stationary_beta_tol = 1e-8;
+    double optimizer_gradient_eps = 1e-5;
+    bool optimizer_gradient_relative = false;
 };
 
 /// Native evaluator for bivariate score-driven copula dynamics.
@@ -62,6 +64,21 @@ public:
     GasLogLikResult negative_log_likelihood(
         const GasParams& params,
         const CopulaSpec& copula,
+        ObservationView u,
+        const GasConfig& config) const;
+
+    GasObjectiveGradientResult negative_log_likelihood_and_gradient(
+        const GasParams& params,
+        const CopulaSpec& copula,
+        ObservationView u,
+        const GasConfig& config) const;
+
+    GasObjectiveGradientResult
+    negative_log_likelihood_and_gradient_shrinkage(
+        const GasParams& params,
+        const CopulaSpec& copula,
+        DoubleView base_correlation,
+        double raw_shrinkage,
         ObservationView u,
         const GasConfig& config) const;
 

@@ -515,6 +515,13 @@ GradLogLikResult grid_neg_loglik_with_grad(
     if (correlation_gradient && copula.family != CopulaFamily::Student) {
         return invalid_grad(SCAR_INVALID_FAMILY, backend);
     }
+    if (correlation_gradient
+        && copula.correlation_kind == CorrelationKind::Factor) {
+        // Factor correlation is a two-stage OU mode.  Its loading score is
+        // intentionally not part of the dense off-diagonal correlation
+        // coordinate system used by these entry points.
+        return invalid_grad(SCAR_INVALID_TRANSFORM, backend);
+    }
 
     const double dt = 1.0 / static_cast<double>(n_obs - 1);
     const double rho = std::exp(-params.kappa * dt);
@@ -932,6 +939,10 @@ GradLogLikResult spectral_neg_loglik_with_grad(
     }
     if (correlation_gradient && copula.family != CopulaFamily::Student) {
         return invalid_grad(SCAR_INVALID_FAMILY, OuBackend::Spectral);
+    }
+    if (correlation_gradient
+        && copula.correlation_kind == CorrelationKind::Factor) {
+        return invalid_grad(SCAR_INVALID_TRANSFORM, OuBackend::Spectral);
     }
     if (!valid_ou_params(params) || !finite_config_doubles(config)) {
         return invalid_grad(SCAR_INVALID_PARAMETER, OuBackend::Spectral);

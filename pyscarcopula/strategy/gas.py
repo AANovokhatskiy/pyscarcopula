@@ -41,6 +41,23 @@ from pyscarcopula.strategy.predict_helpers import (
 
 _DEFAULT_REFINEMENT_FTOL = 1e-12
 _DEFAULT_REFINEMENT_MIN_LOGL_GAIN = 1e-3
+_DEFAULT_OPTIMIZER_GRADIENT_EPS = 1e-5
+
+
+def _native_optimizer_gradient_config(options):
+    """Split native finite-difference controls from SciPy options."""
+    scipy_options = dict(options)
+    relative_step = scipy_options.pop("finite_diff_rel_step", None)
+    absolute_step = scipy_options.pop("eps", None)
+    if relative_step is not None:
+        return scipy_options, float(relative_step), True
+    return (
+        scipy_options,
+        float(
+            _DEFAULT_OPTIMIZER_GRADIENT_EPS
+            if absolute_step is None else absolute_step),
+        False,
+    )
 
 
 def _automatic_gas_start(copula, u, config, initial_mle_result=None):
@@ -69,8 +86,9 @@ class GASStrategy:
     -----
     GAS numerical operations require the compiled extension. There is no
     Python numerical backend or silent fallback. The copula score driving the
-    recursion is computed natively. L-BFGS-B receives only objective values,
-    so its gradient with respect to ``(omega, gamma, beta)`` is numerical.
+    recursion is computed natively. L-BFGS-B receives the objective and its
+    optimizer gradient from one C++ entry point; any required numerical
+    differentiation remains inside the native evaluator.
     """
 
     def __init__(
@@ -172,10 +190,10 @@ class GASStrategy:
         result_diagnostics = {
             "n_threads": self.config.n_threads,
             "model_score": "native",
-            "optimizer_gradient": "numerical",
-            "gradient_kind": "numerical_optimizer",
-            "setup_derivative": "not_provided",
-            "filter_derivative": "not_provided_to_optimizer",
+            "optimizer_gradient": "native",
+            "gradient_kind": "native_finite_difference",
+            "setup_derivative": "native_objective_gradient",
+            "filter_derivative": "native_objective_gradient",
             "analytical_grad_requested": False,
             "analytical_grad_used": False,
         }
@@ -204,6 +222,8 @@ class GASStrategy:
         u,
         gamma0,
         optimizer_options,
+        optimizer_gradient_eps,
+        optimizer_gradient_relative,
         score_eps,
         gamma_bound,
         beta_bound,
@@ -248,6 +268,8 @@ class GASStrategy:
             np.concatenate([gas_lower, [float("-inf")]]),
             np.concatenate([gas_upper, [float("inf")]]),
         )
+        base_correlation = np.ascontiguousarray(
+            copula._corr_base, dtype=np.float64)
 
         def objective(joint):
             joint = np.asarray(joint, dtype=np.float64).reshape(-1)
@@ -257,16 +279,31 @@ class GASStrategy:
             if not np.all(np.isfinite(joint)):
                 raise FloatingPointError(
                     "joint GAS point must contain only finite values")
-            copula._set_corr_from_params(joint[3:])
-            return gas_negloglik(
-                joint[0],
-                joint[1],
-                joint[2],
-                u,
-                copula,
-                self.scaling,
-                score_eps,
-            )
+            try:
+                return (
+                    _cpp_gas
+                    .negative_log_likelihood_and_gradient_shrinkage(
+                        joint[0],
+                        joint[1],
+                        joint[2],
+                        joint[3],
+                        base_correlation,
+                        u,
+                        copula,
+                        self.scaling,
+                        score_eps,
+                        optimizer_gradient_eps=optimizer_gradient_eps,
+                        optimizer_gradient_relative=(
+                            optimizer_gradient_relative),
+                    )
+                )
+            except FloatingPointError:
+                return model_policy.optimizer_failure_evaluation(
+                    joint,
+                    joint0,
+                    1e10,
+                    directional_gradient=True,
+                )
 
         if verbose:
             print(
@@ -280,6 +317,7 @@ class GASStrategy:
             objective,
             joint0,
             method="L-BFGS-B",
+            jac=True,
             bounds=bounds,
             options=optimizer_options,
         )
@@ -295,6 +333,8 @@ class GASStrategy:
             "joint_static": True,
             "joint_optimizer": "python-lbfgsb",
             "joint_correlation": "shrinkage",
+            "optimizer_gradient_eps": optimizer_gradient_eps,
+            "optimizer_gradient_relative": optimizer_gradient_relative,
             "initial_params": joint0.copy(),
             "final_params": np.asarray(result.x, dtype=np.float64).copy(),
         }
@@ -368,6 +408,11 @@ class GASStrategy:
                 finite_diff_rel_step=finite_diff_rel_step,
             ),
         )
+        (
+            optimizer_options,
+            optimizer_gradient_eps,
+            optimizer_gradient_relative,
+        ) = _native_optimizer_gradient_config(optimizer_options)
         score_eps = float(
             score_eps
             if score_eps is not None
@@ -395,6 +440,8 @@ class GASStrategy:
                 u,
                 gamma0,
                 optimizer_options,
+                optimizer_gradient_eps,
+                optimizer_gradient_relative,
                 score_eps,
                 gamma_bound,
                 beta_bound,
@@ -417,20 +464,31 @@ class GASStrategy:
             "gas", gamma_bound=gamma_bound, beta_bound=beta_bound))
 
         def objective(x):
-            return gas_negloglik(
-                x[0],
-                x[1],
-                x[2],
-                u,
-                copula,
-                self.scaling,
-                score_eps,
-            )
+            try:
+                return _cpp_gas.negative_log_likelihood_and_gradient(
+                    x[0],
+                    x[1],
+                    x[2],
+                    u,
+                    copula,
+                    self.scaling,
+                    score_eps,
+                    optimizer_gradient_eps=optimizer_gradient_eps,
+                    optimizer_gradient_relative=optimizer_gradient_relative,
+                )
+            except FloatingPointError:
+                return model_policy.optimizer_failure_evaluation(
+                    x,
+                    gamma0,
+                    1e10,
+                    directional_gradient=True,
+                )
 
         result = minimize(
             objective,
             gamma0,
             method="L-BFGS-B",
+            jac=True,
             bounds=bounds,
             options=optimizer_options,
         )
@@ -445,6 +503,7 @@ class GASStrategy:
                 objective,
                 np.asarray(result.x, dtype=np.float64),
                 method="L-BFGS-B",
+                jac=True,
                 bounds=bounds,
                 options=refined_options,
             )
@@ -504,6 +563,10 @@ class GASStrategy:
             }}
             if automatic_initialization else {}
         )
+        diagnostics.update({
+            "optimizer_gradient_eps": optimizer_gradient_eps,
+            "optimizer_gradient_relative": optimizer_gradient_relative,
+        })
         if refinement_diagnostics is not None:
             diagnostics["optimizer_refinement"] = refinement_diagnostics
         return self._build_result(

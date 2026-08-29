@@ -169,6 +169,28 @@ def test_cpp_gas_wrapper_rejects_invalid_scalar_inputs(kwargs, message):
         )
 
 
+def test_cpp_gas_wrapper_configures_native_optimizer_gradient_step():
+    module = _cpp_gas._extension.load()
+    config = _cpp_gas._config(
+        module,
+        "unit",
+        1e-4,
+        optimizer_gradient_eps=0.023,
+        optimizer_gradient_relative=True,
+    )
+
+    assert config.optimizer_gradient_eps == pytest.approx(0.023)
+    assert config.optimizer_gradient_relative is True
+
+    with pytest.raises(ValueError, match="optimizer_gradient_eps"):
+        _cpp_gas._config(
+            module,
+            "unit",
+            1e-4,
+            optimizer_gradient_eps=0.0,
+        )
+
+
 @pytest.mark.parametrize(
     "u",
     [

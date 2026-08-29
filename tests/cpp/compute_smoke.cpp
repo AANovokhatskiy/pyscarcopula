@@ -28,6 +28,12 @@ int run_jacobi_transition_tests();
 int run_jacobi_evaluator_tests();
 int run_jacobi_sampling_tests();
 int run_pair_model_tests();
+int run_multivariate_gaussian_tests();
+int run_multivariate_student_tests();
+int run_equicorr_stochastic_student_tests();
+int run_gas_model_tests();
+int run_ou_model_tests();
+int run_vine_model_tests();
 int run_multivariate_model_tests();
 int run_application_model_tests();
 
@@ -51,6 +57,32 @@ int main() {
     const int pair_model_status = run_pair_model_tests();
     if (pair_model_status != 0) {
         return 500 + pair_model_status;
+    }
+    const int multivariate_gaussian_status =
+        run_multivariate_gaussian_tests();
+    if (multivariate_gaussian_status != 0) {
+        return 550 + multivariate_gaussian_status;
+    }
+    const int multivariate_student_status = run_multivariate_student_tests();
+    if (multivariate_student_status != 0) {
+        return 575 + multivariate_student_status;
+    }
+    const int equicorr_stochastic_student_status =
+        run_equicorr_stochastic_student_tests();
+    if (equicorr_stochastic_student_status != 0) {
+        return 625 + equicorr_stochastic_student_status;
+    }
+    const int gas_model_status = run_gas_model_tests();
+    if (gas_model_status != 0) {
+        return 650 + gas_model_status;
+    }
+    const int ou_model_status = run_ou_model_tests();
+    if (ou_model_status != 0) {
+        return 675 + ou_model_status;
+    }
+    const int vine_model_status = run_vine_model_tests();
+    if (vine_model_status != 0) {
+        return 685 + vine_model_status;
     }
     const int multivariate_model_status = run_multivariate_model_tests();
     if (multivariate_model_status != 0) {

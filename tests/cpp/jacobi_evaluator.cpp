@@ -1,5 +1,6 @@
 #include "scar/jacobi.hpp"
 
+#include "scar/copula/capability.hpp"
 #include "scar/copula/prepared_pair_kernel.hpp"
 
 #include <algorithm>
@@ -11,6 +12,12 @@
 
 namespace {
 
+struct PairJacobiCase {
+    scar::CopulaFamily family;
+    scar::NativeModelId model_id;
+    scar::Rotation rotation;
+};
+
 bool normalized(const std::vector<double>& values, double tolerance = 2e-12) {
     double total = 0.0;
     for (double value : values) {
@@ -20,6 +27,14 @@ bool normalized(const std::vector<double>& values, double tolerance = 2e-12) {
         total += value;
     }
     return std::abs(total - 1.0) <= tolerance;
+}
+
+template <typename Values>
+bool finite_values(const Values& values) {
+    return std::all_of(
+        values.begin(),
+        values.end(),
+        [](double value) { return std::isfinite(value); });
 }
 
 scar::JacobiEvaluatorConfig config(
@@ -199,6 +214,94 @@ int run_jacobi_evaluator_tests() {
             coefficient_gradient.value.gradient.end(),
             [](double value) { return std::isfinite(value); })) {
         return 10;
+    }
+
+    // The exact 14 registered pair identities must all reach the concrete
+    // Jacobi evaluator for objective, gradient, state, and residual paths.
+    constexpr std::array<PairJacobiCase, 14> pair_cases{{
+        {scar::CopulaFamily::Clayton,
+         scar::NativeModelId::Clayton, scar::Rotation::R0},
+        {scar::CopulaFamily::Clayton,
+         scar::NativeModelId::Clayton, scar::Rotation::R90},
+        {scar::CopulaFamily::Clayton,
+         scar::NativeModelId::Clayton, scar::Rotation::R180},
+        {scar::CopulaFamily::Clayton,
+         scar::NativeModelId::Clayton, scar::Rotation::R270},
+        {scar::CopulaFamily::Frank,
+         scar::NativeModelId::Frank, scar::Rotation::R0},
+        {scar::CopulaFamily::Gumbel,
+         scar::NativeModelId::Gumbel, scar::Rotation::R0},
+        {scar::CopulaFamily::Gumbel,
+         scar::NativeModelId::Gumbel, scar::Rotation::R90},
+        {scar::CopulaFamily::Gumbel,
+         scar::NativeModelId::Gumbel, scar::Rotation::R180},
+        {scar::CopulaFamily::Gumbel,
+         scar::NativeModelId::Gumbel, scar::Rotation::R270},
+        {scar::CopulaFamily::Joe,
+         scar::NativeModelId::Joe, scar::Rotation::R0},
+        {scar::CopulaFamily::Joe,
+         scar::NativeModelId::Joe, scar::Rotation::R90},
+        {scar::CopulaFamily::Joe,
+         scar::NativeModelId::Joe, scar::Rotation::R180},
+        {scar::CopulaFamily::Joe,
+         scar::NativeModelId::Joe, scar::Rotation::R270},
+        {scar::CopulaFamily::Gaussian,
+         scar::NativeModelId::BivariateGaussian, scar::Rotation::R0},
+    }};
+    for (std::size_t index = 0; index < pair_cases.size(); ++index) {
+        const int base = 20 + static_cast<int>(index) * 5;
+        const PairJacobiCase& test = pair_cases[index];
+        scar::CopulaSpec identity = scar::default_pair_copula_spec(test.family);
+        identity.rotation = test.rotation;
+        if (identity.model_descriptor().model_id() != test.model_id) {
+            return base;
+        }
+        for (scar::NativeOperation operation : {
+                 scar::NativeOperation::ParameterTransformBoundsInitialization,
+                 scar::NativeOperation::RowGridDensityGradient,
+                 scar::NativeOperation::LikelihoodObjectiveGradient,
+                 scar::NativeOperation::StateFilterSmoother,
+                 scar::NativeOperation::RosenblattResidual}) {
+            const auto capability = scar::query_capability(
+                identity.model_descriptor(),
+                operation,
+                scar::DynamicsKind::ScarTmJacobi);
+            if (!capability.supported || !capability.reason.empty()) {
+                return base + 1;
+            }
+        }
+        scar::PreparedScarJacobiEvaluator identity_evaluator(
+            identity,
+            observations,
+            8,
+            2,
+            config(
+                scar::JacobiTransitionMethod::LocalFixed,
+                scar::JacobiTransitionStorage::Dense));
+        const auto identity_filter = identity_evaluator.filter(params);
+        const auto identity_objective = identity_evaluator.loglik(params);
+        const auto identity_gradient =
+            identity_evaluator.neg_loglik_with_grad(params);
+        const auto identity_mixture = identity_evaluator.mixture_h_pair(params);
+        const auto identity_rosenblatt = identity_evaluator.rosenblatt(params);
+        if (!identity_filter.is_ok() || !identity_objective.is_ok()
+            || !identity_gradient.is_ok() || !identity_mixture.is_ok()
+            || !identity_rosenblatt.is_ok()
+            || !std::isfinite(identity_objective.value.log_likelihood)
+            || !std::isfinite(identity_gradient.value.objective)
+            || !finite_values(identity_gradient.value.gradient)
+            || !normalized(identity_filter.value.current_probability)
+            || !normalized(identity_filter.value.next_probability)
+            || identity_mixture.value.first.size() != 8
+            || identity_mixture.value.second.size() != 8
+            || identity_rosenblatt.value.first.size() != 8
+            || identity_rosenblatt.value.second.size() != 8
+            || !finite_values(identity_mixture.value.first)
+            || !finite_values(identity_mixture.value.second)
+            || !finite_values(identity_rosenblatt.value.first)
+            || !finite_values(identity_rosenblatt.value.second)) {
+            return base + 2;
+        }
     }
 
     bool rejected_independent = false;

@@ -24,6 +24,12 @@ REQUIRED_MODEL_TEST_SOURCES = tuple(
     ROOT / "tests" / "cpp" / name
     for name in (
         "pair_models.cpp",
+        "multivariate_gaussian.cpp",
+        "multivariate_student.cpp",
+        "equicorr_stochastic_student.cpp",
+        "gas_models.cpp",
+        "ou_models.cpp",
+        "vine_models.cpp",
         "multivariate_models.cpp",
         "application_models.cpp",
         "jacobi_domain.cpp",

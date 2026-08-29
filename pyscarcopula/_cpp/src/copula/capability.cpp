@@ -218,6 +218,14 @@ CapabilityInfo query_capability(const CapabilityRequest& request) {
                 "joint Gaussian factor estimation requires a "
                 "factor-loading score, which is not implemented");
         }
+        if (model_id == NativeModelId::Gaussian
+            && request.operation
+                == NativeOperation::RowGridDensityGradient) {
+            return unsupported(
+                "multivariate Gaussian exposes prepared row log-density and "
+                "objective correlation gradients, but no row/grid gradient "
+                "entry point");
+        }
         return is_common_static_operation(request.operation)
             ? supported()
             : unsupported(

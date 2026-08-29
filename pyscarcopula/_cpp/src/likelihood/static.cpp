@@ -359,7 +359,7 @@ StaticObjectiveResult StaticCopulaEvaluator::evaluate_gaussian_objective(
                 .inverse_cholesky
             : nullptr;
     const auto* dense_correlation =
-        spec.correlation_kind == CorrelationKind::DenseCholesky
+        spec.correlation_kind != CorrelationKind::Factor
             ? &copula::multivariate::correlation::dense(spec)
             : nullptr;
     const FactorCorrelationOperator* factor_correlation =

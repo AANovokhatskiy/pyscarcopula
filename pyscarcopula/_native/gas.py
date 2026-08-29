@@ -113,6 +113,8 @@ def _config(
     score_clip=100.0,
     fisher_floor=1e-6,
     stationary_beta_tol=1e-8,
+    optimizer_gradient_eps=1e-5,
+    optimizer_gradient_relative=False,
 ):
     scaling = _scaling_name(scaling)
     out = module.GasConfig()
@@ -127,6 +129,9 @@ def _config(
     out.fisher_floor = _finite_float(fisher_floor, "fisher_floor")
     out.stationary_beta_tol = _finite_float(
         stationary_beta_tol, "stationary_beta_tol")
+    out.optimizer_gradient_eps = _finite_float(
+        optimizer_gradient_eps, "optimizer_gradient_eps")
+    out.optimizer_gradient_relative = bool(optimizer_gradient_relative)
     if out.score_eps <= 0.0:
         raise ValueError("score_eps must be positive")
     if out.g_clip <= 0.0:
@@ -137,10 +142,23 @@ def _config(
         raise ValueError("fisher_floor must be positive")
     if not 0.0 <= out.stationary_beta_tol < 1.0:
         raise ValueError("stationary_beta_tol must be in [0, 1)")
+    if out.optimizer_gradient_eps <= 0.0:
+        raise ValueError("optimizer_gradient_eps must be positive")
     return out
 
 
-def _inputs(omega, gamma, beta, u, copula, scaling, score_eps):
+def _inputs(
+    omega,
+    gamma,
+    beta,
+    u,
+    copula,
+    scaling,
+    score_eps,
+    *,
+    optimizer_gradient_eps=1e-5,
+    optimizer_gradient_relative=False,
+):
     module = _extension.load()
     from pyscarcopula.copula.multivariate.equicorr_prepared import (
         EquicorrPreparedData,
@@ -164,7 +182,13 @@ def _inputs(omega, gamma, beta, u, copula, scaling, score_eps):
         _params(module, omega, gamma, beta),
         spec,
         obs,
-        _config(module, scaling, score_eps),
+        _config(
+            module,
+            scaling,
+            score_eps,
+            optimizer_gradient_eps=optimizer_gradient_eps,
+            optimizer_gradient_relative=optimizer_gradient_relative,
+        ),
     )
 
 
@@ -315,6 +339,109 @@ def negative_log_likelihood(
     return value
 
 
+def negative_log_likelihood_and_gradient(
+    omega,
+    gamma,
+    beta,
+    u,
+    copula,
+    scaling="unit",
+    score_eps=1e-4,
+    *,
+    optimizer_gradient_eps=1e-5,
+    optimizer_gradient_relative=False,
+) -> tuple[float, np.ndarray]:
+    """Evaluate native ``-logL`` and its three GAS optimizer derivatives."""
+    module, params, spec, obs, config = _inputs(
+        omega,
+        gamma,
+        beta,
+        u,
+        copula,
+        scaling,
+        score_eps,
+        optimizer_gradient_eps=optimizer_gradient_eps,
+        optimizer_gradient_relative=optimizer_gradient_relative,
+    )
+    evaluator = module.GasEvaluator()
+    result = (
+        evaluator.negative_log_likelihood_and_gradient(
+            params, spec, obs, config)
+        if isinstance(obs, np.ndarray)
+        else evaluator.negative_log_likelihood_and_gradient_equicorr_prepared(
+            params, spec, obs.sum_z, obs.sum_z2, config)
+    )
+    _raise_status(result, "negative_log_likelihood_and_gradient")
+    objective = float(result["objective"])
+    gradient = np.asarray(result["gradient"], dtype=np.float64)
+    if (
+        not np.isfinite(objective)
+        or gradient.shape != (3,)
+        or np.any(~np.isfinite(gradient))
+    ):
+        raise FloatingPointError(
+            "C++ GAS objective/gradient returned non-finite values with "
+            "status=ok")
+    return objective, gradient
+
+
+def negative_log_likelihood_and_gradient_shrinkage(
+    omega,
+    gamma,
+    beta,
+    raw_shrinkage,
+    base_correlation,
+    u,
+    copula,
+    scaling="unit",
+    score_eps=1e-4,
+    *,
+    optimizer_gradient_eps=1e-5,
+    optimizer_gradient_relative=False,
+) -> tuple[float, np.ndarray]:
+    """Evaluate joint GAS/shrinkage objective and four native derivatives."""
+    module, params, spec, obs, config = _inputs(
+        omega,
+        gamma,
+        beta,
+        u,
+        copula,
+        scaling,
+        score_eps,
+        optimizer_gradient_eps=optimizer_gradient_eps,
+        optimizer_gradient_relative=optimizer_gradient_relative,
+    )
+    if not isinstance(obs, np.ndarray):
+        raise ValueError(
+            "joint shrinkage GAS requires observation rows, not prepared "
+            "equicorrelation statistics")
+    base = np.ascontiguousarray(base_correlation, dtype=np.float64)
+    expected = int(getattr(copula, "d", 0))
+    if base.shape != (expected, expected):
+        raise ValueError(
+            f"base_correlation must have shape ({expected}, {expected})")
+    result = module.GasEvaluator().negative_log_likelihood_and_gradient_shrinkage(
+        params,
+        spec,
+        base,
+        _finite_float(raw_shrinkage, "raw_shrinkage"),
+        obs,
+        config,
+    )
+    _raise_status(result, "negative_log_likelihood_and_gradient_shrinkage")
+    objective = float(result["objective"])
+    gradient = np.asarray(result["gradient"], dtype=np.float64)
+    if (
+        not np.isfinite(objective)
+        or gradient.shape != (4,)
+        or np.any(~np.isfinite(gradient))
+    ):
+        raise FloatingPointError(
+            "C++ joint GAS/shrinkage objective-gradient returned non-finite "
+            "values with status=ok")
+    return objective, gradient
+
+
 def update_one(
     omega,
     gamma,
@@ -445,6 +572,8 @@ __all__ = [
     "initial_state",
     "log_likelihood",
     "negative_log_likelihood",
+    "negative_log_likelihood_and_gradient",
+    "negative_log_likelihood_and_gradient_shrinkage",
     "update_one",
     "predict_parameter",
     "h_path",

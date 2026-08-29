@@ -1,6 +1,7 @@
 #include "scar/copula/prepared_dynamic_emission.hpp"
 
 #include "scar/copula/multivariate/equicorrelation/kernel.hpp"
+#include "scar/copula/multivariate/correlation/parameterization.hpp"
 #include "scar/copula/multivariate/student/density.hpp"
 #include "scar/copula/pair/gaussian.hpp"
 #include "scar/copula/prepared_pair_kernel.hpp"
@@ -14,6 +15,42 @@
 #include <utility>
 
 namespace scar {
+
+Result<CopulaSpec> prepare_shrinkage_dynamic_spec(
+    const CopulaSpec& template_spec,
+    DoubleView base_correlation,
+    double raw_shrinkage) {
+
+    Result<CopulaSpec> result;
+    if (template_spec.family != CopulaFamily::Student
+        || template_spec.dim < 2
+        || !std::isfinite(raw_shrinkage)) {
+        result.status = Status::InvalidParameter;
+        return result;
+    }
+    const std::size_t dimension =
+        static_cast<std::size_t>(template_spec.dim);
+    const auto correlation = make_shrinkage_correlation(
+        raw_shrinkage, base_correlation, dimension);
+    if (!correlation.is_ok()) {
+        result.status = correlation.status;
+        result.failure = correlation.failure;
+        return result;
+    }
+    const auto prepared = prepare_dense_correlation(
+        {correlation.value.data(), correlation.value.size()}, dimension);
+    if (!prepared.is_ok()) {
+        result.status = prepared.status;
+        result.failure = prepared.failure;
+        return result;
+    }
+    result.value = template_spec;
+    result.value.correlation_kind = CorrelationKind::Shrinkage;
+    result.value.reset_model_storage();
+    result.value.dense_inverse_cholesky() = prepared.inverse_cholesky;
+    result.value.dense_log_determinant() = prepared.log_determinant;
+    return result;
+}
 
 struct PreparedDynamicEmissionWorkspace::Impl {
     scar_internal::StudentWorkspace student;

@@ -33,6 +33,18 @@ py::dict gas_filter_result_to_dict(const scar::GasFilterResult& result) {
     return output;
 }
 
+py::dict gas_objective_gradient_to_dict(
+    const scar::GasObjectiveGradientResult& result) {
+    py::dict output;
+    output["objective"] = result.objective;
+    output["gradient"] = vector_to_array(result.gradient);
+    output["objective_evaluations"] = result.objective_evaluations;
+    output["status"] = static_cast<int>(result.status);
+    output["failure_index"] = result.failure.index;
+    output["failure_coordinate"] = result.failure.coordinate;
+    return output;
+}
+
 py::dict gas_update_result_to_dict(const scar::GasUpdateResult& result) {
     py::dict output;
     output["g_next"] = result.g_next;
@@ -129,7 +141,13 @@ void bind_gas(py::module_& m) {
         .def_readwrite("fisher_floor", &scar::GasConfig::fisher_floor)
         .def_readwrite(
             "stationary_beta_tol",
-            &scar::GasConfig::stationary_beta_tol);
+            &scar::GasConfig::stationary_beta_tol)
+        .def_readwrite(
+            "optimizer_gradient_eps",
+            &scar::GasConfig::optimizer_gradient_eps)
+        .def_readwrite(
+            "optimizer_gradient_relative",
+            &scar::GasConfig::optimizer_gradient_relative);
 
     py::class_<scar::GasRvineEdge>(
         m, "GasRvineEdge", "Native GAS R-vine edge specification.")
@@ -343,6 +361,96 @@ void bind_gas(py::module_& m) {
             py::arg("copula"),
             py::arg("sum_z"),
             py::arg("sum_z2"),
+            py::arg("config"))
+        .def(
+            "negative_log_likelihood_and_gradient",
+            [](const scar::GasEvaluator& evaluator,
+               const scar::GasParams& params,
+               const scar::CopulaSpec& copula,
+               py::array_t<
+                   double,
+                   py::array::c_style | py::array::forcecast> u,
+               const scar::GasConfig& config) {
+                const scar::ObservationView obs =
+                    observation_view_from_array(
+                        copula.model_descriptor().expected_dimension(), u);
+                scar::GasObjectiveGradientResult result;
+                {
+                    py::gil_scoped_release release;
+                    result = evaluator.negative_log_likelihood_and_gradient(
+                        params, copula, obs, config);
+                }
+                return gas_objective_gradient_to_dict(result);
+            },
+            py::arg("params"),
+            py::arg("copula"),
+            py::arg("u"),
+            py::arg("config"))
+        .def(
+            "negative_log_likelihood_and_gradient_equicorr_prepared",
+            [](const scar::GasEvaluator& evaluator,
+               const scar::GasParams& params,
+               scar::CopulaSpec copula,
+               py::array_t<
+                   double,
+                   py::array::c_style | py::array::forcecast> sum_z,
+               py::array_t<
+                   double,
+                   py::array::c_style | py::array::forcecast> sum_z2,
+               const scar::GasConfig& config) {
+                const auto obs = set_equicorr_prepared(
+                    copula, sum_z, sum_z2);
+                scar::GasObjectiveGradientResult result;
+                {
+                    py::gil_scoped_release release;
+                    result = evaluator.negative_log_likelihood_and_gradient(
+                        params, copula, obs, config);
+                }
+                return gas_objective_gradient_to_dict(result);
+            },
+            py::arg("params"),
+            py::arg("copula"),
+            py::arg("sum_z"),
+            py::arg("sum_z2"),
+            py::arg("config"))
+        .def(
+            "negative_log_likelihood_and_gradient_shrinkage",
+            [](const scar::GasEvaluator& evaluator,
+               const scar::GasParams& params,
+               const scar::CopulaSpec& copula,
+               py::array_t<
+                   double,
+                   py::array::c_style | py::array::forcecast>
+                   base_correlation,
+               double raw_shrinkage,
+               py::array_t<
+                   double,
+                   py::array::c_style | py::array::forcecast> u,
+               const scar::GasConfig& config) {
+                const scar::ObservationView obs =
+                    observation_view_from_array(
+                        copula.model_descriptor().expected_dimension(), u);
+                const auto base = flat_view_from_array(
+                    base_correlation, "base_correlation");
+                scar::GasObjectiveGradientResult result;
+                {
+                    py::gil_scoped_release release;
+                    result = evaluator
+                        .negative_log_likelihood_and_gradient_shrinkage(
+                            params,
+                            copula,
+                            base,
+                            raw_shrinkage,
+                            obs,
+                            config);
+                }
+                return gas_objective_gradient_to_dict(result);
+            },
+            py::arg("params"),
+            py::arg("copula"),
+            py::arg("base_correlation"),
+            py::arg("raw_shrinkage"),
+            py::arg("u"),
             py::arg("config"))
         .def(
             "update_one",

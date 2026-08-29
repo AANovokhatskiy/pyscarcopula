@@ -249,6 +249,12 @@ def test_python_free_executable_has_required_model_suites():
     names = {path.name for path in BUILD_CPP_TESTS.REQUIRED_MODEL_TEST_SOURCES}
     assert names == {
         "pair_models.cpp",
+        "multivariate_gaussian.cpp",
+        "multivariate_student.cpp",
+        "equicorr_stochastic_student.cpp",
+        "gas_models.cpp",
+        "ou_models.cpp",
+        "vine_models.cpp",
         "multivariate_models.cpp",
         "application_models.cpp",
         "jacobi_domain.cpp",
@@ -261,6 +267,12 @@ def test_python_free_executable_has_required_model_suites():
         encoding="utf-8")
     for function in (
         "run_pair_model_tests",
+        "run_multivariate_gaussian_tests",
+        "run_multivariate_student_tests",
+        "run_equicorr_stochastic_student_tests",
+        "run_gas_model_tests",
+        "run_ou_model_tests",
+        "run_vine_model_tests",
         "run_multivariate_model_tests",
         "run_application_model_tests",
         "run_jacobi_domain_tests",
@@ -269,6 +281,14 @@ def test_python_free_executable_has_required_model_suites():
         "run_jacobi_sampling_tests",
     ):
         assert entrypoint.count(f"{function}()") == 2
+
+
+def test_multivariate_gaussian_cpp_suite_is_distribution_isolated():
+    source = (ROOT / "tests/cpp/multivariate_gaussian.cpp").read_text(
+        encoding="utf-8")
+    assert "student" not in source.lower()
+    assert '"scar/copula/multivariate/gaussian/density.hpp"' in source
+    assert '"scar/copula/multivariate/correlation/factor.hpp"' in source
 
 
 def test_header_unit_objects_avoid_absolute_output_path_expansion():

@@ -30,6 +30,14 @@ struct DynamicEmissionRowResult {
     }
 };
 
+/// Build a dense Student compatibility spec from a base correlation and a
+/// raw shrinkage coordinate without exposing concrete correlation kernels to
+/// application modules.
+Result<CopulaSpec> prepare_shrinkage_dynamic_spec(
+    const CopulaSpec& template_spec,
+    DoubleView base_correlation,
+    double raw_shrinkage);
+
 /// Per-call scratch storage for a prepared dynamic emission.
 class PreparedDynamicEmissionWorkspace {
 public:

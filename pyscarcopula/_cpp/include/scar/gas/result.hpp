@@ -16,6 +16,22 @@ struct GasLogLikResult {
     }
 };
 
+/// Negative GAS log-likelihood and its optimizer-parameter gradient.
+///
+/// The numerical differentiation loop is deliberately owned by the C++
+/// evaluator so client optimizers never reconstruct model recursion math.
+struct GasObjectiveGradientResult {
+    double objective = 0.0;
+    std::vector<double> gradient;
+    std::uint64_t objective_evaluations = 0;
+    Status status = Status::Ok;
+    FailureContext failure{};
+
+    bool is_ok() const noexcept {
+        return ok(status);
+    }
+};
+
 /// Full filtered GAS paths and their total log-likelihood.
 struct GasFilterResult {
     std::vector<double> g_path;

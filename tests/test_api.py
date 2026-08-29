@@ -966,7 +966,9 @@ class TestConditionalPredict:
             nfev = 1
             message = 'ok'
 
-        def fake_minimize(fun, x0, method=None, bounds=None, options=None):
+        def fake_minimize(
+                fun, x0, method=None, jac=None, bounds=None, options=None):
+            assert jac is True
             captured.append(options)
             return DummyResult()
 
@@ -985,7 +987,8 @@ class TestConditionalPredict:
         assert captured[0]['maxls'] == 33
         assert captured[0]['ftol'] == pytest.approx(1e-11)
         assert captured[0]['maxfun'] == 4000
-        assert captured[0]['eps'] == pytest.approx(1e-5)
+        assert 'eps' not in captured[0]
+        assert 'finite_diff_rel_step' not in captured[0]
         assert captured[1]['ftol'] == pytest.approx(1e-12)
         assert result.score_eps == pytest.approx(cfg.gas_score_eps)
 
@@ -1008,7 +1011,9 @@ class TestConditionalPredict:
             nfev = 1
             message = 'ok'
 
-        def fake_minimize(fun, x0, method=None, bounds=None, options=None):
+        def fake_minimize(
+                fun, x0, method=None, jac=None, bounds=None, options=None):
+            assert jac is True
             captured.append(options)
             return DummyResult()
 

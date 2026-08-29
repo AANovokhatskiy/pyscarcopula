@@ -1,4 +1,5 @@
 #include "scar/copula.hpp"
+#include "scar/copula/multivariate/correlation/factor.hpp"
 #include "scar/copula/multivariate/student/density.hpp"
 
 #include "scar/detail/copula/common.hpp"
@@ -31,7 +32,14 @@ struct StudentBlockResult {
     StudentWorkspace::Diagnostics diagnostics;
 };
 
-bool valid_dense_correlation(const scar::CopulaSpec& spec) {
+bool valid_student_correlation(const scar::CopulaSpec& spec) {
+    if (spec.correlation_kind == scar::CorrelationKind::Factor) {
+        return spec.dim >= 2
+            && spec.factor_operator() != nullptr
+            && spec.factor_operator()->dimension()
+                == static_cast<std::size_t>(spec.dim)
+            && std::isfinite(spec.factor_operator()->logdet());
+    }
     std::size_t square = 0;
     if (spec.dim < 2
         || !valid_student_dimension(spec.dim, square)
@@ -65,7 +73,7 @@ int validate_student_batch(
     if (spec.family != scar::CopulaFamily::Student
         || spec.rotation != scar::Rotation::R0
         || spec.transform != scar::Transform::Softplus
-        || !valid_dense_correlation(spec)) {
+        || !valid_student_correlation(spec)) {
         return SCAR_INVALID_FAMILY;
     }
     if ((!spec.student_ppf_nodes().empty()
