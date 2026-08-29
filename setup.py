@@ -4,6 +4,7 @@ from pathlib import Path
 from pybind11.setup_helpers import Pybind11Extension
 from pybind11.setup_helpers import build_ext as _build_ext
 from setuptools import setup
+from setuptools.command.build_py import build_py as _build_py
 
 
 ROOT = Path(__file__).resolve().parent
@@ -25,8 +26,21 @@ def _load_build_support(name: str):
 _sources = _load_build_support("sources")
 _toolchain = _load_build_support("toolchain")
 _build_parallel = _load_build_support("build_parallel")
+_wheel_layout = _load_build_support("wheel_layout")
 SCAR_COMPUTE_SOURCES = _sources.SCAR_COMPUTE_SOURCES
 PYTHON_BINDING_SOURCES = _sources.PYTHON_BINDING_SOURCES
+
+
+class build_py(_build_py):
+    """Prune deleted modules and build-only helpers from wheel staging."""
+
+    def run(self):
+        super().run()
+        removed = _wheel_layout.prune_stale_package_files(
+            self.build_lib, ROOT / "pyscarcopula")
+        if removed:
+            self.announce(
+                f"pruned {len(removed)} stale wheel staging files", level=2)
 
 
 class build_ext(_build_ext):
@@ -87,7 +101,7 @@ ext_modules = [
 
 
 setup(
-    cmdclass={"build_ext": build_ext},
+    cmdclass={"build_ext": build_ext, "build_py": build_py},
     ext_modules=ext_modules,
     zip_safe=False,
 )

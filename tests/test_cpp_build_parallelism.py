@@ -16,6 +16,9 @@ BUILD_SUPPORT_PATH = (
 TOOLCHAIN_PATH = (
     ROOT / "pyscarcopula" / "_cpp" / "build_support" / "toolchain.py"
 )
+WHEEL_LAYOUT_PATH = (
+    ROOT / "pyscarcopula" / "_cpp" / "build_support" / "wheel_layout.py"
+)
 BUILD_TOOL_PATH = ROOT / "tools" / "build_cpp_tests.py"
 
 
@@ -32,6 +35,8 @@ BUILD_PARALLEL = _load_module(
     "_pyscarcopula_test_build_parallel", BUILD_SUPPORT_PATH)
 TOOLCHAIN = _load_module(
     "_pyscarcopula_test_toolchain", TOOLCHAIN_PATH)
+WHEEL_LAYOUT = _load_module(
+    "_pyscarcopula_test_wheel_layout", WHEEL_LAYOUT_PATH)
 BUILD_CPP_TESTS = _load_module(
     "_pyscarcopula_test_build_cpp_tests", BUILD_TOOL_PATH)
 
@@ -319,3 +324,43 @@ def test_sdist_contains_cpp_registry_inputs_needed_during_metadata_build():
 def test_build_only_cpp_support_is_excluded_from_wheel_packages():
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert '"pyscarcopula._cpp*"' in pyproject
+
+    setup_source = (ROOT / "setup.py").read_text(encoding="utf-8")
+    assert '_load_build_support("wheel_layout")' in setup_source
+    assert '"build_py": build_py' in setup_source
+
+
+def test_wheel_staging_prunes_deleted_modules_and_build_only_support(tmp_path):
+    source = tmp_path / "source" / "pyscarcopula"
+    build = tmp_path / "build"
+    staged = build / "pyscarcopula"
+    (source / "_native").mkdir(parents=True)
+    (staged / "_native").mkdir(parents=True)
+    (staged / "numerical").mkdir(parents=True)
+    (staged / "_cpp" / "build_support").mkdir(parents=True)
+
+    (source / "__init__.py").write_text("", encoding="utf-8")
+    (source / "_native" / "pair.py").write_text("", encoding="utf-8")
+    (staged / "__init__.py").write_text("", encoding="utf-8")
+    (staged / "_native" / "pair.py").write_text("", encoding="utf-8")
+    expected_extension = staged / "_native" / "_scar_cpp.test.pyd"
+    expected_extension.write_bytes(b"native")
+    (staged / "numerical" / "tm_grid.py").write_text(
+        "stale = True\n", encoding="utf-8")
+    (staged / "_scar_cpp.test.pyd").write_bytes(b"removed")
+    (staged / "_cpp" / "build_support" / "sources.py").write_text(
+        "", encoding="utf-8")
+
+    removed = WHEEL_LAYOUT.prune_stale_package_files(build, source)
+
+    assert (staged / "__init__.py").is_file()
+    assert (staged / "_native" / "pair.py").is_file()
+    assert expected_extension.is_file()
+    assert not (staged / "numerical" / "tm_grid.py").exists()
+    assert not (staged / "_scar_cpp.test.pyd").exists()
+    assert not (staged / "_cpp").exists()
+    assert set(removed) == {
+        "pyscarcopula/_cpp/build_support/sources.py",
+        "pyscarcopula/_scar_cpp.test.pyd",
+        "pyscarcopula/numerical/tm_grid.py",
+    }

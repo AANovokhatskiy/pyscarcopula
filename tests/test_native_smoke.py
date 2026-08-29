@@ -1,7 +1,13 @@
 import numpy as np
+import pytest
 
 from pyscarcopula import BivariateGaussianCopula
 from pyscarcopula._native import _scar_cpp
+from pyscarcopula._native.smoke import (
+    installed_distribution_boundary,
+    run_native_smoke,
+    validate_distribution_boundary,
+)
 from pyscarcopula.api import fit
 
 
@@ -53,3 +59,70 @@ def test_native_types_and_gas_methods_are_self_documenting():
             assert f"{parameter_name}:" in docstring
 
     assert _scar_cpp.GasRvinePlan is _scar_cpp.RVineTraversalPlan
+
+
+def test_native_smoke_reports_distribution_and_import_boundary():
+    result = run_native_smoke(n_threads=1)
+    boundary = installed_distribution_boundary()
+
+    assert result["jacobi"]["draws_used"] == 4
+    assert boundary["package_imports_checked"] > 0
+    assert isinstance(boundary["wheel_metadata"], bool)
+    if boundary["wheel_metadata"]:
+        assert boundary["distribution_files_checked"] > 0
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "pyscarcopula/_cpp/src/copula/core.cpp",
+        "pyscarcopula/_scar_cpp.cp312-win_amd64.pyd",
+        "pyscarcopula/copula/_protocol.py",
+        "pyscarcopula/numerical/tm_grid.py",
+        "pyscarcopula/vine/cvine.py",
+        "tests/reference/oracle.py",
+        "pyscarcopula/fixtures/frozen.json",
+    ],
+)
+def test_distribution_boundary_rejects_build_oracle_and_removed_files(path):
+    with pytest.raises(RuntimeError, match="distribution boundary violation"):
+        validate_distribution_boundary([path], ["pyscarcopula"])
+
+
+@pytest.mark.parametrize(
+    "module_name",
+    [
+        "pyscarcopula._scar_cpp",
+        "pyscarcopula.copula._protocol",
+        "pyscarcopula.numerical._rvine_backend",
+        "pyscarcopula.numerical.tm_grid",
+        "pyscarcopula.vine.cvine",
+        "pyscarcopula.tests.reference_oracle",
+    ],
+)
+def test_distribution_boundary_rejects_removed_or_audit_only_imports(
+    module_name,
+):
+    with pytest.raises(RuntimeError, match="distribution boundary violation"):
+        validate_distribution_boundary([], ["pyscarcopula", module_name])
+
+
+def test_distribution_boundary_accepts_native_wheel_layout():
+    result = validate_distribution_boundary(
+        [
+            "pyscarcopula/__init__.py",
+            "pyscarcopula/_native/_scar_cpp.cp312-win_amd64.pyd",
+            "pyscarcopula/_native/pair.py",
+            "pyscarcopula-1.2.3.dist-info/METADATA",
+        ],
+        [
+            "pyscarcopula",
+            "pyscarcopula._native",
+            "pyscarcopula._native._scar_cpp",
+        ],
+    )
+
+    assert result == {
+        "distribution_files_checked": 4,
+        "package_imports_checked": 3,
+    }
