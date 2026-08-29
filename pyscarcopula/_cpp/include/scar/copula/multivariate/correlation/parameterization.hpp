@@ -65,6 +65,11 @@ CorrelationPreprocessingResult estimate_kendall_correlation(
     ObservationView observations,
     double eigenvalue_floor);
 
+double kendall_tau_b(
+    ObservationView observations,
+    std::size_t first,
+    std::size_t second);
+
 Result<std::vector<double>> make_shrinkage_correlation(
     double raw_parameter,
     DoubleView base,

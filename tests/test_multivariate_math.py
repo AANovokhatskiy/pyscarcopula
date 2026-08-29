@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 from pathlib import Path
 from scipy.special import stdtrit
-from scipy.stats import multivariate_normal, multivariate_t, norm
+from scipy.stats import chi2, multivariate_normal, multivariate_t, norm
 from scipy.stats import t as t_dist
 
 from pyscarcopula._constants import PSEUDO_OBS_EPS
@@ -40,7 +40,12 @@ from pyscarcopula.copula.multivariate.student_ppf_cache import (
 from pyscarcopula.copula.multivariate.stochastic_student import (
     StochasticStudentCopula,
 )
-from pyscarcopula._native import gas as _cpp_gas, scar_ou as _cpp_scar_ou
+from pyscarcopula._native import (
+    gas as _cpp_gas,
+    multivariate as _cpp_multivariate,
+    scar_ou as _cpp_scar_ou,
+)
+from pyscarcopula._native.errors import NativeError
 from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
 from pyscarcopula.numerical.gas_filter import gas_filter
 from pyscarcopula.stattests import (
@@ -82,6 +87,24 @@ def _R():
         ],
         dtype=np.float64,
     )
+
+
+def test_native_student_sampler_transforms_raw_uniform_radial_draws():
+    correlation = np.array([[1.0, 0.3], [0.3, 1.0]])
+    df = np.array([5.0, 8.0])
+    normal_draws = np.array([[0.4, -0.2], [-0.7, 1.1]])
+    radial_uniforms = np.array([0.25, 0.75])
+
+    from_uniforms = _cpp_multivariate.student_sample_from_normal_uniforms(
+        correlation, df, normal_draws, radial_uniforms)
+    from_quantiles = _cpp_multivariate.student_sample_from_draws(
+        correlation, df, normal_draws, chi2.ppf(radial_uniforms, df))
+
+    np.testing.assert_allclose(
+        from_uniforms, from_quantiles, rtol=5e-12, atol=5e-13)
+    with pytest.raises(NativeError, match="Student"):
+        _cpp_multivariate.student_sample_from_normal_uniforms(
+            correlation, df, normal_draws, [1.0, 0.5])
 
 
 def _prefix_reweighted(weights, prefix_density):
@@ -653,29 +676,6 @@ def test_stochastic_student_scar_gof_uses_block_batch_emissions(monkeypatch):
     assert np.all((e > 0.0) & (e < 1.0))
 
 
-def test_student_scar_gof_bypasses_python_block_sizing(monkeypatch):
-    from pyscarcopula.numerical import gof_blocks
-
-    rng = np.random.default_rng(20260521)
-    u = pobs(rng.standard_normal((10, 4)))
-    R = _R()
-    result = _scar_result(K=8, grid_range=3.0)
-    calls = []
-
-    def capture_block_size(K, max_elements=2_000_000, max_rows=512,
-                           element_width=1):
-        calls.append(element_width)
-        return 3
-
-    monkeypatch.setattr(gof_blocks, "forward_block_size", capture_block_size)
-
-    student = StochasticStudentCopula(d=4, R=R)
-    stochastic_student_rosenblatt_transform(
-        student, u, result, K=8, grid_range=3.0)
-
-    assert calls == []
-
-
 def test_multivariate_models_support_top_level_api_except_pair_h():
     u = _u()
     R = _R()
@@ -891,6 +891,14 @@ def test_native_conditional_sampling_preserves_public_seed_reproducibility(
     np.testing.assert_array_equal(first, second)
 
 
+def test_invalid_equicorr_conditional_path_does_not_advance_rng():
+    rng = np.random.default_rng(20260829)
+    before = rng.bit_generator.state
+    with pytest.raises(ValueError, match="equicorrelation domain"):
+        sample_gaussian_conditional(8, 3, 1.0, {0: 0.4}, rng=rng)
+    assert rng.bit_generator.state == before
+
+
 @pytest.mark.parametrize("family", ["gaussian", "student"])
 def test_conditional_sampling_all_fixed_preserves_extreme_valid_values(family):
     given = {
@@ -1020,6 +1028,66 @@ def test_student_ppf_table_memory_limit_falls_back_to_exact():
     np.testing.assert_allclose(
         table.rows(4.5, 2, 9), stdtrit(4.5, table.u[2:9]),
         rtol=1e-12, atol=0.0)
+
+
+def test_student_ppf_preparation_and_tails_do_not_use_python_math(monkeypatch):
+    import scipy.special
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Python Student quantile or node construction was called")
+
+    monkeypatch.setattr(scipy.special, "stdtrit", forbidden)
+    monkeypatch.setattr(np, "geomspace", forbidden)
+    monkeypatch.setattr(np, "linspace", forbidden)
+    monkeypatch.setattr(np, "clip", forbidden)
+    table = StudentPPFTable(np.array([[0.25, 0.5, 0.75]]))
+    np.testing.assert_allclose(table(1.0), [[-1.0, 0.0, 1.0]], atol=1e-13)
+    assert np.all(np.isfinite(table(5.0)))
+    assert table.rows(5.0, 0, 0).shape == (0, 3)
+
+
+@pytest.mark.parametrize("df", [3.0, 300.0, 999.0, 1000.0, 3000.0,
+                                10000.0, 99999.0, 100000.0, 1e6])
+def test_student_ppf_exact_path_centre_tails_and_large_df(df):
+    probabilities = np.array([[1e-10, 1e-6, 0.01, 0.45, 0.49, 0.4999,
+                               0.5, 0.5001, 0.51, 0.99, 1-1e-6, 1-1e-10]])
+    table = StudentPPFTable(probabilities, max_table_bytes=1)
+    np.testing.assert_allclose(table(df), stdtrit(df, probabilities),
+                               rtol=2e-13, atol=2e-13)
+
+
+def test_student_ppf_exported_arrays_keep_native_storage_alive():
+    import gc
+
+    table = StudentPPFTable(np.array([[0.25, 0.5, 0.75]]))
+    nodes = table.nodes
+    row = table.table[0]
+    expected = row.copy()
+    del table
+    gc.collect()
+    assert nodes[0] == pytest.approx(2.0 + 1e-6)
+    np.testing.assert_array_equal(row, expected)
+
+
+@pytest.mark.parametrize("operation", ["prepare", "evaluate"])
+def test_student_ppf_propagates_native_unsupported(monkeypatch, operation):
+    from pyscarcopula._native import _extension
+    from pyscarcopula._native.errors import NativeUnsupported
+
+    table = StudentPPFTable(np.array([[0.2, 0.8]]))
+
+    def unsupported(*args, **kwargs):
+        raise NativeUnsupported("sentinel PPF failure")
+
+    module = _extension.load()
+    if operation == "prepare":
+        monkeypatch.setattr(module, "student_prepare_ppf_table", unsupported)
+        call = lambda: StudentPPFTable(table.u)
+    else:
+        monkeypatch.setattr(module, "student_evaluate_ppf_table", unsupported)
+        call = lambda: table(5.0)
+    with pytest.raises(NativeUnsupported, match="sentinel PPF failure"):
+        call()
 
 
 def test_scar_log_likelihood_with_degraded_ppf_cache(monkeypatch):

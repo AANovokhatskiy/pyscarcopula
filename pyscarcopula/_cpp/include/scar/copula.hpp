@@ -1,6 +1,7 @@
 #pragma once
 
 #include "scar/copula/grid_values.hpp"
+#include "scar/copula/model_statistics.hpp"
 #include "scar/copula/result.hpp"
 #include "scar/copula/spec.hpp"
 #include "scar/core/span.hpp"
@@ -41,6 +42,8 @@ public:
     StaticObjectiveResult objective(
         double parameter,
         bool correlation_gradient = false) const;
+    StaticObjectiveResult transformed_objective(
+        double optimizer_parameter) const;
     StaticObjectiveResult gaussian_objective(
         const CopulaSpec& spec,
         bool correlation_gradient = true) const;
@@ -84,6 +87,12 @@ std::vector<double> copula_dtransform(
 std::vector<double> copula_tau_to_param(
     const CopulaSpec& spec,
     const std::vector<double>& tau);
+
+std::vector<double> copula_tau_to_param_capped(
+    const CopulaSpec& spec,
+    const std::vector<double>& tau,
+    double theta_cap,
+    bool has_theta_cap);
 
 std::vector<double> copula_param_to_tau(
     const CopulaSpec& spec,

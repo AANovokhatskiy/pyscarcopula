@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from pyscarcopula._native import _descriptors, _extension
+from pyscarcopula._native import _descriptors, _extension, model_policy
 from pyscarcopula._native.errors import (
     NativeError,
     NATIVE_ADAPTER_STATUS_EXCEPTION_POLICY,
@@ -84,39 +84,67 @@ class StaticLikelihoodEvaluator:
             self, parameter: float, *, fail_value: float = 1e10):
         result = self.result(parameter)
         if result["status"] != 0:
-            return float(fail_value), np.array([0.0], dtype=np.float64)
+            try:
+                raise_for_status(result, "static objective gradient")
+            except FloatingPointError as error:
+                return model_policy.optimizer_numerical_failure_evaluation_for_size(
+                    error, 1, fail_value)
         value = float(result["negative_log_likelihood"])
         gradient = float(result["negative_gradient"])
         if not np.isfinite(value) or not np.isfinite(gradient):
-            return float(fail_value), np.array([0.0], dtype=np.float64)
+            raise FloatingPointError(
+                "C++ static objective gradient returned non-finite values")
+        return value, np.array([gradient], dtype=np.float64)
+
+    def transformed_objective_and_gradient(
+            self, optimizer_parameter: float, *, fail_value: float = 1e10):
+        """Evaluate an equicorrelation objective in native raw coordinates."""
+        result = dict(
+            self._native.transformed_objective(float(optimizer_parameter)))
+        if result["status"] != 0:
+            try:
+                raise_for_status(result, "transformed static objective gradient")
+            except FloatingPointError as error:
+                return model_policy.optimizer_numerical_failure_evaluation_for_size(
+                    error, 1, fail_value)
+        value = float(result["negative_log_likelihood"])
+        gradient = float(result["negative_gradient"])
+        if not np.isfinite(value) or not np.isfinite(gradient):
+            raise FloatingPointError(
+                "C++ transformed static objective gradient returned "
+                "non-finite values")
         return value, np.array([gradient], dtype=np.float64)
 
     def objective_and_joint_gradient(
             self, parameter: float, *, fail_value: float = 1e10):
         """Return scalar-parameter and native correlation derivatives."""
         result = self.joint_result(parameter)
-        if result["status"] != 0:
-            return (
-                float(fail_value),
-                np.array([0.0], dtype=np.float64),
-                np.empty(0, dtype=np.float64),
-            )
-        value = float(result["negative_log_likelihood"])
-        parameter_gradient = float(result["negative_gradient"])
         correlation_gradient = np.asarray(
             result["negative_correlation_gradient"],
             dtype=np.float64,
         )
+        if result["status"] != 0:
+            try:
+                raise_for_status(result, "static joint objective gradient")
+            except FloatingPointError as error:
+                value, parameter_gradient = (
+                    model_policy
+                    .optimizer_numerical_failure_evaluation_for_size(
+                        error, 1, fail_value))
+                _, correlation_gradient = (
+                    model_policy
+                    .optimizer_numerical_failure_evaluation_for_size(
+                        error, correlation_gradient.size, fail_value))
+                return value, parameter_gradient, correlation_gradient
+        value = float(result["negative_log_likelihood"])
+        parameter_gradient = float(result["negative_gradient"])
         if (
             not np.isfinite(value)
             or not np.isfinite(parameter_gradient)
             or np.any(~np.isfinite(correlation_gradient))
         ):
-            return (
-                float(fail_value),
-                np.array([0.0], dtype=np.float64),
-                np.zeros_like(correlation_gradient),
-            )
+            raise FloatingPointError(
+                "C++ static joint objective gradient returned non-finite values")
         return (
             value,
             np.array([parameter_gradient], dtype=np.float64),
@@ -133,11 +161,15 @@ class StaticLikelihoodEvaluator:
         gradient = np.asarray(
             result["negative_correlation_gradient"], dtype=np.float64)
         value = float(result["negative_log_likelihood"])
-        if (
-                result["status"] != 0
-                or not np.isfinite(value)
-                or np.any(~np.isfinite(gradient))):
-            return float(fail_value), np.zeros_like(gradient)
+        if result["status"] != 0:
+            try:
+                raise_for_status(result, "Gaussian static objective gradient")
+            except FloatingPointError as error:
+                return model_policy.optimizer_numerical_failure_evaluation_for_size(
+                    error, gradient.size, fail_value)
+        if not np.isfinite(value) or np.any(~np.isfinite(gradient)):
+            raise FloatingPointError(
+                "C++ Gaussian static objective gradient returned non-finite values")
         return value, gradient
 
     def log_pdf_rows(self, parameter: float) -> np.ndarray:
@@ -152,11 +184,10 @@ class StaticLikelihoodEvaluator:
     def log_likelihood(self, parameter: float) -> float:
         result = self.value_result(parameter)
         value = float(result["negative_log_likelihood"])
-        if result["status"] != 0 or not np.isfinite(value):
-            raise NativeError(
-                "C++ static likelihood reduction failed with "
-                f"status={result['status']}, "
-                f"failure_index={result['failure_index']}")
+        raise_for_status(result, "static likelihood reduction")
+        if not np.isfinite(value):
+            raise FloatingPointError(
+                "C++ static likelihood reduction returned a non-finite value")
         return -value
 
 

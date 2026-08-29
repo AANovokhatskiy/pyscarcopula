@@ -52,6 +52,30 @@ def _correlation():
     )
 
 
+@pytest.mark.parametrize("model_type", [GaussianCopula, StudentCopula])
+@pytest.mark.parametrize("corr_mode", ["fixed", "shrinkage", "cholesky"])
+def test_public_likelihood_prepares_correlation_without_python_linalg(
+        monkeypatch, model_type, corr_mode):
+    model = model_type(d=3, R=_correlation(), corr_mode=corr_mode)
+    observations = _observations(24, 3)
+    options = (
+        {} if model_type is GaussianCopula and corr_mode == "fixed"
+        else {"maxiter": 100}
+    )
+    result = model.fit(observations, to_pobs=False, **options)
+    assert result.success
+    expected = model.log_likelihood(observations)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Python correlation factorization was called")
+
+    monkeypatch.setattr(np.linalg, "cholesky", forbidden)
+    monkeypatch.setattr(np.linalg, "inv", forbidden)
+    monkeypatch.setattr(np.linalg, "slogdet", forbidden)
+    assert model.log_likelihood(observations) == pytest.approx(
+        expected, rel=1e-13, abs=1e-13)
+
+
 def test_pybind_exports_static_likelihood_evaluator():
     module = _cpp_extension.load()
     assert hasattr(module, "StaticCopulaEvaluator")
@@ -113,6 +137,56 @@ def test_strategy_failure_translation_preserves_fail_value():
         np.array([1.0]),
     )
     assert value == strategy.config.fail_value
+
+
+def test_static_evaluator_does_not_mask_invalid_or_nonfinite_native_results():
+    evaluator = static_likelihood.StaticLikelihoodEvaluator.__new__(
+        static_likelihood.StaticLikelihoodEvaluator)
+
+    evaluator.result = lambda parameter: {
+        "status": 6,
+        "negative_log_likelihood": np.inf,
+        "negative_gradient": 0.0,
+    }
+    with pytest.raises(ValueError, match="invalid_parameter"):
+        evaluator.objective_and_gradient(0.2)
+
+    evaluator.result = lambda parameter: {
+        "status": 0,
+        "negative_log_likelihood": np.nan,
+        "negative_gradient": 0.0,
+    }
+    with pytest.raises(FloatingPointError, match="non-finite"):
+        evaluator.objective_and_gradient(0.2)
+
+
+def test_static_evaluator_uses_cpp_policy_only_for_numerical_failure():
+    evaluator = static_likelihood.StaticLikelihoodEvaluator.__new__(
+        static_likelihood.StaticLikelihoodEvaluator)
+    evaluator.result = lambda parameter: {
+        "status": 7,
+        "negative_log_likelihood": np.inf,
+        "negative_gradient": 0.0,
+    }
+
+    value, gradient = evaluator.objective_and_gradient(
+        0.2, fail_value=321.0)
+
+    assert value == 321.0
+    np.testing.assert_array_equal(gradient, [0.0])
+
+
+def test_mle_objective_propagates_unexpected_adapter_failures(monkeypatch):
+    monkeypatch.setattr(
+        static_likelihood,
+        "prepare",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            RuntimeError("unexpected adapter failure")),
+    )
+
+    with pytest.raises(RuntimeError, match="unexpected adapter failure"):
+        MLEStrategy().objective(
+            ClaytonCopula(), _observations(4), np.array([1.0]))
 
 
 def test_mle_fit_uses_one_prepared_native_evaluator(monkeypatch):

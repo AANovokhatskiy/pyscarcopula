@@ -1,6 +1,8 @@
 """Model persistence tests."""
 
+import importlib
 import json
+import operator
 
 import numpy as np
 import pytest
@@ -42,10 +44,46 @@ def test_removed_cvine_artifact_is_rejected_before_class_import(
         imported.append(name)
         raise AssertionError("removed artifact must fail before import")
 
-    monkeypatch.setattr(persistence.importlib, "import_module", fail_import)
+    monkeypatch.setattr(importlib, "import_module", fail_import)
     with pytest.raises(ValueError, match="no migration execution path"):
         persistence.load_model(artifact)
     assert imported == []
+
+
+@pytest.mark.parametrize("class_path", [
+    "pyscarcopula.contrib.marginal.MarginalModel",
+    "pyscarcopula._native._scar_cpp.NativeModelId",
+    "pyscarcopula._native._extension.NativeError",
+    "pyscarcopula.io.Path",
+    "pyscarcopula.unregistered.Payload",
+])
+def test_persistence_rejects_non_schema_types_without_dynamic_import(
+        monkeypatch, class_path):
+    persistence._persisted_classes()
+
+    def forbidden(name):
+        raise AssertionError(f"payload triggered a dynamic import: {name}")
+
+    monkeypatch.setattr(importlib, "import_module", forbidden)
+    with pytest.raises(ValueError, match="Unsupported persisted class"):
+        _from_jsonable({"__pyscarcopula_type__": "class", "class": class_path})
+
+
+def test_persistence_rejects_types_that_spoof_registered_names():
+    fake_model = type("GumbelCopula", (), {
+        "__module__": "pyscarcopula.copula.gumbel"})
+    with pytest.raises(ValueError, match="Unsupported persisted class"):
+        _to_jsonable(fake_model)
+    with pytest.raises(ValueError, match="Unsupported persisted class"):
+        _to_jsonable(fake_model())
+
+
+def test_supported_persistence_registry_is_immutable():
+    registry = persistence._persisted_classes()
+
+    with pytest.raises(TypeError):
+        operator.setitem(
+            registry, "pyscarcopula.contrib.injected.Payload", object)
 
 
 def test_bivariate_save_load_roundtrip(tmp_path, random_u2):

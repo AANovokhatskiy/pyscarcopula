@@ -7,6 +7,7 @@ from typing import Any, Literal
 import numpy as np
 from numpy.typing import ArrayLike
 
+from pyscarcopula._native import validation as native_validation
 from pyscarcopula._utils import pobs
 from pyscarcopula._types import (
     DEFAULT_CONFIG,
@@ -15,6 +16,9 @@ from pyscarcopula._types import (
 )
 from pyscarcopula.copula.multivariate.base import (
     MultivariateCopula,
+    as_real_array,
+    factor_copula_getstate,
+    factor_uniqueness,
     model_state_locked,
 )
 from pyscarcopula.copula.multivariate.corr_param import (
@@ -61,31 +65,7 @@ def _validate_gaussian_fit_data(u):
         raise ValueError("data must contain at least one observation")
     if u.shape[1] < 2:
         raise ValueError("data must contain at least two variables")
-    if not np.all(np.isfinite(u)):
-        raise ValueError("data must contain only finite values")
-    if np.any((u < 0.0) | (u > 1.0)):
-        raise ValueError(
-            "MLE expects pseudo-observations in [0, 1]; use to_pobs=True")
-    if np.any(np.ptp(u, axis=0) == 0.0):
-        raise ValueError(
-            "Gaussian copula correlation is not identifiable for constant "
-            "data columns")
-    if any(
-            np.array_equal(u[:, left], u[:, right])
-            for right in range(1, u.shape[1])
-            for left in range(right)):
-        raise ValueError(
-            "Gaussian copula correlation is not identifiable for duplicate "
-            "data columns")
-
-
-def _as_real_array(data):
-    raw = np.asarray(data)
-    if np.iscomplexobj(raw):
-        raise ValueError("data must be real-valued")
-    if raw.dtype.kind in {"O", "S", "U", "V", "b"}:
-        raise TypeError("data must have a real numeric dtype")
-    return np.asarray(raw, dtype=np.float64)
+    native_validation.validate_fit_data(u, "Gaussian")
 
 
 def _validated_correlation(value, *, name, dimension=None):
@@ -283,11 +263,7 @@ class GaussianCopula(MultivariateCopula):
             return None
         return self._factor_loadings.copy()
 
-    @property
-    def factor_uniqueness_(self):
-        if self._factor_correlation is None:
-            return None
-        return self._factor_correlation.uniqueness.copy()
+    factor_uniqueness_ = property(factor_uniqueness)
 
     @property
     def correlation_operator_(self):
@@ -311,11 +287,7 @@ class GaussianCopula(MultivariateCopula):
             raise ValueError("Fit first")
         return self.corr.copy()
 
-    def __getstate__(self):
-        state = super().__getstate__()
-        state["_factor_correlation"] = None
-        state["_factor_operator"] = None
-        return state
+    __getstate__ = factor_copula_getstate
 
     def __setstate__(self, state):
         stored_mode = state.get("_corr_mode")
@@ -476,7 +448,7 @@ class GaussianCopula(MultivariateCopula):
             raise ValueError(
                 f"GaussianCopula supports only method='mle', "
                 f"got {method!r}")
-        u = _as_real_array(data)
+        u = as_real_array(data)
         if to_pobs:
             if (
                     u.ndim != 2 or u.shape[0] == 0 or u.shape[1] < 2

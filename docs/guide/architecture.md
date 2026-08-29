@@ -37,6 +37,12 @@ typed model descriptors, capability decisions, status translation, and thread
 validation. Production callers use this facade directly; retired numerical
 adapter names are not dispatch surfaces.
 
+Unused numerical implementations are not shipped as importable references.
+The former `_utils.linear_least_squares` kernel and
+`numerical.gof_blocks` streaming state helpers are retired; maintained GoF
+paths call native evaluators directly. Reachability is established from
+production imports, not inferred from an absence of observed runtime calls.
+
 The binary implementation lives at `pyscarcopula._native._scar_cpp`. Only the
 facade loader imports that raw module in production code. The former
 `pyscarcopula._scar_cpp` import path is removed and has no compatibility alias.
@@ -116,12 +122,22 @@ Repository validation compiles and links the complete computational source
 manifest without Python headers or libraries, compiles every public C++ header
 as a self-contained unit, and runs focused C++ model suites. The architecture
 gate validates the complete logical target dependency graph and rejects
-domain cycles. ASan/UBSan and TSan instrument the standalone computational
+domain cycles. It additionally rejects private copies of foundation CDF,
+incomplete beta/gamma, softplus, inverse-softplus, and logistic formulas, and
+exact Python function-body clones inside or across shipped modules. ASan/UBSan
+and TSan instrument the standalone computational
 executable separately from the Python extension; cross-platform wheel,
 accuracy, configuration, and pinned-runner performance workflows use the same
 canonical computational source manifest. Every supported wheel executes the
 frozen numerical golden comparison after installation, and the pinned-runner
 performance workflow is triggered automatically as well as on demand.
+
+Optimizer adapters translate only structured native numerical failures into a
+penalty through the C++ model-policy API. Invalid or unsupported statuses and
+unexpected exceptions propagate through the centralized exception policy. A
+status-OK non-finite objective raises `FloatingPointError`; Python never
+constructs a replacement objective or zero gradient. Jacobi domain rejection
+uses native validation and the same native optimizer policy.
 
 ## Numerical Safety Boundaries
 

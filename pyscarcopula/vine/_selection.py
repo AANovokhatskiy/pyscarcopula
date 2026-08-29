@@ -12,6 +12,7 @@ from typing import NamedTuple
 
 import numpy as np
 
+from pyscarcopula._native import statistics
 from pyscarcopula._native.errors import NativeUnsupported
 from pyscarcopula._native.registry import is_registered_type
 from pyscarcopula.copula.base import BivariateCopula
@@ -162,28 +163,15 @@ def _tau_for_itau(cop_class, tau_value):
     """Return the family-scale tau without altering interior observations."""
     from pyscarcopula.copula.elliptical import BivariateGaussianCopula
 
-    tau = (
-        float(tau_value)
-        if cop_class is BivariateGaussianCopula
-        else abs(float(tau_value))
+    return statistics.tau_for_itau(
+        tau_value,
+        preserve_sign=cop_class is BivariateGaussianCopula,
     )
-    if tau == 0.0:
-        return None
-    if tau >= 1.0 or tau <= -1.0:
-        # Perfect concordance is attained only at a parameter boundary and
-        # has no finite itau start for the screening likelihood.
-        return None
-    return tau
 
 
 def _rotation_compatible(tau, rotate):
     """Check if rotation is compatible with sign of Kendall's tau."""
-    if abs(tau) < 0.15:
-        return True
-    if rotate == 0 or rotate == 180:
-        return tau > 0
-    else:
-        return tau < 0
+    return statistics.rotation_compatible(tau, rotate)
 
 
 def select_best_copula(u1, u2, candidates, allow_rotations=True,
@@ -266,16 +254,12 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
                 logL, evaluator = _screen_log_likelihood(
                     cop, u_pair, float(r0))
 
-                if not np.isfinite(logL):
+                if not statistics.is_finite(logL):
                     continue
 
                 n_params = 1
-                if criterion == 'aic':
-                    score = -2 * logL + 2 * n_params
-                elif criterion == 'bic':
-                    score = -2 * logL + n_params * np.log(T)
-                else:
-                    score = -logL
+                score = statistics.candidate_score(
+                    logL, n_params, T, criterion)
 
                 itau_candidates.append([score, cop, r0, evaluator])
                 _retain_top_prepared_evaluators(itau_candidates, 3)
@@ -299,12 +283,8 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
             logL = result.log_likelihood
 
             n_params = 1
-            if criterion == 'aic':
-                score = -2 * logL + 2 * n_params
-            elif criterion == 'bic':
-                score = -2 * logL + n_params * np.log(T)
-            else:
-                score = -logL
+            score = statistics.candidate_score(
+                logL, n_params, T, criterion)
 
             if score < best_score:
                 best_score = score

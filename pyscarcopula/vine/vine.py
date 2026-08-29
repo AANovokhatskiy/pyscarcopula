@@ -56,7 +56,7 @@ from pyscarcopula.numerical._arrays import (
 from pyscarcopula._types import (
     PredictConfig,
 )
-from pyscarcopula._native import _extension as _cpp_extension
+from pyscarcopula._native import _extension as _cpp_extension, statistics
 from pyscarcopula._native.errors import NativeUnsupported
 from pyscarcopula._native.registry import registry_entry_for
 from pyscarcopula.vine._conditional_rvine import (
@@ -75,8 +75,6 @@ from pyscarcopula.vine._structure import (
 )
 from pyscarcopula.vine._rvine_edges import (
     _edge_h,
-    _edge_h_pair,
-    _edge_h_pair_for_variables,
     _edge_h_inverse,
     _edge_h_inverse_for_variables,
     _edge_initial_model_state,
@@ -872,20 +870,21 @@ class VineCopula:
         self._edge_map = dict(edge_map)
         self._orig_edge_key = orig_edge_key
         self._T = int(T)
-        self._log_likelihood = float(sum(
+        self._log_likelihood = statistics.sum_values(
             pc.log_likelihood for pc in pair_copulas.values()
-        ))
+        )
         self.method = method
         edge_fit_summary = self._build_edge_fit_summary(
             pair_copulas, requested_method=method)
         fit_diagnostics['edge_fits'] = deepcopy(edge_fit_summary)
         self._fit_diagnostics = fit_diagnostics
-        total_nfev = sum(
+        total_nfev = statistics.sum_int64(
             int(getattr(edge_result(pc), 'nfev', 0) or 0)
             for pc in pair_copulas.values()
         )
         n_edges_total = len(pair_copulas)
-        n_params = sum(pc.n_params for pc in pair_copulas.values())
+        n_params = statistics.sum_int64(
+            pc.n_params for pc in pair_copulas.values())
         self.fit_result = OptimizeResult()
         self.fit_result.log_likelihood = self._log_likelihood
         self.fit_result.method = method
@@ -1159,8 +1158,8 @@ class VineCopula:
             self.pair_copulas, active_keys)
         if static_layout is not None:
             parameter_paths, _parameter_sources = static_layout
-            return float(np.sum(self._log_pdf_rows_with_r(
-                u, parameter_paths)))
+            return statistics.sum_values(self._log_pdf_rows_with_r(
+                u, parameter_paths))
 
         module = _cpp_extension.load()
         return float(native_vine.rosenblatt(
@@ -1224,13 +1223,15 @@ class VineCopula:
     def aic(self) -> float:
         """AIC = -2 logL + 2 k."""
         self._require_fit()
-        return -2.0 * self._log_likelihood + 2.0 * self.n_parameters
+        return statistics.information_criterion(
+            self._log_likelihood, self.n_parameters, self._T, "aic")
 
     @property
     def bic(self) -> float:
         """BIC = -2 logL + k log T."""
         self._require_fit()
-        return -2.0 * self._log_likelihood + self.n_parameters * np.log(self._T)
+        return statistics.information_criterion(
+            self._log_likelihood, self.n_parameters, self._T, "bic")
 
     def family_matrix(self) -> np.ndarray:
         """(d, d) object array with copula family names at edge positions.
@@ -2201,90 +2202,29 @@ class VineCopula:
             self, n, r_all, given, start_col, matrix, pair_copulas, edge_map,
             train_pseudo, horizon, rng, predictive_r_mode, state_cache=None,
             posterior_cache=None):
-        d = self.d
-        M = matrix
-        updated = {
-            key: value.copy()
-            for key, value in r_all.items()
-        }
-        pseudo_obs = {}
-        diagnostics = {
-            'mode': 'given_only',
-            'updated_edges': [],
-            'skipped_edges': [],
-        }
+        from pyscarcopula._native import vine as native_vine
 
-        last_var = int(M[0, d - 1])
-        if d - 1 >= start_col:
-            pseudo_obs[(last_var, frozenset())] = np.full(
-                n, given[last_var], dtype=np.float64)
-        else:
-            return updated, diagnostics
-
-        for col in range(d - 2, start_col - 1, -1):
-            leaf = int(M[d - 1 - col, col])
-            top_tree = d - 2 - col
-            pseudo_obs[(leaf, frozenset())] = np.full(
-                n, given[leaf], dtype=np.float64)
-            for t in range(top_tree + 1):
-                key = (t, col)
-                row = d - 2 - col - t
-                partner = int(M[row, col])
-                conditioning = frozenset(
-                    int(M[r, col])
-                    for r in range(row + 1, d - 1 - col)
-                )
-                next_leaf_cond = conditioning | {partner}
-                next_partner_cond = conditioning | {leaf}
-                edge = pair_copulas[key]
-                leaf_val = pseudo_obs[(leaf, conditioning)]
-                partner_val = pseudo_obs[(partner, conditioning)]
-                u_pair = self._edge_pair_from_pseudo_map(
-                    key, pseudo_obs, edge_map)
-
-                r_before = updated[key]
-                r_new = self._dynamic_edge_update_from_observation(
-                    key,
-                    edge,
-                    r_before,
-                    u_pair,
-                    edge_map,
-                    train_pseudo,
-                    horizon,
-                    rng,
-                    predictive_r_mode,
-                    state_cache=state_cache,
-                    posterior_cache=posterior_cache,
-                )
-                if r_new is not None:
-                    updated[key] = np.asarray(r_new, dtype=np.float64)
-                    diagnostics['updated_edges'].append(
-                        self._dynamic_update_record(
-                            key, edge, edge_map, r_before, updated[key],
-                            'updated'))
-                elif (
-                        _edge_initial_model_state(edge) is not None
-                        or edge_has_dynamic_params(edge)):
-                    reason = self._dynamic_edge_skip_reason(
-                        edge, train_pseudo, horizon)
-                    diagnostics['skipped_edges'].append(
-                        self._dynamic_update_record(
-                            key, edge, edge_map, r_before, None,
-                            'skipped', reason=reason))
-
-                r = updated[key]
-                leaf_next, partner_next = _edge_h_pair_for_variables(
-                    edge,
-                    leaf,
-                    leaf_val,
-                    partner,
-                    partner_val,
-                    config={'r': r},
-                )
-                pseudo_obs[(leaf, next_leaf_cond)] = _clip_unit(leaf_next)
-                pseudo_obs[(partner, next_partner_cond)] = _clip_unit(partner_next)
-
-        return updated, diagnostics
+        return native_vine.apply_given_only_dynamic_updates(
+            _cpp_extension.load(),
+            dimension=self.d,
+            trees=self._trees,
+            n=n,
+            r_all=r_all,
+            given=given,
+            start_col=start_col,
+            matrix=matrix,
+            pair_copulas=pair_copulas,
+            edge_map=edge_map,
+            train_pseudo=train_pseudo,
+            horizon=horizon,
+            rng=rng,
+            predictive_r_mode=predictive_r_mode,
+            dynamic_update=self._dynamic_edge_update_from_observation,
+            update_record=self._dynamic_update_record,
+            skip_reason=self._dynamic_edge_skip_reason,
+            state_cache=state_cache,
+            posterior_cache=posterior_cache,
+        )
 
     def _edge_pair_from_pseudo(self, key, pseudo_obs):
         return self._edge_pair_from_pseudo_map(key, pseudo_obs, self._edge_map)
@@ -2294,23 +2234,17 @@ class VineCopula:
             self._trees, key, pseudo_obs, edge_map)
 
     def _compute_pseudo_obs(self, u):
-        pseudo_obs = {
-            (i, frozenset()): u[:, i].copy()
-            for i in range(self.d)
-        }
-        for t, level in enumerate(self._trees):
-            for orig_idx, (conditioned, conditioning) in enumerate(level):
-                pc = self.pair_copulas[self._matrix_key(t, orig_idx)]
-                v1, v2 = sorted(conditioned)
-                u1 = _clip_unit(pseudo_obs[(v1, conditioning)])
-                u2 = _clip_unit(pseudo_obs[(v2, conditioning)])
-                if t < self.d - 2:
-                    u1_next, u2_next = _edge_h_pair(pc, u1, u2)
-                    pseudo_obs[(v2, conditioning | {v1})] = _clip_unit(
-                        u2_next)
-                    pseudo_obs[(v1, conditioning | {v2})] = _clip_unit(
-                        u1_next)
-        return pseudo_obs
+        from pyscarcopula._native import vine as native_vine
+
+        return native_vine.pseudo_observations(
+            _cpp_extension.load(),
+            self.pair_copulas,
+            self.d,
+            self._trees,
+            self._edge_map,
+            self.matrix,
+            u,
+        )
 
     def _history_prediction_cache(self, u, *, fitted_history):
         """Return a mutation-safe cache scoped to one prediction history."""
@@ -2787,11 +2721,17 @@ class VineCopula:
         if history_cache is not None and 'train_pseudo' in history_cache:
             train_pseudo = history_cache['train_pseudo']
         else:
+            from pyscarcopula._native import vine as native_vine
+
             train_pseudo = timed(
                 "compute_pseudo_obs",
                 lambda: (
                     self._compute_pseudo_obs(u_ref)
-                    if u_ref is not None else None
+                    if (
+                        u_ref is not None
+                        and native_vine.pseudo_observation_trace_supported(
+                            self.pair_copulas, self._trees, self._edge_map)
+                    ) else None
                 ),
             )
             if history_cache is not None:

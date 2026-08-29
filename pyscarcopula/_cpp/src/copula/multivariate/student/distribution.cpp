@@ -1,6 +1,7 @@
 #include "scar/copula/multivariate/student/distribution.hpp"
 
 #include "scar/detail/safety.hpp"
+#include "scar/math/beta.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -49,63 +50,6 @@ DualValue operator/(DualValue lhs, DualValue rhs) {
 
 DualValue dual(double value, double derivative = 0.0) {
     return {value, derivative};
-}
-
-double betacf(
-    double a,
-    double b,
-    double x,
-    double requested_tolerance = 3e-14) {
-    constexpr int max_iter = 200;
-    constexpr double eps = 3e-14;
-    const double convergence_tolerance = std::min(
-        eps, requested_tolerance);
-    constexpr double fpmin = 1e-300;
-
-    const double qab = a + b;
-    const double qap = a + 1.0;
-    const double qam = a - 1.0;
-    double c = 1.0;
-    double d = 1.0 - qab * x / qap;
-    if (std::abs(d) < fpmin) {
-        d = fpmin;
-    }
-    d = 1.0 / d;
-    double h = d;
-
-    for (int m = 1; m <= max_iter; ++m) {
-        const int m2 = 2 * m;
-        double aa = static_cast<double>(m) * (b - static_cast<double>(m)) * x
-            / ((qam + static_cast<double>(m2)) * (a + static_cast<double>(m2)));
-        d = 1.0 + aa * d;
-        if (std::abs(d) < fpmin) {
-            d = fpmin;
-        }
-        c = 1.0 + aa / c;
-        if (std::abs(c) < fpmin) {
-            c = fpmin;
-        }
-        d = 1.0 / d;
-        h *= d * c;
-
-        aa = -(a + static_cast<double>(m)) * (qab + static_cast<double>(m)) * x
-            / ((a + static_cast<double>(m2)) * (qap + static_cast<double>(m2)));
-        d = 1.0 + aa * d;
-        if (std::abs(d) < fpmin) {
-            d = fpmin;
-        }
-        c = 1.0 + aa / c;
-        if (std::abs(c) < fpmin) {
-            c = fpmin;
-        }
-        d = 1.0 / d;
-        const double del = d * c;
-        h *= del;
-        if (std::abs(del - 1.0) < convergence_tolerance) {
-            break;
-        }
-    }
-    return h;
 }
 
 DualValue betacf_dual(DualValue a, DualValue b, DualValue x) {
@@ -161,28 +105,6 @@ DualValue betacf_dual(DualValue a, DualValue b, DualValue x) {
         }
     }
     return h;
-}
-
-double regularized_beta(
-    double x,
-    double a,
-    double b,
-    double tolerance = 3e-14) {
-    if (x <= 0.0) {
-        return 0.0;
-    }
-    if (x >= 1.0) {
-        return 1.0;
-    }
-    const double bt = std::exp(
-        student_log_gamma(a + b)
-        - student_log_gamma(a)
-        - student_log_gamma(b)
-        + a * std::log(x) + b * std::log1p(-x));
-    if (x < (a + 1.0) / (a + b + 2.0)) {
-        return bt * betacf(a, b, x, tolerance) / a;
-    }
-    return 1.0 - bt * betacf(b, a, 1.0 - x, tolerance) / b;
 }
 
 DualValue regularized_beta_dual(
@@ -264,7 +186,7 @@ double student_pdf_value(double value, double df) {
 
 double student_survival_positive_value(double value, double df) {
     const double x = df / (df + value * value);
-    return 0.5 * regularized_beta(x, 0.5 * df, 0.5);
+    return 0.5 * scar::math::regularized_beta(x, 0.5 * df, 0.5);
 }
 
 void student_survival_positive_df_value_and_derivative(
@@ -295,16 +217,43 @@ double student_cdf_value(double value, double df) {
 }
 
 double student_cdf_refined_value(double value, double df) {
+    return student_cdf_refined_value(value, student_distribution_parameters(df));
+}
+
+StudentDistributionParameters student_distribution_parameters(double df) {
+    const double log_beta = student_log_gamma(0.5 * (df + 1.0))
+        - student_log_gamma(0.5 * df) - student_log_gamma(0.5);
+    return {df, log_beta, log_beta - 0.5 * std::log(df)};
+}
+
+double student_pdf_value(double value, const StudentDistributionParameters& params) {
+    return std::exp(params.log_pdf_normalization
+        - 0.5 * (params.df + 1.0) * std::log1p(value * value / params.df));
+}
+
+double student_cdf_refined_value(double value, const StudentDistributionParameters& params) {
+    const double df = params.df;
     if (!std::isfinite(value) || !std::isfinite(df) || df <= 0.0) {
         return std::numeric_limits<double>::quiet_NaN();
     }
     const double magnitude = std::abs(value);
+    if (magnitude < 1.0) {
+        // Form the small beta argument directly. Subtracting df/(df+t*t)
+        // from one loses the significant bits needed by quantiles near 1/2.
+        const double squared = magnitude * magnitude;
+        const double central_mass = 0.5 * scar::math::regularized_beta(
+            squared / (df + squared), 0.5, 0.5 * df,
+            4.0 * std::numeric_limits<double>::epsilon(),
+            params.log_beta_normalization, true);
+        return value >= 0.0 ? 0.5 + central_mass : 0.5 - central_mass;
+    }
     const double x = df / (df + magnitude * magnitude);
-    const double survival = 0.5 * regularized_beta(
+    const double survival = 0.5 * scar::math::regularized_beta(
         x,
         0.5 * df,
         0.5,
-        4.0 * std::numeric_limits<double>::epsilon());
+        4.0 * std::numeric_limits<double>::epsilon(),
+        params.log_beta_normalization, true);
     const double cdf = value >= 0.0 ? 1.0 - survival : survival;
     return std::clamp(cdf, 0.0, 1.0);
 }

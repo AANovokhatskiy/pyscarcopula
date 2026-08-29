@@ -157,6 +157,52 @@ def prepare_dense_correlation(correlation):
     return np.ascontiguousarray(inverse), float(result["log_determinant"])
 
 
+def prepare_student_ppf_table(observations, **options):
+    """Prepare clipped observations, df nodes and quantiles in C++."""
+    module = _extension.load()
+    config = module.StudentPpfTableConfig()
+    for name, value in options.items():
+        if value is not None:
+            setattr(config, name, value)
+    values = np.ascontiguousarray(observations, dtype=np.float64)
+    result = dict(module.student_prepare_ppf_table(values, config))
+    raise_for_status(result, "Student PPF table preparation")
+    nodes = np.asarray(result["nodes"], dtype=np.float64)
+    table = (
+        np.asarray(result["table"], dtype=np.float64).reshape((len(nodes),) + values.shape)
+        if result["has_table"] else None
+    )
+    return np.asarray(result["observations"], dtype=np.float64).reshape(values.shape), nodes, table
+
+
+def evaluate_student_ppf_table(observations, nodes, table, df, start=0, stop=None):
+    """Evaluate an observation row block; native policy selects exact or cached PPF."""
+    values = np.ascontiguousarray(observations, dtype=np.float64)
+    if start == 0 and stop is None:
+        offset, count, shape = 0, values.size, values.shape
+    else:
+        start, stop, _ = slice(start, stop).indices(len(values))
+        row_width = values.strides[0] // values.itemsize
+        offset = start * row_width
+        count = values[start:stop].size
+        shape = values[start:stop].shape
+    result = _extension.load().student_evaluate_ppf_table(
+        values, np.ascontiguousarray(nodes, dtype=np.float64),
+        np.empty(0, dtype=np.float64) if table is None else table,
+        float(df), offset, count)
+    raise_for_status(result, "Student PPF table evaluation")
+    return np.asarray(result["values"], dtype=np.float64).reshape(shape)
+
+
+def interpolate_student_ppf_table(nodes, table, df):
+    values = np.ascontiguousarray(table, dtype=np.float64)
+    width = values.reshape(len(nodes), -1).shape[1]
+    result = _extension.load().student_interpolate_ppf_table(
+        np.ascontiguousarray(nodes, dtype=np.float64), values, float(df), width)
+    raise_for_status(result, "Student PPF table interpolation")
+    return np.asarray(result["values"], dtype=np.float64).reshape(values.shape[1:])
+
+
 def estimate_kendall_correlation(observations, *, eigenvalue_floor=1e-8):
     """Estimate and project the Kendall correlation in C++."""
     values = np.ascontiguousarray(observations, dtype=np.float64)
@@ -805,6 +851,29 @@ def equicorr_gaussian_sample_from_normals(
     )
 
 
+def equicorr_gaussian_common_draw_count(rho, dimension, n_rows):
+    """Return the native-required number of raw common-factor normals."""
+    module = _extension.load()
+    result = dict(module.equicorr_gaussian_common_draw_count(
+        _values(rho), int(dimension), int(n_rows)))
+    if result["status"] != module.SCAR_OK:
+        raise NativeError(
+            "C++ equicorrelation common-draw planning failed with "
+            f"status={result['status']}, "
+            f"failure_index={result['failure_index']}")
+    return int(result["count"])
+
+
+def validate_equicorrelation_path(rho, dimension, n_rows, *, name="rho"):
+    """Validate a scalar-or-row equicorrelation path in native C++."""
+    module = _extension.load()
+    status = module.validate_equicorrelation_path(
+        _values(rho), int(dimension), int(n_rows))
+    if status != module.SCAR_OK:
+        raise ValueError(
+            f"{name} must be finite and inside the equicorrelation domain")
+
+
 def student_sample_from_draws(
         correlation, df, normal_draws, chi_square_draws, *, n_threads=1):
     """Transform fixed normal/radial draws into dense Student samples."""
@@ -819,6 +888,23 @@ def student_sample_from_draws(
         ),
         module,
         "dense Student sampling",
+    )
+
+
+def student_sample_from_normal_uniforms(
+        correlation, df, normal_draws, chi_square_uniforms, *, n_threads=1):
+    """Transform raw normal/uniform draws into dense Student samples."""
+    module = _extension.load()
+    return _sampling_values(
+        module.multivariate_student_sample_from_normal_uniforms(
+            np.ascontiguousarray(correlation, dtype=np.float64),
+            _values(df),
+            np.ascontiguousarray(normal_draws, dtype=np.float64),
+            _values(chi_square_uniforms),
+            _validated_n_threads(n_threads),
+        ),
+        module,
+        "dense Student fixed-uniform sampling",
     )
 
 
@@ -856,6 +942,26 @@ def factor_student_sample_from_draws(
         ),
         module,
         "factor Student sampling",
+    )
+
+
+def factor_student_sample_from_normal_uniforms(
+        correlation, df, factor_draws, residual_draws,
+        chi_square_uniforms, *, n_threads=1):
+    """Transform raw normal/uniform draws into factor Student samples."""
+    module = _extension.load()
+    native = getattr(correlation, "_native", correlation)
+    return _sampling_values(
+        module.factor_student_sample_from_normal_uniforms(
+            native,
+            _values(df),
+            np.ascontiguousarray(factor_draws, dtype=np.float64),
+            np.ascontiguousarray(residual_draws, dtype=np.float64),
+            _values(chi_square_uniforms),
+            _validated_n_threads(n_threads),
+        ),
+        module,
+        "factor Student fixed-uniform sampling",
     )
 
 
@@ -916,6 +1022,26 @@ def student_conditional_from_uniforms(
     )
 
 
+def student_conditional_from_normal_uniforms(
+        correlations, given_indices, given_uniforms, df,
+        normal_draws, chi_square_uniforms, *, n_threads=1):
+    """Evaluate dense Student conditioning from raw normal/uniform draws."""
+    module = _extension.load()
+    return _sampling_values(
+        module.multivariate_student_conditional_from_normal_uniforms(
+            np.ascontiguousarray(correlations, dtype=np.float64),
+            np.ascontiguousarray(given_indices, dtype=np.int32),
+            _values(given_uniforms),
+            _values(df),
+            np.ascontiguousarray(normal_draws, dtype=np.float64),
+            _values(chi_square_uniforms),
+            _validated_n_threads(n_threads),
+        ),
+        module,
+        "dense Student conditional fixed-uniform sampling",
+    )
+
+
 def factor_gaussian_conditional_from_uniforms(
         correlation, given_indices, given_uniforms,
         factor_draws, residual_draws, *, n_threads=1):
@@ -955,6 +1081,28 @@ def factor_student_conditional_from_uniforms(
         ),
         module,
         "factor Student conditional sampling",
+    )
+
+
+def factor_student_conditional_from_normal_uniforms(
+        correlation, given_indices, given_uniforms, df,
+        factor_draws, residual_draws, chi_square_uniforms, *, n_threads=1):
+    """Evaluate factor Student conditioning from raw normal/uniform draws."""
+    module = _extension.load()
+    native = getattr(correlation, "_native", correlation)
+    return _sampling_values(
+        module.factor_student_conditional_from_normal_uniforms(
+            native,
+            np.ascontiguousarray(given_indices, dtype=np.int32),
+            _values(given_uniforms),
+            _values(df),
+            np.ascontiguousarray(factor_draws, dtype=np.float64),
+            np.ascontiguousarray(residual_draws, dtype=np.float64),
+            _values(chi_square_uniforms),
+            _validated_n_threads(n_threads),
+        ),
+        module,
+        "factor Student conditional fixed-uniform sampling",
     )
 
 

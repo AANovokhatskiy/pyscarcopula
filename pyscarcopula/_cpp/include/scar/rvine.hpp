@@ -110,7 +110,8 @@ ConditionalSampleResult conditional_sample(
     DoubleView uniforms,
     std::int64_t uniform_rows,
     std::int64_t uniform_columns,
-    int n_threads = 1);
+    int n_threads = 1,
+    bool capture_operation_inputs = false);
 
 DensityResult log_pdf_rows(
     const RVineDensityPlan& plan,
@@ -128,7 +129,8 @@ RosenblattResult rosenblatt_transform(
     DoubleView observations,
     std::int64_t observation_rows,
     std::int64_t observation_columns,
-    int n_threads = 1);
+    int n_threads = 1,
+    bool capture_node_values = false);
 
 MCMCResult mcmc_chunk(
     const RVineDensityPlan& plan,
@@ -151,5 +153,15 @@ MCMCResult mcmc_chunk(
     int n_threads = 1,
     MCMCDensityAlgorithm density_algorithm = MCMCDensityAlgorithm::Auto,
     std::uint64_t memory_budget_bytes = 64U * 1024U * 1024U);
+
+MCMCPolicyResult mcmc_policy(
+    const RVineDensityPlan& plan,
+    const std::vector<int>& free_indices,
+    std::int64_t rows,
+    bool has_proposals,
+    MCMCDensityAlgorithm requested = MCMCDensityAlgorithm::Auto,
+    std::uint64_t memory_budget_bytes = 64U * 1024U * 1024U) noexcept;
+
+MCMCDefaultStepsResult mcmc_default_steps(int free_count) noexcept;
 
 }  // namespace scar::rvine

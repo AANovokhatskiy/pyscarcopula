@@ -6,8 +6,6 @@
 #include <stdexcept>
 
 namespace scar::copula {
-namespace {
-
 constexpr double kLogisticCap = 20.0;
 constexpr double kLogisticScale = 2.0;
 
@@ -20,26 +18,24 @@ double logistic_unit(double value) {
     return exp_pos / (1.0 + exp_pos);
 }
 
-}  // namespace
+double logistic_unit_open(double value) {
+    return std::clamp(
+        logistic_unit(value),
+        std::nextafter(0.0, 1.0),
+        std::nextafter(1.0, 0.0));
+}
 
 double softplus(double value) {
-    if (value > 20.0) {
-        return value;
-    }
-    if (value < -20.0) {
-        return std::exp(value);
-    }
-    return std::log1p(std::exp(value));
+    return std::log1p(std::exp(-std::abs(value)))
+        + std::max(value, 0.0);
+}
+
+double inverse_softplus(double value) {
+    return value + std::log(-std::expm1(-value));
 }
 
 double d_softplus(double value) {
-    if (value > 20.0) {
-        return 1.0;
-    }
-    if (value < -20.0) {
-        return std::exp(value);
-    }
-    return 1.0 / (1.0 + std::exp(-value));
+    return logistic_unit(value);
 }
 
 double transform_parameter(
@@ -76,16 +72,10 @@ double inverse_transform_parameter(
         const double value = positive_softplus_floor
             ? std::max(parameter - offset, 1e-15)
             : parameter - offset;
-        if (value > 20.0) {
-            return value;
-        }
         if (value <= 0.0) {
             return std::log(1e-300);
         }
-        if (value < 1e-8) {
-            return std::log(value);
-        }
-        return std::log(std::expm1(value));
+        return inverse_softplus(value);
     }
     if (transform == Transform::XTanh) {
         // x*tanh(x) is even and therefore has no globally unique inverse.

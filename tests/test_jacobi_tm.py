@@ -3,6 +3,7 @@ import pytest
 
 from pyscarcopula import GumbelCopula
 from pyscarcopula._native import jacobi as jacobi_native
+from pyscarcopula._native.errors import NativeUnsupported
 from pyscarcopula.numerical import jacobi_tm
 from pyscarcopula.numerical.jacobi_tm import (
     DEFAULT_JACOBI_MEMORY_BUDGET_BYTES,
@@ -527,34 +528,32 @@ def test_jacobi_transition_matrix_respects_soft_negative_mass_tol():
 def test_jacobi_loglik_rejects_custom_python_emission():
     u = np.array([[0.2, 0.3], [0.4, 0.7], [0.8, 0.6]])
 
-    ll = jacobi_loglik(
-        kappa=1.5,
-        m=0.4,
-        xi=0.35,
-        u=u,
-        copula=UnitEmissionCopula(),
-        basis_order=6,
-        quad_order=32,
-    )
-
-    assert ll == -np.inf
+    with pytest.raises(NativeUnsupported):
+        jacobi_loglik(
+            kappa=1.5,
+            m=0.4,
+            xi=0.35,
+            u=u,
+            copula=UnitEmissionCopula(),
+            basis_order=6,
+            quad_order=32,
+        )
 
 
 def test_jacobi_matrix_loglik_rejects_custom_python_emission():
     u = np.array([[0.2, 0.3], [0.4, 0.7], [0.8, 0.6]])
 
-    ll = jacobi_matrix_loglik(
-        kappa=1.5,
-        m=0.4,
-        xi=0.35,
-        u=u,
-        copula=UnitEmissionCopula(),
-        basis_order=6,
-        quad_order=32,
-        transition_method="local",
-    )
-
-    assert ll == -np.inf
+    with pytest.raises(NativeUnsupported):
+        jacobi_matrix_loglik(
+            kappa=1.5,
+            m=0.4,
+            xi=0.35,
+            u=u,
+            copula=UnitEmissionCopula(),
+            basis_order=6,
+            quad_order=32,
+            transition_method="local",
+        )
 
 
 def test_jacobi_fixed_grid_gradient_matches_finite_difference():
@@ -610,7 +609,13 @@ def test_jacobi_moving_grid_gradient_matches_finite_difference(
         [0.76, 0.81],
     ], dtype=np.float64)
     copula = GumbelCopula()
-    alpha = np.array([1.2, 0.42, 0.7], dtype=np.float64)
+    alpha = np.asarray(
+        {
+            "local": [1.2, 0.42, 0.7],
+            "spectral_matrix": [10.0, 0.5, 0.1],
+        }[transition_method],
+        dtype=np.float64,
+    )
     kwargs = {
         "basis_order": 3,
         "quad_order": 24,
@@ -656,14 +661,12 @@ def test_jacobi_spectral_gradient_rejects_signed_transition_like_value_path():
         "clip_negative": False,
     }
 
-    value = jacobi_matrix_neg_loglik(
-        0.08, 0.15, 0.3, u, GumbelCopula(), **kwargs)
-    gradient_value, gradient = jacobi_matrix_neg_loglik_with_grad(
-        0.08, 0.15, 0.3, u, GumbelCopula(), **kwargs)
-
-    assert value == pytest.approx(1e10)
-    assert gradient_value == pytest.approx(value)
-    np.testing.assert_array_equal(gradient, np.zeros(3))
+    with pytest.raises(FloatingPointError):
+        jacobi_matrix_neg_loglik(
+            0.08, 0.15, 0.3, u, GumbelCopula(), **kwargs)
+    with pytest.raises(FloatingPointError):
+        jacobi_matrix_neg_loglik_with_grad(
+            0.08, 0.15, 0.3, u, GumbelCopula(), **kwargs)
 
 
 def test_jacobi_explicit_spectral_rejects_material_negative_mass():

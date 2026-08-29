@@ -7,16 +7,14 @@ from itertools import count
 import weakref
 
 import numpy as np
-from scipy.special import stdtrit
-
-from pyscarcopula._utils import clip_pseudo_observations
+from pyscarcopula._native import multivariate as native_multivariate
 
 
 _CACHE_VERSIONS = count(1)
 
 # Upper bound for the precomputed PPF table (nodes × T × d × 8 bytes).
-# Above the limit the values table is skipped. Python calls use exact
-# ``stdtrit`` values; native dynamic specs retain the nodes so they can use
+# Above the limit the values table is skipped. Native calls use exact
+# Student quantiles; dynamic specs retain the nodes so they can use
 # the controlled large-df asymptotic above the final node.
 DEFAULT_MAX_TABLE_BYTES = 256 * 1024 ** 2
 
@@ -30,46 +28,7 @@ def _normalized_snapshot(u) -> np.ndarray:
 
 def _interpolate_ppf_table(nodes, table, df):
     """Hermite-interpolate a node-major PPF table along its first axis."""
-    if not np.isfinite(df):
-        raise ValueError("df must be finite")
-    if df < nodes[0] or df > nodes[-1]:
-        raise ValueError(
-            f"df={df} is outside PPF table range "
-            f"[{nodes[0]}, {nodes[-1]}]")
-    index = np.searchsorted(nodes, df, side="right") - 1
-    index = max(0, min(index, len(nodes) - 2))
-    lo = nodes[index]
-    hi = nodes[index + 1]
-    interval = hi - lo
-    alpha = (df - lo) / interval
-    value_lo = table[index]
-    value_hi = table[index + 1]
-    if df == nodes[0] or df == nodes[-1]:
-        return (1.0 - alpha) * value_lo + alpha * value_hi
-
-    lo_slope_index = index if index == 0 else index - 1
-    hi_slope_index = (
-        index + 1 if index + 1 == len(nodes) - 1 else index + 2)
-    slope_lo = (
-        (value_hi - table[lo_slope_index])
-        / (nodes[index + 1] - nodes[lo_slope_index])
-    )
-    slope_hi = (
-        (table[hi_slope_index] - value_lo)
-        / (nodes[hi_slope_index] - nodes[index])
-    )
-    alpha2 = alpha * alpha
-    alpha3 = alpha2 * alpha
-    h00 = 2.0 * alpha3 - 3.0 * alpha2 + 1.0
-    h10 = alpha3 - 2.0 * alpha2 + alpha
-    h01 = -2.0 * alpha3 + 3.0 * alpha2
-    h11 = alpha3 - alpha2
-    return (
-        h00 * value_lo
-        + h10 * interval * slope_lo
-        + h01 * value_hi
-        + h11 * interval * slope_hi
-    )
+    return native_multivariate.interpolate_student_ppf_table(nodes, table, df)
 
 
 class StudentPPFTable:
@@ -78,62 +37,27 @@ class StudentPPFTable:
     The table has shape ``(n_df_nodes, T, d)`` and costs
     ``n_nodes * T * d * 8`` bytes. When that estimate exceeds
     ``max_table_bytes`` (default ``DEFAULT_MAX_TABLE_BYTES``, 256 MiB) the
-    table is not built (``table is None``) and Python evaluations fall back
-    to the exact ``stdtrit`` quantile. Nodes include a dense boundary layer
+    table is not built (``table is None``) and the native evaluator uses
+    the exact Student quantile. Nodes include a dense boundary layer
     at the model's ``2 + 1e-6`` df limit and extend to 1000, above which the
     native dynamic-emission kernel uses a controlled normal asymptotic.
     """
 
-    def __init__(self, u, df_lo=2.0 + 1e-6, df_hi=1000.0,
-                 n_boundary=80, n_lo=120, n_hi=160,
+    def __init__(self, u, df_lo=None, df_hi=None,
+                 n_boundary=None, n_lo=None, n_hi=None,
                  max_table_bytes=DEFAULT_MAX_TABLE_BYTES):
-        u_c = clip_pseudo_observations(u)
-        self.u = np.ascontiguousarray(u_c, dtype=np.float64)
-        if not (2.0 < df_lo < 2.005):
-            raise ValueError("df_lo must cover the model boundary below 2.005")
-        if df_hi <= 5.0:
-            raise ValueError("df_hi must exceed 5")
-        # The softplus transform can approach 2 + 1e-6 very closely.  A
-        # geometric boundary layer preserves interpolation accuracy there
-        # without forcing exact Student quantiles inside optimizer loops.
-        boundary_stop = 2.005
-        boundary_delta = boundary_stop - df_lo
-        nodes_boundary = np.concatenate((
-            np.array([df_lo]),
-            df_lo + np.geomspace(1e-10, boundary_delta, n_boundary),
-        ))
-        nodes_lo = np.linspace(boundary_stop, 5.0, n_lo)
-        nodes_hi = np.geomspace(5.0, df_hi, n_hi)
-        self.nodes = np.unique(np.concatenate([
-            nodes_boundary, nodes_lo, nodes_hi]))
-        table_bytes = len(self.nodes) * self.u.size * np.dtype(
-            np.float64).itemsize
-        if table_bytes > max_table_bytes:
-            # Too much memory: degrade to exact per-call quantiles.
-            self.table = None
-            return
-        self.table = np.empty(
-            (len(self.nodes),) + u_c.shape, dtype=np.float64)
-        for index, df_value in enumerate(self.nodes):
-            self.table[index] = stdtrit(df_value, u_c)
+        self.u, self.nodes, self.table = native_multivariate.prepare_student_ppf_table(
+            u, df_lo=df_lo, df_hi=df_hi, n_boundary=n_boundary,
+            n_lo=n_lo, n_hi=n_hi, max_table_bytes=max_table_bytes)
 
     def __call__(self, df):
-        df = float(df)
-        if not np.isfinite(df):
-            raise ValueError("df must be finite")
-        if self.table is None or df < self.nodes[0] or df > self.nodes[-1]:
-            return stdtrit(df, self.u)
-        return _interpolate_ppf_table(self.nodes, self.table, df)
+        return native_multivariate.evaluate_student_ppf_table(
+            self.u, self.nodes, self.table, df)
 
     def rows(self, df, start, stop):
         """Evaluate a contiguous row block, using exact tails when required."""
-        df = float(df)
-        if not np.isfinite(df):
-            raise ValueError("df must be finite")
-        if self.table is None or df < self.nodes[0] or df > self.nodes[-1]:
-            return stdtrit(df, self.u[start:stop])
-        return _interpolate_ppf_table(
-            self.nodes, self.table[:, start:stop], df)
+        return native_multivariate.evaluate_student_ppf_table(
+            self.u, self.nodes, self.table, df, start, stop)
 
 
 @dataclass(frozen=True)

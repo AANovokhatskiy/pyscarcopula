@@ -28,8 +28,12 @@ struct SampleResult {
 /// Result of one suffix or DAG conditional-program request.
 struct ConditionalSampleResult {
     std::vector<double> values;
+    /// Canonical edge inputs captured as [operation][row][first, second].
+    /// Populated only by the explicit trace entry point.
+    std::vector<double> operation_inputs;
     std::int64_t n_rows = 0;
     int dimension = 0;
+    int operation_count = 0;
     Status status = Status::Ok;
     FailureContext failure{};
     int n_threads_requested = 1;
@@ -74,9 +78,13 @@ struct DensityResult {
 /// Result of one static R-vine Rosenblatt residual extraction request.
 struct RosenblattResult {
     std::vector<double> residuals;
+    /// Row-major values for every compiled pseudo-observation node.
+    /// Populated only by the explicit trace entry point.
+    std::vector<double> node_values;
     double log_likelihood = 0.0;
     std::int64_t n_rows = 0;
     int dimension = 0;
+    int node_count = 0;
     Status status = Status::Ok;
     FailureContext failure{};
     int n_threads_requested = 1;
@@ -94,6 +102,22 @@ enum class MCMCDensityAlgorithm : int {
     FullRecompute = 1,
     Incremental = 2,
 };
+
+struct MCMCPolicy {
+    MCMCDensityAlgorithm density_algorithm =
+        MCMCDensityAlgorithm::FullRecompute;
+    std::uint64_t reserved_bytes = 0;
+    std::uint64_t one_draw_step_bytes = 0;
+    std::uint64_t required_bytes = 0;
+};
+
+struct MCMCDefaultSteps {
+    std::int64_t n_steps = 0;
+    std::int64_t burnin_steps = 0;
+};
+
+using MCMCPolicyResult = Result<MCMCPolicy>;
+using MCMCDefaultStepsResult = Result<MCMCDefaultSteps>;
 
 /// Result of one stateful coordinate-wise conditional-MCMC chunk.
 struct MCMCResult {

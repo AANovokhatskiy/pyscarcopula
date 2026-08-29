@@ -35,7 +35,9 @@ double student_quantile(
     double df,
     double tolerance = 2e-13,
     int maximum_iterations = 50,
-    bool refined_cdf = false) {
+    bool refined_cdf = false,
+    const StudentDistributionParameters* prepared = nullptr,
+    double initial_quantile = std::numeric_limits<double>::quiet_NaN()) {
     p = clip_pseudo_observation(p);
     if (p == 0.5) {
         return 0.0;
@@ -44,23 +46,28 @@ double student_quantile(
     const bool negative = p < 0.5;
     const double tail_probability = negative ? p : 1.0 - p;
     const double initial_probability = 1.0 - tail_probability;
-    const double initial = std::abs(
-        student_quantile_initial(initial_probability, df));
+    const double initial = std::isfinite(initial_quantile)
+        ? std::abs(initial_quantile)
+        : std::abs(student_quantile_initial(initial_probability, df));
     double lo = 0.0;
-    double hi = std::max(1.0, initial);
-    const auto survival_value = [df, refined_cdf](double value) {
+    double hi = std::isfinite(initial_quantile) && initial > 0.0
+        ? initial : std::max(1.0, initial);
+    const auto survival_value = [df, refined_cdf, prepared](double value) {
+        if (prepared != nullptr) return student_cdf_refined_value(-value, *prepared);
         return refined_cdf
             ? student_cdf_refined_value(-value, df)
             : student_survival_positive_value(value, df);
     };
-    while (survival_value(hi) > tail_probability
-           && hi < 1e12) {
+    double hi_survival = survival_value(hi);
+    while (hi_survival > tail_probability && hi < 1e12) {
         hi *= 2.0;
+        hi_survival = survival_value(hi);
     }
 
     double x = std::min(std::max(initial, lo), hi);
     for (int iter = 0; iter < maximum_iterations; ++iter) {
-        const double survival = survival_value(x);
+        const double survival = iter == 0 && x == hi
+            ? hi_survival : survival_value(x);
         const double error = survival - tail_probability;
         if (error > 0.0) {
             lo = x;
@@ -72,7 +79,8 @@ double student_quantile(
             return negative ? -x : x;
         }
 
-        const double pdf = student_pdf_value(x, df);
+        const double pdf = prepared != nullptr
+            ? student_pdf_value(x, *prepared) : student_pdf_value(x, df);
         const double candidate = x + error / pdf;
         if (std::isfinite(candidate) && candidate > lo && candidate < hi) {
             x = candidate;
@@ -193,12 +201,47 @@ double student_quantile_value(double p, double df) {
 }
 
 double student_quantile_refined_value(double p, double df) {
+    return student_quantile_refined_value(p, student_distribution_parameters(df));
+}
+
+double student_quantile_refined_value(double p, const StudentDistributionParameters& params) {
+    return student_quantile_refined_value(
+        p, params, std::numeric_limits<double>::quiet_NaN());
+}
+
+double student_quantile_refined_value(
+    double p, const StudentDistributionParameters& params, double initial_quantile) {
+    const double df = params.df;
+    if (df >= 1000.0) {
+        // Refine the shared normal-limit kernel through O(df^-6). These
+        // inverse-CDF coefficients follow by expanding the normalized
+        // Student density and reverting its CDF at the normal quantile.
+        // This avoids loss of precision in large log-gamma differences.
+        double value = 0.0;
+        student_quantile_large_df(p, df, value, nullptr);
+        const double z = scar::math::normal_quantile_refined(clip_pseudo_observation(p));
+        const double s = z * z;
+        const double a4 = z * (-21.0 / 2048.0 + s * (-1.0 / 48.0
+            + s * (247.0 / 15360.0 + s * (97.0 / 11520.0 + s * 79.0 / 92160.0))));
+        const double a5 = z * (399.0 / 8192.0 + s * (-17.0 / 8192.0
+            + s * (-99.0 / 20480.0 + s * (31.0 / 12288.0
+            + s * (113.0 / 122880.0 + s * 3.0 / 40960.0)))));
+        const double a6 = z * (869.0 / 65536.0 + s * (147.0 / 4096.0
+            + s * (3263.0 / 983040.0 + s * (-229.0 / 516096.0
+            + s * (48821.0 / 185794560.0 + s * (1931.0 / 23224320.0
+            + s * 71.0 / 12386304.0))))));
+        const double inverse = 1.0 / df;
+        const double inverse2 = inverse * inverse;
+        return value + inverse2 * inverse2 * (a4 + inverse * (a5 + inverse * a6));
+    }
     return student_quantile(
         p,
         df,
         16.0 * std::numeric_limits<double>::epsilon(),
         80,
-        true);
+        true,
+        &params,
+        initial_quantile);
 }
 
 double student_quantile_for_observation(

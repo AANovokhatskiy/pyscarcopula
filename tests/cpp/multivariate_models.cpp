@@ -5,7 +5,10 @@
 #include "scar/copula/multivariate/rosenblatt.hpp"
 #include "scar/copula/multivariate/sampling.hpp"
 #include "scar/copula/multivariate/student/distribution.hpp"
+#include "scar/copula/multivariate/student/factor_grid.hpp"
+#include "scar/copula/multivariate/student/ppf_cache.hpp"
 #include "scar/copula/spec.hpp"
+#include "scar/math/gamma.hpp"
 
 #include <cmath>
 #include <vector>
@@ -21,6 +24,34 @@ bool close(double first, double second, double tolerance = 2e-13) {
 }  // namespace
 
 int run_multivariate_model_tests() {
+    namespace student = scar::copula::multivariate::student;
+    const double probabilities[] = {0.25, 0.5, 0.75};
+    student::PpfTableConfig config;
+    config.max_table_bytes = 1;
+    const auto ppf = student::prepare_ppf_table(
+        scar::DoubleView{probabilities, 3}, config);
+    if (!ppf.is_ok() || ppf.value.has_table || !ppf.value.table.empty()
+        || ppf.value.nodes.front() != config.df_lo
+        || ppf.value.nodes.back() != config.df_hi) {
+        return 20;
+    }
+    const auto quantiles = student::evaluate_ppf_table(
+        scar::DoubleView{ppf.value.observations.data(), 3},
+        scar::DoubleView{ppf.value.nodes.data(), ppf.value.nodes.size()},
+        scar::DoubleView{}, 1.0, 0, 3);
+    if (!quantiles.is_ok() || quantiles.value.size() != 3
+        || !close(quantiles.value[0], -1.0)
+        || !close(quantiles.value[1], 0.0)
+        || !close(quantiles.value[2], 1.0)) {
+        return 21;
+    }
+    const auto bad_slice = student::evaluate_ppf_table(
+        scar::DoubleView{probabilities, 3},
+        scar::DoubleView{ppf.value.nodes.data(), ppf.value.nodes.size()},
+        scar::DoubleView{}, 5.0, 3, 1);
+    if (bad_slice.status != scar::Status::InvalidSize) {
+        return 22;
+    }
     const std::vector<double> identity{
         1.0, 0.0,
         0.0, 1.0,
@@ -97,6 +128,107 @@ int run_multivariate_model_tests() {
     for (double value : student_sample.values) {
         if (!close(value, 0.5)) {
             return 8;
+        }
+    }
+
+    const std::vector<double> chi_square_uniforms{0.5, 0.5};
+    const scar::ConditionalSampleResult uniform_student_sample =
+        scar::multivariate_student_sample_dense_from_uniforms(
+            scar::DoubleView{identity.data(), identity.size()},
+            2,
+            scar::DoubleView{
+                degrees_of_freedom.data(), degrees_of_freedom.size()},
+            scar::DoubleView{zero_normals.data(), zero_normals.size()},
+            scar::DoubleView{
+                chi_square_uniforms.data(), chi_square_uniforms.size()},
+            2,
+            2);
+    if (!uniform_student_sample.is_ok()
+        || uniform_student_sample.values.size() != 4) {
+        return 25;
+    }
+    for (double value : uniform_student_sample.values) {
+        if (!close(value, 0.5)) {
+            return 26;
+        }
+    }
+    const double chi_square_median = scar::math::chi_square_quantile(0.5, 8.0);
+    if (!close(chi_square_median, 7.344121497701794, 2e-11)
+        || !close(
+            scar::math::regularized_gamma_p(4.0, chi_square_median / 2.0),
+            0.5,
+            2e-13)) {
+        return 27;
+    }
+    const std::vector<double> invalid_chi_square_uniforms{1.0, 0.5};
+    const scar::ConditionalSampleResult invalid_uniform_student_sample =
+        scar::multivariate_student_sample_dense_from_uniforms(
+            scar::DoubleView{identity.data(), identity.size()},
+            2,
+            scar::DoubleView{
+                degrees_of_freedom.data(), degrees_of_freedom.size()},
+            scar::DoubleView{zero_normals.data(), zero_normals.size()},
+            scar::DoubleView{
+                invalid_chi_square_uniforms.data(),
+                invalid_chi_square_uniforms.size()},
+            2,
+            1);
+    if (invalid_uniform_student_sample.status != scar::Status::InvalidParameter) {
+        return 28;
+    }
+    const std::vector<double> positive_rho{0.1, 0.2};
+    const std::vector<double> mixed_rho{0.1, -0.2};
+    const auto positive_common = scar::equicorr_gaussian_common_draw_count(
+        {positive_rho.data(), positive_rho.size()}, 3, 2);
+    const auto mixed_common = scar::equicorr_gaussian_common_draw_count(
+        {mixed_rho.data(), mixed_rho.size()}, 3, 2);
+    const auto invalid_common = scar::equicorr_gaussian_common_draw_count(
+        {mixed_rho.data(), mixed_rho.size()}, 1, 2);
+    if (!positive_common.is_ok() || positive_common.value != 2) {
+        return 29;
+    }
+    if (!mixed_common.is_ok() || mixed_common.value != 0) {
+        return 30;
+    }
+    if (invalid_common.status != scar::Status::InvalidSize) {
+        return 31;
+    }
+
+    const scar::FactorCorrelationOperator student_factor(
+        std::vector<double>{0.0, 0.0}, 2, 1, 1e-6);
+    const double student_observations[] = {
+        0.25, 0.75,
+        0.40, 0.60,
+    };
+    const double student_raw_grid[] = {-1.0, 0.5};
+    const double student_df_grid[] = {
+        2.01 + std::log1p(std::exp(student_raw_grid[0])),
+        2.01 + std::log1p(std::exp(student_raw_grid[1])),
+    };
+    const auto student_stochastic =
+        scar::factor_student_stochastic_pdf_and_grad_grid(
+            student_factor, student_observations, 2,
+            student_raw_grid, 2, 2.01, 8, 2);
+    const auto student_grid = scar::factor_student_log_pdf_and_dlog_ddf_grid(
+        student_factor, student_observations, 2,
+        student_df_grid, 2, 8, 2);
+    const auto student_density = scar::factor_student_density_from_log_grid(
+        student_grid.log_pdf.data(), student_grid.dlog_ddf.data(),
+        student_grid.log_pdf.size());
+    if (!student_stochastic.is_ok() || !student_grid.is_ok()
+        || !student_density.is_ok()
+        || student_stochastic.pdf.size() != 4
+        || student_stochastic.d_pdf_dx.size() != 4) {
+        return 23;
+    }
+    for (std::size_t cell = 0; cell < student_stochastic.pdf.size(); ++cell) {
+        const double derivative =
+            1.0 / (1.0 + std::exp(-student_raw_grid[cell % 2]));
+        if (!close(student_stochastic.pdf[cell], student_density.pdf[cell])
+            || !close(
+                student_stochastic.d_pdf_dx[cell],
+                student_density.d_pdf_ddf[cell] * derivative)) {
+            return 24;
         }
     }
 

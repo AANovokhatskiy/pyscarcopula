@@ -6,6 +6,8 @@ import numpy as np
 from scipy.optimize import Bounds, minimize
 
 from pyscarcopula._native import jacobi as jacobi_native
+from pyscarcopula._native import model_policy
+from pyscarcopula._native import validation as native_validation
 from pyscarcopula._types import (
     DEFAULT_CONFIG,
     LatentResult,
@@ -31,8 +33,9 @@ from pyscarcopula.strategy._base import (
     validate_copula_data,
 )
 from pyscarcopula.strategy.predict_helpers import (
-    predict_from_strategy,
+    predictive_params_from_state_with_rng,
     sample_predictive,
+    strategy_predict,
 )
 from pyscarcopula.strategy.initial_point import (
     _explicit_initialization_diagnostics,
@@ -41,9 +44,8 @@ from pyscarcopula.strategy.initial_point import (
 )
 
 
-_INVALID_OBJECTIVE_THRESHOLD = 1e9
-_DEFAULT_KAPPA_BOUNDS = (1e-3, 100.0)
-_DEFAULT_XI_BOUNDS = (1e-3, 5.0)
+_DEFAULT_KAPPA_BOUNDS, _DEFAULT_XI_BOUNDS = (
+    jacobi_native.default_parameter_bounds())
 DEFAULT_JACOBI_MEMORY_BUDGET_BYTES = (
     jacobi_native.DEFAULT_JACOBI_MEMORY_BUDGET_BYTES)
 DEFAULT_LAMPERTI_CHUNK_OBSERVATIONS = (
@@ -60,18 +62,15 @@ def _physical_to_raw(alpha, tau_eps):
 
 
 def _validate_positive_bounds(bounds, name):
-    if bounds is None:
-        return 1e-300, np.inf
-    if len(bounds) != 2:
-        raise ValueError(f"{name} must be a (lower, upper) pair")
-    lower, upper = bounds
-    lower = 1e-300 if lower is None else _finite_float(
-        lower, f"{name} lower")
-    upper = np.inf if upper is None else _finite_float(
-        upper, f"{name} upper")
-    if lower <= 0.0 or upper <= 0.0 or lower >= upper:
-        raise ValueError(f"{name} must satisfy 0 < lower < upper")
-    return lower, upper
+    if bounds is not None:
+        if len(bounds) != 2:
+            raise ValueError(f"{name} must be a (lower, upper) pair")
+        bounds = tuple(
+            None if value is None
+            else _finite_float(value, f"{name} {label}")
+            for value, label in zip(bounds, ("lower", "upper"))
+        )
+    return model_policy.normalize_positive_bounds(bounds, name)
 
 
 def _finite_float(value, name):
@@ -111,10 +110,6 @@ def _validate_alpha0(alpha0):
         raise ValueError(
             "alpha0 must satisfy kappa > 0, 0 < m < 1, and xi > 0")
     return alpha
-
-
-def _objective_is_invalid(value):
-    return (not np.isfinite(value)) or float(value) >= _INVALID_OBJECTIVE_THRESHOLD
 
 
 @register_strategy('SCAR-TM-JACOBI')
@@ -308,10 +303,6 @@ class SCARJacobiStrategy:
             self.kappa_bounds, self.xi_bounds, self.tau_eps)
         return Bounds(lower, upper)
 
-    def _shape_is_supported(self, kappa, m, xi):
-        return jacobi_native.shape_is_supported(
-            kappa, m, xi, self.stationary_shape_max)
-
     def _resolved_quad_order(self):
         return (
             jacobi_native.default_quad_order(self.basis_order)
@@ -343,29 +334,39 @@ class SCARJacobiStrategy:
             u, copula, **self._evaluator_kwargs())
 
     def _neg_loglik(self, kappa, m, xi, u, copula, *, evaluator=None):
-        if not self._shape_is_supported(kappa, m, xi):
-            return 1e10
+        domain_result = jacobi_native.optimizer_domain_evaluation(
+            kappa, m, xi, self.stationary_shape_max,
+            self.config.fail_value)
+        if domain_result is not None:
+            return domain_result[0]
+        evaluator = evaluator or self._prepared_evaluator(u, copula)
         try:
-            evaluator = evaluator or self._prepared_evaluator(u, copula)
-            value = evaluator.neg_loglik(kappa, m, xi)
-            return float(value) if np.isfinite(value) else 1e10
-        except MemoryError:
-            raise
-        except Exception:
-            return 1e10
+            value = float(evaluator.neg_loglik(kappa, m, xi))
+        except FloatingPointError as error:
+            return model_policy.optimizer_failure_objective(error)
+        if not np.isfinite(value):
+            raise FloatingPointError(
+                "native Jacobi objective returned a non-finite value")
+        return value
 
     def _neg_loglik_with_grad(
             self, kappa, m, xi, u, copula, *, evaluator=None):
-        if not self._shape_is_supported(kappa, m, xi):
-            return 1e10, np.zeros(3, dtype=np.float64)
-        fail = (1e10, np.zeros(3, dtype=np.float64))
+        domain_result = jacobi_native.optimizer_domain_evaluation(
+            kappa, m, xi, self.stationary_shape_max,
+            self.config.fail_value)
+        if domain_result is not None:
+            return domain_result
+        evaluator = evaluator or self._prepared_evaluator(u, copula)
         try:
-            evaluator = evaluator or self._prepared_evaluator(u, copula)
             return evaluator.neg_loglik_with_grad(kappa, m, xi)
-        except MemoryError:
-            raise
-        except Exception:
-            return fail
+        except FloatingPointError as error:
+            return model_policy.optimizer_numerical_failure_evaluation(
+                error,
+                [kappa, m, xi],
+                [kappa, m, xi],
+                self.config.fail_value,
+                directional_gradient=False,
+            )
 
     def _selected_transition_backend(self, kappa, m, xi, n_obs):
         if not self._uses_matrix_backend():
@@ -437,41 +438,26 @@ class SCARJacobiStrategy:
         }
 
     def _loglik(self, kappa, m, xi, u, copula, *, evaluator=None):
-        if not self._shape_is_supported(kappa, m, xi):
-            return -np.inf
-        try:
-            evaluator = evaluator or self._prepared_evaluator(u, copula)
-            return evaluator.loglik(kappa, m, xi)
-        except MemoryError:
-            raise
-        except Exception:
-            return -np.inf
+        evaluator = evaluator or self._prepared_evaluator(u, copula)
+        return evaluator.loglik(kappa, m, xi)
 
     def _predictive_mean(
             self, kappa, m, xi, u, copula, *, evaluator=None):
-        if not self._shape_is_supported(kappa, m, xi):
-            raise ValueError("Jacobi stationary shape is outside supported range")
         evaluator = evaluator or self._prepared_evaluator(u, copula)
         return evaluator.predictive_mean(kappa, m, xi)
 
     def _mixture_h(
             self, kappa, m, xi, u, copula, *, evaluator=None):
-        if not self._shape_is_supported(kappa, m, xi):
-            raise ValueError("Jacobi stationary shape is outside supported range")
         evaluator = evaluator or self._prepared_evaluator(u, copula)
         return evaluator.mixture_h(kappa, m, xi)
 
     def _mixture_h_pair(
             self, kappa, m, xi, u, copula, *, evaluator=None):
-        if not self._shape_is_supported(kappa, m, xi):
-            raise ValueError("Jacobi stationary shape is outside supported range")
         evaluator = evaluator or self._prepared_evaluator(u, copula)
         return evaluator.mixture_h_pair(kappa, m, xi)
 
     def _state_distribution(
             self, kappa, m, xi, u, copula, horizon, *, evaluator=None):
-        if not self._shape_is_supported(kappa, m, xi):
-            raise ValueError("Jacobi stationary shape is outside supported range")
         evaluator = evaluator or self._prepared_evaluator(u, copula)
         return evaluator.state_distribution(kappa, m, xi, horizon=horizon)
 
@@ -481,7 +467,7 @@ class SCARJacobiStrategy:
 
     def _initial_point(self, copula, u, initial_mle_result=None):
         if not self.smart_init:
-            alpha0 = np.array([1.0, 0.5, 0.2], dtype=np.float64)
+            alpha0 = jacobi_native.initial_point(None, self.tau_eps)
             diagnostics = _initialization_diagnostics(
                 'constant_default',
                 'constant_default',
@@ -499,16 +485,15 @@ class SCARJacobiStrategy:
             parameter = np.array([mle_result.copula_param])
             tau_hat = float(
                 jacobi_native.parameter_to_tau(copula, parameter)[0])
-            m0 = float(np.clip(tau_hat, self.tau_eps, 1.0 - self.tau_eps))
+            alpha0 = jacobi_native.initial_point(tau_hat, self.tau_eps)
             mle_attempt = _initialization_attempt(
                 'static_mle_tau', success=True)
             selected_method = 'static_mle_tau'
         except Exception as exc:
-            m0 = 0.5
+            alpha0 = jacobi_native.initial_point(None, self.tau_eps)
             mle_attempt = _initialization_attempt(
                 'static_mle_tau', success=False, error=exc)
             selected_method = 'm0_default'
-        alpha0 = np.array([1.0, m0, 0.2], dtype=np.float64)
         attempts = [mle_attempt]
         if selected_method == 'm0_default':
             attempts.append(_initialization_attempt(
@@ -602,7 +587,8 @@ class SCARJacobiStrategy:
         evaluator = self._prepared_evaluator(u, copula)
         raw0 = _physical_to_raw(alpha0, self.tau_eps)
         bounds = self._raw_bounds()
-        raw0 = np.clip(raw0, bounds.lb, bounds.ub)
+        raw0 = model_policy.project_optimizer_point(
+            raw0, bounds.lb, bounds.ub)
 
         optimizer_options = lbfgsb_options(
             self.config.scar_optimizer,
@@ -620,31 +606,16 @@ class SCARJacobiStrategy:
 
         def objective_raw(raw):
             alpha = _raw_to_physical(raw)
-            try:
-                return self._neg_loglik(
-                    alpha[0], alpha[1], alpha[2], u, copula,
-                    evaluator=evaluator)
-            except Exception as exc:
-                if verbose:
-                    print(f"  error at alpha={alpha}: {exc}")
-                return 1e10
+            return self._neg_loglik(
+                alpha[0], alpha[1], alpha[2], u, copula,
+                evaluator=evaluator)
 
         def objective_raw_with_grad(raw):
             alpha = _raw_to_physical(raw)
-            try:
-                val, grad = self._neg_loglik_with_grad(
-                    alpha[0], alpha[1], alpha[2], u, copula,
-                    evaluator=evaluator)
-                raw_grad = grad * np.array([
-                    alpha[0],
-                    alpha[1] * (1.0 - alpha[1]),
-                    alpha[2],
-                ], dtype=np.float64)
-                return val, raw_grad
-            except Exception as exc:
-                if verbose:
-                    print(f"  error at alpha={alpha}: {exc}")
-                return 1e10, np.zeros(3, dtype=np.float64)
+            val, grad = self._neg_loglik_with_grad(
+                alpha[0], alpha[1], alpha[2], u, copula,
+                evaluator=evaluator)
+            return val, jacobi_native.raw_gradient(alpha, grad)
 
         if self.analytical_grad:
             result = minimize(
@@ -673,8 +644,8 @@ class SCARJacobiStrategy:
         final_objective_consistent = True
         if self.analytical_grad:
             final_objective_consistent = (
-                not _objective_is_invalid(gradient_final_fun)
-                and not _objective_is_invalid(final_fun)
+                not native_validation.objective_is_invalid(gradient_final_fun)
+                and not native_validation.objective_is_invalid(final_fun)
                 and np.isclose(
                     gradient_final_fun,
                     final_fun,
@@ -690,7 +661,7 @@ class SCARJacobiStrategy:
                     f"plain={float(final_fun):.6g}"
                 )
 
-        if _objective_is_invalid(final_fun):
+        if native_validation.objective_is_invalid(final_fun):
             result.success = False
             result.message = (
                 f"{result.message}; invalid objective value {float(final_fun):.6g}"
@@ -827,20 +798,10 @@ class SCARJacobiStrategy:
     def objective(self, copula, u: np.ndarray,
                   alpha: np.ndarray, **kwargs) -> float:
         alpha = np.asarray(alpha, dtype=np.float64)
-        try:
-            return self._neg_loglik(alpha[0], alpha[1], alpha[2], u, copula)
-        except Exception:
-            return 1e10
+        return self._neg_loglik(alpha[0], alpha[1], alpha[2], u, copula)
 
-    def predict(self, copula, u, result, n, rng=None, **kwargs):
-        return predict_from_strategy(
-            self, copula, u, result, n, rng=rng, **kwargs)
-
-    def predictive_params(self, copula, u, result, n, rng=None, **kwargs):
-        if rng is None:
-            rng = np.random.default_rng()
-        state = self.predictive_state(copula, u, result, **kwargs)
-        return self.sample_params(copula, state, n, rng=rng, **kwargs)
+    predict = strategy_predict
+    predictive_params = predictive_params_from_state_with_rng
 
     def predictive_state(self, copula, u, result, **kwargs):
         horizon = str(kwargs.get('horizon', 'next')).lower()
@@ -854,7 +815,13 @@ class SCARJacobiStrategy:
                 method='SCAR-TM-JACOBI',
                 horizon=horizon,
                 kind='stationary_jacobi',
-                metadata={'alpha': alpha, 'beta': beta},
+                metadata={
+                    'alpha': alpha,
+                    'beta': beta,
+                    'kappa': p.kappa,
+                    'm': p.m,
+                    'xi': p.xi,
+                },
             )
 
         state_cache = kwargs.get('state_cache')
@@ -909,7 +876,12 @@ class SCARJacobiStrategy:
         if rng is None:
             rng = np.random.default_rng()
         if state.kind == 'stationary_jacobi':
-            tau = rng.beta(state.metadata['alpha'], state.metadata['beta'], n)
+            tau = jacobi_native.sample_stationary_fixed_draws(
+                state.metadata['kappa'],
+                state.metadata['m'],
+                state.metadata['xi'],
+                rng.uniform(0.0, 1.0, size=n),
+            )
             return jacobi_native.tau_to_parameter(
                 copula, tau, theta_cap=self.theta_cap)
 
@@ -918,17 +890,22 @@ class SCARJacobiStrategy:
         if mode not in {'grid', 'histogram'}:
             raise ValueError(
                 "predictive_r_mode must be 'grid' or 'histogram'")
-        tau_grid = np.asarray(state.z_grid, dtype=np.float64)
-        probability = np.asarray(state.prob, dtype=np.float64)
-        indices = rng.choice(tau_grid.size, size=n, p=probability)
-        if mode == 'grid' or tau_grid.size == 1:
-            tau = tau_grid[indices]
-        else:
-            left, right = jacobi_native.state_histogram_cells(
-                tau_grid, indices)
-            tau = rng.uniform(left, right)
-        return jacobi_native.tau_to_parameter(
-            copula, tau, theta_cap=self.theta_cap)
+        selection_draws = rng.uniform(0.0, 1.0, size=n)
+        jitter_draws = (
+            rng.uniform(0.0, 1.0, size=n)
+            if mode == 'histogram' and len(state.z_grid) > 1
+            else np.empty(0, dtype=np.float64)
+        )
+        _, parameters, _ = jacobi_native.sample_state_distribution_fixed_draws(
+            copula,
+            state.z_grid,
+            state.prob,
+            selection_draws,
+            jitter_draws,
+            mode=mode,
+            theta_cap=self.theta_cap,
+        )
+        return parameters
 
     def sample(self, copula, u, result, n, rng=None, **kwargs):
         """Sample the fitted discrete Jacobi Markov model unconditionally."""

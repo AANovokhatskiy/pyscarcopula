@@ -5,6 +5,11 @@
 #include "scar/core/checked_arithmetic.hpp"
 #include "scar/detail/scar_ou/quadrature.hpp"
 #include "scar/detail/scar_ou/transition.hpp"
+#include "scar/scar_ou/initialization.hpp"
+#include "scar/scar_ou/parameterization.hpp"
+#include "scar/scar_ou/policy.hpp"
+#include "scar/scar_ou/quadrature.hpp"
+#include "scar/scar_ou/sampling.hpp"
 
 #include <pybind11/stl.h>
 
@@ -12,6 +17,7 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -63,12 +69,66 @@ py::dict vector_result_to_dict(const scar::ScarOuVectorResult& result) {
     return output;
 }
 
+py::dict parameter_vector_to_dict(
+    const scar::OuParameterVectorResult& result) {
+    py::dict output;
+    output["values"] = vector_to_array(result.value);
+    output["status"] = static_cast<int>(result.status);
+    return output;
+}
+
+py::dict initialization_to_dict(
+    const scar::OuInitializationResult& result) {
+    py::dict output;
+    output["status"] = static_cast<int>(result.status);
+    output["values"] = py::make_tuple(
+        result.value.params.kappa,
+        result.value.params.mu,
+        result.value.params.nu);
+    output["theta_mle"] = result.value.theta_mle;
+    output["df_minus_two"] = result.value.theta_mle - 2.0;
+    output["static_log_likelihood"] =
+        result.value.static_log_likelihood;
+    output["static_log_likelihood_per_observation"] =
+        result.value.static_log_likelihood_per_observation;
+    output["tau_abs"] = result.value.absolute_kendall_tau;
+    output["strength"] = result.value.strength;
+    output["sigma_x"] = result.value.stationary_scale;
+    output["sigma_x_legacy"] = result.value.legacy_stationary_scale;
+    output["rho_target"] = result.value.rho_target;
+    switch (result.value.regime) {
+    case scar::OuInitializationRegime::Weak:
+        output["regime"] = "weak";
+        break;
+    case scar::OuInitializationRegime::Medium:
+        output["regime"] = "medium";
+        break;
+    case scar::OuInitializationRegime::Strong:
+        output["regime"] = "strong";
+        break;
+    default:
+        output["regime"] = py::none();
+        break;
+    }
+    return output;
+}
+
 py::dict state_distribution_to_dict(const scar::StateDistribution& result) {
     py::dict output;
     output["z_grid"] = vector_to_array(result.z_grid);
     output["prob"] = vector_to_array(result.prob);
     output["status"] = static_cast<int>(result.status);
     output["backend"] = static_cast<int>(result.backend);
+    return output;
+}
+
+py::dict state_sample_to_dict(const scar::OuStateSampleResult& result) {
+    py::dict output;
+    output["values"] = vector_to_array(result.value.values);
+    output["selection_draws_used"] = result.value.selection_draws_used;
+    output["jitter_draws_used"] = result.value.jitter_draws_used;
+    output["status"] = static_cast<int>(result.status);
+    output["failure_index"] = result.failure.index;
     return output;
 }
 
@@ -293,6 +353,244 @@ py::dict run_ou_grid_filter_engine(
 }  // namespace
 
 void bind_scar_ou(py::module_& m) {
+    m.def("model_ou_kappa_dt", [](double kappa, int n_obs) {
+        const auto result = scar::ou_kappa_dt(kappa, n_obs);
+        py::dict output;
+        output["value"] = result.value;
+        output["status"] = static_cast<int>(result.status);
+        return output;
+    }, py::arg("kappa"), py::arg("n_obs"));
+    m.def("model_ou_auto_backend", [](
+            double kappa, int n_obs, double small_kdt) {
+        const auto result = scar::ou_auto_backend(kappa, n_obs, small_kdt);
+        py::dict output;
+        output["backend"] = static_cast<int>(result.value);
+        output["status"] = static_cast<int>(result.status);
+        return output;
+    }, py::arg("kappa"), py::arg("n_obs"), py::arg("small_kdt"));
+    m.def("model_ou_adaptive_spectral_basis_order", [](
+            double kappa, int n_obs) {
+        const auto result = scar::ou_adaptive_spectral_basis_order(
+            kappa, n_obs);
+        py::dict output;
+        output["order"] = result.value;
+        output["status"] = static_cast<int>(result.status);
+        return output;
+    }, py::arg("kappa"), py::arg("n_obs"));
+    m.def("model_ou_resolve_quad_order", [](
+            int basis_order,
+            const std::optional<int>& explicit_quad_order) {
+        const auto result = scar::ou_resolve_quad_order(
+            basis_order,
+            explicit_quad_order.value_or(0),
+            explicit_quad_order.has_value());
+        py::dict output;
+        output["order"] = result.value;
+        output["status"] = static_cast<int>(result.status);
+        return output;
+    }, py::arg("basis_order"), py::arg("explicit_quad_order"));
+    py::enum_<scar::OuInitializationRegime>(
+        m, "OuInitializationRegime")
+        .value("NotApplicable", scar::OuInitializationRegime::NotApplicable)
+        .value("Weak", scar::OuInitializationRegime::Weak)
+        .value("Medium", scar::OuInitializationRegime::Medium)
+        .value("Strong", scar::OuInitializationRegime::Strong);
+    py::class_<scar::OuInitializationConfig>(
+        m, "OuInitializationConfig")
+        .def(py::init<>())
+        .def_readwrite("rho_target",
+            &scar::OuInitializationConfig::rho_target)
+        .def_readwrite("sigma_fraction",
+            &scar::OuInitializationConfig::sigma_fraction)
+        .def_readwrite("weak_tau",
+            &scar::OuInitializationConfig::weak_tau)
+        .def_readwrite("strong_tau",
+            &scar::OuInitializationConfig::strong_tau)
+        .def_readwrite("weak_log_likelihood_per_observation",
+            &scar::OuInitializationConfig::
+                weak_log_likelihood_per_observation)
+        .def_readwrite("strong_log_likelihood_per_observation",
+            &scar::OuInitializationConfig::
+                strong_log_likelihood_per_observation)
+        .def_readwrite("weak_stationary_scale",
+            &scar::OuInitializationConfig::weak_stationary_scale)
+        .def_readwrite("maximum_stationary_scale",
+            &scar::OuInitializationConfig::maximum_stationary_scale);
+    m.def("ou_initial_kappa",
+        [](std::size_t count, double rho_target,
+           double kappa_min, double kappa_max) {
+            const auto result = scar::ou_initial_kappa(
+                count, rho_target, kappa_min, kappa_max);
+            py::dict output;
+            output["status"] = static_cast<int>(result.status);
+            output["value"] = result.value;
+            return output;
+        }, py::arg("count"), py::arg("rho_target") = 0.96,
+        py::arg("kappa_min") = 0.01, py::arg("kappa_max") = 100.0);
+    m.def("ou_default_initial_point",
+        [](double mu) {
+            return initialization_to_dict(
+                scar::ou_default_initial_point(mu));
+        }, py::arg("mu"));
+    m.def("ou_heuristic_initial_point",
+        [](std::size_t count, double mu, double rho_target,
+           double sigma_fraction) {
+            return initialization_to_dict(
+                scar::ou_heuristic_initial_point(
+                    count, mu, rho_target, sigma_fraction));
+        }, py::arg("count"), py::arg("mu"),
+        py::arg("rho_target") = 0.95,
+        py::arg("sigma_fraction") = 0.3);
+    m.def("ou_stochastic_student_initial_point",
+        [](std::size_t count, double theta_mle, double mu,
+           double static_log_likelihood, double rho_target, double nu) {
+            return initialization_to_dict(
+                scar::ou_stochastic_student_initial_point(
+                    count, theta_mle, mu, static_log_likelihood,
+                    rho_target, nu));
+        }, py::arg("count"), py::arg("theta_mle"), py::arg("mu"),
+        py::arg("static_log_likelihood"),
+        py::arg("rho_target") = 0.96, py::arg("nu") = 0.1);
+    m.def("ou_strength_aware_initial_point",
+        [](const Float64Array& observations, double theta_mle,
+           double mu, double static_log_likelihood,
+           const scar::OuInitializationConfig& config) {
+            const py::buffer_info info = observations.request();
+            if (info.ndim != 2 || info.shape[0] < 0 || info.shape[1] < 0) {
+                throw std::invalid_argument(
+                    "initialization observations must be 2D");
+            }
+            const scar::ObservationView view{
+                static_cast<const double*>(info.ptr),
+                static_cast<std::size_t>(info.shape[0]),
+                static_cast<int>(info.shape[1])};
+            scar::OuInitializationResult result;
+            {
+                py::gil_scoped_release release;
+                result = scar::ou_strength_aware_initial_point(
+                    view, theta_mle, mu, static_log_likelihood, config);
+            }
+            return initialization_to_dict(result);
+        }, py::arg("observations"), py::arg("theta_mle"),
+        py::arg("mu"), py::arg("static_log_likelihood"),
+        py::arg("config"));
+    m.def("ou_validate_trajectory_parameters",
+        [](const scar::OuParams& params, std::size_t count) {
+            return static_cast<int>(scar::validate_ou_trajectory_parameters(params, count));
+        }, py::arg("params"), py::arg("count"));
+    m.def("ou_sample_trajectory",
+        [](const scar::OuParams& params, const Float64Array& normals) {
+            const auto view = flat_view_from_array(normals, "standard_normals");
+            scar::ScarOuVectorResult result;
+            {
+                py::gil_scoped_release release;
+                result = scar::sample_ou_trajectory(params, view);
+            }
+            return vector_result_to_dict(result);
+        }, py::arg("params"), py::arg("standard_normals"));
+    m.def("ou_sample_stationary",
+        [](const scar::OuParams& params, const Float64Array& normals) {
+            const auto view = flat_view_from_array(normals, "standard_normals");
+            scar::ScarOuVectorResult result;
+            {
+                py::gil_scoped_release release;
+                result = scar::sample_ou_stationary(params, view);
+            }
+            return vector_result_to_dict(result);
+        }, py::arg("params"), py::arg("standard_normals"));
+    m.def("ou_sample_state_distribution",
+        [](const Float64Array& z_grid,
+           const Float64Array& probability,
+           const Float64Array& selection_uniforms,
+           const Float64Array& jitter_uniforms,
+           bool histogram) {
+            const auto states = flat_view_from_array(z_grid, "z_grid");
+            const auto weights = flat_view_from_array(probability, "probability");
+            const auto selection = flat_view_from_array(
+                selection_uniforms, "selection_uniforms");
+            const auto jitter = flat_view_from_array(
+                jitter_uniforms, "jitter_uniforms");
+            scar::OuStateSampleResult result;
+            {
+                py::gil_scoped_release release;
+                result = scar::sample_ou_state_distribution(
+                    states,
+                    weights,
+                    selection,
+                    jitter,
+                    histogram
+                        ? scar::OuStateSamplingMode::Histogram
+                        : scar::OuStateSamplingMode::Grid);
+            }
+            return state_sample_to_dict(result);
+        },
+        py::arg("z_grid"),
+        py::arg("probability"),
+        py::arg("selection_uniforms"),
+        py::arg("jitter_uniforms"),
+        py::arg("histogram"));
+    m.def("ou_condition_state",
+        [](const scar::CopulaSpec& copula,
+           const Float64Array& z_grid,
+           const Float64Array& probability,
+           const Float64Array& observation) {
+            const py::buffer_info info = observation.request();
+            if (info.ndim != 2 || info.shape[0] != 1 || info.shape[1] < 1) {
+                throw std::invalid_argument(
+                    "observation must have shape (1, dimension)");
+            }
+            const auto states = flat_view_from_array(z_grid, "z_grid");
+            const auto weights = flat_view_from_array(probability, "probability");
+            const scar::ObservationView view{
+                static_cast<const double*>(info.ptr),
+                1,
+                static_cast<int>(info.shape[1])};
+            scar::StateDistribution result;
+            {
+                py::gil_scoped_release release;
+                result = scar::condition_ou_state_distribution(
+                    copula, states, weights, view);
+            }
+            return state_distribution_to_dict(result);
+        },
+        py::arg("copula"),
+        py::arg("z_grid"),
+        py::arg("probability"),
+        py::arg("observation"));
+    m.def("ou_trajectory_from_innovations",
+        [](double x0, double mu, double rho, double sigma_cond,
+           const Float64Array& innovations) {
+            const auto view = flat_view_from_array(innovations, "innovations");
+            scar::ScarOuVectorResult result;
+            {
+                py::gil_scoped_release release;
+                result = scar::ou_trajectory_from_innovations(
+                    x0, mu, rho, sigma_cond, view);
+            }
+            return vector_result_to_dict(result);
+        }, py::arg("x0"), py::arg("mu"), py::arg("rho"),
+        py::arg("sigma_cond"), py::arg("innovations"));
+    m.def("ou_hermite_rule", [](int quad_order, int basis_order) {
+        scar::Result<scar::OuHermiteRule> result;
+        {
+            py::gil_scoped_release release;
+            result = scar::ou_hermite_rule(quad_order, basis_order);
+        }
+        py::dict output;
+        output["status"] = static_cast<int>(result.status);
+        output["nodes"] = vector_to_array(result.value.nodes);
+        output["weights"] = vector_to_array(result.value.weights);
+        output["basis"] = matrix_to_array(result.value.basis,
+            result.value.quad_order, result.value.basis_order);
+        return output;
+    }, py::arg("quad_order"), py::arg("basis_order"));
+    m.def("ou_default_quad_order", [](int basis_order) {
+        const auto result = scar::ou_default_quad_order(basis_order);
+        py::dict output;
+        output["status"] = static_cast<int>(result.status);
+        output["order"] = result.value;
+        return output;
+    }, py::arg("basis_order"));
     m.def(
         "_hermite_rule_cache_info",
         []() {
@@ -1156,6 +1454,70 @@ void bind_scar_ou(py::module_& m) {
                         });
                 return smoothed_state_distribution_to_dict(result);
             });
+    m.def("ou_to_log_stationary", [](const std::vector<double>& values) {
+        scar::OuParameterVectorResult result;
+        { py::gil_scoped_release release;
+          result = scar::ou_to_log_stationary(values); }
+        return parameter_vector_to_dict(result);
+    }, py::arg("values"));
+    m.def("ou_from_log_stationary", [](const std::vector<double>& values) {
+        scar::OuParameterVectorResult result;
+        { py::gil_scoped_release release;
+          result = scar::ou_from_log_stationary(values); }
+        return parameter_vector_to_dict(result);
+    }, py::arg("values"));
+    m.def("ou_gradient_to_log_stationary", [](
+            const std::vector<double>& physical,
+            const std::vector<double>& gradient) {
+        scar::OuParameterVectorResult result;
+        { py::gil_scoped_release release;
+          result = scar::ou_gradient_to_log_stationary(
+              physical, gradient); }
+        return parameter_vector_to_dict(result);
+    }, py::arg("physical"), py::arg("gradient"));
+    m.def("ou_gradient_from_log_stationary", [](
+            const std::vector<double>& physical,
+            const std::vector<double>& gradient) {
+        scar::OuParameterVectorResult result;
+        { py::gil_scoped_release release;
+          result = scar::ou_gradient_from_log_stationary(
+              physical, gradient); }
+        return parameter_vector_to_dict(result);
+    }, py::arg("physical"), py::arg("gradient"));
+    m.def("ou_project_optimizer_block", [](
+            const std::vector<double>& values,
+            const std::vector<double>& lower,
+            const std::vector<double>& upper) {
+        scar::OuParameterVectorResult result;
+        { py::gil_scoped_release release;
+          result = scar::ou_project_optimizer_block(
+              values, lower, upper); }
+        return parameter_vector_to_dict(result);
+    }, py::arg("values"), py::arg("lower"), py::arg("upper"));
+    m.def("optimizer_scaled_to_physical", [](
+            const std::vector<double>& values,
+            const std::vector<double>& scale) {
+        return parameter_vector_to_dict(
+            scar::optimizer_scaled_to_physical(values, scale));
+    }, py::arg("values"), py::arg("scale"));
+    m.def("physical_to_optimizer_scaled", [](
+            const std::vector<double>& values,
+            const std::vector<double>& scale) {
+        return parameter_vector_to_dict(
+            scar::physical_to_optimizer_scaled(values, scale));
+    }, py::arg("values"), py::arg("scale"));
+    m.def("gradient_to_optimizer_scaled", [](
+            const std::vector<double>& gradient,
+            const std::vector<double>& scale) {
+        return parameter_vector_to_dict(
+            scar::gradient_to_optimizer_scaled(gradient, scale));
+    }, py::arg("gradient"), py::arg("scale"));
+    m.def("gradient_from_optimizer_scaled", [](
+            const std::vector<double>& gradient,
+            const std::vector<double>& scale) {
+        return parameter_vector_to_dict(
+            scar::gradient_from_optimizer_scaled(gradient, scale));
+    }, py::arg("gradient"), py::arg("scale"));
 }
 
 }  // namespace pyscarcopula::bindings

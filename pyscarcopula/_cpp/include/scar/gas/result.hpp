@@ -75,4 +75,21 @@ struct GasPathResult {
     }
 };
 
+struct GasOuInitializationResult {
+    double kappa = 1.0;
+    double mu = 0.0;
+    double nu = 1.0;
+    double best_log_likelihood = 0.0;
+    double selected_omega = 0.0;
+    double selected_gamma = 0.0;
+    double selected_beta = 0.0;
+    bool grid_candidate_found = false;
+    Status status = Status::Ok;
+    FailureContext failure{};
+
+    bool is_ok() const noexcept {
+        return ok(status);
+    }
+};
+
 }  // namespace scar

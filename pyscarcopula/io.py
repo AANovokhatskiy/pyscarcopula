@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import copy
-import importlib
 import json
 import math
 from dataclasses import fields, is_dataclass
+from functools import lru_cache
 from pathlib import Path
-from typing import Any, TypeVar, overload
+from types import MappingProxyType
+from typing import Any, Mapping, TypeVar, overload
 
 import numpy as np
 from scipy.optimize import OptimizeResult
@@ -74,27 +75,62 @@ def _class_path(cls: type) -> str:
 
 
 def _qualified_name(obj: object) -> str:
-    return _class_path(type(obj))
+    return _persisted_class_path(type(obj))
+
+
+@lru_cache(maxsize=1)
+def _persisted_classes() -> Mapping[str, type]:
+    """Explicit persistence schema; payloads never choose an import target."""
+    from pyscarcopula._native.registry import registered_model_types
+    from pyscarcopula._types import (
+        GASResult, IndependentResult, LatentProcessParams, LatentResult,
+        LBFGSBConfig, MLEResult, MultivariateMLEResult, NumericalConfig,
+        PredictConfig, PredictiveState,
+    )
+    from pyscarcopula.copula.multivariate.corr_param import CorrelationPreprocessingResult
+    from pyscarcopula.copula.multivariate.correlation_policy import CorrelationPolicy
+    from pyscarcopula.copula.multivariate.factor_correlation import FactorCorrelation
+    from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
+    from pyscarcopula.strategy.gas import GASStrategy
+    from pyscarcopula.strategy.mle import MLEStrategy
+    from pyscarcopula.strategy.scar_jacobi import SCARJacobiStrategy
+    from pyscarcopula.strategy.scar_tm import SCARTMStrategy
+    from pyscarcopula.vine._pair_copula import PairCopula
+    from pyscarcopula.vine._rvine_dissmann import VineStructureSelection
+    from pyscarcopula.vine._structure import RVineMatrix
+    from pyscarcopula.vine._vine_fit import VineEdgeFit
+    from pyscarcopula.vine.vine import VineCopula
+
+    classes = (
+        *registered_model_types(), GASResult, IndependentResult,
+        LatentProcessParams, LatentResult, LBFGSBConfig, MLEResult,
+        MultivariateMLEResult, NumericalConfig, PredictConfig, PredictiveState,
+        CorrelationPreprocessingResult, CorrelationPolicy, FactorCorrelation,
+        AutoTMConfig, GASStrategy, MLEStrategy, SCARJacobiStrategy,
+        SCARTMStrategy, PairCopula, VineStructureSelection, RVineMatrix,
+        VineEdgeFit, OptimizeResult,
+    )
+    registry = {_class_path(cls): cls for cls in classes}
+    registry["pyscarcopula.vine.rvine.RVineCopula"] = VineCopula
+    registry["scipy.optimize.OptimizeResult"] = OptimizeResult
+    registry["scipy.optimize._optimize.OptimizeResult"] = OptimizeResult
+    return MappingProxyType(registry)
+
+
+def _persisted_class_path(cls: type) -> str:
+    path = _class_path(cls)
+    if _persisted_classes().get(path) is not cls:
+        raise ValueError(f"Unsupported persisted class: {path!r}")
+    return path
 
 
 def _resolve_class(path: str) -> type:
-    module_name, _, qualname = path.rpartition(".")
-    if not module_name or not qualname:
+    if not isinstance(path, str) or not path.rpartition(".")[0]:
         raise ValueError(f"Invalid class path: {path!r}")
-    if not (
-        module_name.startswith("pyscarcopula.")
-        or module_name == "pyscarcopula"
-        or path == "scipy.optimize._optimize.OptimizeResult"
-        or path == "scipy.optimize.OptimizeResult"
-    ):
+    cls = _persisted_classes().get(path)
+    if cls is None:
         raise ValueError(f"Unsupported persisted class: {path!r}")
-    module = importlib.import_module(module_name)
-    obj = module
-    for part in qualname.split("."):
-        obj = getattr(obj, part)
-    if not isinstance(obj, type):
-        raise TypeError(f"Persisted reference is not a class: {path!r}")
-    return obj
+    return cls
 
 
 def _without_training_data(model: object) -> object:
@@ -142,7 +178,7 @@ def _to_jsonable(obj: Any) -> Any:
             "data": _to_jsonable(obj.tolist()),
         }
     if isinstance(obj, type):
-        return {_TYPE: "class", "class": _class_path(obj)}
+        return {_TYPE: "class", "class": _persisted_class_path(obj)}
     if isinstance(obj, OptimizeResult):
         return {
             _TYPE: "optimize_result",

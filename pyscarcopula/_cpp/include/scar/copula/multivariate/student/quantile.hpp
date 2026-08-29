@@ -2,6 +2,7 @@
 
 #include "scar/copula/spec.hpp"
 #include "scar/copula/multivariate/student/ppf_cache.hpp"
+#include "scar/copula/multivariate/student/distribution.hpp"
 
 #include <cstdint>
 
@@ -25,6 +26,9 @@ void student_quantile_for_emission(
     double* derivative);
 double student_quantile_value(double p, double df);
 double student_quantile_refined_value(double p, double df);
+double student_quantile_refined_value(double p, const StudentDistributionParameters& params);
+double student_quantile_refined_value(
+    double p, const StudentDistributionParameters& params, double initial_quantile);
 double student_quantile_for_observation(
     const scar::CopulaSpec& spec,
     double p,

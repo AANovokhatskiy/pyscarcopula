@@ -12,6 +12,8 @@ namespace scar {
 struct FactorStudentGridResult {
     std::vector<double> log_pdf;
     std::vector<double> dlog_ddf;
+    std::vector<double> pdf;
+    std::vector<double> d_pdf_dx;
     std::size_t rows = 0;
     std::size_t grid_size = 0;
     std::size_t dimension_tiles = 0;
@@ -53,5 +55,18 @@ FactorStudentDensityGridResult factor_student_density_from_log_grid(
     const double* log_pdf,
     const double* dlog_ddf,
     std::size_t cells);
+
+/// Evaluate density and its latent-state derivative for
+/// df(x) = offset + softplus(x).
+FactorStudentGridResult
+factor_student_stochastic_pdf_and_grad_grid(
+    const FactorCorrelationOperator& correlation,
+    const double* observations,
+    std::size_t rows,
+    const double* raw_grid,
+    std::size_t grid_size,
+    double offset,
+    std::size_t dimension_tile,
+    int n_threads = 1);
 
 }  // namespace scar

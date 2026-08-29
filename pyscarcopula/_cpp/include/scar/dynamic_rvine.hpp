@@ -49,6 +49,7 @@ rvine::RosenblattResult dynamic_rvine_rosenblatt_transform(
     DoubleView observations,
     std::int64_t observation_rows,
     std::int64_t observation_columns,
-    int n_threads = 1);
+    int n_threads = 1,
+    bool capture_node_values = false);
 
 }  // namespace scar

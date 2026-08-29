@@ -7,6 +7,7 @@ import numpy as np
 from pyscarcopula._native import jacobi as jacobi_native
 from pyscarcopula.numerical._arrays import (
     validate_float64_allocation,
+    validate_integer,
     validate_positive_int,
 )
 from pyscarcopula.numerical._transition_methods import (
@@ -28,16 +29,6 @@ def _validate_jacobi_order(value, name):
         raise ValueError(
             f"{name} must be <= {MAX_JACOBI_ORDER}; larger Jacobi grids "
             "are disabled to prevent unsafe quadratic allocations")
-    return value
-
-
-def _validate_nonnegative_int(value, name):
-    if isinstance(value, (bool, np.bool_)) or not isinstance(
-            value, (int, np.integer)):
-        raise TypeError(f"{name} must be a non-negative integer")
-    value = int(value)
-    if value < 0:
-        raise ValueError(f"{name} must be non-negative")
     return value
 
 
@@ -86,7 +77,7 @@ def _validate_jacobi_sampling_workspace(
         *, n, quad_order, basis_order, gh_order=1,
         memory_budget_bytes=None):
     """Preflight transition construction and fixed-draw boundary copies."""
-    n = _validate_nonnegative_int(n, "n")
+    n = validate_integer(n, "n")
     quad_order = _validate_jacobi_order(quad_order, "quad_order")
     basis_order = _validate_jacobi_order(basis_order, "basis_order")
     gh_order = _validate_jacobi_order(gh_order, "gh_order")
@@ -478,103 +469,6 @@ def jacobi_transition_matrix(
     return tau, weights, transition
 
 
-def _legacy_grid_sampling_diagnostics(
-        native, *, sampling_method, requested_method, storage, correction, n):
-    """Preserve the frozen public diagnostics while C++ owns execution."""
-    method_used = native["transition_method"]
-    if n == 1:
-        return {
-            "transition_method_requested": requested_method,
-            "sampling_transition_method_requested": sampling_method,
-            "transition_method": "stationary_only",
-            "n": 1,
-        }
-    if storage == "sparse":
-        diagnostics = {
-            "dt": native["dt"],
-            "alpha": native["alpha"],
-            "beta": native["beta"],
-            "gh_order": native["gh_order"],
-            "transition_method": sampling_method,
-            "correction": correction,
-            "nnz": int(native["nnz"]),
-            "max_width": int(native["max_width"]),
-            "retained_bytes": int(native["retained_bytes"]),
-            "dense_bytes": int(native["dense_bytes"]),
-            "stationary_error": native["stationary_error"],
-        }
-        if sampling_method == "local":
-            diagnostics["max_row_sum_error"] = native[
-                "max_row_sum_error"]
-        if correction == "mh":
-            for name in (
-                    "mean_accepted_off_diagonal_mass",
-                    "mean_proposed_off_diagonal_mass",
-                    "acceptance_mass_ratio",
-                    "min_row_acceptance_ratio",
-                    "mean_stay_probability",
-                    "max_stay_probability",
-                    "reverse_missing_edge_fraction",
-                    "detailed_balance_error"):
-                diagnostics[name] = native[name]
-        elif correction == "ipfp":
-            diagnostics.update({
-                "ipfp_iterations": int(native["ipfp_iterations"]),
-                "ipfp_stationary_residual": native[
-                    "ipfp_stationary_residual"],
-                "ipfp_kl_divergence": native["ipfp_kl_divergence"],
-                "ipfp_max_probability_change": native[
-                    "ipfp_max_probability_change"],
-                "mean_stay_probability": native["mean_stay_probability"],
-                "max_stay_probability": native["max_stay_probability"],
-            })
-        diagnostics.update({
-            "transition_method_requested": requested_method,
-            "sampling_transition_method_requested": sampling_method,
-            "model_transition_method_requested": requested_method,
-            "transition_storage": "sparse",
-            "n": n,
-        })
-        return diagnostics
-    if method_used == "spectral_matrix":
-        diagnostics = {
-            "dt": native["dt"],
-            "alpha": native["alpha"],
-            "beta": native["beta"],
-            "raw_min_entry": native["raw_min_entry"],
-            "raw_negative_mass": native["raw_negative_mass"],
-            "max_row_sum_error_before_normalization": native[
-                "max_row_sum_error_before_normalization"],
-            "stationary_error": native["stationary_error"],
-            "clipped_negative": native["clipped_negative"],
-            "transition_method_requested": sampling_method,
-            "transition_method": method_used,
-            "probability_cleanup_applied": native[
-                "probability_cleanup_applied"],
-            "probability_cleanup_negative_mass": native[
-                "probability_cleanup_negative_mass"],
-            "probability_min_entry_before_cleanup": native[
-                "probability_min_entry_before_cleanup"],
-        }
-    else:
-        diagnostics = {
-            "dt": native["dt"],
-            "alpha": native["alpha"],
-            "beta": native["beta"],
-            "gh_order": native["gh_order"],
-            "min_entry": native["min_entry"],
-            "max_row_sum_error": native["max_row_sum_error"],
-            "stationary_error": native["stationary_error"],
-            "transition_method_requested": sampling_method,
-            "transition_method": method_used,
-        }
-        if int(native["spectral_status"]) != 0:
-            diagnostics["spectral_error"] = (
-                "FloatingPointError: C++ Jacobi spectral transition failed")
-    diagnostics["sampling_transition_method_requested"] = sampling_method
-    diagnostics["model_transition_method_requested"] = requested_method
-    diagnostics["n"] = n
-    return diagnostics
 
 
 def sample_jacobi_grid_trajectory(
@@ -595,7 +489,7 @@ def sample_jacobi_grid_trajectory(
         memory_budget_bytes=None,
         return_diagnostics=False):
     """Sample the discrete Jacobi Markov model through fixed-draw C++."""
-    n = _validate_nonnegative_int(n, "n")
+    n = validate_integer(n, "n")
     stationarity_correction = normalize_jacobi_stationarity_correction(
         stationarity_correction)
     transition_storage = normalize_jacobi_transition_storage(
@@ -694,7 +588,7 @@ def sample_jacobi_grid_trajectory(
         memory_budget_bytes=budget,
     )
     if return_diagnostics:
-        diagnostics = _legacy_grid_sampling_diagnostics(
+        diagnostics = jacobi_native.legacy_grid_sampling_diagnostics(
             diagnostics,
             sampling_method=sampling_method,
             requested_method=requested_method,
@@ -732,35 +626,27 @@ def jacobi_matrix_loglik(
         gh_order=gh_order,
         memory_budget_bytes=memory_budget_bytes,
     )
-    try:
-        evaluator = jacobi_native.PreparedScarJacobiEvaluator(
-            u,
-            copula,
-            basis_order=basis_order,
-            quad_order=resolved_quad_order,
-            theta_cap=theta_cap,
-            transition_method=transition_method,
-            storage="dense",
-            clip_negative=clip_negative,
-            negative_mass_tol=negative_mass_tol,
-            gh_order=gh_order,
-            memory_budget_bytes=(
-                DEFAULT_JACOBI_MEMORY_BUDGET_BYTES
-                if memory_budget_bytes is None else memory_budget_bytes),
-        )
-        return evaluator.loglik(kappa, m, xi)
-    except MemoryError:
-        raise
-    except Exception:
-        return -np.inf
+    evaluator = jacobi_native.PreparedScarJacobiEvaluator(
+        u,
+        copula,
+        basis_order=basis_order,
+        quad_order=resolved_quad_order,
+        theta_cap=theta_cap,
+        transition_method=transition_method,
+        storage="dense",
+        clip_negative=clip_negative,
+        negative_mass_tol=negative_mass_tol,
+        gh_order=gh_order,
+        memory_budget_bytes=(
+            DEFAULT_JACOBI_MEMORY_BUDGET_BYTES
+            if memory_budget_bytes is None else memory_budget_bytes),
+    )
+    return evaluator.loglik(kappa, m, xi)
 
 
 def jacobi_matrix_neg_loglik(*args, **kwargs):
     """Minus matrix-filter log-likelihood wrapper for optimizers."""
-    value = jacobi_matrix_loglik(*args, **kwargs)
-    if not np.isfinite(value):
-        return 1e10
-    return -value
+    return -jacobi_matrix_loglik(*args, **kwargs)
 
 
 def jacobi_matrix_neg_loglik_with_grad(
@@ -789,17 +675,7 @@ def jacobi_matrix_neg_loglik_with_grad(
     ``weights``, ``transition`` and ``fi_grid``, followed by analytical
     differentiation of the filtering recursion.
     """
-    fail = 1e10, np.zeros(3, dtype=np.float64)
     method = normalize_jacobi_matrix_transition_method(transition_method)
-
-    shapes = _jacobi_stationary_shape(kappa, m, xi)
-    if shapes is None:
-        return fail
-    alpha, beta = shapes
-
-    u = np.asarray(u, dtype=np.float64)
-    if u.ndim != 2 or u.shape[1] != 2 or len(u) < 1:
-        return fail
 
     basis_order = _validate_jacobi_order(basis_order, "basis_order")
     if quad_order is None:
@@ -815,28 +691,23 @@ def jacobi_matrix_neg_loglik_with_grad(
         memory_budget_bytes=memory_budget_bytes,
     )
 
-    try:
-        evaluator = jacobi_native.PreparedScarJacobiEvaluator(
-            u,
-            copula,
-            basis_order=basis_order,
-            quad_order=quad_order,
-            theta_cap=theta_cap,
-            transition_method=method,
-            storage="dense",
-            clip_negative=clip_negative,
-            negative_mass_tol=negative_mass_tol,
-            gh_order=gh_order,
-            memory_budget_bytes=(
-                DEFAULT_JACOBI_MEMORY_BUDGET_BYTES
-                if memory_budget_bytes is None else memory_budget_bytes),
-            fd_rel_step=fd_rel_step,
-        )
-        return evaluator.neg_loglik_with_grad(kappa, m, xi)
-    except MemoryError:
-        raise
-    except Exception:
-        return fail
+    evaluator = jacobi_native.PreparedScarJacobiEvaluator(
+        u,
+        copula,
+        basis_order=basis_order,
+        quad_order=quad_order,
+        theta_cap=theta_cap,
+        transition_method=method,
+        storage="dense",
+        clip_negative=clip_negative,
+        negative_mass_tol=negative_mass_tol,
+        gh_order=gh_order,
+        memory_budget_bytes=(
+            DEFAULT_JACOBI_MEMORY_BUDGET_BYTES
+            if memory_budget_bytes is None else memory_budget_bytes),
+        fd_rel_step=fd_rel_step,
+    )
+    return evaluator.neg_loglik_with_grad(kappa, m, xi)
 
 
 def jacobi_matrix_forward_predictive_mean(
@@ -973,33 +844,25 @@ def jacobi_loglik(
         matrix=False,
         memory_budget_bytes=memory_budget_bytes,
     )
-    try:
-        evaluator = jacobi_native.PreparedScarJacobiEvaluator(
-            u,
-            copula,
-            basis_order=basis_order,
-            quad_order=resolved_quad_order,
-            theta_cap=theta_cap,
-            transition_method="spectral_coeff",
-            storage="dense",
-            gh_order=1,
-            memory_budget_bytes=(
-                DEFAULT_JACOBI_MEMORY_BUDGET_BYTES
-                if memory_budget_bytes is None else memory_budget_bytes),
-        )
-        return evaluator.loglik(kappa, m, xi)
-    except MemoryError:
-        raise
-    except Exception:
-        return -np.inf
+    evaluator = jacobi_native.PreparedScarJacobiEvaluator(
+        u,
+        copula,
+        basis_order=basis_order,
+        quad_order=resolved_quad_order,
+        theta_cap=theta_cap,
+        transition_method="spectral_coeff",
+        storage="dense",
+        gh_order=1,
+        memory_budget_bytes=(
+            DEFAULT_JACOBI_MEMORY_BUDGET_BYTES
+            if memory_budget_bytes is None else memory_budget_bytes),
+    )
+    return evaluator.loglik(kappa, m, xi)
 
 
 def jacobi_neg_loglik(*args, **kwargs):
     """Minus log-likelihood wrapper for optimizers."""
-    value = jacobi_loglik(*args, **kwargs)
-    if not np.isfinite(value):
-        return 1e10
-    return -value
+    return -jacobi_loglik(*args, **kwargs)
 
 
 def jacobi_forward_predictive_mean(

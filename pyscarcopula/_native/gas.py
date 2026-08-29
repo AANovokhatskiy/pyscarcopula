@@ -237,6 +237,21 @@ def initial_state(
     return output
 
 
+def ou_initial_point(
+        static_mu, u, copula, scaling="unit", score_eps=1e-4):
+    """Run the native fixed GAS grid and OU moment-matching policy."""
+    module = _extension.load()
+    observations = _observations(u, copula)
+    spec = _descriptors.make_gas_spec(
+        module, copula, u=observations,
+        use_student_cache=_scaling_name(scaling) == "unit")
+    config = _config(module, scaling, score_eps)
+    result = module.gas_ou_initial_point(
+        float(static_mu), spec, observations, config)
+    _raise_status(result, "OU initialization")
+    return np.asarray(result["values"], dtype=np.float64), dict(result)
+
+
 def filter(
     omega,
     gamma,

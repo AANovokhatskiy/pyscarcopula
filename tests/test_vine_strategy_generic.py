@@ -204,6 +204,7 @@ def test_rvine_uses_registered_generic_strategy_for_edge_runtime(
     )
     assert all(edge.param is None for edge in vine.pair_copulas.values())
 
+    fit_mixture_h_calls = generic_strategy['mixture_h']
     samples = vine.sample(7, rng=np.random.default_rng(1))
     predicted = vine.predict(8, u=u, rng=np.random.default_rng(2))
     with pytest.raises(
@@ -214,6 +215,7 @@ def test_rvine_uses_registered_generic_strategy_for_edge_runtime(
     assert samples.shape == (7, 3)
     assert predicted.shape == (8, 3)
     assert generic_strategy['fit'] == 3
+    assert generic_strategy['mixture_h'] == fit_mixture_h_calls
     assert len(GenericFakeStrategy.initial_mle_results) == 3
     assert all(
         result.method == 'MLE'

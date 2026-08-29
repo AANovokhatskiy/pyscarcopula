@@ -91,18 +91,13 @@ def sample_gaussian_conditional(
     if not given:
         raise ValueError("sample_gaussian_conditional requires non-empty given")
     rho_path = as_path(rho, n, "rho")
-    lower = -1.0 / (d - 1.0)
-    if (
-            np.any(~np.isfinite(rho_path))
-            or np.any(rho_path <= lower)
-            or np.any(rho_path >= 1.0)):
-        raise ValueError(f"rho must be finite and in ({lower}, 1)")
+    from pyscarcopula._native import multivariate as multivariate_native
+    multivariate_native.validate_equicorrelation_path(rho_path, d, n)
     if len(given) == d:
         return fill_given(n, d, given)
     given_idx, free_idx = _partition_indices(d, given)
     normal_draws = rng.standard_normal((n, len(free_idx)))
 
-    from pyscarcopula._native import multivariate as multivariate_native
     free_values = (
         multivariate_native.equicorr_gaussian_conditional_from_uniforms(
             rho_path,
@@ -189,7 +184,7 @@ def sample_student_conditional(
         return fill_given(n, d, given)
     given_idx, free_idx = _partition_indices(d, given)
     normal_draws = np.empty((n, len(free_idx)), dtype=np.float64)
-    chi_square_draws = np.empty(n, dtype=np.float64)
+    chi_square_uniforms = np.empty(n, dtype=np.float64)
     if R_arr.ndim == 2:
         for df_val in np.unique(df_path):
             mask = df_path == df_val
@@ -197,23 +192,21 @@ def sample_student_conditional(
             m = int(np.sum(mask))
             normal_draws[rows] = rng.standard_normal(
                 (m, len(free_idx)))
-            chi_square_draws[rows] = rng.chisquare(
-                float(df_val) + len(given_idx), size=m)
+            chi_square_uniforms[rows] = rng.uniform(0.0, 1.0, size=m)
     else:
         for row in range(n):
             normal_draws[row] = rng.standard_normal(
                 (1, len(free_idx)))[0]
-            chi_square_draws[row] = rng.chisquare(
-                float(df_path[row]) + len(given_idx), size=1)[0]
+            chi_square_uniforms[row] = rng.uniform(0.0, 1.0, size=1)[0]
 
     from pyscarcopula._native import multivariate as multivariate_native
-    free_values = multivariate_native.student_conditional_from_uniforms(
+    free_values = multivariate_native.student_conditional_from_normal_uniforms(
         R_arr,
         given_idx,
         np.array([given[idx] for idx in given_idx], dtype=np.float64),
         df_path,
         normal_draws,
-        chi_square_draws,
+        chi_square_uniforms,
         n_threads=n_threads,
     )
     return _assemble_native_conditional_sample(
@@ -315,25 +308,19 @@ def sample_factor_student_conditional(
             or np.any(df_path <= 2.0)):
         raise ValueError("df must be finite and greater than 2")
     given_idx, free_idx = _partition_indices(d, given)
-    chi_square_draws = np.empty(n, dtype=np.float64)
-    for df_value in np.unique(df_path):
-        rows = np.flatnonzero(df_path == df_value)
-        chi_square_draws[rows] = rng.chisquare(
-            float(df_value) + len(given_idx),
-            size=len(rows),
-        )
+    chi_square_uniforms = rng.uniform(0.0, 1.0, size=n)
     factor_draws = rng.standard_normal((n, correlation.rank))
     residual_draws = rng.standard_normal((n, d))
     from pyscarcopula._native import multivariate as multivariate_native
     free_values = (
-        multivariate_native.factor_student_conditional_from_uniforms(
+        multivariate_native.factor_student_conditional_from_normal_uniforms(
             correlation,
             given_idx,
             np.array([given[idx] for idx in given_idx], dtype=np.float64),
             df_path,
             factor_draws,
             residual_draws,
-            chi_square_draws,
+            chi_square_uniforms,
             n_threads=n_threads,
         )
     )

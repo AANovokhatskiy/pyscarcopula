@@ -109,6 +109,12 @@ public:
         const CopulaSpec& copula,
         ObservationView u,
         const GasConfig& config) const;
+
+    GasOuInitializationResult ou_initial_point(
+        double static_mu,
+        const CopulaSpec& copula,
+        ObservationView u,
+        const GasConfig& config) const;
 };
 
 }  // namespace scar

@@ -3,6 +3,7 @@
 *numerical experiments
 __pycache__/
 .pytest_cache/
+.test_tmp/
 pytest-cache-files-*/
 pytest-tmp*/
 *.egg-info/
@@ -11,6 +12,9 @@ build/
 site/
 tools/*
 !tools/check_cpp_architecture.py
+!tools/check_python_ownership.py
+!tools/check_python_duplicates.py
+!tools/python_ownership_policy.py
 !tools/build_cpp_tests.py
 !tools/benchmark_timing.py
 !tools/aggregate_release_validation.py

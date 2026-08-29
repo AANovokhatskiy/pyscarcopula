@@ -6,7 +6,6 @@ from pyscarcopula.vine._conditional_rvine import (
     find_rvine_peel_order_for_given_suffix,
 )
 from pyscarcopula.vine._rvine_conditional_plan import FrozenConditionalPlan
-from pyscarcopula.vine._rvine_edges import _edge_h_pair_for_variables
 from pyscarcopula.vine._rvine_matrix_builder import build_rvine_matrix_with_edge_map
 from pyscarcopula.vine._helpers import (
     _clip_unit,
@@ -175,55 +174,6 @@ def build_suffix_conditional_plan(d, start_col, matrix, given):
             append_h_pair(col, tree)
 
     return SuffixConditionalPlan(steps, d)
-
-
-def given_suffix_edge_observations_with_r(
-        d, trees, n, r_all, given, start_col, matrix, pair_copulas, edge_map):
-    """Return edge observations fully determined by fixed suffix values."""
-    M = matrix
-    pseudo_obs = {}
-    observed = {}
-
-    last_var = int(M[0, d - 1])
-    if d - 1 >= start_col:
-        pseudo_obs[(last_var, frozenset())] = np.full(
-            n, given[last_var], dtype=np.float64)
-    else:
-        return observed
-
-    for col in range(d - 2, start_col - 1, -1):
-        leaf = int(M[d - 1 - col, col])
-        top_tree = d - 2 - col
-        pseudo_obs[(leaf, frozenset())] = np.full(
-            n, given[leaf], dtype=np.float64)
-        for t in range(top_tree + 1):
-            row = d - 2 - col - t
-            partner = int(M[row, col])
-            conditioning = frozenset(
-                int(M[r, col])
-                for r in range(row + 1, d - 1 - col)
-            )
-            next_leaf_cond = conditioning | {partner}
-            next_partner_cond = conditioning | {leaf}
-            edge = pair_copulas[(t, col)]
-            r = r_all[(t, col)]
-
-            leaf_val = pseudo_obs[(leaf, conditioning)]
-            partner_val = pseudo_obs[(partner, conditioning)]
-            observed[(t, col)] = edge_pair_from_pseudo_map(
-                trees, (t, col), pseudo_obs, edge_map)
-            leaf_next, partner_next = _edge_h_pair_for_variables(
-                edge,
-                leaf,
-                leaf_val,
-                partner,
-                partner_val,
-                config={'r': r},
-            )
-            pseudo_obs[(leaf, next_leaf_cond)] = _clip_unit(leaf_next)
-            pseudo_obs[(partner, next_partner_cond)] = _clip_unit(partner_next)
-
-    return observed
 
 
 def edge_pair_from_pseudo_map(trees, key, pseudo_obs, edge_map):

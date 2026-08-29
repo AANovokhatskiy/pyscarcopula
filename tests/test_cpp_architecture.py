@@ -81,6 +81,279 @@ def test_current_repository_satisfies_cpp_architecture_contract():
     assert check_repository(ROOT) == []
 
 
+@pytest.mark.parametrize("relative", [
+    "pyscarcopula/_native/extra.py",
+    "pyscarcopula/numerical/extra.py",
+    "pyscarcopula/strategy/extra.py",
+    "pyscarcopula/copula/multivariate/extra.py",
+    "pyscarcopula/vine/extra.py",
+    "pyscarcopula/stattests.py",
+    "pyscarcopula/new_package/extra.py",
+])
+def test_python_ownership_scans_every_production_directory(tmp_path, relative):
+    from tools.check_python_ownership import audit_package
+
+    _write(tmp_path, relative, "def state(x, rho):\n    return x * rho + 1\n")
+    result = audit_package(tmp_path, exceptions={})
+    assert result["verdict"] == "FAIL"
+    assert any(v["rule"] == "python-ownership-arithmetic" for v in result["violations"])
+    assert result["entries"][-1]["category"] == "model_math"
+    # The general gate, not only a standalone audit command, must enforce it.
+    assert any(v.rule.startswith("python-ownership-") for v in
+               CHECKER_MODULE.check_python_numerical_ownership(tmp_path))
+
+
+@pytest.mark.parametrize("source,rule", [
+    ("from scipy.special import stdtrit as quantile\n"
+     "def value(u):\n    return quantile(4, u)\n", "numerical-call"),
+    ("import numpy as n\nsolve = n.linalg.inv\n"
+     "def value(x):\n    return solve(x)\n", "numerical-call"),
+    ("import numba as nb\n@nb.njit\ndef value(x):\n    return x\n", "numba-kernel"),
+    ("def outer():\n    return lambda x: x ** 2\n", "arithmetic"),
+    ("class Model:\n    scale = 1.0 / 3\n", "arithmetic"),
+    ("class Model:\n    _bounds = [(0.01, 5.0)]\n", "model-policy"),
+    ("def fit(problem):\n    return problem(initial_parameters=[1.0, 0.5])\n", "model-policy"),
+    ("def value(native):\n    try:\n        return native()\n"
+     "    except RuntimeError:\n        return 1e10\n", "numeric-fallback"),
+    ("def value(native, fail_value):\n    try:\n        return native()\n"
+     "    except Exception:\n        return float(fail_value)\n", "numeric-fallback"),
+    ("import numpy as np\ndef value(result, fail_value):\n"
+     "    if result['status'] != 0:\n"
+     "        return float(fail_value), np.array([0.0])\n"
+     "    return result['value'], result['gradient']\n", "numeric-fallback"),
+    ("import numpy as np\ndef value(valid):\n"
+     "    fail = 1e10, np.zeros(3)\n"
+     "    if not valid:\n        return fail\n"
+     "    return 0.0, np.ones(3)\n", "numeric-fallback"),
+    ("def value(shape_is_supported):\n"
+     "    if not shape_is_supported():\n        return 1e10\n"
+     "    return native()\n", "numeric-fallback"),
+    ("import numpy as np\ndef value(native, x):\n"
+     "    try:\n        return native(x)\n"
+     "    except RuntimeError:\n        return np.zeros_like(x)\n", "numeric-fallback"),
+    ("def value(rng, df):\n    return rng.chisquare(df)\n", "model-rng"),
+    ("def value(rng, weights):\n    return rng.choice(3, p=weights)\n", "model-rng"),
+    ("def value(rng, mu):\n    return rng.normal(mu, 1)\n", "model-rng"),
+    ("import importlib as il\nil.import_module('pyscarcopula._native._scar_cpp')\n", "raw-import"),
+    ("from ._native import _scar_cpp\n", "raw-import"),
+    ("from pyscarcopula._scar_cpp import objective\n", "raw-import"),
+    ("def load_raw():\n    from importlib import import_module as load\n"
+     "    return load('pyscarcopula._native._scar_cpp')\n", "raw-import"),
+    ("from importlib import import_module as load\nload('pyscarcopula.' + name)\n", "dynamic-import"),
+    ("from scipy.special import *\n", "opaque-import"),
+    ("def initial_point():\n    return [1.0, 0.5, 0.2]\n", "model-policy"),
+    ("def gradient(x, objective):\n    g = []\n    for i in range(len(x)):\n"
+     "        trial = x.copy()\n        trial[i] += 1e-5\n"
+     "        g.append((objective(trial)-objective(x))/1e-5)\n"
+     "    return g\n", "arithmetic"),
+])
+def test_python_ownership_mutations_are_rejected(tmp_path, source, rule):
+    from tools.check_python_ownership import audit_package
+
+    _write(tmp_path, "pyscarcopula/api.py", source)
+    result = audit_package(tmp_path, exceptions={})
+    assert any(v["rule"] == "python-ownership-" + rule for v in result["violations"])
+
+
+def test_python_ownership_aliases_respect_function_scopes(tmp_path):
+    from tools.check_python_ownership import audit_package
+
+    _write(tmp_path, "pyscarcopula/api.py",
+           "def unsafe(x):\n    from scipy.special import stdtrit as f\n"
+           "    return f(4, x)\n"
+           "def safe(x):\n    from numpy import asarray as f\n    return f(x)\n")
+    result = audit_package(tmp_path, exceptions={})
+    assert any(v["symbol"] == "unsafe" and v["rule"].endswith("numerical-call")
+               for v in result["violations"])
+    assert not any(v["symbol"] == "safe" for v in result["violations"])
+
+
+def test_python_ownership_allows_plain_adapters_and_raw_draws(tmp_path):
+    from tools.check_python_ownership import audit_package
+
+    _write(tmp_path, "pyscarcopula/api.py",
+           "import numpy as np\n"
+           "def adapter(x, native):\n    x = np.asarray(x)\n"
+           "    if x.ndim != 2:\n        raise ValueError('shape')\n"
+           "    return native(x)\n"
+           "def draws(rng, n):\n    return rng.standard_normal(n), rng.uniform(0, 1, n)\n")
+    assert audit_package(tmp_path, exceptions={})["violations"] == []
+
+
+def test_python_ownership_allowlist_cannot_hide_symbol_mutations(tmp_path):
+    import ast
+    from tools.check_python_ownership import audit_package, fingerprint
+
+    source = "def size(n):\n    return n * 8\n"
+    path = _write(tmp_path, "pyscarcopula/api.py", source)
+    policy = {"pyscarcopula.api:size": {
+        "owner": "buffer allocation", "reason": "float64 byte count",
+        "test": "this test", "category": "adapter/DTO/validation",
+        "rules": ["arithmetic"], "fingerprint": fingerprint(ast.parse(source).body[0]),
+    }}
+    assert audit_package(tmp_path, exceptions=policy)["violations"] == []
+    path.write_text(source.replace("n * 8", "n * n"), encoding="utf-8")
+    assert any(v["rule"] == "python-ownership-stale-allowlist"
+               for v in audit_package(tmp_path, exceptions=policy)["violations"])
+
+
+def test_python_ownership_inventory_and_import_graph_are_complete(tmp_path):
+    from tools.check_python_ownership import audit_package
+
+    _write(tmp_path, "pyscarcopula/__init__.py", "from . import api\n")
+    _write(tmp_path, "pyscarcopula/api.py", "def run():\n    from . import helper\n")
+    _write(tmp_path, "pyscarcopula/helper.py",
+           "def f():\n    return 1\n"
+           "def f():\n    return lambda x: x\n")
+    _write(tmp_path, "pyscarcopula/unused.py", "def f(x):\n    return x * x\n")
+    result = audit_package(tmp_path, exceptions={})
+    keys = [entry["key"] for entry in result["entries"]]
+    assert len(keys) == len(set(keys))
+    modules = {item["module"]: item for item in result["import_graph"]["modules"]}
+    assert modules["pyscarcopula.helper"]["import_path"]
+    # No incoming edge is not a waiver: the module remains importable.
+    assert not modules["pyscarcopula.unused"]["import_path"]
+    assert modules["pyscarcopula.unused"]["wheel_importable"]
+    assert any(v["path"].endswith("unused.py") for v in result["violations"])
+
+
+def test_python_ownership_contrib_cannot_become_core_fallback(tmp_path):
+    from tools.check_python_ownership import audit_package
+
+    _write(tmp_path, "pyscarcopula/contrib/marginal.py",
+           "def marginal(x):\n    return x ** 2\n")
+    assert audit_package(tmp_path, exceptions={})["violations"] == []
+    _write(tmp_path, "pyscarcopula/api.py",
+           "from .contrib.marginal import marginal\n")
+    assert any(v["rule"] == "python-ownership-contrib-boundary"
+               for v in audit_package(tmp_path, exceptions={})["violations"])
+
+
+def test_python_ownership_reviewed_symbols_are_exact():
+    from tools.check_python_ownership import audit_package
+
+    result = audit_package(ROOT)
+    assert not result["unused_exception_keys"]
+    assert not [v for v in result["violations"] if v["rule"].endswith("stale-allowlist")]
+    entries = {e["key"]: e for e in result["entries"]}
+    assert len(entries) == len(result["entries"])
+    for entry in entries.values():
+        if entry["exception"]:
+            assert entry["exception"]["test"] == (
+                "tests/test_cpp_architecture.py::test_python_ownership_reviewed_symbols_are_exact")
+            assert not entry["unreviewed_signals"]
+
+
+def test_remediated_fv1_fv2_python_owners_do_not_regress():
+    from tools.check_python_ownership import audit_package
+
+    result = audit_package(ROOT)
+    migrated_modules = {
+        "pyscarcopula.numerical.ou_kernels",
+        "pyscarcopula.numerical.hermite_tm",
+        "pyscarcopula.copula.multivariate.student_ppf_cache",
+        "pyscarcopula.io",
+    }
+    migrated_symbols = {
+        "pyscarcopula._native._descriptors:_set_factor",
+        "pyscarcopula._native.scar_ou:sample_trajectory",
+        "pyscarcopula._native.scar_ou:trajectory_from_innovations",
+        "pyscarcopula._native.scar_ou:hermite_rule",
+        "pyscarcopula._native.scar_ou:default_quad_order",
+        "pyscarcopula._native.scar_ou:_kappa_dt",
+        "pyscarcopula._native.model_policy:ou_kappa_dt",
+        "pyscarcopula._native.model_policy:ou_auto_backend",
+        "pyscarcopula._native.model_policy:ou_adaptive_spectral_basis_order",
+        "pyscarcopula._native.model_policy:ou_resolve_quad_order",
+        "pyscarcopula._native.jacobi:fixed_shape_rule",
+        "pyscarcopula._native.jacobi:select_sparse_order",
+        "pyscarcopula._native.jacobi:tau_to_parameter",
+        "pyscarcopula._native.vine:_select_mcmc_density_algorithm",
+        "pyscarcopula._native.vine:mcmc_default_steps",
+        "pyscarcopula.numerical._scar_ou_config:select_auto_backend",
+        "pyscarcopula.numerical._scar_ou_config:validate_cpp_config",
+        "pyscarcopula.numerical.jacobi_sparse:compare_sparse_jacobi_corrections",
+        "pyscarcopula.strategy.scar_tm:SCARTMStrategy._adaptive_spectral_basis_order",
+        "pyscarcopula.strategy.scar_tm:SCARTMStrategy._kappa_dt",
+        "pyscarcopula._native.multivariate:prepare_student_ppf_table",
+        "pyscarcopula._native.multivariate:evaluate_student_ppf_table",
+        "pyscarcopula._native.multivariate:interpolate_student_ppf_table",
+        "pyscarcopula._utils:clip_unit",
+        "pyscarcopula._utils:clip_pseudo_observations",
+        "pyscarcopula._utils:clip_pseudo_observations_no_copy",
+        "pyscarcopula._utils:clip_h_function_values",
+        "pyscarcopula._utils:clip_rosenblatt_output",
+        "pyscarcopula.copula.multivariate.conditional:sample_gaussian_conditional",
+        "pyscarcopula.copula.multivariate.equicorr_prepared:EquicorrPreparedData.__post_init__",
+        "pyscarcopula.copula.multivariate.gaussian:_validate_gaussian_fit_data",
+        "pyscarcopula.copula.multivariate.student:_validate_student_fit_data",
+        "pyscarcopula.numerical.jacobi_sparse:SparseJacobiTransition.__post_init__",
+        "pyscarcopula.strategy.scar_tm:SCARTMStrategy._validate_final_fit",
+        "pyscarcopula.strategy.scar_tm:SCARTMStrategy._fit_joint_static.validate_correlation",
+        "pyscarcopula._types:MultivariateMLEResult.aic",
+        "pyscarcopula._types:MultivariateMLEResult.bic",
+        "pyscarcopula.copula.base:BivariateCopula.log_likelihood",
+        "pyscarcopula.vine._rvine_dissmann:_beam_search_candidates",
+        "pyscarcopula.vine._rvine_dissmann:_fit_score_levels",
+        "pyscarcopula.vine._selection:_rotation_compatible",
+        "pyscarcopula.vine._selection:_tau_for_itau",
+        "pyscarcopula.vine._selection:select_best_copula",
+        "pyscarcopula.vine._structure:<module>",
+        "pyscarcopula.vine._structure:_build_next_tree",
+        "pyscarcopula.vine._structure:_build_next_tree_conditional",
+        "pyscarcopula.vine._structure:_build_tree_0",
+        "pyscarcopula.vine._structure:_build_tree_0_conditional",
+        "pyscarcopula.vine._structure:_dense_rank_matrix_no_ties",
+        "pyscarcopula.vine._structure:_dense_ranks_no_ties",
+        "pyscarcopula.vine._structure:_kendall_tau_from_dense_ranks",
+        "pyscarcopula.vine._structure:_kendall_tau_value",
+        "pyscarcopula.vine._vine_fit:_build_vine_edge_fit",
+        "pyscarcopula.vine._vine_fit:_fit_tree_level",
+        "pyscarcopula.vine.vine:VineCopula.aic",
+        "pyscarcopula.vine.vine:VineCopula.bic",
+        "pyscarcopula.vine.vine:VineCopula._apply_given_only_dynamic_updates_ordered",
+        "pyscarcopula.vine.vine:VineCopula._compute_pseudo_obs",
+        "pyscarcopula.vine.vine:VineCopula.fit",
+        "pyscarcopula.vine.vine:VineCopula.log_likelihood",
+        "pyscarcopula._native.vine:apply_given_only_dynamic_updates",
+        "pyscarcopula._native.vine:conditional_trace",
+        "pyscarcopula._native.vine:pseudo_observation_trace_supported",
+        "pyscarcopula._native.vine:pseudo_observations",
+    }
+    retired_symbols = {
+        "pyscarcopula.numerical.gof_blocks:forward_block_size",
+        "pyscarcopula.numerical.gof_blocks:iter_forward_weight_block_arrays",
+        "pyscarcopula.numerical.gof_blocks:iter_forward_weight_blocks",
+        "pyscarcopula.vine._rvine_suffix:given_suffix_edge_observations_with_r",
+    }
+    entries = {entry["key"]: entry for entry in result["entries"]}
+    assert migrated_symbols <= entries.keys()
+    assert retired_symbols.isdisjoint(entries)
+    assert "pyscarcopula._utils:linear_least_squares" not in entries
+    assert not (ROOT / "pyscarcopula" / "numerical" / "gof_blocks.py").exists()
+    assert "pyscarcopula.numerical.gof_blocks:" not in (
+        ROOT / "tools" / "python_ownership_policy.py"
+    ).read_text(encoding="utf-8")
+    for entry in entries.values():
+        if entry["module"] in migrated_modules or entry["key"] in migrated_symbols:
+            assert not entry["unreviewed_signals"], entry["key"]
+
+
+def test_python_ownership_artifact_guard_and_append_only(tmp_path):
+    from tools.check_python_ownership import main
+
+    root = tmp_path / "product"
+    _write(root, "pyscarcopula/specimen.py", "def f(x):\n    return x\n")
+    with pytest.raises(SystemExit):
+        main(["--root", str(root), "--artifact-root", str(root / "capture")])
+    assert not (root / "capture").exists()
+    output = tmp_path / "external"
+    assert main(["--root", str(root), "--artifact-root", str(output)]) == 0
+    assert (output / "python_import_graph.json").is_file()
+    with pytest.raises(SystemExit):
+        main(["--root", str(root), "--artifact-root", str(output)])
+
+
 def test_raw_extension_import_is_private_to_facade_loader(tmp_path):
     root = tmp_path
     _write(
@@ -277,6 +550,15 @@ def test_foundation_helpers_have_single_canonical_owners():
     assert len(re.findall(r"\bdouble\s+normal_cdf\s*\(", cpp_text)) == 1
     assert len(re.findall(r"\bdouble\s+normal_quantile\s*\(", cpp_text)) == 1
     assert len(re.findall(
+        r"\bdouble\s+regularized_gamma_p\s*\(", cpp_text)) == 1
+    assert len(re.findall(
+        r"\bdouble\s+regularized_beta\s*\(", cpp_text)) == 1
+    assert len(re.findall(r"\bdouble\s+softplus\s*\(", cpp_text)) == 1
+    assert len(re.findall(
+        r"\bdouble\s+inverse_softplus\s*\(", cpp_text)) == 1
+    assert len(re.findall(
+        r"\bdouble\s+logistic_unit\s*\(", cpp_text)) == 1
+    assert len(re.findall(
         r"\bResult<std::size_t>\s+rosenblatt_output_size\s*\(",
         cpp_text,
     )) == 1
@@ -326,6 +608,47 @@ def test_foundation_helpers_have_single_canonical_owners():
         consumer = (source / "scar_ou" / name).read_text(encoding="utf-8")
         assert "const Result<std::size_t> output_shape" in consumer
         assert "output_shape.is_ok()" in consumer
+
+
+@pytest.mark.parametrize("source", [
+    "double local(double x) { return 0.5 * (1.0 + std::erf(x)); }\n",
+    "double regularized_gamma_p(double a, double x) { return x / a; }\n",
+    "double betacf(double a, double b, double x) { return a + b + x; }\n",
+    "double local(double x) { return 1.0 / (1.0 + std::exp(-x)); }\n",
+    "double local(double x) { return std::log1p(std::exp(-std::abs(x))) "
+    "+ std::max(x, 0.0); }\n",
+])
+def test_foundation_formula_duplicate_gate_rejects_semantic_clones(
+        tmp_path, source):
+    root = _minimal_repository(tmp_path)
+    _write(root, "pyscarcopula/_cpp/src/copula/duplicate.cpp", source)
+
+    violations = CHECKER_MODULE.check_foundation_formula_duplicates(root)
+
+    assert violations
+    assert {item.rule for item in violations} == {
+        "foundation-formula-duplicates"}
+
+
+def test_python_exact_duplicate_gate_covers_cross_and_same_file_clones(
+        tmp_path):
+    root = _minimal_repository(tmp_path)
+    body = (
+        "def copied(value):\n"
+        "    result = []\n"
+        "    for item in value:\n"
+        "        if item is not None:\n"
+        "            result.append(item)\n"
+        "    return tuple(result)\n"
+    )
+    _write(root, "pyscarcopula/first.py", body + body)
+    _write(root, "pyscarcopula/second.py", body)
+
+    violations = CHECKER_MODULE.check_python_exact_duplicates(root)
+
+    assert len(violations) == 3
+    assert {item.rule for item in violations} == {
+        "python-exact-duplicates"}
 
 
 def test_pair_copulas_are_vertical_and_prepared_once():

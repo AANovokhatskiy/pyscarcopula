@@ -116,6 +116,21 @@ py::dict factor_student_grid_result_to_dict(
     return output;
 }
 
+py::dict factor_student_stochastic_grid_result_to_dict(
+    const scar::FactorStudentGridResult& result) {
+
+    py::dict output = factor_student_grid_result_to_dict(result);
+    output["pdf"] = matrix_to_array(
+        result.pdf,
+        result.rows,
+        result.grid_size);
+    output["d_pdf_dx"] = matrix_to_array(
+        result.d_pdf_dx,
+        result.rows,
+        result.grid_size);
+    return output;
+}
+
 py::dict factor_student_penalized_result_to_dict(
     const scar::FactorStudentPenalizedObjectiveResult& result,
     std::size_t dimension,
@@ -803,6 +818,47 @@ void bind_factor(py::module_& m) {
         py::arg("correlation"),
         py::arg("observations"),
         py::arg("df_grid"),
+        py::arg("dimension_tile") = 16384,
+        py::arg("n_threads") = 1);
+    m.def(
+        "_factor_student_stochastic_pdf_and_grad_grid",
+        [](
+            const scar::FactorCorrelationOperator& correlation,
+            ConstArray observations,
+            ConstArray raw_grid,
+            double offset,
+            std::size_t dimension_tile,
+            int n_threads) {
+            const py::buffer_info observation_info =
+                observations.request();
+            const std::size_t rows = checked_rows(
+                observation_info,
+                correlation.dimension(),
+                "observations");
+            const py::buffer_info grid_info = raw_grid.request();
+            if (grid_info.ndim != 1 || grid_info.shape[0] < 1) {
+                throw std::invalid_argument(
+                    "raw_grid must be a non-empty 1D array");
+            }
+            scar::FactorStudentGridResult result;
+            {
+                py::gil_scoped_release release;
+                result = scar::factor_student_stochastic_pdf_and_grad_grid(
+                    correlation,
+                    static_cast<const double*>(observation_info.ptr),
+                    rows,
+                    static_cast<const double*>(grid_info.ptr),
+                    static_cast<std::size_t>(grid_info.shape[0]),
+                    offset,
+                    dimension_tile,
+                    n_threads);
+            }
+            return factor_student_stochastic_grid_result_to_dict(result);
+        },
+        py::arg("correlation"),
+        py::arg("observations"),
+        py::arg("raw_grid"),
+        py::arg("offset"),
         py::arg("dimension_tile") = 16384,
         py::arg("n_threads") = 1);
     m.def(

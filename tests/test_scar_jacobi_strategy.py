@@ -437,6 +437,7 @@ def test_scar_jacobi_fit_accepts_spectral_matrix_analytical_gradient():
         method='scar-tm-jacobi',
         analytical_grad=True,
         transition_method='spectral_matrix',
+        clip_negative=True,
         basis_order=3,
         quad_order=18,
         alpha0=np.array([1.0, 0.35, 0.5]),

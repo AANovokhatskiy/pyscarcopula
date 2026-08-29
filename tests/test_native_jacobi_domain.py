@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 from scipy.special import eval_jacobi, roots_jacobi
 
+from pyscarcopula import GumbelCopula
 from pyscarcopula._native import jacobi as jacobi_native
 from pyscarcopula.numerical import jacobi_tm
 from pyscarcopula.strategy import scar_jacobi
@@ -28,6 +29,7 @@ def test_pybind_exports_typed_jacobi_domain_contract():
         "jacobi_lamperti_values",
         "jacobi_physical_to_raw",
         "jacobi_raw_to_physical",
+        "jacobi_sample_stationary",
         "jacobi_stationary_shape",
     }
     assert expected <= set(dir(module))
@@ -61,6 +63,31 @@ def test_native_parameterization_matches_public_contract_values():
     )
     assert jacobi_native.stationary_shape(1.2, 0.4, 0.25) == pytest.approx(
         (15.36, 23.04), rel=5e-12, abs=5e-12)
+
+
+def test_native_stationary_sampler_transforms_caller_owned_uniforms():
+    uniforms = np.array([0.0, 0.5, 0.9], dtype=np.float64)
+    values = jacobi_native.sample_stationary_fixed_draws(
+        1.0, 0.5, np.sqrt(0.5), uniforms)
+
+    assert values.shape == uniforms.shape
+    assert values[0] == 0.0
+    assert values[1] == pytest.approx(0.5, abs=2e-12)
+    assert values[2] > values[1]
+    with pytest.raises(ValueError, match="stationary"):
+        jacobi_native.sample_stationary_fixed_draws(
+            1.0, 0.5, np.sqrt(0.5), [1.0])
+
+
+def test_native_raw_gradient_pullback_matches_parameterization():
+    physical = np.array([1.2, 0.4, 0.25])
+    gradient = np.array([0.7, -0.3, 1.1])
+    np.testing.assert_allclose(
+        jacobi_native.raw_gradient(physical, gradient),
+        [0.84, -0.072, 0.275],
+        rtol=2e-15,
+        atol=2e-15,
+    )
 
 
 @pytest.mark.parametrize(
@@ -128,6 +155,25 @@ def test_native_fixed_weight_derivatives_match_physical_finite_difference():
         numerical[parameter] = (plus_weights - minus_weights) / (2.0 * step)
     np.testing.assert_allclose(
         derivatives, numerical, rtol=3e-6, atol=2e-9)
+
+
+def test_native_fixed_shape_mapping_and_parameter_cap_policy():
+    tau, weights, derivatives = jacobi_native.fixed_shape_rule(
+        2.0, 3.0, 24, jacobi_native.DEFAULT_JACOBI_MEMORY_BUDGET_BYTES)
+    expected_tau, expected_weights, expected_derivatives = (
+        jacobi_native.fixed_tau_rule(
+            2.5, 0.4, 1.0, 24,
+            jacobi_native.DEFAULT_JACOBI_MEMORY_BUDGET_BYTES))
+    np.testing.assert_array_equal(tau, expected_tau)
+    np.testing.assert_array_equal(weights, expected_weights)
+    np.testing.assert_array_equal(derivatives, expected_derivatives.T)
+    assert derivatives.shape == (tau.size, 3)
+
+    mapped = jacobi_native.tau_to_parameter(
+        GumbelCopula(), np.array([0.5, 0.9]), theta_cap=2.0)
+    np.testing.assert_allclose(mapped, [2.0, 2.0])
+    assert jacobi_native.resolve_basis_order(128, 48) == 48
+    assert jacobi_native.horizon_steps(11) == 10
 
 
 def test_native_lamperti_roundtrip_drift_and_boundary_rules():

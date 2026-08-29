@@ -10,6 +10,7 @@ import sys
 
 import numpy as np
 import pytest
+from scipy.stats import chi2
 
 from pyscarcopula import (
     FactorCorrelation,
@@ -23,6 +24,7 @@ from pyscarcopula.copula.multivariate.factor_student import (
 from pyscarcopula.copula.multivariate.factor_estimation import (
     FactorLoadingParameterization,
 )
+from pyscarcopula._native import multivariate as multivariate_native
 from pyscarcopula._native import static as static_likelihood
 from pyscarcopula._native.errors import NativeError, NativeUnsupported
 
@@ -34,6 +36,23 @@ def _problem(dimension=10, rank=3, rows=24, seed=1201):
     observations = rng.uniform(
         0.01, 0.99, size=(rows, dimension))
     return factor, observations
+
+
+def test_factor_student_sampler_transforms_raw_uniform_radial_draws():
+    factor = FactorCorrelation(np.array([[0.2], [-0.1], [0.3]])).prepare()
+    df = np.array([4.5, 9.0])
+    factor_draws = np.array([[0.4], [-0.7]])
+    residual_draws = np.array([[0.2, -0.3, 0.8], [-0.5, 0.6, 0.1]])
+    radial_uniforms = np.array([0.2, 0.85])
+
+    from_uniforms = multivariate_native.factor_student_sample_from_normal_uniforms(
+        factor, df, factor_draws, residual_draws, radial_uniforms)
+    from_quantiles = multivariate_native.factor_student_sample_from_draws(
+        factor, df, factor_draws, residual_draws,
+        chi2.ppf(radial_uniforms, df))
+
+    np.testing.assert_allclose(
+        from_uniforms, from_quantiles, rtol=5e-12, atol=5e-13)
 
 
 @pytest.mark.parametrize("df", [2.01, 4.5, 30.0])
@@ -382,6 +401,24 @@ def test_grid_density_gradient_and_row_batches():
         np.vstack([block.dlog_ddf for block in blocks]),
         full.dlog_ddf,
     )
+
+
+def test_stochastic_grid_owns_softplus_transform_and_pullback():
+    factor, observations = _problem(rows=9, seed=12135)
+    evaluator = FactorStudentEvaluator(factor, observations)
+    raw = np.array([-2.0, 0.25, 4.0])
+    offset = 2.000001
+    df = offset + np.logaddexp(0.0, raw)
+    expected_density, expected_df_gradient = (
+        evaluator.pdf_and_grad_on_grid(df, dimension_tile=3))
+    expected = expected_df_gradient / (1.0 + np.exp(-raw))[None, :]
+
+    density, gradient = evaluator.stochastic_pdf_and_gradient_grid(
+        raw, offset=offset, dimension_tile=3)
+    np.testing.assert_allclose(
+        density, expected_density, rtol=2e-15, atol=2e-15)
+    np.testing.assert_allclose(
+        gradient, expected, rtol=2e-15, atol=2e-15)
 
 
 def test_grid_memory_budget_covers_output_and_native_workspace():

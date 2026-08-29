@@ -1,5 +1,6 @@
 #include "scar/copula/multivariate/correlation/parameterization.hpp"
 
+#include "scar/copula/transforms.hpp"
 #include "scar/detail/linalg.hpp"
 
 #include <algorithm>
@@ -17,14 +18,6 @@ constexpr double kLogitClip = 1e-12;
 
 std::size_t correlation_parameter_count(std::size_t dimension) {
     return dimension * (dimension - 1) / 2;
-}
-
-double logistic_value(double value) {
-    if (value >= 0.0) {
-        return 1.0 / (1.0 + std::exp(-value));
-    }
-    const double exponential = std::exp(value);
-    return exponential / (1.0 + exponential);
 }
 
 bool finite_view(DoubleView values) {
@@ -49,7 +42,7 @@ CorrelationPreprocessingResult invalid_preprocessing(Status status) {
     return result;
 }
 
-double kendall_tau_b(
+double kendall_tau_b_impl(
     ObservationView observations,
     std::size_t first,
     std::size_t second) {
@@ -96,6 +89,20 @@ double kendall_tau_b(
 
 }  // namespace
 
+double kendall_tau_b(
+    ObservationView observations,
+    std::size_t first,
+    std::size_t second) {
+    if (observations.values == nullptr
+        || observations.n_obs < 2
+        || first >= static_cast<std::size_t>(observations.dim)
+        || second >= static_cast<std::size_t>(observations.dim)
+        || first == second) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    return kendall_tau_b_impl(observations, first, second);
+}
+
 Result<std::vector<double>> logistic_transform(DoubleView values) {
     if (!finite_view(values)) {
         return {{}, Status::InvalidParameter, {}};
@@ -105,7 +112,7 @@ Result<std::vector<double>> logistic_transform(DoubleView values) {
         values.data(),
         values.data() + values.size(),
         output.begin(),
-        logistic_value);
+        copula::logistic_unit_open);
     return success(std::move(output));
 }
 
@@ -374,7 +381,7 @@ Result<std::vector<double>> make_shrinkage_correlation(
         || !valid_square(base, dimension)) {
         return {{}, Status::InvalidParameter, {}};
     }
-    const double alpha = logistic_value(raw_parameter);
+    const double alpha = copula::logistic_unit_open(raw_parameter);
     std::vector<double> result(base.data(), base.data() + base.size());
     for (std::size_t row = 0; row < dimension; ++row) {
         result[row * dimension + row] = 1.0;
@@ -492,7 +499,7 @@ Result<std::vector<double>> correlation_gradient_to_raw(
             || !valid_square(base, dimension)) {
             return {{}, Status::InvalidParameter, {}};
         }
-        const double alpha = logistic_value(parameters[0]);
+        const double alpha = copula::logistic_unit_open(parameters[0]);
         const double factor = alpha * (1.0 - alpha);
         long double gradient = 0.0L;
         std::size_t position = 0;
@@ -598,7 +605,7 @@ Result<std::vector<double>> shrinkage_raw_correlation_direction(
         || !valid_square(base, dimension)) {
         return {{}, Status::InvalidParameter, {}};
     }
-    const double alpha = logistic_value(parameters[0]);
+    const double alpha = copula::logistic_unit_open(parameters[0]);
     const double factor = alpha * (1.0 - alpha);
     std::vector<double> result(correlation_parameter_count(dimension));
     std::size_t position = 0;

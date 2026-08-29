@@ -12,9 +12,13 @@ from pyscarcopula._types import (
     MultivariateMLEResult,
     NumericalConfig,
 )
+from pyscarcopula._native import model_policy
+from pyscarcopula._native import validation as native_validation
 from pyscarcopula._utils import pobs
 from pyscarcopula.copula.multivariate.base import (
     MultivariateCopula,
+    as_real_array,
+    factor_copula_getstate,
     model_state_locked,
 )
 from pyscarcopula.copula.multivariate.corr_param import (
@@ -43,14 +47,11 @@ from pyscarcopula.copula.multivariate.factor_student import FactorStudentEvaluat
 from pyscarcopula.strategy.multivariate_mle import (
     StaticMLEEvaluation,
     StaticMLEProblem,
+    make_student_static_mle_evaluator,
     run_static_multivariate_mle,
 )
 
 
-_DF_MIN = 2.001
-# Above this value the fitted Student copula is numerically indistinguishable
-# from its Gaussian limit, while natural-df optimization becomes ill-scaled.
-_DF_FIT_MAX = 10_000.0
 _LBFGSB_FIT_KEYS = (
     "gtol", "ftol", "maxfun", "maxiter", "maxls", "eps", "maxcor",
     "finite_diff_rel_step",
@@ -67,15 +68,6 @@ def _integer(name: str, value: object, *, minimum: int = 0) -> int:
     return result
 
 
-def _as_real_array(data: ArrayLike) -> np.ndarray:
-    raw = np.asarray(data)
-    if np.iscomplexobj(raw):
-        raise ValueError("data must be real-valued")
-    if raw.dtype.kind in {"O", "S", "U", "V", "b"}:
-        raise TypeError("data must have a real numeric dtype")
-    return np.asarray(raw, dtype=np.float64)
-
-
 def _validate_student_fit_data(u: np.ndarray) -> None:
     if u.ndim != 2:
         raise ValueError("data must have shape (n_observations, dimension)")
@@ -83,22 +75,7 @@ def _validate_student_fit_data(u: np.ndarray) -> None:
         raise ValueError("data must contain at least one observation")
     if u.shape[1] < 2:
         raise ValueError("data must contain at least two variables")
-    if not np.all(np.isfinite(u)):
-        raise ValueError("data must contain only finite values")
-    if np.any((u < 0.0) | (u > 1.0)):
-        raise ValueError(
-            "MLE expects pseudo-observations in [0, 1]; use to_pobs=True")
-    if np.any(np.ptp(u, axis=0) == 0.0):
-        raise ValueError(
-            "Student copula correlation is not identifiable for constant "
-            "data columns")
-    if any(
-            np.array_equal(u[:, left], u[:, right])
-            for right in range(1, u.shape[1])
-            for left in range(right)):
-        raise ValueError(
-            "Student copula correlation is not identifiable for duplicate "
-            "data columns")
+    native_validation.validate_fit_data(u, "Student")
 
 
 class StudentCopula(MultivariateCopula):
@@ -286,11 +263,7 @@ class StudentCopula(MultivariateCopula):
             raise ValueError("factor correlation is not initialized; call fit()")
         return self._factor_operator
 
-    def __getstate__(self) -> dict[str, object]:
-        state = super().__getstate__()
-        state["_factor_correlation"] = None
-        state["_factor_operator"] = None
-        return state
+    __getstate__ = factor_copula_getstate
 
     def __setstate__(self, state: dict[str, object]) -> None:
         super().__setstate__(state)
@@ -439,7 +412,7 @@ class StudentCopula(MultivariateCopula):
         if str(method).upper() != "MLE":
             raise ValueError(
                 f"StudentCopula supports only method='mle', got {method!r}")
-        u = _as_real_array(data)
+        u = as_real_array(data)
         if to_pobs:
             if u.ndim != 2 or u.shape[0] == 0 or u.shape[1] < 2 or not np.all(np.isfinite(u)):
                 raise ValueError("data must be a finite non-empty 2D array")
@@ -482,8 +455,9 @@ class StudentCopula(MultivariateCopula):
         if self._corr_mode == "factor":
             return self._fit_factor(u, config, options)
 
-        from pyscarcopula._native import static as static_likelihood
         d = u.shape[1]
+        df_initial, df_bounds = model_policy.student_fit_policy(
+            d, stochastic=False)
         initial_correlation, preprocessing = self._initial_dense_correlation(u)
         estimator: CorrelationEstimator = (
             "joint_mle" if self._corr_mode in {"shrinkage", "cholesky"}
@@ -499,40 +473,20 @@ class StudentCopula(MultivariateCopula):
         )
         corr0 = policy.initial_raw_parameters()
         n_corr = policy.optimized_n_params
-        fixed_evaluator = (
-            static_likelihood.prepare_student(
-                initial_correlation, u, n_threads=config.n_threads)
-            if n_corr == 0 else None)
-
-        def evaluate(parameters: np.ndarray) -> StaticMLEEvaluation:
-            correlation = (
-                initial_correlation.copy() if n_corr == 0
-                else policy.trial_correlation(parameters[1:]))
-            evaluator = fixed_evaluator
-            if evaluator is None:
-                evaluator = static_likelihood.prepare_student(
-                    correlation, u, n_threads=config.n_threads)
-                value, df_gradient, corr_gradient = (
-                    evaluator.objective_and_joint_gradient(
-                        float(parameters[0]), fail_value=config.fail_value))
-            else:
-                value, df_gradient = evaluator.objective_and_gradient(
-                    float(parameters[0]), fail_value=config.fail_value)
-            gradient = np.empty_like(parameters)
-            gradient[0] = df_gradient[0]
-            if n_corr:
-                gradient[1:] = policy.raw_gradient(
-                    parameters[1:], correlation, corr_gradient)
-            return StaticMLEEvaluation(
-                objective=value, gradient=gradient, correlation=correlation,
-                state={"df": float(parameters[0])})
+        evaluate = make_student_static_mle_evaluator(
+            initial_correlation,
+            policy,
+            u,
+            n_threads=config.n_threads,
+            fail_value=config.fail_value,
+        )
 
         outcome = run_static_multivariate_mle(
             StaticMLEProblem(
                 family="student",
                 initial_parameters=np.concatenate((
-                    np.array([max(float(d), 5.0)]), corr0)),
-                bounds=((_DF_MIN, _DF_FIT_MAX),)
+                    np.array([df_initial]), corr0)),
+                bounds=(df_bounds,)
                 + ((None, None),) * n_corr,
                 evaluate=evaluate,
             ),
@@ -551,6 +505,8 @@ class StudentCopula(MultivariateCopula):
             initialization=None)
 
     def _fit_factor(self, u, config, options):
+        df_initial, df_bounds = model_policy.student_fit_policy(
+            u.shape[1], stochastic=False)
         if self._factor_loadings is None:
             loadings, initialization = estimate_factor_loadings(
                 u, self._factor_rank,
@@ -585,8 +541,8 @@ class StudentCopula(MultivariateCopula):
         outcome = run_static_multivariate_mle(
             StaticMLEProblem(
                 family="student_factor",
-                initial_parameters=np.array([max(float(u.shape[1]), 5.0)]),
-                bounds=((_DF_MIN, _DF_FIT_MAX),), evaluate=evaluate),
+                initial_parameters=np.array([df_initial]),
+                bounds=(df_bounds,), evaluate=evaluate),
             optimizer_options=options, fail_value=config.fail_value)
         return self._make_result_and_commit(
             u=u, config=config, outcome=outcome, policy=policy,
@@ -595,6 +551,8 @@ class StudentCopula(MultivariateCopula):
             initialization=initialization)
 
     def _fit_joint_factor(self, u, config, options, loadings, initialization):
+        df_initial, df_bounds = model_policy.student_fit_policy(
+            u.shape[1], stochastic=False)
         parameterization, factor0 = FactorLoadingParameterization.from_loadings(
             loadings, uniqueness_min=self._factor_uniqueness_min)
         if parameterization.n_parameters > self._factor_joint_max_params:
@@ -643,8 +601,8 @@ class StudentCopula(MultivariateCopula):
             StaticMLEProblem(
                 family="student_factor",
                 initial_parameters=np.concatenate((
-                    np.array([max(float(u.shape[1]), 5.0)]), factor0)),
-                bounds=((_DF_MIN, _DF_FIT_MAX),)
+                    np.array([df_initial]), factor0)),
+                bounds=(df_bounds,)
                 + ((None, None),) * parameterization.n_parameters,
                 evaluate=evaluate),
             optimizer_options=joint_options, fail_value=config.fail_value)
@@ -797,11 +755,8 @@ class StudentCopula(MultivariateCopula):
 
     def _nll_with_params(self, u, R, df):
         from pyscarcopula._native import static as static_likelihood
-        try:
-            return static_likelihood.prepare_student(
-                R, u).objective_and_gradient(df)[0]
-        except (FloatingPointError, OverflowError, ValueError, np.linalg.LinAlgError):
-            return 1e10
+        return static_likelihood.prepare_student(
+            R, u).objective_and_gradient(df)[0]
 
     def _nll(self, u):
         if self._correlation is None or self.df is None:
@@ -819,19 +774,19 @@ class StudentCopula(MultivariateCopula):
             operator = self.correlation_operator_
             factor_draws = rng.standard_normal((n, operator.rank))
             residual_draws = rng.standard_normal((n, operator.dimension))
-            chi_square = rng.chisquare(self.df, size=n)
-            return multivariate_native.factor_student_sample_from_draws(
+            chi_square_uniforms = rng.uniform(0.0, 1.0, size=n)
+            return multivariate_native.factor_student_sample_from_normal_uniforms(
                 operator,
                 self.df,
                 factor_draws,
                 residual_draws,
-                chi_square,
+                chi_square_uniforms,
             )
         correlation, df = self._fitted_parameters()
-        chi_square = rng.chisquare(df, size=n)
+        chi_square_uniforms = rng.uniform(0.0, 1.0, size=n)
         normal_draws = rng.standard_normal((n, correlation.shape[0]))
-        return multivariate_native.student_sample_from_draws(
-            correlation, df, normal_draws, chi_square)
+        return multivariate_native.student_sample_from_normal_uniforms(
+            correlation, df, normal_draws, chi_square_uniforms)
 
     @model_state_locked
     def sample_conditional(self, n, given, rng=None, *, n_threads=1):

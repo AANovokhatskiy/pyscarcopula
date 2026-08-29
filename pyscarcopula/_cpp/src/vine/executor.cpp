@@ -5,6 +5,7 @@
 #include "scar/core/threading.hpp"
 #include "scar/detail/copula/common.hpp"
 #include "scar/detail/safety.hpp"
+#include "scar/math/normal.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -766,7 +767,7 @@ double gaussian_inverse_from_quantiles(
     const double z = quantile
         * std::sqrt(1.0 - clipped_rho * clipped_rho)
         + clipped_rho * given;
-    return 0.5 * (1.0 + std::erf(z / std::sqrt(2.0)));
+    return math::normal_cdf(z);
 }
 
 }  // namespace
@@ -955,10 +956,12 @@ ConditionalSampleResult conditional_sample(
     DoubleView uniforms,
     std::int64_t uniform_rows,
     std::int64_t uniform_columns,
-    int n_threads) {
+    int n_threads,
+    bool capture_operation_inputs) {
     ConditionalSampleResult out;
     out.n_rows = uniform_rows;
     out.dimension = plan.dimension;
+    out.operation_count = static_cast<int>(plan.opcodes.size());
     out.n_threads_requested = n_threads;
     const std::size_t edge_count = edges.size();
     if (!scar_internal::valid_thread_count(n_threads) || uniform_rows < 0
@@ -1014,6 +1017,19 @@ ConditionalSampleResult conditional_sample(
     }
 
     out.values.assign(output_value_count, 0.0);
+    if (capture_operation_inputs) {
+        std::size_t captured_pairs = 0;
+        std::size_t captured_values = 0;
+        if (!scar_internal::checked_size_mul(
+                rows, plan.opcodes.size(), captured_pairs)
+            || !scar_internal::checked_size_mul(
+                captured_pairs, 2U, captured_values)) {
+            fail_conditional_sample(out, SCAR_INVALID_SIZE, -1, -1, -1);
+            return out;
+        }
+        out.operation_inputs.assign(
+            captured_values, std::numeric_limits<double>::quiet_NaN());
+    }
     if (rows == 0) {
         return out;
     }
@@ -1139,6 +1155,20 @@ ConditionalSampleResult conditional_sample(
             ? node_offset(output2)
             : 0;
         const bool transposed = plan.transposed[operation] != 0;
+
+        if (capture_operation_inputs) {
+            for (std::size_t row = 0; row < block_rows; ++row) {
+                const std::size_t result_row = row_start + row;
+                const std::size_t captured =
+                    (operation * rows + result_row) * 2U;
+                const double first = nodes[input1_offset + row];
+                const double second = nodes[input2_offset + row];
+                out.operation_inputs[captured] =
+                    transposed ? second : first;
+                out.operation_inputs[captured + 1U] =
+                    transposed ? first : second;
+            }
+        }
 
         if (edge.edge.parameter_free) {
             copy_node_state(input1_offset, output1_offset);

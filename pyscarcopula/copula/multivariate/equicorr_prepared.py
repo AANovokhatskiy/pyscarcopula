@@ -11,6 +11,7 @@ from typing import Any, Mapping
 import numpy as np
 
 from pyscarcopula._constants import PSEUDO_OBS_EPS
+from pyscarcopula._native import validation as native_validation
 
 
 EQUICORR_PREPARED_FORMAT_VERSION = 1
@@ -55,10 +56,6 @@ class EquicorrPreparedData:
             raise ValueError("n_obs must be a positive integer")
         if isinstance(self.dimension, bool) or int(self.dimension) < 2:
             raise ValueError("dimension must be an integer >= 2")
-        if not np.isfinite(self.clipping_epsilon) or not (
-                0.0 < self.clipping_epsilon < 0.5):
-            raise ValueError("clipping_epsilon must be finite and in (0, 0.5)")
-
         convert = np.array if _copy_arrays else np.asanyarray
         sum_z = convert(self.sum_z, dtype=np.float64)
         sum_z2 = convert(self.sum_z2, dtype=np.float64)
@@ -66,21 +63,12 @@ class EquicorrPreparedData:
         if sum_z.shape != expected or sum_z2.shape != expected:
             raise ValueError(
                 f"sum_z and sum_z2 must have shape {expected}")
-        if not np.all(np.isfinite(sum_z)) or not np.all(np.isfinite(sum_z2)):
-            raise ValueError("prepared statistics must contain finite values")
-        if np.any(sum_z2 < 0.0):
-            raise ValueError("sum_z2 must be non-negative")
-        abs_sum_z = np.abs(sum_z)
-        cauchy_bound = (
-            np.sqrt(float(self.dimension)) * np.sqrt(sum_z2))
-        tolerance = (
-            64.0 * np.finfo(np.float64).eps
-            * np.maximum(1.0, np.maximum(abs_sum_z, cauchy_bound))
+        native_validation.validate_equicorr_prepared(
+            sum_z,
+            sum_z2,
+            self.dimension,
+            self.clipping_epsilon,
         )
-        if np.any(abs_sum_z > cauchy_bound + tolerance):
-            raise ValueError(
-                "prepared statistics violate sum_z**2 <= "
-                "dimension*sum_z2")
 
         sum_z.setflags(write=False)
         sum_z2.setflags(write=False)

@@ -5,6 +5,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from scipy.special import betainc
 from scipy.stats import norm
 
 from tools.benchmark_timing import interleaved_timings
@@ -20,13 +21,15 @@ from pyscarcopula.vine._edge_adapter import sample_r_path
 
 
 class _DeterministicRNG:
-    def __init__(self, initial_tau, innovations):
-        self.initial_tau = float(initial_tau)
+    def __init__(self, initial_uniform, innovations):
+        self.initial_uniform = float(initial_uniform)
         self.innovations = iter(innovations)
 
-    def beta(self, alpha, beta):
-        del alpha, beta
-        return self.initial_tau
+    def uniform(self, low=0.0, high=1.0, size=None):
+        assert low == 0.0 and high == 1.0
+        if size is None:
+            return self.initial_uniform
+        return np.full(size, self.initial_uniform, dtype=np.float64)
 
     def standard_normal(self, size=None):
         if size is None:
@@ -64,7 +67,9 @@ def test_lamperti_one_step_matches_independent_ito_formula():
     kappa, m, xi = 1.2, 0.4, 0.25
     tau0 = 0.37
     innovation = 0.2
-    rng = _DeterministicRNG(tau0, [innovation])
+    alpha = 2.0 * kappa * m / xi**2
+    beta = 2.0 * kappa * (1.0 - m) / xi**2
+    rng = _DeterministicRNG(betainc(alpha, beta, tau0), [innovation])
 
     actual = sample_jacobi_lamperti_trajectory(
         kappa, m, xi, 2, rng=rng, substeps=1)
@@ -108,7 +113,7 @@ def test_lamperti_boundary_diagnostics_are_explicit():
         0.5,
         1.0,
         30,
-        rng=np.random.default_rng(1),
+        rng=np.random.default_rng(2),
         substeps=1,
         boundary="reflect",
         return_diagnostics=True,

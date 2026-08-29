@@ -57,6 +57,16 @@ def _sanitizer_environment(mode: str | None):
                 os.environ[name] = value
 
 
+@contextmanager
+def _working_directory(path: Path):
+    previous = Path.cwd()
+    os.chdir(path)
+    try:
+        yield
+    finally:
+        os.chdir(previous)
+
+
 def _load_build_support(name: str):
     path = CPP_ROOT / "build_support" / f"{name}.py"
     spec = importlib.util.spec_from_file_location(
@@ -156,16 +166,19 @@ def build_cpp_tests(
         if check_headers:
             header_units = _write_header_units(header_dir)
             print(f"Compiling {len(header_units)} self-contained header units")
-            # Generated names are already flattened and unique.  Keep their
-            # objects beside them instead of expanding each absolute source
-            # path below output_dir, which can exceed Windows path limits.
-            compiler.compile(
-                [str(path) for path in header_units],
-                output_dir=None,
-                include_dirs=[str(CPP_INCLUDE_ROOT)],
-                debug=debug,
-                extra_postargs=compile_args,
-            )
+            # Compile flattened relative source names from the header-unit
+            # directory.  Passing absolute sources with output_dir=None makes
+            # distutils recreate the drive path below the caller's cwd.
+            header_object_dir = header_dir / "objects"
+            header_object_dir.mkdir(exist_ok=True)
+            with _working_directory(header_dir):
+                compiler.compile(
+                    [path.name for path in header_units],
+                    output_dir=str(header_object_dir),
+                    include_dirs=[str(CPP_INCLUDE_ROOT)],
+                    debug=debug,
+                    extra_postargs=compile_args,
+                )
 
     compiler.link_executable(
         [*compute_objects, *smoke_objects],

@@ -1,6 +1,8 @@
 #include "scar/jacobi.hpp"
 
+#include "scar/copula/transforms.hpp"
 #include "scar/core/checked_arithmetic.hpp"
+#include "scar/math/beta.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -20,14 +22,6 @@ ResultType failure(Status status) {
 
 bool finite_positive(double value) noexcept {
     return std::isfinite(value) && value > 0.0;
-}
-
-double stable_logistic(double value) noexcept {
-    if (value >= 0.0) {
-        return 1.0 / (1.0 + std::exp(-value));
-    }
-    const double exponential = std::exp(value);
-    return exponential / (1.0 + exponential);
 }
 
 double logit(double value) noexcept {
@@ -194,7 +188,7 @@ JacobiParamsResult jacobi_raw_to_physical(
     JacobiParamsResult result;
     result.value = {
         std::exp(raw_kappa),
-        stable_logistic(raw_m),
+        copula::logistic_unit(raw_m),
         std::exp(raw_xi),
     };
     return result;
@@ -220,6 +214,33 @@ JacobiRawParamsResult jacobi_physical_to_raw(
     return result;
 }
 
+JacobiRawParamsResult jacobi_gradient_to_raw(
+    const JacobiParams& params,
+    const std::array<double, 3>& physical_gradient) noexcept {
+
+    if (!finite_positive(params.kappa)
+        || !std::isfinite(params.m)
+        || !(params.m > 0.0 && params.m < 1.0)
+        || !finite_positive(params.xi)
+        || !std::all_of(
+            physical_gradient.begin(), physical_gradient.end(),
+            [](double value) { return std::isfinite(value); })) {
+        return failure<JacobiRawParamsResult>(Status::InvalidParameter);
+    }
+    JacobiRawParamsResult result;
+    result.value = {
+        physical_gradient[0] * params.kappa,
+        physical_gradient[1] * params.m * (1.0 - params.m),
+        physical_gradient[2] * params.xi,
+    };
+    if (!std::all_of(
+            result.value.begin(), result.value.end(),
+            [](double value) { return std::isfinite(value); })) {
+        return failure<JacobiRawParamsResult>(Status::NumericalFailure);
+    }
+    return result;
+}
+
 JacobiRawBoundsResult jacobi_raw_bounds(
     const JacobiParameterBounds& bounds) noexcept {
 
@@ -237,6 +258,21 @@ JacobiRawBoundsResult jacobi_raw_bounds(
         logit(1.0 - bounds.tau_eps),
         std::log(bounds.xi_upper),
     };
+    return result;
+}
+
+JacobiParamsResult jacobi_initial_point(
+    double tau, bool has_tau, double tau_eps) noexcept {
+    JacobiParamsResult result;
+    if (!std::isfinite(tau_eps) || tau_eps <= 0.0 || tau_eps >= 0.5
+        || (has_tau && !std::isfinite(tau))) {
+        result.status = Status::InvalidParameter;
+        return result;
+    }
+    result.value = JacobiParams{
+        1.0,
+        has_tau ? std::clamp(tau, tau_eps, 1.0 - tau_eps) : 0.5,
+        0.2};
     return result;
 }
 
@@ -268,6 +304,41 @@ JacobiShapeResult jacobi_stationary_shape(
     if (!finite_positive(result.value.alpha)
         || !finite_positive(result.value.beta)) {
         return failure<JacobiShapeResult>(Status::InvalidParameter);
+    }
+    return result;
+}
+
+JacobiVectorResult sample_jacobi_stationary(
+    const JacobiParams& params,
+    const std::vector<double>& uniforms) {
+
+    const JacobiShapeResult shape = jacobi_stationary_shape(params);
+    if (!shape.is_ok()) {
+        return failure<JacobiVectorResult>(shape.status);
+    }
+    JacobiVectorResult result;
+    try {
+        result.value.resize(uniforms.size());
+        for (std::size_t index = 0; index < uniforms.size(); ++index) {
+            const double draw = uniforms[index];
+            if (!std::isfinite(draw) || draw < 0.0 || draw >= 1.0) {
+                result.status = Status::InvalidParameter;
+                result.failure.index = static_cast<std::int64_t>(index);
+                result.value.clear();
+                return result;
+            }
+            const double tau = math::beta_quantile(
+                draw, shape.value.alpha, shape.value.beta);
+            if (!std::isfinite(tau) || tau < 0.0 || tau > 1.0) {
+                result.status = Status::NumericalFailure;
+                result.failure.index = static_cast<std::int64_t>(index);
+                result.value.clear();
+                return result;
+            }
+            result.value[index] = tau;
+        }
+    } catch (const std::bad_alloc&) {
+        return failure<JacobiVectorResult>(Status::InvalidSize);
     }
     return result;
 }

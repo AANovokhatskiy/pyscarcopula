@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+import inspect
 
 import numpy as np
 import pytest
@@ -29,6 +30,14 @@ from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
 from pyscarcopula.numerical.tm_functions import tm_loglik
 from pyscarcopula.strategy import scar_tm
 from pyscarcopula.strategy.gas import GASStrategy
+
+
+def test_stochastic_joint_factor_objective_has_no_python_penalty_or_pullback():
+    source = inspect.getsource(
+        StochasticStudentCopula._fit_joint_factor_mle_shared)
+    assert "penalized_parameterized_objective_and_gradient" in source
+    assert "np.sum" not in source
+    assert "parameterization.pullback" not in source
 
 
 def _u(T=60, d=3, seed=123):
@@ -969,7 +978,7 @@ def test_scar_estimated_corr_modes_use_python_optimizer_with_native_likelihood(
     assert result.diagnostics["prepared_native_evaluator"] is True
     assert result.diagnostics["prepared_native_evaluator_count"] >= 1
     assert (
-        result.diagnostics["correlation_parameterization_engine"] == "python")
+        result.diagnostics["correlation_parameterization_engine"] == "cpp")
     assert result.diagnostics["analytical_grad_requested"] is True
     assert result.diagnostics["analytical_grad_used"] is True
     assert result.diagnostics["optimizer_gradient"] == "analytical"
@@ -1031,73 +1040,41 @@ def test_spectral_cholesky_fit_uses_native_correlation_gradient():
 
 
 @pytest.mark.parametrize(
-    ("corr_mode", "corr_n_params"),
+    "corr_mode",
     [
-        ("shrinkage", 1),
-        ("cholesky", 3),
+        "shrinkage",
+        "cholesky",
     ],
 )
-def test_joint_hybrid_jacobian_uses_one_plus_n_corr_evaluations(
-        corr_mode, corr_n_params, monkeypatch):
+def test_joint_analytical_gradient_does_not_fallback_to_python_fd(
+        corr_mode, monkeypatch):
     u = _u(T=12)
     model = StochasticStudentCopula(d=3, R=_R(), corr_mode=corr_mode)
     alpha0 = np.array([2.0, -0.5, 1.5])
-    calls = {"gradient": 0, "objective": 0}
-    captured = {}
+    calls = {"correlation": 0, "ou_only": 0}
 
-    def value_for(kappa, mu, nu, copula):
-        ou = np.array([kappa, mu, nu], dtype=np.float64)
-        corr = np.asarray(copula.corr_params(), dtype=np.float64)
-        return float(np.sum((ou - np.array([1.0, 0.25, 0.75])) ** 2)
-                     + np.sum(corr ** 2) + 3.0)
+    def unsupported(*args, **kwargs):
+        calls["correlation"] += 1
+        raise _cpp_scar_ou.NativeUnsupported("test native derivative failure")
 
-    def info_for(kappa):
-        return {
-            "backend": "spectral",
-            "transition_method": "auto",
-            "kappa_dt": float(kappa) / (len(u) - 1),
-            "n_obs": len(u),
-            "basis_order": 32,
-        }
-
-    def fake_gradient(kappa, mu, nu, u_arg, copula, config):
-        calls["gradient"] += 1
-        grad = 2.0 * (
-            np.array([kappa, mu, nu], dtype=np.float64)
-            - np.array([1.0, 0.25, 0.75])
-        )
-        return value_for(kappa, mu, nu, copula), grad, info_for(kappa)
-
-    def fake_objective(kappa, mu, nu, u_arg, copula, config):
-        calls["objective"] += 1
-        return value_for(kappa, mu, nu, copula), info_for(kappa)
+    def forbidden_ou_only(*args, **kwargs):
+        calls["ou_only"] += 1
+        raise AssertionError("OU-only gradient fallback must not run")
 
     def fake_minimize(fun, x0, *, method, jac, bounds, options):
         assert method == "L-BFGS-B"
         assert jac is True
-        value, gradient = fun(np.asarray(x0, dtype=np.float64))
-        captured["gradient"] = gradient.copy()
-        captured["x0"] = np.asarray(x0, dtype=np.float64).copy()
-        return SimpleNamespace(
-            x=np.asarray(x0, dtype=np.float64).copy(),
-            fun=float(value),
-            success=True,
-            message="test optimizer",
-            nfev=1,
-            jac=gradient,
-        )
+        return fun(np.asarray(x0, dtype=np.float64))
 
     monkeypatch.setattr(
         _cpp_scar_ou,
         "neg_loglik_with_grad_and_corr_info",
-        lambda *args, **kwargs: (_ for _ in ()).throw(
-            _cpp_scar_ou.NativeUnsupported("test fallback")),
+        unsupported,
     )
     monkeypatch.setattr(
         _cpp_scar_ou,
         "neg_loglik_with_grad_and_corr_directional_info",
-        lambda *args, **kwargs: (_ for _ in ()).throw(
-            _cpp_scar_ou.NativeUnsupported("test fallback")),
+        unsupported,
     )
     monkeypatch.setattr(
         _cpp_scar_ou,
@@ -1106,59 +1083,25 @@ def test_joint_hybrid_jacobian_uses_one_plus_n_corr_evaluations(
             _cpp_scar_ou.NativeUnsupported("test prepared fallback")),
     )
     monkeypatch.setattr(
-        _cpp_scar_ou, "neg_loglik_with_grad_info", fake_gradient)
-    monkeypatch.setattr(_cpp_scar_ou, "neg_loglik_info", fake_objective)
+        _cpp_scar_ou, "neg_loglik_with_grad_info", forbidden_ou_only)
     monkeypatch.setattr(scar_tm, "minimize", fake_minimize)
 
-    result = scar_tm.SCARTMStrategy(
-        analytical_grad=True,
-        smart_init=False,
-        strict_gradient_policy=True,
-    ).fit(
-        model,
-        u,
-        alpha0=alpha0,
-        eps=1e-6,
-    )
+    with pytest.raises(
+            _cpp_scar_ou.NativeUnsupported,
+            match="native derivative failure"):
+        scar_tm.SCARTMStrategy(
+            analytical_grad=True,
+            smart_init=False,
+            strict_gradient_policy=True,
+        ).fit(
+            model,
+            u,
+            alpha0=alpha0,
+            eps=1e-6,
+        )
 
-    expected_physical = np.concatenate([
-        2.0 * (alpha0 - np.array([1.0, 0.25, 0.75])),
-        2.0 * model.corr_params() + 1e-6,
-    ])
-    expected_optimizer = expected_physical.copy()
-    expected_optimizer[0] = (
-        expected_physical[0] * alpha0[0]
-        + 0.5 * expected_physical[2] * alpha0[2])
-    expected_optimizer[2] = expected_physical[2] * alpha0[2]
-    sigma0 = alpha0[2] / np.sqrt(2.0 * alpha0[0])
-    expected_x0 = np.concatenate([
-        np.array([np.log(alpha0[0]), alpha0[1], np.log(sigma0)]),
-        model.corr_params(),
-    ])
-
-    assert calls == {
-        "gradient": 2,
-        "objective": 2 * corr_n_params,
-    }
-    np.testing.assert_allclose(
-        captured["gradient"], expected_optimizer,
-        rtol=1e-7, atol=1e-7)
-    np.testing.assert_allclose(
-        captured["x0"], expected_x0)
-    assert (
-        result.diagnostics["optimizer_parameterization"]
-        == "log_kappa_mu_log_stationary_sigma")
-    assert result.diagnostics["objective_evaluations"] == (
-        2 * (1 + corr_n_params))
-    assert result.diagnostics["hybrid_gradient_evaluations"] == 2
-    assert result.diagnostics["correlation_fd_evaluations"] == (
-        2 * corr_n_params)
-    assert result.diagnostics["analytical_grad_used"] is True
-    assert result.diagnostics["final_validation_passed"] is False
-    assert (
-        "projected gradient exceeds validation tolerance"
-        in result.diagnostics["final_validation_reasons"]
-    )
+    assert calls["correlation"] >= 1
+    assert calls["ou_only"] == 0
 
 
 @pytest.mark.parametrize(

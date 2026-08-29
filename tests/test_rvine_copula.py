@@ -2096,16 +2096,23 @@ class TestPredict:
         expected /= np.sum(expected)
         calls = []
 
-        def fake_sample_grid_distribution(
-                z_arg, prob_arg, n, rng, mode='histogram'):
+        def fake_sample_state_distribution_fixed_draws(
+                z_arg, prob_arg, selection_uniforms, jitter_uniforms, *,
+                mode='histogram'):
+            n = len(selection_uniforms)
             calls.append((z_arg.copy(), prob_arg.copy(), n, mode))
             np.testing.assert_allclose(z_arg, z_grid)
             np.testing.assert_allclose(prob_arg, expected)
-            return np.full(n, z_arg[int(np.argmax(prob_arg))])
+            assert len(jitter_uniforms) == n
+            return np.full(n, z_arg[int(np.argmax(prob_arg))]), {
+                'selection_draws_used': n,
+                'jitter_draws_used': n,
+            }
 
         monkeypatch.setattr(
-            'pyscarcopula.numerical.predictive_tm.sample_grid_distribution',
-            fake_sample_grid_distribution,
+            'pyscarcopula.strategy.scar_tm._cpp_scar_ou.'
+            'sample_state_distribution_fixed_draws',
+            fake_sample_state_distribution_fixed_draws,
         )
 
         r = vine._predictive_given_update_r(

@@ -34,6 +34,17 @@ int run_jacobi_domain_tests() {
         || !close(raw.value[2], std::log(0.25))) {
         return 2;
     }
+    const scar::JacobiRawParamsResult raw_gradient =
+        scar::jacobi_gradient_to_raw(
+            {1.2, 0.4, 0.25}, {2.0, 3.0, 4.0});
+    if (!raw_gradient.is_ok()
+        || !close(raw_gradient.value[0], 2.4)
+        || !close(raw_gradient.value[1], 0.72)
+        || !close(raw_gradient.value[2], 1.0)
+        || scar::jacobi_gradient_to_raw(
+            {1.2, 1.0, 0.25}, {2.0, 3.0, 4.0}).is_ok()) {
+        return 20;
+    }
     const scar::JacobiParamsResult clipped_low =
         scar::jacobi_raw_to_physical({
             -scar::kJacobiRawClip - 1.0,
@@ -73,6 +84,21 @@ int run_jacobi_domain_tests() {
         || !close(shape.value.beta, 23.04)
         || scar::ok(scar::validate_jacobi_params({1.0, 0.0, 0.2}))) {
         return 3;
+    }
+    const std::vector<double> stationary_uniforms{0.0, 0.5};
+    const scar::JacobiVectorResult stationary = scar::sample_jacobi_stationary(
+        {1.0, 0.5, std::sqrt(0.5)}, stationary_uniforms);
+    if (!stationary.is_ok()
+        || stationary.value.size() != stationary_uniforms.size()
+        || stationary.value[0] != 0.0
+        || !close(stationary.value[1], 0.5, 2e-12)) {
+        return 21;
+    }
+    const scar::JacobiVectorResult invalid_stationary =
+        scar::sample_jacobi_stationary(
+            {1.0, 0.5, std::sqrt(0.5)}, {1.0});
+    if (invalid_stationary.status != scar::Status::InvalidParameter) {
+        return 22;
     }
 
     scar::JacobiNumericalConfig memory_config;

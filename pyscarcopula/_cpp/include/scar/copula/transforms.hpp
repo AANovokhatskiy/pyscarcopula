@@ -16,7 +16,10 @@ enum class Transform : int {
 namespace scar::copula {
 
 double softplus(double value);
+double inverse_softplus(double value);
 double d_softplus(double value);
+double logistic_unit(double value);
+double logistic_unit_open(double value);
 double transform_parameter(Transform transform, double value, double offset);
 double inverse_transform_parameter(
     Transform transform,

@@ -96,7 +96,7 @@ def test_factor_conditional_raw_binding_rejects_scalar_factor_draws(student):
             )
 
 
-def test_dense_student_sampling_preserves_frozen_rng_draw_order():
+def test_dense_student_sampling_preserves_frozen_raw_rng_draw_order():
     model = StudentCopula(d=4, R=_correlation())
     model._correlation = _correlation()
     model.df = 6.75
@@ -104,10 +104,10 @@ def test_dense_student_sampling_preserves_frozen_rng_draw_order():
     expected_rng = np.random.default_rng(20260825)
 
     actual = model.sample(3, rng=actual_rng)
-    chi_square = expected_rng.chisquare(model.df, size=3)
+    chi_square_uniforms = expected_rng.uniform(0.0, 1.0, size=3)
     normal_draws = expected_rng.standard_normal((3, model.dimension))
-    expected = multivariate_native.student_sample_from_draws(
-        model._correlation, model.df, normal_draws, chi_square)
+    expected = multivariate_native.student_sample_from_normal_uniforms(
+        model._correlation, model.df, normal_draws, chi_square_uniforms)
 
     np.testing.assert_array_equal(actual, expected)
     assert actual_rng.random() == expected_rng.random()

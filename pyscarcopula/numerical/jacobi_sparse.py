@@ -9,6 +9,7 @@ import numpy as np
 from pyscarcopula._native import jacobi as jacobi_native
 from pyscarcopula.numerical._arrays import (
     validate_float64_allocation,
+    validate_integer,
     validate_positive_int,
 )
 from pyscarcopula.numerical._transition_methods import (
@@ -17,7 +18,6 @@ from pyscarcopula.numerical._transition_methods import (
 from pyscarcopula.numerical.jacobi_tm import (
     DEFAULT_JACOBI_MEMORY_BUDGET_BYTES,
     _validate_jacobi_order,
-    _validate_nonnegative_int,
     _validate_transition_count,
 )
 
@@ -39,28 +39,8 @@ class SparseJacobiTransition:
                 "indices and probabilities must have the same 2D shape")
         if counts.shape != (indices.shape[0],):
             raise ValueError("counts must have shape (n_rows,)")
-        if np.any(counts < 1) or np.any(counts > indices.shape[1]):
-            raise ValueError("counts are outside the sparse row width")
-        if np.any(~np.isfinite(probabilities)) or np.any(
-                probabilities < 0.0):
-            raise ValueError(
-                "probabilities must be finite and non-negative")
-        n_rows = indices.shape[0]
-        for row in range(n_rows):
-            count = int(counts[row])
-            active_indices = indices[row, :count]
-            active_probabilities = probabilities[row, :count]
-            if np.any(active_indices < 0) or np.any(
-                    active_indices >= n_rows):
-                raise ValueError("active sparse indices are out of range")
-            if np.any(np.diff(active_indices) <= 0):
-                raise ValueError(
-                    "active sparse indices must be strictly increasing")
-            if not np.isclose(
-                    np.sum(active_probabilities), 1.0,
-                    rtol=0.0,
-                    atol=1e-14):
-                raise ValueError("sparse transition rows must sum to one")
+        jacobi_native.validate_sparse_transition(
+            indices, probabilities, counts)
         object.__setattr__(self, "indices", indices)
         object.__setattr__(self, "probabilities", probabilities)
         object.__setattr__(self, "counts", counts)
@@ -289,7 +269,7 @@ def jacobi_sparse_fixed_grid_transition(
 def sparse_jacobi_full_horizon_diagnostics(
         tau, weights, transition, *, steps, kappa, m):
     """Return deterministic stationarity and first-moment diagnostics."""
-    steps = _validate_nonnegative_int(steps, "steps")
+    steps = validate_integer(steps, "steps")
     return jacobi_native.sparse_full_horizon_diagnostics(
         kappa,
         m,
@@ -421,7 +401,8 @@ def compare_sparse_jacobi_corrections(
                         xi,
                         n_obs=n_obs,
                         quad_order=order,
-                        basis_order=min(basis_order, order),
+                        basis_order=jacobi_native.resolve_basis_order(
+                            basis_order, order),
                         gh_order=gh_order,
                         correction=correction,
                         memory_budget_bytes=memory_budget_bytes,
@@ -432,7 +413,7 @@ def compare_sparse_jacobi_corrections(
                     tau,
                     weights,
                     transition,
-                    steps=n_obs - 1,
+                    steps=jacobi_native.horizon_steps(n_obs),
                     kappa=kappa,
                     m=m,
                 )
@@ -469,26 +450,21 @@ def jacobi_sparse_matrix_loglik(
         correction="none",
         memory_budget_bytes=None):
     """Evaluate a local-GH Jacobi likelihood with sparse filtering."""
-    try:
-        evaluator = jacobi_native.PreparedScarJacobiEvaluator(
-            u,
-            copula,
-            basis_order=basis_order,
-            quad_order=quad_order,
-            theta_cap=theta_cap,
-            transition_method=transition_method,
-            storage="sparse",
-            correction=correction,
-            gh_order=gh_order,
-            memory_budget_bytes=(
-                DEFAULT_JACOBI_MEMORY_BUDGET_BYTES
-                if memory_budget_bytes is None else memory_budget_bytes),
-        )
-        return evaluator.loglik(kappa, m, xi)
-    except MemoryError:
-        raise
-    except Exception:
-        return -np.inf
+    evaluator = jacobi_native.PreparedScarJacobiEvaluator(
+        u,
+        copula,
+        basis_order=basis_order,
+        quad_order=quad_order,
+        theta_cap=theta_cap,
+        transition_method=transition_method,
+        storage="sparse",
+        correction=correction,
+        gh_order=gh_order,
+        memory_budget_bytes=(
+            DEFAULT_JACOBI_MEMORY_BUDGET_BYTES
+            if memory_budget_bytes is None else memory_budget_bytes),
+    )
+    return evaluator.loglik(kappa, m, xi)
 
 
 def jacobi_sparse_matrix_neg_loglik_with_grad(
@@ -506,14 +482,10 @@ def jacobi_sparse_matrix_neg_loglik_with_grad(
         correction="none",
         memory_budget_bytes=None):
     """Return fixed-grid sparse negative likelihood and exact gradient."""
-    fail = 1e10, np.zeros(3, dtype=np.float64)
     if transition_method != "local_fixed" or correction != "none":
         raise ValueError(
             "sparse analytical gradient requires uncorrected "
             "transition_method='local_fixed'")
-    u = np.asarray(u, dtype=np.float64)
-    if u.ndim != 2 or u.shape[1] != 2 or len(u) < 1:
-        return fail
     basis_order = _validate_jacobi_order(basis_order, "basis_order")
     if quad_order is None:
         from pyscarcopula.numerical.jacobi_tm import default_quad_order
@@ -521,26 +493,21 @@ def jacobi_sparse_matrix_neg_loglik_with_grad(
         quad_order = default_quad_order(basis_order)
     quad_order = _validate_jacobi_order(quad_order, "quad_order")
     gh_order = _validate_jacobi_order(gh_order, "gh_order")
-    try:
-        evaluator = jacobi_native.PreparedScarJacobiEvaluator(
-            u,
-            copula,
-            basis_order=basis_order,
-            quad_order=quad_order,
-            theta_cap=theta_cap,
-            transition_method=transition_method,
-            storage="sparse",
-            correction=correction,
-            gh_order=gh_order,
-            memory_budget_bytes=(
-                DEFAULT_JACOBI_MEMORY_BUDGET_BYTES
-                if memory_budget_bytes is None else memory_budget_bytes),
-        )
-        return evaluator.neg_loglik_with_grad(kappa, m, xi)
-    except MemoryError:
-        raise
-    except Exception:
-        return fail
+    evaluator = jacobi_native.PreparedScarJacobiEvaluator(
+        u,
+        copula,
+        basis_order=basis_order,
+        quad_order=quad_order,
+        theta_cap=theta_cap,
+        transition_method=transition_method,
+        storage="sparse",
+        correction=correction,
+        gh_order=gh_order,
+        memory_budget_bytes=(
+            DEFAULT_JACOBI_MEMORY_BUDGET_BYTES
+            if memory_budget_bytes is None else memory_budget_bytes),
+    )
+    return evaluator.neg_loglik_with_grad(kappa, m, xi)
 
 
 def jacobi_sparse_matrix_forward_predictive_mean(
@@ -651,7 +618,7 @@ def sample_sparse_jacobi_trajectory(
         tau, weights, transition, n, *, rng=None,
         memory_budget_bytes=None):
     """Sample one path from a prepared sparse Jacobi transition."""
-    n = _validate_nonnegative_int(n, "n")
+    n = validate_integer(n, "n")
     if n == 0:
         validate_float64_allocation(
             (0,),

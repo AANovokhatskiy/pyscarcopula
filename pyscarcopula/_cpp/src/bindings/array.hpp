@@ -32,9 +32,22 @@ std::vector<int> int_vector_from_array(IntArray values, const char* name);
 
 pybind11::array_t<double> vector_to_array(
     const std::vector<double>& values);
+/// Transfer an owning vector without allocating a second numerical buffer.
+pybind11::array_t<double> vector_to_array(std::vector<double>&& values);
 pybind11::array_t<double> matrix_to_array(
     const std::vector<double>& values,
     std::size_t rows,
     std::size_t columns);
+/// Preserve a failure DTO as a flat array when no complete matrix exists.
+pybind11::array_t<double> result_matrix_to_array(
+    const std::vector<double>& values,
+    std::size_t rows,
+    std::size_t columns);
+/// Preserve a failure DTO as a flat array when no complete tensor exists.
+pybind11::array_t<double> result_tensor3_to_array(
+    const std::vector<double>& values,
+    std::size_t first,
+    std::size_t second,
+    std::size_t third);
 
 }  // namespace pyscarcopula::bindings

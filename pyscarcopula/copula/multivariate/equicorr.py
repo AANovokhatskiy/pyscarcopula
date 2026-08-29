@@ -4,6 +4,7 @@ import numpy as np
 from scipy.optimize import minimize
 
 from pyscarcopula._types import DEFAULT_CONFIG, NumericalConfig
+from pyscarcopula._native import model_policy
 from pyscarcopula.copula.multivariate.base import (
     MultivariateCopula,
     model_state_locked,
@@ -35,7 +36,7 @@ class EquicorrGaussianCopula(MultivariateCopula):
         super().__init__(
             dimension=d, name=f"Equicorr Gaussian copula (d={d})")
         self._d = d
-        self._bounds = [(-10.0, 10.0)]
+        self._bounds = model_policy.public_bounds(self)
 
     @property
     def d(self):
@@ -352,19 +353,16 @@ class EquicorrGaussianCopula(MultivariateCopula):
             self, u, n_threads=config.n_threads)
 
         def neg_ll_and_grad(x):
-            rho = self.transform(np.array([x[0]]))[0]
-            value, grad_rho = evaluator.objective_and_gradient(
-                rho, fail_value=config.fail_value)
-            gradient = grad_rho * self.dtransform(
-                np.array([x[0]], dtype=np.float64))
-            return value, gradient
+            return evaluator.transformed_objective_and_gradient(
+                x[0], fail_value=config.fail_value)
 
+        initial, fit_bounds = model_policy.equicorr_fit_policy()
         result = minimize(
             neg_ll_and_grad,
-            np.array([0.5]),
+            np.array([initial]),
             jac=True,
             method="L-BFGS-B",
-            bounds=[(-8.0, 8.0)],
+            bounds=[fit_bounds],
             options=optimizer_options,
         )
         rho_hat = self.transform(result.x)[0]
@@ -483,21 +481,13 @@ class EquicorrGaussianCopula(MultivariateCopula):
             raise ValueError(
                 f"r must be scalar or array of length {n}, "
                 f"got {parameters.size}")
-        lower = -1.0 / (self._d - 1.0)
-        if (
-                not np.all(np.isfinite(parameters))
-                or np.any(parameters <= lower)
-                or np.any(parameters >= 1.0)):
-            raise ValueError(
-                f"r must be finite and in ({lower}, 1)")
-
-        normal = rng.standard_normal((n, self._d))
-        common = (
-            rng.standard_normal(n)
-            if np.all(parameters >= 0.0)
-            else np.empty(0, dtype=np.float64)
-        )
         from pyscarcopula._native import multivariate as multivariate_native
+        multivariate_native.validate_equicorrelation_path(
+            parameters, self._d, n, name="r")
+        normal = rng.standard_normal((n, self._d))
+        common_count = multivariate_native.equicorr_gaussian_common_draw_count(
+            parameters, self._d, n)
+        common = rng.standard_normal(common_count)
         return multivariate_native.equicorr_gaussian_sample_from_normals(
             parameters,
             self._d,
@@ -545,13 +535,9 @@ class EquicorrGaussianCopula(MultivariateCopula):
             raise ValueError(
                 f"r must be scalar or array of length {n}, "
                 f"got {parameters.size}")
-        lower = -1.0 / (self._d - 1.0)
-        if (
-                not np.all(np.isfinite(parameters))
-                or np.any(parameters <= lower)
-                or np.any(parameters >= 1.0)):
-            raise ValueError(
-                f"r must be finite and in ({lower}, 1)")
+        from pyscarcopula._native import multivariate as multivariate_native
+        multivariate_native.validate_equicorrelation_path(
+            parameters, self._d, n, name="r")
 
         for start in range(0, n, batch_rows):
             stop = min(n, start + batch_rows)

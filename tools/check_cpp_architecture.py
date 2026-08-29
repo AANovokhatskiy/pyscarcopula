@@ -113,7 +113,10 @@ def _target_for_header(relative: str) -> str | None:
             or relative.startswith("vine/")):
         return "vine"
     if (
-            relative in {"copula.hpp", "factor.hpp"}
+            relative in {
+                "copula.hpp", "factor.hpp", "model_policy.hpp",
+        "numerical_validation.hpp", "copula/model_statistics.hpp",
+            }
             or relative.startswith(("copula/", "detail/copula/", "static/"))):
         # static/result.hpp is a DTO exposed by the generic copula contract;
         # the compiled static evaluator remains its own application target.
@@ -1677,7 +1680,7 @@ def check_thin_bindings(root: Path) -> list[Violation]:
     binder_sources = {
         "common.cpp", "parallel.cpp", "copula.cpp", "factor.cpp",
         "multivariate.cpp", "scar_ou_types.cpp", "rvine.cpp", "gas.cpp",
-        "scar_ou.cpp",
+        "scar_ou.cpp", "statistics.cpp",
     }
     for name in sorted(binder_sources):
         path = bindings / name
@@ -2046,6 +2049,70 @@ def check_domain_module_cycles(root: Path) -> list[Violation]:
         root / "pyscarcopula" / "_cpp",
         f"cyclic domain-module dependency: {' -> '.join(cycle)}",
     )]
+
+
+def check_foundation_formula_duplicates(root: Path) -> list[Violation]:
+    """Reject private copies of numerical functions owned by foundation."""
+    rule = "foundation-formula-duplicates"
+    source = root / "pyscarcopula" / "_cpp" / "src"
+    canonical = {
+        "normal": (source / "math" / "normal.cpp").resolve(),
+        "beta": (source / "math" / "beta.cpp").resolve(),
+        "gamma": (source / "math" / "gamma.cpp").resolve(),
+        "transforms": (source / "copula" / "transforms.cpp").resolve(),
+    }
+    definitions = (
+        ("normal", re.compile(
+            r"\bdouble\s+(?:norm_cdf|normal_cdf)\s*\(")),
+        ("beta", re.compile(
+            r"\bdouble\s+(?:betacf|regularized_beta|continued_fraction)\s*\(")),
+        ("gamma", re.compile(
+            r"\bdouble\s+regularized_gamma_p\s*\(")),
+        ("transforms", re.compile(
+            r"\bdouble\s+(?:softplus|inverse_softplus|sigmoid|"
+            r"stable_logistic|logistic_value|logistic_unit(?:_open)?)\s*\(")),
+    )
+    formulas = (
+        ("normal", re.compile(
+            r"0\.5\s*\*\s*\([^;{}]{0,80}\b(?:std::)?erf\s*\(")),
+        ("beta", re.compile(
+            r"\bqab\s*=\s*[^;]+;(?:(?!\}).){0,240}\bqap\s*=\s*[^;]+;"
+            r"(?:(?!\}).){0,240}\bqam\s*=", re.DOTALL)),
+        ("gamma", re.compile(
+            r"\bshifted_shape\b(?:(?!\}).){0,500}\blgamma\s*\(", re.DOTALL)),
+        ("transforms", re.compile(
+            r"1\.0\s*/\s*\(1\.0\s*\+\s*std::exp\s*\(\s*-")),
+        ("transforms", re.compile(
+            r"log1p\s*\(\s*std::exp\s*\(\s*-std::abs\s*\(")),
+    )
+    violations = []
+    for path in _source_files(source):
+        if path.suffix != ".cpp":
+            continue
+        text = path.read_text(encoding="utf-8")
+        checks = (
+            *((owner, pattern, False) for owner, pattern in definitions),
+            *((owner, pattern, True) for owner, pattern in formulas),
+        )
+        for owner, pattern, is_formula in checks:
+            if path.resolve() == canonical[owner]:
+                continue
+            if (
+                    is_formula
+                    and owner == "beta"
+                    and path.as_posix().endswith(
+                        "/copula/multivariate/student/distribution.cpp")):
+                # The df derivative uses dual-number recurrence terms; it is
+                # not a second scalar beta implementation.
+                continue
+            for match in pattern.finditer(text):
+                violations.append(Violation(
+                    rule,
+                    path,
+                    f"private {owner} formula duplicates its canonical owner",
+                    text.count("\n", 0, match.start()) + 1,
+                ))
+    return violations
 
 
 def check_jacobi_sampling_ownership(root: Path) -> list[Violation]:
@@ -2624,18 +2691,58 @@ def check_repository(root: Path) -> list[Violation]:
         check_public_header_cycles,
         check_target_dependency_graph,
         check_domain_module_cycles,
+        check_foundation_formula_duplicates,
         check_vine_native_boundary,
         check_mandatory_vine_dispatch,
         check_jacobi_sampling_ownership,
         check_jacobi_python_cleanup,
         check_jacobi_strategy_facade,
         check_removed_compatibility_cleanup,
+        check_python_numerical_ownership,
+        check_python_exact_duplicates,
     )
     return [
         violation
         for check in checks
         for violation in check(root)
     ]
+
+
+def check_python_numerical_ownership(root: Path) -> list[Violation]:
+    """Audit every shipped Python module, not just Jacobi/vine markers."""
+    try:
+        from tools.check_python_ownership import audit_package
+    except ModuleNotFoundError:
+        from check_python_ownership import audit_package
+    result = audit_package(root)
+    return [
+        Violation(item["rule"], root / item["path"],
+                  f'{item["symbol"]}: {item["message"]}', item["line"])
+        for item in result["violations"]
+    ]
+
+
+def check_python_exact_duplicates(root: Path) -> list[Violation]:
+    """Reject exact shipped function bodies, including same-file copies."""
+    try:
+        from tools.check_python_duplicates import exact_clone_groups
+    except ModuleNotFoundError:
+        from check_python_duplicates import exact_clone_groups
+    violations = []
+    for group in exact_clone_groups(root):
+        members = group["members"]
+        summary = ", ".join(
+            f'{item["path"]}:{item["line"]} {item["name"]}'
+            for item in members)
+        for item in members:
+            violations.append(Violation(
+                "python-exact-duplicates",
+                root / item["path"],
+                "exact function body duplicated across shipped code: "
+                + summary,
+                item["line"],
+            ))
+    return violations
 
 
 def main(argv: list[str] | None = None) -> int:

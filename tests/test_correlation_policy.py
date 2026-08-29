@@ -14,6 +14,7 @@ from pyscarcopula import (
 )
 from pyscarcopula.copula.multivariate.corr_param import (
     estimate_kendall_correlation,
+    sigmoid,
 )
 from pyscarcopula.copula.multivariate.correlation_policy import (
     normalize_correlation_mode,
@@ -25,6 +26,13 @@ def _correlation(rho=0.4):
         [[1.0, rho, -0.1], [rho, 1.0, 0.2], [-0.1, 0.2, 1.0]],
         dtype=np.float64,
     )
+
+
+def test_native_logistic_transform_stays_inside_open_unit_interval():
+    transformed = sigmoid(np.array([-1e300, 0.0, 1e300]))
+    assert np.all(transformed > 0.0)
+    assert np.all(transformed < 1.0)
+    assert transformed[1] == 0.5
 
 
 def test_mode_normalization_is_case_insensitive_and_dense_is_deprecated():

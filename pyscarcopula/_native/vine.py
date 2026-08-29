@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from pyscarcopula._native import _descriptors
+from pyscarcopula._native import _descriptors, _extension
 from pyscarcopula._native.errors import (
     NativeError,
     NativeUnsupported,
@@ -31,6 +31,13 @@ from pyscarcopula.vine._helpers import (
 from pyscarcopula.vine._rvine_conditional_plan import _node_key
 from pyscarcopula._constants import PSEUDO_OBS_EPS
 from pyscarcopula._utils import clip_pseudo_observations
+
+
+def fit_edge_pseudo_observations(edge, first, second):
+    """Evaluate both fitted edge h-functions through native-backed adapters."""
+    from pyscarcopula.vine._rvine_edges import _edge_h_pair
+
+    return _edge_h_pair(edge, first, second)
 
 
 _DEFAULT_MCMC_DRAW_MEMORY_BUDGET_BYTES = 64 * 1024 * 1024
@@ -257,7 +264,8 @@ def compile_density_plan(
         edge_map,
         active_keys,
         *,
-        residual_node_keys=()):
+        residual_node_keys=(),
+        return_node_keys=False):
     """Compile the canonical tree-order density traversal into flat arrays."""
     dimension = int(dimension)
     active_keys = tuple(tuple(int(value) for value in key) for key in active_keys)
@@ -358,6 +366,9 @@ def compile_density_plan(
     native.affected_nodes = affected_nodes
     if not module.validate_rvine_density_plan(native, len(active_keys)):
         raise ValueError("compile_density_plan: native plan validation failed")
+    if return_node_keys:
+        node_keys = tuple(sorted(nodes, key=nodes.__getitem__))
+        return native, node_keys
     return native
 
 
@@ -689,6 +700,34 @@ def static_rosenblatt_parameter_layout(pair_copulas, active_keys):
     return parameters, sources
 
 
+def pseudo_observation_trace_supported(pair_copulas, trees, edge_map):
+    """Return whether fitted edges have a native density-trace executor."""
+    from pyscarcopula._types import (
+        GASResult,
+        IndependentResult,
+        LatentResult,
+        MLEResult,
+    )
+
+    active_keys = density_active_keys(trees, edge_map)
+    if not native_edges_supported(pair_copulas, active_keys):
+        return False
+    for key in active_keys:
+        edge = pair_copulas[key]
+        result = edge_result(edge)
+        if (
+                edge_is_independent(edge)
+                or result is None
+                or type(result) in (IndependentResult, MLEResult, GASResult)):
+            continue
+        if (
+                type(result) is LatentResult
+                and result.method in ("SCAR-TM-OU", "SCAR-TM-JACOBI")):
+            continue
+        return False
+    return True
+
+
 def compile_dynamic_rosenblatt_edges(
         module, pair_copulas, active_keys, n_rows, *, strategy_kwargs=None):
     """Compile static/GAS/OU/Jacobi edges for one native traversal."""
@@ -975,6 +1014,153 @@ def conditional_sample(
         raise NativeError(
             "C++ R-vine conditional sample returned an invalid value count")
     return np.ascontiguousarray(values.reshape(n, int(plan.d)))
+
+
+def conditional_trace(
+        module,
+        pair_copulas,
+        plan,
+        n,
+        given,
+        parameter_paths,
+        *,
+        active_keys=None,
+        n_threads=1):
+    """Return canonical per-operation inputs from one native plan execution."""
+    n = int(n)
+    if n < 0:
+        raise ValueError("R-vine conditional trace row count must be non-negative")
+    active_keys = (
+        conditional_active_keys(plan)
+        if active_keys is None else
+        tuple(tuple(int(value) for value in key) for key in active_keys)
+    )
+    if not native_edges_supported(pair_copulas, active_keys):
+        raise NativeUnsupported(
+            "native conditional R-vine trace requires exact registered "
+            "built-in edge copulas")
+    normalized_paths, parameter_sources = conditional_parameter_layout(
+        pair_copulas, active_keys, parameter_paths, n)
+    edges, parameters = compile_edge_specs(
+        module,
+        pair_copulas,
+        active_keys,
+        normalized_paths,
+        n,
+        parameter_sources=parameter_sources,
+    )
+    native = compile_conditional_plan(module, plan, active_keys, given)
+    given_values = _conditional_given_values(
+        int(plan.d), given, native.given_variables)
+    neutral_uniforms = np.full(
+        (n, int(plan.d)), 0.5, dtype=np.float64)
+    result = module.rvine_conditional_trace(
+        native,
+        edges,
+        parameters.scalar_parameters,
+        parameters.row_parameters,
+        given_values,
+        neutral_uniforms,
+        int(n_threads),
+    )
+    raise_for_status(result, "R-vine conditional trace")
+    operation_count = int(result["operation_count"])
+    expected_operations = len([
+        step for step in plan if step.get("action") != "sample_uniform"])
+    if operation_count != expected_operations:
+        raise NativeError(
+            "C++ R-vine conditional trace returned inconsistent operations")
+    values = np.asarray(result["operation_inputs"], dtype=np.float64)
+    if values.shape != (operation_count, n, 2):
+        raise NativeError(
+            "C++ R-vine conditional trace returned an invalid input buffer")
+    return np.ascontiguousarray(values)
+
+
+def apply_given_only_dynamic_updates(
+        module,
+        *,
+        dimension,
+        trees,
+        n,
+        r_all,
+        given,
+        start_col,
+        matrix,
+        pair_copulas,
+        edge_map,
+        train_pseudo,
+        horizon,
+        rng,
+        predictive_r_mode,
+        dynamic_update,
+        update_record,
+        skip_reason,
+        state_cache=None,
+        posterior_cache=None):
+    """Coordinate dynamic state updates around native suffix-plan traces."""
+    from pyscarcopula.vine._rvine_edges import _edge_initial_model_state
+    from pyscarcopula.vine._rvine_suffix import build_suffix_conditional_plan
+
+    plan = build_suffix_conditional_plan(
+        dimension, start_col, matrix, given)
+    fixed_operations = []
+    for native_operation, step in enumerate(plan):
+        if step.get("action") == "sample_uniform":
+            break
+        if step.get("action") == "h_pair":
+            fixed_operations.append((native_operation, tuple(step["edge"])))
+
+    updated = {key: value.copy() for key, value in r_all.items()}
+    diagnostics = {
+        "mode": "given_only",
+        "updated_edges": [],
+        "skipped_edges": [],
+    }
+    trace = None
+    for operation, key in fixed_operations:
+        if trace is None:
+            trace = conditional_trace(
+                module,
+                pair_copulas,
+                plan,
+                n,
+                given,
+                updated,
+            )
+        edge = pair_copulas[key]
+        r_before = updated[key]
+        r_new = dynamic_update(
+            key,
+            edge,
+            r_before,
+            trace[operation],
+            edge_map,
+            train_pseudo,
+            horizon,
+            rng,
+            predictive_r_mode,
+            state_cache=state_cache,
+            posterior_cache=posterior_cache,
+        )
+        if r_new is not None:
+            updated[key] = np.asarray(r_new, dtype=np.float64)
+            diagnostics["updated_edges"].append(update_record(
+                key, edge, edge_map, r_before, updated[key], "updated"))
+            trace = None
+        elif (
+                _edge_initial_model_state(edge) is not None
+                or edge_has_dynamic_params(edge)):
+            diagnostics["skipped_edges"].append(update_record(
+                key,
+                edge,
+                edge_map,
+                r_before,
+                None,
+                "skipped",
+                reason=skip_reason(edge, train_pseudo, horizon),
+            ))
+    return updated, diagnostics
 
 
 def sample(
@@ -1312,6 +1498,83 @@ def rosenblatt(
     )
 
 
+def pseudo_observations(
+        module,
+        pair_copulas,
+        dimension,
+        trees,
+        edge_map,
+        matrix,
+        observations,
+        *,
+        dynamic_strategy_kwargs=None,
+        n_threads=1):
+    """Return every pseudo-observation node from one native density trace."""
+    dimension = int(dimension)
+    active_keys = density_active_keys(trees, edge_map)
+    if not native_edges_supported(pair_copulas, active_keys):
+        raise NativeUnsupported(
+            "native R-vine pseudo-observations require exact built-in edges")
+    prepared = _rvine_observations(
+        observations, dimension, "pseudo-observation")
+    n_rows = len(prepared)
+    residual_keys = rosenblatt_residual_node_keys(matrix)
+    plan, node_keys = compile_density_plan(
+        module,
+        dimension,
+        trees,
+        edge_map,
+        active_keys,
+        residual_node_keys=residual_keys,
+        return_node_keys=True,
+    )
+    layout = static_rosenblatt_parameter_layout(pair_copulas, active_keys)
+    if layout is None:
+        edges, parameters = compile_dynamic_rosenblatt_edges(
+            module,
+            pair_copulas,
+            active_keys,
+            n_rows,
+            strategy_kwargs=dynamic_strategy_kwargs,
+        )
+        result = module.dynamic_rvine_density_trace(
+            plan,
+            edges,
+            parameters.scalar_parameters,
+            parameters.row_parameters,
+            prepared,
+            int(n_threads),
+        )
+    else:
+        parameter_paths, parameter_sources = layout
+        edges, parameters = compile_edge_specs(
+            module,
+            pair_copulas,
+            active_keys,
+            parameter_paths,
+            n_rows,
+            parameter_sources=parameter_sources,
+        )
+        result = module.rvine_density_trace(
+            plan,
+            edges,
+            parameters.scalar_parameters,
+            parameters.row_parameters,
+            prepared,
+            int(n_threads),
+        )
+    raise_for_status(result, "R-vine pseudo-observation trace")
+    node_count = int(result["node_count"])
+    values = np.asarray(result["node_values"], dtype=np.float64)
+    if node_count != len(node_keys) or values.shape != (n_rows, node_count):
+        raise NativeError(
+            "C++ R-vine pseudo-observation trace returned invalid dimensions")
+    return {
+        key: np.ascontiguousarray(values[:, column])
+        for column, key in enumerate(node_keys)
+    }
+
+
 def _mcmc_memory_budget(memory_budget_bytes):
     """Validate and normalize the internal native MCMC memory budget."""
     if (
@@ -1346,48 +1609,6 @@ def _mcmc_draw_chunk_capacity(
             f"exceeding memory_budget_bytes={budget}"
         )
     return min(int(chunk_steps), int(capacity))
-
-
-def _mcmc_full_reserved_bytes(plan, n, *, has_proposals=True):
-    """Return process-wide full-recompute bytes excluding draw buffers."""
-    item_size = np.dtype(np.float64).itemsize
-    rows = int(n)
-    if rows == 0:
-        return 0
-    dimension = int(plan.dimension)
-    state_and_log_pdf = rows * (dimension + 1) * item_size
-    # The adapter's current state remains live while native code owns its
-    # result.  The binding then copies both result vectors into NumPy arrays,
-    # so three state/log-density buffers coexist at the process peak.
-    binding_peak = 3 * state_and_log_pdf
-    if not has_proposals:
-        return binding_peak
-    node_workspace = int(plan.node_count) * item_size
-    return binding_peak + node_workspace
-
-
-def _mcmc_incremental_reserved_bytes(plan, n, *, has_proposals=True):
-    """Return process-wide incremental bytes excluding draw buffers."""
-    item_size = np.dtype(np.float64).itemsize
-    rows = int(n)
-    if rows == 0:
-        return 0
-    dimension = int(plan.dimension)
-    state_and_log_pdf = rows * (dimension + 1) * item_size
-    binding_peak = 3 * state_and_log_pdf
-    if not has_proposals:
-        return binding_peak
-    operation_count = len(plan.edge_indices)
-    per_row_workspace = (
-        2 * (int(plan.node_count) + operation_count) * item_size
-        + int(plan.node_count) * np.dtype(np.int32).itemsize)
-    # During execution the adapter and native result consume two state-sized
-    # buffers plus one row chunk.  During result conversion three state-sized
-    # buffers coexist.  Reserve for the larger of those two phases.
-    return max(
-        2 * state_and_log_pdf + per_row_workspace,
-        binding_peak,
-    )
 
 
 def _mcmc_adapter_state_bytes(plan, n):
@@ -1428,57 +1649,28 @@ def _validated_mcmc_replay_draws(value, shape, validation_chunk_steps):
 def _select_mcmc_density_algorithm(
         plan, free_vars, n, memory_budget_bytes, requested, *,
         has_proposals=True):
-    """Select incremental execution before state/draw allocation or RNG use."""
-    if requested not in {"auto", "full_recompute", "incremental"}:
-        raise ValueError(
-            "R-vine MCMC density_algorithm must be 'auto', "
-            "'full_recompute', or 'incremental'")
-    operation_count = len(plan.edge_indices)
-    closure_counts = [
-        int(plan.affected_operation_offsets[variable + 1])
-        - int(plan.affected_operation_offsets[variable])
-        for variable in free_vars
-    ]
-    structurally_profitable = (
-        int(n) != 1
-        and operation_count > 0
-        and all(100 * count <= 85 * operation_count
-                for count in closure_counts)
+    """Delegate algorithm and fixed-workspace policy to C++."""
+    result = _extension.load().rvine_mcmc_policy(
+        plan,
+        [int(variable) for variable in free_vars],
+        int(n),
+        bool(has_proposals),
+        requested,
+        int(memory_budget_bytes),
     )
-    one_draw_step = (
-        2 * int(n) * np.dtype(np.float64).itemsize
-        if has_proposals else 0
-    )
-    full_reserved = _mcmc_full_reserved_bytes(
-        plan, n, has_proposals=has_proposals)
-    incremental_reserved = _mcmc_incremental_reserved_bytes(
-        plan, n, has_proposals=has_proposals)
-    full_fits = full_reserved + one_draw_step <= int(memory_budget_bytes)
-    incremental_fits = (
-        incremental_reserved + one_draw_step <= int(memory_budget_bytes))
-    if requested == "full_recompute":
-        if not full_fits:
-            raise MemoryError(
-                "R-vine full-recompute MCMC fixed workspace plus one draw "
-                f"step requires {full_reserved + one_draw_step} bytes, "
-                f"exceeding memory_budget_bytes={int(memory_budget_bytes)}")
-        return requested, full_reserved
-    if requested == "incremental":
-        if not incremental_fits:
-            raise MemoryError(
-                "R-vine incremental MCMC fixed workspace plus one draw step "
-                f"requires {incremental_reserved + one_draw_step} bytes, "
-                "exceeding "
-                f"memory_budget_bytes={int(memory_budget_bytes)}")
-        return requested, incremental_reserved
-    if structurally_profitable and incremental_fits:
-        return "incremental", incremental_reserved
-    if full_fits:
-        return "full_recompute", full_reserved
-    raise MemoryError(
-        "R-vine MCMC full-recompute fallback plus one draw step requires "
-        f"{full_reserved + one_draw_step} bytes, exceeding "
-        f"memory_budget_bytes={int(memory_budget_bytes)}")
+    if int(result["status"]) == 2:
+        raise MemoryError(
+            "R-vine MCMC workspace exceeds memory_budget_bytes="
+            f"{int(memory_budget_bytes)}")
+    raise_for_status(result, "R-vine MCMC execution policy")
+    return str(result["density_algorithm"]), int(result["reserved_bytes"])
+
+
+def mcmc_default_steps(free_count):
+    """Return C++-owned MCMC sampling and burn-in defaults."""
+    result = _extension.load().rvine_mcmc_default_steps(int(free_count))
+    raise_for_status(result, "R-vine MCMC default-step policy")
+    return int(result["n_steps"]), int(result["burnin_steps"])
 
 
 def _execute_log_pdf_rows(
@@ -1672,14 +1864,10 @@ def mcmc(
             out[:, variable] = given[variable]
         return out, _empty_mcmc_diagnostics()
 
-    n_steps = (
-        max(80, 30 * len(free_vars))
-        if n_steps is None else int(n_steps)
-    )
+    default_n_steps, default_burnin_steps = mcmc_default_steps(len(free_vars))
+    n_steps = default_n_steps if n_steps is None else int(n_steps)
     burnin_steps = (
-        max(40, 10 * len(free_vars))
-        if burnin_steps is None else int(burnin_steps)
-    )
+        default_burnin_steps if burnin_steps is None else int(burnin_steps))
     total_steps = burnin_steps + n_steps
     step_offset = int(step_offset)
     if step_offset < 0:

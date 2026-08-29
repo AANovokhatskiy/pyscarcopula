@@ -135,7 +135,7 @@ def _is_independent_copula(copula):
     return isinstance(copula, IndependentCopula)
 
 
-def _normalize_horizon(horizon):
+def normalize_predict_horizon(horizon):
     if horizon in (1, '1'):
         return 'next'
     if horizon in (0, '0'):
@@ -172,7 +172,7 @@ def predict_r_path(copula, result, n, u_train_pair=None, horizon='next',
     """Generate an edge parameter vector for predictive vine sampling."""
     if rng is None:
         rng = np.random.default_rng()
-    horizon = _normalize_horizon(horizon)
+    horizon = normalize_predict_horizon(horizon)
 
     if result is None:
         if param is None:

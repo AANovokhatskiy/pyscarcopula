@@ -68,6 +68,22 @@ py::dict gas_path_result_to_dict(const scar::GasPathResult& result) {
     return output;
 }
 
+py::dict gas_ou_initialization_to_dict(
+    const scar::GasOuInitializationResult& result) {
+    py::dict output;
+    output["values"] =
+        py::make_tuple(result.kappa, result.mu, result.nu);
+    output["best_log_likelihood"] = result.best_log_likelihood;
+    output["selected"] = py::make_tuple(
+        result.selected_omega,
+        result.selected_gamma,
+        result.selected_beta);
+    output["grid_candidate_found"] = result.grid_candidate_found;
+    output["status"] = static_cast<int>(result.status);
+    output["failure_index"] = result.failure.index;
+    return output;
+}
+
 scar::ObservationView set_equicorr_prepared(
     scar::CopulaSpec& copula,
     py::array_t<double, py::array::c_style | py::array::forcecast> sum_z,
@@ -453,6 +469,22 @@ void bind_gas(py::module_& m) {
             py::arg("copula"),
             py::arg("u"),
             py::arg("config"));
+    m.def("gas_ou_initial_point",
+        [](double static_mu, const scar::CopulaSpec& copula,
+           py::array_t<double, py::array::c_style | py::array::forcecast> u,
+           const scar::GasConfig& config) {
+            const scar::ObservationView observations =
+                observation_view_from_array(
+                    copula.model_descriptor().expected_dimension(), u);
+            scar::GasOuInitializationResult result;
+            {
+                py::gil_scoped_release release;
+                result = scar::GasEvaluator{}.ou_initial_point(
+                    static_mu, copula, observations, config);
+            }
+            return gas_ou_initialization_to_dict(result);
+        }, py::arg("static_mu"), py::arg("copula"),
+        py::arg("u"), py::arg("config"));
 }
 
 }  // namespace pyscarcopula::bindings

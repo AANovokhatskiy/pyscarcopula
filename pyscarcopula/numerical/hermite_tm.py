@@ -4,9 +4,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-import numpy as np
-from scipy.special import roots_hermitenorm
-
+from pyscarcopula._native import scar_ou
 from pyscarcopula.numerical._arrays import validate_positive_int
 from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
 
@@ -21,22 +19,12 @@ def standard_normal_hermite_rule(quad_order: int, basis_order: int):
     basis_order = _validate_positive_int(basis_order, "basis_order")
     if quad_order < basis_order:
         raise ValueError("quad_order must be >= basis_order")
-    z, raw_w = roots_hermitenorm(quad_order)
-    weights = raw_w / np.sqrt(2.0 * np.pi)
-    basis = np.empty((quad_order, basis_order), dtype=np.float64)
-    basis[:, 0] = 1.0
-    if basis_order > 1:
-        basis[:, 1] = z
-    for n in range(1, basis_order - 1):
-        basis[:, n + 1] = (
-            z * basis[:, n] - np.sqrt(float(n)) * basis[:, n - 1]
-        ) / np.sqrt(float(n + 1))
-    return z, weights, basis
+    return scar_ou.hermite_rule(quad_order, basis_order)
 
 
 def default_quad_order(basis_order: int) -> int:
     basis_order = _validate_positive_int(basis_order, "basis_order")
-    return max(2 * basis_order + 16, 48)
+    return scar_ou.default_quad_order(basis_order)
 
 
 def default_block_size(quad_order: int, max_elements: int = 1_000_000) -> int:

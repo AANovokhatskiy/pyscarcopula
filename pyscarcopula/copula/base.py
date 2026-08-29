@@ -14,6 +14,7 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from pyscarcopula._types import FitResult, PredictConfig
+from pyscarcopula._native import model_policy, statistics
 from pyscarcopula._utils import pobs, broadcast as _broadcast  # noqa: F401
 
 
@@ -258,7 +259,7 @@ class BivariateCopula(CopulaBase):
 
     _scar_optimizer_config = 'bivariate_scar_optimizer'
     _scar_log_optimizer_config = 'bivariate_log_scar_optimizer'
-    _scar_stationary_scale_bounds = (0.001, 10_000.0)
+    _scar_stationary_scale_bounds = model_policy.stationary_scale_bounds()
     _scar_static_df_mle_initialization = False
     _supports_scar_mixture_h = True
     def __init__(self, rotate: int = 0):
@@ -266,7 +267,6 @@ class BivariateCopula(CopulaBase):
             raise ValueError(f"rotate must be 0/90/180/270, got {rotate}")
         super().__init__(name="BivariateCopula")
         self._rotate = rotate
-        self._bounds = [(-np.inf, np.inf)]
 
     @property
     def dimension(self):
@@ -377,30 +377,21 @@ class BivariateCopula(CopulaBase):
                 f"got {parameter.size}")
 
         family = self._native_pair_family
-        auxiliary = np.empty((0, 0), dtype=np.float64)
         if family == "Gaussian":
             draws = rng.standard_normal((n, 2))
-        elif family == "Clayton":
-            draws = rng.uniform(0, 1, size=(n, 2))
-            auxiliary = rng.gamma(
-                1.0 / parameter, scale=parameter).reshape(n, 1)
-        elif family == "Gumbel":
-            draws = rng.uniform(0, 1, size=(n, 2))
-            angle = rng.uniform(-np.pi / 2.0, np.pi / 2.0, size=n)
-            uniform = rng.uniform(0.0, 1.0, size=n)
-            auxiliary = np.column_stack((angle, uniform))
-        elif family in {"Frank", "Joe"}:
-            first = rng.uniform(0.0, 1.0, size=n)
-            second = rng.uniform(0.0, 1.0, size=n)
-            draws = np.column_stack((first, second))
-        elif family == "Independent":
+            return self._native_adapter().sample_from_rng_draws(
+                self,
+                draws,
+                np.empty((0, 0), dtype=np.float64),
+                parameter,
+            )
+        if family in {"Clayton", "Gumbel", "Frank", "Joe", "Independent"}:
             draws = rng.uniform(0, 1, size=(n, 2))
         else:
             raise ValueError(
                 f"unsupported native pair sampling family: {family}")
-
-        return self._native_adapter().sample_from_rng_draws(
-            self, draws, auxiliary, parameter)
+        return self._native_adapter().sample_from_uniforms(
+            self, draws, parameter)
 
     # ── h-functions ───────────────────────────────────────────────
     def h_unrotated(self, u, v, r):
@@ -429,7 +420,7 @@ class BivariateCopula(CopulaBase):
             from pyscarcopula._native import static as static_likelihood
             return static_likelihood.prepare(self, u).log_likelihood(
                 float(r_arr[0]))
-        return np.sum(self.log_pdf(u[:, 0], u[:, 1], r))
+        return statistics.sum_values(self.log_pdf(u[:, 0], u[:, 1], r))
 
     # ── evaluate pdf on a grid of latent states (for transfer matrix) ──
     def pdf_on_grid(self, u_row, z_grid):
@@ -483,86 +474,3 @@ class BivariateCopula(CopulaBase):
     # ══════════════════════════════════════════════════════════════
     # Fit — delegates to api.fit() / strategy
     # ══════════════════════════════════════════════════════════════
-
-    def predict(self, n, u=None, rng=None, given=None, horizon='next',
-                predictive_r_mode=None, predict_config=None):
-        """Sample n observations for next-step prediction.
-
-        Delegates to api.predict() which dispatches to the correct
-        strategy (MLE/SCAR-TM/GAS). For bivariate copulas,
-        ``given`` may fix coordinate 0 or 1 in pseudo-observation space;
-        the remaining coordinate is sampled conditionally through the
-        fitted copula h-function.
-
-        Parameters
-        ----------
-        n : int
-            Number of predictive samples.
-        u : (T, 2) array-like or None
-            Prediction history. If ``None``, use data from the last
-            :meth:`fit` call.
-        rng : numpy.random.Generator or None
-            Random number generator.
-        given : dict[int, float] or None
-            Optional fixed pseudo-observation coordinate. Keys must be 0 or 1,
-            values must lie in ``(0, 1)``. If both coordinates are fixed, the
-            returned samples repeat those values.
-        horizon : {'current', 'next'}
-            Predictive state timing for GAS and SCAR-TM.
-        predictive_r_mode : {'grid', 'histogram'} or None
-            SCAR-TM predictive parameter sampling mode.
-        predict_config : PredictConfig or None
-            Optional bundled prediction configuration.
-
-        Returns
-        -------
-        (n, 2) pseudo-observations
-        """
-        if self.fit_result is None:
-            raise ValueError("Fit first")
-
-        from pyscarcopula.api import predict as _api_predict
-
-        u_data = u if u is not None else getattr(self, '_last_u', None)
-        if u_data is None:
-            raise ValueError(
-                "No data for predict. "
-                "Either call fit() first or pass u= explicitly.")
-        return _api_predict(
-            self, u_data, self.fit_result, n,
-            rng=rng, given=given, horizon=horizon,
-            predictive_r_mode=predictive_r_mode,
-            predict_config=predict_config)
-
-    def sample(self, n, u=None, rng=None):
-        """Generate n observations reproducing the fitted model.
-
-        Delegates to api.sample() which dispatches to the correct
-        strategy. fit(copula, sample(...)) should recover
-        similar parameters.
-
-        Parameters
-        ----------
-        n : int
-            Number of observations.
-        u : (T, 2) array-like or None
-            Reference fitted history. If ``None``, use data from the last
-            :meth:`fit` call.
-        rng : numpy.random.Generator or None
-            Random number generator.
-
-        Returns
-        -------
-        (n, 2) pseudo-observations
-        """
-        if self.fit_result is None:
-            raise ValueError("Fit first")
-
-        from pyscarcopula.api import sample as _api_sample
-
-        u_data = u if u is not None else getattr(self, '_last_u', None)
-        if u_data is None:
-            raise ValueError(
-                "No data for sample. "
-                "Either call fit() first or pass u= explicitly.")
-        return _api_sample(self, u_data, self.fit_result, n, rng=rng)

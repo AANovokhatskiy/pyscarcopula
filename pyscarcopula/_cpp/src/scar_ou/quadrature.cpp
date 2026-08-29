@@ -1,5 +1,6 @@
 #include "scar/detail/safety.hpp"
 #include "scar/detail/scar_ou/quadrature.hpp"
+#include "scar/scar_ou/quadrature.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -923,3 +924,33 @@ void local_gh_predict_matvec(
 }
 
 }  // namespace scar_internal
+
+namespace scar {
+
+Result<OuHermiteRule> ou_hermite_rule(int quad_order, int basis_order) {
+    Result<OuHermiteRule> result;
+    if (basis_order <= 0 || quad_order < basis_order
+        || static_cast<std::size_t>(quad_order) > scar_internal::kMaxSpectralOrder) {
+        result.status = Status::InvalidParameter;
+        return result;
+    }
+    auto& rule = result.value;
+    if (!scar_internal::standard_normal_hermite_rule(
+            quad_order, basis_order, rule.nodes, rule.weights, rule.basis)) {
+        result.status = Status::NumericalFailure;
+        result.value = {};
+        return result;
+    }
+    rule.quad_order = quad_order;
+    rule.basis_order = basis_order;
+    return result;
+}
+
+Result<int> ou_default_quad_order(int basis_order) {
+    if (basis_order <= 0 || basis_order > (std::numeric_limits<int>::max() - 16) / 2) {
+        return {0, Status::InvalidParameter, {}};
+    }
+    return success(std::max(2 * basis_order + 16, 48));
+}
+
+}  // namespace scar

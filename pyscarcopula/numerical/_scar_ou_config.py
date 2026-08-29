@@ -6,6 +6,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from pyscarcopula._native import model_policy
+
 from pyscarcopula.numerical._transition_methods import (
     normalize_ou_transition_method,
 )
@@ -92,19 +94,21 @@ def validate_cpp_config(
 
     basis_order = _cpp_integer_option(
         "basis_order", config.basis_order, 1, CPP_MAX_SPECTRAL_ORDER)
-    if config.quad_order is None:
-        quad_order = max(2 * basis_order + 16, 48)
-        if quad_order > CPP_MAX_SPECTRAL_ORDER:
+    explicit_quad_order = (
+        None if config.quad_order is None else _cpp_integer_option(
+            "quad_order", config.quad_order, 1, CPP_MAX_SPECTRAL_ORDER))
+    try:
+        model_policy.ou_resolve_quad_order(
+            basis_order, explicit_quad_order)
+    except Exception as exc:
+        if explicit_quad_order is None:
             raise ValueError(
                 "quad_order derived from basis_order exceeds "
                 f"{CPP_MAX_SPECTRAL_ORDER}; set a smaller basis_order or an "
-                "explicit quad_order")
-    else:
-        quad_order = _cpp_integer_option(
-            "quad_order", config.quad_order, 1, CPP_MAX_SPECTRAL_ORDER)
-    if quad_order < basis_order:
+                "explicit quad_order") from exc
         raise ValueError(
-            f"quad_order must be at least basis_order ({basis_order})")
+            "quad_order must be at least basis_order and no greater than "
+            f"{CPP_MAX_SPECTRAL_ORDER}") from exc
 
     _cpp_finite_option("grid_range", config.grid_range, positive=True)
     _cpp_finite_option("small_kdt", config.small_kdt)
@@ -120,8 +124,7 @@ def select_auto_backend(
     method = normalize_ou_transition_method(cfg.transition_method)
     if method != "auto":
         return method
-    kappa_dt = float(kappa) if n_obs <= 1 else float(kappa) / (n_obs - 1)
-    return "local" if kappa_dt < cfg.small_kdt else "spectral"
+    return model_policy.ou_auto_backend(kappa, n_obs, cfg.small_kdt)
 
 
 __all__ = [

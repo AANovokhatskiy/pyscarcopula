@@ -1,6 +1,7 @@
 """Bivariate Gaussian copula."""
 
 import numpy as np
+from pyscarcopula._native import model_policy
 
 from pyscarcopula.copula.base import BivariateCopula
 
@@ -27,13 +28,13 @@ class BivariateGaussianCopula(BivariateCopula):
             raise ValueError("Rotation not supported for Gaussian copula")
         super().__init__(0)
         self._name = "Gaussian copula"
-        self._bounds = [(-0.9999, 0.9999)]
         if transform_type not in ("xtanh", "softplus"):
             raise ValueError(
                 "transform_type must be 'xtanh' or 'softplus', "
                 f"got '{transform_type}'"
             )
         self._transform_type = transform_type
+        self._bounds = model_policy.public_bounds(self)
 
     @property
     def rotatable(self):

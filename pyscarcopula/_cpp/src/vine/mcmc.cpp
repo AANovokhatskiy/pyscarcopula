@@ -14,6 +14,19 @@
 namespace scar::rvine {
 namespace {
 
+bool checked_uint64_mul(
+    std::uint64_t lhs,
+    std::uint64_t rhs,
+    std::uint64_t& result) noexcept {
+
+    if (lhs != 0
+        && rhs > std::numeric_limits<std::uint64_t>::max() / lhs) {
+        return false;
+    }
+    result = lhs * rhs;
+    return true;
+}
+
 void fail_mcmc(
     MCMCResult& out,
     int status,
@@ -92,6 +105,108 @@ bool incremental_is_structurally_profitable(
             return false;
         }
     }
+    return true;
+}
+
+Status select_mcmc_density_algorithm(
+    const RVineDensityPlan& plan,
+    const std::vector<int>& free_indices,
+    std::size_t rows,
+    MCMCDensityAlgorithm requested,
+    bool incremental_fits,
+    bool full_fits,
+    MCMCDensityAlgorithm& selected) noexcept {
+
+    if (requested < MCMCDensityAlgorithm::Auto
+        || requested > MCMCDensityAlgorithm::Incremental) {
+        return Status::InvalidParameter;
+    }
+    selected = requested;
+    if (requested == MCMCDensityAlgorithm::Auto) {
+        if (incremental_fits
+            && rows != 1U
+            && incremental_is_structurally_profitable(plan, free_indices)) {
+            selected = MCMCDensityAlgorithm::Incremental;
+        } else if (full_fits) {
+            selected = MCMCDensityAlgorithm::FullRecompute;
+        } else {
+            return Status::InvalidSize;
+        }
+    }
+    if ((selected == MCMCDensityAlgorithm::Incremental && !incremental_fits)
+        || (selected == MCMCDensityAlgorithm::FullRecompute && !full_fits)) {
+        return Status::InvalidSize;
+    }
+    return Status::Ok;
+}
+
+bool process_mcmc_memory_layout(
+    const RVineDensityPlan& plan,
+    std::size_t rows,
+    bool has_proposals,
+    std::uint64_t& full_reserved,
+    std::uint64_t& incremental_reserved,
+    std::uint64_t& one_draw_step_bytes) noexcept {
+
+    if (rows == 0) {
+        full_reserved = 0;
+        incremental_reserved = 0;
+        one_draw_step_bytes = 0;
+        return true;
+    }
+    std::size_t dimension_plus_log_pdf = 0;
+    std::size_t state_and_log_pdf_values = 0;
+    std::uint64_t state_and_log_pdf_bytes = 0;
+    std::uint64_t binding_peak = 0;
+    if (!scar_internal::checked_size_add(
+            static_cast<std::size_t>(plan.dimension), 1U,
+            dimension_plus_log_pdf)
+        || !scar_internal::checked_size_mul(
+            rows, dimension_plus_log_pdf, state_and_log_pdf_values)
+        || !scar_internal::checked_byte_count<double>(
+            state_and_log_pdf_values, state_and_log_pdf_bytes)
+        || !checked_uint64_mul(
+            state_and_log_pdf_bytes, 3U, binding_peak)) {
+        return false;
+    }
+    full_reserved = binding_peak;
+    incremental_reserved = binding_peak;
+    one_draw_step_bytes = 0;
+    if (!has_proposals) {
+        return true;
+    }
+    std::uint64_t node_bytes = 0;
+    std::uint64_t node_marker_bytes = 0;
+    std::size_t node_and_operation_count = 0;
+    std::uint64_t incremental_value_bytes = 0;
+    std::uint64_t per_row_workspace_bytes = 0;
+    std::uint64_t two_state_buffers = 0;
+    if (!scar_internal::checked_byte_count<double>(
+            static_cast<std::size_t>(plan.node_count), node_bytes)
+        || !scar_internal::checked_byte_count<int>(
+            static_cast<std::size_t>(plan.node_count), node_marker_bytes)
+        || !scar_internal::checked_size_add(
+            static_cast<std::size_t>(plan.node_count),
+            plan.edge_indices.size(), node_and_operation_count)
+        || !scar_internal::checked_byte_count<double>(
+            node_and_operation_count, incremental_value_bytes)
+        || !checked_uint64_mul(
+            incremental_value_bytes, 2U, incremental_value_bytes)
+        || !scar_internal::checked_uint64_add(
+            incremental_value_bytes, node_marker_bytes,
+            per_row_workspace_bytes)
+        || !checked_uint64_mul(
+            state_and_log_pdf_bytes, 2U, two_state_buffers)
+        || !scar_internal::checked_uint64_add(
+            two_state_buffers, per_row_workspace_bytes, two_state_buffers)
+        || !scar_internal::checked_uint64_add(
+            full_reserved, node_bytes, full_reserved)
+        || !scar_internal::checked_byte_count<double>(rows, one_draw_step_bytes)
+        || !checked_uint64_mul(
+            one_draw_step_bytes, 2U, one_draw_step_bytes)) {
+        return false;
+    }
+    incremental_reserved = std::max(binding_peak, two_state_buffers);
     return true;
 }
 
@@ -407,6 +522,72 @@ bool evaluate_incremental_proposal(
 
 }  // namespace
 
+MCMCPolicyResult mcmc_policy(
+    const RVineDensityPlan& plan,
+    const std::vector<int>& free_indices,
+    std::int64_t row_count,
+    bool has_proposals,
+    MCMCDensityAlgorithm requested,
+    std::uint64_t memory_budget_bytes) noexcept {
+
+    if (row_count < 0 || plan.dimension <= 0 || plan.node_count < 0
+        || free_indices.empty()
+        || !std::all_of(free_indices.begin(), free_indices.end(), [&](int value) {
+            return valid_index(value, plan.dimension);
+        })) {
+        return {{}, Status::InvalidParameter, {}};
+    }
+    const auto rows = static_cast<std::size_t>(row_count);
+    std::uint64_t full_reserved = 0;
+    std::uint64_t incremental_reserved = 0;
+    std::uint64_t one_draw_step_bytes = 0;
+    if (!process_mcmc_memory_layout(
+            plan, rows, has_proposals,
+            full_reserved, incremental_reserved, one_draw_step_bytes)) {
+        return {{}, Status::InvalidSize, {}};
+    }
+    std::uint64_t full_required = 0;
+    std::uint64_t incremental_required = 0;
+    if (!scar_internal::checked_uint64_add(
+            full_reserved, one_draw_step_bytes, full_required)
+        || !scar_internal::checked_uint64_add(
+            incremental_reserved, one_draw_step_bytes,
+            incremental_required)) {
+        return {{}, Status::InvalidSize, {}};
+    }
+    MCMCDensityAlgorithm selected = requested;
+    const Status selection_status = select_mcmc_density_algorithm(
+        plan,
+        free_indices,
+        rows,
+        requested,
+        incremental_required <= memory_budget_bytes,
+        full_required <= memory_budget_bytes,
+        selected);
+    if (!ok(selection_status)) {
+        return {{}, selection_status, {}};
+    }
+    MCMCPolicy policy;
+    policy.density_algorithm = selected;
+    policy.reserved_bytes = selected == MCMCDensityAlgorithm::Incremental
+        ? incremental_reserved : full_reserved;
+    policy.one_draw_step_bytes = one_draw_step_bytes;
+    policy.required_bytes = selected == MCMCDensityAlgorithm::Incremental
+        ? incremental_required : full_required;
+    return success(policy);
+}
+
+MCMCDefaultStepsResult mcmc_default_steps(int free_count) noexcept {
+    if (free_count <= 0
+        || free_count > std::numeric_limits<int>::max() / 30) {
+        return {{}, Status::InvalidParameter, {}};
+    }
+    MCMCDefaultSteps defaults;
+    defaults.n_steps = std::max<std::int64_t>(80, 30LL * free_count);
+    defaults.burnin_steps = std::max<std::int64_t>(40, 10LL * free_count);
+    return success(defaults);
+}
+
 MCMCResult mcmc_chunk(
     const RVineDensityPlan& plan,
     const std::vector<EdgeSpec>& edges,
@@ -560,31 +741,21 @@ MCMCResult mcmc_chunk(
         has_proposals,
         memory_budget_bytes,
         full_peak_bytes);
-    if (density_algorithm == MCMCDensityAlgorithm::Auto) {
-        if (
-            incremental_fits
-            && rows != 1U
-            && incremental_is_structurally_profitable(plan, free_indices)) {
-            density_algorithm = MCMCDensityAlgorithm::Incremental;
-        } else if (full_fits) {
-            density_algorithm = MCMCDensityAlgorithm::FullRecompute;
-        } else {
-            fail_mcmc(out, SCAR_INVALID_SIZE, -1, -1, -1);
-            return out;
-        }
-    }
-    if (density_algorithm == MCMCDensityAlgorithm::Incremental
-        && !incremental_fits) {
-        // Explicit incremental requests fail before result/workspace
-        // allocation.  Auto requests select the existing full driver.
-        fail_mcmc(out, SCAR_INVALID_SIZE, -1, -1, -1);
+    MCMCDensityAlgorithm selected_algorithm = density_algorithm;
+    const Status selection_status = select_mcmc_density_algorithm(
+        plan,
+        free_indices,
+        rows,
+        density_algorithm,
+        incremental_fits,
+        full_fits,
+        selected_algorithm);
+    if (!ok(selection_status)) {
+        fail_mcmc(
+            out, static_cast<int>(selection_status), -1, -1, -1);
         return out;
     }
-    if (density_algorithm == MCMCDensityAlgorithm::FullRecompute
-        && !full_fits) {
-        fail_mcmc(out, SCAR_INVALID_SIZE, -1, -1, -1);
-        return out;
-    }
+    density_algorithm = selected_algorithm;
     out.density_algorithm = density_algorithm;
     out.peak_workspace_bytes = density_algorithm
         == MCMCDensityAlgorithm::Incremental
@@ -830,6 +1001,7 @@ MCMCResult mcmc_chunk(
             state_rows,
             state_columns,
             proposal_log_pdf.data(),
+            nullptr,
             nullptr,
             true,
             node_workspace,

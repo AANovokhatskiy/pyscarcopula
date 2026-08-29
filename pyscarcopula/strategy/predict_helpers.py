@@ -131,3 +131,26 @@ def predict_from_strategy(strategy, copula, u, result, n, rng=None, **kwargs):
     d = copula_dimension(copula, u)
     return sample_predictive(
         copula, n, r, given=kwargs.get("given"), rng=rng, d=d)
+
+
+def strategy_predict(strategy, copula, u, result, n, rng=None, **kwargs):
+    """Default strategy method backed by the shared prediction workflow."""
+    return predict_from_strategy(
+        strategy, copula, u, result, n, rng=rng, **kwargs)
+
+
+def predictive_params_from_state(
+        strategy, copula, u, result, n, rng=None, **kwargs):
+    """Sample parameters from a strategy-created predictive state."""
+    state = strategy.predictive_state(copula, u, result, **kwargs)
+    return strategy.sample_params(
+        copula, state, n, rng=rng, **kwargs)
+
+
+def predictive_params_from_state_with_rng(
+        strategy, copula, u, result, n, rng=None, **kwargs):
+    """State sampler variant that always supplies a generator."""
+    if rng is None:
+        rng = np.random.default_rng()
+    return predictive_params_from_state(
+        strategy, copula, u, result, n, rng=rng, **kwargs)

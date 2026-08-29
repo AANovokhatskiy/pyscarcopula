@@ -1,5 +1,8 @@
 #pragma once
 
+#include "scar/core/result.hpp"
+#include "scar/core/span.hpp"
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -16,6 +19,30 @@ struct PpfCache {
     std::vector<double> nodes;
     std::vector<double> table;
 };
+
+struct PpfTableConfig {
+    double df_lo = 2.0 + 1e-6;
+    double df_hi = 1000.0;
+    int n_boundary = 80;
+    int n_lo = 120;
+    int n_hi = 160;
+    std::uint64_t max_table_bytes = 256 * 1024 * 1024;
+};
+
+struct PreparedPpfTable {
+    std::vector<double> observations;
+    std::vector<double> nodes;
+    std::vector<double> table;
+    bool has_table = false;
+};
+
+Result<PreparedPpfTable> prepare_ppf_table(
+    DoubleView observations, const PpfTableConfig& config);
+Result<std::vector<double>> evaluate_ppf_table(
+    DoubleView observations, DoubleView nodes, DoubleView table,
+    double df, std::size_t offset, std::size_t count);
+Result<std::vector<double>> interpolate_ppf_table(
+    DoubleView nodes, DoubleView table, double df, std::size_t width);
 
 PpfCache& ppf_cache(CopulaSpec& spec);
 const PpfCache& ppf_cache(const CopulaSpec& spec);
@@ -38,6 +65,13 @@ bool student_ppf_cache_available(
 PpfInterpolation make_ppf_interpolation(
     const std::vector<double>& nodes,
     double df);
+PpfInterpolation make_ppf_interpolation(scar::DoubleView nodes, double df);
+double interpolate_ppf_value(
+    scar::DoubleView table,
+    std::size_t node_stride,
+    const PpfInterpolation& interpolation,
+    std::size_t offset,
+    double* derivative);
 double interpolate_ppf_value(
     const scar::copula::multivariate::student::PpfCache& cache,
     int dimension,

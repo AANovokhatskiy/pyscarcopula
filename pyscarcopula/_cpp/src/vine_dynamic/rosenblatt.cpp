@@ -124,10 +124,12 @@ rvine::RosenblattResult dynamic_rvine_rosenblatt_transform(
     DoubleView observations,
     std::int64_t observation_rows,
     std::int64_t observation_columns,
-    int n_threads) {
+    int n_threads,
+    bool capture_node_values) {
     rvine::RosenblattResult out;
     out.n_rows = observation_rows;
     out.dimension = plan.dimension;
+    out.node_count = plan.node_count;
     out.n_threads_requested = n_threads;
     out.n_threads_used = 1;
 
@@ -487,6 +489,9 @@ rvine::RosenblattResult dynamic_rvine_rosenblatt_transform(
             out.residuals[row * dimension + column] =
                 rvine::clip_open_unit(value);
         }
+    }
+    if (capture_node_values) {
+        out.node_values = std::move(nodes);
     }
     return out;
 }

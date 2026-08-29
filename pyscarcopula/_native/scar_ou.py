@@ -90,6 +90,251 @@ def _params(module, kappa, mu, nu):
     return params
 
 
+def validate_trajectory_parameters(kappa, mu, nu, count):
+    """Reject invalid OU parameters before NumPy advances its generator."""
+    module = _extension.load()
+    status = module.ou_validate_trajectory_parameters(
+        _params(module, kappa, mu, nu), int(count))
+    _raise_native_status(status, "OU trajectory parameter validation")
+
+
+def sample_trajectory(kappa, mu, nu, standard_normals):
+    """Transform raw standard normals into a stationary exact OU trajectory."""
+    module = _extension.load()
+    result = module.ou_sample_trajectory(
+        _params(module, kappa, mu, nu),
+        np.ascontiguousarray(standard_normals, dtype=np.float64))
+    _raise_native_result(result, "trajectory sampling")
+    return np.asarray(result["values"], dtype=np.float64)
+
+
+def sample_stationary_fixed_draws(kappa, mu, nu, standard_normals):
+    """Transform raw standard normals into stationary OU states in C++."""
+    draws = np.ascontiguousarray(
+        np.asarray(standard_normals, dtype=np.float64).ravel())
+    module = _extension.load()
+    result = module.ou_sample_stationary(
+        _params(module, kappa, mu, nu), draws)
+    _raise_native_result(result, "stationary state sampling")
+    values = np.asarray(result["values"], dtype=np.float64)
+    if values.size != draws.size:
+        raise NativeError(
+            "C++ SCAR-OU stationary sampler violated its fixed-draw contract")
+    return values
+
+
+def sample_state_distribution_fixed_draws(
+        z_grid, probability, selection_uniforms, jitter_uniforms, *,
+        mode="histogram"):
+    """Sample a native OU grid/histogram state from raw uniform draws."""
+    normalized = "histogram" if mode is None else str(mode).lower()
+    if normalized not in {"grid", "histogram"}:
+        raise ValueError("predictive_r_mode must be 'grid' or 'histogram'")
+    selection = np.ascontiguousarray(
+        np.asarray(selection_uniforms, dtype=np.float64).ravel())
+    jitter = np.ascontiguousarray(
+        np.asarray(jitter_uniforms, dtype=np.float64).ravel())
+    result = _extension.load().ou_sample_state_distribution(
+        np.ascontiguousarray(np.asarray(z_grid, dtype=np.float64).ravel()),
+        np.ascontiguousarray(np.asarray(probability, dtype=np.float64).ravel()),
+        selection,
+        jitter,
+        normalized == "histogram",
+    )
+    _raise_native_result(result, "fixed-draw state distribution sampling")
+    selection_used = int(result["selection_draws_used"])
+    jitter_used = int(result["jitter_draws_used"])
+    if selection_used != selection.size or jitter_used != jitter.size:
+        raise NativeError(
+            "C++ SCAR-OU state sampler violated its fixed-draw contract")
+    return np.asarray(result["values"], dtype=np.float64), {
+        "selection_draws_used": selection_used,
+        "jitter_draws_used": jitter_used,
+    }
+
+
+def condition_state(copula, z_grid, probability, observation):
+    """Bayes-reweight one OU state distribution in the native backend."""
+    module = _extension.load()
+    spec = _descriptors.make_copula_ops_spec(module, copula)
+    obs = np.ascontiguousarray(observation, dtype=np.float64)
+    if obs.ndim == 1:
+        obs = obs.reshape(1, -1)
+    result = module.ou_condition_state(
+        spec,
+        np.ascontiguousarray(np.asarray(z_grid, dtype=np.float64).ravel()),
+        np.ascontiguousarray(np.asarray(probability, dtype=np.float64).ravel()),
+        obs,
+    )
+    _raise_native_result(result, "state conditioning")
+    return (
+        np.asarray(result["z_grid"], dtype=np.float64),
+        np.asarray(result["prob"], dtype=np.float64),
+    )
+
+
+def trajectory_from_innovations(x0, mu, rho, sigma_cond, innovations):
+    """Evaluate the native OU recurrence from a supplied initial state."""
+    result = _extension.load().ou_trajectory_from_innovations(
+        float(x0), float(mu), float(rho), float(sigma_cond),
+        np.ascontiguousarray(innovations, dtype=np.float64))
+    _raise_native_result(result, "trajectory recurrence")
+    return np.asarray(result["values"], dtype=np.float64)
+
+
+def _initialization_result(result, operation):
+    _raise_native_result(result, operation)
+    return np.asarray(result["values"], dtype=np.float64), dict(result)
+
+
+def _parameter_vector(result, operation):
+    _raise_native_result(result, operation)
+    return np.asarray(result["values"], dtype=np.float64)
+
+
+def _vector(values, name):
+    array = np.asarray(values, dtype=np.float64)
+    if array.ndim != 1:
+        raise ValueError(f"{name} must be one-dimensional")
+    return array
+
+
+def to_log_stationary(values):
+    """Map a physical OU block to native log-stationary coordinates."""
+    array = _vector(values, "physical OU parameters")
+    return _parameter_vector(
+        _extension.load().ou_to_log_stationary(array.tolist()),
+        "OU log-stationary forward transform")
+
+
+def from_log_stationary(values):
+    """Map native log-stationary coordinates to a physical OU block."""
+    array = _vector(values, "log-stationary OU parameters")
+    return _parameter_vector(
+        _extension.load().ou_from_log_stationary(array.tolist()),
+        "OU log-stationary inverse transform")
+
+
+def gradient_to_log_stationary(physical, gradient):
+    """Pull a physical OU gradient back to log-stationary coordinates."""
+    physical_array = _vector(physical, "physical OU parameters")
+    gradient_array = _vector(gradient, "OU gradient")
+    return _parameter_vector(
+        _extension.load().ou_gradient_to_log_stationary(
+            physical_array.tolist(), gradient_array.tolist()),
+        "OU log-stationary gradient pullback")
+
+
+def gradient_from_log_stationary(physical, gradient):
+    """Map a log-stationary gradient back to physical OU coordinates."""
+    physical_array = _vector(physical, "physical OU parameters")
+    gradient_array = _vector(gradient, "OU optimizer gradient")
+    return _parameter_vector(
+        _extension.load().ou_gradient_from_log_stationary(
+            physical_array.tolist(), gradient_array.tolist()),
+        "OU physical gradient conversion")
+
+
+def project_optimizer_block(values, lower, upper):
+    """Project the three-coordinate OU optimizer block in native code."""
+    array = _vector(values, "OU optimizer values")
+    lower_array = _vector(lower, "OU optimizer lower bounds")
+    upper_array = _vector(upper, "OU optimizer upper bounds")
+    return _parameter_vector(
+        _extension.load().ou_project_optimizer_block(
+            array.tolist(), lower_array.tolist(), upper_array.tolist()),
+        "OU optimizer projection")
+
+
+def _scaled(operation, values, scale, label):
+    value_array = _vector(values, label)
+    scale_array = _vector(scale, "optimizer scale")
+    return _parameter_vector(
+        operation(value_array.tolist(), scale_array.tolist()), label)
+
+
+def scaled_to_physical(values, scale):
+    return _scaled(
+        _extension.load().optimizer_scaled_to_physical,
+        values, scale, "scaled-to-physical parameter conversion")
+
+
+def physical_to_scaled(values, scale):
+    return _scaled(
+        _extension.load().physical_to_optimizer_scaled,
+        values, scale, "physical-to-scaled parameter conversion")
+
+
+def gradient_to_scaled(gradient, scale):
+    return _scaled(
+        _extension.load().gradient_to_optimizer_scaled,
+        gradient, scale, "scaled-gradient pullback")
+
+
+def gradient_from_scaled(gradient, scale):
+    return _scaled(
+        _extension.load().gradient_from_optimizer_scaled,
+        gradient, scale, "physical-gradient conversion")
+
+
+def initial_kappa(count, rho_target=0.96, kappa_min=0.01, kappa_max=100.0):
+    result = _extension.load().ou_initial_kappa(
+        int(count), float(rho_target), float(kappa_min), float(kappa_max))
+    _raise_native_result(result, "initial kappa selection")
+    return float(result["value"])
+
+
+def default_initial_point(mu):
+    return _initialization_result(
+        _extension.load().ou_default_initial_point(float(mu)),
+        "default initial point")
+
+
+def heuristic_initial_point(
+        count, mu, rho_target=0.95, sigma_fraction=0.3):
+    return _initialization_result(
+        _extension.load().ou_heuristic_initial_point(
+            int(count), float(mu), float(rho_target), float(sigma_fraction)),
+        "heuristic initial point")
+
+
+def stochastic_student_initial_point(
+        count, theta_mle, mu, static_log_likelihood,
+        rho_target=0.96, nu=0.1):
+    return _initialization_result(
+        _extension.load().ou_stochastic_student_initial_point(
+            int(count), float(theta_mle), float(mu),
+            float(static_log_likelihood), float(rho_target), float(nu)),
+        "stochastic Student initial point")
+
+
+def strength_aware_initial_point(
+        observations, theta_mle, mu, static_log_likelihood, **options):
+    module = _extension.load()
+    config = module.OuInitializationConfig()
+    for name, value in options.items():
+        setattr(config, name, float(value))
+    return _initialization_result(
+        module.ou_strength_aware_initial_point(
+            np.ascontiguousarray(observations, dtype=np.float64),
+            float(theta_mle), float(mu), float(static_log_likelihood), config),
+        "strength-aware initial point")
+
+
+def hermite_rule(quad_order, basis_order):
+    """Return the same native Hermite rule used by the spectral evaluator."""
+    result = _extension.load().ou_hermite_rule(int(quad_order), int(basis_order))
+    _raise_native_result(result, "Hermite rule construction")
+    return tuple(np.asarray(result[key], dtype=np.float64)
+                 for key in ("nodes", "weights", "basis"))
+
+
+def default_quad_order(basis_order):
+    result = _extension.load().ou_default_quad_order(int(basis_order))
+    _raise_native_result(result, "default quadrature-order selection")
+    return int(result["order"])
+
+
 def _config(module, cfg: AutoTMConfig):
     out = module.OuNumericalConfig()
     out.K = int(cfg.K)
@@ -235,7 +480,8 @@ class PreparedScarOuObjective:
             result, "prepared loglik", backend=info["backend"])
         value = -float(result["log_likelihood"])
         if not np.isfinite(value):
-            return 1e10, info
+            raise FloatingPointError(
+                "C++ prepared SCAR-OU objective returned a non-finite value")
         return value, info
 
     def neg_loglik_with_grad_info(self, kappa, mu, nu):
@@ -339,9 +585,9 @@ def _call_loglik(evaluator, method, params, spec, u, config):
 
 
 def _kappa_dt(kappa: float, n_obs: int) -> float:
-    if n_obs <= 1:
-        return float(kappa)
-    return float(kappa) / float(n_obs - 1)
+    from pyscarcopula._native import model_policy
+
+    return model_policy.ou_kappa_dt(kappa, n_obs)
 
 
 def _result_info(result, method: str, kappa, n_obs: int,
@@ -418,7 +664,8 @@ def neg_loglik_info(kappa, mu, nu, u, copula,
     """Evaluate negative log-likelihood and return C++ backend diagnostics."""
     value, info = loglik(kappa, mu, nu, u, copula, config)
     if not np.isfinite(value):
-        return 1e10, info
+        raise FloatingPointError(
+            "C++ OU loglik returned a non-finite value with status=ok")
     return -float(value), info
 
 

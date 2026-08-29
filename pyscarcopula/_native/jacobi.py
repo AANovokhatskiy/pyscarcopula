@@ -6,9 +6,11 @@ import math
 
 import numpy as np
 
+from pyscarcopula._native import model_policy
 from pyscarcopula._native._extension import load
 from pyscarcopula._native.errors import raise_for_status
 from pyscarcopula.numerical._arrays import (
+    validate_integer,
     validate_float64_allocation,
     validate_positive_int,
 )
@@ -51,16 +53,6 @@ def _validate_order(value, name):
         raise ValueError(
             f"{name} must be <= {MAX_JACOBI_ORDER}; larger Jacobi grids "
             "are disabled to prevent unsafe quadratic allocations")
-    return value
-
-
-def _validate_nonnegative_int(value, name):
-    if isinstance(value, (bool, np.bool_)) or not isinstance(
-            value, (int, np.integer)):
-        raise TypeError(f"{name} must be a non-negative integer")
-    value = int(value)
-    if value < 0:
-        raise ValueError(f"{name} must be non-negative")
     return value
 
 
@@ -132,6 +124,18 @@ def physical_to_raw(values, tau_eps):
     return np.asarray(result["values"], dtype=np.float64)
 
 
+def raw_gradient(values, physical_gradient):
+    values = np.asarray(values, dtype=np.float64)
+    gradient = np.asarray(physical_gradient, dtype=np.float64)
+    if values.shape != (3,) or gradient.shape != (3,):
+        raise ValueError(
+            "Jacobi parameters and gradient must both have shape (3,)")
+    result = load().jacobi_gradient_to_raw(
+        _params(*values), gradient.tolist())
+    _raise(result, "physical-to-raw gradient pullback")
+    return np.asarray(result["values"], dtype=np.float64)
+
+
 def raw_bounds(kappa_bounds, xi_bounds, tau_eps):
     module = load()
     bounds = module.JacobiParameterBounds()
@@ -146,11 +150,41 @@ def raw_bounds(kappa_bounds, xi_bounds, tau_eps):
     )
 
 
+def initial_point(tau, tau_eps):
+    result = load().jacobi_initial_point(
+        None if tau is None else float(tau), float(tau_eps))
+    _raise(result, "initial point")
+    return np.asarray(result["values"], dtype=np.float64)
+
+
+def default_parameter_bounds():
+    """Return the C++ Jacobi optimizer defaults in physical coordinates."""
+    bounds = load().JacobiParameterBounds()
+    return (
+        (float(bounds.kappa_lower), float(bounds.kappa_upper)),
+        (float(bounds.xi_lower), float(bounds.xi_upper)),
+    )
+
+
 def stationary_shape(kappa, m, xi):
     result = load().jacobi_stationary_shape(_params(kappa, m, xi))
     if int(result["status"]) != 0:
         return None
     return float(result["alpha"]), float(result["beta"])
+
+
+def sample_stationary_fixed_draws(kappa, m, xi, uniforms):
+    """Transform raw uniforms into stationary Jacobi states in C++."""
+    draws = np.ascontiguousarray(
+        np.asarray(uniforms, dtype=np.float64).ravel())
+    result = load().jacobi_sample_stationary(
+        _params(kappa, m, xi), draws)
+    _raise(result, "fixed-draw stationary Jacobi sampling")
+    values = np.asarray(result["values"], dtype=np.float64)
+    if values.size != draws.size:
+        raise RuntimeError(
+            "C++ stationary Jacobi sampler violated its fixed-draw contract")
+    return values
 
 
 def shape_is_supported(kappa, m, xi, stationary_shape_max):
@@ -159,6 +193,20 @@ def shape_is_supported(kappa, m, xi, stationary_shape_max):
         else float(stationary_shape_max))
     status = load().jacobi_validate_params(_params(kappa, m, xi), limit)
     return int(status) == 0
+
+
+def optimizer_domain_evaluation(
+        kappa, m, xi, stationary_shape_max, fail_value):
+    """Return the C++-owned optimizer rejection for a finite invalid domain."""
+    if shape_is_supported(kappa, m, xi, stationary_shape_max):
+        return None
+    parameters = [kappa, m, xi]
+    return model_policy.optimizer_failure_evaluation(
+        parameters,
+        parameters,
+        fail_value,
+        directional_gradient=False,
+    )
 
 
 def copula_supported(copula):
@@ -181,12 +229,11 @@ def tau_to_parameter(copula, tau, *, theta_cap=None):
     values = np.ascontiguousarray(
         np.atleast_1d(np.asarray(tau, dtype=np.float64)).ravel())
     result = np.asarray(
-        module.copula_tau_to_param(spec, values), dtype=np.float64)
+        module.copula_tau_to_param_capped(spec, values, theta_cap),
+        dtype=np.float64)
     if np.any(~np.isfinite(result)):
         raise FloatingPointError(
             "native tau_to_param produced non-finite sampling parameters")
-    if theta_cap is not None:
-        result = np.minimum(result, float(theta_cap))
     return result
 
 
@@ -308,18 +355,27 @@ def fixed_tau_rule(kappa, m, xi, quad_order, memory_budget_bytes):
 
 
 def fixed_shape_rule(alpha, beta, quad_order, memory_budget_bytes):
-    alpha = float(alpha)
-    beta = float(beta)
-    total = alpha + beta
-    if not np.isfinite(total) or alpha <= 0.0 or beta <= 0.0:
-        raise ValueError("alpha and beta must be finite and positive")
-    return fixed_tau_rule(
-        0.5 * total,
-        alpha / total,
-        1.0,
-        quad_order,
-        memory_budget_bytes,
+    result = load().jacobi_build_fixed_shape_rule(
+        float(alpha), float(beta), int(quad_order), int(memory_budget_bytes))
+    _raise(result, "fixed-shape stationary rule")
+    return (
+        np.asarray(result["tau"], dtype=np.float64),
+        np.asarray(result["weights"], dtype=np.float64),
+        np.asarray(result["weight_derivatives"], dtype=np.float64).T,
     )
+
+
+def resolve_basis_order(requested_basis_order, quad_order):
+    result = load().jacobi_resolve_basis_order(
+        int(requested_basis_order), int(quad_order))
+    _raise(result, "Jacobi basis-order policy")
+    return int(result["order"])
+
+
+def horizon_steps(n_obs):
+    result = load().jacobi_horizon_steps(int(n_obs))
+    _raise(result, "Jacobi horizon-step policy")
+    return int(result["steps"])
 
 
 def lamperti(tau, xi):
@@ -584,20 +640,31 @@ class PreparedScarJacobiEvaluator:
     def loglik(self, kappa, m, xi):
         result = self._native.loglik(_params(kappa, m, xi))
         _evaluator_raise(result, "prepared log-likelihood")
-        return float(result["log_likelihood"])
+        value = float(result["log_likelihood"])
+        if not np.isfinite(value):
+            raise FloatingPointError(
+                "C++ prepared Jacobi log-likelihood returned a non-finite value")
+        return value
 
     def neg_loglik(self, kappa, m, xi):
         result = self._native.loglik(_params(kappa, m, xi))
         _evaluator_raise(result, "prepared objective")
-        return float(result["objective"])
+        value = float(result["objective"])
+        if not np.isfinite(value):
+            raise FloatingPointError(
+                "C++ prepared Jacobi objective returned a non-finite value")
+        return value
 
     def neg_loglik_with_grad(self, kappa, m, xi):
         result = self._native.neg_loglik_with_grad(_params(kappa, m, xi))
         _evaluator_raise(result, "prepared objective gradient")
-        return (
-            float(result["objective"]),
-            np.asarray(result["gradient"], dtype=np.float64),
-        )
+        value = float(result["objective"])
+        gradient = np.asarray(result["gradient"], dtype=np.float64)
+        if not np.isfinite(value) or np.any(~np.isfinite(gradient)):
+            raise FloatingPointError(
+                "C++ prepared Jacobi objective gradient returned "
+                "non-finite values")
+        return value, gradient
 
     def predictive_mean(self, kappa, m, xi):
         result = self._native.predictive_mean(_params(kappa, m, xi))
@@ -803,7 +870,7 @@ def _validate_sampling_workspace(
         _sampling_memory_error(exc)
 
 
-def _legacy_grid_sampling_diagnostics(
+def legacy_grid_sampling_diagnostics(
         native, *, sampling_method, requested_method, storage, correction, n):
     """Preserve frozen public diagnostics while native C++ owns execution."""
     method_used = native["transition_method"]
@@ -909,7 +976,7 @@ def sample_grid_trajectory(
         stationarity_correction="none", memory_budget_bytes=None,
         return_diagnostics=False):
     """Run the public fixed-draw TM-grid protocol through the native facade."""
-    n = _validate_nonnegative_int(n, "n")
+    n = validate_integer(n, "n")
     stationarity_correction = normalize_jacobi_stationarity_correction(
         stationarity_correction)
     transition_storage = normalize_jacobi_transition_storage(
@@ -1012,7 +1079,7 @@ def sample_grid_trajectory(
         memory_budget_bytes=budget,
     )
     if return_diagnostics:
-        diagnostics = _legacy_grid_sampling_diagnostics(
+        diagnostics = legacy_grid_sampling_diagnostics(
             diagnostics,
             sampling_method=sampling_method,
             requested_method=requested_method,
@@ -1056,7 +1123,7 @@ def sample_lamperti_trajectory(
         chunk_observations=DEFAULT_LAMPERTI_CHUNK_OBSERVATIONS,
         memory_budget_bytes=None, return_diagnostics=False):
     """Run chunked Lamperti--Euler sampling through fixed-draw native calls."""
-    n = _validate_nonnegative_int(n, "n")
+    n = validate_integer(n, "n")
     substeps = validate_positive_int(substeps, "lamperti_substeps")
     boundary = normalize_lamperti_boundary(boundary)
     eps = validate_lamperti_eps(eps)
@@ -1104,7 +1171,8 @@ def sample_lamperti_trajectory(
         rng = np.random.default_rng()
 
     path = np.empty(n, dtype=np.float64)
-    path[0] = float(rng.beta(alpha, beta))
+    path[0] = sample_stationary_fixed_draws(
+        kappa, m, xi, rng.uniform(0.0, 1.0, size=1))[0]
     if n == 1:
         return (path, diagnostics) if return_diagnostics else path
 
@@ -1334,6 +1402,15 @@ def sparse_left_multiply(indices, probabilities, counts, values):
     return np.asarray(result["values"], dtype=np.float64)
 
 
+def validate_sparse_transition(indices, probabilities, counts):
+    """Validate sparse row invariants without materializing a dense matrix."""
+    load().jacobi_validate_sparse_transition(
+        np.asarray(indices, dtype=np.int64),
+        np.asarray(probabilities, dtype=np.float64),
+        np.asarray(counts, dtype=np.int64),
+    )
+
+
 def sparse_to_dense(indices, probabilities, counts):
     """Materialize sparse transition rows through the native boundary."""
     result = load().jacobi_sparse_to_dense(
@@ -1364,12 +1441,13 @@ def select_sparse_order(
         kappa, m, xi, *, n_obs, quad_orders, basis_order, gh_order,
         max_full_horizon_tv, max_relative_variance_error,
         max_conditional_mean_rmse, max_lag_one_correlation_error,
-        memory_budget_bytes=1024**3, require_pass=False):
+        memory_budget_bytes=DEFAULT_JACOBI_MEMORY_BUDGET_BYTES,
+        require_pass=False):
     module = load()
     config = _transition_config(
         n_obs=n_obs,
         quad_order=quad_orders[0],
-        basis_order=min(basis_order, quad_orders[0]),
+        basis_order=basis_order,
         gh_order=gh_order,
         method="local",
         storage="sparse",
@@ -1444,6 +1522,7 @@ __all__ = [
     "fixed_shape_rule",
     "gauss_hermite_rule",
     "inverse_lamperti",
+    "initial_point",
     "jacobi_rule",
     "lamperti",
     "lamperti_drift",
@@ -1452,6 +1531,7 @@ __all__ = [
     "normalize_sampling_method",
     "dense_transition",
     "default_quad_order",
+    "default_parameter_bounds",
     "parameter_to_tau",
     "resolve_dt",
     "select_sparse_order",
@@ -1461,6 +1541,7 @@ __all__ = [
     "sparse_transition",
     "transition_powers",
     "physical_to_raw",
+    "raw_gradient",
     "raw_bounds",
     "raw_to_physical",
     "sample_grid_trajectory_fixed_draws",
@@ -1468,6 +1549,7 @@ __all__ = [
     "sample_lamperti_chunk_fixed_draws",
     "sample_lamperti_trajectory",
     "sample_prepared_sparse_trajectory_fixed_draws",
+    "sample_stationary_fixed_draws",
     "sample_state_distribution_fixed_draws",
     "state_histogram_cells",
     "shape_is_supported",
@@ -1475,4 +1557,5 @@ __all__ = [
     "tau_to_parameter",
     "validate_copula_mapping",
     "validate_lamperti_eps",
+    "validate_sparse_transition",
 ]

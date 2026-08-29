@@ -5,6 +5,8 @@
 namespace pyscarcopula::bindings {
 
 void bind_common(pybind11::module_& module);
+void bind_validation(pybind11::module_& module);
+void bind_statistics(pybind11::module_& module);
 void bind_parallel(pybind11::module_& module);
 void bind_copula(pybind11::module_& module);
 void bind_capability(pybind11::module_& module);

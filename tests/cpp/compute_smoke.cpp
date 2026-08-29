@@ -134,6 +134,18 @@ int main() {
         return 16;
     }
 
+    const auto gaussian_joint = scar::make_typed_model_descriptor(
+        scar::NativeModelId::Gaussian, 3, scar::CorrelationKind::Factor, 0,
+        scar::FactorEstimationKind::Joint);
+    const auto gaussian_joint_support = scar::query_capability(
+        gaussian_joint, scar::NativeOperation::LikelihoodObjectiveGradient,
+        scar::DynamicsKind::Mle);
+    if (gaussian_joint_support.supported
+        || gaussian_joint_support.reason.find("factor-loading score")
+            == std::string::npos) {
+        return 17;
+    }
+
     if (!scar::is_supported(spec)) {
         return 5;
     }

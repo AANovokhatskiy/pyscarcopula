@@ -10,6 +10,7 @@
 #include "scar/detail/parallel.hpp"
 #include "scar/detail/safety.hpp"
 #include "scar/math/normal.hpp"
+#include "scar/math/gamma.hpp"
 #include "scar/numerical_constants.hpp"
 
 #include <algorithm>
@@ -990,7 +991,83 @@ ConditionalSampleResult equicorrelation_conditional_uniforms(
     return out;
 }
 
+Status chi_square_draws_from_uniforms(
+    DoubleView df,
+    std::size_t rows,
+    std::size_t degrees_offset,
+    DoubleView uniforms,
+    std::vector<double>& draws) {
+
+    if (!valid_degrees_of_freedom(df, rows) || uniforms.size() != rows) {
+        return Status::InvalidSize;
+    }
+    draws.resize(rows);
+    for (std::size_t row = 0; row < rows; ++row) {
+        const double uniform = uniforms[row];
+        if (!std::isfinite(uniform) || uniform < 0.0 || uniform >= 1.0) {
+            draws.clear();
+            return Status::InvalidParameter;
+        }
+        const double probability = std::max(
+            uniform, std::numeric_limits<double>::min());
+        double draw = math::chi_square_quantile(
+            probability,
+            df_at(df, row) + static_cast<double>(degrees_offset));
+        if (draw == 0.0 && probability > 0.0) {
+            draw = std::numeric_limits<double>::min();
+        }
+        if (!std::isfinite(draw) || !(draw > 0.0)) {
+            draws.clear();
+            return Status::NumericalFailure;
+        }
+        draws[row] = draw;
+    }
+    return Status::Ok;
+}
+
 }  // namespace
+
+Result<std::int64_t> equicorr_gaussian_common_draw_count(
+    DoubleView rho,
+    int dimension,
+    std::int64_t n_rows) {
+
+    Result<std::int64_t> result;
+    std::size_t rows = 0;
+    std::size_t unused = 0;
+    if (dimension < 2 || !checked_shape(n_rows, 1, rows, unused)) {
+        result.status = Status::InvalidSize;
+        return result;
+    }
+    if (!valid_equicorrelation_path(
+            rho, rows, static_cast<std::size_t>(dimension))) {
+        result.status = Status::InvalidParameter;
+        return result;
+    }
+    for (std::size_t index = 0; index < rho.size(); ++index) {
+        if (rho[index] < 0.0) {
+            return result;
+        }
+    }
+    result.value = static_cast<std::int64_t>(rows);
+    return result;
+}
+
+Status validate_equicorrelation_path(
+    DoubleView rho,
+    int dimension,
+    std::int64_t n_rows) noexcept {
+
+    std::size_t rows = 0;
+    std::size_t unused = 0;
+    if (dimension < 2 || !checked_shape(n_rows, 1, rows, unused)) {
+        return Status::InvalidSize;
+    }
+    return valid_equicorrelation_path(
+        rho, rows, static_cast<std::size_t>(dimension))
+        ? Status::Ok
+        : Status::InvalidParameter;
+}
 
 ConditionalSampleResult multivariate_gaussian_sample_dense(
     DoubleView correlation,
@@ -1047,6 +1124,37 @@ ConditionalSampleResult multivariate_student_sample_dense(
         true);
 }
 
+ConditionalSampleResult multivariate_student_sample_dense_from_uniforms(
+    DoubleView correlation,
+    int dimension,
+    DoubleView df,
+    DoubleView normal_draws,
+    DoubleView chi_square_uniforms,
+    std::int64_t n_rows,
+    int n_threads) {
+
+    ConditionalSampleResult invalid;
+    invalid.n_rows = n_rows;
+    invalid.n_free = dimension;
+    invalid.n_threads_requested = n_threads;
+    std::size_t rows = 0;
+    std::size_t unused = 0;
+    if (!checked_shape(n_rows, 1, rows, unused)) {
+        invalid.status = Status::InvalidSize;
+        return invalid;
+    }
+    std::vector<double> chi_square;
+    const Status status = chi_square_draws_from_uniforms(
+        df, rows, 0, chi_square_uniforms, chi_square);
+    if (!ok(status)) {
+        invalid.status = status;
+        return invalid;
+    }
+    return multivariate_student_sample_dense(
+        correlation, dimension, df, normal_draws,
+        {chi_square.data(), chi_square.size()}, n_rows, n_threads);
+}
+
 ConditionalSampleResult multivariate_gaussian_sample_factor(
     const FactorCorrelationOperator& correlation,
     DoubleView factor_draws,
@@ -1083,6 +1191,37 @@ ConditionalSampleResult multivariate_student_sample_factor(
         n_rows,
         n_threads,
         true);
+}
+
+ConditionalSampleResult multivariate_student_sample_factor_from_uniforms(
+    const FactorCorrelationOperator& correlation,
+    DoubleView df,
+    DoubleView factor_draws,
+    DoubleView residual_draws,
+    DoubleView chi_square_uniforms,
+    std::int64_t n_rows,
+    int n_threads) {
+
+    ConditionalSampleResult invalid;
+    invalid.n_rows = n_rows;
+    invalid.n_free = static_cast<std::int64_t>(correlation.dimension());
+    invalid.n_threads_requested = n_threads;
+    std::size_t rows = 0;
+    std::size_t unused = 0;
+    if (!checked_shape(n_rows, 1, rows, unused)) {
+        invalid.status = Status::InvalidSize;
+        return invalid;
+    }
+    std::vector<double> chi_square;
+    const Status status = chi_square_draws_from_uniforms(
+        df, rows, 0, chi_square_uniforms, chi_square);
+    if (!ok(status)) {
+        invalid.status = status;
+        return invalid;
+    }
+    return multivariate_student_sample_factor(
+        correlation, df, factor_draws, residual_draws,
+        {chi_square.data(), chi_square.size()}, n_rows, n_threads);
 }
 
 ConditionalSampleResult multivariate_gaussian_conditional_from_uniforms(
@@ -1151,6 +1290,43 @@ ConditionalSampleResult multivariate_student_conditional_from_uniforms(
         n_threads);
 }
 
+ConditionalSampleResult
+multivariate_student_conditional_from_normal_uniforms(
+    DoubleView correlations,
+    std::int64_t correlation_rows,
+    int dimension,
+    const std::vector<int>& given_indices,
+    DoubleView given_uniforms,
+    DoubleView df,
+    DoubleView normal_draws,
+    DoubleView chi_square_uniforms,
+    std::int64_t n_rows,
+    int n_threads) {
+
+    ConditionalSampleResult invalid;
+    invalid.n_rows = n_rows;
+    invalid.n_free = dimension
+        - static_cast<std::int64_t>(given_indices.size());
+    invalid.n_threads_requested = n_threads;
+    std::size_t rows = 0;
+    std::size_t unused = 0;
+    if (!checked_shape(n_rows, 1, rows, unused)) {
+        invalid.status = Status::InvalidSize;
+        return invalid;
+    }
+    std::vector<double> chi_square;
+    const Status status = chi_square_draws_from_uniforms(
+        df, rows, given_indices.size(), chi_square_uniforms, chi_square);
+    if (!ok(status)) {
+        invalid.status = status;
+        return invalid;
+    }
+    return multivariate_student_conditional_from_uniforms(
+        correlations, correlation_rows, dimension, given_indices,
+        given_uniforms, df, normal_draws,
+        {chi_square.data(), chi_square.size()}, n_rows, n_threads);
+}
+
 ConditionalSampleResult multivariate_gaussian_conditional_factor(
     const FactorCorrelationOperator& correlation,
     const std::vector<int>& given_indices,
@@ -1195,6 +1371,42 @@ ConditionalSampleResult multivariate_student_conditional_factor(
         n_rows,
         n_threads,
         true);
+}
+
+ConditionalSampleResult
+multivariate_student_conditional_factor_from_normal_uniforms(
+    const FactorCorrelationOperator& correlation,
+    const std::vector<int>& given_indices,
+    DoubleView given_uniforms,
+    DoubleView df,
+    DoubleView factor_draws,
+    DoubleView residual_draws,
+    DoubleView chi_square_uniforms,
+    std::int64_t n_rows,
+    int n_threads) {
+
+    ConditionalSampleResult invalid;
+    invalid.n_rows = n_rows;
+    invalid.n_free = static_cast<std::int64_t>(correlation.dimension())
+        - static_cast<std::int64_t>(given_indices.size());
+    invalid.n_threads_requested = n_threads;
+    std::size_t rows = 0;
+    std::size_t unused = 0;
+    if (!checked_shape(n_rows, 1, rows, unused)) {
+        invalid.status = Status::InvalidSize;
+        return invalid;
+    }
+    std::vector<double> chi_square;
+    const Status status = chi_square_draws_from_uniforms(
+        df, rows, given_indices.size(), chi_square_uniforms, chi_square);
+    if (!ok(status)) {
+        invalid.status = status;
+        return invalid;
+    }
+    return multivariate_student_conditional_factor(
+        correlation, given_indices, given_uniforms, df,
+        factor_draws, residual_draws,
+        {chi_square.data(), chi_square.size()}, n_rows, n_threads);
 }
 
 }  // namespace scar

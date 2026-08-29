@@ -136,6 +136,25 @@ def test_fit_checks_extension_before_optimization(monkeypatch, observations):
         )
 
 
+def test_final_gas_validation_does_not_fabricate_result(monkeypatch, observations):
+    def fail_validation(*args, **kwargs):
+        raise RuntimeError("native validation failed")
+
+    monkeypatch.setattr(
+        "pyscarcopula.strategy.gas.gas_loglik", fail_validation)
+
+    with pytest.raises(RuntimeError, match="native validation failed"):
+        GASStrategy()._build_result(
+            BivariateGaussianCopula(),
+            observations,
+            SimpleNamespace(success=True, message="ok", nfev=1),
+            np.asarray(PARAMS),
+            1e-5,
+            10.0,
+            0.999,
+        )
+
+
 def test_gas_diagnostics_distinguish_score_from_optimizer_gradient(
         monkeypatch, observations):
     captured = {}
@@ -167,12 +186,27 @@ def test_gas_diagnostics_distinguish_score_from_optimizer_gradient(
     assert result.diagnostics["analytical_grad_used"] is False
 
 
-def test_optimizer_objective_translates_native_failure(
+def test_optimizer_objective_propagates_native_failure(
     monkeypatch,
     observations,
 ):
     def fail(*args, **kwargs):
         raise FloatingPointError("native failure")
+
+    monkeypatch.setattr(_cpp_gas, "negative_log_likelihood", fail)
+
+    with pytest.raises(FloatingPointError, match="native failure"):
+        gas_negloglik(*PARAMS, observations, BivariateGaussianCopula())
+
+
+def test_optimizer_objective_uses_native_policy_for_structured_numerical_failure(
+    monkeypatch,
+    observations,
+):
+    def fail(*args, **kwargs):
+        error = FloatingPointError("structured numerical failure")
+        error.status = 7
+        raise error
 
     monkeypatch.setattr(_cpp_gas, "negative_log_likelihood", fail)
 

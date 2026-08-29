@@ -13,6 +13,7 @@ from pyscarcopula import (
     StochasticStudentCopula,
     StudentCopula,
 )
+from pyscarcopula._native import NativeUnsupported
 from pyscarcopula.strategy import multivariate_mle
 from pyscarcopula.strategy.multivariate_mle import (
     StaticMLEEvaluation,
@@ -30,28 +31,14 @@ def _problem(evaluate):
     )
 
 
-def test_evaluator_failure_supplies_nonzero_optimizer_gradient(monkeypatch):
-    captured = {}
-
+def test_typed_evaluator_failure_propagates_without_python_gradient():
     def evaluate(parameters):
-        raise ValueError("synthetic numerical failure")
+        raise NativeUnsupported("synthetic typed evaluator failure")
 
-    def fake_minimize(fun, x0, **kwargs):
-        value, gradient = fun(x0)
-        captured["value"] = value
-        captured["gradient"] = gradient
-        return SimpleNamespace(
-            x=x0.copy(), fun=value, success=True, nfev=1, message="ok")
-
-    monkeypatch.setattr(multivariate_mle, "minimize", fake_minimize)
-    outcome = run_static_multivariate_mle(
-        _problem(evaluate), optimizer_options={"gtol": 1e-4},
-        fail_value=1e10)
-
-    assert captured["value"] == 1e10
-    assert np.linalg.norm(captured["gradient"]) > 0.0
-    assert outcome.accepted is False
-    assert outcome.evaluation is None
+    with pytest.raises(NativeUnsupported, match="typed evaluator failure"):
+        run_static_multivariate_mle(
+            _problem(evaluate), optimizer_options={"gtol": 1e-4},
+            fail_value=1e10)
 
 
 def test_unexpected_objective_error_propagates():

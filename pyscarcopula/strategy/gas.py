@@ -11,6 +11,7 @@ from pyscarcopula._types import (
     gas_params,
 )
 from pyscarcopula._native import gas as _cpp_gas
+from pyscarcopula._native import model_policy
 from pyscarcopula.numerical._arrays import (
     validate_float64_allocation,
     validate_positive_int,
@@ -32,6 +33,7 @@ from pyscarcopula.strategy._base import (
     reject_legacy_tol,
 )
 from pyscarcopula.strategy.predict_helpers import (
+    predictive_params_from_state,
     predict_from_strategy,
     sample_predictive,
 )
@@ -50,7 +52,7 @@ def _automatic_gas_start(copula, u, config, initial_mle_result=None):
     mu_mle = float(np.atleast_1d(
         copula.inv_transform(np.atleast_1d(mle_result.copula_param))
     )[0])
-    return np.array([mu_mle * 0.05, 0.05, 0.95])
+    return model_policy.gas_default_initial_point(mu_mle)
 
 
 @register_strategy("GAS")
@@ -145,33 +147,27 @@ class GASStrategy:
 
         success = bool(result.success)
         message = str(result.message)
-        try:
-            final_log_likelihood = gas_loglik(
-                gas_values[0],
-                gas_values[1],
-                gas_values[2],
-                u,
-                copula,
-                self.scaling,
-                score_eps,
-            )
-            if not np.isfinite(final_log_likelihood):
-                raise FloatingPointError(
-                    "final GAS log-likelihood is not finite")
-            r_last = gas_predict_param(
-                gas_values[0],
-                gas_values[1],
-                gas_values[2],
-                u,
-                copula,
-                self.scaling,
-                score_eps,
-            )
-        except Exception as exc:
-            success = False
-            final_log_likelihood = -1e10
-            r_last = 0.0
-            message = f"{message}; final native GAS validation failed: {exc}"
+        final_log_likelihood = gas_loglik(
+            gas_values[0],
+            gas_values[1],
+            gas_values[2],
+            u,
+            copula,
+            self.scaling,
+            score_eps,
+        )
+        if not np.isfinite(final_log_likelihood):
+            raise FloatingPointError(
+                "final GAS log-likelihood is not finite")
+        r_last = gas_predict_param(
+            gas_values[0],
+            gas_values[1],
+            gas_values[2],
+            u,
+            copula,
+            self.scaling,
+            score_eps,
+        )
 
         result_diagnostics = {
             "n_threads": self.config.n_threads,
@@ -246,28 +242,31 @@ class GASStrategy:
         if not np.all(np.isfinite(joint0)):
             raise ValueError("gamma0 must contain only finite values")
 
+        gas_lower, gas_upper = model_policy.latent_bounds(
+            "gas", gamma_bound=gamma_bound, beta_bound=beta_bound)
         bounds = Bounds(
-            [-np.inf, -gamma_bound, -beta_bound, -np.inf],
-            [np.inf, gamma_bound, beta_bound, np.inf],
+            np.concatenate([gas_lower, [float("-inf")]]),
+            np.concatenate([gas_upper, [float("inf")]]),
         )
 
         def objective(joint):
             joint = np.asarray(joint, dtype=np.float64).reshape(-1)
-            if joint.size != 3 + n_corr or not np.all(np.isfinite(joint)):
-                return self.config.fail_value
-            try:
-                copula._set_corr_from_params(joint[3:])
-                return gas_negloglik(
-                    joint[0],
-                    joint[1],
-                    joint[2],
-                    u,
-                    copula,
-                    self.scaling,
-                    score_eps,
-                )
-            except Exception:
-                return self.config.fail_value
+            if joint.size != 3 + n_corr:
+                raise ValueError(
+                    f"joint GAS point must contain {3 + n_corr} values")
+            if not np.all(np.isfinite(joint)):
+                raise FloatingPointError(
+                    "joint GAS point must contain only finite values")
+            copula._set_corr_from_params(joint[3:])
+            return gas_negloglik(
+                joint[0],
+                joint[1],
+                joint[2],
+                u,
+                copula,
+                self.scaling,
+                score_eps,
+            )
 
         if verbose:
             print(
@@ -414,10 +413,8 @@ class GASStrategy:
                 f"gamma_bound={gamma_bound}, beta_bound={beta_bound}"
             )
 
-        bounds = Bounds(
-            [-np.inf, -gamma_bound, -beta_bound],
-            [np.inf, gamma_bound, beta_bound],
-        )
+        bounds = Bounds(*model_policy.latent_bounds(
+            "gas", gamma_bound=gamma_bound, beta_bound=beta_bound))
 
         def objective(x):
             return gas_negloglik(
@@ -690,9 +687,7 @@ class GASStrategy:
         return predict_from_strategy(
             self, copula, u, result, n, rng=rng, **kwargs)
 
-    def predictive_params(self, copula, u, result, n, rng=None, **kwargs):
-        state = self.predictive_state(copula, u, result, **kwargs)
-        return self.sample_params(copula, state, n, rng=rng, **kwargs)
+    predictive_params = predictive_params_from_state
 
     def predictive_state(self, copula, u, result, **kwargs):
         if u is None or len(u) == 0:

@@ -64,6 +64,7 @@ int evaluate_density_plan_rows(
     std::int64_t observation_columns,
     double* log_pdf,
     double* residuals,
+    double* node_values,
     bool tolerate_non_finite,
     std::vector<double>& node_workspace,
     std::int64_t& failure_row,
@@ -200,6 +201,13 @@ int evaluate_density_plan_rows(
                     residual_row[column] = clip_open_unit(value);
                 }
             }
+            if (node_values != nullptr) {
+                std::copy(
+                    node_workspace.begin(),
+                    node_workspace.end(),
+                    node_values + row * static_cast<std::size_t>(
+                        plan.node_count));
+            }
         }
     }
     return SCAR_OK;
@@ -249,6 +257,7 @@ DensityResult log_pdf_rows(
         observation_rows,
         observation_columns,
         out.log_pdf.data(),
+        nullptr,
         nullptr,
         false,
         node_workspace,

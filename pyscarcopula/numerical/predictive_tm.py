@@ -36,22 +36,21 @@ def sample_grid_distribution(z_grid, prob, n, rng, mode='histogram'):
     that cell, preserving cell masses while removing grid atoms.
     """
     mode = 'grid' if mode is None else str(mode).lower()
-    z_grid = np.asarray(z_grid, dtype=np.float64)
-    prob = np.asarray(prob, dtype=np.float64)
-    idx = rng.choice(len(z_grid), size=n, p=prob)
-
-    if mode == 'grid':
-        return z_grid[idx]
-    if mode != 'histogram':
+    if mode not in {'grid', 'histogram'}:
         raise ValueError("predictive_r_mode must be 'grid' or 'histogram'")
-    if len(z_grid) == 1:
-        return np.full(n, z_grid[0], dtype=np.float64)
+    from pyscarcopula._native import scar_ou
 
-    mid = 0.5 * (z_grid[:-1] + z_grid[1:])
-    left = np.empty_like(z_grid)
-    right = np.empty_like(z_grid)
-    left[0] = z_grid[0]
-    left[1:] = mid
-    right[:-1] = mid
-    right[-1] = z_grid[-1]
-    return rng.uniform(left[idx], right[idx])
+    selection_draws = rng.uniform(0.0, 1.0, size=n)
+    jitter_draws = (
+        rng.uniform(0.0, 1.0, size=n)
+        if mode == 'histogram' and len(z_grid) > 1
+        else np.empty(0, dtype=np.float64)
+    )
+    values, _ = scar_ou.sample_state_distribution_fixed_draws(
+        z_grid,
+        prob,
+        selection_draws,
+        jitter_draws,
+        mode=mode,
+    )
+    return values

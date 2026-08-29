@@ -28,6 +28,7 @@ from typing import Any, Mapping
 
 import numpy as np
 
+from pyscarcopula._native import statistics
 from pyscarcopula.numerical._arrays import as_pseudo_observation_array
 from pyscarcopula.vine._conditional_rvine import (
     find_rvine_peel_order_for_given_suffix,
@@ -499,9 +500,9 @@ def _beam_search_candidates(
                     'trees_repr': state['trees_repr'] + [new_repr],
                     'fitted': state['fitted'] + [fitted_t],
                     'pseudo_obs': pseudo_obs,
-                    'fit_score_partial': (
-                        state['fit_score_partial']
-                        + _fit_score_levels([fitted_t])
+                    'fit_score_partial': statistics.add_scores(
+                        state['fit_score_partial'],
+                        _fit_score_levels([fitted_t]),
                     ),
                     'mode_path': state['mode_path'] + (mode,),
                 })
@@ -573,11 +574,11 @@ def _build_tree_level_repr(
 
 
 def _fit_score_levels(fitted_levels):
-    return float(sum(
-        abs(float(pc.tau))
+    return statistics.sum_absolute(
+        float(pc.tau)
         for level in fitted_levels
         for pc in level
-    ))
+    )
 
 
 def _prune_beam(states, beam_width):

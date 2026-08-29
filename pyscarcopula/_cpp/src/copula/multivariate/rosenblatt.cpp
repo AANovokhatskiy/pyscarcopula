@@ -7,6 +7,7 @@
 #include "scar/detail/linalg.hpp"
 #include "scar/detail/parallel.hpp"
 #include "scar/detail/safety.hpp"
+#include "scar/math/gamma.hpp"
 #include "scar/math/normal.hpp"
 
 #include <algorithm>
@@ -99,65 +100,6 @@ int rosenblatt_workers(
             rows, dimension, 16, 2048)
         ? n_threads
         : 1;
-}
-
-double regularized_gamma_p(double shape, double value) {
-    if (value <= 0.0) {
-        return 0.0;
-    }
-    if (!std::isfinite(value)) {
-        return 1.0;
-    }
-    constexpr int max_iterations = 1024;
-    constexpr double tolerance =
-        4.0 * std::numeric_limits<double>::epsilon();
-    constexpr double minimum = 1e-300;
-    const double log_scale =
-        -value + shape * std::log(value) - std::lgamma(shape);
-    if (value < shape + 1.0) {
-        double term = 1.0 / shape;
-        double sum = term;
-        double shifted_shape = shape;
-        for (int iteration = 1;
-             iteration <= max_iterations;
-             ++iteration) {
-            shifted_shape += 1.0;
-            term *= value / shifted_shape;
-            sum += term;
-            if (std::abs(term) <= std::abs(sum) * tolerance) {
-                break;
-            }
-        }
-        return std::clamp(sum * std::exp(log_scale), 0.0, 1.0);
-    }
-
-    double b = value + 1.0 - shape;
-    double c = 1.0 / minimum;
-    double d = 1.0 / std::max(b, minimum);
-    double fraction = d;
-    for (int iteration = 1;
-         iteration <= max_iterations;
-         ++iteration) {
-        const double index = static_cast<double>(iteration);
-        const double coefficient = -index * (index - shape);
-        b += 2.0;
-        d = coefficient * d + b;
-        if (std::abs(d) < minimum) {
-            d = minimum;
-        }
-        c = b + coefficient / c;
-        if (std::abs(c) < minimum) {
-            c = minimum;
-        }
-        d = 1.0 / d;
-        const double change = d * c;
-        fraction *= change;
-        if (std::abs(change - 1.0) <= tolerance) {
-            break;
-        }
-    }
-    const double complement = std::exp(log_scale) * fraction;
-    return std::clamp(1.0 - complement, 0.0, 1.0);
 }
 
 MultivariateRosenblattResult factor_rosenblatt(
@@ -699,7 +641,7 @@ RadialSummaryResult radial_uniform_summary(
                                 residuals.row(row)[coordinate]));
                     quadratic += quantile * quantile;
                 }
-                out.values[row] = regularized_gamma_p(
+                out.values[row] = math::regularized_gamma_p(
                     0.5 * static_cast<double>(dimension),
                     0.5 * quadratic);
             }

@@ -9,6 +9,7 @@
 #include "scar/copula/multivariate/sampling.hpp"
 #include "scar/copula/multivariate/student/conditional.hpp"
 #include "scar/copula/multivariate/student/quantile.hpp"
+#include "scar/copula/multivariate/student/ppf_cache.hpp"
 #include "scar/copula/multivariate/student/rosenblatt.hpp"
 #include "scar/core/checked_arithmetic.hpp"
 
@@ -16,6 +17,7 @@
 
 #include <limits>
 #include <stdexcept>
+#include <utility>
 
 namespace py = pybind11;
 
@@ -94,10 +96,12 @@ py::dict conditional_sample_result_to_dict(
     const scar::ConditionalSampleResult& result) {
 
     py::dict output;
-    output["values"] = matrix_to_array(
-        result.values,
-        static_cast<std::size_t>(result.n_rows),
-        static_cast<std::size_t>(result.n_free));
+    output["values"] = result.is_ok()
+        ? py::object(matrix_to_array(
+            result.values,
+            static_cast<std::size_t>(result.n_rows),
+            static_cast<std::size_t>(result.n_free)))
+        : py::object(py::array_t<double>(0));
     output["status"] = static_cast<int>(result.status);
     output["failure_index"] = result.failure.index;
     output["n_threads_requested"] = result.n_threads_requested;
@@ -236,6 +240,62 @@ void bind_multivariate(py::module_& m) {
     using ConstArray = py::array_t<
         double,
         py::array::c_style | py::array::forcecast>;
+
+    using PpfTableConfig = scar::copula::multivariate::student::PpfTableConfig;
+    py::class_<PpfTableConfig>(m, "StudentPpfTableConfig")
+        .def(py::init<>())
+        .def_readwrite("df_lo", &PpfTableConfig::df_lo)
+        .def_readwrite("df_hi", &PpfTableConfig::df_hi)
+        .def_readwrite("n_boundary", &PpfTableConfig::n_boundary)
+        .def_readwrite("n_lo", &PpfTableConfig::n_lo)
+        .def_readwrite("n_hi", &PpfTableConfig::n_hi)
+        .def_readwrite("max_table_bytes", &PpfTableConfig::max_table_bytes);
+    m.def("student_prepare_ppf_table",
+        [](const Float64Array& observations, const PpfTableConfig& config) {
+            const auto view = flat_view_from_array(observations, "observations");
+            scar::Result<scar::copula::multivariate::student::PreparedPpfTable> result;
+            {
+                py::gil_scoped_release release;
+                result = scar::copula::multivariate::student::prepare_ppf_table(view, config);
+            }
+            py::dict output;
+            output["status"] = static_cast<int>(result.status);
+            output["failure_index"] = result.failure.index;
+            output["observations"] = vector_to_array(std::move(result.value.observations));
+            output["nodes"] = vector_to_array(std::move(result.value.nodes));
+            output["table"] = vector_to_array(std::move(result.value.table));
+            output["has_table"] = result.value.has_table;
+            return output;
+        }, py::arg("observations"), py::arg("config"));
+    m.def("student_evaluate_ppf_table",
+        [](const Float64Array& observations, const Float64Array& nodes,
+           const Float64Array& table, double df, std::size_t offset, std::size_t count) {
+            const auto obs_view = flat_view_from_array(observations, "observations");
+            const auto node_view = flat_view_from_array(nodes, "nodes");
+            const auto table_info = table.request();
+            const auto table_view = flat_view(table_info);
+            scar::Result<std::vector<double>> result;
+            {
+                py::gil_scoped_release release;
+                result = scar::copula::multivariate::student::evaluate_ppf_table(
+                    obs_view, node_view, table_view, df, offset, count);
+            }
+            return vector_result_to_dict(result);
+        }, py::arg("observations"), py::arg("nodes"), py::arg("table"),
+        py::arg("df"), py::arg("offset"), py::arg("count"));
+    m.def("student_interpolate_ppf_table",
+        [](const Float64Array& nodes, const Float64Array& table, double df, std::size_t width) {
+            const auto node_view = flat_view_from_array(nodes, "nodes");
+            const auto table_info = table.request();
+            const auto table_view = flat_view(table_info);
+            scar::Result<std::vector<double>> result;
+            {
+                py::gil_scoped_release release;
+                result = scar::copula::multivariate::student::interpolate_ppf_table(
+                    node_view, table_view, df, width);
+            }
+            return vector_result_to_dict(result);
+        }, py::arg("nodes"), py::arg("table"), py::arg("df"), py::arg("width"));
 
     m.def(
         "static_correlation_logistic",
@@ -774,6 +834,55 @@ void bind_multivariate(py::module_& m) {
         py::arg("n_threads") = 1);
 
     m.def(
+        "multivariate_student_sample_from_normal_uniforms",
+        [](
+            py::array_t<double, py::array::c_style | py::array::forcecast>
+                correlation,
+            py::array_t<double, py::array::c_style | py::array::forcecast> df,
+            py::array_t<double, py::array::c_style | py::array::forcecast>
+                normal_draws,
+            py::array_t<double, py::array::c_style | py::array::forcecast>
+                chi_square_uniforms,
+            int n_threads) {
+            const py::buffer_info correlation_info = correlation.request();
+            const py::buffer_info draw_info = normal_draws.request();
+            if (correlation_info.ndim != 2
+                || correlation_info.shape[0] != correlation_info.shape[1]
+                || correlation_info.shape[0] < 2
+                || draw_info.ndim != 2
+                || draw_info.shape[1] != correlation_info.shape[0]) {
+                throw std::invalid_argument(
+                    "correlation must have shape (d,d) and normal_draws "
+                    "must have shape (n,d)");
+            }
+            scar::ConditionalSampleResult result;
+            {
+                const auto correlation_view = flat_view_from_array(
+                    correlation, "correlation");
+                const auto degrees = flat_view_from_array(df, "df");
+                const auto draws = flat_view_from_array(
+                    normal_draws, "normal_draws");
+                const auto uniforms = flat_view_from_array(
+                    chi_square_uniforms, "chi_square_uniforms");
+                py::gil_scoped_release release;
+                result = scar::multivariate_student_sample_dense_from_uniforms(
+                    correlation_view,
+                    static_cast<int>(correlation_info.shape[0]),
+                    degrees,
+                    draws,
+                    uniforms,
+                    static_cast<std::int64_t>(draw_info.shape[0]),
+                    n_threads);
+            }
+            return conditional_sample_result_to_dict(result);
+        },
+        py::arg("correlation"),
+        py::arg("df"),
+        py::arg("normal_draws"),
+        py::arg("chi_square_uniforms"),
+        py::arg("n_threads") = 1);
+
+    m.def(
         "multivariate_gaussian_sample_from_normals",
         [](
             py::array_t<double, py::array::c_style | py::array::forcecast>
@@ -811,6 +920,45 @@ void bind_multivariate(py::module_& m) {
         py::arg("correlation"),
         py::arg("normal_draws"),
         py::arg("n_threads") = 1);
+
+    m.def(
+        "equicorr_gaussian_common_draw_count",
+        [](
+            py::array_t<double, py::array::c_style | py::array::forcecast>
+                rho,
+            int dimension,
+            std::int64_t n_rows) {
+            scar::Result<std::int64_t> result;
+            {
+                const auto parameters = flat_view_from_array(rho, "rho");
+                py::gil_scoped_release release;
+                result = scar::equicorr_gaussian_common_draw_count(
+                    parameters, dimension, n_rows);
+            }
+            py::dict output;
+            output["status"] = static_cast<int>(result.status);
+            output["failure_index"] = result.failure.index;
+            output["count"] = result.value;
+            return output;
+        },
+        py::arg("rho"),
+        py::arg("dimension"),
+        py::arg("n_rows"));
+
+    m.def(
+        "validate_equicorrelation_path",
+        [](
+            py::array_t<double, py::array::c_style | py::array::forcecast>
+                rho,
+            int dimension,
+            std::int64_t n_rows) {
+            const auto parameters = flat_view_from_array(rho, "rho");
+            return static_cast<int>(scar::validate_equicorrelation_path(
+                parameters, dimension, n_rows));
+        },
+        py::arg("rho"),
+        py::arg("dimension"),
+        py::arg("n_rows"));
 
     m.def(
         "equicorr_gaussian_sample_from_normals",
@@ -907,6 +1055,58 @@ void bind_multivariate(py::module_& m) {
         py::arg("n_threads") = 1);
 
     m.def(
+        "factor_student_sample_from_normal_uniforms",
+        [](
+            const scar::FactorCorrelationOperator& correlation,
+            py::array_t<double, py::array::c_style | py::array::forcecast> df,
+            py::array_t<double, py::array::c_style | py::array::forcecast>
+                factor_draws,
+            py::array_t<double, py::array::c_style | py::array::forcecast>
+                residual_draws,
+            py::array_t<double, py::array::c_style | py::array::forcecast>
+                chi_square_uniforms,
+            int n_threads) {
+            const py::buffer_info factor_info = factor_draws.request();
+            const py::buffer_info residual_info = residual_draws.request();
+            if (factor_info.ndim != 2
+                || residual_info.ndim != 2
+                || factor_info.shape[0] != residual_info.shape[0]
+                || factor_info.shape[1]
+                    != static_cast<py::ssize_t>(correlation.rank())
+                || residual_info.shape[1]
+                    != static_cast<py::ssize_t>(correlation.dimension())) {
+                throw std::invalid_argument(
+                    "factor_draws and residual_draws have invalid shapes");
+            }
+            scar::ConditionalSampleResult result;
+            {
+                const auto degrees = flat_view_from_array(df, "df");
+                const auto factors = flat_view_from_array(
+                    factor_draws, "factor_draws");
+                const auto residuals = flat_view_from_array(
+                    residual_draws, "residual_draws");
+                const auto uniforms = flat_view_from_array(
+                    chi_square_uniforms, "chi_square_uniforms");
+                py::gil_scoped_release release;
+                result = scar::multivariate_student_sample_factor_from_uniforms(
+                    correlation,
+                    degrees,
+                    factors,
+                    residuals,
+                    uniforms,
+                    static_cast<std::int64_t>(factor_info.shape[0]),
+                    n_threads);
+            }
+            return conditional_sample_result_to_dict(result);
+        },
+        py::arg("correlation"),
+        py::arg("df"),
+        py::arg("factor_draws"),
+        py::arg("residual_draws"),
+        py::arg("chi_square_uniforms"),
+        py::arg("n_threads") = 1);
+
+    m.def(
         "factor_gaussian_sample_from_normals",
         [](
             const scar::FactorCorrelationOperator& correlation,
@@ -999,6 +1199,72 @@ void bind_multivariate(py::module_& m) {
         py::arg("factor_draws"),
         py::arg("residual_draws"),
         py::arg("chi_square_draws"),
+        py::arg("n_threads") = 1);
+
+    m.def(
+        "multivariate_student_conditional_from_normal_uniforms",
+        [](
+            py::array_t<double, py::array::c_style | py::array::forcecast>
+                correlations,
+            py::array_t<int, py::array::c_style | py::array::forcecast>
+                given_indices,
+            py::array_t<double, py::array::c_style | py::array::forcecast>
+                given_uniforms,
+            py::array_t<double, py::array::c_style | py::array::forcecast> df,
+            py::array_t<double, py::array::c_style | py::array::forcecast>
+                normal_draws,
+            py::array_t<double, py::array::c_style | py::array::forcecast>
+                chi_square_uniforms,
+            int n_threads) {
+            const py::buffer_info corr_info = correlations.request();
+            const py::buffer_info draw_info = normal_draws.request();
+            if ((corr_info.ndim != 2 && corr_info.ndim != 3)
+                || corr_info.shape[corr_info.ndim - 1]
+                    != corr_info.shape[corr_info.ndim - 2]
+                || draw_info.ndim != 2) {
+                throw std::invalid_argument(
+                    "correlations must be (d,d) or (n,d,d), and "
+                    "normal_draws must be (n,n_free)");
+            }
+            const int dimension = static_cast<int>(
+                corr_info.shape[corr_info.ndim - 1]);
+            const std::int64_t correlation_rows =
+                corr_info.ndim == 2 ? 1 : corr_info.shape[0];
+            scar::ConditionalSampleResult result;
+            {
+                const auto corr = flat_view_from_array(
+                    correlations, "correlations");
+                const auto indices = int_vector_from_array(
+                    given_indices, "given_indices");
+                const auto given = flat_view_from_array(
+                    given_uniforms, "given_uniforms");
+                const auto degrees = flat_view_from_array(df, "df");
+                const auto draws = flat_view_from_array(
+                    normal_draws, "normal_draws");
+                const auto uniforms = flat_view_from_array(
+                    chi_square_uniforms, "chi_square_uniforms");
+                py::gil_scoped_release release;
+                result = scar::
+                    multivariate_student_conditional_from_normal_uniforms(
+                        corr,
+                        correlation_rows,
+                        dimension,
+                        indices,
+                        given,
+                        degrees,
+                        draws,
+                        uniforms,
+                        static_cast<std::int64_t>(draw_info.shape[0]),
+                        n_threads);
+            }
+            return conditional_sample_result_to_dict(result);
+        },
+        py::arg("correlations"),
+        py::arg("given_indices"),
+        py::arg("given_uniforms"),
+        py::arg("df"),
+        py::arg("normal_draws"),
+        py::arg("chi_square_uniforms"),
         py::arg("n_threads") = 1);
 
     m.def(
@@ -1167,6 +1433,71 @@ void bind_multivariate(py::module_& m) {
         py::arg("df"),
         py::arg("normal_draws"),
         py::arg("chi_square_draws"),
+        py::arg("n_threads") = 1);
+
+    m.def(
+        "factor_student_conditional_from_normal_uniforms",
+        [](
+            const scar::FactorCorrelationOperator& correlation,
+            py::array_t<int, py::array::c_style | py::array::forcecast>
+                given_indices,
+            py::array_t<double, py::array::c_style | py::array::forcecast>
+                given_uniforms,
+            py::array_t<double, py::array::c_style | py::array::forcecast> df,
+            py::array_t<double, py::array::c_style | py::array::forcecast>
+                factor_draws,
+            py::array_t<double, py::array::c_style | py::array::forcecast>
+                residual_draws,
+            py::array_t<double, py::array::c_style | py::array::forcecast>
+                chi_square_uniforms,
+            int n_threads) {
+            const py::buffer_info factor_info = factor_draws.request();
+            const py::buffer_info residual_info = residual_draws.request();
+            if (factor_info.ndim != 2
+                || residual_info.ndim != 2
+                || factor_info.shape[0] != residual_info.shape[0]
+                || factor_info.shape[1]
+                    != static_cast<py::ssize_t>(correlation.rank())
+                || residual_info.shape[1]
+                    != static_cast<py::ssize_t>(correlation.dimension())) {
+                throw std::invalid_argument(
+                    "factor_draws and residual_draws have invalid shapes");
+            }
+            scar::ConditionalSampleResult result;
+            {
+                const auto indices = int_vector_from_array(
+                    given_indices, "given_indices");
+                const auto given = flat_view_from_array(
+                    given_uniforms, "given_uniforms");
+                const auto degrees = flat_view_from_array(df, "df");
+                const auto factors = flat_view_from_array(
+                    factor_draws, "factor_draws");
+                const auto residuals = flat_view_from_array(
+                    residual_draws, "residual_draws");
+                const auto uniforms = flat_view_from_array(
+                    chi_square_uniforms, "chi_square_uniforms");
+                py::gil_scoped_release release;
+                result = scar::
+                    multivariate_student_conditional_factor_from_normal_uniforms(
+                        correlation,
+                        indices,
+                        given,
+                        degrees,
+                        factors,
+                        residuals,
+                        uniforms,
+                        static_cast<std::int64_t>(factor_info.shape[0]),
+                        n_threads);
+            }
+            return conditional_sample_result_to_dict(result);
+        },
+        py::arg("correlation"),
+        py::arg("given_indices"),
+        py::arg("given_uniforms"),
+        py::arg("df"),
+        py::arg("factor_draws"),
+        py::arg("residual_draws"),
+        py::arg("chi_square_uniforms"),
         py::arg("n_threads") = 1);
 
     m.def(

@@ -106,9 +106,33 @@ def test_common_binding_advertises_all_rosenblatt_entry_points():
     assert hasattr(module, "rvine_conditional_sample")
     assert hasattr(module, "rvine_log_pdf_rows")
     assert hasattr(module, "rvine_mcmc_chunk")
+    assert hasattr(module, "rvine_mcmc_policy")
+    assert hasattr(module, "rvine_mcmc_default_steps")
     assert not hasattr(module, "rvine_mcmc")
     assert hasattr(module, "rvine_rosenblatt_transform")
     assert hasattr(module, "dense_student_rosenblatt_transform")
+
+
+def test_native_mcmc_policy_owns_defaults_and_85_percent_threshold():
+    module = _cpp_extension.load()
+    assert _cpp_rvine.mcmc_default_steps(1) == (80, 40)
+    assert _cpp_rvine.mcmc_default_steps(4) == (120, 40)
+
+    plan = module.RVineDensityPlan()
+    plan.dimension = 1
+    plan.node_count = 1
+    plan.edge_indices = [0] * 100
+    plan.affected_operation_offsets = [0, 85]
+    policy = module.rvine_mcmc_policy(
+        plan, [0], 2, True, "auto", 1024**3)
+    assert policy["status"] == 0
+    assert policy["density_algorithm"] == "incremental"
+
+    plan.affected_operation_offsets = [0, 86]
+    policy = module.rvine_mcmc_policy(
+        plan, [0], 2, True, "auto", 1024**3)
+    assert policy["status"] == 0
+    assert policy["density_algorithm"] == "full_recompute"
 
 
 def test_common_traversal_serializer_preserves_every_flat_array():
@@ -300,6 +324,65 @@ def test_conditional_and_density_compilers_emit_flat_indexed_programs():
         native_conditional, len(active_keys))
     assert not module.validate_rvine_density_plan(
         native_density, len(active_keys))
+
+
+def test_conditional_trace_captures_canonical_fixed_suffix_inputs():
+    module = _cpp_extension.load()
+    vine = configured_mixed_family_vine()
+    peel_order = [
+        int(vine.matrix[vine.d - 1 - column, column])
+        for column in range(vine.d)
+    ]
+    fixed = peel_order[-2:]
+    given = {fixed[0]: 0.37, fixed[1]: 0.71}
+    start_col = given_suffix_start_col(vine.d, given, vine.matrix)
+    plan = build_suffix_conditional_plan(
+        vine.d, start_col, vine.matrix, given)
+    trace = _cpp_rvine.conditional_trace(
+        module,
+        vine.pair_copulas,
+        plan,
+        5,
+        given,
+        scalar_parameters(vine),
+    )
+
+    first_step = next(step for step in plan if step["action"] == "h_pair")
+    variables = sorted((int(first_step["leaf"]), int(first_step["partner"])))
+    expected = np.tile([given[variables[0]], given[variables[1]]], (5, 1))
+    np.testing.assert_array_equal(trace[0], expected)
+
+
+def test_pseudo_observation_trace_contains_native_rosenblatt_nodes():
+    module = _cpp_extension.load()
+    vine = configured_mixed_family_vine()
+    observations = np.random.default_rng(2026082901).uniform(
+        0.02, 0.98, size=(9, vine.d))
+    pseudo = _cpp_rvine.pseudo_observations(
+        module,
+        vine.pair_copulas,
+        vine.d,
+        vine.trees,
+        vine._edge_map,
+        vine.matrix,
+        observations,
+    )
+    residual_keys = _cpp_rvine.rosenblatt_residual_node_keys(vine.matrix)
+    residuals = _cpp_rvine.rosenblatt(
+        module,
+        vine.pair_copulas,
+        vine.d,
+        vine.trees,
+        vine._edge_map,
+        vine.matrix,
+        observations,
+    )
+
+    for variable in range(vine.d):
+        np.testing.assert_array_equal(
+            pseudo[(variable, frozenset())], observations[:, variable])
+    for column, key in enumerate(residual_keys):
+        np.testing.assert_array_equal(pseudo[key], residuals[:, column])
 
 
 @pytest.mark.parametrize(

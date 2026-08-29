@@ -5,11 +5,13 @@
 #include "scar/copula/multivariate/correlation/factor.hpp"
 #include "scar/copula/prepared_pair_kernel.hpp"
 #include "scar/core/checked_arithmetic.hpp"
+#include "scar/model_policy.hpp"
 
 #include <pybind11/stl.h>
 
 #include <cmath>
 #include <cstdint>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -19,6 +21,36 @@ namespace py = pybind11;
 
 namespace pyscarcopula::bindings {
 namespace {
+
+py::dict parameter_bounds_to_dict(
+    const scar::ParameterBoundsResult& result) {
+    py::dict output;
+    output["lower"] = result.value.lower;
+    output["upper"] = result.value.upper;
+    output["status"] = static_cast<int>(result.status);
+    return output;
+}
+
+py::dict fit_policy_to_dict(
+    const scar::FitParameterPolicyResult& result) {
+    py::dict output;
+    output["initial"] = result.value.initial;
+    output["lower"] = result.value.lower;
+    output["upper"] = result.value.upper;
+    output["has_lower"] = result.value.has_lower;
+    output["has_upper"] = result.value.has_upper;
+    output["status"] = static_cast<int>(result.status);
+    return output;
+}
+
+py::dict optimizer_failure_to_dict(
+    const scar::OptimizerFailureEvaluationResult& result) {
+    py::dict output;
+    output["objective"] = result.value.objective;
+    output["gradient"] = vector_to_array(result.value.gradient);
+    output["status"] = static_cast<int>(result.status);
+    return output;
+}
 
 py::array_t<double> grid_values_to_array(const scar::GridValues& values) {
     return matrix_to_array(
@@ -145,6 +177,131 @@ py::dict static_objective_result_to_dict(
 }  // namespace
 
 void bind_copula(py::module_& m) {
+    m.def("model_public_parameter_bounds",
+        [](const scar::CopulaSpec& spec) {
+            return parameter_bounds_to_dict(
+                scar::model_public_parameter_bounds(spec));
+        }, py::arg("spec"));
+    m.def("model_ou_parameter_bounds", []() {
+        return parameter_bounds_to_dict(scar::ou_parameter_bounds());
+    });
+    m.def("model_ou_scaled_optimizer_bounds",
+        [](const std::vector<double>& scale) {
+            return parameter_bounds_to_dict(
+                scar::ou_scaled_optimizer_bounds(scale));
+        }, py::arg("scale"));
+    m.def("model_ou_log_stationary_parameter_bounds", []() {
+        return parameter_bounds_to_dict(
+            scar::ou_log_stationary_parameter_bounds());
+    });
+    m.def("model_ou_log_stationary_parameter_bounds_for_scale",
+        [](const std::optional<double>& lower,
+           const std::optional<double>& upper) {
+            return parameter_bounds_to_dict(
+                scar::ou_log_stationary_parameter_bounds_for_scale(
+                    lower.value_or(0.0), lower.has_value(),
+                    upper.value_or(0.0), upper.has_value()));
+        }, py::arg("lower"), py::arg("upper"));
+    m.def("model_ou_log_stationary_result_bounds", []() {
+        return parameter_bounds_to_dict(
+            scar::ou_log_stationary_result_bounds());
+    });
+    m.def("model_jacobi_parameter_bounds", []() {
+        return parameter_bounds_to_dict(scar::jacobi_parameter_bounds());
+    });
+    m.def("model_gas_parameter_bounds",
+        [](double gamma_bound, double beta_bound) {
+            return parameter_bounds_to_dict(
+                scar::gas_parameter_bounds(gamma_bound, beta_bound));
+        }, py::arg("gamma_bound"), py::arg("beta_bound"));
+    m.def("model_default_gas_parameter_bounds", []() {
+        return parameter_bounds_to_dict(
+            scar::default_gas_parameter_bounds());
+    });
+    m.def("model_normalize_positive_bounds",
+        [](const std::optional<double>& lower,
+           const std::optional<double>& upper) {
+            return parameter_bounds_to_dict(
+                scar::normalize_positive_bounds(
+                    lower.value_or(0.0), lower.has_value(),
+                    upper.value_or(0.0), upper.has_value()));
+        }, py::arg("lower"), py::arg("upper"));
+    m.def("model_stationary_scale_bounds", []() {
+        return parameter_bounds_to_dict(scar::stationary_scale_bounds());
+    });
+    m.def("model_student_fit_policy",
+        [](int dimension, bool stochastic) {
+            return fit_policy_to_dict(
+                scar::student_fit_parameter_policy(dimension, stochastic));
+        }, py::arg("dimension"), py::arg("stochastic"));
+    m.def("model_equicorr_fit_policy", []() {
+        return fit_policy_to_dict(scar::equicorr_fit_parameter_policy());
+    });
+    m.def("model_default_pair_mle_parameter",
+        [](const scar::CopulaSpec& spec) {
+            const auto result = scar::default_pair_mle_parameter(spec);
+            py::dict output;
+            output["value"] = result.value;
+            output["status"] = static_cast<int>(result.status);
+            return output;
+        }, py::arg("spec"));
+    m.def("model_gas_default_initial_point", [](double mu) {
+        const auto result = scar::gas_default_initial_point(mu);
+        py::dict output;
+        output["values"] = vector_to_array(result.value);
+        output["status"] = static_cast<int>(result.status);
+        return output;
+    }, py::arg("mu"));
+    m.def("model_optimizer_unit_scale",
+        [](const std::vector<double>& parameters) {
+            const auto result = scar::optimizer_unit_scale(parameters);
+            py::dict output;
+            output["values"] = vector_to_array(result.value);
+            output["status"] = static_cast<int>(result.status);
+            return output;
+        }, py::arg("parameters"));
+    m.def("model_project_optimizer_point", [](
+            const std::vector<double>& parameters,
+            const std::vector<double>& lower,
+            const std::vector<double>& upper) {
+        const auto result = scar::project_optimizer_point(
+            parameters, lower, upper);
+        py::dict output;
+        output["values"] = vector_to_array(result.value);
+        output["status"] = static_cast<int>(result.status);
+        return output;
+    }, py::arg("parameters"), py::arg("lower"), py::arg("upper"));
+    m.def("model_optimizer_failure_objective", []() {
+        const auto result = scar::optimizer_failure_objective();
+        py::dict output;
+        output["objective"] = result.value;
+        output["status"] = static_cast<int>(result.status);
+        return output;
+    });
+    m.def("model_optimizer_failure_objective", [](double fail_value) {
+        const auto result = scar::optimizer_failure_objective(fail_value);
+        py::dict output;
+        output["objective"] = result.value;
+        output["status"] = static_cast<int>(result.status);
+        return output;
+    }, py::arg("fail_value"));
+    m.def("model_optimizer_failure_evaluation", [](
+            const std::vector<double>& parameters,
+            const std::vector<double>& initial_parameters,
+            double fail_value,
+            bool directional_gradient) {
+        return optimizer_failure_to_dict(
+            scar::optimizer_failure_evaluation(
+                parameters, initial_parameters, fail_value,
+                directional_gradient));
+    }, py::arg("parameters"), py::arg("initial_parameters"),
+       py::arg("fail_value"), py::arg("directional_gradient"));
+    m.def("model_optimizer_failure_evaluation_for_size", [](
+            std::size_t gradient_size, double fail_value) {
+        return optimizer_failure_to_dict(
+            scar::optimizer_failure_evaluation_for_size(
+                gradient_size, fail_value));
+    }, py::arg("gradient_size"), py::arg("fail_value"));
     auto copula_family = py::enum_<scar::CopulaFamily>(
         m, "CopulaFamily", "Native copula-family dispatch identifier.");
 #define SCAR_PAIR_FAMILY(                                                \
@@ -380,6 +537,19 @@ void bind_copula(py::module_& m) {
             },
             py::arg("parameter"))
         .def(
+            "transformed_objective",
+            [](const scar::StaticCopulaEvaluator& evaluator,
+               double optimizer_parameter) {
+                scar::StaticObjectiveResult result;
+                {
+                    py::gil_scoped_release release;
+                    result = evaluator.transformed_objective(
+                        optimizer_parameter);
+                }
+                return static_objective_result_to_dict(result);
+            },
+            py::arg("optimizer_parameter"))
+        .def(
             "objective_with_correlation_gradient",
             [](const scar::StaticCopulaEvaluator& evaluator,
                double parameter) {
@@ -462,6 +632,22 @@ void bind_copula(py::module_& m) {
         },
         py::arg("copula"),
         py::arg("tau"));
+
+    m.def(
+        "copula_tau_to_param_capped",
+        [](const scar::CopulaSpec& copula,
+           py::array_t<double, py::array::c_style | py::array::forcecast> tau,
+           const std::optional<double>& theta_cap) {
+            return vector_to_array(
+                scar::copula_tau_to_param_capped(
+                    copula,
+                    vector_from_array(tau),
+                    theta_cap.value_or(0.0),
+                    theta_cap.has_value()));
+        },
+        py::arg("copula"),
+        py::arg("tau"),
+        py::arg("theta_cap"));
 
     m.def(
         "copula_param_to_tau",

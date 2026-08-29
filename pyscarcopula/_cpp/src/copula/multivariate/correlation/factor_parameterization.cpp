@@ -1,5 +1,6 @@
 #include "scar/copula/multivariate/correlation/factor_parameterization.hpp"
 
+#include "scar/copula/transforms.hpp"
 #include "scar/math/normal.hpp"
 
 #include <algorithm>
@@ -30,23 +31,6 @@ bool valid_factor_shape(
             values.data(),
             values.data() + values.size(),
             [](double value) { return std::isfinite(value); });
-}
-
-double softplus(double value) {
-    return std::log1p(std::exp(-std::abs(value)))
-        + std::max(value, 0.0);
-}
-
-double inverse_softplus(double value) {
-    return value + std::log(-std::expm1(-value));
-}
-
-double sigmoid(double value) {
-    if (value >= 0.0) {
-        return 1.0 / (1.0 + std::exp(-value));
-    }
-    const double exponential = std::exp(value);
-    return exponential / (1.0 + exponential);
 }
 
 bool orthonormalize_columns(
@@ -301,7 +285,7 @@ bool raw_factor_matrix(
     for (std::size_t index = 0; index < parameters.size(); ++index) {
         double value = parameters[index];
         if (diagonal[index]) {
-            value = softplus(value) + kJointDiagonalRawFloor;
+            value = copula::softplus(value) + kJointDiagonalRawFloor;
         }
         raw[rows[index] * rank + columns[index]] = value;
     }
@@ -595,7 +579,7 @@ FactorLoadingParameterizationResult factor_parameterization_from_loadings(
             result.diagonal_entries.push_back(diagonal ? 1 : 0);
             double value = raw[row * rank + column];
             if (diagonal) {
-                value = inverse_softplus(std::max(
+                value = copula::inverse_softplus(std::max(
                     value - kJointDiagonalRawFloor,
                     std::numeric_limits<double>::epsilon()));
             }
@@ -707,7 +691,7 @@ Result<std::vector<double>> factor_parameterization_pullback(
     for (std::size_t index = 0; index < parameters.size(); ++index) {
         result[index] = raw_gradient[rows[index] * rank + columns[index]];
         if (diagonal[index]) {
-            result[index] *= sigmoid(parameters[index]);
+            result[index] *= copula::logistic_unit(parameters[index]);
         }
     }
     return success(std::move(result));

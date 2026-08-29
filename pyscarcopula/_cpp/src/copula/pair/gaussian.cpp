@@ -9,14 +9,7 @@
 namespace scar_internal {
 
 using scar::math::normal_quantile;
-
-namespace {
-
-double norm_cdf(double x) {
-    return 0.5 * (1.0 + std::erf(x / std::sqrt(2.0)));
-}
-
-}  // namespace
+using scar::math::normal_cdf;
 
 double gaussian_tau_to_parameter(double tau) {
     if (!std::isfinite(tau) || tau <= -1.0 || tau >= 1.0) {
@@ -212,7 +205,7 @@ double gaussian_h_unrotated(double u, double v, double rho) {
 
 double gaussian_h_from_quantiles(double z_u, double z_v, double rho) {
     const double z = (z_u - rho * z_v) / std::sqrt(1.0 - rho * rho);
-    return norm_cdf(z);
+    return normal_cdf(z);
 }
 
 void gaussian_h_pair_from_quantiles(
@@ -222,8 +215,8 @@ void gaussian_h_pair_from_quantiles(
     double& first_next,
     double& second_next) {
     const double scale = std::sqrt(1.0 - rho * rho);
-    first_next = norm_cdf((z_first - rho * z_second) / scale);
-    second_next = norm_cdf((z_second - rho * z_first) / scale);
+    first_next = normal_cdf((z_first - rho * z_second) / scale);
+    second_next = normal_cdf((z_second - rho * z_first) / scale);
 }
 
 double gaussian_h_inverse_unrotated(double q, double given, double rho) {
@@ -233,7 +226,7 @@ double gaussian_h_inverse_unrotated(double q, double given, double rho) {
     const double z =
         normal_quantile(q_clipped) * std::sqrt(1.0 - rho_clipped * rho_clipped)
         + rho_clipped * normal_quantile(given_clipped);
-    return norm_cdf(z);
+    return normal_cdf(z);
 }
 
 }  // namespace scar_internal

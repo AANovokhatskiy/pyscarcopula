@@ -9,7 +9,7 @@ pyscarcopula/
 |-- _types.py                # Results and numerical configuration
 |-- _native/                 # Mandatory extension facade and support policy
 |   |-- pair.py, multivariate.py, static.py
-|   |-- gas.py, scar_ou.py, jacobi.py, vine.py
+|   |-- gas.py, scar_ou.py, jacobi.py, model_policy.py, statistics.py, vine.py
 |   `-- registry.py, errors.py, threads.py, _extension.py
 |-- io.py                    # JSON model persistence
 |-- stattests.py             # Goodness-of-fit orchestration
@@ -124,34 +124,89 @@ built-in pair subclasses contain no frailty or conditional-inversion sampling
 formulae. Point evaluation and sampling use the same family `h_inverse`
 implementation and accuracy contract; there is no sampling-specific inverse.
 
+Public parameter domains, optimizer defaults, OU/Jacobi/GAS latent bounds,
+stationary-scale limits, and dynamic-model initial-point formulas are owned by
+`scar/model_policy.hpp` and `scar/scar_ou/initialization.hpp`. The same model
+policy owner computes OU `kappa*dt`, automatic local/spectral dispatch,
+adaptive spectral basis orders, and derived quadrature orders. Python
+constructors and strategies may select an MLE result and assemble diagnostics,
+but they obtain every numerical policy value through `_native/model_policy.py`,
+`_native/scar_ou.py`, `_native/gas.py`, or `_native/jacobi.py`. Bounds-only
+policy lookup accepts subclasses so normal Python construction remains
+compatible; numerical dispatch still requires an exact native registry entry.
+
+Likelihood reductions, AIC/BIC and candidate scores, dense no-tie ranks,
+tie-aware Kendall tau-b, and vine selection predicates are owned by
+`scar/copula/model_statistics.hpp`. `_native/statistics.py` normalizes buffers
+and translates typed statuses; structure and beam-search modules only order
+the native scores and assemble topology.
+
 Static dense/factor Gaussian and Student runtime sampling/GoF paths likewise
-keep only RNG draw generation and output assembly in Python. Fixed normal and
-chi-square draws, unconditional and conditional latent transforms, correlation
-algebra, marginal CDFs, dense/factor Rosenblatt transforms, and the radial GoF
-summary are owned by `copula::multivariate`. SciPy remains at the facade only
-for the final one-sample Cramér-von Mises statistic and p-value.
+keep only raw standard-normal/uniform generation and output assembly in Python.
+The Student chi-square inverse transform, unconditional and conditional latent
+transforms, correlation algebra, marginal CDFs, dense/factor Rosenblatt
+transforms, and the radial GoF summary are owned by `copula::multivariate`.
+SciPy remains at the facade only for the final one-sample Cramér-von Mises
+statistic and p-value.
 Equicorrelation unconditional sampling, conditional sampling, and Rosenblatt
 transforms use specialized scalar-or-row C++ kernels without materializing a
-dense correlation matrix. Dynamic state/filter ownership is native as well.
+dense correlation matrix. The native sampler also decides whether a parameter
+path requires common-factor normal draws and validates the exact correlation
+domain; Python only supplies the returned raw draw count. Dynamic state/filter
+ownership is native as well.
 
 Static dense-correlation preprocessing uses the dependency-free C++17 Jacobi
-eigensolver as its canonical arithmetic path. Python performs boundary shape
-and finiteness checks and constructs the public diagnostics DTO, but does not
-run an eigendecomposition or reconstruct the projected matrix. The numerical
+eigensolver as its canonical arithmetic path. Python performs structural shape
+checks and constructs the public diagnostics DTO, while C++ owns finiteness,
+range, and positive-definiteness checks as well as the projected matrix. The
+numerical
 baseline was explicitly refrozen when this owner changed; LAPACK, OpenBLAS,
 and other external linear-algebra runtimes are not build dependencies.
+
+Open-unit clipping and numerical input invariants are centralized in
+`scar/numerical_validation.hpp`. This layer owns pseudo-observation, h-function,
+and Rosenblatt clipping; Gaussian/Student identifiability checks; prepared
+equicorrelation Cauchy bounds; and SCAR-OU final-fit diagnostics. Sparse Jacobi
+row invariants remain in the Jacobi domain owner and are exposed through a
+validation-only native call. Python keeps dtype/shape normalization, exception
+presentation, optimizer orchestration, and result DTO assembly.
+
+Static likelihood descriptors also use native dense preparation; they never
+repeat Cholesky, inversion, or log-determinant arithmetic in Python. Gaussian
+factor/joint estimation is rejected by the native capability matrix, matching
+the public constructor until a factor-loading score is implemented.
+
+OU trajectory sampling accepts raw standard normals and evaluates the initial
+stationary state and exact recurrence in `scar_ou/sampling.cpp`. The public
+Hermite utility uses the same cached C++ rule and default order as the spectral
+evaluator. Stationary-state scaling, grid/histogram selection with midpoint
+cells, and observation-based state reweighting are native fixed-draw operations.
+Neither path contains a Python or Numba numerical implementation.
+
+Student PPF table preparation, df nodes, interpolation and over-budget exact
+evaluation belong to `copula/multivariate/student/ppf_cache.cpp`. Python retains
+array shape/row-block handling and cache lifecycle. Refined Student quantiles
+use a central beta argument near the median and a sixth-order normal-limit
+expansion for df >= 1000; the separate dynamic-emission large-df approximation
+keeps its existing policy. The shared refined normal quantile uses survival
+probabilities for the upper-tail Newton correction.
 
 The complete SCAR-TM-Jacobi numerical boundary is native C++17. Typed
 parameter, configuration, result, and status objects own raw/physical
 transforms, stationary Beta shapes and derivatives, checked workspace
 arithmetic, transition construction, adaptive backend selection,
 filtering/smoothing, objective/gradient, residual/state operations, Lamperti
-transforms and fixed-draw sampling. Gauss-Jacobi/Gauss-Hermite construction and
+transforms, stationary Beta inverse transforms, and fixed-draw sampling.
+Gauss-Jacobi/Gauss-Hermite construction and
 the normalized Jacobi basis reuse the dependency-free symmetric eigensolver
 family. The workspace contract charges the maximum Jacobi/Hermite eigenvector
 peak not already covered by retained dense transition or gradient matrices.
 Production Python and SciPy do not duplicate these formulas; Python owns fit,
 RNG, chunk, and result orchestration only.
+Fixed-shape stationary rules convert `(alpha, beta)` inside the native Jacobi
+domain, candidate basis orders are capped there, and full-horizon step counts
+are derived there from the observation count. Pair-copula tau mapping and its
+optional parameter cap are one native operation.
 
 The extension build has one canonical source manifest at
 `pyscarcopula/_cpp/build_support/sources.py`. `SCAR_COMPUTE_SOURCES` contains
@@ -184,6 +239,20 @@ indices. Raw OU emission filtering is a public computational
 operation, `filter_ou_grid_emissions`, returning `OuGridFilterResult`; the
 SCAR-OU binder only validates the buffer shape/lifetime, invokes that API
 without the GIL, and serializes its result.
+
+Optimizer callbacks never synthesize Python objective or gradient values.
+Unsupported and unexpected native failures reach the centralized exception
+policy unchanged. Only a structured native numerical-failure status may invoke
+the named C++ optimizer-failure policy; its penalty and gradient are returned by
+C++, including zero-gradient policies. A status-OK result containing a
+non-finite objective is a native contract error and raises `FloatingPointError`.
+Explicit, pre-evaluation domain rejection such as the configured Jacobi
+stationary-shape cutoff remains separate from runtime failure handling. C++
+validates that domain and returns the optimizer penalty/gradient through the
+same native model-policy API; Python neither embeds the cutoff formula nor
+constructs the rejected evaluation. Generic optimizer scaling/projection also
+uses the native model policy; Python retains SciPy option, termination and DTO
+bookkeeping only.
 
 Native copula code is organized by model ownership rather than by a shared
 horizontal implementation file:
@@ -278,8 +347,10 @@ parallel-axis policies stay in the owning kernels.
 Python remains responsible for:
 
 - optimizer orchestration and result construction;
-- correlation parameterization and chain rules around native evaluators;
-- RNG and generation of fixed draws used by native conditional sampling;
+- selecting correlation modes and carrying raw optimizer vectors; native
+  evaluators own correlation parameterization and gradient pullbacks;
+- generation of raw standard-normal and uniform draws consumed by native
+  sampling transforms;
 - Jacobi fit, fixed-draw generation, chunk, and result orchestration around the
   mandatory native evaluator and sampling operations;
 - goodness-of-fit and contribution analytics.
@@ -303,9 +374,14 @@ fallback.
 SCAR-TM-OU joint Stochastic Student fits can hold a prepared native evaluator
 for one optimizer loop. That object owns the copied observations, native
 copula specification, Student PPF cache, and reusable gradient workspaces.
-Python still owns the raw correlation parameterization and updates only the
-native Student factor between objective calls. Direct functional adapters
-remain available for one-off evaluations.
+Native code maps raw correlation coordinates and returns their analytical
+gradient; analytical joint fitting does not synthesize a Python finite-
+difference correlation gradient. Python updates the native Student factor and
+orchestrates the optimizer between objective calls. Direct functional adapters
+remain available for one-off evaluations. OU log-stationary and scaled
+coordinates, Jacobi raw-gradient pullbacks, equicorrelation transformed static
+objectives, stochastic-Student df chain rules, and identified factor penalties
+likewise cross the facade as typed native operations.
 
 Gaussian and Student multivariate conditional kernels accept read-only native
 views. C-contiguous NumPy `float64` inputs remain alive for the complete
@@ -330,6 +406,22 @@ GAS sampler execute that same plan. Model-specific parameter generation and
 state updates remain in their strategy executors; the plan owns only topology,
 node dependencies, edge orientation, and operation order.
 
+Conditional suffix edge inputs and density pseudo-observation nodes are also
+produced by the native plan executors. Trace mode is explicit and opt-in: C++
+returns canonical `(operation, row, side)` or `(row, node)` arrays, while
+`_native/vine.py` maps topology keys and coordinates strategy callbacks.
+`VineCopula` does not evaluate h-pairs or evolve pseudo-observation state in
+Python, and the retired suffix traversal helper is absent from production.
+Registered extension strategies without a native dynamic executor receive no
+fabricated Python pseudo-history; prediction continues through their public
+parameter-path hook with `None` history.
+
+Importable production modules are part of the supported architecture even
+when no internal caller is currently found. Consequently, the unused
+`_utils.linear_least_squares` kernel and `numerical.gof_blocks` state-evolution
+helpers are removed instead of being treated as unreachable reference code.
+GoF execution uses the native forward evaluators.
+
 Arbitrary-given R-vine MCMC also compiles, once per density plan, the
 topologically ordered operations and nodes affected by each original
 coordinate. The native incremental executor caches node values and individual
@@ -337,11 +429,14 @@ edge log-density contributions per chain, recomputes only that closure for a
 proposal, and then sums all edge contributions in their original order. A
 rejected proposal never changes the accepted cache. Its accepted/proposal
 caches are row-chunked under the same preflight memory budget as states,
-log-densities, and replay draws. The adapter selects the incremental path only
-for structurally profitable closures that fit the budget. Otherwise it uses
-the preserved full-recompute oracle only when that driver's complete state,
-proposal, density-workspace, and draw footprint also fits; if neither path
-fits, preflight fails before consuming RNG state or allocating MCMC buffers.
+log-densities, and replay draws. A shared native policy selects the incremental
+path only for structurally profitable closures that fit the budget, using the
+fixed 85 percent affected-operation threshold. Otherwise it uses the preserved
+full-recompute oracle only when that driver's complete state, proposal,
+density-workspace, and draw footprint also fits; if neither path fits,
+preflight fails before consuming RNG state or allocating MCMC buffers. Python
+queries this policy before creating draws, and obtains default sampling and
+burn-in step counts from the same native owner.
 Algorithm and workspace measurements are internal native diagnostics, while
 the public MCMC diagnostics schema remains unchanged. Single-chain calls
 retain full recomputation because the incremental cache setup does not
@@ -363,6 +458,9 @@ fitting data.
 
 Persistence uses a single JSON representation. The loader restores the same
 canonical class paths and state layout written by the current package.
+Only the explicit model/configuration/result registry in `io.py` can be
+resolved. Payload class paths never select an import target; contrib types,
+raw extension classes and unregistered Python classes cannot be persisted.
 
 For generic vines, `RVineMatrix` is the canonical public structure. The model
 stores a separate natural-order matrix for numerical traversal:

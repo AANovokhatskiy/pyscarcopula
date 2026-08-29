@@ -421,6 +421,25 @@ JacobiFixedRuleResult build_fixed_jacobi_rule(
     }
 }
 
+JacobiFixedRuleResult build_fixed_jacobi_shape_rule(
+    double alpha,
+    double beta,
+    int quad_order,
+    std::uint64_t memory_budget_bytes) {
+
+    const double total = alpha + beta;
+    if (!std::isfinite(alpha) || !std::isfinite(beta)
+        || alpha <= 0.0 || beta <= 0.0 || !std::isfinite(total)) {
+        return failure<JacobiFixedRuleResult>(Status::InvalidParameter);
+    }
+    JacobiParams params;
+    params.kappa = 0.5 * total;
+    params.m = alpha / total;
+    params.xi = 1.0;
+    return build_fixed_jacobi_rule(
+        params, quad_order, memory_budget_bytes);
+}
+
 JacobiVectorResult evaluate_jacobi_polynomials(
     double x,
     double alpha,

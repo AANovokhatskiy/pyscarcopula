@@ -583,4 +583,81 @@ GasPathResult GasEvaluator::h_path(
     return out;
 }
 
+GasOuInitializationResult GasEvaluator::ou_initial_point(
+    double static_mu,
+    const CopulaSpec& copula,
+    ObservationView u,
+    const GasConfig& config) const {
+    GasOuInitializationResult out;
+    if (!std::isfinite(static_mu) || u.n_obs < 2) {
+        out.status = Status::InvalidParameter;
+        return out;
+    }
+    constexpr double betas[] = {0.90, 0.95, 0.98, 0.99};
+    constexpr double gammas[] = {0.01, 0.05, 0.1, 0.3, 0.5};
+    double best = -1e10;
+    for (const double beta : betas) {
+        for (const double gamma : gammas) {
+            const GasParams candidate{
+                static_mu * (1.0 - beta), gamma, beta};
+            const GasLogLikResult evaluated = log_likelihood(
+                candidate, copula, u, config);
+            if (evaluated.is_ok() && evaluated.log_likelihood > best) {
+                best = evaluated.log_likelihood;
+                out.selected_omega = candidate.omega;
+                out.selected_gamma = candidate.gamma;
+                out.selected_beta = candidate.beta;
+                out.grid_candidate_found = true;
+            }
+        }
+    }
+    if (!out.grid_candidate_found) {
+        out.mu = static_mu;
+        return out;
+    }
+    const GasFilterResult filtered = filter(
+        GasParams{out.selected_omega, out.selected_gamma, out.selected_beta},
+        copula, u, config);
+    if (!filtered.is_ok()) {
+        out.status = filtered.status;
+        out.failure = filtered.failure;
+        return out;
+    }
+    out.best_log_likelihood = best;
+    long double sum = 0.0L;
+    for (const double value : filtered.g_path) sum += value;
+    out.mu = static_cast<double>(
+        sum / static_cast<long double>(filtered.g_path.size()));
+    long double variance_sum = 0.0L;
+    for (const double value : filtered.g_path) {
+        const long double centered =
+            static_cast<long double>(value) - out.mu;
+        variance_sum += centered * centered;
+    }
+    const double variance = static_cast<double>(
+        variance_sum / static_cast<long double>(filtered.g_path.size()));
+    if (variance < 1e-10) {
+        return out;
+    }
+    long double covariance_sum = 0.0L;
+    for (std::size_t index = 0;
+         index + 1 < filtered.g_path.size(); ++index) {
+        covariance_sum +=
+            (static_cast<long double>(filtered.g_path[index]) - out.mu)
+            * (static_cast<long double>(filtered.g_path[index + 1]) - out.mu);
+    }
+    const double covariance = static_cast<double>(
+        covariance_sum
+        / static_cast<long double>(filtered.g_path.size() - 1));
+    const double autocorrelation = std::clamp(
+        covariance / variance, 0.01, 0.999);
+    const double dt =
+        1.0 / static_cast<double>(u.n_obs - 1);
+    out.kappa = std::clamp(
+        -std::log(autocorrelation) / dt, 0.01, 100.0);
+    out.nu = std::clamp(
+        std::sqrt(2.0 * out.kappa * variance), 0.01, 50.0);
+    return out;
+}
+
 }  // namespace scar

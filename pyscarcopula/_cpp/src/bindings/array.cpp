@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -181,6 +182,18 @@ py::array_t<double> vector_to_array(const std::vector<double>& values) {
     return output;
 }
 
+py::array_t<double> vector_to_array(std::vector<double>&& values) {
+    auto storage = std::make_unique<std::vector<double>>(std::move(values));
+    const auto count = static_cast<py::ssize_t>(storage->size());
+    auto* data = storage->data();
+    py::capsule owner(storage.get(), [](void* pointer) {
+        delete static_cast<std::vector<double>*>(pointer);
+    });
+    storage.release();
+    return py::array_t<double>(
+        {count}, {static_cast<py::ssize_t>(sizeof(double))}, data, owner);
+}
+
 py::array_t<double> matrix_to_array(
     const std::vector<double>& values,
     std::size_t rows,
@@ -195,6 +208,41 @@ py::array_t<double> matrix_to_array(
     py::array_t<double> output({
         static_cast<py::ssize_t>(rows),
         static_cast<py::ssize_t>(columns),
+    });
+    std::copy(values.begin(), values.end(), output.mutable_data());
+    return output;
+}
+
+py::array_t<double> result_matrix_to_array(
+    const std::vector<double>& values,
+    std::size_t rows,
+    std::size_t columns) {
+
+    std::size_t expected = 0;
+    if (!scar::core::checked_size_mul(rows, columns, expected)
+        || expected != values.size()) {
+        return vector_to_array(values);
+    }
+    return matrix_to_array(values, rows, columns);
+}
+
+py::array_t<double> result_tensor3_to_array(
+    const std::vector<double>& values,
+    std::size_t first,
+    std::size_t second,
+    std::size_t third) {
+
+    std::size_t first_second = 0;
+    std::size_t expected = 0;
+    if (!scar::core::checked_size_mul(first, second, first_second)
+        || !scar::core::checked_size_mul(first_second, third, expected)
+        || expected != values.size()) {
+        return vector_to_array(values);
+    }
+    py::array_t<double> output({
+        static_cast<py::ssize_t>(first),
+        static_cast<py::ssize_t>(second),
+        static_cast<py::ssize_t>(third),
     });
     std::copy(values.begin(), values.end(), output.mutable_data());
     return output;

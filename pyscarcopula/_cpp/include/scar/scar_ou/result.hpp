@@ -64,6 +64,15 @@ struct StateDistribution {
     }
 };
 
+/// Fixed-draw samples from a discrete/histogram OU state distribution.
+struct OuStateSample {
+    std::vector<double> values;
+    std::int64_t selection_draws_used = 0;
+    std::int64_t jitter_draws_used = 0;
+};
+
+using OuStateSampleResult = Result<OuStateSample>;
+
 /// Full posterior state distribution for every observation on one OU grid.
 struct SmoothedStateDistribution {
     std::vector<double> z_grid;

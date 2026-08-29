@@ -115,3 +115,78 @@ def test_sample_ou_trajectory_rejects_invalid_size(n, error):
     with pytest.raises(error, match="n must"):
         sample_ou_trajectory(
             1.4, 0.2, 0.9, n, np.random.default_rng(20260724))
+
+
+@pytest.mark.parametrize("n", [1, 17, 10001])
+def test_ou_sampling_uses_only_raw_normal_draws(monkeypatch, n):
+    class RawNormalRng:
+        def __init__(self):
+            self.calls = []
+
+        def standard_normal(self, size):
+            self.calls.append(size)
+            return np.zeros(size)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Python OU parameter arithmetic was called")
+
+    monkeypatch.setattr(np, "exp", forbidden)
+    monkeypatch.setattr(np, "sqrt", forbidden)
+    rng = RawNormalRng()
+    result = sample_ou_trajectory(1.4, 0.2, 0.9, n, rng)
+    np.testing.assert_array_equal(result, np.full(n, 0.2))
+    assert rng.calls == [n]
+
+
+def test_ou_sampling_does_not_swallow_native_failure(monkeypatch):
+    from pyscarcopula._native import _extension
+    from pyscarcopula._native.errors import NativeUnsupported
+
+    def unsupported(*args, **kwargs):
+        raise NativeUnsupported("sentinel OU sampling failure")
+
+    monkeypatch.setattr(_extension.load(), "ou_sample_trajectory", unsupported)
+    with pytest.raises(NativeUnsupported, match="sentinel OU sampling failure"):
+        sample_ou_trajectory(1.4, 0.2, 0.9, 3, np.random.default_rng(1))
+
+
+@pytest.mark.parametrize("params", [(-1., .2, .9), (0., .2, .9),
+                                    (1.4, np.nan, .9), (1.4, .2, -1.),
+                                    (1.4, .2, 1e300)])
+def test_invalid_ou_parameters_do_not_advance_rng(params):
+    rng, reference = np.random.default_rng(51), np.random.default_rng(51)
+    with pytest.raises(ValueError):
+        sample_ou_trajectory(*params, 17, rng)
+    np.testing.assert_array_equal(rng.random(8), reference.random(8))
+
+
+@pytest.mark.parametrize("quad_order,basis_order", [(8, 4), (48, 16), (80, 32)])
+def test_hermite_rule_matches_independent_scipy_rule(quad_order, basis_order):
+    from scipy.special import roots_hermitenorm
+
+    nodes, weights, basis = standard_normal_hermite_rule(quad_order, basis_order)
+    expected_nodes, expected_weights = roots_hermitenorm(quad_order)
+    np.testing.assert_allclose(nodes, expected_nodes, rtol=5e-13, atol=5e-14)
+    np.testing.assert_allclose(weights, expected_weights / np.sqrt(2 * np.pi),
+                               rtol=5e-12, atol=5e-15)
+    np.testing.assert_allclose(basis.T @ (weights[:, None] * basis),
+                               np.eye(basis_order), rtol=5e-12, atol=5e-12)
+
+
+def test_hermite_utilities_dispatch_to_production_native_owner(monkeypatch):
+    from pyscarcopula._native import _extension
+    from pyscarcopula._native.errors import NativeUnsupported
+    from pyscarcopula.numerical.hermite_tm import default_quad_order
+
+    standard_normal_hermite_rule.cache_clear()
+    module = _extension.load()
+
+    def unsupported(*args, **kwargs):
+        raise NativeUnsupported("sentinel Hermite failure")
+
+    monkeypatch.setattr(module, "ou_hermite_rule", unsupported)
+    monkeypatch.setattr(module, "ou_default_quad_order", unsupported)
+    with pytest.raises(NativeUnsupported, match="sentinel Hermite failure"):
+        standard_normal_hermite_rule(24, 8)
+    with pytest.raises(NativeUnsupported, match="sentinel Hermite failure"):
+        default_quad_order(8)

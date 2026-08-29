@@ -241,10 +241,10 @@ double sparse_reverse_probability(
     return 0.0;
 }
 
-bool validate_sparse_transition(
+JacobiSparseValidationCode validate_sparse_transition_detail(
     const JacobiSparseTransition& transition) noexcept {
     if (transition.order <= 0 || transition.max_width <= 0) {
-        return false;
+        return JacobiSparseValidationCode::InvalidShape;
     }
     const std::size_t order = static_cast<std::size_t>(transition.order);
     const std::size_t width =
@@ -252,12 +252,12 @@ bool validate_sparse_transition(
     if (transition.indices.size() != order * width
         || transition.probabilities.size() != order * width
         || transition.counts.size() != order) {
-        return false;
+        return JacobiSparseValidationCode::InvalidShape;
     }
     for (std::size_t row = 0; row < order; ++row) {
         const std::int64_t raw_count = transition.counts[row];
         if (raw_count < 1 || raw_count > transition.max_width) {
-            return false;
+            return JacobiSparseValidationCode::InvalidCount;
         }
         const std::size_t count = static_cast<std::size_t>(raw_count);
         double sum = 0.0;
@@ -266,20 +266,24 @@ bool validate_sparse_transition(
             const std::size_t offset = sparse_offset(transition, row, slot);
             const std::int64_t target = transition.indices[offset];
             const double probability = transition.probabilities[offset];
-            if (target <= previous
-                || target >= static_cast<std::int64_t>(order)
-                || !std::isfinite(probability)
-                || probability < 0.0) {
-                return false;
+            if (target < 0
+                || target >= static_cast<std::int64_t>(order)) {
+                return JacobiSparseValidationCode::IndexOutOfRange;
+            }
+            if (target <= previous) {
+                return JacobiSparseValidationCode::IndicesNotIncreasing;
+            }
+            if (!std::isfinite(probability) || probability < 0.0) {
+                return JacobiSparseValidationCode::InvalidProbability;
             }
             previous = target;
             sum += probability;
         }
-        if (std::abs(sum - 1.0) > 1e-12) {
-            return false;
+        if (std::abs(sum - 1.0) > 1e-14) {
+            return JacobiSparseValidationCode::RowSum;
         }
     }
-    return true;
+    return JacobiSparseValidationCode::Ok;
 }
 
 std::vector<double> sparse_left_multiply_unchecked(
@@ -1027,6 +1031,11 @@ JacobiDenseTransitionResult dense_from_sparse(
 
 }  // namespace
 
+JacobiSparseValidationCode validate_jacobi_sparse_transition(
+    const JacobiSparseTransition& transition) noexcept {
+    return validate_sparse_transition_detail(transition);
+}
+
 Status validate_jacobi_transition_config(
     const JacobiTransitionConfig& config) noexcept {
     if (!ok(validate_jacobi_config(config.numerical))) {
@@ -1122,6 +1131,31 @@ JacobiIntResult default_jacobi_quad_order(int basis_order) noexcept {
     }
     JacobiIntResult result;
     result.value = order;
+    return result;
+}
+
+JacobiIntResult resolve_jacobi_basis_order(
+    int requested_basis_order,
+    int quad_order) noexcept {
+
+    if (requested_basis_order <= 0
+        || quad_order <= 0
+        || quad_order > kMaxJacobiOrder) {
+        return failure<JacobiIntResult>(Status::InvalidSize);
+    }
+    JacobiIntResult result;
+    result.value = std::min(requested_basis_order, quad_order);
+    return result;
+}
+
+JacobiIntResult jacobi_horizon_steps(std::int64_t n_obs) noexcept {
+    if (n_obs < 2
+        || n_obs - 1 > static_cast<std::int64_t>(
+            std::numeric_limits<int>::max())) {
+        return failure<JacobiIntResult>(Status::InvalidSize);
+    }
+    JacobiIntResult result;
+    result.value = static_cast<int>(n_obs - 1);
     return result;
 }
 
@@ -1620,7 +1654,8 @@ JacobiSparseTransitionResult build_jacobi_sparse_transition(
 JacobiVectorResult jacobi_sparse_left_multiply(
     const JacobiSparseTransition& transition,
     const std::vector<double>& values) {
-    if (!validate_sparse_transition(transition)
+    if (validate_jacobi_sparse_transition(transition)
+            != JacobiSparseValidationCode::Ok
         || values.size() != static_cast<std::size_t>(transition.order)
         || !std::all_of(values.begin(), values.end(), [](double value) {
             return std::isfinite(value);
@@ -1638,7 +1673,8 @@ JacobiVectorResult jacobi_sparse_left_multiply(
 
 JacobiVectorResult jacobi_sparse_to_dense(
     const JacobiSparseTransition& transition) {
-    if (!validate_sparse_transition(transition)) {
+    if (validate_jacobi_sparse_transition(transition)
+            != JacobiSparseValidationCode::Ok) {
         return failure<JacobiVectorResult>(Status::InvalidParameter);
     }
     try {
@@ -1671,7 +1707,8 @@ JacobiHorizonResult jacobi_sparse_full_horizon_diagnostics(
     std::int64_t steps) {
     if (!ok(validate_jacobi_params(
             params, std::numeric_limits<double>::infinity()))
-        || !validate_sparse_transition(transition)
+        || validate_jacobi_sparse_transition(transition)
+            != JacobiSparseValidationCode::Ok
         || steps < 0
         || tau.size() != static_cast<std::size_t>(transition.order)
         || weights.size() != tau.size()) {
@@ -1791,8 +1828,12 @@ JacobiAdaptiveSelectionResult select_sparse_jacobi_order(
     bool have_successful = false;
     for (int order : quad_orders) {
         candidate_config.numerical.quad_order = order;
-        candidate_config.numerical.basis_order = std::min(
+        const JacobiIntResult basis_order = resolve_jacobi_basis_order(
             requested_basis_order, order);
+        if (!basis_order.is_ok()) {
+            return failure<JacobiAdaptiveSelectionResult>(basis_order.status);
+        }
+        candidate_config.numerical.basis_order = basis_order.value;
         JacobiAdaptiveCandidate record;
         record.quad_order = order;
         JacobiSparseTransitionResult transition =

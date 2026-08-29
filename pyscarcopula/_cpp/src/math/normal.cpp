@@ -78,10 +78,14 @@ double normal_quantile(double p) {
 double normal_quantile_refined(double p) {
     p = clip_probability(p);
     const double x = normal_quantile(p);
-    const double cdf = normal_cdf(x);
+    // In the upper tail use the small survival probability; CDF subtraction
+    // rounds the Newton correction to zero close to one.
+    const double error = x > 0.0
+        ? (1.0 - p) - normal_cdf(-x)
+        : normal_cdf(x) - p;
     const double pdf =
         std::exp(-0.5 * x * x) / std::sqrt(2.0 * kPi);
-    return x - (cdf - p) / pdf;
+    return x - error / pdf;
 }
 
 }  // namespace scar::math

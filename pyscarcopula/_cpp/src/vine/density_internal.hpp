@@ -36,6 +36,7 @@ int evaluate_density_plan_rows(
     std::int64_t observation_columns,
     double* log_pdf,
     double* residuals,
+    double* node_values,
     bool tolerate_non_finite,
     std::vector<double>& node_workspace,
     std::int64_t& failure_row,

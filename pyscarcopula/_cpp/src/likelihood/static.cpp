@@ -267,6 +267,40 @@ StaticObjectiveResult StaticCopulaEvaluator::objective(
         parameter, true, correlation_gradient_requested);
 }
 
+StaticObjectiveResult StaticCopulaEvaluator::transformed_objective(
+    double optimizer_parameter) const {
+
+    StaticObjectiveResult out;
+    out.n_threads_requested = n_threads_;
+    if (spec_.family != CopulaFamily::EquicorrGaussian
+        || !std::isfinite(optimizer_parameter)) {
+        out.status = Status::InvalidParameter;
+        out.negative_log_likelihood =
+            std::numeric_limits<double>::infinity();
+        return out;
+    }
+    const double parameter = scar_internal::equicorr_transform(
+        spec_, optimizer_parameter);
+    const double derivative = scar_internal::equicorr_dtransform(
+        spec_, optimizer_parameter);
+    if (!std::isfinite(parameter) || !std::isfinite(derivative)) {
+        out.status = Status::NumericalFailure;
+        out.negative_log_likelihood =
+            std::numeric_limits<double>::infinity();
+        return out;
+    }
+    out = evaluate_objective(parameter, true, false);
+    if (out.is_ok()) {
+        out.negative_gradient *= derivative;
+        if (!std::isfinite(out.negative_gradient)) {
+            out.status = Status::NumericalFailure;
+            out.negative_log_likelihood =
+                std::numeric_limits<double>::infinity();
+        }
+    }
+    return out;
+}
+
 StaticObjectiveResult StaticCopulaEvaluator::objective_value(
     double parameter) const {
 

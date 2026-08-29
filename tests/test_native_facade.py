@@ -72,6 +72,35 @@ def test_extension_loader_and_errors_have_separate_facade_owners():
         assert not hasattr(module, "available")
 
 
+def test_scar_ou_fixed_draw_state_sampling_and_conditioning_contracts():
+    from pyscarcopula._native import scar_ou
+
+    stationary = scar_ou.sample_stationary_fixed_draws(
+        2.0, 0.3, 4.0, np.array([0.5, -1.0, 0.25]))
+    np.testing.assert_allclose(stationary, [1.3, -1.7, 0.8], atol=2e-15)
+
+    z_grid = np.array([-1.0, 0.0, 2.0])
+    probability = np.array([0.2, 0.3, 0.5])
+    grid, grid_info = scar_ou.sample_state_distribution_fixed_draws(
+        z_grid, probability, [0.0, 0.2, 0.499999, 0.5, 0.999], [],
+        mode="grid")
+    np.testing.assert_array_equal(grid, [-1.0, 0.0, 0.0, 2.0, 2.0])
+    assert grid_info == {"selection_draws_used": 5, "jitter_draws_used": 0}
+
+    histogram, histogram_info = scar_ou.sample_state_distribution_fixed_draws(
+        z_grid, probability, [0.1, 0.6], [0.5, 0.25], mode="histogram")
+    np.testing.assert_array_equal(histogram, [-0.75, 1.25])
+    assert histogram_info == {
+        "selection_draws_used": 2,
+        "jitter_draws_used": 2,
+    }
+
+    conditioned_grid, conditioned_probability = scar_ou.condition_state(
+        IndependentCopula(), z_grid, probability, [0.25, 0.75])
+    np.testing.assert_array_equal(conditioned_grid, z_grid)
+    np.testing.assert_allclose(conditioned_probability, probability, atol=0.0)
+
+
 def test_top_level_import_fails_fast_when_extension_is_missing():
     code = """
 import importlib.abc
@@ -324,6 +353,33 @@ def test_strategy_requirements_are_checked_by_cpp_query():
     assert unsupported.reason
 
 
+def test_gaussian_joint_factor_capability_matches_public_rejection():
+    from pyscarcopula._native import _extension
+
+    with pytest.raises(NotImplementedError, match="factor-loading score"):
+        GaussianCopula(d=3, corr_mode="factor", factor_rank=1,
+                       factor_estimation="joint")
+    module = _extension.load()
+    descriptor = module.make_typed_model_descriptor(
+        module.NativeModelId.Gaussian, 3, module.CorrelationKind.Factor, 0,
+        module.FactorEstimationKind.Joint)
+    result = module.query_capability(
+        descriptor, module.NativeOperation.LikelihoodObjectiveGradient,
+        module.DynamicsKind.Mle)
+    assert not result.supported
+    assert "factor-loading score" in result.reason
+
+    for model_id, estimation in (
+            (module.NativeModelId.Gaussian, module.FactorEstimationKind.TwoStage),
+            (module.NativeModelId.Student, module.FactorEstimationKind.Joint)):
+        supported_descriptor = module.make_typed_model_descriptor(
+            model_id, 3, module.CorrelationKind.Factor, 0, estimation)
+        assert module.query_capability(
+            supported_descriptor,
+            module.NativeOperation.LikelihoodObjectiveGradient,
+            module.DynamicsKind.Mle).supported
+
+
 @pytest.mark.parametrize(
     ("status", "exception"),
     [
@@ -377,6 +433,79 @@ def test_central_status_policy_preserves_structured_failure_context():
         diagnostics={"iterations": 4},
     )
     assert error.failure_context is error.context
+
+
+def test_objective_wrappers_propagate_native_failures(monkeypatch):
+    import importlib
+
+    from pyscarcopula import GumbelCopula, StudentCopula
+    from pyscarcopula._native import static as static_likelihood
+    from pyscarcopula.strategy import scar_tm
+    from pyscarcopula.strategy.scar_jacobi import SCARJacobiStrategy
+
+    observations = np.array(
+        [[0.12, 0.23], [0.31, 0.45], [0.58, 0.67], [0.79, 0.86]],
+        dtype=np.float64,
+    )
+
+    def unsupported(*_args, **_kwargs):
+        raise NativeUnsupported("injected native objective failure")
+
+    gas_filter = importlib.import_module("pyscarcopula.numerical.gas_filter")
+    monkeypatch.setattr(
+        gas_filter._cpp_gas, "negative_log_likelihood", unsupported)
+    with pytest.raises(NativeUnsupported, match="native objective failure"):
+        gas_filter.gas_negloglik(
+            0.1, 0.2, 0.3, observations, GumbelCopula())
+
+    monkeypatch.setattr(scar_tm._cpp_scar_ou, "neg_loglik", unsupported)
+    with pytest.raises(NativeUnsupported, match="native objective failure"):
+        scar_tm.SCARTMStrategy().objective(
+            GumbelCopula(), observations, np.array([1.0, 0.2, 0.3]))
+
+    def numerical_failure(*_args, **_kwargs):
+        raise FloatingPointError("injected native numerical failure")
+
+    monkeypatch.setattr(static_likelihood, "prepare_student", numerical_failure)
+    student = StudentCopula(d=2, R=np.eye(2))
+    with pytest.raises(FloatingPointError, match="native numerical failure"):
+        student._nll_with_params(observations, np.eye(2), 6.0)
+
+    jacobi = SCARJacobiStrategy(basis_order=3, quad_order=16)
+    monkeypatch.setattr(jacobi, "_prepared_evaluator", unsupported)
+    with pytest.raises(NativeUnsupported, match="native objective failure"):
+        jacobi.objective(
+            GumbelCopula(), observations, np.array([1.2, 0.4, 0.25]))
+
+
+def test_jacobi_fit_callback_propagates_native_failure(monkeypatch):
+    from pyscarcopula import GumbelCopula
+    from pyscarcopula.strategy.scar_jacobi import SCARJacobiStrategy
+
+    def unsupported(*_args, **_kwargs):
+        raise NativeUnsupported("injected native Jacobi fit failure")
+
+    class FailingEvaluator:
+        neg_loglik = staticmethod(unsupported)
+        neg_loglik_with_grad = staticmethod(unsupported)
+
+    strategy = SCARJacobiStrategy(
+        basis_order=3,
+        quad_order=16,
+        smart_init=False,
+        analytical_grad=True,
+    )
+    monkeypatch.setattr(
+        strategy, "_prepared_evaluator", lambda *_args, **_kwargs: FailingEvaluator())
+    observations = np.array(
+        [[0.12, 0.23], [0.31, 0.45], [0.58, 0.67], [0.79, 0.86]],
+        dtype=np.float64,
+    )
+    with pytest.raises(NativeUnsupported, match="Jacobi fit failure"):
+        strategy.fit(
+            GumbelCopula(), observations,
+            alpha0=np.array([1.2, 0.4, 0.25]),
+            maxiter=1, maxfun=4)
 
 
 @pytest.mark.parametrize("value", [1, 8, np.int64(256)])

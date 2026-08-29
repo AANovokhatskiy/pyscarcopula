@@ -8,9 +8,9 @@ from typing import Callable, Mapping, Sequence
 import numpy as np
 from scipy.optimize import minimize
 
+from pyscarcopula._native import model_policy
 from pyscarcopula.copula.multivariate.corr_param import validate_corr_matrix
 from pyscarcopula.copula.multivariate.correlation_policy import FloatArray
-from pyscarcopula._native.errors import NativeError
 
 
 @dataclass(frozen=True)
@@ -76,26 +76,49 @@ class StaticMLEOutcome:
         }
 
 
-_EXPECTED_NUMERICAL_ERRORS = (
-    FloatingPointError,
-    OverflowError,
-    ValueError,
-    np.linalg.LinAlgError,
-    NativeError,
-)
+def make_student_static_mle_evaluator(
+        initial_correlation, policy, observations, *, n_threads, fail_value):
+    """Create the shared dense Student df/correlation native evaluator."""
+    from pyscarcopula._native import static as static_likelihood
+
+    n_corr = policy.optimized_n_params
+    fixed_evaluator = (
+        static_likelihood.prepare_student(
+            initial_correlation, observations, n_threads=n_threads)
+        if n_corr == 0 else None)
+
+    def evaluate(parameters):
+        correlation = (
+            initial_correlation.copy()
+            if n_corr == 0
+            else policy.trial_correlation(parameters[1:]))
+        evaluator = fixed_evaluator
+        if evaluator is None:
+            evaluator = static_likelihood.prepare_student(
+                correlation, observations, n_threads=n_threads)
+            value, df_gradient, corr_gradient = (
+                evaluator.objective_and_joint_gradient(
+                    float(parameters[0]), fail_value=fail_value))
+        else:
+            value, df_gradient = evaluator.objective_and_gradient(
+                float(parameters[0]), fail_value=fail_value)
+        gradient = np.empty_like(parameters)
+        gradient[0] = df_gradient[0]
+        if n_corr:
+            gradient[1:] = policy.raw_gradient(
+                parameters[1:], correlation, corr_gradient)
+        return StaticMLEEvaluation(
+            objective=value,
+            gradient=gradient,
+            correlation=correlation,
+            state={"df": float(parameters[0])},
+        )
+
+    return evaluate
 
 
-def _failure_value_and_gradient(
-        parameters: FloatArray,
-        initial_parameters: FloatArray,
-        fail_value: float) -> tuple[float, FloatArray]:
-    direction = parameters - initial_parameters
-    norm = float(np.linalg.norm(direction))
-    if not np.isfinite(norm) or norm == 0.0:
-        direction = np.ones_like(initial_parameters)
-    else:
-        direction = direction / norm
-    return fail_value, direction * np.sqrt(fail_value)
+class _RejectedEvaluation(FloatingPointError):
+    """A status-ok evaluator result that violates the optimizer contract."""
 
 
 def _validate_evaluation(
@@ -112,7 +135,7 @@ def _validate_evaluation(
             not np.isfinite(value)
             or value >= fail_value
             or np.any(~np.isfinite(gradient))):
-        raise FloatingPointError(
+        raise _RejectedEvaluation(
             "static MLE objective returned a non-finite/failure result")
     correlation = evaluation.correlation
     if correlation is not None:
@@ -161,10 +184,10 @@ def run_static_multivariate_mle(
         fail_value: float) -> StaticMLEOutcome:
     """Optimize and independently validate one static multivariate problem.
 
-    Expected numerical failures are translated to a large objective with a
-    non-zero gradient. Unexpected exceptions propagate to expose programming
-    errors. No model object is accepted by this function, so objective calls
-    cannot publish fitted state accidentally.
+    Typed native failures propagate through the shared status-to-exception
+    policy. Structured numerical failures and rejected numeric results use the
+    C++-owned optimizer penalty. No model object is accepted by this function,
+    so objective calls cannot publish fitted state accidentally.
     """
     x0 = np.asarray(
         problem.initial_parameters, dtype=np.float64).reshape(-1).copy()
@@ -194,15 +217,24 @@ def run_static_multivariate_mle(
         try:
             evaluation = strict_evaluate(parameters)
             return evaluation.objective, evaluation.gradient.copy()
-        except _EXPECTED_NUMERICAL_ERRORS:
-            return _failure_value_and_gradient(parameters, x0, fail_value)
+        except _RejectedEvaluation:
+            return model_policy.optimizer_failure_evaluation(
+                parameters, x0, fail_value, directional_gradient=True)
+        except FloatingPointError as error:
+            return model_policy.optimizer_numerical_failure_evaluation(
+                error, parameters, x0, fail_value,
+                directional_gradient=True)
 
+    initial_evaluation = None
     try:
         initial_evaluation = strict_evaluate(x0)
         initial_objective = initial_evaluation.objective
-    except _EXPECTED_NUMERICAL_ERRORS:
-        initial_evaluation = None
-        initial_objective = fail_value
+    except _RejectedEvaluation:
+        initial_objective, _ = model_policy.optimizer_failure_evaluation(
+            x0, x0, fail_value, directional_gradient=True)
+    except FloatingPointError as error:
+        initial_objective = model_policy.optimizer_failure_objective(
+            error, fail_value)
 
     if x0.size:
         optimizer_result = minimize(
@@ -230,12 +262,13 @@ def run_static_multivariate_mle(
     final_evaluation = None
     try:
         final_evaluation = strict_evaluate(final_parameters)
-    except _EXPECTED_NUMERICAL_ERRORS:
-        pass
-
-    final_objective = (
-        fail_value
-        if final_evaluation is None else final_evaluation.objective)
+        final_objective = final_evaluation.objective
+    except _RejectedEvaluation:
+        final_objective, _ = model_policy.optimizer_failure_evaluation(
+            final_parameters, x0, fail_value, directional_gradient=True)
+    except FloatingPointError as error:
+        final_objective = model_policy.optimizer_failure_objective(
+            error, fail_value)
     projected_gradient = (
         None
         if final_evaluation is None

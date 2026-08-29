@@ -576,6 +576,62 @@ class FactorStudentEvaluator:
         )
         return result.pdf_and_gradient()
 
+    def stochastic_pdf_and_gradient_grid(
+            self,
+            raw_grid: Any,
+            *,
+            offset: float,
+            dimension_tile: int = 16384,
+            n_threads: int = 1,
+            memory_budget_bytes: int | None = None
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Return density and d/dx for df=offset+softplus(x) natively."""
+        from pyscarcopula._native import _extension as _cpp_extension
+
+        dimension_tile = validate_integer(
+            dimension_tile, "dimension_tile", minimum=1)
+        n_threads = _validated_n_threads(n_threads)
+        grid = np.ascontiguousarray(
+            np.asarray(raw_grid, dtype=np.float64))
+        if grid.ndim != 1 or grid.shape[0] < 1:
+            raise ValueError("raw_grid must be a non-empty 1D array")
+        required = self._grid_peak_bytes(
+            self.n_observations,
+            len(grid),
+            dimension_tile,
+            n_threads,
+        )
+        _validated_budget(
+            memory_budget_bytes,
+            required,
+            "reduce the grid or increase memory_budget_bytes",
+        )
+        native_result = dict(
+            _cpp_extension.load()
+            ._factor_student_stochastic_pdf_and_grad_grid(
+                self._correlation._native,
+                self._observations,
+                grid,
+                float(offset),
+                dimension_tile,
+                n_threads,
+            )
+        )
+        _raise_native_status(
+            native_result, "stochastic density-grid evaluation")
+        density = np.asarray(
+            native_result["pdf"], dtype=np.float64)
+        gradient = np.asarray(
+            native_result["d_pdf_dx"], dtype=np.float64)
+        expected = (self.n_observations, len(grid))
+        if density.shape != expected or gradient.shape != expected:
+            raise RuntimeError(
+                "native stochastic factor Student grid returned "
+                "invalid output")
+        density.setflags(write=False)
+        gradient.setflags(write=False)
+        return density, gradient
+
     def evaluate_grid_batches(
             self,
             df_grid: Any,

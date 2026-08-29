@@ -10,6 +10,7 @@ Single source of truth for:
 import numpy as np
 from numba import njit
 
+from pyscarcopula._native import validation as native_validation
 from pyscarcopula._constants import (
     H_FUNCTION_EPS,
     PSEUDO_OBS_EPS,
@@ -91,12 +92,12 @@ def pobs(data):
 
 def clip_unit(x, eps=PSEUDO_OBS_EPS):
     """Clip array to (eps, 1-eps). Used for pseudo-obs safety."""
-    return np.clip(x, eps, 1.0 - eps)
+    return native_validation.clip_open_unit(x, eps)
 
 
 def clip_pseudo_observations(x):
     """Clip pseudo-observations before an inverse Gaussian/Student CDF."""
-    return np.clip(x, PSEUDO_OBS_EPS, 1.0 - PSEUDO_OBS_EPS)
+    return native_validation.clip_open_unit(x, PSEUDO_OBS_EPS)
 
 
 def clip_pseudo_observations_no_copy(x):
@@ -105,46 +106,17 @@ def clip_pseudo_observations_no_copy(x):
         values = x
     else:
         values = np.asarray(x, dtype=np.float64)
-    if np.all(
-            (values > PSEUDO_OBS_EPS)
-            & (values < 1.0 - PSEUDO_OBS_EPS)):
+    if not native_validation.open_unit_clip_required(
+            values, PSEUDO_OBS_EPS):
         return values
-    return clip_pseudo_observations(values)
+    return native_validation.clip_open_unit(values, PSEUDO_OBS_EPS)
 
 
 def clip_h_function_values(x):
     """Clip h/inverse-h values to the native numerical safety interval."""
-    return np.clip(x, H_FUNCTION_EPS, 1.0 - H_FUNCTION_EPS)
+    return native_validation.clip_open_unit(x, H_FUNCTION_EPS)
 
 
 def clip_rosenblatt_output(x):
     """Clip final Rosenblatt values before GoF normal quantiles."""
-    return np.clip(
-        x, ROSENBLATT_OUTPUT_EPS, 1.0 - ROSENBLATT_OUTPUT_EPS)
-
-
-# ══════════════════════════════════════════════════════════════════
-# Linear algebra helper (used in EIS)
-# ══════════════════════════════════════════════════════════════════
-
-@njit(cache=True)
-def linear_least_squares(A, b, ridge_alpha=0.0, pseudo_inverse=False):
-    """Solve Ax = b with optional Tikhonov regularization.
-
-    Parameters
-    ----------
-    A : (m, n) array
-    b : (m,) array
-    ridge_alpha : float, regularization strength
-    pseudo_inverse : bool, use pinv instead of normal equations
-
-    Returns
-    -------
-    x : (n,) array
-    """
-    if pseudo_inverse:
-        return np.linalg.pinv(A) @ b
-
-    penalty = np.eye(A.shape[1])
-    penalty[0, 0] = 0.0
-    return np.linalg.inv(A.T @ A + ridge_alpha * penalty) @ A.T @ b
+    return native_validation.clip_open_unit(x, ROSENBLATT_OUTPUT_EPS)

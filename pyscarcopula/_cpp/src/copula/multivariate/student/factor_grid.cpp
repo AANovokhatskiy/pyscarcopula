@@ -2,6 +2,7 @@
 
 #include "scar/copula/multivariate/student/density.hpp"
 #include "scar/copula/multivariate/student/quantile.hpp"
+#include "scar/copula/transforms.hpp"
 #include "scar/detail/parallel.hpp"
 #include "scar/detail/safety.hpp"
 
@@ -10,6 +11,7 @@
 #include <cstdint>
 #include <limits>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 namespace scar {
@@ -468,6 +470,81 @@ FactorStudentDensityGridResult factor_student_density_from_log_grid(
             || !std::isfinite(result.d_pdf_ddf[cell])) {
             result.status = Status::NumericalFailure;
             result.failure.index = static_cast<std::int64_t>(cell);
+            return result;
+        }
+    }
+    return result;
+}
+
+FactorStudentGridResult
+factor_student_stochastic_pdf_and_grad_grid(
+    const FactorCorrelationOperator& correlation,
+    const double* observations,
+    std::size_t rows,
+    const double* raw_grid,
+    std::size_t grid_size,
+    double offset,
+    std::size_t dimension_tile,
+    int n_threads) {
+
+    FactorStudentGridResult result;
+    if (raw_grid == nullptr || grid_size == 0
+        || !std::isfinite(offset) || offset <= 2.0) {
+        result.status = Status::InvalidParameter;
+        return result;
+    }
+    std::vector<double> df_grid(grid_size);
+    std::vector<double> derivatives(grid_size);
+    for (std::size_t index = 0; index < grid_size; ++index) {
+        if (!std::isfinite(raw_grid[index])) {
+            result.status = Status::InvalidParameter;
+            result.failure.index =
+                static_cast<std::int64_t>(index);
+            return result;
+        }
+        df_grid[index] = copula::transform_parameter(
+            Transform::Softplus, raw_grid[index], offset);
+        derivatives[index] = copula::d_transform_parameter(
+            Transform::Softplus, raw_grid[index]);
+        if (!std::isfinite(df_grid[index])
+            || !std::isfinite(derivatives[index])) {
+            result.status = Status::NumericalFailure;
+            result.failure.index =
+                static_cast<std::int64_t>(index);
+            return result;
+        }
+    }
+    result = factor_student_log_pdf_and_dlog_ddf_grid(
+        correlation,
+        observations,
+        rows,
+        df_grid.data(),
+        grid_size,
+        dimension_tile,
+        n_threads);
+    if (!result.is_ok()) {
+        return result;
+    }
+    auto density = factor_student_density_from_log_grid(
+        result.log_pdf.data(),
+        result.dlog_ddf.data(),
+        result.log_pdf.size());
+    if (!density.is_ok()) {
+        result.status = density.status;
+        result.failure = density.failure;
+        return result;
+    }
+    result.pdf = std::move(density.pdf);
+    result.d_pdf_dx.resize(result.pdf.size());
+    for (std::size_t cell = 0; cell < result.pdf.size(); ++cell) {
+        result.d_pdf_dx[cell] =
+            density.d_pdf_ddf[cell] * derivatives[cell % grid_size];
+        if (!std::isfinite(result.d_pdf_dx[cell])) {
+            result.status = Status::NumericalFailure;
+            result.failure.index =
+                static_cast<std::int64_t>(cell);
+            result.pdf.clear();
+            result.d_pdf_dx.clear();
             return result;
         }
     }

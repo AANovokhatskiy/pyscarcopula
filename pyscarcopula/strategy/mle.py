@@ -24,11 +24,13 @@ from pyscarcopula.strategy._base import (
     reject_legacy_tol,
 )
 from pyscarcopula.strategy.predict_helpers import (
-    predict_from_strategy,
+    predictive_params_from_state,
     sample_predictive,
+    strategy_predict,
 )
 from pyscarcopula._native import pair as pair_native
 from pyscarcopula._native import static as static_likelihood
+from pyscarcopula._native import model_policy
 from pyscarcopula._native.registry import registry_entry_for
 from pyscarcopula.numerical._arrays import as_float64_array
 
@@ -137,7 +139,7 @@ class MLEStrategy:
             x0 = _validate_scalar_mle_parameter(
                 copula, alpha0, name="alpha0")
         else:
-            x0_val = copula.transform(np.array([1.5]))[0]
+            x0_val = model_policy.default_pair_mle_parameter(copula)
             x0 = _validate_scalar_mle_parameter(
                 copula, x0_val, name="default MLE initial point")
 
@@ -227,19 +229,16 @@ class MLEStrategy:
                   alpha: np.ndarray, **kwargs) -> float:
         """Minus log-likelihood: -sum log c(u1, u2; alpha[0])."""
         registry_entry_for(copula)
-        try:
-            if is_multivariate_copula(copula):
-                try:
-                    return -float(copula.log_likelihood(u, float(alpha[0])))
-                except TypeError:
-                    return -float(copula.log_likelihood(u))
-            evaluator = static_likelihood.prepare(
-                copula, u, n_threads=self.config.n_threads)
-            value, _ = evaluator.objective_and_gradient(
-                float(alpha[0]), fail_value=self.config.fail_value)
-            return value
-        except Exception:
-            return float(self.config.fail_value)
+        if is_multivariate_copula(copula):
+            try:
+                return -float(copula.log_likelihood(u, float(alpha[0])))
+            except TypeError:
+                return -float(copula.log_likelihood(u))
+        evaluator = static_likelihood.prepare(
+            copula, u, n_threads=self.config.n_threads)
+        value, _ = evaluator.objective_and_gradient(
+            float(alpha[0]), fail_value=self.config.fail_value)
+        return value
 
     def sample(self, copula, u, result, n, rng=None, **kwargs):
         """Sample n observations with constant r = theta_mle."""
@@ -248,15 +247,8 @@ class MLEStrategy:
         return sample_predictive(
             copula, n, r, given=kwargs.get('given'), rng=rng, d=d)
 
-    def predict(self, copula, u, result, n, rng=None, **kwargs):
-        """Predict = sample for MLE (constant parameter)."""
-        return predict_from_strategy(
-            self, copula, u, result, n, rng=rng, **kwargs)
-
-    def predictive_params(self, copula, u, result, n, rng=None, **kwargs):
-        """Constant predictive parameter for MLE."""
-        state = self.predictive_state(copula, u, result, **kwargs)
-        return self.sample_params(copula, state, n, rng=rng, **kwargs)
+    predict = strategy_predict
+    predictive_params = predictive_params_from_state
 
     def predictive_state(self, copula, u, result, **kwargs):
         horizon = str(kwargs.get('horizon', 'next')).lower()

@@ -15,6 +15,8 @@ from typing import Any
 import numpy as np
 
 from pyscarcopula._native.threads import validate_n_threads
+from pyscarcopula._native import model_policy as _model_policy
+from pyscarcopula._native import statistics
 
 
 # Numerical configuration
@@ -445,12 +447,14 @@ class LatentProcessParams:
 
 def ou_params(kappa: float, mu: float, nu: float) -> LatentProcessParams:
     """Convenience constructor for OU process parameters."""
+    from pyscarcopula._native import model_policy
+    lower, upper = model_policy.latent_bounds("ou")
     return LatentProcessParams(
         process_type='ou',
         names=('kappa', 'mu', 'nu'),
         values=np.array([kappa, mu, nu]),
-        bounds_lower=np.array([0.001, -np.inf, 0.001]),
-        bounds_upper=np.array([np.inf, np.inf, np.inf]),
+        bounds_lower=np.asarray(lower, dtype=np.float64),
+        bounds_upper=np.asarray(upper, dtype=np.float64),
     )
 
 
@@ -460,18 +464,25 @@ def jacobi_params(kappa: float, m: float, xi: float) -> LatentProcessParams:
     The process evolves Kendall's tau directly:
     d tau_t = kappa * (m - tau_t) dt + xi * sqrt(tau_t * (1 - tau_t)) dW_t.
     """
+    from pyscarcopula._native import model_policy
+    lower, upper = model_policy.latent_bounds("jacobi")
     return LatentProcessParams(
         process_type='jacobi',
         names=('kappa', 'm', 'xi'),
         values=np.array([kappa, m, xi]),
-        bounds_lower=np.array([0.001, 1e-6, 0.001]),
-        bounds_upper=np.array([np.inf, 1.0 - 1e-6, np.inf]),
+        bounds_lower=np.asarray(lower, dtype=np.float64),
+        bounds_upper=np.asarray(upper, dtype=np.float64),
     )
 
 
+_DEFAULT_GAS_GAMMA_BOUND, _DEFAULT_GAS_BETA_BOUND = (
+    _model_policy.default_gas_limits())
+
+
 def gas_params(omega: float, gamma: float, beta: float,
-               gamma_bound: float = 10.0,
-               beta_bound: float = 0.999) -> LatentProcessParams:
+               gamma_bound: float = _DEFAULT_GAS_GAMMA_BOUND,
+               beta_bound: float = _DEFAULT_GAS_BETA_BOUND
+               ) -> LatentProcessParams:
     """Convenience constructor for GAS process parameters.
 
     Bounds used by GASProcess.fit():
@@ -479,14 +490,15 @@ def gas_params(omega: float, gamma: float, beta: float,
       gamma: [-gamma_bound, gamma_bound] (score sensitivity can be negative)
       beta:  (-beta_bound, beta_bound) (persistence, |beta| < 1)
     """
-    gamma_bound = float(gamma_bound)
-    beta_bound = float(beta_bound)
+    from pyscarcopula._native import model_policy
+    lower, upper = model_policy.latent_bounds(
+        "gas", gamma_bound=gamma_bound, beta_bound=beta_bound)
     return LatentProcessParams(
         process_type='gas',
         names=('omega', 'gamma', 'beta'),
         values=np.array([omega, gamma, beta]),
-        bounds_lower=np.array([-np.inf, -gamma_bound, -beta_bound]),
-        bounds_upper=np.array([np.inf, gamma_bound, beta_bound]),
+        bounds_lower=np.asarray(lower, dtype=np.float64),
+        bounds_upper=np.asarray(upper, dtype=np.float64),
     )
 
 
@@ -589,14 +601,21 @@ class MultivariateMLEResult(MLEResult):
     @property
     def aic(self) -> float:
         """Akaike information criterion."""
-        return 2.0 * self.parameter_count - 2.0 * self.log_likelihood
+        return statistics.information_criterion(
+            self.log_likelihood,
+            self.parameter_count,
+            self.n_observations,
+            "aic",
+        )
 
     @property
     def bic(self) -> float:
         """Bayesian information criterion."""
-        return (
-            np.log(self.n_observations) * self.parameter_count
-            - 2.0 * self.log_likelihood
+        return statistics.information_criterion(
+            self.log_likelihood,
+            self.parameter_count,
+            self.n_observations,
+            "bic",
         )
 
     def _repr_lines(self) -> list[str]:

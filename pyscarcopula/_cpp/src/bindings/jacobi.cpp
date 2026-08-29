@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <vector>
 
@@ -691,6 +692,14 @@ void bind_jacobi(py::module_& m) {
           result = scar::jacobi_physical_to_raw(params, tau_eps); }
         return raw_to_dict(result);
     });
+    m.def("jacobi_gradient_to_raw", [](
+            const scar::JacobiParams& params,
+            const std::array<double, 3>& gradient) {
+        scar::JacobiRawParamsResult result;
+        { py::gil_scoped_release release;
+          result = scar::jacobi_gradient_to_raw(params, gradient); }
+        return raw_to_dict(result);
+    }, py::arg("params"), py::arg("gradient"));
     m.def("jacobi_raw_bounds", [](
             const scar::JacobiParameterBounds& bounds) {
         scar::JacobiRawBoundsResult result;
@@ -698,6 +707,11 @@ void bind_jacobi(py::module_& m) {
           result = scar::jacobi_raw_bounds(bounds); }
         return bounds_to_dict(result);
     });
+    m.def("jacobi_initial_point",
+        [](const std::optional<double>& tau, double tau_eps) {
+            return params_to_dict(scar::jacobi_initial_point(
+                tau.value_or(0.0), tau.has_value(), tau_eps));
+        }, py::arg("tau"), py::arg("tau_eps"));
     m.def("jacobi_stationary_shape", [](
             const scar::JacobiParams& params) {
         scar::JacobiShapeResult result;
@@ -705,6 +719,17 @@ void bind_jacobi(py::module_& m) {
           result = scar::jacobi_stationary_shape(params); }
         return shape_to_dict(result);
     });
+    m.def("jacobi_sample_stationary", [](
+            const scar::JacobiParams& params,
+            py::array_t<double, py::array::c_style | py::array::forcecast>
+                uniforms) {
+        const std::vector<double> draws = flat_vector_from_array(
+            uniforms, "uniforms");
+        scar::JacobiVectorResult result;
+        { py::gil_scoped_release release;
+          result = scar::sample_jacobi_stationary(params, draws); }
+        return vector_to_dict(result);
+    }, py::arg("params"), py::arg("uniforms"));
     m.def("jacobi_validate_params", [](
             const scar::JacobiParams& params, double shape_max) {
         int status = 0;
@@ -845,6 +870,33 @@ void bind_jacobi(py::module_& m) {
     }, py::arg("params"), py::arg("quad_order"),
        py::arg("memory_budget_bytes") =
             scar::kDefaultJacobiMemoryBudgetBytes);
+    m.def("jacobi_build_fixed_shape_rule", [](
+            double alpha,
+            double beta,
+            int quad_order,
+            std::uint64_t memory_budget_bytes) {
+        scar::JacobiFixedRuleResult result;
+        { py::gil_scoped_release release;
+          result = scar::build_fixed_jacobi_shape_rule(
+              alpha, beta, quad_order, memory_budget_bytes); }
+        return fixed_rule_to_dict(result);
+    }, py::arg("alpha"), py::arg("beta"), py::arg("quad_order"),
+       py::arg("memory_budget_bytes") =
+            scar::kDefaultJacobiMemoryBudgetBytes);
+    m.def("jacobi_resolve_basis_order", [](
+            int requested_basis_order, int quad_order) {
+        const scar::JacobiIntResult result = scar::resolve_jacobi_basis_order(
+            requested_basis_order, quad_order);
+        py::dict output = status_dict(result);
+        output["order"] = result.value;
+        return output;
+    }, py::arg("requested_basis_order"), py::arg("quad_order"));
+    m.def("jacobi_horizon_steps", [](std::int64_t n_obs) {
+        const scar::JacobiIntResult result = scar::jacobi_horizon_steps(n_obs);
+        py::dict output = status_dict(result);
+        output["steps"] = result.value;
+        return output;
+    }, py::arg("n_obs"));
     m.def("jacobi_evaluate_polynomials", [](
             double x,
             double alpha,
@@ -954,6 +1006,38 @@ void bind_jacobi(py::module_& m) {
         { py::gil_scoped_release release;
           result = scar::build_jacobi_sparse_transition(params, config); }
         return sparse_transition_to_dict(result);
+    });
+    m.def("jacobi_validate_sparse_transition", [](
+            py::array_t<std::int64_t,
+                py::array::c_style | py::array::forcecast> indices,
+            Float64Array probabilities,
+            py::array_t<std::int64_t,
+                py::array::c_style | py::array::forcecast> counts) {
+        const scar::JacobiSparseTransition transition =
+            sparse_transition_from_arrays(indices, probabilities, counts);
+        switch (scar::validate_jacobi_sparse_transition(transition)) {
+        case scar::JacobiSparseValidationCode::Ok:
+            return;
+        case scar::JacobiSparseValidationCode::InvalidShape:
+            throw py::value_error(
+                "indices and probabilities must have the same 2D shape");
+        case scar::JacobiSparseValidationCode::InvalidCount:
+            throw py::value_error(
+                "counts are outside the sparse row width");
+        case scar::JacobiSparseValidationCode::InvalidProbability:
+            throw py::value_error(
+                "probabilities must be finite and non-negative");
+        case scar::JacobiSparseValidationCode::IndexOutOfRange:
+            throw py::value_error(
+                "active sparse indices are out of range");
+        case scar::JacobiSparseValidationCode::IndicesNotIncreasing:
+            throw py::value_error(
+                "active sparse indices must be strictly increasing");
+        case scar::JacobiSparseValidationCode::RowSum:
+            throw py::value_error(
+                "sparse transition rows must sum to one");
+        }
+        throw py::value_error("invalid sparse transition");
     });
     m.def("jacobi_sparse_left_multiply", [](
             py::array_t<std::int64_t,

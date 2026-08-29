@@ -211,6 +211,13 @@ CapabilityInfo query_capability(const CapabilityRequest& request) {
                 "static multivariate model does not support "
                 + std::string(dynamics_name(request.dynamics)));
         }
+        if (model_id == NativeModelId::Gaussian
+            && descriptor.correlation_kind() == CorrelationKind::Factor
+            && descriptor.factor_estimation() == FactorEstimationKind::Joint) {
+            return unsupported(
+                "joint Gaussian factor estimation requires a "
+                "factor-loading score, which is not implemented");
+        }
         return is_common_static_operation(request.operation)
             ? supported()
             : unsupported(

@@ -28,11 +28,23 @@ JacobiRawParamsResult jacobi_physical_to_raw(
     const JacobiParams& params,
     double tau_eps) noexcept;
 
+JacobiRawParamsResult jacobi_gradient_to_raw(
+    const JacobiParams& params,
+    const std::array<double, 3>& physical_gradient) noexcept;
+
 JacobiRawBoundsResult jacobi_raw_bounds(
     const JacobiParameterBounds& bounds) noexcept;
 
+JacobiParamsResult jacobi_initial_point(
+    double tau, bool has_tau, double tau_eps) noexcept;
+
 JacobiShapeResult jacobi_stationary_shape(
     const JacobiParams& params) noexcept;
+
+/// Transform caller-owned raw uniforms into the stationary Jacobi beta law.
+JacobiVectorResult sample_jacobi_stationary(
+    const JacobiParams& params,
+    const std::vector<double>& uniforms);
 
 JacobiScalarResult jacobi_resolve_dt(
     std::int64_t n_obs) noexcept;
@@ -107,6 +119,13 @@ JacobiFixedRuleResult build_fixed_jacobi_rule(
     std::uint64_t memory_budget_bytes =
         kDefaultJacobiMemoryBudgetBytes);
 
+JacobiFixedRuleResult build_fixed_jacobi_shape_rule(
+    double alpha,
+    double beta,
+    int quad_order,
+    std::uint64_t memory_budget_bytes =
+        kDefaultJacobiMemoryBudgetBytes);
+
 JacobiVectorResult evaluate_jacobi_polynomials(
     double x,
     double alpha,
@@ -124,6 +143,12 @@ JacobiMemoryResult estimate_jacobi_sparse_storage(
     const JacobiTransitionConfig& config) noexcept;
 
 JacobiIntResult default_jacobi_quad_order(int basis_order) noexcept;
+
+JacobiIntResult resolve_jacobi_basis_order(
+    int requested_basis_order,
+    int quad_order) noexcept;
+
+JacobiIntResult jacobi_horizon_steps(std::int64_t n_obs) noexcept;
 
 JacobiVectorResult jacobi_transition_powers(
     const JacobiParams& params,
@@ -157,6 +182,19 @@ JacobiDenseTransitionResult build_jacobi_dense_transition(
 JacobiSparseTransitionResult build_jacobi_sparse_transition(
     const JacobiParams& params,
     const JacobiTransitionConfig& config);
+
+enum class JacobiSparseValidationCode : int {
+    Ok = 0,
+    InvalidShape,
+    InvalidCount,
+    InvalidProbability,
+    IndexOutOfRange,
+    IndicesNotIncreasing,
+    RowSum,
+};
+
+JacobiSparseValidationCode validate_jacobi_sparse_transition(
+    const JacobiSparseTransition& transition) noexcept;
 
 JacobiVectorResult jacobi_sparse_left_multiply(
     const JacobiSparseTransition& transition,

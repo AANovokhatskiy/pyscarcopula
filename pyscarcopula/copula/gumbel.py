@@ -1,4 +1,5 @@
 import numpy as np
+from pyscarcopula._native import model_policy
 
 from pyscarcopula.copula.base import BivariateCopula
 
@@ -17,8 +18,7 @@ class GumbelCopula(BivariateCopula):
                 f"got '{transform_type}'"
             )
         self._transform_type = transform_type
-        upper = 21.0001 if transform_type == "logistic" else np.inf
-        self._bounds = [(1.0001, upper)]
+        self._bounds = model_policy.public_bounds(self)
 
     def tau_to_param(self, tau):
         tau = np.atleast_1d(np.asarray(tau, dtype=np.float64))

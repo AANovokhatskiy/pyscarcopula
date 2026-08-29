@@ -15,6 +15,31 @@ _P = ParamSpec("_P")
 _R = TypeVar("_R")
 
 
+def as_real_array(data):
+    """Normalize real numeric observations without accepting lossy coercions."""
+    raw = np.asarray(data)
+    if np.iscomplexobj(raw):
+        raise ValueError("data must be real-valued")
+    if raw.dtype.kind in {"O", "S", "U", "V", "b"}:
+        raise TypeError("data must have a real numeric dtype")
+    return np.asarray(raw, dtype=np.float64)
+
+
+def factor_uniqueness(instance):
+    """Shared read-only factor uniqueness property implementation."""
+    if instance._factor_correlation is None:
+        return None
+    return instance._factor_correlation.uniqueness.copy()
+
+
+def factor_copula_getstate(instance):
+    """Drop derived factor caches from a multivariate copula pickle."""
+    state = MultivariateCopula.__getstate__(instance)
+    state["_factor_correlation"] = None
+    state["_factor_operator"] = None
+    return state
+
+
 def model_state_locked(method: Callable[_P, _R]) -> Callable[_P, _R]:
     """Serialize operations that read or publish mutable fitted state."""
     @wraps(method)

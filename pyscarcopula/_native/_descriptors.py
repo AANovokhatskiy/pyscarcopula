@@ -116,6 +116,27 @@ def _make_native_pair_spec(module, copula):
     return spec
 
 
+def make_pair_model_policy_spec(module, copula):
+    """Build a bounds-only pair spec without granting compute registration.
+
+    Built-in subclasses inherit public constructor policy, while every
+    numerical dispatch path continues to require an exact registry entry.
+    """
+    family_name = getattr(copula, "_native_pair_family", None)
+    if family_name not in {
+            "Independent", "Clayton", "Frank", "Gumbel", "Joe",
+            "Gaussian"}:
+        raise NativeUnsupported(
+            f"Unsupported pair model policy: {type(copula).__name__}")
+    spec = module._default_pair_copula_spec(
+        getattr(module.CopulaFamily, family_name))
+    transform_name = _transform_name(copula)
+    if transform_name and spec.transform != module.Transform.GaussianTanh:
+        spec.transform = _native_archimedean_transform(
+            module, transform_name)
+    return spec
+
+
 def supported_for_scar_ou(copula) -> bool:
     """Return whether ``copula`` can use C++ SCAR-TM-OU kernels."""
     try:
@@ -201,11 +222,12 @@ def ensure_supported_for_static_likelihood(copula) -> None:
 
 
 def _set_factor(spec, correlation) -> None:
-    correlation = np.asarray(correlation, dtype=np.float64)
-    factor = np.linalg.cholesky(correlation)
-    spec.dim = int(correlation.shape[0])
-    spec.l_inv = np.linalg.inv(factor).reshape(-1).tolist()
-    spec.log_det = float(2.0 * np.sum(np.log(np.diag(factor))))
+    from pyscarcopula._native.multivariate import prepare_dense_correlation
+
+    inverse, log_determinant = prepare_dense_correlation(correlation)
+    spec.dim = int(inverse.shape[0])
+    spec.l_inv = inverse.reshape(-1).tolist()
+    spec.log_det = log_determinant
 
 
 def make_student_static_spec(module, correlation):
@@ -402,7 +424,6 @@ def make_multivariate_transform_spec(module, copula):
     if isinstance(copula, EquicorrGaussianCopula):
         spec.family = module.CopulaFamily.EquicorrGaussian
         spec.transform = module.Transform.GaussianTanh
-        spec.offset = 0.0
         spec.dim = int(copula.d)
         return spec
     if isinstance(copula, StochasticStudentCopula):
@@ -413,6 +434,33 @@ def make_multivariate_transform_spec(module, copula):
         return spec
     raise NativeUnsupported(
         f"Unsupported multivariate copula: {type(copula).__name__}")
+
+
+def make_multivariate_model_policy_spec(module, copula):
+    """Build a bounds-only multivariate spec, including subclasses."""
+    from pyscarcopula.copula.multivariate.equicorr import (
+        EquicorrGaussianCopula,
+    )
+    from pyscarcopula.copula.multivariate.stochastic_student import (
+        StochasticStudentCopula,
+    )
+
+    spec = module.CopulaSpec()
+    spec.rotation = module.Rotation.R0
+    if isinstance(copula, EquicorrGaussianCopula):
+        spec.family = module.CopulaFamily.EquicorrGaussian
+        spec.transform = module.Transform.GaussianTanh
+        spec.offset = 0.0
+        spec.dim = int(copula.d)
+        return spec
+    if isinstance(copula, StochasticStudentCopula):
+        spec.family = module.CopulaFamily.Student
+        spec.transform = module.Transform.Softplus
+        spec.offset = float(copula._df_offset)
+        spec.dim = int(copula.d)
+        return spec
+    raise NativeUnsupported(
+        f"Unsupported multivariate model policy: {type(copula).__name__}")
 
 
 def make_multivariate_spec(module, copula, cache=None):

@@ -323,34 +323,31 @@ class TestSmartInit:
         np.testing.assert_allclose(alpha0, gas_alpha)
         assert info['method'] == 'gas'
 
-    def test_gas_initial_point_uses_lightweight_loglik_then_one_filter(
+    def test_gas_initial_point_delegates_grid_and_moments_to_native(
             self, monkeypatch):
         from pyscarcopula.strategy import initial_point
-        gas_module = importlib.import_module(
-            'pyscarcopula.numerical.gas_filter')
 
         u = np.full((8, 2), 0.5)
         cop = GumbelCopula()
         calls = []
+        expected = np.array([1.2, 0.3, 0.4])
 
         monkeypatch.setattr(initial_point, '_mle_mu', lambda *args: 0.2)
 
-        def fake_loglik(omega, gamma, beta, u_arg, copula, scaling):
-            calls.append(('loglik', omega, gamma, beta))
-            return gamma
+        def fake_native(static_mu, u_arg, copula):
+            calls.append((static_mu, u_arg, copula))
+            return expected, {'best_log_likelihood': 3.0}
 
-        def fake_filter(omega, gamma, beta, u_arg, copula, scaling):
-            calls.append(('filter', omega, gamma, beta))
-            return np.linspace(0.0, 0.7, len(u_arg)), np.zeros(len(u_arg)), 0.0
-
-        monkeypatch.setattr(gas_module, 'gas_loglik', fake_loglik)
-        monkeypatch.setattr(gas_module, 'gas_filter', fake_filter)
+        monkeypatch.setattr(
+            initial_point.native_gas, 'ou_initial_point', fake_native)
 
         result = initial_point._gas_initial_point(u, cop)
 
-        assert result.shape == (3,)
-        assert sum(call[0] == 'loglik' for call in calls) == 20
-        assert sum(call[0] == 'filter' for call in calls) == 1
+        np.testing.assert_array_equal(result, expected)
+        assert len(calls) == 1
+        assert calls[0][0] == 0.2
+        assert calls[0][1] is u
+        assert calls[0][2] is cop
 
     def test_stochastic_student_starts_near_static_df_mle(self, monkeypatch):
         from pyscarcopula.copula.multivariate import StochasticStudentCopula

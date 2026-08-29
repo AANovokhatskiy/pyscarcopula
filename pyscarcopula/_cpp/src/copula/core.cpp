@@ -217,6 +217,28 @@ std::vector<double> copula_tau_to_param(
     return out;
 }
 
+std::vector<double> copula_tau_to_param_capped(
+    const CopulaSpec& spec,
+    const std::vector<double>& tau,
+    double theta_cap,
+    bool has_theta_cap) {
+
+    std::vector<double> out = copula_tau_to_param(spec, tau);
+    if (!has_theta_cap) {
+        return out;
+    }
+    if (!std::isfinite(theta_cap) || theta_cap <= 0.0) {
+        std::fill(
+            out.begin(), out.end(),
+            std::numeric_limits<double>::quiet_NaN());
+        return out;
+    }
+    for (double& value : out) {
+        value = std::min(value, theta_cap);
+    }
+    return out;
+}
+
 std::vector<double> copula_param_to_tau(
     const CopulaSpec& spec,
     const std::vector<double>& r) {

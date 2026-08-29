@@ -44,6 +44,23 @@ def test_native_statistics_match_dense_reference_and_report_clipping():
     assert diagnostics["temporary_values"] == 12
 
 
+def test_transformed_static_objective_owns_equicorr_chain_rule():
+    rng = np.random.default_rng(314159)
+    u = rng.uniform(0.01, 0.99, size=(23, 4))
+    model = EquicorrGaussianCopula(d=4)
+    evaluator = static_likelihood.prepare(model, u)
+    raw = 0.45
+    rho = model.transform(np.array([raw]))[0]
+    expected_value, physical_gradient = evaluator.objective_and_gradient(rho)
+    expected_gradient = physical_gradient * model.dtransform(
+        np.array([raw]))
+
+    value, gradient = evaluator.transformed_objective_and_gradient(raw)
+    assert value == pytest.approx(expected_value, rel=0.0, abs=0.0)
+    np.testing.assert_allclose(
+        gradient, expected_gradient, rtol=2e-15, atol=2e-15)
+
+
 @pytest.mark.parametrize(
     ("shape", "expected_axis"),
     [((2, 8192), "dimension_tiles"), ((32, 512), "rows")],
@@ -561,5 +578,12 @@ def test_negative_equicorrelation_sampling_is_structural_and_batched():
     with pytest.raises(ValueError, match="r must be finite"):
         next(model.sample_at_parameter_batches(
             1, -1.0 / 3.0, batch_rows=1))
+
+
+def test_native_equicorrelation_common_draw_planner_owns_sign_policy():
+    assert multivariate_native.equicorr_gaussian_common_draw_count(
+        [0.1, 0.2], 3, 2) == 2
+    assert multivariate_native.equicorr_gaussian_common_draw_count(
+        [0.1, -0.2], 3, 2) == 0
 
 

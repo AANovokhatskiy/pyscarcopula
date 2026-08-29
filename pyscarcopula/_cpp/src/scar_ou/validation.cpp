@@ -4,6 +4,7 @@
 #include "scar/core/threading.hpp"
 #include "scar/detail/safety.hpp"
 #include "scar/detail/scar_ou/grid.hpp"
+#include "scar/scar_ou/quadrature.hpp"
 
 #include <algorithm>
 #include <climits>
@@ -184,7 +185,7 @@ OuNumericalConfig with_default_quad_order(OuNumericalConfig config) {
             return config;
         }
         config.spectral_quad_order =
-            std::max(2 * config.spectral_basis_order + 16, 48);
+            ou_default_quad_order(config.spectral_basis_order).value;
     }
     return config;
 }

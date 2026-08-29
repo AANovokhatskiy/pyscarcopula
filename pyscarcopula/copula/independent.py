@@ -12,6 +12,7 @@ is set to independent, saving all fit/TM/GAS computation.
 
 import numpy as np
 from pyscarcopula.copula.base import BivariateCopula
+from pyscarcopula._native import model_policy
 
 
 class IndependentCopula(BivariateCopula):
@@ -31,7 +32,7 @@ class IndependentCopula(BivariateCopula):
         # to keep the interface uniform
         super().__init__(0)
         self._name = "Independent copula"
-        self._bounds = []  # no parameters
+        self._bounds = model_policy.public_bounds(self)
 
     # ── transform (trivial) ──────────────────────────────────────
 

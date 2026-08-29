@@ -9,6 +9,7 @@ import numpy as np
 
 from pyscarcopula._utils import clip_rosenblatt_output
 from pyscarcopula._native import gas as _cpp_gas
+from pyscarcopula._native import model_policy
 from pyscarcopula.numerical._arrays import as_float64_array
 
 
@@ -93,9 +94,9 @@ def gas_negloglik(
     scaling="unit",
     score_eps=1e-4,
 ):
-    """Return ``-logL`` for optimization, translating failures to ``1e10``."""
+    """Return native ``-logL`` and propagate its structured failures."""
     try:
-        value = _cpp_gas.negative_log_likelihood(
+        return _cpp_gas.negative_log_likelihood(
             omega,
             gamma,
             beta,
@@ -104,9 +105,8 @@ def gas_negloglik(
             scaling,
             score_eps,
         )
-        return float(value) if np.isfinite(value) else 1e10
-    except Exception:
-        return 1e10
+    except FloatingPointError as error:
+        return model_policy.optimizer_failure_objective(error)
 
 
 def gas_rosenblatt(

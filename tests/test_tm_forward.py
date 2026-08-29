@@ -27,9 +27,6 @@ from pyscarcopula.numerical._scar_ou_config import (
     AutoTMConfig,
     select_auto_backend,
 )
-from pyscarcopula.numerical.gof_blocks import (
-    forward_block_size,
-)
 from pyscarcopula.copula.elliptical import BivariateGaussianCopula
 from pyscarcopula.copula.clayton import ClaytonCopula
 from pyscarcopula.copula.multivariate import StochasticStudentCopula
@@ -79,15 +76,6 @@ def _direct_forward_density(grid, phi):
 def _density_to_mass(grid, phi):
     mass = phi * grid.trap_w
     return mass / np.sum(mass)
-
-
-def test_forward_block_size_bounds_memory():
-    assert forward_block_size(300) == 512
-    assert forward_block_size(10_000) == 200
-    assert forward_block_size(10_000_000) == 1
-    assert forward_block_size(300, max_elements=1_000, max_rows=10) == 3
-    assert forward_block_size(
-        100, max_elements=1_000, max_rows=10, element_width=5) == 2
 
 
 def test_local_transition_loglik_is_finite():
