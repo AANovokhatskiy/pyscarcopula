@@ -3,6 +3,7 @@
 #include "scar/copula/transforms.hpp"
 #include "scar/core/checked_arithmetic.hpp"
 #include "scar/math/beta.hpp"
+#include "scar/math/gamma.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -616,7 +617,8 @@ JacobiScalarResult jacobi_log_beta(
     }
     JacobiScalarResult result;
     result.value =
-        std::lgamma(alpha) + std::lgamma(beta) - std::lgamma(alpha + beta);
+        math::log_gamma(alpha) + math::log_gamma(beta)
+        - math::log_gamma(alpha + beta);
     if (!std::isfinite(result.value)) {
         result.status = Status::NumericalFailure;
     }

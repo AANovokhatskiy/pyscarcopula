@@ -7,6 +7,16 @@
 #include <limits>
 
 namespace scar::math {
+
+double log_gamma(double value) noexcept {
+#if defined(__GLIBC__)
+    int sign = 0;
+    return ::lgamma_r(value, &sign);
+#else
+    return std::lgamma(value);
+#endif
+}
+
 namespace {
 
 constexpr int kMaximumIterations = 10000;
@@ -23,7 +33,7 @@ double gamma_series(double a, double x) noexcept {
         sum += term;
         if (std::abs(term) <= std::abs(sum) * kTolerance) break;
     }
-    return sum * std::exp(-x + a * std::log(x) - std::lgamma(a));
+    return sum * std::exp(-x + a * std::log(x) - log_gamma(a));
 }
 
 double gamma_continued_fraction_q(double a, double x) noexcept {
@@ -45,7 +55,7 @@ double gamma_continued_fraction_q(double a, double x) noexcept {
         value *= change;
         if (std::abs(change - 1.0) <= kTolerance) break;
     }
-    return std::exp(-x + a * std::log(x) - std::lgamma(a)) * value;
+    return std::exp(-x + a * std::log(x) - log_gamma(a)) * value;
 }
 
 }  // namespace
@@ -105,7 +115,7 @@ double chi_square_quantile(double probability, double df) noexcept {
         if (value > 0.0) {
             const double log_density = (0.5 * df - 1.0) * std::log(value)
                 - 0.5 * value - 0.5 * df * std::log(2.0)
-                - std::lgamma(0.5 * df);
+                - log_gamma(0.5 * df);
             const double density = std::exp(log_density);
             if (std::isfinite(density) && density > 0.0) {
                 const double newton = value - (cdf - probability) / density;

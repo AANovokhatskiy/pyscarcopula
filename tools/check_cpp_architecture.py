@@ -2068,6 +2068,8 @@ def check_foundation_formula_duplicates(root: Path) -> list[Violation]:
             r"\bdouble\s+(?:betacf|regularized_beta|continued_fraction)\s*\(")),
         ("gamma", re.compile(
             r"\bdouble\s+regularized_gamma_p\s*\(")),
+        ("gamma", re.compile(
+            r"(?<![_\w])(?:std::|::)?lgamma\s*\(")),
         ("transforms", re.compile(
             r"\bdouble\s+(?:softplus|inverse_softplus|sigmoid|"
             r"stable_logistic|logistic_value|logistic_unit(?:_open)?)\s*\(")),

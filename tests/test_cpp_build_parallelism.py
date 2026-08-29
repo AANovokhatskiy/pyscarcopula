@@ -191,6 +191,22 @@ def test_non_msvc_environment_is_left_untouched(monkeypatch):
     assert TOOLCHAIN.os.environ["PATH"] == "inherited-path"
 
 
+def test_strict_msvc_replaces_default_warning_level(monkeypatch):
+    class Compiler:
+        compiler_type = "msvc"
+        initialized = True
+        compile_options = ["/nologo", "/O2", "/W3", "/MD"]
+        compile_options_debug = ["/nologo", "/Od", "/W3", "/MDd"]
+
+    monkeypatch.setenv("PYSCA_CPP_STRICT", "1")
+    compiler = Compiler()
+    TOOLCHAIN.prepare_compiler_environment(compiler)
+
+    assert compiler.compile_options == ["/nologo", "/O2", "/MD"]
+    assert compiler.compile_options_debug == ["/nologo", "/Od", "/MDd"]
+    assert TOOLCHAIN.standalone_compile_args("msvc")[-2:] == ["/W4", "/WX"]
+
+
 def test_build_cpp_tests_cli_forwards_explicit_jobs(monkeypatch, tmp_path):
     captured = {}
 
@@ -301,6 +317,20 @@ def test_header_unit_objects_avoid_absolute_output_path_expansion():
     header_block = source[source.index("if check_headers:"):]
     compile_call = header_block[:header_block.index("compiler.link_executable")]
     assert "output_dir=None" in compile_call
+
+
+def test_cpp_objects_avoid_absolute_source_path_expansion():
+    source = BUILD_TOOL_PATH.read_text(encoding="utf-8")
+    build_block = source[
+        source.index("with build_parallel.parallel_compilation"):
+        source.index("if check_headers:")
+    ]
+    assert "with _working_directory(CPP_SOURCE_ROOT):" in build_block
+    assert "list(sources.SCAR_COMPUTE_SOURCES)" in build_block
+    assert 'with _working_directory(ROOT / "tests" / "cpp"):' in build_block
+    assert "[path.name for path in CPP_TEST_SOURCES]" in build_block
+    assert "[str(path) for path in compute_sources]" not in build_block
+    assert "[str(path) for path in CPP_TEST_SOURCES]" not in build_block
 
 
 def test_extension_and_cpp_boundary_use_shared_build_support():

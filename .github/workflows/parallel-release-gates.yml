@@ -99,10 +99,13 @@ jobs:
           PYSCA_CPP_STRICT: "1"
         run: |
           python tools/check_cpp_architecture.py
-          python tools/build_cpp_tests.py --force -j 8
+          python tools/check_python_ownership.py
+          python tools/build_cpp_tests.py --force -j 4
 
       - name: Run architecture contracts
-        run: python -m pytest -n 8 -q tests/test_cpp_architecture.py
+        run: >-
+          python -m pytest -n 4 -q
+          tests/test_cpp_architecture.py tests/test_gate1_benchmarks.py
 
       - name: Build strict wheel
         env:
@@ -185,7 +188,7 @@ jobs:
           CXX: clang++
           PYSCA_CPP_STRICT: "1"
         run: >-
-          python tools/build_cpp_tests.py --force -j 8
+          python tools/build_cpp_tests.py --force -j 4
           --sanitize address-undefined
           --build-dir build/cpp-tests-asan-ubsan
       - name: Run native parallel sanitizer suite
@@ -252,7 +255,7 @@ jobs:
             halt_on_error=1:abort_on_error=1:
             second_deadlock_stack=1:history_size=7
         run: >-
-          python tools/build_cpp_tests.py --force -j 8
+          python tools/build_cpp_tests.py --force -j 4
           --sanitize thread
           --build-dir build/cpp-tests-tsan
       - name: Run parallel race suite

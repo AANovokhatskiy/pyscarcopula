@@ -9,6 +9,7 @@
 #include "scar/detail/scar_ou/grid.hpp"
 #include "scar/detail/scar_ou/transition.hpp"
 #include "scar/factor.hpp"
+#include "scar/math/gamma.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -49,8 +50,8 @@ double multivariate_student_log_pdf(
     double quadratic_form) {
 
     const double dimension_value = static_cast<double>(dimension);
-    return std::lgamma(0.5 * (df + dimension_value))
-        - std::lgamma(0.5 * df)
+    return math::log_gamma(0.5 * (df + dimension_value))
+        - math::log_gamma(0.5 * df)
         - 0.5 * dimension_value * std::log(df * 3.14159265358979323846)
         - 0.5 * log_determinant
         - 0.5 * (df + dimension_value)
@@ -58,8 +59,8 @@ double multivariate_student_log_pdf(
 }
 
 double univariate_student_log_pdf(double value, double df) {
-    return std::lgamma(0.5 * (df + 1.0))
-        - std::lgamma(0.5 * df)
+    return math::log_gamma(0.5 * (df + 1.0))
+        - math::log_gamma(0.5 * df)
         - 0.5 * std::log(df * 3.14159265358979323846)
         - 0.5 * (df + 1.0) * std::log1p(value * value / df);
 }

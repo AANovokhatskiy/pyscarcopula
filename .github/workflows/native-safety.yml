@@ -16,6 +16,7 @@ on:
       - "pyscarcopula/strategy/scar_jacobi.py"
       - "tests/test_cpp.py"
       - "tests/test_cpp_architecture.py"
+      - "tests/test_gate1_benchmarks.py"
       - "tests/test_cpp_gas_wrapper.py"
       - "tests/test_cpp_rvine_layer.py"
       - "tests/test_cpp_rvine_conditional.py"
@@ -37,6 +38,10 @@ on:
       - "tests/test_vine_performance.py"
       - "setup.py"
       - "tools/check_cpp_architecture.py"
+      - "tools/check_python_ownership.py"
+      - "tools/python_ownership_policy.py"
+      - "tools/run_gate1_benchmarks.py"
+      - "benchmarks/gate1_manifest_v2.json"
       - "pyproject.toml"
   pull_request:
     paths:
@@ -52,6 +57,7 @@ on:
       - "pyscarcopula/strategy/scar_jacobi.py"
       - "tests/test_cpp.py"
       - "tests/test_cpp_architecture.py"
+      - "tests/test_gate1_benchmarks.py"
       - "tests/test_cpp_gas_wrapper.py"
       - "tests/test_cpp_rvine_layer.py"
       - "tests/test_cpp_rvine_conditional.py"
@@ -73,6 +79,10 @@ on:
       - "tests/test_vine_performance.py"
       - "setup.py"
       - "tools/check_cpp_architecture.py"
+      - "tools/check_python_ownership.py"
+      - "tools/python_ownership_policy.py"
+      - "tools/run_gate1_benchmarks.py"
+      - "benchmarks/gate1_manifest_v2.json"
       - "pyproject.toml"
   workflow_dispatch:
 
@@ -93,7 +103,9 @@ jobs:
           python-version: "3.12"
 
       - name: Check C++ architecture
-        run: python tools/check_cpp_architecture.py
+        run: |
+          python tools/check_cpp_architecture.py
+          python tools/check_python_ownership.py
 
       - name: Install sanitizer build
         env:
@@ -116,6 +128,7 @@ jobs:
           export LD_PRELOAD="${asan_path}:${libstdcpp_path}"
           python -m pytest -vv -s --tb=long \
             tests/test_cpp_architecture.py \
+            tests/test_gate1_benchmarks.py \
             tests/test_cpp.py \
             tests/test_cpp_gas_wrapper.py \
             tests/test_cpp_rvine_layer.py \

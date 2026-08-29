@@ -49,6 +49,25 @@ def prepare_compiler_environment(compiler: Any) -> None:
     if toolchain_path:
         os.environ["PATH"] = toolchain_path
 
+    if env_flag("PYSCA_CPP_STRICT"):
+        # setuptools' MSVC defaults contain /W3.  Leaving it in place before
+        # the explicit /W4 emits D9025, a command-line warning which /WX does
+        # not promote.  Replace only the default warning level; /W4 and /WX
+        # remain explicit per-target arguments below.
+        for attribute in ("compile_options", "compile_options_debug"):
+            options = getattr(compiler, attribute, None)
+            if options is not None:
+                setattr(
+                    compiler,
+                    attribute,
+                    [
+                        option for option in options
+                        if str(option).upper() not in {
+                            "/W0", "/W1", "/W2", "/W3", "/W4",
+                        }
+                    ],
+                )
+
 
 def _sanitizer_mode() -> tuple[bool, bool]:
     sanitize = env_flag("PYSCA_CPP_SANITIZE")

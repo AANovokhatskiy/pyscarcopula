@@ -24,7 +24,9 @@ tools/*
 !tools/validate_jacobi_sampling.py
 !tools/compare_copulae_crypto6.py
 !tools/benchmark_conditional_sampling.py
+!tools/run_gate1_benchmarks.py
 benchmarks/*
+!benchmarks/gate1_manifest_v2.json
 scripts/
 results/
 AGENTS.md

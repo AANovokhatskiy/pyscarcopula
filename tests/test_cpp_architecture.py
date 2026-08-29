@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 import re
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -551,6 +553,17 @@ def test_foundation_helpers_have_single_canonical_owners():
     assert len(re.findall(r"\bdouble\s+normal_quantile\s*\(", cpp_text)) == 1
     assert len(re.findall(
         r"\bdouble\s+regularized_gamma_p\s*\(", cpp_text)) == 1
+    assert len(re.findall(r"\bdouble\s+log_gamma\s*\(", cpp_text)) == 1
+    assert "::lgamma_r(value, &sign)" in (
+        source / "math" / "gamma.cpp"
+    ).read_text(encoding="utf-8")
+    for path in sorted(source.rglob("*.cpp")):
+        if path == source / "math" / "gamma.cpp":
+            continue
+        assert re.search(
+            r"(?<![_\w])(?:std::|::)?lgamma\s*\(",
+            path.read_text(encoding="utf-8"),
+        ) is None, path
     assert len(re.findall(
         r"\bdouble\s+regularized_beta\s*\(", cpp_text)) == 1
     assert len(re.findall(r"\bdouble\s+softplus\s*\(", cpp_text)) == 1
@@ -613,6 +626,7 @@ def test_foundation_helpers_have_single_canonical_owners():
 @pytest.mark.parametrize("source", [
     "double local(double x) { return 0.5 * (1.0 + std::erf(x)); }\n",
     "double regularized_gamma_p(double a, double x) { return x / a; }\n",
+    "double local(double x) { return std::lgamma(x); }\n",
     "double betacf(double a, double b, double x) { return a + b + x; }\n",
     "double local(double x) { return 1.0 / (1.0 + std::exp(-x)); }\n",
     "double local(double x) { return std::log1p(std::exp(-std::abs(x))) "
@@ -1322,7 +1336,8 @@ def test_gate4_workflow_covers_required_compilers_and_build_boundaries():
 
     assert "msystem: MINGW64" in source
     assert "install: mingw-w64-x86_64-gcc" in source
-    assert "python tools/build_cpp_tests.py --force -j 8" in source
+    assert "python tools/build_cpp_tests.py --force -j 4" in source
+    assert "python tools/check_python_ownership.py" in source
     assert "python -m pyscarcopula._native.smoke" in source
     assert "Run full non-benchmark suite against wheel" in source
     assert source.index("Verify Python-free C++ build boundary") < source.index(
@@ -1338,7 +1353,96 @@ def test_release_workflows_automate_sanitizers_and_wheel_smoke():
     assert "--sanitize address-undefined" in release
     assert "Run Python-free ThreadSanitizer executable" in release
     assert "--sanitize thread" in release
-    assert release.count("tools/build_cpp_tests.py --force -j 8") >= 3
+    assert release.count("tools/build_cpp_tests.py --force -j 4") >= 3
+    assert "python -m pytest -n 4 -q" in release
+    assert "tests/test_cpp_architecture.py tests/test_gate1_benchmarks.py" in release
+    assert "-j 8" not in release
+    assert "-n 8" not in release
+
+
+def test_gate1_manifest_covers_full_fv6_performance_matrix():
+    manifest = json.loads(
+        (ROOT / "benchmarks/gate1_manifest_v2.json").read_text(
+            encoding="utf-8"))
+    cases = manifest["cases"]
+    ids = [case["id"] for case in cases]
+
+    assert manifest["manifest_id"] == "pyscarcopula-gate1-v2"
+    assert len(ids) == len(set(ids))
+    assert manifest["thread_values"] == [1, 2, 4, "physical"]
+    policy = manifest["protocol"]["regression_policy"]
+    assert policy["maximum_runtime_ratio"] == 2.0
+    assert policy["maximum_python_allocation_count_ratio"] == 2.0
+    assert policy["maximum_python_peak_memory_ratio"] == 2.0
+    assert policy["maximum_process_peak_rss_ratio"] == 2.0
+    assert policy["maximum_parallel_scaling_loss_ratio"] == 2.0
+    assert policy["require_checksum_match"] is True
+    assert policy["require_domain_diagnostics_match"] is True
+
+    models = {case["model"] for case in cases}
+    assert {
+        "pair",
+        "dense_gaussian",
+        "factor_gaussian",
+        "gaussian_shrinkage",
+        "gaussian_cholesky",
+        "dense_student",
+        "factor_student",
+        "equicorr_gaussian",
+        "gas_pair",
+        "gas_equicorr",
+        "gas_dense_student",
+        "gas_stochastic_student_factor",
+        "scar_ou_pair",
+        "scar_ou_equicorr",
+        "scar_ou_stochastic_student_dense",
+        "scar_ou_stochastic_student_factor",
+        "scar_jacobi_pair",
+        "student_ppf",
+        "correlation",
+        "cvine_static",
+        "rvine_static",
+        "rvine_gas",
+        "rvine_scar_ou",
+        "rvine_scar_jacobi",
+    } <= models
+    assert {case.get("topology", "dvine") for case in cases
+            if case["runner"].startswith("vine_")} == {
+                "cvine", "dvine", "rvine"}
+    assert {case.get("dynamic") for case in cases
+            if case["runner"] == "vine_dynamic_rosenblatt"} == {
+                "gas", "scar_ou", "scar_jacobi"}
+    assert {case["mode"] for case in cases
+            if case["model"] == "scar_ou_pair"} >= {
+                "cold_preparation", "prepared_repeated"}
+    assert {case["mode"] for case in cases
+            if case["model"] == "scar_jacobi_pair"} >= {
+                "cold_preparation", "prepared_repeated"}
+
+
+def test_gate1_runner_requires_external_append_only_artifacts(tmp_path):
+    from tools import run_gate1_benchmarks as gate1
+
+    assert gate1._required_thread_capacity([
+        {"n_threads": 1},
+        {"n_threads": 2},
+        {"n_threads": 4},
+        {"n_threads": "physical"},
+    ]) == 4
+
+    with pytest.raises(SystemExit, match="outside the product repository"):
+        gate1._artifact_paths(SimpleNamespace(
+            artifact_root=ROOT, output=None, summary=None))
+
+    artifact_root, output, summary = gate1._artifact_paths(SimpleNamespace(
+        artifact_root=tmp_path / "run", output=None, summary=None))
+    assert artifact_root == (tmp_path / "run").resolve()
+    assert output == artifact_root / "gate1_candidate.json"
+    assert summary == artifact_root / "performance_summary.md"
+    output.write_text("immutable", encoding="utf-8")
+    with pytest.raises(SystemExit, match="refusing to overwrite"):
+        gate1._artifact_paths(SimpleNamespace(
+            artifact_root=artifact_root, output=None, summary=None))
 
     wheels = (ROOT / ".github/workflows/wheels.yml").read_text(
         encoding="utf-8")

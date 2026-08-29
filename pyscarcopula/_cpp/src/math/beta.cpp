@@ -1,5 +1,7 @@
 #include "scar/math/beta.hpp"
 
+#include "scar/math/gamma.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -64,8 +66,8 @@ double regularized_beta(
     if (x <= 0.0) return 0.0;
     if (x >= 1.0) return 1.0;
     if (!has_log_normalization) {
-        log_normalization = std::lgamma(a + b)
-            - std::lgamma(a) - std::lgamma(b);
+        log_normalization = log_gamma(a + b)
+            - log_gamma(a) - log_gamma(b);
     }
     const double scale = std::exp(
         log_normalization + a * std::log(x) + b * std::log1p(-x));

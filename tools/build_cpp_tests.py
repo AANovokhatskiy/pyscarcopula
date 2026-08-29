@@ -127,9 +127,12 @@ def build_cpp_tests(
 
     build_dir = build_dir.resolve()
     object_dir = build_dir / compiler_type / "objects"
+    compute_object_dir = object_dir / "compute"
+    test_object_dir = object_dir / "tests"
     executable_dir = build_dir / compiler_type / "bin"
     header_dir = build_dir / compiler_type / "header-units"
-    object_dir.mkdir(parents=True, exist_ok=True)
+    compute_object_dir.mkdir(parents=True, exist_ok=True)
+    test_object_dir.mkdir(parents=True, exist_ok=True)
     executable_dir.mkdir(parents=True, exist_ok=True)
 
     compute_sources = [
@@ -154,20 +157,25 @@ def build_cpp_tests(
         f"build jobs: {build_jobs})"
     )
     with build_parallel.parallel_compilation(compiler, build_jobs):
-        compute_objects = compiler.compile(
-            [str(path) for path in compute_sources],
-            output_dir=str(object_dir),
-            include_dirs=[str(CPP_INCLUDE_ROOT)],
-            debug=debug,
-            extra_postargs=compile_args,
-        )
-        smoke_objects = compiler.compile(
-            [str(path) for path in CPP_TEST_SOURCES],
-            output_dir=str(object_dir),
-            include_dirs=[str(CPP_INCLUDE_ROOT)],
-            debug=debug,
-            extra_postargs=compile_args,
-        )
+        # Distutils embeds an absolute source path below output_dir on Windows.
+        # Compile from each source root instead so long, external validation
+        # roots do not exceed the MSVC object-path limit.
+        with _working_directory(CPP_SOURCE_ROOT):
+            compute_objects = compiler.compile(
+                list(sources.SCAR_COMPUTE_SOURCES),
+                output_dir=str(compute_object_dir),
+                include_dirs=[str(CPP_INCLUDE_ROOT)],
+                debug=debug,
+                extra_postargs=compile_args,
+            )
+        with _working_directory(ROOT / "tests" / "cpp"):
+            smoke_objects = compiler.compile(
+                [path.name for path in CPP_TEST_SOURCES],
+                output_dir=str(test_object_dir),
+                include_dirs=[str(CPP_INCLUDE_ROOT)],
+                debug=debug,
+                extra_postargs=compile_args,
+            )
 
         if check_headers:
             header_units = _write_header_units(header_dir)

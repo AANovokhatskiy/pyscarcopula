@@ -2,6 +2,7 @@
 
 #include "scar/detail/safety.hpp"
 #include "scar/math/beta.hpp"
+#include "scar/math/gamma.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -146,12 +147,7 @@ DualValue regularized_beta_dual(
 }  // namespace
 
 double student_log_gamma(double value) {
-#if defined(__GLIBC__)
-    int sign = 0;
-    return ::lgamma_r(value, &sign);
-#else
-    return std::lgamma(value);
-#endif
+    return scar::math::log_gamma(value);
 }
 
 double student_digamma_positive(double x) {
