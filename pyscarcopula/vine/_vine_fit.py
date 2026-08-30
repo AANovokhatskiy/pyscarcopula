@@ -129,6 +129,9 @@ def fit_vine_edges(
         threshold,
         dynamic_failure_policy,
     )
+    from pyscarcopula.strategy._base import partition_strategy_fit_kwargs
+    fit_kwargs = dict(fit_kwargs or {})
+    partition_strategy_fit_kwargs(method, fit_kwargs)
 
     candidates = (
         candidates if candidates is not None else _default_candidates())
@@ -158,7 +161,6 @@ def fit_vine_edges(
         for variable in range(d)
     }
     fitted_levels = []
-    fit_kwargs = dict(fit_kwargs or {})
     for tree, level in enumerate(tree_levels):
         fitted_levels.append(_fit_tree_level(
             tree,
@@ -263,8 +265,30 @@ def _fit_tree_level(
                 if isinstance(copula, IndependentCopula):
                     selection_result = copula._fit_validated(u_pair)
                 else:
+                    selection_fit_kwargs = fit_kwargs
+                    if str(method).lower() != "mle":
+                        from pyscarcopula.strategy._base import (
+                            partition_strategy_fit_kwargs,
+                        )
+                        _, selection_fit_kwargs = (
+                            partition_strategy_fit_kwargs(
+                                "mle",
+                                fit_kwargs,
+                                reject_unknown=False,
+                            )
+                        )
+                        if "alpha0" in selection_fit_kwargs:
+                            alpha0 = np.asarray(
+                                selection_fit_kwargs["alpha0"])
+                            if alpha0.size != 1:
+                                selection_fit_kwargs.pop("alpha0")
                     selection_result = fit_with_strategy(
-                        copula, u_pair, "mle", config, fit_kwargs)
+                        copula,
+                        u_pair,
+                        "mle",
+                        config,
+                        selection_fit_kwargs,
+                    )
             else:
                 copula, selection_result = select_best_copula(
                     u1,
@@ -365,35 +389,15 @@ def _make_fixed_copula(spec, transform_type):
 
 
 def _fit_with_strategy(copula, u_pair, method, config, fit_kwargs):
-    from pyscarcopula.strategy._base import get_strategy
+    from pyscarcopula.strategy._base import (
+        get_strategy,
+        partition_strategy_fit_kwargs,
+    )
 
-    fit_call_kwargs = dict(fit_kwargs)
-    if str(method).lower() == "mle" and "alpha0" in fit_call_kwargs:
-        alpha0 = np.asarray(fit_call_kwargs["alpha0"])
-        if alpha0.size != 1:
-            fit_call_kwargs.pop("alpha0")
-    strategy_kwargs = {
-        key: value
-        for key, value in fit_call_kwargs.items()
-        if key not in (
-            "alpha0",
-            "gamma0",
-            "gtol",
-            "ftol",
-            "maxfun",
-            "maxiter",
-            "maxls",
-            "eps",
-            "maxcor",
-            "finite_diff_rel_step",
-            "score_eps",
-            "gamma_bound",
-            "beta_bound",
-            "seed",
-            "dwt",
-            "verbose",
-        )
-    }
+    strategy_kwargs, fit_call_kwargs = partition_strategy_fit_kwargs(
+        method,
+        fit_kwargs,
+    )
     strategy = get_strategy(method, config=config, **strategy_kwargs)
     return strategy.fit(copula, u_pair, **fit_call_kwargs)
 

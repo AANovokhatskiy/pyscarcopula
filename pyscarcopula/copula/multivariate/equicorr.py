@@ -396,15 +396,22 @@ class EquicorrGaussianCopula(MultivariateCopula):
         return fitted
 
     @model_state_locked
-    def fit(self, data, method="scar-tm-ou", to_pobs=False, **kwargs):
+    def fit(
+            self,
+            data,
+            method="scar-tm-ou",
+            to_pobs=False,
+            config=None,
+            **kwargs):
         from pyscarcopula._utils import pobs
         from pyscarcopula.copula.multivariate.equicorr_prepared import (
             EquicorrPreparedData,
         )
+        from pyscarcopula.strategy._base import (
+            partition_strategy_fit_kwargs,
+        )
 
-        config = kwargs.pop("config", None)
-        if "tol" in kwargs:
-            raise TypeError("tol is not supported; use gtol")
+        partition_strategy_fit_kwargs(method, kwargs)
         if isinstance(data, EquicorrPreparedData):
             if data.dimension != self._d:
                 raise ValueError(

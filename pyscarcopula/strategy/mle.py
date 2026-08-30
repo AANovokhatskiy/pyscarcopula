@@ -21,7 +21,7 @@ from pyscarcopula.strategy._base import (
     lbfgsb_options,
     lbfgsb_overrides,
     register_strategy,
-    reject_legacy_tol,
+    reject_unknown_mle_kwargs,
 )
 from pyscarcopula.strategy.predict_helpers import (
     predictive_params_from_state,
@@ -63,7 +63,10 @@ class MLEStrategy:
     the MLE objective.
     """
 
+    _strict_keyword_contract = True
+
     def __init__(self, config: NumericalConfig | None = None, **kwargs):
+        reject_unknown_mle_kwargs(kwargs)
         self.config = config or DEFAULT_CONFIG
 
     def fit(self, copula, u: np.ndarray,
@@ -91,14 +94,14 @@ class MLEStrategy:
             optimizer still evaluates the likelihood directly at that value.
         gtol, ftol, maxfun, maxiter, maxls, eps, maxcor,
         finite_diff_rel_step : L-BFGS-B options
-        **kwargs : ignored (for interface compatibility)
+        **kwargs : unsupported keyword arguments are rejected
 
         Returns
         -------
         MLEResult
         """
         registry_entry_for(copula)
-        reject_legacy_tol(kwargs)
+        reject_unknown_mle_kwargs(kwargs)
         optimizer_overrides = lbfgsb_overrides(
             gtol=gtol,
             ftol=ftol,

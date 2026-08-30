@@ -341,6 +341,83 @@ def test_invalid_structure_is_rejected_before_edge_fit(monkeypatch):
         fit_vine_edges(_gaussian_data(dimension=3), invalid_trees)
 
 
+def test_vine_edge_fit_rejects_unknown_strategy_kwargs_before_selection(
+        monkeypatch):
+    def unexpected_call(*args, **kwargs):
+        raise AssertionError("edge selection/fitting must not run")
+
+    monkeypatch.setattr(
+        vine_fit_module, "_fit_with_strategy", unexpected_call)
+    monkeypatch.setattr(
+        vine_fit_module, "select_best_copula", unexpected_call)
+    trees = dvine_structure(3).to_trees()
+
+    with pytest.raises(
+            TypeError,
+            match="unexpected GAS keyword.*definitely_unknown"):
+        fit_vine_edges(
+            _gaussian_data(rows=20, dimension=3),
+            trees,
+            method="gas",
+            fit_kwargs={"definitely_unknown": True},
+        )
+
+
+def test_vine_model_fit_rejects_unknown_strategy_kwargs_atomically():
+    vine = VineCopula.dvine(d=3)
+
+    with pytest.raises(
+            TypeError,
+            match="unexpected SCAR-TM-OU keyword.*definitely_unknown"):
+        vine.fit(
+            _gaussian_data(rows=20, dimension=3),
+            method="scar-tm-ou",
+            definitely_unknown=True,
+        )
+
+    assert vine.fit_result is None
+    assert vine.pair_copulas is None
+    assert getattr(vine, "_last_u", None) is None
+
+
+def test_dynamic_vine_prefit_separates_constructor_and_initial_options(
+        monkeypatch):
+    calls = []
+    original = vine_fit_module._fit_with_strategy
+
+    def captured(copula, u_pair, method, config, fit_kwargs):
+        calls.append((str(method).upper(), dict(fit_kwargs)))
+        return original(copula, u_pair, method, config, fit_kwargs)
+
+    monkeypatch.setattr(vine_fit_module, "_fit_with_strategy", captured)
+    trees = dvine_structure(2).to_trees()
+    fit_vine_edges(
+        _gaussian_data(rows=35, dimension=2),
+        trees,
+        copulas=_fixed_specs(trees),
+        method="scar-tm-ou",
+        fit_kwargs={
+            "K": 12,
+            "alpha0": np.array([1.0, 0.0, 1.0]),
+            "maxiter": 3,
+        },
+    )
+
+    selection_kwargs = calls[0][1]
+    dynamic_kwargs = calls[1][1]
+    assert calls[0][0] == "MLE"
+    assert "K" not in selection_kwargs
+    assert "alpha0" not in selection_kwargs
+    assert selection_kwargs["maxiter"] == 3
+    assert calls[1][0] == "SCAR-TM-OU"
+    assert dynamic_kwargs["K"] == 12
+    np.testing.assert_array_equal(
+        dynamic_kwargs["alpha0"],
+        np.array([1.0, 0.0, 1.0]),
+    )
+    assert dynamic_kwargs["initial_mle_result"].method == "MLE"
+
+
 def test_dynamic_failure_falls_back_to_mle_and_is_aggregated(monkeypatch):
     original = vine_fit_module._fit_with_strategy
 

@@ -200,6 +200,8 @@ def select_rvine(
     diagnostics : dict, optional
         Returned only when ``return_diagnostics=True``.
     """
+    from pyscarcopula.strategy._base import partition_strategy_fit_kwargs
+    partition_strategy_fit_kwargs(method, fit_kwargs)
     u = as_pseudo_observation_array(
         u, name="u", allow_boundary=False)
     if u.ndim != 2:

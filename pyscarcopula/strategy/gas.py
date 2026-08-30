@@ -30,7 +30,7 @@ from pyscarcopula.strategy._base import (
     lbfgsb_options,
     lbfgsb_overrides,
     register_strategy,
-    reject_legacy_tol,
+    reject_unknown_strategy_kwargs,
 )
 from pyscarcopula.strategy.predict_helpers import (
     predictive_params_from_state,
@@ -91,6 +91,9 @@ class GASStrategy:
     differentiation remains inside the native evaluator.
     """
 
+    _strict_keyword_contract = True
+    _constructor_keyword_aliases = frozenset({"backend"})
+
     def __init__(
         self,
         config: NumericalConfig | None = None,
@@ -101,6 +104,7 @@ class GASStrategy:
             raise TypeError(
                 "GAS backend selection was removed; native execution is "
                 "always used")
+        reject_unknown_strategy_kwargs("GAS", kwargs)
         self.config = config or DEFAULT_CONFIG
         self.scaling = scaling
 
@@ -377,11 +381,11 @@ class GASStrategy:
         **kwargs,
     ) -> GASResult:
         """Fit the native GAS model."""
-        reject_legacy_tol(kwargs)
         if "backend" in kwargs:
             raise TypeError(
                 "GAS backend selection was removed; native execution is "
                 "always used")
+        reject_unknown_strategy_kwargs("GAS", kwargs)
         corr_num_params = int(
             getattr(copula, "_corr_num_params", lambda: 0)())
         if (

@@ -15,7 +15,8 @@ from numpy.typing import ArrayLike, NDArray
 
 from pyscarcopula._types import FitResult, PredictConfig
 from pyscarcopula._native import model_policy, statistics
-from pyscarcopula._utils import pobs, broadcast as _broadcast  # noqa: F401
+from pyscarcopula._utils import broadcast as _broadcast  # noqa: F401
+from pyscarcopula.numerical._arrays import as_float64_array
 
 
 FloatArray = NDArray[np.float64]
@@ -96,12 +97,28 @@ class CopulaBase:
         This low-level optimizer hook accepts parameters in the strategy's
         unconstrained representation.
         """
-        from pyscarcopula.strategy._base import get_strategy
+        from pyscarcopula.strategy._base import (
+            get_strategy,
+            partition_strategy_fit_kwargs,
+        )
 
-        u = np.asarray(u, dtype=np.float64)
-        alpha = np.atleast_1d(np.asarray(alpha, dtype=np.float64))
-        strategy = get_strategy(method, **kwargs)
-        return strategy.objective(self, u, alpha, **kwargs)
+        u = as_float64_array(u, name="u")
+        alpha = np.atleast_1d(as_float64_array(alpha, name="alpha"))
+        config = kwargs.pop("config", None)
+        constructor_kwargs, objective_kwargs = (
+            partition_strategy_fit_kwargs(method, kwargs)
+        )
+        strategy = get_strategy(
+            method,
+            config=config,
+            **constructor_kwargs,
+        )
+        return strategy.objective(
+            self,
+            u,
+            alpha,
+            **objective_kwargs,
+        )
 
     def fit(
         self,
@@ -130,13 +147,13 @@ class CopulaBase:
         """
         from pyscarcopula.api import fit as _api_fit
 
-        u = np.asarray(data, dtype=np.float64)
-        if to_pobs:
-            u = pobs(u)
-        result = _api_fit(self, u, method=method, **kwargs)
-        self.fit_result = result
-        self._last_u = u
-        return result
+        return _api_fit(
+            self,
+            data,
+            method=method,
+            to_pobs=to_pobs,
+            **kwargs,
+        )
 
     def predict(
         self,
@@ -368,7 +385,8 @@ class BivariateCopula(CopulaBase):
         if rng is None:
             rng = np.random.default_rng()
 
-        parameter = np.atleast_1d(np.asarray(r, dtype=np.float64)).ravel()
+        parameter = np.atleast_1d(
+            as_float64_array(r, name="r")).ravel()
         if parameter.size == 1:
             parameter = np.full(n, parameter[0])
         elif parameter.size != n:
@@ -415,7 +433,8 @@ class BivariateCopula(CopulaBase):
     # ── log-likelihood ────────────────────────────────────────────
     def log_likelihood(self, u, r):
         """u: (T, 2), r: scalar or (T,)."""
-        r_arr = np.atleast_1d(np.asarray(r, dtype=np.float64)).ravel()
+        r_arr = np.atleast_1d(
+            as_float64_array(r, name="r")).ravel()
         if r_arr.size == 1:
             from pyscarcopula._native import static as static_likelihood
             return static_likelihood.prepare(self, u).log_likelihood(
@@ -428,7 +447,7 @@ class BivariateCopula(CopulaBase):
         c(u_row; Psi(z_j)) for each z_j in z_grid.
         u_row: (2,), z_grid: (K,). Returns (K,).
         """
-        u = np.asarray(u_row, dtype=np.float64).reshape(1, 2)
+        u = as_float64_array(u_row, name="u_row").reshape(1, 2)
         return self._native_adapter().pdf_grid(self, u, z_grid)[0]
 
     def pdf_and_grad_on_grid(self, u_row, z_grid):
@@ -440,7 +459,7 @@ class BivariateCopula(CopulaBase):
         u_row: (2,), z_grid: (K,).
         Returns (fi, dfi_dz) each of shape (K,).
         """
-        u = np.asarray(u_row, dtype=np.float64).reshape(1, 2)
+        u = as_float64_array(u_row, name="u_row").reshape(1, 2)
         fi, dfi_dz = self._native_adapter().pdf_and_grad_grid(
             self, u, z_grid)
         return fi[0], dfi_dz[0]

@@ -662,7 +662,10 @@ class VineCopula:
         self : VineCopula
             Enables chained calls, e.g. ``VineCopula().fit(u).summary()``.
         """
-        from pyscarcopula.strategy._base import validate_strategy_method
+        from pyscarcopula.strategy._base import (
+            partition_strategy_fit_kwargs,
+            validate_strategy_method,
+        )
         method = validate_strategy_method(method)
         u = _as_rvine_observations(
             data, operation="fit", to_pobs=to_pobs)
@@ -690,6 +693,7 @@ class VineCopula:
         beam_width_supplied = 'beam_width' in kwargs
         structure_search = kwargs.pop('structure_search', 'beam')
         beam_width = kwargs.pop('beam_width', 4)
+        partition_strategy_fit_kwargs(method, kwargs)
 
         if truncation_level is not None:
             if not isinstance(truncation_level, (int, np.integer)):

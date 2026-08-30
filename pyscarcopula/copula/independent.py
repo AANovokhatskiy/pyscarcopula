@@ -94,7 +94,13 @@ class IndependentCopula(BivariateCopula):
 
     # ── fit (instant) ────────────────────────────────────────────
 
-    def fit(self, data, method='mle', to_pobs=False, **kwargs):
+    def fit(
+            self,
+            data,
+            method='mle',
+            to_pobs=False,
+            config=None,
+            **kwargs):
         """
         'Fit' the independence copula.
 
@@ -108,14 +114,22 @@ class IndependentCopula(BivariateCopula):
 
         from pyscarcopula._utils import pobs
         from pyscarcopula.numerical._arrays import as_float64_array
-        from pyscarcopula.strategy._base import validate_copula_data
+        from pyscarcopula.strategy._base import (
+            partition_strategy_fit_kwargs,
+            validate_copula_data,
+            validate_raw_copula_data,
+        )
 
-        u = as_float64_array(data, name="data")
+        partition_strategy_fit_kwargs(
+            normalized_method,
+            kwargs,
+        )
         if to_pobs:
+            u = validate_raw_copula_data(self, data)
             u = pobs(u)
+        else:
+            u = as_float64_array(data, name="data")
         u = validate_copula_data(self, u)
-        if u.shape[0] == 0:
-            raise ValueError("copula data must contain at least one observation")
         return self._fit_validated(u)
 
     def _fit_validated(self, u):

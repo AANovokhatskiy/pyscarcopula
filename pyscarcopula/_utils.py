@@ -37,9 +37,13 @@ def broadcast(u1, u2, r):
     -------
     u1a, u2a, ra : ndarray (n,)
     """
-    u1a = np.atleast_1d(np.asarray(u1, dtype=np.float64)).ravel()
-    u2a = np.atleast_1d(np.asarray(u2, dtype=np.float64)).ravel()
-    ra = np.atleast_1d(np.asarray(r, dtype=np.float64)).ravel()
+    # Imported lazily because numerical.__init__ imports utilities used by
+    # native modules while this module itself is still being initialized.
+    from pyscarcopula.numerical._arrays import as_float64_array
+
+    u1a = np.atleast_1d(as_float64_array(u1, name="u1")).ravel()
+    u2a = np.atleast_1d(as_float64_array(u2, name="u2")).ravel()
+    ra = np.atleast_1d(as_float64_array(r, name="r")).ravel()
     n = max(len(u1a), len(u2a), len(ra))
     if len(u1a) == 1 and n > 1:
         u1a = np.full(n, u1a[0])

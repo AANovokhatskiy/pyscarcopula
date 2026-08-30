@@ -28,6 +28,10 @@ from pyscarcopula.numerical.predictive_tm import (
     sample_grid_distribution, tm_state_distribution,
 )
 from pyscarcopula.strategy.gas import GASStrategy
+from pyscarcopula.strategy._base import (
+    get_strategy,
+    partition_strategy_fit_kwargs,
+)
 
 
 class TestPublicPackageSurface:
@@ -89,6 +93,126 @@ class TestFitResultTypes:
 
         with pytest.raises(error, match="real values|pseudo-observations"):
             fit(copula, invalid_data, method="scar-tm-ou")
+
+    @pytest.mark.parametrize("invalid_value", [np.nan, np.inf, -np.inf])
+    @pytest.mark.parametrize("stateful", [False, True])
+    def test_fit_to_pobs_rejects_nonfinite_raw_data_before_ranking(
+            self, invalid_value, stateful):
+        raw = np.random.default_rng(2027).standard_normal((20, 2))
+        raw[4, 1] = invalid_value
+        copula = ClaytonCopula()
+
+        with pytest.raises(ValueError, match="finite"):
+            if stateful:
+                copula.fit(raw, method="mle", to_pobs=True)
+            else:
+                fit(copula, raw, method="mle", to_pobs=True)
+
+    @pytest.mark.parametrize(
+        "raw",
+        [np.array(0.5), np.array([0.2, 0.3])],
+    )
+    @pytest.mark.parametrize("stateful", [False, True])
+    def test_fit_to_pobs_rejects_non_2d_data_before_ranking(
+            self, raw, stateful):
+        copula = ClaytonCopula()
+
+        with pytest.raises(ValueError, match="copula data must be 2D"):
+            if stateful:
+                copula.fit(raw, method="mle", to_pobs=True)
+            else:
+                fit(copula, raw, method="mle", to_pobs=True)
+
+    def test_stateful_fit_rejects_complex_data(self):
+        data = np.array([[0.2 + 7.0j, 0.3], [0.4, 0.5]])
+
+        with pytest.raises(TypeError, match="real values"):
+            ClaytonCopula().fit(data, method="mle")
+
+    @pytest.mark.parametrize("stateful", [False, True])
+    def test_bivariate_mle_rejects_unknown_keywords(
+            self, random_u2, stateful):
+        copula = ClaytonCopula()
+
+        with pytest.raises(
+                TypeError,
+                match="unexpected MLE keyword.*definitely_unknown"):
+            if stateful:
+                copula.fit(
+                    random_u2,
+                    method="mle",
+                    definitely_unknown=True,
+                )
+            else:
+                fit(
+                    copula,
+                    random_u2,
+                    method="mle",
+                    definitely_unknown=True,
+                )
+
+    @pytest.mark.parametrize(
+        "method",
+        ["gas", "scar-tm-ou", "scar-tm-jacobi"],
+    )
+    @pytest.mark.parametrize("stateful", [False, True])
+    def test_bivariate_dynamic_fit_rejects_unknown_keywords(
+            self, random_u2, method, stateful):
+        copula = ClaytonCopula()
+
+        with pytest.raises(
+                TypeError,
+                match=f"unexpected {method.upper()} keyword.*definitely_unknown"):
+            if stateful:
+                copula.fit(
+                    random_u2,
+                    method=method,
+                    definitely_unknown=True,
+                )
+            else:
+                fit(
+                    copula,
+                    random_u2,
+                    method=method,
+                    definitely_unknown=True,
+                )
+
+        assert copula.fit_result is None
+        assert getattr(copula, "_last_u", None) is None
+
+    @pytest.mark.parametrize(
+        "method",
+        ["gas", "scar-tm-ou", "scar-tm-jacobi"],
+    )
+    def test_dynamic_strategy_rejects_unknown_constructor_and_fit_keywords(
+            self, random_u2, method):
+        with pytest.raises(
+                TypeError,
+                match=f"unexpected {method.upper()} keyword.*definitely_unknown"):
+            get_strategy(method, definitely_unknown=True)
+
+        strategy = get_strategy(method)
+        with pytest.raises(
+                TypeError,
+                match=f"unexpected {method.upper()} keyword.*definitely_unknown"):
+            strategy.fit(
+                ClaytonCopula(),
+                random_u2,
+                definitely_unknown=True,
+            )
+
+    def test_strategy_fit_kwargs_are_partitioned_by_explicit_contract(self):
+        constructor_kwargs, fit_kwargs = partition_strategy_fit_kwargs(
+            "scar-tm-jacobi",
+            {
+                "spectral_basis_order": 8,
+                "alpha0": np.array([1.0, 0.5, 0.2]),
+                "maxiter": 3,
+            },
+        )
+
+        assert constructor_kwargs == {"spectral_basis_order": 8}
+        assert set(fit_kwargs) == {"alpha0", "maxiter"}
 
     def test_gas_returns_gas_result(self, random_u2):
         cop = GumbelCopula(rotate=180)
@@ -338,6 +462,21 @@ class TestIndependentCopula:
         assert result.success
         assert copula._last_u.shape == raw.shape
         assert np.all((copula._last_u > 0.0) & (copula._last_u < 1.0))
+
+    @pytest.mark.parametrize("invalid_value", [np.nan, np.inf, -np.inf])
+    def test_direct_fit_to_pobs_rejects_nonfinite_before_ranking(
+            self, invalid_value):
+        raw = np.array([[10.0, -2.0], [30.0, 5.0], [20.0, 1.0]])
+        raw[1, 0] = invalid_value
+
+        with pytest.raises(ValueError, match="finite"):
+            IndependentCopula().fit(raw, to_pobs=True)
+
+    def test_direct_fit_rejects_unknown_mle_keywords(self, random_u2):
+        with pytest.raises(
+                TypeError,
+                match="unexpected MLE keyword.*maxiterr"):
+            IndependentCopula().fit(random_u2, maxiterr=1)
 
     def test_top_level_fit_zero_logL(self):
         cop = IndependentCopula()

@@ -29,7 +29,7 @@ from pyscarcopula.strategy._base import (
     lbfgsb_options,
     lbfgsb_overrides,
     register_strategy,
-    reject_legacy_tol,
+    reject_unknown_strategy_kwargs,
     validate_copula_data,
 )
 from pyscarcopula.strategy.predict_helpers import (
@@ -127,6 +127,12 @@ class SCARJacobiStrategy:
         physical central-difference objective inside the native evaluator.
     """
 
+    _strict_keyword_contract = True
+    _constructor_keyword_aliases = frozenset({
+        "spectral_basis_order",
+        "spectral_quad_order",
+    })
+
     def __init__(self, config: NumericalConfig | None = None,
                  basis_order: int = 32,
                  quad_order: int | None = None,
@@ -160,9 +166,10 @@ class SCARJacobiStrategy:
                  analytical_grad: bool = False,
                  smart_init: bool = True,
                  **kwargs):
-        self.config = config or DEFAULT_CONFIG
         basis_order = kwargs.pop('spectral_basis_order', basis_order)
         quad_order = kwargs.pop('spectral_quad_order', quad_order)
+        reject_unknown_strategy_kwargs("SCAR-TM-JACOBI", kwargs)
+        self.config = config or DEFAULT_CONFIG
         self.basis_order = validate_positive_int(basis_order, "basis_order")
         self.quad_order = (
             None if quad_order is None
@@ -554,7 +561,7 @@ class SCARJacobiStrategy:
             verbose: bool = False,
             initial_mle_result=None,
             **kwargs) -> LatentResult:
-        reject_legacy_tol(kwargs)
+        reject_unknown_strategy_kwargs("SCAR-TM-JACOBI", kwargs)
         self._check_kendall_mapping(copula)
         u = validate_copula_data(copula, u)
         if alpha0 is None:

@@ -207,16 +207,15 @@ def test_notebooks_do_not_import_private_pyscarcopula_modules():
 
 
 def test_vinecopula_is_the_discoverable_canonical_vine_api():
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    api = (ROOT / "docs/api/vine.md").read_text(encoding="utf-8")
     for public_surface in (
             "VineCopula()",
             "VineCopula.cvine(",
             "VineCopula.dvine(",
             "RVineMatrix.from_trees(",
             "natural_order_matrix"):
-        assert public_surface in readme
+        assert public_surface in api
 
-    api = (ROOT / "docs/api/vine.md").read_text(encoding="utf-8")
     assert api.index("## VineCopula") < api.index("## RVineCopula")
     assert "RVineCopula is VineCopula" in api
     assert "compatibility name" in api.lower()

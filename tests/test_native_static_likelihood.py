@@ -295,6 +295,32 @@ def test_mle_accepts_scalar_alpha0():
     assert np.isfinite(result.copula_param)
 
 
+def test_mle_strategy_rejects_unknown_keywords_before_native_prepare(
+        monkeypatch):
+    monkeypatch.setattr(
+        static_likelihood,
+        "prepare",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("unknown keyword reached native preparation")),
+    )
+
+    with pytest.raises(
+            TypeError,
+            match="unexpected MLE keyword.*definitely_unknown"):
+        MLEStrategy().fit(
+            BivariateGaussianCopula(),
+            _observations(12),
+            definitely_unknown=True,
+        )
+
+
+def test_mle_strategy_constructor_rejects_unknown_keywords():
+    with pytest.raises(
+            TypeError,
+            match="unexpected MLE keyword.*definitely_unknown"):
+        MLEStrategy(definitely_unknown=True)
+
+
 @pytest.mark.parametrize(
     ("optimizer_x", "optimizer_fun", "error", "message"),
     [

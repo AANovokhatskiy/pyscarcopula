@@ -40,6 +40,57 @@ class TestMLERecovery:
             f"MLE recovery: true={true_r}, got={result.copula_param:.4f}"
 
 
+@pytest.mark.parametrize(
+    ("method", "alpha", "options"),
+    [
+        ("mle", np.array([1.4]), {}),
+        (
+            "gas",
+            np.array([0.0, 0.1, 0.8]),
+            {"scaling": "unit", "score_eps": 1e-4},
+        ),
+        (
+            "scar-tm-ou",
+            np.array([0.8, 0.1, 0.7]),
+            {"K": 12, "adaptive": False, "transition_method": "matrix"},
+        ),
+        (
+            "scar-tm-jacobi",
+            np.array([1.0, 0.5, 0.2]),
+            {"spectral_basis_order": 8, "spectral_quad_order": 16},
+        ),
+    ],
+)
+def test_mlog_likelihood_routes_strategy_keywords(
+        method, alpha, options):
+    u = pobs(np.random.default_rng(33).standard_normal((16, 2)))
+    copula = GumbelCopula(rotate=180)
+
+    value = copula.mlog_likelihood(
+        alpha,
+        u,
+        method=method,
+        config=NumericalConfig(n_threads=1),
+        **options,
+    )
+
+    assert np.isfinite(value)
+
+
+def test_mlog_likelihood_rejects_unknown_strict_strategy_keyword():
+    u = pobs(np.random.default_rng(34).standard_normal((8, 2)))
+
+    with pytest.raises(
+            TypeError,
+            match="unexpected GAS keyword.*definitely_unknown"):
+        GumbelCopula(rotate=180).mlog_likelihood(
+            np.array([0.0, 0.1, 0.8]),
+            u,
+            method="gas",
+            definitely_unknown=True,
+        )
+
+
 class TestSCARConvergence:
     """SCAR-TM should achieve higher logL than MLE on dynamic data."""
 

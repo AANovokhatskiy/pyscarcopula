@@ -43,7 +43,9 @@ from pyscarcopula.strategy._base import (
     get_strategy,
     get_strategy_for_result,
     is_multivariate_copula,
+    partition_strategy_fit_kwargs,
     validate_copula_data,
+    validate_raw_copula_data,
 )
 
 
@@ -152,13 +154,23 @@ def fit(
                 "MLE, GAS, and SCAR-TM-OU strategies")
         u = data
     else:
-        u = _as_float64_array_no_copy(data)
         if to_pobs:
+            u = validate_raw_copula_data(copula, data)
             u = _pobs(u)
+        else:
+            u = _as_float64_array_no_copy(data)
         validate_copula_data(copula, u)
+    constructor_kwargs, fit_kwargs = partition_strategy_fit_kwargs(
+        method,
+        kwargs,
+    )
     ensure_strategy_supported(copula, method)
-    strategy = get_strategy(method, config=config, **kwargs)
-    result = strategy.fit(copula, u, **kwargs)
+    strategy = get_strategy(
+        method,
+        config=config,
+        **constructor_kwargs,
+    )
+    result = strategy.fit(copula, u, **fit_kwargs)
     # Mirror the state synchronization of copula.fit() so convenience
     # methods (predict/sample without explicit data or result) see the
     # strategy result rather than a stale intermediate (e.g. MLE) one.

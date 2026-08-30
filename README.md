@@ -38,127 +38,8 @@ Supported estimation methods:
 pip install pyscarcopula
 ```
 
-Official wheels include the compiled numerical extension and do not need a
-local compiler. Source and editable installs require a C++17 compiler:
-
-* Windows: Microsoft C++ Build Tools / Visual Studio Build Tools, or
-  MinGW-w64 GCC (see below)
-* Linux: GCC or Clang with the usual Python development headers
-* macOS: Xcode Command Line Tools
-
-On Windows, a MinGW-w64 GCC toolchain (for example the MSYS2 `ucrt64` GCC) can
-be used instead of the Microsoft compiler by opting in explicitly:
-
-```bash
-PYSCA_CPP_COMPILER=mingw32 pip install .
-# or, from the source tree:
-python setup.py build_ext --compiler=mingw32 --inplace
-```
-
-The GCC runtime is linked statically, so the resulting extension does not need
-MSYS2 DLLs at runtime. MSVC remains the default Windows toolchain.
-
-C++ source compilation uses one build job by default. Source and editable
-installs can opt into parallel compilation without additional build tools:
-
-```bash
-PYSCA_CPP_BUILD_JOBS=4 pip install .
-# or, from the source tree:
-python setup.py build_ext --parallel 4 --inplace
-```
-
-`PYSCA_CPP_BUILD_JOBS` must be a positive integer. It controls compilation
-only; linking remains sequential and installed runtime threading is unchanged.
-
-For local development:
-
-```bash
-git clone https://github.com/AANovokhatskiy/pyscarcopula
-cd pyscarcopula
-pip install -e ".[test]"
-```
-
-To run the full test suite from the source tree, build the C++ extension in
-place first:
-
-```bash
-python setup.py build_ext --inplace
-pytest --run-validation
-```
-
-`pytest --run-validation` enables optional validation tests. A source checkout
-without a successfully built extension is incomplete for the default
-bivariate GAS workflow.
-
-The default command uses one pytest worker and runs tests sequentially. To
-run independent test modules on an explicit number of CPU cores, pass that
-number to pytest-xdist:
-
-```bash
-pytest -n 4 --run-validation
-```
-
-The repository configures xdist's `loadscope` scheduler, so tests within one
-module remain sequential while separate modules can run concurrently. Use an
-explicit core count rather than `-n auto` for reproducible resource usage.
-
-Timing gates compare relative speedups or overhead ratios; absolute seconds
-are report-only. Opt-in benchmarks may run through xdist like the rest of the
-suite:
-
-```bash
-PYSCA_RUN_BENCHMARKS=1 pytest -n 10 -m benchmark
-```
-
-CPU placement remains under operating-system control. Relative alternatives
-are measured in paired, interleaved rounds so scheduler migration or transient
-load cannot systematically put the complete baseline and candidate phases on
-different classes of CPU core.
-
-Validation and optional external groups use the same parallel runner:
-
-```bash
-pytest -n 10 --run-validation -m validation
-pytest -n 10 --run-validation -m external  # requires .[external]
-```
-
-`loadscope` intentionally keeps cases from one test module sequential. In
-particular, alternatives inside one relative benchmark must not execute at the
-same time, and the release/equicorrelation report writers use one shared JSON
-artifact per module. Their modules still run concurrently with other modules.
-
-Optional benchmark and large validation checks are disabled by default. Enable
-them explicitly:
-
-```bash
-PYSCA_RUN_BENCHMARKS=1 \
-PYSCA_RUN_LARGE_BENCHMARKS=1 \
-PYSCA_RUN_VINE_BENCHMARKS=1 \
-pytest tests --run-validation
-```
-
-On Windows PowerShell:
-
-```powershell
-$env:PYSCA_RUN_BENCHMARKS = "1"
-$env:PYSCA_RUN_LARGE_BENCHMARKS = "1"
-$env:PYSCA_RUN_VINE_BENCHMARKS = "1"
-pytest tests --run-validation
-```
-
-Conditional sampling has separate PR, distributional, nightly external/d=50,
-and manual benchmark layers.  See the
-[conditional sampling validation guide](docs/guide/conditional-sampling-validation.md)
-for exact marker selections, oracle-only calibration, artifacts, and failure
-triage.
-
-Core dependencies: `numpy`, `numba`, `scipy`, `joblib`, `tqdm`.
-
-Verify the compiled extension with:
-
-```bash
-python -m pyscarcopula._native.smoke
-```
+For source and editable builds, compiler selection, testing, benchmarks, and
+documentation builds, see the [installation guide](docs/getting-started/installation.md).
 
 ## Quick start
 
@@ -209,83 +90,13 @@ corresponding correlation modes, estimation methods, and limitations.
 
 ## Features
 
-### Vine copulas
-
-`VineCopula` is the primary API for regular vines. Omitting `structure`
-selects an R-vine from data; C-vines and D-vines are fixed
-[`RVineMatrix`](docs/api/vine.md) structures:
-
-```python
-import numpy as np
-
-from pyscarcopula import VineCopula
-
-rng = np.random.default_rng(2028)
-vine_data = rng.random((400, 4))
-
-# Data-driven regular vine
-auto = VineCopula().fit(vine_data, method="mle")
-
-# Fixed standard structures
-c_vine = VineCopula.cvine(d=4).fit(vine_data, method="mle")
-d_vine = VineCopula.dvine(d=4).fit(vine_data, method="mle")
-```
-
-For an arbitrary valid regular-vine tree sequence, construct
-`RVineMatrix.from_trees(...)` and pass it as `VineCopula(structure=...)`.
-The [Vine guide](docs/guide/vine.md) defines the decoded tree format and
-explains family selection, truncation, and conditional sampling.
-
-Use `vine.structure` for the `RVineMatrix` and
-`vine.natural_order_matrix` when an integration specifically needs the
-natural-order runtime matrix. `vine.matrix` is a compatibility property.
-The raw `pyvinecopulib` matrix uses one-based labels and the opposite
-tree-level order above each anti-diagonal entry, so it is not obtained by
-simply adding one. See the
-[matrix-layout conversion](docs/api/vine.md#matrix-layout-and-pyvinecopulib).
-
-**Copula families**
-
-* Archimedean: Gumbel, Frank, Clayton, Joe, including rotations where supported
-* Elliptical: Gaussian and Student-t
-* Independence copula for null models and vine pruning
-* Multivariate Gaussian, Student-t, equicorrelation, and stochastic Student models
-* Shared APIs for bivariate, multivariate, and vine models
-
-**Vine copulas**
-
-* One `VineCopula` runtime for auto-selected and fixed regular vines
-* Fixed C-vine and D-vine factories backed by `RVineMatrix`
-* Arbitrary valid structures built from decoded tree edges
-* Automatic family and rotation selection per edge using AIC/BIC
-* Tree-level and edge-level truncation
-* Mixed MLE, SCAR, GAS, and independence edges within one vine
-
-**Sampling and prediction**
-
-* Unconditional sampling from fitted bivariate, multivariate, and vine models
-* Conditional sampling for static and dynamic multivariate models and R-vines
-* Exact and approximate conditional modes for R-vines
-* `PredictConfig` for explicit prediction options
-* Reproducible random generation via `rng`
-* JSON persistence through `model.save()` and `ModelClass.load()`
-  (`include_data=False` can omit stored training data)
-
-**Diagnostics and risk**
-
-* Rosenblatt-transform based goodness-of-fit tests
-* Mixture Rosenblatt transform for stochastic models
-* Predictive time-varying copula parameter paths
-* VaR and CVaR utilities in `pyscarcopula.contrib`
-
-**CPU parallelism**
-
-* Explicit native threading for eligible multivariate row, emission,
-  conditional-sampling, static-likelihood, and Monte Carlo kernels
-* Process-level `fit_independent` and rolling `risk_metrics` execution
-* Absolute one-thread default: omitted `n_threads` always means `1`, regardless
-  of environment variables
-* Dependency-free C++17 linear algebra without hidden BLAS or OpenMP pools
+The library covers [bivariate](docs/guide/bivariate.md),
+[multivariate](docs/guide/multivariate_models.md), [factor](docs/guide/factor-models.md),
+and [vine](docs/guide/vine.md) copulas. See the documentation for
+[estimation methods](docs/guide/estimation-methods.md),
+[sampling and prediction](docs/guide/prediction-semantics.md),
+[diagnostics](docs/api/diagnostics.md), and
+[CPU parallelism](docs/guide/parallelism.md).
 
 ## Mathematical background
 
@@ -296,7 +107,7 @@ F(x_1, \ldots, x_d) = C(F_1(x_1), \ldots, F_d(x_d)),
 ```
 
 where `C` is a copula and `F_i` are marginal distributions. This separates
-marginal modelling from dependence modelling.
+marginal and dependence modelling.
 
 For a one-parameter Archimedean copula with generator `phi`,
 
@@ -313,45 +124,16 @@ In SCAR models the copula parameter is time-varying:
 dx_t = \kappa(\mu - x_t)dt + \nu dW_t,
 ```
 
-where `x_t` is a latent Ornstein-Uhlenbeck process and `Psi` maps the latent
-state to the valid parameter domain. `scar-tm-jacobi` instead evolves
-Kendall's tau directly with a bounded Jacobi diffusion and maps tau back to the
-copula parameter for families that implement `tau_to_param`.
+where `x_t` is a latent Ornstein-Uhlenbeck process and `Psi` maps it to the
+valid parameter domain. The Jacobi variant models Kendall's tau with a bounded
+diffusion. Deterministic likelihood evaluation uses grid, spectral, or local
+quadrature backends.
 
-The transfer matrix method evaluates the latent-state likelihood by exploiting
-the Markov structure of the latent process. The path integral is computed as a
-sequence of matrix-vector products on a discretized grid or spectral basis,
-avoiding Monte Carlo variance at the cost of numerical approximation.
-
-For SCAR-TM-OU, `transition_method='auto'` uses a hybrid deterministic strategy:
-Hermite spectral evaluation where it is reliable, matrix-based transition
-evaluation for regimes better handled on a grid, and local Gauss-Hermite in
-narrow-kernel OU cases. In broad terms, this keeps the latent path integral as
-repeated deterministic linear-algebra updates while choosing the most suitable
-transition representation automatically. See
-[`docs/guide/performance.md`](docs/guide/performance.md) for the details and
-the available `transition_method` values.
-
-```python
-result = fit(copula, u, method="scar-tm-ou")
-```
-
-```python
-result = fit(copula, u, method="gas")
-```
-
-Use the default `scaling="unit"` for production. `scaling="fisher"` remains an
-experimental, numerically sensitive mode.
-
-See [`docs/guide/performance.md`](docs/guide/performance.md) for supported
-families and numerical options.
-
-Vine copulas decompose a `d`-dimensional dependence model into bivariate
-copulas arranged in a sequence of trees. `VineCopula()` selects a regular-vine
-structure from data subject to the proximity condition.
-`VineCopula.cvine(...)` and `VineCopula.dvine(...)` use fixed standard
-structures, while `VineCopula(structure=RVineMatrix.from_trees(...))` accepts
-an arbitrary valid decoded tree sequence.
+For derivations and parameter mappings, see
+[Mathematical Contracts](docs/guide/mathematical-contracts.md). Implementation
+and grid details are covered by [Numerical Backends](docs/guide/numerical-backends.md),
+with practical choices summarized in
+[Performance Tuning](docs/guide/performance.md).
 
 ## Examples and docs
 

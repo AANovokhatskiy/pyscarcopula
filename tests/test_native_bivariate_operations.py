@@ -33,6 +33,41 @@ _ROTATED_ARCHIMEDEAN_FAMILIES = [
 ]
 
 
+@pytest.mark.parametrize(
+    "operation",
+    [
+        pytest.param(
+            lambda copula: copula.log_pdf(0.2 + 7.0j, 0.4, 0.8),
+            id="log-pdf-observation",
+        ),
+        pytest.param(
+            lambda copula: copula.transform([0.2 + 7.0j]),
+            id="transform",
+        ),
+        pytest.param(
+            lambda copula: copula.tau_to_param([0.4 + 7.0j]),
+            id="tau-to-param",
+        ),
+        pytest.param(
+            lambda copula: copula.param_to_tau([0.8 + 7.0j]),
+            id="param-to-tau",
+        ),
+        pytest.param(
+            lambda copula: copula.sample_at_parameter(2, 0.8 + 7.0j),
+            id="sampling-parameter",
+        ),
+        pytest.param(
+            lambda copula: copula.pdf_on_grid(
+                [0.2 + 7.0j, 0.4], [-1.0, 1.0]),
+            id="grid-observation",
+        ),
+    ],
+)
+def test_bivariate_public_operations_reject_complex_inputs(operation):
+    with pytest.raises(TypeError, match="real values"):
+        operation(ClaytonCopula())
+
+
 def _rotated_coordinates(first, second, rotation):
     rotated_first = np.asarray(first, dtype=np.float64).copy()
     rotated_second = np.asarray(second, dtype=np.float64).copy()

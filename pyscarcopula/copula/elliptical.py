@@ -2,6 +2,7 @@
 
 import numpy as np
 from pyscarcopula._native import model_policy
+from pyscarcopula.numerical._arrays import as_float64_array
 
 from pyscarcopula.copula.base import BivariateCopula
 
@@ -41,13 +42,13 @@ class BivariateGaussianCopula(BivariateCopula):
         return False
 
     def tau_to_param(self, tau):
-        tau = np.atleast_1d(np.asarray(tau, dtype=np.float64))
+        tau = np.atleast_1d(as_float64_array(tau, name="tau"))
         if np.any((tau <= -1.0) | (tau >= 1.0)):
             raise ValueError("Gaussian Kendall tau must be in (-1, 1)")
         return self._native_adapter().tau_to_param(self, tau)
 
     def param_to_tau(self, r):
-        r = np.atleast_1d(np.asarray(r, dtype=np.float64))
+        r = np.atleast_1d(as_float64_array(r, name="r"))
         if np.any((r <= -1.0) | (r >= 1.0)):
             raise ValueError(
                 "Gaussian correlation parameter must be in (-1, 1)")

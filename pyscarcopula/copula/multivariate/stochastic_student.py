@@ -1516,6 +1516,7 @@ class StochasticStudentCopula(MultivariateCopula):
             data: ArrayLike,
             method: str = 'scar-tm-ou',
             to_pobs: bool = False,
+            config: NumericalConfig | None = None,
             **kwargs: Any) -> FitResultBase:
         """
         Fit the stochastic Student-t copula.
@@ -1534,9 +1535,10 @@ class StochasticStudentCopula(MultivariateCopula):
         -------
         FitResult
         """
-        config = kwargs.pop('config', None)
-        if 'tol' in kwargs:
-            raise TypeError("tol is not supported; use gtol")
+        from pyscarcopula.strategy._base import (
+            partition_strategy_fit_kwargs,
+        )
+        partition_strategy_fit_kwargs(method, kwargs)
 
         u = _as_float64_array_no_copy(data)
         _validate_fit_data(u, self._d)

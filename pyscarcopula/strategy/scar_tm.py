@@ -18,7 +18,7 @@ from pyscarcopula.strategy._base import (
     lbfgsb_options,
     lbfgsb_overrides,
     register_strategy,
-    reject_legacy_tol,
+    reject_unknown_strategy_kwargs,
 )
 from pyscarcopula.numerical._scar_ou_config import (
     AutoTMConfig,
@@ -536,6 +536,9 @@ class SCARTMStrategy:
         Enforce the final projected-gradient tolerance (default False).
     """
 
+    _strict_keyword_contract = True
+    _constructor_keyword_aliases = frozenset({"backend"})
+
     def __init__(self, config: NumericalConfig | None = None,
                  K: int | None = None,
                  grid_range: float | None = None,
@@ -565,6 +568,7 @@ class SCARTMStrategy:
             raise TypeError(
                 "SCAR-TM-OU backend selection was removed; native execution "
                 "is always used")
+        reject_unknown_strategy_kwargs("SCAR-TM-OU", kwargs)
         self.config = config or DEFAULT_CONFIG
         self.K = K if K is not None else self.config.default_K
         self.grid_range = grid_range if grid_range is not None else self.config.default_grid_range
@@ -1287,7 +1291,7 @@ class SCARTMStrategy:
         -------
         LatentResult
         """
-        reject_legacy_tol(kwargs)
+        reject_unknown_strategy_kwargs("SCAR-TM-OU", kwargs)
         log_stationary = _uses_log_stationary_scale(
             copula, self.log_stationary_scale_optimization)
         optimizer_options = lbfgsb_options(

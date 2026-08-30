@@ -5,9 +5,14 @@ Adding a method means adding a strategy module and registering it.
 """
 
 from __future__ import annotations
+from functools import lru_cache
+import inspect
 from typing import Protocol, runtime_checkable
 import numpy as np
-from pyscarcopula.numerical._arrays import as_pseudo_observation_array
+from pyscarcopula.numerical._arrays import (
+    as_float64_array,
+    as_pseudo_observation_array,
+)
 from pyscarcopula._native.registry import (
     native_id_for,
     query_capability,
@@ -27,6 +32,25 @@ def reject_legacy_tol(kwargs):
     """Reject the removed SciPy-style ``tol`` alias consistently."""
     if 'tol' in kwargs:
         raise TypeError("tol is not supported; use gtol")
+
+
+def reject_unknown_mle_kwargs(kwargs, *, allowed=()):
+    """Reject unsupported MLE keywords while retaining common fit options."""
+    reject_legacy_tol(kwargs)
+    unexpected = sorted(set(kwargs).difference(allowed))
+    if unexpected:
+        raise TypeError(
+            f"unexpected MLE keyword argument(s): {unexpected}")
+
+
+def reject_unknown_strategy_kwargs(method, kwargs):
+    """Reject leftover constructor or fit keywords for one strategy."""
+    reject_legacy_tol(kwargs)
+    unexpected = sorted(kwargs)
+    if unexpected:
+        raise TypeError(
+            f"unexpected {str(method).upper()} keyword argument(s): "
+            f"{unexpected}")
 
 
 def lbfgsb_overrides(
@@ -113,10 +137,8 @@ def copula_dimension(copula, u=None) -> int | None:
     return None
 
 
-def validate_copula_data(copula, u):
-    """Validate 2D data against an explicit, known copula dimension."""
-    registry_entry_for(copula)
-    array = as_pseudo_observation_array(u)
+def _validate_copula_data_shape(copula, array):
+    """Validate observation layout against an explicit copula dimension."""
     if array.ndim != 2:
         raise ValueError(f"copula data must be 2D, got shape {array.shape}")
     if array.shape[0] == 0:
@@ -127,6 +149,23 @@ def validate_copula_data(copula, u):
             f"{type(copula).__name__} expects {dimension} columns, "
             f"got shape {array.shape}")
     return array
+
+
+def validate_raw_copula_data(copula, data):
+    """Validate finite real raw observations before a rank transform."""
+    registry_entry_for(copula)
+    array = as_float64_array(data, name="data")
+    _validate_copula_data_shape(copula, array)
+    if not np.all(np.isfinite(array)):
+        raise ValueError("data must contain only finite values")
+    return array
+
+
+def validate_copula_data(copula, u):
+    """Validate 2D pseudo-observations for an exact copula dimension."""
+    registry_entry_for(copula)
+    array = as_pseudo_observation_array(u)
+    return _validate_copula_data_shape(copula, array)
 
 
 def is_multivariate_copula(copula) -> bool:
@@ -411,6 +450,101 @@ class FitStrategy(Protocol):
 _REGISTRY: dict[str, type] = {}
 
 
+def _explicit_keyword_names(callable_object, *, excluded):
+    """Return explicit keyword parameters, excluding variadic ``**kwargs``."""
+    return frozenset(
+        name
+        for name, parameter in inspect.signature(
+            callable_object).parameters.items()
+        if name not in excluded
+        and parameter.kind in {
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        }
+    )
+
+
+def _accepts_var_keywords(callable_object):
+    return any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in inspect.signature(
+            callable_object).parameters.values()
+    )
+
+
+@lru_cache(maxsize=None)
+def _strategy_keyword_contract(method: str):
+    """Return constructor and fit keyword names for a registered strategy."""
+    normalized = validate_strategy_method(method)
+    cls = _REGISTRY[normalized]
+    constructor_names = set(_explicit_keyword_names(
+        cls.__init__, excluded={"self", "config"}))
+    constructor_names.update(getattr(
+        cls, "_constructor_keyword_aliases", ()))
+    fit_names = _explicit_keyword_names(
+        cls.fit, excluded={"self", "copula", "u"})
+    return (
+        frozenset(constructor_names),
+        fit_names,
+        _accepts_var_keywords(cls.__init__),
+        _accepts_var_keywords(cls.fit),
+        bool(getattr(cls, "_strict_keyword_contract", False)),
+    )
+
+
+def partition_strategy_fit_kwargs(
+        method: str,
+        kwargs,
+        *,
+        reject_unknown: bool = True):
+    """Partition public fit keywords into constructor and fit options.
+
+    Explicit strategy signatures are the source of truth. Compatibility
+    aliases handled inside a constructor can be declared through
+    ``_constructor_keyword_aliases`` on the strategy class.
+    """
+    normalized = validate_strategy_method(method)
+    if reject_unknown:
+        reject_legacy_tol(kwargs)
+    (
+        constructor_names,
+        fit_names,
+        constructor_var_kwargs,
+        fit_var_kwargs,
+        strict_contract,
+    ) = _strategy_keyword_contract(normalized)
+    recognized = constructor_names.union(fit_names)
+    unexpected = sorted(set(kwargs).difference(recognized))
+    variadic_contract = constructor_var_kwargs or fit_var_kwargs
+    if (
+            reject_unknown
+            and unexpected
+            and (strict_contract or not variadic_contract)):
+        raise TypeError(
+            f"unexpected {normalized} keyword argument(s): {unexpected}")
+    constructor_kwargs = {
+        name: value
+        for name, value in kwargs.items()
+        if name in constructor_names
+        or (
+            not strict_contract
+            and constructor_var_kwargs
+            and name not in recognized
+        )
+    }
+    fit_kwargs = {
+        name: value
+        for name, value in kwargs.items()
+        if name in fit_names
+        or (
+            not strict_contract
+            and fit_var_kwargs
+            and name not in recognized
+        )
+    }
+    return constructor_kwargs, fit_kwargs
+
+
 def register_strategy(method_name: str):
     """Decorator to register a strategy class for a method name.
 
@@ -421,6 +555,7 @@ def register_strategy(method_name: str):
     """
     def decorator(cls):
         _REGISTRY[method_name.upper()] = cls
+        _strategy_keyword_contract.cache_clear()
         return cls
     return decorator
 
@@ -530,7 +665,16 @@ def get_strategy_for_result(result: FitResult,
             result_kwargs['memory_budget_bytes'] = memory_budget_bytes
 
     result_kwargs.update(kwargs)
-    return get_strategy(result.method, config=config, **result_kwargs)
+    constructor_kwargs, _ = partition_strategy_fit_kwargs(
+        result.method,
+        result_kwargs,
+        reject_unknown=False,
+    )
+    return get_strategy(
+        result.method,
+        config=config,
+        **constructor_kwargs,
+    )
 
 
 def _import_all_strategies():
