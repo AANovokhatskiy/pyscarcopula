@@ -72,6 +72,46 @@ def test_native_default_initial_point_contracts():
     )
 
 
+@pytest.mark.parametrize("tau", [-1.0, 1.0])
+def test_gaussian_exact_tau_uses_admissible_mle_bound(tau):
+    copula = BivariateGaussianCopula()
+    assert model_policy.pair_mle_initial_parameter(copula, tau) == tau * 0.9999
+    # A finite MLE start does not change the singular public mapping domain.
+    with pytest.raises(ValueError):
+        copula.tau_to_param([tau])
+
+
+@pytest.mark.parametrize("family", [ClaytonCopula, FrankCopula, GumbelCopula, JoeCopula])
+@pytest.mark.parametrize("transform", ["softplus", "logistic"])
+def test_archimedean_exact_tau_requires_finite_mle_bound(family, transform):
+    copula = family(transform_type=transform)
+    lower, upper = copula.bounds[0]
+    if np.isfinite(upper):
+        parameter = model_policy.pair_mle_initial_parameter(copula, 1.0)
+        assert parameter == upper
+        assert lower <= parameter
+    else:
+        with pytest.raises(FloatingPointError, match="exact Kendall limits require finite bounds"):
+            model_policy.pair_mle_initial_parameter(copula, 1.0)
+    with pytest.raises(ValueError):
+        copula.tau_to_param([1.0])
+
+
+@pytest.mark.parametrize("family", [ClaytonCopula, FrankCopula, GumbelCopula, JoeCopula, BivariateGaussianCopula])
+@pytest.mark.parametrize("tau", [1e-8, 0.35, 0.999])
+def test_pair_mle_initial_parameter_preserves_interior_itau_mapping(family, tau):
+    copula = family()
+    expected = float(copula.tau_to_param([tau])[0])
+    lower, upper = copula.bounds[0]
+    assert model_policy.pair_mle_initial_parameter(copula, tau) == np.clip(expected, lower, upper)
+
+
+@pytest.mark.parametrize("tau", [np.nan, np.inf, -np.inf, 1.00001, -1.00001])
+def test_pair_mle_initial_parameter_rejects_invalid_tau(tau):
+    with pytest.raises(ValueError, match="pair MLE initial parameter"):
+        model_policy.pair_mle_initial_parameter(BivariateGaussianCopula(), tau)
+
+
 def test_native_optimizer_failure_policy_owns_value_and_gradient():
     value, directional = model_policy.optimizer_failure_evaluation(
         [2.0, 1.0], [1.0, 1.0], 400.0,

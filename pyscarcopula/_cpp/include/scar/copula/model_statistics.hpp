@@ -40,6 +40,7 @@ Result<double> kendall_tau_from_dense_ranks(
     Span<const std::int64_t> second);
 Result<double> kendall_tau(DoubleView first, DoubleView second);
 
+// Preserve exact dependence limits for the native MLE initialization policy.
 Result<double> tau_for_itau(double tau, bool preserve_sign);
 Result<bool> rotation_compatible(double tau, int rotation);
 Result<bool> absolute_below(double value, double threshold);

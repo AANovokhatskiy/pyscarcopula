@@ -170,6 +170,42 @@ Result<double> default_pair_mle_parameter(const CopulaSpec& spec) {
         : Result<double>{0.0, Status::NumericalFailure, {}};
 }
 
+Result<double> pair_mle_initial_parameter(const CopulaSpec& spec, double tau) {
+    const PreparedPairKernel kernel(spec);
+    if (!kernel.is_supported() || spec.family == CopulaFamily::Independent
+        || !std::isfinite(tau) || tau < -1.0 || tau > 1.0
+        || (spec.family != CopulaFamily::Gaussian && tau <= 0.0)) {
+        return {0.0, Status::InvalidParameter, {}};
+    }
+    const auto domain = model_public_parameter_bounds(spec);
+    if (!domain.is_ok()
+        || domain.value.lower.size() != 1 || domain.value.upper.size() != 1) {
+        return {0.0, Status::InvalidParameter, {}};
+    }
+
+    double parameter;
+    if (std::abs(tau) == 1.0) {
+        // The itau limit may be singular or infinite. Keep bounded families
+        // at their admissible limit. An arbitrary finite start cannot define
+        // an unbounded limit or guarantee a finite maximum on comonotone data.
+        parameter = tau < 0.0 ? domain.value.lower[0] : domain.value.upper[0];
+        if (!std::isfinite(parameter)) {
+            return {0.0, Status::NumericalFailure, {}};
+        }
+    } else {
+        parameter = kernel.tau_to_parameter(tau);
+    }
+    if (!std::isfinite(parameter)) {
+        return {0.0, Status::NumericalFailure, {}};
+    }
+    const auto projected = project_optimizer_point(
+        {parameter}, domain.value.lower, domain.value.upper);
+    if (!projected.is_ok()) {
+        return {0.0, projected.status, projected.failure};
+    }
+    return success(projected.value[0]);
+}
+
 Result<std::vector<double>> gas_default_initial_point(double mu) {
     if (!std::isfinite(mu)) {
         return {{}, Status::InvalidParameter, {}};

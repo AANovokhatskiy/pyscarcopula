@@ -46,6 +46,24 @@ def _density_request(vine, parameters, n):
     return module, context, pack
 
 
+@pytest.mark.parametrize("value", [-1e300, -0.1, 1.1, 1e300, np.nan, np.inf, -np.inf])
+def test_direct_density_rejects_outside_unit_observations(value):
+    vine = configured_static_dvine(3)
+    observations = np.full((4, 3), 0.5)
+    module, context, pack = _density_request(vine, scalar_parameters(vine), 4)
+    observations[2, 1] = value
+
+    result = module.rvine_log_pdf_rows(
+        context["plan"], context["edges"],
+        pack.scalar_parameters, pack.row_parameters, observations)
+
+    assert result["status"] == 6
+    assert result["failure_row"] == 2
+    assert np.asarray(result["log_pdf"]).size == 0
+    with pytest.raises(ValueError):
+        _cpp_rvine._rvine_observations(observations, 3, "density")
+
+
 def test_density_plan_precompiles_and_validates_coordinate_closures():
     vine = configured_static_dvine(6)
     parameters = scalar_parameters(vine)

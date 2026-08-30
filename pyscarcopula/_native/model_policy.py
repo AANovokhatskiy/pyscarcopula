@@ -145,6 +145,16 @@ def default_pair_mle_parameter(copula):
     return float(result["value"])
 
 
+def pair_mle_initial_parameter(copula, tau):
+    """Return a native MLE start; exact Kendall limits require finite bounds."""
+    module = _extension.load()
+    spec = _descriptors.make_copula_ops_spec(module, copula)
+    result = _checked(
+        module.model_pair_mle_initial_parameter(spec, float(tau)),
+        "pair MLE initial parameter (exact Kendall limits require finite bounds)")
+    return float(result["value"])
+
+
 def gas_default_initial_point(mu):
     result = _checked(
         _extension.load().model_gas_default_initial_point(float(mu)),

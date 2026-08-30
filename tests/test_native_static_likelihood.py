@@ -192,19 +192,25 @@ def test_mle_objective_propagates_unexpected_adapter_failures(monkeypatch):
 def test_mle_fit_uses_one_prepared_native_evaluator(monkeypatch):
     u = _observations(120)
     copula = BivariateGaussianCopula()
-    calls = {"prepare": 0, "objective": 0}
+    calls = {"prepare": 0, "objective": 0, "native": 0}
     real_prepare = static_likelihood.prepare
 
     def counted_prepare(copula_arg, u_arg, **kwargs):
         calls["prepare"] += 1
         evaluator = real_prepare(copula_arg, u_arg, **kwargs)
         real_objective = evaluator.objective_and_gradient
+        real_result = evaluator.result
 
         def counted_objective(*args, **kwargs):
             calls["objective"] += 1
             return real_objective(*args, **kwargs)
 
+        def counted_result(parameter):
+            calls["native"] += 1
+            return real_result(parameter)
+
         evaluator.objective_and_gradient = counted_objective
+        evaluator.result = counted_result
         return evaluator
 
     def legacy_fail(*args, **kwargs):
@@ -220,6 +226,8 @@ def test_mle_fit_uses_one_prepared_native_evaluator(monkeypatch):
     assert np.isfinite(result.log_likelihood)
     assert calls["prepare"] == 1
     assert calls["objective"] >= 1
+    assert calls["objective"] == result.nfev
+    assert calls["native"] == result.nfev + 1
 
 
 def test_mle_explicit_alpha0_is_a_natural_parameter(monkeypatch):
@@ -229,6 +237,9 @@ def test_mle_explicit_alpha0_is_a_natural_parameter(monkeypatch):
 
     class Evaluator:
         def objective_and_gradient(self, parameter, **kwargs):
+            return self.validated_objective_and_gradient(parameter)
+
+        def validated_objective_and_gradient(self, parameter):
             evaluated.append(float(parameter))
             return 0.0, np.array([0.0])
 
@@ -260,7 +271,7 @@ def test_mle_explicit_alpha0_is_a_natural_parameter(monkeypatch):
 
     result = MLEStrategy().fit(copula, u, alpha0=np.array([2.25]))
 
-    assert evaluated == [2.25]
+    assert evaluated == [2.25, 2.25]
     assert result.copula_param == 2.25
 
 
@@ -353,6 +364,69 @@ def test_mle_rejects_nonfinite_optimizer_output(
 
     with pytest.raises(error, match=message):
         MLEStrategy().fit(BivariateGaussianCopula(), _observations(12))
+
+
+@pytest.mark.parametrize(
+    "final_result, error, message",
+    [
+        (dict(status=7, negative_log_likelihood=np.inf, negative_gradient=0.0,
+              failure_index=0), FloatingPointError, "numerical_failure"),
+        (dict(status=6, negative_log_likelihood=np.inf, negative_gradient=0.0),
+         ValueError, "invalid_parameter"),
+        (dict(status=0, negative_log_likelihood=np.nan, negative_gradient=0.0),
+         FloatingPointError, "non-finite"),
+        (dict(status=0, negative_log_likelihood=0.0, negative_gradient=np.nan),
+         FloatingPointError, "non-finite"),
+    ],
+)
+def test_mle_rejects_invalid_final_native_evaluation(
+        monkeypatch, final_result, error, message):
+    evaluator = static_likelihood.prepare(
+        BivariateGaussianCopula(), _observations(12))
+
+    def fake_minimize(fun, x0, **kwargs):
+        value, _ = fun(x0)
+        # The optimizer succeeded, but the final native check must still pass.
+        monkeypatch.setattr(evaluator, "result", lambda parameter: final_result)
+        return SimpleNamespace(
+            x=x0, fun=value, success=True, nfev=1, message="ok")
+
+    monkeypatch.setattr(mle_module, "minimize", fake_minimize)
+    with pytest.raises(error, match=message):
+        MLEStrategy().fit(
+            BivariateGaussianCopula(), _observations(12),
+            _prepared_evaluator=evaluator)
+
+
+def test_mle_tolerates_numerical_failure_at_nonfinal_trial(monkeypatch):
+    evaluator = static_likelihood.prepare(
+        BivariateGaussianCopula(), _observations(12))
+    original_result = evaluator.result
+    strategy = MLEStrategy()
+
+    def result(parameter):
+        if parameter == 0.25:
+            return dict(status=7, negative_log_likelihood=np.inf,
+                        negative_gradient=0.0, failure_index=0)
+        return original_result(parameter)
+
+    def fake_minimize(fun, x0, **kwargs):
+        penalty, gradient = fun(np.array([0.25]))
+        assert penalty == strategy.config.fail_value
+        np.testing.assert_array_equal(gradient, [0.0])
+        value, _ = fun(x0)
+        return SimpleNamespace(
+            x=x0, fun=value, success=True, nfev=2, message="ok")
+
+    monkeypatch.setattr(evaluator, "result", result)
+    monkeypatch.setattr(mle_module, "minimize", fake_minimize)
+    fitted = strategy.fit(
+        BivariateGaussianCopula(), _observations(12), alpha0=0.2,
+        _prepared_evaluator=evaluator)
+
+    assert fitted.success
+    assert fitted.log_likelihood == pytest.approx(
+        evaluator.log_likelihood(fitted.copula_param))
 
 
 def test_static_student_mle_optimizes_natural_df(monkeypatch):

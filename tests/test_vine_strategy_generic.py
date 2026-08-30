@@ -7,7 +7,7 @@ import pytest
 
 from pyscarcopula import api
 from pyscarcopula._native.errors import NativeUnsupported
-from pyscarcopula._types import LatentProcessParams, LatentResult
+from pyscarcopula._types import LatentProcessParams, LatentResult, MLEResult
 from pyscarcopula._utils import pobs
 from pyscarcopula.copula.elliptical import BivariateGaussianCopula
 from pyscarcopula.strategy import _base as strategy_base
@@ -225,6 +225,24 @@ def test_rvine_uses_registered_generic_strategy_for_edge_runtime(
     assert generic_strategy['model_sample_params'] == 3
     assert generic_strategy['predictive_params'] == 3
     assert generic_strategy['log_likelihood'] == 0
+
+
+def test_rvine_preserves_custom_prediction_for_static_result(
+        generic_strategy, monkeypatch):
+    def fit(self, copula, u, **kwargs):
+        return MLEResult(
+            log_likelihood=12.5, method=METHOD, copula_name=copula.name,
+            success=True, copula_param=0.2)
+
+    monkeypatch.setattr(GenericFakeStrategy, 'fit', fit)
+    vine = RVineCopula(candidates=[BivariateGaussianCopula]).fit(
+        _data(d=2), method=METHOD, copulas=_fixed_gaussian_edges(2))
+    generic_strategy.clear()
+    predicted = vine.predict(8, rng=np.random.default_rng(2))
+
+    assert predicted.shape == (8, 2)
+    assert generic_strategy['predictive_params'] == 1
+    assert generic_strategy['model_sample_params'] == 0
 
 
 def test_rvine_prefers_strategy_mixture_h_pair(

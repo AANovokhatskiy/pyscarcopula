@@ -9,10 +9,11 @@ Two-phase approach (mirroring pyvinecopulib):
 
 from functools import lru_cache
 from typing import NamedTuple
+import warnings
 
 import numpy as np
 
-from pyscarcopula._native import statistics
+from pyscarcopula._native import model_policy, statistics
 from pyscarcopula._native.errors import NativeUnsupported
 from pyscarcopula._native.registry import is_registered_type
 from pyscarcopula.copula.base import BivariateCopula
@@ -143,20 +144,8 @@ def _kendall_tau(u1, u2):
 
 
 def _itau_initial_param(copula, tau_value):
-    """Compute initial copula parameter from Kendall's tau.
-
-    Returns parameter in the copula's natural domain (before inv_transform).
-    Returns None when the candidate does not implement the public mapping.
-    """
-    try:
-        parameter = copula.tau_to_param(
-            np.array([tau_value], dtype=np.float64))
-    except NotImplementedError:
-        return None
-    parameter = np.asarray(parameter, dtype=np.float64).reshape(-1)
-    if parameter.size != 1 or not np.isfinite(parameter[0]):
-        raise ValueError("tau_to_param must return one finite parameter")
-    return float(parameter[0])
+    """Delegate itau starts and exact dependence limits to native policy."""
+    return model_policy.pair_mle_initial_parameter(copula, tau_value)
 
 
 def _tau_for_itau(cop_class, tau_value):
@@ -176,7 +165,8 @@ def _rotation_compatible(tau, rotate):
 
 def select_best_copula(u1, u2, candidates, allow_rotations=True,
                        criterion='aic', transform_type='softplus', *,
-                       u_pair=None, tau_value=None):
+                       u_pair=None, tau_value=None, config=None,
+                       fit_kwargs=None):
     """
     Select best bivariate copula for (u1, u2) by AIC/BIC/logL.
 
@@ -200,6 +190,11 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
     tau_value : float, optional
         Precomputed Kendall's tau for ``u1`` and ``u2``. When omitted, the
         statistic is computed internally.
+    config : NumericalConfig, optional
+        Native thread policy and MLE optimizer defaults.
+    fit_kwargs : dict, optional
+        MLE optimizer overrides. A natural-space ``alpha0`` is accepted only
+        with one non-independent candidate family; otherwise use itau starts.
 
     Returns
     -------
@@ -211,7 +206,17 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
 
     from pyscarcopula.copula.independent import IndependentCopula
     from pyscarcopula.copula.elliptical import BivariateGaussianCopula
-    from pyscarcopula._types import IndependentResult
+    from pyscarcopula._types import DEFAULT_CONFIG, IndependentResult
+    from pyscarcopula.strategy._base import partition_strategy_fit_kwargs
+
+    config = DEFAULT_CONFIG if config is None else config
+    _, fit_kwargs = partition_strategy_fit_kwargs("mle", dict(fit_kwargs or {}))
+    if fit_kwargs.get("alpha0") is not None and len({
+            candidate for candidate in candidates
+            if candidate is not IndependentCopula}) != 1:
+        raise ValueError(
+            "alpha0 with automatic family selection requires exactly one "
+            "non-independent candidate family; omit alpha0 or fix copulas")
 
     T = len(u1)
     if u_pair is None:
@@ -226,6 +231,7 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
 
     # ── Phase 1: itau screening ──────────────────────────────
     itau_candidates = []
+    numerical_failures = []
 
     for cop_class in candidates:
         if cop_class is IndependentCopula:
@@ -252,10 +258,10 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
                     continue
 
                 logL, evaluator = _screen_log_likelihood(
-                    cop, u_pair, float(r0))
+                    cop, u_pair, float(r0), n_threads=config.n_threads)
 
                 if not statistics.is_finite(logL):
-                    continue
+                    raise FloatingPointError("non-finite screening likelihood")
 
                 n_params = 1
                 score = statistics.candidate_score(
@@ -263,8 +269,12 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
 
                 itau_candidates.append([score, cop, r0, evaluator])
                 _retain_top_prepared_evaluators(itau_candidates, 3)
-            except Exception:
-                continue
+            except FloatingPointError as exc:
+                message = (
+                    f"{cop_class.__name__}(rotate={angle}) screening failed: "
+                    f"{exc}")
+                numerical_failures.append(message)
+                warnings.warn(message, RuntimeWarning, stacklevel=2)
 
     # ── Phase 2: refine top-3 ────────────────────────────────
     itau_candidates.sort(key=lambda x: x[0])
@@ -273,14 +283,21 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
     best_score = 0.0  # independence baseline
     best_copula = indep
     best_result = indep_result
+    refined_count = 0
 
     for idx in range(n_refine):
         _, cop, r0, evaluator = itau_candidates[idx]
         try:
-            alpha0 = np.array([r0], dtype=np.float64)
+            refine_kwargs = dict(fit_kwargs)
+            if refine_kwargs.get("alpha0") is None:
+                refine_kwargs["alpha0"] = np.array([r0], dtype=np.float64)
             result = _fit_mle_direct(
-                cop, u_pair, alpha0=alpha0, evaluator=evaluator)
+                cop, u_pair, evaluator=evaluator, config=config,
+                **refine_kwargs)
             logL = result.log_likelihood
+            if not statistics.is_finite(logL):
+                raise FloatingPointError("non-finite fitted likelihood")
+            refined_count += 1
 
             n_params = 1
             score = statistics.candidate_score(
@@ -290,13 +307,22 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
                 best_score = score
                 best_copula = cop
                 best_result = result
-        except Exception:
-            continue
+        except FloatingPointError as exc:
+            message = (
+                f"{type(cop).__name__}(rotate={cop.rotate}) refinement failed: "
+                f"{exc}")
+            numerical_failures.append(message)
+            warnings.warn(message, RuntimeWarning, stacklevel=2)
+
+    if numerical_failures and refined_count == 0:
+        raise FloatingPointError(
+            "No candidate family could be evaluated: "
+            + "; ".join(numerical_failures))
 
     return SelectedCopula(best_copula, best_result)
 
 
-def _screen_log_likelihood(copula, u_pair, parameter):
+def _screen_log_likelihood(copula, u_pair, parameter, *, n_threads=1):
     """Evaluate screening logL and retain reusable native state when safe."""
     from pyscarcopula.copula.base import BivariateCopula
     from pyscarcopula._native import static as static_likelihood
@@ -305,7 +331,8 @@ def _screen_log_likelihood(copula, u_pair, parameter):
     registry_entry_for(copula)
 
     if static_likelihood.supported(copula):
-        evaluator = static_likelihood.prepare(copula, u_pair)
+        evaluator = static_likelihood.prepare(
+            copula, u_pair, n_threads=n_threads)
         return float(evaluator.log_likelihood(parameter)), evaluator
     raise NativeUnsupported(
         f"{type(copula).__name__} has no registered native static likelihood")
@@ -324,13 +351,15 @@ def _retain_top_prepared_evaluators(candidates, limit):
             candidate[3] = None
 
 
-def _fit_mle_direct(copula, u_pair, alpha0=None, evaluator=None):
+def _fit_mle_direct(
+        copula, u_pair, alpha0=None, evaluator=None, *, config=None, **kwargs):
     """Fit MLE without the public API dispatch overhead."""
     from pyscarcopula.strategy.mle import MLEStrategy
 
-    return MLEStrategy().fit(
+    return MLEStrategy(config=config).fit(
         copula,
         u_pair,
         alpha0=alpha0,
         _prepared_evaluator=evaluator,
+        **kwargs,
     )

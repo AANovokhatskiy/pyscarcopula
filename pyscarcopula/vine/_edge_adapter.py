@@ -102,6 +102,18 @@ def edge_has_dynamic_params(edge):
     return getattr(edge_result(edge), 'params', None) is not None
 
 
+def edge_has_static_params(edge):
+    """Identify constant built-in results without bypassing custom strategies."""
+    from pyscarcopula._types import MLEResult
+
+    result = edge_result(edge)
+    return (
+        result is None
+        or (type(result) is MLEResult and result.method.upper() == 'MLE')
+        or edge_is_independent(edge)
+    )
+
+
 def result_param_items(result):
     """Return named strategy parameters from a fitted result."""
     params = getattr(result, 'params', None)

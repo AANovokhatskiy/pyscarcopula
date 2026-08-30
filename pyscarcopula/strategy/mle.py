@@ -182,8 +182,18 @@ class MLEStrategy:
             raise RuntimeError(
                 "MLE optimizer returned a non-finite objective value")
 
+        # A finite failure penalty with zero gradient can look converged to
+        # L-BFGS-B. Require a genuine evaluation at the returned point, even
+        # when the optimizer reports success or the numerical failure recovers.
+        validated_value, _ = evaluator.validated_objective_and_gradient(
+            float(fitted_parameter[0]))
+        if objective_value != validated_value:
+            raise FloatingPointError(
+                "MLE optimizer objective does not match the final native "
+                "evaluation; a numerical failure penalty cannot be fitted")
+
         return MLEResult(
-            log_likelihood=-objective_value,
+            log_likelihood=-validated_value,
             method='MLE',
             copula_name=copula.name,
             success=result.success,

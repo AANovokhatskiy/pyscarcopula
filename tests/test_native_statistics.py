@@ -60,11 +60,15 @@ def test_native_kendall_dense_fast_path_and_degenerate_values():
     assert np.isnan(statistics.kendall_tau([1.0, np.nan], [1.0, 2.0]))
 
 
-def test_native_selection_predicates_preserve_existing_semantics():
+def test_native_selection_predicates():
     assert statistics.tau_for_itau(-0.4, preserve_sign=True) == -0.4
     assert statistics.tau_for_itau(-0.4, preserve_sign=False) == 0.4
     assert statistics.tau_for_itau(0.0, preserve_sign=True) is None
-    assert statistics.tau_for_itau(1.0, preserve_sign=False) is None
+    assert statistics.tau_for_itau(1.0, preserve_sign=False) == 1.0
+    assert statistics.tau_for_itau(-1.0, preserve_sign=False) == 1.0
+    assert statistics.tau_for_itau(-1.0, preserve_sign=True) == -1.0
+    assert statistics.tau_for_itau(1.0, preserve_sign=True) == 1.0
+    assert statistics.tau_for_itau(1.01, preserve_sign=True) is None
     assert statistics.rotation_compatible(0.1, 0)
     assert statistics.rotation_compatible(0.5, 180)
     assert statistics.rotation_compatible(-0.5, 90)

@@ -1130,14 +1130,14 @@ def _gof_dynamic_multivariate(
 # ══════════════════════════════════════════════════════════════════
 
 def _prepare_rvine_rosenblatt_observations(vine, u):
-    """Preserve the characterized public input contract before dispatch."""
-    observations = np.asarray(u, dtype=np.float64)
+    """Validate pseudo-observations before applying endpoint safeguards."""
+    observations = as_pseudo_observation_array(u, name="u")
+    if observations.ndim != 2:
+        raise ValueError(f"u must have shape (T, {vine.d})")
     _, dimension = observations.shape
     if dimension != vine.d:
         raise ValueError(
             f"u has d={dimension}, but fitted vine has d={vine.d}")
-    if np.any(np.isnan(observations)):
-        raise ValueError("u must contain only finite values")
     return clip_pseudo_observations(observations)
 
 

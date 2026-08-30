@@ -4,6 +4,7 @@
 
 #include "scar/core/threading.hpp"
 #include "scar/detail/safety.hpp"
+#include "scar/numerical_validation.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -46,11 +47,11 @@ int prepare_density_plan_request(
     if (prepare_status != SCAR_OK) {
         return prepare_status;
     }
-    for (std::size_t index = 0; index < value_count; ++index) {
-        if (!std::isfinite(observations[index])) {
-            failure_row = static_cast<std::int64_t>(index / dimension);
-            return SCAR_INVALID_PARAMETER;
-        }
+    const auto validation = validate_pseudo_observations(observations);
+    if (!validation.is_ok()) {
+        failure_row = validation.failure.index / plan.dimension;
+        // Preserve the vine boundary's input-error status for NaN/Inf too.
+        return SCAR_INVALID_PARAMETER;
     }
     return SCAR_OK;
 }

@@ -245,6 +245,14 @@ void bind_copula(py::module_& m) {
             output["status"] = static_cast<int>(result.status);
             return output;
         }, py::arg("spec"));
+    m.def("model_pair_mle_initial_parameter",
+        [](const scar::CopulaSpec& spec, double tau) {
+            const auto result = scar::pair_mle_initial_parameter(spec, tau);
+            py::dict output;
+            output["value"] = result.value;
+            output["status"] = static_cast<int>(result.status);
+            return output;
+        }, py::arg("spec"), py::arg("tau"));
     m.def("model_gas_default_initial_point", [](double mu) {
         const auto result = scar::gas_default_initial_point(mu);
         py::dict output;

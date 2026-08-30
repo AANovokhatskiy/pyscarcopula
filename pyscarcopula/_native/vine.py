@@ -31,6 +31,7 @@ from pyscarcopula.vine._helpers import (
 from pyscarcopula.vine._rvine_conditional_plan import _node_key
 from pyscarcopula._constants import PSEUDO_OBS_EPS
 from pyscarcopula._utils import clip_pseudo_observations
+from pyscarcopula.numerical._arrays import as_pseudo_observation_array
 
 
 def fit_edge_pseudo_observations(edge, first, second):
@@ -1286,17 +1287,12 @@ def sample(
 def _rvine_observations(values, dimension, operation):
     """Validate row observations for one native R-vine traversal."""
     label = f"R-vine {operation} observations"
-    raw = np.asarray(values)
-    if np.iscomplexobj(raw):
-        raise TypeError(f"{label} must contain real values")
-    observations = np.asarray(raw, dtype=np.float64)
+    observations = as_pseudo_observation_array(values, name=label)
     if observations.ndim != 2 or observations.shape[1] != int(dimension):
         raise ValueError(
             f"{label} must have shape "
             f"(n, {int(dimension)}), got {observations.shape}"
         )
-    if not np.all(np.isfinite(observations)):
-        raise ValueError(f"{label} must be finite")
     return np.ascontiguousarray(observations)
 
 

@@ -129,8 +129,12 @@ The public fit-time controls are:
 The default fit-time search is `structure_search='beam'`.
 
 With `conditional_strict=False`, fit may keep a structure that is not exact for
-the target. Prediction uses the approximate fallback when the exact suffix path
-is not available.
+the target and records `conditional_fit_supported=False` in its diagnostics.
+Prediction for that same fit-time target still raises `ValueError`; relaxing
+fit-time rejection does not establish conditional support. Other conditioning
+sets use the ordinary suffix or approximate path. To use the approximate
+fallback for a set that cannot be an exact suffix, fit without `given_vars` and
+pass that set only to `predict(given=...)`.
 
 ## Dynamic Conditioning
 

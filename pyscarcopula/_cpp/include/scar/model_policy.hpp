@@ -48,6 +48,9 @@ FitParameterPolicyResult student_fit_parameter_policy(
     int dimension, bool stochastic);
 FitParameterPolicyResult equicorr_fit_parameter_policy();
 Result<double> default_pair_mle_parameter(const CopulaSpec& spec);
+// Family-scale Kendall tau: signed for Gaussian, positive for other pairs.
+// Exact limits require a finite model bound; unbounded itau limits fail.
+Result<double> pair_mle_initial_parameter(const CopulaSpec& spec, double tau);
 Result<std::vector<double>> gas_default_initial_point(double mu);
 Result<std::vector<double>> optimizer_unit_scale(
     const std::vector<double>& parameters);

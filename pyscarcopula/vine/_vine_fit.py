@@ -211,6 +211,16 @@ def _fit_tree_level(
         fit_with_strategy = _fit_with_strategy
     is_truncated = (
         truncation_level is not None and t >= truncation_level)
+    selection_fit_kwargs = dict(fit_kwargs)
+    if str(method).lower() != "mle":
+        from pyscarcopula.strategy._base import partition_strategy_fit_kwargs
+
+        _, selection_fit_kwargs = partition_strategy_fit_kwargs(
+            "mle", fit_kwargs, reject_unknown=False)
+        if "alpha0" in selection_fit_kwargs:
+            alpha0 = np.asarray(selection_fit_kwargs["alpha0"])
+            if alpha0.size != 1:
+                selection_fit_kwargs.pop("alpha0")
 
     fitted_level = []
     for edge_idx, (conditioned, conditioning) in enumerate(tree_repr):
@@ -265,23 +275,6 @@ def _fit_tree_level(
                 if isinstance(copula, IndependentCopula):
                     selection_result = copula._fit_validated(u_pair)
                 else:
-                    selection_fit_kwargs = fit_kwargs
-                    if str(method).lower() != "mle":
-                        from pyscarcopula.strategy._base import (
-                            partition_strategy_fit_kwargs,
-                        )
-                        _, selection_fit_kwargs = (
-                            partition_strategy_fit_kwargs(
-                                "mle",
-                                fit_kwargs,
-                                reject_unknown=False,
-                            )
-                        )
-                        if "alpha0" in selection_fit_kwargs:
-                            alpha0 = np.asarray(
-                                selection_fit_kwargs["alpha0"])
-                            if alpha0.size != 1:
-                                selection_fit_kwargs.pop("alpha0")
                     selection_result = fit_with_strategy(
                         copula,
                         u_pair,
@@ -299,6 +292,8 @@ def _fit_tree_level(
                     transform_type=transform_type,
                     u_pair=u_pair,
                     tau_value=tau_val,
+                    config=config,
+                    fit_kwargs=selection_fit_kwargs,
                 )
             edge_fit_diagnostics["selection_ms"] = (
                 1e3 * (perf_counter() - selection_started))

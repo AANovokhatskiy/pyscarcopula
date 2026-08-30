@@ -83,13 +83,17 @@ class StaticLikelihoodEvaluator:
 
     def objective_and_gradient(
             self, parameter: float, *, fail_value: float = 1e10):
+        """Evaluate an optimizer trial, penalizing native numerical failures."""
+        try:
+            return self.validated_objective_and_gradient(parameter)
+        except FloatingPointError as error:
+            return model_policy.optimizer_numerical_failure_evaluation_for_size(
+                error, 1, fail_value)
+
+    def validated_objective_and_gradient(self, parameter: float):
+        """Evaluate the actual objective and gradient without a failure penalty."""
         result = self.result(parameter)
-        if result["status"] != 0:
-            try:
-                raise_for_status(result, "static objective gradient")
-            except FloatingPointError as error:
-                return model_policy.optimizer_numerical_failure_evaluation_for_size(
-                    error, 1, fail_value)
+        raise_for_status(result, "static objective gradient")
         value = float(result["negative_log_likelihood"])
         gradient = float(result["negative_gradient"])
         if not np.isfinite(value) or not np.isfinite(gradient):

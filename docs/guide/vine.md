@@ -96,7 +96,9 @@ vine.fit(
 `given_vars` is a fit-time structure-selection target. With the default
 `conditional_strict=True`, `fit` raises `ValueError` if no suffix-compatible
 exact structure is constructed. With `conditional_strict=False`, prediction can
-use the approximate fallback when the exact path is not available.
+still use other conditioning sets, but the unsupported fit-time target remains
+rejected by `predict`. To use the approximate fallback for that set, fit without
+`given_vars` and supply the set only to `predict(given=...)`.
 
 ## Fixed D-vine
 
@@ -209,6 +211,27 @@ vine.fit(u, method='scar-tm-ou',
 
 Edges where no parametric copula beats independence by AIC are set to `IndependentCopula` automatically.
 
+MLE optimizer options and `NumericalConfig` also apply to the refinement stage
+of automatic family selection. Screening uses the configured native thread
+count. An explicit natural-parameter `alpha0` requires exactly one
+non-independent candidate family, or fixed edge families via `copulas=`;
+with several candidate families, omit it to use family-specific itau starts.
+Internally generated itau starts are projected onto each family's MLE bounds;
+explicit `alpha0` values outside those bounds are rejected. Exact Kendall
+dependence (`tau = ±1`) is retained for selection: Gaussian starts at its
+admissible correlation bound, and bounded Archimedean families start at their
+upper parameter bound. An unbounded Archimedean itau limit is reported as a
+candidate numerical failure, rather than being replaced with an arbitrary
+finite parameter. The default pool can still select Gaussian; a pool with no
+evaluable candidate raises and preserves the previous fit. Interior itau
+mappings and public `tau_to_param` domains are unchanged. A fitted MLE point
+must pass a final native likelihood and gradient check: an optimizer's finite
+numerical-failure penalty is not accepted as a likelihood.
+Unexpected native, allocation, or configuration errors abort fitting and
+preserve any previous fitted model. A candidate's numerical failure is reported
+with a warning; if no candidate can be evaluated, fitting raises instead of
+reporting a successful independent model.
+
 ## Goodness of fit
 
 ```python
@@ -236,6 +259,11 @@ predictions = vine.predict(
 # Sample: reproduce fitted model (for parameter recovery)
 samples = vine.sample(n=10000, rng=np.random.default_rng(2024))
 ```
+
+For a vine with only built-in static MLE or independent edges, unconditional
+`predict` uses the same bounded row batches as `sample`. Static prediction
+does not compute or cache historical pseudo-observations, and static edge
+parameters remain scalar during conditional prediction.
 
 Conditional generation is supported via `given={var_index: u_value}` in
 pseudo-observation space:

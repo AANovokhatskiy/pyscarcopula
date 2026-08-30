@@ -2,12 +2,14 @@
 #include "scar/copula/prepared_pair_kernel.hpp"
 #include "scar/dynamic_rvine.hpp"
 #include "scar/gas_rvine.hpp"
+#include "scar/model_policy.hpp"
 #include "scar/rvine.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 namespace {
@@ -642,6 +644,40 @@ int run_vine_model_tests() {
         || !bic.is_ok()
         || std::abs(bic.value - (25.0 + 3.0 * std::log(100.0))) > 1e-15) {
         return 10;
+    }
+
+    // Exact Kendall limits must reach finite native MLE initialization.
+    const auto gaussian_spec = scar::default_pair_copula_spec(
+        scar::CopulaFamily::Gaussian);
+    for (double endpoint : {-1.0, 1.0}) {
+        const auto signed_tau = scar::tau_for_itau(endpoint, true);
+        const auto positive_tau = scar::tau_for_itau(endpoint, false);
+        const auto initial = scar::pair_mle_initial_parameter(
+            gaussian_spec, endpoint);
+        if (!signed_tau.is_ok() || signed_tau.value != endpoint
+            || !positive_tau.is_ok() || positive_tau.value != 1.0
+            || !initial.is_ok() || initial.value != endpoint * 0.9999) {
+            return 23;
+        }
+    }
+    for (const auto family : {scar::CopulaFamily::Clayton, scar::CopulaFamily::Frank,
+                             scar::CopulaFamily::Gumbel, scar::CopulaFamily::Joe}) {
+        auto spec = scar::default_pair_copula_spec(family);
+        const auto initial = scar::pair_mle_initial_parameter(spec, 1.0);
+        spec.transform = scar::Transform::Logistic;
+        const auto bounded = scar::pair_mle_initial_parameter(spec, 1.0);
+        const auto domain = scar::model_public_parameter_bounds(spec);
+        if (initial.status != scar::Status::NumericalFailure || !bounded.is_ok()
+            || !domain.is_ok()
+            || bounded.value != domain.value.upper[0]) {
+            return 24;
+        }
+    }
+    for (double invalid_tau : {1.001, -1.001,
+                              std::numeric_limits<double>::quiet_NaN()}) {
+        if (scar::pair_mle_initial_parameter(gaussian_spec, invalid_tau).is_ok()) {
+            return 25;
+        }
     }
 
     scar::rvine::EdgeSpec unsupported;

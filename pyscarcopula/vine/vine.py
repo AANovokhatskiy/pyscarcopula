@@ -99,6 +99,7 @@ from pyscarcopula.vine._rvine_sampling_plan import (
 from pyscarcopula.vine._edge_adapter import (
     edge_copula,
     edge_has_dynamic_params,
+    edge_has_static_params,
     edge_is_independent,
     edge_param,
     edge_result,
@@ -2306,7 +2307,7 @@ class VineCopula:
                     key, train_pseudo, edge_map)
             r_all[key] = _edge_r_for_predict(
                 edge,
-                n,
+                1 if edge_has_static_params(edge) else n,
                 u_train_pair=u_pair,
                 horizon=edge_horizon,
                 rng=rng,
@@ -2717,10 +2718,13 @@ class VineCopula:
             )
         )
 
+        is_static = all(
+            edge_has_static_params(edge)
+            for edge in self.pair_copulas.values())
         history_cache = (
             self._history_prediction_cache(
                 u_ref, fitted_history=use_fitted_history_cache)
-            if u_ref is not None else None
+            if u_ref is not None and not is_static else None
         )
         if history_cache is not None and 'train_pseudo' in history_cache:
             train_pseudo = history_cache['train_pseudo']
@@ -2733,6 +2737,7 @@ class VineCopula:
                     self._compute_pseudo_obs(u_ref)
                     if (
                         u_ref is not None
+                        and not is_static
                         and native_vine.pseudo_observation_trace_supported(
                             self.pair_copulas, self._trees, self._edge_map)
                     ) else None
@@ -2880,6 +2885,12 @@ class VineCopula:
                     pair_copulas=pair_copulas,
                 ),
             )
+            if pcfg.return_diagnostics:
+                return samples, attach_timings(diagnostics)
+            return samples
+        if is_static:
+            samples = timed(
+                "unconditional_sample", lambda: self.sample(n, rng=rng))
             if pcfg.return_diagnostics:
                 return samples, attach_timings(diagnostics)
             return samples

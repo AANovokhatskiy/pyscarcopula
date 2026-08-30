@@ -276,7 +276,7 @@ Result<double> kendall_tau(DoubleView first, DoubleView second) {
 
 Result<double> tau_for_itau(double tau, bool preserve_sign) {
     const double candidate = preserve_sign ? tau : std::abs(tau);
-    if (candidate == 0.0 || candidate >= 1.0 || candidate <= -1.0) {
+    if (candidate == 0.0 || candidate > 1.0 || candidate < -1.0) {
         return {0.0, Status::InvalidParameter, {}};
     }
     return success(candidate);
