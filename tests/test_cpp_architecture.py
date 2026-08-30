@@ -199,6 +199,27 @@ def test_python_ownership_allowlist_cannot_hide_symbol_mutations(tmp_path):
                for v in audit_package(tmp_path, exceptions=policy)["violations"])
 
 
+def test_python_ownership_fingerprint_is_stable_without_type_params(
+        monkeypatch):
+    import ast
+    from tools.check_python_ownership import fingerprint
+
+    node = ast.parse(
+        "def reviewed(value):\n"
+        "    return value * 8\n"
+    ).body[0]
+    expected = fingerprint(node)
+    for definition_type in (
+            ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef):
+        fields = tuple(
+            field
+            for field in definition_type._fields
+            if field != "type_params"
+        )
+        monkeypatch.setattr(definition_type, "_fields", fields)
+    assert fingerprint(node) == expected
+
+
 def test_python_ownership_inventory_and_import_graph_are_complete(tmp_path):
     from tools.check_python_ownership import audit_package
 

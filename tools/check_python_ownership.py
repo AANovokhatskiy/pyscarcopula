@@ -43,8 +43,45 @@ RNG_CALLS = frozenset({
 SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
 
 
+def _stable_ast_dump(value):
+    """Return the Python 3.12 AST representation on every supported CPython.
+
+    Python 3.13 changed :func:`ast.dump` to omit empty fields by default,
+    while Python 3.10 and 3.11 do not expose the ``type_params`` fields added
+    to definitions in Python 3.12.  Ownership review fingerprints must describe
+    source structure, not the interpreter used to run the release gate.
+    """
+    if isinstance(value, ast.AST):
+        fields = list(ast.iter_fields(value))
+        definition_types = (
+            ast.FunctionDef,
+            ast.AsyncFunctionDef,
+            ast.ClassDef,
+        )
+        if isinstance(value, definition_types) and not any(
+                name == "type_params" for name, _ in fields):
+            fields.append(("type_params", getattr(value, "type_params", [])))
+        fields = [
+            (name, field_value)
+            for name, field_value in fields
+            if not (
+                field_value is None
+                and getattr(type(value), name, ...) is None
+            )
+        ]
+        rendered = ", ".join(
+            f"{name}={_stable_ast_dump(field_value)}"
+            for name, field_value in fields
+        )
+        return f"{type(value).__name__}({rendered})"
+    if isinstance(value, list):
+        return "[" + ", ".join(_stable_ast_dump(item) for item in value) + "]"
+    return repr(value)
+
+
 def fingerprint(node):
-    return hashlib.sha256(ast.dump(node, include_attributes=False).encode()).hexdigest()
+    canonical = _stable_ast_dump(node)
+    return hashlib.sha256(canonical.encode()).hexdigest()
 
 
 def dotted(node):

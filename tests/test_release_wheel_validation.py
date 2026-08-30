@@ -213,6 +213,11 @@ def test_toolchain_and_sanitizer_workflow_has_complete_gate4_provenance():
     assert "tools/finalize_release_artifacts.py" in workflow
     assert "--sanitize address-undefined" in workflow
     assert "--sanitize thread" in workflow
+    assert "pip install -e" not in workflow
+    assert workflow.count("Build and install external") == 4
+    assert workflow.count("--import-mode=importlib") >= 5
+    assert workflow.count("--validation-file") >= 5
+    assert "libstdcxx_path" in workflow
     assert "${{ runner.temp }}/pyscarcopula-fv7" in workflow
     assert "build/release" not in workflow
 

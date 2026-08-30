@@ -203,15 +203,13 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - name: Install sanitizer build
-        env:
-          CC: clang
-          CXX: clang++
-          PYSCA_CPP_SANITIZE: "1"
-          PYSCA_CPP_STRICT: "1"
+      - name: Install sanitizer build and test dependencies
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e ".[test]"
+          python -m pip install --upgrade pip "setuptools>=68.0" wheel "pybind11>=2.13"
+          python -m pip install \
+            "numpy>=1.22" "scipy>=1.9" "numba>=0.56" \
+            "joblib>=1.0" "tqdm>=4.0" \
+            "pytest>=7.0" "pytest-xdist>=3.5" "pandas>=1.5" "mypy>=1.10"
       - name: Run Python-free ASan and UBSan executable
         env:
           CC: clang
@@ -221,7 +219,39 @@ jobs:
           python tools/build_cpp_tests.py --force -j 4
           --sanitize address-undefined
           --build-dir "${{ runner.temp }}/cpp-tests-asan-ubsan"
+      - name: Build and install external ASan and UBSan wheel
+        shell: bash
+        env:
+          CC: clang
+          CXX: clang++
+          PYSCA_CPP_SANITIZE: "1"
+          PYSCA_CPP_STRICT: "1"
+          PYSCA_CPP_BUILD_JOBS: "4"
+        run: |
+          python -m pip wheel . --no-deps --no-build-isolation \
+            --wheel-dir "$FV7_ARTIFACT_ROOT/wheelhouse"
+          python -m pip install --force-reinstall --no-deps \
+            "$FV7_ARTIFACT_ROOT"/wheelhouse/*.whl
+      - name: Validate installed ASan and UBSan wheel
+        working-directory: ${{ runner.temp }}
+        shell: bash
+        env:
+          ASAN_OPTIONS: >-
+            detect_leaks=0:halt_on_error=1:abort_on_error=1:
+            strict_string_checks=1:symbolize=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: |
+          asan_path="$(clang++ -print-file-name=libclang_rt.asan-x86_64.so)"
+          export LD_PRELOAD="${asan_path}"
+          wheel=$(find "$FV7_ARTIFACT_ROOT/wheelhouse" \
+            -maxdepth 1 -name '*.whl' -print -quit)
+          python "$GITHUB_WORKSPACE/tools/validate_installed_wheel.py" \
+            --source-root "$GITHUB_WORKSPACE" \
+            --wheel "$wheel" \
+            --configuration linux-clang-asan-ubsan \
+            --output "$FV7_ARTIFACT_ROOT/wheel_validation.json"
       - name: Run native parallel sanitizer suite
+        working-directory: ${{ runner.temp }}
         env:
           ASAN_OPTIONS: >-
             detect_leaks=0:halt_on_error=1:abort_on_error=1:
@@ -231,20 +261,22 @@ jobs:
         run: |
           asan_path="$(clang++ -print-file-name=libclang_rt.asan-x86_64.so)"
           export LD_PRELOAD="${asan_path}"
-          python -m pytest -vv -s --tb=long \
-            tests/test_parallel_runtime.py \
-            tests/test_multivariate_parallelization_baselines.py \
-            tests/test_static_parallelization.py \
-            tests/test_sampling_parallelization.py \
-            tests/test_external_parallel_fit.py \
-            tests/test_equicorr_prepared.py \
-            tests/test_linalg_backend.py \
-            tests/test_native_jacobi_domain.py \
-            tests/test_native_jacobi_transition.py \
-            tests/test_native_jacobi_evaluator.py \
-            tests/test_native_jacobi_sampling.py \
-            tests/test_native_jacobi_operations.py \
-            -m "not benchmark and not sanitizer_numerical"
+          python -m pytest --import-mode=importlib -p no:cacheprovider \
+            -vv -s --tb=long \
+            "$GITHUB_WORKSPACE/tests/test_parallel_runtime.py" \
+            "$GITHUB_WORKSPACE/tests/test_multivariate_parallelization_baselines.py" \
+            "$GITHUB_WORKSPACE/tests/test_static_parallelization.py" \
+            "$GITHUB_WORKSPACE/tests/test_sampling_parallelization.py" \
+            "$GITHUB_WORKSPACE/tests/test_external_parallel_fit.py" \
+            "$GITHUB_WORKSPACE/tests/test_equicorr_prepared.py" \
+            "$GITHUB_WORKSPACE/tests/test_linalg_backend.py" \
+            "$GITHUB_WORKSPACE/tests/test_native_jacobi_domain.py" \
+            "$GITHUB_WORKSPACE/tests/test_native_jacobi_transition.py" \
+            "$GITHUB_WORKSPACE/tests/test_native_jacobi_evaluator.py" \
+            "$GITHUB_WORKSPACE/tests/test_native_jacobi_sampling.py" \
+            "$GITHUB_WORKSPACE/tests/test_native_jacobi_operations.py" \
+            -m "not benchmark and not sanitizer_numerical" \
+            --junitxml="$FV7_ARTIFACT_ROOT/tests.xml"
       - name: Write sanitizer metadata
         env:
           CC: clang
@@ -253,6 +285,9 @@ jobs:
           python tools/write_release_metadata.py
           --source-root "${{ github.workspace }}"
           --configuration linux-clang-asan-ubsan
+          --wheel-dir "${{ env.FV7_ARTIFACT_ROOT }}/wheelhouse"
+          --validation-file
+          "${{ env.FV7_ARTIFACT_ROOT }}/wheel_validation.json"
           --test-workers 4 --build-jobs 4
           --output "${{ env.FV7_ARTIFACT_ROOT }}/provenance.json"
       - name: Finalize append-only sanitizer evidence
@@ -279,15 +314,13 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - name: Install ThreadSanitizer build
-        env:
-          CC: gcc
-          CXX: g++
-          PYSCA_CPP_THREAD_SANITIZE: "1"
-          PYSCA_CPP_STRICT: "1"
+      - name: Install ThreadSanitizer build and test dependencies
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e ".[test]"
+          python -m pip install --upgrade pip "setuptools>=68.0" wheel "pybind11>=2.13"
+          python -m pip install \
+            "numpy>=1.22" "scipy>=1.9" "numba>=0.56" \
+            "joblib>=1.0" "tqdm>=4.0" \
+            "pytest>=7.0" "pytest-xdist>=3.5" "pandas>=1.5" "mypy>=1.10"
       - name: Run Python-free ThreadSanitizer executable
         env:
           CC: gcc
@@ -300,7 +333,39 @@ jobs:
           python tools/build_cpp_tests.py --force -j 4
           --sanitize thread
           --build-dir "${{ runner.temp }}/cpp-tests-tsan"
+      - name: Build and install external ThreadSanitizer wheel
+        shell: bash
+        env:
+          CC: gcc
+          CXX: g++
+          PYSCA_CPP_THREAD_SANITIZE: "1"
+          PYSCA_CPP_STRICT: "1"
+          PYSCA_CPP_BUILD_JOBS: "4"
+        run: |
+          python -m pip wheel . --no-deps --no-build-isolation \
+            --wheel-dir "$FV7_ARTIFACT_ROOT/wheelhouse"
+          python -m pip install --force-reinstall --no-deps \
+            "$FV7_ARTIFACT_ROOT"/wheelhouse/*.whl
+      - name: Validate installed ThreadSanitizer wheel
+        working-directory: ${{ runner.temp }}
+        shell: bash
+        env:
+          TSAN_OPTIONS: >-
+            halt_on_error=1:abort_on_error=1:
+            second_deadlock_stack=1:history_size=7
+        run: |
+          tsan_path="$(g++ -print-file-name=libtsan.so)"
+          libstdcxx_path="$(g++ -print-file-name=libstdc++.so.6)"
+          export LD_PRELOAD="${tsan_path}:${libstdcxx_path}"
+          wheel=$(find "$FV7_ARTIFACT_ROOT/wheelhouse" \
+            -maxdepth 1 -name '*.whl' -print -quit)
+          python "$GITHUB_WORKSPACE/tools/validate_installed_wheel.py" \
+            --source-root "$GITHUB_WORKSPACE" \
+            --wheel "$wheel" \
+            --configuration linux-gcc-tsan \
+            --output "$FV7_ARTIFACT_ROOT/wheel_validation.json"
       - name: Run parallel race suite
+        working-directory: ${{ runner.temp }}
         env:
           TSAN_OPTIONS: >-
             halt_on_error=1:abort_on_error=1:
@@ -308,17 +373,20 @@ jobs:
           PYTHONFAULTHANDLER: "1"
         run: |
           tsan_path="$(g++ -print-file-name=libtsan.so)"
-          export LD_PRELOAD="${tsan_path}"
-          python -m pytest -vv -s --tb=long \
-            tests/test_parallel_runtime.py \
-            tests/test_multivariate_parallelization_baselines.py \
-            tests/test_static_parallelization.py \
-            tests/test_sampling_parallelization.py \
-            tests/test_external_parallel_fit.py \
-            tests/test_equicorr_prepared.py \
-            tests/test_native_jacobi_evaluator.py \
-            tests/test_native_jacobi_sampling.py \
-            -m "not benchmark and not sanitizer_numerical and not tsan_incompatible"
+          libstdcxx_path="$(g++ -print-file-name=libstdc++.so.6)"
+          export LD_PRELOAD="${tsan_path}:${libstdcxx_path}"
+          python -m pytest --import-mode=importlib -p no:cacheprovider \
+            -vv -s --tb=long \
+            "$GITHUB_WORKSPACE/tests/test_parallel_runtime.py" \
+            "$GITHUB_WORKSPACE/tests/test_multivariate_parallelization_baselines.py" \
+            "$GITHUB_WORKSPACE/tests/test_static_parallelization.py" \
+            "$GITHUB_WORKSPACE/tests/test_sampling_parallelization.py" \
+            "$GITHUB_WORKSPACE/tests/test_external_parallel_fit.py" \
+            "$GITHUB_WORKSPACE/tests/test_equicorr_prepared.py" \
+            "$GITHUB_WORKSPACE/tests/test_native_jacobi_evaluator.py" \
+            "$GITHUB_WORKSPACE/tests/test_native_jacobi_sampling.py" \
+            -m "not benchmark and not sanitizer_numerical and not tsan_incompatible" \
+            --junitxml="$FV7_ARTIFACT_ROOT/tests.xml"
       - name: Write sanitizer metadata
         env:
           CC: gcc
@@ -327,6 +395,9 @@ jobs:
           python tools/write_release_metadata.py
           --source-root "${{ github.workspace }}"
           --configuration linux-gcc-tsan
+          --wheel-dir "${{ env.FV7_ARTIFACT_ROOT }}/wheelhouse"
+          --validation-file
+          "${{ env.FV7_ARTIFACT_ROOT }}/wheel_validation.json"
           --test-workers 4 --build-jobs 4
           --output "${{ env.FV7_ARTIFACT_ROOT }}/provenance.json"
       - name: Finalize append-only thread-sanitizer evidence
@@ -353,27 +424,58 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - run: python -m pip install -e ".[test]"
+      - name: Install lifecycle build and test dependencies
+        run: |
+          python -m pip install --upgrade pip "setuptools>=68.0" wheel "pybind11>=2.13"
+          python -m pip install \
+            "numpy>=1.22" "scipy>=1.9" "numba>=0.56" \
+            "joblib>=1.0" "tqdm>=4.0" \
+            "pytest>=7.0" "pytest-xdist>=3.5" "pandas>=1.5" "mypy>=1.10"
+      - name: Build and install external lifecycle wheel
+        env:
+          PYSCA_CPP_STRICT: "1"
+          PYSCA_CPP_BUILD_JOBS: "4"
+        run: |
+          python -m pip wheel . --no-deps --no-build-isolation \
+            --wheel-dir "$FV7_ARTIFACT_ROOT/wheelhouse"
+          python -m pip install --force-reinstall --no-deps \
+            "$FV7_ARTIFACT_ROOT"/wheelhouse/*.whl
+      - name: Validate installed lifecycle wheel
+        working-directory: ${{ runner.temp }}
+        shell: bash
+        run: |
+          wheel=$(find "$FV7_ARTIFACT_ROOT/wheelhouse" \
+            -maxdepth 1 -name '*.whl' -print -quit)
+          python "$GITHUB_WORKSPACE/tools/validate_installed_wheel.py" \
+            --source-root "$GITHUB_WORKSPACE" \
+            --wheel "$wheel" \
+            --configuration linux-lifecycle-memory \
+            --output "$FV7_ARTIFACT_ROOT/wheel_validation.json"
       - name: Build CI-only allocation probe
         run: |
-          mkdir -p "$FV7_ARTIFACT_ROOT"
           cc -shared -fPIC -O2 tools/allocation_probe.c \
             -o "$FV7_ARTIFACT_ROOT/libpysca_alloc_probe.so"
       - name: Run lifecycle, allocator and RSS gates
+        working-directory: ${{ runner.temp }}
         env:
           PYSCA_RELEASE_STRESS_CYCLES: "100"
           PYSCA_ALLOCATION_PROBE: ${{ env.FV7_ARTIFACT_ROOT }}/libpysca_alloc_probe.so
           PYSCA_RELEASE_METRICS_OUTPUT: ${{ env.FV7_ARTIFACT_ROOT }}/metrics.json
           LD_PRELOAD: ${{ env.FV7_ARTIFACT_ROOT }}/libpysca_alloc_probe.so
         run: |
-          python -m pytest -vv -s --tb=long --run-validation \
-            tests/test_parallel_release_gates.py \
-            tests/test_parallel_runtime.py
+          python -m pytest --import-mode=importlib -p no:cacheprovider \
+            -vv -s --tb=long --run-validation \
+            "$GITHUB_WORKSPACE/tests/test_parallel_release_gates.py" \
+            "$GITHUB_WORKSPACE/tests/test_parallel_runtime.py" \
+            --junitxml="$FV7_ARTIFACT_ROOT/tests.xml"
       - name: Write lifecycle metadata
         run: >-
           python tools/write_release_metadata.py
           --source-root "${{ github.workspace }}"
           --configuration linux-lifecycle-memory
+          --wheel-dir "${{ env.FV7_ARTIFACT_ROOT }}/wheelhouse"
+          --validation-file
+          "${{ env.FV7_ARTIFACT_ROOT }}/wheel_validation.json"
           --test-workers 4 --build-jobs 4
           --output "${{ env.FV7_ARTIFACT_ROOT }}/provenance.json"
       - name: Finalize append-only lifecycle evidence
@@ -400,21 +502,49 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - run: python -m pip install -e ".[test]"
-      - name: Create external artifact root
-        run: >-
-          python -c "from pathlib import Path;
-          Path(r'${{ env.FV7_ARTIFACT_ROOT }}').mkdir(parents=True)"
-      - env:
+      - name: Install subinterpreter build and test dependencies
+        run: |
+          python -m pip install --upgrade pip "setuptools>=68.0" wheel "pybind11>=2.13"
+          python -m pip install \
+            "numpy>=1.22" "scipy>=1.9" "numba>=0.56" \
+            "joblib>=1.0" "tqdm>=4.0" \
+            "pytest>=7.0" "pytest-xdist>=3.5" "pandas>=1.5" "mypy>=1.10"
+      - name: Build and install external subinterpreter wheel
+        env:
+          PYSCA_CPP_STRICT: "1"
+          PYSCA_CPP_BUILD_JOBS: "4"
+        run: |
+          python -m pip wheel . --no-deps --no-build-isolation \
+            --wheel-dir "$FV7_ARTIFACT_ROOT/wheelhouse"
+          python -m pip install --force-reinstall --no-deps \
+            "$FV7_ARTIFACT_ROOT"/wheelhouse/*.whl
+      - name: Validate installed subinterpreter wheel
+        working-directory: ${{ runner.temp }}
+        shell: bash
+        run: |
+          wheel=$(find "$FV7_ARTIFACT_ROOT/wheelhouse" \
+            -maxdepth 1 -name '*.whl' -print -quit)
+          python "$GITHUB_WORKSPACE/tools/validate_installed_wheel.py" \
+            --source-root "$GITHUB_WORKSPACE" \
+            --wheel "$wheel" \
+            --configuration subinterpreter-rejection \
+            --output "$FV7_ARTIFACT_ROOT/wheel_validation.json"
+      - working-directory: ${{ runner.temp }}
+        env:
           PYSCA_RELEASE_METRICS_OUTPUT: ${{ env.FV7_ARTIFACT_ROOT }}/metrics.json
-        run: >-
-          python -m pytest -vv --run-validation
-          tests/test_parallel_release_gates.py::test_subinterpreter_contract_is_immediate_rejection
+        run: |
+          python -m pytest --import-mode=importlib -p no:cacheprovider \
+            -vv --run-validation \
+            "$GITHUB_WORKSPACE/tests/test_parallel_release_gates.py::test_subinterpreter_contract_is_immediate_rejection" \
+            --junitxml="$FV7_ARTIFACT_ROOT/tests.xml"
       - name: Write subinterpreter metadata
         run: >-
           python tools/write_release_metadata.py
           --source-root "${{ github.workspace }}"
           --configuration subinterpreter-rejection
+          --wheel-dir "${{ env.FV7_ARTIFACT_ROOT }}/wheelhouse"
+          --validation-file
+          "${{ env.FV7_ARTIFACT_ROOT }}/wheel_validation.json"
           --test-workers 4 --build-jobs 4
           --output "${{ env.FV7_ARTIFACT_ROOT }}/provenance.json"
       - name: Finalize append-only subinterpreter evidence
