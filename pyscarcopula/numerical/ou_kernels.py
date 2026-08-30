@@ -2,6 +2,7 @@
 
 import numpy as np
 from pyscarcopula._native import scar_ou
+from pyscarcopula.numerical._arrays import validate_integer
 
 
 def ou_sample_trajectory_from_innovations(
@@ -29,3 +30,23 @@ def sample_ou_trajectory(kappa, mu, nu, n, rng):
     scar_ou.validate_trajectory_parameters(kappa, mu, nu, n)
     return scar_ou.sample_trajectory(
         kappa, mu, nu, rng.standard_normal(n))
+
+
+def sample_ou_trajectory_batches(kappa, mu, nu, n, rng, *, batch_rows):
+    """Stream exact OU states without retaining a path-sized draw buffer.
+
+    The native kernel uses the full path length to set dt, even for a final
+    short block. With no intervening RNG use the blocks reproduce the
+    monolithic normal stream exactly.
+    """
+    n = validate_integer(n, "n")
+    batch_rows = validate_integer(batch_rows, "batch_rows", minimum=1)
+    scar_ou.validate_trajectory_parameters(kappa, mu, nu, n)
+    previous_state = 0.0
+    for start in range(0, n, batch_rows):
+        count = min(batch_rows, n - start)
+        values = scar_ou.sample_trajectory_block(
+            kappa, mu, nu, n, previous_state, start == 0,
+            rng.standard_normal(count))
+        previous_state = float(values[-1])
+        yield values

@@ -166,9 +166,10 @@ py::dict hermite_rule_cache_info_to_dict(
 std::unique_ptr<scar::PreparedScarOuEvaluator>
 make_prepared_scar_ou_evaluator(
     scar::CopulaSpec copula,
-    py::array_t<double, py::array::c_style | py::array::forcecast> u,
+    py::object raw_u,
     const scar::OuNumericalConfig& config,
     const std::string& method) {
+    auto u = real_float64_array_from_object(raw_u, "u");
 
     const py::buffer_info info = u.request();
     if (info.ndim != 2 || info.shape[1] < 2) {
@@ -192,10 +193,12 @@ make_prepared_scar_ou_evaluator(
 std::unique_ptr<scar::PreparedScarOuEvaluator>
 make_prepared_equicorr_scar_ou_evaluator(
     scar::CopulaSpec copula,
-    py::array_t<double, py::array::c_style | py::array::forcecast> sum_z,
-    py::array_t<double, py::array::c_style | py::array::forcecast> sum_z2,
+    py::object raw_sum_z,
+    py::object raw_sum_z2,
     const scar::OuNumericalConfig& config,
     const std::string& method) {
+    auto sum_z = real_float64_array_from_object(raw_sum_z, "sum_z");
+    auto sum_z2 = real_float64_array_from_object(raw_sum_z2, "sum_z2");
 
     return std::make_unique<scar::PreparedScarOuEvaluator>(
         std::move(copula),
@@ -498,6 +501,22 @@ void bind_scar_ou(py::module_& m) {
             }
             return vector_result_to_dict(result);
         }, py::arg("params"), py::arg("standard_normals"));
+    m.def("ou_sample_trajectory_block",
+        [](const scar::OuParams& params, std::size_t total_count,
+           double previous_state, bool initialize, py::object raw_normals) {
+            const auto normals = real_float64_array_from_object(
+                raw_normals, "standard_normals");
+            const auto view = flat_view_from_array(normals, "standard_normals");
+            scar::ScarOuVectorResult result;
+            {
+                py::gil_scoped_release release;
+                result = scar::sample_ou_trajectory_block(
+                    params, total_count, previous_state, initialize, view);
+            }
+            return vector_result_to_dict(result);
+        }, py::arg("params"), py::arg("total_count"),
+        py::arg("previous_state"), py::arg("initialize"),
+        py::arg("standard_normals"));
     m.def("ou_sample_state_distribution",
         [](const Float64Array& z_grid,
            const Float64Array& probability,
@@ -835,8 +854,9 @@ void bind_scar_ou(py::module_& m) {
             [](const scar::ScarOuEvaluator& evaluator,
                const scar::OuParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::OuNumericalConfig& config) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const scar::LogLikResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
@@ -850,8 +870,9 @@ void bind_scar_ou(py::module_& m) {
             [](const scar::ScarOuEvaluator& evaluator,
                const scar::OuParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::OuNumericalConfig& config) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const scar::LogLikResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
@@ -865,8 +886,9 @@ void bind_scar_ou(py::module_& m) {
             [](const scar::ScarOuEvaluator& evaluator,
                const scar::OuParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::OuNumericalConfig& config) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const scar::LogLikResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
@@ -880,8 +902,9 @@ void bind_scar_ou(py::module_& m) {
             [](const scar::ScarOuEvaluator& evaluator,
                const scar::OuParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::OuNumericalConfig& config) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const scar::LogLikResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
@@ -895,8 +918,9 @@ void bind_scar_ou(py::module_& m) {
             [](const scar::ScarOuEvaluator& evaluator,
                const scar::OuParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::OuNumericalConfig& config) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const scar::GradLogLikResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
@@ -910,8 +934,9 @@ void bind_scar_ou(py::module_& m) {
             [](const scar::ScarOuEvaluator& evaluator,
                const scar::OuParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::OuNumericalConfig& config) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const scar::GradLogLikResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
@@ -925,8 +950,9 @@ void bind_scar_ou(py::module_& m) {
             [](const scar::ScarOuEvaluator& evaluator,
                const scar::OuParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::OuNumericalConfig& config) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const scar::GradLogLikResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
@@ -940,8 +966,9 @@ void bind_scar_ou(py::module_& m) {
             [](const scar::ScarOuEvaluator& evaluator,
                const scar::OuParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::OuNumericalConfig& config) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const scar::GradLogLikResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
@@ -955,10 +982,11 @@ void bind_scar_ou(py::module_& m) {
             [](const scar::ScarOuEvaluator& evaluator,
                const scar::OuParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::OuNumericalConfig& config,
                py::array_t<double, py::array::c_style | py::array::forcecast>
                    corr_direction) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const std::vector<double> direction =
                     vector_from_array(corr_direction);
                 const scar::GradLogLikResult result =
@@ -975,8 +1003,9 @@ void bind_scar_ou(py::module_& m) {
             [](const scar::ScarOuEvaluator& evaluator,
                const scar::OuParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::OuNumericalConfig& config) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const scar::GradLogLikResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
@@ -990,10 +1019,11 @@ void bind_scar_ou(py::module_& m) {
             [](const scar::ScarOuEvaluator& evaluator,
                const scar::OuParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::OuNumericalConfig& config,
                py::array_t<double, py::array::c_style | py::array::forcecast>
                    corr_direction) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const std::vector<double> direction =
                     vector_from_array(corr_direction);
                 const scar::GradLogLikResult result =
@@ -1010,8 +1040,9 @@ void bind_scar_ou(py::module_& m) {
             [](const scar::ScarOuEvaluator& evaluator,
                const scar::OuParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::OuNumericalConfig& config) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const scar::GradLogLikResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
@@ -1025,10 +1056,11 @@ void bind_scar_ou(py::module_& m) {
             [](const scar::ScarOuEvaluator& evaluator,
                const scar::OuParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::OuNumericalConfig& config,
                py::array_t<double, py::array::c_style | py::array::forcecast>
                    corr_direction) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const std::vector<double> direction =
                     vector_from_array(corr_direction);
                 const scar::GradLogLikResult result =
@@ -1045,8 +1077,9 @@ void bind_scar_ou(py::module_& m) {
             [](const scar::ScarOuEvaluator& evaluator,
                const scar::OuParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::OuNumericalConfig& config) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const scar::GradLogLikResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
@@ -1060,10 +1093,11 @@ void bind_scar_ou(py::module_& m) {
             [](const scar::ScarOuEvaluator& evaluator,
                const scar::OuParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::OuNumericalConfig& config,
                py::array_t<double, py::array::c_style | py::array::forcecast>
                    corr_direction) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const std::vector<double> direction =
                     vector_from_array(corr_direction);
                 const scar::GradLogLikResult result =
@@ -1080,8 +1114,9 @@ void bind_scar_ou(py::module_& m) {
             [](const scar::ScarOuEvaluator& evaluator,
                const scar::OuParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::OuNumericalConfig& config) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const scar::GradLogLikResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
@@ -1095,8 +1130,9 @@ void bind_scar_ou(py::module_& m) {
             [](const scar::ScarOuEvaluator& evaluator,
                const scar::OuParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::OuNumericalConfig& config) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const scar::ScarOuVectorResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
@@ -1110,8 +1146,9 @@ void bind_scar_ou(py::module_& m) {
             [](const scar::ScarOuEvaluator& evaluator,
                const scar::OuParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::OuNumericalConfig& config) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const scar::ScarOuVectorResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
@@ -1125,8 +1162,9 @@ void bind_scar_ou(py::module_& m) {
             [](const scar::ScarOuEvaluator& evaluator,
                const scar::OuParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::OuNumericalConfig& config) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const scar::ScarOuVectorResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
@@ -1140,8 +1178,9 @@ void bind_scar_ou(py::module_& m) {
             [](const scar::ScarOuEvaluator& evaluator,
                const scar::OuParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::OuNumericalConfig& config) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const scar::ScarOuVectorResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
@@ -1155,8 +1194,9 @@ void bind_scar_ou(py::module_& m) {
             [](const scar::ScarOuEvaluator& evaluator,
                const scar::OuParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::OuNumericalConfig& config) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const scar::ScarOuVectorResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
@@ -1170,8 +1210,9 @@ void bind_scar_ou(py::module_& m) {
             [](const scar::ScarOuEvaluator& evaluator,
                const scar::OuParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::OuNumericalConfig& config) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const scar::ScarOuVectorResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
@@ -1185,8 +1226,9 @@ void bind_scar_ou(py::module_& m) {
             [](const scar::ScarOuEvaluator& evaluator,
                const scar::OuParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::OuNumericalConfig& config) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const scar::ScarOuVectorResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
@@ -1200,8 +1242,9 @@ void bind_scar_ou(py::module_& m) {
             [](const scar::ScarOuEvaluator& evaluator,
                const scar::OuParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::OuNumericalConfig& config) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const scar::ScarOuVectorResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
@@ -1215,8 +1258,9 @@ void bind_scar_ou(py::module_& m) {
             [](const scar::ScarOuEvaluator& evaluator,
                const scar::OuParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::OuNumericalConfig& config) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const scar::ScarOuVectorResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
@@ -1230,8 +1274,9 @@ void bind_scar_ou(py::module_& m) {
             [](const scar::ScarOuEvaluator& evaluator,
                const scar::OuParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::OuNumericalConfig& config) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const scar::ScarOuVectorResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
@@ -1245,8 +1290,9 @@ void bind_scar_ou(py::module_& m) {
             [](const scar::ScarOuEvaluator& evaluator,
                const scar::OuParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::OuNumericalConfig& config) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const scar::ScarOuVectorResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
@@ -1260,8 +1306,9 @@ void bind_scar_ou(py::module_& m) {
             [](const scar::ScarOuEvaluator& evaluator,
                const scar::OuParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::OuNumericalConfig& config) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const scar::ScarOuVectorResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
@@ -1275,8 +1322,9 @@ void bind_scar_ou(py::module_& m) {
             [](const scar::ScarOuEvaluator& evaluator,
                const scar::OuParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::OuNumericalConfig& config) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const scar::ScarOuVectorResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
@@ -1290,8 +1338,9 @@ void bind_scar_ou(py::module_& m) {
             [](const scar::ScarOuEvaluator& evaluator,
                const scar::OuParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::OuNumericalConfig& config) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const scar::ScarOuVectorResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
@@ -1305,8 +1354,9 @@ void bind_scar_ou(py::module_& m) {
             [](const scar::ScarOuEvaluator& evaluator,
                const scar::OuParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::OuNumericalConfig& config) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const scar::ScarOuVectorResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
@@ -1320,8 +1370,9 @@ void bind_scar_ou(py::module_& m) {
             [](const scar::ScarOuEvaluator& evaluator,
                const scar::OuParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::OuNumericalConfig& config) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const scar::ScarOuVectorResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
@@ -1335,8 +1386,9 @@ void bind_scar_ou(py::module_& m) {
             [](const scar::ScarOuEvaluator& evaluator,
                const scar::OuParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::OuNumericalConfig& config) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const scar::ScarOuVectorResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
@@ -1350,8 +1402,9 @@ void bind_scar_ou(py::module_& m) {
             [](const scar::ScarOuEvaluator& evaluator,
                const scar::OuParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::OuNumericalConfig& config) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const scar::ScarOuVectorResult result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
@@ -1365,9 +1418,10 @@ void bind_scar_ou(py::module_& m) {
             [](const scar::ScarOuEvaluator& evaluator,
                const scar::OuParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::OuNumericalConfig& config,
                bool horizon_next) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const scar::StateDistribution result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
@@ -1381,9 +1435,10 @@ void bind_scar_ou(py::module_& m) {
             [](const scar::ScarOuEvaluator& evaluator,
                const scar::OuParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::OuNumericalConfig& config,
                bool horizon_next) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const scar::StateDistribution result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
@@ -1397,9 +1452,10 @@ void bind_scar_ou(py::module_& m) {
             [](const scar::ScarOuEvaluator& evaluator,
                const scar::OuParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::OuNumericalConfig& config,
                bool horizon_next) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const scar::StateDistribution result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
@@ -1413,8 +1469,9 @@ void bind_scar_ou(py::module_& m) {
             [](const scar::ScarOuEvaluator& evaluator,
                const scar::OuParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::OuNumericalConfig& config) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const scar::SmoothedStateDistribution result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
@@ -1429,8 +1486,9 @@ void bind_scar_ou(py::module_& m) {
             [](const scar::ScarOuEvaluator& evaluator,
                const scar::OuParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::OuNumericalConfig& config) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const scar::SmoothedStateDistribution result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {
@@ -1444,8 +1502,9 @@ void bind_scar_ou(py::module_& m) {
             [](const scar::ScarOuEvaluator& evaluator,
                const scar::OuParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::OuNumericalConfig& config) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const scar::SmoothedStateDistribution result =
                     with_observation_view_without_gil(
                         copula, u, [&](scar::ObservationView obs) {

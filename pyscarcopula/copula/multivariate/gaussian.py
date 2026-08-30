@@ -940,6 +940,7 @@ class GaussianCopula(MultivariateCopula):
             n_threads=1,
             memory_budget_bytes=None):
         """Draw predictive samples, optionally conditional on fixed uniforms."""
+        n_threads = _validated_n_threads(n_threads)
         if predict_config is not None:
             from pyscarcopula.api import _resolve_predict_config
             config = _resolve_predict_config(

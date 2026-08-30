@@ -107,6 +107,20 @@ values.
 reconstruction copies constructor policy rather than fitted mutable state;
 JSON persistence retains fitted raw parameters and compact factor state.
 
+Multivariate dynamic fit orchestration owns a training-data snapshot and
+holds the model lock through preparation, optimization, and publication.
+Its transaction restores prior owners if initialization or fitting raises;
+model hooks reset data-derived correlation and finalize result metadata.
+Constructor correlation policy and explicitly initialized factor loadings
+survive refits. Implicit dynamic likelihood and conditional sampling route
+through the fitted strategy, rather than extracting a static parameter from
+a latent-process result.
+
+The shared strategy sampling adapters own dynamic model and predictive block
+iteration. Models validate counts, thread settings, and memory budgets before
+delegating; the adapters preserve those settings on every observation block.
+Numerical state updates and observation transforms remain native.
+
 ## Native Boundary
 
 The pybind11 C++ extension is mandatory. `_native/_extension.py` is the sole
@@ -177,7 +191,12 @@ factor/joint estimation is rejected by the native capability matrix, matching
 the public constructor until a factor-loading score is implemented.
 
 OU trajectory sampling accepts raw standard normals and evaluates the initial
-stationary state and exact recurrence in `scar_ou/sampling.cpp`. The public
+stationary state and exact recurrence in `scar_ou/sampling.cpp`. Block
+continuation takes the total path length and prior state, preserving the
+same time step without an `O(n)` trajectory allocation. Python owns bounded
+RNG draws and block iteration. GAS/OU observation bindings reject complex
+arrays with the shared real-array adapter before force-casting or releasing
+the GIL. The public
 Hermite utility uses the same cached C++ rule and default order as the spectral
 evaluator. Stationary-state scaling, grid/histogram selection with midpoint
 cells, and observation-based state reweighting are native fixed-draw operations.

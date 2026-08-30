@@ -305,14 +305,37 @@ int run_ou_model_tests() {
         chunked.end(),
         second_chunk.values.begin() + 1,
         second_chunk.values.end());
+    const auto first_block = scar::sample_ou_trajectory_block(
+        trajectory_params, normals.size(), 0.0, true, {normals.data(), 3});
+    if (!first_block.is_ok() || first_block.values.size() != 3) return 2;
+    const auto second_block = scar::sample_ou_trajectory_block(
+        trajectory_params, normals.size(), first_block.values.back(), false,
+        {normals.data() + 3, 2});
+    std::vector<double> blocked = first_block.values;
+    blocked.insert(
+        blocked.end(), second_block.values.begin(), second_block.values.end());
     if (!sampled.is_ok() || !full_continuation.is_ok()
         || !first_chunk.is_ok() || !second_chunk.is_ok()
+        || !second_block.is_ok()
         || sampled.values.size() != normals.size()
+        || blocked != sampled.values
         || !close_vectors(sampled.values, full_continuation.values, 1e-14)
         || !close_vectors(chunked, full_continuation.values, 1e-14)
         || scar::validate_ou_trajectory_parameters(
             scar::OuParams{-1.0, 0.0, 1.0}, normals.size())
             != scar::Status::InvalidParameter) {
+        return 2;
+    }
+    if (scar::sample_ou_trajectory_block(
+            trajectory_params, 2, 0.0, true, view(normals)).status
+            != scar::Status::InvalidSize
+        || scar::sample_ou_trajectory_block(
+            trajectory_params, normals.size(),
+            std::numeric_limits<double>::quiet_NaN(), false,
+            view(normals)).status != scar::Status::InvalidParameter
+        || scar::sample_ou_trajectory_block(
+            trajectory_params, normals.size(), 0.0, true,
+            {nullptr, 1}).status != scar::Status::InvalidSize) {
         return 2;
     }
 

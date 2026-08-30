@@ -15,7 +15,10 @@ from pyscarcopula._types import (
 from pyscarcopula._native import model_policy
 from pyscarcopula._native import validation as native_validation
 from pyscarcopula._utils import pobs
-from pyscarcopula.numerical._arrays import validate_integer
+from pyscarcopula.numerical._arrays import (
+    validate_integer,
+    validate_sampling_n_threads as _validated_n_threads,
+)
 from pyscarcopula.copula.multivariate.base import (
     MultivariateCopula,
     as_real_array,
@@ -767,8 +770,9 @@ class StudentCopula(MultivariateCopula):
         return self._nll_with_params(u, self._correlation, self.df)
 
     @model_state_locked
-    def sample(self, n, u=None, rng=None):
+    def sample(self, n, u=None, rng=None, *, n_threads=1):
         n = validate_integer(n, "n")
+        n_threads = _validated_n_threads(n_threads)
         if rng is None:
             rng = np.random.default_rng()
         from pyscarcopula._native import multivariate as multivariate_native
@@ -785,17 +789,20 @@ class StudentCopula(MultivariateCopula):
                 factor_draws,
                 residual_draws,
                 chi_square_uniforms,
+                n_threads=n_threads,
             )
         correlation, df = self._fitted_parameters()
         chi_square_uniforms = rng.uniform(0.0, 1.0, size=n)
         normal_draws = rng.standard_normal((n, correlation.shape[0]))
         return multivariate_native.student_sample_from_normal_uniforms(
-            correlation, df, normal_draws, chi_square_uniforms)
+            correlation, df, normal_draws, chi_square_uniforms,
+            n_threads=n_threads)
 
     @model_state_locked
     def sample_conditional(self, n, given, rng=None, *, n_threads=1):
         """Draw samples conditional on fixed copula-uniform coordinates."""
         n = validate_integer(n, "n")
+        n_threads = _validated_n_threads(n_threads)
         if self.df is None:
             raise ValueError("Fit first")
         from pyscarcopula.copula.multivariate.conditional import (
@@ -803,7 +810,7 @@ class StudentCopula(MultivariateCopula):
         )
         normalized = validate_multivariate_given(given, self.dimension)
         if not normalized:
-            return self.sample(n, rng=rng)
+            return self.sample(n, rng=rng, n_threads=n_threads)
         if self._corr_mode == "factor":
             from pyscarcopula.copula.multivariate.conditional import (
                 sample_factor_student_conditional,
@@ -819,8 +826,9 @@ class StudentCopula(MultivariateCopula):
             n_threads=n_threads)
 
     def predict(self, n, u=None, rng=None, given=None, horizon="next",
-                predictive_r_mode=None, predict_config=None):
+                predictive_r_mode=None, predict_config=None, *, n_threads=1):
         """Draw predictive samples, optionally conditional on fixed uniforms."""
+        n_threads = _validated_n_threads(n_threads)
         if predict_config is not None:
             from pyscarcopula.api import _resolve_predict_config
             config = _resolve_predict_config(
@@ -828,5 +836,6 @@ class StudentCopula(MultivariateCopula):
                 {"predictive_r_mode": predictive_r_mode})
             given = config.given
         if given is not None:
-            return self.sample_conditional(n, given=given, rng=rng)
-        return self.sample(n, u=u, rng=rng)
+            return self.sample_conditional(
+                n, given=given, rng=rng, n_threads=n_threads)
+        return self.sample(n, u=u, rng=rng, n_threads=n_threads)

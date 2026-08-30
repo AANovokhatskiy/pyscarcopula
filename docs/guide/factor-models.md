@@ -397,7 +397,11 @@ gas_result = dynamic_student.fit(u, method="gas")
 ```
 
 In dynamic fits the estimated loadings remain fixed while the degrees of
-freedom follow the selected GAS or SCAR process.
+freedom follow the selected GAS or SCAR process. A subsequent fit estimates
+loadings from its new observations unless they were supplied to the
+constructor or retained by an explicit `initialize_factor(data)` call.
+Providing a dynamic optimizer start does not reuse data-derived loadings
+from a previous fit.
 
 ## Student likelihood without a model
 
@@ -465,7 +469,11 @@ conditional = student.sample_conditional(
 
 For dynamic fitted models, `sample_batches` and `predict_batches` preserve the
 GAS or SCAR parameter-path semantics instead of replacing them with one
-constant `df`.
+constant `df`. SCAR model sampling streams its OU path in row blocks using
+the full requested length for the time step. Keep the seed and `batch_rows`
+fixed to reproduce the same sample sequence. The dense Student sampler also
+honors `memory_budget_bytes` before allocating its output or drawing random
+numbers; factor mode additionally budgets its structural workspace.
 
 ## Scope of the factor representation
 

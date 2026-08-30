@@ -92,6 +92,27 @@ Factor correlation, static and joint MLE, dynamic GAS/SCAR examples, and
 standalone operator usage are covered on the dedicated
 [Factor Models](factor-models.md) page.
 
+For both dynamic model classes, `cop.log_likelihood(u)` evaluates the fitted
+strategy: the GAS filtered likelihood or the integrated SCAR likelihood.
+Passing an explicit `r` evaluates the static emission likelihood at that
+parameter instead. With nonempty `given` and no explicit `r`,
+`cop.sample_conditional(n, given=...)` uses the next predictive distribution,
+as does `cop.predict(n, given=...)`. With no fixed coordinates it retains
+the model-reproduction semantics of `cop.sample(n)`.
+
+Dynamic fits retain an owned snapshot of their training observations;
+subsequent changes to the caller's array do not change prediction history.
+If fitting raises, the previous fitted result, correlation, history, and
+caches are restored. A normally returned dynamic candidate still carries
+its optimizer `success` flag, which callers should inspect.
+
+Each Student dynamic fit recomputes data-derived correlation from the new
+observations, including when `gamma0` or `alpha0` is supplied. Fixed `R`
+and factor loadings supplied to the constructor remain fixed. An explicit
+`initialize_factor(data)` also retains those loadings for later fits.
+For estimated dense modes, `corr_base` and `R` remain initialization policy;
+they do not freeze jointly estimated correlation parameters.
+
 ## Equicorrelation Gaussian Copula
 
 For $d$ assets, the standard Gaussian copula has $d(d-1)/2$ static

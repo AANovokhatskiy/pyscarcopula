@@ -80,24 +80,41 @@ ScarOuVectorResult ou_trajectory_from_innovations(
 ScarOuVectorResult sample_ou_trajectory(
     const OuParams& params, DoubleView standard_normals) {
 
+    return sample_ou_trajectory_block(
+        params, standard_normals.size(), 0.0, true, standard_normals);
+}
+
+ScarOuVectorResult sample_ou_trajectory_block(
+    const OuParams& params, std::size_t total_count,
+    double previous_state, bool initialize, DoubleView standard_normals) {
+
     ScarOuVectorResult result;
     if (standard_normals.empty()) {
         return result;
     }
-    if (standard_normals.data() == nullptr) {
+    if (standard_normals.data() == nullptr
+        || standard_normals.size() > total_count) {
         result.status = Status::InvalidSize;
         return result;
     }
-    const auto prepared = prepare_parameters(params, standard_normals.size());
+    const auto prepared = prepare_parameters(params, total_count);
     if (!prepared.is_ok()) {
         result.status = prepared.status;
         return result;
     }
-    const double x0 = params.mu
-        + prepared.value.sigma_stationary * standard_normals[0];
-    return ou_trajectory_from_innovations(
+    const double x0 = initialize
+        ? params.mu + prepared.value.sigma_stationary * standard_normals[0]
+        : previous_state;
+    const std::size_t offset = initialize ? 1 : 0;
+    result = ou_trajectory_from_innovations(
         x0, params.mu, prepared.value.rho, prepared.value.sigma_cond,
-        DoubleView{standard_normals.data() + 1, standard_normals.size() - 1});
+        DoubleView{standard_normals.data() + offset,
+                   standard_normals.size() - offset});
+    if (!initialize && result.is_ok()) {
+        // The continuation's previous state belongs to the preceding block.
+        result.values.erase(result.values.begin());
+    }
+    return result;
 }
 
 ScarOuVectorResult sample_ou_stationary(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from functools import wraps
 import threading
 from typing import Callable, ParamSpec, TypeVar
@@ -67,6 +68,40 @@ class MultivariateCopula(CopulaBase):
     def __setstate__(self, state):
         self.__dict__.update(state)
         self._state_lock = threading.RLock()
+
+    @contextmanager
+    def _fit_transaction(self):
+        """Restore fitted state if orchestration or an initializer raises.
+
+        Model fitting replaces correlation arrays and prepared caches rather
+        than mutating published buffers, so retaining their owners is enough
+        to roll back without duplicating a training matrix or native cache.
+        """
+        with self._state_lock:
+            previous = self.__dict__.copy()
+            try:
+                yield
+            except BaseException:
+                self.__dict__.clear()
+                self.__dict__.update(previous)
+                raise
+
+    def _prepare_dynamic_fit(self, u):
+        """Prepare model-specific state for a new dynamic fit."""
+
+    def _finalize_dynamic_fit(self, result):
+        """Attach model-specific metadata before publishing a fit."""
+        return result
+
+    def _fitted_log_likelihood(self, u, *, n_threads=1):
+        from pyscarcopula.api import log_likelihood
+        from pyscarcopula._types import NumericalConfig
+
+        if self.fit_result is None:
+            raise ValueError("Fit first or supply an explicit parameter r")
+        return log_likelihood(
+            self, u, self.fit_result,
+            config=NumericalConfig(n_threads=n_threads))
 
     @staticmethod
     def _validate_dimension_value(dimension):

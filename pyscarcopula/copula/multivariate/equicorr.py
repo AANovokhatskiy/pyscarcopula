@@ -1,7 +1,10 @@
 """Equicorrelation Gaussian copula."""
 
 import numpy as np
-from pyscarcopula.numerical._arrays import as_float64_array
+from pyscarcopula.numerical._arrays import (
+    as_float64_array,
+    validate_sampling_n_threads as _validated_n_threads,
+)
 
 from pyscarcopula._types import DEFAULT_CONFIG, NumericalConfig
 from pyscarcopula._native import model_policy
@@ -10,6 +13,7 @@ from pyscarcopula.copula.multivariate.base import (
     model_state_locked,
 )
 from pyscarcopula.copula.multivariate.conditional import (
+    fill_given,
     sample_gaussian_conditional,
     validate_multivariate_given,
 )
@@ -166,13 +170,9 @@ class EquicorrGaussianCopula(MultivariateCopula):
 
     @model_state_locked
     def log_likelihood(self, u, r=None, *, n_threads=1):
+        """Evaluate the fitted strategy, or a static density at explicit r."""
         if r is None:
-            from pyscarcopula._types import MLEResult
-            if isinstance(self.fit_result, MLEResult):
-                r = self.fit_result.copula_param
-            else:
-                r = float(self.transform(
-                    np.array([self.fit_result.params.mu]))[0])
+            return self._fitted_log_likelihood(u, n_threads=n_threads)
         from pyscarcopula._native import static as static_likelihood
         return static_likelihood.prepare(
             self, u, n_threads=n_threads).log_likelihood(float(r))
@@ -465,9 +465,8 @@ class EquicorrGaussianCopula(MultivariateCopula):
                 return result
         else:
             from pyscarcopula.api import fit
-            result = fit(
+            return fit(
                 self, observations, method=method, config=config, **kwargs)
-            self.fit_result = result
         if isinstance(observations, EquicorrPreparedData):
             self._last_prepared = observations
             self._last_u = None
@@ -477,7 +476,8 @@ class EquicorrGaussianCopula(MultivariateCopula):
         return result
 
     def sample_at_parameter(
-            self, n, r, rng=None, *, memory_budget_bytes=None):
+            self, n, r, rng=None, *, n_threads=1, memory_budget_bytes=None):
+        n_threads = _validated_n_threads(n_threads)
         if isinstance(n, (bool, np.bool_)) or not isinstance(
                 n, (int, np.integer)):
             raise TypeError("n must be an integer")
@@ -511,6 +511,7 @@ class EquicorrGaussianCopula(MultivariateCopula):
             self._d,
             normal,
             common,
+            n_threads=n_threads,
         )
 
     def sample_at_parameter_batches(
@@ -520,6 +521,7 @@ class EquicorrGaussianCopula(MultivariateCopula):
             *,
             batch_rows=128,
             rng=None,
+            n_threads=1,
             memory_budget_bytes=None):
         """Yield unconditional samples without allocating the full ``(n,d)``.
 
@@ -527,6 +529,7 @@ class EquicorrGaussianCopula(MultivariateCopula):
         most ``batch_rows`` rows and uses the structural equicorrelation
         sampler for both positive and negative correlation.
         """
+        n_threads = _validated_n_threads(n_threads)
         if isinstance(n, (bool, np.bool_)) or not isinstance(
                 n, (int, np.integer)):
             raise TypeError("n must be an integer")
@@ -565,13 +568,16 @@ class EquicorrGaussianCopula(MultivariateCopula):
                 stop - start,
                 block_r,
                 rng=rng,
+                n_threads=n_threads,
                 memory_budget_bytes=memory_budget_bytes,
             )
 
     @model_state_locked
     def sample(
-            self, n, u=None, rng=None, *, memory_budget_bytes=None):
+            self, n, u=None, rng=None, *, n_threads=1,
+            memory_budget_bytes=None):
         """Generate observations reproducing the fitted model."""
+        n_threads = _validated_n_threads(n_threads)
         if self.fit_result is None:
             raise ValueError("Fit first")
         self._validated_memory_budget(
@@ -588,7 +594,10 @@ class EquicorrGaussianCopula(MultivariateCopula):
             raise ValueError(
                 "No data for sample. "
                 "Either call fit() first or pass u= explicitly.")
-        return _api_sample(self, u_data, self.fit_result, n, rng=rng)
+        return _api_sample(
+            self, u_data, self.fit_result, n, rng=rng,
+            n_threads=n_threads,
+            memory_budget_bytes=memory_budget_bytes)
 
     @model_state_locked
     def sample_batches(
@@ -599,12 +608,14 @@ class EquicorrGaussianCopula(MultivariateCopula):
             *,
             batch_rows=128,
             given=None,
+            n_threads=1,
             memory_budget_bytes=None):
         """Yield fitted-model samples in bounded row blocks.
 
         GAS is advanced one generated observation at a time. MLE and SCAR
         use their constant or OU model parameter paths respectively.
         """
+        n_threads = _validated_n_threads(n_threads)
         if self.fit_result is None:
             raise ValueError("Fit first")
         if isinstance(n, (bool, np.bool_)) or not isinstance(
@@ -631,38 +642,11 @@ class EquicorrGaussianCopula(MultivariateCopula):
         result = self.fit_result
         strategy = get_strategy_for_result(result)
         state = strategy.model_sample_state(self, result)
-        if state is None:
-            parameters = strategy.model_sample_params(
-                self, result, n, rng=rng)
-
-            def independent_blocks():
-                for start in range(0, n, batch_rows):
-                    stop = min(n, start + batch_rows)
-                    yield self.sample_conditional(
-                        stop - start,
-                        r=parameters[start:stop],
-                        given=given,
-                        rng=rng,
-                    )
-
-            return independent_blocks()
-
-        def recursive_blocks():
-            current = state
-            for start in range(0, n, batch_rows):
-                stop = min(n, start + batch_rows)
-                block = np.empty((stop - start, self._d), dtype=np.float64)
-                for row in range(stop - start):
-                    parameter = strategy.sample_params(
-                        self, current, 1, rng=rng)[0]
-                    observation = self.sample_conditional(
-                        1, r=parameter, given=given, rng=rng)
-                    block[row] = observation[0]
-                    current = strategy.condition_state(
-                        self, current, observation, result)
-                yield block
-
-        return recursive_blocks()
+        from pyscarcopula.strategy.predict_helpers import sample_model_batches
+        return sample_model_batches(
+            self, strategy, result, state, n, batch_rows=batch_rows,
+            given=given, rng=rng, n_threads=n_threads,
+            memory_budget_bytes=memory_budget_bytes)
 
     @model_state_locked
     def sample_conditional(
@@ -674,6 +658,7 @@ class EquicorrGaussianCopula(MultivariateCopula):
             *,
             n_threads=1,
             memory_budget_bytes=None):
+        n_threads = _validated_n_threads(n_threads)
         self._validated_memory_budget(
             memory_budget_bytes,
             self._sample_output_bytes(n),
@@ -686,15 +671,21 @@ class EquicorrGaussianCopula(MultivariateCopula):
         if not given:
             if r is None:
                 return self.sample(
-                    n, rng=rng, memory_budget_bytes=memory_budget_bytes)
+                    n, rng=rng, n_threads=n_threads,
+                    memory_budget_bytes=memory_budget_bytes)
             return self.sample_at_parameter(
                 n,
                 r=r,
                 rng=rng,
+                n_threads=n_threads,
                 memory_budget_bytes=memory_budget_bytes,
             )
+        if r is None and len(given) == self._d:
+            return fill_given(n, self._d, given)
         if r is None:
-            r = self.fit_result.copula_param if self.fit_result else 0.5
+            return self.predict(
+                n, given=given, rng=rng, n_threads=n_threads,
+                memory_budget_bytes=memory_budget_bytes)
         return sample_gaussian_conditional(
             n, self._d, r, given=given, rng=rng,
             n_threads=n_threads)
@@ -709,7 +700,10 @@ class EquicorrGaussianCopula(MultivariateCopula):
             horizon="next",
             predictive_r_mode=None,
             predict_config=None,
-            memory_budget_bytes=None):
+            memory_budget_bytes=None,
+            *,
+            n_threads=1):
+        n_threads = _validated_n_threads(n_threads)
         if predict_config is not None:
             from pyscarcopula.api import _resolve_predict_config
             config = _resolve_predict_config(
@@ -732,7 +726,8 @@ class EquicorrGaussianCopula(MultivariateCopula):
         from pyscarcopula._types import MLEResult
         if isinstance(self.fit_result, MLEResult):
             return self.sample_conditional(
-                n, r=self.fit_result.copula_param, given=given, rng=rng)
+                n, r=self.fit_result.copula_param, given=given, rng=rng,
+                n_threads=n_threads, memory_budget_bytes=memory_budget_bytes)
 
         observations = u if u is not None else getattr(self, "_last_u", None)
         if observations is None:
@@ -745,6 +740,7 @@ class EquicorrGaussianCopula(MultivariateCopula):
             given=given,
             horizon=horizon,
             predictive_r_mode=predictive_r_mode,
+            n_threads=n_threads,
             memory_budget_bytes=memory_budget_bytes,
         )
         try:
@@ -764,8 +760,10 @@ class EquicorrGaussianCopula(MultivariateCopula):
             horizon="next",
             predictive_r_mode=None,
             predict_config=None,
+            n_threads=1,
             memory_budget_bytes=None):
         """Yield fitted predictive samples from one frozen predictive state."""
+        n_threads = _validated_n_threads(n_threads)
         if self.fit_result is None:
             raise ValueError("Fit first")
         if isinstance(n, (bool, np.bool_)) or not isinstance(
@@ -811,24 +809,12 @@ class EquicorrGaussianCopula(MultivariateCopula):
             predictive_r_mode=config.predictive_r_mode,
         )
 
-        def blocks():
-            for start in range(0, n, batch_rows):
-                count = min(batch_rows, n - start)
-                parameters = strategy.sample_params(
-                    self,
-                    state,
-                    count,
-                    rng=rng,
-                    predictive_r_mode=config.predictive_r_mode,
-                )
-                yield self.sample_conditional(
-                    count,
-                    r=parameters,
-                    given=config.given,
-                    rng=rng,
-                )
-
-        return blocks()
+        from pyscarcopula.strategy.predict_helpers import sample_predictive_batches
+        return sample_predictive_batches(
+            self, strategy, state, n, batch_rows=batch_rows,
+            given=config.given, rng=rng,
+            predictive_r_mode=config.predictive_r_mode,
+            n_threads=n_threads, memory_budget_bytes=memory_budget_bytes)
 
     @model_state_locked
     def predictive_mean(self, u):

@@ -33,7 +33,10 @@ from pyscarcopula._native import pair as pair_native
 from pyscarcopula._native import static as static_likelihood
 from pyscarcopula._native import model_policy
 from pyscarcopula._native.registry import registry_entry_for
-from pyscarcopula.numerical._arrays import as_float64_array
+from pyscarcopula.numerical._arrays import (
+    as_float64_array,
+    validate_float64_allocation,
+)
 
 
 def _validate_scalar_mle_parameter(copula, value, *, name):
@@ -259,15 +262,20 @@ class MLEStrategy:
 
     def sample(self, copula, u, result, n, rng=None, **kwargs):
         """Sample n observations with constant r = theta_mle."""
+        d = copula_dimension(copula, u)
+        validate_float64_allocation(
+            (n, d), name="MLE sample output",
+            memory_budget_bytes=kwargs.get("memory_budget_bytes"))
         if isinstance(result, MultivariateMLEResult):
             from pyscarcopula.strategy.multivariate_mle import (
                 sampling_model_from_result,
             )
             copula = sampling_model_from_result(copula, result)
         r = np.full(n, result.copula_param)
-        d = copula_dimension(copula, u)
         return sample_predictive(
-            copula, n, r, given=kwargs.get('given'), rng=rng, d=d)
+            copula, n, r, given=kwargs.get('given'), rng=rng, d=d,
+            n_threads=kwargs.get("n_threads", 1),
+            memory_budget_bytes=kwargs.get("memory_budget_bytes"))
 
     def predict(self, copula, u, result, n, rng=None, **kwargs):
         """Predict from the supplied static result without refitting its model."""
@@ -298,3 +306,10 @@ class MLEStrategy:
 
     def model_sample_state(self, copula, result, **kwargs):
         return None
+
+    def model_sample_params_batches(
+            self, copula, result, n, *, batch_rows, rng=None):
+        """Materialize only one block of the constant parameter path."""
+        for start in range(0, n, batch_rows):
+            yield self.model_sample_params(
+                copula, result, min(batch_rows, n - start), rng=rng)

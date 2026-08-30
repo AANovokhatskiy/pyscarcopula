@@ -106,7 +106,7 @@ class GASStrategy:
                 "always used")
         reject_unknown_strategy_kwargs("GAS", kwargs)
         self.config = config or DEFAULT_CONFIG
-        self.scaling = scaling
+        self.scaling = _cpp_gas._scaling_name(scaling)
 
     def _score_eps(self, result: GASResult | None = None) -> float:
         if result is None:
@@ -748,6 +748,8 @@ class GASStrategy:
                 given=given,
                 rng=rng,
                 d=d,
+                n_threads=kwargs.get("n_threads", 1),
+                memory_budget_bytes=kwargs.get("memory_budget_bytes"),
             )
             samples[t] = obs[0]
             if t < n - 1:

@@ -53,7 +53,8 @@ def test_equicorr_dense_mle_result_stays_scalar_and_compact():
 def test_equicorr_failed_refit_preserves_previous_training_state():
     model = EquicorrGaussianCopula(3)
     u = np.random.default_rng(8103).uniform(0.05, 0.95, size=(30, 3))
-    result = model.fit(u, method="mle", maxiter=3)
+    result = model.fit(u, method="mle")
+    assert result.success
     previous_u = model._last_u
 
     with pytest.raises(ValueError, match="finite"):

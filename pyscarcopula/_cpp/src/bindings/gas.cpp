@@ -107,8 +107,8 @@ py::dict gas_ou_initialization_to_dict(
 
 scar::ObservationView set_equicorr_prepared(
     scar::CopulaSpec& copula,
-    py::array_t<double, py::array::c_style | py::array::forcecast> sum_z,
-    py::array_t<double, py::array::c_style | py::array::forcecast> sum_z2) {
+    const Float64Array& sum_z,
+    const Float64Array& sum_z2) {
 
     copula.equicorr_sum_scores() = vector_from_array(sum_z);
     copula.equicorr_sum_squares() = vector_from_array(sum_z2);
@@ -230,8 +230,9 @@ void bind_gas(py::module_& m) {
             [](const scar::GasEvaluator& evaluator,
                const scar::GasParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::GasConfig& config) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const scar::ObservationView obs =
                     observation_view_from_array(
                         copula.model_descriptor().expected_dimension(), u);
@@ -251,13 +252,11 @@ void bind_gas(py::module_& m) {
             [](const scar::GasEvaluator& evaluator,
                const scar::GasParams& params,
                scar::CopulaSpec copula,
-               py::array_t<
-                   double,
-                   py::array::c_style | py::array::forcecast> sum_z,
-               py::array_t<
-                   double,
-                   py::array::c_style | py::array::forcecast> sum_z2,
+               py::object raw_sum_z,
+               py::object raw_sum_z2,
                const scar::GasConfig& config) {
+                auto sum_z = real_float64_array_from_object(raw_sum_z, "sum_z");
+                auto sum_z2 = real_float64_array_from_object(raw_sum_z2, "sum_z2");
                 const auto obs = set_equicorr_prepared(
                     copula, sum_z, sum_z2);
                 scar::GasFilterResult result;
@@ -278,8 +277,9 @@ void bind_gas(py::module_& m) {
             [](const scar::GasEvaluator& evaluator,
                const scar::GasParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::GasConfig& config) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const scar::ObservationView obs =
                     observation_view_from_array(
                         copula.model_descriptor().expected_dimension(), u);
@@ -300,13 +300,11 @@ void bind_gas(py::module_& m) {
             [](const scar::GasEvaluator& evaluator,
                const scar::GasParams& params,
                scar::CopulaSpec copula,
-               py::array_t<
-                   double,
-                   py::array::c_style | py::array::forcecast> sum_z,
-               py::array_t<
-                   double,
-                   py::array::c_style | py::array::forcecast> sum_z2,
+               py::object raw_sum_z,
+               py::object raw_sum_z2,
                const scar::GasConfig& config) {
+                auto sum_z = real_float64_array_from_object(raw_sum_z, "sum_z");
+                auto sum_z2 = real_float64_array_from_object(raw_sum_z2, "sum_z2");
                 const auto obs = set_equicorr_prepared(
                     copula, sum_z, sum_z2);
                 scar::GasLogLikResult result;
@@ -327,8 +325,9 @@ void bind_gas(py::module_& m) {
             [](const scar::GasEvaluator& evaluator,
                const scar::GasParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::GasConfig& config) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const scar::ObservationView obs =
                     observation_view_from_array(
                         copula.model_descriptor().expected_dimension(), u);
@@ -349,13 +348,11 @@ void bind_gas(py::module_& m) {
             [](const scar::GasEvaluator& evaluator,
                const scar::GasParams& params,
                scar::CopulaSpec copula,
-               py::array_t<
-                   double,
-                   py::array::c_style | py::array::forcecast> sum_z,
-               py::array_t<
-                   double,
-                   py::array::c_style | py::array::forcecast> sum_z2,
+               py::object raw_sum_z,
+               py::object raw_sum_z2,
                const scar::GasConfig& config) {
+                auto sum_z = real_float64_array_from_object(raw_sum_z, "sum_z");
+                auto sum_z2 = real_float64_array_from_object(raw_sum_z2, "sum_z2");
                 const auto obs = set_equicorr_prepared(
                     copula, sum_z, sum_z2);
                 scar::GasLogLikResult result;
@@ -376,10 +373,9 @@ void bind_gas(py::module_& m) {
             [](const scar::GasEvaluator& evaluator,
                const scar::GasParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<
-                   double,
-                   py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::GasConfig& config) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const scar::ObservationView obs =
                     observation_view_from_array(
                         copula.model_descriptor().expected_dimension(), u);
@@ -400,13 +396,11 @@ void bind_gas(py::module_& m) {
             [](const scar::GasEvaluator& evaluator,
                const scar::GasParams& params,
                scar::CopulaSpec copula,
-               py::array_t<
-                   double,
-                   py::array::c_style | py::array::forcecast> sum_z,
-               py::array_t<
-                   double,
-                   py::array::c_style | py::array::forcecast> sum_z2,
+               py::object raw_sum_z,
+               py::object raw_sum_z2,
                const scar::GasConfig& config) {
+                auto sum_z = real_float64_array_from_object(raw_sum_z, "sum_z");
+                auto sum_z2 = real_float64_array_from_object(raw_sum_z2, "sum_z2");
                 const auto obs = set_equicorr_prepared(
                     copula, sum_z, sum_z2);
                 scar::GasObjectiveGradientResult result;
@@ -432,10 +426,9 @@ void bind_gas(py::module_& m) {
                    py::array::c_style | py::array::forcecast>
                    base_correlation,
                double raw_shrinkage,
-               py::array_t<
-                   double,
-                   py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::GasConfig& config) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const scar::ObservationView obs =
                     observation_view_from_array(
                         copula.model_descriptor().expected_dimension(), u);
@@ -516,9 +509,10 @@ void bind_gas(py::module_& m) {
             [](const scar::GasEvaluator& evaluator,
                const scar::GasParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::GasConfig& config,
                bool horizon_next) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const scar::ObservationView obs =
                     observation_view_from_array(
                         copula.model_descriptor().expected_dimension(), u);
@@ -540,14 +534,12 @@ void bind_gas(py::module_& m) {
             [](const scar::GasEvaluator& evaluator,
                const scar::GasParams& params,
                scar::CopulaSpec copula,
-               py::array_t<
-                   double,
-                   py::array::c_style | py::array::forcecast> sum_z,
-               py::array_t<
-                   double,
-                   py::array::c_style | py::array::forcecast> sum_z2,
+               py::object raw_sum_z,
+               py::object raw_sum_z2,
                const scar::GasConfig& config,
                bool horizon_next) {
+                auto sum_z = real_float64_array_from_object(raw_sum_z, "sum_z");
+                auto sum_z2 = real_float64_array_from_object(raw_sum_z2, "sum_z2");
                 const auto obs = set_equicorr_prepared(
                     copula, sum_z, sum_z2);
                 scar::GasPredictResult result;
@@ -592,8 +584,9 @@ void bind_gas(py::module_& m) {
             [](const scar::GasEvaluator& evaluator,
                const scar::GasParams& params,
                const scar::CopulaSpec& copula,
-               py::array_t<double, py::array::c_style | py::array::forcecast> u,
+               py::object raw_u,
                const scar::GasConfig& config) {
+                auto u = real_float64_array_from_object(raw_u, "u");
                 const scar::ObservationView obs =
                     observation_view_from_array(
                         copula.model_descriptor().expected_dimension(), u);
@@ -611,8 +604,9 @@ void bind_gas(py::module_& m) {
             py::arg("config"));
     m.def("gas_ou_initial_point",
         [](double static_mu, const scar::CopulaSpec& copula,
-           py::array_t<double, py::array::c_style | py::array::forcecast> u,
+           py::object raw_u,
            const scar::GasConfig& config) {
+            auto u = real_float64_array_from_object(raw_u, "u");
             const scar::ObservationView observations =
                 observation_view_from_array(
                     copula.model_descriptor().expected_dimension(), u);

@@ -996,9 +996,9 @@ def test_fallback_predict_draws_independent_latent_parameter_per_sample():
         captured = {}
         original = copula.sample_conditional
 
-        def spy(n_, r=None, given=None, rng=None, _orig=original):
+        def spy(n_, r=None, given=None, rng=None, _orig=original, **kwargs):
             captured["r"] = np.atleast_1d(np.asarray(r, dtype=np.float64))
-            return _orig(n_, r=r, given=given, rng=rng)
+            return _orig(n_, r=r, given=given, rng=rng, **kwargs)
 
         copula.sample_conditional = spy
         try:

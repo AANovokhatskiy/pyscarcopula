@@ -25,7 +25,9 @@ result.bic
 Static `GaussianCopula` and `StudentCopula` accept only `method='mle'`. Both
 provide exact conditional generation in pseudo-observation space through
 `sample_conditional(n, given, rng=None, *, n_threads=1)` and
-`predict(n, given=..., rng=...)`:
+`predict(n, given=..., rng=..., n_threads=1)`. Both models also accept
+`n_threads=1` in `sample`; an empty `given` preserves the requested thread
+count when delegating to unconditional sampling:
 
 ```python
 import numpy as np
@@ -340,6 +342,27 @@ unconditional sampling and one frozen posterior state for prediction.
 Monolithic `sample`, `predict`, `sample_conditional`, and
 `sample_at_parameter` also accept `memory_budget_bytes` and fail before
 allocating an oversized output.
+
+All Equicorr sampling and prediction methods shown above, including their
+batch variants and `sample_conditional`, accept keyword-only `n_threads=1`.
+The requested count reaches the native observation sampler for explicit
+parameters and fitted MLE/GAS/SCAR predictions. Thread counts must be integers
+in `[1, 256]`, including when all coordinates are fixed or the output is empty.
+Small blocks and the one-observation-at-a-time GAS model trajectory retain
+their sequential execution policy.
+
+SCAR `sample_batches` generates OU states one block at a time, with
+`dt=1/(n-1)` based on the full requested length (`dt=1` for a single row).
+Its temporary path storage is `O(batch_rows)`, not `O(n)`. Observation draws
+are interleaved with OU blocks, so reproduce a draw sequence with the same
+seed **and** `batch_rows`; changing the block size may change the sequence.
+
+For both `EquicorrGaussianCopula` and `StochasticStudentCopula`, omitting
+`r` in `log_likelihood(u)` evaluates the fitted MLE/GAS/SCAR strategy.
+An explicit `r` requests a static emission likelihood. Omitting `r` in
+`sample_conditional(n, given=...)` with fixed coordinates uses the next
+predictive distribution. Pass `r` to condition at a fixed parameter, or
+use `sample_batches(..., given=...)` for a conditional model trajectory.
 
 ### API
 

@@ -24,6 +24,13 @@ ScarOuVectorResult ou_trajectory_from_innovations(
 ScarOuVectorResult sample_ou_trajectory(
     const OuParams& params, DoubleView standard_normals);
 
+/// One bounded block of a path whose time step is set by total_count.
+/// initialize consumes the first draw for the stationary state; otherwise
+/// every draw advances previous_state by one step.
+ScarOuVectorResult sample_ou_trajectory_block(
+    const OuParams& params, std::size_t total_count,
+    double previous_state, bool initialize, DoubleView standard_normals);
+
 /// Stationary OU states from caller-owned raw standard normals.
 ScarOuVectorResult sample_ou_stationary(
     const OuParams& params, DoubleView standard_normals);

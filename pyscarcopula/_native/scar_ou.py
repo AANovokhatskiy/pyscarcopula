@@ -19,7 +19,10 @@ from pyscarcopula.numerical._scar_ou_config import (
     select_auto_backend,
     validate_cpp_config,
 )
-from pyscarcopula.numerical._arrays import as_pseudo_observation_array
+from pyscarcopula.numerical._arrays import (
+    as_float64_array,
+    as_pseudo_observation_array,
+)
 from pyscarcopula.numerical._transition_methods import (
     normalize_ou_transition_method,
 )
@@ -105,6 +108,19 @@ def sample_trajectory(kappa, mu, nu, standard_normals):
         _params(module, kappa, mu, nu),
         np.ascontiguousarray(standard_normals, dtype=np.float64))
     _raise_native_result(result, "trajectory sampling")
+    return np.asarray(result["values"], dtype=np.float64)
+
+
+def sample_trajectory_block(
+        kappa, mu, nu, total_count, previous_state, initialize,
+        standard_normals):
+    """Advance a bounded OU block using the complete path's time step."""
+    module = _extension.load()
+    result = module.ou_sample_trajectory_block(
+        _params(module, kappa, mu, nu), int(total_count),
+        float(previous_state), bool(initialize),
+        as_float64_array(standard_normals, name="standard_normals"))
+    _raise_native_result(result, "trajectory block sampling")
     return np.asarray(result["values"], dtype=np.float64)
 
 

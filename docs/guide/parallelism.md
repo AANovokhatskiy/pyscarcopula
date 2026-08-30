@@ -103,6 +103,13 @@ row, grid, or trajectory work, not the recurrence itself. Small workloads use
 a sequential fast path even when a larger value is requested, because thread
 scheduling would cost more than the kernel.
 
+Multivariate `sample`, `predict`, and `sample_conditional` preserve the
+explicit `n_threads` setting through the model and top-level `api` entry
+points. Equicorr and stochastic Student batch methods preserve it for every
+block as well. Empty or fully fixed `given` mappings do not bypass thread
+validation. This setting controls observation sampling; it does not change
+the mathematical order of GAS or SCAR state updates.
+
 ## Correctness and thread safety
 
 Parallel kernels use a stable block partition and deterministic result

@@ -24,7 +24,10 @@ from pyscarcopula.numerical._scar_ou_config import (
     AutoTMConfig,
     validate_cpp_config,
 )
-from pyscarcopula.numerical._arrays import as_pseudo_observation_array
+from pyscarcopula.numerical._arrays import (
+    as_pseudo_observation_array,
+    validate_float64_allocation,
+)
 from pyscarcopula.numerical._transition_methods import (
     normalize_ou_transition_method,
 )
@@ -1811,10 +1814,15 @@ class SCARTMStrategy:
         if rng is None:
             rng = np.random.default_rng()
 
-        r = self.model_sample_params(copula, result, n, rng=rng)
         d = copula_dimension(copula, u)
+        validate_float64_allocation(
+            (n, d), name="SCAR sample output",
+            memory_budget_bytes=kwargs.get("memory_budget_bytes"))
+        r = self.model_sample_params(copula, result, n, rng=rng)
         return sample_predictive(
-            copula, n, r, given=kwargs.get('given'), rng=rng, d=d)
+            copula, n, r, given=kwargs.get('given'), rng=rng, d=d,
+            n_threads=kwargs.get("n_threads", 1),
+            memory_budget_bytes=kwargs.get("memory_budget_bytes"))
 
     predict = strategy_predict
     predictive_params = predictive_params_from_state_with_rng
@@ -1932,3 +1940,15 @@ class SCARTMStrategy:
 
     def model_sample_state(self, copula, result, **kwargs):
         return None
+
+    def model_sample_params_batches(
+            self, copula, result, n, *, batch_rows, rng=None):
+        """Stream an OU parameter path, preserving the full trajectory dt."""
+        from pyscarcopula.numerical.ou_kernels import sample_ou_trajectory_batches
+
+        if rng is None:
+            rng = np.random.default_rng()
+        p = result.params
+        for states in sample_ou_trajectory_batches(
+                p.kappa, p.mu, p.nu, n, rng, batch_rows=batch_rows):
+            yield copula.transform(states)

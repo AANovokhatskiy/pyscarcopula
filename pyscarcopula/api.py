@@ -26,6 +26,7 @@ to this API internally but require copula.fit() to have been called.
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from typing import Any, TypeAlias
 
 import numpy as np
@@ -170,28 +171,37 @@ def fit(
         config=config,
         **constructor_kwargs,
     )
-    result = strategy.fit(copula, u, **fit_kwargs)
-    multivariate_mle = is_multivariate_copula(copula) and method.upper() == "MLE"
-    if multivariate_mle and not result.success:
-        # Multivariate MLE publishes only independently accepted candidates.
-        # Preserve that atomic contract when called through the top-level API.
+    multivariate = is_multivariate_copula(copula)
+    multivariate_mle = multivariate and method.upper() == "MLE"
+    transaction = copula._fit_transaction() if multivariate else nullcontext()
+    with transaction:
+        # A fit owns its training snapshot before any native call releases
+        # the GIL. Immutable prepared statistics already own their buffers.
+        if multivariate and not prepared_input:
+            u = u.copy()
+        if multivariate and not multivariate_mle:
+            copula._prepare_dynamic_fit(u)
+        result = strategy.fit(copula, u, **fit_kwargs)
+        if multivariate_mle and not result.success:
+            # Static MLE publishes only independently accepted candidates.
+            return result
+        if multivariate and not multivariate_mle:
+            result = copula._finalize_dynamic_fit(result)
+        # Keep the returned dynamic candidate (including its success flag),
+        # never an intermediate MLE used to initialize the optimizer.
+        copula.fit_result = result
+        if prepared_input:
+            copula._last_prepared = u
+            copula._last_u = None
+        else:
+            copula._last_u = u
+            if hasattr(copula, "_last_prepared"):
+                copula._last_prepared = None
+        if (
+                getattr(result, "params", None) is not None
+                and hasattr(copula, "_last_latent_result")):
+            copula._last_latent_result = result
         return result
-    # Mirror the state synchronization of copula.fit() so convenience
-    # methods (predict/sample without explicit data or result) see the
-    # strategy result rather than a stale intermediate (e.g. MLE) one.
-    copula.fit_result = result
-    if prepared_input:
-        copula._last_prepared = u
-        copula._last_u = None
-    else:
-        copula._last_u = u.copy() if multivariate_mle else u
-        if hasattr(copula, "_last_prepared"):
-            copula._last_prepared = None
-    if (
-            getattr(result, "params", None) is not None
-            and hasattr(copula, "_last_latent_result")):
-        copula._last_latent_result = result
-    return result
 
 
 def log_likelihood(
@@ -378,6 +388,9 @@ def sample(
     if _is_generic_vine(copula):
         return copula.sample(n, **kwargs)
 
+    if is_multivariate_copula(copula) and "n_threads" in kwargs:
+        from pyscarcopula._native.threads import validate_n_threads
+        kwargs["n_threads"] = validate_n_threads(kwargs["n_threads"])
     prepared = _prepared_equicorr_or_none(copula, data)
     if prepared is None:
         u = _as_float64_array_no_copy(data)
@@ -493,6 +506,9 @@ def predict(
         return copula.predict(
             n, u=data, predict_config=pcfg, **kwargs)
 
+    if is_multivariate_copula(copula) and "n_threads" in kwargs:
+        from pyscarcopula._native.threads import validate_n_threads
+        kwargs["n_threads"] = validate_n_threads(kwargs["n_threads"])
     prepared = _prepared_equicorr_or_none(copula, data)
     if prepared is None:
         u = _as_float64_array_no_copy(data)

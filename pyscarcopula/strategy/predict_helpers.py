@@ -7,6 +7,7 @@ import numpy as np
 from pyscarcopula.strategy._base import (
     copula_dimension,
     has_dynamic_scalar_parameter,
+    is_multivariate_copula,
     is_pair_copula,
     supports_conditional_sampling,
 )
@@ -84,7 +85,9 @@ def conditional_sample_bivariate(copula, n, r, given=None, rng=None):
     )
 
 
-def sample_predictive(copula, n, r, given=None, rng=None, d=None):
+def sample_predictive(
+        copula, n, r, given=None, rng=None, d=None, *,
+        n_threads=1, memory_budget_bytes=None):
     """Sample from a predictive parameter path.
 
     Conditional ``given`` sampling is delegated to the registered built-in
@@ -93,6 +96,10 @@ def sample_predictive(copula, n, r, given=None, rng=None, d=None):
     from pyscarcopula._native.registry import registry_entry_for
 
     registry_entry_for(copula)
+    if is_multivariate_copula(copula) and has_dynamic_scalar_parameter(copula):
+        return copula.sample_conditional(
+            n, r=r, given=given, rng=rng, n_threads=n_threads,
+            memory_budget_bytes=memory_budget_bytes)
     if given is None and d is not None and int(d) != 2 and hasattr(copula, "_R_path"):
         return copula.sample(n=n, df_path=r, rng=rng)
 
@@ -100,7 +107,7 @@ def sample_predictive(copula, n, r, given=None, rng=None, d=None):
         if is_pair_copula(copula):
             return copula.sample_at_parameter(n, r, rng=rng)
         if not has_dynamic_scalar_parameter(copula):
-            return copula.sample(n, rng=rng)
+            return copula.sample(n, rng=rng, n_threads=n_threads)
         return copula.sample_at_parameter(n, r, rng=rng)
 
     if is_pair_copula(copula):
@@ -110,7 +117,7 @@ def sample_predictive(copula, n, r, given=None, rng=None, d=None):
     if supports_conditional_sampling(copula):
         if not has_dynamic_scalar_parameter(copula):
             return copula.sample_conditional(
-                n, given=given, rng=rng)
+                n, given=given, rng=rng, n_threads=n_threads)
         return copula.sample_conditional(n, r=r, given=given, rng=rng)
 
     if d is None:
@@ -130,13 +137,57 @@ def predict_from_strategy(strategy, copula, u, result, n, rng=None, **kwargs):
     r = strategy.predictive_params(copula, u, result, n, rng=rng, **kwargs)
     d = copula_dimension(copula, u)
     return sample_predictive(
-        copula, n, r, given=kwargs.get("given"), rng=rng, d=d)
+        copula, n, r, given=kwargs.get("given"), rng=rng, d=d,
+        n_threads=kwargs.get("n_threads", 1),
+        memory_budget_bytes=kwargs.get("memory_budget_bytes"))
 
 
 def strategy_predict(strategy, copula, u, result, n, rng=None, **kwargs):
     """Default strategy method backed by the shared prediction workflow."""
     return predict_from_strategy(
         strategy, copula, u, result, n, rng=rng, **kwargs)
+
+
+def sample_model_batches(
+        copula, strategy, result, state, n, *, batch_rows, given, rng,
+        n_threads, memory_budget_bytes):
+    """Generate bounded model blocks, preserving the sequential GAS state."""
+    if state is None:
+        parameter_blocks = strategy.model_sample_params_batches(
+            copula, result, n, rng=rng, batch_rows=batch_rows)
+        for parameters in parameter_blocks:
+            yield copula.sample_conditional(
+                len(parameters), r=parameters, given=given, rng=rng,
+                n_threads=n_threads, memory_budget_bytes=memory_budget_bytes)
+        return
+
+    current = state
+    for start in range(0, n, batch_rows):
+        count = min(batch_rows, n - start)
+        block = np.empty((count, copula.dimension), dtype=np.float64)
+        for row in range(count):
+            parameter = strategy.sample_params(copula, current, 1, rng=rng)[0]
+            observation = copula.sample_conditional(
+                1, r=parameter, given=given, rng=rng,
+                n_threads=n_threads, memory_budget_bytes=memory_budget_bytes)
+            block[row] = observation[0]
+            current = strategy.condition_state(
+                copula, current, observation, result)
+        yield block
+
+
+def sample_predictive_batches(
+        copula, strategy, state, n, *, batch_rows, given, rng,
+        predictive_r_mode, n_threads, memory_budget_bytes):
+    """Sample bounded row blocks from one frozen predictive state."""
+    for start in range(0, n, batch_rows):
+        count = min(batch_rows, n - start)
+        parameters = strategy.sample_params(
+            copula, state, count, rng=rng,
+            predictive_r_mode=predictive_r_mode)
+        yield copula.sample_conditional(
+            count, r=parameters, given=given, rng=rng,
+            n_threads=n_threads, memory_budget_bytes=memory_budget_bytes)
 
 
 def predictive_params_from_state(
