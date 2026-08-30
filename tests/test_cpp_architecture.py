@@ -1341,6 +1341,18 @@ def test_setup_build_path_does_not_mutate_path():
     assert "shutil.which" not in source
 
 
+def test_equicorr_preparation_threshold_has_one_definition():
+    source = (
+        ROOT
+        / "pyscarcopula/_cpp/src/copula/multivariate/equicorrelation/evaluator.cpp"
+    ).read_text(encoding="utf-8")
+    declaration = (
+        "constexpr std::size_t kEquicorrPreparationMinCells = 4096;"
+    )
+    assert source.count(declaration) == 1
+    assert source.count("kEquicorrPreparationMinCells") == 2
+
+
 def test_gate4_workflow_covers_required_compilers_and_build_boundaries():
     source = (
         ROOT / ".github/workflows/parallel-release-gates.yml"

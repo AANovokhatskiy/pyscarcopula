@@ -26,7 +26,6 @@ namespace {
 
 constexpr std::int64_t kEquicorrGridMinRowsPerBlock = 64;
 constexpr std::size_t kEquicorrGridMinCells = 262144;
-constexpr std::size_t kEquicorrPreparationMinCells = 4096;
 
 struct EquicorrBlockResult {
     bool ran = false;
