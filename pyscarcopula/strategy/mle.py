@@ -10,6 +10,7 @@ from scipy.optimize import minimize
 
 from pyscarcopula._types import (
     MLEResult,
+    MultivariateMLEResult,
     NumericalConfig,
     DEFAULT_CONFIG,
     PredictiveState,
@@ -112,12 +113,20 @@ class MLEStrategy:
             maxcor=maxcor,
             finite_diff_rel_step=finite_diff_rel_step,
         )
+        optimizer_overrides = {
+            key: value for key, value in optimizer_overrides.items()
+            if value is not None
+        }
+
+        if is_multivariate_copula(copula) and alpha0 is not None:
+            raise TypeError("alpha0 is not supported by multivariate MLE")
 
         if not has_dynamic_scalar_parameter(copula):
             direct_fit = getattr(copula, 'fit', None)
             if direct_fit is not None:
                 result = direct_fit(
-                    u, to_pobs=False, config=self.config)
+                    u, to_pobs=False, config=self.config,
+                    **optimizer_overrides)
                 if getattr(result, 'method', '').upper() == 'MLE':
                     return result
 
@@ -129,7 +138,8 @@ class MLEStrategy:
             direct_fit = getattr(copula, 'fit', None)
             if direct_fit is not None:
                 result = direct_fit(
-                    u, to_pobs=False, config=self.config)
+                    u, to_pobs=False, config=self.config,
+                    **optimizer_overrides)
                 if getattr(result, 'method', '').upper() == 'MLE':
                     return result
 
@@ -191,11 +201,15 @@ class MLEStrategy:
                        result: MLEResult) -> float:
         """sum log c(u1, u2; r_mle)."""
         registry_entry_for(copula)
+        if isinstance(result, MultivariateMLEResult):
+            from pyscarcopula.strategy.multivariate_mle import (
+                log_likelihood_from_result,
+            )
+            return log_likelihood_from_result(
+                copula, u, result, n_threads=self.config.n_threads)
         if is_multivariate_copula(copula):
-            try:
-                return float(copula.log_likelihood(u, result.copula_param))
-            except TypeError:
-                return float(copula.log_likelihood(u))
+            return float(copula.log_likelihood(
+                u, result.copula_param, n_threads=self.config.n_threads))
         evaluator = static_likelihood.prepare(
             copula, u, n_threads=self.config.n_threads)
         return evaluator.log_likelihood(result.copula_param)
@@ -245,12 +259,22 @@ class MLEStrategy:
 
     def sample(self, copula, u, result, n, rng=None, **kwargs):
         """Sample n observations with constant r = theta_mle."""
+        if isinstance(result, MultivariateMLEResult):
+            from pyscarcopula.strategy.multivariate_mle import (
+                sampling_model_from_result,
+            )
+            copula = sampling_model_from_result(copula, result)
         r = np.full(n, result.copula_param)
         d = copula_dimension(copula, u)
         return sample_predictive(
             copula, n, r, given=kwargs.get('given'), rng=rng, d=d)
 
-    predict = strategy_predict
+    def predict(self, copula, u, result, n, rng=None, **kwargs):
+        """Predict from the supplied static result without refitting its model."""
+        if isinstance(result, MultivariateMLEResult):
+            return self.sample(copula, u, result, n, rng=rng, **kwargs)
+        return strategy_predict(self, copula, u, result, n, rng=rng, **kwargs)
+
     predictive_params = predictive_params_from_state
 
     def predictive_state(self, copula, u, result, **kwargs):

@@ -294,7 +294,8 @@ def test_refit_clears_stale_dense_or_prepared_training_state():
     prepared = model.prepare_sufficient_statistics(u)
 
     model.fit(u, method="MLE")
-    assert model._last_u is u
+    np.testing.assert_array_equal(model._last_u, u)
+    assert not np.shares_memory(model._last_u, u)
     assert model._last_prepared is None
     model.fit(prepared, method="MLE")
     assert model._last_u is None

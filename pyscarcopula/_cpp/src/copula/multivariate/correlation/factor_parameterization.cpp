@@ -477,6 +477,7 @@ FactorLoadingParameterizationResult factor_parameterization_from_loadings(
     result.dimension = dimension;
     result.rank = rank;
     if (!valid_factor_shape(loadings, dimension, rank)
+        || rank > (dimension - 1) / 2
         || !std::isfinite(uniqueness_min)
         || !(uniqueness_min > 0.0 && uniqueness_min < 1.0)) {
         result.status = Status::InvalidParameter;

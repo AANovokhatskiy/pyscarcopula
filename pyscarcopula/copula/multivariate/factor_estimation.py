@@ -6,10 +6,15 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from pyscarcopula.numerical._arrays import as_float64_array
+from pyscarcopula.copula.multivariate.correlation_policy import (
+    validate_joint_factor_rank,
+)
+
 
 @dataclass(frozen=True)
 class FactorLoadingParameterization:
-    """Identifiable smooth coordinates for joint factor optimization.
+    """Rotation-anchored smooth coordinates for joint factor optimization.
 
     Pivoted anchor rows form a lower-triangular block with positive diagonal,
     removing the rotational degrees of freedom. Each raw row is mapped
@@ -27,13 +32,14 @@ class FactorLoadingParameterization:
 
     @classmethod
     def from_loadings(cls, loadings, *, uniqueness_min):
-        loadings = np.asarray(loadings, dtype=np.float64)
+        loadings = as_float64_array(loadings, name="loadings")
         if loadings.ndim != 2:
             raise ValueError("loadings must be a two-dimensional array")
         dimension, rank = loadings.shape
         if not 1 <= rank < dimension or not np.all(np.isfinite(loadings)):
             raise ValueError(
                 "loadings must have shape (d, k), 1 <= k < d, and be finite")
+        validate_joint_factor_rank(dimension, rank)
         from pyscarcopula._native import multivariate as multivariate_native
         native = multivariate_native.factor_parameterization_from_loadings(
             loadings, uniqueness_min)
@@ -89,7 +95,7 @@ def estimate_factor_loadings(
         seed,
         oversampling):
     """Estimate loadings by tiled randomized SVD without dense covariance."""
-    u = np.asarray(u, dtype=np.float64)
+    u = as_float64_array(u, name="u")
     if u.ndim != 2 or u.shape[1] < 2 or u.shape[0] == 0:
         raise ValueError(
             "u must have shape (n_observations, dimension), dimension >= 2")

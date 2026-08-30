@@ -292,9 +292,19 @@ rapidly, and extend through `df = 1000`.
 When the estimated size exceeds the limit, the values table is not built.
 Python-level table calls then use exact `scipy.special.stdtrit` values. Native
 dynamic-emission specs retain the df nodes even without the values table:
-they use exact quantiles up to the final node and a third-order Cornish-Fisher
-normal-quantile expansion above it. Static Student likelihoods carry no
-dynamic node metadata and retain exact quantiles at all finite `df` values.
+they use CDF inversion below `df=1000`, a sixth-order normal-limit expansion
+from `df=1000` through the final node, and a third-order Cornish-Fisher
+expansion above it. Static Student likelihoods carry no dynamic node metadata:
+they use CDF inversion below `df=1000` and the sixth-order expansion above
+that threshold, avoiding cancellation in large-`df` CDF inversion.
+
+Student density normalization also avoids subtracting large log-gamma values.
+At `df >= 32`, native kernels combine integer gamma recurrences in `log1p`
+form with a half-step Stirling expansion through `df^-11`. The derivative uses
+the same expansion. Density scores evaluate the small remainder
+`log1p(x) - x/(1+x)` by a series near zero, avoiding cancellation and products
+of `df^2` in the normal limit. Dense and factor kernels share this implementation;
+the finite-df copula is retained rather than replaced by a hard Gaussian cutoff.
 
 The native exact path obtains the quantile's `df` derivative by implicit
 differentiation of the Student CDF. The large-`df` expansion has a matching
@@ -806,9 +816,16 @@ SPD parameterization. The Cholesky mode is guarded at `d <= 10` by default.
 their sample correlation, while Student uses Kendall preprocessing and then
 optimizes only `df`. Factor mode uses Woodbury operators with `O(d*k + k^2)`
 stored state. Gaussian and two-stage Student estimate loadings outside the
-joint optimizer; joint static Student uses the native loading score and an
-identified loading parameterization. None of the compact likelihood,
+joint optimizer; joint static Student uses the native loading score and a
+rotation-anchored loading parameterization with `d >= 2*k + 1`. None of the compact likelihood,
 sampling, bootstrap, or persistence paths needs a dense `d*d` correlation.
+
+Dense `GaussianCopula.sample` and `predict` check `memory_budget_bytes` against
+the returned `n*d*8` bytes before consuming random draws. This output-only
+contract also applies to dense conditional sampling; it does not bound all
+temporary workspace. Batch iterators apply the check to each output block.
+Factor Gaussian sampling instead checks its existing workspace-plus-output
+estimate.
 
 - conditional Gaussian/Student sampling reuses the Schur-complement Cholesky
   factor when one correlation matrix is shared by all output rows;

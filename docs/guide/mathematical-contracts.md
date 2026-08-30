@@ -394,6 +394,21 @@ and projects to a valid SPD correlation when necessary. These plug-in
 correlations are counted in AIC/BIC because they are estimated from the same
 sample, even though they are absent from the optimizer vector.
 
+Each static fit recomputes data-derived correlations and factor initializations
+from its current observations. Only constructor-supplied `R`, `corr_base`, or
+`factor_loadings` are reused. Rejected MLE candidates are returned for inspection
+without replacing the accepted result or training data, including through
+`api.fit`. `api.log_likelihood(model, data, result)` evaluates the correlation
+and scalar parameter captured in `result`, even after the model is refitted.
+`api.sample` and `api.predict`, including `given` conditioning, likewise use
+the explicitly supplied static result. They reconstruct independent sampling
+state without changing the prototype; factor results remain compact. Reusing
+the same result and RNG seed therefore reproduces draws after a prototype refit.
+
+Observation and loading preparation rejects complex values before float64
+conversion, including streamed equicorrelation statistics and factor
+initialization. A discarded imaginary component is not an accepted coercion.
+
 `shrinkage` uses
 
 $$R(\alpha)=\alpha R_0 + (1-\alpha)I,\qquad 0<\alpha<1,$$
@@ -404,13 +419,15 @@ optimizes them. The latter is intended for small $d$. Factor mode represents
 
 $$R=D+BB^\top,\qquad D_{ii}=1-\lVert B_{i\cdot}\rVert^2,$$
 
-with identifiable count $dk-k(k-1)/2$. Two-stage factor fits count the
-estimated loadings as plug-in parameters. Joint static Student factor fitting
-optimizes `df` and identified loadings together; Gaussian factor fitting is
-two-stage.
+with generic correlation dimension $\min(dk-k(k-1)/2, d(d-1)/2)$.
+Two-stage factor fits count this dimension as plug-in parameters. Joint static
+Student factor fitting optimizes `df` and rotation-anchored loadings together;
+it requires $d \ge 2k+1$, a sufficient regime for generic identifiability.
+This does not guarantee identification at singular loading configurations.
+Gaussian factor fitting is two-stage.
 
 Consequently, with $q=d(d-1)/2$ and
-$f=dk-k(k-1)/2$, the effective counts are:
+$f=\min(dk-k(k-1)/2,q)$, the effective counts are:
 
 | Correlation policy | Gaussian | Student |
 |---|---:|---:|

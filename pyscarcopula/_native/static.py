@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+from pyscarcopula.numerical._arrays import as_float64_array
 
 from pyscarcopula._native import _descriptors, _extension, model_policy
 from pyscarcopula._native.errors import (
@@ -30,7 +31,7 @@ class StaticLikelihoodEvaluator:
                 module, spec, u, n_threads)
             return
         observations = np.ascontiguousarray(
-            np.asarray(u, dtype=np.float64))
+            as_float64_array(u, name="u"))
         spec = _descriptors.make_static_likelihood_spec(
             module, copula, u=observations)
         self._initialize(module, spec, observations, n_threads)
@@ -65,7 +66,7 @@ class StaticLikelihoodEvaluator:
     def from_spec(cls, module, spec, u, *, n_threads=1):
         instance = cls.__new__(cls)
         observations = np.ascontiguousarray(
-            np.asarray(u, dtype=np.float64))
+            as_float64_array(u, name="u"))
         instance._initialize(module, spec, observations, n_threads)
         return instance
 
@@ -209,5 +210,12 @@ def prepare_student(correlation, u, *, n_threads=1) -> StaticLikelihoodEvaluator
 def prepare_gaussian(correlation, u, *, n_threads=1) -> StaticLikelihoodEvaluator:
     module = _extension.load()
     spec = _descriptors.make_gaussian_static_spec(module, correlation)
+    return StaticLikelihoodEvaluator.from_spec(
+        module, spec, u, n_threads=n_threads)
+
+
+def prepare_factor_gaussian(operator, u, *, n_threads=1) -> StaticLikelihoodEvaluator:
+    module = _extension.load()
+    spec = _descriptors.make_factor_gaussian_static_spec(module, operator)
     return StaticLikelihoodEvaluator.from_spec(
         module, spec, u, n_threads=n_threads)

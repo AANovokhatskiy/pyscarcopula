@@ -578,9 +578,10 @@ void bind_multivariate(py::module_& m) {
     m.def(
         "prepare_equicorr_sufficient_statistics",
         [](
-            py::array_t<double, py::array::c_style | py::array::forcecast> u,
+            py::object u_input,
             std::size_t dimension_tile,
             int n_threads) {
+            const auto u = real_float64_array_from_object(u_input, "u");
             const py::buffer_info info = u.request();
             if (info.ndim != 2 || info.shape[1] < 2) {
                 throw std::invalid_argument(
@@ -621,14 +622,15 @@ void bind_multivariate(py::module_& m) {
     m.def(
         "multivariate_log_pdf_and_grad",
         [](const scar::CopulaSpec& copula,
-           py::array_t<double, py::array::c_style | py::array::forcecast> u,
-           py::array_t<double, py::array::c_style | py::array::forcecast> r,
+           py::object u,
+           py::object r,
            std::int64_t row_offset,
            int n_threads) {
             scar::MultivariateRowsResult result;
             const scar::Observations observations =
-                observations_from_array(u);
-            const std::vector<double> parameters = vector_from_array(r);
+                observations_from_array(real_float64_array_from_object(u, "u"));
+            const std::vector<double> parameters = vector_from_array(
+                real_float64_array_from_object(r, "r"));
             {
                 py::gil_scoped_release release;
                 result = scar::multivariate_log_pdf_and_grad(

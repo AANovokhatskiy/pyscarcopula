@@ -64,8 +64,10 @@ from pyscarcopula.copula.multivariate.correlation_policy import (
     CorrelationMode,
     CorrelationPolicy,
     FactorEstimation,
+    factor_parameter_count,
     normalize_correlation_mode,
     normalize_factor_estimation,
+    validate_joint_factor_rank,
 )
 from pyscarcopula.copula.multivariate.student_ppf_cache import (
     StudentPPFTable as _PPFTable,
@@ -79,6 +81,7 @@ from pyscarcopula.copula.multivariate.factor_estimation import (
     estimate_factor_loadings,
 )
 from pyscarcopula.numerical._arrays import (
+    as_float64_array,
     validate_integer,
     validate_sampling_memory_budget as _sampling_memory_budget,
     validate_sampling_n_threads as _sampling_n_threads,
@@ -103,9 +106,7 @@ _STUDENT_FIT_INITIAL, _STUDENT_FIT_BOUNDS = (
     model_policy.student_fit_policy(2, stochastic=True))
 _DF_OFFSET, _DF_FIT_UPPER = _STUDENT_FIT_BOUNDS
 def _as_float64_array_no_copy(value):
-    if type(value) is np.ndarray and value.dtype == np.float64:
-        return value
-    return np.asarray(value, dtype=np.float64)
+    return as_float64_array(value, name="data")
 
 
 def _validate_fit_data(u, d):
@@ -296,6 +297,8 @@ class StochasticStudentCopula(MultivariateCopula):
             self._factor_rank = int(factor_rank)
             if not 1 <= self._factor_rank < d:
                 raise ValueError("factor_rank must satisfy 1 <= k < d")
+            if self._factor_estimation == 'joint':
+                validate_joint_factor_rank(d, self._factor_rank)
             if not (
                     np.isfinite(self._factor_uniqueness_min)
                     and 0.0 < self._factor_uniqueness_min < 1.0):
@@ -560,10 +563,7 @@ class StochasticStudentCopula(MultivariateCopula):
         """Return compact factor representation and initialization metadata."""
         if self._corr_mode != 'factor':
             return {}
-        identifiable = (
-            self._d * self._factor_rank
-            - self._factor_rank * (self._factor_rank - 1) // 2
-        )
+        identifiable = factor_parameter_count(self._d, self._factor_rank)
         diagnostics = {
             'factor_rank': self._factor_rank,
             'factor_estimation': self._factor_estimation,
@@ -655,10 +655,7 @@ class StochasticStudentCopula(MultivariateCopula):
 
     def _corr_plugin_num_params(self):
         if self._corr_mode == 'factor':
-            return (
-                self._d * self._factor_rank
-                - self._factor_rank * (self._factor_rank - 1) // 2
-            )
+            return factor_parameter_count(self._d, self._factor_rank)
         preprocessing = self._corr_preprocessing
         if (
                 self._corr_mode == 'fixed'
@@ -841,7 +838,7 @@ class StochasticStudentCopula(MultivariateCopula):
         if self._corr_mode != 'factor' and self._R is None:
             raise ValueError("Correlation matrix R not set. Call fit() first.")
 
-        u = np.asarray(u, dtype=np.float64)
+        u = as_float64_array(u, name="u")
 
         if r is None:
             from pyscarcopula._types import MLEResult
@@ -1259,7 +1256,7 @@ class StochasticStudentCopula(MultivariateCopula):
         )
 
         if self._corr_mode == "factor":
-            if self._factor_loadings is None:
+            if self._constructor_factor_loadings is None:
                 loadings, initialization = estimate_factor_loadings(
                     u,
                     self._factor_rank,
@@ -1274,9 +1271,8 @@ class StochasticStudentCopula(MultivariateCopula):
                         "source": "joint_randomized_svd_start",
                     }
             else:
-                loadings = self._factor_loadings.copy()
-                initialization = dict(
-                    self._factor_initialization_diagnostics)
+                loadings = self._constructor_factor_loadings.copy()
+                initialization = {"source": "supplied"}
             if self._factor_estimation == "joint":
                 return self._fit_joint_factor_mle_shared(
                     u,
@@ -1326,11 +1322,11 @@ class StochasticStudentCopula(MultivariateCopula):
             corr_alpha = None
             candidate_factor = factor
         else:
-            if self._corr_base is not None:
-                initial_correlation = self._corr_base.copy()
+            if self._constructor_corr_base is not None:
+                initial_correlation = self._constructor_corr_base.copy()
                 preprocessing = self._corr_base_preprocessing
-            elif self._R is not None:
-                initial_correlation = self._R.copy()
+            elif self._constructor_R is not None:
+                initial_correlation = self._constructor_R.copy()
                 preprocessing = self._corr_preprocessing
                 if preprocessing is None:
                     preprocessing = preprocess_correlation_matrix(

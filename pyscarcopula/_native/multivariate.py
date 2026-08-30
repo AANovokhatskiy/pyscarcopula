@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+from pyscarcopula.numerical._arrays import as_float64_array
 
 from pyscarcopula._native.threads import validate_n_threads
 from pyscarcopula._native import _descriptors, _extension
@@ -14,11 +15,11 @@ from pyscarcopula._native.errors import (
 
 def _values(value) -> np.ndarray:
     return np.ascontiguousarray(
-        np.atleast_1d(np.asarray(value, dtype=np.float64)).ravel())
+        np.atleast_1d(as_float64_array(value)).ravel())
 
 
 def _rows(copula, u) -> np.ndarray:
-    values = np.ascontiguousarray(np.asarray(u, dtype=np.float64))
+    values = np.ascontiguousarray(as_float64_array(u, name="u"))
     expected_d = int(copula.d)
     if values.ndim != 2 or values.shape[1] != expected_d:
         raise ValueError(
@@ -372,7 +373,7 @@ def factor_parameterization_from_loadings(loadings, uniqueness_min) -> dict:
     module = _extension.load()
     result = _static_correlation_result(
         module.static_factor_parameterization_from_loadings(
-            np.ascontiguousarray(loadings, dtype=np.float64),
+            np.ascontiguousarray(as_float64_array(loadings, name="loadings")),
             float(uniqueness_min),
         ),
         module,
@@ -442,11 +443,13 @@ def estimate_factor_loadings_from_projection(
     module = _extension.load()
     result = _static_correlation_result(
         module.static_estimate_factor_loadings(
-            np.ascontiguousarray(observations, dtype=np.float64),
+            np.ascontiguousarray(as_float64_array(
+                observations, name="observations")),
             int(rank),
             float(uniqueness_min),
             int(dimension_tile),
-            np.ascontiguousarray(random_projection, dtype=np.float64),
+            np.ascontiguousarray(as_float64_array(
+                random_projection, name="random_projection")),
         ),
         module,
         "static factor loading initialization",
@@ -468,7 +471,7 @@ def prepare_equicorr_statistics(
     dimension_tile = int(dimension_tile)
     if dimension_tile < 1:
         raise ValueError("dimension_tile must be a positive integer")
-    observations = np.ascontiguousarray(np.asarray(u, dtype=np.float64))
+    observations = np.ascontiguousarray(as_float64_array(u, name="u"))
     if observations.ndim != 2 or observations.shape[1] < 2:
         raise ValueError(
             "u must be a 2D array with shape (T, d), d >= 2")

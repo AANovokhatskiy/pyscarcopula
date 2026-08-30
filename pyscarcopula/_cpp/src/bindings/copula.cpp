@@ -481,12 +481,11 @@ void bind_copula(py::module_& m) {
         .def(
             py::init([](
                 const scar::CopulaSpec& copula,
-                py::array_t<
-                    double,
-                    py::array::c_style | py::array::forcecast> u,
+                py::object u,
                 int n_threads) {
                 return scar::StaticCopulaEvaluator(
-                    copula, observations_from_array(u), n_threads);
+                    copula, observations_from_array(
+                        real_float64_array_from_object(u, "u")), n_threads);
             }),
             py::arg("copula"),
             py::arg("u"),
@@ -494,17 +493,13 @@ void bind_copula(py::module_& m) {
         .def(
             py::init([](
                 const scar::CopulaSpec& copula,
-                py::array_t<
-                    double,
-                    py::array::c_style | py::array::forcecast> sum_z,
-                py::array_t<
-                    double,
-                    py::array::c_style | py::array::forcecast> sum_z2,
+                py::object sum_z,
+                py::object sum_z2,
                 int n_threads) {
                 return scar::StaticCopulaEvaluator(
                     copula,
-                    vector_from_array(sum_z),
-                    vector_from_array(sum_z2),
+                    vector_from_array(real_float64_array_from_object(sum_z, "sum_z")),
+                    vector_from_array(real_float64_array_from_object(sum_z2, "sum_z2")),
                     n_threads);
             }),
             py::arg("copula"),

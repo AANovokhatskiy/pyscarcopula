@@ -171,11 +171,50 @@ double student_digamma_positive(double x) {
     return result;
 }
 
+double student_log_pdf_normalization(
+    std::size_t dimension, double df, double* derivative) {
+    const double half_dimension = 0.5 * static_cast<double>(dimension);
+    if (df < 32.0) {
+        if (derivative != nullptr) {
+            *derivative = 0.5 * (
+                student_digamma_positive(0.5 * df + half_dimension)
+                - student_digamma_positive(0.5 * df)) - half_dimension / df;
+        }
+        return student_log_gamma(0.5 * df + half_dimension)
+            - student_log_gamma(0.5 * df)
+            - half_dimension * (std::log(df) + std::log(kPi));
+    }
+
+    double value = -half_dimension * std::log(2.0 * kPi);
+    double slope = 0.0;
+    if (dimension % 2 != 0) {
+        // Stirling's log-gamma ratio for a half-step, through df^-11.
+        // At df >= 32 the first omitted term is below 3e-18. Keeping the
+        // half-step separate avoids losing it when df+1 rounds back to df.
+        const double inverse = 1.0 / df;
+        const double inverse2 = inverse * inverse;
+        value += inverse * (-0.25 + inverse2 * (1.0 / 24.0
+            + inverse2 * (-1.0 / 20.0 + inverse2 * (17.0 / 112.0
+            + inverse2 * (-31.0 / 36.0 + inverse2 * 691.0 / 88.0)))));
+        slope = inverse2 * (0.25 + inverse2 * (-1.0 / 8.0
+            + inverse2 * (0.25 + inverse2 * (-17.0 / 16.0
+            + inverse2 * (31.0 / 4.0 - inverse2 * 691.0 / 8.0)))));
+    }
+    // Gamma recurrence gives exact integer steps in log1p form. Its cost
+    // is linear in d, bounded by the density's existing marginal reduction.
+    for (std::size_t index = dimension % 2; index < dimension; index += 2) {
+        const double offset = static_cast<double>(index);
+        value += std::log1p(offset / df);
+        slope -= (offset / df) / (df + offset);
+    }
+    if (derivative != nullptr) {
+        *derivative = slope;
+    }
+    return value;
+}
+
 double student_pdf_value(double value, double df) {
-    const double log_pdf =
-        student_log_gamma(0.5 * (df + 1.0))
-        - student_log_gamma(0.5 * df)
-        - 0.5 * std::log(df * kPi)
+    const double log_pdf = student_log_pdf_normalization(1, df)
         - 0.5 * (df + 1.0) * std::log1p((value * value) / df);
     return std::exp(log_pdf);
 }
@@ -217,9 +256,15 @@ double student_cdf_refined_value(double value, double df) {
 }
 
 StudentDistributionParameters student_distribution_parameters(double df) {
-    const double log_beta = student_log_gamma(0.5 * (df + 1.0))
-        - student_log_gamma(0.5 * df) - student_log_gamma(0.5);
-    return {df, log_beta, log_beta - 0.5 * std::log(df)};
+    if (df < 32.0) {
+        // Preserve the beta normalization's rounding in iterative CDF
+        // inversion. Converting via log-PDF and back changes Newton stopping.
+        const double log_beta = student_log_gamma(0.5 * (df + 1.0))
+            - student_log_gamma(0.5 * df) - student_log_gamma(0.5);
+        return {df, log_beta, log_beta - 0.5 * std::log(df)};
+    }
+    const double log_pdf = student_log_pdf_normalization(1, df);
+    return {df, log_pdf + 0.5 * std::log(df), log_pdf};
 }
 
 double student_pdf_value(double value, const StudentDistributionParameters& params) {

@@ -14,6 +14,9 @@ namespace {
 
 constexpr double kStudentNormalAsymptoticDf = 1000.0;
 
+void student_quantile_large_df_refined(
+    double p, double df, double& value, double* derivative);
+
 double student_quantile_initial(double p, double df) {
     const double z = scar::math::normal_quantile(p);
     const double z2 = z * z;
@@ -39,6 +42,11 @@ double student_quantile(
     const StudentDistributionParameters* prepared = nullptr,
     double initial_quantile = std::numeric_limits<double>::quiet_NaN()) {
     p = clip_pseudo_observation(p);
+    if (df >= kStudentNormalAsymptoticDf) {
+        double value = 0.0;
+        student_quantile_large_df_refined(p, df, value, nullptr);
+        return value;
+    }
     if (p == 0.5) {
         return 0.0;
     }
@@ -121,12 +129,41 @@ void student_quantile_large_df(
     }
 }
 
+void student_quantile_large_df_refined(
+    double p, double df, double& value, double* derivative) {
+    // Expand the normalized Student CDF inverse through O(df^-6).
+    // Unlike CDF inversion, this remains well-conditioned in the normal limit.
+    student_quantile_large_df(p, df, value, derivative);
+    const double z = scar::math::normal_quantile_refined(clip_pseudo_observation(p));
+    const double s = z * z;
+    const double a4 = z * (-21.0 / 2048.0 + s * (-1.0 / 48.0
+        + s * (247.0 / 15360.0 + s * (97.0 / 11520.0 + s * 79.0 / 92160.0))));
+    const double a5 = z * (399.0 / 8192.0 + s * (-17.0 / 8192.0
+        + s * (-99.0 / 20480.0 + s * (31.0 / 12288.0
+        + s * (113.0 / 122880.0 + s * 3.0 / 40960.0)))));
+    const double a6 = z * (869.0 / 65536.0 + s * (147.0 / 4096.0
+        + s * (3263.0 / 983040.0 + s * (-229.0 / 516096.0
+        + s * (48821.0 / 185794560.0 + s * (1931.0 / 23224320.0
+        + s * 71.0 / 12386304.0))))));
+    const double inverse = 1.0 / df;
+    const double inverse2 = inverse * inverse;
+    const double inverse4 = inverse2 * inverse2;
+    value += inverse4 * (a4 + inverse * (a5 + inverse * a6));
+    if (derivative != nullptr) {
+        *derivative -= inverse4 * inverse
+            * (4.0 * a4 + inverse * (5.0 * a5 + inverse * 6.0 * a6));
+    }
+}
+
 void student_quantile_exact_with_derivative(
     double p,
     double df,
     double& value,
     double& derivative) {
-
+    if (df >= kStudentNormalAsymptoticDf) {
+        student_quantile_large_df_refined(p, df, value, &derivative);
+        return;
+    }
     value = student_quantile(p, df);
     if (value == 0.0) {
         derivative = 0.0;
@@ -159,7 +196,7 @@ bool use_large_df_quantile(
 
     // A populated dynamic PPF cache defines the point beyond which the
     // third-order Cornish-Fisher expansion is used. Static Student
-    // likelihoods carry no nodes and therefore retain exact quantiles.
+    // likelihoods carry no nodes and use the sixth-order normal-limit kernel.
     return !cache.nodes.empty()
         && df > std::max(
             kStudentNormalAsymptoticDf, cache.nodes.back());
@@ -212,27 +249,10 @@ double student_quantile_refined_value(double p, const StudentDistributionParamet
 double student_quantile_refined_value(
     double p, const StudentDistributionParameters& params, double initial_quantile) {
     const double df = params.df;
-    if (df >= 1000.0) {
-        // Refine the shared normal-limit kernel through O(df^-6). These
-        // inverse-CDF coefficients follow by expanding the normalized
-        // Student density and reverting its CDF at the normal quantile.
-        // This avoids loss of precision in large log-gamma differences.
+    if (df >= kStudentNormalAsymptoticDf) {
         double value = 0.0;
-        student_quantile_large_df(p, df, value, nullptr);
-        const double z = scar::math::normal_quantile_refined(clip_pseudo_observation(p));
-        const double s = z * z;
-        const double a4 = z * (-21.0 / 2048.0 + s * (-1.0 / 48.0
-            + s * (247.0 / 15360.0 + s * (97.0 / 11520.0 + s * 79.0 / 92160.0))));
-        const double a5 = z * (399.0 / 8192.0 + s * (-17.0 / 8192.0
-            + s * (-99.0 / 20480.0 + s * (31.0 / 12288.0
-            + s * (113.0 / 122880.0 + s * 3.0 / 40960.0)))));
-        const double a6 = z * (869.0 / 65536.0 + s * (147.0 / 4096.0
-            + s * (3263.0 / 983040.0 + s * (-229.0 / 516096.0
-            + s * (48821.0 / 185794560.0 + s * (1931.0 / 23224320.0
-            + s * 71.0 / 12386304.0))))));
-        const double inverse = 1.0 / df;
-        const double inverse2 = inverse * inverse;
-        return value + inverse2 * inverse2 * (a4 + inverse * (a5 + inverse * a6));
+        student_quantile_large_df_refined(p, df, value, nullptr);
+        return value;
     }
     return student_quantile(
         p,

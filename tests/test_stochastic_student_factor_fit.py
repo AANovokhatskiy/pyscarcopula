@@ -60,9 +60,9 @@ def test_factor_static_mle_returns_compact_result():
     assert result.success
     assert np.isfinite(result.log_likelihood)
     assert result.correlation_matrix is None
-    assert result.n_params == 8
+    assert result.n_params == 7
     assert result.diagnostics["corr_mode"] == "factor"
-    assert result.diagnostics["factor_n_params"] == 7
+    assert result.diagnostics["factor_n_params"] == 6
     assert "corr_matrix" not in result.diagnostics
     assert "correlation_matrix" not in result.model_parameters
     np.testing.assert_allclose(
@@ -190,7 +190,7 @@ def test_factor_gas_fit_is_native_and_counts_estimated_loadings():
 
     assert np.isfinite(result.log_likelihood)
     assert result.log_likelihood > -1e9
-    assert result.n_params == 10
+    assert result.n_params == 9
     assert result.diagnostics["model_score"] == "native"
     assert result.diagnostics["corr_mode"] == "factor"
     assert result.diagnostics["n_threads"] == 2
@@ -254,7 +254,7 @@ def test_factor_scar_fit_uses_prepared_native_evaluator():
 
     assert np.isfinite(result.log_likelihood)
     assert result.log_likelihood > -1e9
-    assert result.n_params == 10
+    assert result.n_params == 9
     assert result.diagnostics["selected_engine"] == "cpp"
     assert result.diagnostics["prepared_native_evaluator"] is True
     assert result.diagnostics["corr_mode"] == "factor"

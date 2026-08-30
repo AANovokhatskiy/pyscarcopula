@@ -268,18 +268,13 @@ def test_dynamic_fit_diagnostics_record_resolved_thread_count(method, kwargs):
 
 
 def test_concurrent_mutating_operations_are_serialized_per_model(monkeypatch):
+    from scipy.optimize import minimize
+
     first_entered = threading.Event()
     release_first = threading.Event()
     second_attempted = threading.Event()
     call_lock = threading.Lock()
     calls = 0
-
-    class DummyResult:
-        x = np.array([0.0])
-        fun = 0.0
-        success = True
-        nfev = 1
-        message = "ok"
 
     def fake_minimize(*args, **kwargs):
         nonlocal calls
@@ -289,10 +284,10 @@ def test_concurrent_mutating_operations_are_serialized_per_model(monkeypatch):
         if current == 1:
             first_entered.set()
             assert release_first.wait(timeout=5)
-        return DummyResult()
+        return minimize(*args, **kwargs)
 
     monkeypatch.setattr(
-        "pyscarcopula.copula.multivariate.equicorr.minimize",
+        "pyscarcopula.strategy.multivariate_mle.minimize",
         fake_minimize,
     )
     model = EquicorrGaussianCopula(d=3)

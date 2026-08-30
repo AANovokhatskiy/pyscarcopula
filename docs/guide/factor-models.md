@@ -252,7 +252,8 @@ The sequence is:
 1. Estimate `B` with tiled randomized SVD.
 2. Prepare the immutable factor operator.
 3. Hold `B` fixed and optimize constant `df`.
-4. Count the estimated identifiable factor parameters in AIC/BIC.
+4. Count the generic factor-correlation dimension in AIC/BIC, capped at
+   `d*(d-1)/2` when the requested rank saturates the correlation space.
 
 Supplied loadings skip step 1:
 
@@ -293,10 +294,17 @@ print(joint_result.diagnostics["joint_gradient_inf_norm"])
 print(joint_result.diagnostics["joint_gradient_gate"])
 ```
 
-The constructor guard is based on `d*k`. The optimizer uses
-`d*k-k*(k-1)/2` identifiable coordinates: pivot-selected anchor rows form a
-lower-triangular block with positive diagonal. Native analytical gradients
-are used for both `df` and every loading. A reported optimizer success is
+Joint fitting requires `d >= 2*k + 1`, a sufficient regime for generic
+identifiability. Higher ranks remain available for two-stage fitting. This
+guard does not certify singular or rank-deficient loading configurations.
+The row-deletion criterion behind this restriction is described in
+[the factor-identification literature](https://www.mdpi.com/2225-1146/11/4/26).
+
+The optimizer uses `d*k-k*(k-1)/2` rotation-anchored coordinates:
+pivot-selected anchor rows form a lower-triangular block with positive
+diagonal. `factor_joint_max_params` additionally bounds the optimization
+size (the `StochasticStudentCopula` guard conservatively uses `d*k`). Native
+analytical gradients are used for both `df` and every loading. A reported optimizer success is
 accepted only when uniqueness, Woodbury condition, finite objective, and
 terminal-gradient gates all pass.
 

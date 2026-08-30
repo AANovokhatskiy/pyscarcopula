@@ -1,7 +1,7 @@
 """Equicorrelation Gaussian copula."""
 
 import numpy as np
-from scipy.optimize import minimize
+from pyscarcopula.numerical._arrays import as_float64_array
 
 from pyscarcopula._types import DEFAULT_CONFIG, NumericalConfig
 from pyscarcopula._native import model_policy
@@ -113,7 +113,7 @@ class EquicorrGaussianCopula(MultivariateCopula):
                     "2D blocks") from error
 
         for source in sources:
-            block = np.asarray(source, dtype=np.float64)
+            block = as_float64_array(source, name="u_batches block")
             if block.ndim != 2 or block.shape[1] != expected_d:
                 raise ValueError(
                     f"each block must have shape (T, {expected_d}), "
@@ -352,33 +352,41 @@ class EquicorrGaussianCopula(MultivariateCopula):
         evaluator = static_likelihood.prepare(
             self, u, n_threads=config.n_threads)
 
-        def neg_ll_and_grad(x):
-            return evaluator.transformed_objective_and_gradient(
+        from pyscarcopula.strategy.multivariate_mle import (
+            StaticMLEEvaluation,
+            StaticMLEProblem,
+            run_static_multivariate_mle,
+        )
+
+        def evaluate(x):
+            value, gradient = evaluator.transformed_objective_and_gradient(
                 x[0], fail_value=config.fail_value)
+            return StaticMLEEvaluation(value, gradient)
 
         initial, fit_bounds = model_policy.equicorr_fit_policy()
-        result = minimize(
-            neg_ll_and_grad,
-            np.array([initial]),
-            jac=True,
-            method="L-BFGS-B",
-            bounds=[fit_bounds],
-            options=optimizer_options,
+        outcome = run_static_multivariate_mle(
+            StaticMLEProblem(
+                family="equicorr_gaussian",
+                initial_parameters=np.array([initial]),
+                bounds=[fit_bounds], evaluate=evaluate),
+            optimizer_options=optimizer_options,
+            fail_value=config.fail_value,
         )
-        rho_hat = self.transform(result.x)[0]
+        rho_hat = self.transform(outcome.parameters)[0]
         fitted = MultivariateMLEResult(
-            log_likelihood=-result.fun,
+            log_likelihood=-outcome.final_objective,
             method="MLE",
             copula_name=self._name,
-            success=result.success,
-            nfev=result.nfev,
-            message=str(getattr(result, "message", "")),
+            success=outcome.accepted,
+            nfev=outcome.nfev,
+            message=outcome.message,
             copula_param=rho_hat,
             parameter_count=1,
             n_observations=len(u),
             model_parameters={"rho": rho_hat},
             correlation_matrix=None,
             diagnostics={
+                **outcome.diagnostics(),
                 "n_threads": config.n_threads,
                 "model_score": "not_applicable",
                 "optimizer_gradient": "analytical",
@@ -392,7 +400,8 @@ class EquicorrGaussianCopula(MultivariateCopula):
                 "equicorrelation_rho": float(rho_hat),
             },
         )
-        self.fit_result = fitted
+        if outcome.accepted:
+            self.fit_result = fitted
         return fitted
 
     @model_state_locked
@@ -425,7 +434,7 @@ class EquicorrGaussianCopula(MultivariateCopula):
                     "SCAR-TM-OU")
             observations = data
         else:
-            observations = np.asarray(data, dtype=np.float64)
+            observations = as_float64_array(data, name="data")
             if observations.ndim != 2 or observations.shape[1] != self._d:
                 raise ValueError(
                     f"data must have shape (n_observations, {self._d})")
@@ -452,6 +461,8 @@ class EquicorrGaussianCopula(MultivariateCopula):
                     f"unexpected MLE keyword argument(s): {unexpected}")
             result = self._fit_mle(
                 observations, config=config, **optimizer_kwargs)
+            if not result.success:
+                return result
         else:
             from pyscarcopula.api import fit
             result = fit(
@@ -461,7 +472,7 @@ class EquicorrGaussianCopula(MultivariateCopula):
             self._last_prepared = observations
             self._last_u = None
         else:
-            self._last_u = observations
+            self._last_u = observations.copy()
             self._last_prepared = None
         return result
 

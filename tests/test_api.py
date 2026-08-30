@@ -728,23 +728,19 @@ class TestEquicorrGaussian:
             EquicorrGaussianCopula(d=1)
 
     def test_multivariate_mle_uses_model_optimizer_config(self, monkeypatch):
-        captured = {}
+        from scipy.optimize import minimize
 
-        class DummyResult:
-            x = np.array([0.0])
-            fun = 0.0
-            success = True
-            nfev = 1
-            message = 'ok'
+        captured = {}
 
         def fake_minimize(
                 fun, x0, jac=None, method=None, bounds=None, options=None):
             captured['options'] = options
             captured['jac'] = jac
-            return DummyResult()
+            return minimize(
+                fun, x0, jac=jac, method=method, bounds=bounds, options=options)
 
         monkeypatch.setattr(
-            'pyscarcopula.copula.multivariate.equicorr.minimize',
+            'pyscarcopula.strategy.multivariate_mle.minimize',
             fake_minimize)
 
         u = pobs(np.random.default_rng(46).standard_normal((40, 4)))

@@ -88,6 +88,22 @@ def normalize_factor_estimation(value: str) -> FactorEstimation:
     return cast(FactorEstimation, estimation)
 
 
+def factor_parameter_count(dimension: int, rank: int) -> int:
+    """Generic correlation dimension, capped by the ambient correlation space."""
+    return min(
+        dimension * rank - rank * (rank - 1) // 2,
+        cholesky_corr_n_params(dimension),
+    )
+
+
+def validate_joint_factor_rank(dimension: int, rank: int) -> None:
+    """Require the sufficient generic identifiability regime for joint fits."""
+    if dimension < 2 * rank + 1:
+        raise ValueError(
+            "joint factor estimation requires d >= 2 * factor_rank + 1 "
+            "for generic identifiability; use two-stage estimation otherwise")
+
+
 def _readonly_float_array(value: ArrayLike, *, name: str) -> FloatArray:
     array = np.array(value, dtype=np.float64, copy=True)
     if not np.all(np.isfinite(array)):
@@ -209,6 +225,8 @@ class CorrelationPolicy:
                 raise ValueError("factor_rank must satisfy 1 <= k < dimension")
             estimation = normalize_factor_estimation(
                 self.factor_estimation or "two-stage")
+            if estimation == "joint":
+                validate_joint_factor_rank(dimension, rank)
             object.__setattr__(self, "factor_rank", rank)
             object.__setattr__(self, "factor_estimation", estimation)
         elif self.factor_rank is not None or self.factor_estimation is not None:
@@ -228,9 +246,7 @@ class CorrelationPolicy:
         dense_n = cholesky_corr_n_params(dimension)
         factor_n = 0
         if mode == "factor":
-            factor_n = (
-                dimension * self.factor_rank
-                - self.factor_rank * (self.factor_rank - 1) // 2)
+            factor_n = factor_parameter_count(dimension, self.factor_rank)
         optimized_n = {
             "fixed": 0,
             "shrinkage": 1,
@@ -250,7 +266,7 @@ class CorrelationPolicy:
 
         expected_raw = self.optimized_n_params
         if mode == "factor":
-            # Factor raw parameters use a separate identifiable loading
+            # Factor raw parameters use a separate rotation-anchored loading
             # parameterization and are not materialized by this dense policy.
             expected_raw = 0
         if raw.size not in (0, expected_raw):

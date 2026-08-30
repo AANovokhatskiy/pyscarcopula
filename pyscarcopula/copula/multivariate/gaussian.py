@@ -30,6 +30,7 @@ from pyscarcopula.copula.multivariate.correlation_policy import (
     CorrelationMode,
     CorrelationPolicy,
     FactorEstimation,
+    factor_parameter_count,
     normalize_correlation_mode,
     normalize_factor_estimation,
     restore_correlation_result_metadata,
@@ -382,7 +383,7 @@ class GaussianCopula(MultivariateCopula):
         if self._corr_mode != "factor":
             raise ValueError(
                 "initialize_factor requires corr_mode='factor'")
-        u = np.asarray(data, dtype=np.float64)
+        u = as_real_array(data)
         _validate_gaussian_fit_data(u)
         if u.shape[1] != self.dimension:
             raise ValueError(
@@ -409,10 +410,7 @@ class GaussianCopula(MultivariateCopula):
     def factor_diagnostics(self):
         if self._corr_mode != "factor":
             return {}
-        identifiable = (
-            self.dimension * self._factor_rank
-            - self._factor_rank * (self._factor_rank - 1) // 2
-        )
+        identifiable = factor_parameter_count(self.dimension, self._factor_rank)
         diagnostics = {
             "corr_mode": "factor",
             "factor_rank": self._factor_rank,
@@ -485,7 +483,7 @@ class GaussianCopula(MultivariateCopula):
         n_threads = _validated_n_threads(
             config.n_threads)
         if self._corr_mode == "factor":
-            if self._factor_operator is None:
+            if self._constructor_factor_loadings is None:
                 loadings, initialization = estimate_factor_loadings(
                     u,
                     self._factor_rank,
@@ -517,7 +515,7 @@ class GaussianCopula(MultivariateCopula):
                     d=u.shape[1],
                     corr_mode="factor",
                     factor_rank=self._factor_rank,
-                    factor_loadings=self._factor_loadings,
+                    factor_loadings=self._constructor_factor_loadings,
                     factor_tile_size=self._factor_tile_size,
                     factor_uniqueness_min=self._factor_uniqueness_min,
                     factor_seed=self._factor_seed,
@@ -598,14 +596,14 @@ class GaussianCopula(MultivariateCopula):
                 self._last_u = u.copy()
             return result
 
-        if self._corr_base is not None:
-            initial_correlation = self._corr_base.copy()
+        if self._constructor_corr_base is not None:
+            initial_correlation = self._constructor_corr_base.copy()
         elif self._supplied_correlation is not None:
             initial_correlation = self._supplied_correlation.copy()
         else:
             initial_correlation = _gaussian_score_correlation(u)
         initialization_source = (
-            "corr_base" if self._corr_base is not None
+            "corr_base" if self._constructor_corr_base is not None
             else "supplied" if self._supplied_correlation is not None
             else "gaussian_score")
         estimator: CorrelationEstimator = (
@@ -782,6 +780,7 @@ class GaussianCopula(MultivariateCopula):
             *,
             n_threads=1,
             memory_budget_bytes=None):
+        """Draw uniforms; dense budgets cover output, factor budgets include workspace."""
         n = validate_integer(n, "n")
         n_threads = _validated_n_threads(n_threads)
         if rng is None:
@@ -808,6 +807,12 @@ class GaussianCopula(MultivariateCopula):
         if correlation is None:
             raise ValueError("Fit first")
         d = correlation.shape[0]
+        # Dense sampling budgets cover the returned array, as does the
+        # dense conditional API. Check before consuming random draws.
+        _validated_budget(
+            memory_budget_bytes, n * d * 8,
+            "use sample_batches(), reduce batch_rows, or increase "
+            "memory_budget_bytes")
         normal_draws = rng.standard_normal((n, d))
         return multivariate_native.gaussian_sample_from_normals(
             correlation, normal_draws, n_threads=n_threads)

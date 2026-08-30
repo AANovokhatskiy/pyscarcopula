@@ -310,7 +310,9 @@ void bind_factor(py::module_& m) {
         py::arg("uniqueness"));
     m.def(
         "static_factor_parameterization_from_loadings",
-        [](ConstArray loadings, double uniqueness_min) {
+        [](py::object loadings_input, double uniqueness_min) {
+            const auto loadings = real_float64_array_from_object(
+                loadings_input, "loadings");
             const py::buffer_info info = loadings.request();
             if (info.ndim != 2) {
                 throw std::invalid_argument("loadings must be a matrix");
@@ -414,11 +416,15 @@ void bind_factor(py::module_& m) {
         py::arg("max_norm"));
     m.def(
         "static_estimate_factor_loadings",
-        [](ConstArray observations,
+        [](py::object observations_input,
            std::size_t rank,
            double uniqueness_min,
            std::size_t dimension_tile,
-           ConstArray random_projection) {
+           py::object random_projection_input) {
+            const auto observations = real_float64_array_from_object(
+                observations_input, "observations");
+            const auto random_projection = real_float64_array_from_object(
+                random_projection_input, "random_projection");
             const py::buffer_info observation_info = observations.request();
             const py::buffer_info projection_info =
                 random_projection.request();
@@ -637,9 +643,12 @@ void bind_factor(py::module_& m) {
         "_factor_student_log_pdf_and_dlog_ddf",
         [](
             const scar::FactorCorrelationOperator& correlation,
-            ConstArray observations,
-            ConstArray df,
+            py::object observations_input,
+            py::object df_input,
             int n_threads) {
+            const auto observations = real_float64_array_from_object(
+                observations_input, "observations");
+            const auto df = real_float64_array_from_object(df_input, "df");
             const py::buffer_info observation_info =
                 observations.request();
             const std::size_t rows = checked_rows(

@@ -45,6 +45,23 @@ PreparedStudentDensity prepare_student_density(
 
 namespace {
 
+double student_shape_df_derivative(
+    double quadratic, double quadratic_derivative, double df,
+    double dimension, double log_shape) {
+    const double ratio = quadratic / df;
+    // log1p(x)-x/(1+x) starts at x^2/2. Direct subtraction loses the df
+    // score in the normal limit; this series also avoids products of df^2.
+    const double remainder = ratio < 1e-3
+        ? ratio * ratio * (0.5 + ratio * (-2.0 / 3.0
+            + ratio * (0.75 + ratio * (-0.8
+            + ratio * (5.0 / 6.0 - ratio * 6.0 / 7.0)))))
+        : log_shape - ratio / (1.0 + ratio);
+    return -0.5 * remainder
+        + 0.5 * (dimension / df) * ratio / (1.0 + ratio)
+        - 0.5 * (1.0 + dimension / df)
+            * quadratic_derivative / (1.0 + ratio);
+}
+
 bool factor_precision_product(
     const scar::FactorCorrelationOperator& correlation,
     const std::vector<double>& values,
@@ -432,13 +449,8 @@ bool student_marginal_log_pdf_from_quantile(
         - 0.5 * (df + 1.0) * marginal_shape;
     const double quantile_squared_derivative =
         2.0 * quantile * quantile_derivative;
-    const double marginal_shape_derivative =
-        (df * quantile_squared_derivative - quantile_squared)
-        / (df * (df + quantile_squared));
-    dlog_ddf =
-        marginal_constant_derivative
-        - 0.5 * marginal_shape
-        - 0.5 * (df + 1.0) * marginal_shape_derivative;
+    dlog_ddf = marginal_constant_derivative + student_shape_df_derivative(
+        quantile_squared, quantile_squared_derivative, df, 1.0, marginal_shape);
     return std::isfinite(log_pdf) && std::isfinite(dlog_ddf);
 }
 
@@ -450,14 +462,8 @@ bool student_marginal_log_pdf_constants(
     if (!std::isfinite(df) || df <= 2.0) {
         return false;
     }
-    marginal_constant =
-        student_log_gamma(0.5 * (df + 1.0))
-        - student_log_gamma(0.5 * df)
-        - 0.5 * std::log(df * kPi);
-    marginal_constant_derivative =
-        0.5 * student_digamma_positive(0.5 * (df + 1.0))
-        - 0.5 * student_digamma_positive(0.5 * df)
-        - 0.5 / df;
+    marginal_constant = student_log_pdf_normalization(
+        1, df, &marginal_constant_derivative);
     return std::isfinite(marginal_constant)
         && std::isfinite(marginal_constant_derivative);
 }
@@ -488,25 +494,18 @@ bool student_log_pdf_from_summaries(
     }
     const double dimension_value = static_cast<double>(dimension);
     const double joint_shape = std::log1p(quadratic_form / df);
+    double joint_const_derivative = 0.0;
     const double joint_log =
-        student_log_gamma(0.5 * (df + dimension_value))
-        - student_log_gamma(0.5 * df)
-        - 0.5 * dimension_value * std::log(df * kPi)
+        student_log_pdf_normalization(
+            dimension, df, compute_derivative ? &joint_const_derivative : nullptr)
         - 0.5 * logdet
         - 0.5 * (df + dimension_value) * joint_shape;
     log_pdf = joint_log - marginal_log_pdf;
     if (compute_derivative) {
-        const double joint_const_derivative =
-            0.5 * student_digamma_positive(0.5 * (df + dimension_value))
-            - 0.5 * student_digamma_positive(0.5 * df)
-            - 0.5 * dimension_value / df;
-        const double joint_shape_derivative =
-            (df * quadratic_form_derivative - quadratic_form)
-            / (df * (df + quadratic_form));
-        const double joint_dlog_ddf =
-            joint_const_derivative
-            - 0.5 * joint_shape
-            - 0.5 * (df + dimension_value) * joint_shape_derivative;
+        const double joint_dlog_ddf = joint_const_derivative
+            + student_shape_df_derivative(
+                quadratic_form, quadratic_form_derivative, df,
+                dimension_value, joint_shape);
         *dlog_ddf = joint_dlog_ddf - marginal_dlog_ddf;
     }
     return std::isfinite(log_pdf)
@@ -831,28 +830,14 @@ bool student_fill_grid_bivariate(
                 const PpfInterpolation interpolation =
                     make_ppf_interpolation(cache.nodes, df);
 
-        const double half_df = 0.5 * df;
-        const double log_df_pi = std::log(df * kPi);
-        const double joint_const =
-            student_log_gamma(half_df + 1.0)
-            - student_log_gamma(half_df)
-            - log_df_pi
-            - 0.5 * log_determinant;
-        const double marginal_const =
-            student_log_gamma(half_df + 0.5)
-            - student_log_gamma(half_df)
-            - 0.5 * log_df_pi;
+        double joint_const_derivative = 0.0;
+        double marginal_const_derivative = 0.0;
+        const double joint_const = student_log_pdf_normalization(
+            2, df, &joint_const_derivative) - 0.5 * log_determinant;
+        const double marginal_const = student_log_pdf_normalization(
+            1, df, &marginal_const_derivative);
         const double copula_const = joint_const - 2.0 * marginal_const;
 
-        const double digamma_half_df = student_digamma_positive(half_df);
-        const double joint_const_derivative =
-            0.5 * student_digamma_positive(half_df + 1.0)
-            - 0.5 * digamma_half_df
-            - 1.0 / df;
-        const double marginal_const_derivative =
-            0.5 * student_digamma_positive(half_df + 0.5)
-            - 0.5 * digamma_half_df
-            - 0.5 / df;
         const double copula_const_derivative =
             joint_const_derivative - 2.0 * marginal_const_derivative;
 
@@ -892,23 +877,13 @@ bool student_fill_grid_bivariate(
                     * (marginal_shape1 + marginal_shape2);
             const double pdf = std::exp(log_pdf);
 
-            const double joint_shape_derivative =
-                (df * dquad - quad) / (df * (df + quad));
-            const double marginal_shape1_derivative =
-                (df * 2.0 * x1 * dx1 - x1_sq)
-                / (df * (df + x1_sq));
-            const double marginal_shape2_derivative =
-                (df * 2.0 * x2 * dx2 - x2_sq)
-                / (df * (df + x2_sq));
             const double dlog_ddf =
                 copula_const_derivative
-                - 0.5 * joint_shape
-                - 0.5 * (df + 2.0) * joint_shape_derivative
-                + 0.5 * (marginal_shape1 + marginal_shape2)
-                + 0.5 * (df + 1.0)
-                    * (
-                        marginal_shape1_derivative
-                        + marginal_shape2_derivative);
+                + student_shape_df_derivative(quad, dquad, df, 2.0, joint_shape)
+                - student_shape_df_derivative(
+                    x1_sq, 2.0 * x1 * dx1, df, 1.0, marginal_shape1)
+                - student_shape_df_derivative(
+                    x2_sq, 2.0 * x2 * dx2, df, 1.0, marginal_shape2);
 
             const std::size_t output =
                 static_cast<std::size_t>(t - first_row) * K + j;

@@ -171,6 +171,11 @@ def fit(
         **constructor_kwargs,
     )
     result = strategy.fit(copula, u, **fit_kwargs)
+    multivariate_mle = is_multivariate_copula(copula) and method.upper() == "MLE"
+    if multivariate_mle and not result.success:
+        # Multivariate MLE publishes only independently accepted candidates.
+        # Preserve that atomic contract when called through the top-level API.
+        return result
     # Mirror the state synchronization of copula.fit() so convenience
     # methods (predict/sample without explicit data or result) see the
     # strategy result rather than a stale intermediate (e.g. MLE) one.
@@ -179,7 +184,7 @@ def fit(
         copula._last_prepared = u
         copula._last_u = None
     else:
-        copula._last_u = u
+        copula._last_u = u.copy() if multivariate_mle else u
         if hasattr(copula, "_last_prepared"):
             copula._last_prepared = None
     if (

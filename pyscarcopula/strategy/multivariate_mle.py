@@ -13,6 +13,74 @@ from pyscarcopula.copula.multivariate.corr_param import validate_corr_matrix
 from pyscarcopula.copula.multivariate.correlation_policy import FloatArray
 
 
+def sampling_model_from_result(copula, result):
+    """Build independent sampling state from a static result's physical values."""
+    from pyscarcopula._native.registry import native_id_for
+
+    family = native_id_for(copula)
+    if family == "EquicorrGaussian":
+        # Its sampler takes rho explicitly and has no fitted correlation state.
+        return copula
+    if family not in {"Gaussian", "Student", "StochasticStudent"}:
+        raise TypeError("result requires a static multivariate model")
+    correlation = result.correlation_matrix
+    if correlation is None:
+        loadings = result.model_parameters.get("factor_loadings")
+        if loadings is None:
+            raise ValueError("static result is missing its correlation state")
+        dimension, rank = loadings.shape
+        options = dict(
+            corr_mode="factor", factor_rank=rank, factor_loadings=loadings,
+            factor_uniqueness_min=np.finfo(np.float64).tiny)
+    else:
+        dimension = correlation.shape[0]
+        options = dict(R=correlation)
+    if copula.dimension is not None and copula.dimension != dimension:
+        raise ValueError("static result dimension does not match the model")
+    snapshot = type(copula)(d=dimension, **options)
+    if family == "Gaussian" and correlation is not None:
+        snapshot.corr = correlation.copy()
+    if family == "Student":
+        snapshot.shape = correlation
+        snapshot.df = float(result.copula_param)
+    return snapshot
+
+
+def log_likelihood_from_result(copula, u, result, *, n_threads=1):
+    """Evaluate an owned static result without reading fitted model state."""
+    from pyscarcopula._native import static as static_likelihood
+    from pyscarcopula._native.registry import native_id_for
+    from pyscarcopula.copula.multivariate.factor_correlation import FactorCorrelation
+    from pyscarcopula.copula.multivariate.factor_student import FactorStudentEvaluator
+
+    family = native_id_for(copula)
+    if family == "EquicorrGaussian":
+        return static_likelihood.prepare(
+            copula, u, n_threads=n_threads).log_likelihood(result.copula_param)
+    if family not in {"Gaussian", "Student", "StochasticStudent"}:
+        raise TypeError("result requires a static multivariate model")
+    correlation = result.correlation_matrix
+    loadings = result.model_parameters.get("factor_loadings")
+    if correlation is None:
+        if loadings is None:
+            raise ValueError("static result is missing its correlation state")
+        # The result already contains physical loadings. Do not impose the
+        # prototype's possibly different optimization uniqueness constraint.
+        operator = FactorCorrelation(
+            loadings, uniqueness_min=np.finfo(np.float64).tiny).prepare()
+        if family != "Gaussian":
+            return FactorStudentEvaluator(operator, u).evaluate(
+                result.copula_param, n_threads=n_threads).log_likelihood
+        evaluator = static_likelihood.prepare_factor_gaussian(
+            operator, u, n_threads=n_threads)
+    else:
+        prepare = (static_likelihood.prepare_gaussian if family == "Gaussian"
+                   else static_likelihood.prepare_student)
+        evaluator = prepare(correlation, u, n_threads=n_threads)
+    return evaluator.log_likelihood(
+        0.0 if family == "Gaussian" else result.copula_param)
+
+
 @dataclass(frozen=True)
 class StaticMLEEvaluation:
     """One valid objective evaluation and its unpublished candidate state."""

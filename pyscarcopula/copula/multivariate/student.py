@@ -15,6 +15,7 @@ from pyscarcopula._types import (
 from pyscarcopula._native import model_policy
 from pyscarcopula._native import validation as native_validation
 from pyscarcopula._utils import pobs
+from pyscarcopula.numerical._arrays import validate_integer
 from pyscarcopula.copula.multivariate.base import (
     MultivariateCopula,
     as_real_array,
@@ -31,9 +32,11 @@ from pyscarcopula.copula.multivariate.correlation_policy import (
     CorrelationMode,
     CorrelationPolicy,
     FactorEstimation,
+    factor_parameter_count,
     normalize_correlation_mode,
     normalize_factor_estimation,
     restore_correlation_result_metadata,
+    validate_joint_factor_rank,
 )
 from pyscarcopula.copula.multivariate.factor_correlation import (
     FactorCorrelation,
@@ -193,9 +196,9 @@ class StudentCopula(MultivariateCopula):
             self._factor_rank = _integer("factor_rank", factor_rank, minimum=1)
             if self._factor_rank >= self.dimension:
                 raise ValueError("factor_rank must satisfy 1 <= k < d")
-            expected = (
-                self.dimension * self._factor_rank
-                - self._factor_rank * (self._factor_rank - 1) // 2)
+            if estimation == "joint":
+                validate_joint_factor_rank(self.dimension, self._factor_rank)
+            expected = factor_parameter_count(self.dimension, self._factor_rank)
             if estimation == "joint" and expected > self._factor_joint_max_params:
                 raise ValueError(
                     "joint factor estimation exceeds factor_joint_max_params")
@@ -440,8 +443,8 @@ class StudentCopula(MultivariateCopula):
             optimizer_overrides=optimizer_kwargs)
 
     def _initial_dense_correlation(self, u: np.ndarray):
-        if self._corr_base is not None:
-            return self._corr_base.copy(), self._base_preprocessing
+        if self._constructor_corr_base is not None:
+            return self._base_preprocessing.correlation.copy(), self._base_preprocessing
         if self._supplied_correlation is not None:
             return self._supplied_correlation.copy(), self._supplied_preprocessing
         preprocessing = estimate_kendall_correlation(u, eps=1e-8)
@@ -507,7 +510,7 @@ class StudentCopula(MultivariateCopula):
     def _fit_factor(self, u, config, options):
         df_initial, df_bounds = model_policy.student_fit_policy(
             u.shape[1], stochastic=False)
-        if self._factor_loadings is None:
+        if self._constructor_factor_loadings is None:
             loadings, initialization = estimate_factor_loadings(
                 u, self._factor_rank,
                 uniqueness_min=self._factor_uniqueness_min,
@@ -515,8 +518,8 @@ class StudentCopula(MultivariateCopula):
                 seed=self._factor_seed,
                 oversampling=self._factor_oversampling)
         else:
-            loadings = self._factor_loadings.copy()
-            initialization = dict(self._factor_initialization_diagnostics)
+            loadings = self._constructor_factor_loadings.copy()
+            initialization = {"source": "supplied"}
         if self._factor_estimation == "joint":
             return self._fit_joint_factor(
                 u, config, options, loadings, initialization)
@@ -765,6 +768,7 @@ class StudentCopula(MultivariateCopula):
 
     @model_state_locked
     def sample(self, n, u=None, rng=None):
+        n = validate_integer(n, "n")
         if rng is None:
             rng = np.random.default_rng()
         from pyscarcopula._native import multivariate as multivariate_native
@@ -791,6 +795,7 @@ class StudentCopula(MultivariateCopula):
     @model_state_locked
     def sample_conditional(self, n, given, rng=None, *, n_threads=1):
         """Draw samples conditional on fixed copula-uniform coordinates."""
+        n = validate_integer(n, "n")
         if self.df is None:
             raise ValueError("Fit first")
         from pyscarcopula.copula.multivariate.conditional import (

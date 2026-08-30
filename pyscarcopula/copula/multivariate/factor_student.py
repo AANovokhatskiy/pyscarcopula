@@ -15,7 +15,7 @@ from pyscarcopula.copula.multivariate.factor_correlation import (
     _validated_budget,
     _validated_n_threads,
 )
-from pyscarcopula.numerical._arrays import validate_integer
+from pyscarcopula.numerical._arrays import as_float64_array, validate_integer
 
 
 def _raise_native_status(result: Mapping[str, Any], operation: str) -> None:
@@ -139,7 +139,8 @@ class FactorStudentEvaluator:
                 "correlation must be FactorCorrelation or "
                 "PreparedFactorCorrelation")
 
-        values = np.array(observations, dtype=np.float64, order="C")
+        values = np.array(as_float64_array(observations, name="observations"),
+                          dtype=np.float64, order="C")
         if (
                 values.ndim != 2
                 or values.shape[0] < 1
@@ -180,7 +181,7 @@ class FactorStudentEvaluator:
         return self._correlation.rank
 
     def _df_values(self, df):
-        values = np.asarray(df, dtype=np.float64)
+        values = as_float64_array(df, name="df")
         common = values.ndim == 0
         if common:
             values = values.reshape(1)
