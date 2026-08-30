@@ -21,6 +21,8 @@ tools/*
 !tools/allocation_probe.c
 !tools/native_dependency_audit.py
 !tools/write_release_metadata.py
+!tools/validate_installed_wheel.py
+!tools/finalize_release_artifacts.py
 !tools/validate_jacobi_sampling.py
 !tools/compare_copulae_crypto6.py
 !tools/benchmark_conditional_sampling.py

@@ -1338,7 +1338,9 @@ def test_gate4_workflow_covers_required_compilers_and_build_boundaries():
     assert "install: mingw-w64-x86_64-gcc" in source
     assert "python tools/build_cpp_tests.py --force -j 4" in source
     assert "python tools/check_python_ownership.py" in source
-    assert "python -m pyscarcopula._native.smoke" in source
+    assert "tools/validate_installed_wheel.py" in source
+    assert "wheel_validation.json" in source
+    assert "tools/write_release_metadata.py" in source
     assert "Run full non-benchmark suite against wheel" in source
     assert source.index("Verify Python-free C++ build boundary") < source.index(
         "Build strict wheel")
@@ -1446,8 +1448,11 @@ def test_gate1_runner_requires_external_append_only_artifacts(tmp_path):
 
     wheels = (ROOT / ".github/workflows/wheels.yml").read_text(
         encoding="utf-8")
-    assert 'CIBW_BUILD: "cp310-* cp311-* cp312-* cp313-* cp314-*"' in wheels
-    assert "python -m pyscarcopula._native.smoke" in wheels
+    for tag in ("cp310", "cp311", "cp312", "cp313", "cp314"):
+        assert wheels.count(f"tag: {tag}") == 1
+    assert "tools/validate_installed_wheel.py" in wheels
+    assert "CIBW_TEST_COMMAND" in wheels
+    assert "wheel_validation.json" in wheels
 
 
 def test_stateless_scar_bindings_release_gil_after_array_validation():

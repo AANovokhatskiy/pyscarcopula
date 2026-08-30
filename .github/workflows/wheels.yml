@@ -1,76 +1,245 @@
-name: Build wheels
+name: Gate 4 release wheels
 
 on:
   push:
-    branches: [master]
+    branches: [master, dev]
   pull_request:
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  build_wheels:
-    name: Build wheels on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
+  build_wheel:
+    name: wheel-${{ matrix.platform.name }}-${{ matrix.python.tag }}
+    runs-on: ${{ matrix.platform.os }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        python:
+          - version: "3.10"
+            tag: cp310
+          - version: "3.11"
+            tag: cp311
+          - version: "3.12"
+            tag: cp312
+          - version: "3.13"
+            tag: cp313
+          - version: "3.14"
+            tag: cp314
+        platform:
+          - name: linux-gcc-x86_64
+            os: ubuntu-latest
+            arch: x86_64
+          - name: windows-msvc-amd64
+            os: windows-latest
+            arch: AMD64
+          - name: macos-appleclang-x86_64
+            os: macos-15-intel
+            arch: x86_64
+          - name: macos-appleclang-arm64
+            os: macos-15
+            arch: arm64
+    env:
+      FV7_CONFIGURATION: >-
+        wheel-${{ matrix.platform.name }}-${{ matrix.python.tag }}
+      FV7_ARTIFACT_ROOT: >-
+        ${{ runner.temp }}/pyscarcopula-fv7/wheel-${{ matrix.platform.name }}-${{ matrix.python.tag }}
 
     steps:
       - uses: actions/checkout@v6
 
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python.version }}
 
-      - name: Build wheels
+      - name: Create external artifact root
+        run: >-
+          python -c "from pathlib import Path;
+          Path(r'${{ env.FV7_ARTIFACT_ROOT }}').mkdir(parents=True)"
+
+      - name: Verify runner architecture
+        run: >-
+          python -c "import platform;
+          actual=platform.machine().lower();
+          expected='${{ matrix.platform.arch }}'.lower();
+          aliases={'amd64':'x86_64','aarch64':'arm64'};
+          assert aliases.get(actual,actual)==aliases.get(expected,expected),
+          (actual,expected)"
+
+      - name: Build and test one clean wheel target
         uses: pypa/cibuildwheel@v3.4.1
         env:
-          CIBW_BUILD: "cp310-* cp311-* cp312-* cp313-* cp314-*"
+          CIBW_BUILD: "${{ matrix.python.tag }}-*"
           CIBW_BUILD_VERBOSITY: "1"
+          CIBW_OUTPUT_DIR: "${{ env.FV7_ARTIFACT_ROOT }}/wheelhouse"
           CIBW_SKIP: "*-musllinux_* *-win32 *-manylinux_i686"
-          CIBW_ARCHS_LINUX: "x86_64"
-          CIBW_ARCHS_WINDOWS: "AMD64"
-          CIBW_ARCHS_MACOS: "universal2"
-          CIBW_TEST_SKIP: "*-macosx_universal2:x86_64"
+          CIBW_ARCHS_LINUX: "${{ matrix.platform.arch }}"
+          CIBW_ARCHS_WINDOWS: "${{ matrix.platform.arch }}"
+          CIBW_ARCHS_MACOS: "${{ matrix.platform.arch }}"
+          CIBW_ENVIRONMENT: >-
+            PYSCA_CPP_STRICT=1 PYSCA_CPP_BUILD_JOBS=4
+          CIBW_BEFORE_BUILD: >-
+            python -m pip install
+            "tomli>=1.1; python_version < '3.11'" &&
+            python "{project}/tools/check_cpp_architecture.py" &&
+            python "{project}/tools/check_python_ownership.py"
           CIBW_BEFORE_TEST: >-
             python -m pip install --prefer-binary
-            "numpy>=1.22"
-            "scipy>=1.9"
+            "numpy>=1.22" "scipy>=1.9" "numba>=0.56"
+            "joblib>=1.0" "tqdm>=4.0"
           CIBW_TEST_COMMAND: >-
-            python -m pyscarcopula._native.smoke
+            python "{project}/tools/validate_installed_wheel.py"
+            --source-root "{project}"
+            --wheel "{wheel}"
+            --configuration
+            wheel-${{ matrix.platform.name }}-${{ matrix.python.tag }}
+
+      - name: Validate wheel again in a fresh venv (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          python -m venv "$RUNNER_TEMP/pyscarcopula-wheel-venv"
+          venv_python="$RUNNER_TEMP/pyscarcopula-wheel-venv/bin/python"
+          "$venv_python" -m pip install --upgrade pip
+          "$venv_python" -m pip install \
+            "$FV7_ARTIFACT_ROOT"/wheelhouse/*.whl
+          wheel=$(find "$FV7_ARTIFACT_ROOT/wheelhouse" \
+            -maxdepth 1 -name '*.whl' -print -quit)
+          cd "$RUNNER_TEMP"
+          "$venv_python" \
+            "$GITHUB_WORKSPACE/tools/validate_installed_wheel.py" \
+            --source-root "$GITHUB_WORKSPACE" \
+            --wheel "$wheel" \
+            --configuration "$FV7_CONFIGURATION" \
+            --output "$FV7_ARTIFACT_ROOT/wheel_validation.json"
+
+      - name: Validate wheel again in a fresh venv (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $venv = Join-Path $env:RUNNER_TEMP "pyscarcopula-wheel-venv"
+          python -m venv $venv
+          $venvPython = Join-Path $venv "Scripts/python.exe"
+          & $venvPython -m pip install --upgrade pip
+          $wheelDir = Join-Path $env:FV7_ARTIFACT_ROOT "wheelhouse"
+          $wheel = (Get-ChildItem -LiteralPath $wheelDir -Filter *.whl -File -ErrorAction Stop).FullName
+          & $venvPython -m pip install $wheel
+          Set-Location $env:RUNNER_TEMP
+          $validator = Join-Path $env:GITHUB_WORKSPACE "tools/validate_installed_wheel.py"
+          $validation = Join-Path $env:FV7_ARTIFACT_ROOT "wheel_validation.json"
+          & $venvPython $validator --source-root $env:GITHUB_WORKSPACE --wheel $wheel --configuration $env:FV7_CONFIGURATION --output $validation
+
+      - name: Write source, binary and toolchain provenance
+        run: >-
+          python tools/write_release_metadata.py
+          --source-root "${{ github.workspace }}"
+          --configuration "${{ env.FV7_CONFIGURATION }}"
+          --wheel-dir "${{ env.FV7_ARTIFACT_ROOT }}/wheelhouse"
+          --validation-file
+          "${{ env.FV7_ARTIFACT_ROOT }}/wheel_validation.json"
+          --test-workers 4
+          --build-jobs 4
+          --output "${{ env.FV7_ARTIFACT_ROOT }}/provenance.json"
+
+      - name: Finalize append-only wheel evidence
+        run: >-
+          python tools/finalize_release_artifacts.py
+          --source-root "${{ github.workspace }}"
+          --artifact-root "${{ env.FV7_ARTIFACT_ROOT }}"
+          --producer "Gate 4 ${{ env.FV7_CONFIGURATION }}"
 
       - uses: actions/upload-artifact@v7
         with:
-          name: wheels-${{ matrix.os }}
-          path: wheelhouse/*.whl
+          name: fv7-${{ env.FV7_CONFIGURATION }}
+          path: ${{ env.FV7_ARTIFACT_ROOT }}
+          if-no-files-found: error
 
   build_sdist:
-    name: Build sdist
+    name: Build and smoke-test sdist
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v6
-
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-
-      - name: Build sdist
+      - name: Build sdist outside checkout
         run: |
           python -m pip install build twine
-          python -m build --sdist
-          twine check dist/*
-
-      - name: Install and smoke-test sdist
+          mkdir -p "$RUNNER_TEMP/pyscarcopula-sdist"
+          python -m build --sdist \
+            --outdir "$RUNNER_TEMP/pyscarcopula-sdist"
+          twine check "$RUNNER_TEMP"/pyscarcopula-sdist/*
+      - name: Install and smoke-test sdist outside source tree
+        working-directory: ${{ runner.temp }}
         run: |
-          python -m pip install --force-reinstall dist/*.tar.gz
-          cd "$RUNNER_TEMP"
+          python -m pip install --force-reinstall \
+            "$RUNNER_TEMP"/pyscarcopula-sdist/*.tar.gz
           python -m pyscarcopula._native.smoke
-
+      - name: Finalize append-only sdist evidence
+        run: >-
+          python tools/finalize_release_artifacts.py
+          --source-root "${{ github.workspace }}"
+          --artifact-root "${{ runner.temp }}/pyscarcopula-sdist"
+          --producer "Gate 4 source distribution"
       - uses: actions/upload-artifact@v7
         with:
-          name: sdist
-          path: dist/*.tar.gz
+          name: fv7-sdist
+          path: ${{ runner.temp }}/pyscarcopula-sdist
+          if-no-files-found: error
+
+  report:
+    name: Aggregate complete wheel matrix
+    if: always()
+    needs: [build_wheel]
+    runs-on: ubuntu-latest
+    env:
+      FV7_REPORT_ROOT: ${{ runner.temp }}/pyscarcopula-fv7-report
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: fv7-wheel-*
+          path: ${{ runner.temp }}/pyscarcopula-fv7-downloaded
+      - name: Aggregate and reject incomplete CPython/platform matrix
+        run: |
+          python tools/aggregate_release_validation.py \
+            --source-root "$GITHUB_WORKSPACE" \
+            --artifacts "$RUNNER_TEMP/pyscarcopula-fv7-downloaded" \
+            --json-output "$FV7_REPORT_ROOT/platform_matrix.json" \
+            --markdown-output "$FV7_REPORT_ROOT/platform_matrix.md" \
+            --required-configuration wheel-linux-gcc-x86_64-cp310 \
+            --required-configuration wheel-linux-gcc-x86_64-cp311 \
+            --required-configuration wheel-linux-gcc-x86_64-cp312 \
+            --required-configuration wheel-linux-gcc-x86_64-cp313 \
+            --required-configuration wheel-linux-gcc-x86_64-cp314 \
+            --required-configuration wheel-windows-msvc-amd64-cp310 \
+            --required-configuration wheel-windows-msvc-amd64-cp311 \
+            --required-configuration wheel-windows-msvc-amd64-cp312 \
+            --required-configuration wheel-windows-msvc-amd64-cp313 \
+            --required-configuration wheel-windows-msvc-amd64-cp314 \
+            --required-configuration wheel-macos-appleclang-x86_64-cp310 \
+            --required-configuration wheel-macos-appleclang-x86_64-cp311 \
+            --required-configuration wheel-macos-appleclang-x86_64-cp312 \
+            --required-configuration wheel-macos-appleclang-x86_64-cp313 \
+            --required-configuration wheel-macos-appleclang-x86_64-cp314 \
+            --required-configuration wheel-macos-appleclang-arm64-cp310 \
+            --required-configuration wheel-macos-appleclang-arm64-cp311 \
+            --required-configuration wheel-macos-appleclang-arm64-cp312 \
+            --required-configuration wheel-macos-appleclang-arm64-cp313 \
+            --required-configuration wheel-macos-appleclang-arm64-cp314
+      - name: Finalize platform-matrix evidence
+        run: >-
+          python tools/finalize_release_artifacts.py
+          --source-root "${{ github.workspace }}"
+          --artifact-root "${{ env.FV7_REPORT_ROOT }}"
+          --producer "Gate 4 complete wheel matrix"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: fv7-platform-matrix
+          path: ${{ env.FV7_REPORT_ROOT }}
+          if-no-files-found: error
