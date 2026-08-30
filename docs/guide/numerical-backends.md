@@ -516,7 +516,7 @@ latent coordinate.
 | `adaptive_require_pass` | strategy kwarg | `False` | Raise instead of returning an exhausted adaptive-order result when no candidate passes. |
 | `spectral_basis_order` / `basis_order` | strategy kwarg | `32` | Number of Jacobi basis functions. |
 | `spectral_quad_order` / `quad_order` | strategy kwarg | auto | Jacobi quadrature order; default is `max(2 * basis_order + 16, 48)`. |
-| `analytical_grad` | strategy kwarg | `False` | Passes the Jacobi matrix-filter Jacobian to the optimizer. Fully analytical for `local_fixed`; semi-analytical for `local`, `spectral_matrix`, and `auto`. Not available with `spectral_coeff`. |
+| `analytical_grad` | strategy kwarg | `False` | Passes a model-provided Jacobian to the optimizer. Fully analytical for `local_fixed`; semi-analytical for `local`, `spectral_matrix`, and `auto`; native finite differences for `spectral_coeff`. |
 | `negative_mass_tol` | strategy kwarg | `1e-5` | Maximum spectral truncation noise that may be clipped and renormalized into a probability transition. Larger negative mass makes `auto` fall back and makes explicit `spectral_matrix` fail unless `clip_negative=True`. |
 | `gh_order` | strategy kwarg | `5` | Gauss-Hermite order for the local Lamperti transition. |
 | `theta_cap` | strategy kwarg | `None` | Optional cap on the copula parameter after mapping from tau. Useful for very high positive dependence. |
@@ -585,8 +585,26 @@ cannot mix spectral and local objectives. Analytical-gradient fits also
 recompute the ordinary objective at the final point and report
 `final_objective_consistent` in result diagnostics.
 `transition_method='spectral_coeff'` uses coefficient-space filtering instead
-of a transition matrix. It is available for diagnostic comparisons and does
-not support the analytical-gradient option.
+of a transition matrix. It is available for diagnostic comparisons. With
+`analytical_grad=True`, the native evaluator computes the complete objective
+gradient by central finite differences and reports
+`gradient_kind='native_finite_difference'`.
+
+Fit and history-dependent evaluations need `T >= 2` to define
+`dt = 1 / (T - 1)`. A prepared evaluator with one observation can still
+condition an existing state. Native observation inputs must be finite and in
+`[0, 1]`; out-of-range data are rejected before copula evaluation. State
+conditioning and fixed-draw sampling require strictly increasing tau atoms in
+`[0, 1]` and finite nonnegative masses with a finite positive total. Masses
+need not sum to one: both operations normalize the measure without mutating
+the caller's arrays. If conditioning has no finite likelihood at any
+positive-mass atom, it retains the normalized prior.
+
+Prepared-evaluator construction, state conditioning, and fixed-draw state
+sampling reject complex inputs before conversion to `float64`, including
+complex NumPy scalars stored in object arrays. This applies to both the Python
+facade and direct native bindings. Real lists, integer/float arrays, and real
+object arrays retain their supported conversion behavior.
 
 #### Unconditional Jacobi sampling
 

@@ -8,7 +8,10 @@ from pyscarcopula._native.threads import validate_n_threads
 def as_float64_array(value, *, name="array"):
     """Return a real float64 array without lossy complex coercion."""
     array = np.asarray(value)
-    if np.issubdtype(array.dtype, np.complexfloating):
+    if np.issubdtype(array.dtype, np.complexfloating) or (
+            array.dtype.kind == "O" and any(
+                isinstance(item, (complex, np.complexfloating))
+                for item in array.flat)):
         raise TypeError(f"{name} must contain real values, not complex values")
     if type(array) is np.ndarray and array.dtype == np.float64:
         return array

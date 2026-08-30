@@ -25,34 +25,18 @@ bool valid_draw(double value) noexcept {
     return std::isfinite(value) && value >= 0.0 && value < 1.0;
 }
 
-bool valid_probability_vector(
-    const std::vector<double>& values,
-    double& total) noexcept {
-
-    total = 0.0;
-    if (values.empty()) {
-        return false;
-    }
-    for (double value : values) {
-        if (!std::isfinite(value) || value < 0.0) {
-            return false;
-        }
-        total += value;
-    }
-    return std::isfinite(total) && total > 0.0;
-}
-
 std::size_t select_index(
     const double* probabilities,
     std::size_t count,
-    double /* total */,
+    double total,
     double draw) noexcept {
 
-    const double target = draw;
     double cumulative = 0.0;
     for (std::size_t index = 0; index < count; ++index) {
         cumulative += probabilities[index];
-        if (target < cumulative) {
+        // Divide the CDF, not the draw: multiplying a draw by a subnormal
+        // total can round across an atom boundary and bias the sample.
+        if (draw < cumulative / total) {
             return index;
         }
     }
@@ -112,14 +96,14 @@ JacobiTrajectoryResult sample_stationary_only(
         tau = rule.value.tau;
         weights = rule.value.weights;
     }
-    double total = 0.0;
-    if (tau.size() != weights.size()
-        || !valid_probability_vector(weights, total)) {
+    const JacobiScalarResult mass = validate_jacobi_state_distribution(
+        tau, weights);
+    if (!mass.is_ok()) {
         result.status = Status::NumericalFailure;
         return result;
     }
     const std::size_t index = select_index(
-        weights.data(), weights.size(), total, uniform);
+        weights.data(), weights.size(), mass.value, uniform);
     result.value.tau = {tau[index]};
     result.value.draws_used = 1;
     return result;
@@ -140,8 +124,9 @@ JacobiTrajectoryResult sample_dense(
         result.status = Status::InvalidSize;
         return result;
     }
-    double stationary_total = 0.0;
-    if (!valid_probability_vector(transition.weights, stationary_total)) {
+    const JacobiScalarResult mass = validate_jacobi_state_distribution(
+        transition.tau, transition.weights);
+    if (!mass.is_ok()) {
         result.status = Status::NumericalFailure;
         return result;
     }
@@ -155,7 +140,7 @@ JacobiTrajectoryResult sample_dense(
 
     result.value.tau.resize(uniforms.size());
     std::size_t state = select_index(
-        transition.weights.data(), order, stationary_total, uniforms[0]);
+        transition.weights.data(), order, mass.value, uniforms[0]);
     result.value.tau[0] = transition.tau[state];
     for (std::size_t observation = 1;
          observation < uniforms.size(); ++observation) {
@@ -202,8 +187,9 @@ JacobiTrajectoryResult sample_sparse(
         result.status = Status::InvalidSize;
         return result;
     }
-    double stationary_total = 0.0;
-    if (!valid_probability_vector(transition.weights, stationary_total)) {
+    const JacobiScalarResult mass = validate_jacobi_state_distribution(
+        transition.tau, transition.weights);
+    if (!mass.is_ok()) {
         result.status = Status::NumericalFailure;
         return result;
     }
@@ -217,7 +203,7 @@ JacobiTrajectoryResult sample_sparse(
 
     result.value.tau.resize(uniforms.size());
     std::size_t state = select_index(
-        transition.weights.data(), order, stationary_total, uniforms[0]);
+        transition.weights.data(), order, mass.value, uniforms[0]);
     result.value.tau[0] = transition.tau[state];
     for (std::size_t observation = 1;
          observation < uniforms.size(); ++observation) {
@@ -470,19 +456,13 @@ JacobiStateSampleResult sample_jacobi_state_distribution(
         || (needs_jitter && jitter_draws.size() != selection_draws.size())) {
         return failure<JacobiStateSampleResult>(Status::InvalidSize);
     }
-    double probability_total = 0.0;
-    if (!valid_probability_vector(probability, probability_total)) {
-        return failure<JacobiStateSampleResult>(Status::InvalidParameter);
-    }
-    for (std::size_t index = 0; index < tau.size(); ++index) {
-        if (!std::isfinite(tau[index])
-            || tau[index] < 0.0 || tau[index] > 1.0
-            || (index > 0 && !(tau[index] > tau[index - 1]))) {
-            JacobiStateSampleResult result = failure<JacobiStateSampleResult>(
-                Status::InvalidParameter);
-            result.failure.index = static_cast<std::int64_t>(index);
-            return result;
-        }
+    const JacobiScalarResult mass = validate_jacobi_state_distribution(
+        tau, probability);
+    if (!mass.is_ok()) {
+        JacobiStateSampleResult result = failure<JacobiStateSampleResult>(
+            mass.status);
+        result.failure = mass.failure;
+        return result;
     }
     for (std::size_t index = 0; index < selection_draws.size(); ++index) {
         if (!valid_draw(selection_draws[index])
@@ -502,7 +482,7 @@ JacobiStateSampleResult sample_jacobi_state_distribution(
             const std::size_t index = select_index(
                 probability.data(),
                 probability.size(),
-                probability_total,
+                mass.value,
                 selection_draws[draw]);
             double sampled_tau = tau[index];
             if (needs_jitter) {

@@ -102,6 +102,31 @@ JacobiMemoryResult finish_memory_estimate(
 
 }  // namespace
 
+JacobiScalarResult validate_jacobi_state_distribution(
+    const std::vector<double>& tau,
+    const std::vector<double>& probability) noexcept {
+
+    if (tau.empty() || tau.size() != probability.size()) {
+        return failure<JacobiScalarResult>(Status::InvalidSize);
+    }
+    JacobiScalarResult result;
+    for (std::size_t index = 0; index < tau.size(); ++index) {
+        if (!std::isfinite(tau[index])
+            || tau[index] < 0.0 || tau[index] > 1.0
+            || (index > 0 && !(tau[index] > tau[index - 1]))
+            || !std::isfinite(probability[index]) || probability[index] < 0.0) {
+            result.status = Status::InvalidParameter;
+            result.failure.index = static_cast<std::int64_t>(index);
+            return result;
+        }
+        result.value += probability[index];
+    }
+    if (!std::isfinite(result.value) || !(result.value > 0.0)) {
+        result.status = Status::InvalidParameter;
+    }
+    return result;
+}
+
 Status validate_jacobi_params(
     const JacobiParams& params,
     double stationary_shape_max) noexcept {

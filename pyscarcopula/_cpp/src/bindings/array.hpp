@@ -17,6 +17,11 @@ using IntArray = pybind11::array_t<
     int,
     pybind11::array::c_style | pybind11::array::forcecast>;
 
+/// Reject complex inputs before forcecast can discard their imaginary part.
+Float64Array real_float64_array_from_object(
+    pybind11::handle values,
+    const char* name);
+
 std::vector<std::vector<double>> observations_from_array(Float64Array values);
 scar::ObservationView observation_view_from_array(
     int expected_dimension,

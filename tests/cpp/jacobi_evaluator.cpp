@@ -7,6 +7,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <limits>
 #include <stdexcept>
 #include <vector>
 
@@ -329,6 +330,69 @@ int run_jacobi_evaluator_tests() {
     }
     if (!rejected_independent) {
         return 11;
+    }
+
+    for (double value : {-0.1, 1.1, std::numeric_limits<double>::quiet_NaN(),
+                         std::numeric_limits<double>::infinity()}) {
+        auto invalid_observations = observations;
+        invalid_observations[0] = value;
+        bool rejected = false;
+        try {
+            scar::PreparedScarJacobiEvaluator invalid(
+                copula, invalid_observations, 8, 2,
+                config(scar::JacobiTransitionMethod::Local,
+                       scar::JacobiTransitionStorage::Dense));
+        } catch (const std::invalid_argument&) {
+            rejected = true;
+        }
+        if (!rejected) {
+            return 12;
+        }
+    }
+
+    for (const auto& tau : std::vector<std::vector<double>>{
+             {-0.1, 0.8}, {0.2, 1.1}, {0.8, 0.2}, {0.2, 0.2}}) {
+        const auto invalid = evaluator.condition_state(tau, {0.5, 0.5}, {0.5, 0.5});
+        if (invalid.is_ok() || !invalid.value.probability.empty()) {
+            return 13;
+        }
+    }
+    for (const auto& probability : std::vector<std::vector<double>>{
+             {0.0, 0.0}, {-0.1, 1.1},
+             {std::numeric_limits<double>::max(), std::numeric_limits<double>::max()}}) {
+        if (evaluator.condition_state({0.2, 0.8}, probability, {0.5, 0.5}).is_ok()) {
+            return 14;
+        }
+    }
+    for (const auto& observation : std::vector<std::array<double, 2>>{
+             {-0.1, 0.5}, {0.5, 1.1}}) {
+        if (evaluator.condition_state({0.2, 0.8}, {0.5, 0.5}, observation).is_ok()) {
+            return 15;
+        }
+    }
+
+    // One-row evaluators are used for conditioning, not for a time transition.
+    auto single_config = config(scar::JacobiTransitionMethod::Local,
+                                scar::JacobiTransitionStorage::Dense);
+    single_config.transition.numerical.n_obs = 1;
+    scar::PreparedScarJacobiEvaluator single(
+        copula, {0.5, 0.5}, 1, 2, single_config);
+    const auto reference = single.condition_state({0.2, 0.8}, {0.5, 0.5}, {0.5, 0.5});
+    if (!reference.is_ok() || single.loglik(params).is_ok()) {
+        return 16;
+    }
+    for (double scale : {0.2, 2.0, 1e-200, 1e200, 1e-320}) {
+        const auto scaled = single.condition_state(
+            {0.2, 0.8}, {0.5 * scale, 0.5 * scale}, {0.5, 0.5});
+        if (!scaled.is_ok() || !normalized(scaled.value.probability)
+            || std::abs(scaled.value.probability[0]
+                        - reference.value.probability[0]) > 1e-12) {
+            return 17;
+        }
+    }
+    const auto fallback = single.condition_state({0.2, 0.8}, {2.0, 2.0}, {0.0, 1.0});
+    if (!fallback.is_ok() || fallback.value.probability != std::vector<double>{0.5, 0.5}) {
+        return 18;
     }
     return 0;
 }

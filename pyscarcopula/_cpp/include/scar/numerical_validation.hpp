@@ -48,6 +48,10 @@ ClipResult clip_open_unit(DoubleView values, double epsilon);
 Result<bool> open_unit_clip_required(DoubleView values, double epsilon);
 bool objective_is_invalid(double value) noexcept;
 
+/// Range validation without fit-specific identifiability restrictions.
+NumericalValidationResult validate_pseudo_observations(
+    DoubleView values) noexcept;
+
 NumericalValidationResult validate_fit_observations(
     DoubleView values,
     std::size_t rows,

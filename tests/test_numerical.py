@@ -1,4 +1,6 @@
 """Numerical kernel regression tests."""
+import warnings
+
 import numpy as np
 import pytest
 
@@ -29,6 +31,22 @@ def test_array_normalization_rejects_complex_values_without_lossy_cast():
 
     with pytest.raises(TypeError, match="real values"):
         as_float64_array(values, name="observations")
+
+
+@pytest.mark.parametrize("scalar", [complex, np.complex64, np.complex128])
+@pytest.mark.parametrize("imaginary", [0.0, 1.0])
+def test_array_normalization_rejects_complex_object_scalars(scalar, imaginary):
+    values = np.array([scalar(0.5 + imaginary * 1j)], dtype=object)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with pytest.raises(TypeError, match="real values"):
+            as_float64_array(values, name="observations")
+    assert not caught
+
+
+def test_array_normalization_preserves_real_object_coercion():
+    values = np.array([np.float32(0.5), 1, "0.25"], dtype=object)
+    np.testing.assert_array_equal(as_float64_array(values), [0.5, 1.0, 0.25])
 
 
 def test_pseudo_observation_validation_is_reusable_and_boundary_aware():

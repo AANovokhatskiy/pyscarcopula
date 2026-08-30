@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import inspect
+import warnings
 
 import numpy as np
+import pytest
 
 from pyscarcopula import GumbelCopula, IndependentCopula
 from pyscarcopula._native import jacobi as jacobi_native
@@ -145,6 +147,104 @@ def test_predictive_grid_sampling_and_tau_mapping_are_native():
 
     np.testing.assert_array_equal(actual, expected)
     np.testing.assert_array_equal(actual_rng.random(8), expected_rng.random(8))
+
+
+@pytest.mark.parametrize("mode", ["grid", "histogram"])
+@pytest.mark.parametrize("scale", [
+    0.2, 2.0, 1e-200, 1e200, 2.0 * np.nextafter(0.0, 1.0),
+])
+def test_state_sampler_is_invariant_to_probability_mass_scale(mode, scale):
+    tau = np.array([0.2, 0.8])
+    probability = np.array([0.5, 0.5]) * scale
+    draws = np.array([0.0, 0.2, 0.5, 0.9])
+    jitter = np.full(4, 0.5) if mode == "histogram" else np.empty(0)
+    before = probability.copy()
+    sampled, _, diagnostics = jacobi_native.sample_state_distribution_fixed_draws(
+        GumbelCopula(), tau, probability, draws, jitter, mode=mode)
+
+    expected = [0.35, 0.35, 0.65, 0.65] if mode == "histogram" else [
+        0.2, 0.2, 0.8, 0.8]
+    np.testing.assert_allclose(sampled, expected, rtol=0.0, atol=1e-15)
+    np.testing.assert_array_equal(probability, before)
+    assert diagnostics["selection_draws_used"] == 4
+    assert diagnostics["jitter_draws_used"] == len(jitter)
+
+
+@pytest.mark.parametrize("probability", [
+    [0.0, 0.0], [-0.1, 1.1], [np.nan, 1.0], [np.inf, 1.0],
+    [np.finfo(float).max, np.finfo(float).max],
+])
+def test_state_sampler_rejects_invalid_probability_mass(probability):
+    with pytest.raises(ValueError):
+        jacobi_native.sample_state_distribution_fixed_draws(
+            GumbelCopula(), [0.2, 0.8], probability, [0.2], [], mode="grid")
+
+
+@pytest.mark.parametrize("raw_binding", [False, True])
+@pytest.mark.parametrize("argument", [
+    "tau", "probability", "selection_draws", "jitter_draws",
+])
+@pytest.mark.parametrize("dtype", [np.complex64, object])
+def test_state_sampler_rejects_complex_before_cast(raw_binding, argument, dtype):
+    values = dict(tau=np.array([0.2, 0.8]), probability=np.array([0.5, 0.5]),
+                  selection_draws=np.array([0.2]), jitter_draws=np.array([0.5]))
+    values[argument] = np.array(
+        [np.complex64(value + 1j) for value in values[argument]], dtype=dtype)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with pytest.raises(TypeError, match="complex"):
+            if raw_binding:
+                from pyscarcopula._native import _descriptors
+
+                module = load()
+                spec = _descriptors.make_copula_ops_spec(module, GumbelCopula())
+                module.jacobi_sample_state_distribution(
+                    spec, **values, mode=module.JacobiStateSamplingMode.Histogram)
+            else:
+                jacobi_native.sample_state_distribution_fixed_draws(
+                    GumbelCopula(), **values, mode="histogram")
+    assert not caught
+
+
+@pytest.mark.parametrize("raw_binding", [False, True])
+@pytest.mark.parametrize("dtype", [np.float32, np.int64, object])
+def test_state_sampler_preserves_real_input_coercion(raw_binding, dtype):
+    tau = np.array([0.25, 0.75], dtype=np.float32)
+    probability = np.array([1, 1], dtype=dtype)
+    draws = np.array([0], dtype=dtype)
+    if raw_binding:
+        from pyscarcopula._native import _descriptors
+
+        module = load()
+        spec = _descriptors.make_copula_ops_spec(module, GumbelCopula())
+        result = module.jacobi_sample_state_distribution(
+            spec, tau, probability, draws, [], module.JacobiStateSamplingMode.Grid)
+        assert result["status"] == 0
+        actual = result["tau"]
+    else:
+        actual, _, _ = jacobi_native.sample_state_distribution_fixed_draws(
+            GumbelCopula(), tau, probability, draws, [], mode="grid")
+    np.testing.assert_array_equal(actual, [0.25])
+
+
+@pytest.mark.parametrize("field", ["z_grid", "prob"])
+@pytest.mark.parametrize("dtype", [np.complex64, object])
+@pytest.mark.parametrize("mode", ["grid", "histogram"])
+def test_state_sampling_rejects_complex_before_rng_draws(field, dtype, mode):
+    values = dict(z_grid=np.array([0.2, 0.8]), prob=np.array([0.5, 0.5]))
+    values[field] = np.array(
+        [np.complex64(value + 1j) for value in values[field]], dtype=dtype)
+    state = PredictiveState(
+        method="SCAR-TM-JACOBI", horizon="next", kind="grid", **values)
+    actual_rng = np.random.default_rng(8120)
+    expected_rng = np.random.default_rng(8120)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with pytest.raises(TypeError, match="complex"):
+            SCARJacobiStrategy().sample_params(
+                GumbelCopula(), state, 4, rng=actual_rng, predictive_r_mode=mode)
+    assert not caught
+    np.testing.assert_array_equal(actual_rng.random(4), expected_rng.random(4))
 
 
 def test_predictive_histogram_preserves_rng_calls_with_native_cells():

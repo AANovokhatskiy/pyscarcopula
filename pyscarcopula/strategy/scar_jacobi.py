@@ -16,6 +16,8 @@ from pyscarcopula._types import (
     jacobi_params,
 )
 from pyscarcopula.numerical._arrays import (
+    as_float64_array,
+    as_pseudo_observation_array,
     validate_float64_allocation,
     validate_positive_int,
 )
@@ -564,6 +566,10 @@ class SCARJacobiStrategy:
         reject_unknown_strategy_kwargs("SCAR-TM-JACOBI", kwargs)
         self._check_kendall_mapping(copula)
         u = validate_copula_data(copula, u)
+        if len(u) < 2:
+            raise ValueError(
+                "SCAR-TM-JACOBI fit requires at least two observations "
+                "to define dt = 1 / (T - 1)")
         if alpha0 is None:
             alpha0, initialization = self._initial_point(
                 copula, u, initial_mle_result)
@@ -857,12 +863,12 @@ class SCARJacobiStrategy:
     def condition_state(self, copula, state, observation, result, **kwargs):
         if observation is None or state.kind != 'grid':
             return state
-        u = np.asarray(observation, dtype=np.float64)
+        u = as_pseudo_observation_array(observation, name="observation")
         if u.ndim != 2 or u.shape[1] != 2 or len(u) == 0:
             return state
 
-        tau_grid = np.asarray(state.z_grid, dtype=np.float64)
-        prob = np.asarray(state.prob, dtype=np.float64)
+        tau_grid = as_float64_array(state.z_grid, name="tau")
+        prob = as_float64_array(state.prob, name="probability")
         evaluator = self._prepared_evaluator(u[:1], copula)
         conditioned_tau, weights = evaluator.condition_state(
             tau_grid,
@@ -897,16 +903,18 @@ class SCARJacobiStrategy:
         if mode not in {'grid', 'histogram'}:
             raise ValueError(
                 "predictive_r_mode must be 'grid' or 'histogram'")
+        tau = as_float64_array(state.z_grid, name="tau")
+        probability = as_float64_array(state.prob, name="probability")
         selection_draws = rng.uniform(0.0, 1.0, size=n)
         jitter_draws = (
             rng.uniform(0.0, 1.0, size=n)
-            if mode == 'histogram' and len(state.z_grid) > 1
+            if mode == 'histogram' and len(tau) > 1
             else np.empty(0, dtype=np.float64)
         )
         _, parameters, _ = jacobi_native.sample_state_distribution_fixed_draws(
             copula,
-            state.z_grid,
-            state.prob,
+            tau,
+            probability,
             selection_draws,
             jitter_draws,
             mode=mode,

@@ -1,4 +1,5 @@
 from pathlib import Path
+import warnings
 
 import numpy as np
 import pytest
@@ -29,6 +30,167 @@ def _evaluator(**kwargs):
     options.update(kwargs)
     return jacobi_native.PreparedScarJacobiEvaluator(
         OBSERVATIONS, GumbelCopula(), **options)
+
+
+@pytest.mark.parametrize("raw_binding", [False, True])
+@pytest.mark.parametrize("bad_value", [-0.1, 1.1, np.nan, np.inf, -np.inf])
+def test_prepared_evaluator_rejects_invalid_observations(raw_binding, bad_value):
+    observations = OBSERVATIONS.copy()
+    observations[0, 0] = bad_value
+    with pytest.raises(ValueError):
+        if raw_binding:
+            from pyscarcopula._native import _descriptors
+
+            module = jacobi_native.load()
+            config = module.JacobiEvaluatorConfig()
+            config.transition.numerical.n_obs = len(observations)
+            spec = _descriptors.make_copula_ops_spec(module, GumbelCopula())
+            module.PreparedScarJacobiEvaluator(spec, observations, config)
+        else:
+            jacobi_native.PreparedScarJacobiEvaluator(
+                observations, GumbelCopula())
+
+
+@pytest.mark.parametrize("raw_binding", [False, True])
+@pytest.mark.parametrize("dtype", [np.complex64, np.complex128, object])
+def test_prepared_evaluator_rejects_lossy_complex_coercion(raw_binding, dtype):
+    observations = np.array([[np.complex64(0.5 + 1j)] * 2], dtype=dtype)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with pytest.raises(TypeError, match="complex"):
+            if raw_binding:
+                from pyscarcopula._native import _descriptors
+
+                module = jacobi_native.load()
+                spec = _descriptors.make_copula_ops_spec(module, GumbelCopula())
+                module.PreparedScarJacobiEvaluator(
+                    spec, observations, module.JacobiEvaluatorConfig())
+            else:
+                jacobi_native.PreparedScarJacobiEvaluator(
+                    observations, GumbelCopula())
+    assert not caught
+
+
+@pytest.mark.parametrize("raw_binding", [False, True])
+@pytest.mark.parametrize("argument", ["tau", "probability", "observation"])
+@pytest.mark.parametrize("dtype", [np.complex64, object])
+def test_conditioning_rejects_complex_before_cast(raw_binding, argument, dtype):
+    values = dict(tau=np.array([0.2, 0.8]), probability=np.array([0.5, 0.5]),
+                  observation=np.array([0.5, 0.5]))
+    values[argument] = np.array(
+        [np.complex64(value + 1j) for value in values[argument]], dtype=dtype)
+    evaluator = _evaluator()
+    target = evaluator._native if raw_binding else evaluator
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with pytest.raises(TypeError, match="complex"):
+            target.condition_state(**values)
+    assert not caught
+
+
+@pytest.mark.parametrize("raw_binding", [False, True])
+@pytest.mark.parametrize("dtype", [np.float32, np.int64, object])
+def test_conditioning_preserves_real_input_coercion(raw_binding, dtype):
+    evaluator = _evaluator()
+    tau = np.array([0.2, 0.8], dtype=np.float32)
+    probability = np.array([1, 1], dtype=dtype)
+    observation = np.array([0, 1], dtype=dtype)
+    if raw_binding:
+        result = evaluator._native.condition_state(tau, probability, observation)
+        assert result["status"] == 0
+        actual = result["probability"]
+    else:
+        _, actual = evaluator.condition_state(tau, probability, observation)
+    np.testing.assert_array_equal(actual, [0.5, 0.5])
+
+
+@pytest.mark.parametrize("layout", ["strided", "fortran", "read_only"])
+def test_prepared_evaluator_preserves_supported_observation_buffers(layout):
+    observations = {
+        "strided": np.repeat(OBSERVATIONS, 2, axis=0)[::2],
+        "fortran": np.asfortranarray(OBSERVATIONS),
+        "read_only": OBSERVATIONS.copy(),
+    }[layout]
+    if layout == "read_only":
+        observations.flags.writeable = False
+    before = observations.copy()
+    evaluator = jacobi_native.PreparedScarJacobiEvaluator(
+        observations, GumbelCopula(), basis_order=4, quad_order=16, gh_order=3)
+    assert evaluator.loglik(*PARAMS) == _evaluator().loglik(*PARAMS)
+    np.testing.assert_array_equal(observations, before)
+
+
+@pytest.mark.parametrize("raw_binding", [False, True])
+@pytest.mark.parametrize("tau,probability,observation", [
+    ([-0.1, 0.8], [0.5, 0.5], [0.5, 0.5]),
+    ([0.2, 1.1], [0.5, 0.5], [0.5, 0.5]),
+    ([0.8, 0.2], [0.5, 0.5], [0.5, 0.5]),
+    ([0.2, 0.2], [0.5, 0.5], [0.5, 0.5]),
+    ([0.2, 0.8], [0.0, 0.0], [0.5, 0.5]),
+    ([0.2, 0.8], [-0.1, 1.1], [0.5, 0.5]),
+    ([0.2, 0.8], [np.finfo(float).max] * 2, [0.5, 0.5]),
+    ([0.2, 0.8], [0.5, 0.5], [-0.1, 0.5]),
+    ([0.2, 0.8], [0.5, 0.5], [0.5, 1.1]),
+])
+def test_conditioning_rejects_invalid_state_or_observation(
+        raw_binding, tau, probability, observation):
+    evaluator = _evaluator()
+    if raw_binding:
+        result = evaluator._native.condition_state(
+            np.array(tau), np.array(probability), np.array(observation))
+        assert result["status"] != 0
+        assert len(result["probability"]) == 0
+    else:
+        with pytest.raises(ValueError):
+            evaluator.condition_state(tau, probability, observation)
+
+
+@pytest.mark.parametrize("scale", [0.2, 2.0, 1e-200, 1e200, 1e-320])
+def test_singleton_evaluator_can_condition_scaled_state_without_mutation(scale):
+    evaluator = jacobi_native.PreparedScarJacobiEvaluator(
+        [[0.5, 0.5]], GumbelCopula())
+    tau = np.array([0.2, 0.8])
+    probability = np.array([0.5, 0.5]) * scale
+    before = probability.copy()
+    _, reference = evaluator.condition_state(tau, [0.5, 0.5], [0.5, 0.5])
+    actual_tau, actual = evaluator.condition_state(tau, probability, [0.5, 0.5])
+    np.testing.assert_array_equal(actual_tau, tau)
+    np.testing.assert_allclose(actual, reference, rtol=1e-12, atol=1e-14)
+    np.testing.assert_allclose(actual.sum(), 1.0, rtol=0.0, atol=2e-15)
+    np.testing.assert_array_equal(probability, before)
+
+
+def test_conditioning_zero_likelihood_keeps_a_normalized_prior():
+    evaluator = _evaluator()
+    _, probability = evaluator.condition_state([0.2, 0.8], [2.0, 2.0], [0.0, 1.0])
+    np.testing.assert_array_equal(probability, [0.5, 0.5])
+
+
+@pytest.mark.parametrize("scale", [1.0, 1e300, 1e-320])
+@pytest.mark.parametrize("observation", [[0.5, 0.5], [0.31, 0.79]])
+def test_conditioning_matches_closed_form_gumbel_bayes_update(scale, observation):
+    tau = np.array([0.2, 0.8, 0.9])
+    probability = np.array([0.3, 0.7, 0.0]) * scale
+    # Differentiate C(u,v) = exp(-((-log(u))**theta
+    #                            + (-log(v))**theta)**(1/theta)).
+    # This oracle does not call production density or tau-mapping kernels.
+    theta = 1.0 / (1.0 - tau)
+    x, y = -np.log(observation)
+    power_sum = x**theta + y**theta
+    radius = power_sum**(1.0 / theta)
+    log_density = (
+        -radius + x + y
+        + (theta - 1.0) * (np.log(x) + np.log(y))
+        + (2.0 / theta - 2.0) * np.log(power_sum)
+        + np.log1p((theta - 1.0) / radius)
+    )
+    expected = (probability / probability.sum()) * np.exp(log_density)
+    expected /= expected.sum()
+
+    _, actual = _evaluator().condition_state(tau, probability, observation)
+
+    np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-14)
+    assert actual[-1] == 0.0
 
 
 def test_prepared_evaluator_reuses_setup_filter_and_observation_cache():

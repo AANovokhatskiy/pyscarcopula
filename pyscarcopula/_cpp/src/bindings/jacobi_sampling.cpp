@@ -229,12 +229,20 @@ void bind_jacobi_sampling(py::module_& m) {
     m.def(
         "jacobi_sample_state_distribution",
         [](const scar::CopulaSpec& copula,
-           Float64Array tau,
-           Float64Array probability,
-           Float64Array selection_draws,
-           Float64Array jitter_draws,
+           py::handle tau_input,
+           py::handle probability_input,
+           py::handle selection_input,
+           py::handle jitter_input,
            scar::JacobiStateSamplingMode mode,
            double theta_cap) {
+            const Float64Array tau = real_float64_array_from_object(
+                tau_input, "tau");
+            const Float64Array probability = real_float64_array_from_object(
+                probability_input, "probability");
+            const Float64Array selection_draws = real_float64_array_from_object(
+                selection_input, "selection_draws");
+            const Float64Array jitter_draws = real_float64_array_from_object(
+                jitter_input, "jitter_draws");
             const std::vector<double> tau_values = flat_vector_from_array(
                 tau, "tau");
             const std::vector<double> probability_values =

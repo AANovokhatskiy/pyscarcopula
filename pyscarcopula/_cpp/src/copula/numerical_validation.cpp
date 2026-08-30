@@ -70,6 +70,27 @@ Result<bool> open_unit_clip_required(DoubleView values, double epsilon) {
     return success(false);
 }
 
+NumericalValidationResult validate_pseudo_observations(
+    DoubleView values) noexcept {
+
+    NumericalValidationResult result;
+    for (std::size_t index = 0; index < values.size(); ++index) {
+        const double value = values[index];
+        if (!std::isfinite(value)) {
+            result.status = Status::NumericalFailure;
+            result.code = NumericalValidationCode::NonFinite;
+        } else if (value < 0.0 || value > 1.0) {
+            result.status = Status::InvalidParameter;
+            result.code = NumericalValidationCode::OutsideUnitInterval;
+        } else {
+            continue;
+        }
+        result.failure.index = static_cast<std::int64_t>(index);
+        return result;
+    }
+    return result;
+}
+
 NumericalValidationResult validate_fit_observations(
     DoubleView values,
     std::size_t rows,
@@ -82,28 +103,15 @@ NumericalValidationResult validate_fit_observations(
         result.code = NumericalValidationCode::NonFinite;
         return result;
     }
-    for (std::size_t row = 0; row < rows; ++row) {
-        for (std::size_t column = 0; column < columns; ++column) {
-            const double value = values[row * columns + column];
-            if (!std::isfinite(value)) {
-                result.status = Status::NumericalFailure;
-                result.code = NumericalValidationCode::NonFinite;
-                result.row = static_cast<std::int64_t>(row);
-                result.column = static_cast<int>(column);
-                result.failure.row = result.row;
-                result.failure.coordinate = result.column;
-                return result;
-            }
-            if (value < 0.0 || value > 1.0) {
-                result.status = Status::InvalidParameter;
-                result.code = NumericalValidationCode::OutsideUnitInterval;
-                result.row = static_cast<std::int64_t>(row);
-                result.column = static_cast<int>(column);
-                result.failure.row = result.row;
-                result.failure.coordinate = result.column;
-                return result;
-            }
-        }
+    result = validate_pseudo_observations(values);
+    if (!result.is_ok()) {
+        const auto index = static_cast<std::size_t>(result.failure.index);
+        result.row = static_cast<std::int64_t>(index / columns);
+        result.column = static_cast<int>(index % columns);
+        result.failure.index = -1;
+        result.failure.row = result.row;
+        result.failure.coordinate = result.column;
+        return result;
     }
     for (std::size_t column = 0; column < columns; ++column) {
         const double first = values[column];

@@ -10,6 +10,8 @@ from pyscarcopula._native import model_policy
 from pyscarcopula._native._extension import load
 from pyscarcopula._native.errors import raise_for_status
 from pyscarcopula.numerical._arrays import (
+    as_float64_array,
+    as_pseudo_observation_array,
     validate_integer,
     validate_float64_allocation,
     validate_positive_int,
@@ -584,6 +586,8 @@ class PreparedScarJacobiEvaluator:
     One instance owns the immutable copula descriptor and observations.  Its
     native peer caches the latest transition, transformed grid, emissions,
     filter, and smoother for repeated calls at the same physical parameters.
+    A single observation is sufficient for condition_state; history-dependent
+    operations require at least two observations to define dt = 1 / (n - 1).
     """
 
     def __init__(
@@ -596,7 +600,7 @@ class PreparedScarJacobiEvaluator:
         from pyscarcopula._native import _descriptors
 
         module = load()
-        observations = np.ascontiguousarray(u, dtype=np.float64)
+        observations = np.ascontiguousarray(as_pseudo_observation_array(u))
         if (
                 observations.ndim != 2
                 or observations.shape[1] != 2
@@ -726,9 +730,9 @@ class PreparedScarJacobiEvaluator:
             "next": self._module.JacobiStateHorizon.Next,
         }[normalized]
         result = self._native.condition_state(
-            np.asarray(tau, dtype=np.float64),
-            np.asarray(probability, dtype=np.float64),
-            np.asarray(observation, dtype=np.float64),
+            as_float64_array(tau, name="tau"),
+            as_float64_array(probability, name="probability"),
+            as_pseudo_observation_array(observation, name="observation"),
             native_horizon,
         )
         _evaluator_raise(result, "prepared state conditioning")
@@ -1251,14 +1255,14 @@ def sample_state_distribution_fixed_draws(
         raise ValueError("predictive_r_mode must be 'grid' or 'histogram'")
     spec = _descriptors.make_copula_ops_spec(module, copula)
     selection = np.ascontiguousarray(
-        np.asarray(selection_draws, dtype=np.float64).ravel())
+        as_float64_array(selection_draws, name="selection_draws").ravel())
     jitter = np.ascontiguousarray(
-        np.asarray(jitter_draws, dtype=np.float64).ravel())
+        as_float64_array(jitter_draws, name="jitter_draws").ravel())
     result = module.jacobi_sample_state_distribution(
         spec,
-        np.ascontiguousarray(np.asarray(tau, dtype=np.float64).ravel()),
+        np.ascontiguousarray(as_float64_array(tau, name="tau").ravel()),
         np.ascontiguousarray(
-            np.asarray(probability, dtype=np.float64).ravel()),
+            as_float64_array(probability, name="probability").ravel()),
         selection,
         jitter,
         native_mode,

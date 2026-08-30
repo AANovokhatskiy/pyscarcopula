@@ -69,6 +69,38 @@ void validate_finite(
 
 }  // namespace
 
+Float64Array real_float64_array_from_object(
+    py::handle values,
+    const char* name) {
+
+    const py::array array = py::array::ensure(values);
+    if (!array) {
+        throw py::type_error(std::string(name) + " must contain real values");
+    }
+    const auto reject_complex = [name]() {
+        throw py::type_error(
+            std::string(name) + " must contain real values, not complex values");
+    };
+    if (array.dtype().kind() == 'c') {
+        reject_complex();
+    }
+    if (array.dtype().kind() == 'O') {
+        // NumPy complex scalars in an object array can also cast with only a
+        // warning. Preserve real object coercion without scanning numeric arrays.
+        for (py::handle item : array.attr("flat")) {
+            const py::array scalar = py::array::ensure(item);
+            if (scalar && scalar.dtype().kind() == 'c') {
+                reject_complex();
+            }
+        }
+    }
+    Float64Array output = Float64Array::ensure(array);
+    if (!output) {
+        throw py::type_error(std::string(name) + " must contain real values");
+    }
+    return output;
+}
+
 std::vector<std::vector<double>> observations_from_array(
     Float64Array values) {
 

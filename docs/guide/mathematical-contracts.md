@@ -284,9 +284,14 @@ the central point is held fixed across setup finite differences, and the
 ordinary likelihood is independently recomputed at the final optimizer point
 before a fit can be reported as successful.
 
-The numerical boundary validates non-empty bivariate observations, finite
+The numerical boundary validates finite bivariate observations in `[0, 1]`, finite
 physical initialization (`kappa > 0`, `0 < m < 1`, `xi > 0`), and strict
-integer quadrature orders. Jacobi workspaces are preflighted before root
+integer quadrature orders. Fitting requires at least two observations to define
+`dt = 1 / (T - 1)`; a one-row prepared evaluator can condition an existing
+state without a transition. State atoms must be strictly increasing in
+`[0, 1]`, with finite nonnegative masses and a finite positive total.
+Conditioning and state sampling accept unnormalized masses and preserve their
+distribution under common positive scaling. Jacobi workspaces are preflighted before root
 construction and matrix allocation. A hard order cap prevents accidental
 multi-gigabyte quadratic requests; `memory_budget_bytes` can impose a smaller
 application-specific limit.
@@ -357,13 +362,14 @@ beta law. This path is an approximate sampling oracle only: likelihood,
 gradient, filtering, and prediction continue to use their configured
 transition backend.
 
-The optimized implementation keeps this recursion in a strictly sequential
-Numba kernel. `parallel=True` is forbidden because it would violate the causal
-state update. The kernel never owns an RNG: Python draws stationary beta and
-Gaussian values from the supplied `numpy.random.Generator`, passes Gaussian
-values in complete-interval chunks, and carries the final transformed state
-between chunks. Python and Numba executions must agree pathwise on identical
-innovations, including intervention counts.
+The implementation keeps this recursion in a strictly sequential native C++
+kernel; updates cannot run in parallel because each depends on the previous
+state. The kernel never owns an RNG: Python draws stationary beta and Gaussian
+values from the supplied `numpy.random.Generator`, passes Gaussian values in
+complete-interval chunks, and carries the final transformed state between
+chunks. Chunk partitions must agree pathwise on identical innovations,
+including intervention counts. Legacy `numba` and `python` engine labels are
+aliases for `native`, not separate execution paths.
 
 Stationary shapes below one are reported by
 `stationary_boundary_singular=True`. This is a diagnostic, not an accuracy

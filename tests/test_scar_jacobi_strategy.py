@@ -1,4 +1,6 @@
+from dataclasses import replace
 from pathlib import Path
+import warnings
 
 import numpy as np
 import pytest
@@ -11,7 +13,7 @@ from pyscarcopula import (
     JoeCopula,
 )
 from pyscarcopula._native import jacobi as jacobi_native
-from pyscarcopula._types import LatentResult, jacobi_params
+from pyscarcopula._types import LatentResult, PredictiveState, jacobi_params
 from pyscarcopula.api import (
     fit,
     log_likelihood,
@@ -286,6 +288,19 @@ def test_scar_jacobi_rejects_empty_data():
             method='scar-tm-jacobi',
             smart_init=False,
         )
+
+
+@pytest.mark.parametrize("alpha0", [None, np.array([1.0, 0.4, 0.25])])
+def test_scar_jacobi_rejects_singleton_before_initialization_or_optimizer(
+        monkeypatch, alpha0):
+    def unexpected(*args, **kwargs):
+        pytest.fail("singleton must be rejected before model preparation")
+
+    monkeypatch.setattr(scar_jacobi.SCARJacobiStrategy, "_initial_point", unexpected)
+    monkeypatch.setattr(scar_jacobi.SCARJacobiStrategy, "_prepared_evaluator", unexpected)
+    monkeypatch.setattr(scar_jacobi, "minimize", unexpected)
+    with pytest.raises(ValueError, match="at least two observations"):
+        fit(GumbelCopula(), [[0.4, 0.6]], method="scar-tm-jacobi", alpha0=alpha0)
 
 
 @pytest.mark.parametrize(
@@ -955,6 +970,35 @@ def test_scar_jacobi_mixture_h_populates_state_cache():
     for tau_grid, prob in cache.values():
         assert tau_grid.shape == prob.shape
         np.testing.assert_allclose(np.sum(prob), 1.0, rtol=1e-12, atol=1e-12)
+
+
+@pytest.mark.parametrize("argument", ["observation", "z_grid", "prob"])
+@pytest.mark.parametrize("dtype", [np.complex64, object])
+def test_strategy_conditioning_rejects_complex_before_preparation(
+        monkeypatch, argument, dtype):
+    state = PredictiveState(
+        method="SCAR-TM-JACOBI", horizon="next", kind="grid",
+        z_grid=np.array([0.2, 0.8]), prob=np.array([0.5, 0.5]))
+    observation = np.array([[0.5, 0.5]])
+    source = observation if argument == "observation" else getattr(state, argument)
+    invalid = np.array(
+        [np.complex64(value + 1j) for value in source.flat], dtype=dtype
+    ).reshape(source.shape)
+    if argument == "observation":
+        observation = invalid
+    else:
+        state = replace(state, **{argument: invalid})
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("complex input reached native evaluator preparation")
+
+    strategy = scar_jacobi.SCARJacobiStrategy()
+    monkeypatch.setattr(strategy, "_prepared_evaluator", unexpected)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with pytest.raises(TypeError, match="complex"):
+            strategy.condition_state(GumbelCopula(), state, observation, None)
+    assert not caught
 
 
 def test_scar_jacobi_condition_state_reweights_grid_distribution():

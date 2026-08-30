@@ -428,14 +428,17 @@ py::dict state_result_to_dict(
 std::unique_ptr<scar::PreparedScarJacobiEvaluator>
 make_prepared_scar_jacobi_evaluator(
     scar::CopulaSpec copula,
-    Float64Array observations,
+    py::handle observations_input,
     const scar::JacobiEvaluatorConfig& config) {
 
+    const Float64Array observations = real_float64_array_from_object(
+        observations_input, "u");
     const py::buffer_info info = observations.request();
     if (info.ndim != 2 || info.shape[1] != 2 || info.shape[0] < 1) {
         throw std::invalid_argument(
             "u must be a 2D float64 array with shape (n, 2), n >= 1");
     }
+    observation_view_from_array(2, observations);
     const auto n_obs = static_cast<std::int64_t>(info.shape[0]);
     std::vector<double> values = flat_vector_from_array(observations, "u");
     return std::make_unique<scar::PreparedScarJacobiEvaluator>(
@@ -647,10 +650,16 @@ void bind_jacobi(py::module_& m) {
         .def(
             "condition_state",
             [](const scar::PreparedScarJacobiEvaluator& evaluator,
-               Float64Array tau,
-               Float64Array probability,
-               Float64Array observation,
+               py::handle tau_input,
+               py::handle probability_input,
+               py::handle observation_input,
                scar::JacobiStateHorizon horizon) {
+                const Float64Array tau = real_float64_array_from_object(
+                    tau_input, "tau");
+                const Float64Array probability = real_float64_array_from_object(
+                    probability_input, "probability");
+                const Float64Array observation = real_float64_array_from_object(
+                    observation_input, "observation");
                 const std::vector<double> tau_values =
                     flat_vector_from_array(tau, "tau");
                 const std::vector<double> probability_values =

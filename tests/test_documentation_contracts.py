@@ -22,6 +22,20 @@ WORKFLOW_FILES = sorted((ROOT / ".github/workflows").glob("*.yml"))
 OPTIONAL_DOCUMENTATION_MODULES = {"pyvinecopulib"}
 
 
+def test_jacobi_docs_describe_native_gradient_sampling_and_singleton_contract():
+    estimation = (ROOT / "docs/guide/estimation-methods.md").read_text(encoding="utf-8")
+    backends = (ROOT / "docs/guide/numerical-backends.md").read_text(encoding="utf-8")
+    mathematics = (ROOT / "docs/guide/mathematical-contracts.md").read_text(encoding="utf-8")
+    for guide in (estimation, backends):
+        assert "gradient_kind='native_finite_difference'" in guide
+        assert "one-row prepared evaluator" in guide or "one observation" in guide
+        assert "explicitly rejects `analytical_grad=True`" not in guide
+        assert "Not available with `spectral_coeff`" not in guide
+    for guide in (estimation, mathematics):
+        assert "Numba kernel" not in guide
+        assert "separate execution paths" in guide or "separate production implementations" in guide
+
+
 def _python_blocks(path):
     text = path.read_text(encoding="utf-8")
     pattern = re.compile(r"^```python[^\n]*\n(.*?)^```$", re.MULTILINE | re.DOTALL)

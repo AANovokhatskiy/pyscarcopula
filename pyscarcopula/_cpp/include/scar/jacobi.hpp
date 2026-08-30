@@ -21,6 +21,12 @@ Status validate_jacobi_bounds(
 Status validate_jacobi_config(
     const JacobiNumericalConfig& config) noexcept;
 
+/// Validate ordered tau atoms and nonnegative masses; return their finite,
+/// positive total. Callers may supply unnormalized probability measures.
+JacobiScalarResult validate_jacobi_state_distribution(
+    const std::vector<double>& tau,
+    const std::vector<double>& probability) noexcept;
+
 JacobiParamsResult jacobi_raw_to_physical(
     const std::array<double, 3>& raw) noexcept;
 

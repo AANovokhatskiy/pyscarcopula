@@ -44,6 +44,7 @@ outer optimizer and the corresponding diagnostics.
 | SCAR-TM-JACOBI | `analytical_grad=False` | Numerical finite differences | `not_applicable` | `numerical` |
 | SCAR-TM-JACOBI | `local_fixed`, analytical gradient | Model-provided | `not_applicable` | `analytical` |
 | SCAR-TM-JACOBI | `local`, `spectral_matrix`, or `auto`, analytical gradient | Model-provided | `not_applicable` | `semi_analytical` |
+| SCAR-TM-JACOBI | `spectral_coeff`, `analytical_grad=True` | Native finite differences | `not_applicable` | `native_finite_difference` |
 
 For joint Stochastic Student SCAR-TM-OU fits, the analytical-gradient path
 includes OU and static-correlation derivatives. Result diagnostics report the
@@ -296,7 +297,13 @@ derivatives are analytical. For `local`, `spectral_matrix`, and either backend
 selected by `auto`, setup arrays are differentiated by finite differences and
 the filtering recursion is differentiated analytically; these modes are
 therefore semi-analytical. `spectral_coeff` is a coefficient-space comparison
-backend and explicitly rejects `analytical_grad=True`.
+backend. With `analytical_grad=True`, it supplies a complete native central
+finite-difference objective gradient and reports
+`gradient_kind='native_finite_difference'`; it is not an analytical derivative.
+
+Jacobi fitting requires at least two observations because its transition time
+step is `dt = 1 / (T - 1)`. A one-row prepared evaluator remains valid for
+conditioning an existing state, which does not construct a transition.
 
 `LatentResult.diagnostics` reports `gradient_requested`, `gradient_used`,
 `gradient_kind`, `setup_derivative`, `filter_derivative`, and the transition
@@ -318,9 +325,10 @@ likelihood. An experimental `sampling_method='lamperti_euler'` instead
 simulates a continuous tau path with substepped Euler--Maruyama in the
 Lamperti coordinate. It is useful as an independent discretization comparison
 but does not change the fitting backend and is not an exact diffusion sampler.
-Its Numba kernel is strictly sequential and consumes Gaussian innovations
-created by the caller's NumPy generator in bounded chunks. The Python engine
-remains available as a pathwise reference implementation.
+Its mandatory native C++ kernel is strictly sequential and consumes Gaussian
+innovations created by the caller's NumPy generator in bounded chunks. Legacy
+`lamperti_engine='numba'` and `'python'` labels normalize to `'native'`; they
+do not select separate production implementations.
 
 For an explicit moving-grid local transition,
 `transition_storage='sparse'` selects the `O(K * gh_order)` sparse filtering

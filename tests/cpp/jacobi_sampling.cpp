@@ -167,5 +167,26 @@ int run_jacobi_sampling_tests() {
     if (invalid.is_ok() || invalid.failure.index != 0) {
         return 7;
     }
+    for (double scale : {0.2, 2.0, 1e-200, 1e200,
+                         2.0 * std::numeric_limits<double>::denorm_min()}) {
+        const auto scaled = scar::sample_jacobi_state_distribution(
+            copula, {0.2, 0.8}, {0.5 * scale, 0.5 * scale},
+            {0.0, 0.2, 0.5, 0.9}, {}, scar::JacobiStateSamplingMode::Grid, 10.0);
+        if (!scaled.is_ok()
+            || scaled.value.tau != std::vector<double>{0.2, 0.2, 0.8, 0.8}
+            || scaled.value.selection_draws_used != 4) {
+            return 8;
+        }
+    }
+    for (const auto& probability : std::vector<std::vector<double>>{
+             {0.0, 0.0}, {-0.1, 1.1},
+             {std::numeric_limits<double>::max(), std::numeric_limits<double>::max()}}) {
+        const auto bad_mass = scar::sample_jacobi_state_distribution(
+            copula, {0.2, 0.8}, probability, {0.2}, {},
+            scar::JacobiStateSamplingMode::Grid, 10.0);
+        if (bad_mass.is_ok() || !bad_mass.value.tau.empty()) {
+            return 9;
+        }
+    }
     return 0;
 }

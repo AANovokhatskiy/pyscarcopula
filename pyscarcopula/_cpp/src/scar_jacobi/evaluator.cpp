@@ -4,6 +4,7 @@
 #include "scar/detail/safety.hpp"
 #include "scar/math/normal.hpp"
 #include "scar/numerical_constants.hpp"
+#include "scar/numerical_validation.hpp"
 
 #include <algorithm>
 #include <array>
@@ -639,10 +640,13 @@ struct PreparedScarJacobiEvaluator::Impl {
             || observations.size() != expected) {
             throw std::invalid_argument("u shape is not representable");
         }
-        if (!std::all_of(
-                observations.begin(), observations.end(),
-                [](double value) { return std::isfinite(value); })) {
-            throw std::invalid_argument("u must contain only finite values");
+        const auto validation = validate_pseudo_observations(
+            {observations.data(), observations.size()});
+        if (!validation.is_ok()) {
+            throw std::invalid_argument(
+                validation.code == NumericalValidationCode::NonFinite
+                    ? "u must contain only finite values"
+                    : "u must contain pseudo-observations in [0, 1]");
         }
         if (!ok(validate_jacobi_config(config.transition.numerical))) {
             throw std::invalid_argument("invalid Jacobi evaluator config");
@@ -1251,45 +1255,62 @@ JacobiStateDistributionResult PreparedScarJacobiEvaluator::condition_state(
     const std::array<double, 2>& observation,
     JacobiStateHorizon horizon) const {
     const std::lock_guard<std::mutex> lock(impl_->mutex);
-    if (tau.empty() || tau.size() != probability.size()
-        || !std::isfinite(observation[0]) || !std::isfinite(observation[1])) {
-        return failed<JacobiStateDistributionResult>(Status::InvalidSize, 21);
+    const JacobiScalarResult mass = validate_jacobi_state_distribution(
+        tau, probability);
+    if (!mass.is_ok()) {
+        auto result = failed<JacobiStateDistributionResult>(mass.status, 21);
+        result.failure.index = mass.failure.index;
+        return result;
+    }
+    const auto validation = validate_pseudo_observations(
+        {observation.data(), observation.size()});
+    if (!validation.is_ok()) {
+        auto result = failed<JacobiStateDistributionResult>(
+            Status::InvalidParameter, 21);
+        result.failure.coordinate = static_cast<int>(validation.failure.index);
+        return result;
     }
     JacobiStateDistributionResult result;
     result.value.tau = tau;
     result.value.probability = probability;
+    for (double& value : result.value.probability) {
+        value /= mass.value;
+    }
     result.value.horizon = horizon;
     std::vector<double> log_weight(tau.size(), 0.0);
     double maximum = -std::numeric_limits<double>::infinity();
     bool any = false;
     for (std::size_t node = 0; node < tau.size(); ++node) {
-        if (!std::isfinite(tau[node]) || !std::isfinite(probability[node])
-            || probability[node] < 0.0) {
-            return failed<JacobiStateDistributionResult>(
-                Status::InvalidParameter, 21);
-        }
         double theta = impl_->pair.tau_to_parameter(tau[node]);
         if (!std::isnan(impl_->config.transition.numerical.theta_cap)) {
             theta = std::min(
                 theta, impl_->config.transition.numerical.theta_cap);
         }
-        log_weight[node] = impl_->pair.log_pdf(
-            observation[0], observation[1], theta);
+        // Include the prior in log space so tiny valid masses do not
+        // underflow during conditioning, and zero-mass atoms cannot set
+        // the normalization scale.
+        log_weight[node] = probability[node] > 0.0
+            ? std::log(probability[node]) + impl_->pair.log_pdf(
+                observation[0], observation[1], theta)
+            : -std::numeric_limits<double>::infinity();
         if (std::isfinite(log_weight[node])) {
             maximum = std::max(maximum, log_weight[node]);
             any = true;
         }
     }
     if (!any) {
+        // Preserve the existing zero-likelihood fallback, but always return
+        // a normalized prior even when the caller supplied unnormalized mass.
         return result;
     }
     for (std::size_t node = 0; node < tau.size(); ++node) {
         result.value.probability[node] = std::isfinite(log_weight[node])
-            ? probability[node] * std::exp(log_weight[node] - maximum)
+            ? std::exp(log_weight[node] - maximum)
             : 0.0;
     }
     if (!normalize_probability(result.value.probability, 0.0)) {
-        result.value.probability = probability;
+        return failed<JacobiStateDistributionResult>(
+            Status::NumericalFailure, 21);
     }
     return result;
 }
