@@ -67,7 +67,7 @@ from pyscarcopula.vine._rvine_dissmann import (
     select_rvine,
     select_rvine_structure,
 )
-from pyscarcopula.vine._vine_fit import fit_vine_edges
+from pyscarcopula.vine._vine_fit import _validate_fit_policy, fit_vine_edges
 from pyscarcopula.vine._structure import (
     RVineMatrix,
     cvine_structure,
@@ -695,24 +695,8 @@ class VineCopula:
         structure_search = kwargs.pop('structure_search', 'beam')
         beam_width = kwargs.pop('beam_width', 4)
         partition_strategy_fit_kwargs(method, kwargs)
-
-        if truncation_level is not None:
-            if not isinstance(truncation_level, (int, np.integer)):
-                raise TypeError(
-                    f"truncation_level must be int or None, "
-                    f"got {type(truncation_level).__name__}"
-                )
-            if truncation_level < 0:
-                raise ValueError(
-                    f"truncation_level must be >= 0, got {truncation_level}"
-                )
-        if truncation_fill not in ('mle', 'independent'):
-            raise ValueError(
-                "truncation_fill must be 'mle' or 'independent', "
-                f"got {truncation_fill!r}"
-            )
-        if threshold is not None and threshold < 0:
-            raise ValueError(f"threshold must be >= 0 or None, got {threshold}")
+        _validate_fit_policy(
+            truncation_level, truncation_fill, threshold, dynamic_failure_policy)
 
         if self._configured_structure is None:
             selection, working_fits = select_rvine_structure(
@@ -727,6 +711,7 @@ class VineCopula:
                 config=config,
                 truncation_level=truncation_level,
                 truncation_fill=truncation_fill,
+                dynamic_failure_policy=dynamic_failure_policy,
                 threshold=threshold,
                 min_edge_logL=min_edge_logL,
                 transform_type=transform_type,
@@ -2177,7 +2162,8 @@ class VineCopula:
             rng,
             predictive_r_mode,
             state_cache=state_cache,
-            cache_key=_predictive_state_cache_key(key, horizon),
+            cache_key=_predictive_state_cache_key(
+                (key[0], edge_map[key]), horizon),
             posterior_cache=posterior_cache,
             strategy_for_result=_strategy_for_result,
         )
@@ -2313,7 +2299,8 @@ class VineCopula:
                 rng=rng,
                 predictive_r_mode=predictive_r_mode,
                 state_cache=state_cache,
-                cache_key=_predictive_state_cache_key(key, edge_horizon),
+                cache_key=_predictive_state_cache_key(
+                    (key[0], edge_map[key]), edge_horizon),
                 posterior_cache=posterior_cache,
             )
         return r_all

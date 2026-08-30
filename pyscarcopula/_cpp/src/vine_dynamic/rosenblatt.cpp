@@ -2,6 +2,7 @@
 
 #include "scar/core/checked_arithmetic.hpp"
 #include "scar/core/threading.hpp"
+#include "scar/numerical_validation.hpp"
 #include "scar/observation.hpp"
 
 #include "../vine/density_internal.hpp"
@@ -137,7 +138,18 @@ rvine::RosenblattResult dynamic_rvine_rosenblatt_transform(
         || observation_rows < 0
         || observation_columns != plan.dimension
         || parameters.n_rows != observation_rows
+        || plan.residual_nodes.size()
+            != static_cast<std::size_t>(plan.dimension)
         || !rvine::validate_density_plan(plan, edges.size())) {
+        fail_dynamic_rvine(out, SCAR_INVALID_SIZE, -1, -1, -1);
+        return out;
+    }
+    // Density-only plans may omit h outputs. This traversal always stores
+    // both directions, so the more permissive density contract is not enough.
+    if (std::any_of(plan.output1_nodes.begin(), plan.output1_nodes.end(),
+            [](int node) { return node < 0; })
+        || std::any_of(plan.output2_nodes.begin(), plan.output2_nodes.end(),
+            [](int node) { return node < 0; })) {
         fail_dynamic_rvine(out, SCAR_INVALID_SIZE, -1, -1, -1);
         return out;
     }
@@ -153,6 +165,14 @@ rvine::RosenblattResult dynamic_rvine_rosenblatt_transform(
         || observations.size() != observation_count
         || (observation_count > 0 && observations.data() == nullptr)) {
         fail_dynamic_rvine(out, SCAR_INVALID_SIZE, -1, -1, -1);
+        return out;
+    }
+
+    const auto observation_validation = validate_pseudo_observations(observations);
+    if (!observation_validation.is_ok()) {
+        fail_dynamic_rvine(
+            out, SCAR_INVALID_PARAMETER,
+            observation_validation.failure.index / plan.dimension, -1, -1);
         return out;
     }
 
@@ -186,15 +206,6 @@ rvine::RosenblattResult dynamic_rvine_rosenblatt_transform(
     for (std::size_t row = 0; row < rows; ++row) {
         for (std::size_t variable = 0; variable < dimension; ++variable) {
             const double value = observations[row * dimension + variable];
-            if (!std::isfinite(value)) {
-                fail_dynamic_rvine(
-                    out,
-                    SCAR_INVALID_PARAMETER,
-                    static_cast<std::int64_t>(row),
-                    -1,
-                    -1);
-                return out;
-            }
             nodes[
                 row * node_count
                 + static_cast<std::size_t>(plan.input_nodes[variable])] =

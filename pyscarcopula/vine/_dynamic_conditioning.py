@@ -17,7 +17,7 @@ from pyscarcopula.vine._rvine_edges import (
 
 
 def predictive_state_cache_key(edge_key, horizon):
-    """Return cache key for strategy predictive state reuse."""
+    """Key a state by stable (tree, original edge index), never matrix column."""
     return 'predictive_state', edge_key, normalize_predict_horizon(horizon)
 
 

@@ -232,6 +232,13 @@ preserve any previous fitted model. A candidate's numerical failure is reported
 with a warning; if no candidate can be evaluated, fitting raises instead of
 reporting a successful independent model.
 
+`dynamic_failure_policy='fallback'` replaces an unsuccessful dynamic edge fit
+with its MLE selection result. Use `'keep'` to retain the unsuccessful dynamic
+result and its diagnostics, or `'raise'` to abort fitting while preserving any
+previous fitted model. This policy applies to fixed structures and every
+candidate in auto, beam, and multi-start structure selection. Falling back does
+not turn an unsuccessful MLE result into a successful fit.
+
 ## Goodness of fit
 
 ```python
@@ -296,6 +303,15 @@ For SCAR-TM edges, `predict(..., horizon='current')` uses the posterior latent
 state after the fitted history and `predict(..., horizon='next')` uses the
 one-step-ahead latent state. For SCAR-TM-OU edges, `sample` simulates
 independent OU trajectories.
+
+SCAR vines use edge-wise pseudo likelihood for fitting and likelihood
+evaluation. Each edge is optimized separately. Pseudo-observations for higher
+trees are constructed from the fitted lower-tree h-functions, using mixture
+h-functions for latent edges. `sample` reproduces the latent-trajectory vine,
+while `predict` uses edge-wise posterior or one-step predictive states from
+the observed history. The edge-wise criterion approximates the full joint
+marginal likelihood; joint latent-state optimization and filtering are outside
+this contract.
 
 For SCAR-TM predictive parameter sampling, `predictive_r_mode` may be `None`,
 `"grid"`, or `"histogram"`.

@@ -357,16 +357,19 @@ _SYMBOL_REVIEWS = (
      'b8d42ccdd98cd7ea2e8eaa7189061131dcbf62d110e548e15fa6f87095e39632', 'structure', ('arithmetic',)),
     ('pyscarcopula.vine._rvine_dag:matrix_edge_key',
      'ad27d9dc2b8e735bac6735f390f29f1d6a8d1ad4be69b2bf22a74b02e814e213', 'structure', ('arithmetic',)),
+    # Dynamic failure policy is validated and forwarded as orchestration only;
+    # topology counters/search ordering are unchanged. Regression coverage:
+    # tests/test_dynamic_vine_regressions.py.
     ('pyscarcopula.vine._rvine_dissmann:_build_and_fit_candidate',
-     '1e3fca9bee580d6c6672b6a15f528d032204c624f53e4c5addf677d151c7d559', 'structure', ('arithmetic', 'numerical-call')),
+     '5d02e73d77c07dec37511deee9ce8770c55baff756731228720e1cebd814b465', 'structure', ('arithmetic', 'numerical-call')),
     ('pyscarcopula.vine._rvine_dissmann:_build_tree_level_repr',
      '9a2fb401d4a53574fb19bd2805d813a79fc5299b7459fcf2bce3f2d434aab07c', 'structure', ('arithmetic', 'numerical-call')),
     ('pyscarcopula.vine._rvine_dissmann:_beam_search_candidates',
-     '32ef437d012ff1e383723c23109eb4b81ae9182acbd8d09b7153b5ef832ee587', 'structure', ('arithmetic',)),
+     'd3d73ad1c6860a0db5bd895692c3155abb74cf5a0719b649d63fd74c5c711803', 'structure', ('arithmetic',)),
     ('pyscarcopula.vine._rvine_dissmann:_prune_beam.<lambda#1>',
      '0ab1ce8aa65a4468186f35cb271d938597395f75f4130e54d0ba402bf4c3724d', 'structure', ('arithmetic',)),
     ('pyscarcopula.vine._rvine_dissmann:select_rvine',
-     '53ce8a620e80f3b8fcaf8d528189c375cf55408134e77c9446f2bd29d7451a4a', 'structure', ('numerical-call',)),
+     '887153d928d356f7774444ac6f1e382ecdae0563bba9a1bf7d778dfed2377bf0', 'structure', ('numerical-call',)),
     ('pyscarcopula.vine._rvine_dissmann:select_rvine.<lambda#1>',
      '4fe029a62ad81b114a455941f1db3484f00db344c1f9f0af795df10c1634c0a6', 'structure', ('arithmetic',)),
     ('pyscarcopula.vine._rvine_dissmann:select_rvine_structure',

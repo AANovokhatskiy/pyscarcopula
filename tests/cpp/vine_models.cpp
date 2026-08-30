@@ -458,6 +458,42 @@ int run_vine_model_tests() {
         return 7;
     }
 
+    // The dynamic traversal requires a complete Rosenblatt plan, whereas
+    // the generic density plan may omit residuals and final h outputs.
+    for (int invalid_kind = 0; invalid_kind < 3; ++invalid_kind) {
+        auto invalid_plan = r_plan;
+        if (invalid_kind == 0) {
+            invalid_plan.residual_nodes.clear();
+        } else if (invalid_kind == 1) {
+            invalid_plan.residual_nodes.resize(1);
+        } else {
+            invalid_plan.output1_nodes.back() = -1;
+            invalid_plan.output2_nodes.back() = -1;
+            invalid_plan.residual_nodes = invalid_plan.input_nodes;
+        }
+        const auto invalid = scar::dynamic_rvine_rosenblatt_transform(
+            invalid_plan, dynamic_edges, dynamic_parameters,
+            view(observations), 5, 3, 1, true);
+        if (invalid.status != scar::Status::InvalidSize
+            || !invalid.residuals.empty() || !invalid.node_values.empty()) {
+            return 20;
+        }
+    }
+    for (double value : {-0.01, 1.01,
+             std::numeric_limits<double>::quiet_NaN(),
+             std::numeric_limits<double>::infinity()}) {
+        auto invalid_observations = observations;
+        invalid_observations[7] = value;
+        const auto invalid = scar::dynamic_rvine_rosenblatt_transform(
+            r_plan, dynamic_edges, dynamic_parameters,
+            view(invalid_observations), 5, 3, 1, true);
+        if (invalid.status != scar::Status::InvalidParameter
+            || invalid.failure.row != 2
+            || !invalid.residuals.empty() || !invalid.node_values.empty()) {
+            return 21;
+        }
+    }
+
     // Suffix and arbitrary-DAG conditional programs use the same edge pack.
     const scar::RVineConditionalPlan suffix = suffix_conditional_plan();
     const scar::RVineConditionalPlan dag = dag_conditional_plan();

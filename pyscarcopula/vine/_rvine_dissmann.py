@@ -54,6 +54,7 @@ from pyscarcopula.vine._vine_fit import (
     _fit_with_strategy,
     _make_fixed_copula,
     _pair_from_result,
+    _validate_fit_policy,
 )
 
 
@@ -134,6 +135,7 @@ def select_rvine(
     config=None,
     truncation_level=None,
     truncation_fill='independent',
+    dynamic_failure_policy='fallback',
     threshold=0.0,
     min_edge_logL=None,
     transform_type='xtanh',
@@ -170,6 +172,10 @@ def select_rvine(
     truncation_fill : {'mle', 'independent'}
         For truncated trees, either fit edges with MLE only or force
         ``IndependentCopula``. The default is ``'independent'``.
+    dynamic_failure_policy : {'fallback', 'keep', 'raise'}
+        On an unsuccessful dynamic edge fit, reuse its MLE selection result,
+        retain the unsuccessful dynamic result, or abort fitting. Applies
+        to every candidate in ordinary, beam, and multi-start searches.
     threshold : float or None
         Pre-fit Kendall's tau threshold. If ``abs(tau) < threshold``,
         the edge is set to ``IndependentCopula`` without fitting. The
@@ -211,13 +217,8 @@ def select_rvine(
     _, d = u.shape
     if d < 2:
         raise ValueError(f"select_rvine: need d >= 2, got d={d}")
-    if truncation_fill not in ('mle', 'independent'):
-        raise ValueError(
-            "truncation_fill must be 'mle' or 'independent', "
-            f"got {truncation_fill!r}"
-        )
-    if threshold is not None and threshold < 0:
-        raise ValueError(f"threshold must be >= 0 or None, got {threshold}")
+    _validate_fit_policy(
+        truncation_level, truncation_fill, threshold, dynamic_failure_policy)
     structure_search = str(structure_search).lower()
     if structure_search not in ('beam', 'multi-start'):
         raise ValueError(
@@ -253,6 +254,7 @@ def select_rvine(
             transform_type,
             fit_kwargs,
             mode='fit_first',
+            dynamic_failure_policy=dynamic_failure_policy,
         )
         if not return_diagnostics:
             return trees_repr, fitted
@@ -284,6 +286,7 @@ def select_rvine(
             fit_kwargs,
             given_vars,
             beam_width,
+            dynamic_failure_policy=dynamic_failure_policy,
         )
     else:
         candidate_results = []
@@ -306,6 +309,7 @@ def select_rvine(
                 fit_kwargs,
                 mode=mode,
                 given_vars=given_vars,
+                dynamic_failure_policy=dynamic_failure_policy,
             )
             candidate_results.append(_score_candidate_structure(
                 trees_repr,
@@ -356,7 +360,8 @@ def _branch_pseudo_obs(pseudo_obs):
 def _build_and_fit_candidate(
         u, d, pseudo_obs_seed, candidates, allow_rotations, criterion, method,
         copulas, config, truncation_level, truncation_fill, threshold,
-        min_edge_logL, transform_type, fit_kwargs, *, mode, given_vars=()):
+        min_edge_logL, transform_type, fit_kwargs, *, mode, given_vars=(),
+        dynamic_failure_policy='fallback'):
     pseudo_obs = _branch_pseudo_obs(pseudo_obs_seed)
     trees_repr = []
     fitted = []
@@ -383,6 +388,7 @@ def _build_and_fit_candidate(
         config=config,
         truncation_level=truncation_level,
         truncation_fill=truncation_fill,
+        dynamic_failure_policy=dynamic_failure_policy,
         threshold=threshold,
         min_edge_logL=min_edge_logL,
         transform_type=transform_type,
@@ -428,6 +434,7 @@ def _build_and_fit_candidate(
             config=config,
             truncation_level=truncation_level,
             truncation_fill=truncation_fill,
+            dynamic_failure_policy=dynamic_failure_policy,
             threshold=threshold,
             min_edge_logL=min_edge_logL,
             transform_type=transform_type,
@@ -441,7 +448,8 @@ def _build_and_fit_candidate(
 def _beam_search_candidates(
         u, d, pseudo_obs_seed, candidates, allow_rotations, criterion, method,
         copulas, config, truncation_level, truncation_fill, threshold,
-        min_edge_logL, transform_type, fit_kwargs, given_vars, beam_width):
+        min_edge_logL, transform_type, fit_kwargs, given_vars, beam_width, *,
+        dynamic_failure_policy='fallback'):
     beam = []
     # Tree 0 seeds the beam. Higher trees extend each partial structure with
     # all modes, so mode_path is an intentional per-level builder trace.
@@ -459,6 +467,7 @@ def _beam_search_candidates(
             config=config,
             truncation_level=truncation_level,
             truncation_fill=truncation_fill,
+            dynamic_failure_policy=dynamic_failure_policy,
             threshold=threshold,
             min_edge_logL=min_edge_logL,
             transform_type=transform_type,
@@ -493,6 +502,7 @@ def _beam_search_candidates(
                     config=config,
                     truncation_level=truncation_level,
                     truncation_fill=truncation_fill,
+                    dynamic_failure_policy=dynamic_failure_policy,
                     threshold=threshold,
                     min_edge_logL=min_edge_logL,
                     transform_type=transform_type,
@@ -695,6 +705,7 @@ def _fit_tree_level(
     config,
     truncation_level,
     truncation_fill,
+    dynamic_failure_policy='fallback',
     threshold,
     min_edge_logL,
     transform_type,
@@ -714,6 +725,7 @@ def _fit_tree_level(
         config=config,
         truncation_level=truncation_level,
         truncation_fill=truncation_fill,
+        dynamic_failure_policy=dynamic_failure_policy,
         threshold=threshold,
         min_edge_logL=min_edge_logL,
         transform_type=transform_type,
