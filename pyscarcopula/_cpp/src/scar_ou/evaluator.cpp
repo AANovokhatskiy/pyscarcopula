@@ -271,12 +271,10 @@ GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_and_corr_auto(
     if (!valid_ou_params(params) || !finite_config_doubles(config)) {
         return invalid_grad(SCAR_INVALID_PARAMETER, OuBackend::Spectral);
     }
-    if (u.empty() || config.auto_small_kdt <= 0.0) {
+    if (u.size() < 2 || config.auto_small_kdt <= 0.0) {
         return invalid_grad(SCAR_INVALID_SIZE, OuBackend::Spectral);
     }
-    const double kdt = u.size() <= 1
-        ? params.kappa
-        : params.kappa / static_cast<double>(u.size() - 1);
+    const double kdt = params.kappa / static_cast<double>(u.size() - 1);
     if (kdt < config.auto_small_kdt) {
         return neg_loglik_with_grad_and_corr_local_gh(
             params, copula, u, config);
@@ -324,12 +322,10 @@ GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_and_corr_directional_auto
     if (!valid_ou_params(params) || !finite_config_doubles(config)) {
         return invalid_grad(SCAR_INVALID_PARAMETER, OuBackend::Spectral);
     }
-    if (u.empty() || config.auto_small_kdt <= 0.0) {
+    if (u.size() < 2 || config.auto_small_kdt <= 0.0) {
         return invalid_grad(SCAR_INVALID_SIZE, OuBackend::Spectral);
     }
-    const double kdt = u.size() <= 1
-        ? params.kappa
-        : params.kappa / static_cast<double>(u.size() - 1);
+    const double kdt = params.kappa / static_cast<double>(u.size() - 1);
     if (kdt < config.auto_small_kdt) {
         return neg_loglik_with_grad_and_corr_directional_local_gh(
             params, copula, u, config, corr_direction);
@@ -377,12 +373,10 @@ GradLogLikResult ScarOuEvaluator::neg_loglik_with_grad_auto(
     if (!valid_ou_params(params) || !finite_config_doubles(config)) {
         return invalid_grad(SCAR_INVALID_PARAMETER, OuBackend::Spectral);
     }
-    if (u.empty() || config.auto_small_kdt <= 0.0) {
+    if (u.size() < 2 || config.auto_small_kdt <= 0.0) {
         return invalid_grad(SCAR_INVALID_SIZE, OuBackend::Spectral);
     }
-    const double kdt = u.size() <= 1
-        ? params.kappa
-        : params.kappa / static_cast<double>(u.size() - 1);
+    const double kdt = params.kappa / static_cast<double>(u.size() - 1);
     if (kdt < config.auto_small_kdt) {
         return neg_loglik_with_grad_local_gh(params, copula, u, config);
     }
@@ -426,12 +420,10 @@ LogLikResult ScarOuEvaluator::loglik_auto(
     if (!valid_ou_params(params) || !finite_config_doubles(config)) {
         return invalid_loglik(SCAR_INVALID_PARAMETER, OuBackend::Spectral);
     }
-    if (u.empty() || config.auto_small_kdt <= 0.0) {
+    if (u.size() < 2 || config.auto_small_kdt <= 0.0) {
         return invalid_loglik(SCAR_INVALID_SIZE, OuBackend::Spectral);
     }
-    const double kdt = u.size() <= 1
-        ? params.kappa
-        : params.kappa / static_cast<double>(u.size() - 1);
+    const double kdt = params.kappa / static_cast<double>(u.size() - 1);
     if (kdt < config.auto_small_kdt) {
         return loglik_local_gh(params, copula, u, config);
     }

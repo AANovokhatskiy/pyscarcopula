@@ -60,6 +60,47 @@ def _skip_unless_large_enabled():
             "set PYSCA_RUN_LARGE_BENCHMARKS=1 to run large benchmark checks")
 
 
+@pytest.mark.benchmark
+def test_scar_d10_correlation_score_does_not_repeat_transition_per_parameter():
+    _skip_unless_enabled()
+    d, T, K = 10, 128, 256
+    correlation = np.full((d, d), 0.2)
+    np.fill_diagonal(correlation, 1.0)
+    u = np.random.default_rng(20260830).uniform(0.05, 0.95, (T, d))
+    prepared = _cpp_scar_ou.prepare_objective(
+        u, StochasticStudentCopula(d=d, R=correlation),
+        AutoTMConfig(transition_method="matrix", grid_method="dense",
+                     K=K, max_K=K, adaptive=False, n_threads=1))
+    direction = np.full(45, 1.0 / 45)
+    def full():
+        return prepared.neg_loglik_with_grad_and_corr_info(2.0, 0.4, 0.9)
+
+    def directional():
+        return prepared.neg_loglik_with_grad_and_corr_directional_info(
+            2.0, 0.4, 0.9, direction)
+
+    for _ in range(2):
+        full()
+        directional()
+    measured = interleaved_timings(
+        {"full": full, "directional": directional}, repeats=5)
+    full_result = measured.results["full"]
+    directional_result = measured.results["directional"]
+    np.testing.assert_allclose(full_result[0], directional_result[0], atol=1e-12)
+    np.testing.assert_allclose(
+        full_result[2] @ direction, directional_result[2][0],
+        rtol=1e-10, atol=1e-10)
+    # Both paths have the same number of transition matvecs. The margin
+    # allows extra score reduction and runner noise, but not 45 sensitivities.
+    ratio = measured.median_ratio("full", "directional")
+    assert ratio < 3.0
+    _print_benchmark(
+        "scar_d10_checkpoint_score", T=T, d=d, K=K, n_corr=45,
+        full_ms=f"{1000 * measured.medians['full']:.3f}",
+        directional_ms=f"{1000 * measured.medians['directional']:.3f}",
+        ratio=f"{ratio:.3f}")
+
+
 def _example_student(d=10, T=600, corr_mode="fixed"):
     rng = np.random.default_rng(15_000 + 100 * d + T)
     raw = rng.standard_t(df=5.0, size=(T, d))

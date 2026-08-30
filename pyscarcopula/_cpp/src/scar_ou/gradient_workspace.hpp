@@ -28,7 +28,7 @@ struct ScarOuGridGradientWorkspace {
     std::vector<double> r_grid;
     std::vector<double> dpsi_grid;
     std::vector<double> beta;
-    std::vector<double> c_vals;
+    std::vector<double> emission_log_scales;
     std::vector<double> target;
     std::vector<double> next;
     std::vector<double> dx_dalpha;
@@ -42,6 +42,8 @@ struct ScarOuGridGradientWorkspace {
     std::vector<double> alpha;
     std::vector<double> alpha_source;
     std::vector<double> alpha_next;
+    std::vector<double> alpha_history;
+    std::vector<std::vector<double>> alpha_checkpoints;
 };
 
 struct ScarOuSpectralGradientWorkspace {

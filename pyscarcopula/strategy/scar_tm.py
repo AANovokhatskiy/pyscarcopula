@@ -90,6 +90,10 @@ def _normalize_spectral_basis_order(value):
             raise ValueError(
                 "spectral_basis_order must be a positive integer or 'auto'"
             ) from exc
+    if isinstance(value, (bool, np.bool_)) or not isinstance(
+            value, (int, np.integer)):
+        raise ValueError(
+            "spectral_basis_order must be a positive integer or 'auto'")
     order = int(value)
     if order <= 0:
         raise ValueError("spectral_basis_order must be positive")
@@ -1313,6 +1317,9 @@ class SCARTMStrategy:
         )
         if not isinstance(u, EquicorrPreparedData):
             u = as_pseudo_observation_array(u)
+        if len(u) < 2:
+            raise ValueError(
+                "SCAR-TM-OU requires at least two observations")
         corr_num_params = getattr(copula, "_corr_num_params", None)
         n_corr = int(corr_num_params()) if callable(corr_num_params) else 0
         if n_corr:

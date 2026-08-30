@@ -340,7 +340,7 @@ def test_prepared_evaluator_serializes_concurrent_calls():
     np.testing.assert_array_equal(values, [expected] * len(values))
 
 
-@pytest.mark.parametrize("d", [2, 4])
+@pytest.mark.parametrize("d", [2, 4, 10])
 def test_student_scar_matrix_gradient_uses_internal_threads_bitwise(d):
     T = 32
     rng = np.random.default_rng(607 + d)

@@ -100,6 +100,10 @@ def test_scar_ou_fixed_draw_state_sampling_and_conditioning_contracts():
     np.testing.assert_array_equal(conditioned_grid, z_grid)
     np.testing.assert_allclose(conditioned_probability, probability, atol=0.0)
 
+    with pytest.raises(NativeError, match="invalid_parameter"):
+        scar_ou.condition_state(
+            IndependentCopula(), z_grid, np.zeros(3), [0.25, 0.75])
+
 
 def test_top_level_import_fails_fast_when_extension_is_missing():
     code = """

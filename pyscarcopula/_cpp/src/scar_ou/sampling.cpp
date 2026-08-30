@@ -238,6 +238,7 @@ StateDistribution condition_ou_state_distribution(
     auto workspace = emission.make_workspace(false);
     std::vector<double> log_density(z_grid.size(), 0.0);
     double maximum = -std::numeric_limits<double>::infinity();
+    double prior_total = 0.0;
     for (std::size_t index = 0; index < z_grid.size(); ++index) {
         if (!std::isfinite(z_grid[index]) || !std::isfinite(probability[index])
             || probability[index] < 0.0) {
@@ -246,13 +247,21 @@ StateDistribution condition_ou_state_distribution(
             result.prob.clear();
             return result;
         }
+        prior_total += probability[index];
         log_density[index] = emission.log_pdf_at_state(
             observation.data(), 0, z_grid[index], workspace);
         if (probability[index] > 0.0 && std::isfinite(log_density[index])) {
             maximum = std::max(maximum, log_density[index]);
         }
     }
+    if (!std::isfinite(prior_total) || !(prior_total > 0.0)) {
+        result.status = Status::InvalidParameter;
+        result.prob.clear();
+        return result;
+    }
     if (!std::isfinite(maximum)) {
+        result.status = Status::NumericalFailure;
+        result.prob.clear();
         return result;
     }
     double total = 0.0;
@@ -263,8 +272,8 @@ StateDistribution condition_ou_state_distribution(
         total += result.prob[index];
     }
     if (!std::isfinite(total) || !(total > 0.0)) {
-        result.prob.assign(
-            probability.data(), probability.data() + probability.size());
+        result.status = Status::NumericalFailure;
+        result.prob.clear();
         return result;
     }
     for (double& weight : result.prob) weight /= total;

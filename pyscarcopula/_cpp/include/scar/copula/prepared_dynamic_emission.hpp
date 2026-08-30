@@ -151,6 +151,17 @@ public:
         std::vector<double>& gradients,
         int n_threads,
         double* log_scale_sum = nullptr) const;
+    /// Fill a bounded row range while retaining global prepared-cache indices.
+    bool fill_density_and_gradient_block(
+        const double* observations,
+        std::int64_t first_row,
+        std::int64_t rows,
+        const std::vector<double>& parameters,
+        const std::vector<double>& derivatives,
+        std::vector<double>& densities,
+        std::vector<double>& gradients,
+        std::vector<double>& row_log_scales,
+        int n_threads) const;
     void fill_density_row_on_state_grid(
         const double* observations,
         std::int64_t row_index,

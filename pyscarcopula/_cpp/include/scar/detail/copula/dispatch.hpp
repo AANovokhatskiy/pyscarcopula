@@ -75,7 +75,9 @@ void copula_pdf_and_grad_grid_precomputed(
     std::vector<double>& fi,
     std::vector<double>& dfi_dx,
     int n_threads = 1,
-    double* log_scale_sum = nullptr);
+    double* log_scale_sum = nullptr,
+    std::int64_t first_row = 0,
+    double* row_log_scales = nullptr);
 double copula_h_rotated(
     const scar::CopulaSpec& spec,
     double u,

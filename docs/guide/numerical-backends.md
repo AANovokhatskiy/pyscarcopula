@@ -229,6 +229,20 @@ deviation. For slow mean reversion this can produce large grids. If that is too
 expensive, use `grid_method='sparse'`, reduce `pts_per_sigma`, or set
 `adaptive=False` with an explicit `K`.
 
+The analytical `matrix` and `local` gradients stream emissions through the
+specialized native batch kernels, in blocks of at most `B = floor(2^20 / K)`
+rows, and keep rolling backward states and OU sensitivities. The ordinary
+gradient uses `O(B*K + K)` workspace in addition to the transition operator
+(`O(K^2)` for dense matrix, `O(K * gh_order)` for local).
+
+Joint Student correlation gradients accumulate posterior scores, with one
+forward-state block and balanced checkpoint recomputation instead of a full
+history. Their additional workspace is `O(B*K + K*p + K*L)`, where `p` is the
+number of correlation parameters and `L = ceil(log2(max(1, T/B)))`.
+Checkpointing adds at most `O(T*L)` emission/transition steps; it does not add
+one transition per correlation parameter. Histories that fit in one block
+need no recomputation. These are working-block sizes, not hard limits on `T`.
+
 #### Compiled engine
 
 The compiled engine implements the SCAR-TM-OU likelihood, analytical gradient,
@@ -239,10 +253,10 @@ SCAR-TM-OU likelihood and gradient support:
 
 | Family | Rotations | Transform |
 |--------|-----------|-----------|
-| Clayton | 0, 90, 180, 270 | `softplus`, `xtanh` |
-| Gumbel | 0, 90, 180, 270 | `softplus`, `xtanh` |
-| Joe | 0, 90, 180, 270 | `softplus`, `xtanh` |
-| Frank | 0 | `softplus`, `xtanh` |
+| Clayton | 0, 90, 180, 270 | `softplus`, `xtanh`, `exp`, `logistic` |
+| Gumbel | 0, 90, 180, 270 | `softplus`, `xtanh`, `exp`, `logistic` |
+| Joe | 0, 90, 180, 270 | `softplus`, `xtanh`, `exp`, `logistic` |
+| Frank | 0 | `softplus`, `xtanh`, `exp`, `logistic` |
 | Independent | 0 | identity |
 | Bivariate Gaussian | 0 | Gaussian tanh transform |
 | Equicorr Gaussian | 0 | dimension-aware Gaussian tanh |

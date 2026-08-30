@@ -32,7 +32,7 @@ LogLikResult ScarOuEvaluator::loglik_spectral(
         return invalid_loglik(SCAR_INVALID_PARAMETER, OuBackend::Spectral);
     }
     std::size_t spectral_elements = 0;
-    if (n_obs <= 0
+    if (n_obs < 2
         || !scar_internal::valid_spectral_dimensions(
             config.spectral_quad_order,
             config.spectral_basis_order,

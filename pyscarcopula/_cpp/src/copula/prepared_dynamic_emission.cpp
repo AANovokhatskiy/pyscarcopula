@@ -10,6 +10,7 @@
 #include "scar/detail/safety.hpp"
 #include "scar/status.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <utility>
@@ -497,6 +498,36 @@ void PreparedDynamicEmission::fill_density_and_gradient_grid(
         gradients,
         n_threads,
         log_scale_sum);
+}
+
+bool PreparedDynamicEmission::fill_density_and_gradient_block(
+    const double* observations,
+    std::int64_t first_row,
+    std::int64_t rows,
+    const std::vector<double>& parameters,
+    const std::vector<double>& derivatives,
+    std::vector<double>& densities,
+    std::vector<double>& gradients,
+    std::vector<double>& row_log_scales,
+    int n_threads) const {
+
+    std::size_t elements = 0;
+    if (first_row < 0 || rows <= 0 || parameters.empty()
+        || rows > std::numeric_limits<std::int64_t>::max() - first_row
+        || parameters.size() != derivatives.size()
+        || !scar_internal::checked_size_mul(
+            static_cast<std::size_t>(rows), parameters.size(), elements)) {
+        return false;
+    }
+    row_log_scales.assign(static_cast<std::size_t>(rows), 0.0);
+    scar_internal::copula_pdf_and_grad_grid_precomputed(
+        *impl_->spec, observations, rows, parameters, derivatives,
+        densities, gradients, n_threads, nullptr, first_row,
+        row_log_scales.data());
+    return densities.size() == elements && gradients.size() == elements
+        && std::all_of(
+            row_log_scales.begin(), row_log_scales.end(),
+            [](double value) { return std::isfinite(value); });
 }
 
 void PreparedDynamicEmission::fill_density_row_on_state_grid(

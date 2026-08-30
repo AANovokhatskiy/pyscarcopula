@@ -17,6 +17,7 @@ from pyscarcopula.copula.multivariate.equicorr import (
 )
 from pyscarcopula.copula.multivariate import StochasticStudentCopula
 from pyscarcopula._native import scar_ou as _cpp_scar_ou
+from pyscarcopula._native import NativeError
 from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
 from pyscarcopula import stattests
 from pyscarcopula.strategy import scar_tm
@@ -29,6 +30,25 @@ _MATRIX_CONFIG = AutoTMConfig(
     adaptive=False,
     max_K=24,
 )
+
+
+@pytest.mark.parametrize(
+    "transition_method", ["auto", "spectral", "matrix", "local"])
+def test_native_ou_objectives_require_two_observations(transition_method):
+    copula = BivariateGaussianCopula()
+    u = np.array([[0.25, 0.75]])
+    config = AutoTMConfig(
+        transition_method=transition_method,
+        K=16,
+        adaptive=False,
+        max_K=16,
+    )
+
+    with pytest.raises(NativeError, match="invalid_size"):
+        _cpp_scar_ou.neg_loglik(1.0, 0.0, 0.5, u, copula, config)
+    prepared = _cpp_scar_ou.prepare_objective(u, copula, config)
+    with pytest.raises(NativeError, match="invalid_size"):
+        prepared.neg_loglik_info(1.0, 0.0, 0.5)
 
 
 @pytest.mark.parametrize(
@@ -81,6 +101,122 @@ def test_new_transform_ou_gradient_matches_finite_difference(
     assert np.isfinite(value)
     np.testing.assert_allclose(
         gradient, finite_difference, rtol=2e-5, atol=2e-6)
+
+
+@pytest.mark.parametrize("transition_method", ["matrix", "local"])
+def test_grid_gradient_streams_long_observation_history(transition_method):
+    copula = IndependentCopula()
+    u = np.full((100_000, 2), 0.5)
+    config = AutoTMConfig(
+        transition_method=transition_method,
+        K=8,
+        adaptive=False,
+        max_K=8,
+        gh_order=5,
+    )
+
+    expected = _cpp_scar_ou.neg_loglik(
+        2.0, 0.0, 0.5, u, copula, config)
+    value, gradient = _cpp_scar_ou.neg_loglik_with_grad(
+        2.0, 0.0, 0.5, u, copula, config)
+
+    assert value == pytest.approx(expected, rel=1e-12, abs=1e-8)
+    assert np.all(np.isfinite(gradient))
+
+
+@pytest.mark.parametrize("transition_method", ["matrix", "local"])
+def test_student_d10_all_correlation_gradients_match_finite_differences(
+        transition_method):
+    d = 10
+    u = np.random.default_rng(20260830).uniform(0.05, 0.95, (36, d))
+    correlation = np.full((d, d), 0.2)
+    np.fill_diagonal(correlation, 1.0)
+    copula = StochasticStudentCopula(d=d, R=correlation)
+    config = AutoTMConfig(
+        transition_method=transition_method, K=32, max_K=32,
+        adaptive=False, grid_method="dense")
+    prepared = _cpp_scar_ou.prepare_objective(u, copula, config)
+    params = np.array([1.2, 0.4, 0.8])
+    value, ou_gradient, gradient, _ = (
+        prepared.neg_loglik_with_grad_and_corr_info(*params))
+    expected_value, expected_ou, _ = prepared.neg_loglik_with_grad_info(*params)
+    assert gradient.shape == (45,)
+    np.testing.assert_allclose(value, expected_value, rtol=0.0, atol=1e-12)
+    np.testing.assert_allclose(ou_gradient, expected_ou, rtol=0.0, atol=1e-11)
+    lower = np.tril_indices(d, -1)
+    finite_difference = []
+    step = 1e-5
+    for i, j in zip(*lower):
+        values = []
+        for sign in (1, -1):
+            trial = correlation.copy()
+            trial[i, j] += sign * step
+            trial[j, i] += sign * step
+            copula._set_R(trial)
+            prepared.update_copula(copula)
+            values.append(prepared.neg_loglik_info(*params)[0])
+        finite_difference.append((values[0] - values[1]) / (2 * step))
+    np.testing.assert_allclose(gradient, finite_difference, rtol=2e-7, atol=2e-7)
+
+
+@pytest.mark.validation
+@pytest.mark.parametrize("d,T", [(2, 4097), (10, 8195)])
+@pytest.mark.parametrize("transition_method", ["matrix", "local"])
+def test_student_checkpoint_gradient_across_emission_blocks(d, T, transition_method):
+    from pyscarcopula.copula.multivariate.student_ppf_cache import (
+        StudentPPFTable, prepare_student_ppf_cache,
+    )
+
+    rng = np.random.default_rng(20260830 + d)
+    u = rng.uniform(0.08, 0.92, (T, d))
+    correlation = np.full((d, d), 0.15)
+    np.fill_diagonal(correlation, 1.0)
+    copula = StochasticStudentCopula(d=d, R=correlation)
+    # A small table keeps this long-history test about gradient workspace,
+    # rather than the separately budgeted PPF cache.
+    copula._ppf_cache = prepare_student_ppf_cache(
+        None, u, u, d,
+        table_factory=lambda values: StudentPPFTable(
+            values, n_boundary=8, n_lo=24, n_hi=16))
+    config = AutoTMConfig(
+        transition_method=transition_method, K=256, max_K=256,
+        adaptive=False, grid_method="dense", n_threads=4)
+    prepared = _cpp_scar_ou.prepare_objective(u, copula, config)
+    params = np.array([2.0, 0.4, 0.9])
+    value, ou_gradient, gradient, _ = (
+        prepared.neg_loglik_with_grad_and_corr_info(*params))
+    lower = np.tril_indices(d, -1)
+    direction = rng.normal(size=len(lower[0]))
+    direction /= np.linalg.norm(direction)
+    directional_value, directional_ou, directional_gradient, _ = (
+        prepared.neg_loglik_with_grad_and_corr_directional_info(
+            *params, direction))
+    ordinary_value, ordinary_ou, _ = prepared.neg_loglik_with_grad_info(*params)
+    np.testing.assert_allclose([value, directional_value], ordinary_value, atol=1e-9)
+    np.testing.assert_allclose(ou_gradient, ordinary_ou, rtol=1e-12, atol=1e-9)
+    np.testing.assert_allclose(directional_ou, ordinary_ou, rtol=1e-12, atol=1e-9)
+    np.testing.assert_allclose(directional_gradient, [gradient @ direction], rtol=1e-10)
+
+    step = 1e-5
+    finite_ou = []
+    for p in range(3):
+        delta = np.zeros(3)
+        delta[p] = step
+        plus = prepared.neg_loglik_info(*(params + delta))[0]
+        minus = prepared.neg_loglik_info(*(params - delta))[0]
+        finite_ou.append((plus - minus) / (2 * step))
+    np.testing.assert_allclose(ou_gradient, finite_ou, rtol=2e-5, atol=2e-5)
+
+    values = []
+    for sign in (1, -1):
+        trial = correlation.copy()
+        trial[lower] += sign * step * direction
+        trial[(lower[1], lower[0])] += sign * step * direction
+        copula._set_R(trial)
+        prepared.update_copula(copula)
+        values.append(prepared.neg_loglik_info(*params)[0])
+    finite_corr = (values[0] - values[1]) / (2 * step)
+    np.testing.assert_allclose(directional_gradient, [finite_corr], rtol=2e-6, atol=2e-5)
 
 
 def test_native_ou_supports_equicorr_forward_and_state():

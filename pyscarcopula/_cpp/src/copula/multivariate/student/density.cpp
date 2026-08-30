@@ -774,7 +774,8 @@ bool student_fill_grid_bivariate(
     const std::vector<double>& dpsi_grid,
     double* fi,
     double* dfi_dx,
-    int n_threads) {
+    int n_threads,
+    std::int64_t first_row) {
 
     if (spec.dim != 2) {
         return false;
@@ -783,8 +784,9 @@ bool student_fill_grid_bivariate(
         scar::copula::multivariate::correlation::dense(spec);
     const auto& cache =
         scar::copula::multivariate::student::ppf_cache(spec);
-    if (n_obs <= 0
-        || cache.observation_count != n_obs
+    if (n_obs <= 0 || first_row < 0
+        || first_row > cache.observation_count
+        || n_obs > cache.observation_count - first_row
         || !student_ppf_cache_available(cache, 2, 0)
         || df_grid.size() != dpsi_grid.size()
         || dense.inverse_cholesky.size() != 4) {
@@ -819,8 +821,8 @@ bool student_fill_grid_bivariate(
     const double log_determinant = dense.log_determinant;
     constexpr std::int64_t min_rows_per_block = 8;
     parallel_for_blocks(
-        0,
-        n_obs,
+        first_row,
+        first_row + n_obs,
         min_rows_per_block,
         n_threads,
         [&](std::int64_t begin, std::int64_t end, std::size_t) {
@@ -909,7 +911,7 @@ bool student_fill_grid_bivariate(
                         + marginal_shape2_derivative);
 
             const std::size_t output =
-                static_cast<std::size_t>(t) * K + j;
+                static_cast<std::size_t>(t - first_row) * K + j;
             fi[output] = pdf;
             dfi_dx[output] = pdf * dlog_ddf * dpsi_grid[j];
             }

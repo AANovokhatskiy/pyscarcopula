@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Make the SCAR-TM-OU contract consistent across public and native entry
+  points: require at least two observations, reject non-positive automatic
+  backend thresholds and lossy spectral-order values, and reject zero-mass
+  conditioned states. Matrix/local analytical gradients now stream bounded
+  emission blocks with rolling OU sensitivities instead of retaining three
+  `T x K` arrays. Preserve specialized Student batch emissions and use bounded
+  forward-state blocks with balanced checkpoint recomputation for correlation
+  posterior scores, avoiding a transition per correlation parameter.
+  Document all supported Archimedean transforms.
 - Audit every tracked `tests/` and `tools/` file for refactoring artifacts:
   archive the frozen Python R-vine differential harness, historical provenance
   fixture, report-only inventory/calibration tools, and generated benchmark

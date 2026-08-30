@@ -131,6 +131,8 @@ def test_native_generic_optimizer_scale_and_projection_policy():
 
 def test_native_ou_backend_basis_and_quadrature_policies():
     assert model_policy.ou_kappa_dt(2.0, 5) == 0.5
+    with pytest.raises(ValueError, match="kappa-dt policy"):
+        model_policy.ou_kappa_dt(2.0, 1)
     assert model_policy.ou_auto_backend(0.01, 11, 0.01) == "local"
     assert model_policy.ou_auto_backend(1.0, 11, 0.01) == "spectral"
 

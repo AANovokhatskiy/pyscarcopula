@@ -9,13 +9,10 @@
 namespace scar {
 
 Result<double> ou_kappa_dt(double kappa, int n_obs) noexcept {
-    if (n_obs < 1) {
+    if (n_obs < 2) {
         return {0.0, Status::InvalidParameter, {}};
     }
-    return success(
-        n_obs == 1
-            ? kappa
-            : kappa / static_cast<double>(n_obs - 1));
+    return success(kappa / static_cast<double>(n_obs - 1));
 }
 
 Result<OuBackend> ou_auto_backend(

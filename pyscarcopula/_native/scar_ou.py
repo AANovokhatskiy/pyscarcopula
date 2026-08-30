@@ -598,7 +598,8 @@ def _result_info(result, method: str, kappa, n_obs: int,
         "status": int(result["status"]),
         "transition_method": method,
         "engine": "cpp",
-        "kappa_dt": _kappa_dt(kappa, n_obs),
+        "kappa_dt": (
+            np.nan if n_obs < 2 else _kappa_dt(kappa, n_obs)),
         "n_obs": int(n_obs),
         "basis_order": int(cfg.basis_order),
     }
@@ -617,6 +618,9 @@ def _result_info(result, method: str, kappa, n_obs: int,
         result.get("matrix_fallback_reason", 0))
     if matrix_reason is not None:
         info["matrix_fallback_reason"] = matrix_reason
+
+    if n_obs < 2:
+        return info
 
     if method == "auto" and not fallback_chain:
         selected = select_auto_backend(float(kappa), n_obs, cfg)

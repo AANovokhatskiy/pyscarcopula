@@ -230,7 +230,8 @@ bool student_fill_grid_bivariate(
     const std::vector<double>& dpsi_grid,
     double* fi,
     double* dfi_dx,
-    int n_threads = 1);
+    int n_threads = 1,
+    std::int64_t first_row = 0);
 
 scar::MultivariateRowsResult student_log_pdf_and_grad_rows(
     const scar::CopulaSpec& spec,

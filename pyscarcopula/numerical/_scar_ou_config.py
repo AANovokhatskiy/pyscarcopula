@@ -111,7 +111,7 @@ def validate_cpp_config(
             f"{CPP_MAX_SPECTRAL_ORDER}") from exc
 
     _cpp_finite_option("grid_range", config.grid_range, positive=True)
-    _cpp_finite_option("small_kdt", config.small_kdt)
+    _cpp_finite_option("small_kdt", config.small_kdt, positive=True)
     _cpp_finite_option("r_gh", config.r_gh)
 
 

@@ -240,6 +240,25 @@ void operator_transpose_matvec(
     }
 }
 
+constexpr std::size_t kGradientEmissionBlockElements = 1U << 20;
+
+bool fill_gradient_emission_block(
+    const PreparedDynamicEmission& emission,
+    const double* observations,
+    std::int64_t first_row,
+    std::int64_t end_row,
+    const std::vector<double>& parameters,
+    const std::vector<double>& derivatives,
+    int n_threads,
+    std::vector<double>& densities,
+    std::vector<double>& gradients,
+    std::vector<double>& log_scales) {
+
+    return emission.fill_density_and_gradient_block(
+        observations, first_row, end_row - first_row,
+        parameters, derivatives, densities, gradients, log_scales, n_threads);
+}
+
 bool build_dense_grid_gradient_operator(
     const std::vector<double>& xi,
     const std::vector<double>& base_w,
@@ -498,8 +517,7 @@ GradLogLikResult grid_neg_loglik_with_grad(
         || config.pts_per_sigma <= 0) {
         return invalid_grad(SCAR_INVALID_SIZE, backend);
     }
-    if (!valid_grid_config(config, backend)
-        || !valid_observation_grid_size(u.size(), config.K)) {
+    if (!valid_grid_config(config, backend)) {
         return invalid_grad(SCAR_INVALID_SIZE, backend);
     }
     if (backend == OuBackend::LocalGh && config.gh_order <= 0) {
@@ -567,8 +585,7 @@ GradLogLikResult grid_neg_loglik_with_grad(
     if (K_eff_size > scar_internal::kMaxGridSize
         || (backend == OuBackend::Matrix
             && config.grid_method == OuGridMethod::Dense
-            && K_eff_size > scar_internal::kMaxDenseGridSize)
-        || !valid_observation_grid_size(u.size(), K_eff)) {
+            && K_eff_size > scar_internal::kMaxDenseGridSize)) {
         return invalid_grad(SCAR_INVALID_SIZE, backend);
     }
 
@@ -637,76 +654,21 @@ GradLogLikResult grid_neg_loglik_with_grad(
 
     const double* observation_values = observation_data(emission, u);
     const std::size_t K_size = static_cast<std::size_t>(K_eff);
-    std::size_t nK = 0;
-    if (!scar_internal::checked_size_mul(u.size(), K_size, nK)) {
-        return invalid_grad(SCAR_INVALID_SIZE, backend);
-    }
+    const std::int64_t emission_block_rows =
+        static_cast<std::int64_t>(std::max<std::size_t>(
+            1, kGradientEmissionBlockElements / K_size));
     std::vector<double>& fi = ws.fi;
     std::vector<double>& dfi_dx = ws.dfi_dx;
     std::vector<double>& r_grid = ws.r_grid;
     std::vector<double>& dpsi_grid = ws.dpsi_grid;
-    fi.assign(nK, 0.0);
-    dfi_dx.assign(nK, 0.0);
     r_grid.clear();
     dpsi_grid.clear();
     emission.prepare_grid_transform(
         x_grid, r_grid, dpsi_grid);
-    double emission_log_scale = 0.0;
-    emission.fill_density_and_gradient_grid(
-        observation_values,
-        n_obs,
-        r_grid,
-        dpsi_grid,
-        fi,
-        dfi_dx,
-        config.n_threads,
-        &emission_log_scale);
-
     std::vector<double>& beta = ws.beta;
-    std::vector<double>& c_vals = ws.c_vals;
-    beta.assign(nK, 0.0);
-    c_vals.assign(static_cast<std::size_t>(n_obs - 1), 0.0);
-    for (int j = 0; j < K_eff; ++j) {
-        beta[(u.size() - 1) * K_size + static_cast<std::size_t>(j)] = 1.0;
-    }
+    std::vector<double>& emission_log_scales = ws.emission_log_scales;
     std::vector<double>& target = ws.target;
     std::vector<double>& next = ws.next;
-    target.assign(static_cast<std::size_t>(K_eff), 0.0);
-    next.assign(static_cast<std::size_t>(K_eff), 0.0);
-    double cumul_logc = 0.0;
-    for (std::int64_t t = n_obs - 2; t >= 0; --t) {
-        const std::size_t next_row =
-            static_cast<std::size_t>(t + 1) * K_size;
-        for (int j = 0; j < K_eff; ++j) {
-            const std::size_t idx = static_cast<std::size_t>(j);
-            target[idx] = fi[next_row + idx] * beta[next_row + idx];
-        }
-        operator_matvec(op, false, target, next);
-        double scale = 0.0;
-        for (double value : next) {
-            scale = std::max(scale, std::abs(value));
-        }
-        if (!std::isfinite(scale) || scale <= 0.0) {
-            return invalid_grad(SCAR_NUMERICAL_FAILURE, backend);
-        }
-        c_vals[static_cast<std::size_t>(t)] = scale;
-        cumul_logc += std::log(scale);
-        const std::size_t row = static_cast<std::size_t>(t) * K_size;
-        for (int j = 0; j < K_eff; ++j) {
-            beta[row + static_cast<std::size_t>(j)] =
-                next[static_cast<std::size_t>(j)] / scale;
-        }
-    }
-
-    double Z0 = 0.0;
-    for (int j = 0; j < K_eff; ++j) {
-        const std::size_t idx = static_cast<std::size_t>(j);
-        Z0 += fi[idx] * pw_const[idx] * beta[idx];
-    }
-    if (!std::isfinite(Z0) || Z0 <= 0.0) {
-        return invalid_grad(SCAR_NUMERICAL_FAILURE, backend);
-    }
-
     const double drho_dkappa = -dt * rho;
     const double dsigma_dkappa = -0.5 * sigma / params.kappa;
     const double dsigma_dnu = sigma / params.nu;
@@ -729,85 +691,27 @@ GradLogLikResult grid_neg_loglik_with_grad(
     std::vector<double>& d_target = ws.d_target;
     std::vector<double>& contrib = ws.contrib;
     std::vector<double>& transition_grad = ws.transition_grad;
+    beta.assign(K_size, 1.0);
+    target.assign(K_size, 0.0);
+    next.assign(K_size, 0.0);
     d_beta.assign(triple_K, 0.0);
     new_d_beta.assign(triple_K, 0.0);
-    d_target.assign(static_cast<std::size_t>(K_eff), 0.0);
-    contrib.assign(static_cast<std::size_t>(K_eff), 0.0);
-    transition_grad.assign(static_cast<std::size_t>(K_eff), 0.0);
-    for (std::int64_t t = n_obs - 2; t >= 0; --t) {
-        const std::size_t next_row =
-            static_cast<std::size_t>(t + 1) * K_size;
-        for (int j = 0; j < K_eff; ++j) {
-            const std::size_t idx = static_cast<std::size_t>(j);
-            target[idx] = fi[next_row + idx] * beta[next_row + idx];
-        }
-        operator_matvec(op, true, target, transition_grad);
-        const double inv_c = 1.0 / c_vals[static_cast<std::size_t>(t)];
-
-        for (int p = 0; p < 3; ++p) {
-            const std::size_t p_offset =
-                static_cast<std::size_t>(p) * K_size;
-            for (int j = 0; j < K_eff; ++j) {
-                const std::size_t idx = static_cast<std::size_t>(j);
-                const double dfi =
-                    dfi_dx[next_row + idx] * dx_dalpha[p_offset + idx];
-                d_target[idx] =
-                    dfi * beta[next_row + idx]
-                    + fi[next_row + idx] * d_beta[p_offset + idx];
-            }
-            operator_matvec(op, false, d_target, contrib);
-            if (p == 0) {
-                for (int j = 0; j < K_eff; ++j) {
-                    const std::size_t idx = static_cast<std::size_t>(j);
-                    contrib[idx] += transition_grad[idx] * drho_dkappa;
-                }
-            }
-            for (int j = 0; j < K_eff; ++j) {
-                const std::size_t idx = static_cast<std::size_t>(j);
-                new_d_beta[p_offset + idx] = contrib[idx] * inv_c;
-            }
-        }
-        d_beta.swap(new_d_beta);
-    }
-
-    double grad[3] = {0.0, 0.0, 0.0};
-    for (int p = 0; p < 3; ++p) {
-        const std::size_t p_offset =
-            static_cast<std::size_t>(p) * K_size;
-        double num = 0.0;
-        for (int j = 0; j < K_eff; ++j) {
-            const std::size_t idx = static_cast<std::size_t>(j);
-            const double dfi0 = dfi_dx[idx] * dx_dalpha[p_offset + idx];
-            num += (dfi0 * beta[idx] + fi[idx] * d_beta[p_offset + idx])
-                * pw_const[idx];
-        }
-        grad[p] = num / Z0;
-    }
+    d_target.assign(K_size, 0.0);
+    contrib.assign(K_size, 0.0);
+    transition_grad.assign(K_size, 0.0);
 
     std::vector<double> corr_grad;
+    const bool directional =
+        corr_gradient_mode == CorrGradientMode::Directional;
     if (correlation_gradient) {
-        std::vector<double>& precision = ws.precision;
-        precision.clear();
-        if (!scar_internal::student_precision_matrix(copula, precision)) {
+        if (!scar_internal::student_precision_matrix(copula, ws.precision)) {
             return invalid_grad(SCAR_INVALID_SIZE, backend);
         }
-        std::size_t dim_square = 0;
-        if (!scar_internal::valid_student_dimension(
-                copula.dim, dim_square)) {
-            return invalid_grad(SCAR_INVALID_SIZE, backend);
-        }
-        const std::size_t dim_size =
-            static_cast<std::size_t>(copula.dim);
         std::size_t n_corr = 0;
-        if (!scar_internal::valid_student_correlation_count(
-                copula.dim, n_corr)) {
-            return invalid_grad(SCAR_INVALID_SIZE, backend);
-        }
-        const bool directional =
-            corr_gradient_mode == CorrGradientMode::Directional;
-        if (directional
-            && (corr_direction == nullptr
-                || corr_direction->size() != n_corr)) {
+        if (!scar_internal::valid_student_correlation_count(copula.dim, n_corr)
+            || (directional
+                && (corr_direction == nullptr
+                    || corr_direction->size() != n_corr))) {
             return invalid_grad(SCAR_INVALID_SIZE, backend);
         }
         const std::size_t score_width = directional ? 1 : n_corr;
@@ -816,89 +720,226 @@ GradLogLikResult grid_neg_loglik_with_grad(
                 K_size, score_width, score_elements)) {
             return invalid_grad(SCAR_INVALID_SIZE, backend);
         }
-        corr_grad.assign(directional ? 1 : n_corr, 0.0);
-        std::vector<double>& scores = ws.scores;
-        std::vector<double>& alpha = ws.alpha;
-        std::vector<double>& alpha_source = ws.alpha_source;
-        std::vector<double>& alpha_next = ws.alpha_next;
-        scores.assign(score_elements, 0.0);
-        alpha = pw_const;
-        alpha_source.assign(static_cast<std::size_t>(K_eff), 0.0);
-        alpha_next.assign(static_cast<std::size_t>(K_eff), 0.0);
+        corr_grad.assign(score_width, 0.0);
+        ws.scores.assign(score_elements, 0.0);
+        ws.alpha_source.assign(K_size, 0.0);
+        ws.alpha_next.assign(K_size, 0.0);
 
-        for (std::int64_t t = 0; t < n_obs; ++t) {
-            const std::size_t row_offset =
-                static_cast<std::size_t>(t) * K_size;
-            const double* row =
-                observation_values
-                + static_cast<std::size_t>(t) * dim_size;
-            if (directional) {
-                if (!scar_internal::student_corr_directional_score_row(
-                        copula,
-                        row,
-                        t,
-                        r_grid,
-                        precision,
-                        *corr_direction,
-                        scores.data())) {
-                    return invalid_grad(SCAR_NUMERICAL_FAILURE, backend);
-                }
-            } else {
-                if (!scar_internal::student_corr_score_row(
-                        copula,
-                        row,
-                        t,
-                        r_grid,
-                        precision,
-                        scores.data())) {
-                    return invalid_grad(SCAR_NUMERICAL_FAILURE, backend);
-                }
-            }
+        // Balanced checkpointing retains one K-vector per split, not a
+        // T-by-K history or one transition sensitivity per correlation.
+        std::size_t levels = 0;
+        for (std::int64_t span = n_obs; span > emission_block_rows;
+             span = span / 2 + span % 2) {
+            ++levels;
+        }
+        ws.alpha_checkpoints.resize(levels);
+        for (auto& checkpoint : ws.alpha_checkpoints) {
+            checkpoint.resize(K_size);
+        }
+    }
 
-            double posterior_total = 0.0;
-            for (int j = 0; j < K_eff; ++j) {
-                const std::size_t idx = static_cast<std::size_t>(j);
-                posterior_total +=
-                    alpha[idx] * fi[row_offset + idx]
-                    * beta[row_offset + idx];
-            }
-            if (!std::isfinite(posterior_total) || posterior_total <= 0.0) {
-                return invalid_grad(SCAR_NUMERICAL_FAILURE, backend);
-            }
-            for (int j = 0; j < K_eff; ++j) {
-                const std::size_t idx = static_cast<std::size_t>(j);
-                const double posterior =
-                    alpha[idx] * fi[row_offset + idx]
-                    * beta[row_offset + idx] / posterior_total;
-                const std::size_t score_offset = idx * score_width;
-                for (std::size_t p = 0; p < corr_grad.size(); ++p) {
-                    corr_grad[p] += posterior * scores[score_offset + p];
-                }
-            }
+    auto fill_block = [&](std::int64_t first, std::int64_t end) {
+        return fill_gradient_emission_block(
+            emission, observation_values, first, end, r_grid, dpsi_grid,
+            config.n_threads, fi, dfi_dx, emission_log_scales);
+    };
+    auto forward_step = [&](const double* density,
+                            std::vector<double>& alpha) {
+        for (std::size_t j = 0; j < K_size; ++j) {
+            ws.alpha_source[j] = alpha[j] * density[j];
+        }
+        operator_transpose_matvec(op, ws.alpha_source, ws.alpha_next);
+        double scale = 0.0;
+        for (double value : ws.alpha_next) {
+            scale = std::max(scale, std::abs(value));
+        }
+        if (!std::isfinite(scale) || scale <= 0.0) {
+            return false;
+        }
+        for (double& value : ws.alpha_next) {
+            value /= scale;
+        }
+        alpha.swap(ws.alpha_next);
+        return true;
+    };
 
-            if (t < n_obs - 1) {
-                for (int j = 0; j < K_eff; ++j) {
-                    const std::size_t idx = static_cast<std::size_t>(j);
-                    alpha_source[idx] = alpha[idx] * fi[row_offset + idx];
+    // The backward state and its three OU sensitivities roll across leaves.
+    // Row scales are counted only here, never during checkpoint recomputation.
+    double emission_log_scale = 0.0;
+    double cumul_logc = 0.0;
+    auto backward_block = [&](std::int64_t first, std::int64_t end,
+                              const std::vector<double>* prior) {
+        if (!fill_block(first, end)) {
+            return false;
+        }
+        if (prior != nullptr) {
+            ws.alpha = *prior;
+            ws.alpha_history.resize(fi.size());
+            for (std::int64_t t = first; t < end; ++t) {
+                const std::size_t offset =
+                    static_cast<std::size_t>(t - first) * K_size;
+                std::copy(ws.alpha.begin(), ws.alpha.end(),
+                          ws.alpha_history.data() + offset);
+                if (t + 1 < end
+                    && !forward_step(fi.data() + offset, ws.alpha)) {
+                    return false;
                 }
-                operator_transpose_matvec(op, alpha_source, alpha_next);
-                double alpha_scale = 0.0;
-                for (double value : alpha_next) {
-                    alpha_scale = std::max(alpha_scale, std::abs(value));
-                }
-                if (!std::isfinite(alpha_scale) || alpha_scale <= 0.0) {
-                    return invalid_grad(SCAR_NUMERICAL_FAILURE, backend);
-                }
-                for (double& value : alpha_next) {
-                    value /= alpha_scale;
-                }
-                alpha.swap(alpha_next);
             }
         }
-        for (double value : corr_grad) {
-            if (!std::isfinite(value)) {
+        for (double row_scale : emission_log_scales) {
+            emission_log_scale += row_scale;
+        }
+        for (std::int64_t row = end - 1; row >= first; --row) {
+            const std::size_t row_offset =
+                static_cast<std::size_t>(row - first) * K_size;
+            const double* fi_row = fi.data() + row_offset;
+            const double* dfi_dx_row = dfi_dx.data() + row_offset;
+            if (prior != nullptr) {
+                const double* observation = observation_values
+                    + static_cast<std::size_t>(row)
+                        * static_cast<std::size_t>(copula.dim);
+                const bool scored = directional
+                    ? scar_internal::student_corr_directional_score_row(
+                        copula, observation, row, r_grid, ws.precision,
+                        *corr_direction, ws.scores.data())
+                    : scar_internal::student_corr_score_row(
+                        copula, observation, row, r_grid, ws.precision,
+                        ws.scores.data());
+                if (!scored) {
+                    return false;
+                }
+                const double* alpha = ws.alpha_history.data() + row_offset;
+                double total = 0.0;
+                for (std::size_t j = 0; j < K_size; ++j) {
+                    total += alpha[j] * fi_row[j] * beta[j];
+                }
+                if (!std::isfinite(total) || total <= 0.0) {
+                    return false;
+                }
+                for (std::size_t j = 0; j < K_size; ++j) {
+                    const double posterior =
+                        alpha[j] * fi_row[j] * beta[j] / total;
+                    const std::size_t offset = j * corr_grad.size();
+                    for (std::size_t p = 0; p < corr_grad.size(); ++p) {
+                        corr_grad[p] += posterior * ws.scores[offset + p];
+                    }
+                }
+            }
+            if (row == 0) {
+                // f_0 is integrated against the stationary prior below.
+                continue;
+            }
+            for (std::size_t j = 0; j < K_size; ++j) {
+                target[j] = fi_row[j] * beta[j];
+            }
+            operator_matvec(op, false, target, next);
+            double scale = 0.0;
+            for (double value : next) {
+                scale = std::max(scale, std::abs(value));
+            }
+            if (!std::isfinite(scale) || scale <= 0.0) {
+                return false;
+            }
+            operator_matvec(op, true, target, transition_grad);
+            const double inv_scale = 1.0 / scale;
+            for (int p = 0; p < 3; ++p) {
+                const std::size_t p_offset =
+                    static_cast<std::size_t>(p) * K_size;
+                for (std::size_t j = 0; j < K_size; ++j) {
+                    const double dfi = dfi_dx_row[j] * dx_dalpha[p_offset + j];
+                    d_target[j] = dfi * beta[j] + fi_row[j] * d_beta[p_offset + j];
+                }
+                operator_matvec(op, false, d_target, contrib);
+                if (p == 0) {
+                    for (std::size_t j = 0; j < K_size; ++j) {
+                        contrib[j] += transition_grad[j] * drho_dkappa;
+                    }
+                }
+                for (std::size_t j = 0; j < K_size; ++j) {
+                    new_d_beta[p_offset + j] = contrib[j] * inv_scale;
+                }
+            }
+            for (std::size_t j = 0; j < K_size; ++j) {
+                beta[j] = next[j] * inv_scale;
+            }
+            d_beta.swap(new_d_beta);
+            cumul_logc += std::log(scale);
+        }
+        return true;
+    };
+
+    if (correlation_gradient) {
+        // Recompute the midpoint's predictive distribution, visit the right
+        // half first, then the left. beta remains the correct future message
+        // at every leaf. Both halves shrink; depth is at most 63 for int64 T.
+        auto visit = [&](auto&& self, std::int64_t first, std::int64_t end,
+                         std::size_t depth,
+                         const std::vector<double>& prior) -> bool {
+            if (end - first <= emission_block_rows) {
+                return backward_block(first, end, &prior);
+            }
+            // Balance by emission blocks, keeping full blocks on the right.
+            // Just above a block boundary only the short left remainder
+            // needs recomputing, rather than half of the entire history.
+            const std::int64_t blocks =
+                (end - first - 1) / emission_block_rows + 1;
+            const std::int64_t middle =
+                end - (blocks / 2) * emission_block_rows;
+            auto& midpoint = ws.alpha_checkpoints[depth];
+            midpoint = prior;
+            for (std::int64_t begin = first; begin < middle;) {
+                const std::int64_t block_end = begin
+                    + std::min(emission_block_rows, middle - begin);
+                if (!fill_block(begin, block_end)) {
+                    return false;
+                }
+                for (std::int64_t t = begin; t < block_end; ++t) {
+                    const std::size_t offset =
+                        static_cast<std::size_t>(t - begin) * K_size;
+                    if (!forward_step(fi.data() + offset, midpoint)) {
+                        return false;
+                    }
+                }
+                begin = block_end;
+            }
+            return self(self, middle, end, depth + 1, midpoint)
+                && self(self, first, middle, depth + 1, prior);
+        };
+        if (!visit(visit, 0, n_obs, 0, pw_const)) {
+            return invalid_grad(SCAR_NUMERICAL_FAILURE, backend);
+        }
+    } else {
+        for (std::int64_t end = n_obs; end > 0;) {
+            const std::int64_t first =
+                std::max<std::int64_t>(0, end - emission_block_rows);
+            if (!backward_block(first, end, nullptr)) {
                 return invalid_grad(SCAR_NUMERICAL_FAILURE, backend);
             }
+            end = first;
+        }
+    }
+
+    double Z0 = 0.0;
+    for (std::size_t j = 0; j < K_size; ++j) {
+        Z0 += fi[j] * pw_const[j] * beta[j];
+    }
+    if (!std::isfinite(Z0) || Z0 <= 0.0) {
+        return invalid_grad(SCAR_NUMERICAL_FAILURE, backend);
+    }
+    double grad[3] = {0.0, 0.0, 0.0};
+    for (int p = 0; p < 3; ++p) {
+        const std::size_t offset = static_cast<std::size_t>(p) * K_size;
+        double numerator = 0.0;
+        for (std::size_t j = 0; j < K_size; ++j) {
+            const double dfi = dfi_dx[j] * dx_dalpha[offset + j];
+            numerator += (dfi * beta[j] + fi[j] * d_beta[offset + j])
+                * pw_const[j];
+        }
+        grad[p] = numerator / Z0;
+    }
+    for (double value : corr_grad) {
+        if (!std::isfinite(value)) {
+            return invalid_grad(SCAR_NUMERICAL_FAILURE, backend);
         }
     }
 
@@ -948,7 +989,7 @@ GradLogLikResult spectral_neg_loglik_with_grad(
         return invalid_grad(SCAR_INVALID_PARAMETER, OuBackend::Spectral);
     }
     std::size_t spectral_elements = 0;
-    if (n_obs <= 0
+    if (n_obs < 2
         || !scar_internal::valid_spectral_dimensions(
             config.spectral_quad_order,
             config.spectral_basis_order,

@@ -496,7 +496,7 @@ _SYMBOL_REVIEWS = (
     ('pyscarcopula.strategy.scar_tm:SCARTMStrategy._fit_joint_static.objective_and_grad_scaled',
      '291913f1113a16fb02add12708f8b93877ea8d41016b4c2a2da9112150c347b2', 'fit_orchestration', ('arithmetic',)),
     ('pyscarcopula.strategy.scar_tm:SCARTMStrategy.fit',
-     '0fce8dad5fbc0b8f3515e6a8faaba766c9a0851b2b143667bd2af39a11a9ba2b', 'fit_orchestration', ('arithmetic', 'numerical-call')),
+     '453f8094fd2dc871e59debeac98ae9115252f5312ab8a4df255ba9812c175ef5', 'fit_orchestration', ('arithmetic', 'numerical-call')),
 )
 
 EXCEPTIONS = {

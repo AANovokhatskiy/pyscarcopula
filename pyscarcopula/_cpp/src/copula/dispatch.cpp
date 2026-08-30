@@ -10,6 +10,7 @@
 #include "scar/math/normal.hpp"
 
 #include <cmath>
+#include <limits>
 
 namespace scar_internal {
 
@@ -549,7 +550,9 @@ void copula_pdf_and_grad_grid_precomputed(
     std::vector<double>& fi,
     std::vector<double>& dfi_dx,
     int n_threads,
-    double* log_scale_sum) {
+    double* log_scale_sum,
+    std::int64_t first_row,
+    double* row_log_scales) {
 
     if (log_scale_sum != nullptr) {
         *log_scale_sum = 0.0;
@@ -558,11 +561,26 @@ void copula_pdf_and_grad_grid_precomputed(
     const std::size_t K = r_grid.size();
     std::size_t n_obs_size = 0;
     std::size_t elements = 0;
-    if (!checked_nonnegative_size(n_obs, n_obs_size)
+    if (first_row < 0 || n_obs < 0
+        || n_obs > std::numeric_limits<std::int64_t>::max() - first_row
+        || K == 0 || dpsi_grid.size() != K
+        || !checked_nonnegative_size(n_obs, n_obs_size)
         || !checked_size_mul(n_obs_size, K, elements)) {
         fi.clear();
         dfi_dx.clear();
         return;
+    }
+    const std::int64_t end_row = first_row + n_obs;
+    std::size_t observation_elements = 0;
+    if (spec.dim < 1 || !checked_size_mul(
+            static_cast<std::size_t>(end_row),
+            static_cast<std::size_t>(spec.dim), observation_elements)) {
+        fi.clear();
+        dfi_dx.clear();
+        return;
+    }
+    if (row_log_scales != nullptr) {
+        std::fill(row_log_scales, row_log_scales + n_obs_size, 0.0);
     }
     fi.assign(elements, 0.0);
     dfi_dx.assign(elements, 0.0);
@@ -572,7 +590,9 @@ void copula_pdf_and_grad_grid_precomputed(
         const scar::FactorStudentGridResult result =
             scar::factor_student_log_pdf_and_dlog_ddf_grid(
                 *spec.factor_operator(),
-                u,
+                u == nullptr ? nullptr
+                    : u + static_cast<std::size_t>(first_row)
+                        * static_cast<std::size_t>(spec.dim),
                 n_obs_size,
                 r_grid.data(),
                 K,
@@ -612,6 +632,9 @@ void copula_pdf_and_grad_grid_precomputed(
                 return;
             }
             total_scale += row_scale;
+            if (row_log_scales != nullptr) {
+                row_log_scales[row] = row_scale;
+            }
             for (std::size_t grid = 0; grid < K; ++grid) {
                 const std::size_t index = offset + grid;
                 const double density =
@@ -636,14 +659,15 @@ void copula_pdf_and_grad_grid_precomputed(
             dpsi_grid,
             fi.data(),
             dfi_dx.data(),
-            n_threads)) {
+            n_threads,
+            first_row)) {
         return;
     }
-    if (spec.family == scar::CopulaFamily::Student && n_threads > 1) {
+    if (spec.family == scar::CopulaFamily::Student) {
         constexpr std::int64_t min_rows_per_block = 8;
         parallel_for_blocks(
-            0,
-            n_obs,
+            first_row,
+            end_row,
             min_rows_per_block,
             n_threads,
             [&](std::int64_t begin,
@@ -655,7 +679,7 @@ void copula_pdf_and_grad_grid_precomputed(
                     static_cast<std::size_t>(spec.dim));
                 for (std::int64_t t = begin; t < end; ++t) {
                     const std::size_t output_row =
-                        static_cast<std::size_t>(t) * K;
+                        static_cast<std::size_t>(t - first_row) * K;
                     const double* observation_row =
                         u + static_cast<std::size_t>(t)
                             * static_cast<std::size_t>(spec.dim);
@@ -680,8 +704,8 @@ void copula_pdf_and_grad_grid_precomputed(
             static_cast<std::size_t>(kEquicorrGridMinRowsPerBlock),
             kEquicorrGridMinCells)) {
         parallel_for_blocks(
-            0,
-            n_obs,
+            first_row,
+            end_row,
             kEquicorrGridMinRowsPerBlock,
             n_threads,
             [&](std::int64_t begin,
@@ -689,7 +713,7 @@ void copula_pdf_and_grad_grid_precomputed(
                 std::size_t) {
                 for (std::int64_t t = begin; t < end; ++t) {
                     const std::size_t output_row =
-                        static_cast<std::size_t>(t) * K;
+                        static_cast<std::size_t>(t - first_row) * K;
                     const bool cache_available =
                         spec.equicorr_sum_scores().size()
                             == spec.equicorr_sum_squares().size()
@@ -718,10 +742,12 @@ void copula_pdf_and_grad_grid_precomputed(
             const bool cache_available =
                 spec.pair_gaussian_first_scores().size()
                     == spec.pair_gaussian_second_scores().size()
-                && spec.pair_gaussian_first_scores().size() >= n_obs_size;
-            for (std::int64_t t = 0; t < n_obs; ++t) {
+                && spec.pair_gaussian_first_scores().size()
+                    >= static_cast<std::size_t>(end_row);
+            for (std::int64_t t = first_row; t < end_row; ++t) {
                 const std::size_t observation = static_cast<std::size_t>(t);
-                const std::size_t output_row = observation * K;
+                const std::size_t output_row =
+                    static_cast<std::size_t>(t - first_row) * K;
                 if (!cache_available) {
                     const double* observation_row = u + observation * 2;
                     gaussian_fill_row(
@@ -745,10 +771,11 @@ void copula_pdf_and_grad_grid_precomputed(
                     dfi_dx.data() + output_row);
             }
         } else {
-            for (std::int64_t t = 0; t < n_obs; ++t) {
+            for (std::int64_t t = first_row; t < end_row; ++t) {
                 const std::size_t observation =
                     static_cast<std::size_t>(t);
-                const std::size_t output_row = observation * K;
+                const std::size_t output_row =
+                    static_cast<std::size_t>(t - first_row) * K;
                 const double* observation_row = u + observation * 2;
                 pair_kernel.fill_grid_row_with_gradient(
                     observation_row[0],
@@ -761,8 +788,8 @@ void copula_pdf_and_grad_grid_precomputed(
         }
         return;
     }
-    for (std::int64_t t = 0; t < n_obs; ++t) {
-        const std::size_t row = static_cast<std::size_t>(t) * K;
+    for (std::int64_t t = first_row; t < end_row; ++t) {
+        const std::size_t row = static_cast<std::size_t>(t - first_row) * K;
         copula_pdf_and_grad_row_precomputed_flat(
             spec,
             u,

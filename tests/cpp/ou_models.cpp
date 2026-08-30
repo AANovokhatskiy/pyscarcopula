@@ -2,6 +2,8 @@
 #include "scar/copula/capability.hpp"
 #include "scar/copula/multivariate/correlation/factor.hpp"
 #include "scar/copula/multivariate/correlation/parameterization.hpp"
+#include "scar/copula/multivariate/student/ppf_cache.hpp"
+#include "scar/copula/prepared_dynamic_emission.hpp"
 #include "scar/copula/prepared_pair_kernel.hpp"
 #include "scar/ou.hpp"
 #include "scar/model_policy.hpp"
@@ -16,6 +18,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <limits>
 #include <numeric>
 #include <vector>
 
@@ -139,6 +142,60 @@ scar::CopulaSpec factor_student_spec(
     spec.factor_operator() = factor;
     spec.dense_log_determinant() = factor->logdet();
     return spec;
+}
+
+bool emission_blocks_match_rows(
+    const scar::CopulaSpec& spec,
+    const std::vector<double>& observations) {
+
+    scar::PreparedDynamicEmission emission(spec);
+    std::vector<double> parameters, derivatives;
+    // The last state is outside the Student cache and exercises exact fallback.
+    for (const std::vector<double> states : {
+            std::vector<double>{-2.0, 0.2, 3.0},
+            std::vector<double>{-2.0, 0.2, 1100.0}}) {
+        if (spec.family != scar::CopulaFamily::Student
+            && states.back() > 100.0) {
+            continue;
+        }
+        emission.prepare_grid_transform(states, parameters, derivatives);
+        const auto K = parameters.size();
+        std::vector<double> density, gradient, scales;
+        std::vector<double> row_density(K), row_gradient(K);
+        for (int threads : {1, 4}) {
+            if (!emission.fill_density_and_gradient_block(
+                    observations.data(), 1, 3, parameters, derivatives,
+                    density, gradient, scales, threads)
+                || density.size() != 3 * K || scales.size() != 3) {
+                return false;
+            }
+            for (std::size_t row = 0; row < 3; ++row) {
+                double scale = 0.0;
+                emission.fill_density_and_gradient_row(
+                    observations.data(), static_cast<std::int64_t>(row + 1),
+                    parameters, derivatives, row_density.data(),
+                    row_gradient.data(), &scale);
+                if (!close(scale, scales[row], 2e-10)) {
+                    return false;
+                }
+                for (std::size_t j = 0; j < K; ++j) {
+                    if (!close(density[row * K + j], row_density[j], 2e-10)
+                        || !close(gradient[row * K + j], row_gradient[j], 2e-10)) {
+                        return false;
+                    }
+                }
+            }
+        }
+        if (emission.fill_density_and_gradient_block(
+                observations.data(), -1, 3, parameters, derivatives,
+                density, gradient, scales, 1)
+            || emission.fill_density_and_gradient_block(
+                observations.data(), 1, std::numeric_limits<std::int64_t>::max(),
+                parameters, derivatives, density, gradient, scales, 1)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 scar::OuNumericalConfig matrix_config(scar::OuGridMethod method) {
@@ -568,6 +625,9 @@ int run_ou_model_tests() {
     for (std::size_t index = 0; index < student_specs.size(); ++index) {
         const int base = 120 + static_cast<int>(index) * 10;
         const scar::CopulaSpec& spec = student_specs[index];
+        if (!emission_blocks_match_rows(spec, multivariate_values)) {
+            return 145 + static_cast<int>(index);
+        }
         const auto objective = evaluator.neg_loglik_with_grad_matrix(
             params, spec, multivariate_observations, dense_config);
         if (!objective.is_ok() || objective.neg_gradient.size() != 3
@@ -649,5 +709,31 @@ int run_ou_model_tests() {
         return 140;
     }
 
+    if (!emission_blocks_match_rows(representative, pair_values)
+        || !emission_blocks_match_rows(equicorr, multivariate_values)) {
+        return 147;
+    }
+    for (int d : {2, 10}) {
+        std::vector<double> R(static_cast<std::size_t>(d * d), 0.2);
+        for (int j = 0; j < d; ++j) {
+            R[static_cast<std::size_t>(j * d + j)] = 1.0;
+        }
+        auto spec = dense_student_spec(R, d);
+        std::vector<double> observations(static_cast<std::size_t>(19 * d));
+        for (std::size_t j = 0; j < observations.size(); ++j) {
+            observations[j] = 0.1 + 0.8 * static_cast<double>((j * 31) % 101) / 101.;
+        }
+        auto table = scar::copula::multivariate::student::prepare_ppf_table(
+            view(observations), {});
+        if (!table.is_ok() || !table.value.has_table) {
+            return 148;
+        }
+        spec.student_ppf_observation_count() = 19;
+        spec.student_ppf_nodes() = std::move(table.value.nodes);
+        spec.student_ppf_table() = std::move(table.value.table);
+        if (!emission_blocks_match_rows(spec, observations)) {
+            return 149;
+        }
+    }
     return 0;
 }

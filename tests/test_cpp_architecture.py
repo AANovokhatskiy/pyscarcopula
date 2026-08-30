@@ -970,6 +970,25 @@ def test_application_modules_use_prepared_copula_interfaces():
     assert '#include "scar/copula.hpp"' not in composition_header
 
 
+def test_scar_ou_grid_gradient_streams_observation_state():
+    source = ROOT / "pyscarcopula" / "_cpp" / "src" / "scar_ou"
+    gradient = (source / "gradient.cpp").read_text(encoding="utf-8")
+    workspace = (source / "gradient_workspace.hpp").read_text(
+        encoding="utf-8")
+
+    assert "kGradientEmissionBlockElements" in gradient
+    assert "fill_gradient_emission_block" in gradient
+    assert "fi.assign(nK" not in gradient
+    assert "dfi_dx.assign(nK" not in gradient
+    assert "beta.assign(nK" not in gradient
+    assert "std::vector<double> c_vals" not in workspace
+    assert "alpha_history" in workspace
+    assert "alpha_checkpoints" in workspace
+    assert "corr_alpha" not in workspace
+    assert "emission.fill_density_and_gradient_block" in gradient
+    assert "parallel_for_blocks" not in gradient
+
+
 def test_public_cpp_api_is_domain_scoped_and_caller_neutral():
     cpp = ROOT / "pyscarcopula" / "_cpp"
     include = cpp / "include" / "scar"

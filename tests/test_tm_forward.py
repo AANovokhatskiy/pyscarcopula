@@ -397,6 +397,34 @@ def test_scar_tm_auto_spectral_basis_order_policy():
 
     with pytest.raises(ValueError, match="spectral_basis_order"):
         SCARTMStrategy(spectral_basis_order="wide")
+    for invalid in (True, np.bool_(False), 3.7):
+        with pytest.raises(ValueError, match="spectral_basis_order"):
+            SCARTMStrategy(spectral_basis_order=invalid)
+
+
+@pytest.mark.parametrize("small_kdt", [0.0, -1e-3])
+def test_scar_tm_rejects_nonpositive_auto_small_kdt_at_construction(
+        small_kdt):
+    with pytest.raises(ValueError, match="small_kdt.*positive finite"):
+        SCARTMStrategy(auto_small_kdt=small_kdt)
+
+
+def test_scar_tm_rejects_single_observation_before_optimizer(monkeypatch):
+    optimizer_called = False
+
+    def forbidden_optimizer(*args, **kwargs):
+        nonlocal optimizer_called
+        optimizer_called = True
+        raise AssertionError("optimizer must not run")
+
+    monkeypatch.setattr(scar_tm, "minimize", forbidden_optimizer)
+    with pytest.raises(ValueError, match="at least two observations"):
+        SCARTMStrategy(smart_init=False).fit(
+            BivariateGaussianCopula(),
+            np.array([[0.25, 0.75]]),
+            alpha0=np.array([1.0, 0.0, 0.5]),
+        )
+    assert optimizer_called is False
 
 
 def test_scar_tm_adaptive_spectral_basis_order_reaches_objective(monkeypatch):
