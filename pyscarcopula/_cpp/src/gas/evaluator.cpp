@@ -1,8 +1,10 @@
 #include "scar/gas.hpp"
 
 #include "scar/copula/prepared_dynamic_emission.hpp"
+#include "scar/copula/prepared_pair_kernel.hpp"
 #include "scar/detail/copula/common.hpp"
 #include "scar/detail/safety.hpp"
+#include "scar/math/normal.hpp"
 
 #include <algorithm>
 #include <array>
@@ -143,8 +145,7 @@ RowEvaluation evaluate_row(
         return out;
     }
 
-    const bool analytic_derivative =
-        need_score && config.scaling == GasScaling::Unit;
+    const bool analytic_derivative = need_score;
     const DynamicEmissionRowResult emission_row =
         emission.evaluate_parameter(
             row,
@@ -161,9 +162,10 @@ RowEvaluation evaluate_row(
         return out;
     }
 
+    const double analytic_score = emission_row.dlog_dparameter
+        * gas_dtransform(emission, g);
     if (config.scaling == GasScaling::Unit) {
-        out.score = emission_row.dlog_dparameter
-            * gas_dtransform(emission, g);
+        out.score = analytic_score;
     } else {
         const double ll_plus = log_pdf_at_g(
             emission, row, row_index, g + config.score_eps, workspace);
@@ -173,17 +175,14 @@ RowEvaluation evaluate_row(
             out.status = SCAR_NUMERICAL_FAILURE;
             return out;
         }
-        const double score_denominator = 2.0 * config.score_eps;
         const double curvature_denominator =
             config.score_eps * config.score_eps;
-        const double gradient =
-            (ll_plus - ll_minus) / score_denominator;
         const double second_derivative =
             (ll_plus - 2.0 * out.log_likelihood + ll_minus)
             / curvature_denominator;
         const double fisher =
             std::max(-second_derivative, config.fisher_floor);
-        out.score = gradient / fisher;
+        out.score = analytic_score / fisher;
     }
 
     if (!std::isfinite(out.score)) {
@@ -655,46 +654,174 @@ GasPredictResult GasEvaluator::predict_parameter(
     bool horizon_next) const {
 
     GasPredictResult out;
-    const GasFilterResult filtered = filter(
-        params, copula, u, config);
-    out.status = filtered.status;
-    out.failure = filtered.failure;
-    if (!out.is_ok()) {
-        return out;
-    }
-    out.parameter = filtered.r_path.back();
-    if (!horizon_next) {
+    PreparedDynamicEmission emission =
+        PreparedDynamicEmission::borrow(copula);
+    const int status = validate_inputs(params, emission, u, config);
+    if (status != SCAR_OK) {
+        set_failure(out, status, -1);
         return out;
     }
 
-    const double* row = u.values == nullptr
-        ? nullptr
-        : u.values
-            + static_cast<std::size_t>(u.dim) * (u.n_obs - 1);
-    PreparedDynamicEmission emission =
-        PreparedDynamicEmission::borrow(copula);
-    PreparedDynamicEmissionWorkspace workspace =
-        emission.make_workspace(true);
-    const RowEvaluation evaluation = evaluate_row(
-        emission,
-        row,
-        static_cast<std::int64_t>(u.n_obs - 1),
-        filtered.g_path.back(),
-        config,
-        true,
-        workspace);
-    out.status = status_from_int(evaluation.status);
-    if (!out.is_ok()) {
-        out.failure.index = static_cast<std::int64_t>(u.n_obs - 1);
+    double g = initial_g(params, config);
+    if (!std::isfinite(g)) {
+        set_failure(out, SCAR_NUMERICAL_FAILURE, -1);
         return out;
     }
-    out.parameter = gas_transform(
-        emission,
-        next_g(
-            params,
+    PreparedDynamicEmissionWorkspace workspace =
+        emission.make_workspace(true);
+    for (std::size_t t = 0; t < u.n_obs; ++t) {
+        const double* row = u.values == nullptr
+            ? nullptr
+            : u.values + static_cast<std::size_t>(u.dim) * t;
+        const bool final_row = t + 1 == u.n_obs;
+        const bool need_score = !final_row || horizon_next;
+        const RowEvaluation evaluation = evaluate_row(
+            emission,
+            row,
+            static_cast<std::int64_t>(t),
+            g,
             config,
-            filtered.g_path.back(),
-            evaluation.score));
+            need_score,
+            workspace);
+        if (evaluation.status != SCAR_OK) {
+            set_failure(
+                out, evaluation.status, static_cast<std::int64_t>(t));
+            return out;
+        }
+        if (final_row) {
+            out.parameter = horizon_next
+                ? gas_transform(
+                    emission,
+                    next_g(params, config, g, evaluation.score))
+                : evaluation.r;
+            if (!std::isfinite(out.parameter)) {
+                set_failure(
+                    out,
+                    SCAR_NUMERICAL_FAILURE,
+                    static_cast<std::int64_t>(t));
+            }
+            return out;
+        }
+        g = next_g(params, config, g, evaluation.score);
+        if (!std::isfinite(g)) {
+            set_failure(
+                out, SCAR_NUMERICAL_FAILURE,
+                static_cast<std::int64_t>(t));
+            return out;
+        }
+    }
+    return out;
+}
+
+GasSampleResult GasEvaluator::sample_bivariate(
+    const GasParams& params,
+    const CopulaSpec& copula,
+    ObservationView draws,
+    const GasConfig& config) const {
+
+    GasSampleResult out;
+    out.n_rows = static_cast<std::int64_t>(draws.n_obs);
+    PreparedDynamicEmission emission =
+        PreparedDynamicEmission::borrow(copula);
+    if (!valid_params(params) || !valid_config(config)) {
+        set_failure(out, SCAR_INVALID_PARAMETER, -1);
+        return out;
+    }
+    const int copula_status = validate_copula(emission);
+    if (copula_status != SCAR_OK) {
+        set_failure(out, copula_status, -1);
+        return out;
+    }
+    if (emission.expected_dimension() != 2
+        || copula.family == CopulaFamily::Student
+        || copula.family == CopulaFamily::EquicorrGaussian
+        || copula.family == CopulaFamily::MultivariateGaussian) {
+        set_failure(out, SCAR_INVALID_FAMILY, -1);
+        return out;
+    }
+    if (draws.values == nullptr || draws.n_obs == 0 || draws.dim != 2) {
+        set_failure(out, SCAR_INVALID_SIZE, -1);
+        return out;
+    }
+
+    const CopulaSpec transposed_copula =
+        scar_internal::transposed_copula_spec(copula);
+    const PreparedPairKernel sampling_kernel(transposed_copula);
+    if (!sampling_kernel.is_supported()) {
+        set_failure(out, SCAR_INVALID_FAMILY, -1);
+        return out;
+    }
+
+    for (std::size_t t = 0; t < draws.n_obs; ++t) {
+        const double* draw = draws.values + 2 * t;
+        if (!std::isfinite(draw[0]) || !std::isfinite(draw[1])
+            || (copula.family != CopulaFamily::Gaussian
+                && (!(draw[0] > 0.0 && draw[0] < 1.0)
+                    || !(draw[1] > 0.0 && draw[1] < 1.0)))) {
+            set_failure(
+                out, SCAR_INVALID_PARAMETER,
+                static_cast<std::int64_t>(t));
+            return out;
+        }
+    }
+    double g = initial_g(params, config);
+    if (!std::isfinite(g)) {
+        set_failure(out, SCAR_NUMERICAL_FAILURE, -1);
+        return out;
+    }
+    out.values.resize(2 * draws.n_obs);
+    PreparedDynamicEmissionWorkspace workspace =
+        emission.make_workspace(true);
+    for (std::size_t t = 0; t < draws.n_obs; ++t) {
+        const double* draw = draws.values + 2 * t;
+        const double parameter = gas_transform(emission, g);
+        double sample[2] = {0.0, 0.0};
+        if (copula.family == CopulaFamily::Gaussian) {
+            const double residual_scale = std::sqrt(
+                std::max(0.0, 1.0 - parameter * parameter));
+            sample[0] = math::normal_cdf(draw[0]);
+            sample[1] = math::normal_cdf(
+                parameter * draw[0] + residual_scale * draw[1]);
+        } else {
+            sample[0] = draw[0];
+            sample[1] = sampling_kernel.inverse_h(
+                draw[1], draw[0], parameter);
+        }
+        if (!std::isfinite(sample[0]) || !std::isfinite(sample[1])
+            || !(sample[0] > 0.0 && sample[0] < 1.0)
+            || !(sample[1] > 0.0 && sample[1] < 1.0)) {
+            set_failure(
+                out, SCAR_NUMERICAL_FAILURE,
+                static_cast<std::int64_t>(t));
+            return out;
+        }
+        out.values[2 * t] = sample[0];
+        out.values[2 * t + 1] = sample[1];
+
+        if (t + 1 < draws.n_obs) {
+            const RowEvaluation evaluation = evaluate_row(
+                emission,
+                sample,
+                static_cast<std::int64_t>(t),
+                g,
+                config,
+                true,
+                workspace);
+            if (evaluation.status != SCAR_OK) {
+                set_failure(
+                    out, evaluation.status,
+                    static_cast<std::int64_t>(t));
+                return out;
+            }
+            g = next_g(params, config, g, evaluation.score);
+            if (!std::isfinite(g)) {
+                set_failure(
+                    out, SCAR_NUMERICAL_FAILURE,
+                    static_cast<std::int64_t>(t));
+                return out;
+            }
+        }
+    }
     return out;
 }
 

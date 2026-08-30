@@ -121,6 +121,12 @@ public:
         const GasConfig& config,
         bool horizon_next) const;
 
+    GasSampleResult sample_bivariate(
+        const GasParams& params,
+        const CopulaSpec& copula,
+        ObservationView draws,
+        const GasConfig& config) const;
+
     GasPathResult h_path(
         const GasParams& params,
         const CopulaSpec& copula,

@@ -84,11 +84,11 @@ $g_t = \omega + \beta g_{t-1} + \gamma\,score_{t-1}$.
 | `gamma0` | fit kwarg | MLE-based | Initial $[\omega, \gamma, \beta]$. |
 | `gtol` | fit kwarg / `gas_optimizer.gtol` | `1e-3` | L-BFGS-B projected-gradient tolerance. |
 | `ftol` | fit kwarg / `gas_optimizer.ftol` | `1e-9` | Relative objective decrease tolerance. |
-| `maxfun` | fit kwarg / `gas_optimizer.maxfun` | `4000` | Maximum function evaluations. |
+| `maxfun` | fit kwarg / `gas_optimizer.maxfun` | `4000` | Maximum optimizer function evaluations. |
 | `maxiter` | fit kwarg / `gas_optimizer.maxiter` | `1000` | Maximum optimizer iterations. |
 | `maxls` | fit kwarg / `gas_optimizer.maxls` | `100` | Maximum L-BFGS-B line-search steps per iteration. |
-| `eps` | fit kwarg / `gas_optimizer.eps` | `1e-5` | L-BFGS-B finite-difference step. |
-| `score_eps` | fit kwarg / `gas_score_eps` | `1e-4` | Finite-difference step for score calculations where needed. |
+| `eps` | fit kwarg / `gas_optimizer.eps` | `1e-5` | Native finite-difference step for the outer optimizer gradient. |
+| `score_eps` | fit kwarg / `gas_score_eps` | `1e-4` | Finite-difference step for Fisher curvature. |
 | `gamma_bound` | fit kwarg / `gas_gamma_bound` | `20.0` | Bounds score sensitivity to $[-\texttt{gamma\_bound}, \texttt{gamma\_bound}]$. |
 | `beta_bound` | fit kwarg / `gas_beta_bound` | `0.999` | Bounds persistence to $[-\texttt{beta\_bound}, \texttt{beta\_bound}]$; must be in $(0, 1)$. |
 | `scaling` | strategy kwarg | `'unit'` | Recommended score scaling mode. `'fisher'` is numerically sensitive. |
@@ -114,21 +114,32 @@ filtering, prediction, and Rosenblatt operations. Unsupported copulas fail
 immediately.
 
 The model score driving the GAS recursion is not an analytical gradient of the
-complete likelihood with respect to `omega`, `gamma`, and `beta`. SciPy
-L-BFGS-B obtains that optimizer gradient by finite differences.
-`GASResult.diagnostics` records these as
-`model_score='native'` and `optimizer_gradient='numerical'`.
+complete likelihood with respect to `omega`, `gamma`, and `beta`. The compiled
+evaluator obtains that optimizer gradient by central finite differences and
+returns it together with the objective to SciPy L-BFGS-B.
+`GASResult.diagnostics` records these as `model_score='native'`,
+`optimizer_gradient='native'`, and
+`gradient_kind='native_finite_difference'`. `maxfun` is passed directly to
+SciPy L-BFGS-B, and `nfev` retains SciPy's optimizer function-evaluation
+semantics.
 
-Fisher scaling computes curvature by a second finite difference inside the GAS
-recursion, while L-BFGS-B also differentiates the outer objective numerically.
-Together with the Fisher floor and score clipping, this can produce a
-piecewise, step-sensitive objective. Prefer `scaling='unit'` unless Fisher
-behavior is specifically under study.
+Fisher scaling uses the analytical copula score
+$\partial\log c/\partial r\,\partial r/\partial g$ as its numerator and
+computes only the local curvature by a second finite difference inside the GAS
+recursion. The native evaluator still differentiates the outer objective
+numerically. Together with the Fisher floor and score clipping, this can
+produce a piecewise, step-sensitive objective. Prefer `scaling='unit'` unless
+Fisher behavior is specifically under study.
 
 GAS `sample` and `predict` require a positive integer draw count. Both accept
-`memory_budget_bytes=` as a pre-allocation guard; `sample` accounts for its
-output and `predict` accounts for its output plus the predictive parameter
-path. The causal GAS sample recursion is not split into batches.
+`memory_budget_bytes=` as a pre-allocation guard. Fused bivariate `sample`
+accounts for its caller-owned RNG draws, native result staging, and final
+NumPy output: `6 * n * sizeof(float64)` bytes. Other sample paths account for
+their output. `predict` accounts for its output plus the predictive parameter
+path. Unconditional bivariate sampling performs its causal score recursion in
+one fused native call; conditional and multivariate sampling retain the
+stepwise model-specific path. The causal GAS sample recursion is not split
+into batches.
 
 ### SCAR-TM-OU
 

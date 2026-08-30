@@ -348,6 +348,22 @@ int run_gas_model_tests() {
                 return base + 8;
             }
         }
+
+        const auto sampled = evaluator.sample_bivariate(
+            params, spec, pair_observations, unit_config);
+        if (!sampled.is_ok()
+            || sampled.n_rows != 5
+            || sampled.values.size() != pair_values.size()
+            || !std::all_of(
+                sampled.values.begin(),
+                sampled.values.end(),
+                [](double value) {
+                    return std::isfinite(value)
+                        && value > 0.0
+                        && value < 1.0;
+                })) {
+            return base + 9;
+        }
     }
 
     // Registered multivariate GAS emissions reuse the same evaluator. Their

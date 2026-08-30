@@ -110,9 +110,10 @@ s_t =
 \frac{\partial \log c(u_t;\Psi(g_t))}{\partial g_t}.
 $$
 
-Fisher scaling rescales this score by a curvature estimate. It combines
-finite-difference curvature, clipping, and floors inside the recursion.
-`scaling='unit'` avoids those nested numerical operations and is the baseline
+Fisher scaling rescales this analytical copula score by a finite-difference
+curvature estimate. It combines that curvature, clipping, and floors inside
+the recursion.
+`scaling='unit'` avoids the numerical curvature rescaling and is the baseline
 used by the fitting guide.
 
 The compiled GAS evaluator handles likelihood, score recursion, filtering,

@@ -379,6 +379,47 @@ def test_bivariate_gas_fisher_satisfies_numerical_invariants(name, scaling):
     assert current == pytest.approx(first.r_path[-1])
 
 
+@pytest.mark.parametrize("name", COPULA_FACTORIES)
+def test_bivariate_gas_fisher_uses_analytical_copula_score(name):
+    copula = COPULA_FACTORIES[name]()
+    observation = OBSERVATIONS[0]
+    g_t = 0.2
+    r_t = float(copula.transform(np.array([g_t]))[0])
+    dlog_dr = float(copula.dlog_pdf_dr(
+        observation[:1], observation[1:], np.array([r_t]))[0])
+    analytic_score = dlog_dr * float(
+        copula.dtransform(np.array([g_t]))[0])
+
+    def log_pdf_at_g(g):
+        parameter = float(copula.transform(np.array([g]))[0])
+        return float(copula.log_pdf(
+            observation[:1], observation[1:],
+            np.array([parameter]))[0])
+
+    ll_zero = log_pdf_at_g(g_t)
+    ll_plus = log_pdf_at_g(g_t + SCORE_EPS)
+    ll_minus = log_pdf_at_g(g_t - SCORE_EPS)
+    curvature = max(
+        -(ll_plus - 2.0 * ll_zero + ll_minus) / SCORE_EPS**2,
+        1e-6,
+    )
+    expected = np.clip(analytic_score / curvature, -100.0, 100.0)
+
+    update = _cpp_gas.update_one(
+        *PARAMS,
+        g_t,
+        observation,
+        copula,
+        "fisher",
+        SCORE_EPS,
+    )
+
+    assert update.log_likelihood == pytest.approx(
+        ll_zero, rel=1e-12, abs=1e-12)
+    np.testing.assert_allclose(
+        update.score, expected, rtol=1e-11, atol=1e-11)
+
+
 @pytest.mark.parametrize("scaling", ["unit", "fisher"])
 def test_final_observation_affects_loglik_and_next_but_not_filtered_state(
         scaling):

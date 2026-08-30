@@ -81,6 +81,18 @@ struct GasPredictResult {
     }
 };
 
+/// Bivariate GAS samples generated from caller-owned random draws.
+struct GasSampleResult {
+    std::vector<double> values;
+    std::int64_t n_rows = 0;
+    Status status = Status::Ok;
+    FailureContext failure{};
+
+    bool is_ok() const noexcept {
+        return ok(status);
+    }
+};
+
 struct GasPathResult {
     std::vector<double> values;
     Status status = Status::Ok;

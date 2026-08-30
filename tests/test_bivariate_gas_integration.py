@@ -15,18 +15,24 @@ from pyscarcopula.strategy.gas import GASStrategy
 from pyscarcopula._types import GASResult, gas_params
 
 
-def _native_parameter_path(params, copula, scaling, observations):
+def _stepwise_sample_from_uniforms(params, copula, scaling, draws):
     state = _cpp_gas.initial_state(*params, copula, scaling)
     g_t = state.g
     r_t = state.parameter
-    path = []
-    for row in observations:
-        path.append(r_t)
-        update = _cpp_gas.update_one(
-            *params, g_t, row, copula, scaling, 1e-4)
-        g_t = update.g_next
-        r_t = update.r_next
-    return np.asarray(path)
+    samples = []
+    for index, draw in enumerate(draws):
+        row = copula._native_adapter().sample_from_uniforms(
+            copula,
+            draw.reshape(1, 2),
+            np.array([r_t]),
+        )[0]
+        samples.append(row)
+        if index + 1 < len(draws):
+            update = _cpp_gas.update_one(
+                *params, g_t, row, copula, scaling, 1e-4)
+            g_t = update.g_next
+            r_t = update.r_next
+    return np.asarray(samples)
 
 
 @pytest.mark.parametrize(
@@ -50,11 +56,11 @@ def test_native_gas_accepts_new_archimedean_transforms(
 
 
 @pytest.mark.parametrize("scaling", ["unit", "fisher"])
-def test_python_driven_sampling_matches_native_recursion(
+def test_fused_sampling_matches_stepwise_native_recursion(
         monkeypatch, scaling):
     copula = GumbelCopula(rotate=180)
     params = (0.03, 0.02, 0.65)
-    observations = np.array(
+    draws = np.array(
         [
             [0.21, 0.72],
             [0.64, 0.35],
@@ -64,18 +70,21 @@ def test_python_driven_sampling_matches_native_recursion(
         ],
         dtype=np.float64,
     )
-    expected_r = _native_parameter_path(
-        params, copula, scaling, observations)
-    seen_r = []
-    cursor = iter(observations)
+    expected = _stepwise_sample_from_uniforms(
+        params, copula, scaling, draws)
+    calls = []
+    original_sample = _cpp_gas.sample_bivariate
 
-    def deterministic_sample(n, r, rng=None):
-        assert n == 1
-        seen_r.append(float(np.asarray(r)[0]))
-        return np.asarray([next(cursor)], dtype=np.float64)
+    def counted_sample(*args, **kwargs):
+        calls.append("sample")
+        return original_sample(*args, **kwargs)
 
-    monkeypatch.setattr(
-        copula, "sample_at_parameter", deterministic_sample)
+    class FixedRng:
+        def uniform(self, low, high, size):
+            assert (low, high, size) == (0.0, 1.0, draws.shape)
+            return draws.copy()
+
+    monkeypatch.setattr(_cpp_gas, "sample_bivariate", counted_sample)
     result = GASResult(
         log_likelihood=0.0,
         method="GAS",
@@ -90,13 +99,12 @@ def test_python_driven_sampling_matches_native_recursion(
         copula,
         None,
         result,
-        len(observations),
-        rng=np.random.default_rng(123),
+        len(draws),
+        rng=FixedRng(),
     )
 
-    np.testing.assert_allclose(samples, observations, rtol=0.0, atol=0.0)
-    np.testing.assert_allclose(
-        seen_r, expected_r, rtol=2e-8, atol=2e-9)
+    np.testing.assert_allclose(samples, expected, rtol=0.0, atol=0.0)
+    assert calls == ["sample"]
 
 
 def test_gas_fit_gof_and_bootstrap_use_compiled_kernels(monkeypatch):
@@ -115,6 +123,7 @@ def test_gas_fit_gof_and_bootstrap_use_compiled_kernels(monkeypatch):
 
     p = result.params
     assert np.isfinite(result.log_likelihood)
+    assert 0 < result.nfev <= 80
     assert result.log_likelihood == pytest.approx(
         _cpp_gas.log_likelihood(
             p.omega,
@@ -129,9 +138,14 @@ def test_gas_fit_gof_and_bootstrap_use_compiled_kernels(monkeypatch):
         abs=1e-12,
     )
 
-    calls = {"update": 0, "h": 0}
+    calls = {"sample": 0, "update": 0, "h": 0}
+    original_sample = _cpp_gas.sample_bivariate
     original_update = _cpp_gas.update_one
     original_h = _cpp_gas.h_path
+
+    def counted_sample(*args, **kwargs):
+        calls["sample"] += 1
+        return original_sample(*args, **kwargs)
 
     def counted_update(*args, **kwargs):
         calls["update"] += 1
@@ -141,6 +155,7 @@ def test_gas_fit_gof_and_bootstrap_use_compiled_kernels(monkeypatch):
         calls["h"] += 1
         return original_h(*args, **kwargs)
 
+    monkeypatch.setattr(_cpp_gas, "sample_bivariate", counted_sample)
     monkeypatch.setattr(_cpp_gas, "update_one", counted_update)
     monkeypatch.setattr(_cpp_gas, "h_path", counted_h)
 
@@ -160,4 +175,5 @@ def test_gas_fit_gof_and_bootstrap_use_compiled_kernels(monkeypatch):
     assert gof.n_bootstrap == 2
     assert np.all(np.isfinite(gof.bootstrap_statistics))
     assert calls["h"] == 3
-    assert calls["update"] == 2 * (len(u) - 1)
+    assert calls["sample"] == 2
+    assert calls["update"] == 0

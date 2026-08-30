@@ -83,6 +83,22 @@ def test_current_repository_satisfies_cpp_architecture_contract():
     assert check_repository(ROOT) == []
 
 
+def test_native_gas_prediction_streams_state_without_filter_paths():
+    source = (
+        ROOT / "pyscarcopula/_cpp/src/gas/evaluator.cpp"
+    ).read_text(encoding="utf-8")
+    body = source.split(
+        "GasPredictResult GasEvaluator::predict_parameter", 1
+    )[1].split(
+        "GasSampleResult GasEvaluator::sample_bivariate", 1
+    )[0]
+
+    assert "GasFilterResult" not in body
+    assert "filter(" not in body
+    assert "g_path" not in body
+    assert "double g = initial_g" in body
+
+
 @pytest.mark.parametrize("relative", [
     "pyscarcopula/_native/extra.py",
     "pyscarcopula/numerical/extra.py",

@@ -34,6 +34,7 @@ from pyscarcopula.contrib.risk_metrics import (
     _calculate_cvar_fixed,
     _process_chunk_fixed,
 )
+from pyscarcopula._native import gas as _cpp_gas
 from pyscarcopula._native import scar_ou as _cpp_scar_ou
 from pyscarcopula.stattests import rvine_rosenblatt_transform
 from pyscarcopula.strategy._base import get_strategy_for_result
@@ -1503,7 +1504,8 @@ class TestConditionalSamplingPlanLayer:
         np.testing.assert_allclose(r_next, copula.transform(np.full(3, 0.25)))
         assert not np.allclose(r_current, r_next)
 
-    def test_gas_sample_uses_score_driven_recursion(self, monkeypatch):
+    def test_gas_sample_routes_score_recursion_to_fused_native(
+            self, monkeypatch):
         copula = BivariateGaussianCopula()
         result = GASResult(
             log_likelihood=0.0,
@@ -1515,21 +1517,24 @@ class TestConditionalSamplingPlanLayer:
             r_last=0.0,
         )
         strategy = get_strategy_for_result(result)
-        seen_r = []
+        calls = []
 
-        def sample_and_record(n, r, rng=None):
-            seen_r.extend(np.asarray(r, dtype=np.float64).tolist())
-            return np.tile(np.array([[0.25, 0.75]], dtype=np.float64), (n, 1))
+        def fused_sample(
+                omega, gamma, beta, draws, model, scaling, score_eps):
+            calls.append((omega, gamma, beta, draws.shape, model, scaling))
+            return np.tile(
+                np.array([[0.25, 0.75]], dtype=np.float64),
+                (len(draws), 1),
+            )
 
-        monkeypatch.setattr(copula, 'sample_at_parameter', sample_and_record)
+        monkeypatch.setattr(_cpp_gas, 'sample_bivariate', fused_sample)
 
         samples = strategy.sample(
             copula, None, result, 4, rng=np.random.default_rng(180))
 
         assert samples.shape == (4, 2)
         np.testing.assert_allclose(samples, np.tile([0.25, 0.75], (4, 1)))
-        assert len(seen_r) == 4
-        assert len(set(np.round(seen_r, 12))) > 1
+        assert calls == [(0.0, 0.2, 0.5, (4, 2), copula, 'unit')]
 
     def test_risk_metrics_worker_chunks_use_reproducible_per_window_rng(self):
         rng = np.random.default_rng(190)

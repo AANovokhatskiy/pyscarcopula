@@ -38,7 +38,7 @@ outer optimizer and the corresponding diagnostics.
 | Method | Configuration | Optimizer gradient | `model_score` | `gradient_kind` |
 |--------|---------------|--------------------|---------------|-----------------|
 | MLE | Built-in supported model | Analytical | `not_applicable` | `analytical` |
-| GAS | Any supported scaling | Numerical finite differences | `native` | `numerical_optimizer` |
+| GAS | Any supported scaling | Native finite differences | `native` | `native_finite_difference` |
 | SCAR-TM-OU | `analytical_grad=True` | Analytical native Jacobian | `not_applicable` | `analytical` |
 | SCAR-TM-OU | `analytical_grad=False` | Numerical finite differences | `not_applicable` | `numerical` |
 | SCAR-TM-JACOBI | `analytical_grad=False` | Numerical finite differences | `not_applicable` | `numerical` |
@@ -141,16 +141,20 @@ GAS uses the compiled evaluator for likelihood, score recursion, state
 updates, prediction, and the bivariate Rosenblatt path for supported built-in
 copulas. Unsupported copulas and missing compiled support fail immediately.
 
-Use `scaling='unit'` as the numerical baseline. `scaling='fisher'` uses
-nested finite differences and clipping/floor thresholds; its fitted optimum
-can be sensitive to optimizer finite-difference steps.
+Use `scaling='unit'` as the numerical baseline. `scaling='fisher'` uses the
+analytical copula score as its numerator and a finite-difference curvature
+estimate with clipping/floor thresholds; its fitted optimum can be sensitive
+to optimizer finite-difference steps.
 
 The GAS copula score and filtering recursion are model calculations.
 They are not the optimizer Jacobian with respect to
-`(omega, gamma, beta)`. GAS passes objective values to L-BFGS-B, which
-therefore computes that outer gradient numerically. Result
-diagnostics distinguish these concepts with `model_score='native'` and
-`optimizer_gradient='numerical'`.
+`(omega, gamma, beta)`. The compiled evaluator computes that outer gradient
+with central finite differences and returns the objective and gradient through
+one L-BFGS-B callback. Result diagnostics distinguish these concepts with
+`model_score='native'`, `optimizer_gradient='native'`, and
+`gradient_kind='native_finite_difference'`. `maxfun` is passed directly to
+SciPy L-BFGS-B, and `nfev` retains SciPy's optimizer function-evaluation
+semantics.
 
 ## SCAR-TM-OU
 

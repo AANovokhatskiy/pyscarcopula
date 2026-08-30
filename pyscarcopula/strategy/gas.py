@@ -704,6 +704,30 @@ class GASStrategy:
             memory_budget_bytes=kwargs.get("memory_budget_bytes"),
         )
 
+        family = getattr(copula, "_native_pair_family", None)
+        if d == 2 and family is not None and given is None:
+            validate_float64_allocation(
+                (n, 3 * d),
+                name=(
+                    "GAS fused sample output, native staging, "
+                    "and RNG draws"),
+                memory_budget_bytes=kwargs.get("memory_budget_bytes"),
+            )
+            draws = (
+                rng.standard_normal((n, 2))
+                if family == "Gaussian"
+                else rng.uniform(0.0, 1.0, size=(n, 2))
+            )
+            return _cpp_gas.sample_bivariate(
+                p.omega,
+                p.gamma,
+                p.beta,
+                draws,
+                copula,
+                result.scaling,
+                score_eps,
+            )
+
         state = _cpp_gas.initial_state(
             p.omega,
             p.gamma,

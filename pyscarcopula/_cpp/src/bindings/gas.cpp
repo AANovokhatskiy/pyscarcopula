@@ -72,6 +72,15 @@ py::dict gas_predict_result_to_dict(const scar::GasPredictResult& result) {
     return output;
 }
 
+py::dict gas_sample_result_to_dict(const scar::GasSampleResult& result) {
+    py::dict output;
+    output["values"] = result_matrix_to_array(
+        result.values, static_cast<std::size_t>(result.n_rows), 2);
+    output["status"] = static_cast<int>(result.status);
+    output["failure_index"] = result.failure.index;
+    return output;
+}
+
 py::dict gas_path_result_to_dict(const scar::GasPathResult& result) {
     py::dict output;
     output["values"] = vector_to_array(result.values);
@@ -555,6 +564,29 @@ void bind_gas(py::module_& m) {
             py::arg("sum_z2"),
             py::arg("config"),
             py::arg("horizon_next"))
+        .def(
+            "sample_bivariate",
+            [](const scar::GasEvaluator& evaluator,
+               const scar::GasParams& params,
+               const scar::CopulaSpec& copula,
+               py::array_t<
+                   double,
+                   py::array::c_style | py::array::forcecast> draws,
+               const scar::GasConfig& config) {
+                const scar::ObservationView draw_view =
+                    finite_matrix_view_from_array(2, draws, "draws");
+                scar::GasSampleResult result;
+                {
+                    py::gil_scoped_release release;
+                    result = evaluator.sample_bivariate(
+                        params, copula, draw_view, config);
+                }
+                return gas_sample_result_to_dict(result);
+            },
+            py::arg("params"),
+            py::arg("copula"),
+            py::arg("draws"),
+            py::arg("config"))
         .def(
             "h_path",
             [](const scar::GasEvaluator& evaluator,

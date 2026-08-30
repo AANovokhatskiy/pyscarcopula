@@ -5,7 +5,12 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from pyscarcopula.copula.clayton import ClaytonCopula
+from pyscarcopula.copula.elliptical import BivariateGaussianCopula
+from pyscarcopula.copula.frank import FrankCopula
 from pyscarcopula.copula.gumbel import GumbelCopula
+from pyscarcopula.copula.independent import IndependentCopula
+from pyscarcopula.copula.joe import JoeCopula
 from pyscarcopula.copula.multivariate import (
     EquicorrGaussianCopula,
     StochasticStudentCopula,
@@ -57,6 +62,105 @@ def test_cpp_gas_wrapper_filter_and_likelihood_are_internally_consistent(
     assert _cpp_gas.negative_log_likelihood(
         *PARAMS, OBSERVATIONS, copula, scaling=scaling
     ) == pytest.approx(-result.log_likelihood, rel=2e-9, abs=2e-10)
+
+
+def test_cpp_gas_objective_gradient_returns_standard_pair():
+    evaluated = _cpp_gas.negative_log_likelihood_and_gradient(
+        *PARAMS,
+        OBSERVATIONS,
+        GumbelCopula(),
+    )
+    objective, gradient = evaluated
+
+    assert type(evaluated) is tuple
+    assert np.isfinite(objective)
+    assert gradient.shape == (3,)
+
+
+@pytest.mark.parametrize(
+    ("copula", "draw_kind"),
+    [
+        *[
+            (factory(rotate=rotation), "uniform")
+            for factory in (ClaytonCopula, GumbelCopula, JoeCopula)
+            for rotation in (0, 90, 180, 270)
+        ],
+        (FrankCopula(), "uniform"),
+        (IndependentCopula(), "uniform"),
+        (BivariateGaussianCopula(), "normal"),
+    ],
+)
+def test_cpp_gas_fused_sampling_matches_stepwise_recursion(
+        copula, draw_kind):
+    rng = np.random.default_rng(20260830)
+    draws = (
+        rng.standard_normal((16, 2))
+        if draw_kind == "normal"
+        else rng.uniform(0.01, 0.99, size=(16, 2))
+    )
+    original_draws = draws.copy()
+    actual = _cpp_gas.sample_bivariate(
+        *PARAMS, draws, copula, scaling="fisher")
+
+    state = _cpp_gas.initial_state(
+        *PARAMS, copula, scaling="fisher")
+    g_t = state.g
+    r_t = state.parameter
+    expected = []
+    adapter = copula._native_adapter()
+    for index, draw in enumerate(draws):
+        if draw_kind == "normal":
+            row = adapter.sample_from_rng_draws(
+                copula,
+                draw.reshape(1, 2),
+                np.empty((0, 0), dtype=np.float64),
+                np.array([r_t]),
+            )[0]
+        else:
+            row = adapter.sample_from_uniforms(
+                copula,
+                draw.reshape(1, 2),
+                np.array([r_t]),
+            )[0]
+        expected.append(row)
+        if index + 1 < len(draws):
+            update = _cpp_gas.update_one(
+                *PARAMS,
+                g_t,
+                row,
+                copula,
+                scaling="fisher",
+            )
+            g_t = update.g_next
+            r_t = update.r_next
+
+    np.testing.assert_allclose(
+        actual, np.asarray(expected), rtol=0.0, atol=0.0)
+    np.testing.assert_array_equal(draws, original_draws)
+
+
+@pytest.mark.parametrize(
+    "draws",
+    [
+        np.empty((0, 2)),
+        np.ones((3, 1)),
+        np.array([[0.2, np.nan]]),
+        np.array([[0.0, 0.5]]),
+    ],
+)
+def test_cpp_gas_fused_sampling_rejects_invalid_draw_arrays(draws):
+    with pytest.raises(ValueError):
+        _cpp_gas.sample_bivariate(
+            *PARAMS, draws, GumbelCopula())
+
+
+def test_cpp_gas_star_import_exports_only_existing_symbols():
+    namespace = {}
+
+    exec("from pyscarcopula._native.gas import *", namespace)
+
+    assert "sample_bivariate" in namespace
+    assert "available" not in namespace
 
 
 @pytest.mark.parametrize("scaling", ["unit", "fisher"])
@@ -262,6 +366,17 @@ def test_cpp_gas_wrapper_translates_status_codes(status, error):
             {"status": status, "failure_index": 4}, "test")
 
 
+def test_cpp_gas_gradient_failure_uses_standard_status_translation():
+    result = {
+        "status": 7,
+        "failure_index": 4,
+        "objective_evaluations": 3,
+    }
+
+    with pytest.raises(FloatingPointError):
+        _cpp_gas._raise_status(result, "test")
+
+
 def test_cpp_gas_wrapper_rejects_invalid_horizon():
     with pytest.raises(ValueError, match="horizon"):
         _cpp_gas.predict_parameter(
@@ -292,11 +407,27 @@ def test_cpp_gas_wrapper_accepts_multivariate_observations(copula):
         copula,
         scaling="unit",
     )
+    current = _cpp_gas.predict_parameter(
+        *PARAMS,
+        observations,
+        copula,
+        scaling="unit",
+        horizon="current",
+    )
+    next_parameter = _cpp_gas.predict_parameter(
+        *PARAMS,
+        observations,
+        copula,
+        scaling="unit",
+        horizon="next",
+    )
 
     assert filtered.g_path.shape == (len(observations),)
     assert filtered.r_path.shape == (len(observations),)
     assert filtered.score_path.shape == (len(observations) - 1,)
     assert np.isfinite(filtered.log_likelihood)
+    assert current == pytest.approx(filtered.r_path[-1])
+    assert next_parameter == pytest.approx(update.r_next)
     assert np.all(np.isfinite([
         update.g_next,
         update.r,

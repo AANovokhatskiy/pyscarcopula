@@ -501,8 +501,8 @@ def test_gradient_matrix_matches_diagnostic_vocabulary():
     expected_rows = (
         "| MLE | Built-in supported model | Analytical "
         "| `not_applicable` | `analytical` |",
-        "| GAS | Any supported scaling | Numerical finite differences "
-        "| `native` | `numerical_optimizer` |",
+        "| GAS | Any supported scaling | Native finite differences "
+        "| `native` | `native_finite_difference` |",
         "| SCAR-TM-OU | `analytical_grad=True` | Analytical native Jacobian "
         "| `not_applicable` | `analytical` |",
         "| SCAR-TM-JACOBI | `local_fixed`, analytical gradient "

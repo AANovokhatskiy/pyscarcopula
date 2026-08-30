@@ -54,6 +54,19 @@ void validate_finite_unit_interval(
     }
 }
 
+void validate_finite(
+    const double* data,
+    std::size_t size,
+    const char* name) {
+
+    for (std::size_t index = 0; index < size; ++index) {
+        if (!std::isfinite(data[index])) {
+            throw std::invalid_argument(
+                std::string(name) + " must contain only finite values");
+        }
+    }
+}
+
 }  // namespace
 
 std::vector<std::vector<double>> observations_from_array(
@@ -102,6 +115,31 @@ scar::ObservationView observation_view_from_array(
     }
     const auto* data = static_cast<const double*>(info.ptr);
     validate_finite_unit_interval(data, size, "u");
+    return {data, rows, expected_dimension};
+}
+
+scar::ObservationView finite_matrix_view_from_array(
+    int expected_dimension,
+    const Float64Array& values,
+    const char* name) {
+
+    const py::buffer_info info = values.request();
+    if (expected_dimension < 0
+        || info.ndim != 2
+        || info.shape[1] != expected_dimension) {
+        throw std::invalid_argument(
+            std::string(name) + " must be a 2D float64 array with shape "
+            "(n, expected dimension)");
+    }
+    const std::size_t rows = checked_extent(info.shape[0], name);
+    const std::size_t columns = checked_extent(info.shape[1], name);
+    std::size_t size = 0;
+    if (!scar::core::checked_size_mul(rows, columns, size)) {
+        throw std::invalid_argument(
+            std::string(name) + " shape is not representable");
+    }
+    const auto* data = static_cast<const double*>(info.ptr);
+    validate_finite(data, size, name);
     return {data, rows, expected_dimension};
 }
 

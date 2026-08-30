@@ -230,6 +230,41 @@ def test_equicorr_gas_score_does_not_call_python_derivative(monkeypatch):
     np.testing.assert_allclose(score, expected, rtol=1e-12, atol=1e-12)
 
 
+@pytest.mark.parametrize("model_kind", ["equicorr", "student"])
+def test_multivariate_gas_fisher_uses_analytical_copula_score(model_kind):
+    u = _u()[:1]
+    if model_kind == "equicorr":
+        copula = EquicorrGaussianCopula(d=4)
+        g_t = 0.2
+    else:
+        copula = StochasticStudentCopula(d=4, R=_R())
+        g_t = 1.4
+    score_eps = 1e-4
+    r_t = float(copula.transform(np.array([g_t]))[0])
+    analytic_score = float(
+        copula.dlog_pdf_dr_rows(u, np.array([r_t]))[0]
+        * copula.dtransform(np.array([g_t]))[0]
+    )
+
+    def log_pdf_at_g(g):
+        parameter = float(copula.transform(np.array([g]))[0])
+        return float(copula.log_pdf_rows(u, np.array([parameter]))[0])
+
+    ll_zero = log_pdf_at_g(g_t)
+    ll_plus = log_pdf_at_g(g_t + score_eps)
+    ll_minus = log_pdf_at_g(g_t - score_eps)
+    curvature = max(
+        -(ll_plus - 2.0 * ll_zero + ll_minus) / score_eps**2,
+        1e-6,
+    )
+    expected = np.clip(analytic_score / curvature, -100.0, 100.0)
+
+    score = _cpp_gas.update_one(
+        0.0, 0.0, 0.0, g_t, u, copula, "fisher", score_eps).score
+
+    np.testing.assert_allclose(score, expected, rtol=1e-11, atol=1e-11)
+
+
 def test_student_log_pdf_matches_scipy_t_copula_formula():
     u = _u()
     R = _R()

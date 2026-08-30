@@ -21,6 +21,10 @@ std::vector<std::vector<double>> observations_from_array(Float64Array values);
 scar::ObservationView observation_view_from_array(
     int expected_dimension,
     const Float64Array& values);
+scar::ObservationView finite_matrix_view_from_array(
+    int expected_dimension,
+    const Float64Array& values,
+    const char* name);
 std::vector<double> vector_from_array(Float64Array values);
 std::vector<double> flat_vector_from_array(
     Float64Array values,

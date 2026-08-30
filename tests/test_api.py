@@ -985,6 +985,12 @@ class TestConditionalPredict:
         result = self._gas_sampling_result(cop)
         allocation_attempted = False
 
+        class FailRng:
+            def standard_normal(self, *args, **kwargs):
+                nonlocal allocation_attempted
+                allocation_attempted = True
+                raise AssertionError("allocation must not be attempted")
+
         def fail_empty(*args, **kwargs):
             nonlocal allocation_attempted
             allocation_attempted = True
@@ -997,7 +1003,8 @@ class TestConditionalPredict:
                 random_u2,
                 result,
                 10,
-                memory_budget_bytes=10 * 2 * 8 - 1,
+                rng=FailRng(),
+                memory_budget_bytes=10 * 6 * 8 - 1,
             )
         assert not allocation_attempted
 
@@ -1025,7 +1032,7 @@ class TestConditionalPredict:
 
     @pytest.mark.parametrize(
         ("operation", "required"),
-        [(sample, 4 * 2 * 8), (predict, 4 * 3 * 8)],
+        [(sample, 4 * 6 * 8), (predict, 4 * 3 * 8)],
     )
     def test_gas_sampling_accepts_sufficient_memory_budget(
             self, operation, required, random_u2):
@@ -1129,6 +1136,7 @@ class TestConditionalPredict:
         assert 'eps' not in captured[0]
         assert 'finite_diff_rel_step' not in captured[0]
         assert captured[1]['ftol'] == pytest.approx(1e-12)
+        assert captured[1]['maxfun'] == 4000
         assert result.score_eps == pytest.approx(cfg.gas_score_eps)
 
         result = GASStrategy().fit(

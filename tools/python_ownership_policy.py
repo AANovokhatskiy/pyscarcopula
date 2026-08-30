@@ -298,7 +298,7 @@ _SYMBOL_REVIEWS = (
     ('pyscarcopula.strategy.gas:GASStrategy.predict',
      '5620e446b702986af8a26aa601a2d8c76648148d15c142ba19d9aedfbcdfec88', 'structure', ('arithmetic',)),
     ('pyscarcopula.strategy.gas:GASStrategy.sample',
-     '409f01e686e6f125cdc2756f23cf1b05fe827666171bcc27cf384c471a1ee73e', 'structure', ('arithmetic',)),
+     '8c130f0182f886ba142cc36a9295621245b515efdcb9a8be80cd0e8ebd7b5931', 'native_sampling_adapter', ('arithmetic',)),
     ('pyscarcopula.strategy.initial_point:_fallback_initial_point',
      '069a4f0d1fd77d4eb8e7e14d8b6e65cb7fd1db0cb8d92442d4153ba18640ab30', 'native_policy_adapter', ('model-policy',)),
     ('pyscarcopula.strategy.initial_point:_gas_initial_point',

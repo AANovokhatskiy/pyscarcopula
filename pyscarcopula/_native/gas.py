@@ -534,6 +534,43 @@ def predict_parameter(
     return value
 
 
+def sample_bivariate(
+    omega,
+    gamma,
+    beta,
+    draws,
+    copula,
+    scaling="unit",
+    score_eps=1e-4,
+) -> np.ndarray:
+    """Generate one fused bivariate GAS path from caller-owned RNG draws."""
+    module = _extension.load()
+    obs = as_float64_array(draws, name="draws")
+    if obs.ndim != 2 or obs.shape[1] != 2:
+        raise ValueError(
+            "bivariate GAS sampling requires draws of shape (n, 2), "
+            f"got {obs.shape}"
+        )
+    if len(obs) == 0:
+        raise ValueError("draws must contain at least one row")
+    if np.any(~np.isfinite(obs)):
+        raise ValueError("draws must contain only finite values")
+    if int(getattr(copula, "d", 2)) != 2:
+        raise ValueError("bivariate GAS sampling requires a bivariate copula")
+    obs = np.ascontiguousarray(obs)
+    params = _params(module, omega, gamma, beta)
+    spec = _descriptors.make_gas_spec(module, copula)
+    config = _config(module, scaling, score_eps)
+    result = module.GasEvaluator().sample_bivariate(
+        params, spec, obs, config)
+    _raise_status(result, "sample_bivariate")
+    values = np.asarray(result["values"], dtype=np.float64)
+    if values.shape != obs.shape or np.any(~np.isfinite(values)):
+        raise FloatingPointError(
+            "C++ GAS sample_bivariate returned invalid values with status=ok")
+    return values
+
+
 def h_path(
     omega,
     gamma,
@@ -563,7 +600,6 @@ __all__ = [
     "GasFilterOutput",
     "GasStateOutput",
     "GasUpdateOutput",
-    "available",
     "require_available",
     "ensure_supported",
     "supported",
@@ -576,5 +612,6 @@ __all__ = [
     "negative_log_likelihood_and_gradient_shrinkage",
     "update_one",
     "predict_parameter",
+    "sample_bivariate",
     "h_path",
 ]

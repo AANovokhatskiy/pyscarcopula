@@ -220,7 +220,7 @@ def test_gas_optimizer_gradient_step_routes_to_native(
             x=np.asarray(x0, dtype=np.float64),
             fun=float(value),
             success=True,
-            nfev=1,
+            nfev=17,
             message="ok",
             jac=np.asarray(gradient, dtype=np.float64),
         )
@@ -246,11 +246,13 @@ def test_gas_optimizer_gradient_step_routes_to_native(
         observations,
         gamma0=np.asarray(PARAMS),
         ftol=1e-9,
+        maxfun=23,
         **fit_kwargs,
     )
 
     assert "eps" not in captured["scipy_options"]
     assert "finite_diff_rel_step" not in captured["scipy_options"]
+    assert captured["scipy_options"]["maxfun"] == 23
     assert captured["native_kwargs"] == {
         "optimizer_gradient_eps": expected_eps,
         "optimizer_gradient_relative": expected_relative,
@@ -261,6 +263,9 @@ def test_gas_optimizer_gradient_step_routes_to_native(
         result.diagnostics["optimizer_gradient_relative"]
         is expected_relative
     )
+    assert result.nfev == 17
+    assert "objective_evaluations" not in result.diagnostics
+    assert "requested_maxfun" not in result.diagnostics
 
 
 def test_joint_shrinkage_gradient_step_routes_to_native(
@@ -281,7 +286,7 @@ def test_joint_shrinkage_gradient_step_routes_to_native(
             x=np.asarray(x0, dtype=np.float64),
             fun=float(value),
             success=True,
-            nfev=1,
+            nfev=19,
             message="ok",
             jac=np.asarray(gradient, dtype=np.float64),
         )
@@ -308,10 +313,12 @@ def test_joint_shrinkage_gradient_step_routes_to_native(
         gamma0=np.asarray(PARAMS),
         ftol=1e-9,
         eps=0.031,
+        maxfun=29,
     )
 
     assert "eps" not in captured["scipy_options"]
     assert "finite_diff_rel_step" not in captured["scipy_options"]
+    assert captured["scipy_options"]["maxfun"] == 29
     assert captured["native_kwargs"] == {
         "optimizer_gradient_eps": 0.031,
         "optimizer_gradient_relative": False,
@@ -319,6 +326,9 @@ def test_joint_shrinkage_gradient_step_routes_to_native(
     assert result.diagnostics["optimizer_gradient_eps"] == pytest.approx(
         0.031)
     assert result.diagnostics["optimizer_gradient_relative"] is False
+    assert result.nfev == 19
+    assert "objective_evaluations" not in result.diagnostics
+    assert "requested_maxfun" not in result.diagnostics
 
 
 def test_optimizer_objective_propagates_native_failure(
@@ -368,7 +378,8 @@ def test_multivariate_filter_uses_native_evaluator(monkeypatch):
     "copula",
     [BivariateGaussianCopula(), EquicorrGaussianCopula(d=4)],
 )
-def test_sampling_uses_native_initial_state_and_updates(monkeypatch, copula):
+def test_sampling_uses_fused_pair_or_native_multivariate_updates(
+        monkeypatch, copula):
     result = GASResult(
         log_likelihood=0.0,
         method="GAS",
@@ -392,8 +403,14 @@ def test_sampling_uses_native_initial_state_and_updates(monkeypatch, copula):
             score=0.0,
         )
 
+    def fake_sample(*args, **kwargs):
+        calls.append("sample")
+        draws = np.asarray(args[3])
+        return np.full(draws.shape, 0.5, dtype=np.float64)
+
     monkeypatch.setattr(_cpp_gas, "initial_state", fake_initial)
     monkeypatch.setattr(_cpp_gas, "update_one", fake_update)
+    monkeypatch.setattr(_cpp_gas, "sample_bivariate", fake_sample)
     if not hasattr(copula, "sample"):
         pytest.skip("copula has no sampler")
 
@@ -406,7 +423,10 @@ def test_sampling_uses_native_initial_state_and_updates(monkeypatch, copula):
     )
 
     assert samples.shape == (4, copula.d)
-    assert calls == ["initial", "update", "update", "update"]
+    if copula.d == 2:
+        assert calls == ["sample"]
+    else:
+        assert calls == ["initial", "update", "update", "update"]
 
 
 def test_model_and_conditioning_states_use_native_operations(monkeypatch):
