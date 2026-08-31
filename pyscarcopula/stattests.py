@@ -220,8 +220,8 @@ def gof_test(model, data, to_pobs=True, K=300, grid_range=5.0,
     model : BivariateCopula, VineCopula, GaussianCopula, or StudentCopula
     data : (T, d) array
     to_pobs : bool
-    K : int — grid size (SCAR only)
-    grid_range : float (SCAR only)
+    K : int — grid size (SCAR-TM-OU only)
+    grid_range : float (SCAR-TM-OU only)
     fit_result : FitResult or None
         If provided, use this instead of model.fit_result.
         Enables the stateless API: gof_test(copula, u, fit_result=result)
@@ -433,8 +433,12 @@ def _bivariate_rosenblatt_from_result(copula, u, fit_result,
 
     from pyscarcopula.strategy._base import get_strategy_for_result
 
-    strategy = get_strategy_for_result(
-        fit_result, K=K, grid_range=grid_range)
+    # K/grid_range are OU-grid settings. Jacobi restores its own quadrature
+    # settings from the result and must not receive unrelated OU options.
+    grid_kwargs = (
+        {} if method == 'SCAR-TM-JACOBI'
+        else {'K': K, 'grid_range': grid_range})
+    strategy = get_strategy_for_result(fit_result, **grid_kwargs)
     e = np.empty((len(u), 2), dtype=np.float64)
     e[:, 0] = u[:, 0]
     e[:, 1] = strategy.rosenblatt_e2(copula, u, fit_result)

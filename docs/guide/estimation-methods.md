@@ -11,6 +11,22 @@ see [Mathematical Contracts](mathematical-contracts.md).
 Each estimation method supports a defined set of model families. Unsupported
 combinations fail before optimization starts.
 
+Built-in strategies separate constructor settings from arguments to each
+operation. For example, `K` configures SCAR-TM-OU numerical evaluation, while
+`alpha0`, `initial_mle_result`, and `maxiter` belong to fitting; passing those
+fit arguments to `mlog_likelihood` or a post-fit likelihood call raises
+`TypeError`. Unknown keywords also raise `TypeError` instead of being ignored.
+Sampling and prediction arguments such as `rng` and `given` are routed to the
+sampler, separately from numerical constructor overrides.
+
+For automatic SCAR-TM-OU initialization, `config.mle_optimizer` controls the
+internal static MLE even when `smart_init=True`. The resulting static estimate
+is reused by the initialization heuristics and their fallbacks. Supplying
+`initial_mle_result` avoids that static fit; an explicit `alpha0` bypasses
+automatic initialization entirely. If the internal MLE raises with
+`smart_init=True`, initialization uses the constant fallback and records the
+error in its diagnostics. With `smart_init=False`, the MLE error propagates.
+
 ## Method Summary
 
 | Method | Key | State | Main use |

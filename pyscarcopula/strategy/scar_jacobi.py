@@ -134,6 +134,16 @@ class SCARJacobiStrategy:
         "spectral_basis_order",
         "spectral_quad_order",
     })
+    _operation_keyword_aliases = {
+        "mixture_h": frozenset({
+            "state_cache", "current_cache_key", "next_cache_key",
+        }),
+        "sample": frozenset({"given", "sampling_diagnostics"}),
+        "predict": frozenset({
+            "given", "horizon", "predictive_r_mode", "n_threads",
+            "memory_budget_bytes", "state_cache", "cache_key",
+        }),
+    }
 
     def __init__(self, config: NumericalConfig | None = None,
                  basis_order: int = 32,
@@ -810,6 +820,7 @@ class SCARJacobiStrategy:
 
     def objective(self, copula, u: np.ndarray,
                   alpha: np.ndarray, **kwargs) -> float:
+        reject_unknown_strategy_kwargs("SCAR-TM-JACOBI", kwargs)
         alpha = np.asarray(alpha, dtype=np.float64)
         return self._neg_loglik(alpha[0], alpha[1], alpha[2], u, copula)
 

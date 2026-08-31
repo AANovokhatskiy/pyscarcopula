@@ -93,6 +93,14 @@ class GASStrategy:
 
     _strict_keyword_contract = True
     _constructor_keyword_aliases = frozenset({"backend"})
+    _operation_keyword_aliases = {
+        "objective": frozenset({"score_eps"}),
+        "sample": frozenset({"given", "n_threads", "memory_budget_bytes"}),
+        "predict": frozenset({
+            "given", "horizon", "predictive_r_mode", "n_threads",
+            "memory_budget_bytes",
+        }),
+    }
 
     def __init__(
         self,
@@ -676,7 +684,8 @@ class GASStrategy:
             raise TypeError(
                 "GAS backend selection was removed; native execution is "
                 "always used")
-        score_eps = float(kwargs.get("score_eps", self._score_eps()))
+        score_eps = float(kwargs.pop("score_eps", self._score_eps()))
+        reject_unknown_strategy_kwargs("GAS", kwargs)
         return gas_negloglik(
             gamma[0],
             gamma[1],

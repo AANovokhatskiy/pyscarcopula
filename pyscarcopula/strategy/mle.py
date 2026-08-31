@@ -68,6 +68,13 @@ class MLEStrategy:
     """
 
     _strict_keyword_contract = True
+    _operation_keyword_aliases = {
+        "sample": frozenset({"given", "n_threads", "memory_budget_bytes"}),
+        "predict": frozenset({
+            "given", "horizon", "predictive_r_mode", "n_threads",
+            "memory_budget_bytes",
+        }),
+    }
 
     def __init__(self, config: NumericalConfig | None = None, **kwargs):
         reject_unknown_mle_kwargs(kwargs)
@@ -258,6 +265,7 @@ class MLEStrategy:
     def objective(self, copula, u: np.ndarray,
                   alpha: np.ndarray, **kwargs) -> float:
         """Minus log-likelihood: -sum log c(u1, u2; alpha[0])."""
+        reject_unknown_mle_kwargs(kwargs)
         registry_entry_for(copula)
         if is_multivariate_copula(copula):
             try:

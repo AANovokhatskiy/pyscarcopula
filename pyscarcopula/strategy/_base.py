@@ -545,6 +545,49 @@ def partition_strategy_fit_kwargs(
     return constructor_kwargs, fit_kwargs
 
 
+def partition_strategy_operation_kwargs(method: str, operation: str, kwargs):
+    """Separate constructor options from one operation's keyword contract.
+
+    Fit options are not an operation contract: for example, ``alpha0`` and
+    ``maxiter`` must never be accepted by a likelihood call. Built-in methods
+    with delegated ``**kwargs`` declare the additional names they consume in
+    ``_operation_keyword_aliases``. Custom variadic strategies retain their
+    existing extension contract.
+    """
+    normalized = validate_strategy_method(method)
+    reject_legacy_tol(kwargs)
+    cls = _REGISTRY[normalized]
+    constructor_names, _, constructor_variadic, _, strict = (
+        _strategy_keyword_contract(normalized))
+    function = getattr(cls, operation)
+    operation_names = set(_explicit_keyword_names(
+        function,
+        excluded={"self", "strategy", "copula", "u", "result", "n",
+                  "alpha", "gamma", "config"},
+    ))
+    operation_names.update(getattr(
+        cls, "_operation_keyword_aliases", {}).get(operation, ()))
+    recognized = constructor_names.union(operation_names)
+    operation_variadic = _accepts_var_keywords(function)
+    unexpected = sorted(set(kwargs).difference(recognized))
+    if unexpected and (strict or not (
+            constructor_variadic or operation_variadic)):
+        raise TypeError(
+            f"unexpected {normalized} keyword argument(s) for "
+            f"{operation}: {unexpected}")
+    constructor_kwargs = {
+        name: value for name, value in kwargs.items()
+        if name in constructor_names
+        or (not strict and constructor_variadic and name not in recognized)
+    }
+    operation_kwargs = {
+        name: value for name, value in kwargs.items()
+        if name in operation_names
+        or (not strict and operation_variadic and name not in recognized)
+    }
+    return constructor_kwargs, operation_kwargs
+
+
 def register_strategy(method_name: str):
     """Decorator to register a strategy class for a method name.
 
@@ -592,7 +635,13 @@ def get_strategy(method: str, config: NumericalConfig | None = None,
 def get_strategy_for_result(result: FitResult,
                             config: NumericalConfig | None = None,
                             **kwargs) -> FitStrategy:
-    """Instantiate the strategy matching an existing FitResult."""
+    """Restore saved settings and apply validated constructor overrides.
+
+    Callers must route operation-specific options to that operation, not to
+    this constructor factory. Only saved metadata is filtered for relevance.
+    """
+    explicit_kwargs, _ = partition_strategy_operation_kwargs(
+        result.method, "__init__", kwargs)
     result_kwargs = {}
     method = result.method.upper()
 
@@ -664,12 +713,12 @@ def get_strategy_for_result(result: FitResult,
         if memory_budget_bytes is not None:
             result_kwargs['memory_budget_bytes'] = memory_budget_bytes
 
-    result_kwargs.update(kwargs)
     constructor_kwargs, _ = partition_strategy_fit_kwargs(
         result.method,
         result_kwargs,
         reject_unknown=False,
     )
+    constructor_kwargs.update(explicit_kwargs)
     return get_strategy(
         result.method,
         config=config,

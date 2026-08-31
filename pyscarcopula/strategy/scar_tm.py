@@ -545,6 +545,13 @@ class SCARTMStrategy:
 
     _strict_keyword_contract = True
     _constructor_keyword_aliases = frozenset({"backend"})
+    _operation_keyword_aliases = {
+        "sample": frozenset({"given", "n_threads", "memory_budget_bytes"}),
+        "predict": frozenset({
+            "given", "horizon", "predictive_r_mode", "n_threads",
+            "memory_budget_bytes", "state_cache", "cache_key", "posterior_cache",
+        }),
+    }
 
     def __init__(self, config: NumericalConfig | None = None,
                  K: int | None = None,
@@ -1796,6 +1803,7 @@ class SCARTMStrategy:
     def objective(self, copula, u: np.ndarray,
                   alpha: np.ndarray, **kwargs) -> float:
         """Minus log-likelihood: TM integrated -logL(kappa, mu, nu)."""
+        reject_unknown_strategy_kwargs("SCAR-TM-OU", kwargs)
         cfg = self._auto_config(kappa=alpha[0], n_obs=len(u))
         self._uses_cpp(copula)
         return _cpp_scar_ou.neg_loglik(

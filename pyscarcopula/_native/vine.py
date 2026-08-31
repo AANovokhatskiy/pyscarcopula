@@ -747,6 +747,12 @@ def compile_dynamic_rosenblatt_edges(
 
     n_rows = int(n_rows)
     strategy_kwargs = dict(strategy_kwargs or {})
+    # GOF supplies OU grid overrides for the whole vine, including non-OU
+    # edges. Keep all other overrides subject to the strict strategy contract.
+    non_ou_kwargs = {
+        name: value for name, value in strategy_kwargs.items()
+        if name not in {'K', 'grid_range'}
+    }
     scalar_parameters = []
     native_edges = []
     for raw_key in active_keys:
@@ -783,7 +789,7 @@ def compile_dynamic_rosenblatt_edges(
             native.edge = base
             native.dynamics = module.DynamicRvineKind.STATIC
         elif type(result) is GASResult:
-            strategy = strategy_for_result(result, **strategy_kwargs)
+            strategy = strategy_for_result(result, **non_ou_kwargs)
             params = result.params
             base.parameter_free = False
             base.parameter_source = module.RVineParameterSource.NONE
@@ -817,7 +823,7 @@ def compile_dynamic_rosenblatt_edges(
         elif (
                 type(result) is LatentResult
                 and result.method == "SCAR-TM-JACOBI"):
-            strategy = strategy_for_result(result, **strategy_kwargs)
+            strategy = strategy_for_result(result, **non_ou_kwargs)
             params = result.params
             base.parameter_free = False
             base.parameter_source = module.RVineParameterSource.NONE

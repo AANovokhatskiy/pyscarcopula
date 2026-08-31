@@ -100,11 +100,22 @@ def resolve_ou_initial_point(
         else smart_initial_point_func
     )
     smart_diagnostics = None
+    mle_result = initial_mle_result
     if smart_init:
+        attempt_method = (
+            'static_mle' if mle_result is None else 'smart_initial_point')
         try:
-            smart_kwargs = {'verbose': verbose}
-            if initial_mle_result is not None:
-                smart_kwargs['initial_mle_result'] = initial_mle_result
+            # Resolve the static fit here, where the caller's numerical and
+            # MLE optimizer config is available. Reuse it in every heuristic
+            # and fallback instead of letting them start a default-config MLE.
+            if mle_result is None:
+                from pyscarcopula.strategy.mle import MLEStrategy
+                mle_result = MLEStrategy(config=config).fit(copula, u)
+            attempt_method = 'smart_initial_point'
+            smart_kwargs = {
+                'verbose': verbose,
+                'initial_mle_result': mle_result,
+            }
             alpha, info = smart_initial(u, copula, **smart_kwargs)
             if verbose:
                 print(f"Smart init: {info.get('chosen_method')}, "
@@ -115,21 +126,32 @@ def resolve_ou_initial_point(
                 else 'strategy_fit')
             return alpha, diagnostics
         except Exception as exc:
+            constant_alpha = native_ou.default_initial_point(0.0)[0]
             smart_diagnostics = _initialization_diagnostics(
                 'automatic',
                 'failed',
-                native_ou.default_initial_point(0.0)[0],
+                constant_alpha,
                 [_initialization_attempt(
-                    'smart_initial_point', success=False, error=exc)],
+                    attempt_method, success=False, error=exc)],
             )
             smart_diagnostics['success'] = False
+            if mle_result is None:
+                # The smart heuristics require a static estimate. Preserve
+                # their constant fallback without repeating a failed MLE.
+                diagnostics = _fallback_initialization_diagnostics(
+                    smart_diagnostics, 'constant_default', constant_alpha)
+                diagnostics['mle_source'] = 'strategy_fit'
+                if verbose:
+                    print(
+                        "Static MLE init failed "
+                        f"({type(exc).__name__}: {exc}); using constant_default")
+                return constant_alpha, diagnostics
             if verbose:
                 print(
                     "Smart init failed "
                     f"({type(exc).__name__}: {exc}); trying mle_default")
 
     try:
-        mle_result = initial_mle_result
         if mle_result is None:
             from pyscarcopula.strategy.mle import MLEStrategy
             mle_result = MLEStrategy(config=config).fit(copula, u)

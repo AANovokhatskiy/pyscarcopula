@@ -94,19 +94,20 @@ class CopulaBase:
     ) -> float:
         """Evaluate a strategy's negative log-likelihood objective.
 
-        This low-level optimizer hook accepts parameters in the strategy's
-        unconstrained representation.
+        Parameters use the strategy's objective representation (physical
+        ``[kappa, mu, nu]`` for SCAR-TM-OU). Fit arguments such as ``alpha0``,
+        ``initial_mle_result`` and ``maxiter`` are not accepted here.
         """
         from pyscarcopula.strategy._base import (
             get_strategy,
-            partition_strategy_fit_kwargs,
+            partition_strategy_operation_kwargs,
         )
 
         u = as_float64_array(u, name="u")
         alpha = np.atleast_1d(as_float64_array(alpha, name="alpha"))
         config = kwargs.pop("config", None)
         constructor_kwargs, objective_kwargs = (
-            partition_strategy_fit_kwargs(method, kwargs)
+            partition_strategy_operation_kwargs(method, "objective", kwargs)
         )
         strategy = get_strategy(
             method,

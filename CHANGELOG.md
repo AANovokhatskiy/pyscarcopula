@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Reject unknown and misplaced fit keywords in built-in post-fit API calls
+  and negative likelihood objectives. Route constructor settings separately
+  from sampling/prediction arguments, preserving RNG, conditional sampling,
+  numerical overrides and fitted defaults. SCAR-TM-OU smart initialization
+  now uses the caller's MLE optimizer configuration and reuses that static
+  result through heuristic fallbacks, retaining the constant fallback when
+  the static MLE raises. Vine GOF applies OU grid overrides only to OU edges,
+  so mixed GAS/Jacobi/OU traversals retain their fitted numerical settings.
 - Make the SCAR-TM-OU contract consistent across public and native entry
   points: require at least two observations, reject non-positive automatic
   backend thresholds and lossy spectral-order values, and reject zero-mass

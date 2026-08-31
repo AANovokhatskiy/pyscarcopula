@@ -45,6 +45,7 @@ from pyscarcopula.strategy._base import (
     get_strategy_for_result,
     is_multivariate_copula,
     partition_strategy_fit_kwargs,
+    partition_strategy_operation_kwargs,
     validate_copula_data,
     validate_raw_copula_data,
 )
@@ -241,8 +242,11 @@ def log_likelihood(
         validate_copula_data(copula, u)
     else:
         u = prepared
-    strategy = get_strategy_for_result(result, config=config, **kwargs)
-    return strategy.log_likelihood(copula, u, result)
+    constructor_kwargs, operation_kwargs = partition_strategy_operation_kwargs(
+        result.method, "log_likelihood", kwargs)
+    strategy = get_strategy_for_result(
+        result, config=config, **constructor_kwargs)
+    return strategy.log_likelihood(copula, u, result, **operation_kwargs)
 
 
 def predictive_mean(
@@ -283,8 +287,11 @@ def predictive_mean(
     else:
         u = prepared
     _reject_public_posterior_cache(kwargs)
-    strategy = get_strategy_for_result(result, config=config, **kwargs)
-    return strategy.predictive_mean(copula, u, result)
+    constructor_kwargs, operation_kwargs = partition_strategy_operation_kwargs(
+        result.method, "predictive_mean", kwargs)
+    strategy = get_strategy_for_result(
+        result, config=config, **constructor_kwargs)
+    return strategy.predictive_mean(copula, u, result, **operation_kwargs)
 
 
 def mixture_h(
@@ -332,19 +339,11 @@ def mixture_h(
         raise NotImplementedError(
             f"{type(copula).__name__} does not expose pair h-functions")
     _reject_public_posterior_cache(kwargs)
-    runtime_names = ('state_cache', 'current_cache_key', 'next_cache_key')
-    strategy_kwargs = {
-        name: value
-        for name, value in kwargs.items()
-        if name not in runtime_names
-    }
-    strategy = get_strategy_for_result(result, config=config, **strategy_kwargs)
-    runtime_kwargs = {
-        name: kwargs[name]
-        for name in runtime_names
-        if name in kwargs
-    }
-    return strategy.mixture_h(copula, u, result, **runtime_kwargs)
+    constructor_kwargs, operation_kwargs = partition_strategy_operation_kwargs(
+        result.method, "mixture_h", kwargs)
+    strategy = get_strategy_for_result(
+        result, config=config, **constructor_kwargs)
+    return strategy.mixture_h(copula, u, result, **operation_kwargs)
 
 
 def sample(
@@ -397,8 +396,11 @@ def sample(
         validate_copula_data(copula, u)
     else:
         u = prepared
-    strategy = get_strategy_for_result(result, config=config, **kwargs)
-    return strategy.sample(copula, u, result, n, **kwargs)
+    constructor_kwargs, operation_kwargs = partition_strategy_operation_kwargs(
+        result.method, "sample", kwargs)
+    strategy = get_strategy_for_result(
+        result, config=config, **constructor_kwargs)
+    return strategy.sample(copula, u, result, n, **operation_kwargs)
 
 
 def _resolve_predict_config(
@@ -515,7 +517,10 @@ def predict(
         validate_copula_data(copula, u)
     else:
         u = prepared
-    strategy = get_strategy_for_result(result, config=config, **kwargs)
+    constructor_kwargs, operation_kwargs = partition_strategy_operation_kwargs(
+        result.method, "predict", kwargs)
+    strategy = get_strategy_for_result(
+        result, config=config, **constructor_kwargs)
     return strategy.predict(
         copula,
         u,
@@ -524,7 +529,7 @@ def predict(
         given=pcfg.given,
         horizon=pcfg.horizon,
         predictive_r_mode=pcfg.predictive_r_mode,
-        **kwargs,
+        **operation_kwargs,
     )
 
 

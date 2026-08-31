@@ -35,6 +35,61 @@ def _observations(n=17, d=3, seed=2026082255):
     return np.random.default_rng(seed).uniform(0.01, 0.99, size=(n, d))
 
 
+def _configured_all_dynamic_vine():
+    vine = configured_static_dvine(4)
+    for key, factory in zip(vine.pair_copulas, (
+            configured_mixed_gas_vine, configured_mixed_scar_vine,
+            configured_mixed_jacobi_vine)):
+        vine.pair_copulas[key] = factory().pair_copulas[(0, 1)]
+    vine.method = 'MIXED'
+    return vine
+
+
+@pytest.mark.parametrize('factory', [
+    configured_mixed_gas_vine, configured_mixed_jacobi_vine,
+    configured_mixed_scar_vine, _configured_all_dynamic_vine,
+])
+@pytest.mark.parametrize('overrides', [{}, {'K': 23, 'grid_range': 2.75}])
+def test_gof_routes_ou_grid_options_in_dynamic_vines(factory, overrides):
+    vine = factory()
+    result = stattests.gof_test(
+        vine, _observations(d=vine.d), to_pobs=False, **overrides)
+    assert np.isfinite(result.statistic)
+    assert 0 <= result.pvalue <= 1
+
+
+def test_dynamic_rosenblatt_preserves_ou_grid_and_other_fitted_settings():
+    vine = _configured_all_dynamic_vine()
+    module = _cpp_extension.load()
+    active = _cpp_rvine.density_active_keys(vine._trees, vine._edge_map)
+    edges, _ = _cpp_rvine.compile_dynamic_rosenblatt_edges(
+        module, vine.pair_copulas, active, 17,
+        strategy_kwargs={'K': 23, 'grid_range': 2.75})
+    by_kind = {edge.dynamics: edge for edge in edges}
+    ou = by_kind[module.DynamicRvineKind.SCAR_OU]
+    assert ou.ou_config.K == 23
+    assert ou.ou_config.grid_range == 2.75
+    jacobi = by_kind[module.DynamicRvineKind.SCAR_JACOBI]
+    assert jacobi.jacobi_config.transition.numerical.basis_order == 8
+    assert jacobi.jacobi_config.transition.numerical.quad_order == 32
+    assert module.DynamicRvineKind.GAS in by_kind
+    assert module.DynamicRvineKind.STATIC in by_kind
+
+
+@pytest.mark.parametrize('factory', [
+    configured_mixed_gas_vine, configured_mixed_jacobi_vine,
+    configured_mixed_scar_vine,
+])
+def test_dynamic_rosenblatt_rejects_unknown_non_grid_options(factory):
+    vine = factory()
+    module = _cpp_extension.load()
+    active = _cpp_rvine.density_active_keys(vine._trees, vine._edge_map)
+    with pytest.raises(TypeError, match='definitely_unknown'):
+        _cpp_rvine.compile_dynamic_rosenblatt_edges(
+            module, vine.pair_copulas, active, 17,
+            strategy_kwargs={'K': 23, 'grid_range': 2.75, 'definitely_unknown': 1})
+
+
 def _native_request(vine, observations):
     module = _cpp_extension.load()
     active_keys = _cpp_rvine.density_active_keys(
