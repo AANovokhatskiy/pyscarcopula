@@ -31,6 +31,7 @@ from pyscarcopula.numerical._arrays import (
     as_float64_array,
     as_pseudo_observation_array,
     validate_float64_allocation,
+    validate_sampling_n_threads,
 )
 from pyscarcopula.numerical._transition_methods import (
     normalize_ou_transition_method,
@@ -591,12 +592,17 @@ class SCARTMStrategy:
 
     _strict_keyword_contract = True
     _constructor_keyword_aliases = frozenset({"backend"})
+    # Both steps receive the complete context from the shared prediction and
+    # vine adapters, including fields consumed only by the other step.
+    _prediction_context_keywords = frozenset({
+        "given", "horizon", "predictive_r_mode", "n_threads",
+        "memory_budget_bytes", "state_cache", "cache_key", "posterior_cache",
+    })
     _operation_keyword_aliases = {
         "sample": frozenset({"given", "n_threads", "memory_budget_bytes"}),
-        "predict": frozenset({
-            "given", "horizon", "predictive_r_mode", "n_threads",
-            "memory_budget_bytes", "state_cache", "cache_key", "posterior_cache",
-        }),
+        "predict": _prediction_context_keywords,
+        "predictive_state": _prediction_context_keywords,
+        "sample_params": _prediction_context_keywords,
     }
 
     def __init__(self, config: NumericalConfig | None = None,
@@ -1220,6 +1226,8 @@ class SCARTMStrategy:
                 objective_scaled,
                 x0_scaled,
                 method='L-BFGS-B',
+                jac=('2-point' if scaled_options.get(
+                    'finite_diff_rel_step') is not None else None),
                 bounds=optimizer_box,
                 options=scaled_options,
             )
@@ -1343,6 +1351,11 @@ class SCARTMStrategy:
             full joint vector, or None for automatic initialization.
         gtol, ftol, maxfun, maxiter, maxls, eps, maxcor,
         finite_diff_rel_step : L-BFGS-B options
+            On the numerical-gradient path, a non-None relative step from
+            the fit options or optimizer config takes precedence over eps.
+            Relative steps use optimizer coordinates; otherwise eps retains
+            its absolute-step behavior (scaled for physical OU parameters).
+            Native analytical gradients do not use either step option.
         verbose : print progress
         initial_mle_result : MLEResult, optional
             Existing static fit used only for automatic initialization.
@@ -1591,6 +1604,8 @@ class SCARTMStrategy:
             result = minimize(
                 objective_scaled, x0_scaled,
                 method='L-BFGS-B',
+                jac=('2-point' if scaled_options.get(
+                    'finite_diff_rel_step') is not None else None),
                 bounds=optimizer_box,
                 options=scaled_options,
             )
@@ -1703,7 +1718,7 @@ class SCARTMStrategy:
     def rosenblatt_e2(self, copula, u: np.ndarray,
                       result: LatentResult,
                       posterior_cache=None) -> np.ndarray:
-        """Mixture Rosenblatt: e2 = E[h(u2, u1; Psi(x_k)) | u_{1:k-1}]."""
+        """Predictive mixture CDF of the second variable given the first."""
         p = result.params
         self._uses_cpp(copula)
         cfg = self._auto_config(
@@ -1873,6 +1888,7 @@ class SCARTMStrategy:
         so the full trajectory covers [0, 1].
         """
         reject_unknown_operation_kwargs(self, 'sample', kwargs)
+        validate_sampling_n_threads(kwargs.get('n_threads', 1))
         if rng is None:
             rng = np.random.default_rng()
 
@@ -1892,6 +1908,7 @@ class SCARTMStrategy:
 
     def predictive_state(self, copula, u, result, **kwargs):
         """Return SCAR-TM predictive state as a grid distribution."""
+        reject_unknown_operation_kwargs(self, 'predictive_state', kwargs)
         p = result.params
         if u is None:
             return PredictiveState(
@@ -1944,6 +1961,7 @@ class SCARTMStrategy:
 
     def condition_state(self, copula, state, observation, result, **kwargs):
         """Bayes-reweight a SCAR-TM grid state by one observed pair."""
+        reject_unknown_operation_kwargs(self, 'condition_state', kwargs)
         if observation is None or state.kind != 'grid':
             return state
         u = np.asarray(observation, dtype=np.float64)
@@ -1963,6 +1981,7 @@ class SCARTMStrategy:
         )
 
     def sample_params(self, copula, state, n, rng=None, **kwargs):
+        reject_unknown_operation_kwargs(self, 'sample_params', kwargs)
         if rng is None:
             rng = np.random.default_rng()
         if state.kind == 'stationary_normal':
@@ -1993,6 +2012,7 @@ class SCARTMStrategy:
 
     def model_sample_params(self, copula, result, n, rng=None, **kwargs):
         """OU trajectory parameters for unconditional model reproduction."""
+        reject_unknown_operation_kwargs(self, 'model_sample_params', kwargs)
         if rng is None:
             rng = np.random.default_rng()
 

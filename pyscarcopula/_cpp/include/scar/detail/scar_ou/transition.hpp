@@ -214,8 +214,7 @@ bool matrix_forward_mixture_h(
     const double* u,
     std::int64_t n_obs,
     double* out,
-    double* out_reverse = nullptr,
-    bool direct_swapped_h = false);
+    double* out_reverse = nullptr);
 bool local_forward_predictive_mean(
     const scar::PreparedDynamicEmission& emission,
     const OuGrid& grid,
@@ -232,7 +231,6 @@ bool local_forward_mixture_h(
     const double* u,
     std::int64_t n_obs,
     double* out,
-    double* out_reverse = nullptr,
-    bool direct_swapped_h = false);
+    double* out_reverse = nullptr);
 
 }  // namespace scar_internal

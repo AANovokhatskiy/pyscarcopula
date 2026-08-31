@@ -115,6 +115,7 @@ def _config(
     stationary_beta_tol=1e-8,
     optimizer_gradient_eps=1e-5,
     optimizer_gradient_relative=False,
+    optimizer_bounds=None,
 ):
     scaling = _scaling_name(scaling)
     out = module.GasConfig()
@@ -132,6 +133,17 @@ def _config(
     out.optimizer_gradient_eps = _finite_float(
         optimizer_gradient_eps, "optimizer_gradient_eps")
     out.optimizer_gradient_relative = bool(optimizer_gradient_relative)
+    if optimizer_bounds is not None:
+        if len(optimizer_bounds) != 2:
+            raise ValueError("optimizer_bounds must contain lower and upper bounds")
+        lower = as_float64_array(optimizer_bounds[0], name="optimizer lower bounds")
+        upper = as_float64_array(optimizer_bounds[1], name="optimizer upper bounds")
+        if lower.ndim != 1 or upper.shape != lower.shape or len(lower) not in (3, 4):
+            raise ValueError("optimizer_bounds must contain matching 3- or 4-vectors")
+        if np.any(np.isnan(lower)) or np.any(np.isnan(upper)) or np.any(lower >= upper):
+            raise ValueError("optimizer_bounds must be ordered and cannot contain NaN")
+        out.optimizer_lower_bounds = lower.tolist()
+        out.optimizer_upper_bounds = upper.tolist()
     if out.score_eps <= 0.0:
         raise ValueError("score_eps must be positive")
     if out.g_clip <= 0.0:
@@ -158,6 +170,7 @@ def _inputs(
     *,
     optimizer_gradient_eps=1e-5,
     optimizer_gradient_relative=False,
+    optimizer_bounds=None,
 ):
     module = _extension.load()
     from pyscarcopula.copula.multivariate.equicorr_prepared import (
@@ -188,6 +201,7 @@ def _inputs(
             score_eps,
             optimizer_gradient_eps=optimizer_gradient_eps,
             optimizer_gradient_relative=optimizer_gradient_relative,
+            optimizer_bounds=optimizer_bounds,
         ),
     )
 
@@ -350,6 +364,7 @@ def negative_log_likelihood_and_gradient(
     *,
     optimizer_gradient_eps=1e-5,
     optimizer_gradient_relative=False,
+    optimizer_bounds=None,
 ) -> tuple[float, np.ndarray]:
     """Evaluate native ``-logL`` and its three GAS optimizer derivatives."""
     module, params, spec, obs, config = _inputs(
@@ -362,6 +377,7 @@ def negative_log_likelihood_and_gradient(
         score_eps,
         optimizer_gradient_eps=optimizer_gradient_eps,
         optimizer_gradient_relative=optimizer_gradient_relative,
+        optimizer_bounds=optimizer_bounds,
     )
     evaluator = module.GasEvaluator()
     result = (
@@ -398,6 +414,7 @@ def negative_log_likelihood_and_gradient_shrinkage(
     *,
     optimizer_gradient_eps=1e-5,
     optimizer_gradient_relative=False,
+    optimizer_bounds=None,
 ) -> tuple[float, np.ndarray]:
     """Evaluate joint GAS/shrinkage objective and four native derivatives."""
     module, params, spec, obs, config = _inputs(
@@ -410,6 +427,7 @@ def negative_log_likelihood_and_gradient_shrinkage(
         score_eps,
         optimizer_gradient_eps=optimizer_gradient_eps,
         optimizer_gradient_relative=optimizer_gradient_relative,
+        optimizer_bounds=optimizer_bounds,
     )
     if not isinstance(obs, np.ndarray):
         raise ValueError(

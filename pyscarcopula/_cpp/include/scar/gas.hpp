@@ -34,6 +34,10 @@ struct GasConfig {
     double stationary_beta_tol = 1e-8;
     double optimizer_gradient_eps = 1e-5;
     bool optimizer_gradient_relative = false;
+    // Empty bounds mean unbounded finite differences; fits supply their
+    // actual optimizer bounds, including a joint correlation coordinate.
+    std::vector<double> optimizer_lower_bounds;
+    std::vector<double> optimizer_upper_bounds;
 };
 
 /// Native evaluator for bivariate score-driven copula dynamics.

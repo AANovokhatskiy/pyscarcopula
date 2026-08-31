@@ -37,6 +37,7 @@ from pyscarcopula._native.registry import registry_entry_for
 from pyscarcopula.numerical._arrays import (
     as_float64_array,
     validate_float64_allocation,
+    validate_sampling_n_threads,
 )
 
 
@@ -249,14 +250,13 @@ class MLEStrategy:
 
     def rosenblatt_e2(self, copula, u: np.ndarray,
                       result: MLEResult) -> np.ndarray:
-        """e2 = h(u2, u1; r_mle)."""
-        registry_entry_for(copula)
-        r = np.full(len(u), result.copula_param)
-        return pair_native.h(copula, u[:, 1], u[:, 0], r)
+        """Conditional CDF of the second canonical variable given the first."""
+        second_given_first, _ = self.mixture_h_pair(copula, u, result)
+        return second_given_first
 
     def mixture_h(self, copula, u: np.ndarray,
                   result: MLEResult) -> np.ndarray:
-        """h(u2, u1; r_mle) — same as rosenblatt_e2 for MLE."""
+        """Second-given-first conditional CDF at the constant MLE parameter."""
         return self.rosenblatt_e2(copula, u, result)
 
     def mixture_h_pair(self, copula, u: np.ndarray,
@@ -299,6 +299,7 @@ class MLEStrategy:
     def sample(self, copula, u, result, n, rng=None, **kwargs):
         """Sample n observations with constant r = theta_mle."""
         reject_unknown_operation_kwargs(self, 'sample', kwargs)
+        n_threads = validate_sampling_n_threads(kwargs.get('n_threads', 1))
         d = copula_dimension(copula, u)
         validate_float64_allocation(
             (n, d), name="MLE sample output",
@@ -311,7 +312,7 @@ class MLEStrategy:
         r = np.full(n, result.copula_param)
         return sample_predictive(
             copula, n, r, given=kwargs.get('given'), rng=rng, d=d,
-            n_threads=kwargs.get("n_threads", 1),
+            n_threads=n_threads,
             memory_budget_bytes=kwargs.get("memory_budget_bytes"),
             config=self.config)
 

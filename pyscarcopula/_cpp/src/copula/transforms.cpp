@@ -26,16 +26,39 @@ double logistic_unit_open(double value) {
 }
 
 double softplus(double value) {
-    return std::log1p(std::exp(-std::abs(value)))
-        + std::max(value, 0.0);
+    // Preserve the historical arithmetic and tail approximations: changing
+    // their rounding changes finite-difference GAS optimization trajectories.
+    // The tail error is at most exp(-20), and these branches prevent overflow.
+    if (value > 20.0) {
+        return value;
+    }
+    if (value < -20.0) {
+        return std::exp(value);
+    }
+    return std::log1p(std::exp(value));
 }
 
 double inverse_softplus(double value) {
-    return value + std::log(-std::expm1(-value));
+    if (value > 20.0) {
+        return value;
+    }
+    // The historical small-value approximation avoids cancellation; its
+    // absolute latent error is below 5e-9. Zero/negative inputs retain log's
+    // -infinity/NaN behavior; the public parameter inverse applies its floor.
+    if (value < 1e-8) {
+        return std::log(value);
+    }
+    return std::log(std::expm1(value));
 }
 
 double d_softplus(double value) {
-    return logistic_unit(value);
+    if (value > 20.0) {
+        return 1.0;
+    }
+    if (value < -20.0) {
+        return std::exp(value);
+    }
+    return 1.0 / (1.0 + std::exp(-value));
 }
 
 double transform_parameter(

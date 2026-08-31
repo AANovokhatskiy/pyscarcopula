@@ -947,7 +947,8 @@ class TestConditionalSamplingPlanLayer:
         assert np.all(samples[:, 1] < 1.0)
 
         u2 = samples[:, 1]
-        z = copula.h(u2, np.full(n, u1_value), np.full(n, float(theta)))
+        _, z = copula.h_pair(
+            np.full(n, u1_value), u2, np.full(n, float(theta)))
 
         ks_stat, _ = kstest(z, 'uniform')
         assert ks_stat < 0.030, (
@@ -956,9 +957,9 @@ class TestConditionalSamplingPlanLayer:
         )
 
         grid = np.array([0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95])
-        theo_cdf = copula.h(grid,
-                            np.full(len(grid), u1_value),
-                            np.full(len(grid), float(theta)))
+        _, theo_cdf = copula.h_pair(
+            np.full(len(grid), u1_value), grid,
+            np.full(len(grid), float(theta)))
         emp_cdf = np.array([np.mean(u2 <= g) for g in grid])
         cdf_err = np.max(np.abs(emp_cdf - theo_cdf))
         assert cdf_err < 0.020, (

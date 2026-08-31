@@ -84,10 +84,11 @@ $g_t = \omega + \beta g_{t-1} + \gamma\,score_{t-1}$.
 | `gamma0` | fit kwarg | MLE-based | Initial $[\omega, \gamma, \beta]$. |
 | `gtol` | fit kwarg / `gas_optimizer.gtol` | `1e-3` | L-BFGS-B projected-gradient tolerance. |
 | `ftol` | fit kwarg / `gas_optimizer.ftol` | `1e-9` | Relative objective decrease tolerance. |
-| `maxfun` | fit kwarg / `gas_optimizer.maxfun` | `4000` | Maximum optimizer function evaluations. |
+| `maxfun` | fit kwarg / `gas_optimizer.maxfun` | `4000` | Maximum scalar objective evaluations, including numerical-gradient probes. |
 | `maxiter` | fit kwarg / `gas_optimizer.maxiter` | `1000` | Maximum optimizer iterations. |
 | `maxls` | fit kwarg / `gas_optimizer.maxls` | `100` | Maximum L-BFGS-B line-search steps per iteration. |
-| `eps` | fit kwarg / `gas_optimizer.eps` | `1e-5` | Native finite-difference step for the outer optimizer gradient. |
+| `eps` | fit kwarg / `gas_optimizer.eps` | `1e-5` | Absolute native two-point step for the outer optimizer gradient when `finite_diff_rel_step` is unset. |
+| `finite_diff_rel_step` | fit kwarg / `gas_optimizer.finite_diff_rel_step` | `None` | Relative two-point step in optimizer coordinates; takes precedence over `eps`. |
 | `score_eps` | fit kwarg / `gas_score_eps` | `1e-4` | Finite-difference step for Fisher curvature. |
 | `gamma_bound` | fit kwarg / `gas_gamma_bound` | `20.0` | Bounds score sensitivity to $[-\texttt{gamma\_bound}, \texttt{gamma\_bound}]$. |
 | `beta_bound` | fit kwarg / `gas_beta_bound` | `0.999` | Bounds persistence to $[-\texttt{beta\_bound}, \texttt{beta\_bound}]$; must be in $(0, 1)$. |
@@ -115,13 +116,20 @@ immediately.
 
 The model score driving the GAS recursion is not an analytical gradient of the
 complete likelihood with respect to `omega`, `gamma`, and `beta`. The compiled
-evaluator obtains that optimizer gradient by central finite differences and
-returns it together with the objective to SciPy L-BFGS-B.
+evaluator obtains that optimizer gradient by two-point finite differences and
+returns it together with the objective to SciPy L-BFGS-B. It follows SciPy's
+forward-step convention, adjusts steps at parameter bounds, and divides by
+the actual representable displacement. An explicit relative step follows
+the sign and magnitude of the optimizer coordinate.
 `GASResult.diagnostics` records these as `model_score='native'`,
 `optimizer_gradient='native'`, and
-`gradient_kind='native_finite_difference'`. `maxfun` is passed directly to
-SciPy L-BFGS-B, and `nfev` retains SciPy's optimizer function-evaluation
-semantics.
+`gradient_kind='native_finite_difference'`. `maxfun` and `nfev` use scalar
+objective budget units, preserving the previous counts for completed
+finite-difference calls. Each native objective/gradient call is charged four
+units, or five for joint GAS/shrinkage fitting. An early numerical failure
+may execute fewer likelihood evaluations but still incurs that full charge;
+`nfev` therefore does not count physical likelihood calls. As with SciPy
+numerical gradients, an iteration or line search can exceed `maxfun`.
 
 Fisher scaling uses the analytical copula score
 $\partial\log c/\partial r\,\partial r/\partial g$ as its numerator and
@@ -162,7 +170,8 @@ does not introduce simulation noise.
 | `maxfun` | fit kwarg / `scar_optimizer.maxfun` | `300` | Maximum function evaluations. |
 | `maxiter` | fit kwarg / `scar_optimizer.maxiter` | `100` | Maximum optimizer iterations. |
 | `maxls` | fit kwarg / `scar_optimizer.maxls` | `20` | Maximum L-BFGS-B line-search steps per iteration. |
-| `eps` | fit kwarg / `scar_optimizer.eps` | `1e-4` | L-BFGS-B finite-difference step for numerical-gradient fits. |
+| `eps` | fit kwarg / `scar_optimizer.eps` | `1e-4` | Absolute step for numerical-gradient fits when `finite_diff_rel_step` is unset; scaled for physical OU coordinates. Inactive for native analytical gradients. |
+| `finite_diff_rel_step` | fit kwarg / selected optimizer config | `None` | Relative step in optimizer coordinates for numerical-gradient fits. A non-None value takes precedence over `eps`; a non-None fit kwarg overrides the config. Inactive for native analytical gradients. |
 | `K` | strategy kwarg / `default_K` | `300` | Minimum latent grid size. May be increased by the adaptive rule. |
 | `grid_range` | strategy kwarg / `default_grid_range` | `5.0` | Grid spans $[-\texttt{grid\_range}\,\sigma, +\texttt{grid\_range}\,\sigma]$. |
 | `grid_method` | strategy kwarg / `default_grid_method` | `'auto'` | `'auto'`, `'dense'`, or `'sparse'`. Use sparse for large grids. |
@@ -521,7 +530,8 @@ latent coordinate.
 | `maxfun` | fit kwarg / `scar_optimizer.maxfun` | `300` | Maximum function evaluations. |
 | `maxiter` | fit kwarg / `scar_optimizer.maxiter` | `100` | Maximum optimizer iterations. |
 | `maxls` | fit kwarg / `scar_optimizer.maxls` | `20` | Maximum L-BFGS-B line-search steps per iteration. |
-| `eps` | fit kwarg / `scar_optimizer.eps` | `1e-4` | L-BFGS-B finite-difference step. |
+| `eps` | fit kwarg / `scar_optimizer.eps` | `1e-4` | Absolute step in raw optimizer coordinates for numerical-gradient fits when `finite_diff_rel_step` is unset. Inactive for native analytical gradients. |
+| `finite_diff_rel_step` | fit kwarg / `scar_optimizer.finite_diff_rel_step` | `None` | Relative step in raw optimizer coordinates for numerical-gradient fits. A non-None value takes precedence over `eps`; a non-None fit kwarg overrides the config. Inactive for native analytical gradients. |
 | `transition_method` | strategy kwarg | `'auto'` | `'auto'`, `'spectral_matrix'`, `'local'`, `'local_fixed'`, or `'spectral_coeff'`. |
 | `transition_storage` | strategy kwarg | `'dense'` | Dense transition storage, or opt-in `'sparse'` storage for explicit `local` and `local_fixed` backends. |
 | `stationarity_correction` | strategy kwarg | `'none'` | Experimental sparse moving-grid correction: `'none'`, `'mh'`, or `'ipfp'`. |
@@ -602,6 +612,12 @@ perturbations use that same selected backend, so a single gradient evaluation
 cannot mix spectral and local objectives. Analytical-gradient fits also
 recompute the ordinary objective at the final point and report
 `final_objective_consistent` in result diagnostics.
+Final fit validation checks the native parameter domain and evaluates the
+objective and requested gradient without optimizer penalties. A domain or
+numerical failure marks the fit unsuccessful regardless of `config.fail_value`,
+so vine fitting can apply its configured fallback policy. The
+`final_evaluation_status` diagnostic records `0` for successful evaluation,
+`6` for invalid parameters, or `7` for a native numerical failure.
 `transition_method='spectral_coeff'` uses coefficient-space filtering instead
 of a transition matrix. It is available for diagnostic comparisons. With
 `analytical_grad=True`, the native evaluator computes the complete objective

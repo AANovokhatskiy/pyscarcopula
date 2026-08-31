@@ -1,9 +1,13 @@
 """Regression values for deterministic SCAR-TM-OU calculations."""
 
+import sys
+
 import numpy as np
 import pytest
 
 from pyscarcopula.copula.clayton import ClaytonCopula
+from pyscarcopula.copula.gumbel import GumbelCopula
+from pyscarcopula.copula.joe import JoeCopula
 from pyscarcopula.copula.multivariate.stochastic_student import (
     StochasticStudentCopula,
 )
@@ -43,6 +47,46 @@ GRID = np.array(
 
 def _assert_close(actual, expected):
     np.testing.assert_allclose(actual, expected, rtol=2e-7, atol=2e-8)
+
+
+@pytest.mark.parametrize(
+    ("copula", "expected"),
+    [
+        (
+            GumbelCopula(),
+            [1.825326483267322e-07, 0.2327475254143381,
+             0.00015166589262193968],
+        ),
+        (
+            JoeCopula(),
+            [2.455314537472119e-07, 0.11272315528480627,
+             6.858395682600099e-05],
+        ),
+    ],
+)
+def test_bivariate_scar_matrix_preserves_legacy_gradient_rounding(
+        copula, expected):
+    observations = np.random.default_rng(20260831).uniform(
+        0.01, 0.99, size=(64, 2))
+    config = AutoTMConfig(
+        transition_method="matrix",
+        K=300,
+        max_K=300,
+        adaptive=False,
+        grid_range=5.0,
+        grid_method="sparse",
+    )
+
+    _, gradient = _cpp_scar_ou.neg_loglik_with_grad(
+        100.0, -3.25, 0.14, observations, copula, config)
+
+    # The Windows 0.20.1 reference pins the arithmetic within a small ULP
+    # budget: reciprocal multiplication and pow exceed it and change fits.
+    # Other libm implementations need not produce the same final bits.
+    if sys.platform == "win32":
+        np.testing.assert_array_max_ulp(gradient, expected, maxulp=8)
+    else:
+        np.testing.assert_allclose(gradient, expected, rtol=2e-11, atol=1e-14)
 
 
 def test_bivariate_scar_matrix_matches_regression_values():

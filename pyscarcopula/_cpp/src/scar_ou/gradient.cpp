@@ -860,7 +860,9 @@ GradLogLikResult grid_neg_loglik_with_grad(
                 }
             }
             for (std::size_t j = 0; j < K_size; ++j) {
-                beta[j] = next[j] * inv_scale;
+                // Preserve legacy division: reciprocal multiplication changes
+                // the analytical gradient's rounding and optimizer trajectory.
+                beta[j] = next[j] / scale;
             }
             d_beta.swap(new_d_beta);
             cumul_logc += std::log(scale);

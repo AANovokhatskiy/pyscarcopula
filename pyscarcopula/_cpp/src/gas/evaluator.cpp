@@ -293,12 +293,104 @@ GasLogLikResult run_shrinkage_log_likelihood(
 
 double optimizer_gradient_step(
     const GasConfig& config,
-    double value) noexcept {
+    double value,
+    double lower,
+    double upper) noexcept {
 
-    return config.optimizer_gradient_relative
-        ? config.optimizer_gradient_eps
-            * std::max(1.0, std::abs(value))
+    // Match SciPy's two-point provider: absolute eps points forward even
+    // for negative coordinates; an explicit relative step follows sign(x).
+    const double sign = value >= 0.0 ? 1.0 : -1.0;
+    double step = config.optimizer_gradient_relative
+        ? config.optimizer_gradient_eps * sign * std::abs(value)
         : config.optimizer_gradient_eps;
+    if ((value + step) - value == 0.0) {
+        step = std::sqrt(std::numeric_limits<double>::epsilon())
+            * sign * std::max(1.0, std::abs(value));
+    }
+    const double lower_distance = value - lower;
+    const double upper_distance = upper - value;
+    const double shifted = value + step;
+    if (shifted < lower || shifted > upper) {
+        if (std::abs(step) <= std::max(lower_distance, upper_distance)) {
+            step = -step;
+        } else {
+            step = upper_distance >= lower_distance
+                ? upper_distance : -lower_distance;
+        }
+    }
+    return step;
+}
+
+template <std::size_t Size, typename Evaluate>
+GasObjectiveGradientResult optimizer_value_gradient(
+    const std::array<double, Size>& values,
+    const GasConfig& config,
+    Evaluate evaluate) {
+
+    GasObjectiveGradientResult out;
+    const bool bounded = !config.optimizer_lower_bounds.empty()
+        || !config.optimizer_upper_bounds.empty();
+    if (bounded && (config.optimizer_lower_bounds.size() != Size
+                    || config.optimizer_upper_bounds.size() != Size)) {
+        out.status = Status::InvalidParameter;
+        return out;
+    }
+    for (std::size_t coordinate = 0; coordinate < Size; ++coordinate) {
+        if (bounded) {
+            const double lower = config.optimizer_lower_bounds[coordinate];
+            const double upper = config.optimizer_upper_bounds[coordinate];
+            if (std::isnan(lower) || std::isnan(upper) || lower >= upper
+                || values[coordinate] < lower || values[coordinate] > upper) {
+                out.status = Status::InvalidParameter;
+                out.failure.coordinate = static_cast<int>(coordinate);
+                return out;
+            }
+        }
+    }
+    const GasLogLikResult base = evaluate(values);
+    ++out.objective_evaluations;
+    if (!base.is_ok()) {
+        out.status = base.status;
+        out.failure = base.failure;
+        return out;
+    }
+    out.objective = -base.log_likelihood;
+    out.gradient.assign(Size, 0.0);
+    for (std::size_t coordinate = 0; coordinate < Size; ++coordinate) {
+        const double lower = bounded ? config.optimizer_lower_bounds[coordinate]
+            : -std::numeric_limits<double>::infinity();
+        const double upper = bounded ? config.optimizer_upper_bounds[coordinate]
+            : std::numeric_limits<double>::infinity();
+        auto shifted = values;
+        shifted[coordinate] += optimizer_gradient_step(
+            config, values[coordinate], lower, upper);
+        // Floating-point addition determines the actual representable step.
+        const double delta = shifted[coordinate] - values[coordinate];
+        if (!std::isfinite(delta) || delta == 0.0) {
+            out.status = Status::NumericalFailure;
+            out.failure.coordinate = static_cast<int>(coordinate);
+            out.gradient.clear();
+            return out;
+        }
+        const GasLogLikResult moved = evaluate(shifted);
+        ++out.objective_evaluations;
+        if (!moved.is_ok()) {
+            out.status = moved.status;
+            out.failure = moved.failure;
+            out.failure.coordinate = static_cast<int>(coordinate);
+            out.gradient.clear();
+            return out;
+        }
+        out.gradient[coordinate] = -(
+            moved.log_likelihood - base.log_likelihood) / delta;
+        if (!std::isfinite(out.gradient[coordinate])) {
+            out.status = Status::NumericalFailure;
+            out.failure.coordinate = static_cast<int>(coordinate);
+            out.gradient.clear();
+            return out;
+        }
+    }
+    return out;
 }
 
 }  // namespace
@@ -432,57 +524,13 @@ GasEvaluator::negative_log_likelihood_and_gradient(
     ObservationView u,
     const GasConfig& config) const {
 
-    GasObjectiveGradientResult out;
-    out.gradient.assign(3, 0.0);
-    const GasLogLikResult base = run_log_likelihood(
-        params, copula, u, config);
-    ++out.objective_evaluations;
-    if (!base.is_ok()) {
-        out.status = base.status;
-        out.failure = base.failure;
-        out.gradient.clear();
-        return out;
-    }
-    out.objective = -base.log_likelihood;
-
-    const std::array<double, 3> values{
-        params.omega, params.gamma, params.beta};
-    for (std::size_t coordinate = 0;
-         coordinate < values.size();
-         ++coordinate) {
-        const double step = optimizer_gradient_step(
-            config, values[coordinate]);
-        GasParams plus = params;
-        GasParams minus = params;
-        double* plus_values[] = {&plus.omega, &plus.gamma, &plus.beta};
-        double* minus_values[] = {&minus.omega, &minus.gamma, &minus.beta};
-        *plus_values[coordinate] += step;
-        *minus_values[coordinate] -= step;
-        const GasLogLikResult plus_result = run_log_likelihood(
-            plus, copula, u, config);
-        const GasLogLikResult minus_result = run_log_likelihood(
-            minus, copula, u, config);
-        out.objective_evaluations += 2;
-        if (!plus_result.is_ok() || !minus_result.is_ok()) {
-            const GasLogLikResult& failed =
-                !plus_result.is_ok() ? plus_result : minus_result;
-            out.status = failed.status;
-            out.failure = failed.failure;
-            out.failure.coordinate = static_cast<int>(coordinate);
-            out.gradient.clear();
-            return out;
-        }
-        out.gradient[coordinate] = -(
-            plus_result.log_likelihood - minus_result.log_likelihood)
-            / (2.0 * step);
-        if (!std::isfinite(out.gradient[coordinate])) {
-            out.status = Status::NumericalFailure;
-            out.failure.coordinate = static_cast<int>(coordinate);
-            out.gradient.clear();
-            return out;
-        }
-    }
-    return out;
+    return optimizer_value_gradient(
+        std::array<double, 3>{params.omega, params.gamma, params.beta},
+        config,
+        [&](const std::array<double, 3>& values) {
+            const GasParams point{values[0], values[1], values[2]};
+            return run_log_likelihood(point, copula, u, config);
+        });
 }
 
 GasObjectiveGradientResult
@@ -494,65 +542,17 @@ GasEvaluator::negative_log_likelihood_and_gradient_shrinkage(
     ObservationView u,
     const GasConfig& config) const {
 
-    GasObjectiveGradientResult out;
-    out.gradient.assign(4, 0.0);
-    const GasLogLikResult base = run_shrinkage_log_likelihood(
-        params, copula, base_correlation, raw_shrinkage, u, config);
-    ++out.objective_evaluations;
-    if (!base.is_ok()) {
-        out.status = base.status;
-        out.failure = base.failure;
-        out.gradient.clear();
-        return out;
-    }
-    out.objective = -base.log_likelihood;
-
-    const std::array<double, 4> values{
-        params.omega, params.gamma, params.beta, raw_shrinkage};
-    for (std::size_t coordinate = 0;
-         coordinate < values.size();
-         ++coordinate) {
-        const double step = optimizer_gradient_step(
-            config, values[coordinate]);
-        GasParams plus = params;
-        GasParams minus = params;
-        double plus_raw = raw_shrinkage;
-        double minus_raw = raw_shrinkage;
-        if (coordinate < 3) {
-            double* plus_values[] = {&plus.omega, &plus.gamma, &plus.beta};
-            double* minus_values[] = {&minus.omega, &minus.gamma, &minus.beta};
-            *plus_values[coordinate] += step;
-            *minus_values[coordinate] -= step;
-        } else {
-            plus_raw += step;
-            minus_raw -= step;
-        }
-        const GasLogLikResult plus_result = run_shrinkage_log_likelihood(
-            plus, copula, base_correlation, plus_raw, u, config);
-        const GasLogLikResult minus_result = run_shrinkage_log_likelihood(
-            minus, copula, base_correlation, minus_raw, u, config);
-        out.objective_evaluations += 2;
-        if (!plus_result.is_ok() || !minus_result.is_ok()) {
-            const GasLogLikResult& failed =
-                !plus_result.is_ok() ? plus_result : minus_result;
-            out.status = failed.status;
-            out.failure = failed.failure;
-            out.failure.coordinate = static_cast<int>(coordinate);
-            out.gradient.clear();
-            return out;
-        }
-        out.gradient[coordinate] = -(
-            plus_result.log_likelihood - minus_result.log_likelihood)
-            / (2.0 * step);
-        if (!std::isfinite(out.gradient[coordinate])) {
-            out.status = Status::NumericalFailure;
-            out.failure.coordinate = static_cast<int>(coordinate);
-            out.gradient.clear();
-            return out;
-        }
-    }
-    return out;
+    return optimizer_value_gradient(
+        std::array<double, 4>{
+            params.omega, params.gamma, params.beta, raw_shrinkage},
+        config,
+        [&](const std::array<double, 4>& values) {
+            const GasParams point{values[0], values[1], values[2]};
+            return run_shrinkage_log_likelihood(
+                point, copula, base_correlation, values[3], u, config);
+        });
 }
+
 
 GasUpdateResult GasEvaluator::update_one(
     const GasParams& params,

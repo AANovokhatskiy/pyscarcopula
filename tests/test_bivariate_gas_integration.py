@@ -108,6 +108,15 @@ def test_fused_sampling_matches_stepwise_native_recursion(
 
 
 def test_gas_fit_gof_and_bootstrap_use_compiled_kernels(monkeypatch):
+    gradient_calls = []
+    original_gradient = _cpp_gas.negative_log_likelihood_and_gradient
+
+    def counted_gradient(*args, **kwargs):
+        gradient_calls.append(1)
+        return original_gradient(*args, **kwargs)
+
+    monkeypatch.setattr(
+        _cpp_gas, "negative_log_likelihood_and_gradient", counted_gradient)
     source = BivariateGaussianCopula()
     u = source.sample_at_parameter(
         45, np.full(45, 0.55), rng=np.random.default_rng(20260612))
@@ -123,7 +132,11 @@ def test_gas_fit_gof_and_bootstrap_use_compiled_kernels(monkeypatch):
 
     p = result.params
     assert np.isfinite(result.log_likelihood)
-    assert 0 < result.nfev <= 80
+    # The two refinement runs each have their own maxfun budget. As with
+    # SciPy numerical derivatives, the final iteration may exceed that limit.
+    assert result.nfev == 4 * len(gradient_calls) > 0
+    refinement = result.diagnostics['optimizer_refinement']
+    assert result.nfev == refinement['first_nfev'] + refinement['refined_nfev']
     assert result.log_likelihood == pytest.approx(
         _cpp_gas.log_likelihood(
             p.omega,

@@ -252,8 +252,12 @@ def test_gas_optimizer_gradient_step_routes_to_native(
 
     assert "eps" not in captured["scipy_options"]
     assert "finite_diff_rel_step" not in captured["scipy_options"]
-    assert captured["scipy_options"]["maxfun"] == 23
-    assert captured["native_kwargs"] == {
+    assert captured["scipy_options"]["maxfun"] == 23 // 4
+    native_kwargs = dict(captured["native_kwargs"])
+    lower, upper = native_kwargs.pop("optimizer_bounds")
+    np.testing.assert_array_equal(lower, [-np.inf, -20.0, -0.999])
+    np.testing.assert_array_equal(upper, [np.inf, 20.0, 0.999])
+    assert native_kwargs == {
         "optimizer_gradient_eps": expected_eps,
         "optimizer_gradient_relative": expected_relative,
     }
@@ -263,7 +267,7 @@ def test_gas_optimizer_gradient_step_routes_to_native(
         result.diagnostics["optimizer_gradient_relative"]
         is expected_relative
     )
-    assert result.nfev == 17
+    assert result.nfev == 17 * 4
     assert "objective_evaluations" not in result.diagnostics
     assert "requested_maxfun" not in result.diagnostics
 
@@ -318,15 +322,19 @@ def test_joint_shrinkage_gradient_step_routes_to_native(
 
     assert "eps" not in captured["scipy_options"]
     assert "finite_diff_rel_step" not in captured["scipy_options"]
-    assert captured["scipy_options"]["maxfun"] == 29
-    assert captured["native_kwargs"] == {
+    assert captured["scipy_options"]["maxfun"] == 29 // 5
+    native_kwargs = dict(captured["native_kwargs"])
+    lower, upper = native_kwargs.pop("optimizer_bounds")
+    np.testing.assert_array_equal(lower, [-np.inf, -20.0, -0.999, -np.inf])
+    np.testing.assert_array_equal(upper, [np.inf, 20.0, 0.999, np.inf])
+    assert native_kwargs == {
         "optimizer_gradient_eps": 0.031,
         "optimizer_gradient_relative": False,
     }
     assert result.diagnostics["optimizer_gradient_eps"] == pytest.approx(
         0.031)
     assert result.diagnostics["optimizer_gradient_relative"] is False
-    assert result.nfev == 19
+    assert result.nfev == 19 * 5
     assert "objective_evaluations" not in result.diagnostics
     assert "requested_maxfun" not in result.diagnostics
 

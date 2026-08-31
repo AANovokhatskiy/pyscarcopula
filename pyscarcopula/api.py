@@ -303,9 +303,12 @@ def mixture_h(
 ) -> FloatArray:
     """h-function for vine pseudo-observation propagation.
 
-    MLE:  h(u2, u1; theta_mle)
-    SCAR: E[h(u2, u1; Psi(x_k)) | u_{1:k-1}] using predictive weights
-    GAS:  h(u2, u1; Psi(g_t))
+    MLE:  h_{2|1}(u2 | u1; theta_mle)
+    SCAR: E[h_{2|1}(u2 | u1; Psi(x_k)) | u_{1:k-1}] using predictive weights
+    GAS:  h_{2|1}(u2 | u1; Psi(g_t))
+
+    The conditional direction uses the original copula's variable order,
+    including for asymmetric 90/270-degree rotations.
 
     Parameters
     ----------
@@ -387,7 +390,7 @@ def sample(
     if _is_generic_vine(copula):
         return copula.sample(n, **kwargs)
 
-    if is_multivariate_copula(copula) and "n_threads" in kwargs:
+    if "n_threads" in kwargs:
         from pyscarcopula._native.threads import validate_n_threads
         kwargs["n_threads"] = validate_n_threads(kwargs["n_threads"])
     prepared = _prepared_equicorr_or_none(copula, data)
@@ -535,7 +538,7 @@ def predict(
 
     _validate_non_vine_predict_config(pcfg, explicit_vine_options)
 
-    if is_multivariate_copula(copula) and "n_threads" in kwargs:
+    if "n_threads" in kwargs:
         from pyscarcopula._native.threads import validate_n_threads
         kwargs["n_threads"] = validate_n_threads(kwargs["n_threads"])
     prepared = _prepared_equicorr_or_none(copula, data)

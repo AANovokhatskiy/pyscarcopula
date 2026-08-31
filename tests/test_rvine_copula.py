@@ -343,7 +343,7 @@ def _scar_tm_gaussian_pair(kappa=1.0, mu=0.0, nu=4.0):
     )
 
 
-def _manual_suffix_stateful_rvine():
+def _manual_suffix_stateful_rvine(*, with_history=False):
     vine = RVineCopula(candidates=[BivariateGaussianCopula])
     vine.d = 3
     vine.matrix = np.array([
@@ -366,7 +366,10 @@ def _manual_suffix_stateful_rvine():
         (0, 1): _gas_gaussian_pair(r_last=0.0, gamma=1.0),
         (1, 0): _mle_gaussian_pair(0.85),
     }
-    vine._last_u = None
+    # Centered Gaussian observations keep this fixture's GAS score/state at zero.
+    vine._last_u = (
+        np.full((3, 3), 0.5, dtype=np.float64) if with_history else None
+    )
     vine._target_given_vars = ()
     vine._conditional_fit_supported = True
     vine.method = 'MIXED'
@@ -1975,7 +1978,7 @@ class TestPredict:
         np.testing.assert_allclose(direct, via_api, rtol=0.0, atol=0.0)
 
     def test_given_only_noops_when_stateful_edge_not_fully_observed(self):
-        vine = _manual_suffix_stateful_rvine()
+        vine = _manual_suffix_stateful_rvine(with_history=True)
         given = {0: 0.99}
 
         ignored = vine.predict(
@@ -1996,7 +1999,7 @@ class TestPredict:
         np.testing.assert_allclose(ignored, updated, rtol=0.0, atol=0.0)
 
     def test_given_only_dynamic_conditioning_updates_stateful_suffix_edge(self):
-        vine = _manual_suffix_stateful_rvine()
+        vine = _manual_suffix_stateful_rvine(with_history=True)
         given = {0: 0.99, 1: 0.99}
 
         ignored = vine.predict(
@@ -2350,7 +2353,7 @@ class TestPredict:
         ) > 1e-4
 
     def test_dynamic_conditioning_return_diagnostics_lists_updated_edges(self):
-        vine = _manual_suffix_stateful_rvine()
+        vine = _manual_suffix_stateful_rvine(with_history=True)
         given = {0: 0.99, 1: 0.99}
 
         samples, diagnostics = vine.predict(
@@ -2373,7 +2376,7 @@ class TestPredict:
         assert 'r_after_mean' in diagnostics['updated_edges'][0]
 
     def test_predict_return_diagnostics_includes_timing_breakdown(self):
-        vine = _manual_suffix_stateful_rvine()
+        vine = _manual_suffix_stateful_rvine(with_history=True)
         given = {0: 0.99, 1: 0.99}
 
         samples, diagnostics = vine.predict(
@@ -2401,7 +2404,7 @@ class TestPredict:
         assert timings['total'] >= timings['predict_r_for_edges']
 
     def test_predict_without_diagnostics_does_not_read_timers(self, monkeypatch):
-        vine = _manual_suffix_stateful_rvine()
+        vine = _manual_suffix_stateful_rvine(with_history=True)
         given = {0: 0.99, 1: 0.99}
 
         class TimerBomb:

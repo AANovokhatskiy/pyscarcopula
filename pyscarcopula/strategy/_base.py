@@ -304,9 +304,9 @@ class FitStrategy(Protocol):
                       result: FitResult) -> np.ndarray:
         """Second Rosenblatt residual for GoF.
 
-        MLE:  e2 = h(u2, u1, r_mle)
-        SCAR: e2 = E[h(u2, u1, Psi(x_k)) | u_{1:k-1}] (mixture)
-        GAS:  e2 = h(u2, u1, Psi(g_t))
+        MLE:  e2 = h_{2|1}(u2 | u1; r_mle)
+        SCAR: e2 = E[h_{2|1}(u2 | u1; Psi(x_k)) | u_{1:k-1}]
+        GAS:  e2 = h_{2|1}(u2 | u1; Psi(g_t))
         """
         ...
 
@@ -314,9 +314,9 @@ class FitStrategy(Protocol):
                   result: FitResult) -> np.ndarray:
         """h-function for vine pseudo-observations.
 
-        MLE:  h(u2, u1; theta_mle), constant parameter
-        SCAR: E[h(u2, u1; Psi(x)) | data], mixture over predictive state
-        GAS:  h(u2, u1; Psi(g_t)), along the GAS-filtered path
+        MLE:  h_{2|1}(u2 | u1; theta_mle), constant parameter
+        SCAR: E[h_{2|1}(u2 | u1; Psi(x)) | data], predictive mixture
+        GAS:  h_{2|1}(u2 | u1; Psi(g_t)), along the GAS-filtered path
 
         This is the key function that propagates pseudo-obs through
         the vine tree. Different methods produce different pseudo-obs,

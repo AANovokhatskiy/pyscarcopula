@@ -156,7 +156,13 @@ void bind_gas(py::module_& m) {
             &scar::GasConfig::optimizer_gradient_eps)
         .def_readwrite(
             "optimizer_gradient_relative",
-            &scar::GasConfig::optimizer_gradient_relative);
+            &scar::GasConfig::optimizer_gradient_relative)
+        .def_readwrite(
+            "optimizer_lower_bounds",
+            &scar::GasConfig::optimizer_lower_bounds)
+        .def_readwrite(
+            "optimizer_upper_bounds",
+            &scar::GasConfig::optimizer_upper_bounds);
 
     py::class_<scar::GasRvineEdge>(
         m, "GasRvineEdge", "Native GAS R-vine edge specification.")

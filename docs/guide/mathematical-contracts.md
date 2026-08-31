@@ -67,6 +67,15 @@ copula parameter domain with smooth links:
   $\nu_t=2+10^{-6}+\log(1+\exp(x_t))$ so the fitted copula has finite
   variance.
 
+Softplus evaluation preserves the arithmetic used in version 0.20.1 so that
+numerical optimizer trajectories remain reproducible. It uses the linear
+tail above 20 and the exponential tail below -20; these approximations have
+absolute error at most $e^{-20}$ and small jumps at the thresholds. Its
+inverse uses $\log(y)$ below $10^{-8}$, with absolute latent error below
+$5\times10^{-9}$. The branches avoid exponential overflow. Replacing these
+expressions with algebraically equivalent formulas can change fitted GAS
+parameters through finite-difference rounding.
+
 Some bivariate copulas can also use the `xtanh` transform. It is a valid
 forward transform for fitting, but its positive-branch inverse is only an
 initialization convention because the map is not globally one-to-one.

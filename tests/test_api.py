@@ -1128,11 +1128,12 @@ class TestConditionalPredict:
         assert captured[0]['gtol'] == pytest.approx(2e-4)
         assert captured[0]['maxls'] == 33
         assert captured[0]['ftol'] == pytest.approx(1e-11)
-        assert captured[0]['maxfun'] == 4000
+        assert captured[0]['maxfun'] == 4000 // 4
         assert 'eps' not in captured[0]
         assert 'finite_diff_rel_step' not in captured[0]
         assert captured[1]['ftol'] == pytest.approx(1e-12)
-        assert captured[1]['maxfun'] == 4000
+        assert captured[1]['maxfun'] == 4000 // 4
+        assert result.nfev == 8  # two native providers, four scalar calls each
         assert result.score_eps == pytest.approx(cfg.gas_score_eps)
 
         result = GASStrategy().fit(
@@ -1185,11 +1186,11 @@ class TestConditionalPredict:
         )
 
         assert captured[0]['ftol'] == pytest.approx(1e-9)
-        assert captured[0]['maxfun'] == 222
+        assert captured[0]['maxfun'] == 222 // 4
         assert captured[1]['ftol'] == pytest.approx(1e-12)
-        assert captured[1]['maxfun'] == 222
+        assert captured[1]['maxfun'] == 222 // 4
         assert captured[2]['ftol'] == pytest.approx(1e-12)
-        assert captured[2]['maxfun'] == 111
+        assert captured[2]['maxfun'] == 111 // 4
 
     def test_gas_post_fit_uses_result_score_eps(self, monkeypatch):
         captured = {}

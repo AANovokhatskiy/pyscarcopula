@@ -1679,8 +1679,9 @@ def test_cpp_independent_copula_h_and_inverse_match_python():
     )
 
 
-def test_vine_edge_can_route_point_h_and_inverse_to_cpp_backend():
-    copula = GumbelCopula(rotate=180, transform_type="softplus")
+@pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+def test_vine_edge_can_route_point_h_and_inverse_to_cpp_backend(rotation):
+    copula = GumbelCopula(rotate=rotation, transform_type="softplus")
     edge = PairCopula(copula=copula, param=2.1)
     u = np.array([0.2, 0.4, 0.7], dtype=np.float64)
     given = np.array([0.3, 0.6, 0.8], dtype=np.float64)
@@ -1689,13 +1690,14 @@ def test_vine_edge_can_route_point_h_and_inverse_to_cpp_backend():
 
     np.testing.assert_allclose(
         _edge_h(edge, u, given, config=cfg),
-        copula.h(u, given, np.full(len(u), edge.param)),
+        copula.h_pair(given, u, np.full(len(u), edge.param))[1],
         rtol=2e-6,
         atol=2e-6,
     )
+    inverted = _edge_h_inverse(edge, q, given, config=cfg)
     np.testing.assert_allclose(
-        _edge_h_inverse(edge, q, given, config=cfg),
-        copula.h_inverse(q, given, np.full(len(q), edge.param)),
+        copula.h_pair(given, inverted, np.full(len(q), edge.param))[1],
+        q,
         rtol=3e-6,
         atol=3e-6,
     )

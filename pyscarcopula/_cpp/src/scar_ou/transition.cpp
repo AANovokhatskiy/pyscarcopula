@@ -849,8 +849,7 @@ bool matrix_forward_mixture_h(
     const double* u,
     std::int64_t n_obs,
     double* out,
-    double* out_reverse,
-    bool direct_swapped_h) {
+    double* out_reverse) {
 
     if (emission.family() == scar::CopulaFamily::Student) {
         return false;
@@ -902,10 +901,8 @@ bool matrix_forward_mixture_h(
         } else {
             for (int j = 0; j < grid.K; ++j) {
                 const std::size_t idx = static_cast<std::size_t>(j);
-                const scar::PreparedDynamicEmission& h_emission =
-                    direct_swapped_h ? emission : transposed_emission;
                 h_mix += weights[idx]
-                    * h_emission.h(u2, u1, r_grid[idx]);
+                    * transposed_emission.h(u2, u1, r_grid[idx]);
                 if (out_reverse != nullptr) {
                     h_mix_reverse += weights[idx]
                         * emission.h(u1, u2, r_grid[idx]);
@@ -976,8 +973,7 @@ bool local_forward_mixture_h(
     const double* u,
     std::int64_t n_obs,
     double* out,
-    double* out_reverse,
-    bool direct_swapped_h) {
+    double* out_reverse) {
 
     if (emission.family() == scar::CopulaFamily::Student) {
         return false;
@@ -1035,10 +1031,8 @@ bool local_forward_mixture_h(
         } else {
             for (int j = 0; j < grid.K; ++j) {
                 const std::size_t idx = static_cast<std::size_t>(j);
-                const scar::PreparedDynamicEmission& h_emission =
-                    direct_swapped_h ? emission : transposed_emission;
                 h_mix += weights[idx]
-                    * h_emission.h(u2, u1, r_grid[idx]);
+                    * transposed_emission.h(u2, u1, r_grid[idx]);
                 if (out_reverse != nullptr) {
                     h_mix_reverse += weights[idx]
                         * emission.h(u1, u2, r_grid[idx]);

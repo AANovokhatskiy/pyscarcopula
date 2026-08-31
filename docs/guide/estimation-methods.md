@@ -166,12 +166,17 @@ to optimizer finite-difference steps.
 The GAS copula score and filtering recursion are model calculations.
 They are not the optimizer Jacobian with respect to
 `(omega, gamma, beta)`. The compiled evaluator computes that outer gradient
-with central finite differences and returns the objective and gradient through
+with two-point finite differences matching SciPy's forward-step and bound
+adjustment conventions, and returns the objective and gradient through
 one L-BFGS-B callback. Result diagnostics distinguish these concepts with
 `model_score='native'`, `optimizer_gradient='native'`, and
-`gradient_kind='native_finite_difference'`. `maxfun` is passed directly to
-SciPy L-BFGS-B, and `nfev` retains SciPy's optimizer function-evaluation
-semantics.
+`gradient_kind='native_finite_difference'`. `maxfun` and `nfev` use scalar
+objective budget units, including numerical-gradient probes: four units
+per native provider call, or five for joint GAS/shrinkage fitting. These equal
+the scalar evaluation counts when the finite-difference call completes.
+A numerical failure can abort the native call earlier while still charging
+the full budget units, so `nfev` is not a physical likelihood-call counter.
+An explicit `finite_diff_rel_step` takes precedence over the absolute `eps` step.
 
 ## SCAR-TM-OU
 

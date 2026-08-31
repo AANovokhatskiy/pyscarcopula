@@ -191,9 +191,7 @@ std::vector<double> ScarOuEvaluator::forward_rosenblatt_local_gh(
             gh_weights,
             observation_values,
             static_cast<std::int64_t>(u.size()),
-            values.data(),
-            nullptr,
-            true)) {
+            values.data())) {
         status = SCAR_NUMERICAL_FAILURE;
     }
     return assemble_forward_rosenblatt(u, values, status);
@@ -246,9 +244,7 @@ std::vector<double> ScarOuEvaluator::forward_rosenblatt_matrix(
             transition,
             observation_values,
             static_cast<std::int64_t>(u.size()),
-            values.data(),
-            nullptr,
-            true)) {
+            values.data())) {
         status = SCAR_NUMERICAL_FAILURE;
     }
     return assemble_forward_rosenblatt(u, values, status);

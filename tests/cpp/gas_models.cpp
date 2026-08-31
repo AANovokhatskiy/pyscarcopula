@@ -6,6 +6,7 @@
 #include "scar/copula/multivariate/student/rosenblatt.hpp"
 #include "scar/copula/prepared_dynamic_emission.hpp"
 #include "scar/copula/prepared_pair_kernel.hpp"
+#include "scar/copula/transforms.hpp"
 #include "scar/gas.hpp"
 #include "scar/model_policy.hpp"
 
@@ -14,6 +15,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <vector>
 
@@ -128,6 +130,27 @@ double finite_difference(
         / (2.0 * step);
 }
 
+double forward_difference(
+    const scar::GasEvaluator& evaluator,
+    const scar::GasParams& params,
+    const scar::CopulaSpec& spec,
+    scar::ObservationView observations,
+    const scar::GasConfig& config,
+    std::size_t coordinate,
+    double step) {
+
+    scar::GasParams shifted = params;
+    double* shifted_values[] = {
+        &shifted.omega, &shifted.gamma, &shifted.beta};
+    const double before = *shifted_values[coordinate];
+    *shifted_values[coordinate] += step;
+    const double delta = *shifted_values[coordinate] - before;
+    return (evaluator.negative_log_likelihood(
+                shifted, spec, observations, config).log_likelihood
+            - evaluator.negative_log_likelihood(
+                params, spec, observations, config).log_likelihood) / delta;
+}
+
 }  // namespace
 
 int run_gas_model_tests() {
@@ -172,7 +195,7 @@ int run_gas_model_tests() {
         pair_values.data(), 5, 2};
     const scar::GasParams params{0.07, 0.16, 0.68};
     scar::GasConfig unit_config;
-    unit_config.optimizer_gradient_eps = 1e-5;
+    unit_config.optimizer_gradient_eps = 1e-7;
     const scar::GasEvaluator evaluator;
 
     const auto bounds = scar::default_gas_parameter_bounds();
@@ -267,7 +290,7 @@ int run_gas_model_tests() {
             || filtered.r_path.size() != 5
             || filtered.score_path.size() != 4
             || objective_gradient.gradient.size() != 3
-            || objective_gradient.objective_evaluations != 7
+            || objective_gradient.objective_evaluations != 4
             || !close(filtered.log_likelihood, log_likelihood.log_likelihood)
             || !close(negative.log_likelihood, -filtered.log_likelihood)
             || !close(
@@ -471,7 +494,7 @@ int run_gas_model_tests() {
             unit_config);
     if (!joint_gradient.is_ok()
         || joint_gradient.gradient.size() != 4
-        || joint_gradient.objective_evaluations != 9) {
+        || joint_gradient.objective_evaluations != 5) {
         return 230;
     }
     for (std::size_t coordinate = 0; coordinate < 4; ++coordinate) {
@@ -541,7 +564,7 @@ int run_gas_model_tests() {
     }
     constexpr std::array<double, 3> step_values{0.07, 1.6, 0.68};
     for (std::size_t coordinate = 0; coordinate < 3; ++coordinate) {
-        const double absolute_expected = finite_difference(
+        const double absolute_expected = forward_difference(
             evaluator,
             step_params,
             step_spec,
@@ -549,7 +572,7 @@ int run_gas_model_tests() {
             absolute_step_config,
             coordinate,
             absolute_step_config.optimizer_gradient_eps);
-        const double relative_expected = finite_difference(
+        const double relative_expected = forward_difference(
             evaluator,
             step_params,
             step_spec,
@@ -557,7 +580,7 @@ int run_gas_model_tests() {
             relative_step_config,
             coordinate,
             relative_step_config.optimizer_gradient_eps
-                * std::max(1.0, std::abs(step_values[coordinate])));
+                * std::abs(step_values[coordinate]));
         if (!close(
                 absolute_step_gradient.gradient[coordinate],
                 absolute_expected,
@@ -579,6 +602,24 @@ int run_gas_model_tests() {
     if (invalid_gradient.status != scar::Status::InvalidParameter
         || !invalid_gradient.gradient.empty()) {
         return 250;
+    }
+
+    // Public arrays reject nonfinite inputs. Check the canonical primitives
+    // directly so historical GAS arithmetic preserves their IEEE behavior.
+    const double infinity = std::numeric_limits<double>::infinity();
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    if (scar::copula::softplus(-infinity) != 0.0
+        || scar::copula::softplus(infinity) != infinity
+        || !std::isnan(scar::copula::softplus(nan))
+        || scar::copula::d_softplus(-infinity) != 0.0
+        || scar::copula::d_softplus(infinity) != 1.0
+        || !std::isnan(scar::copula::d_softplus(nan))
+        || scar::copula::inverse_softplus(infinity) != infinity
+        || scar::copula::inverse_softplus(0.0) != -infinity
+        || !std::isnan(scar::copula::inverse_softplus(-infinity))
+        || !std::isnan(scar::copula::inverse_softplus(-1.0))
+        || !std::isnan(scar::copula::inverse_softplus(nan))) {
+        return 251;
     }
 
     return 0;

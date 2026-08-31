@@ -2,8 +2,9 @@
 Goodness-of-fit tests for copula models (bivariate and vine).
 
 Bivariate:
-    MLE:  e2 = h(u2, u1, r)
-    SCAR: e2 = E[h(u2, u1, Psi(x_k)) | u_{1:k-1}]  (mixture)
+    MLE:  e2 = h_{2|1}(u2 | u1; r)
+    SCAR: e2 = E[h_{2|1}(u2 | u1; Psi(x_k)) | u_{1:k-1}]  (mixture)
+    Directions refer to the original column order, including rotated copulas.
 
 C-Vine (d dimensions):
     Rosenblatt transform through the tree:
@@ -160,7 +161,8 @@ def rosenblatt_transform_mle(copula, u, r):
     T = len(u)
     e = np.empty((T, 2))
     e[:, 0] = u[:, 0]
-    e[:, 1] = copula.h(u[:, 1], u[:, 0], np.full(T, float(r)))
+    _, e[:, 1] = copula.h_pair(
+        u[:, 0], u[:, 1], np.full(T, float(r)))
     return clip_rosenblatt_output(e)
 
 

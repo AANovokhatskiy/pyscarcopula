@@ -311,12 +311,9 @@ def compile_density_plan(
             operation_edges.append(edge_index)
             input1_nodes.append(node_id(_node_key(first, conditioning)))
             input2_nodes.append(node_id(_node_key(second, conditioning)))
-            # The public d=2 oracle calls the original rotated copula as
-            # h(u1 | u0), rather than requesting the variable-aware second
-            # direction from h_pair. Swapping h_pair orientation preserves
-            # that historical 90/270-degree rotation behavior.
-            transposed.append(int(dimension == 2 and bool(
-                residual_node_keys)))
+            # Inputs follow canonical variable order in every dimension;
+            # h_pair owns the reverse direction, including rotated copulas.
+            transposed.append(0)
             if tree < dimension - 2 or residual_node_keys:
                 output1_nodes.append(node_id(
                     _node_key(first, conditioning | {second})))

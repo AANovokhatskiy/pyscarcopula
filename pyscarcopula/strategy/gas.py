@@ -12,6 +12,7 @@ from pyscarcopula._types import (
 )
 from pyscarcopula._native import gas as _cpp_gas
 from pyscarcopula._native import model_policy
+from pyscarcopula._native.threads import validate_n_threads
 from pyscarcopula.numerical._arrays import (
     validate_float64_allocation,
     validate_positive_int,
@@ -59,6 +60,21 @@ def _native_optimizer_gradient_config(options):
             if absolute_step is None else absolute_step),
         False,
     )
+
+
+def _minimize_gas_objective(objective, initial, *, bounds, options):
+    """Keep maxfun and nfev in scalar-objective units across native FD."""
+    evaluations_per_point = int(np.size(initial)) + 1
+    native_options = dict(options)
+    if "maxfun" in native_options:
+        native_options["maxfun"] = (
+            int(native_options["maxfun"]) // evaluations_per_point)
+    result = minimize(
+        objective, initial, method="L-BFGS-B", jac=True,
+        bounds=bounds, options=native_options,
+    )
+    result.nfev = int(result.nfev) * evaluations_per_point
+    return result
 
 
 def _automatic_gas_start(copula, u, config, initial_mle_result=None):
@@ -324,6 +340,7 @@ class GASStrategy:
                         optimizer_gradient_eps=optimizer_gradient_eps,
                         optimizer_gradient_relative=(
                             optimizer_gradient_relative),
+                        optimizer_bounds=(bounds.lb, bounds.ub),
                     )
                 )
             except FloatingPointError:
@@ -342,11 +359,9 @@ class GASStrategy:
                 f"beta_bound={beta_bound}"
             )
 
-        result = minimize(
+        result = _minimize_gas_objective(
             objective,
             joint0,
-            method="L-BFGS-B",
-            jac=True,
             bounds=bounds,
             options=optimizer_options,
         )
@@ -504,6 +519,7 @@ class GASStrategy:
                     score_eps,
                     optimizer_gradient_eps=optimizer_gradient_eps,
                     optimizer_gradient_relative=optimizer_gradient_relative,
+                    optimizer_bounds=(bounds.lb, bounds.ub),
                 )
             except FloatingPointError:
                 return model_policy.optimizer_failure_evaluation(
@@ -513,11 +529,9 @@ class GASStrategy:
                     directional_gradient=True,
                 )
 
-        result = minimize(
+        result = _minimize_gas_objective(
             objective,
             gamma0,
-            method="L-BFGS-B",
-            jac=True,
             bounds=bounds,
             options=optimizer_options,
         )
@@ -528,11 +542,9 @@ class GASStrategy:
                 > _DEFAULT_REFINEMENT_FTOL):
             refined_options = dict(optimizer_options)
             refined_options["ftol"] = _DEFAULT_REFINEMENT_FTOL
-            refined = minimize(
+            refined = _minimize_gas_objective(
                 objective,
                 np.asarray(result.x, dtype=np.float64),
-                method="L-BFGS-B",
-                jac=True,
                 bounds=bounds,
                 options=refined_options,
             )
@@ -629,6 +641,7 @@ class GASStrategy:
         result: GASResult,
         **kwargs,
     ) -> np.ndarray:
+        reject_unknown_operation_kwargs(self, 'predictive_mean', kwargs)
         p = result.params
         _, r_path, _ = gas_filter(
             p.omega,
@@ -717,6 +730,8 @@ class GASStrategy:
     def sample(self, copula, u, result, n, rng=None, **kwargs):
         """Recursively sample using native GAS state updates."""
         reject_unknown_operation_kwargs(self, 'sample', kwargs)
+        if "n_threads" in kwargs:
+            validate_n_threads(kwargs["n_threads"])
         n = validate_positive_int(n, "n")
         if rng is None:
             rng = np.random.default_rng()
@@ -813,7 +828,20 @@ class GASStrategy:
     predictive_params = predictive_params_from_state
 
     def predictive_state(self, copula, u, result, **kwargs):
+        horizon = kwargs.get("horizon", "next")
+        if horizon in (0, "0"):
+            horizon = "current"
+        elif horizon in (1, "1"):
+            horizon = "next"
+        else:
+            horizon = str(horizon).lower()
+        if horizon not in {"current", "next"}:
+            raise ValueError("horizon must be 'current' or 'next'")
         if u is None or len(u) == 0:
+            if horizon == "current":
+                raise ValueError(
+                    "prediction history is required for GAS horizon='current'; "
+                    "the fitted result stores only the next parameter")
             if self._result_scaling(result) != result.scaling:
                 raise ValueError(
                     "prediction history is required to override GAS scaling")
@@ -828,11 +856,11 @@ class GASStrategy:
                 copula,
                 self._result_scaling(result),
                 self._score_eps(result),
-                horizon=kwargs.get("horizon", "next"),
+                horizon=horizon,
             )
         return PredictiveState(
             method="GAS",
-            horizon=str(kwargs.get("horizon", "next")).lower(),
+            horizon=horizon,
             kind="point",
             r=np.array([r_t], dtype=np.float64),
             metadata={

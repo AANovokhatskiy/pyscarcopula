@@ -4,6 +4,11 @@ from __future__ import annotations
 
 import numpy as np
 
+from pyscarcopula.numerical._arrays import (
+    validate_float64_allocation,
+    validate_integer,
+    validate_sampling_n_threads,
+)
 from pyscarcopula.strategy._base import (
     copula_dimension,
     has_dynamic_scalar_parameter,
@@ -105,6 +110,13 @@ def sample_predictive(
     from pyscarcopula._native.registry import registry_entry_for
 
     entry = registry_entry_for(copula)
+    n = validate_integer(n, "n", minimum=0)
+    n_threads = validate_sampling_n_threads(n_threads)
+    dimension = copula_dimension(copula) if d is None else d
+    if dimension is not None:
+        validate_float64_allocation(
+            (n, dimension), name="predictive sample output",
+            memory_budget_bytes=memory_budget_bytes)
     if is_multivariate_copula(copula) and has_dynamic_scalar_parameter(copula):
         return copula.sample_conditional(
             n, r=r, given=given, rng=rng, n_threads=n_threads,
@@ -149,13 +161,19 @@ def sample_predictive(
 def predict_from_strategy(strategy, copula, u, result, n, rng=None, **kwargs):
     """Shared strategy predict implementation for predictive parameter paths."""
     reject_unknown_operation_kwargs(strategy, 'predict', kwargs)
+    n = validate_integer(n, "n", minimum=0)
+    n_threads = validate_sampling_n_threads(kwargs.get("n_threads", 1))
+    d = copula_dimension(copula, u)
+    # Reject oversized output before materializing a parameter path or using RNG.
+    validate_float64_allocation(
+        (n, d), name="predictive sample output",
+        memory_budget_bytes=kwargs.get("memory_budget_bytes"))
     if rng is None:
         rng = np.random.default_rng()
     r = strategy.predictive_params(copula, u, result, n, rng=rng, **kwargs)
-    d = copula_dimension(copula, u)
     return sample_predictive(
         copula, n, r, given=kwargs.get("given"), rng=rng, d=d,
-        n_threads=kwargs.get("n_threads", 1),
+        n_threads=n_threads,
         memory_budget_bytes=kwargs.get("memory_budget_bytes"),
         config=getattr(strategy, 'config', None))
 

@@ -135,10 +135,21 @@ class SCARJacobiStrategy:
         "spectral_basis_order",
         "spectral_quad_order",
     })
+    # Shared prediction/vine adapters forward their complete context to both
+    # the state and parameter-sampling steps, even when a step uses only part.
+    _prediction_context_keywords = frozenset({
+        "given", "horizon", "predictive_r_mode", "n_threads",
+        "memory_budget_bytes", "state_cache", "cache_key", "posterior_cache",
+    })
+    _mixture_context_keywords = frozenset({
+        "state_cache", "current_cache_key", "next_cache_key", "posterior_cache",
+    })
     _operation_keyword_aliases = {
-        "mixture_h": frozenset({
-            "state_cache", "current_cache_key", "next_cache_key",
-        }),
+        "mixture_h": _mixture_context_keywords,
+        "mixture_h_pair": _mixture_context_keywords,
+        "predictive_state": _prediction_context_keywords,
+        "sample_params": _prediction_context_keywords,
+        "model_sample_params": frozenset({"given", "sampling_diagnostics"}),
         "sample": frozenset({"given", "sampling_diagnostics"}),
         "predict": frozenset({
             "given", "horizon", "predictive_r_mode", "n_threads",
@@ -363,7 +374,8 @@ class SCARJacobiStrategy:
         try:
             value = float(evaluator.neg_loglik(kappa, m, xi))
         except FloatingPointError as error:
-            return model_policy.optimizer_failure_objective(error)
+            return model_policy.optimizer_failure_objective(
+                error, self.config.fail_value)
         if not np.isfinite(value):
             raise FloatingPointError(
                 "native Jacobi objective returned a non-finite value")
@@ -574,6 +586,14 @@ class SCARJacobiStrategy:
             verbose: bool = False,
             initial_mle_result=None,
             **kwargs) -> LatentResult:
+        """Fit a Jacobi model using native objectives and optional gradients.
+
+        On the numerical-gradient path, a non-None ``finite_diff_rel_step``
+        resolved from the fit options or optimizer config takes precedence
+        over ``eps`` and uses relative steps in raw optimizer coordinates.
+        Otherwise ``eps`` controls absolute steps. Analytical gradients are
+        provided by the native evaluator and do not use either step option.
+        """
         reject_unknown_strategy_kwargs("SCAR-TM-JACOBI", kwargs)
         self._check_kendall_mapping(copula)
         u = validate_copula_data(copula, u)
@@ -655,18 +675,41 @@ class SCARJacobiStrategy:
                 objective_raw,
                 raw0,
                 method='L-BFGS-B',
+                jac=('2-point' if optimizer_options.get(
+                    'finite_diff_rel_step') is not None else None),
                 bounds=bounds,
                 options=optimizer_options,
             )
 
         alpha = _raw_to_physical(result.x)
+        final_fun = float(self.config.fail_value)
         gradient_final_fun = None
-        if self.analytical_grad:
-            gradient_final_fun, _ = objective_raw_with_grad(result.x)
-        final_fun = objective_raw(result.x)
+        final_evaluation_status = 0
+        final_evaluation_error = None
+        # Optimizer penalties are not evidence of a valid final fit.
+        if not jacobi_native.shape_is_supported(
+                alpha[0], alpha[1], alpha[2], self.stationary_shape_max):
+            final_evaluation_status = 6
+            final_evaluation_error = "invalid Jacobi parameters"
+        else:
+            try:
+                final_fun = evaluator.neg_loglik(alpha[0], alpha[1], alpha[2])
+                if self.analytical_grad:
+                    gradient_final_fun, _ = evaluator.neg_loglik_with_grad(
+                        alpha[0], alpha[1], alpha[2])
+            except (ValueError, FloatingPointError) as error:
+                final_evaluation_status = getattr(error, "status", None)
+                if final_evaluation_status not in (6, 7):
+                    raise
+                final_evaluation_error = str(error)
+        if final_evaluation_error is not None:
+            result.success = False
+            result.message = (
+                f"{result.message}; final objective evaluation failed: "
+                f"{final_evaluation_error}")
 
-        final_objective_consistent = True
-        if self.analytical_grad:
+        final_objective_consistent = final_evaluation_status == 0
+        if self.analytical_grad and final_objective_consistent:
             final_objective_consistent = (
                 not native_validation.objective_is_invalid(gradient_final_fun)
                 and not native_validation.objective_is_invalid(final_fun)
@@ -707,6 +750,7 @@ class SCARJacobiStrategy:
                 alpha[0], alpha[1], alpha[2], len(u))
         diagnostics = self._gradient_diagnostics(selected_backend)
         diagnostics["initialization"] = initialization
+        diagnostics["final_evaluation_status"] = final_evaluation_status
         diagnostics["final_objective_value"] = float(final_fun)
         diagnostics["final_gradient_objective_value"] = (
             None
@@ -776,6 +820,7 @@ class SCARJacobiStrategy:
 
     def mixture_h(self, copula, u: np.ndarray,
                   result: LatentResult, **kwargs) -> np.ndarray:
+        reject_unknown_operation_kwargs(self, 'mixture_h', kwargs)
         p = result.params
         evaluator = self._prepared_evaluator(u, copula)
         h_mix = self._mixture_h(
@@ -799,6 +844,7 @@ class SCARJacobiStrategy:
     def mixture_h_pair(self, copula, u: np.ndarray,
                        result: LatentResult, **kwargs):
         """Both h-directions from one Jacobi posterior pass."""
+        reject_unknown_operation_kwargs(self, 'mixture_h_pair', kwargs)
         p = result.params
         evaluator = self._prepared_evaluator(u, copula)
         h_pair = self._mixture_h_pair(
@@ -829,6 +875,7 @@ class SCARJacobiStrategy:
     predictive_params = predictive_params_from_state_with_rng
 
     def predictive_state(self, copula, u, result, **kwargs):
+        reject_unknown_operation_kwargs(self, 'predictive_state', kwargs)
         horizon = str(kwargs.get('horizon', 'next')).lower()
         p = result.params
         if u is None:
@@ -873,6 +920,7 @@ class SCARJacobiStrategy:
         )
 
     def condition_state(self, copula, state, observation, result, **kwargs):
+        reject_unknown_operation_kwargs(self, 'condition_state', kwargs)
         if observation is None or state.kind != 'grid':
             return state
         u = as_pseudo_observation_array(observation, name="observation")
@@ -898,6 +946,7 @@ class SCARJacobiStrategy:
         )
 
     def sample_params(self, copula, state, n, rng=None, **kwargs):
+        reject_unknown_operation_kwargs(self, 'sample_params', kwargs)
         if rng is None:
             rng = np.random.default_rng()
         if state.kind == 'stationary_jacobi':
@@ -969,6 +1018,7 @@ class SCARJacobiStrategy:
 
     def model_sample_params(self, copula, result, n, rng=None, **kwargs):
         """Return an unconditional Jacobi copula-parameter trajectory."""
+        reject_unknown_operation_kwargs(self, 'model_sample_params', kwargs)
         diagnostics_out = kwargs.get("sampling_diagnostics")
         if (
                 diagnostics_out is not None

@@ -24,7 +24,7 @@ from pyscarcopula.vine._edge_adapter import (
 def _edge_h(edge, u_conditioned, u_given, config=None, u_pair=None,
             state_cache=None, current_cache_key=None, next_cache_key=None,
             posterior_cache=None, **strategy_kwargs):
-    """Compute h(u_conditioned | u_given) for a pair edge."""
+    """Compute second-given-first h in the fitted edge's canonical order."""
     copula = edge_copula(edge)
     if isinstance(copula, IndependentCopula):
         return np.asarray(u_conditioned, dtype=np.float64).copy()
@@ -32,12 +32,12 @@ def _edge_h(edge, u_conditioned, u_given, config=None, u_pair=None,
     cfg = config if isinstance(config, dict) else {}
     r = cfg.get('r')
     if r is not None:
-        return copula.h(u_conditioned, u_given, r)
+        return copula.h_pair(u_given, u_conditioned, r)[1]
 
     result = edge_result(edge)
     if result is None:
         r = np.full(len(np.atleast_1d(u_conditioned)), edge_param(edge))
-        return copula.h(u_conditioned, u_given, r)
+        return copula.h_pair(u_given, u_conditioned, r)[1]
     if edge_is_independent(edge):
         return np.asarray(u_conditioned, dtype=np.float64).copy()
 
@@ -130,13 +130,14 @@ def _edge_log_likelihood(edge, u_pair, config=None, **strategy_kwargs):
 
 
 def _edge_h_inverse(edge, v, u_given, config=None, *, copula_override=None):
-    """Compute inverse h for an RVine pair edge.
+    """Invert second-given-first h for an RVine pair edge.
 
     ``config`` may contain a precomputed ``r`` array. If omitted, ``r`` is
     generated with the same model-reproduction rules used by CVine sampling.
+    A variable-aware caller can supply an already oriented ``copula_override``.
     """
     copula = (
-        edge_copula(edge)
+        transposed_bivariate_copula(edge_copula(edge))
         if copula_override is None
         else copula_override
     )

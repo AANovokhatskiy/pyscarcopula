@@ -60,7 +60,7 @@ class PairCopula:
         return 0 if isinstance(self.copula, IndependentCopula) else 1
 
     def h(self, u_conditioned, u_given):
-        """h(u_conditioned | u_given) using this edge's fit result."""
+        """Second-given-first h in the fitted edge's canonical variable order."""
         from pyscarcopula.vine._rvine_edges import _edge_h
         return _edge_h(self, u_conditioned, u_given)
 
