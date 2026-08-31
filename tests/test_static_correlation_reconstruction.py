@@ -6,8 +6,10 @@ import numpy as np
 import pytest
 from scipy.stats import norm
 
-from pyscarcopula import GaussianCopula, StudentCopula
+from pyscarcopula import GaussianCopula, StudentCopula, api
+from pyscarcopula._native import multivariate as multivariate_native
 from pyscarcopula._parallel import create_worker_model, get_copula_constructor
+from pyscarcopula.strategy.multivariate_mle import sampling_model_from_result
 
 
 CORRELATION = np.array([
@@ -22,6 +24,72 @@ def _observations(seed=1201, rows=100):
     latent = np.random.default_rng(seed).multivariate_normal(
         np.zeros(3), CORRELATION, size=rows)
     return norm.cdf(latent)
+
+
+@pytest.fixture(scope="module", params=["fixed", "shrinkage", "cholesky"])
+def fitted_dense_student(request):
+    options = dict(d=3, R=CORRELATION, corr_mode=request.param)
+    if request.param != "fixed":
+        options["corr_base"] = np.eye(3)
+    model = StudentCopula(**options)
+    result = model.fit(_observations(seed=1207), maxiter=300, maxfun=2000)
+    assert result.success, result.message
+    return model, result
+
+
+@pytest.mark.parametrize("operation", [
+    "sample_conditional", "predict", "api.sample", "api.predict",
+])
+@pytest.mark.parametrize("n,given", [
+    (0, {0: 0.4}), (19, {0: 0.4}),
+    (0, {0: 0.2, 1: 0.4, 2: 0.6}),
+    (19, {0: 0.2, 1: 0.4, 2: 0.6}),
+])
+def test_student_result_sampling_does_not_reproject_physical_correlation(
+        fitted_dense_student, operation, n, given, monkeypatch):
+    model, result = fitted_dense_student
+    data = _observations(seed=1207)
+    rng = np.random.default_rng(41)
+    if operation.startswith("api."):
+        function = getattr(api, operation.split(".")[1])
+        expected = function(
+            model, data, result, n, given=given, rng=rng)
+    else:
+        expected = getattr(model, operation)(
+            n, given=given, rng=rng)
+
+    model.shape = None
+    model.df = None
+
+    def reject_projection(*args, **kwargs):
+        raise AssertionError("physical result correlation must not be projected")
+
+    monkeypatch.setattr(
+        multivariate_native, "preprocess_correlation", reject_projection)
+    rng = np.random.default_rng(41)
+    if operation.startswith("api."):
+        actual = function(model, data, result, n, given=given, rng=rng)
+    else:
+        actual = getattr(model, operation)(n, given=given, rng=rng)
+    np.testing.assert_array_equal(actual, expected)
+
+
+def test_student_result_reconstruction_owns_and_revalidates_current_matrix(
+        fitted_dense_student):
+    model, fitted = fitted_dense_student
+    result = replace(
+        fitted, correlation_matrix=fitted.correlation_matrix.copy())
+    expected = result.correlation_matrix.copy()
+    snapshot = sampling_model_from_result(model, result)
+
+    result.correlation_matrix[...] = np.eye(3)
+    current = sampling_model_from_result(model, result)
+    np.testing.assert_array_equal(snapshot.shape, expected)
+    np.testing.assert_array_equal(current.shape, np.eye(3))
+
+    result.correlation_matrix[0, 1] = 0.2
+    with pytest.raises(ValueError):
+        sampling_model_from_result(model, result)
 
 
 @pytest.mark.parametrize("model_type", [GaussianCopula, StudentCopula])

@@ -426,6 +426,19 @@ consistent with `log_pdf_rows(u, parameter=df)`; omitting `parameter` uses fitte
 scalar parameter path, so `api.predictive_mean` raises `NotImplementedError`;
 Student returns its constant fitted `df` path.
 
+Student object `sample`, `sample_conditional`, and `predict` use the accepted
+typed result when one is attached, including its compact factor loadings.
+Changing or clearing the model's mutable `df` or `shape` does not replace that
+sampling state. Without a typed result, manually initialized `shape`/`df` or
+factor state remains usable. The `shape` setter accepts only real SPD
+correlation matrices of the model's dimension; invalid assignments leave the
+previous matrix unchanged. Likelihood operations retain the current-state
+semantics described above.
+
+For both static families, `to_correlation_matrix` enforces `max_dimension` and
+`memory_budget_bytes` before returning a dense copy or materializing a factor
+correlation. The memory limit covers the returned float64 matrix.
+
 Object `predict` (and Gaussian `predict_batches`) validates the same prediction
 options as `api.predict`, including rejecting active vine-only controls.
 Valid `current` and `next` horizons have the same static distribution.

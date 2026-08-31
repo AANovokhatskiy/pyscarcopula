@@ -11,6 +11,7 @@ from scipy.optimize import minimize
 from pyscarcopula._native import model_policy
 from pyscarcopula.copula.multivariate.corr_param import validate_corr_matrix
 from pyscarcopula.copula.multivariate.correlation_policy import FloatArray
+from pyscarcopula.numerical._arrays import as_float64_scalar
 
 
 def sampling_model_from_result(copula, result):
@@ -34,7 +35,9 @@ def sampling_model_from_result(copula, result):
             factor_uniqueness_min=np.finfo(np.float64).tiny)
     else:
         dimension = correlation.shape[0]
-        options = dict(R=correlation)
+        # A static result contains physical correlation state. Student's
+        # shape setter validates that state without projecting it again.
+        options = {} if family == "Student" else dict(R=correlation)
     if copula.dimension is not None and copula.dimension != dimension:
         raise ValueError("static result dimension does not match the model")
     snapshot = type(copula)(d=dimension, **options)
@@ -42,7 +45,8 @@ def sampling_model_from_result(copula, result):
         snapshot.corr = correlation.copy()
     if family == "Student":
         snapshot.shape = correlation
-        snapshot.df = float(result.copula_param)
+        snapshot.df = as_float64_scalar(
+            result.copula_param, name="copula_param")
     return snapshot
 
 
@@ -264,7 +268,7 @@ def run_static_multivariate_mle(
     bounds = tuple(problem.bounds)
     if len(bounds) != x0.size:
         raise ValueError("bounds must match initial_parameters")
-    fail_value = float(fail_value)
+    fail_value = as_float64_scalar(fail_value, name="fail_value")
     if not np.isfinite(fail_value) or fail_value <= 0.0:
         raise ValueError("fail_value must be positive and finite")
 

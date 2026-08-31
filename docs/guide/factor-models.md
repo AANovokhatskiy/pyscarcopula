@@ -141,6 +141,11 @@ small_R = small_factor.to_dense(
 
 For a large `d`, use the prepared operator instead of raising these guards.
 
+`GaussianCopula.to_correlation_matrix` and
+`StudentCopula.to_correlation_matrix` enforce the same dimension and output
+byte limits. These limits apply both when materializing factor correlations
+and when returning an owned copy of an already stored dense correlation.
+
 ## Static Gaussian factor model
 
 `GaussianCopula` composes the independent operator for static Gaussian MLE,

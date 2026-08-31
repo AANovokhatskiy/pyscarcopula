@@ -39,7 +39,7 @@ class LBFGSBConfig:
 
     ``None`` means "inherit the library default" when the configuration is
     merged into :class:`NumericalConfig`. All supplied values must be
-    strictly positive.
+    finite, real, and strictly positive.
     """
 
     gtol: float | None = None
@@ -90,10 +90,17 @@ class LBFGSBConfig:
 
     @staticmethod
     def _validated_option(name: str, value: float | int) -> float | int:
-        if name in ('maxfun', 'maxiter', 'maxls', 'maxcor'):
+        from pyscarcopula.numerical._arrays import as_float64_scalar
+
+        integer_option = name in ('maxfun', 'maxiter', 'maxls', 'maxcor')
+        if integer_option and isinstance(value, (int, np.integer)):
+            # Preserve exact integer counts without a float64 round trip.
             value = int(value)
         else:
-            value = float(value)
+            scalar = as_float64_scalar(value, name=name)
+            if not np.isfinite(scalar):
+                raise ValueError(f"{name} must be positive and finite")
+            value = int(value) if integer_option else scalar
         if value <= 0:
             raise ValueError(f"{name} must be positive")
         return value
@@ -596,8 +603,10 @@ class MultivariateMLEResult(MLEResult):
             self, "n_observations", int(self.n_observations))
 
         if self.correlation_matrix is not None:
-            correlation = np.array(
-                self.correlation_matrix, dtype=np.float64, copy=True)
+            from pyscarcopula.numerical._arrays import as_float64_array
+
+            correlation = as_float64_array(
+                self.correlation_matrix, name="correlation_matrix").copy()
             if (
                     correlation.ndim != 2
                     or correlation.shape[0] != correlation.shape[1]):

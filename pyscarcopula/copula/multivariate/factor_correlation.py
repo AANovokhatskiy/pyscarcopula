@@ -12,7 +12,10 @@ from typing import Any, Mapping
 import numpy as np
 
 from pyscarcopula._native.threads import validate_n_threads
-from pyscarcopula.numerical._arrays import validate_integer
+from pyscarcopula.numerical._arrays import (
+    validate_float64_allocation,
+    validate_integer,
+)
 
 
 FACTOR_CORRELATION_FORMAT_VERSION = 1
@@ -31,6 +34,22 @@ def _validated_budget(memory_budget_bytes, required, guidance):
         raise TypeError("memory_budget_bytes must be an integer")
     if int(memory_budget_bytes) < required:
         raise MemoryError(f"operation requires {required} bytes; {guidance}")
+
+
+def _validate_dense_materialization(
+        dimension, *, max_dimension=2048, memory_budget_bytes=None):
+    """Guard the dense output allocation for factor and stored correlations."""
+    max_dimension = validate_integer(
+        max_dimension, "max_dimension", minimum=1)
+    if dimension > max_dimension:
+        raise MemoryError(
+            f"dense correlation is disabled for dimension "
+            f"{dimension}; increase max_dimension explicitly")
+    validate_float64_allocation(
+        (dimension, dimension),
+        name="dense correlation",
+        memory_budget_bytes=memory_budget_bytes,
+    )
 
 
 def _metadata(factor: "FactorCorrelation") -> dict[str, Any]:
@@ -164,17 +183,10 @@ class FactorCorrelation:
             max_dimension: int = 2048,
             memory_budget_bytes: int | None = None) -> np.ndarray:
         """Explicitly materialize ``R`` for small diagnostic problems."""
-        max_dimension = validate_integer(
-            max_dimension, "max_dimension", minimum=1)
-        required = self.dimension * self.dimension * 8
-        if self.dimension > max_dimension:
-            raise MemoryError(
-                f"dense correlation is disabled for dimension "
-                f"{self.dimension}; increase max_dimension explicitly")
-        _validated_budget(
-            memory_budget_bytes,
-            required,
-            "increase memory_budget_bytes or use prepare()",
+        _validate_dense_materialization(
+            self.dimension,
+            max_dimension=max_dimension,
+            memory_budget_bytes=memory_budget_bytes,
         )
         from pyscarcopula._native import multivariate as multivariate_native
         return multivariate_native.factor_correlation_to_dense(

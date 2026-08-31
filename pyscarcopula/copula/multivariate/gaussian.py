@@ -36,6 +36,8 @@ from pyscarcopula.copula.multivariate.correlation_policy import (
     restore_correlation_result_metadata,
 )
 from pyscarcopula.numerical._arrays import (
+    as_float64_array,
+    as_float64_scalar,
     validate_integer,
     validate_sampling_memory_budget as _validated_budget,
     validate_sampling_n_threads as _validated_n_threads,
@@ -48,6 +50,7 @@ _LBFGSB_FIT_KEYS = (
 )
 from pyscarcopula.copula.multivariate.factor_correlation import (
     FactorCorrelation,
+    _validate_dense_materialization,
 )
 from pyscarcopula.copula.multivariate.factor_estimation import (
     estimate_factor_loadings,
@@ -67,6 +70,18 @@ def _validate_gaussian_fit_data(u):
     if u.shape[1] < 2:
         raise ValueError("data must contain at least two variables")
     native_validation.validate_fit_data(u, "Gaussian")
+
+
+def _prepare_gaussian_fit_data(data, *, to_pobs):
+    u = as_real_array(data)
+    if to_pobs:
+        if (
+                u.ndim != 2 or u.shape[0] == 0 or u.shape[1] < 2
+                or not np.all(np.isfinite(u))):
+            raise ValueError("data must be a finite non-empty 2D array")
+        u = pobs(u)
+    _validate_gaussian_fit_data(u)
+    return u
 
 
 def _validated_correlation(value, *, name, dimension=None):
@@ -126,7 +141,9 @@ class GaussianCopula(MultivariateCopula):
         if corr_mode != "factor" and factor_estimation != "two-stage":
             raise ValueError(
                 "factor_estimation is only configurable in factor mode")
-        if not 0.0 < float(corr_shrinkage_init) < 1.0:
+        corr_shrinkage_init = as_float64_scalar(
+            corr_shrinkage_init, name="corr_shrinkage_init")
+        if not 0.0 < corr_shrinkage_init < 1.0:
             raise ValueError("corr_shrinkage_init must be in (0, 1)")
         cholesky_d_max = validate_integer(
             cholesky_d_max, "cholesky_d_max", minimum=1)
@@ -174,7 +191,7 @@ class GaussianCopula(MultivariateCopula):
             else self._supplied_correlation.copy())
         self._constructor_corr_base = (
             None if self._corr_base is None else self._corr_base.copy())
-        self._corr_shrinkage_init = float(corr_shrinkage_init)
+        self._corr_shrinkage_init = corr_shrinkage_init
         self._corr_params_raw = np.empty(0, dtype=np.float64)
         self._corr_alpha = None
         self._cholesky_d_max = cholesky_d_max
@@ -188,7 +205,8 @@ class GaussianCopula(MultivariateCopula):
         self._constructor_factor_loadings = None
         self._factor_tile_size = validate_integer(
             factor_tile_size, "factor_tile_size", minimum=1)
-        self._factor_uniqueness_min = float(factor_uniqueness_min)
+        self._factor_uniqueness_min = as_float64_scalar(
+            factor_uniqueness_min, name="factor_uniqueness_min")
         if not (
                 np.isfinite(self._factor_uniqueness_min)
                 and 0.0 < self._factor_uniqueness_min < 1.0):
@@ -279,6 +297,7 @@ class GaussianCopula(MultivariateCopula):
 
     def to_correlation_matrix(
             self, *, max_dimension=2048, memory_budget_bytes=None):
+        """Return an owned dense correlation within dimension and byte limits."""
         if self._corr_mode == "factor":
             return self.correlation_operator_.to_dense(
                 max_dimension=max_dimension,
@@ -286,6 +305,11 @@ class GaussianCopula(MultivariateCopula):
             )
         if self.corr is None:
             raise ValueError("Fit first")
+        _validate_dense_materialization(
+            self.corr.shape[0],
+            max_dimension=max_dimension,
+            memory_budget_bytes=memory_budget_bytes,
+        )
         return self.corr.copy()
 
     __getstate__ = factor_copula_getstate
@@ -361,7 +385,7 @@ class GaussianCopula(MultivariateCopula):
         if self._corr_mode != "factor":
             raise ValueError(
                 "factor loadings require corr_mode='factor'")
-        loadings = np.asarray(loadings, dtype=np.float64)
+        loadings = as_float64_array(loadings, name="factor_loadings")
         expected = (self.dimension, self._factor_rank)
         if loadings.shape != expected:
             raise ValueError(
@@ -383,17 +407,10 @@ class GaussianCopula(MultivariateCopula):
         if self._corr_mode != "factor":
             raise ValueError(
                 "initialize_factor requires corr_mode='factor'")
-        u = as_real_array(data)
-        _validate_gaussian_fit_data(u)
+        u = _prepare_gaussian_fit_data(data, to_pobs=to_pobs)
         if u.shape[1] != self.dimension:
             raise ValueError(
                 f"data must have {self.dimension} columns")
-        if to_pobs:
-            u = pobs(u)
-        elif np.any((u < 0.0) | (u > 1.0)):
-            raise ValueError(
-                "factor initialization expects pseudo-observations "
-                "in [0, 1]; use to_pobs=True")
         if self._factor_operator is not None:
             return self._factor_operator
         loadings, diagnostics = estimate_factor_loadings(
@@ -446,14 +463,7 @@ class GaussianCopula(MultivariateCopula):
             raise ValueError(
                 f"GaussianCopula supports only method='mle', "
                 f"got {method!r}")
-        u = as_real_array(data)
-        if to_pobs:
-            if (
-                    u.ndim != 2 or u.shape[0] == 0 or u.shape[1] < 2
-                    or not np.all(np.isfinite(u))):
-                raise ValueError("data must be a finite non-empty 2D array")
-            u = pobs(u)
-        _validate_gaussian_fit_data(u)
+        u = _prepare_gaussian_fit_data(data, to_pobs=to_pobs)
         if self.dimension is not None and u.shape[1] != self.dimension:
             raise ValueError(
                 f"data must have {self.dimension} columns")
@@ -544,8 +554,7 @@ class GaussianCopula(MultivariateCopula):
                     require_not_worse=False,
                 ),
                 optimizer_options={},
-                fail_value=float(
-                    config.fail_value),
+                fail_value=config.fail_value,
             )
             diagnostics = {
                 "estimator": "factor_gaussian_score_correlation",

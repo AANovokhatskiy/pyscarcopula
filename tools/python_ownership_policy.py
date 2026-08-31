@@ -27,6 +27,12 @@ _REVIEW_KINDS = {
 }
 
 _SYMBOL_REVIEWS = (
+    # Static MLE input fixes reuse real-value and dense-allocation validators.
+    # The reviewed result type union, native-objective signs, and generic
+    # optimizer acceptance bookkeeping retain their existing ownership.
+    # Covered by tests/test_static_gaussian_remaining_fixes.py and
+    # tests/test_static_config_remaining_fixes.py. Factor to_dense and Gaussian
+    # initialize_factor no longer require arithmetic exceptions.
     # Sampling/conditional routing and numerical-step changes preserve native
     # ownership of model mathematics. The GAS wrapper below only converts
     # optimizer call budgets/counts to scalar-objective units; covered by
@@ -149,7 +155,7 @@ _SYMBOL_REVIEWS = (
     ('pyscarcopula._parallel:validate_n_jobs',
      'd42bc191bdb95359ae6800a28f4e47ff6f66bdcf400bb2fa03161a1e4b427f7f', 'structure', ('numerical-call',)),
     ('pyscarcopula._types:<module>',
-     '3699ff09d32d6f052d1037e6f4ec6ab99e5496d652814d509c281ba4ade3d2bb', 'structure', ('arithmetic',)),
+     '5a3bb472c9eb6e80378c2fab6f293e21b8486a9acbf7e69beae84eeaca4a7625', 'structure', ('arithmetic',)),
     ('pyscarcopula._utils:<module>',
      'c352b38009d48a10a85ae5ac8e44d63fb1b5004ee600fc1aae24fff81dc816f2', 'marginal_input', ('numerical-import',)),
     ('pyscarcopula._utils:_rank_col',
@@ -200,8 +206,6 @@ _SYMBOL_REVIEWS = (
      'c5ae5a972df15c677ac99db89da22f0bdc9b58e51ad2534d39bebfa9deb48274', 'structure', ('numerical-call',)),
     ('pyscarcopula.copula.multivariate.factor_correlation:FactorCorrelation.storage_bytes',
      '61bea2a4ec20a7fe64729dadca66103d006923cc0e81261e82f0e98e4343a989', 'structure', ('arithmetic',)),
-    ('pyscarcopula.copula.multivariate.factor_correlation:FactorCorrelation.to_dense',
-     'e2fbdd2c94de0a9a22cd4baaa284b734a93b801ffeff87afaef92811d441a278', 'structure', ('arithmetic',)),
     ('pyscarcopula.copula.multivariate.factor_correlation:PreparedFactorCorrelation.__init__',
      '2052f039af26cc3a6adc9bafd80ca3fd48726e79f52aa2406c9b1e9e2815df4c', 'structure', ('arithmetic', 'numerical-call')),
     ('pyscarcopula.copula.multivariate.factor_correlation:PreparedFactorCorrelation.sample_normal',
@@ -221,13 +225,11 @@ _SYMBOL_REVIEWS = (
     ('pyscarcopula.copula.multivariate.gaussian:GaussianCopula._nll',
      '445c0a77c947babf5b47215080cad1cc4be9b86062ade95812e7b58b723f1f64', 'sign', ('arithmetic',)),
     ('pyscarcopula.copula.multivariate.gaussian:GaussianCopula.fit',
-     '195863f6132ff2ee5d87790abbfe1938cc6b0a0ce2c2ac9a1093a8b1c20c2dfb', 'sign', ('arithmetic',)),
+     '8bf8e5f178b7f86d63dac9ab96b825efcfce99f6552bf3ca8c386b38ee874405', 'sign', ('arithmetic',)),
     ('pyscarcopula.copula.multivariate.gaussian:GaussianCopula.fit.evaluate_factor',
      'c39340dec7acf3f167adab3aaeb92838c14bd36563098297346d825214fd5b7e', 'sign', ('arithmetic',)),
     ('pyscarcopula.copula.multivariate.gaussian:GaussianCopula.fit.evaluate_fixed',
      '588759af84d8ac4d2e5d7478ff67eb904b09cb4f54b76f5d8230778d542348cc', 'sign', ('arithmetic',)),
-    ('pyscarcopula.copula.multivariate.gaussian:GaussianCopula.initialize_factor',
-     'd1c2564b952c8efc4ae45f1f6a540d8124f1ef627fe139603828ab77519612e1', 'structure', ('arithmetic',)),
     ('pyscarcopula.copula.multivariate.gaussian:GaussianCopula.sample_batches',
      'c9f385dd9da24c7cdeaa1d99d1a275f2cdd189b87756472d90569b0ff40df941', 'structure', ('numerical-call',)),
     ('pyscarcopula.copula.multivariate.gaussian:GaussianCopula.sample_batches.blocks',
@@ -333,7 +335,7 @@ _SYMBOL_REVIEWS = (
     ('pyscarcopula.strategy.multivariate_mle:_projected_gradient',
      '77795126aeb786ec5fe2e47755df8146486dbba8028aa38cf8cfa2e109782f23', 'bookkeeping', ('arithmetic', 'numerical-call')),
     ('pyscarcopula.strategy.multivariate_mle:run_static_multivariate_mle',
-     '66dc9d70cff8b4a6c561a3ef534930b84e06d061f1c48720fffc946e1f72eb49', 'bookkeeping', ('arithmetic', 'numerical-call')),
+     '90b340e85d3560dc8a6373db5802e2838a057e55ab7be0cfb242d3d6dae11b37', 'bookkeeping', ('arithmetic', 'numerical-call')),
     ('pyscarcopula.strategy.multivariate_mle:run_static_multivariate_mle.strict_evaluate',
      '0ee557ea90e1298990f46748c6e25f796a1a2575da0b5bbe45aabc9c1f1b6db7', 'bookkeeping', ('arithmetic',)),
     ('pyscarcopula.strategy.scar_jacobi:SCARJacobiStrategy._loglik',
