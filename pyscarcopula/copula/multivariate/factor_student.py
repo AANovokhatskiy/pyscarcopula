@@ -15,7 +15,9 @@ from pyscarcopula.copula.multivariate.factor_correlation import (
     _validated_budget,
     _validated_n_threads,
 )
-from pyscarcopula.numerical._arrays import as_float64_array, validate_integer
+from pyscarcopula.numerical._arrays import (
+    as_float64_array, as_float64_scalar, validate_integer,
+)
 
 
 def _raise_native_status(result: Mapping[str, Any], operation: str) -> None:
@@ -303,10 +305,11 @@ class FactorStudentEvaluator:
         """Evaluate the joint factor objective entirely in native code."""
         from pyscarcopula._native import _extension as _cpp_extension
 
-        df_value = float(df)
+        df_value = as_float64_scalar(df, name="df")
         if not np.isfinite(df_value) or df_value <= 2.0:
             raise ValueError("df must be finite and greater than 2")
-        values = np.ascontiguousarray(parameters, dtype=np.float64)
+        values = np.ascontiguousarray(
+            as_float64_array(parameters, name="factor parameters"))
         if values.ndim != 1 or values.shape != (
                 parameterization.n_parameters,):
             raise ValueError("factor parameters have unexpected shape")
@@ -327,8 +330,8 @@ class FactorStudentEvaluator:
                 self.rank,
                 float(parameterization.max_norm),
                 float(parameterization.uniqueness_min),
-                float(condition_max),
-                float(penalty),
+                as_float64_scalar(condition_max, name="condition_max"),
+                as_float64_scalar(penalty, name="penalty"),
                 n_threads,
             )
         )
@@ -369,7 +372,7 @@ class FactorStudentEvaluator:
         if np.asarray(df).ndim != 0:
             raise ValueError(
                 "joint_likelihood_and_gradient requires a scalar df")
-        df_value = float(df)
+        df_value = as_float64_scalar(df, name="df")
         if not np.isfinite(df_value) or df_value <= 2.0:
             raise ValueError("df must be finite and greater than 2")
         n_threads = _validated_n_threads(n_threads)

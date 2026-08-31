@@ -4,6 +4,7 @@ import numpy as np
 
 from pyscarcopula._constants import PSEUDO_OBS_EPS
 from pyscarcopula._utils import clip_pseudo_observations
+from pyscarcopula.numerical._arrays import as_float64_array
 
 
 def validate_vine_given(given, d):
@@ -51,10 +52,7 @@ def _open_unit_uniform(rng, size):
 
 def _prepared_open_unit_draws(value, shape, *, name):
     """Validate replay draws and own a C-contiguous float64 representation."""
-    array = np.asarray(value)
-    if np.issubdtype(array.dtype, np.complexfloating):
-        raise TypeError(f"{name} must contain real values, not complex values")
-    array = np.asarray(array, dtype=np.float64)
+    array = as_float64_array(value, name=name)
     if array.shape != tuple(shape):
         raise ValueError(
             f"{name} must have shape {tuple(shape)}, got {array.shape}")

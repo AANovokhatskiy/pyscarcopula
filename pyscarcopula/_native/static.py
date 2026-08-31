@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
-from pyscarcopula.numerical._arrays import as_float64_array
+from pyscarcopula.numerical._arrays import as_float64_array, as_float64_scalar
 
 from pyscarcopula._native import _descriptors, _extension, model_policy
 from pyscarcopula._native.errors import (
@@ -71,15 +71,15 @@ class StaticLikelihoodEvaluator:
         return instance
 
     def result(self, parameter: float) -> dict:
-        return dict(self._native.objective(float(parameter)))
+        return dict(self._native.objective(as_float64_scalar(parameter)))
 
     def value_result(self, parameter: float) -> dict:
-        return dict(self._native.objective_value(float(parameter)))
+        return dict(self._native.objective_value(as_float64_scalar(parameter)))
 
     def joint_result(self, parameter: float) -> dict:
         return dict(
             self._native.objective_with_correlation_gradient(
-                float(parameter)))
+                as_float64_scalar(parameter)))
 
     def objective_and_gradient(
             self, parameter: float, *, fail_value: float = 1e10):
@@ -105,7 +105,8 @@ class StaticLikelihoodEvaluator:
             self, optimizer_parameter: float, *, fail_value: float = 1e10):
         """Evaluate an equicorrelation objective in native raw coordinates."""
         result = dict(
-            self._native.transformed_objective(float(optimizer_parameter)))
+            self._native.transformed_objective(as_float64_scalar(
+                optimizer_parameter, name="optimizer_parameter")))
         if result["status"] != 0:
             try:
                 raise_for_status(result, "transformed static objective gradient")
@@ -179,7 +180,7 @@ class StaticLikelihoodEvaluator:
 
     def log_pdf_rows(self, parameter: float) -> np.ndarray:
         values = np.asarray(
-            self._native.log_pdf_rows(float(parameter)),
+            self._native.log_pdf_rows(as_float64_scalar(parameter)),
             dtype=np.float64,
         )
         if np.any(~np.isfinite(values)):

@@ -131,6 +131,9 @@ class MLEStrategy:
 
         if is_multivariate_copula(copula) and alpha0 is not None:
             raise TypeError("alpha0 is not supported by multivariate MLE")
+        if is_multivariate_copula(copula) and _prepared_evaluator is not None:
+            raise TypeError(
+                "_prepared_evaluator is not supported by multivariate MLE")
 
         if not has_dynamic_scalar_parameter(copula):
             direct_fit = getattr(copula, 'fit', None)
@@ -238,7 +241,10 @@ class MLEStrategy:
     def predictive_mean(self, copula, u: np.ndarray,
                         result: MLEResult) -> np.ndarray:
         """Constant parameter for all time steps."""
-        registry_entry_for(copula)
+        entry = registry_entry_for(copula)
+        if entry.native_id == "Gaussian":
+            raise NotImplementedError(
+                "GaussianCopula has no scalar parameter for predictive_mean")
         return np.full(len(u), result.copula_param)
 
     def rosenblatt_e2(self, copula, u: np.ndarray,
@@ -265,14 +271,25 @@ class MLEStrategy:
 
     def objective(self, copula, u: np.ndarray,
                   alpha: np.ndarray, **kwargs) -> float:
-        """Minus log-likelihood: -sum log c(u1, u2; alpha[0])."""
+        """Negative likelihood at a natural scalar parameter, or empty Gaussian alpha.
+
+        Static multivariate correlations remain fixed at their current values;
+        correlation optimizer coordinates are private to model.fit.
+        """
         reject_unknown_mle_kwargs(kwargs)
-        registry_entry_for(copula)
+        entry = registry_entry_for(copula)
         if is_multivariate_copula(copula):
-            try:
-                return -float(copula.log_likelihood(u, float(alpha[0])))
-            except TypeError:
-                return -float(copula.log_likelihood(u))
+            if entry.native_id == "Gaussian":
+                if alpha.ndim != 1 or alpha.size != 0:
+                    raise ValueError(
+                        "GaussianCopula alpha must be an empty vector; "
+                        "correlation coordinates are only supported by fit")
+                return -float(copula.log_likelihood(
+                    u, n_threads=self.config.n_threads))
+            if alpha.ndim != 1 or alpha.size != 1 or not np.isfinite(alpha[0]):
+                raise ValueError("alpha must contain exactly one finite value")
+            return -float(copula.log_likelihood(
+                u, float(alpha[0]), n_threads=self.config.n_threads))
         evaluator = static_likelihood.prepare(
             copula, u, n_threads=self.config.n_threads)
         value, _ = evaluator.objective_and_gradient(

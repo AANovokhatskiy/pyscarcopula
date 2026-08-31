@@ -750,7 +750,7 @@ class GaussianCopula(MultivariateCopula):
             self, u, n_threads=n_threads).log_likelihood(0.0)
 
     def log_pdf_rows(
-            self, u, parameter=None, *, n_threads=1, **kwargs):
+            self, u, parameter=None, *, n_threads=1):
         from pyscarcopula._native import static as static_likelihood
         return static_likelihood.prepare(
             self, u, n_threads=n_threads).log_pdf_rows(0.0)
@@ -941,13 +941,14 @@ class GaussianCopula(MultivariateCopula):
             memory_budget_bytes=None):
         """Draw predictive samples, optionally conditional on fixed uniforms."""
         n_threads = _validated_n_threads(n_threads)
-        if predict_config is not None:
-            from pyscarcopula.api import _resolve_predict_config
-            config = _resolve_predict_config(
-                predict_config, given, horizon, {
-                    "predictive_r_mode": predictive_r_mode,
-                })
-            given = config.given
+        from pyscarcopula.api import (
+            _resolve_predict_config, _validate_non_vine_predict_config,
+        )
+        config = _resolve_predict_config(
+            predict_config, given, horizon,
+            {"predictive_r_mode": predictive_r_mode})
+        _validate_non_vine_predict_config(config)
+        given = config.given
         sampling_options = {}
         if n_threads != 1:
             sampling_options["n_threads"] = n_threads
@@ -981,13 +982,14 @@ class GaussianCopula(MultivariateCopula):
             predict_config=None,
             n_threads=1,
             memory_budget_bytes=None):
-        if predict_config is not None:
-            from pyscarcopula.api import _resolve_predict_config
-            config = _resolve_predict_config(
-                predict_config, given, horizon, {
-                    "predictive_r_mode": predictive_r_mode,
-                })
-            given = config.given
+        from pyscarcopula.api import (
+            _resolve_predict_config, _validate_non_vine_predict_config,
+        )
+        config = _resolve_predict_config(
+            predict_config, given, horizon,
+            {"predictive_r_mode": predictive_r_mode})
+        _validate_non_vine_predict_config(config)
+        given = config.given
         return self.sample_batches(
             n,
             u=u,

@@ -31,7 +31,9 @@ from pyscarcopula.vine._helpers import (
 from pyscarcopula.vine._rvine_conditional_plan import _node_key
 from pyscarcopula._constants import PSEUDO_OBS_EPS
 from pyscarcopula._utils import clip_pseudo_observations
-from pyscarcopula.numerical._arrays import as_pseudo_observation_array
+from pyscarcopula.numerical._arrays import (
+    as_float64_array, as_pseudo_observation_array,
+)
 
 
 def fit_edge_pseudo_observations(edge, first, second):
@@ -438,12 +440,8 @@ def _scalar_request_key(active_keys, parameter_sources, native_edges):
 
 def _parameter_path(value, n_rows, edge_key):
     """Normalize one scalar or row-wise edge-parameter path."""
-    raw = np.asarray(value)
-    if np.iscomplexobj(raw):
-        raise TypeError(
-            f"R-vine parameter path for edge {edge_key} must contain real values"
-        )
-    path = np.asarray(raw, dtype=np.float64)
+    path = as_float64_array(
+        value, name=f"R-vine parameter path for edge {edge_key}")
     if path.ndim == 0:
         path = path.reshape(1)
     if path.ndim != 1 or len(path) not in {1, n_rows}:

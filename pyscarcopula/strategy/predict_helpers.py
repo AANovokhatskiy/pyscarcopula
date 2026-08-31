@@ -104,7 +104,7 @@ def sample_predictive(
     """
     from pyscarcopula._native.registry import registry_entry_for
 
-    registry_entry_for(copula)
+    entry = registry_entry_for(copula)
     if is_multivariate_copula(copula) and has_dynamic_scalar_parameter(copula):
         return copula.sample_conditional(
             n, r=r, given=given, rng=rng, n_threads=n_threads,
@@ -112,11 +112,17 @@ def sample_predictive(
     if given is None and d is not None and int(d) != 2 and hasattr(copula, "_R_path"):
         return copula.sample(n=n, df_path=r, rng=rng)
 
+    static_options = {"n_threads": n_threads}
+    if entry.native_id == "Gaussian" and memory_budget_bytes is not None:
+        # Gaussian owns a workspace guard in addition to the API output guard.
+        # Student's static sampler only supports the latter contract.
+        static_options["memory_budget_bytes"] = memory_budget_bytes
+
     if given is None:
         if is_pair_copula(copula):
             return copula.sample_at_parameter(n, r, rng=rng)
         if not has_dynamic_scalar_parameter(copula):
-            return copula.sample(n, rng=rng, n_threads=n_threads)
+            return copula.sample(n, rng=rng, **static_options)
         return copula.sample_at_parameter(n, r, rng=rng)
 
     if is_pair_copula(copula):
@@ -126,7 +132,7 @@ def sample_predictive(
     if supports_conditional_sampling(copula):
         if not has_dynamic_scalar_parameter(copula):
             return copula.sample_conditional(
-                n, given=given, rng=rng, n_threads=n_threads)
+                n, given=given, rng=rng, **static_options)
         return copula.sample_conditional(n, r=r, given=given, rng=rng)
 
     if d is None:

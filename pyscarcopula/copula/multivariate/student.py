@@ -16,6 +16,7 @@ from pyscarcopula._native import model_policy
 from pyscarcopula._native import validation as native_validation
 from pyscarcopula._utils import pobs
 from pyscarcopula.numerical._arrays import (
+    as_float64_scalar,
     validate_integer,
     validate_sampling_n_threads as _validated_n_threads,
 )
@@ -127,6 +128,9 @@ class StudentCopula(MultivariateCopula):
                 factor_rank is not None or factor_loadings is not None):
             raise ValueError(
                 "factor_rank and factor_loadings require corr_mode='factor'")
+        if mode != "factor" and estimation != "two-stage":
+            raise ValueError(
+                "factor_estimation is only configurable in factor mode")
         if not 0.0 < float(corr_shrinkage_init) < 1.0:
             raise ValueError("corr_shrinkage_init must be in (0, 1)")
         cholesky_d_max = _integer(
@@ -735,10 +739,11 @@ class StudentCopula(MultivariateCopula):
             raise ValueError("Fit first")
         return self.to_correlation_matrix(), self.df
 
-    def log_pdf_rows(self, u, parameter=None, *, n_threads=1, **kwargs):
-        df = self.df if parameter is None else float(parameter)
+    def log_pdf_rows(self, u, parameter=None, *, n_threads=1):
+        df = self.df if parameter is None else parameter
         if df is None:
             raise ValueError("Fit first")
+        df = as_float64_scalar(df, name="df")
         if self._corr_mode == "factor":
             return FactorStudentEvaluator(
                 self.correlation_operator_, u).log_pdf_rows(
@@ -747,17 +752,20 @@ class StudentCopula(MultivariateCopula):
         return static_likelihood.prepare_student(
             self._correlation, u, n_threads=n_threads).log_pdf_rows(df)
 
-    def log_likelihood(self, u, *, n_threads=1):
-        if self.df is None:
+    def log_likelihood(self, u, parameter=None, *, n_threads=1):
+        """Evaluate the current correlation at fitted or explicitly supplied df."""
+        df = self.df if parameter is None else parameter
+        if df is None:
             raise ValueError("Fit first")
+        df = as_float64_scalar(df, name="df")
         if self._corr_mode == "factor":
             return FactorStudentEvaluator(
                 self.correlation_operator_, u).evaluate(
-                    self.df, n_threads=n_threads).log_likelihood
+                    df, n_threads=n_threads).log_likelihood
         from pyscarcopula._native import static as static_likelihood
         return static_likelihood.prepare_student(
             self._correlation, u,
-            n_threads=n_threads).log_likelihood(self.df)
+            n_threads=n_threads).log_likelihood(df)
 
     def _nll_with_params(self, u, R, df):
         from pyscarcopula._native import static as static_likelihood
@@ -829,12 +837,14 @@ class StudentCopula(MultivariateCopula):
                 predictive_r_mode=None, predict_config=None, *, n_threads=1):
         """Draw predictive samples, optionally conditional on fixed uniforms."""
         n_threads = _validated_n_threads(n_threads)
-        if predict_config is not None:
-            from pyscarcopula.api import _resolve_predict_config
-            config = _resolve_predict_config(
-                predict_config, given, horizon,
-                {"predictive_r_mode": predictive_r_mode})
-            given = config.given
+        from pyscarcopula.api import (
+            _resolve_predict_config, _validate_non_vine_predict_config,
+        )
+        config = _resolve_predict_config(
+            predict_config, given, horizon,
+            {"predictive_r_mode": predictive_r_mode})
+        _validate_non_vine_predict_config(config)
+        given = config.given
         if given is not None:
             return self.sample_conditional(
                 n, given=given, rng=rng, n_threads=n_threads)

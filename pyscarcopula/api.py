@@ -445,6 +445,22 @@ def _resolve_predict_config(
     return out
 
 
+def _validate_non_vine_predict_config(pcfg: PredictConfig, explicit_options=()):
+    """Reject vine-only prediction controls at API and model entry points."""
+    unsupported = set(explicit_options).union(
+        name for name, active in (
+            ('dynamic_conditioning', pcfg.dynamic_conditioning != 'ignore'),
+            ('return_diagnostics', bool(pcfg.return_diagnostics)),
+            ('mcmc_steps', pcfg.mcmc_steps is not None),
+            ('mcmc_burnin', pcfg.mcmc_burnin is not None),
+        ) if active
+    )
+    if unsupported:
+        raise TypeError(
+            f"prediction option(s) supported only by vine models: "
+            f"{sorted(unsupported)}")
+
+
 def predict(
     copula: object,
     data: ArrayLike,
@@ -516,18 +532,7 @@ def predict(
         return copula.predict(
             n, u=data, predict_config=pcfg, **kwargs)
 
-    unsupported = explicit_vine_options.union(
-        name for name, active in (
-            ('dynamic_conditioning', pcfg.dynamic_conditioning != 'ignore'),
-            ('return_diagnostics', bool(pcfg.return_diagnostics)),
-            ('mcmc_steps', pcfg.mcmc_steps is not None),
-            ('mcmc_burnin', pcfg.mcmc_burnin is not None),
-        ) if active
-    )
-    if unsupported:
-        raise TypeError(
-            f"prediction option(s) supported only by vine models: "
-            f"{sorted(unsupported)}")
+    _validate_non_vine_predict_config(pcfg, explicit_vine_options)
 
     if is_multivariate_copula(copula) and "n_threads" in kwargs:
         from pyscarcopula._native.threads import validate_n_threads

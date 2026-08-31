@@ -18,6 +18,22 @@ def as_float64_array(value, *, name="array"):
     return np.asarray(array, dtype=np.float64)
 
 
+def as_float64_scalar(value, *, name="parameter"):
+    """Return a real scalar; leave finiteness and domain rules to the caller.
+
+    Zero-dimensional arrays are scalars; one-element vectors are not.
+    Complex values are rejected even when their imaginary part is zero.
+    """
+    if type(value) is float:
+        return value
+    if isinstance(value, np.floating):
+        return float(value)
+    array = as_float64_array(value, name=name)
+    if array.ndim != 0:
+        raise ValueError(f"{name} must be a scalar")
+    return float(array)
+
+
 def as_pseudo_observation_array(
         value, *, name="u", allow_boundary=True):
     """Return finite float64 pseudo-observations in the supported unit range."""

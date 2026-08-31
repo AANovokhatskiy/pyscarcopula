@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from pyscarcopula.numerical._arrays import as_float64_array
+
 def validate_multivariate_given(given, d):
     """Normalize finite ``given`` values in the open unit interval.
 
@@ -41,7 +43,7 @@ def validate_multivariate_given(given, d):
 
 def as_path(values, n, name):
     """Return a scalar-or-length-n numeric value as a length-n path."""
-    arr = np.atleast_1d(np.asarray(values, dtype=np.float64)).ravel()
+    arr = np.atleast_1d(as_float64_array(values, name=name)).ravel()
     if arr.size == 1:
         return np.full(int(n), float(arr[0]), dtype=np.float64)
     if arr.size != int(n):

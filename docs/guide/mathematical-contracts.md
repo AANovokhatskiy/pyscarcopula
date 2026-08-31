@@ -405,9 +405,40 @@ the explicitly supplied static result. They reconstruct independent sampling
 state without changing the prototype; factor results remain compact. Reusing
 the same result and RNG seed therefore reproduces draws after a prototype refit.
 
+The public `mlog_likelihood(alpha, u, method="mle")` evaluates the current
+correlation without modifying fitted state. Gaussian accepts an empty `alpha`
+vector; Student accepts exactly one finite natural degrees-of-freedom value
+greater than two.
+Correlation optimizer coordinates belong to `fit` and are rejected by this
+scalar objective interface. `NumericalConfig.n_threads` reaches the native
+objective evaluator. Student also accepts `log_likelihood(u, parameter=df)`,
+consistent with `log_pdf_rows(u, parameter=df)`; omitting `parameter` uses fitted
+`df`. Both families reject unsupported `log_pdf_rows` keywords. Gaussian has no
+scalar parameter path, so `api.predictive_mean` raises `NotImplementedError`;
+Student returns its constant fitted `df` path.
+
+Object `predict` (and Gaussian `predict_batches`) validates the same prediction
+options as `api.predict`, including rejecting active vine-only controls.
+Valid `current` and `next` horizons have the same static distribution.
+Gaussian `api.sample` and `api.predict` forward `memory_budget_bytes` to the
+object sampler for both unconditional and conditional draws: dense budgets
+cover output, while factor budgets also cover workspace. Static Student API
+sampling retains its output allocation guard. A non-default `factor_estimation`
+requires factor mode; prepared pair evaluators cannot be supplied to multivariate
+MLE fitting through `_prepared_evaluator`.
+
 Observation and loading preparation rejects complex values before float64
 conversion, including streamed equicorrelation statistics and factor
 initialization. A discarded imaginary component is not an accepted coercion.
+The shared `numerical._arrays.as_float64_array` and `as_float64_scalar`
+normalizers enforce this representation contract, including complex values
+stored in object arrays and values with zero imaginary parts. Scalar likelihood
+parameters accept real scalars and zero-dimensional arrays, but not vectors.
+Scalar normalization does not impose finiteness or model-specific bounds;
+the existing model/native validators and optimizer failure policies own those
+rules. Adapters must normalize user inputs before any `float()` or float64
+cast that could discard an imaginary component. Output conversion of values
+already returned by native code does not require input validation.
 
 `shrinkage` uses
 

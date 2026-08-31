@@ -184,6 +184,12 @@ equicorrelation Cauchy bounds; and SCAR-OU final-fit diagnostics. Sparse Jacobi
 row invariants remain in the Jacobi domain owner and are exposed through a
 validation-only native call. Python keeps dtype/shape normalization, exception
 presentation, optimizer orchestration, and result DTO assembly.
+Python adapters share real-input normalization in `numerical._arrays`:
+`as_float64_scalar` for scalar parameters and `as_float64_array` for arrays
+or scalar/row-wise paths. These helpers reject complex inputs before lossy
+casts; they do not own mathematical parameter bounds or numerical-failure
+penalties. Model-specific dtype and shape restrictions remain at their public
+boundaries.
 
 Static likelihood descriptors also use native dense preparation; they never
 repeat Cholesky, inversion, or log-determinant arithmetic in Python. Gaussian

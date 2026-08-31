@@ -82,6 +82,7 @@ from pyscarcopula.copula.multivariate.factor_estimation import (
 )
 from pyscarcopula.numerical._arrays import (
     as_float64_array,
+    as_float64_scalar,
     validate_integer,
     validate_sampling_memory_budget as _sampling_memory_budget,
     validate_sampling_n_threads as _sampling_n_threads,
@@ -119,7 +120,7 @@ def _validate_fit_data(u, d):
 
 
 def _validated_student_sampling_parameters(r, n):
-    values = np.atleast_1d(np.asarray(r, dtype=np.float64)).ravel()
+    values = np.atleast_1d(as_float64_array(r, name="r")).ravel()
     if values.size not in (1, int(n)):
         raise ValueError(
             f"r must be scalar or array of length {int(n)}, "
@@ -873,6 +874,7 @@ class StochasticStudentCopula(MultivariateCopula):
         """
         if r is None:
             return self._fitted_log_likelihood(u, n_threads=n_threads)
+        r = as_float64_scalar(r, name="r")
         if (
                 self._corr_mode == 'factor'
                 and self._factor_operator is None):
@@ -886,11 +888,11 @@ class StochasticStudentCopula(MultivariateCopula):
         if self._corr_mode == 'factor':
             return FactorStudentEvaluator(
                 self._factor_operator, u).evaluate(
-                    float(r), n_threads=n_threads).log_likelihood
+                    r, n_threads=n_threads).log_likelihood
 
         from pyscarcopula._native import static as static_likelihood
         return static_likelihood.prepare(
-            self, u, n_threads=n_threads).log_likelihood(float(r))
+            self, u, n_threads=n_threads).log_likelihood(r)
 
     def log_pdf_rows(
             self, u, r, t_index=None, cache=None, *, n_threads=1):
@@ -1719,7 +1721,7 @@ class StochasticStudentCopula(MultivariateCopula):
         batch_rows = validate_integer(batch_rows, "batch_rows", minimum=1)
         n_threads = _sampling_n_threads(n_threads)
         parameters = np.atleast_1d(
-            np.asarray(r, dtype=np.float64)).ravel()
+            as_float64_array(r, name="r")).ravel()
         if parameters.size not in (1, n):
             raise ValueError(
                 f"r must be scalar or array of length {n}, "

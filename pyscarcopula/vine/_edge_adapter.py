@@ -9,6 +9,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from pyscarcopula.numerical._arrays import as_float64_scalar
+
 
 @dataclass(frozen=True)
 class EdgeView:
@@ -68,12 +70,12 @@ def edge_param(edge, default=None):
     """Return a scalar edge parameter when the edge has a point parameter."""
     value = getattr(edge, 'param', None)
     if value is not None:
-        return float(value)
+        return as_float64_scalar(value, name="edge parameter")
 
     result = edge_result(edge)
     result_param = getattr(result, 'copula_param', None)
     if result_param is not None:
-        return float(result_param)
+        return as_float64_scalar(result_param, name="edge parameter")
     if _is_independent_copula(edge_copula(edge)):
         return 0.0
     return default

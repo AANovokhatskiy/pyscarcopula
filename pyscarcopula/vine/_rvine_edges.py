@@ -123,7 +123,7 @@ def _edge_log_likelihood(edge, u_pair, config=None, **strategy_kwargs):
     if r is not None:
         from pyscarcopula._native import static as static_likelihood
         return static_likelihood.prepare(
-            copula, u_pair).log_likelihood(float(r))
+            copula, u_pair).log_likelihood(r)
 
     return edge_log_likelihood(
         copula, result, u_pair, config=config, **strategy_kwargs)

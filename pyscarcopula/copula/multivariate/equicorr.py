@@ -3,6 +3,7 @@
 import numpy as np
 from pyscarcopula.numerical._arrays import (
     as_float64_array,
+    as_float64_scalar,
     validate_sampling_n_threads as _validated_n_threads,
 )
 
@@ -173,9 +174,10 @@ class EquicorrGaussianCopula(MultivariateCopula):
         """Evaluate the fitted strategy, or a static density at explicit r."""
         if r is None:
             return self._fitted_log_likelihood(u, n_threads=n_threads)
+        r = as_float64_scalar(r, name="r")
         from pyscarcopula._native import static as static_likelihood
         return static_likelihood.prepare(
-            self, u, n_threads=n_threads).log_likelihood(float(r))
+            self, u, n_threads=n_threads).log_likelihood(r)
 
     def log_pdf_rows(self, u, r, t_index=None, *, n_threads=1):
         from pyscarcopula._native import multivariate as multivariate_native
@@ -492,7 +494,7 @@ class EquicorrGaussianCopula(MultivariateCopula):
         )
         if rng is None:
             rng = np.random.default_rng()
-        parameters = np.atleast_1d(np.asarray(r, dtype=np.float64)).ravel()
+        parameters = np.atleast_1d(as_float64_array(r, name="r")).ravel()
         if parameters.size == 1:
             parameters = np.full(n, parameters[0], dtype=np.float64)
         elif parameters.size != n:
@@ -551,7 +553,7 @@ class EquicorrGaussianCopula(MultivariateCopula):
             rng = np.random.default_rng()
 
         parameters = np.atleast_1d(
-            np.asarray(r, dtype=np.float64)).ravel()
+            as_float64_array(r, name="r")).ravel()
         if parameters.size not in (1, n):
             raise ValueError(
                 f"r must be scalar or array of length {n}, "

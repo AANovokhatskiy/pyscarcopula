@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
-from pyscarcopula.numerical._arrays import as_float64_array
+from pyscarcopula.numerical._arrays import as_float64_array, as_float64_scalar
 
 from pyscarcopula._native.threads import validate_n_threads
 from pyscarcopula._native import _descriptors, _extension
@@ -165,7 +165,8 @@ def prepare_student_ppf_table(observations, **options):
     for name, value in options.items():
         if value is not None:
             setattr(config, name, value)
-    values = np.ascontiguousarray(observations, dtype=np.float64)
+    values = np.ascontiguousarray(
+        as_float64_array(observations, name="observations"))
     result = dict(module.student_prepare_ppf_table(values, config))
     raise_for_status(result, "Student PPF table preparation")
     nodes = np.asarray(result["nodes"], dtype=np.float64)
@@ -178,7 +179,9 @@ def prepare_student_ppf_table(observations, **options):
 
 def evaluate_student_ppf_table(observations, nodes, table, df, start=0, stop=None):
     """Evaluate an observation row block; native policy selects exact or cached PPF."""
-    values = np.ascontiguousarray(observations, dtype=np.float64)
+    df = as_float64_scalar(df, name="df")
+    values = np.ascontiguousarray(
+        as_float64_array(observations, name="observations"))
     if start == 0 and stop is None:
         offset, count, shape = 0, values.size, values.shape
     else:
@@ -188,18 +191,21 @@ def evaluate_student_ppf_table(observations, nodes, table, df, start=0, stop=Non
         count = values[start:stop].size
         shape = values[start:stop].shape
     result = _extension.load().student_evaluate_ppf_table(
-        values, np.ascontiguousarray(nodes, dtype=np.float64),
-        np.empty(0, dtype=np.float64) if table is None else table,
-        float(df), offset, count)
+        values, np.ascontiguousarray(as_float64_array(nodes, name="nodes")),
+        np.empty(0, dtype=np.float64) if table is None else as_float64_array(
+            table, name="table"),
+        df, offset, count)
     raise_for_status(result, "Student PPF table evaluation")
     return np.asarray(result["values"], dtype=np.float64).reshape(shape)
 
 
 def interpolate_student_ppf_table(nodes, table, df):
-    values = np.ascontiguousarray(table, dtype=np.float64)
+    df = as_float64_scalar(df, name="df")
+    values = np.ascontiguousarray(as_float64_array(table, name="table"))
     width = values.reshape(len(nodes), -1).shape[1]
     result = _extension.load().student_interpolate_ppf_table(
-        np.ascontiguousarray(nodes, dtype=np.float64), values, float(df), width)
+        np.ascontiguousarray(as_float64_array(nodes, name="nodes")),
+        values, df, width)
     raise_for_status(result, "Student PPF table interpolation")
     return np.asarray(result["values"], dtype=np.float64).reshape(values.shape[1:])
 
@@ -1206,23 +1212,13 @@ def radial_uniform_summary(residuals, *, n_threads=1):
 
 def _dense_student_rosenblatt_arrays(correlation, df, u):
     """Validate and own dense Student Rosenblatt input arrays."""
-    raw_correlation = np.asarray(correlation)
-    raw_observations = np.asarray(u)
-    raw_df = np.asarray(df)
-    if np.iscomplexobj(raw_correlation):
-        raise TypeError("correlation must contain real values")
-    if np.iscomplexobj(raw_observations):
-        raise TypeError("u must contain real values")
-    if np.iscomplexobj(raw_df):
-        raise TypeError("df must contain real values")
-
     observations = np.ascontiguousarray(
-        np.asarray(raw_observations, dtype=np.float64))
+        as_float64_array(u, name="u"))
     if observations.ndim != 2:
         raise ValueError("u must be a 2D array")
     rows, dimension = observations.shape
     correlation_array = np.ascontiguousarray(
-        np.asarray(raw_correlation, dtype=np.float64))
+        as_float64_array(correlation, name="correlation"))
     if correlation_array.shape != (dimension, dimension) or dimension < 1:
         raise ValueError(
             f"correlation must have shape ({dimension}, {dimension})")
@@ -1232,7 +1228,7 @@ def _dense_student_rosenblatt_arrays(correlation, df, u):
         raise ValueError("u must not contain NaN values")
 
     df_array = np.ascontiguousarray(
-        np.atleast_1d(np.asarray(raw_df, dtype=np.float64)).ravel())
+        np.atleast_1d(as_float64_array(df, name="df")).ravel())
     if df_array.size not in ({0, 1} if rows == 0 else {1, rows}):
         raise ValueError("df must be scalar or have one value per row")
     if not np.all(np.isfinite(df_array)) or np.any(df_array <= 0.0):
