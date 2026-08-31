@@ -33,6 +33,20 @@ def factor_uniqueness(instance):
     return instance._factor_correlation.uniqueness.copy()
 
 
+def fitted_ou_state_distribution(instance, u, K=None, grid_range=None):
+    """Shared OU posterior query for scalar dynamic multivariate models."""
+    from pyscarcopula.strategy._base import get_ou_strategy_for_result
+    overrides = {key: value for key, value in (
+        ("K", K), ("grid_range", grid_range)) if value is not None}
+    strategy = get_ou_strategy_for_result(instance.fit_result, **overrides)
+    if u is None:
+        raise ValueError(
+            "u is required for the distribution at the last observation")
+    state = strategy.predictive_state(
+        instance, u, instance.fit_result, horizon="current")
+    return state.z_grid, state.prob
+
+
 def factor_copula_getstate(instance):
     """Drop derived factor caches from a multivariate copula pickle."""
     state = MultivariateCopula.__getstate__(instance)

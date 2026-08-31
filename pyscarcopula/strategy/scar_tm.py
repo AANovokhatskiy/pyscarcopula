@@ -1622,6 +1622,13 @@ class SCARTMStrategy:
         p = result.params
         cfg = self._auto_config(kappa=p.kappa, n_obs=len(u))
         self._uses_cpp(copula)
+        from pyscarcopula.copula.multivariate.equicorr_prepared import (
+            EquicorrPreparedData,
+        )
+        if isinstance(u, EquicorrPreparedData):
+            prepared = _cpp_scar_ou.prepare_objective(u, copula, cfg)
+            negative_value, _ = prepared.neg_loglik_info(p.kappa, p.mu, p.nu)
+            return -negative_value
         value, _ = _cpp_scar_ou.loglik(
             p.kappa, p.mu, p.nu, u, copula, cfg)
         return value

@@ -11,6 +11,7 @@ from pyscarcopula._types import DEFAULT_CONFIG, NumericalConfig
 from pyscarcopula._native import model_policy
 from pyscarcopula.copula.multivariate.base import (
     MultivariateCopula,
+    fitted_ou_state_distribution,
     model_state_locked,
 )
 from pyscarcopula.copula.multivariate.conditional import (
@@ -36,6 +37,11 @@ class EquicorrGaussianCopula(MultivariateCopula):
     """Gaussian copula controlled by one equicorrelation parameter."""
 
     def __init__(self, d, rotate=0):
+        if isinstance(rotate, (bool, np.bool_)) or not isinstance(
+                rotate, (int, float, np.integer, np.floating)):
+            raise TypeError("rotate must be numeric zero")
+        if as_float64_scalar(rotate, name="rotate") != 0:
+            raise ValueError("EquicorrGaussianCopula supports only rotate=0")
         if d < 2:
             raise ValueError(f"d must be >= 2, got {d}")
         super().__init__(
@@ -632,6 +638,7 @@ class EquicorrGaussianCopula(MultivariateCopula):
             raise ValueError("n must be non-negative")
         if batch_rows < 1:
             raise ValueError("batch_rows must be positive")
+        given = validate_multivariate_given(given, self._d)
         self._validated_memory_budget(
             memory_budget_bytes,
             self._sample_output_bytes(min(n, batch_rows)),
@@ -706,15 +713,16 @@ class EquicorrGaussianCopula(MultivariateCopula):
             *,
             n_threads=1):
         n_threads = _validated_n_threads(n_threads)
-        if predict_config is not None:
-            from pyscarcopula.api import _resolve_predict_config
-            config = _resolve_predict_config(
-                predict_config, given, horizon, {
-                    "predictive_r_mode": predictive_r_mode,
-                })
-            given = config.given
-            horizon = config.horizon
-            predictive_r_mode = config.predictive_r_mode
+        from pyscarcopula.api import (
+            _resolve_predict_config, _validate_non_vine_predict_config,
+        )
+        config = _resolve_predict_config(
+            predict_config, given, horizon,
+            {"predictive_r_mode": predictive_r_mode})
+        _validate_non_vine_predict_config(config)
+        given = validate_multivariate_given(config.given, self._d)
+        horizon = config.horizon
+        predictive_r_mode = config.predictive_r_mode
         if self.fit_result is None:
             raise ValueError("Fit first")
         self._validated_memory_budget(
@@ -788,13 +796,17 @@ class EquicorrGaussianCopula(MultivariateCopula):
         if rng is None:
             rng = np.random.default_rng()
 
-        from pyscarcopula.api import _resolve_predict_config
+        from pyscarcopula.api import (
+            _resolve_predict_config, _validate_non_vine_predict_config,
+        )
         config = _resolve_predict_config(
             predict_config,
             given,
             horizon,
             {"predictive_r_mode": predictive_r_mode},
         )
+        _validate_non_vine_predict_config(config)
+        given = validate_multivariate_given(config.given, self._d)
         observations = u if u is not None else getattr(
             self, "_last_u", None)
         if observations is None:
@@ -814,7 +826,7 @@ class EquicorrGaussianCopula(MultivariateCopula):
         from pyscarcopula.strategy.predict_helpers import sample_predictive_batches
         return sample_predictive_batches(
             self, strategy, state, n, batch_rows=batch_rows,
-            given=config.given, rng=rng,
+            given=given, rng=rng,
             predictive_r_mode=config.predictive_r_mode,
             n_threads=n_threads, memory_budget_bytes=memory_budget_bytes)
 
@@ -828,25 +840,10 @@ class EquicorrGaussianCopula(MultivariateCopula):
         return _predictive_mean(self, u, self.fit_result)
 
     @model_state_locked
-    def xT_distribution(self, u, K=300, grid_range=5.0):
-        if self.fit_result is None:
-            raise ValueError("Fit with SCAR first")
-        kappa, mu, nu = self.fit_result.params.values
-        from pyscarcopula._native import scar_ou as _cpp_scar_ou
-        from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
-        from pyscarcopula.copula.multivariate.equicorr_prepared import (
-            EquicorrPreparedData,
-        )
-        config = AutoTMConfig(K=K, grid_range=grid_range)
-        if isinstance(u, EquicorrPreparedData):
-            return _cpp_scar_ou.prepare_objective(
-                u, self, config).state_distribution(
-                    kappa, mu, nu, horizon="current")
-        return _cpp_scar_ou.state_distribution(
-            kappa,
-            mu,
-            nu,
-            u,
-            self,
-            config,
-        )
+    def xT_distribution(self, u, K=None, grid_range=None):
+        """Return the fitted OU state distribution at the last observation.
+
+        Omitted grid settings inherit the fit; explicit K/grid_range override
+        them. MLE and GAS fits do not define an OU state distribution.
+        """
+        return fitted_ou_state_distribution(self, u, K, grid_range)

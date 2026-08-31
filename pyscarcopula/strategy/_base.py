@@ -744,6 +744,14 @@ def get_strategy_for_result(result: FitResult,
     )
 
 
+def get_ou_strategy_for_result(result: FitResult, **kwargs) -> FitStrategy:
+    """Restore an OU result without interpreting another process's parameters."""
+    if (str(getattr(result, "method", "")).upper() != "SCAR-TM-OU"
+            or getattr(getattr(result, "params", None), "process_type", None) != "ou"):
+        raise ValueError("This operation requires a fitted SCAR-TM-OU result")
+    return get_strategy_for_result(result, **kwargs)
+
+
 def _import_all_strategies():
     """Import all strategy modules to trigger @register_strategy."""
     # These imports cause the @register_strategy decorators to fire.

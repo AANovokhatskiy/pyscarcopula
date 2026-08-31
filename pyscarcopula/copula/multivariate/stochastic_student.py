@@ -35,6 +35,7 @@ from numpy.typing import ArrayLike
 
 from pyscarcopula.copula.multivariate.base import (
     MultivariateCopula,
+    fitted_ou_state_distribution,
     factor_uniqueness,
     model_state_locked,
 )
@@ -138,6 +139,9 @@ def _validated_student_sampling_parameters(r, n):
 # Class
 # ══════════════════════════════════════════════════════════════
 
+_INHERIT_MAX_K = object()
+
+
 class StochasticStudentCopula(MultivariateCopula):
     """
     d-dimensional Student-t copula with stochastic degrees of freedom.
@@ -185,6 +189,9 @@ class StochasticStudentCopula(MultivariateCopula):
     ``(log(kappa), mu, log(sigma_x))``, where
     ``sigma_x = nu / sqrt(2 * kappa)``. The internal representation is
     reported in the fit diagnostics.
+
+    Factor emission methods evaluate only the supplied observation block.
+    They do not accept a dense PPF ``cache``; ``t_index`` must be None or 0.
     """
 
     _gas_optimizer_config = 'stochastic_student_gas_optimizer'
@@ -222,6 +229,8 @@ class StochasticStudentCopula(MultivariateCopula):
             raise ValueError(f"d must be >= 2, got {d}")
         corr_mode = normalize_correlation_mode(corr_mode)
         factor_estimation = normalize_factor_estimation(factor_estimation)
+        if corr_mode != 'factor' and factor_estimation == 'joint':
+            raise ValueError("factor_estimation='joint' requires corr_mode='factor'")
         if corr_mode == 'fixed' and corr_base is not None:
             raise ValueError("corr_base is only valid for estimated corr modes")
         if corr_mode == 'factor' and (R is not None or corr_base is not None):
@@ -894,10 +903,19 @@ class StochasticStudentCopula(MultivariateCopula):
         return static_likelihood.prepare(
             self, u, n_threads=n_threads).log_likelihood(r)
 
+    @staticmethod
+    def _validate_factor_emission_options(t_index, cache):
+        """Factor kernels use only the supplied rows, without a dense cache."""
+        if cache is not None:
+            raise TypeError("cache is not supported for factor emissions")
+        if t_index is not None and validate_integer(t_index, "t_index") != 0:
+            raise ValueError("t_index must be None or 0 for factor emissions")
+
     def log_pdf_rows(
             self, u, r, t_index=None, cache=None, *, n_threads=1):
         """Return one log-density per row for scalar/row-wise df values."""
         if self._corr_mode == 'factor':
+            self._validate_factor_emission_options(t_index, cache)
             if self._factor_operator is None:
                 raise ValueError(
                     "Factor correlation not set. "
@@ -917,6 +935,7 @@ class StochasticStudentCopula(MultivariateCopula):
             self, u, r, t_index=None, cache=None, *, n_threads=1):
         """Return d log c(u_t; df_t) / d df_t for each row."""
         if self._corr_mode == 'factor':
+            self._validate_factor_emission_options(t_index, cache)
             if self._factor_operator is None:
                 raise ValueError(
                     "Factor correlation not set. "
@@ -937,6 +956,7 @@ class StochasticStudentCopula(MultivariateCopula):
             self, u, r, t_index=None, cache=None, *, n_threads=1):
         """Return per-row log-density and d log c(u_t; df_t) / d df_t."""
         if self._corr_mode == 'factor':
+            self._validate_factor_emission_options(t_index, cache)
             if self._factor_operator is None:
                 raise ValueError(
                     "Factor correlation not set. "
@@ -1043,6 +1063,7 @@ class StochasticStudentCopula(MultivariateCopula):
             raise ValueError("R not set")
 
         if self._corr_mode == 'factor':
+            self._validate_factor_emission_options(t_index, cache)
             evaluator = FactorStudentEvaluator(
                 self._factor_operator, u)
             return evaluator.stochastic_pdf_and_gradient_grid(
@@ -1944,12 +1965,15 @@ class StochasticStudentCopula(MultivariateCopula):
         u : (T, d) or None — conditioning data.
         rng : np.random.Generator or None
         """
-        from pyscarcopula.api import _resolve_predict_config
+        from pyscarcopula.api import (
+            _resolve_predict_config, _validate_non_vine_predict_config,
+        )
         config = _resolve_predict_config(
             predict_config, given, horizon, {
                 "predictive_r_mode": predictive_r_mode,
             })
-        given = config.given
+        _validate_non_vine_predict_config(config)
+        given = validate_multivariate_given(config.given, self._d)
         horizon = config.horizon
         predictive_r_mode = config.predictive_r_mode
         if self.fit_result is None:
@@ -2022,13 +2046,17 @@ class StochasticStudentCopula(MultivariateCopula):
         if rng is None:
             rng = np.random.default_rng()
 
-        from pyscarcopula.api import _resolve_predict_config
+        from pyscarcopula.api import (
+            _resolve_predict_config, _validate_non_vine_predict_config,
+        )
         config = _resolve_predict_config(
             predict_config,
             given,
             horizon,
             {"predictive_r_mode": predictive_r_mode},
         )
+        _validate_non_vine_predict_config(config)
+        given = validate_multivariate_given(config.given, self._d)
         if self._corr_mode == "factor":
             _sampling_memory_budget(
                 memory_budget_bytes,
@@ -2055,7 +2083,7 @@ class StochasticStudentCopula(MultivariateCopula):
         from pyscarcopula.strategy.predict_helpers import sample_predictive_batches
         return sample_predictive_batches(
             self, strategy, state, n, batch_rows=batch_rows,
-            given=config.given, rng=rng,
+            given=given, rng=rng,
             predictive_r_mode=config.predictive_r_mode,
             n_threads=n_threads, memory_budget_bytes=memory_budget_bytes)
 
@@ -2075,29 +2103,27 @@ class StochasticStudentCopula(MultivariateCopula):
         return _predictive_mean(self, u_data, self.fit_result)
 
     @model_state_locked
-    def xT_distribution(self, u, K=300, grid_range=5.0):
-        """Distribution of x_T on grid (for predict)."""
-        if self.fit_result is None:
-            raise ValueError("Fit with SCAR first")
-        kappa, mu, nu_ou = self.fit_result.params.values
-        from pyscarcopula._native import scar_ou as _cpp_scar_ou
-        from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
-        return _cpp_scar_ou.state_distribution(
-            kappa,
-            mu,
-            nu_ou,
-            u,
-            self,
-            AutoTMConfig(K=K, grid_range=grid_range),
-        )
+    def xT_distribution(self, u, K=None, grid_range=None):
+        """Return x_T's OU grid distribution, inheriting omitted fit settings.
+
+        Explicit K/grid_range override the saved grid. Requires an OU fit;
+        GAS and MLE parameters cannot be used as OU process parameters.
+        """
+        return fitted_ou_state_distribution(self, u, K, grid_range)
 
     @model_state_locked
     def posterior_state_weights(
             self, u, params=None, *, K=None, grid_range=None,
             grid_method=None, adaptive=None, pts_per_sigma=None,
-            transition_method='matrix', max_K=None, r_gh=3.0, gh_order=5):
-        """Return ``P(x_t = grid_i | u_1:T)`` on the TM grid."""
-        u = np.asarray(u, dtype=np.float64)
+            transition_method=None, max_K=_INHERIT_MAX_K, r_gh=None, gh_order=None):
+        """Return ``P(x_t = grid_i | u_1:T)`` on the OU TM grid.
+
+        Omitted settings inherit the current (or last latent) OU result,
+        including when params explicitly overrides its physical OU values.
+        Without an OU result, explicit params uses the default matrix grid.
+        Explicit max_K=None removes the grid cap; omission inherits it.
+        """
+        u = as_float64_array(u, name="u")
         if u.ndim != 2 or u.shape[1] != self._d:
             raise ValueError(
                 f"u must have shape (T, {self._d}), got {u.shape}")
@@ -2106,22 +2132,35 @@ class StochasticStudentCopula(MultivariateCopula):
         if not np.all(np.isfinite(u)):
             raise ValueError("u must contain only finite values")
 
+        fit_result = self.fit_result
+        if getattr(fit_result, "params", None) is None:
+            fit_result = getattr(self, "_last_latent_result", None)
+        from pyscarcopula.strategy._base import get_ou_strategy_for_result
         if params is None:
             if self.fit_result is None:
                 raise ValueError("Fit first or pass params")
-            fit_result = self.fit_result
-            if getattr(fit_result, "params", None) is None:
-                fit_result = getattr(self, "_last_latent_result", None)
-            if getattr(fit_result, "params", None) is None:
-                raise ValueError(
-                    "posterior_state_weights requires latent SCAR/GAS "
-                    "parameters; call fit(..., method='scar-tm-ou') or "
-                    "pass params= explicitly"
-                )
+            get_ou_strategy_for_result(fit_result)
             params = fit_result.params.values
-        params = np.asarray(params, dtype=np.float64).reshape(-1)
+        elif str(getattr(fit_result, "method", "")).upper() != 'SCAR-TM-OU':
+            fit_result = None
+        params = as_float64_array(params, name="params").reshape(-1)
         if not np.all(np.isfinite(params)):
             raise ValueError("params must contain only finite values")
+
+        options = {key: value for key, value in (
+            ("K", K), ("grid_range", grid_range), ("grid_method", grid_method),
+            ("adaptive", adaptive), ("pts_per_sigma", pts_per_sigma),
+            ("transition_method", transition_method), ("r_gh", r_gh),
+            ("gh_order", gh_order)) if value is not None}
+        if max_K is not _INHERIT_MAX_K:
+            options["max_K"] = max_K
+        if fit_result is not None:
+            strategy = get_ou_strategy_for_result(fit_result, **options)
+        else:
+            from pyscarcopula.strategy.scar_tm import SCARTMStrategy
+            defaults = dict(transition_method='matrix', max_K=None)
+            defaults.update(options)
+            strategy = SCARTMStrategy(**defaults)
 
         self._ensure_corr_initialized(u)
         n_corr = self._corr_num_params()
@@ -2143,54 +2182,21 @@ class StochasticStudentCopula(MultivariateCopula):
 
         try:
             return self._posterior_state_weights_tm(
-                u, latent_params, K=K, grid_range=grid_range,
-                grid_method=grid_method, adaptive=adaptive,
-                pts_per_sigma=pts_per_sigma,
-                transition_method=transition_method, max_K=max_K,
-                r_gh=r_gh, gh_order=gh_order)
+                u, latent_params, strategy=strategy)
         finally:
             if corr_state is not None:
                 self._restore_corr_state(corr_state)
 
-    def _posterior_state_weights_tm(
-            self, u, latent_params, *, K, grid_range, grid_method,
-            adaptive, pts_per_sigma, transition_method, max_K,
-            r_gh, gh_order):
+    def _posterior_state_weights_tm(self, u, latent_params, *, strategy):
         """Native C++ forward-backward sweep for posterior state weights."""
-
-        config = DEFAULT_CONFIG
-        K = config.default_K if K is None else int(K)
-        grid_range = (
-            config.default_grid_range if grid_range is None
-            else float(grid_range))
-        grid_method = (
-            config.default_grid_method if grid_method is None
-            else grid_method)
-        adaptive = (
-            config.default_adaptive if adaptive is None
-            else bool(adaptive))
-        pts_per_sigma = (
-            config.default_pts_per_sigma if pts_per_sigma is None
-            else int(pts_per_sigma))
-
         from pyscarcopula._native import scar_ou as _cpp_scar_ou
-        from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
         _, weights = _cpp_scar_ou.smoothed_state_distribution(
             latent_params[0],
             latent_params[1],
             latent_params[2],
             u,
             self,
-            AutoTMConfig(
-                K=K,
-                grid_range=grid_range,
-                grid_method=grid_method,
-                adaptive=adaptive,
-                pts_per_sigma=pts_per_sigma,
-                transition_method=transition_method,
-                max_K=max_K,
-                r_gh=r_gh,
-                gh_order=gh_order,
-            ),
+            strategy._auto_config(strategy._grid_transition_method(),
+                                  kappa=latent_params[0], n_obs=len(u)),
         )
         return weights

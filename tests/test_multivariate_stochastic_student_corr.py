@@ -700,7 +700,9 @@ def test_posterior_state_weights_validates_inputs_and_param_length():
 def test_posterior_state_weights_uses_fit_result_params_by_default():
     u = _u(T=16)
     model = StochasticStudentCopula(d=3, R=_R())
-    model.fit_result = SimpleNamespace(params=ou_params(1.2, 0.5, 0.8))
+    model.fit_result = LatentResult(
+        log_likelihood=1.0, method="SCAR-TM-OU", copula_name=model.name,
+        success=True, params=ou_params(1.2, 0.5, 0.8))
 
     implicit = model.posterior_state_weights(u, K=8, adaptive=False)
     explicit = model.posterior_state_weights(

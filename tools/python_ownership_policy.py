@@ -27,6 +27,12 @@ _REVIEW_KINDS = {
 }
 
 _SYMBOL_REVIEWS = (
+    # Dynamic routing review: validation and restored strategy dispatch keep
+    # existing buffer/parameter-count bookkeeping unchanged. Prepared OU
+    # likelihood only reverses the sign of the validated native objective.
+    # Covered by tests/test_dynamic_multivariate_parameter_routing.py.
+    ('pyscarcopula.strategy.scar_tm:SCARTMStrategy.log_likelihood',
+     '71c42bdaa0eee2253e39e5984277714a52cab51dc88080bc4cec26f900cee542', 'sign', ('arithmetic',)),
     # Shared dynamic block iteration: bounds, output allocation and native
     # strategy dispatch only; exercised by test_multivariate_sampling_threads.py.
     ('pyscarcopula.strategy.predict_helpers:sample_predictive_batches',
@@ -178,13 +184,13 @@ _SYMBOL_REVIEWS = (
     ('pyscarcopula.copula.multivariate.equicorr:EquicorrGaussianCopula.pdf_and_grad_on_grid_batches',
      'eecea89c36dbb43f8521afe855174d65aded0bce2afcbbcee4008ff59700d472', 'structure', ('arithmetic', 'numerical-call')),
     ('pyscarcopula.copula.multivariate.equicorr:EquicorrGaussianCopula.predict',
-     '4d7787b5c9cbcc69bf03ad5ee69630dfa440a2f5ddd3f10be4852358691c4a39', 'structure', ('numerical-call',)),
+     '15f3cd7da582e38b87f007c87990d81f4e31ca5e205d03d1d16c6e1bd4f4016b', 'structure', ('numerical-call',)),
     ('pyscarcopula.copula.multivariate.equicorr:EquicorrGaussianCopula.predict_batches',
-     '7d04375968911a5ee0986d93eb5abb2ae3664dad0956bf6e4ea642ce37afcca0', 'structure', ('numerical-call',)),
+     'f065fd11cab06062e15128b79fe395ab9146e4d49aff3176898a1d47502902a7', 'structure', ('numerical-call',)),
     ('pyscarcopula.copula.multivariate.equicorr:EquicorrGaussianCopula.prepare_sufficient_statistics',
      'a10d78d28e6ea1a1dd4920e9dd4f38ad7173057ecb353ee01b0c5efdfa52b869', 'bookkeeping', ('arithmetic', 'numerical-call')),
     ('pyscarcopula.copula.multivariate.equicorr:EquicorrGaussianCopula.sample_batches',
-     '5eafa5c091eba9600483238c65457657489770f0cb7dbaf7f719f4195ebafa8c', 'structure', ('numerical-call',)),
+     'c5ae5a972df15c677ac99db89da22f0bdc9b58e51ad2534d39bebfa9deb48274', 'structure', ('numerical-call',)),
     ('pyscarcopula.copula.multivariate.factor_correlation:FactorCorrelation.storage_bytes',
      '61bea2a4ec20a7fe64729dadca66103d006923cc0e81261e82f0e98e4343a989', 'structure', ('arithmetic',)),
     ('pyscarcopula.copula.multivariate.factor_correlation:FactorCorrelation.to_dense',
@@ -234,9 +240,9 @@ _SYMBOL_REVIEWS = (
     ('pyscarcopula.copula.multivariate.stochastic_student:StochasticStudentCopula._split_joint_params',
      '582c15638c1b4700e8448b52925af578d0d16a186f313d8ab531eafa6d36080e', 'structure', ('arithmetic',)),
     ('pyscarcopula.copula.multivariate.stochastic_student:StochasticStudentCopula.posterior_state_weights',
-     'f02ffd323f88f396da51955a2d3abc3fc04cc08f9bb4d7157f5b9ef8ff6a87b9', 'structure', ('arithmetic',)),
+     '4a40a4f170f730fbd23351774ab28b0abbc190c07b24e059f999c02b834c7636', 'structure', ('arithmetic',)),
     ('pyscarcopula.copula.multivariate.stochastic_student:StochasticStudentCopula.predict_batches',
-     '18e03d695b21478ac1cacc00fc7aac5cdeab5e20aa76b18de14017d26f4b075f', 'structure', ('numerical-call',)),
+     'a08d938fe981271d37758ca8fc5fe66ea123c49d95d9f3929981a7e36603418f', 'structure', ('numerical-call',)),
     ('pyscarcopula.copula.multivariate.stochastic_student:StochasticStudentCopula.sample',
      '60bbebd036522aaef82e15873b5177590228a0b71a1ccdb2123e2f20561e437b', 'structure', ('arithmetic', 'numerical-call')),
     ('pyscarcopula.copula.multivariate.stochastic_student:StochasticStudentCopula.sample_at_parameter_batches',
@@ -485,7 +491,7 @@ _SYMBOL_REVIEWS = (
     ('pyscarcopula.copula.multivariate.equicorr:EquicorrGaussianCopula.sample_at_parameter_batches',
      '61fb42bcb517c7e59bfe27c96accd8e8b3d9d412c140103d7e162c2b8883d552', 'native_sampling_adapter', ('arithmetic', 'numerical-call')),
     ('pyscarcopula.copula.multivariate.stochastic_student:StochasticStudentCopula.__init__',
-     'bb5ac0a50f8b8ca100f50062693d3796e7e181961e4f2a5f009b15ca6fa925c6', 'structure', ('arithmetic',)),
+     'c9c8ca4df73f237bc06e898fa52271320a2973daf9b55e86d60b7a2422407478', 'structure', ('arithmetic',)),
     ('pyscarcopula.copula.multivariate.stochastic_student:StochasticStudentCopula._fit_joint_factor_mle_shared',
      '9ca557d64db550a98a6a4992fd7f9679e2584d16cdc6d632583939a3a41664e1', 'fit_orchestration', ('arithmetic', 'numerical-call')),
     ('pyscarcopula.copula.multivariate.stochastic_student:StochasticStudentCopula._fit_mle_shared',
@@ -497,7 +503,7 @@ _SYMBOL_REVIEWS = (
     ('pyscarcopula.strategy.gas:GASStrategy.fit',
      'eb006df979af81105bfabc8f959f3b80be31fa8df1373a0a6e2e6136dfb2dd48', 'fit_orchestration', ('arithmetic',)),
     ('pyscarcopula.strategy.mle:MLEStrategy.fit',
-     '70f73bdef39b16b75d9e1f57e209f6afb3c02af17e6a4619fa4ae516a277d5a6', 'sign', ('arithmetic',)),
+     'b635918888bcc169f3f13806bd5d42db0445b339b5f795c65eca9982c4ed94c0', 'sign', ('arithmetic',)),
     ('pyscarcopula.strategy.scar_jacobi:SCARJacobiStrategy.fit',
      '62906569c375dd56124348bbf3b420fcfea1fe041f09d077168ae60e02eb2294', 'fit_orchestration', ('arithmetic',)),
     ('pyscarcopula.strategy.scar_tm:SCARTMStrategy._fit_joint_static',

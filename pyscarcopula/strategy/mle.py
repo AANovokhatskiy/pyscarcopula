@@ -139,7 +139,7 @@ class MLEStrategy:
             direct_fit = getattr(copula, 'fit', None)
             if direct_fit is not None:
                 result = direct_fit(
-                    u, to_pobs=False, config=self.config,
+                    u, method='MLE', to_pobs=False, config=self.config,
                     **optimizer_overrides)
                 if getattr(result, 'method', '').upper() == 'MLE':
                     return result
@@ -152,7 +152,7 @@ class MLEStrategy:
             direct_fit = getattr(copula, 'fit', None)
             if direct_fit is not None:
                 result = direct_fit(
-                    u, to_pobs=False, config=self.config,
+                    u, method='MLE', to_pobs=False, config=self.config,
                     **optimizer_overrides)
                 if getattr(result, 'method', '').upper() == 'MLE':
                     return result
