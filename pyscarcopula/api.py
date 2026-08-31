@@ -521,6 +521,7 @@ def predict(
         diagnostics are requested by a supporting vine model, returns the
         samples together with a diagnostics mapping.
     """
+    _reject_public_posterior_cache(kwargs)
     vine_option_names = {
         'dynamic_conditioning', 'return_diagnostics',
         'mcmc_steps', 'mcmc_burnin',

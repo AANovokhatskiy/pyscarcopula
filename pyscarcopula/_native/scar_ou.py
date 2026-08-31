@@ -482,6 +482,17 @@ class PreparedScarOuObjective:
         corr_version = getattr(copula, "_corr_cache_version", None)
         if not force and corr_version == self._student_corr_version:
             return
+        if getattr(copula, "corr_mode", None) == "factor":
+            # The native in-place updater accepts a dense inverse Cholesky
+            # factor only. Rebuild on low-rank correlation changes without
+            # materializing a dense matrix; unchanged versions still reuse it.
+            spec = _descriptors.make_spec(self.module, copula, self.obs)
+            native = self.module.PreparedScarOuEvaluator(
+                spec, self.obs, self.config, self.method)
+            self.spec = spec
+            self._native = native
+            self._student_corr_version = corr_version
+            return
         self._native.update_student_factor(
             np.asarray(copula._L_inv, dtype=np.float64).reshape(-1),
             float(copula._log_det),

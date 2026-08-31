@@ -93,6 +93,8 @@ def gas_negloglik(
     copula,
     scaling="unit",
     score_eps=1e-4,
+    *,
+    fail_value=None,
 ):
     """Return native ``-logL`` and propagate its structured failures."""
     try:
@@ -106,7 +108,7 @@ def gas_negloglik(
             score_eps,
         )
     except FloatingPointError as error:
-        return model_policy.optimizer_failure_objective(error)
+        return model_policy.optimizer_failure_objective(error, fail_value)
 
 
 def gas_rosenblatt(

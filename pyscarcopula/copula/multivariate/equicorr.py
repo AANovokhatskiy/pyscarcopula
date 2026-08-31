@@ -4,6 +4,7 @@ import numpy as np
 from pyscarcopula.numerical._arrays import (
     as_float64_array,
     as_float64_scalar,
+    validate_integer,
     validate_sampling_n_threads as _validated_n_threads,
 )
 
@@ -34,7 +35,12 @@ _LBFGSB_FIT_KEYS = (
 
 
 class EquicorrGaussianCopula(MultivariateCopula):
-    """Gaussian copula controlled by one equicorrelation parameter."""
+    """Gaussian copula controlled by one equicorrelation parameter.
+
+    Row emission methods accept ``t_index`` as a compatibility offset: it
+    must be ``None`` or a non-negative integer. Pass already-sliced ``u``
+    and ``r``; the offset does not select or shift their rows.
+    """
 
     def __init__(self, d, rotate=0):
         if isinstance(rotate, (bool, np.bool_)) or not isinstance(
@@ -186,12 +192,16 @@ class EquicorrGaussianCopula(MultivariateCopula):
             self, u, n_threads=n_threads).log_likelihood(r)
 
     def log_pdf_rows(self, u, r, t_index=None, *, n_threads=1):
+        if t_index is not None:
+            t_index = validate_integer(t_index, "t_index")
         from pyscarcopula._native import multivariate as multivariate_native
         values, _ = multivariate_native.log_pdf_and_dlog_rows(
             self, u, r, t_index=t_index, n_threads=n_threads)
         return values
 
     def dlog_pdf_dr_rows(self, u, r, t_index=None, *, n_threads=1):
+        if t_index is not None:
+            t_index = validate_integer(t_index, "t_index")
         from pyscarcopula._native import multivariate as multivariate_native
         _, values = multivariate_native.log_pdf_and_dlog_rows(
             self, u, r, t_index=t_index, n_threads=n_threads)
@@ -199,6 +209,8 @@ class EquicorrGaussianCopula(MultivariateCopula):
 
     def log_pdf_and_dlog_dr_rows(
             self, u, r, t_index=None, *, n_threads=1):
+        if t_index is not None:
+            t_index = validate_integer(t_index, "t_index")
         from pyscarcopula._native import multivariate as multivariate_native
         return multivariate_native.log_pdf_and_dlog_rows(
             self, u, r, t_index=t_index, n_threads=n_threads)
@@ -284,6 +296,15 @@ class EquicorrGaussianCopula(MultivariateCopula):
         batch_rows = int(batch_rows)
         if batch_rows < 1:
             raise ValueError("batch_rows must be positive")
+        n_threads = _validated_n_threads(n_threads)
+        if isinstance(u, EquicorrPreparedData):
+            if u.dimension != self._d:
+                raise ValueError(
+                    "prepared dimension does not match model dimension")
+        elif len(u) == 0:
+            # Nonempty blocks retain their native validation below; do not
+            # normalize an entire input matrix merely to validate batching.
+            self.validate_dimension(as_float64_array(u, name="u"))
         n_grid = len(x_grid)
         per_block = self._grid_output_bytes(
             min(batch_rows, len(u)), n_grid)

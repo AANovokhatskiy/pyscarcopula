@@ -29,6 +29,15 @@ with TemporaryDirectory() as directory:
 Model instances also expose `model.save(...)`, and model classes provide a
 matching `load(...)` convenience method.
 
+For Equicorr models fitted to `EquicorrPreparedData`, `include_data=True`
+retains the compact sufficient statistics, without reconstructing the original
+observations. Loading restores their validation and read-only arrays.
+Dataclass records encoded with the `object` tag are rejected; they must use
+the `dataclass` tag so that loading invokes their validating constructor.
+`include_data=False` omits both dense training observations and prepared
+statistics; fitted parameters and diagnostics are retained. Saving does not
+change the source model's retained history.
+
 ::: pyscarcopula.io.save_model
 
 ::: pyscarcopula.io.load_model

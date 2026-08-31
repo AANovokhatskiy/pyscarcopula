@@ -711,6 +711,7 @@ class GASStrategy:
             copula,
             self.scaling,
             score_eps,
+            fail_value=self.config.fail_value,
         )
 
     def sample(self, copula, u, result, n, rng=None, **kwargs):

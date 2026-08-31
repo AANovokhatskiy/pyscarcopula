@@ -1741,6 +1741,8 @@ class StochasticStudentCopula(MultivariateCopula):
         n = validate_integer(n, "n")
         batch_rows = validate_integer(batch_rows, "batch_rows", minimum=1)
         n_threads = _sampling_n_threads(n_threads)
+        _sampling_memory_budget(
+            memory_budget_bytes, 0, "increase memory_budget_bytes")
         parameters = np.atleast_1d(
             as_float64_array(r, name="r")).ravel()
         if parameters.size not in (1, n):
@@ -1980,6 +1982,8 @@ class StochasticStudentCopula(MultivariateCopula):
             raise ValueError("Fit first")
         n = validate_integer(n, "n")
         n_threads = _sampling_n_threads(n_threads)
+        _sampling_memory_budget(
+            memory_budget_bytes, 0, "increase memory_budget_bytes")
         if rng is None:
             rng = np.random.default_rng()
         sampling_options = {}
@@ -2043,6 +2047,8 @@ class StochasticStudentCopula(MultivariateCopula):
         n = validate_integer(n, "n")
         batch_rows = validate_integer(batch_rows, "batch_rows", minimum=1)
         n_threads = _sampling_n_threads(n_threads)
+        _sampling_memory_budget(
+            memory_budget_bytes, 0, "increase memory_budget_bytes")
         if rng is None:
             rng = np.random.default_rng()
 

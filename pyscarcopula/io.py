@@ -89,6 +89,7 @@ def _persisted_classes() -> Mapping[str, type]:
     )
     from pyscarcopula.copula.multivariate.corr_param import CorrelationPreprocessingResult
     from pyscarcopula.copula.multivariate.correlation_policy import CorrelationPolicy
+    from pyscarcopula.copula.multivariate.equicorr_prepared import EquicorrPreparedData
     from pyscarcopula.copula.multivariate.factor_correlation import FactorCorrelation
     from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
     from pyscarcopula.strategy.gas import GASStrategy
@@ -105,7 +106,8 @@ def _persisted_classes() -> Mapping[str, type]:
         *registered_model_types(), GASResult, IndependentResult,
         LatentProcessParams, LatentResult, LBFGSBConfig, MLEResult,
         MultivariateMLEResult, NumericalConfig, PredictConfig, PredictiveState,
-        CorrelationPreprocessingResult, CorrelationPolicy, FactorCorrelation,
+        CorrelationPreprocessingResult, CorrelationPolicy, EquicorrPreparedData,
+        FactorCorrelation,
         AutoTMConfig, GASStrategy, MLEStrategy, SCARJacobiStrategy,
         SCARTMStrategy, PairCopula, VineStructureSelection, RVineMatrix,
         VineEdgeFit, OptimizeResult,
@@ -134,9 +136,12 @@ def _resolve_class(path: str) -> type:
 
 
 def _without_training_data(model: object) -> object:
-    model_copy = copy.deepcopy(model)
-    if hasattr(model_copy, "_last_u"):
-        setattr(model_copy, "_last_u", None)
+    # Serialization only reads the remaining state. Do not copy potentially
+    # large histories or pickle immutable prepared-data metadata to drop them.
+    model_copy = copy.copy(model)
+    for name in ("_last_u", "_last_prepared"):
+        if hasattr(model_copy, name):
+            setattr(model_copy, name, None)
     return model_copy
 
 
@@ -204,7 +209,7 @@ def _to_jsonable(obj: Any) -> Any:
         return {_TYPE: "set", "items": [_to_jsonable(item) for item in sorted(obj)]}
     if isinstance(obj, list):
         return [_to_jsonable(item) for item in obj]
-    if isinstance(obj, dict):
+    if isinstance(obj, (dict, MappingProxyType)):
         return {
             _TYPE: "dict",
             "items": [
@@ -279,6 +284,11 @@ def _from_jsonable(payload: Any, _removed_checked: bool = False) -> Any:
         }
     if tag == "object":
         cls = _resolve_class(payload["class"])
+        # Dataclasses must go through their constructor to validate state.
+        if is_dataclass(cls):
+            raise ValueError(
+                f"Persisted dataclass {payload['class']!r} "
+                "requires the 'dataclass' tag")
         obj = cls.__new__(cls)
         state = {
             key: _from_jsonable(value, True)
@@ -303,10 +313,11 @@ def save_model(model: object, path: str | Path, *, include_data: bool = False) -
         Destination file path.
     include_data : bool, default False
         If False, drop cached training pseudo-observations stored as
-        ``_last_u`` before writing. This reduces file size and avoids
-        persisting the training sample. Fitted state, diagnostics, and cached
-        likelihood values are still saved. Loaded dynamic models may require
-        explicit data passed to prediction methods.
+        ``_last_u`` and prepared training statistics stored as
+        ``_last_prepared`` before writing. This reduces file size and avoids
+        persisting the training sample or its statistics. Fitted state,
+        diagnostics, and cached likelihood values are still saved. Loaded
+        dynamic models may require explicit data passed to prediction methods.
     """
     payload_model = model if include_data else _without_training_data(model)
     envelope = {

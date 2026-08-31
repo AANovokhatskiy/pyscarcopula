@@ -174,8 +174,9 @@ def test_shared_objective_contract_rejects_wrong_phase(control, method, alpha):
 def test_gas_objective_specific_option_reaches_consumer(control, monkeypatch):
     from pyscarcopula.strategy import gas
 
-    def consumer(omega, gamma, beta, u, copula, scaling, score_eps):
+    def consumer(omega, gamma, beta, u, copula, scaling, score_eps, *, fail_value):
         assert scaling == 'unit' and score_eps == .017
+        assert fail_value == 1e10
         return 73.125
 
     monkeypatch.setattr(gas, 'gas_negloglik', consumer)

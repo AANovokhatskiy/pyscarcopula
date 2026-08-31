@@ -4,6 +4,8 @@ Python owns optimizer orchestration and result construction. The compiled
 evaluator owns likelihood, gradients, forward filtering, and state outputs.
 """
 
+import hashlib
+
 import numpy as np
 from scipy.optimize import minimize, Bounds
 
@@ -26,6 +28,7 @@ from pyscarcopula.numerical._scar_ou_config import (
     validate_cpp_config,
 )
 from pyscarcopula.numerical._arrays import (
+    as_float64_array,
     as_pseudo_observation_array,
     validate_float64_allocation,
 )
@@ -355,7 +358,12 @@ _POSTERIOR_WORKSPACE_UNSUPPORTED = object()
 
 
 class _PreparedScarOuPosteriorCache:
-    """Prepared native posterior evaluators scoped to one caller workflow."""
+    """Prepared posterior evaluators scoped to one caller workflow.
+
+    Native evaluators copy their observations. Check mutable histories before
+    reuse so an in-place edit cannot leave that native snapshot stale. This
+    O(T*d) check belongs only to posterior calls, never optimizer evaluations.
+    """
 
     def __init__(self):
         self.cache = {}
@@ -365,11 +373,43 @@ class _PreparedScarOuPosteriorCache:
         self.disabled = True
         self.cache.clear()
 
+    @staticmethod
+    def _history_signature(u):
+        from pyscarcopula.copula.multivariate.equicorr_prepared import (
+            EquicorrPreparedData,
+        )
+
+        # Prepared sufficient statistics have an immutable public contract.
+        if isinstance(u, EquicorrPreparedData):
+            return None
+        if isinstance(u, np.ndarray) and u.dtype.kind in "biuf":
+            # Hash the original numeric storage, including mmap/float32 input,
+            # without making the float64 copy needed by a new evaluator.
+            obs = np.asarray(u)
+        else:
+            obs = as_float64_array(u, name="u")
+        digest = hashlib.blake2b(digest_size=16)
+        if obs.flags.c_contiguous:
+            digest.update(memoryview(obs.reshape(-1)).cast("B"))
+        else:
+            # Avoid materializing a contiguous history just to hash a view.
+            # 4096 elements stay within 64 KiB for supported numeric dtypes.
+            for chunk in np.nditer(
+                    obs, flags=["external_loop", "buffered", "zerosize_ok"],
+                    op_flags=["readonly"], order="C",
+                    buffersize=4096):
+                digest.update(chunk.tobytes())
+        return obs.shape, obs.dtype.str, digest.digest()
+
     def prepared_for(self, u, copula, auto_config):
         if self.disabled:
             return None
         key = (id(u), id(copula), auto_config)
-        prepared = self.cache.get(key, _POSTERIOR_WORKSPACE_MISSING)
+        signature = self._history_signature(u)
+        entry = self.cache.get(key)
+        prepared = (
+            entry[3] if entry is not None and entry[2] == signature
+            else _POSTERIOR_WORKSPACE_MISSING)
         if prepared is _POSTERIOR_WORKSPACE_UNSUPPORTED:
             return None
         if prepared is _POSTERIOR_WORKSPACE_MISSING:
@@ -380,9 +420,12 @@ class _PreparedScarOuPosteriorCache:
                 self.disable()
                 return None
             except _cpp_scar_ou.NativeUnsupported:
-                self.cache[key] = _POSTERIOR_WORKSPACE_UNSUPPORTED
+                self.cache[key] = (
+                    u, copula, signature, _POSTERIOR_WORKSPACE_UNSUPPORTED)
                 return None
-            self.cache[key] = prepared
+            # Strong references prevent identity-key collisions after GC.
+            # Replace this entry on mutation instead of accumulating snapshots.
+            self.cache[key] = (u, copula, signature, prepared)
         try:
             prepared.update_copula(copula)
             return prepared
@@ -390,7 +433,8 @@ class _PreparedScarOuPosteriorCache:
             self.disable()
             return None
         except _cpp_scar_ou.NativeUnsupported:
-            self.cache[key] = _POSTERIOR_WORKSPACE_UNSUPPORTED
+            self.cache[key] = (
+                u, copula, signature, _POSTERIOR_WORKSPACE_UNSUPPORTED)
             return None
 
     def _call(self, u, copula, auto_config, prepared_call, fallback_call):
@@ -401,8 +445,9 @@ class _PreparedScarOuPosteriorCache:
             except AttributeError:
                 self.disable()
             except _cpp_scar_ou.NativeUnsupported:
-                self.cache[(id(u), id(copula), auto_config)] = (
-                    _POSTERIOR_WORKSPACE_UNSUPPORTED)
+                key = (id(u), id(copula), auto_config)
+                self.cache[key] = (
+                    *self.cache[key][:3], _POSTERIOR_WORKSPACE_UNSUPPORTED)
         return fallback_call()
 
     def predictive_mean(self, kappa, mu, nu, u, copula, auto_config):
