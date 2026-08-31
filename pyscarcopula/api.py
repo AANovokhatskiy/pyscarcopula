@@ -492,6 +492,9 @@ def predict(
     predict_config : PredictConfig or None
         Bundled prediction options. Explicit non-default arguments override
         corresponding fields in this object.
+        ``dynamic_conditioning``, ``return_diagnostics``, ``mcmc_steps`` and
+        ``mcmc_burnin`` are vine-only options. Non-vine models reject these
+        direct keywords and non-default values in ``predict_config``.
     **kwargs
         Strategy- or vine-specific prediction options.
 
@@ -502,11 +505,29 @@ def predict(
         diagnostics are requested by a supporting vine model, returns the
         samples together with a diagnostics mapping.
     """
+    vine_option_names = {
+        'dynamic_conditioning', 'return_diagnostics',
+        'mcmc_steps', 'mcmc_burnin',
+    }
+    explicit_vine_options = vine_option_names.intersection(kwargs)
     pcfg = _resolve_predict_config(predict_config, given, horizon, kwargs)
     registry_entry_for(copula)
     if _is_generic_vine(copula):
         return copula.predict(
             n, u=data, predict_config=pcfg, **kwargs)
+
+    unsupported = explicit_vine_options.union(
+        name for name, active in (
+            ('dynamic_conditioning', pcfg.dynamic_conditioning != 'ignore'),
+            ('return_diagnostics', bool(pcfg.return_diagnostics)),
+            ('mcmc_steps', pcfg.mcmc_steps is not None),
+            ('mcmc_burnin', pcfg.mcmc_burnin is not None),
+        ) if active
+    )
+    if unsupported:
+        raise TypeError(
+            f"prediction option(s) supported only by vine models: "
+            f"{sorted(unsupported)}")
 
     if is_multivariate_copula(copula) and "n_threads" in kwargs:
         from pyscarcopula._native.threads import validate_n_threads

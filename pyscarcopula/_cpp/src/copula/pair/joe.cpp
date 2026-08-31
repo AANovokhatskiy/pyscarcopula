@@ -361,7 +361,9 @@ double joe_h_unrotated(double u, double v, double r) {
     return std::exp(log_h);
 }
 
-double joe_h_inverse_unrotated(double q, double given, double r) {
+double joe_h_inverse_with_options(
+    double q, double given, double r,
+    const scar::HInverseOptions& options) {
     const double q_clipped = std::min(std::max(q, kHEps), 1.0 - kHEps);
     const double given_clipped = std::min(std::max(given, kHEps), 1.0 - kHEps);
     if (r < 1.0 + 1e-8) {
@@ -371,11 +373,11 @@ double joe_h_inverse_unrotated(double q, double given, double r) {
     double lo = kHEps;
     double hi = 1.0 - kHEps;
     double t = q_clipped;
-    for (int j = 0; j < 50; ++j) {
+    for (int j = 0; j < options.max_iterations; ++j) {
         t = std::min(std::max(t, lo), hi);
         const double h_val = joe_h_unrotated(t, given_clipped, r);
         const double err = h_val - q_clipped;
-        if (std::abs(err) < 1e-10) {
+        if (std::abs(err) < options.tolerance) {
             break;
         }
         if (err > 0.0) {
@@ -399,6 +401,10 @@ double joe_h_inverse_unrotated(double q, double given, double r) {
     return std::min(std::max(t, kHEps), 1.0 - kHEps);
 }
 
+double joe_h_inverse_unrotated(double q, double given, double r) {
+    return joe_h_inverse_with_options(q, given, r, {1e-10, 50});
+}
+
 }  // namespace scar_internal
 
 namespace scar::copula::pair {
@@ -414,6 +420,7 @@ const PairKernelFunctions& joe_kernel() noexcept {
         scar_internal::joe_h_inverse_unrotated,
         scar_internal::joe_fill_density_grid_row,
         scar_internal::joe_fill_density_gradient_grid_row,
+        scar_internal::joe_h_inverse_with_options,
     };
     return functions;
 }

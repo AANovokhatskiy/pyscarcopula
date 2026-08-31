@@ -18,6 +18,7 @@ from pyscarcopula.strategy._base import (
     lbfgsb_options,
     lbfgsb_overrides,
     register_strategy,
+    reject_unknown_operation_kwargs,
     reject_unknown_strategy_kwargs,
 )
 from pyscarcopula.numerical._scar_ou_config import (
@@ -1819,6 +1820,7 @@ class SCARTMStrategy:
         Uses the same time discretization as the model: dt = 1/(n-1),
         so the full trajectory covers [0, 1].
         """
+        reject_unknown_operation_kwargs(self, 'sample', kwargs)
         if rng is None:
             rng = np.random.default_rng()
 
@@ -1830,7 +1832,8 @@ class SCARTMStrategy:
         return sample_predictive(
             copula, n, r, given=kwargs.get('given'), rng=rng, d=d,
             n_threads=kwargs.get("n_threads", 1),
-            memory_budget_bytes=kwargs.get("memory_budget_bytes"))
+            memory_budget_bytes=kwargs.get("memory_budget_bytes"),
+            config=self.config)
 
     predict = strategy_predict
     predictive_params = predictive_params_from_state_with_rng

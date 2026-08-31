@@ -2,6 +2,7 @@
 
 #include "scar/copula/grid_values.hpp"
 #include "scar/copula/model_statistics.hpp"
+#include "scar/copula/conditional_options.hpp"
 #include "scar/copula/result.hpp"
 #include "scar/copula/spec.hpp"
 #include "scar/core/span.hpp"
@@ -145,7 +146,8 @@ Observations copula_conditional_sample_from_uniforms(
     const std::vector<double>& uniforms,
     const std::vector<double>& r,
     int given_coordinate,
-    double given_value);
+    double given_value,
+    const HInverseOptions* options = nullptr);
 
 /// Reproduce the family-specific pre-refactor sampling transform from
 /// caller-owned RNG draws.  ``draws`` always has two columns; ``auxiliary``

@@ -31,6 +31,7 @@ from pyscarcopula.strategy._base import (
     lbfgsb_overrides,
     register_strategy,
     reject_unknown_strategy_kwargs,
+    reject_unknown_operation_kwargs,
 )
 from pyscarcopula.strategy.predict_helpers import (
     predictive_params_from_state,
@@ -79,8 +80,9 @@ class GASStrategy:
     Parameters
     ----------
     config : NumericalConfig
-    scaling : {'unit', 'fisher'}
-        Score scaling type. ``unit`` is recommended for production.
+    scaling : {'unit', 'fisher'} or None
+        Explicit score scaling override. None uses ``unit`` when fitting and
+        inherits the fitted result's scaling for subsequent operations.
 
     Notes
     -----
@@ -105,7 +107,7 @@ class GASStrategy:
     def __init__(
         self,
         config: NumericalConfig | None = None,
-        scaling: str = "unit",
+        scaling: str | None = None,
         **kwargs,
     ):
         if "backend" in kwargs:
@@ -114,7 +116,22 @@ class GASStrategy:
                 "always used")
         reject_unknown_strategy_kwargs("GAS", kwargs)
         self.config = config or DEFAULT_CONFIG
-        self.scaling = _cpp_gas._scaling_name(scaling)
+        self._explicit_scaling = scaling is not None
+        self.scaling = _cpp_gas._scaling_name(
+            'unit' if scaling is None else scaling)
+
+    def __setstate__(self, state):
+        """Restore JSON/pickle state without changing legacy scaling semantics."""
+        self.__dict__.update(state)
+        # Before explicit overrides, post-fit operations used result.scaling.
+        self._explicit_scaling = state.get("_explicit_scaling", False)
+
+    def _result_scaling(self, result: GASResult) -> str:
+        """Use an explicit constructor override, otherwise inherit the fit."""
+        return (
+            self.scaling if self._explicit_scaling
+            else _cpp_gas._scaling_name(result.scaling)
+        )
 
     def _score_eps(self, result: GASResult | None = None) -> float:
         if result is None:
@@ -313,7 +330,7 @@ class GASStrategy:
                 return model_policy.optimizer_failure_evaluation(
                     joint,
                     joint0,
-                    1e10,
+                    self.config.fail_value,
                     directional_gradient=True,
                 )
 
@@ -492,7 +509,7 @@ class GASStrategy:
                 return model_policy.optimizer_failure_evaluation(
                     x,
                     gamma0,
-                    1e10,
+                    self.config.fail_value,
                     directional_gradient=True,
                 )
 
@@ -601,7 +618,7 @@ class GASStrategy:
             p.beta,
             u,
             copula,
-            result.scaling,
+            self._result_scaling(result),
             self._score_eps(result),
         )
 
@@ -619,7 +636,7 @@ class GASStrategy:
             p.beta,
             u,
             copula,
-            result.scaling,
+            self._result_scaling(result),
             self._score_eps(result),
         )
         return r_path
@@ -648,7 +665,7 @@ class GASStrategy:
             p.beta,
             u,
             copula,
-            result.scaling,
+            self._result_scaling(result),
             self._score_eps(result),
         )
 
@@ -669,7 +686,7 @@ class GASStrategy:
             p.beta,
             u,
             copula,
-            result.scaling,
+            self._result_scaling(result),
             self._score_eps(result),
         )
 
@@ -698,6 +715,7 @@ class GASStrategy:
 
     def sample(self, copula, u, result, n, rng=None, **kwargs):
         """Recursively sample using native GAS state updates."""
+        reject_unknown_operation_kwargs(self, 'sample', kwargs)
         n = validate_positive_int(n, "n")
         if rng is None:
             rng = np.random.default_rng()
@@ -733,7 +751,7 @@ class GASStrategy:
                 p.beta,
                 draws,
                 copula,
-                result.scaling,
+                self._result_scaling(result),
                 score_eps,
             )
 
@@ -742,7 +760,7 @@ class GASStrategy:
             p.gamma,
             p.beta,
             copula,
-            result.scaling,
+            self._result_scaling(result),
             score_eps,
         )
         g_t = state.g
@@ -759,6 +777,7 @@ class GASStrategy:
                 d=d,
                 n_threads=kwargs.get("n_threads", 1),
                 memory_budget_bytes=kwargs.get("memory_budget_bytes"),
+                config=self.config,
             )
             samples[t] = obs[0]
             if t < n - 1:
@@ -769,7 +788,7 @@ class GASStrategy:
                     g_t,
                     obs,
                     copula,
-                    result.scaling,
+                    self._result_scaling(result),
                     score_eps,
                 )
                 g_t = update.g_next
@@ -777,6 +796,7 @@ class GASStrategy:
         return samples
 
     def predict(self, copula, u, result, n, rng=None, **kwargs):
+        reject_unknown_operation_kwargs(self, 'predict', kwargs)
         n = validate_positive_int(n, "n")
         d = copula_dimension(copula, u)
         if d is None:
@@ -793,6 +813,9 @@ class GASStrategy:
 
     def predictive_state(self, copula, u, result, **kwargs):
         if u is None or len(u) == 0:
+            if self._result_scaling(result) != result.scaling:
+                raise ValueError(
+                    "prediction history is required to override GAS scaling")
             r_t = float(result.r_last)
         else:
             p = result.params
@@ -802,7 +825,7 @@ class GASStrategy:
                 p.beta,
                 u,
                 copula,
-                result.scaling,
+                self._result_scaling(result),
                 self._score_eps(result),
                 horizon=kwargs.get("horizon", "next"),
             )
@@ -840,7 +863,7 @@ class GASStrategy:
             g_t,
             u,
             copula,
-            result.scaling,
+            self._result_scaling(result),
             self._score_eps(result),
         )
         return PredictiveState(
@@ -873,7 +896,7 @@ class GASStrategy:
             p.gamma,
             p.beta,
             copula,
-            result.scaling,
+            self._result_scaling(result),
             self._score_eps(result),
         )
         return PredictiveState(

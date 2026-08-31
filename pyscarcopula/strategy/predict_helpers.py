@@ -10,6 +10,7 @@ from pyscarcopula.strategy._base import (
     is_multivariate_copula,
     is_pair_copula,
     supports_conditional_sampling,
+    reject_unknown_operation_kwargs,
 )
 
 
@@ -44,7 +45,8 @@ def validate_given(given):
     return out
 
 
-def conditional_sample_bivariate(copula, n, r, given=None, rng=None):
+def conditional_sample_bivariate(
+        copula, n, r, given=None, rng=None, *, config=None):
     """Sample from a bivariate copula with optional fixed coordinates."""
     from pyscarcopula._native.registry import registry_entry_for
 
@@ -76,18 +78,25 @@ def conditional_sample_bivariate(copula, n, r, given=None, rng=None):
 
     from pyscarcopula._native import pair as copula_native
     given_coordinate, given_value = next(iter(given.items()))
+    inverse_options = {}
+    if config is not None:
+        inverse_options = {
+            'bisection_tol': config.bisection_tol,
+            'bisection_maxiter': config.bisection_maxiter,
+        }
     return copula_native.conditional_sample_from_uniforms(
         copula,
         z,
         r_arr,
         given_coordinate=given_coordinate,
         given_value=given_value,
+        **inverse_options,
     )
 
 
 def sample_predictive(
         copula, n, r, given=None, rng=None, d=None, *,
-        n_threads=1, memory_budget_bytes=None):
+        n_threads=1, memory_budget_bytes=None, config=None):
     """Sample from a predictive parameter path.
 
     Conditional ``given`` sampling is delegated to the registered built-in
@@ -112,7 +121,7 @@ def sample_predictive(
 
     if is_pair_copula(copula):
         return conditional_sample_bivariate(
-            copula, n, r, given=given, rng=rng)
+            copula, n, r, given=given, rng=rng, config=config)
 
     if supports_conditional_sampling(copula):
         if not has_dynamic_scalar_parameter(copula):
@@ -127,11 +136,13 @@ def sample_predictive(
             "given= conditional sampling is only implemented for bivariate "
             "copulas and vine models"
         )
-    return conditional_sample_bivariate(copula, n, r, given=given, rng=rng)
+    return conditional_sample_bivariate(
+        copula, n, r, given=given, rng=rng, config=config)
 
 
 def predict_from_strategy(strategy, copula, u, result, n, rng=None, **kwargs):
     """Shared strategy predict implementation for predictive parameter paths."""
+    reject_unknown_operation_kwargs(strategy, 'predict', kwargs)
     if rng is None:
         rng = np.random.default_rng()
     r = strategy.predictive_params(copula, u, result, n, rng=rng, **kwargs)
@@ -139,7 +150,8 @@ def predict_from_strategy(strategy, copula, u, result, n, rng=None, **kwargs):
     return sample_predictive(
         copula, n, r, given=kwargs.get("given"), rng=rng, d=d,
         n_threads=kwargs.get("n_threads", 1),
-        memory_budget_bytes=kwargs.get("memory_budget_bytes"))
+        memory_budget_bytes=kwargs.get("memory_budget_bytes"),
+        config=getattr(strategy, 'config', None))
 
 
 def strategy_predict(strategy, copula, u, result, n, rng=None, **kwargs):

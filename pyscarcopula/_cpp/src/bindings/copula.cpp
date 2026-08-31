@@ -796,7 +796,16 @@ void bind_copula(py::module_& m) {
                uniforms,
            py::array_t<double, py::array::c_style | py::array::forcecast> r,
            int given_coordinate,
-           double given_value) {
+           double given_value,
+           std::optional<double> bisection_tol,
+           std::optional<int> bisection_maxiter) {
+            scar::HInverseOptions options;
+            if (bisection_tol) {
+                options.tolerance = *bisection_tol;
+            }
+            if (bisection_maxiter) {
+                options.max_iterations = *bisection_maxiter;
+            }
             const std::vector<double> uniform_values =
                 vector_from_array(uniforms);
             const std::vector<double> parameters = vector_from_array(r);
@@ -808,7 +817,8 @@ void bind_copula(py::module_& m) {
                     uniform_values,
                     parameters,
                     given_coordinate,
-                    given_value);
+                    given_value,
+                    bisection_tol || bisection_maxiter ? &options : nullptr);
             }
             return pair_observations_to_array(result);
         },
@@ -816,7 +826,10 @@ void bind_copula(py::module_& m) {
         py::arg("uniforms"),
         py::arg("r"),
         py::arg("given_coordinate"),
-        py::arg("given_value"));
+        py::arg("given_value"),
+        py::kw_only(),
+        py::arg("bisection_tol") = py::none(),
+        py::arg("bisection_maxiter") = py::none());
 
     m.def(
         "copula_pdf_grid",

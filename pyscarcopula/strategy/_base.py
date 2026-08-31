@@ -545,6 +545,24 @@ def partition_strategy_fit_kwargs(
     return constructor_kwargs, fit_kwargs
 
 
+def reject_unknown_operation_kwargs(strategy, operation: str, kwargs):
+    """Validate direct built-in operations without accepting constructor keys.
+
+    The aliases are also used by the public router. Custom strategies retain
+    their variadic extension contract unless they opt into strict validation.
+    """
+    if not getattr(strategy, '_strict_keyword_contract', False):
+        return
+    reject_legacy_tol(kwargs)
+    allowed = getattr(strategy, '_operation_keyword_aliases', {}).get(
+        operation, ())
+    unexpected = sorted(set(kwargs).difference(allowed))
+    if unexpected:
+        raise TypeError(
+            f"unexpected {type(strategy).__name__} keyword argument(s) "
+            f"for {operation}: {unexpected}")
+
+
 def partition_strategy_operation_kwargs(method: str, operation: str, kwargs):
     """Separate constructor options from one operation's keyword contract.
 

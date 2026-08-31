@@ -200,7 +200,8 @@ class NumericalConfig:
     stochastic_student_scar_optimizer: LBFGSBConfig = field(
         default_factory=lambda: DEFAULT_STOCHASTIC_STUDENT_SCAR_OPTIMIZER)
 
-    # Bisection (h-function inversion)
+    # Iterative h-function inversion for conditional Gumbel/Joe sampling.
+    # Gumbel tests the log-equation residual; Joe tests the h-value residual.
     bisection_tol: float = 1e-10
     bisection_maxiter: int = 60
 
@@ -212,6 +213,13 @@ class NumericalConfig:
     def __post_init__(self) -> None:
         resolved_threads = validate_n_threads(self.n_threads)
         object.__setattr__(self, 'n_threads', resolved_threads)
+        if not np.isfinite(self.bisection_tol) or self.bisection_tol <= 0:
+            raise ValueError('bisection_tol must be positive and finite')
+        if isinstance(self.bisection_maxiter, (bool, np.bool_)) or not isinstance(
+                self.bisection_maxiter, (int, np.integer)):
+            raise TypeError('bisection_maxiter must be a positive integer')
+        if self.bisection_maxiter <= 0:
+            raise ValueError('bisection_maxiter must be positive')
         object.__setattr__(
             self, 'mle_optimizer',
             DEFAULT_MLE_OPTIMIZER.merged(self.mle_optimizer))

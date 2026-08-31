@@ -34,19 +34,11 @@ double evaluate_rotated_conditional(
     int rotation,
     ConditionalKernel kernel) {
 
-    if (!is_valid_rotation(rotation) || kernel == nullptr) {
+    if (kernel == nullptr) {
         return std::numeric_limits<double>::quiet_NaN();
     }
-
-    double rotated_first = 0.0;
-    double rotated_second = 0.0;
-    apply_rotation(
-        first, second, rotation, rotated_first, rotated_second);
-    const double value = kernel(rotated_first, rotated_second, parameter);
-    if (rotation == 90 || rotation == 180) {
-        return 1.0 - value;
-    }
-    return value;
+    return evaluate_rotated_conditional_with(
+        first, second, parameter, rotation, kernel);
 }
 
 }  // namespace scar::copula

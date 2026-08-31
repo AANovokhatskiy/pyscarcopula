@@ -1,5 +1,7 @@
 #pragma once
 
+#include "scar/copula/conditional_options.hpp"
+
 #include <vector>
 
 namespace scar::copula::pair {
@@ -15,6 +17,8 @@ using PairDensityGradientKernel = void (*)(
     double&,
     double&);
 using PairConditionalKernel = double (*)(double, double, double);
+using PairConfiguredInverseKernel = double (*)(
+    double, double, double, const HInverseOptions&);
 using PairDensityGridKernel = void (*)(
     double,
     double,
@@ -42,6 +46,7 @@ struct PairKernelFunctions {
     PairConditionalKernel inverse_h = nullptr;
     PairDensityGridKernel fill_density_grid_row = nullptr;
     PairDensityGradientGridKernel fill_density_gradient_grid_row = nullptr;
+    PairConfiguredInverseKernel inverse_h_with_options = nullptr;
 };
 
 }  // namespace scar::copula::pair

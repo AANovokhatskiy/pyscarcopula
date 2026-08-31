@@ -131,6 +131,14 @@ numerically. Together with the Fisher floor and score clipping, this can
 produce a piecewise, step-sensitive objective. Prefer `scaling='unit'` unless
 Fisher behavior is specifically under study.
 
+Post-fit API operations inherit `GASResult.scaling` unless an explicit
+`scaling=` override is supplied. The override applies to likelihood,
+filtering, sampling, and prediction without changing the fitted result.
+Likewise, `GASStrategy()` inherits the result's scaling for post-fit calls;
+its fit default remains `unit`. Overriding scaling when predicting requires
+the observation history, since the cached final parameter belongs to the
+original scaling.
+
 GAS `sample` and `predict` require a positive integer draw count. Both accept
 `memory_budget_bytes=` as a pre-allocation guard. Fused bivariate `sample`
 accounts for its caller-owned RNG draws, native result staging, and final
@@ -937,6 +945,19 @@ result = fit(copula, u, method='gas', config=cfg)
 ```
 
 Per-call keyword arguments override the config values for that fit.
+
+For conditional bivariate `api.sample` and `api.predict`,
+`bisection_tol` and `bisection_maxiter` configure the iterative inverse-h
+solvers used by Gumbel and Joe (including rotations). The default tolerance
+is `1e-10`, and the iteration limit is `60`. Gumbel tests its transformed
+log-equation residual; Joe tests the h-function residual. A small iteration
+limit can return an inaccurate approximation. These settings do not affect
+analytical inverse-h families or unconditional sampling. Direct low-level
+inverse-h calls without a config retain their established family defaults.
+
+GAS fit uses `config.fail_value` when a numerical objective evaluation raises
+`FloatingPointError`, including joint shrinkage fits. Argument and programming
+errors such as `TypeError` and `ValueError` propagate to the caller.
 
 Multivariate Student models use separate GAS optimizer defaults,
 so changing them does not affect bivariate GAS fits or vine edges:

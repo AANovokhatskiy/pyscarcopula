@@ -23,6 +23,7 @@ from pyscarcopula.strategy._base import (
     lbfgsb_overrides,
     register_strategy,
     reject_unknown_mle_kwargs,
+    reject_unknown_operation_kwargs,
 )
 from pyscarcopula.strategy.predict_helpers import (
     predictive_params_from_state,
@@ -280,6 +281,7 @@ class MLEStrategy:
 
     def sample(self, copula, u, result, n, rng=None, **kwargs):
         """Sample n observations with constant r = theta_mle."""
+        reject_unknown_operation_kwargs(self, 'sample', kwargs)
         d = copula_dimension(copula, u)
         validate_float64_allocation(
             (n, d), name="MLE sample output",
@@ -293,12 +295,18 @@ class MLEStrategy:
         return sample_predictive(
             copula, n, r, given=kwargs.get('given'), rng=rng, d=d,
             n_threads=kwargs.get("n_threads", 1),
-            memory_budget_bytes=kwargs.get("memory_budget_bytes"))
+            memory_budget_bytes=kwargs.get("memory_budget_bytes"),
+            config=self.config)
 
     def predict(self, copula, u, result, n, rng=None, **kwargs):
         """Predict from the supplied static result without refitting its model."""
+        reject_unknown_operation_kwargs(self, 'predict', kwargs)
         if isinstance(result, MultivariateMLEResult):
-            return self.sample(copula, u, result, n, rng=rng, **kwargs)
+            sample_kwargs = {
+                key: value for key, value in kwargs.items()
+                if key in self._operation_keyword_aliases['sample']
+            }
+            return self.sample(copula, u, result, n, rng=rng, **sample_kwargs)
         return strategy_predict(self, copula, u, result, n, rng=rng, **kwargs)
 
     predictive_params = predictive_params_from_state

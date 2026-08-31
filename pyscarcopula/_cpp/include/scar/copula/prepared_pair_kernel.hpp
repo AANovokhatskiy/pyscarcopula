@@ -63,7 +63,9 @@ public:
         double parameter,
         double& first_next,
         double& second_next) const;
-    double inverse_h(double quantile, double given, double parameter) const;
+    double inverse_h(
+        double quantile, double given, double parameter,
+        const HInverseOptions* options = nullptr) const;
 
     bool is_unrotated_gaussian() const noexcept;
     double prepare_conditional_value(double value) const;

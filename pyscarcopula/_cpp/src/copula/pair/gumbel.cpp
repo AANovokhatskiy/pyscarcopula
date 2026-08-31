@@ -250,7 +250,9 @@ double gumbel_h_unrotated(double u, double v, double r) {
     return std::exp(log_h);
 }
 
-double gumbel_h_inverse_unrotated(double q, double given, double r) {
+double gumbel_h_inverse_with_options(
+    double q, double given, double r,
+    const scar::HInverseOptions& options) {
     const double q_clipped = std::min(std::max(q, kHEps), 1.0 - kHEps);
     const double given_clipped = std::min(std::max(given, kHEps), 1.0 - kHEps);
     if (r < 1.0 + 1e-8) {
@@ -275,10 +277,10 @@ double gumbel_h_inverse_unrotated(double q, double given, double r) {
     }
 
     double A = std::min(std::max(y - std::log(q_clipped), lo), hi);
-    for (int j = 0; j < 32; ++j) {
+    for (int j = 0; j < options.max_iterations; ++j) {
         A = std::min(std::max(A, lo), hi);
         const double f = (1.0 - r) * std::log(A) - A - target;
-        if (std::abs(f) < 1e-12) {
+        if (std::abs(f) < options.tolerance) {
             break;
         }
         if (f > 0.0) {
@@ -305,6 +307,10 @@ double gumbel_h_inverse_unrotated(double q, double given, double r) {
     return std::min(std::max(value, kHEps), 1.0 - kHEps);
 }
 
+double gumbel_h_inverse_unrotated(double q, double given, double r) {
+    return gumbel_h_inverse_with_options(q, given, r, {1e-12, 32});
+}
+
 }  // namespace scar_internal
 
 namespace scar::copula::pair {
@@ -320,6 +326,7 @@ const PairKernelFunctions& gumbel_kernel() noexcept {
         scar_internal::gumbel_h_inverse_unrotated,
         scar_internal::gumbel_fill_density_grid_row,
         scar_internal::gumbel_fill_density_gradient_grid_row,
+        scar_internal::gumbel_h_inverse_with_options,
     };
     return functions;
 }

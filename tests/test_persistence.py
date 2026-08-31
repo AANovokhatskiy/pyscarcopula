@@ -3,6 +3,7 @@
 import importlib
 import json
 import operator
+import pickle
 
 import numpy as np
 import pytest
@@ -20,12 +21,14 @@ from pyscarcopula._utils import pobs
 from pyscarcopula._types import (
     GASResult,
     LatentResult,
+    NumericalConfig,
     gas_params,
     jacobi_params,
     ou_params,
 )
 from pyscarcopula.api import log_likelihood, predict, predictive_mean, sample
 from pyscarcopula.io import _from_jsonable, _to_jsonable
+from pyscarcopula.strategy.gas import GASStrategy
 
 
 def test_removed_cvine_artifact_is_rejected_before_class_import(
@@ -130,6 +133,99 @@ def test_legacy_gas_backend_field_is_ignored_on_load():
     assert loaded.copula_name == result.copula_name
     np.testing.assert_allclose(loaded.params.values, result.params.values)
     assert not hasattr(loaded, "backend")
+
+
+def _roundtrip_gas_strategy(strategy, tmp_path, serialization):
+    if serialization == "pickle":
+        return pickle.loads(pickle.dumps(strategy))
+    path = tmp_path / "gas_strategy.json"
+    persistence.save_model(strategy, path, include_data=True)
+    return load_model(path, expected_type=GASStrategy)
+
+
+@pytest.fixture(params=["json", "pickle"])
+def legacy_gas_strategy(request, tmp_path, saved_scaling):
+    strategy = GASStrategy(
+        config=NumericalConfig(gas_score_eps=0.00037), scaling=saved_scaling)
+    # Older strategies persisted only config and scaling; no override flag.
+    del strategy._explicit_scaling
+    return _roundtrip_gas_strategy(strategy, tmp_path, request.param)
+
+
+@pytest.mark.parametrize("saved_scaling", ["unit", "fisher"])
+@pytest.mark.parametrize("result_scaling", ["unit", "fisher"])
+@pytest.mark.parametrize("entry", [
+    "log_likelihood", "predictive_mean", "mixture_h", "sample", "predict",
+])
+def test_legacy_gas_strategy_inherits_result_scaling(
+        legacy_gas_strategy, saved_scaling, result_scaling, entry):
+    copula = GumbelCopula(rotate=180)
+    u = np.random.default_rng(314).uniform(0.12, 0.88, (16, 2))
+    result = GASResult(
+        method="GAS", copula_name=copula.name, success=True,
+        log_likelihood=0.0, params=gas_params(0.13, 0.055, 0.61),
+        scaling=result_scaling, score_eps=0.00037, r_last=2.1)
+
+    def call(strategy):
+        args = (copula, u, result)
+        kwargs = {}
+        if entry in {"sample", "predict"}:
+            args += (7,)
+            kwargs["rng"] = np.random.default_rng(617)
+        return getattr(strategy, entry)(*args, **kwargs)
+
+    np.testing.assert_allclose(call(legacy_gas_strategy), call(GASStrategy()))
+    assert legacy_gas_strategy.scaling == saved_scaling
+    assert result.scaling == result_scaling
+
+
+@pytest.mark.parametrize("saved_scaling", ["unit", "fisher"])
+def test_legacy_gas_strategy_preserves_fit_options_and_can_be_resaved(
+        legacy_gas_strategy, saved_scaling, tmp_path):
+    config = NumericalConfig(gas_score_eps=0.00037)
+    assert legacy_gas_strategy.config == config
+    copula = GumbelCopula(rotate=180)
+    u = np.random.default_rng(314).uniform(0.12, 0.88, (16, 2))
+    parameters = gas_params(0.13, 0.055, 0.61)
+    expected = GASStrategy(config=config, scaling=saved_scaling)
+    assert legacy_gas_strategy.objective(
+        copula, u, parameters.values) == pytest.approx(
+            expected.objective(copula, u, parameters.values))
+
+    result = GASResult(
+        method="GAS", copula_name=copula.name, success=True,
+        log_likelihood=0.0, params=parameters,
+        scaling="fisher" if saved_scaling == "unit" else "unit", r_last=2.1)
+    path = tmp_path / "resaved_strategy.json"
+    persistence.save_model(legacy_gas_strategy, path)
+    reloaded = load_model(path, expected_type=GASStrategy)
+    assert reloaded.config == config
+    assert reloaded.scaling == saved_scaling
+    # Cached prediction must not require history for a legacy strategy.
+    np.testing.assert_array_equal(
+        reloaded.predict(copula, None, result, 7, rng=np.random.default_rng(617)),
+        GASStrategy().predict(
+            copula, None, result, 7, rng=np.random.default_rng(617)))
+
+
+@pytest.mark.parametrize("serialization", ["json", "pickle"])
+@pytest.mark.parametrize("scaling", [None, "unit", "fisher"])
+@pytest.mark.parametrize("result_scaling", ["unit", "fisher"])
+def test_gas_strategy_roundtrip_preserves_scaling_override(
+        tmp_path, serialization, scaling, result_scaling):
+    strategy = GASStrategy(scaling=scaling)
+    loaded = _roundtrip_gas_strategy(strategy, tmp_path, serialization)
+    copula = GumbelCopula(rotate=180)
+    u = np.random.default_rng(314).uniform(0.12, 0.88, (16, 2))
+    result = GASResult(
+        method="GAS", copula_name=copula.name, success=True,
+        log_likelihood=0.0, params=gas_params(0.13, 0.055, 0.61),
+        scaling=result_scaling, score_eps=0.00037, r_last=2.1)
+    assert loaded._explicit_scaling is (scaling is not None)
+    assert loaded.scaling == strategy.scaling
+    np.testing.assert_array_equal(
+        loaded.predict(copula, u, result, 7, rng=np.random.default_rng(617)),
+        strategy.predict(copula, u, result, 7, rng=np.random.default_rng(617)))
 
 
 def test_legacy_scar_backend_field_is_ignored_on_load():

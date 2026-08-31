@@ -166,8 +166,17 @@ def sample_from_rng_draws(copula, draws, auxiliary, r) -> np.ndarray:
 
 
 def conditional_sample_from_uniforms(
-        copula, uniforms, r, *, given_coordinate, given_value) -> np.ndarray:
-    """Apply the native fixed-uniform inverse-h conditional transform."""
+        copula, uniforms, r, *, given_coordinate, given_value,
+        bisection_tol=None, bisection_maxiter=None) -> np.ndarray:
+    """Apply inverse-h, optionally configuring iterative Gumbel/Joe solvers."""
+    options = {}
+    if bisection_tol is not None:
+        options['bisection_tol'] = bisection_tol
+    if bisection_maxiter is not None:
+        if isinstance(bisection_maxiter, (bool, np.bool_)) or not isinstance(
+                bisection_maxiter, (int, np.integer)):
+            raise TypeError('bisection_maxiter must be a positive integer')
+        options['bisection_maxiter'] = int(bisection_maxiter)
     module, spec = _module_and_spec(copula)
     draws = _vector(uniforms, name="uniforms")
     parameters = _vector(0.0 if r is None else r)
@@ -177,6 +186,7 @@ def conditional_sample_from_uniforms(
         parameters,
         int(given_coordinate),
         float(given_value),
+        **options,
     )
     return _finite(values, "copula_conditional_sample_from_uniforms")
 

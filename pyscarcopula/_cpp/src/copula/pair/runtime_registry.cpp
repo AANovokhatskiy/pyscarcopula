@@ -364,8 +364,17 @@ void PreparedPairKernel::h_pair(
 double PreparedPairKernel::inverse_h(
     double quantile,
     double given,
-    double parameter) const {
+    double parameter,
+    const HInverseOptions* options) const {
 
+    if (is_supported() && options != nullptr
+        && functions_->inverse_h_with_options != nullptr) {
+        return copula::evaluate_rotated_conditional_with(
+            quantile, given, parameter, static_cast<int>(rotation_),
+            [this, options](double q, double v, double r) {
+                return functions_->inverse_h_with_options(q, v, r, *options);
+            });
+    }
     return is_supported() && functions_->inverse_h != nullptr
         ? copula::evaluate_rotated_conditional(
             quantile,

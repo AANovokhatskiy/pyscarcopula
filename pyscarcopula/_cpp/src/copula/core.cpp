@@ -433,8 +433,17 @@ Observations copula_conditional_sample_from_uniforms(
     const std::vector<double>& uniforms,
     const std::vector<double>& r,
     int given_coordinate,
-    double given_value) {
+    double given_value,
+    const HInverseOptions* options) {
 
+    if (options != nullptr) {
+        if (!std::isfinite(options->tolerance) || options->tolerance <= 0.0) {
+            throw std::invalid_argument("bisection_tol must be positive and finite");
+        }
+        if (options->max_iterations <= 0) {
+            throw std::invalid_argument("bisection_maxiter must be positive");
+        }
+    }
     if (given_coordinate != 0 && given_coordinate != 1) {
         throw std::invalid_argument(
             "conditional pair sampling coordinate must be 0 or 1");
@@ -468,7 +477,8 @@ Observations copula_conditional_sample_from_uniforms(
         const double sampled = kernel.inverse_h(
             quantile,
             given_value,
-            r_value(r, static_cast<std::int64_t>(row)));
+            r_value(r, static_cast<std::int64_t>(row)),
+            options);
         if (!std::isfinite(sampled)
             || !(sampled >= 0.0 && sampled <= 1.0)) {
             throw std::invalid_argument(

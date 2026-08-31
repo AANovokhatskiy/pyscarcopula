@@ -31,6 +31,7 @@ from pyscarcopula.strategy._base import (
     lbfgsb_options,
     lbfgsb_overrides,
     register_strategy,
+    reject_unknown_operation_kwargs,
     reject_unknown_strategy_kwargs,
     validate_copula_data,
 )
@@ -935,6 +936,7 @@ class SCARJacobiStrategy:
 
     def sample(self, copula, u, result, n, rng=None, **kwargs):
         """Sample the fitted discrete Jacobi Markov model unconditionally."""
+        reject_unknown_operation_kwargs(self, 'sample', kwargs)
         if isinstance(n, (bool, np.bool_)) or not isinstance(
                 n, (int, np.integer)):
             raise TypeError("n must be a non-negative integer")
@@ -962,6 +964,7 @@ class SCARJacobiStrategy:
             given=kwargs.get("given"),
             rng=rng,
             d=d,
+            config=self.config,
         )
 
     def model_sample_params(self, copula, result, n, rng=None, **kwargs):
