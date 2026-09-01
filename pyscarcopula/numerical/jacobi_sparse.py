@@ -9,6 +9,7 @@ import numpy as np
 from pyscarcopula._native import jacobi as jacobi_native
 from pyscarcopula.numerical._arrays import (
     as_float64_array,
+    as_integer_array,
     validate_float64_allocation,
     validate_integer,
     validate_positive_int,
@@ -32,10 +33,10 @@ class SparseJacobiTransition:
     counts: np.ndarray
 
     def __post_init__(self):
-        indices = np.asarray(self.indices, dtype=np.intp)
+        indices = as_integer_array(self.indices, name="indices", dtype=np.intp)
         probabilities = as_float64_array(
             self.probabilities, name="probabilities")
-        counts = np.asarray(self.counts, dtype=np.intp)
+        counts = as_integer_array(self.counts, name="counts", dtype=np.intp)
         if indices.ndim != 2 or probabilities.shape != indices.shape:
             raise ValueError(
                 "indices and probabilities must have the same 2D shape")

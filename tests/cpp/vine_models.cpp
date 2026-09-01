@@ -461,18 +461,19 @@ int run_vine_model_tests() {
     // The dynamic traversal requires a complete Rosenblatt plan, whereas
     // the generic density plan may omit residuals and final h outputs.
     for (int invalid_kind = 0; invalid_kind < 3; ++invalid_kind) {
-        auto invalid_plan = r_plan;
+        auto invalid_rosenblatt_plan = r_plan;
         if (invalid_kind == 0) {
-            invalid_plan.residual_nodes.clear();
+            invalid_rosenblatt_plan.residual_nodes.clear();
         } else if (invalid_kind == 1) {
-            invalid_plan.residual_nodes.resize(1);
+            invalid_rosenblatt_plan.residual_nodes.resize(1);
         } else {
-            invalid_plan.output1_nodes.back() = -1;
-            invalid_plan.output2_nodes.back() = -1;
-            invalid_plan.residual_nodes = invalid_plan.input_nodes;
+            invalid_rosenblatt_plan.output1_nodes.back() = -1;
+            invalid_rosenblatt_plan.output2_nodes.back() = -1;
+            invalid_rosenblatt_plan.residual_nodes =
+                invalid_rosenblatt_plan.input_nodes;
         }
         const auto invalid = scar::dynamic_rvine_rosenblatt_transform(
-            invalid_plan, dynamic_edges, dynamic_parameters,
+            invalid_rosenblatt_plan, dynamic_edges, dynamic_parameters,
             view(observations), 5, 3, 1, true);
         if (invalid.status != scar::Status::InvalidSize
             || !invalid.residuals.empty() || !invalid.node_values.empty()) {

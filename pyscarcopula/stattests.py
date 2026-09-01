@@ -457,12 +457,19 @@ def _bivariate_rosenblatt_from_result(copula, u, fit_result,
 
 
 def _bootstrap_fit_kwargs(fit_result, fit_kwargs):
-    """Warm-start bootstrap refits from the original fitted parameters."""
+    """Restore fitted defaults while retaining explicit refit settings."""
     out = dict(fit_kwargs)
+    method = fit_result.method.upper()
+    if method == 'GAS' and out.get('score_eps') is None:
+        from pyscarcopula._types import DEFAULT_CONFIG
+
+        config = out.get('config')
+        out['score_eps'] = (
+            config.gas_score_eps if config is not None else
+            getattr(fit_result, 'score_eps', DEFAULT_CONFIG.gas_score_eps))
     if 'alpha0' in out or 'gamma0' in out:
         return out
 
-    method = fit_result.method.upper()
     if method == 'MLE' and hasattr(fit_result, 'copula_param'):
         out['alpha0'] = np.array([fit_result.copula_param], dtype=np.float64)
     else:
@@ -582,7 +589,7 @@ def _bootstrap_prepare_gaussian(
     return copula
 
 
-def _bootstrap_simulate_gaussian(
+def _bootstrap_simulate_static_multivariate(
         copula, u, fit_result, rng, K, grid_range, n_threads, config):
     return copula.sample(len(u), rng=rng, n_threads=n_threads)
 
@@ -712,9 +719,9 @@ def _bootstrap_prepare_equicorr(
     return copula
 
 
-def _bootstrap_simulate_equicorr(
+def _bootstrap_simulate_dynamic_multivariate(
         copula, u, fit_result, rng, K, grid_range, n_threads, config):
-    return copula.sample(len(u), u=u, rng=rng)
+    return copula.sample(len(u), u=u, rng=rng, n_threads=n_threads)
 
 
 def _bootstrap_refit_dynamic(
@@ -818,12 +825,6 @@ def _bootstrap_prepare_stochastic_student(
     return copula
 
 
-def _bootstrap_simulate_stochastic_student(
-        copula, u, fit_result, rng, K, grid_range, n_threads, config):
-    return copula.sample(
-        len(u), u=u, rng=rng, n_threads=n_threads)
-
-
 def _bootstrap_statistic_stochastic_student(
         copula, u_boot, fit_result, K, grid_range):
     e_boot = stochastic_student_rosenblatt_transform(
@@ -851,14 +852,14 @@ _BOOTSTRAP_ADAPTERS = {
     'gaussian': _BootstrapAdapter(
         capture=_bootstrap_capture_none,
         prepare=_bootstrap_prepare_gaussian,
-        simulate=_bootstrap_simulate_gaussian,
+        simulate=_bootstrap_simulate_static_multivariate,
         refit=_bootstrap_refit_static_multivariate,
         statistic=_bootstrap_statistic_gaussian,
     ),
     'student': _BootstrapAdapter(
         capture=_bootstrap_capture_none,
         prepare=_bootstrap_prepare_student,
-        simulate=_bootstrap_simulate_fitted_model,
+        simulate=_bootstrap_simulate_static_multivariate,
         refit=_bootstrap_refit_static_multivariate,
         statistic=_bootstrap_statistic_student,
     ),
@@ -872,14 +873,14 @@ _BOOTSTRAP_ADAPTERS = {
     'equicorr': _BootstrapAdapter(
         capture=_bootstrap_capture_none,
         prepare=_bootstrap_prepare_equicorr,
-        simulate=_bootstrap_simulate_equicorr,
+        simulate=_bootstrap_simulate_dynamic_multivariate,
         refit=_bootstrap_refit_dynamic,
         statistic=_bootstrap_statistic_equicorr,
     ),
     'stochastic_student': _BootstrapAdapter(
         capture=_bootstrap_capture_stochastic_student,
         prepare=_bootstrap_prepare_stochastic_student,
-        simulate=_bootstrap_simulate_stochastic_student,
+        simulate=_bootstrap_simulate_dynamic_multivariate,
         refit=_bootstrap_refit_dynamic,
         statistic=_bootstrap_statistic_stochastic_student,
     ),
@@ -984,6 +985,10 @@ def _bootstrap_gof(
             "bootstrap_fit_kwargs cannot override to_pobs; "
             "bootstrap samples are already pseudo-observations")
     validate_model_fit_kwargs(copula, fit_result.method, fit_kwargs)
+    if fit_result.method.upper() == 'GAS':
+        # Resolve fitted defaults before with_n_threads adds a default config;
+        # only a config supplied by the caller overrides the fitted score step.
+        fit_kwargs = _bootstrap_fit_kwargs(fit_result, fit_kwargs)
     n_threads, parallel_diagnostics = resolve_parallelism(
         n_jobs, n_bootstrap, None, (fit_kwargs,))
     fit_kwargs = with_n_threads(fit_kwargs, n_threads)

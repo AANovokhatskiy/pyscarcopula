@@ -862,12 +862,15 @@ def test_student_rng_boundary_forwards_raw_draws_without_python_transform(
     output = np.full((3, 3), 0.75)
     captured = {}
 
-    def fixed_draw_call(correlation, df, normal_draws, chi_square_uniforms):
+    def fixed_draw_call(
+        correlation, df, normal_draws, chi_square_uniforms, *, n_threads
+    ):
         captured.update(
             correlation=correlation,
             df=df,
             normal_draws=normal_draws,
             chi_square_uniforms=chi_square_uniforms,
+            n_threads=n_threads,
         )
         return output
 
@@ -887,6 +890,7 @@ def test_student_rng_boundary_forwards_raw_draws_without_python_transform(
     assert captured["normal_draws"] is normals
     assert captured["chi_square_uniforms"] is uniforms
     assert captured["df"] == 6.0
+    assert captured["n_threads"] == 1
     np.testing.assert_array_equal(captured["correlation"], _CORRELATION)
     assert rng.calls == [
         ("uniform", 0.0, 1.0, 3),
@@ -914,8 +918,9 @@ def test_equicorr_rng_boundary_uses_native_draw_count_and_raw_normals(
         captured["planner"] = (parameters.copy(), dimension, n_rows)
         return 2
 
-    def fixed_draw_call(parameters, dimension, normal, common):
+    def fixed_draw_call(parameters, dimension, normal, common, *, n_threads):
         captured["fixed"] = (parameters, dimension, normal, common)
+        captured["n_threads"] = n_threads
         return output
 
     monkeypatch.setattr(
@@ -942,4 +947,5 @@ def test_equicorr_rng_boundary_uses_native_draw_count_and_raw_normals(
     assert dimension == 4
     assert normal is row_draws
     assert common is common_draws
+    assert captured["n_threads"] == 1
     assert rng.calls == [(3, 4), 2]

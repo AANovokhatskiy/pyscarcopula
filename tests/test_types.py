@@ -184,6 +184,80 @@ class TestPredictiveState:
 # ══════════════════════════════════════════════════════════════════
 
 class TestLatentProcessParams:
+    @pytest.mark.parametrize('field', ['values', 'bounds_lower', 'bounds_upper'])
+    @pytest.mark.parametrize('representation', ['complex', 'object', 'list', 'nested'])
+    @pytest.mark.parametrize('imaginary', [0., .2])
+    def test_rejects_complex_values_and_bounds(self, field, representation, imaginary):
+        data = np.array([1. + imaginary * 1j, 2.], dtype=np.complex128)
+        if representation == 'object':
+            data = data.astype(object)
+        elif representation == 'list':
+            data = data.tolist()
+        elif representation == 'nested':
+            nested = np.empty(data.size, dtype=object)
+            for index, value in enumerate(data):
+                nested[index] = np.array(value)
+            data = nested
+        kwargs = dict(process_type='generic', names=('a', 'b'), values=[1., 2.])
+        kwargs[field] = data
+        with pytest.raises(TypeError, match=field + '.*real'):
+            LatentProcessParams(**kwargs)
+
+    @pytest.mark.parametrize('factory,values,key', [
+        (ou_params, [2., .3, .4], 'kappa'),
+        (gas_params, [.2, .03, .6], 'omega'),
+        (jacobi_params, [2., .4, .3], 'kappa'),
+    ])
+    @pytest.mark.parametrize('route', ['factory', 'replace'])
+    @pytest.mark.parametrize('value', [1. + .2j, np.complex64(1.), np.complex128(1. + .2j)])
+    def test_factories_and_replace_reject_complex(self, factory, values, key, route, value):
+        original = factory(*values)
+        with pytest.raises(TypeError, match='values.*real'):
+            if route == 'factory':
+                factory(value, *values[1:])
+            else:
+                original.replace(**{key: value})
+        np.testing.assert_array_equal(original.values, values)
+
+    @pytest.mark.parametrize('key', ['gamma_bound', 'beta_bound'])
+    @pytest.mark.parametrize('value', [np.complex128(.8 + .2j), np.complex128(.8)])
+    @pytest.mark.parametrize('nested', [False, True])
+    def test_gas_bounds_reject_complex_before_native_conversion(self, key, value, nested):
+        if nested:
+            outer = np.empty((), dtype=object)
+            outer[()] = np.array(value)
+            value = outer
+        with pytest.raises(TypeError, match=key + '.*real'):
+            gas_params(.2, .03, .6, **{key: value})
+
+    def test_nested_real_values_and_bounds_remain_supported(self):
+        values = np.empty(2, dtype=object)
+        values[0], values[1] = np.array(.3), np.array(.4)
+        bounds = np.empty((), dtype=object)
+        bounds[()] = np.array(.8)
+        params = LatentProcessParams('generic', ('a', 'b'), values, values, values)
+        for actual in (params.values, params.bounds_lower, params.bounds_upper):
+            np.testing.assert_array_equal(actual, [.3, .4])
+        gas = gas_params(.2, .03, .6, gamma_bound=bounds, beta_bound=bounds)
+        np.testing.assert_array_equal(gas.bounds_lower[1:], [-.8, -.8])
+        np.testing.assert_array_equal(gas.bounds_upper[1:], [.8, .8])
+
+    def test_real_strided_storage_and_infinite_bounds_keep_existing_contract(self):
+        storage = np.array([2., 9., .3, 9., .4, 9.])
+        values = storage[::2]
+        values.setflags(write=False)
+        bounds = np.array([-np.inf, 0., 0.])
+        params = LatentProcessParams(
+            'ou', ('kappa', 'mu', 'nu'), values, bounds, [np.inf] * 3)
+        assert params.values is values
+        assert params.bounds_lower is bounds
+        assert not params.values.flags.writeable
+        replaced = params.replace(mu=.5)
+        np.testing.assert_array_equal(params.values, [2., .3, .4])
+        np.testing.assert_array_equal(replaced.values, [2., .5, .4])
+        assert replaced.bounds_lower is bounds
+        np.testing.assert_array_equal(replaced.bounds_upper, [np.inf] * 3)
+
     @pytest.mark.parametrize('params', [
         ou_params(2., .3, .4), gas_params(.2, .03, .6),
         jacobi_params(2., .4, .3),

@@ -30,18 +30,29 @@ not only perturbing the observed pseudo-observations.
 
 `bootstrap_fit_kwargs` accepts the selected model's normal fit options,
 including strategy constructor settings such as GAS `scaling` or OU `K`.
-Explicit settings override the fitted strategy defaults for refitting.
+These settings control bootstrap refitting. For bivariate,
+`EquicorrGaussianCopula`, and `StochasticStudentCopula` GAS refits, the fitted
+`score_eps` is retained even when a new `gamma0` is supplied.
+For these models, an explicit `score_eps` takes priority over an explicit
+`config.gas_score_eps`, which takes priority over the fitted score step.
+Passing `score_eps=None` selects the config or fitted default.
+GAS Vine refits do not restore fitted score steps from individual edges.
+Set `bootstrap_fit_kwargs={'score_eps': value}` to use one chosen step for
+all refitted GAS edges; otherwise they use an explicit `config.gas_score_eps`
+or the library default.
 Unknown or misplaced keys are rejected before bootstrap random streams or
 workers are created, including when `bootstrap_refit=False`. In that mode,
-valid fit-only options have no effect; `config` still controls bootstrap
-numerical execution and thread routing.
+valid fit-only options have no effect. Samplers that support native threads
+receive the resolved `config.n_threads`, including static Student and
+Equicorr models; parallel bootstrap uses one native thread per worker.
 The dictionary cannot override `to_pobs`: generated bootstrap samples are
 already pseudo-observations.
 
 Fitted `VineCopula` models follow the same parametric-bootstrap contract. A
 replication simulates from the captured fitted R-vine, optionally refits a
-worker-owned vine with the same structure and fitting settings, applies the
-R-vine Rosenblatt transform, and recomputes the Cramer-von Mises statistic.
+worker-owned vine with the same structure and requested fitting settings,
+applies the R-vine Rosenblatt transform, and recomputes the Cramer-von Mises
+statistic.
 Static exact built-in edges use the native Rosenblatt runtime; unsupported or
 dynamic edges use the preserved Python transform without changing the result
 schema or random-stream policy.

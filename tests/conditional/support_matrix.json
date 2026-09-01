@@ -263,7 +263,7 @@
         "sample_conditional": ["n", "given", "rng", "n_threads"],
         "predict": [
           "n", "u", "rng", "given", "horizon",
-          "predictive_r_mode", "predict_config"
+          "predictive_r_mode", "predict_config", "n_threads"
         ]
       },
       "notes": "The output uses the original-df marginal CDF after drawing from the conditional t law."
@@ -299,7 +299,7 @@
         ],
         "predict": [
           "n", "u", "rng", "given", "horizon", "predictive_r_mode",
-          "predict_config", "memory_budget_bytes"
+          "predict_config", "memory_budget_bytes", "n_threads"
         ]
       },
       "notes": "SCAR-TM prediction needs an independent full-history filtering and mixture-CDF oracle."

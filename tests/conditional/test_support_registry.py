@@ -177,8 +177,9 @@ def _unsupported_probe(case: UnsupportedCase) -> None:
             "SCAR-TM-JACOBI",
         )
     elif case.probe == "stochastic_student_joint_factor_gas":
+        # Use an identifiable factor model so validation reaches the GAS gate.
         model = StochasticStudentCopula(
-            4,
+            5,
             corr_mode="factor",
             factor_rank=2,
             factor_estimation="joint",

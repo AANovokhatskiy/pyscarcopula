@@ -40,8 +40,9 @@ Nonreal observations and unknown or wrong-method `fit_kwargs` are rejected
 before any fit or worker process starts. This includes task-specific keyword
 dictionaries: an invalid later task prevents earlier tasks from running.
 Optimizer nonconvergence remains a returned result; inspect each
-`batch.results[i].success` before using its model. An unsuccessful fit does
-not publish that result as the model's fitted state.
+`batch.results[i].success` before using its model. Whether an unsuccessful
+result is attached to `model.fit_result` follows that model's fit contract;
+the presence of fitted state alone does not establish convergence.
 
 ## risk_metrics
 

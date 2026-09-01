@@ -35,8 +35,11 @@ def latent_bounds(process, *, gamma_bound=None, beta_bound=None):
     if result is None:
         if process != "gas":
             raise ValueError(f"unknown latent process: {process!r}")
+        from pyscarcopula.numerical._arrays import as_float64_scalar
+
         native = module.model_gas_parameter_bounds(
-            float(gamma_bound), float(beta_bound))
+            as_float64_scalar(gamma_bound, name="gamma_bound"),
+            as_float64_scalar(beta_bound, name="beta_bound"))
     else:
         native = result()
     native = _checked(native, f"{process} parameter bounds")

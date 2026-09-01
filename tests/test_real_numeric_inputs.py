@@ -51,6 +51,78 @@ def test_scalar_and_array_normalizers_reject_complex(value):
             normalize(value, name="trial")
 
 
+@pytest.mark.parametrize("container", ["0d", "1d", "object", "list", "tuple", "empty"])
+@pytest.mark.parametrize("imaginary", [0., .2])
+def test_nested_complex_containers_reject_before_loss(container, imaginary):
+    leaf = np.array(.7 + imaginary * 1j)
+    if container == "1d":
+        leaf = leaf.reshape(1)
+    elif container == "object":
+        leaf = leaf.astype(object)
+    elif container == "list":
+        leaf = [leaf]
+    elif container == "tuple":
+        leaf = (leaf,)
+    elif container == "empty":
+        leaf = np.empty(0, dtype=complex)
+    outer = np.empty((), dtype=object)
+    outer[()] = leaf
+    for normalize in (arrays.as_float64_scalar, arrays.as_float64_array):
+        with pytest.raises(TypeError, match="nested.*real.*complex"):
+            normalize(outer, name="nested")
+
+
+def test_deeply_nested_complex_rejects_without_recursive_validation():
+    value = np.array(.7 + .2j)
+    containers = []
+    for _ in range(1200):
+        outer = np.empty((), dtype=object)
+        outer[()] = value
+        containers.append(outer)
+        value = outer
+    try:
+        with pytest.raises(TypeError, match="real.*complex"):
+            arrays.as_float64_array(value)
+    finally:
+        # NumPy destroys object chains recursively; keep fixture teardown
+        # independent of its C-stack limit after checking the validator.
+        for container in containers:
+            container[()] = None
+
+
+@pytest.mark.parametrize("cycle", ["self", "mutual", "list"])
+def test_cyclic_object_containers_reject_before_conversion(cycle):
+    value = np.empty((), dtype=object)
+    if cycle == "self":
+        value[()] = value
+    elif cycle == "mutual":
+        other = np.empty((), dtype=object)
+        value[()] = other
+        other[()] = value
+    else:
+        value[()] = [value]
+    try:
+        with pytest.raises(ValueError, match="cyclic"):
+            arrays.as_float64_array(value)
+    finally:
+        value[()] = None
+
+
+def test_nested_real_scalars_and_repeated_references_preserve_values():
+    leaf = np.array(.7)
+    boxed = np.empty((), dtype=object)
+    boxed[()] = leaf
+    source = np.empty(4, dtype=object)
+    source[:] = [boxed, "1.25", boxed, None]
+    source.setflags(write=False)
+    np.testing.assert_array_equal(
+        arrays.as_float64_array(source), [.7, 1.25, .7, np.nan])
+    assert arrays.as_float64_scalar(boxed) == .7
+    assert source[0] is source[2] is boxed
+    assert boxed.item() is leaf and leaf.item() == .7
+    assert not source.flags.writeable
+
+
 @pytest.mark.parametrize("value", [5, 5., np.float16(5), np.float32(5), np.float64(5),
                                   np.longdouble(5), np.int64(5),
                                   np.array(5.), np.array(5, dtype=object)])

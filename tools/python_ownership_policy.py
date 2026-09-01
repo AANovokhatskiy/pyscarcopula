@@ -27,6 +27,11 @@ _REVIEW_KINDS = {
 }
 
 _SYMBOL_REVIEWS = (
+    # Bootstrap fitted defaults/thread routing and exact real/integer input
+    # validation preserve the existing native ownership. Only fingerprints
+    # of reviewed scopes change; no arithmetic permissions are added.
+    # Covered by tests/test_gof_parameter_routing.py, test_types.py,
+    # test_sparse_jacobi_input_validation.py and test_multivariate_mle_strategy.py.
     # Input-contract and GOF routing review: the refreshed existing scopes
     # retain type unions, buffer/shape accounting, native-objective signs,
     # generic optimizer acceptance and the established SciPy CvM boundary.
@@ -86,7 +91,7 @@ _SYMBOL_REVIEWS = (
     ('pyscarcopula._native.errors:raise_for_status',
      'dadaf69a392881507afc63f7f5c974a5e3a2c8ad0c9cd6ac013cfa8b8bc5adff', 'serialization', ('arithmetic',)),
     ('pyscarcopula._native.jacobi:<module>',
-     '6356617de9a80661709aefc7ccad3ba6f5d75b7ee206844a617578818d5e9f85', 'structure', ('arithmetic',)),
+     'f0742a876192e6a4525d5d0dfa905b048348ee6a123b68021db7871e047ae4a8', 'structure', ('arithmetic',)),
     ('pyscarcopula._native.gas:ou_initial_point',
      '208dea1d5f9800442553cfe83f2040aeba8fb90d767b8b9b62a0eaf7d0250286', 'native_policy_adapter', ('model-policy',)),
     ('pyscarcopula._native.jacobi:PreparedScarJacobiEvaluator.__init__',
@@ -165,7 +170,7 @@ _SYMBOL_REVIEWS = (
     ('pyscarcopula._parallel:validate_n_jobs',
      'd42bc191bdb95359ae6800a28f4e47ff6f66bdcf400bb2fa03161a1e4b427f7f', 'structure', ('numerical-call',)),
     ('pyscarcopula._types:<module>',
-     'b1a862a002742a23b61b64d3d2ac70cae861fa8c0e75448df5742364fa471b9c', 'structure', ('arithmetic',)),
+     '0622cc598535b78cf4c0ab48fd0dad8af1d476975e95293f40355b53e94e5e2c', 'structure', ('arithmetic',)),
     ('pyscarcopula._utils:<module>',
      'c352b38009d48a10a85ae5ac8e44d63fb1b5004ee600fc1aae24fff81dc816f2', 'marginal_input', ('numerical-import',)),
     ('pyscarcopula._utils:_rank_col',
@@ -318,9 +323,9 @@ _SYMBOL_REVIEWS = (
     ('pyscarcopula.numerical.jacobi_tm:sample_jacobi_grid_trajectory',
      'a87698071c583b044ba091ba2a04353da73210a2b30fd78373d7c71eb09c023a', 'structure', ('arithmetic', 'numerical-call')),
     ('pyscarcopula.stattests:<module>',
-     '6507490b7d06a6254f0386199b43a837442c9d07b71ffb623bf8cf6f1b9f6f46', 'gof', ('numerical-import',)),
+     '369ef16db18f1822e62373d41324a900eb9c1484434c80579df26f9401bcc6d2', 'gof', ('numerical-import',)),
     ('pyscarcopula.stattests:_bootstrap_gof',
-     'f1d686d859ce37ac58901dbd17fdfcecbe1ecdb2a8ffa9c7ebde4a9e82a4608c', 'gof', ('arithmetic', 'numerical-call')),
+     '3c25deed706be6d940b308d5e061b89c69f2de4be9f345e2de8b7d783e3b0496', 'gof', ('arithmetic', 'numerical-call')),
     ('pyscarcopula.stattests:_bootstrap_gof_worker',
      '9c8e4cac5881ed45b1720a53fd8c6d715a4959641a645f9965f98c891fa80ae1', 'gof', ('arithmetic',)),
     ('pyscarcopula.stattests:cvm_test',
@@ -348,7 +353,7 @@ _SYMBOL_REVIEWS = (
     ('pyscarcopula.strategy.multivariate_mle:_projected_gradient',
      '77795126aeb786ec5fe2e47755df8146486dbba8028aa38cf8cfa2e109782f23', 'bookkeeping', ('arithmetic', 'numerical-call')),
     ('pyscarcopula.strategy.multivariate_mle:run_static_multivariate_mle',
-     'c2c0d1cbabe28212d047c4fdca2aa2e4dd39ce53a1f45ca0232b862135b82154', 'bookkeeping', ('arithmetic', 'numerical-call')),
+     '15c41ebe13833168bbd4ad7c2bde755e8aa37ea586350094e26d6d791d40d5bd', 'bookkeeping', ('arithmetic', 'numerical-call')),
     ('pyscarcopula.strategy.multivariate_mle:run_static_multivariate_mle.strict_evaluate',
      '0ee557ea90e1298990f46748c6e25f796a1a2575da0b5bbe45aabc9c1f1b6db7', 'bookkeeping', ('arithmetic',)),
     ('pyscarcopula.strategy.scar_jacobi:SCARJacobiStrategy._loglik',

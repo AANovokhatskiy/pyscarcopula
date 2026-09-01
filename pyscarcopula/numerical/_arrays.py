@@ -5,14 +5,45 @@ import numpy as np
 from pyscarcopula._native.threads import validate_n_threads
 
 
+def _validate_real_object_array(array, *, name):
+    """Inspect nested containers before casting, without recursive Python calls."""
+    active = {id(array)}
+    checked = set()
+    stack = [(id(array), iter(array.flat))]
+    while stack:
+        identity, items = stack[-1]
+        try:
+            item = next(items)
+        except StopIteration:
+            active.remove(identity)
+            checked.add(identity)
+            stack.pop()
+            continue
+        if isinstance(item, (complex, np.complexfloating)) or (
+                isinstance(item, np.ndarray) and
+                np.issubdtype(item.dtype, np.complexfloating)):
+            raise TypeError(f"{name} must contain real values, not complex values")
+        if isinstance(item, np.ndarray) and item.dtype.kind == "O":
+            children = iter(item.flat)
+        elif isinstance(item, (list, tuple)):
+            children = iter(item)
+        else:
+            continue
+        identity = id(item)
+        if identity in active:
+            raise ValueError(f"{name} must not contain cyclic containers")
+        if identity not in checked:
+            active.add(identity)
+            stack.append((identity, children))
+
+
 def as_float64_array(value, *, name="array"):
     """Return a real float64 array without lossy complex coercion."""
     array = np.asarray(value)
-    if np.issubdtype(array.dtype, np.complexfloating) or (
-            array.dtype.kind == "O" and any(
-                isinstance(item, (complex, np.complexfloating))
-                for item in array.flat)):
+    if np.issubdtype(array.dtype, np.complexfloating):
         raise TypeError(f"{name} must contain real values, not complex values")
+    if array.dtype.kind == "O":
+        _validate_real_object_array(array, name=name)
     if type(array) is np.ndarray and array.dtype == np.float64:
         return array
     return np.asarray(array, dtype=np.float64)
@@ -32,6 +63,39 @@ def as_float64_scalar(value, *, name="parameter"):
     if array.ndim != 0:
         raise ValueError(f"{name} must be a scalar")
     return float(array)
+
+
+def as_integer_array(value, *, name="array", dtype=np.int64):
+    """Return exact signed integers without truncation, bool coercion or wrap.
+
+    Model-specific bounds remain the caller's responsibility. Sequence inputs
+    use object storage first so mixed Python bool/int values cannot lose their
+    types during NumPy's inference. Existing integer arrays keep the fast path.
+    """
+    target = np.dtype(dtype)
+    if target.kind != "i":
+        raise TypeError("dtype must be a signed integer dtype")
+    array = np.asarray(value, dtype=object) if isinstance(
+        value, (list, tuple)) else np.asarray(value)
+    bounds = np.iinfo(target)
+    if array.dtype.kind == "O":
+        for item in array.flat:
+            if isinstance(item, (bool, np.bool_, np.timedelta64)) or not isinstance(
+                    item, (int, np.integer)):
+                raise TypeError(f"{name} must contain integer values")
+            integer = int(item)
+            if integer < bounds.min or integer > bounds.max:
+                raise ValueError(f"{name} values must fit in {target.name}")
+    elif array.dtype.kind in "iu":
+        if not np.can_cast(array.dtype, target, casting="safe"):
+            outside = np.any(array > bounds.max)
+            if array.dtype.kind == "i":
+                outside = outside or np.any(array < bounds.min)
+            if outside:
+                raise ValueError(f"{name} values must fit in {target.name}")
+    else:
+        raise TypeError(f"{name} must contain integer values")
+    return np.asarray(array, dtype=target)
 
 
 def as_pseudo_observation_array(

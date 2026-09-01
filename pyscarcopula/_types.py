@@ -394,6 +394,7 @@ class LatentProcessParams:
 
     The named access (params.kappa) goes through __getattr__,
     the positional access (params.values[0]) is always available.
+    Values and optional bounds must be real; infinite bounds are allowed.
     """
 
     process_type: str                          # 'ou', 'levy', 'fbm', ...
@@ -403,15 +404,18 @@ class LatentProcessParams:
     bounds_upper: np.ndarray | None = None     # per-param upper bounds
 
     def __post_init__(self) -> None:
-        # Ensure values is a proper numpy array
+        from pyscarcopula.numerical._arrays import as_float64_array
+
         object.__setattr__(self, 'values',
-                           np.asarray(self.values, dtype=np.float64))
+                           as_float64_array(self.values, name='values'))
         if self.bounds_lower is not None:
             object.__setattr__(self, 'bounds_lower',
-                               np.asarray(self.bounds_lower, dtype=np.float64))
+                               as_float64_array(
+                                   self.bounds_lower, name='bounds_lower'))
         if self.bounds_upper is not None:
             object.__setattr__(self, 'bounds_upper',
-                               np.asarray(self.bounds_upper, dtype=np.float64))
+                               as_float64_array(
+                                   self.bounds_upper, name='bounds_upper'))
         if len(self.names) != len(self.values):
             raise ValueError(
                 f"names ({len(self.names)}) and values ({len(self.values)}) "

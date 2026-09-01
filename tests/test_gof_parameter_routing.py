@@ -17,7 +17,7 @@ from pyscarcopula import (
     VineCopula,
 )
 from pyscarcopula._types import (
-    GASResult, LatentResult, gas_params, jacobi_params, ou_params,
+    GASResult, LatentResult, NumericalConfig, gas_params, jacobi_params, ou_params,
 )
 from pyscarcopula.stattests import cvm_test, gof_test
 
@@ -278,6 +278,123 @@ def test_bootstrap_constructor_overrides_reach_refit_strategy(
 
     assert np.isfinite(actual.statistic)
     assert seen == [options]
+
+
+@pytest.mark.parametrize("kind", ["pair", "equicorr", "student"])
+@pytest.mark.parametrize("warm_start", [False, True])
+@pytest.mark.parametrize("overrides, expected", [
+    ({}, 0.2),
+    ({"score_eps": 0.3}, 0.3),
+    ({"config": NumericalConfig(gas_score_eps=0.4)}, 0.4),
+    ({"score_eps": 0.3, "config": NumericalConfig(gas_score_eps=0.4)}, 0.3),
+    ({"score_eps": None, "config": NumericalConfig(gas_score_eps=0.4)}, 0.4),
+    ({"score_eps": None}, 0.2),
+], ids=["fitted", "explicit", "config", "explicit-over-config",
+        "none-with-config", "none-with-fitted"])
+def test_gas_bootstrap_refit_resolves_score_step_at_native_objective(
+        kind, warm_start, overrides, expected, monkeypatch):
+    from pyscarcopula._native import gas as native
+    from pyscarcopula.strategy.gas import GASStrategy
+
+    model = {
+        "pair": BivariateGaussianCopula(),
+        "equicorr": EquicorrGaussianCopula(2),
+        "student": StochasticStudentCopula(2, R=np.eye(2)),
+    }[kind]
+    fitted = replace(_dynamic_result("GAS"), scaling="fisher", score_eps=0.2)
+    objective_steps, fitted_steps = [], []
+    original_objective = native.negative_log_likelihood_and_gradient
+    original_fit = GASStrategy.fit
+
+    @wraps(original_objective)
+    def capture_objective(*args, **kwargs):
+        objective_steps.append(args[6])
+        return original_objective(*args, **kwargs)
+
+    @wraps(original_fit)
+    def capture_fit(self, copula, u, **kwargs):
+        result = original_fit(self, copula, u, **kwargs)
+        fitted_steps.append(result.score_eps)
+        return result
+
+    monkeypatch.setattr(
+        native, "negative_log_likelihood_and_gradient", capture_objective)
+    monkeypatch.setattr(GASStrategy, "fit", capture_fit)
+    options = {"maxiter": 2, "maxfun": 20, "ftol": 1e-6, **overrides}
+    if warm_start:
+        options["gamma0"] = [0.1, 0.03, 0.6]
+    actual = gof_test(
+        model, _observations(), to_pobs=False, fit_result=fitted,
+        bootstrap=True, n_bootstrap=1, bootstrap_fit_kwargs=options, rng=193)
+
+    assert np.all(np.isfinite(actual.bootstrap_statistics))
+    assert fitted_steps == [expected]
+    assert objective_steps and set(objective_steps) == {expected}
+    assert fitted.score_eps == 0.2
+
+
+@pytest.mark.parametrize("kind, method, consumer", [
+    ("student", "MLE", "student_sample_from_normal_uniforms"),
+    ("factor_student", "MLE", "factor_student_sample_from_normal_uniforms"),
+    ("equicorr", "MLE", "equicorr_gaussian_sample_from_normals"),
+    ("equicorr", "GAS", "equicorr_gaussian_sample_from_normals"),
+    ("equicorr", "SCAR-TM-OU", "equicorr_gaussian_sample_from_normals"),
+    ("gaussian", "MLE", "gaussian_sample_from_normals"),
+    ("dynamic_student", "GAS", "student_sample_from_normal_uniforms"),
+])
+@pytest.mark.parametrize("refit", [False, True])
+def test_bootstrap_sampling_delivers_resolved_threads_to_native(
+        kind, method, consumer, refit, monkeypatch):
+    from pyscarcopula._native import multivariate as native
+
+    u = _observations()
+    model = {
+        "student": StudentCopula(2),
+        "factor_student": StudentCopula(2, corr_mode="factor", factor_rank=1),
+        "equicorr": EquicorrGaussianCopula(2),
+        "gaussian": GaussianCopula(2),
+        "dynamic_student": StochasticStudentCopula(2, R=np.eye(2)),
+    }[kind]
+    result = (model.fit(u, to_pobs=False, method="mle") if method == "MLE"
+              else _dynamic_result(method))
+    seen = []
+    original = getattr(native, consumer)
+
+    @wraps(original)
+    def capture(*args, **kwargs):
+        seen.append(kwargs.get("n_threads", 1))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(native, consumer, capture)
+    fit_kwargs = {"config": NumericalConfig(n_threads=2)}
+    if kind != "gaussian":
+        fit_kwargs["maxiter"] = 2
+    actual = gof_test(
+        model, u, to_pobs=False, fit_result=result, bootstrap=True,
+        bootstrap_refit=refit, n_bootstrap=1, rng=194,
+        bootstrap_fit_kwargs=fit_kwargs)
+
+    assert actual.n_threads == 2
+    assert np.all(np.isfinite(actual.bootstrap_statistics))
+    assert seen and set(seen) == {2}
+
+
+@pytest.mark.parametrize("model_class", [StudentCopula, EquicorrGaussianCopula])
+def test_bootstrap_sampler_thread_count_preserves_seed_partition(model_class):
+    model = model_class(2)
+    u = _observations()
+    fitted = model.fit(u, to_pobs=False, method="mle")
+    options = dict(
+        to_pobs=False, fit_result=fitted, bootstrap=True, bootstrap_refit=False,
+        n_bootstrap=2, rng=195,
+        bootstrap_fit_kwargs={"config": NumericalConfig(n_threads=2)})
+
+    sequential = gof_test(model, u, n_jobs=1, **options)
+    parallel = gof_test(model, u, n_jobs=2, **options)
+
+    assert sequential.n_threads == 2 and parallel.n_threads == 1
+    np.testing.assert_array_equal(
+        sequential.bootstrap_statistics, parallel.bootstrap_statistics)
 
 
 @pytest.mark.parametrize("n_jobs", [1, 2])

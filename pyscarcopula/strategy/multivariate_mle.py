@@ -12,7 +12,7 @@ from pyscarcopula._native import model_policy
 from pyscarcopula._types import LBFGSBConfig
 from pyscarcopula.copula.multivariate.corr_param import validate_corr_matrix
 from pyscarcopula.copula.multivariate.correlation_policy import FloatArray
-from pyscarcopula.numerical._arrays import as_float64_scalar
+from pyscarcopula.numerical._arrays import as_float64_array, as_float64_scalar
 
 
 def sampling_model_from_result(copula, result):
@@ -263,8 +263,8 @@ def run_static_multivariate_mle(
     so objective calls cannot publish fitted state accidentally.
     """
     optimizer_options = LBFGSBConfig().options(**optimizer_options)
-    x0 = np.asarray(
-        problem.initial_parameters, dtype=np.float64).reshape(-1).copy()
+    x0 = as_float64_array(
+        problem.initial_parameters, name="initial_parameters").reshape(-1).copy()
     if np.any(~np.isfinite(x0)):
         raise ValueError("initial_parameters must contain only finite values")
     bounds = tuple(problem.bounds)
