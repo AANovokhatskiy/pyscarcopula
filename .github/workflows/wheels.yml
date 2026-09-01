@@ -75,10 +75,12 @@ jobs:
 
       - name: Build and test one clean wheel target
         uses: pypa/cibuildwheel@v3.4.1
+        with:
+          # The action's --output-dir argument overrides CIBW_OUTPUT_DIR.
+          output-dir: "${{ env.FV7_ARTIFACT_ROOT }}/wheelhouse"
         env:
           CIBW_BUILD: "${{ matrix.python.tag }}-*"
           CIBW_BUILD_VERBOSITY: "1"
-          CIBW_OUTPUT_DIR: "${{ env.FV7_ARTIFACT_ROOT }}/wheelhouse"
           CIBW_SKIP: "*-musllinux_* *-win32 *-manylinux_i686"
           CIBW_ARCHS_LINUX: "${{ matrix.platform.arch }}"
           CIBW_ARCHS_WINDOWS: "${{ matrix.platform.arch }}"
