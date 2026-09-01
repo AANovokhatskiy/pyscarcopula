@@ -151,7 +151,7 @@ bool emission_blocks_match_rows(
     scar::PreparedDynamicEmission emission(spec);
     std::vector<double> parameters, derivatives;
     // The last state is outside the Student cache and exercises exact fallback.
-    for (const std::vector<double> states : {
+    for (const std::vector<double>& states : {
             std::vector<double>{-2.0, 0.2, 3.0},
             std::vector<double>{-2.0, 0.2, 1100.0}}) {
         if (spec.family != scar::CopulaFamily::Student
