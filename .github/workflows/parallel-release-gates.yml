@@ -58,12 +58,17 @@ jobs:
             cxx: clang++
             cpp_compiler: ""
 
-    env:
-      FV7_ARTIFACT_ROOT: >-
-        ${{ runner.temp }}/pyscarcopula-fv7/${{ matrix.name }}
-
     steps:
       - uses: actions/checkout@v6
+
+      - name: Initialize external artifact root
+        shell: bash
+        env:
+          FV7_ARTIFACT_ROOT: >-
+            ${{ runner.temp }}/pyscarcopula-fv7/${{ matrix.name }}
+        run: |
+          mkdir -p "$FV7_ARTIFACT_ROOT"
+          echo "FV7_ARTIFACT_ROOT=$FV7_ARTIFACT_ROOT" >> "$GITHUB_ENV"
 
       - uses: actions/setup-python@v6
         with:
@@ -99,6 +104,7 @@ jobs:
           ".[test]"
 
       - name: Verify Python-free C++ build boundary
+        shell: bash
         env:
           CC: ${{ matrix.cc }}
           CXX: ${{ matrix.cxx }}
@@ -195,11 +201,15 @@ jobs:
     name: Linux Clang ASan and UBSan
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    env:
-      FV7_ARTIFACT_ROOT: >-
-        ${{ runner.temp }}/pyscarcopula-fv7/linux-clang-asan-ubsan
     steps:
       - uses: actions/checkout@v6
+      - name: Initialize external artifact root
+        env:
+          FV7_ARTIFACT_ROOT: >-
+            ${{ runner.temp }}/pyscarcopula-fv7/linux-clang-asan-ubsan
+        run: |
+          mkdir -p "$FV7_ARTIFACT_ROOT"
+          echo "FV7_ARTIFACT_ROOT=$FV7_ARTIFACT_ROOT" >> "$GITHUB_ENV"
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -306,11 +316,15 @@ jobs:
     name: Linux GCC ThreadSanitizer
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    env:
-      FV7_ARTIFACT_ROOT: >-
-        ${{ runner.temp }}/pyscarcopula-fv7/linux-gcc-tsan
     steps:
       - uses: actions/checkout@v6
+      - name: Initialize external artifact root
+        env:
+          FV7_ARTIFACT_ROOT: >-
+            ${{ runner.temp }}/pyscarcopula-fv7/linux-gcc-tsan
+        run: |
+          mkdir -p "$FV7_ARTIFACT_ROOT"
+          echo "FV7_ARTIFACT_ROOT=$FV7_ARTIFACT_ROOT" >> "$GITHUB_ENV"
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -416,11 +430,15 @@ jobs:
     name: Unix lifecycle and memory stress
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    env:
-      FV7_ARTIFACT_ROOT: >-
-        ${{ runner.temp }}/pyscarcopula-fv7/linux-lifecycle-memory
     steps:
       - uses: actions/checkout@v6
+      - name: Initialize external artifact root
+        env:
+          FV7_ARTIFACT_ROOT: >-
+            ${{ runner.temp }}/pyscarcopula-fv7/linux-lifecycle-memory
+        run: |
+          mkdir -p "$FV7_ARTIFACT_ROOT"
+          echo "FV7_ARTIFACT_ROOT=$FV7_ARTIFACT_ROOT" >> "$GITHUB_ENV"
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -494,11 +512,15 @@ jobs:
     name: Embedded subinterpreter rejection
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      FV7_ARTIFACT_ROOT: >-
-        ${{ runner.temp }}/pyscarcopula-fv7/subinterpreter-rejection
     steps:
       - uses: actions/checkout@v6
+      - name: Initialize external artifact root
+        env:
+          FV7_ARTIFACT_ROOT: >-
+            ${{ runner.temp }}/pyscarcopula-fv7/subinterpreter-rejection
+        run: |
+          mkdir -p "$FV7_ARTIFACT_ROOT"
+          echo "FV7_ARTIFACT_ROOT=$FV7_ARTIFACT_ROOT" >> "$GITHUB_ENV"
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -569,10 +591,12 @@ jobs:
       - unix-lifecycle-memory
       - subinterpreters
     runs-on: ubuntu-latest
-    env:
-      FV7_REPORT_ROOT: ${{ runner.temp }}/parallel-release-validation
     steps:
       - uses: actions/checkout@v6
+      - name: Initialize report path
+        env:
+          FV7_REPORT_ROOT: ${{ runner.temp }}/parallel-release-validation
+        run: echo "FV7_REPORT_ROOT=$FV7_REPORT_ROOT" >> "$GITHUB_ENV"
       - uses: actions/download-artifact@v8
         with:
           pattern: parallel-gate-*
