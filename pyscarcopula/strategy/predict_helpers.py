@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from pyscarcopula.numerical._arrays import (
+    as_float64_array,
     validate_float64_allocation,
     validate_integer,
     validate_sampling_n_threads,
@@ -60,7 +61,7 @@ def conditional_sample_bivariate(
         rng = np.random.default_rng()
 
     given = validate_given(given)
-    r_arr = np.atleast_1d(np.asarray(r, dtype=np.float64)).ravel()
+    r_arr = np.atleast_1d(as_float64_array(r, name="r")).ravel()
     if r_arr.size == 1:
         r_arr = np.full(n, r_arr[0], dtype=np.float64)
     elif r_arr.size != n:
@@ -229,6 +230,7 @@ def sample_predictive_batches(
 def predictive_params_from_state(
         strategy, copula, u, result, n, rng=None, **kwargs):
     """Sample parameters from a strategy-created predictive state."""
+    reject_unknown_operation_kwargs(strategy, 'predictive_params', kwargs)
     state = strategy.predictive_state(copula, u, result, **kwargs)
     return strategy.sample_params(
         copula, state, n, rng=rng, **kwargs)

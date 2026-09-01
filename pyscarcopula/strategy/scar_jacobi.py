@@ -17,6 +17,7 @@ from pyscarcopula._types import (
 )
 from pyscarcopula.numerical._arrays import (
     as_float64_array,
+    as_float64_scalar,
     as_pseudo_observation_array,
     validate_float64_allocation,
     validate_positive_int,
@@ -80,7 +81,7 @@ def _finite_float(value, name):
     if isinstance(value, (bool, np.bool_)):
         raise TypeError(f"{name} must be a finite real number")
     try:
-        result = float(value)
+        result = as_float64_scalar(value, name=name)
     except (TypeError, ValueError) as exc:
         raise TypeError(f"{name} must be a finite real number") from exc
     if not np.isfinite(result):
@@ -147,6 +148,7 @@ class SCARJacobiStrategy:
     _operation_keyword_aliases = {
         "mixture_h": _mixture_context_keywords,
         "mixture_h_pair": _mixture_context_keywords,
+        "predictive_params": _prediction_context_keywords,
         "predictive_state": _prediction_context_keywords,
         "sample_params": _prediction_context_keywords,
         "model_sample_params": frozenset({"given", "sampling_diagnostics"}),
@@ -868,7 +870,7 @@ class SCARJacobiStrategy:
     def objective(self, copula, u: np.ndarray,
                   alpha: np.ndarray, **kwargs) -> float:
         reject_unknown_strategy_kwargs("SCAR-TM-JACOBI", kwargs)
-        alpha = np.asarray(alpha, dtype=np.float64)
+        alpha = as_float64_array(alpha, name="alpha")
         return self._neg_loglik(alpha[0], alpha[1], alpha[2], u, copula)
 
     predict = strategy_predict
@@ -877,6 +879,8 @@ class SCARJacobiStrategy:
     def predictive_state(self, copula, u, result, **kwargs):
         reject_unknown_operation_kwargs(self, 'predictive_state', kwargs)
         horizon = str(kwargs.get('horizon', 'next')).lower()
+        if horizon not in {'current', 'next'}:
+            raise ValueError("horizon must be 'current' or 'next'")
         p = result.params
         if u is None:
             shapes = jacobi_native.stationary_shape(p.kappa, p.m, p.xi)
@@ -947,6 +951,11 @@ class SCARJacobiStrategy:
 
     def sample_params(self, copula, state, n, rng=None, **kwargs):
         reject_unknown_operation_kwargs(self, 'sample_params', kwargs)
+        mode = kwargs.get('predictive_r_mode')
+        mode = 'grid' if mode is None else str(mode).lower()
+        if mode not in {'grid', 'histogram'}:
+            raise ValueError(
+                "predictive_r_mode must be 'grid' or 'histogram'")
         if rng is None:
             rng = np.random.default_rng()
         if state.kind == 'stationary_jacobi':
@@ -959,11 +968,6 @@ class SCARJacobiStrategy:
             return jacobi_native.tau_to_parameter(
                 copula, tau, theta_cap=self.theta_cap)
 
-        mode = kwargs.get('predictive_r_mode')
-        mode = 'grid' if mode is None else str(mode).lower()
-        if mode not in {'grid', 'histogram'}:
-            raise ValueError(
-                "predictive_r_mode must be 'grid' or 'histogram'")
         tau = as_float64_array(state.z_grid, name="tau")
         probability = as_float64_array(state.prob, name="probability")
         selection_draws = rng.uniform(0.0, 1.0, size=n)
@@ -1069,4 +1073,5 @@ class SCARJacobiStrategy:
             copula, tau, theta_cap=self.theta_cap)
 
     def model_sample_state(self, copula, result, **kwargs):
+        reject_unknown_operation_kwargs(self, 'model_sample_state', kwargs)
         return None

@@ -70,12 +70,23 @@ class MLEStrategy:
     """
 
     _strict_keyword_contract = True
+    # Shared prediction/vine adapters pass the context to both state steps.
+    _prediction_context_keywords = frozenset({
+        "given", "horizon", "predictive_r_mode", "n_threads",
+        "memory_budget_bytes", "state_cache", "cache_key", "posterior_cache",
+    })
     _operation_keyword_aliases = {
+        "mixture_h_pair": frozenset({
+            "state_cache", "current_cache_key", "next_cache_key", "posterior_cache",
+        }),
         "sample": frozenset({"given", "n_threads", "memory_budget_bytes"}),
         "predict": frozenset({
             "given", "horizon", "predictive_r_mode", "n_threads",
             "memory_budget_bytes",
         }),
+        "predictive_params": _prediction_context_keywords,
+        "predictive_state": _prediction_context_keywords,
+        "sample_params": _prediction_context_keywords,
     }
 
     def __init__(self, config: NumericalConfig | None = None, **kwargs):
@@ -263,6 +274,7 @@ class MLEStrategy:
                        result: MLEResult,
                        **kwargs) -> tuple[np.ndarray, np.ndarray]:
         """Both conditional directions at the constant MLE parameter."""
+        reject_unknown_operation_kwargs(self, 'mixture_h_pair', kwargs)
         registry_entry_for(copula)
         r = np.full(len(u), result.copula_param)
         first_given_second, second_given_first = pair_native.h_pair(
@@ -277,6 +289,7 @@ class MLEStrategy:
         correlation optimizer coordinates are private to model.fit.
         """
         reject_unknown_mle_kwargs(kwargs)
+        alpha = as_float64_array(alpha, name="alpha")
         entry = registry_entry_for(copula)
         if is_multivariate_copula(copula):
             if entry.native_id == "Gaussian":
@@ -330,7 +343,10 @@ class MLEStrategy:
     predictive_params = predictive_params_from_state
 
     def predictive_state(self, copula, u, result, **kwargs):
+        reject_unknown_operation_kwargs(self, 'predictive_state', kwargs)
         horizon = str(kwargs.get('horizon', 'next')).lower()
+        if horizon not in {'current', 'next'}:
+            raise ValueError("horizon must be 'current' or 'next'")
         return PredictiveState(
             method='MLE',
             horizon=horizon,
@@ -339,16 +355,20 @@ class MLEStrategy:
         )
 
     def condition_state(self, copula, state, observation, result, **kwargs):
+        reject_unknown_operation_kwargs(self, 'condition_state', kwargs)
         return state
 
     def sample_params(self, copula, state, n, rng=None, **kwargs):
+        reject_unknown_operation_kwargs(self, 'sample_params', kwargs)
         return np.full(n, float(np.asarray(state.r)[0]), dtype=np.float64)
 
     def model_sample_params(self, copula, result, n, rng=None, **kwargs):
         """Constant parameter path for model reproduction."""
+        reject_unknown_operation_kwargs(self, 'model_sample_params', kwargs)
         return np.full(n, result.copula_param, dtype=np.float64)
 
     def model_sample_state(self, copula, result, **kwargs):
+        reject_unknown_operation_kwargs(self, 'model_sample_state', kwargs)
         return None
 
     def model_sample_params_batches(

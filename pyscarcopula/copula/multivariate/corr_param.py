@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+from pyscarcopula.numerical._arrays import as_float64_array
 
 
 @dataclass(frozen=True)
@@ -44,7 +45,7 @@ def logit(p: float | np.ndarray) -> np.ndarray:
 
 def project_to_corr(R: np.ndarray, eps: float = 1e-8) -> np.ndarray:
     """Project a finite square matrix to an SPD correlation matrix in C++."""
-    R = np.asarray(R, dtype=np.float64)
+    R = as_float64_array(R, name="R")
     if R.ndim != 2 or R.shape[0] != R.shape[1]:
         raise ValueError("R must be a square matrix")
     if not np.all(np.isfinite(R)):
@@ -63,7 +64,7 @@ def preprocess_correlation_matrix(
         eps: float = 1e-8,
         nonfinite_kendall_pairs=()) -> CorrelationPreprocessingResult:
     """Project a finite matrix and report whether SPD correction was needed."""
-    input_correlation = np.asarray(R, dtype=np.float64)
+    input_correlation = as_float64_array(R, name="R")
     if (
             input_correlation.ndim != 2
             or input_correlation.shape[0] != input_correlation.shape[1]):
@@ -96,7 +97,7 @@ def estimate_kendall_correlation(
     information and is mapped to zero dependence while retaining unit
     diagonal.
     """
-    observations = np.asarray(observations, dtype=np.float64)
+    observations = as_float64_array(observations, name="observations")
     if observations.ndim != 2:
         raise ValueError(
             "observations must have shape (n_observations, dimension)")
@@ -119,7 +120,7 @@ def estimate_kendall_correlation(
 
 def validate_corr_matrix(R: np.ndarray, eps: float = 1e-8) -> None:
     """Validate a finite SPD correlation matrix in the native kernel."""
-    R = np.asarray(R, dtype=np.float64)
+    R = as_float64_array(R, name="R")
     if R.ndim != 2 or R.shape[0] != R.shape[1]:
         raise ValueError("R must be a square matrix")
     if not np.all(np.isfinite(R)):
@@ -131,7 +132,7 @@ def validate_corr_matrix(R: np.ndarray, eps: float = 1e-8) -> None:
 def _make_shrinkage_corr_from_validated(
         alpha_raw: float, R0: np.ndarray) -> np.ndarray:
     """Build a shrinkage correlation from a validated base in C++."""
-    R0 = np.asarray(R0, dtype=np.float64)
+    R0 = as_float64_array(R0, name="R0")
     from pyscarcopula._native import multivariate as multivariate_native
     return multivariate_native.make_shrinkage_correlation(alpha_raw, R0)
 
@@ -162,7 +163,7 @@ def _corr_from_cholesky_params(params: np.ndarray, d: int) -> np.ndarray:
     """Build a correlation matrix from native Cholesky parameters."""
     d = int(d)
     expected = cholesky_corr_n_params(d)
-    params = np.asarray(params, dtype=np.float64).reshape(-1)
+    params = as_float64_array(params, name="params").reshape(-1)
     if params.size != expected:
         raise ValueError(
             f"expected {expected} Cholesky correlation parameters, "
@@ -192,9 +193,9 @@ def _corr_gradient_to_raw_params(
     from pyscarcopula._native import multivariate as multivariate_native
     return multivariate_native.correlation_gradient_to_raw(
         corr_mode,
-        np.asarray(params, dtype=np.float64).reshape(-1),
+        as_float64_array(params, name="params").reshape(-1),
         R,
-        np.asarray(corr_gradient, dtype=np.float64).reshape(-1),
+        as_float64_array(corr_gradient, name="corr_gradient").reshape(-1),
         corr_base,
     )
 
@@ -205,4 +206,4 @@ def _shrinkage_raw_corr_direction(
     """Return lower-triangle ``dR/draw`` for shrinkage correlation."""
     from pyscarcopula._native import multivariate as multivariate_native
     return multivariate_native.shrinkage_raw_correlation_direction(
-        np.asarray(params, dtype=np.float64).reshape(-1), corr_base)
+        as_float64_array(params, name="params").reshape(-1), corr_base)

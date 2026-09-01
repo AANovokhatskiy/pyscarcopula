@@ -13,6 +13,8 @@ import numpy as np
 
 from pyscarcopula._native.threads import validate_n_threads
 from pyscarcopula.numerical._arrays import (
+    as_float64_array,
+    as_float64_scalar,
     validate_float64_allocation,
     validate_integer,
 )
@@ -82,11 +84,15 @@ class FactorCorrelation:
             raise ValueError(
                 f"unsupported factor-correlation format version "
                 f"{self.format_version}")
-        if not np.isfinite(self.uniqueness_min) or not (
-                0.0 < self.uniqueness_min < 1.0):
+        uniqueness_min = as_float64_scalar(
+            self.uniqueness_min, name="uniqueness_min")
+        if not np.isfinite(uniqueness_min) or not (
+                0.0 < uniqueness_min < 1.0):
             raise ValueError(
                 "uniqueness_min must be finite and in (0, 1)")
 
+        # Validate before casting while retaining mmap ownership on borrowed data.
+        as_float64_array(self.loadings, name="loadings")
         convert = np.array if _copy_arrays else np.asanyarray
         loadings = convert(self.loadings, dtype=np.float64)
         if (
@@ -150,7 +156,7 @@ class FactorCorrelation:
             *,
             uniqueness_min: float = 1e-8) -> "FactorCorrelation":
         """Map arbitrary finite rows into the valid factor-correlation set."""
-        unconstrained = np.asarray(values, dtype=np.float64)
+        unconstrained = as_float64_array(values, name="values")
         if (
                 unconstrained.ndim != 2
                 or unconstrained.shape[0] < 2
@@ -160,6 +166,8 @@ class FactorCorrelation:
             raise ValueError(
                 "unconstrained values must have shape (d, k), "
                 "1 <= k < d, and be finite")
+        uniqueness_min = as_float64_scalar(
+            uniqueness_min, name="uniqueness_min")
         if not np.isfinite(uniqueness_min) or not (
                 0.0 < float(uniqueness_min) < 1.0):
             raise ValueError(
@@ -302,7 +310,7 @@ class PreparedFactorCorrelation:
         return float(self._native.logdet)
 
     def _rows(self, values):
-        array = np.asarray(values, dtype=np.float64)
+        array = as_float64_array(values, name="values")
         squeeze = array.ndim == 1
         if squeeze:
             array = array[None, :]
@@ -406,8 +414,8 @@ class PreparedFactorCorrelation:
         factor distributions whose factor draws have a non-identity small
         covariance.
         """
-        factors = np.asarray(factor_draws, dtype=np.float64)
-        residuals = np.asarray(residual_draws, dtype=np.float64)
+        factors = as_float64_array(factor_draws, name="factor_draws")
+        residuals = as_float64_array(residual_draws, name="residual_draws")
         if (
                 factors.ndim != 2
                 or factors.shape[1] != self.rank):

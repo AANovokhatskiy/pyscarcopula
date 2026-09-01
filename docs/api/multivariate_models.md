@@ -161,6 +161,13 @@ $R=D+BB^\top$ and prepares a matrix-free Woodbury operator.
 likelihoods. `StochasticStudentCopula(corr_mode="factor")` exposes the same
 representation through the model API.
 
+Prepared operators and evaluators require real-valued observations, loadings,
+parameters, and draws; complex arrays are rejected before conversion.
+Dimensions, ranks, row indices, and factor-initialization integer options
+require Python or NumPy integers, excluding booleans. Conditional samplers
+validate the supplied correlation, Student degrees of freedom, and thread
+count even when every coordinate is fixed by `given`.
+
 ```python
 import numpy as np
 from pyscarcopula import FactorCorrelation, FactorStudentEvaluator

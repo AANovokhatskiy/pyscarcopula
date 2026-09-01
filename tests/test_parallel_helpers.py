@@ -114,3 +114,85 @@ def test_legacy_private_imports_alias_shared_runtime():
         risk_metrics._get_copula_constructor
         is _parallel.get_copula_constructor
     )
+
+
+@pytest.mark.parametrize("model_name", [
+    "IndependentCopula", "BivariateGaussianCopula", "ClaytonCopula",
+    "FrankCopula", "GumbelCopula", "JoeCopula", "GaussianCopula",
+    "StudentCopula", "EquicorrGaussianCopula", "StochasticStudentCopula",
+    "VineCopula",
+])
+@pytest.mark.parametrize("key", ["unknown_option", "K", "tol"])
+def test_fit_preflight_rejects_unknown_or_wrong_method_keys(model_name, key):
+    import pyscarcopula as p
+    from pyscarcopula._parallel import validate_model_fit_kwargs
+
+    constructor_options = {"d": 2} if model_name in {
+        "EquicorrGaussianCopula", "StochasticStudentCopula"} else {}
+    model = getattr(p, model_name)(**constructor_options)
+    with pytest.raises(TypeError, match=key):
+        validate_model_fit_kwargs(model, "mle", {key: 13})
+    assert model.fit_result is None
+
+
+@pytest.mark.parametrize("method, options", [
+    ("mle", {"alpha0": [.2], "maxiter": 5}),
+    ("gas", {"scaling": "fisher", "gamma0": [.1, .1, .7], "maxiter": 5}),
+    ("scar-tm-ou", {"K": 17, "grid_range": 3., "alpha0": [2., .3, .4]}),
+    ("scar-tm-jacobi", {"basis_order": 8, "alpha0": [2., .4, .3]}),
+])
+def test_fit_preflight_preserves_constructor_and_optimizer_options(method, options):
+    from pyscarcopula import BivariateGaussianCopula
+    from pyscarcopula._parallel import validate_model_fit_kwargs
+
+    config = NumericalConfig(n_threads=2)
+    kwargs = {**options, "config": config, "to_pobs": False}
+    before = dict(kwargs)
+    model = BivariateGaussianCopula()
+    validate_model_fit_kwargs(model, method, kwargs)
+    assert kwargs == before
+    assert kwargs["config"] is config
+    assert model.fit_result is None
+
+
+def test_fit_preflight_respects_static_and_vine_specific_owners():
+    from pyscarcopula import GaussianCopula, StudentCopula, VineCopula
+    from pyscarcopula._parallel import validate_model_fit_kwargs
+
+    with pytest.raises(TypeError, match="corr_mode"):
+        validate_model_fit_kwargs(GaussianCopula(), "mle", {"maxiter": 9})
+    validate_model_fit_kwargs(GaussianCopula(corr_mode="shrinkage"), "mle", {"maxiter": 9})
+    validate_model_fit_kwargs(StudentCopula(), "mle", {"maxiter": 9})
+    vine = VineCopula()
+    validate_model_fit_kwargs(vine, "gas", {
+        "scaling": "fisher", "beam_width": 2, "dynamic_failure_policy": "raise",
+        "conditional_mode": "suffix", "maxiter": 9})
+    for key in ("initial_mle_result", "_prepared_evaluator"):
+        with pytest.raises(TypeError, match=key):
+            validate_model_fit_kwargs(vine, "mle", {key: object()})
+
+
+@pytest.mark.parametrize("options", [{"method": "gas"}, {"data": []}, {"config": {}}])
+def test_fit_preflight_rejects_duplicate_arguments_and_invalid_config(options):
+    from pyscarcopula import BivariateGaussianCopula
+    from pyscarcopula._parallel import validate_model_fit_kwargs
+
+    with pytest.raises(TypeError):
+        validate_model_fit_kwargs(BivariateGaussianCopula(), "mle", options)
+
+
+@pytest.mark.parametrize("model_name", [
+    "EquicorrGaussianCopula", "StochasticStudentCopula",
+])
+def test_multivariate_mle_preflight_preserves_public_optimizer_options(model_name):
+    import pyscarcopula as p
+    from pyscarcopula._parallel import validate_model_fit_kwargs
+
+    model = getattr(p, model_name)(d=2)
+    options = {"config": NumericalConfig(n_threads=2), "to_pobs": False,
+               "gtol": 1e-5, "ftol": 1e-8, "maxiter": 9, "maxfun": 80,
+               "maxls": 10, "eps": 1e-6, "maxcor": 5,
+               "finite_diff_rel_step": .01}
+    before = dict(options)
+    validate_model_fit_kwargs(model, "mle", options)
+    assert options == before and model.fit_result is None

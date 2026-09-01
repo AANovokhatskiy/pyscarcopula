@@ -15,6 +15,7 @@ import numpy as np
 
 from pyscarcopula._native import gas as native_gas
 from pyscarcopula._native import scar_ou as native_ou
+from pyscarcopula.numerical._arrays import as_float64_array
 
 
 def _initialization_attempt(method, *, success, error=None):
@@ -91,7 +92,7 @@ def resolve_ou_initial_point(
         smart_initial_point_func=None, initial_mle_result=None):
     """Return an OU initial point and common initialization diagnostics."""
     if alpha0 is not None:
-        alpha = np.asarray(alpha0, dtype=np.float64)
+        alpha = as_float64_array(alpha0, name="alpha0")
         return alpha, _explicit_initialization_diagnostics(alpha)
 
     smart_initial = (

@@ -14,6 +14,8 @@ from pyscarcopula._native import gas as _cpp_gas
 from pyscarcopula._native import model_policy
 from pyscarcopula._native.threads import validate_n_threads
 from pyscarcopula.numerical._arrays import (
+    as_float64_array,
+    as_float64_scalar,
     validate_float64_allocation,
     validate_positive_int,
 )
@@ -111,6 +113,11 @@ class GASStrategy:
 
     _strict_keyword_contract = True
     _constructor_keyword_aliases = frozenset({"backend"})
+    # Shared prediction/vine adapters pass the context to both state steps.
+    _prediction_context_keywords = frozenset({
+        "given", "horizon", "predictive_r_mode", "n_threads",
+        "memory_budget_bytes", "state_cache", "cache_key", "posterior_cache",
+    })
     _operation_keyword_aliases = {
         "objective": frozenset({"score_eps"}),
         "sample": frozenset({"given", "n_threads", "memory_budget_bytes"}),
@@ -118,6 +125,9 @@ class GASStrategy:
             "given", "horizon", "predictive_r_mode", "n_threads",
             "memory_budget_bytes",
         }),
+        "predictive_params": _prediction_context_keywords,
+        "predictive_state": _prediction_context_keywords,
+        "sample_params": _prediction_context_keywords,
     }
 
     def __init__(
@@ -714,8 +724,10 @@ class GASStrategy:
             raise TypeError(
                 "GAS backend selection was removed; native execution is "
                 "always used")
-        score_eps = float(kwargs.pop("score_eps", self._score_eps()))
+        score_eps = as_float64_scalar(
+            kwargs.pop("score_eps", self._score_eps()), name="score_eps")
         reject_unknown_strategy_kwargs("GAS", kwargs)
+        gamma = as_float64_array(gamma, name="gamma")
         return gas_negloglik(
             gamma[0],
             gamma[1],
@@ -828,6 +840,7 @@ class GASStrategy:
     predictive_params = predictive_params_from_state
 
     def predictive_state(self, copula, u, result, **kwargs):
+        reject_unknown_operation_kwargs(self, 'predictive_state', kwargs)
         horizon = kwargs.get("horizon", "next")
         if horizon in (0, "0"):
             horizon = "current"
@@ -871,9 +884,10 @@ class GASStrategy:
         )
 
     def condition_state(self, copula, state, observation, result, **kwargs):
+        reject_unknown_operation_kwargs(self, 'condition_state', kwargs)
         if observation is None:
             return state
-        u = np.asarray(observation, dtype=np.float64)
+        u = as_float64_array(observation, name="observation")
         d = copula_dimension(copula, u)
         if u.ndim != 2 or d is None or u.shape[1] != d or len(u) == 0:
             return state
@@ -904,6 +918,7 @@ class GASStrategy:
         )
 
     def sample_params(self, copula, state, n, rng=None, **kwargs):
+        reject_unknown_operation_kwargs(self, 'sample_params', kwargs)
         n = validate_positive_int(n, "n")
         validate_float64_allocation(
             (n,),
@@ -913,12 +928,14 @@ class GASStrategy:
         return np.full(n, float(np.asarray(state.r)[0]), dtype=np.float64)
 
     def model_sample_params(self, copula, result, n, rng=None, **kwargs):
+        reject_unknown_operation_kwargs(self, 'model_sample_params', kwargs)
         raise ValueError(
             "GAS sample paths require stepwise score updates and cannot be "
             "precomputed"
         )
 
     def model_sample_state(self, copula, result, **kwargs):
+        reject_unknown_operation_kwargs(self, 'model_sample_state', kwargs)
         p = result.params
         initial = _cpp_gas.initial_state(
             p.omega,

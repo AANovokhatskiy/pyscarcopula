@@ -444,6 +444,9 @@ class LatentProcessParams:
 
     def replace(self, **kwargs: float) -> LatentProcessParams:
         """Return a new LatentProcessParams with some values changed."""
+        unknown = sorted(set(kwargs).difference(self.names))
+        if unknown:
+            raise TypeError(f"Unknown {self.process_type} parameter(s): {unknown}")
         d = self.to_dict()
         d.update(kwargs)
         new_values = np.array([d[n] for n in self.names])

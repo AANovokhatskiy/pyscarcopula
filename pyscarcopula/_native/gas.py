@@ -12,7 +12,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from pyscarcopula._native import _descriptors, _extension
-from pyscarcopula.numerical._arrays import as_float64_array
+from pyscarcopula.numerical._arrays import as_float64_array, as_float64_scalar
 from pyscarcopula._native.errors import (
     NativeError,
     NativeUnavailable,
@@ -61,7 +61,7 @@ def supported(copula) -> bool:
 
 def _finite_float(value, name: str) -> float:
     try:
-        result = float(value)
+        result = as_float64_scalar(value, name=name)
     except (TypeError, ValueError, OverflowError) as exc:
         raise ValueError(f"{name} must be a finite float") from exc
     if not np.isfinite(result):

@@ -8,6 +8,7 @@ import numpy as np
 
 from pyscarcopula._native import jacobi as jacobi_native
 from pyscarcopula.numerical._arrays import (
+    as_float64_array,
     validate_float64_allocation,
     validate_integer,
     validate_positive_int,
@@ -32,7 +33,8 @@ class SparseJacobiTransition:
 
     def __post_init__(self):
         indices = np.asarray(self.indices, dtype=np.intp)
-        probabilities = np.asarray(self.probabilities, dtype=np.float64)
+        probabilities = as_float64_array(
+            self.probabilities, name="probabilities")
         counts = np.asarray(self.counts, dtype=np.intp)
         if indices.ndim != 2 or probabilities.shape != indices.shape:
             raise ValueError(
@@ -67,7 +69,7 @@ class SparseJacobiTransition:
 
     def left_multiply(self, vector):
         """Return ``vector @ P`` without dense materialization."""
-        vector = np.asarray(vector, dtype=np.float64)
+        vector = as_float64_array(vector, name="vector")
         if vector.shape != (self.shape[0],):
             raise ValueError(
                 f"vector must have shape ({self.shape[0]},)")
@@ -619,6 +621,8 @@ def sample_sparse_jacobi_trajectory(
         memory_budget_bytes=None):
     """Sample one path from a prepared sparse Jacobi transition."""
     n = validate_integer(n, "n")
+    tau_values = as_float64_array(tau, name="tau")
+    weight_values = as_float64_array(weights, name="weights")
     if n == 0:
         validate_float64_allocation(
             (0,),
@@ -626,8 +630,6 @@ def sample_sparse_jacobi_trajectory(
             memory_budget_bytes=memory_budget_bytes,
         )
         return np.empty(0, dtype=np.float64)
-    tau_values = np.asarray(tau, dtype=np.float64)
-    weight_values = np.asarray(weights, dtype=np.float64)
     retained_bytes = int(transition.retained_bytes)
     grid_bytes = int(tau_values.nbytes + weight_values.nbytes)
     path_bytes = validate_float64_allocation(

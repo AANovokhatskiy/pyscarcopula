@@ -31,6 +31,27 @@ def _problem(evaluate):
     )
 
 
+@pytest.mark.parametrize('dimension', [0, 1])
+@pytest.mark.parametrize('options,key', [
+    ({'optimizer_typo': 3}, 'optimizer_typo'),
+    ({'gtol': np.nan}, 'gtol'),
+    ({'maxiter': 0}, 'maxiter'),
+    ({'eps': np.complex128(1e-5 + .2j)}, 'eps'),
+])
+def test_invalid_options_rejected_before_initial_evaluation(dimension, options, key):
+    calls = []
+
+    def evaluate(parameters):
+        calls.append(parameters)
+        return StaticMLEEvaluation(float(np.sum(parameters ** 2)), 2 * parameters)
+
+    problem = StaticMLEProblem('test', np.zeros(dimension),
+                               ((None, None),) * dimension, evaluate)
+    with pytest.raises((TypeError, ValueError), match=key):
+        run_static_multivariate_mle(problem, optimizer_options=options, fail_value=1e10)
+    assert calls == []
+
+
 def test_typed_evaluator_failure_propagates_without_python_gradient():
     def evaluate(parameters):
         raise NativeUnsupported("synthetic typed evaluator failure")

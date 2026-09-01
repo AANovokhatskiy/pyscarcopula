@@ -601,6 +601,7 @@ class SCARTMStrategy:
     _operation_keyword_aliases = {
         "sample": frozenset({"given", "n_threads", "memory_budget_bytes"}),
         "predict": _prediction_context_keywords,
+        "predictive_params": _prediction_context_keywords,
         "predictive_state": _prediction_context_keywords,
         "sample_params": _prediction_context_keywords,
     }
@@ -1872,6 +1873,7 @@ class SCARTMStrategy:
                   alpha: np.ndarray, **kwargs) -> float:
         """Minus log-likelihood: TM integrated -logL(kappa, mu, nu)."""
         reject_unknown_strategy_kwargs("SCAR-TM-OU", kwargs)
+        alpha = as_float64_array(alpha, name="alpha")
         cfg = self._auto_config(kappa=alpha[0], n_obs=len(u))
         self._uses_cpp(copula)
         return _cpp_scar_ou.neg_loglik(
@@ -1909,11 +1911,14 @@ class SCARTMStrategy:
     def predictive_state(self, copula, u, result, **kwargs):
         """Return SCAR-TM predictive state as a grid distribution."""
         reject_unknown_operation_kwargs(self, 'predictive_state', kwargs)
+        horizon = str(kwargs.get('horizon', 'next')).lower()
+        if horizon not in {'current', 'next'}:
+            raise ValueError("horizon must be 'current' or 'next'")
         p = result.params
         if u is None:
             return PredictiveState(
                 method='SCAR-TM-OU',
-                horizon=str(kwargs.get('horizon', 'next')).lower(),
+                horizon=horizon,
                 kind='stationary_normal',
                 metadata={
                     'kappa': p.kappa,
@@ -1929,7 +1934,6 @@ class SCARTMStrategy:
             cached = state_cache.get(cache_key)
 
         if cached is None:
-            horizon = kwargs.get('horizon', 'next')
             self._uses_cpp(copula)
             cfg = self._auto_config(
                 self._grid_transition_method(),
@@ -1953,7 +1957,7 @@ class SCARTMStrategy:
         z_grid, prob = cached
         return PredictiveState(
             method='SCAR-TM-OU',
-            horizon=str(kwargs.get('horizon', 'next')).lower(),
+            horizon=horizon,
             kind='grid',
             z_grid=np.asarray(z_grid, dtype=np.float64),
             prob=np.asarray(prob, dtype=np.float64),
@@ -1964,7 +1968,7 @@ class SCARTMStrategy:
         reject_unknown_operation_kwargs(self, 'condition_state', kwargs)
         if observation is None or state.kind != 'grid':
             return state
-        u = np.asarray(observation, dtype=np.float64)
+        u = as_float64_array(observation, name="observation")
         if u.ndim != 2 or len(u) == 0:
             return state
         u = u[:1]
@@ -1982,6 +1986,10 @@ class SCARTMStrategy:
 
     def sample_params(self, copula, state, n, rng=None, **kwargs):
         reject_unknown_operation_kwargs(self, 'sample_params', kwargs)
+        mode = kwargs.get('predictive_r_mode')
+        mode = 'histogram' if mode is None else str(mode).lower()
+        if mode not in {'grid', 'histogram'}:
+            raise ValueError("predictive_r_mode must be 'grid' or 'histogram'")
         if rng is None:
             rng = np.random.default_rng()
         if state.kind == 'stationary_normal':
@@ -1993,8 +2001,6 @@ class SCARTMStrategy:
             )
             return copula.transform(x_t)
 
-        mode = kwargs.get('predictive_r_mode')
-        mode = 'histogram' if mode is None else str(mode).lower()
         selection_draws = rng.uniform(0.0, 1.0, size=n)
         jitter_draws = (
             rng.uniform(0.0, 1.0, size=n)
@@ -2022,6 +2028,7 @@ class SCARTMStrategy:
         return copula.transform(x)
 
     def model_sample_state(self, copula, result, **kwargs):
+        reject_unknown_operation_kwargs(self, 'model_sample_state', kwargs)
         return None
 
     def model_sample_params_batches(

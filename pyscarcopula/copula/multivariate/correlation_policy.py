@@ -8,6 +8,7 @@ import warnings
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
+from pyscarcopula.numerical._arrays import as_float64_array
 
 from pyscarcopula.copula.multivariate.corr_param import (
     CorrelationPreprocessingResult,
@@ -105,7 +106,7 @@ def validate_joint_factor_rank(dimension: int, rank: int) -> None:
 
 
 def _readonly_float_array(value: ArrayLike, *, name: str) -> FloatArray:
-    array = np.array(value, dtype=np.float64, copy=True)
+    array = np.array(as_float64_array(value, name=name), copy=True)
     if not np.all(np.isfinite(array)):
         raise ValueError(f"{name} must contain only finite values")
     array.setflags(write=False)
@@ -344,7 +345,8 @@ class CorrelationPolicy:
 
     def trial_correlation(self, raw_parameters: ArrayLike) -> FloatArray:
         """Build a dense trial correlation without model-state mutation."""
-        raw = np.asarray(raw_parameters, dtype=np.float64).reshape(-1)
+        raw = as_float64_array(
+            raw_parameters, name="raw_parameters").reshape(-1)
         if self.mode == "fixed":
             correlation = self.initial_correlation
             if correlation is None:
@@ -375,9 +377,9 @@ class CorrelationPolicy:
                 "raw correlation gradients require an optimized dense mode")
         return _corr_gradient_to_raw_params(
             self.mode,
-            np.asarray(raw_parameters, dtype=np.float64),
-            np.asarray(correlation, dtype=np.float64),
-            np.asarray(correlation_gradient, dtype=np.float64),
+            as_float64_array(raw_parameters, name="raw_parameters"),
+            as_float64_array(correlation, name="correlation"),
+            as_float64_array(correlation_gradient, name="correlation_gradient"),
             self.initial_correlation if self.mode == "shrinkage" else None,
         )
 
@@ -393,6 +395,7 @@ class CorrelationPolicy:
         }
         if self.preprocessing is not None:
             diagnostics.update(self.preprocessing.diagnostics())
+            diagnostics["corr_initialization_source"] = self.initialization_source
         if self.mode == "factor":
             diagnostics.update({
                 "factor_rank": self.factor_rank,

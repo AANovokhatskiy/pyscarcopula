@@ -184,6 +184,17 @@ class TestPredictiveState:
 # ══════════════════════════════════════════════════════════════════
 
 class TestLatentProcessParams:
+    @pytest.mark.parametrize('params', [
+        ou_params(2., .3, .4), gas_params(.2, .03, .6),
+        jacobi_params(2., .4, .3),
+    ])
+    @pytest.mark.parametrize('unknown', ['parameter_typo', 'maxiter'])
+    def test_replace_rejects_unknown_names_without_changing_original(self, params, unknown):
+        original = params.values.copy()
+        with pytest.raises(TypeError, match=unknown):
+            params.replace(**{params.names[0]: 7., unknown: 13.})
+        np.testing.assert_array_equal(params.values, original)
+
     def test_ou_params(self):
         p = ou_params(kappa=49.97, mu=2.42, nu=10.65)
         assert p.process_type == 'ou'

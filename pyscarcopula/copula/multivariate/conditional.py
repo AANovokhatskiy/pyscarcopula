@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import numpy as np
 
-from pyscarcopula.numerical._arrays import as_float64_array
+from pyscarcopula.numerical._arrays import (
+    as_float64_array,
+    validate_integer,
+    validate_sampling_n_threads,
+)
 
 def validate_multivariate_given(given, d):
     """Normalize finite ``given`` values in the open unit interval.
@@ -59,6 +63,13 @@ def fill_given(n, d, given):
     return out
 
 
+def _student_df_path(df, n):
+    values = as_float64_array(df, name="df")
+    if np.any(~np.isfinite(values)) or np.any(values <= 2.0):
+        raise ValueError("df must be finite and greater than 2")
+    return as_path(values, n, "df")
+
+
 def _partition_indices(d, given):
     given_idx = np.array(sorted(given), dtype=int)
     free_idx = np.array([idx for idx in range(int(d)) if idx not in given],
@@ -87,14 +98,15 @@ def sample_gaussian_conditional(
     """
     if rng is None:
         rng = np.random.default_rng()
-    n = int(n)
-    d = int(d)
+    n = validate_integer(n, "n")
+    d = validate_integer(d, "d", minimum=2)
+    n_threads = validate_sampling_n_threads(n_threads)
     given = validate_multivariate_given(given, d)
     if not given:
         raise ValueError("sample_gaussian_conditional requires non-empty given")
-    rho_path = as_path(rho, n, "rho")
     from pyscarcopula._native import multivariate as multivariate_native
-    multivariate_native.validate_equicorrelation_path(rho_path, d, n)
+    multivariate_native.validate_equicorrelation_path(rho, d, n)
+    rho_path = as_path(rho, n, "rho")
     if len(given) == d:
         return fill_given(n, d, given)
     given_idx, free_idx = _partition_indices(d, given)
@@ -124,8 +136,9 @@ def sample_gaussian_copula_conditional(
     """
     if rng is None:
         rng = np.random.default_rng()
-    n = int(n)
-    R = np.asarray(R, dtype=np.float64)
+    n = validate_integer(n, "n")
+    n_threads = validate_sampling_n_threads(n_threads)
+    R = as_float64_array(R, name="R")
     if R.ndim != 2 or R.shape[0] != R.shape[1]:
         raise ValueError("R must be a square correlation matrix")
     d = R.shape[0]
@@ -134,6 +147,8 @@ def sample_gaussian_copula_conditional(
         raise ValueError(
             "sample_gaussian_copula_conditional requires non-empty given")
     if len(given) == d:
+        from pyscarcopula._native import multivariate as multivariate_native
+        multivariate_native.validate_correlation(R)
         return fill_given(n, d, given)
 
     given_idx, free_idx = _partition_indices(d, given)
@@ -162,11 +177,16 @@ def sample_student_conditional(
     """
     if rng is None:
         rng = np.random.default_rng()
-    n = int(n)
-    R_arr = np.asarray(R_path, dtype=np.float64)
+    n = validate_integer(n, "n")
+    n_threads = validate_sampling_n_threads(n_threads)
+    R_arr = as_float64_array(R_path, name="R_path")
     if R_arr.ndim == 2:
+        if R_arr.shape[0] != R_arr.shape[1]:
+            raise ValueError("R_path matrices must be square")
         d = R_arr.shape[0]
     elif R_arr.ndim == 3:
+        if R_arr.shape[1] != R_arr.shape[2]:
+            raise ValueError("R_path matrices must be square")
         if len(R_arr) != n:
             raise ValueError(
                 f"R_path length {len(R_arr)} does not match n={n}")
@@ -177,12 +197,12 @@ def sample_student_conditional(
     given = validate_multivariate_given(given, d)
     if not given:
         raise ValueError("sample_student_conditional requires non-empty given")
-    df_path = as_path(df, n, "df")
-    if (
-            np.any(~np.isfinite(df_path))
-            or np.any(df_path <= 2.0)):
-        raise ValueError("df must be finite and greater than 2")
+    df_path = _student_df_path(df, n)
     if len(given) == d:
+        from pyscarcopula._native import multivariate as multivariate_native
+        matrices = (R_arr,) if R_arr.ndim == 2 else R_arr
+        for matrix in matrices:
+            multivariate_native.validate_correlation(matrix)
         return fill_given(n, d, given)
     given_idx, free_idx = _partition_indices(d, given)
     normal_draws = np.empty((n, len(free_idx)), dtype=np.float64)
@@ -230,12 +250,8 @@ def sample_factor_gaussian_conditional(
     if not isinstance(correlation, PreparedFactorCorrelation):
         raise TypeError(
             "correlation must be a PreparedFactorCorrelation")
-    if isinstance(n, (bool, np.bool_)) or not isinstance(
-            n, (int, np.integer)):
-        raise TypeError("n must be an integer")
-    n = int(n)
-    if n < 0:
-        raise ValueError("n must be non-negative")
+    n = validate_integer(n, "n")
+    n_threads = validate_sampling_n_threads(n_threads)
     if rng is None:
         rng = np.random.default_rng()
 
@@ -287,12 +303,8 @@ def sample_factor_student_conditional(
     if not isinstance(correlation, PreparedFactorCorrelation):
         raise TypeError(
             "correlation must be a PreparedFactorCorrelation")
-    if isinstance(n, (bool, np.bool_)) or not isinstance(
-            n, (int, np.integer)):
-        raise TypeError("n must be an integer")
-    n = int(n)
-    if n < 0:
-        raise ValueError("n must be non-negative")
+    n = validate_integer(n, "n")
+    n_threads = validate_sampling_n_threads(n_threads)
     if rng is None:
         rng = np.random.default_rng()
 
@@ -301,14 +313,9 @@ def sample_factor_student_conditional(
     if not given:
         raise ValueError(
             "sample_factor_student_conditional requires non-empty given")
+    df_path = _student_df_path(df, n)
     if len(given) == d:
         return fill_given(n, d, given)
-
-    df_path = as_path(df, n, "df")
-    if (
-            not np.all(np.isfinite(df_path))
-            or np.any(df_path <= 2.0)):
-        raise ValueError("df must be finite and greater than 2")
     given_idx, free_idx = _partition_indices(d, given)
     chi_square_uniforms = rng.uniform(0.0, 1.0, size=n)
     factor_draws = rng.standard_normal((n, correlation.rank))

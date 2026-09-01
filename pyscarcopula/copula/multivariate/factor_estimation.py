@@ -6,7 +6,11 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from pyscarcopula.numerical._arrays import as_float64_array
+from pyscarcopula.numerical._arrays import (
+    as_float64_array,
+    as_float64_scalar,
+    validate_integer,
+)
 from pyscarcopula.copula.multivariate.correlation_policy import (
     validate_joint_factor_rank,
 )
@@ -104,16 +108,21 @@ def estimate_factor_loadings(
             "u must contain finite pseudo-observations in [0, 1]")
 
     n_observations, dimension = u.shape
-    rank = int(rank)
+    rank = validate_integer(rank, "rank", minimum=1)
+    dimension_tile = validate_integer(
+        dimension_tile, "dimension_tile", minimum=1)
+    seed = validate_integer(seed, "seed")
+    oversampling = validate_integer(oversampling, "oversampling")
+    uniqueness_min = as_float64_scalar(uniqueness_min, name="uniqueness_min")
     if n_observations <= rank:
         raise ValueError(
             "two-stage factor initialization requires "
             "n_observations > factor_rank")
     subspace_size = min(
-        dimension, n_observations, rank + int(oversampling))
+        dimension, n_observations, rank + oversampling)
     if subspace_size < rank:
         raise ValueError("factor_rank exceeds the estimable data rank")
-    rng = np.random.default_rng(int(seed))
+    rng = np.random.default_rng(seed)
     random_projection = rng.standard_normal(
         (dimension, subspace_size))
     from pyscarcopula._native import multivariate as multivariate_native

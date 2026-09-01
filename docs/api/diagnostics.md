@@ -16,10 +16,27 @@ calculation follows the fitted strategy:
 - SCAR-TM integrates conditional h-functions over the predictive latent-state
   distribution.
 
+An explicit static Gaussian or Student `fit_result` also supplies correlation
+state (dense or factor) and Student degrees of freedom, taking precedence over
+state attached to the model without changing that model. GAS diagnostics keep
+the fitted `scaling` and `score_eps`. Dynamic multivariate SCAR diagnostics
+require an OU result and preserve its grid settings and `auto_small_kdt`;
+`K` and `grid_range` on the GoF call override the corresponding grid sizes.
+
 Bootstrap calibration, when requested, simulates from the fitted model and
 recomputes the statistic on generated samples. For stochastic latent-state
 models this means resampling both the latent path and the copula observations,
 not only perturbing the observed pseudo-observations.
+
+`bootstrap_fit_kwargs` accepts the selected model's normal fit options,
+including strategy constructor settings such as GAS `scaling` or OU `K`.
+Explicit settings override the fitted strategy defaults for refitting.
+Unknown or misplaced keys are rejected before bootstrap random streams or
+workers are created, including when `bootstrap_refit=False`. In that mode,
+valid fit-only options have no effect; `config` still controls bootstrap
+numerical execution and thread routing.
+The dictionary cannot override `to_pobs`: generated bootstrap samples are
+already pseudo-observations.
 
 Fitted `VineCopula` models follow the same parametric-bootstrap contract. A
 replication simulates from the captured fitted R-vine, optionally refits a
@@ -34,6 +51,9 @@ The returned `BootstrapGoFResult` exposes `statistic`, the calibrated
 `bootstrap_diagnostics`. Parallel execution metadata is available as
 `n_jobs_requested`, resolved `n_jobs`, `n_threads`, and `backend`; reproducible
 execution policy is recorded in `rng_policy` and `worker_model_ownership`.
+Unsuccessful refits retain `bootstrap_fit_success=False` and their messages
+in the diagnostics. Their statistics remain in the calibration sample; check
+these flags before interpreting the calibrated p-value.
 
 Common fit diagnostics to inspect before interpreting GoF results include:
 

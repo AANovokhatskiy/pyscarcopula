@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import replace
+import inspect
 import multiprocessing as mp
 import os
 from typing import Any, Mapping, Sequence
@@ -17,6 +18,95 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 
 from pyscarcopula._types import NumericalConfig
+
+
+def validate_model_fit_kwargs(copula, method, kwargs) -> None:
+    """Check fit keyword ownership before simulation or worker submission.
+
+    Public signatures and the strategy registry own the accepted names. This
+    preflight does not fit a model, consume randomness, or mutate its state;
+    data-dependent validation remains with the actual fit.
+    """
+    from pyscarcopula.copula.base import CopulaBase
+    from pyscarcopula.copula.multivariate.equicorr import (
+        EquicorrGaussianCopula, _LBFGSB_FIT_KEYS as equicorr_keys,
+    )
+    from pyscarcopula.copula.multivariate.gaussian import (
+        GaussianCopula, _LBFGSB_FIT_KEYS as gaussian_keys,
+    )
+    from pyscarcopula.copula.multivariate.student import (
+        StudentCopula, _LBFGSB_FIT_KEYS as student_keys,
+    )
+    from pyscarcopula.copula.multivariate.stochastic_student import (
+        StochasticStudentCopula, _LBFGSB_FIT_KEYS as stochastic_student_keys,
+    )
+    from pyscarcopula.strategy._base import (
+        ensure_strategy_supported, partition_strategy_fit_kwargs,
+    )
+    from pyscarcopula.vine.vine import VineCopula
+
+    options = dict(kwargs)
+    config = options.get("config")
+    if config is not None and not isinstance(config, NumericalConfig):
+        raise TypeError("fit keyword 'config' must be NumericalConfig")
+    duplicates = set(options).intersection({"self", "data", "u", "method"})
+    if duplicates:
+        raise TypeError(f"duplicate fit argument(s): {sorted(duplicates)}")
+    fit_method = getattr(copula, "fit", None)
+    if not callable(fit_method):
+        raise TypeError("copula must provide a callable fit method")
+    signature = inspect.signature(fit_method)
+    if not any(p.kind == inspect.Parameter.VAR_KEYWORD
+               for p in signature.parameters.values()):
+        signature.bind(None, method=method, **options)
+        return
+    explicit = {name for name, p in signature.parameters.items()
+                if p.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                              inspect.Parameter.KEYWORD_ONLY)}
+    remaining = {name: value for name, value in options.items()
+                 if name not in explicit}
+    # Base model.fit forwards config through **kwargs to the top-level API.
+    remaining.pop("config", None)
+    if "backend" in remaining and str(method).upper() in {"GAS", "SCAR-TM-OU"}:
+        raise TypeError(
+            f"{str(method).upper()} backend selection was removed; "
+            "native execution is mandatory")
+    if (str(method).upper() == "MLE" and isinstance(
+            copula, (EquicorrGaussianCopula, StochasticStudentCopula))):
+        keys = (equicorr_keys if isinstance(copula, EquicorrGaussianCopula)
+                else stochastic_student_keys)
+        unexpected = sorted(set(remaining).difference(keys))
+        if unexpected:
+            raise TypeError(f"unexpected MLE keyword argument(s): {unexpected}")
+    elif isinstance(copula, (GaussianCopula, StudentCopula)):
+        if str(method).upper() != "MLE":
+            raise ValueError(
+                f"{type(copula).__name__} supports only method='mle'")
+        keys = (
+            gaussian_keys if isinstance(copula, GaussianCopula)
+            else student_keys)
+        unexpected = sorted(set(remaining).difference(keys))
+        if unexpected:
+            raise TypeError(f"unexpected MLE keyword argument(s): {unexpected}")
+        if (isinstance(copula, GaussianCopula) and remaining
+                and copula.corr_mode not in {"shrinkage", "cholesky"}):
+            raise TypeError(
+                "optimizer options require corr_mode='shrinkage' or 'cholesky'")
+    elif isinstance(copula, VineCopula):
+        internal = set(remaining).intersection({
+            "initial_mle_result", "_prepared_evaluator"})
+        if internal:
+            raise TypeError(
+                "VineCopula.fit does not accept internal argument(s): "
+                f"{sorted(internal)}")
+        for name in ("truncation_level", "truncation_fill", "threshold",
+                     "min_edge_logL", "transform_type", "structure_search",
+                     "beam_width", "dynamic_failure_policy"):
+            remaining.pop(name, None)
+        partition_strategy_fit_kwargs(method, remaining)
+    elif isinstance(copula, CopulaBase):
+        partition_strategy_fit_kwargs(method, remaining)
+        ensure_strategy_supported(copula, method)
 
 
 def validate_n_jobs(n_jobs: int, n_tasks: int) -> tuple[int, int]:

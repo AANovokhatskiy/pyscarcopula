@@ -21,6 +21,7 @@ from pyscarcopula.numerical._scar_ou_config import (
 )
 from pyscarcopula.numerical._arrays import (
     as_float64_array,
+    as_float64_scalar,
     as_pseudo_observation_array,
 )
 from pyscarcopula.numerical._transition_methods import (
@@ -87,9 +88,9 @@ def copula_h_inverse(copula, q, u_given, r) -> np.ndarray:
 
 def _params(module, kappa, mu, nu):
     params = module.OuParams()
-    params.kappa = float(kappa)
-    params.mu = float(mu)
-    params.nu = float(nu)
+    params.kappa = as_float64_scalar(kappa, name="kappa")
+    params.mu = as_float64_scalar(mu, name="mu")
+    params.nu = as_float64_scalar(nu, name="nu")
     return params
 
 

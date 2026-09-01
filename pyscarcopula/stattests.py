@@ -37,6 +37,7 @@ from pyscarcopula._parallel import (
     get_copula_constructor,
     resolve_parallelism,
     spawn_seed_sequences,
+    validate_model_fit_kwargs,
     with_n_threads,
 )
 from pyscarcopula._utils import (
@@ -46,6 +47,7 @@ from pyscarcopula._utils import (
 )
 from pyscarcopula.numerical._arrays import (
     as_float64_array,
+    as_float64_scalar,
     as_pseudo_observation_array,
     validate_float64_allocation,
     validate_positive_int,
@@ -158,11 +160,13 @@ def _validated_boolean(name, value):
 
 def rosenblatt_transform_mle(copula, u, r):
     """Rosenblatt for constant copula parameter (MLE). Returns (T, 2)."""
+    u = as_pseudo_observation_array(u, name="u")
+    r = as_float64_scalar(r, name="r")
     T = len(u)
     e = np.empty((T, 2))
     e[:, 0] = u[:, 0]
     _, e[:, 1] = copula.h_pair(
-        u[:, 0], u[:, 1], np.full(T, float(r)))
+        u[:, 0], u[:, 1], np.full(T, r))
     return clip_rosenblatt_output(e)
 
 
@@ -193,11 +197,13 @@ def rosenblatt_transform_scar(copula, u, alpha, K=300, grid_range=5.0,
     return e
 
 
-def rosenblatt_transform_gas(copula, u, gas_params, scaling='unit'):
+def rosenblatt_transform_gas(copula, u, gas_params, scaling='unit',
+                             score_eps=1e-4):
     """Rosenblatt for GAS (bivariate). Returns (T, 2)."""
     from pyscarcopula.numerical.gas_filter import gas_rosenblatt
     omega, gamma, beta = gas_params
-    return gas_rosenblatt(omega, gamma, beta, u, copula, scaling)
+    return gas_rosenblatt(
+        omega, gamma, beta, u, copula, scaling, score_eps)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -326,9 +332,9 @@ def gof_test(model, data, to_pobs=True, K=300, grid_range=5.0,
             rvine_fit_result = model
         return _bootstrap_gof(
             'rvine',
-            rvine_fit_result,
-            u,
             model,
+            u,
+            rvine_fit_result,
             float(result.statistic),
             K=K,
             grid_range=grid_range,
@@ -352,7 +358,8 @@ def gof_test(model, data, to_pobs=True, K=300, grid_range=5.0,
                 rng,
                 n_jobs,
             )
-        return gaussian_gof_test(model, data, to_pobs)
+        return gaussian_gof_test(
+            model, data, to_pobs, fit_result=fit_result)
     elif isinstance(model, StudentCopula):
         if bootstrap:
             return _gof_static_multivariate(
@@ -367,7 +374,8 @@ def gof_test(model, data, to_pobs=True, K=300, grid_range=5.0,
                 rng,
                 n_jobs,
             )
-        return student_gof_test(model, data, to_pobs)
+        return student_gof_test(
+            model, data, to_pobs, fit_result=fit_result)
     else:
         raise TypeError(f"Unsupported model type: {type(model).__name__}")
 
@@ -427,7 +435,8 @@ def _bivariate_rosenblatt_from_result(copula, u, fit_result,
     if method == 'GAS':
         scaling = getattr(fit_result, 'scaling', 'unit')
         return rosenblatt_transform_gas(
-            copula, u, fit_result.params.values, scaling)
+            copula, u, fit_result.params.values, scaling,
+            score_eps=getattr(fit_result, 'score_eps', 1e-4))
 
     if getattr(fit_result, 'params', None) is None:
         raise ValueError(
@@ -492,7 +501,7 @@ def _fit_result_diagnostics(result):
     return row
 
 
-def _bootstrap_strategy(fit_result, config):
+def _bootstrap_strategy(fit_result, config, **constructor_kwargs):
     if (
             fit_result.method.upper() == 'MLE'
             and not hasattr(fit_result, 'copula_param')):
@@ -500,7 +509,8 @@ def _bootstrap_strategy(fit_result, config):
 
     from pyscarcopula.strategy._base import get_strategy_for_result
 
-    return get_strategy_for_result(fit_result, config=config)
+    return get_strategy_for_result(
+        fit_result, config=config, **constructor_kwargs)
 
 
 def _bootstrap_capture_none(copula, fit_result):
@@ -524,7 +534,11 @@ def _bootstrap_refit_bivariate(
         copula_class, constructor_kwargs, u_boot, fit_result, fit_kwargs,
         K, grid_range, n_threads, config):
     copula = create_worker_model(copula_class, constructor_kwargs)
-    strategy = _bootstrap_strategy(fit_result, config)
+    from pyscarcopula.strategy._base import partition_strategy_fit_kwargs
+
+    strategy_kwargs, fit_kwargs = partition_strategy_fit_kwargs(
+        fit_result.method, fit_kwargs)
+    strategy = _bootstrap_strategy(fit_result, config, **strategy_kwargs)
     if strategy is None:
         result = copula.fit(
             u_boot, method='mle', to_pobs=False, **fit_kwargs)
@@ -721,11 +735,17 @@ def _bootstrap_refit_dynamic(
     if hasattr(copula, '_ensure_corr_initialized'):
         copula._ensure_corr_initialized(u_boot)
 
-    from pyscarcopula.strategy._base import get_strategy_for_result
+    from pyscarcopula.strategy._base import (
+        get_strategy_for_result,
+        partition_strategy_fit_kwargs,
+    )
 
+    strategy_kwargs, fit_kwargs = partition_strategy_fit_kwargs(
+        fit_result.method, fit_kwargs)
     strategy = get_strategy_for_result(
         fit_result,
         config=config,
+        **strategy_kwargs,
     )
     result = strategy.fit(
         copula,
@@ -959,6 +979,11 @@ def _bootstrap_gof(
         {} if bootstrap_fit_kwargs is None
         else dict(bootstrap_fit_kwargs)
     )
+    if 'to_pobs' in fit_kwargs:
+        raise TypeError(
+            "bootstrap_fit_kwargs cannot override to_pobs; "
+            "bootstrap samples are already pseudo-observations")
+    validate_model_fit_kwargs(copula, fit_result.method, fit_kwargs)
     n_threads, parallel_diagnostics = resolve_parallelism(
         n_jobs, n_bootstrap, None, (fit_kwargs,))
     fit_kwargs = with_n_threads(fit_kwargs, n_threads)
@@ -1321,7 +1346,7 @@ def factor_gaussian_rosenblatt_transform(correlation, u):
     return multivariate_native.factor_gaussian_rosenblatt(correlation, u)
 
 
-def gaussian_gof_test(copula, data, to_pobs=True):
+def gaussian_gof_test(copula, data, to_pobs=True, *, fit_result=None):
     """
     Goodness-of-fit test for a fitted GaussianCopula.
 
@@ -1330,6 +1355,8 @@ def gaussian_gof_test(copula, data, to_pobs=True):
     copula : GaussianCopula (fitted, has .corr)
     data : (T, d)
     to_pobs : bool
+    fit_result : FitResult or None
+        Explicit fitted correlation state, taking precedence over the model.
 
     Returns
     -------
@@ -1337,6 +1364,12 @@ def gaussian_gof_test(copula, data, to_pobs=True):
     """
     u = _prepare_gof_data(
         data, expected_dim=copula.dimension, to_pobs=to_pobs)
+
+    if fit_result is not None:
+        from pyscarcopula.strategy.multivariate_mle import (
+            sampling_model_from_result,
+        )
+        copula = sampling_model_from_result(copula, fit_result)
 
     if getattr(copula, "corr_mode", "dense") == "factor":
         try:
@@ -1373,7 +1406,7 @@ def factor_student_rosenblatt_transform(correlation, df, u):
         correlation, df, u)
 
 
-def student_gof_test(copula, data, to_pobs=True):
+def student_gof_test(copula, data, to_pobs=True, *, fit_result=None):
     """
     Goodness-of-fit test for a fitted StudentCopula.
 
@@ -1382,6 +1415,9 @@ def student_gof_test(copula, data, to_pobs=True):
     copula : StudentCopula (fitted, has .shape and .df)
     data : (T, d)
     to_pobs : bool
+    fit_result : FitResult or None
+        Explicit fitted correlation and degrees of freedom, taking precedence
+        over the model.
 
     Returns
     -------
@@ -1389,6 +1425,12 @@ def student_gof_test(copula, data, to_pobs=True):
     """
     u = _prepare_gof_data(
         data, expected_dim=copula.dimension, to_pobs=to_pobs)
+
+    if fit_result is not None:
+        from pyscarcopula.strategy.multivariate_mle import (
+            sampling_model_from_result,
+        )
+        copula = sampling_model_from_result(copula, fit_result)
 
     if getattr(copula, "corr_mode", "fixed") == "factor":
         try:
@@ -1423,37 +1465,24 @@ def _gas_parameter_path(copula, u, fit_result):
     return np.asarray(r_path, dtype=np.float64)
 
 
-def _tm_grid_kwargs_from_result(fit_result):
-    """SCAR-TM numerical options stored on a fitted result."""
-    out = {}
-    for name in (
-            'grid_method', 'adaptive', 'pts_per_sigma',
-            'transition_method', 'max_K',
-            'r_gh', 'gh_order'):
-        value = getattr(fit_result, name, None)
-        if value is not None:
-            out[name] = value
-    if 'transition_method' in out:
-        out['transition_method'] = _grid_transition_method(
-            out['transition_method'])
-    return out
-
-
 def _native_grid_config_from_result(fit_result, K, grid_range):
     """Build the native grid config with the preserved OU-grid defaults."""
     from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
+    from pyscarcopula.strategy._base import get_ou_strategy_for_result
 
-    options = _tm_grid_kwargs_from_result(fit_result)
+    strategy = get_ou_strategy_for_result(
+        fit_result, K=K, grid_range=grid_range)
     return AutoTMConfig(
-        K=K,
-        grid_range=grid_range,
-        grid_method=options.get('grid_method', 'auto'),
-        adaptive=options.get('adaptive', True),
-        pts_per_sigma=options.get('pts_per_sigma', 4),
-        transition_method=options.get('transition_method', 'matrix'),
-        max_K=options.get('max_K', None),
-        r_gh=options.get('r_gh', 3.0),
-        gh_order=options.get('gh_order', 5),
+        K=strategy.K,
+        grid_range=strategy.grid_range,
+        grid_method=strategy.grid_method,
+        adaptive=strategy.adaptive,
+        pts_per_sigma=strategy.pts_per_sigma,
+        transition_method=_grid_transition_method(strategy.transition_method),
+        small_kdt=strategy.auto_small_kdt,
+        max_K=strategy.max_K,
+        r_gh=strategy.r_gh,
+        gh_order=strategy.gh_order,
     )
 
 
@@ -1485,6 +1514,7 @@ def equicorr_rosenblatt_transform(copula, u, fit_result, K=300, grid_range=5.0):
     if method not in ('MLE', 'GAS'):
         from pyscarcopula._native import scar_ou as _cpp_scar_ou
 
+        config = _native_grid_config_from_result(fit_result, K, grid_range)
         kappa, mu, nu = fit_result.params.values
         return _cpp_scar_ou.gaussian_rosenblatt(
             kappa,
@@ -1492,8 +1522,7 @@ def equicorr_rosenblatt_transform(copula, u, fit_result, K=300, grid_range=5.0):
             nu,
             u,
             copula,
-            _native_grid_config_from_result(
-                fit_result, K, grid_range),
+            config,
         )
 
     if method == 'MLE':
@@ -1575,6 +1604,7 @@ def stochastic_student_rosenblatt_transform(copula, u, fit_result,
     if method not in ('MLE', 'GAS'):
         from pyscarcopula._native import scar_ou as _cpp_scar_ou
 
+        config = _native_grid_config_from_result(fit_result, K, grid_range)
         kappa, mu, nu_ou = fit_result.params.values
         return _cpp_scar_ou.student_rosenblatt(
             kappa,
@@ -1582,8 +1612,7 @@ def stochastic_student_rosenblatt_transform(copula, u, fit_result,
             nu_ou,
             u,
             copula,
-            _native_grid_config_from_result(
-                fit_result, K, grid_range),
+            config,
         )
 
     if method == 'MLE':

@@ -61,7 +61,7 @@ def _validated_n_threads(n_threads) -> int:
 
 def gaussian_score_correlation(u) -> np.ndarray:
     """Estimate the Gaussian-score correlation in the native static kernel."""
-    observations = np.ascontiguousarray(np.asarray(u, dtype=np.float64))
+    observations = np.ascontiguousarray(as_float64_array(u, name="u"))
     if observations.ndim != 2:
         raise ValueError("u must have shape (n,d)")
     module = _extension.load()
@@ -97,7 +97,7 @@ def _static_correlation_result(result, module, operation):
 
 def correlation_logistic(values) -> np.ndarray:
     """Apply the native stable logistic correlation transform."""
-    array = np.asarray(values, dtype=np.float64)
+    array = as_float64_array(values, name="values")
     module = _extension.load()
     result = _static_correlation_result(
         module.static_correlation_logistic(
@@ -110,7 +110,7 @@ def correlation_logistic(values) -> np.ndarray:
 
 def correlation_logit(values) -> np.ndarray:
     """Apply the native clipped inverse-logistic correlation transform."""
-    array = np.asarray(values, dtype=np.float64)
+    array = as_float64_array(values, name="values")
     module = _extension.load()
     result = _static_correlation_result(
         module.static_correlation_logit(np.ascontiguousarray(array)),
@@ -122,7 +122,8 @@ def correlation_logit(values) -> np.ndarray:
 
 def preprocess_correlation(correlation, *, eigenvalue_floor=1e-8):
     """Project a matrix to SPD correlation form in the native kernel."""
-    matrix = np.ascontiguousarray(correlation, dtype=np.float64)
+    matrix = np.ascontiguousarray(as_float64_array(correlation, name="correlation"))
+    eigenvalue_floor = as_float64_scalar(eigenvalue_floor, name="eigenvalue_floor")
     module = _extension.load()
     result = _static_correlation_result(
         module.static_preprocess_correlation(matrix, float(eigenvalue_floor)),
@@ -144,7 +145,7 @@ def preprocess_correlation(correlation, *, eigenvalue_floor=1e-8):
 
 def prepare_dense_correlation(correlation):
     """Build inverse-Cholesky and log-determinant state in C++."""
-    matrix = np.ascontiguousarray(correlation, dtype=np.float64)
+    matrix = np.ascontiguousarray(as_float64_array(correlation, name="correlation"))
     module = _extension.load()
     result = _static_correlation_result(
         module.static_prepare_dense_correlation(matrix),
@@ -212,7 +213,8 @@ def interpolate_student_ppf_table(nodes, table, df):
 
 def estimate_kendall_correlation(observations, *, eigenvalue_floor=1e-8):
     """Estimate and project the Kendall correlation in C++."""
-    values = np.ascontiguousarray(observations, dtype=np.float64)
+    values = np.ascontiguousarray(as_float64_array(observations, name="observations"))
+    eigenvalue_floor = as_float64_scalar(eigenvalue_floor, name="eigenvalue_floor")
     module = _extension.load()
     result = _static_correlation_result(
         module.static_estimate_kendall_correlation(
@@ -235,7 +237,8 @@ def estimate_kendall_correlation(observations, *, eigenvalue_floor=1e-8):
 
 def validate_correlation(correlation, *, tolerance=1e-8) -> None:
     """Validate a finite SPD correlation matrix in C++."""
-    matrix = np.ascontiguousarray(correlation, dtype=np.float64)
+    matrix = np.ascontiguousarray(as_float64_array(correlation, name="correlation"))
+    tolerance = as_float64_scalar(tolerance, name="tolerance")
     module = _extension.load()
     _static_correlation_result(
         module.static_validate_correlation(matrix, float(tolerance)),
@@ -246,7 +249,8 @@ def validate_correlation(correlation, *, tolerance=1e-8) -> None:
 
 def make_shrinkage_correlation(raw_parameter, base) -> np.ndarray:
     """Build the dense shrinkage trial correlation natively."""
-    matrix = np.ascontiguousarray(base, dtype=np.float64)
+    matrix = np.ascontiguousarray(as_float64_array(base, name="base"))
+    raw_parameter = as_float64_scalar(raw_parameter, name="raw_parameter")
     module = _extension.load()
     result = _static_correlation_result(
         module.static_make_shrinkage_correlation(
@@ -262,7 +266,8 @@ def make_shrinkage_correlation(raw_parameter, base) -> np.ndarray:
 def pack_cholesky_correlation(
         correlation, *, eigenvalue_floor=1e-8) -> np.ndarray:
     """Pack native unit-diagonal Cholesky optimizer coordinates."""
-    matrix = np.ascontiguousarray(correlation, dtype=np.float64)
+    matrix = np.ascontiguousarray(as_float64_array(correlation, name="correlation"))
+    eigenvalue_floor = as_float64_scalar(eigenvalue_floor, name="eigenvalue_floor")
     module = _extension.load()
     result = _static_correlation_result(
         module.static_pack_cholesky_correlation(
@@ -275,7 +280,7 @@ def pack_cholesky_correlation(
 
 def unpack_cholesky_correlation(parameters, dimension) -> np.ndarray:
     """Build a correlation matrix from native Cholesky coordinates."""
-    values = np.ascontiguousarray(parameters, dtype=np.float64)
+    values = np.ascontiguousarray(as_float64_array(parameters, name="parameters"))
     module = _extension.load()
     result = _static_correlation_result(
         module.static_unpack_cholesky_correlation(values, int(dimension)),
@@ -297,14 +302,15 @@ def correlation_gradient_to_raw(
     base_values = (
         np.empty(0, dtype=np.float64)
         if base is None
-        else np.ascontiguousarray(base, dtype=np.float64)
+        else np.ascontiguousarray(as_float64_array(base, name="base"))
     )
     result = _static_correlation_result(
         module.static_correlation_gradient_to_raw(
             modes[mode],
-            np.ascontiguousarray(parameters, dtype=np.float64),
-            np.ascontiguousarray(correlation, dtype=np.float64),
-            np.ascontiguousarray(correlation_gradient, dtype=np.float64),
+            np.ascontiguousarray(as_float64_array(parameters, name="parameters")),
+            np.ascontiguousarray(as_float64_array(correlation, name="correlation")),
+            np.ascontiguousarray(as_float64_array(
+                correlation_gradient, name="correlation_gradient")),
             base_values,
         ),
         module,
@@ -318,8 +324,8 @@ def shrinkage_raw_correlation_direction(parameters, base) -> np.ndarray:
     module = _extension.load()
     result = _static_correlation_result(
         module.static_shrinkage_raw_direction(
-            np.ascontiguousarray(parameters, dtype=np.float64),
-            np.ascontiguousarray(base, dtype=np.float64),
+            np.ascontiguousarray(as_float64_array(parameters, name="parameters")),
+            np.ascontiguousarray(as_float64_array(base, name="base")),
         ),
         module,
         "static shrinkage correlation direction",
@@ -332,8 +338,8 @@ def factor_correlation_from_loadings(loadings, uniqueness_min):
     module = _extension.load()
     result = _static_correlation_result(
         module.static_factor_correlation_from_loadings(
-            np.ascontiguousarray(loadings, dtype=np.float64),
-            float(uniqueness_min),
+            np.ascontiguousarray(as_float64_array(loadings, name="loadings")),
+            as_float64_scalar(uniqueness_min, name="uniqueness_min"),
         ),
         module,
         "static factor-correlation construction",
@@ -349,8 +355,8 @@ def factor_correlation_from_unconstrained(values, uniqueness_min):
     module = _extension.load()
     result = _static_correlation_result(
         module.static_factor_correlation_from_unconstrained(
-            np.ascontiguousarray(values, dtype=np.float64),
-            float(uniqueness_min),
+            np.ascontiguousarray(as_float64_array(values, name="values")),
+            as_float64_scalar(uniqueness_min, name="uniqueness_min"),
         ),
         module,
         "static unconstrained factor transform",
@@ -363,8 +369,8 @@ def factor_correlation_to_dense(loadings, uniqueness) -> np.ndarray:
     module = _extension.load()
     result = _static_correlation_result(
         module.static_factor_correlation_to_dense(
-            np.ascontiguousarray(loadings, dtype=np.float64),
-            np.ascontiguousarray(uniqueness, dtype=np.float64),
+            np.ascontiguousarray(as_float64_array(loadings, name="loadings")),
+            np.ascontiguousarray(as_float64_array(uniqueness, name="uniqueness")),
         ),
         module,
         "static dense factor materialization",
@@ -380,7 +386,7 @@ def factor_parameterization_from_loadings(loadings, uniqueness_min) -> dict:
     result = _static_correlation_result(
         module.static_factor_parameterization_from_loadings(
             np.ascontiguousarray(as_float64_array(loadings, name="loadings")),
-            float(uniqueness_min),
+            as_float64_scalar(uniqueness_min, name="uniqueness_min"),
         ),
         module,
         "static factor parameterization initialization",
@@ -405,7 +411,7 @@ def factor_parameterization_loadings(
     module = _extension.load()
     result = _static_correlation_result(
         module.static_factor_parameterization_loadings(
-            np.ascontiguousarray(parameters, dtype=np.float64),
+            np.ascontiguousarray(as_float64_array(parameters, name="parameters")),
             np.ascontiguousarray(free_rows, dtype=np.float64),
             np.ascontiguousarray(free_columns, dtype=np.float64),
             np.ascontiguousarray(diagonal_entries, dtype=np.float64),
@@ -427,8 +433,9 @@ def factor_parameterization_pullback(
     module = _extension.load()
     result = _static_correlation_result(
         module.static_factor_parameterization_pullback(
-            np.ascontiguousarray(parameters, dtype=np.float64),
-            np.ascontiguousarray(loading_gradient, dtype=np.float64),
+            np.ascontiguousarray(as_float64_array(parameters, name="parameters")),
+            np.ascontiguousarray(as_float64_array(
+                loading_gradient, name="loading_gradient")),
             np.ascontiguousarray(free_rows, dtype=np.float64),
             np.ascontiguousarray(free_columns, dtype=np.float64),
             np.ascontiguousarray(diagonal_entries, dtype=np.float64),
@@ -1136,8 +1143,8 @@ def gaussian_rosenblatt(correlation, u, *, n_threads=1):
     module = _extension.load()
     return _rosenblatt_values(
         module.dense_gaussian_rosenblatt_transform(
-            np.ascontiguousarray(correlation, dtype=np.float64),
-            np.ascontiguousarray(u, dtype=np.float64),
+            np.ascontiguousarray(as_float64_array(correlation, name="correlation")),
+            np.ascontiguousarray(as_float64_array(u, name="u")),
             _validated_n_threads(n_threads),
         ),
         module,
@@ -1151,7 +1158,7 @@ def equicorr_gaussian_rosenblatt(rho, u, *, n_threads=1):
     return _rosenblatt_values(
         module.equicorr_gaussian_rosenblatt_transform(
             _values(rho),
-            np.ascontiguousarray(u, dtype=np.float64),
+            np.ascontiguousarray(as_float64_array(u, name="u")),
             _validated_n_threads(n_threads),
         ),
         module,
@@ -1166,7 +1173,7 @@ def factor_gaussian_rosenblatt(correlation, u, *, n_threads=1):
     return _rosenblatt_values(
         module.factor_gaussian_rosenblatt_transform(
             native,
-            np.ascontiguousarray(u, dtype=np.float64),
+            np.ascontiguousarray(as_float64_array(u, name="u")),
             _validated_n_threads(n_threads),
         ),
         module,
@@ -1181,7 +1188,7 @@ def factor_student_rosenblatt(correlation, df, u, *, n_threads=1):
     return _rosenblatt_values(
         module.factor_student_rosenblatt_transform(
             native,
-            np.ascontiguousarray(u, dtype=np.float64),
+            np.ascontiguousarray(as_float64_array(u, name="u")),
             _values(df),
             _validated_n_threads(n_threads),
         ),
@@ -1194,7 +1201,7 @@ def radial_uniform_summary(residuals, *, n_threads=1):
     """Reduce multivariate residuals to radial uniform summaries natively."""
     module = _extension.load()
     result = dict(module.radial_uniform_summary(
-        np.ascontiguousarray(residuals, dtype=np.float64),
+        np.ascontiguousarray(as_float64_array(residuals, name="residuals")),
         _validated_n_threads(n_threads),
     ))
     if result["status"] != module.SCAR_OK:

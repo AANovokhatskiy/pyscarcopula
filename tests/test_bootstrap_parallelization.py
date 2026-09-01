@@ -660,11 +660,19 @@ def test_nonbootstrap_gof_ignores_n_jobs():
     assert np.isfinite(result.statistic)
 
 
-def test_bootstrap_worker_error_identifies_replication():
+def test_bootstrap_worker_error_identifies_replication(monkeypatch):
+    import pyscarcopula.stattests as st
+    from dataclasses import replace
     from pyscarcopula.stattests import gof_test
 
     model, u, fit_result = _fit_bivariate("mle")
 
+    def fail_simulation(*args, **kwargs):
+        raise ValueError("simulation failed")
+
+    monkeypatch.setitem(
+        st._BOOTSTRAP_ADAPTERS, "bivariate",
+        replace(st._BOOTSTRAP_ADAPTERS["bivariate"], simulate=fail_simulation))
     with pytest.raises(RuntimeError, match="bootstrap iteration 1 failed"):
         gof_test(
             model,
@@ -674,7 +682,6 @@ def test_bootstrap_worker_error_identifies_replication():
             bootstrap=True,
             n_bootstrap=2,
             bootstrap_refit=True,
-            bootstrap_fit_kwargs={"tol": 1e-6},
             rng=915,
             n_jobs=1,
         )

@@ -36,6 +36,13 @@ reproducibility, and thread-safety guidance.
 model per task. No model, prepared evaluator, or transient fit cache is shared
 between tasks.
 
+Nonreal observations and unknown or wrong-method `fit_kwargs` are rejected
+before any fit or worker process starts. This includes task-specific keyword
+dictionaries: an invalid later task prevents earlier tasks from running.
+Optimizer nonconvergence remains a returned result; inspect each
+`batch.results[i].success` before using its model. An unsuccessful fit does
+not publish that result as the model's fitted state.
+
 ## risk_metrics
 
 ::: pyscarcopula.contrib.risk_metrics.risk_metrics

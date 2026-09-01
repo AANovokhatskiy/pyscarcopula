@@ -420,7 +420,7 @@ class FactorStudentEvaluator:
         )
 
     def _grid_values(self, df_grid):
-        values = np.asarray(df_grid, dtype=np.float64)
+        values = as_float64_array(df_grid, name="df_grid")
         if values.ndim != 1 or values.shape[0] < 1:
             raise ValueError("df_grid must be a non-empty 1D array")
         if np.any(~np.isfinite(values)) or np.any(values <= 2.0):
@@ -596,7 +596,8 @@ class FactorStudentEvaluator:
             dimension_tile, "dimension_tile", minimum=1)
         n_threads = _validated_n_threads(n_threads)
         grid = np.ascontiguousarray(
-            np.asarray(raw_grid, dtype=np.float64))
+            as_float64_array(raw_grid, name="raw_grid"))
+        offset = as_float64_scalar(offset, name="offset")
         if grid.ndim != 1 or grid.shape[0] < 1:
             raise ValueError("raw_grid must be a non-empty 1D array")
         required = self._grid_peak_bytes(

@@ -12,6 +12,18 @@ For the statistical meaning of each method, see
 For the complete native-thread, process-worker, determinism, thread-safety,
 and dimensional-scaling contract, see [CPU Parallelism](parallelism.md).
 
+Direct built-in strategy state methods reject unknown keywords and options
+owned by fitting, such as `maxiter`. `PredictConfig` belongs to the public
+prediction API; direct strategy calls take the individual prediction options.
+Shared vine cache context remains accepted by the corresponding state hooks,
+and custom variadic strategies retain their extension keyword contract.
+Prediction horizons are checked before returning a state without history;
+SCAR parameter samplers validate the grid/histogram selector before drawing
+from a stationary state. Complex parameters and sparse Jacobi inputs are
+rejected before conversion to real arrays. Static multivariate optimizer
+options are validated before any objective evaluation, including closed-form
+fits with no optimizer coordinates.
+
 ## Bivariate Models
 
 All bivariate fits go through the strategy registry:
@@ -335,6 +347,12 @@ are possible at their boundaries.
 internal table construction. `StochasticStudentCopula` currently uses the
 package-wide default; there is no model-level fit or constructor option for
 overriding this cap.
+
+Prepared Student quantile tables keep their observation snapshot, nodes, and
+cached values read-only. Reuse compares observation contents; modifying the
+source observations creates a new cache. Row-block coordinates must be
+non-negative integers with `start <= stop` inside the available rows. An empty
+block at the end is valid.
 
 With `transition_method='auto'`, a `numerical_failure` from the spectral path
 may be recovered by trying matrix and then local transition methods. Forced

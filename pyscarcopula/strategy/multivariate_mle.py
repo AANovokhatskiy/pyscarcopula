@@ -9,6 +9,7 @@ import numpy as np
 from scipy.optimize import minimize
 
 from pyscarcopula._native import model_policy
+from pyscarcopula._types import LBFGSBConfig
 from pyscarcopula.copula.multivariate.corr_param import validate_corr_matrix
 from pyscarcopula.copula.multivariate.correlation_policy import FloatArray
 from pyscarcopula.numerical._arrays import as_float64_scalar
@@ -261,6 +262,7 @@ def run_static_multivariate_mle(
     C++-owned optimizer penalty. No model object is accepted by this function,
     so objective calls cannot publish fitted state accidentally.
     """
+    optimizer_options = LBFGSBConfig().options(**optimizer_options)
     x0 = np.asarray(
         problem.initial_parameters, dtype=np.float64).reshape(-1).copy()
     if np.any(~np.isfinite(x0)):

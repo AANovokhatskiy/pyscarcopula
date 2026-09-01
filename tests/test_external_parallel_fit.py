@@ -50,7 +50,6 @@ def test_fit_independent_process_default_disables_inner_threads():
         _datasets(2),
         n_jobs=2,
         mp_start_method="spawn",
-        fit_kwargs={"maxiter": 3, "maxfun": 12},
     )
 
     assert batch.diagnostics["n_jobs"] == 2
@@ -58,6 +57,7 @@ def test_fit_independent_process_default_disables_inner_threads():
     assert batch.diagnostics["nested_parallelism"] is False
     assert all(item.result.diagnostics["n_threads"] == 1
                for item in batch.fits)
+    assert all(item.result.success for item in batch.fits)
     assert all(item.model.fit_result is item.result for item in batch.fits)
 
 
@@ -106,6 +106,88 @@ def test_fit_independent_supports_task_specific_starting_points():
 
     assert len(batch.results) == 2
     assert all(np.isfinite(result.log_likelihood) for result in batch.results)
+
+
+@pytest.mark.parametrize("n_jobs", [1, 2])
+@pytest.mark.parametrize("key", ["unknown_option", "K", "tol"])
+def test_fit_independent_rejects_invalid_options_before_any_fit(monkeypatch, n_jobs, key):
+    from pyscarcopula import BivariateGaussianCopula
+    from pyscarcopula.contrib import parallel_fit
+
+    def unexpected_work(*args, **kwargs):
+        pytest.fail("validation must precede fitting and process creation")
+
+    monkeypatch.setattr(parallel_fit, "_fit_worker", unexpected_work)
+    mp_context = parallel_fit.mp.get_context()
+    monkeypatch.setattr(mp_context, "Pool", unexpected_work)
+    monkeypatch.setattr(parallel_fit.mp, "get_context", lambda *args: mp_context)
+    with pytest.raises(TypeError, match=key):
+        parallel_fit.fit_independent(
+            BivariateGaussianCopula(), _datasets(2), n_jobs=n_jobs,
+            fit_kwargs=[{}, {key: 17}])
+
+
+@pytest.mark.parametrize("n_jobs", [1, 2])
+@pytest.mark.parametrize("object_array", [False, True])
+def test_fit_independent_rejects_complex_data_before_fitting(monkeypatch, n_jobs, object_array):
+    from pyscarcopula import BivariateGaussianCopula
+    from pyscarcopula.contrib import parallel_fit
+
+    data = _datasets(1)[0].astype(complex) + .2j
+    if object_array:
+        data = data.astype(object)
+    monkeypatch.setattr(parallel_fit, "_fit_worker",
+                        lambda *args: pytest.fail("invalid data reached fit"))
+    with pytest.raises(TypeError, match="real|complex"):
+        parallel_fit.fit_independent(BivariateGaussianCopula(), [data], n_jobs=n_jobs)
+
+
+@pytest.mark.parametrize("n_jobs", [1, 2])
+def test_fit_independent_preserves_unsuccessful_result_without_publishing(n_jobs):
+    from pyscarcopula import EquicorrGaussianCopula
+    from pyscarcopula.contrib.parallel_fit import fit_independent
+
+    batch = fit_independent(
+        EquicorrGaussianCopula(d=2), _datasets(2), n_jobs=n_jobs,
+        mp_start_method="spawn", fit_kwargs={"maxiter": 1, "maxfun": 2})
+    assert all(not item.result.success for item in batch.fits)
+    assert all(item.model.fit_result is None for item in batch.fits)
+
+
+@pytest.mark.parametrize("method", ["gas", "scar-tm-ou"])
+def test_fit_independent_rejects_retired_backend_before_worker(monkeypatch, method):
+    from pyscarcopula import BivariateGaussianCopula
+    from pyscarcopula.contrib import parallel_fit
+
+    monkeypatch.setattr(parallel_fit, "_fit_worker",
+                        lambda *args: pytest.fail("retired key reached a fit"))
+    with pytest.raises(TypeError, match="backend"):
+        parallel_fit.fit_independent(
+            BivariateGaussianCopula(), _datasets(1), method=method,
+            fit_kwargs={"backend": "auto"})
+
+
+@pytest.mark.parametrize("model_name", [
+    "EquicorrGaussianCopula", "StochasticStudentCopula",
+])
+@pytest.mark.parametrize("key", ["alpha0", "_prepared_evaluator"])
+@pytest.mark.parametrize("n_jobs", [1, 2])
+def test_multivariate_mle_options_are_checked_before_worker(
+        monkeypatch, model_name, key, n_jobs):
+    import pyscarcopula as p
+    from pyscarcopula.contrib import parallel_fit
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("model-specific MLE option reached worker creation")
+
+    monkeypatch.setattr(parallel_fit, "_fit_worker", unexpected)
+    context = parallel_fit.mp.get_context()
+    monkeypatch.setattr(context, "Pool", unexpected)
+    monkeypatch.setattr(parallel_fit.mp, "get_context", lambda *args: context)
+    with pytest.raises(TypeError, match=key):
+        parallel_fit.fit_independent(
+            getattr(p, model_name)(d=2), _datasets(2), n_jobs=n_jobs,
+            fit_kwargs=[{}, {key: [.2]}])
 
 
 def test_risk_metrics_records_resolved_parallel_policy(monkeypatch):

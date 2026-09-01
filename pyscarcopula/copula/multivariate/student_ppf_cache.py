@@ -8,6 +8,7 @@ import weakref
 
 import numpy as np
 from pyscarcopula._native import multivariate as native_multivariate
+from pyscarcopula.numerical._arrays import as_float64_array, validate_integer
 
 
 _CACHE_VERSIONS = count(1)
@@ -20,7 +21,7 @@ DEFAULT_MAX_TABLE_BYTES = 256 * 1024 ** 2
 
 
 def _normalized_snapshot(u) -> np.ndarray:
-    values = np.ascontiguousarray(np.asarray(u, dtype=np.float64))
+    values = np.ascontiguousarray(as_float64_array(u, name="u"))
     snapshot = values.copy()
     snapshot.setflags(write=False)
     return snapshot
@@ -49,6 +50,10 @@ class StudentPPFTable:
         self.u, self.nodes, self.table = native_multivariate.prepare_student_ppf_table(
             u, df_lo=df_lo, df_hi=df_hi, n_boundary=n_boundary,
             n_lo=n_lo, n_hi=n_hi, max_table_bytes=max_table_bytes)
+        self.u.setflags(write=False)
+        self.nodes.setflags(write=False)
+        if self.table is not None:
+            self.table.setflags(write=False)
 
     def __call__(self, df):
         return native_multivariate.evaluate_student_ppf_table(
@@ -56,6 +61,11 @@ class StudentPPFTable:
 
     def rows(self, df, start, stop):
         """Evaluate a contiguous row block, using exact tails when required."""
+        start = validate_integer(start, "start")
+        stop = validate_integer(stop, "stop")
+        if stop < start or stop > len(self.u):
+            raise ValueError(
+                f"PPF table block [{start}:{stop}] is outside length {len(self.u)}")
         return native_multivariate.evaluate_student_ppf_table(
             self.u, self.nodes, self.table, df, start, stop)
 
@@ -78,7 +88,7 @@ class StudentPPFCache:
         if self.u_snapshot is None:
             return False
         normalized = np.ascontiguousarray(
-            np.asarray(values, dtype=np.float64))
+            as_float64_array(values, name="values"))
         return (
             self.u_shape == tuple(normalized.shape)
             and np.array_equal(self.u_snapshot, normalized)
@@ -88,40 +98,51 @@ class StudentPPFCache:
         return self._ppf(df)
 
     def block(self, n_rows, t_index=0, max_rows=None, expected_d=None):
+        n_rows = validate_integer(n_rows, "n_rows")
+        start = validate_integer(t_index, "t_index")
+        if max_rows is not None:
+            max_rows = validate_integer(max_rows, "max_rows")
+        if expected_d is not None:
+            expected_d = validate_integer(expected_d, "expected_d", minimum=1)
         if self.d != self.u_shape[1]:
             raise ValueError("PPF cache dimension is inconsistent")
-        if expected_d is not None and self.d != int(expected_d):
+        if expected_d is not None and self.d != expected_d:
             raise ValueError(
                 f"PPF cache has dimension {self.d}, "
-                f"expected {int(expected_d)}")
-        start = int(t_index)
-        stop = start + int(n_rows)
+                f"expected {expected_d}")
+        stop = start + n_rows
         limit = self.u_shape[0] if max_rows is None else min(
-            self.u_shape[0], int(max_rows))
-        if start < 0 or stop > limit:
+            self.u_shape[0], max_rows)
+        if stop > limit:
             raise ValueError(
                 f"PPF cache block [{start}:{stop}] is outside length {limit}")
         return start, stop
 
     def ppf_rows(self, df, start=0, stop=None):
+        start = validate_integer(start, "start")
         if stop is None:
             stop = self.u_shape[0]
-        start, stop = self.block(int(stop) - int(start), start)
+        stop = validate_integer(stop, "stop")
+        start, stop = self.block(stop - start, start)
         return self._ppf.rows(df, start, stop)
 
 
 def prepare_student_ppf_cache(
         cached, source, u, d, table_factory=StudentPPFTable):
     """Reuse or build the single PPF cache for a pseudo-observation array."""
-    normalized = np.ascontiguousarray(np.asarray(u, dtype=np.float64))
-    if normalized.ndim != 2 or normalized.shape[1] != int(d):
+    d = validate_integer(d, "d", minimum=1)
+    normalized = np.ascontiguousarray(as_float64_array(u, name="u"))
+    if normalized.ndim != 2 or normalized.shape[1] != d:
         raise ValueError(
-            f"u must have shape (T, {int(d)}), got {normalized.shape}")
+            f"u must have shape (T, {d}), got {normalized.shape}")
     if cached is not None and cached.matches(source, normalized):
         return cached
 
     snapshot = _normalized_snapshot(normalized)
     table = table_factory(snapshot)
+    table.nodes.setflags(write=False)
+    if table.table is not None:
+        table.table.setflags(write=False)
     try:
         source_ref = weakref.ref(source)
     except TypeError:
@@ -130,7 +151,7 @@ def prepare_student_ppf_cache(
         u_shape=tuple(snapshot.shape),
         ppf_nodes=table.nodes,
         ppf_table=table.table,
-        d=int(d),
+        d=d,
         source_ref=source_ref,
         _ppf=table,
         u_snapshot=snapshot,

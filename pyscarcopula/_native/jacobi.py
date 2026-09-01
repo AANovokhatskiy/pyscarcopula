@@ -11,6 +11,7 @@ from pyscarcopula._native._extension import load
 from pyscarcopula._native.errors import raise_for_status
 from pyscarcopula.numerical._arrays import (
     as_float64_array,
+    as_float64_scalar,
     as_pseudo_observation_array,
     validate_integer,
     validate_float64_allocation,
@@ -33,9 +34,9 @@ _LAMPERTI_ENGINES = frozenset({"native", "numba", "python"})
 def _params(kappa, m, xi):
     module = load()
     params = module.JacobiParams()
-    params.kappa = float(kappa)
-    params.m = float(m)
-    params.xi = float(xi)
+    params.kappa = as_float64_scalar(kappa, name="kappa")
+    params.m = as_float64_scalar(m, name="m")
+    params.xi = as_float64_scalar(xi, name="xi")
     return params
 
 
@@ -1222,12 +1223,12 @@ def sample_prepared_sparse_trajectory_fixed_draws(
         tau, weights, indices, probabilities, counts, uniforms):
     """Sample a caller-prepared sparse transition wholly in native C++."""
     draws = np.ascontiguousarray(
-        np.asarray(uniforms, dtype=np.float64).ravel())
+        as_float64_array(uniforms, name="uniforms").ravel())
     result = load().jacobi_sample_prepared_sparse_trajectory(
-        np.ascontiguousarray(np.asarray(tau, dtype=np.float64).ravel()),
-        np.ascontiguousarray(np.asarray(weights, dtype=np.float64).ravel()),
+        np.ascontiguousarray(as_float64_array(tau, name="tau").ravel()),
+        np.ascontiguousarray(as_float64_array(weights, name="weights").ravel()),
         np.ascontiguousarray(np.asarray(indices, dtype=np.int64)),
-        np.ascontiguousarray(np.asarray(probabilities, dtype=np.float64)),
+        np.ascontiguousarray(as_float64_array(probabilities, name="probabilities")),
         np.ascontiguousarray(np.asarray(counts, dtype=np.int64).ravel()),
         draws,
     )
@@ -1403,9 +1404,9 @@ def sparse_transition(
 def sparse_left_multiply(indices, probabilities, counts, values):
     result = load().jacobi_sparse_left_multiply(
         np.asarray(indices, dtype=np.int64),
-        np.asarray(probabilities, dtype=np.float64),
+        as_float64_array(probabilities, name="probabilities"),
         np.asarray(counts, dtype=np.int64),
-        np.asarray(values, dtype=np.float64),
+        as_float64_array(values, name="values"),
     )
     _raise(result, "sparse transition matvec")
     return np.asarray(result["values"], dtype=np.float64)
@@ -1415,7 +1416,7 @@ def validate_sparse_transition(indices, probabilities, counts):
     """Validate sparse row invariants without materializing a dense matrix."""
     load().jacobi_validate_sparse_transition(
         np.asarray(indices, dtype=np.int64),
-        np.asarray(probabilities, dtype=np.float64),
+        as_float64_array(probabilities, name="probabilities"),
         np.asarray(counts, dtype=np.int64),
     )
 
@@ -1424,7 +1425,7 @@ def sparse_to_dense(indices, probabilities, counts):
     """Materialize sparse transition rows through the native boundary."""
     result = load().jacobi_sparse_to_dense(
         np.asarray(indices, dtype=np.int64),
-        np.asarray(probabilities, dtype=np.float64),
+        as_float64_array(probabilities, name="probabilities"),
         np.asarray(counts, dtype=np.int64),
     )
     _raise(result, "sparse transition dense materialization")
