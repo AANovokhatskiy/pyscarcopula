@@ -798,8 +798,10 @@ def compile_dynamic_rosenblatt_edges(
         elif type(result) is LatentResult and result.method == "SCAR-TM-OU":
             strategy = strategy_for_result(result, **strategy_kwargs)
             params = result.params
+            # The prepared evaluator dispatches likelihood by this method;
+            # its posterior/h operations map spectral to auto internally.
             cfg = strategy._auto_config(
-                strategy._grid_transition_method(),
+                strategy.transition_method,
                 kappa=params.kappa,
                 n_obs=n_rows,
             )

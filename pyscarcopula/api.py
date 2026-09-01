@@ -66,6 +66,16 @@ def _reject_public_posterior_cache(kwargs: dict[str, Any]) -> None:
             "accepted by the top-level API")
 
 
+def _reject_vine_postfit_config(
+    config: NumericalConfig | None,
+    operation: str,
+) -> None:
+    """Reject a configuration that VineCopula post-fit methods cannot use."""
+    if config is not None:
+        raise TypeError(
+            f"config is not supported for VineCopula {operation}")
+
+
 def _prepared_equicorr_or_none(copula, data):
     from pyscarcopula.copula.multivariate.equicorr import (
         EquicorrGaussianCopula,
@@ -223,7 +233,8 @@ def log_likelihood(
     result : FitResult
         Result returned by :func:`fit`.
     config : NumericalConfig or None
-        Numerical and optimizer settings.
+        Numerical and optimizer settings. VineCopula post-fit dispatch does
+        not support this argument and accepts only ``None``.
     **kwargs
         Forwarded to the strategy constructor when applicable.
 
@@ -234,6 +245,7 @@ def log_likelihood(
     """
     registry_entry_for(copula)
     if _is_generic_vine(copula):
+        _reject_vine_postfit_config(config, "log_likelihood")
         return float(copula.log_likelihood(data, **kwargs))
 
     prepared = _prepared_equicorr_or_none(copula, data)
@@ -380,6 +392,9 @@ def sample(
         internally.
     n : int
         Number of observations to generate.
+    config : NumericalConfig or None
+        Numerical and optimizer settings. VineCopula post-fit dispatch does
+        not support this argument and accepts only ``None``.
 
     Returns
     -------
@@ -388,6 +403,7 @@ def sample(
     """
     registry_entry_for(copula)
     if _is_generic_vine(copula):
+        _reject_vine_postfit_config(config, "sample")
         return copula.sample(n, **kwargs)
 
     if "n_threads" in kwargs:
@@ -507,7 +523,8 @@ def predict(
     n : int
         Number of samples.
     config : NumericalConfig or None
-        Numerical and optimizer settings.
+        Numerical and optimizer settings. VineCopula post-fit dispatch does
+        not support this argument and accepts only ``None``.
     predict_config : PredictConfig or None
         Bundled prediction options. Explicit non-default arguments override
         corresponding fields in this object.
@@ -533,6 +550,7 @@ def predict(
     pcfg = _resolve_predict_config(predict_config, given, horizon, kwargs)
     registry_entry_for(copula)
     if _is_generic_vine(copula):
+        _reject_vine_postfit_config(config, "predict")
         return copula.predict(
             n, u=data, predict_config=pcfg, **kwargs)
 

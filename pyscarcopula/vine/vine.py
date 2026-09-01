@@ -54,6 +54,7 @@ from pyscarcopula.numerical._arrays import (
     validate_positive_int,
 )
 from pyscarcopula._types import (
+    NumericalConfig,
     PredictConfig,
 )
 from pyscarcopula._native import _extension as _cpp_extension, statistics
@@ -195,6 +196,18 @@ def _copy_trees(trees):
 def _edge_identity(edge):
     conditioned, conditioning = edge
     return frozenset(conditioned), frozenset(conditioning)
+
+
+def _structures_represent_same_vine(left, right):
+    """Compare structures by semantic tree edges, not matrix encoding."""
+    if left.d != right.d:
+        return False
+    return all(
+        frozenset(_edge_identity(edge) for edge in left_level)
+        == frozenset(_edge_identity(edge) for edge in right_level)
+        for left_level, right_level in zip(
+            left.to_trees(), right.to_trees(), strict=True)
+    )
 
 
 def _canonicalize_fitted_levels(structure, source_trees, fitted_levels):
@@ -525,7 +538,8 @@ class VineCopula:
                     "match trees")
             if (
                     configured_structure is not None
-                    and configured_structure != canonical_structure):
+                    and not _structures_represent_same_vine(
+                        configured_structure, canonical_structure)):
                 raise ValueError(
                     "Persisted VineCopula fixed structure does not "
                     "match fitted trees")
@@ -599,7 +613,7 @@ class VineCopula:
             *,
             to_pobs: bool = False,
             copulas: Any = None,
-            config: Any = None,
+            config: NumericalConfig | None = None,
             given_vars: Sequence[int] | None = None,
             conditional_strict: bool = True,
             conditional_mode: str = 'suffix',
@@ -667,7 +681,27 @@ class VineCopula:
             partition_strategy_fit_kwargs,
             validate_strategy_method,
         )
+        if 'initial_mle_result' in kwargs:
+            raise TypeError(
+                "VineCopula.fit: initial_mle_result is an internal per-edge "
+                "argument and is not supported"
+            )
+        if config is not None and not isinstance(config, NumericalConfig):
+            raise TypeError(
+                "VineCopula.fit: config must be NumericalConfig or None, "
+                f"got {type(config).__name__}"
+            )
+        if '_prepared_evaluator' in kwargs:
+            raise TypeError(
+                "VineCopula.fit: _prepared_evaluator is an internal MLE "
+                "argument and is not supported"
+            )
         method = validate_strategy_method(method)
+        if 'backend' in kwargs and method in {'GAS', 'SCAR-TM-OU'}:
+            raise TypeError(
+                f"{method} backend selection was removed; native execution "
+                "is mandatory"
+            )
         u = _as_rvine_observations(
             data, operation="fit", to_pobs=to_pobs)
 
@@ -1081,8 +1115,62 @@ class VineCopula:
     @matrix.setter
     def matrix(self, value: Any) -> None:
         """Set legacy hand-built runtime state using an owned matrix copy."""
-        self._natural_order_matrix = (
-            None if value is None else np.asarray(value, dtype=int).copy())
+        has_dependent_state = any((
+            self._trees is not None,
+            self._edge_map is not None,
+            self.pair_copulas is not None,
+        ))
+        if value is None:
+            if has_dependent_state:
+                raise ValueError(
+                    "VineCopula.matrix: cannot clear an existing fitted "
+                    "matrix; refit or create a new VineCopula")
+            matrix = None
+        else:
+            matrix = np.asarray(value)
+            try:
+                RVineMatrix.from_natural_order(matrix)
+            except (TypeError, ValueError) as exc:
+                raise type(exc)(
+                    f"VineCopula.matrix: invalid natural-order matrix: {exc}"
+                ) from exc
+            if self.d is not None and matrix.shape[0] != self.d:
+                raise ValueError(
+                    "VineCopula.matrix: matrix dimension does not match "
+                    f"d={self.d}")
+            matrix = np.array(matrix, dtype=np.int64, copy=True)
+            if self._trees is not None:
+                if self.d is None:
+                    raise ValueError(
+                        "VineCopula.matrix: existing runtime trees require "
+                        "a known dimension")
+                try:
+                    expected_matrix, expected_edge_map = (
+                        build_rvine_matrix_with_edge_map(
+                            self.d, self._trees))
+                except (TypeError, ValueError, RuntimeError) as exc:
+                    raise ValueError(
+                        "VineCopula.matrix: existing runtime trees are "
+                        "invalid") from exc
+                if not np.array_equal(matrix, expected_matrix):
+                    raise ValueError(
+                        "VineCopula.matrix: matrix does not match existing "
+                        "runtime trees")
+                if (
+                        self._edge_map is not None
+                        and dict(self._edge_map) != expected_edge_map):
+                    raise ValueError(
+                        "VineCopula.matrix: existing edge map does not match "
+                        "runtime trees")
+            if (
+                    has_dependent_state
+                    and self._natural_order_matrix is not None
+                    and not np.array_equal(
+                        matrix, self._natural_order_matrix)):
+                raise ValueError(
+                    "VineCopula.matrix: cannot replace an existing fitted "
+                    "matrix; refit or create a new VineCopula")
+        self._natural_order_matrix = matrix
         self._invalidate_native_rvine_cache()
 
     @property

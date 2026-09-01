@@ -206,9 +206,22 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
 
     from pyscarcopula.copula.independent import IndependentCopula
     from pyscarcopula.copula.elliptical import BivariateGaussianCopula
-    from pyscarcopula._types import DEFAULT_CONFIG, IndependentResult
+    from pyscarcopula._types import (
+        DEFAULT_CONFIG,
+        IndependentResult,
+        NumericalConfig,
+    )
     from pyscarcopula.strategy._base import partition_strategy_fit_kwargs
 
+    if criterion not in ('aic', 'bic', 'loglik'):
+        raise ValueError(
+            f"criterion must be 'aic', 'bic' or 'loglik', got {criterion!r}"
+        )
+    if config is not None and not isinstance(config, NumericalConfig):
+        raise TypeError(
+            "config must be NumericalConfig or None, "
+            f"got {type(config).__name__}"
+        )
     config = DEFAULT_CONFIG if config is None else config
     _, fit_kwargs = partition_strategy_fit_kwargs("mle", dict(fit_kwargs or {}))
     if fit_kwargs.get("alpha0") is not None and len({

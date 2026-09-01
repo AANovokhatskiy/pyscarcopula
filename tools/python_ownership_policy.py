@@ -132,8 +132,11 @@ _SYMBOL_REVIEWS = (
      'f9c6061a2afc06e5724198fbb120340c1099daabd2e1fe00390cfad6ea5f285b', 'structure', ('arithmetic', 'numerical-call')),
     ('pyscarcopula._native.static:StaticLikelihoodEvaluator.log_likelihood',
      '04e8ade622d6fda31aff4b1f31f14b8c7c5eb210219e9426267712754484e6b2', 'sign', ('arithmetic',)),
+    # Descriptor routing now preserves an explicit OU spectral selector; the
+    # prepared native evaluator remains the owner of likelihood/h arithmetic.
+    # Covered by tests/test_vine_ou_spectral_native_routing.py.
     ('pyscarcopula._native.vine:<module>',
-     'f59c87b7efac14702af2898bd19f7df99b4c8844b5dfc950385dcd545cf4c111', 'structure', ('arithmetic',)),
+     '616d5ded3a7d804c09d87c584d60ab5abd9024b16046dd2e1718cc2b880a0971', 'structure', ('arithmetic',)),
     ('pyscarcopula._native.vine:_execute_dynamic_rosenblatt',
      '738bd4b4742d38980193ec1678d4a4579e35724ca9fb95aa939760e8980c6950', 'structure', ('arithmetic',)),
     ('pyscarcopula._native.vine:_execute_rosenblatt',
@@ -164,8 +167,11 @@ _SYMBOL_REVIEWS = (
      '6d1523c8a005eaa90268eb0b9db1f7cdecc5ee92933ed56ab3bcb541d94872ee', 'structure', ('numerical-call',)),
     ('pyscarcopula._utils:pobs',
      '578419e6bc2597cb97a9e06e579db77b594ffa45b29c28e5cef092a7600fe24c', 'marginal_input', ('arithmetic', 'numba-kernel')),
+    # API module change adds only an unsupported Vine post-fit config gate;
+    # it does not alter the reviewed result type union or numerical ownership.
+    # Covered by tests/test_vine_postfit_config_routing.py.
     ('pyscarcopula.api:<module>',
-     'ef5d9c077f83f41c74727778bc2d4ab853bd58fca368cf06c46f1e923682a856', 'structure', ('arithmetic',)),
+     '415d4aed26ce02d1097b18cdc7f96d14830fc05dd98f69bb7c67d524da0b9f66', 'structure', ('arithmetic',)),
     ('pyscarcopula.copula._rotation:transposed_bivariate_copula',
      'a89c19be868efff3d3c1430622599ca35dec8db904fe9ca0b97e263d936b1bfe', 'structure', ('arithmetic',)),
     ('pyscarcopula.copula.clayton:ClaytonCopula.tau_to_param',
@@ -420,9 +426,10 @@ _SYMBOL_REVIEWS = (
     ('pyscarcopula.vine._selection:validate_fixed_copula_specs',
      '472122278feede30615924945571e0983833a453f6c9d379b1011e72c2676fdf', 'structure', ('arithmetic', 'numerical-call')),
     # Candidate-count bookkeeping only; likelihood and ranking math stay native.
-    # Failure/config coverage: tests/test_rvine_validation_regressions.py.
+    # Failure/config coverage: tests/test_rvine_validation_regressions.py and
+    # tests/test_vine_selection_validation.py.
     ('pyscarcopula.vine._selection:select_best_copula',
-     '8d78de0a5b41c513776e9b2947df3b7adaaaa81aa25b6d0970c42de789f92c3c', 'structure', ('numerical-call', 'arithmetic')),
+     'bb791d292ed1ad89c69a72b1af59587f2519e295d230c7718d644a538ec580e9', 'structure', ('numerical-call', 'arithmetic')),
     ('pyscarcopula.vine._structure:RVineMatrix._validate',
      'ed389dd0b2b8a27e51d6909997f0060725f3add52504210396212d11c7d4c439', 'structure', ('arithmetic',)),
     ('pyscarcopula.vine._structure:RVineMatrix.edge',
