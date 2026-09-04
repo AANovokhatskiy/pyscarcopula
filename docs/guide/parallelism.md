@@ -135,11 +135,10 @@ the sequential time recursions required by GAS and SCAR:
 | Gaussian and Student conditional sampling | generated rows | Reuses one conditional factorization when correlation is shared |
 | Factor Student unconditional/conditional sampling | generated rows | Uses fixed Python draws and a compact native factor transform |
 | Factor Gaussian likelihood and sampling | observation/generated rows | Reuses the immutable Woodbury operator; conditioning solves only `k*k` |
-| SCAR Monte Carlo likelihood | trajectories | Uses caller-generated fixed draws |
 
 GAS state updates and SCAR forward/backward filtering remain sequential over
 time. Increasing `n_threads` therefore accelerates the independent emission,
-row, grid, or trajectory work, not the recurrence itself. Small workloads use
+row, or grid work, not the recurrence itself. Small workloads use
 a sequential fast path even when a larger value is requested, because thread
 scheduling would cost more than the kernel.
 
@@ -154,7 +153,7 @@ the mathematical order of GAS or SCAR state updates.
 
 Parallel kernels use a stable block partition and deterministic result
 placement. With identical inputs and random draws, the tested row, grid,
-conditional-sampling, and Monte Carlo paths agree between `n_threads=1` and
+and conditional-sampling paths agree between `n_threads=1` and
 the parallel modes. If several rows fail, the parallel implementation reports
 the same smallest `failure_index` as the sequential implementation.
 
@@ -237,9 +236,14 @@ batch = fit_independent(
 ```
 
 The same policy applies to `risk_metrics`. Per-window `SeedSequence` children
-make results independent of process chunking. Diagnostics report `n_jobs`,
-`n_threads`, the multiprocessing start method, whether nested parallelism was
-enabled, and the per-task ownership policy.
+preserve each window's random draws when process chunking changes. In an
+optimized portfolio, sequential execution carries the preceding window's
+weights into the next optimization. Each process chunk starts with equal
+weights and carries optimized weights only within that chunk. Changing
+`n_jobs` or chunk boundaries can therefore change optimized weights, VaR,
+and CVaR even with the same seed. Diagnostics report `n_jobs`, `n_threads`,
+the multiprocessing start method, whether nested parallelism was enabled,
+and the per-task ownership policy.
 
 Avoid choosing `n_jobs * n_threads` substantially above the CPUs available to
 the job. Start with one parallelism level: native threads for one large fit,

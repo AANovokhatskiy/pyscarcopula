@@ -18,6 +18,7 @@ Usage:
 """
 
 import importlib.util
+from functools import partial
 
 import numpy as np
 from numba import njit
@@ -30,9 +31,11 @@ from pyscarcopula._parallel import (
     get_copula_constructor as _get_copula_constructor,
     resolve_parallelism as _resolve_parallelism,
     spawn_seed_sequences as _spawn_seed_sequences,
+    validate_model_fit_kwargs,
     with_n_threads as _with_n_threads,
 )
 from pyscarcopula._utils import pobs
+from pyscarcopula.numerical._arrays import as_float64_array
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -123,13 +126,7 @@ def cvar_empirical(arr, gamma, window_len):
 # ══════════════════════════════════════════════════════════════════
 
 def _is_elliptical_multivariate(copula):
-    """Check if copula is a multivariate elliptical (Gaussian/Student).
-
-    These have a different interface:
-      - fit(data) without method parameter
-      - sample(n) without r parameter
-      - no _rotate attribute
-    """
+    """Identify static elliptical models, which always use their own MLE fit."""
     from pyscarcopula.copula.multivariate import GaussianCopula, StudentCopula
     return isinstance(copula, (GaussianCopula, StudentCopula))
 
@@ -139,12 +136,29 @@ def _is_independent_copula(copula):
     return isinstance(copula, IndependentCopula)
 
 
-def _fit_copula(copula, uk, method, **kwargs):
-    """Fit copula, handling interface differences."""
+def _check_optimization_result(result, failure_policy, stage, window_index):
+    """Reject a final failed optimization, not internal retries or penalties."""
+    if failure_policy == 'raise' and not getattr(result, 'success', False):
+        status = getattr(result, 'status', None)
+        message = getattr(result, 'message', 'unsuccessful result')
+        raise RuntimeError(
+            f"risk_metrics: {stage} failed at window ending at index "
+            f"{window_index} (status={status}): {message}")
+
+
+def _fit_copula(copula, uk, method, *, failure_policy='raise',
+                window_index=None, **kwargs):
+    """Check this fit's result before a prediction can read older fitted state."""
     if _is_elliptical_multivariate(copula):
-        copula.fit(uk)
+        result = copula.fit(uk, **kwargs)
     else:
-        copula.fit(uk, method=method, **kwargs)
+        result = copula.fit(uk, method=method, **kwargs)
+    # Vine.fit returns the vine itself; other built-in fits return their DTO.
+    if result is copula:
+        result = copula.fit_result
+    _check_optimization_result(
+        result, failure_policy, 'copula fit', window_index)
+    return result
 
 
 def _risk_predict_kwargs(copula, kwargs):
@@ -173,7 +187,7 @@ def _predict_copula(copula, uk, N_mc, rng=None, **kwargs):
 # Rolling CVaR with fixed weights (MC pipeline)
 # ══════════════════════════════════════════════════════════════════
 
-def _process_chunk_fixed(args):
+def _process_chunk_fixed(args, *, failure_policy='raise'):
     """
     Process a chunk of rolling windows (fixed weights).
 
@@ -190,7 +204,8 @@ def _process_chunk_fixed(args):
         idx = k + window_len - 1
         uk = pobs(data[k:k + window_len])
         cop = copula_class(**copula_kwargs)
-        _fit_copula(cop, uk, method, **fit_kwargs)
+        _fit_copula(cop, uk, method, failure_policy=failure_policy,
+                    window_index=idx, **fit_kwargs)
 
         rng = np.random.default_rng(window_seeds[k - chunk_start])
         u_pred = _predict_copula(cop, uk, N_mc, rng=rng, **fit_kwargs)
@@ -199,6 +214,8 @@ def _process_chunk_fixed(args):
         x0 = np.array([0.0])
         res = minimize(F_cvar_q, x0, args=(gamma, loss),
                        method='SLSQP', tol=1e-7)
+        _check_optimization_result(
+            res, failure_policy, 'VaR/CVaR optimization', idx)
         v, c = res.x[0], res.fun
 
         results.append((idx, v, c))
@@ -206,7 +223,7 @@ def _process_chunk_fixed(args):
     return results
 
 
-def _process_chunk_optimal(args):
+def _process_chunk_optimal(args, *, failure_policy='raise'):
     """
     Process a chunk of rolling windows (portfolio optimization).
     """
@@ -229,7 +246,8 @@ def _process_chunk_optimal(args):
         idx = k + window_len - 1
         uk = pobs(data[k:k + window_len])
         cop = copula_class(**copula_kwargs)
-        _fit_copula(cop, uk, method, **fit_kwargs)
+        _fit_copula(cop, uk, method, failure_policy=failure_policy,
+                    window_index=idx, **fit_kwargs)
 
         rng = np.random.default_rng(window_seeds[k - chunk_start])
         u_pred = _predict_copula(cop, uk, N_mc, rng=rng, **fit_kwargs)
@@ -237,6 +255,8 @@ def _process_chunk_optimal(args):
         res = minimize(F_cvar_wq, x0, args=(gamma, r),
                        method='SLSQP', bounds=bounds,
                        constraints=constr, tol=1e-7)
+        _check_optimization_result(
+            res, failure_policy, 'VaR/CVaR optimization', idx)
 
         results.append((idx, res.x[0], res.fun, res.x[1:dim + 1].copy()))
         x0 = res.x.copy()
@@ -302,7 +322,7 @@ def _calculate_cvar_fixed(copula, data, method, marginal_model,
                           marg_params, gamma, window_len, N_mc,
                           portfolio_weight, n_jobs=1,
                           window_seed_sequences=None,
-                          mp_start_method=None, **kwargs):
+                          mp_start_method=None, failure_policy='raise', **kwargs):
     """
     CVaR with fixed portfolio weights.
 
@@ -327,7 +347,8 @@ def _calculate_cvar_fixed(copula, data, method, marginal_model,
             idx = k + window_len - 1
             uk = pobs(data[k:k + window_len])
 
-            _fit_copula(copula, uk, method, **kwargs)
+            _fit_copula(copula, uk, method, failure_policy=failure_policy,
+                        window_index=idx, **kwargs)
             rng = np.random.default_rng(window_seed_sequences[k])
             u_pred = _predict_copula(copula, uk, N_mc, rng=rng, **kwargs)
             r = marginal_model.ppf(u_pred, marg_params[idx])
@@ -335,6 +356,8 @@ def _calculate_cvar_fixed(copula, data, method, marginal_model,
             x0 = np.array([0.0])
             res = minimize(F_cvar_q, x0, args=(gamma, loss),
                            method='SLSQP', tol=1e-7)
+            _check_optimization_result(
+                res, failure_policy, 'VaR/CVaR optimization', idx)
             var[idx] = res.x[0]
             cvar[idx] = res.fun
     else:
@@ -355,7 +378,10 @@ def _calculate_cvar_fixed(copula, data, method, marginal_model,
             context,
         )
         with context.Pool(len(chunks)) as pool:
-            chunk_results = pool.map(_process_chunk_fixed, pool_args)
+            worker = partial(_process_chunk_fixed, failure_policy=failure_policy)
+            # Surface a failing chunk without waiting for earlier submissions.
+            # Exiting the Pool context terminates remaining workers on error.
+            chunk_results = list(pool.imap_unordered(worker, pool_args))
 
         for chunk in chunk_results:
             for idx, v, c in chunk:
@@ -368,7 +394,7 @@ def _calculate_cvar_fixed(copula, data, method, marginal_model,
 def _calculate_cvar_optimal(copula, data, method, marginal_model,
                             marg_params, gamma, window_len, N_mc,
                             n_jobs=1, window_seed_sequences=None,
-                            mp_start_method=None, **kwargs):
+                            mp_start_method=None, failure_policy='raise', **kwargs):
     """
     CVaR with portfolio weight optimization.
 
@@ -403,13 +429,16 @@ def _calculate_cvar_optimal(copula, data, method, marginal_model,
             idx = k + window_len - 1
             uk = pobs(data[k:k + window_len])
 
-            _fit_copula(copula, uk, method, **kwargs)
+            _fit_copula(copula, uk, method, failure_policy=failure_policy,
+                        window_index=idx, **kwargs)
             rng = np.random.default_rng(window_seed_sequences[k])
             u_pred = _predict_copula(copula, uk, N_mc, rng=rng, **kwargs)
             r = marginal_model.ppf(u_pred, marg_params[idx])
             res = minimize(F_cvar_wq, x0, args=(gamma, r),
                            method='SLSQP', bounds=bounds,
                            constraints=constr, tol=1e-7)
+            _check_optimization_result(
+                res, failure_policy, 'VaR/CVaR optimization', idx)
 
             var[idx] = res.x[0]
             cvar[idx] = res.fun
@@ -433,7 +462,8 @@ def _calculate_cvar_optimal(copula, data, method, marginal_model,
             context,
         )
         with context.Pool(len(chunks)) as pool:
-            chunk_results = pool.map(_process_chunk_optimal, pool_args)
+            worker = partial(_process_chunk_optimal, failure_policy=failure_policy)
+            chunk_results = list(pool.imap_unordered(worker, pool_args))
 
         for chunk in chunk_results:
             for idx, v, c, w in chunk:
@@ -459,6 +489,7 @@ def risk_metrics(copula, data, window_len,
                  n_threads=None,
                  mp_start_method=None,
                  rng=None,
+                 failure_policy: Literal['raise', 'continue'] = 'raise',
                  **kwargs):
     """
     Rolling VaR/CVaR estimation with copula models.
@@ -491,6 +522,19 @@ def risk_metrics(copula, data, window_len,
     rng : int, np.random.Generator, np.random.SeedSequence, or None
         Root randomness source. Independent child SeedSequences are spawned
         per rolling window, so parallel workers never share one Generator.
+    failure_policy : {'raise', 'continue'}, default 'raise'
+        'raise' stops on a final unsuccessful copula fit or VaR/CVaR optimizer
+        result, before prediction or consumption of that optimizer result.
+        This includes iteration/evaluation limit exhaustion. Internal failed
+        trials and successful model fallbacks do not count as final failure.
+        The error identifies the stage and zero-based window end index.
+        Parallel execution stops when the first failing chunk is observed;
+        other chunks may already have run, and error order is not chronological.
+        'continue' keeps the previous behavior of using available fitted state
+        and optimizer output regardless of success. A rejected refit may leave
+        an older fitted state in use; an unfitted model can still raise.
+        Exceptions propagate under both policies. Marginal fitting exposes no
+        common success flag; its exceptions likewise propagate unchanged.
     **kwargs : forwarded to copula.fit()
 
     Returns
@@ -499,7 +543,9 @@ def risk_metrics(copula, data, window_len,
     """
     from pyscarcopula.contrib.marginal import MarginalModel
 
-    data = np.asarray(data, dtype=np.float64)
+    if not isinstance(failure_policy, str) or failure_policy not in ('raise', 'continue'):
+        raise ValueError("failure_policy must be 'raise' or 'continue'")
+    data = as_float64_array(data, name='data')
     T, dim = data.shape
 
     if window_len > T:
@@ -518,6 +564,9 @@ def risk_metrics(copula, data, window_len,
     )
     resolved_jobs = parallel_diagnostics["n_jobs"]
     kwargs = _with_n_threads(kwargs, resolved_threads)
+    fit_method = 'mle' if _is_elliptical_multivariate(copula) else method
+    validate_model_fit_kwargs(copula, fit_method, kwargs)
+    parallel_diagnostics['failure_policy'] = failure_policy
 
     # Fit marginals
     marginal_model = MarginalModel.create(marginals_method)
@@ -547,6 +596,7 @@ def risk_metrics(copula, data, window_len,
                     window_seed_sequences=window_seed_sequences,
                     mp_start_method=parallel_diagnostics[
                         "multiprocessing_start_method"],
+                    failure_policy=failure_policy,
                     **kwargs)
             else:
                 var, cvar, w = _calculate_cvar_fixed(
@@ -556,6 +606,7 @@ def risk_metrics(copula, data, window_len,
                     window_seed_sequences=window_seed_sequences,
                     mp_start_method=parallel_diagnostics[
                         "multiprocessing_start_method"],
+                    failure_policy=failure_policy,
                     **kwargs)
             res[g][n] = {
                 'var': var,

@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+from types import SimpleNamespace
 from scipy.stats import (
     cramervonmises,
     cramervonmises_2samp,
@@ -135,6 +136,7 @@ class _RiskMetricsFakeCopula:
 
     def fit(self, data, method='mle', **kwargs):
         self.mean_ = np.mean(data, axis=0)
+        self.fit_result = SimpleNamespace(success=True)
         return self
 
     def predict(self, n, u=None, rng=None, **kwargs):

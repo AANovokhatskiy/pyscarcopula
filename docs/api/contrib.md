@@ -48,6 +48,36 @@ the presence of fitted state alone does not establish convergence.
 
 ::: pyscarcopula.contrib.risk_metrics.risk_metrics
 
+`failure_policy="raise"` is the default. A final unsuccessful copula fit
+stops that window before prediction can use older fitted state. A final
+unsuccessful SLSQP result stops before its VaR, CVaR or weights are consumed.
+Iteration/evaluation limit exhaustion counts as failure even when the
+returned candidate is finite. Internal rejected objective trials, unsuccessful
+restarts and successful model fallbacks do not count as final failure; for a
+vine, the final selected edge results determine overall fit success.
+
+The exception identifies the stage and zero-based window end index. With
+multiple processes, the first error received stops collection and terminates
+remaining workers; other windows may already have run. This does not promise
+the chronologically earliest failing window or rollback of the caller's model.
+
+`failure_policy="continue"` retains the previous handling of unsuccessful
+results: prediction uses the available fitted state and the portfolio step
+uses the returned optimizer candidate. In particular, a rejected refit can
+leave an older fitted state in use. A fresh model with no fitted state may
+still raise. Exceptions are never suppressed under either policy.
+
+This policy checks final copula and portfolio results. Marginal fits return
+parameter arrays rather than a common success result, so hidden marginal
+optimizer convergence flags are not inspected; marginal exceptions propagate
+unchanged. The policy does not make unsupported marginal prediction modes
+available.
+
+Nonreal input and unknown or wrong-owner fit keywords are rejected before
+marginal fitting or worker submission under both policies. Gaussian/Student
+models retain their documented MLE method override and receive the supplied
+optimizer/numerical settings, including resolved `n_threads`.
+
 ## MarginalModel
 
 ::: pyscarcopula.contrib.marginal.MarginalModel

@@ -117,6 +117,7 @@ def test_worker_constructor_preserves_rvine_options():
 
 
 def test_risk_metrics_forwards_n_jobs_to_marginal_fit(monkeypatch):
+    from pyscarcopula import IndependentCopula
     from pyscarcopula.contrib import risk_metrics as risk_module
     from pyscarcopula.contrib.marginal import MarginalModel
 
@@ -126,9 +127,6 @@ def test_risk_metrics_forwards_n_jobs_to_marginal_fit(monkeypatch):
         def fit_rolling(self, data, window_len, n_jobs=-1):
             calls["marginal_n_jobs"] = n_jobs
             return np.zeros((data.shape[0], data.shape[1], 1))
-
-    class DummyCopula:
-        _rotate = 0
 
     data = np.arange(12, dtype=np.float64).reshape(6, 2)
     expected_weight = np.array([0.5, 0.5])
@@ -158,7 +156,7 @@ def test_risk_metrics_forwards_n_jobs_to_marginal_fit(monkeypatch):
     )
 
     risk_module.risk_metrics(
-        DummyCopula(),
+        IndependentCopula(),
         data,
         window_len=3,
         gamma=0.9,

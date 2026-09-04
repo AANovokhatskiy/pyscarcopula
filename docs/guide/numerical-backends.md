@@ -943,8 +943,13 @@ worker: if `n_threads` is omitted, exactly one native thread is used.
 The same policy applies to rolling `risk_metrics`. Each result leaf contains a
 `diagnostics` mapping with `n_jobs`, `n_threads`,
 `multiprocessing_start_method`, `nested_parallelism`, and the worker ownership
-contract. Per-window `SeedSequence` objects keep results independent of chunk
-partitioning. For `n_jobs=1`, sequential windows may reuse the caller's model,
+contract. Per-window `SeedSequence` objects preserve each window's random
+draws across chunk partitions. Optimized portfolio results can still differ:
+sequential execution starts each optimization from the preceding window's
+weights, while each process chunk starts with equal weights and reuses
+optimized weights only within that chunk. Changing `n_jobs` or chunk
+boundaries can therefore change weights, VaR, and CVaR even with the same
+seed. For `n_jobs=1`, sequential windows may reuse the caller's model,
 but each fit invalidates and rebuilds its transient prepared state before the
 next window.
 

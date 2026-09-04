@@ -191,6 +191,7 @@ def test_multivariate_mle_options_are_checked_before_worker(
 
 
 def test_risk_metrics_records_resolved_parallel_policy(monkeypatch):
+    from pyscarcopula import IndependentCopula
     from pyscarcopula.contrib import risk_metrics as risk_module
     from pyscarcopula.contrib.marginal import MarginalModel
 
@@ -200,9 +201,6 @@ def test_risk_metrics_records_resolved_parallel_policy(monkeypatch):
         def fit_rolling(self, data, window_len, n_jobs=-1):
             calls["marginal_n_jobs"] = n_jobs
             return np.zeros((len(data), data.shape[1], 1))
-
-    class DummyCopula:
-        _rotate = 0
 
     monkeypatch.setattr(
         MarginalModel, "create", staticmethod(lambda name: Marginal()))
@@ -215,7 +213,7 @@ def test_risk_metrics_records_resolved_parallel_policy(monkeypatch):
 
     monkeypatch.setattr(risk_module, "_calculate_cvar_fixed", calculate)
     result = risk_module.risk_metrics(
-        DummyCopula(),
+        IndependentCopula(),
         np.arange(12, dtype=np.float64).reshape(6, 2),
         window_len=3,
         gamma=0.9,
