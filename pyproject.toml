@@ -34,7 +34,6 @@ classifiers = [
 ]
 dependencies = [
     "numpy>=1.22",
-    "numba>=0.56",
     "scipy>=1.9",
     "joblib>=1.0",
     "psutil; sys_platform == 'win32'",
@@ -42,7 +41,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+contrib = ["numba>=0.56"]
 test = [
+    "numba>=0.56", # Exercises the optional contrib helpers.
     "pytest>=7.0",
     "pytest-xdist>=3.5",
     "pandas>=1.5",

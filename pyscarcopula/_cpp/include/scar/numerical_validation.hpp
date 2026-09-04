@@ -45,6 +45,13 @@ struct ClipResult {
 };
 
 ClipResult clip_open_unit(DoubleView values, double epsilon);
+/// Column-wise ordinal ranks / (rows + 1), with ties in row order and NaNs last.
+std::vector<double> pseudo_observations(
+    DoubleView values, std::size_t rows, std::size_t columns);
+std::vector<double> pseudo_observations(
+    Span<const std::int64_t> values, std::size_t rows, std::size_t columns);
+std::vector<double> pseudo_observations(
+    Span<const std::uint64_t> values, std::size_t rows, std::size_t columns);
 Result<bool> open_unit_clip_required(DoubleView values, double epsilon);
 bool objective_is_invalid(double value) noexcept;
 

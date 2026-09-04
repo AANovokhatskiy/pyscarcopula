@@ -94,7 +94,7 @@ jobs:
             python "{project}/tools/check_python_ownership.py"
           CIBW_BEFORE_TEST: >-
             python -m pip install --prefer-binary
-            "numpy>=1.22" "scipy>=1.9" "numba>=0.56"
+            "numpy>=1.22" "scipy>=1.9"
             "joblib>=1.0" "tqdm>=4.0"
           CIBW_TEST_COMMAND: >-
             python "{project}/tools/validate_installed_wheel.py"

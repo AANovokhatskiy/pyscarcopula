@@ -171,14 +171,8 @@ _SYMBOL_REVIEWS = (
      'd42bc191bdb95359ae6800a28f4e47ff6f66bdcf400bb2fa03161a1e4b427f7f', 'structure', ('numerical-call',)),
     ('pyscarcopula._types:<module>',
      '0622cc598535b78cf4c0ab48fd0dad8af1d476975e95293f40355b53e94e5e2c', 'structure', ('arithmetic',)),
-    ('pyscarcopula._utils:<module>',
-     'c352b38009d48a10a85ae5ac8e44d63fb1b5004ee600fc1aae24fff81dc816f2', 'marginal_input', ('numerical-import',)),
-    ('pyscarcopula._utils:_rank_col',
-     '845d28175d5821edcdc6d2e7ce43dd16abacab49e4c95cc3426226bc3d5bd33f', 'marginal_input', ('arithmetic', 'numba-kernel')),
     ('pyscarcopula._utils:broadcast',
      '6d1523c8a005eaa90268eb0b9db1f7cdecc5ee92933ed56ab3bcb541d94872ee', 'structure', ('numerical-call',)),
-    ('pyscarcopula._utils:pobs',
-     '578419e6bc2597cb97a9e06e579db77b594ffa45b29c28e5cef092a7600fe24c', 'marginal_input', ('arithmetic', 'numba-kernel')),
     # API module change adds only an unsupported Vine post-fit config gate;
     # it does not alter the reviewed result type union or numerical ownership.
     # Covered by tests/test_vine_postfit_config_routing.py.

@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import importlib
+import importlib.abc
 import importlib.util
 from importlib import metadata
 import json
@@ -379,7 +380,6 @@ def _representative_native_cases() -> tuple[dict, dict]:
 
 
 def _ownership_sentinel(context: dict) -> dict:
-    import numba
     import numpy as np
     from scipy import linalg as scipy_linalg
     from scipy import special as scipy_special
@@ -412,7 +412,6 @@ def _ownership_sentinel(context: dict) -> dict:
             "betainc", "betaincinv", "gammaln", "ndtr", "ndtri",
             "roots_hermite", "roots_hermitenorm", "roots_jacobi", "stdtrit",
         )),
-        (numba, ("jit", "njit")),
     )
     try:
         for owner, names in targets:
@@ -678,7 +677,23 @@ def _parallel_runtime_contract(extension_sha256: str) -> dict:
     }
 
 
+class _RejectNumba(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "numba" or fullname.startswith("numba."):
+            raise AssertionError("core wheel validation must not import numba")
+        return None
+
+
 def validate(source_root: Path, wheel: Path, configuration: str) -> dict:
+    blocker = _RejectNumba()
+    sys.meta_path.insert(0, blocker)
+    try:
+        return _validate_without_numba(source_root, wheel, configuration)
+    finally:
+        sys.meta_path.remove(blocker)
+
+
+def _validate_without_numba(source_root: Path, wheel: Path, configuration: str) -> dict:
     source_root = source_root.resolve()
     if not source_root.is_dir():
         raise RuntimeError(f"source root does not exist: {source_root}")

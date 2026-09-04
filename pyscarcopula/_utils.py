@@ -8,7 +8,6 @@ Single source of truth for:
 """
 
 import numpy as np
-from numba import njit
 
 from pyscarcopula._native import validation as native_validation
 from pyscarcopula._constants import (
@@ -58,22 +57,12 @@ def broadcast(u1, u2, r):
 # Pseudo-observations
 # ══════════════════════════════════════════════════════════════════
 
-@njit(cache=True)
-def _rank_col(x):
-    """Rank a single column. Returns float64 ranks in [1, n]."""
-    n = len(x)
-    order = np.argsort(x)
-    ranks = np.empty(n, dtype=np.float64)
-    for i in range(n):
-        ranks[order[i]] = float(i + 1)
-    return ranks
-
-
-@njit(cache=True)
 def pobs(data):
     """Pseudo-observations via rank transform.
 
     u_ij = rank(x_ij) / (n + 1), so u in (0, 1).
+    Ranks are ordinal: ties receive successive ranks in input row order.
+    NaNs sort after all other values. Computation is performed in C++.
 
     Parameters
     ----------
@@ -83,11 +72,7 @@ def pobs(data):
     -------
     u : ndarray (T, d), values in (0, 1)
     """
-    n, d = data.shape
-    u = np.empty((n, d), dtype=np.float64)
-    for j in range(d):
-        u[:, j] = _rank_col(data[:, j]) / (n + 1.0)
-    return u
+    return native_validation.pobs(data)
 
 
 # ══════════════════════════════════════════════════════════════════

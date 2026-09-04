@@ -136,10 +136,13 @@ python tools/build_cpp_tests.py --build-jobs 4
 | Package | Min version | Purpose |
 |---------|-------------|---------|
 | numpy | 1.22 | Arrays, linear algebra |
-| numba | 0.56 | Python analytics, GoF, and dynamic sampling helpers |
 | scipy | 1.9 | Optimization (L-BFGS-B), sparse matrices |
 | joblib | 1.0 | Parallel computation |
 | tqdm | 4.0 | Progress bars |
+
+Numba is only used by the optional `contrib` helpers. Install them with
+`pip install "pyscarcopula[contrib]"`. The core package, including the C++
+pseudo-observation rank transform, does not require Numba.
 
 ## Python version
 

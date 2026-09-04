@@ -16,6 +16,30 @@ namespace py = pybind11;
 namespace pyscarcopula::bindings {
 namespace {
 
+template <typename T>
+py::array_t<double> pobs_array(py::handle source) {
+    using Array = py::array_t<T, py::array::c_style | py::array::forcecast>;
+    const Array values = Array::ensure(source);
+    if (!values) {
+        throw py::type_error("data must be a real numeric array");
+    }
+    const py::buffer_info info = values.request();
+    if (info.ndim != 2) {
+        throw py::value_error("data must have shape (n_observations, dimension)");
+    }
+    std::vector<double> result;
+    {
+        py::gil_scoped_release release;
+        result = scar::pseudo_observations(
+            scar::Span<const T>{values.data(), static_cast<std::size_t>(info.size)},
+            static_cast<std::size_t>(info.shape[0]),
+            static_cast<std::size_t>(info.shape[1]));
+    }
+    return matrix_to_array(result,
+        static_cast<std::size_t>(info.shape[0]),
+        static_cast<std::size_t>(info.shape[1]));
+}
+
 scar::DoubleView raw_flat_view(const Float64Array& values) {
     const py::buffer_info info = values.request();
     return {
@@ -81,6 +105,20 @@ py::dict backend_agreement_to_dict(
 }  // namespace
 
 void bind_validation(py::module_& m) {
+    m.def("validation_pobs", [](py::object source) {
+        const py::array values = py::array::ensure(source);
+        if (!values) {
+            throw py::type_error("data must be a real numeric array");
+        }
+        switch (values.dtype().kind()) {
+        case 'i': return pobs_array<std::int64_t>(values);
+        case 'u': return pobs_array<std::uint64_t>(values);
+        case 'b':
+        case 'f': return pobs_array<double>(values);
+        default: throw py::type_error("data must be a real numeric array");
+        }
+    }, py::arg("values"));
+
     m.def(
         "validation_objective_is_invalid",
         &scar::objective_is_invalid,

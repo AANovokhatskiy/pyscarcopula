@@ -11,6 +11,10 @@ def _array(values):
     return np.ascontiguousarray(values, dtype=np.float64)
 
 
+def pobs(values):
+    return _extension.load().validation_pobs(values)
+
+
 def clip_open_unit(values, epsilon):
     result = dict(
         _extension.load().validation_clip_open_unit(

@@ -1,10 +1,14 @@
 #include "scar/numerical_validation.hpp"
+#include "scar/core/checked_arithmetic.hpp"
 
 #include "scar/copula/multivariate/correlation/parameterization.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <numeric>
+#include <stdexcept>
+#include <type_traits>
 #include <utility>
 
 namespace scar {
@@ -32,7 +36,58 @@ double quiet_nan() noexcept {
     return std::numeric_limits<double>::quiet_NaN();
 }
 
+template <typename T>
+std::vector<double> rank_observations(
+    Span<const T> values, std::size_t rows, std::size_t columns) {
+    std::size_t size = 0;
+    if (!core::checked_size_mul(rows, columns, size)
+        || size != values.size() || (size != 0 && values.data() == nullptr)) {
+        throw std::invalid_argument("data size does not match its shape");
+    }
+    std::vector<double> output(size);
+    if (size == 0) {
+        return output;
+    }
+    std::vector<std::size_t> order(rows);
+    const double denominator = static_cast<double>(rows) + 1.0;
+    for (std::size_t column = 0; column < columns; ++column) {
+        std::iota(order.begin(), order.end(), std::size_t{0});
+        std::sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
+            const T left = values[a * columns + column];
+            const T right = values[b * columns + column];
+            if constexpr (std::is_floating_point_v<T>) {
+                if (std::isnan(left) != std::isnan(right)) {
+                    return !std::isnan(left);
+                }
+            }
+            if (left < right) return true;
+            if (right < left) return false;
+            return a < b;
+        });
+        for (std::size_t rank = 0; rank < rows; ++rank) {
+            output[order[rank] * columns + column] =
+                (static_cast<double>(rank) + 1.0) / denominator;
+        }
+    }
+    return output;
+}
+
 }  // namespace
+
+std::vector<double> pseudo_observations(
+    DoubleView values, std::size_t rows, std::size_t columns) {
+    return rank_observations(values, rows, columns);
+}
+
+std::vector<double> pseudo_observations(
+    Span<const std::int64_t> values, std::size_t rows, std::size_t columns) {
+    return rank_observations(values, rows, columns);
+}
+
+std::vector<double> pseudo_observations(
+    Span<const std::uint64_t> values, std::size_t rows, std::size_t columns) {
+    return rank_observations(values, rows, columns);
+}
 
 bool objective_is_invalid(double value) noexcept {
     return !std::isfinite(value) || value >= kInvalidObjectiveThreshold;

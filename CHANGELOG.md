@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Move `pobs` ordinal ranking into C++, preserving integer precision and
+  ordering tied values by input row (previously an unstable sort). NaNs sort
+  last. Remove Numba from core dependencies; install `pyscarcopula[contrib]`
+  for the optional marginal and risk helpers that still use it.
 - Reject unknown and misplaced fit keywords in built-in post-fit API calls
   and negative likelihood objectives. Route constructor settings separately
   from sampling/prediction arguments, preserving RNG, conditional sampling,
