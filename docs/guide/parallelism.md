@@ -151,6 +151,10 @@ the mathematical order of GAS or SCAR state updates.
 
 ## Correctness and thread safety
 
+Each submitted batch captures the caller's C floating-point environment and
+applies it on workers before numerical work. Worker defaults therefore do not
+change the arithmetic contract between serial and parallel execution.
+
 Parallel kernels use a stable block partition and deterministic result
 placement. With identical inputs and random draws, the tested row, grid,
 and conditional-sampling paths agree between `n_threads=1` and

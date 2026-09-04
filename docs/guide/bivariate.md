@@ -1,196 +1,159 @@
 # Bivariate Copulas
 
-## The SCAR model
+Bivariate models describe dependence between two uniform margins. Start
+with a constant MLE fit, then consider GAS or SCAR when time variation is
+part of the modelling question. The code blocks on this page run in order.
 
-In the SCAR (Stochastic Copula Autoregressive) model, the copula parameter follows a latent Ornstein-Uhlenbeck process:
+## Families and data
 
-$$r_t = \Psi(x_t), \qquad dx_t = \kappa(\mu - x_t)\,dt + \nu\,dW_t$$
+| Family | Dependence / tail pattern |
+|---|---|
+| Gumbel, Joe | Positive dependence, upper-tail dependence before rotation |
+| Clayton | Positive dependence, lower-tail dependence before rotation |
+| Frank | Symmetric dependence, no asymptotic tail dependence |
+| Bivariate Gaussian | Positive or negative correlation, no asymptotic tail dependence |
+| Independent | No dependence and no fitted parameter |
 
-The three OU parameters control:
+```python
+import numpy as np
+from pyscarcopula import GumbelCopula
+from pyscarcopula.api import fit, sample, predict, predictive_mean
 
-- $\kappa$ - mean-reversion speed
-- $\mu$ - long-run mean of the latent process
-- $\nu$ - volatility of the latent process
+source = GumbelCopula(rotate=180)
+u = source.sample_at_parameter(
+    120, np.full(120, 1.8), rng=np.random.default_rng(9),
+)
+```
 
-For the likelihood recursion, gradient identity, transition backends, and
-predictive Rosenblatt transform used by SCAR and GAS, see
-[Mathematical Contracts](mathematical-contracts.md).
+Application inputs must have shape `(T, 2)`. Pass existing pseudo-observations
+directly, or set `to_pobs=True` for raw continuous observations.
+
+## Rotations
+
+| Rotation | Tail pattern for rotatable Archimedean families |
+|---|---|
+| 0 degrees | Upper tail for Gumbel/Joe, lower tail for Clayton |
+| 90 or 270 degrees | Mixed tails and negative association |
+| 180 degrees | Opposite tail from the unrotated family |
+
+For lower-tail dependence, compare `GumbelCopula(rotate=180)` and
+`ClaytonCopula()` using MLE and goodness of fit. Frank and bivariate Gaussian
+do not expose these rotations. See [Parameter Transforms](transforms.md) for
+the parameter links used by dynamic fits.
 
 ## Fitting
 
 ```python
-from pyscarcopula import GumbelCopula
-from pyscarcopula.api import fit
-
 copula = GumbelCopula(rotate=180)
-scar_result = fit(copula, u, method='scar-tm-ou')
-
-print(
-    scar_result.params.kappa,
-    scar_result.params.mu,
-    scar_result.params.nu,
-)
-print(scar_result.log_likelihood)
+mle_result = fit(copula, u, method="mle")
+print(mle_result.copula_param, mle_result.log_likelihood)
+if not mle_result.success:
+    raise RuntimeError(mle_result.message)
 ```
 
-For Kendall-tau dynamics, use `method='scar-tm-jacobi'`:
-
-```python
-result_jacobi = fit(copula, u, method='scar-tm-jacobi')
-print(result_jacobi.params.kappa, result_jacobi.params.m, result_jacobi.params.xi)
-```
-
-SCAR-TM-JACOBI is available for copulas with a Kendall-tau parameter mapping
-such as Gumbel, Clayton, Frank, Joe, and bivariate Gaussian. It models tau
-directly with a bounded Jacobi diffusion and maps tau back to the copula
-parameter.
-
-The default `transition_method='auto'` selects among the supported numerical
-backends and records the selected path in fit diagnostics. See
-[Estimation Methods](estimation-methods.md) for model semantics and
-[Numerical Backends](numerical-backends.md) for backend selection, fallback
-conditions, and configuration.
-
-## Rotations
-
-Rotations capture different tail dependence patterns:
-
-| Rotation | Tail dependence |
-|----------|-----------------|
-| 0 deg | Upper tail (Gumbel, Joe) or lower tail (Clayton) |
-| 90 deg | Mixed |
-| 180 deg | Opposite tail |
-| 270 deg | Mixed |
-
-For lower-tail dependence, compare `GumbelCopula(rotate=180)` and
-`ClaytonCopula(rotate=0)` with an MLE baseline and goodness-of-fit test.
+`fit` returns a result and stores it on the model. A later fit replaces the
+model's fitted state; explicit results passed to the functional API select
+the desired fit. See [Configuration and Results](../api/configuration.md#fit-results).
 
 ## Sampling and prediction
 
-Two functions serve different purposes:
-
-**`sample`** generates synthetic data from the fitted model. SCAR-TM-OU
-simulates an OU trajectory. SCAR-TM-JACOBI simulates Kendall's tau with the
-likelihood-consistent `tm_grid` sampler by default, or with the experimental
-opt-in `lamperti_euler` sampler, and maps tau to the time-varying copula
-parameter. This is useful for model validation:
-`fit(copula, sample(...))` should recover similar parameters.
-
 ```python
-import numpy as np
-from pyscarcopula.api import sample, predict
-
-v = sample(
-    copula,
-    u,
-    scar_result,
-    n=2000,
-    rng=np.random.default_rng(2024),
+v = sample(copula, u, mle_result, n=500, rng=np.random.default_rng(2024))
+u_pred = predict(copula, u, mle_result, n=500, rng=np.random.default_rng(2025))
+u_cond = predict(
+    copula, u, mle_result, n=500, given={0: 0.4},
+    rng=np.random.default_rng(2026),
 )
-result_refit = fit(copula, v, method='scar-tm-ou')
 ```
 
-**`predict`** generates samples for next-step forecasting. It also supports
-conditional generation via `given={idx: u_value}`. For SCAR-TM,
-`horizon='current'` uses $p(x_T \mid data)$, while `horizon='next'` uses the
-one-step-ahead predictive distribution $p(x_{T+1} \mid data)$.
+`sample` reproduces a fitted model. `predict` conditions on the observed
+history; for MLE both use the same constant parameter. `given` fixes either
+column or both columns. The meanings diverge for dynamic models:
 
-For the shared prediction terminology used by bivariate and vine models, see
-[Prediction Semantics](prediction-semantics.md).
+| Method | `sample` | `predict` |
+|---|---|---|
+| MLE | Constant parameter | Constant parameter |
+| GAS | Recursive score-driven trajectory | Last filtered or next score state |
+| SCAR-TM-OU | New OU trajectory | Posterior or one-step predictive mixture |
+| SCAR-TM-JACOBI | `tm_grid` trajectory; experimental `lamperti_euler` opt-in | Posterior or one-step predictive mixture |
 
 ## The GAS model
 
-The GAS model is observation-driven. The copula parameter is
+GAS is observation-driven. Its parameter is $r_t=\Psi(g_t)$, with recursion
 
-$$r_t = \Psi(g_t),$$
+$$
+g_{t+1}=\omega+\beta g_t+\gamma s_t.
+$$
 
-where the unbounded recursion state follows
-
-$$g_{t+1} = \omega + \beta g_t + \gamma s_t.$$
-
-Here $\omega$ is the intercept, $\gamma$ controls sensitivity to the scaled
-score, $\beta$ controls persistence, and $s_t$ is the scaled score of the
-current copula log-density with respect to $g_t$.
-
-GAS uses the compiled numerical evaluator:
+Here $s_t$ is the scaled log-density score with respect to $g_t$.
 
 ```python
-from pyscarcopula.api import fit
-
-gas_result = fit(copula, u, method='gas', scaling='unit')
+gas_result = fit(copula, u, method="gas", scaling="unit")
+print(gas_result.success, gas_result.params)
 ```
 
-The example uses `scaling='unit'`. See
-[Estimation Methods](estimation-methods.md#gas) for the scaling contract and
-[Numerical Backends](numerical-backends.md#gas) for optimizer controls.
+GAS returns `GASResult`. See [Estimation Methods](estimation-methods.md#gas)
+for the score contract and [Optimizer Controls](../reference/optimizers.md#gas)
+for numerical options.
+
+## The SCAR model
+
+SCAR-TM-OU maps a latent Ornstein-Uhlenbeck process to the copula parameter:
+
+$$
+r_t=\Psi(x_t),\qquad dx_t=\kappa(\mu-x_t)\,dt+\nu\,dW_t.
+$$
+
+The parameters are mean-reversion speed $\kappa$, long-run latent mean $\mu$,
+and latent diffusion coefficient $\nu$. SCAR-TM-JACOBI instead evolves
+family-scale Kendall tau with a bounded diffusion.
 
 ```python
-u_pred = predict(copula, u, gas_result, n=100_000,
-                  rng=np.random.default_rng(2025))
-
-# Conditional forecast: sample U2 | U1 = 0.4
-u_cond = predict(copula, u, gas_result, n=20_000, given={0: 0.4},
-                  rng=np.random.default_rng(2026))
-
-# SCAR-TM: choose current-step or one-step-ahead latent mixture
-u_current = predict(copula, u, scar_result, n=20_000, horizon='current',
-                     rng=np.random.default_rng(2027))
+scar_result = fit(copula, u, method="scar-tm-ou")
+result_jacobi = fit(copula, u, method="scar-tm-jacobi")
+print(scar_result.success, scar_result.params)
+print(result_jacobi.success, result_jacobi.params)
 ```
 
-| Method | `sample` | `predict` |
-|--------|----------|-----------|
-| MLE | constant r | constant r |
-| SCAR-TM-OU | OU trajectory | current/posterior or one-step-ahead mixture |
-| SCAR-TM-JACOBI | `tm_grid` trajectory by default; experimental Lamperti--Euler opt-in | current/posterior or one-step-ahead mixture |
-| GAS | recursive score-driven simulation | `current`: last filtered state; `next`: one score-recursion step |
+Both SCAR methods return `LatentResult`. Inspect optimizer success and
+backend diagnostics before interpreting either result. Supported combinations
+are listed in [Estimation Methods](estimation-methods.md#model-and-method-compatibility).
+
+`horizon="current"` uses the posterior after the observed sample, while
+`horizon="next"` uses its one-step-ahead transition:
+
+```python
+u_current = predict(
+    copula, u, scar_result, n=500, horizon="current",
+    rng=np.random.default_rng(2027),
+)
+```
+
+See [Prediction Semantics](prediction-semantics.md) for horizons and
+[Mathematical Contracts](mathematical-contracts.md) for likelihood formulas.
 
 ## Diagnostics
 
 ### Predictive mean parameter
 
 ```python
-from pyscarcopula.api import predictive_mean
-
 r_t = predictive_mean(copula, u, scar_result)
+assert r_t.shape == (len(u),)
 ```
 
-Returns the predictive mean copula parameter at each time step, before the
-current observation is absorbed.
+This is the predictive mean copula parameter before each current observation
+is absorbed, rather than the posterior smoothed mean.
 
 ### Goodness of fit
 
 ```python
 from pyscarcopula.stattests import gof_test
 
-gof = gof_test(copula, u, fit_result=scar_result, to_pobs=False)
+gof = gof_test(copula, u, fit_result=mle_result, to_pobs=False)
 ```
 
-The GoF test uses the Rosenblatt transform with the Cramer-von Mises
-statistic. GAS evaluates the transform at the filtered point state. SCAR
-models integrate the h-function over the predictive latent-state distribution
-before the current observation is absorbed, which is the mixture Rosenblatt
-contract described in [Mathematical Contracts](mathematical-contracts.md).
-
-Use parametric bootstrap calibration when an asymptotic p-value is
-insufficient:
-
-```python
-gof = gof_test(
-    copula,
-    u,
-    fit_result=scar_result,
-    to_pobs=False,
-    bootstrap=True,
-    n_bootstrap=499,
-    n_jobs=-1,
-    rng=20260730,
-)
-```
-
-Bootstrap replicas run in independent worker processes. Each replica owns its
-model and random stream, so a fixed seed produces the same bootstrap
-statistics for `n_jobs=1` and `n_jobs>1`. Native computations use one thread
-per worker to avoid nested process/thread oversubscription. Bootstrap
-calibration is also available for static Gaussian and Student copulas and for
-dynamic equicorrelation Gaussian and stochastic Student copulas. Vine
-bootstrap remains out of scope.
+GAS uses its filtered point state for the Rosenblatt transform. SCAR uses
+a predictive mixture of h-functions. Parametric bootstrap supports bivariate,
+static and dynamic multivariate, and fitted vine models. See
+[Diagnostics](../api/diagnostics.md) for calibration, random streams,
+process parallelism, and unsuccessful-refit handling.

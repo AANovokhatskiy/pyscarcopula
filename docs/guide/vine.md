@@ -18,7 +18,9 @@ families via AIC, and can use constant (MLE) or time-varying (SCAR, GAS)
 parameters.
 
 The shared `transform_type` option is passed to candidate constructors.
-Archimedean edge families use it to select `softplus` or `xtanh`.
+Archimedean edge families support `softplus`, `xtanh`, `exp`, and `logistic`.
+For `exp` or `logistic`, use an Archimedean-only candidate pool as shown in
+[Parameter Transforms](transforms.md#using-with-vine).
 `BivariateGaussianCopula` accepts the same argument for constructor
 uniformity, but Gaussian edges always use their bounded `GaussianTanh`
 correlation mapping.
@@ -199,12 +201,13 @@ For large d, not all edges benefit from dynamic parameters:
 
 ```python
 # Trees 0-1: SCAR, trees 2+: MLE
-vine.fit(u, method='scar-tm-ou', truncation_level=2)
+vine.fit(u, method='scar-tm-ou', truncation_level=2,
+         truncation_fill='mle')
 
-# Edges with weak MLE dependence stay MLE
+# Edges below min_edge_logL become independent
 vine.fit(u, method='scar-tm-ou', min_edge_logL=10)
 
-# Both
+# Default truncation_fill='independent': truncate and prune to independence
 vine.fit(u, method='scar-tm-ou',
          truncation_level=2, min_edge_logL=10)
 ```

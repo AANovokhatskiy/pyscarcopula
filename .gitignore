@@ -11,6 +11,7 @@ pytest-tmp*/
 build/
 site/
 tools/*
+!tools/check_docs.py
 !tools/check_cpp_architecture.py
 !tools/check_python_ownership.py
 !tools/check_python_duplicates.py

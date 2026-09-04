@@ -3,6 +3,12 @@
 Optional modules for risk metrics, independent fit batches, and marginal
 models. Not part of the core copula API.
 
+Install the optional marginal and risk dependencies before importing them:
+
+```bash
+pip install "pyscarcopula[contrib]"
+```
+
 ```python
 from pyscarcopula.contrib.risk_metrics import risk_metrics
 from pyscarcopula.contrib.parallel_fit import fit_independent

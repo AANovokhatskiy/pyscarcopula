@@ -26,7 +26,7 @@ matrix method.
 - **Compiled numerical engine** included in official wheels
 - **Prediction controls**: `PredictConfig`, diagnostics, dynamic conditioning,
   reproducible `rng`
-- **Transform functions**: `softplus` (default), `xtanh` (symmetric)
+- **Archimedean transforms**: `softplus` (default), `xtanh`, `exp`, `logistic`
 - **Diagnostics**: GoF test, predictive mean parameter paths
 
 For native threading, rolling-window safety, external process workers, and

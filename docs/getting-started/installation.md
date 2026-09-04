@@ -97,13 +97,20 @@ Clone the repository so the example datasets are available, then install the
 optional notebook dependencies:
 
 ```bash
-pip install -e ".[examples]"
+pip install -e ".[examples,contrib]"
 jupyter lab examples/
 ```
 
 The comparison notebook requires the optional `pyvinecopulib` dependency,
-which is not installed with pyscarcopula. Install it separately before running
-`06_pyvinecopulib_comparison.ipynb`.
+which is not installed with pyscarcopula. Install the pinned comparison dependency before running
+`06_pyvinecopulib_comparison.ipynb`:
+
+```bash
+pip install -e ".[examples,contrib,external]"
+```
+
+The `contrib` extra supplies Numba for the marginal and risk helpers used by
+`05_risk_metrics.ipynb`; `examples` alone does not install it.
 
 ## Build the documentation
 

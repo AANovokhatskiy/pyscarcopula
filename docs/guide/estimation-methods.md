@@ -11,21 +11,29 @@ see [Mathematical Contracts](mathematical-contracts.md).
 Each estimation method supports a defined set of model families. Unsupported
 combinations fail before optimization starts.
 
-Built-in strategies separate constructor settings from arguments to each
-operation. For example, `K` configures SCAR-TM-OU numerical evaluation, while
-`alpha0`, `initial_mle_result`, and `maxiter` belong to fitting; passing those
-fit arguments to `mlog_likelihood` or a post-fit likelihood call raises
-`TypeError`. Unknown keywords also raise `TypeError` instead of being ignored.
-Sampling and prediction arguments such as `rng` and `given` are routed to the
-sampler, separately from numerical constructor overrides.
+## Model and method compatibility
 
-For automatic SCAR-TM-OU initialization, `config.mle_optimizer` controls the
-internal static MLE even when `smart_init=True`. The resulting static estimate
-is reused by the initialization heuristics and their fallbacks. Supplying
-`initial_mle_result` avoids that static fit; an explicit `alpha0` bypasses
-automatic initialization entirely. If the internal MLE raises with
-`smart_init=True`, initialization uses the constant fallback and records the
-error in its diagnostics. With `smart_init=False`, the MLE error propagates.
+| Model / correlation policy | MLE | GAS | SCAR-TM-OU | SCAR-TM-JACOBI |
+|---|---|---|---|---|
+| Gumbel, Clayton, Frank, Joe, bivariate Gaussian | Yes | Yes | Yes | Yes |
+| Static Gaussian: fixed, shrinkage, cholesky, factor two-stage | Yes | No | No | No |
+| Static Student: fixed, shrinkage, cholesky, factor two-stage or joint | Yes | No | No | No |
+| Equicorrelation Gaussian | Yes | Yes | Yes | No |
+| Stochastic Student: fixed, shrinkage, factor two-stage | Yes | Yes | Yes | No |
+| Stochastic Student: cholesky | Yes | No | Yes | No |
+| Stochastic Student: factor joint | Yes | No | No | No |
+| VineCopula: supported pair families on each active edge | Yes | Yes | Yes | Yes |
+
+Independence has no fitted dependence parameter; independent vine edges stay
+constant instead of running a dynamic optimizer. Jacobi evolves positive
+family-scale tau; rotations determine the corresponding observed direction.
+Gaussian and Frank use their positive-dependence branch for Jacobi.
+For factor joint fits, `d >= 2*k + 1` is required. Unknown Python subclasses
+cannot acquire native support through inheritance.
+
+Start with MLE, inspect the result, then select dynamics. Vine family
+selection uses an MLE baseline before any dynamic edge refit. See
+[Vine Copulas](vine.md#truncation) for truncation and dynamic-failure policies.
 
 ## Method Summary
 
@@ -36,9 +44,11 @@ error in its diagnostics. With `smart_init=False`, the MLE error propagates.
 | SCAR-TM-OU | `'scar-tm-ou'` | OU latent state mapped to bivariate dependence or Student degrees of freedom | Deterministic stochastic-latent likelihood |
 | SCAR-TM-JACOBI | `'scar-tm-jacobi'` | Jacobi diffusion for Kendall's tau | Bounded tau dynamics with deterministic filtering |
 
-All dynamic methods return a `LatentResult` with `params`,
-`log_likelihood`, optimizer status, and enough metadata for `predict`,
-`predictive_mean`, and GoF utilities. Model sampling is available where the
+GAS returns `GASResult`; SCAR methods return `LatentResult`. Both contain
+`params`, `log_likelihood`, optimizer status, and fitted settings for
+`predict`, `predictive_mean`, and GoF. See
+[Configuration and Results](../api/configuration.md#fit-results) for result
+types and their common and method-specific fields. Model sampling is available where the
 strategy implements a path simulator. SCAR-TM-JACOBI supports both
 unconditional `sample` and conditional or unconditional `predict`.
 Its default unconditional sampler is the likelihood-consistent
@@ -377,6 +387,24 @@ produces very narrow one-step Jacobi transitions. In this regime the local
 transition produces a nonnegative row-normalized matrix. Change
 `basis_order` only when comparing the spectral approximation against the local
 backend; otherwise leave backend selection to `transition_method='auto'`.
+
+## Fit options and initialization
+
+Built-in strategies separate constructor settings from arguments to each
+operation. For example, `K` configures SCAR-TM-OU numerical evaluation, while
+`alpha0`, `initial_mle_result`, and `maxiter` belong to fitting; passing those
+fit arguments to `mlog_likelihood` or a post-fit likelihood call raises
+`TypeError`. Unknown keywords also raise `TypeError` instead of being ignored.
+Sampling and prediction arguments such as `rng` and `given` are routed to the
+sampler, separately from numerical constructor overrides.
+
+For automatic SCAR-TM-OU initialization, `config.mle_optimizer` controls the
+internal static MLE even when `smart_init=True`. The resulting static estimate
+is reused by the initialization heuristics and their fallbacks. Supplying
+`initial_mle_result` avoids that static fit; an explicit `alpha0` bypasses
+automatic initialization entirely. If the internal MLE raises with
+`smart_init=True`, initialization uses the constant fallback and records the
+error in its diagnostics. With `smart_init=False`, the MLE error propagates.
 
 ## Sampling, Prediction, and Diagnostics
 

@@ -3,16 +3,29 @@
 ## Overview
 
 The `multivariate` module contains $d$-dimensional copula models that extend
-the SCAR framework beyond bivariate families. Dynamic models use a
-**single scalar latent OU process**, so the existing transfer matrix
-infrastructure works unchanged.
+the SCAR framework beyond bivariate families. Dynamic models vary one scalar parameter using GAS or a latent OU process.
+The OU fits use the same transfer-matrix machinery as bivariate SCAR.
 
 | Model | Class | Latent parameter | Description |
 |-------|-------|-----------------|-------------|
 | Static Gaussian | `GaussianCopula` | None | Static Gaussian dependence with configurable correlation policy |
 | Static Student-t | `StudentCopula` | None | Static Student dependence with fitted `df` and configurable correlation policy |
 | Equicorrelation Gaussian | `EquicorrGaussianCopula` | $\rho(t)$ | Single dynamic correlation for d assets |
-| Stochastic Student-t | `StochasticStudentCopula` | $\nu(t)$ | Fixed correlation, OU-driven degrees of freedom |
+| Stochastic Student-t | `StochasticStudentCopula` | $\operatorname{df}(t)$ | Fixed correlation, OU-driven degrees of freedom |
+
+## Example data
+
+Examples use pseudo-observations with observations in rows. The static and
+factor sections use the five-column `u` below. The dynamic usage examples
+either reuse `u` or declare a separate input explicitly. Each fit replaces the model's
+fitted state; inspect `result.success` before using a candidate.
+
+```python
+import numpy as np
+from pyscarcopula import NumericalConfig
+
+u = np.random.default_rng(2026).uniform(0.01, 0.99, size=(200, 5))
+```
 
 ## Static Gaussian and Student Models
 
@@ -79,7 +92,7 @@ The scalar state can be estimated in three ways:
 
 - **MLE**: $r_t=r$ is constant and estimated by likelihood maximization.
 - **GAS**: $g_t$ follows the observation-driven recursion
-  $$g_{t+1} = \omega + \beta g_t + \gamma s_t,$$
+  $g_{t+1} = \omega + \beta g_t + \gamma s_t$,
   where $s_t$ is the score of $\log c(u_t;\Psi(g_t))$ with respect to $g_t$.
 - **SCAR-TM-OU**: $g_t$ is a latent OU process. The likelihood integrates over
   the latent state using the transfer-matrix filter.
@@ -142,7 +155,7 @@ inverse have closed forms.
 ```python
 from pyscarcopula.copula.multivariate import EquicorrGaussianCopula
 
-cop = EquicorrGaussianCopula(d=6)
+cop = EquicorrGaussianCopula(d=u.shape[1])
 
 # MLE (constant rho)
 cop.fit(u, method='mle')
@@ -190,23 +203,23 @@ jobs should be batched.
 
 ## Stochastic Student-t Copula
 
-A $d$-dimensional t-copula where the degrees-of-freedom parameter $\nu(t)$
+A $d$-dimensional t-copula where the degrees-of-freedom parameter $\operatorname{df}(t)$
 follows a latent OU process and the static correlation matrix $R$ is fixed or
 estimated jointly:
 
-$$\nu(t) = 2 + 10^{-6} + \mathrm{softplus}(x(t)), \qquad x(t) \sim \text{OU}(\theta, \mu, \sigma)$$
+$$\operatorname{df}(t) = 2 + 10^{-6} + \mathrm{softplus}(x(t)), \qquad x(t) \sim \text{OU}(\kappa, \mu, \nu)$$
 
-The transform maps $\mathbb{R} \to (2 + 10^{-6}, \infty)$, ensuring finite
-variance.
+The transform maps $\mathbb{R} \to (2 + 10^{-6}, \infty)$, giving the underlying Student distribution finite variance. Copula uniforms
+are bounded regardless of this condition.
 The copula density is
 
-$$c(u_t;R,\nu_t)=
-\frac{t_d(q_t;0,R,\nu_t)}
-     {\prod_{j=1}^d t_1(q_{tj};\nu_t)}, \qquad
-q_{tj}=T_{\nu_t}^{-1}(u_{tj}).$$
+$$c(u_t;R,\operatorname{df}_t)=
+\frac{t_d(q_t;0,R,\operatorname{df}_t)}
+     {\prod_{j=1}^d t_1(q_{tj};\operatorname{df}_t)}, \qquad
+q_{tj}=T_{\operatorname{df}_t}^{-1}(u_{tj}).$$
 
 The latent/dynamic part of the model controls only tail thickness. Smaller
-$\nu_t$ means heavier joint tails; larger $\nu_t$ moves the copula toward the
+$\operatorname{df}_t$ means heavier joint tails; larger $\operatorname{df}_t$ moves the copula toward the
 Gaussian copula.
 
 For `method='scar-tm-ou'`, the public OU parameters remain
@@ -229,11 +242,14 @@ gradient obtains the quantile derivative analytically from the Student CDF;
 it does not finite-difference the complete emission likelihood. Above the
 final table node, dynamic fits use a third-order Cornish-Fisher expansion
 toward the normal quantile, together with its analytical `df` derivative.
-Static Student likelihoods retain exact quantiles.
+Static Student likelihoods use native CDF inversion below `df=1000` and
+a refined sixth-order normal-limit expansion at and above that threshold.
+See [Student Quantiles](../reference/student-quantiles.md) for the shared
+cache, inversion, and asymptotic contract.
 
 ### Stochastic Student copula with estimated static correlation
 
-Static correlation can be handled in three modes:
+Static correlation can be handled in four modes:
 
 ```python
 import numpy as np
@@ -289,7 +305,10 @@ uses a different estimator.
 ```python
 from pyscarcopula.copula.multivariate import StochasticStudentCopula
 
-cop = StochasticStudentCopula(d=6)
+import numpy as np
+
+returns = np.random.default_rng(20260728).standard_normal((60, 6))
+cop = StochasticStudentCopula(d=returns.shape[1])
 
 # Fit (R estimated automatically via Kendall tau)
 result = cop.fit(returns, method='scar-tm-ou', to_pobs=True)
@@ -328,7 +347,7 @@ identifiable parameter count is deliberately bounded:
 joint = StochasticStudentCopula(
     d=u.shape[1],
     corr_mode="factor",
-    factor_rank=4,
+    factor_rank=2,  # for the five-column example: d >= 2*k + 1
     factor_estimation="joint",
     factor_joint_max_params=100_000,
 )
@@ -346,10 +365,10 @@ derivatives through their sequential recursions. Dynamic factor models
 therefore require `factor_estimation="two-stage"`.
 
 ```python
-factor_samples = cop.sample_at_parameter(
+factor_samples = factor.sample_at_parameter(
     50_000, r=6.0, rng=np.random.default_rng(2026), n_threads=4)
 
-factor_conditional = cop.sample_conditional(
+factor_conditional = factor.sample_conditional(
     50_000,
     r=6.0,
     given={0: 0.25, 3: 0.8},
@@ -493,7 +512,7 @@ from pyscarcopula import NumericalConfig
 factor_gaussian = GaussianCopula(
     d=u.shape[1],
     corr_mode="factor",
-    factor_rank=8,
+    factor_rank=min(8, u.shape[1] - 1),
     factor_tile_size=16_384,
 )
 factor_result = factor_gaussian.fit(

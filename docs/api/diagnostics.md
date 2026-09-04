@@ -53,9 +53,11 @@ replication simulates from the captured fitted R-vine, optionally refits a
 worker-owned vine with the same structure and requested fitting settings,
 applies the R-vine Rosenblatt transform, and recomputes the Cramer-von Mises
 statistic.
-Static exact built-in edges use the native Rosenblatt runtime; unsupported or
-dynamic edges use the preserved Python transform without changing the result
-schema or random-stream policy.
+Supported static and dynamic exact built-in edges use the mandatory native
+Rosenblatt traversal. Unknown edge types raise `NativeUnsupported`; there is
+no Python numerical fallback. Dynamic traversals preserve each edge
+strategy and its fitted settings, with explicit OU grid overrides applied
+only to OU edges.
 
 The returned `BootstrapGoFResult` exposes `statistic`, the calibrated
 `pvalue`, `bootstrap_statistics`, `n_bootstrap`, and

@@ -3,7 +3,7 @@
 ## Overview
 
 Factor correlation is the scalable correlation representation used by the
-multivariate Gaussian and stochastic Student models:
+multivariate Gaussian, static Student, and stochastic Student models:
 
 $$
 R = D + BB^\top,
@@ -21,7 +21,7 @@ The implementation has three separate layers:
 |---|---|---|
 | Correlation value | `FactorCorrelation` | Validate and persist `B` and `D` |
 | Prepared operator | `PreparedFactorCorrelation` | Woodbury linear algebra and normal generation |
-| Model adapter | `GaussianCopula`, `StochasticStudentCopula`, `FactorStudentEvaluator` | Marginal transforms, likelihood, fitting, dynamics, and sampling |
+| Model adapter | `GaussianCopula`, `StudentCopula`, `StochasticStudentCopula`, `FactorStudentEvaluator` | Marginal transforms, likelihood, fitting, dynamics, and sampling |
 
 `FactorCorrelation` is independent of Student, Gaussian, GAS, SCAR, and
 optimizer state. The same read-only prepared operator can therefore be
@@ -45,14 +45,26 @@ matrix, or Schur complement.
 
 ### Construct and prepare
 
+The examples below share a small `(80, 20)` dataset and can be run in order.
+The separate streaming example at the end handles 100000 dimensions.
+For iterator examples, `consume` stands for an application sink; this small
+example checks each block without retaining it.
+
+```python
+def consume(*blocks):
+    for block in blocks:
+        assert block.ndim == 2
+```
+
 ```python
 import numpy as np
 
 from pyscarcopula import FactorCorrelation
 
 rng = np.random.default_rng(2026)
-d = 100_000
-k = 8
+d = 20
+k = 4
+u = rng.uniform(0.01, 0.99, size=(80, d))
 
 B = rng.normal(scale=0.01, size=(d, k))
 factor = FactorCorrelation(
@@ -102,7 +114,7 @@ normal_rows = operator.sample_normal(
 )
 
 for block in operator.sample_normal_batches(
-    1_000_000,
+    256,
     batch_rows=128,
     rng=np.random.default_rng(8),
     n_threads=4,
@@ -192,7 +204,7 @@ gaussian = GaussianCopula(
 rows = gaussian.log_pdf_rows(u, n_threads=4)
 total = gaussian.log_likelihood(u, n_threads=4)
 draws = gaussian.sample(
-    10_000,
+    128,
     rng=np.random.default_rng(9),
     n_threads=4,
 )
@@ -202,7 +214,7 @@ Conditional generation fixes values in pseudo-observation space:
 
 ```python
 conditional = gaussian.sample_conditional(
-    10_000,
+    128,
     given={0: 0.25, 7: 0.80},
     rng=np.random.default_rng(10),
     n_threads=4,
@@ -260,10 +272,11 @@ The sequence is:
 4. Count the generic factor-correlation dimension in AIC/BIC, capped at
    `d*(d-1)/2` when the requested rank saturates the correlation space.
 
-Supplied loadings skip step 1:
+Supplied loadings skip step 1. This separate model leaves `student` available
+for the fitted sampling example below:
 
 ```python
-student = StochasticStudentCopula(
+supplied_student = StochasticStudentCopula(
     d=B.shape[0],
     corr_mode="factor",
     factor_rank=B.shape[1],
@@ -352,7 +365,7 @@ gas_result = gas_student.fit(
 
 df_path = predictive_mean(gas_student, u, gas_result)
 gas_draws = gas_student.predict(
-    10_000,
+    128,
     u=u,
     rng=np.random.default_rng(11),
     n_threads=4,
@@ -383,7 +396,7 @@ scar_result = scar_student.fit(
 )
 
 scar_draws = scar_student.predict(
-    10_000,
+    128,
     u=u,
     rng=np.random.default_rng(12),
     n_threads=4,
@@ -470,12 +483,12 @@ Use batches whenever `n*d` output is itself large:
 
 ```python
 for block in student.sample_batches(
-    1_000_000,
+    256,
     u=u,
     batch_rows=128,
     rng=np.random.default_rng(13),
     n_threads=4,
-    memory_budget_bytes=128 * (2 * student.d + student.factor_rank + 8) * 8,
+    memory_budget_bytes=16 * 1024**2,
 ):
     consume(block)
 ```
@@ -484,7 +497,7 @@ Conditional sampling keeps fixed pseudo-observations exact:
 
 ```python
 conditional = student.sample_conditional(
-    10_000,
+    128,
     r=mle.copula_param,
     given={0: 0.25, 3: 0.80},
     rng=np.random.default_rng(14),
@@ -499,6 +512,30 @@ the full requested length for the time step. Keep the seed and `batch_rows`
 fixed to reproduce the same sample sequence. The dense Student sampler also
 honors `memory_budget_bytes` before allocating its output or drawing random
 numbers; factor mode additionally budgets its structural workspace.
+
+## Streaming at 100000 dimensions
+
+This is a separate large-output example. Run it only when the application
+needs all 1024 rows: it streams about 819 MB in total, retaining at most one
+32-row output block. Never collect this iterator into a list. The numerical
+budget applies to each call; it does not reserve memory for other processes.
+
+```python
+large_d, large_k = 100_000, 8
+large_B = np.random.default_rng(2026).normal(scale=0.01, size=(large_d, large_k))
+large_gaussian = GaussianCopula(
+    d=large_d, corr_mode="factor", factor_rank=large_k,
+    factor_loadings=large_B,
+)
+for block in large_gaussian.sample_batches(
+    1024, batch_rows=32, memory_budget_bytes=128 * 1024**2,
+    rng=np.random.default_rng(2027),
+):
+    consume(block)
+```
+
+One monolithic `sample(10_000)` at this dimension needs 8 GB for the output
+alone. Compact correlation storage does not make that output compact.
 
 ## Scope of the factor representation
 
@@ -517,6 +554,7 @@ present factor scores as output of this API.
 
 The supported compositions are the first-party adapters
 `GaussianCopula(corr_mode="factor")`,
+`StudentCopula(corr_mode="factor")`,
 `StochasticStudentCopula(corr_mode="factor")`, and
 `FactorStudentEvaluator`.
 

@@ -1,5 +1,11 @@
 # Developer Architecture
 
+Read this page to locate responsibility before changing a model or strategy.
+The repository [source map](https://github.com/AANovokhatskiy/pyscarcopula/blob/master/ARCHITECTURE.md)
+lists concrete modules, C++ ownership, dependency rules, and build entry points.
+For user-visible method support, start with
+[Estimation Methods](estimation-methods.md#model-and-method-compatibility).
+
 ## Class Hierarchy
 
 Every built-in copula derives from `CopulaBase`:
@@ -57,28 +63,12 @@ facade loader imports that raw module in production code. The former
 
 ## Native Thread Runtime
 
-Eligible multivariate kernels use one lazily created C++17 thread pool per
-process. Calls divide independent rows or trajectories into stable blocks;
-GAS and SCAR time recursions remain sequential. `n_threads=1` takes a direct
-fast path without creating or querying the pool.
+The native runtime, process ownership, locks, floating-point environment,
+and reproducibility contract are documented in
+[CPU Parallelism](parallelism.md#correctness-and-thread-safety).
+Use independent model/evaluator instances for independent concurrent fits.
 
-The pool records its owning process ID. A spawned or forked child creates its
-own runtime when it first performs explicitly parallel work and never reuses
-the parent's workers. Nested native dispatch from a worker falls back to a
-local sequential call, preventing starvation and deadlock.
-
-Each submitted batch captures the calling thread's C floating-point
-environment and applies it before numerical work starts on a pool worker.
-This prevents operating-system or runtime-specific worker defaults from
-changing the last bits of otherwise identical serial and parallel results.
-
-Model mutation is protected by a per-instance re-entrant lock. Prepared SCAR
-evaluators protect mutable workspace with a native mutex. Concurrent work
-should normally use independent models/evaluators; sharing one prepared
-evaluator is safe but serializes its objective calls.
-
-The default thread count is an absolute `1`. Environment variables are not
-consulted. See [CPU Parallelism](parallelism.md) for the public contract.
+### Vine execution and caches
 
 R-vine execution uses one shared flat plan and family-operation layer. Native
 entry points cover supported static unconditional and conditional sampling,
@@ -172,3 +162,32 @@ from pyscarcopula import (
 
 Multivariate models can be imported either from `pyscarcopula` or from
 `pyscarcopula.copula.multivariate`.
+
+## Development workflow
+
+1. Locate the owning model and operation in the source map. Change the native
+   formula or policy in that owner, and extend its typed capability declaration
+   if the supported operation set changes.
+2. Keep Python changes in input normalization, request assembly, optimizer/RNG
+   coordination, and result reporting. Bindings translate buffers and DTOs;
+   they do not become an additional numerical implementation.
+3. Add focused numerical or API contract tests for changed behavior. Run
+   `python tools/check_cpp_architecture.py` and, for native changes, the
+   standalone model/header build with `python tools/build_cpp_tests.py`.
+4. Update the relevant guide and API reference, then execute documentation
+   examples and rendering checks. The documentation workflow validates pull
+   requests before deployment from the main branch.
+
+Local documentation validation after installing `.[test,docs]`:
+
+```bash
+python -m pytest tests/test_documentation_contracts.py tests/test_documentation_rendering.py
+python -m mkdocs build --strict
+python tools/check_docs.py --site-dir site
+python -m playwright install chromium
+python tools/check_docs.py --site-dir site --browser
+```
+
+The browser check renders every content page at desktop and mobile widths,
+checks math output and page overflow, and saves screenshots for failures.
+Legacy page anchors are checked against a versioned fixture.

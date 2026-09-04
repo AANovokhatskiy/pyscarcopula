@@ -25,7 +25,7 @@ OPTIONAL_DOCUMENTATION_MODULES = {"pyvinecopulib"}
 
 def test_jacobi_docs_describe_native_gradient_sampling_and_singleton_contract():
     estimation = (ROOT / "docs/guide/estimation-methods.md").read_text(encoding="utf-8")
-    backends = (ROOT / "docs/guide/numerical-backends.md").read_text(encoding="utf-8")
+    backends = (ROOT / "docs/reference/scar-jacobi.md").read_text(encoding="utf-8")
     mathematics = (ROOT / "docs/guide/mathematical-contracts.md").read_text(encoding="utf-8")
     for guide in (estimation, backends):
         assert "gradient_kind='native_finite_difference'" in guide
@@ -261,6 +261,7 @@ def test_complete_public_documentation_examples_execute():
             "docs/index.md",
             "docs/api/copulas.md",
             "docs/api/persistence.md",
+            "docs/api/static-models.md",
             "docs/guide/performance.md"):
         path = ROOT / relative_path
         namespace = {"__name__": "__documentation_example__"}
@@ -276,6 +277,10 @@ def test_complete_public_documentation_examples_execute():
         == (200,)
     )
     assert namespaces["docs/api/persistence.md"]["samples"].shape == (20, 2)
+    static = namespaces["docs/api/static-models.md"]
+    assert static["conditional"].shape == (10_000, 5)
+    np.testing.assert_array_equal(static["conditional"][:, 0], 0.25)
+    assert static["student_result"].correlation_matrix is None
     assert np.isfinite(
         namespaces["docs/guide/performance.md"]["result"].log_likelihood)
 
@@ -287,9 +292,9 @@ def test_quick_start_executes_as_one_workflow():
         exec(compile(source, filename=str(path), mode="exec"), namespace)
 
     assert namespace["u"].shape == (400, 2)
-    assert namespace["u_pred"].shape == (100_000, 2)
-    assert namespace["u_cond"].shape == (20_000, 2)
-    assert namespace["v"].shape == (2_000, 2)
+    assert namespace["u_pred"].shape == (500, 2)
+    assert namespace["u_cond"].shape == (500, 2)
+    assert namespace["v"].shape == (500, 2)
 
 
 def test_bivariate_guide_executes_as_one_workflow():
@@ -308,14 +313,14 @@ def test_bivariate_guide_executes_as_one_workflow():
     for source in _python_blocks(path):
         exec(compile(source, filename=str(path), mode="exec"), namespace)
 
-    assert namespace["u_pred"].shape == (100_000, 2)
-    assert namespace["u_cond"].shape == (20_000, 2)
-    assert namespace["u_current"].shape == (20_000, 2)
-    assert namespace["r_t"].shape == (80,)
+    assert namespace["u_pred"].shape == (500, 2)
+    assert namespace["u_cond"].shape == (500, 2)
+    assert namespace["u_current"].shape == (500, 2)
+    assert namespace["r_t"].shape == (120,)
 
 
 def test_factor_api_intro_example_executes():
-    path = ROOT / "docs/api/multivariate_models.md"
+    path = ROOT / "docs/api/factor.md"
     source = next(
         block for block in _python_blocks(path)
         if "FactorStudentEvaluator(operator, u).evaluate" in block
@@ -593,3 +598,67 @@ def test_representative_documented_workflows_execute():
     assert vine.sample(5, rng=np.random.default_rng(1)).shape == (5, 3)
     assert vine.predict(
         5, u=u_vine, rng=np.random.default_rng(2)).shape == (5, 3)
+
+
+def test_small_factor_walkthrough_executes_in_order(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    path = ROOT / "docs/guide/factor-models.md"
+    namespace = {"__name__": "__documentation_example__"}
+    for source in _python_blocks(path):
+        # Explicitly separate large-output recipe is outside the small walkthrough.
+        if "large_d, large_k" in source:
+            continue
+        exec(compile(source, filename=str(path), mode="exec"), namespace)
+    assert namespace["u"].shape == (80, 20)
+    assert namespace["conditional"].shape == (128, 20)
+    np.testing.assert_array_equal(namespace["conditional"][:, 0], 0.25)
+    np.testing.assert_array_equal(namespace["conditional"][:, 3], 0.80)
+    np.testing.assert_array_equal(namespace["portable"].loadings, namespace["mapped"].loadings)
+
+
+def test_result_types_in_bivariate_workflow():
+    from pyscarcopula import GumbelCopula
+    from pyscarcopula._types import GASResult, LatentResult, MLEResult
+
+    u = GumbelCopula().sample_at_parameter(40, np.full(40, 1.8), rng=np.random.default_rng(9))
+    model = GumbelCopula()
+    for method, result_type, names in (
+        ("mle", MLEResult, None),
+        ("gas", GASResult, ("omega", "gamma", "beta")),
+        ("scar-tm-ou", LatentResult, ("kappa", "mu", "nu")),
+        ("scar-tm-jacobi", LatentResult, ("kappa", "m", "xi")),
+    ):
+        result = model.fit(u, method=method)
+        assert isinstance(result, result_type)
+        assert np.isfinite(result.log_likelihood)
+        if names:
+            assert tuple(result.params.names) == names
+
+
+def test_documented_joint_factor_example_uses_identifiable_rank():
+    from pyscarcopula import NumericalConfig, StochasticStudentCopula
+
+    path = ROOT / "docs/guide/multivariate_models.md"
+    namespace = dict(np=np, NumericalConfig=NumericalConfig,
+                     StochasticStudentCopula=StochasticStudentCopula)
+    blocks = _python_blocks(path)
+    data = next(block for block in blocks if 'size=(200, 5)' in block)
+    joint = next(block for block in blocks if 'joint = StochasticStudentCopula(' in block)
+    for source in (data, joint):
+        exec(compile(source, filename=str(path), mode="exec"), namespace)
+    assert namespace["joint"].d >= 2 * namespace["joint"].factor_rank + 1
+    assert np.isfinite(namespace["joint_result"].log_likelihood)
+    assert namespace["joint_result"].correlation_matrix is None
+
+
+def test_documented_archimedean_vine_transform_example_executes():
+    from pyscarcopula import VineCopula
+
+    path = ROOT / "docs/guide/transforms.md"
+    source = next(block for block in _python_blocks(path) if 'bounded_vine =' in block)
+    namespace = dict(VineCopula=VineCopula,
+                     u=np.random.default_rng(41).uniform(0.05, 0.95, (40, 3)))
+    exec(compile(source, filename=str(path), mode="exec"), namespace)
+    draws = namespace["bounded_vine"].sample(10, rng=np.random.default_rng(42))
+    assert draws.shape == (10, 3)
+    assert np.all((draws > 0) & (draws < 1))

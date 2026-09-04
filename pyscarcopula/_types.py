@@ -38,7 +38,7 @@ class LBFGSBConfig:
     """Options for SciPy's L-BFGS-B optimizer.
 
     ``None`` means "inherit the library default" when the configuration is
-    merged into :class:`NumericalConfig`. All supplied values must be
+    merged into `NumericalConfig`. All supplied values must be
     finite, real, and strictly positive.
     """
 
@@ -67,7 +67,7 @@ class LBFGSBConfig:
         """Return validated options suitable for ``scipy.optimize.minimize``.
 
         Keyword arguments override fields on this object. Unknown option
-        names raise :class:`TypeError` instead of being silently ignored.
+        names raise `TypeError` instead of being silently ignored.
         """
         values = {
             name: getattr(self, name)
@@ -280,12 +280,14 @@ class PredictConfig:
     given : dict[int, float] or None
         Coordinates fixed during conditional sampling, expressed in
         pseudo-observation space.
-    horizon : {"current", "next"}
-        Whether to use the filtered current state or advance it one step.
-    predictive_r_mode : {"grid", "histogram"} or None
-        Sampling representation for a predictive scalar parameter.
-    dynamic_conditioning : {"ignore", "given_only"}
-        Policy for updating dynamic vine edges from conditioned values.
+    horizon : str, default="next"
+        Use "current" for the filtered state or "next" to advance one step.
+    predictive_r_mode : str or None, default=None
+        Sampling representation for a predictive scalar parameter: "grid" or
+        "histogram". None selects the strategy-specific default.
+    dynamic_conditioning : str, default="ignore"
+        Policy for updating dynamic vine edges from conditioned values:
+        "ignore" or "given_only".
     return_diagnostics : bool
         Request prediction diagnostics from models that support them.
     mcmc_steps, mcmc_burnin : int or None
@@ -294,7 +296,7 @@ class PredictConfig:
 
     Notes
     -----
-    Call :meth:`validated` after direct construction, or use :meth:`replace`,
+    Call `validated` after direct construction, or use `replace`,
     to normalize string values and validate integer controls.
     """
 

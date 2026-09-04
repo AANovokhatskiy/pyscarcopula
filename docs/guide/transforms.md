@@ -12,7 +12,7 @@ default is `softplus`.
 | Name | Formula | Properties |
 |------|---------|------------|
 | `softplus` | $\log(1 + \exp(x)) + \texttt{offset}$ | Default; asymmetric, floor at `offset` |
-| `xtanh` | $x \tanh(x) + \texttt{offset}$ | Symmetric, linear growth at large $|x|$ |
+| `xtanh` | $x \tanh(x) + \texttt{offset}$ | Symmetric, linear growth at large $\lvert x\rvert$ |
 | `exp` | $\exp(x) + \texttt{offset}$ | Positive, asymmetric, exponential growth |
 | `logistic` | $\texttt{offset} + 20\,\sigma(x/2)$ | Bounded to `(offset, offset + 20)` |
 
@@ -105,5 +105,20 @@ vine = VineCopula.cvine(d=u.shape[1])
 vine.fit(u, method='scar-tm-ou', transform_type='softplus')
 ```
 
-Archimedean edges use the selected transform. Gaussian edges accept and retain
-the value for configuration consistency but always use `GaussianTanh`.
+Archimedean edges use the selected transform. Gaussian edges accept only
+`softplus` and `xtanh` as configuration labels and always use `GaussianTanh`.
+The default candidate pool includes Gaussian, so it cannot be used with
+`exp` or `logistic`. Select an Archimedean-only pool explicitly:
+
+```python
+from pyscarcopula import ClaytonCopula, FrankCopula, GumbelCopula, JoeCopula
+
+bounded_vine = VineCopula.dvine(
+    d=u.shape[1],
+    candidates=[ClaytonCopula, FrankCopula, GumbelCopula, JoeCopula],
+).fit(u, method="mle", transform_type="logistic")
+```
+
+The same restriction applies to fixed edge specifications passed with
+`copulas=`. Gaussian edges in a mixed family pool require `softplus` or `xtanh`;
+these labels leave their correlation mapping unchanged.

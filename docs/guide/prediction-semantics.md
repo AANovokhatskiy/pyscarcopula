@@ -155,9 +155,11 @@ prefer structures that make this set easy to condition on exactly."
 
 With `conditional_strict=True`, fit rejects a structure that cannot support
 the target set through the exact suffix sampler. With
-`conditional_strict=False`, fit keeps the best available structure and
-prediction uses the approximate fallback when the exact suffix path is not
-available.
+`conditional_strict=False`, fit can retain an unsupported structure, but
+`predict` still raises `ValueError` for that unsupported fit-time target.
+To allow approximate conditioning for that set, fit without `given_vars` and
+pass the set only to `predict(given=...)`. Other conditioning sets follow the
+ordinary suffix or approximate routing.
 
 Use `given_vars` when the conditioning indices are known before fitting and
 the exact suffix path is required. Use `given` to supply their values when

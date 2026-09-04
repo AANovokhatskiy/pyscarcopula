@@ -53,8 +53,11 @@ test = [
 external = ["pyvinecopulib==0.7.5"]
 examples = ["pandas>=1.5", "matplotlib", "jupyter"]
 docs = [
+    "mkdocs>=1.6,<2",
     "mkdocs-material>=9.5",
     "mkdocstrings[python]>=0.25",
+    "black>=24.0", # Formats generated API signatures.
+    "playwright>=1.51",
 ]
 
 [project.urls]

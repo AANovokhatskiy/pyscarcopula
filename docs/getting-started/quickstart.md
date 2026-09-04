@@ -1,91 +1,83 @@
 # Quick Start
 
+This complete example fits a constant bivariate model, checks the result,
+and generates unconditional and conditional samples. See
+[Installation](installation.md) before running it.
+
 ## Prepare data
 
-pyscarcopula works with pseudo-observations: uniform marginals obtained from
-ranked data.
+Rows are observations and columns are variables. Copulas use
+pseudo-observations strictly inside `(0, 1)`; this simulation already has
+uniform margins.
 
 ```python
 import numpy as np
 from scipy.stats import norm
+from pyscarcopula import GumbelCopula
 
 rng = np.random.default_rng(2026)
-d = 2
-rho = 0.45
-R = (1.0 - rho) * np.eye(d) + rho * np.ones((d, d))
-u = norm.cdf(rng.multivariate_normal(np.zeros(d), R, size=400))
+R = np.array([[1.0, 0.45], [0.45, 1.0]])
+u = norm.cdf(rng.multivariate_normal(np.zeros(2), R, size=400))
 ```
 
-For application data, replace this simulated array with column-wise ranks
-divided by `n + 1`, or pass raw continuous observations with `to_pobs=True`.
+For continuous application data, pass `to_pobs=True` to `fit` to rank each
+column and divide the ranks by `n + 1`. Otherwise pass existing
+pseudo-observations with the default `to_pobs=False`.
 
 ## Fit a bivariate copula
 
 ```python
-from pyscarcopula import GumbelCopula
-
 copula = GumbelCopula(rotate=180)
-
-# Constant parameter (MLE)
-result_mle = copula.fit(u, method="mle")
-
-# Time-varying parameter (SCAR)
-result_tm = copula.fit(u, method="scar-tm-ou")
-
-print(f"MLE:  logL = {result_mle.log_likelihood:.2f}")
-print(f"SCAR: logL = {result_tm.log_likelihood:.2f}")
+result = copula.fit(u, method="mle")
+print(result.success, result.message)
+print(result.copula_param, result.log_likelihood)
+if not result.success:
+    raise RuntimeError(result.message)
 ```
+
+The result is also available as `copula.fit_result`. Inspect `success`
+before using a fit: a finite likelihood alone does not establish optimizer
+convergence. See [Configuration and Results](../api/configuration.md#fit-results)
+for fields returned by each method.
+
+## Sample and predict
+
+```python
+v = copula.sample(500, rng=np.random.default_rng(2024))
+u_pred = copula.predict(500, rng=np.random.default_rng(2025))
+u_cond = copula.predict(
+    500, given={0: 0.35}, rng=np.random.default_rng(2026),
+)
+assert v.shape == u_pred.shape == u_cond.shape == (500, 2)
+np.testing.assert_array_equal(u_cond[:, 0], np.full(500, 0.35))
+```
+
+`sample` reproduces the fitted model; `predict` draws forecast observations.
+Their distributions coincide for MLE. `given` fixes zero-based columns in
+pseudo-observation space. Use a fresh seeded generator to repeat a draw
+sequence; reusing a generator advances its stream.
 
 ## Goodness-of-fit test
 
 ```python
 from pyscarcopula.stattests import gof_test
 
-gof = gof_test(copula, u, fit_result=result_tm, to_pobs=False)
+gof = gof_test(copula, u, fit_result=result, to_pobs=False)
 print(f"p-value = {gof.pvalue:.4f}")
 ```
 
+GoF evaluates a Rosenblatt transform and a Cramer-von Mises statistic.
+See [Diagnostics](../api/diagnostics.md) for parametric-bootstrap calibration
+and its fit-success diagnostics.
+
 ## Predictive mean copula parameter
 
-```python
-from pyscarcopula.api import predictive_mean
+The MLE parameter is constant. For observation-driven or latent parameter
+paths, continue with [Bivariate Copulas](../guide/bivariate.md) and its
+[predictive mean example](../guide/bivariate.md#predictive-mean-parameter).
 
-r_t = predictive_mean(copula, u, result_tm)
-# r_t[k] = E[Psi(x_k) | u_{1:k-1}]
-```
+## Next steps
 
-## Sample and predict
-
-```python
-# sample: reproduce the fitted model (for validation)
-v = copula.sample(2000, rng=np.random.default_rng(2024))
-copula_refit = GumbelCopula(rotate=180)
-result_refit = copula_refit.fit(v, method="scar-tm-ou")
-gof_v = gof_test(copula_refit, v, fit_result=result_refit, to_pobs=False)
-print(f"GoF on sample: p={gof_v.pvalue:.4f}")
-
-# predict: next-step forecast (for risk metrics)
-u_pred = copula.predict(100_000, rng=np.random.default_rng(2025))
-
-# conditional forecast in pseudo-observation space
-u_cond = copula.predict(
-    20_000,
-    given={0: 0.35},
-    horizon="current",
-    rng=np.random.default_rng(2026),
-)
-```
-
-Use a fresh `np.random.default_rng(seed)` when you need exactly reproducible
-Monte Carlo output.
-
-For multivariate dynamic models, continue with
-[Multivariate Models](../guide/multivariate_models.md) or
-[Factor Models](../guide/factor-models.md). For vine construction and
-conditional sampling, see [Vine Copulas](../guide/vine.md),
-[Prediction Semantics](../guide/prediction-semantics.md) and
-[R-vine Conditioning](../guide/rvine-conditioning.md).
-
-For guidance on which family and estimation method to use, continue with
-[Choosing a Model](choosing-a-model.md) and
-[Estimation Methods](../guide/estimation-methods.md).
+Use [Choosing a Model](choosing-a-model.md) for alternative structures,
+[Estimation Methods](../guide/estimation-methods.md) for GAS and SCAR, and
+[Prediction Semantics](../guide/prediction-semantics.md) for dynamic horizons.

@@ -14,17 +14,17 @@ threading, and oversubscription rules are in
 
 | Observed condition | First action | Detailed reference |
 |---|---|---|
-| Optimizer stops at its evaluation limit | Increase the method-specific `maxfun` after checking that the initial point and data are valid | [Optimizer controls](numerical-backends.md#bivariate-models) |
-| GAS fit is sensitive to finite-difference settings | Use `scaling="unit"` as the baseline and inspect `ftol`, `gtol`, and `eps` | [GAS](numerical-backends.md#gas) |
-| SCAR-TM-OU reports a narrow transition kernel | Leave `transition_method="auto"` so it can select the local path | [OU transfer methods](numerical-backends.md#transfer-methods) |
-| SCAR-TM-OU spectral evaluation fails | Inspect the recorded spectral-to-matrix and matrix-to-local fallbacks before forcing a backend | [Spectral Hermite likelihood](numerical-backends.md#spectral-hermite-likelihood) |
-| SCAR-TM-JACOBI reports negative spectral mass or invalid row sums | Leave `transition_method="auto"` or compare against `local`; do not raise basis order without checking memory | [Jacobi transfer methods](numerical-backends.md#jacobi-transfer-methods) |
-| A multivariate result would allocate a dense `d*d` matrix | Select equicorrelation or `corr_mode="factor"` according to the model assumptions | [Multivariate native paths](numerical-backends.md#multivariate-native-paths) |
-| Full static correlation optimization grows too quickly | Use `shrinkage`; use `cholesky` only for small `d`, or factor mode for a justified low-rank model | [Multivariate native paths](numerical-backends.md#multivariate-native-paths) |
+| Optimizer stops at its evaluation limit | Increase the method-specific `maxfun` after checking that the initial point and data are valid | [Optimizer controls](../reference/optimizers.md#bivariate-models) |
+| GAS fit is sensitive to finite-difference settings | Use `scaling="unit"` as the baseline and inspect `ftol`, `gtol`, and `eps` | [GAS](../reference/optimizers.md#gas) |
+| SCAR-TM-OU reports a narrow transition kernel | Leave `transition_method="auto"` so it can select the local path | [OU transfer methods](../reference/scar-ou.md#transfer-methods) |
+| SCAR-TM-OU spectral evaluation fails | Inspect the recorded spectral-to-matrix and matrix-to-local fallbacks before forcing a backend | [Spectral Hermite likelihood](../reference/scar-ou.md#spectral-hermite-likelihood) |
+| SCAR-TM-JACOBI reports negative spectral mass or invalid row sums | Leave `transition_method="auto"` or compare against `local`; do not raise basis order without checking memory | [Jacobi transfer methods](../reference/scar-jacobi.md#jacobi-transfer-methods) |
+| A multivariate result would allocate a dense `d*d` matrix | Select equicorrelation or `corr_mode="factor"` according to the model assumptions | [Multivariate native paths](../reference/multivariate-numerics.md#multivariate-native-paths) |
+| Full static correlation optimization grows too quickly | Use `shrinkage`; use `cholesky` only for small `d`, or factor mode for a justified low-rank model | [Multivariate native paths](../reference/multivariate-numerics.md#multivariate-native-paths) |
 | Only a fast static baseline is needed | Keep the default `corr_mode="fixed"`; inspect `corr_estimator` to distinguish supplied and plug-in correlation | [Estimation methods](estimation-methods.md#mle) |
-| Output sampling exceeds the memory budget | Use the model's batch iterator and set `batch_rows` or `memory_budget_bytes` | [Multivariate native paths](numerical-backends.md#multivariate-native-paths) |
-| Many independent fits dominate runtime | Use process-level `n_jobs`; keep per-fit `n_threads=1` unless measured otherwise | [Independent fit parallelism](numerical-backends.md#independent-fit-parallelism) |
-| Vine fitting attempts too many dynamic edges | Set `truncation_level` or `min_edge_logL` from the modelling requirement | [Generic VineCopula](numerical-backends.md#generic-vinecopula) |
+| Output sampling exceeds the memory budget | Use the model's batch iterator and set `batch_rows` or `memory_budget_bytes` | [Multivariate native paths](../reference/multivariate-numerics.md#multivariate-native-paths) |
+| Many independent fits dominate runtime | Use process-level `n_jobs`; keep per-fit `n_threads=1` unless measured otherwise | [Independent fit parallelism](parallelism.md#independent-fits-and-rolling-windows) |
+| Vine fitting attempts too many dynamic edges | Set `truncation_level` or `min_edge_logL` from the modelling requirement | [Generic VineCopula](../reference/vine-numerics.md#generic-vinecopula) |
 
 ## Minimal Configuration
 

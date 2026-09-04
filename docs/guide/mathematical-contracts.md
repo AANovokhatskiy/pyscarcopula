@@ -64,8 +64,8 @@ copula parameter domain with smooth links:
 - equicorrelation Gaussian dependence uses a dimension-aware bounded link
   into $(-1/(d-1),1)$;
 - Student degrees of freedom use
-  $\nu_t=2+10^{-6}+\log(1+\exp(x_t))$ so the fitted copula has finite
-  variance.
+  $\nu_t=2+10^{-6}+\log(1+\exp(x_t))$ so the underlying Student distribution has finite
+  variance. Copula uniforms are bounded independently of this restriction.
 
 Softplus evaluation preserves the arithmetic used in version 0.20.1 so that
 numerical optimizer trajectories remain reproducible. It uses the linear
