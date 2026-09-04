@@ -35,7 +35,7 @@ def test_conditional_workflow_exposes_all_four_layers_and_exact_selections():
     required_jobs = (
         "pr-smoke:",
         "validation:",
-        "nightly-external-high-dimensional:",
+        "one-time-external-high-dimensional:",
         "manual-benchmark:",
     )
     assert all(job in workflow for job in required_jobs)
@@ -46,6 +46,9 @@ def test_conditional_workflow_exposes_all_four_layers_and_exact_selections():
     assert "pyvinecopulib==0.7.5" not in workflow
     assert 'python -m pip install -e ".[test,external]"' in workflow
     assert "PYSCA_ENFORCE_PERFORMANCE_GATES" not in workflow
+    assert "schedule:" not in workflow
+    assert "github.event_name == 'schedule'" not in workflow
+    assert "external-high-dimensional" in workflow
 
 
 def test_conditional_validation_guide_documents_commands_and_triage():

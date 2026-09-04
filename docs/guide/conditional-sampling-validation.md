@@ -26,14 +26,15 @@ contract cases in the registry.
 | Layer | Trigger | Selection | Purpose |
 |---|---|---|---|
 | PR smoke | pull request and push to `master` | non-validation, non-benchmark, non-external | API contracts, deterministic parity, routing, seeds, fixed columns |
-| Validation | push to `master`, nightly schedule, or manual | `validation` excluding external/benchmark | analytical and distributional gates, including non-external `d=50` cases |
-| Nightly | nightly schedule or manual | `external or high_dimensional`, excluding benchmark | pinned pyvine parity, full high-dimensional matrix, 20-seed oracle calibration |
+| Validation | push to `master` or one-time manual run | `validation` excluding external/benchmark | analytical and distributional gates, including non-external `d=50` cases |
+| External/high-dimensional | one-time manual run only | `external or high_dimensional`, excluding benchmark | pinned pyvine parity, full high-dimensional matrix, 20-seed oracle calibration |
 | Benchmark | manual only | benchmark contracts plus permanent runner | warmed JSON/CSV measurements; never a wall-clock correctness gate |
 
-The workflow is `.github/workflows/conditional-sampling.yml`.  A manual run
-accepts `pr-smoke`, `validation`, `nightly`, `benchmark`, or `all` as its
-layer.  The nightly external environment pins `pyvinecopulib==0.7.5` through
-the `external` optional dependency.
+The workflow is `.github/workflows/conditional-sampling.yml`. It has no
+scheduled trigger. A one-time manual run accepts `pr-smoke`, `validation`,
+`external-high-dimensional`, `benchmark`, or `all` as its layer. The external
+environment pins `pyvinecopulib==0.7.5` through the `external` optional
+dependency.
 
 ## Local commands
 
@@ -57,7 +58,7 @@ python -m pytest -q tests/conditional --strict-markers --run-validation \
   -m "validation and not benchmark and not external"
 ```
 
-Pinned external and high-dimensional nightly layer:
+Pinned external and high-dimensional one-time layer:
 
 ```bash
 python -m pip install -e ".[test,external]"
@@ -122,5 +123,6 @@ suite.
    MCMC chains is not proof of exactness.
 
 Every CI layer uploads JUnit output and runner metadata even when pytest
-fails.  Nightly additionally uploads the support inventory and calibration
-report; manual benchmark runs retain JSON/CSV evidence for 90 days.
+fails. The one-time external/high-dimensional layer additionally uploads the
+support inventory and calibration report; manual benchmark runs retain
+JSON/CSV evidence for 90 days.

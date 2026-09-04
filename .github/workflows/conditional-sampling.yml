@@ -22,8 +22,6 @@ on:
       - "tools/write_release_metadata.py"
       - "pyproject.toml"
       - "setup.py"
-  schedule:
-    - cron: "23 2 * * *"
   workflow_dispatch:
     inputs:
       layer:
@@ -35,7 +33,7 @@ on:
           - all
           - pr-smoke
           - validation
-          - nightly
+          - external-high-dimensional
           - benchmark
 
 permissions:
@@ -93,7 +91,6 @@ jobs:
     name: Distributional validation
     if: >-
       github.event_name == 'push' ||
-      github.event_name == 'schedule' ||
       (github.event_name == 'workflow_dispatch' &&
        (inputs.layer == 'all' || inputs.layer == 'validation'))
     runs-on: ubuntu-latest
@@ -128,12 +125,11 @@ jobs:
           if-no-files-found: warn
           retention-days: 21
 
-  nightly-external-high-dimensional:
-    name: Nightly external and high-dimensional
+  one-time-external-high-dimensional:
+    name: One-time external and high-dimensional
     if: >-
-      github.event_name == 'schedule' ||
-      (github.event_name == 'workflow_dispatch' &&
-       (inputs.layer == 'all' || inputs.layer == 'nightly'))
+      github.event_name == 'workflow_dispatch' &&
+      (inputs.layer == 'all' || inputs.layer == 'external-high-dimensional')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -149,19 +145,19 @@ jobs:
           python -m pytest -q tests/conditional
           --strict-markers --run-validation
           -m "(external or high_dimensional) and not benchmark"
-          --junitxml=build/conditional-sampling/nightly.xml
+          --junitxml=build/conditional-sampling/external-high-dimensional.xml
       - name: Write runner metadata
         if: always()
         run: >-
           python tools/write_release_metadata.py
-          --configuration conditional-nightly-external-d50
+          --configuration conditional-one-time-external-d50
           --status "${{ job.status }}"
-          --output build/conditional-sampling/nightly-metadata.json
-      - name: Upload nightly evidence
+          --output build/conditional-sampling/external-high-dimensional-metadata.json
+      - name: Upload external and high-dimensional evidence
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: conditional-nightly
+          name: conditional-external-high-dimensional
           path: build/conditional-sampling/*
           if-no-files-found: warn
           retention-days: 30
