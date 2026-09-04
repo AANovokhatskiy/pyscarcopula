@@ -233,7 +233,7 @@ _SYMBOL_REVIEWS = (
     ('pyscarcopula.copula.multivariate.factor_estimation:estimate_factor_loadings',
      '066f65fe073f629b3b3b20d38b200f683a8f806ff4887a7f0ca8ba9ddbb0affd', 'structure', ('arithmetic', 'numerical-call')),
     ('pyscarcopula.copula.multivariate.factor_student:FactorStudentEvaluator._grid_peak_bytes',
-     '774f9f3d31ded0ec091d8e3ee1380c3610a96476537f022e5513cebe1a74d588', 'structure', ('arithmetic',)),
+     '4ef8a5a372d9523660bb3c2b3792f7cc5218a4a4e4e2517e38fcd50565e93f74', 'structure', ('arithmetic', 'numerical-call')),
     ('pyscarcopula.copula.multivariate.factor_student:FactorStudentEvaluator.evaluate_grid_batches',
      'b1b2223b26db6f1ce1ea66afe865619a2698e141af7552aaf04b9edebf3e020d', 'structure', ('arithmetic', 'numerical-call')),
     ('pyscarcopula.copula.multivariate.factor_student:FactorStudentEvaluator.penalized_parameterized_objective_and_gradient',

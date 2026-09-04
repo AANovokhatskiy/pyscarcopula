@@ -317,6 +317,16 @@ For very large `d`, prefer `two-stage`. Joint optimization retains compact
 correlation storage but is still a high-dimensional nonlinear optimization
 problem.
 
+For `N` rows, the joint kernel keeps `R = min(N, 64)` stable reduction
+partials. Their `R*d*k` loading-gradient storage remains fixed even when the
+call uses fewer runners, which preserves the numerical fold. The executor may
+limit `W` for useful work per runner; queued execution then uses
+`J = min(R, W)` scratch slots. Each slot owns `3*d + k` doubles. The inner
+factor solve reuses that rank-sized buffer instead of allocating once per row.
+Diagnostics report `reduction_blocks`, `reduction_workspace_bytes`,
+`planned_worker_slots`, `worker_workspace_peak_bytes`, and
+`planned_worker_workspace_bytes` separately.
+
 ## Dynamic Student models
 
 ### GAS
@@ -443,6 +453,16 @@ for block in evaluator.evaluate_grid_batches(
 ):
     consume(block.log_pdf, block.dlog_ddf)
 ```
+
+The grid budget includes each public result's actual lifetime. Let
+`C = observation_rows * len(df_grid)` and `S = len(df_grid)`, with all values
+below measured in bytes. Log-grid evaluation keeps the conservative
+`32*C + native_workspace` requirement. Density conversion requires the
+larger of that value and `48*C`. The stochastic density/gradient call requires
+the largest of `log_requirement + 16*S`, `40*C + 16*S`, and `64*C`.
+`evaluate_grid_batches` and `pdf_and_grad_on_grid_batches` apply the same
+formula to the largest requested row block. These checks describe one call;
+they do not reserve memory across concurrent calls.
 
 ## Sampling fitted Student models
 

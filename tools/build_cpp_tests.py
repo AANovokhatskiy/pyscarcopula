@@ -165,6 +165,7 @@ def build_cpp_tests(
                 list(sources.SCAR_COMPUTE_SOURCES),
                 output_dir=str(compute_object_dir),
                 include_dirs=[str(CPP_INCLUDE_ROOT)],
+                macros=[("SCAR_PARALLEL_TESTING", "1")],
                 debug=debug,
                 extra_postargs=compile_args,
             )
@@ -173,6 +174,7 @@ def build_cpp_tests(
                 [path.name for path in CPP_TEST_SOURCES],
                 output_dir=str(test_object_dir),
                 include_dirs=[str(CPP_INCLUDE_ROOT)],
+                macros=[("SCAR_PARALLEL_TESTING", "1")],
                 debug=debug,
                 extra_postargs=compile_args,
             )
@@ -210,7 +212,9 @@ def build_cpp_tests(
 
     if run:
         print(f"Running Python-free smoke executable: {executable}")
-        subprocess.run([str(executable)], cwd=executable_dir, check=True)
+        subprocess.run(
+            [str(executable)], cwd=executable_dir, check=True, timeout=300,
+        )
     print("Python-free C++ compile/link boundary passed")
     return executable
 

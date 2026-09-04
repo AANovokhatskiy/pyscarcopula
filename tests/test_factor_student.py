@@ -421,6 +421,51 @@ def test_stochastic_grid_owns_softplus_transform_and_pullback():
         gradient, expected, rtol=2e-15, atol=2e-15)
 
 
+def test_grid_budget_accounts_for_each_public_output_lifetime():
+    factor, observations = _problem(
+        dimension=40, rank=4, rows=128, seed=12136)
+    evaluator = FactorStudentEvaluator(factor, observations)
+    grid = np.linspace(3.0, 17.0, 8)
+
+    log_required = evaluator._grid_peak_bytes(
+        128, 8, 16, 4, result_kind="log")
+    density_required = evaluator._grid_peak_bytes(
+        128, 8, 16, 4, result_kind="density")
+    stochastic_required = evaluator._grid_peak_bytes(
+        128, 8, 16, 4, result_kind="stochastic")
+    assert log_required == 32 * 1024 + 896
+    assert density_required == 48 * 1024
+    assert stochastic_required == 64 * 1024
+
+    with pytest.raises(MemoryError, match="evaluate_grid_batches"):
+        evaluator.evaluate_grid(
+            grid, dimension_tile=16, n_threads=4,
+            memory_budget_bytes=log_required - 1)
+    logged = evaluator.evaluate_grid(
+        grid, dimension_tile=16, n_threads=4,
+        memory_budget_bytes=log_required)
+    assert logged.diagnostics["peak_bytes_required"] == log_required
+
+    with pytest.raises(MemoryError, match="pdf_and_grad_on_grid_batches"):
+        evaluator.pdf_and_grad_on_grid(
+            grid, dimension_tile=16, n_threads=4,
+            memory_budget_bytes=density_required - 1)
+    density, gradient = evaluator.pdf_and_grad_on_grid(
+        grid, dimension_tile=16, n_threads=4,
+        memory_budget_bytes=density_required)
+    assert density.shape == gradient.shape == (128, 8)
+
+    raw_grid = np.linspace(-2.0, 2.0, 8)
+    with pytest.raises(MemoryError, match="reduce the grid"):
+        evaluator.stochastic_pdf_and_gradient_grid(
+            raw_grid, offset=2.1, dimension_tile=16, n_threads=4,
+            memory_budget_bytes=stochastic_required - 1)
+    density, gradient = evaluator.stochastic_pdf_and_gradient_grid(
+        raw_grid, offset=2.1, dimension_tile=16, n_threads=4,
+        memory_budget_bytes=stochastic_required)
+    assert density.shape == gradient.shape == (128, 8)
+
+
 def test_grid_memory_budget_covers_output_and_native_workspace():
     factor, observations = _problem(rows=7, seed=1214)
     evaluator = FactorStudentEvaluator(factor, observations)
@@ -451,6 +496,26 @@ def test_grid_memory_budget_covers_output_and_native_workspace():
             n_threads=4,
             memory_budget_bytes=batch_required - 1,
         ))
+
+    density_batch_required = evaluator._grid_peak_bytes(
+        3, len(grid), 4, 4, result_kind="density")
+    with pytest.raises(MemoryError, match="reduce batch_rows"):
+        list(evaluator.pdf_and_grad_on_grid_batches(
+            grid,
+            batch_rows=3,
+            dimension_tile=4,
+            n_threads=4,
+            memory_budget_bytes=density_batch_required - 1,
+        ))
+    density_blocks = list(evaluator.pdf_and_grad_on_grid_batches(
+        grid,
+        batch_rows=3,
+        dimension_tile=4,
+        n_threads=4,
+        memory_budget_bytes=density_batch_required,
+    ))
+    assert [density.shape for density, _ in density_blocks] == [
+        (3, 4), (3, 4), (1, 4)]
 
 
 def test_large_dimension_grid_has_no_full_ppf_cache():

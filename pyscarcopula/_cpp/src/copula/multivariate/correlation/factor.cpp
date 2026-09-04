@@ -2,6 +2,7 @@
 
 #include "scar/copula/model_storage.hpp"
 #include "scar/copula/spec.hpp"
+#include "scar/copula/multivariate/correlation/factor_solve.hpp"
 #include "scar/detail/linalg.hpp"
 #include "scar/detail/parallel.hpp"
 #include "scar/detail/safety.hpp"
@@ -269,30 +270,8 @@ void FactorCorrelationOperator::solve_rows(
                     values + static_cast<std::size_t>(row) * dimension_;
                 double* target =
                     output + static_cast<std::size_t>(row) * dimension_;
-                require_finite_row(input, dimension_);
-                std::fill(small.begin(), small.end(), 0.0);
-                for (std::size_t column = 0; column < dimension_; ++column) {
-                    const double* weighted =
-                        weighted_loadings_.data() + column * rank_;
-                    for (std::size_t factor = 0;
-                         factor < rank_;
-                         ++factor) {
-                        small[factor] += weighted[factor] * input[column];
-                    }
-                }
-                solve_cholesky_inplace(cholesky_m_, rank_, small);
-                for (std::size_t column = 0; column < dimension_; ++column) {
-                    const double* weighted =
-                        weighted_loadings_.data() + column * rank_;
-                    double value =
-                        inverse_uniqueness_[column] * input[column];
-                    for (std::size_t factor = 0;
-                         factor < rank_;
-                         ++factor) {
-                        value -= weighted[factor] * small[factor];
-                    }
-                    target[column] = value;
-                }
+                scar_internal::factor_solve_row_with_workspace(
+                    *this, input, target, small.data(), small.size());
             }
         });
 }
@@ -413,6 +392,44 @@ void FactorCorrelationOperator::solve_core_inplace(
 }
 
 }  // namespace scar
+
+namespace scar_internal {
+
+void factor_solve_row_with_workspace(
+    const scar::FactorCorrelationOperator& correlation,
+    const double* values,
+    double* output,
+    double* workspace,
+    std::size_t workspace_size) {
+
+    const std::size_t dimension = correlation.dimension();
+    const std::size_t rank = correlation.rank();
+    if (values == nullptr || output == nullptr || workspace == nullptr
+        || workspace_size < rank) {
+        throw std::invalid_argument("factor row solve requires rank-sized workspace");
+    }
+    scar::require_finite_row(values, dimension);
+    std::fill(workspace, workspace + rank, 0.0);
+    const auto& weighted_loadings = correlation.weighted_loadings();
+    const auto& inverse_uniqueness = correlation.inverse_uniqueness();
+    for (std::size_t column = 0; column < dimension; ++column) {
+        const double* weighted = weighted_loadings.data() + column * rank;
+        for (std::size_t factor = 0; factor < rank; ++factor) {
+            workspace[factor] += weighted[factor] * values[column];
+        }
+    }
+    correlation.solve_core_inplace(workspace);
+    for (std::size_t column = 0; column < dimension; ++column) {
+        const double* weighted = weighted_loadings.data() + column * rank;
+        double value = inverse_uniqueness[column] * values[column];
+        for (std::size_t factor = 0; factor < rank; ++factor) {
+            value -= weighted[factor] * workspace[factor];
+        }
+        output[column] = value;
+    }
+}
+
+}  // namespace scar_internal
 
 namespace scar::copula::multivariate::correlation {
 

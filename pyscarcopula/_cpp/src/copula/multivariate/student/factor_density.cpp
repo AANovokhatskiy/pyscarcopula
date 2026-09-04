@@ -3,6 +3,7 @@
 #include "scar/copula/multivariate/correlation/factor_parameterization.hpp"
 #include "scar/copula/multivariate/student/density.hpp"
 #include "scar/copula/multivariate/student/quantile.hpp"
+#include "scar/copula/multivariate/correlation/factor_solve.hpp"
 #include "scar/detail/parallel.hpp"
 #include "scar/detail/safety.hpp"
 
@@ -26,7 +27,6 @@ struct JointBlockResult {
     bool ran = false;
     double log_likelihood = 0.0;
     double dlog_likelihood_ddf = 0.0;
-    std::vector<double> loading_gradient;
     std::int64_t failure_index = -1;
 };
 
@@ -217,36 +217,21 @@ FactorStudentJointResult factor_student_joint_likelihood_gradient(
     const std::size_t dimension = correlation.dimension();
     const std::size_t rank = correlation.rank();
     std::size_t input_values = 0;
+    std::size_t input_bytes = 0;
     std::size_t loading_values = 0;
-    if (!scar_internal::checked_size_mul(
+    std::size_t loading_bytes = 0;
+    if (rows > static_cast<std::size_t>(
+            std::numeric_limits<std::int64_t>::max())
+        || !scar_internal::checked_size_mul(
             rows, dimension, input_values)
         || !scar_internal::checked_size_mul(
-            dimension, rank, loading_values)) {
+            input_values, sizeof(double), input_bytes)
+        || !scar_internal::checked_size_mul(
+            dimension, rank, loading_values)
+        || !scar_internal::checked_size_mul(
+            loading_values, sizeof(double), loading_bytes)) {
         throw std::invalid_argument(
             "factor Student joint input shape is not representable");
-    }
-
-    std::vector<double> precision_times_loadings(
-        loading_values, 0.0);
-    std::vector<double> precision_diagonal(dimension, 0.0);
-    std::vector<double> small(rank, 0.0);
-    const std::vector<double>& weighted_loadings =
-        correlation.weighted_loadings();
-    const std::vector<double>& inverse_uniqueness =
-        correlation.inverse_uniqueness();
-    for (std::size_t row = 0; row < dimension; ++row) {
-        const double* weighted =
-            weighted_loadings.data() + row * rank;
-        std::copy(weighted, weighted + rank, small.begin());
-        correlation.solve_core_inplace(small.data());
-        double diagonal_correction = 0.0;
-        for (std::size_t factor = 0; factor < rank; ++factor) {
-            precision_times_loadings[row * rank + factor] =
-                small[factor];
-            diagonal_correction += weighted[factor] * small[factor];
-        }
-        precision_diagonal[row] =
-            inverse_uniqueness[row] - diagonal_correction;
     }
 
     const std::size_t reduction_blocks = std::min(
@@ -269,6 +254,59 @@ FactorStudentJointResult factor_student_joint_likelihood_gradient(
         throw std::invalid_argument(
             "factor Student joint workspace size is not representable");
     }
+    // Numerical partials and their ordered fold do not depend on this budget.
+    // A large request may use fewer workers without falling back to serial.
+    const int threads = scar_internal::limit_worker_count(
+        n_threads, std::max(std::size_t{1}, reduction_blocks / 4));
+    const auto plan = scar_internal::make_parallel_execution_plan(
+        0, static_cast<std::int64_t>(reduction_blocks), reduction_blocks, threads);
+    const std::size_t slots = scar_internal::parallel_execution_slots(plan);
+    std::size_t scratch_values = 0;
+    std::size_t scratch_bytes = 0;
+    std::size_t block_bytes = 0;
+    std::size_t prepared_values = 0;
+    std::size_t prepared_bytes = 0;
+    std::size_t rank_bytes = 0;
+    std::size_t boundary_bytes = 0;
+    std::size_t preparation_bytes = 0;
+    std::size_t execution_bytes = 0;
+    std::size_t conversion_bytes = 0;
+    // Check each lifetime separately. Their maximum is the owned buffer peak;
+    // borrowed inputs/operator and runtime bookkeeping are accounted elsewhere.
+    if (!scar_internal::checked_size_mul(slots, worker_values, scratch_values)
+        || !scar_internal::checked_size_mul(
+            scratch_values, sizeof(double), scratch_bytes)
+        || !scar_internal::checked_size_mul(
+            reduction_blocks, sizeof(JointBlockResult), block_bytes)
+        || !scar_internal::checked_size_add(
+            loading_values, dimension, prepared_values)
+        || !scar_internal::checked_size_mul(
+            prepared_values, sizeof(double), prepared_bytes)
+        || !scar_internal::checked_size_mul(rank, sizeof(double), rank_bytes)
+        || !scar_internal::checked_size_mul(
+            plan.bounds().size(), sizeof(std::int64_t), boundary_bytes)
+        || !scar_internal::checked_size_add(
+            prepared_bytes, loading_bytes, preparation_bytes)
+        || !scar_internal::checked_size_add(
+            preparation_bytes, boundary_bytes, preparation_bytes)
+        || !scar_internal::checked_size_add(
+            preparation_bytes, rank_bytes, preparation_bytes)
+        || !scar_internal::checked_size_add(
+            prepared_bytes, loading_bytes, execution_bytes)
+        || !scar_internal::checked_size_add(
+            execution_bytes, boundary_bytes, execution_bytes)
+        || !scar_internal::checked_size_add(
+            execution_bytes, reduction_bytes, execution_bytes)
+        || !scar_internal::checked_size_add(
+            execution_bytes, scratch_bytes, execution_bytes)
+        || !scar_internal::checked_size_add(
+            execution_bytes, block_bytes, execution_bytes)
+        || !scar_internal::checked_size_add(
+            loading_bytes, loading_bytes, conversion_bytes)) {
+        throw std::invalid_argument(
+            "factor Student joint workspace size is not representable");
+    }
+
     FactorStudentJointResult result;
     result.dlog_likelihood_dloadings.assign(loading_values, 0.0);
     result.n_threads_requested = n_threads;
@@ -276,42 +314,59 @@ FactorStudentJointResult factor_student_joint_likelihood_gradient(
     if (rows == 0) {
         return result;
     }
+    result.reduction_workspace_bytes = reduction_bytes;
+    result.worker_workspace_peak_bytes = worker_bytes;
+    result.planned_worker_slots = slots;
+    result.planned_worker_workspace_bytes = scratch_bytes;
+
+    std::vector<double> precision_times_loadings(loading_values, 0.0);
+    std::vector<double> precision_diagonal(dimension, 0.0);
+    {
+        std::vector<double> small(rank, 0.0);
+        const auto& weighted_loadings = correlation.weighted_loadings();
+        const auto& inverse_uniqueness = correlation.inverse_uniqueness();
+        for (std::size_t row = 0; row < dimension; ++row) {
+            const double* weighted = weighted_loadings.data() + row * rank;
+            std::copy(weighted, weighted + rank, small.begin());
+            correlation.solve_core_inplace(small.data());
+            double diagonal_correction = 0.0;
+            for (std::size_t factor = 0; factor < rank; ++factor) {
+                precision_times_loadings[row * rank + factor] = small[factor];
+                diagonal_correction += weighted[factor] * small[factor];
+            }
+            precision_diagonal[row] =
+                inverse_uniqueness[row] - diagonal_correction;
+        }
+    }
 
     std::vector<JointBlockResult> blocks(reduction_blocks);
-    for (JointBlockResult& block : blocks) {
-        block.loading_gradient.assign(loading_values, 0.0);
-    }
-    result.reduction_workspace_bytes = reduction_bytes;
-    const int threads = scar_internal::worker_count_for_items(
-        n_threads, reduction_blocks, 4);
-    result.worker_workspace_peak_bytes = worker_bytes;
-
-    scar_internal::parallel_for_blocks(
-        0,
-        static_cast<std::int64_t>(reduction_blocks),
-        1,
-        threads,
+    std::vector<double> loading_gradients(reduction_values, 0.0);
+    {
+        std::vector<double> scratch(scratch_values, 0.0);
+        const scar_internal::PreparedParallelBlockFunction evaluate_blocks =
         [&](std::int64_t begin,
             std::int64_t end,
-            std::size_t) {
-            std::vector<double> quantiles(dimension, 0.0);
-            std::vector<double> quantile_derivatives(dimension, 0.0);
-            std::vector<double> precision_times_quantiles(
-                dimension, 0.0);
-            std::vector<double> projected(rank, 0.0);
+            const scar_internal::ParallelBlockContext& context) {
+            double* quantiles = scratch.data() + context.worker_slot * worker_values;
+            double* quantile_derivatives = quantiles + dimension;
+            double* precision_times_quantiles = quantile_derivatives + dimension;
+            double* projected = precision_times_quantiles + dimension;
             for (std::int64_t block_index = begin;
                  block_index < end;
                  ++block_index) {
                 JointBlockResult& block =
                     blocks[static_cast<std::size_t>(block_index)];
                 block.ran = true;
-                const std::size_t row_begin =
-                    rows * static_cast<std::size_t>(block_index)
-                    / reduction_blocks;
-                const std::size_t row_end =
-                    rows * (
-                        static_cast<std::size_t>(block_index) + 1)
-                    / reduction_blocks;
+                const std::size_t block_id = static_cast<std::size_t>(block_index);
+                double* block_gradient =
+                    loading_gradients.data() + block_id * loading_values;
+                // Same floor-based partition without overflowing rows * block_id.
+                const std::size_t quotient = rows / reduction_blocks;
+                const std::size_t remainder = rows % reduction_blocks;
+                const std::size_t row_begin = quotient * block_id
+                    + remainder * block_id / reduction_blocks;
+                const std::size_t row_end = quotient * (block_id + 1)
+                    + remainder * (block_id + 1) / reduction_blocks;
                 for (std::size_t row = row_begin;
                      row < row_end;
                      ++row) {
@@ -337,14 +392,12 @@ FactorStudentJointResult factor_student_joint_likelihood_gradient(
                             static_cast<std::int64_t>(row);
                         break;
                     }
-                    correlation.solve_rows(
-                        quantiles.data(),
-                        1,
-                        precision_times_quantiles.data(),
-                        1);
+                    scar_internal::factor_solve_row_with_workspace(
+                        correlation, quantiles, precision_times_quantiles,
+                        projected, rank);
                     double quadratic_form = 0.0;
                     double quadratic_form_derivative = 0.0;
-                    std::fill(projected.begin(), projected.end(), 0.0);
+                    std::fill(projected, projected + rank, 0.0);
                     for (std::size_t column = 0;
                          column < dimension;
                          ++column) {
@@ -368,8 +421,8 @@ FactorStudentJointResult factor_student_joint_likelihood_gradient(
                     double row_log_pdf = 0.0;
                     double row_df_gradient = 0.0;
                     if (!scar_internal::student_log_pdf_from_quantiles(
-                            quantiles.data(),
-                            quantile_derivatives.data(),
+                            quantiles,
+                            quantile_derivatives,
                             dimension,
                             df,
                             correlation.logdet(),
@@ -399,7 +452,7 @@ FactorStudentJointResult factor_student_joint_likelihood_gradient(
                         const double* loading =
                             correlation.loadings().data() + column * rank;
                         double* gradient =
-                            block.loading_gradient.data() + column * rank;
+                            block_gradient + column * rank;
                         const double* precision_loading =
                             precision_times_loadings.data()
                             + column * rank;
@@ -418,9 +471,17 @@ FactorStudentJointResult factor_student_joint_likelihood_gradient(
                     }
                 }
             }
-        });
+        };
+        if (threads == 1) {
+            // Keep the legacy serial callback's caller/TLS/fenv behavior.
+            evaluate_blocks(0, static_cast<std::int64_t>(reduction_blocks), {0, 0});
+        } else {
+            scar_internal::execute_parallel_plan(plan, evaluate_blocks);
+        }
+    }
 
-    for (const JointBlockResult& block : blocks) {
+    for (std::size_t block_id = 0; block_id < reduction_blocks; ++block_id) {
+        const JointBlockResult& block = blocks[block_id];
         if (!block.ran) {
             continue;
         }
@@ -439,7 +500,7 @@ FactorStudentJointResult factor_student_joint_likelihood_gradient(
              index < loading_values;
              ++index) {
             result.dlog_likelihood_dloadings[index] +=
-                block.loading_gradient[index];
+                loading_gradients[block_id * loading_values + index];
         }
     }
     if (result.failure.index >= 0) {
@@ -522,6 +583,8 @@ factor_student_penalized_parameterized_objective_gradient(
         joint.worker_workspace_peak_bytes;
     result.reduction_workspace_bytes =
         joint.reduction_workspace_bytes;
+    result.planned_worker_slots = joint.planned_worker_slots;
+    result.planned_worker_workspace_bytes = joint.planned_worker_workspace_bytes;
     result.log_likelihood = joint.log_likelihood;
     if (!joint.is_ok()) {
         return result;

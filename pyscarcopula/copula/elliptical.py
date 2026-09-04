@@ -18,8 +18,8 @@ class BivariateGaussianCopula(BivariateCopula):
         Compatibility-only constructor argument used by shared copula and
         vine configuration flows. It does not select the Gaussian parameter
         transform: Gaussian models always use the bounded ``GaussianTanh``
-    mapping. The supplied value is retained as configuration metadata but
-    must not be interpreted as applying softplus or xtanh mathematics.
+        mapping. The supplied value is retained as configuration metadata but
+        must not be interpreted as applying softplus or xtanh mathematics.
     """
 
     _native_pair_family = "Gaussian"

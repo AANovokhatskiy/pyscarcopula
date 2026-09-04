@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 from datetime import datetime, timezone
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -17,6 +18,82 @@ except ModuleNotFoundError:
 
 def _inside(root: Path, target: Path) -> bool:
     return target == root or root in target.parents
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _wheel_identity_error(payload: dict) -> str | None:
+    wheel = payload.get("wheel")
+    if not isinstance(wheel, dict):
+        return "missing wheel identity"
+    required = ("file", "sha256", "files", "extension", "extension_sha256")
+    if any(field not in wheel for field in required):
+        return "incomplete wheel identity"
+    if (
+            not isinstance(wheel["file"], str)
+            or not wheel["file"]
+            or Path(wheel["file"]).name != wheel["file"]
+            or not isinstance(wheel["files"], int)
+            or isinstance(wheel["files"], bool)
+            or wheel["files"] < 1
+            or not isinstance(wheel["extension"], str)
+            or not wheel["extension"]):
+        return "invalid wheel identity"
+    for field in ("sha256", "extension_sha256"):
+        digest = wheel[field]
+        if (
+                not isinstance(digest, str)
+                or len(digest) != 64
+                or any(character not in "0123456789abcdef" for character in digest)):
+            return f"invalid wheel {field}"
+    return None
+
+
+def _runtime_contract_error(payload: dict) -> str | None:
+    if payload.get("schema_version") != 2 or payload.get("status") != "passed":
+        return "installed-wheel validation schema or status is invalid"
+    wheel_error = _wheel_identity_error(payload)
+    if wheel_error is not None:
+        return wheel_error
+    contract = payload.get("parallel_runtime_contract")
+    if not isinstance(contract, dict):
+        return "missing parallel_runtime_contract"
+    default = contract.get("default_call") or {}
+    parallel = contract.get("parallel_call") or {}
+    if (
+            contract.get("default_n_threads") != 1
+            or default.get("runtime_initialized") is not False
+            or default.get("batches_submitted") != 0
+            or default.get("tasks_submitted") != 0):
+        return "default call did not prove the one-thread no-pool contract"
+    if (
+            parallel.get("requested_n_threads") != 2
+            or parallel.get("runtime_initialized") is not True
+            or parallel.get("owner_pid_matches") is not True
+            or parallel.get("worker_count") != 2
+            or parallel.get("batches_submitted") != 1
+            or parallel.get("tasks_submitted") != 2):
+        return "explicit call did not prove one two-runner batch"
+    if contract.get("shutdown_initialized") is not False:
+        return "runtime shutdown was not recorded"
+    for field in ("extension_sha256", "result_sha256"):
+        digest = contract.get(field)
+        if not isinstance(digest, str) or len(digest) != 64:
+            return f"invalid {field}"
+    extension_digest = contract["extension_sha256"]
+    if extension_digest != (payload.get("wheel") or {}).get(
+            "extension_sha256"):
+        return "runtime contract does not match the validated wheel"
+    if extension_digest != (payload.get("import_boundary") or {}).get(
+            "extension_sha256"):
+        return "runtime contract does not match the installed extension"
+    return None
 
 
 def aggregate(artifacts: Path, required: tuple[str, ...]) -> dict:
@@ -40,17 +117,19 @@ def aggregate(artifacts: Path, required: tuple[str, ...]) -> dict:
     )
     missing = sorted(set(required) - set(configurations))
 
-    provenance = [
-        record["payload"]
+    provenance_entries = [
+        record
         for record in records
         if record["payload"].get("record_type") == "release_provenance"
     ]
-    validation = [
-        record["payload"]
+    validation_entries = [
+        record
         for record in records
         if record["payload"].get("record_type")
         == "installed_wheel_validation"
     ]
+    provenance = [record["payload"] for record in provenance_entries]
+    validation = [record["payload"] for record in validation_entries]
     provenance_configurations = {
         record.get("configuration") for record in provenance
     }
@@ -69,6 +148,67 @@ def aggregate(artifacts: Path, required: tuple[str, ...]) -> dict:
     missing_wheel_validation = sorted(
         required_wheels - validation_configurations
     )
+    runtime_contract_failures = []
+    runtime_contract_provenance_failures = []
+    for configuration in sorted(required_wheels):
+        matching_validation = [
+            record for record in validation_entries
+            if record["payload"].get("configuration") == configuration
+        ]
+        if len(matching_validation) != 1:
+            runtime_contract_failures.append({
+                "configuration": configuration,
+                "error": (
+                    "expected exactly one installed-wheel validation, got "
+                    f"{len(matching_validation)}"
+                ),
+            })
+            continue
+        validation_entry = matching_validation[0]
+        validation_record = validation_entry["payload"]
+        error = _runtime_contract_error(validation_record)
+        if error is not None:
+            runtime_contract_failures.append({
+                "configuration": configuration,
+                "error": error,
+            })
+            continue
+
+        matching_provenance = [
+            record for record in provenance
+            if record.get("configuration") == configuration
+        ]
+        contract = validation_record["parallel_runtime_contract"]
+        if len(matching_provenance) != 1:
+            runtime_contract_provenance_failures.append({
+                "configuration": configuration,
+                "error": (
+                    "expected exactly one provenance record, got "
+                    f"{len(matching_provenance)}"
+                ),
+            })
+            continue
+        provenance_record = matching_provenance[0]
+        wheels = provenance_record.get("wheels") or []
+        recorded_validation = provenance_record.get("wheel_validation") or {}
+        recorded_contract = recorded_validation.get("parallel_runtime_contract")
+        validation_path = Path(validation_entry["artifact"])
+        validation_wheel = validation_record["wheel"]
+        if (
+                provenance_record.get("schema_version") != 3
+                or provenance_record.get("status") != "passed"
+                or len(wheels) != 1
+                or wheels[0] != validation_wheel
+                or recorded_validation.get("wheel") != validation_wheel
+                or recorded_validation.get("file") != validation_path.name
+                or recorded_validation.get("sha256") != _sha256(validation_path)
+                or recorded_contract != contract):
+            runtime_contract_provenance_failures.append({
+                "configuration": configuration,
+                "error": (
+                    "runtime contract does not match wheel provenance"
+                ),
+            })
 
     heads = {record.get("head") for record in provenance if record.get("head")}
     source_digests = {
@@ -141,6 +281,8 @@ def aggregate(artifacts: Path, required: tuple[str, ...]) -> dict:
         missing,
         missing_provenance,
         missing_wheel_validation,
+        runtime_contract_failures,
+        runtime_contract_provenance_failures,
         dirty,
         invalid_concurrency,
         wheel_provenance_failures,
@@ -148,7 +290,7 @@ def aggregate(artifacts: Path, required: tuple[str, ...]) -> dict:
         consistency_errors,
     ))
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "verdict": "passed" if passed else "failed",
         "artifact_count": len(records),
@@ -157,6 +299,10 @@ def aggregate(artifacts: Path, required: tuple[str, ...]) -> dict:
         "missing_configurations": missing,
         "missing_provenance": missing_provenance,
         "missing_wheel_validation": missing_wheel_validation,
+        "parallel_runtime_contract_failures": runtime_contract_failures,
+        "parallel_runtime_provenance_failures": (
+            runtime_contract_provenance_failures
+        ),
         "dirty_configurations": dirty,
         "invalid_concurrency": invalid_concurrency,
         "wheel_provenance_failures": wheel_provenance_failures,

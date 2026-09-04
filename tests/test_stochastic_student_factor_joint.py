@@ -404,3 +404,84 @@ def test_joint_gradient_large_dimension_has_no_dense_state():
         result.dlog_likelihood_dloadings))
     assert result.diagnostics["reduction_workspace_bytes"] == (
         len(observations) * dimension * rank * 8)
+
+
+@pytest.mark.parametrize("rows", [0, 1, 16, 63, 64, 256])
+@pytest.mark.parametrize("n_threads", [1, 4, 16, 17, 32, 256])
+def test_joint_worker_budget_preserves_reductions(rows, n_threads):
+    from pyscarcopula._native import _extension
+
+    module = _extension.load()
+    rng = np.random.default_rng(9821)
+    factor = FactorCorrelation(rng.normal(0.0, 0.08, (5, 2))).prepare()
+    observations = rng.uniform(0.03, 0.97, (rows, 5))
+    module._parallel_runtime_shutdown()
+    reference = module._factor_student_joint_likelihood_gradient(
+        factor._native, observations, 6.0, 1)
+    assert not module._parallel_runtime_info()["initialized"]
+    actual = module._factor_student_joint_likelihood_gradient(
+        factor._native, observations, 6.0, n_threads)
+    info = module._parallel_runtime_info()
+    for key in ("status", "log_likelihood", "dlog_likelihood_ddf",
+                "dlog_likelihood_dloadings", "parallel_blocks",
+                "reduction_workspace_bytes", "worker_workspace_peak_bytes"):
+        np.testing.assert_array_equal(actual[key], reference[key])
+    assert actual["n_threads_requested"] == n_threads
+    partials = min(rows, 64)
+    workers = min(n_threads, max(1, partials // 4))
+    queued = workers if rows and workers > 1 else 0
+    slots = workers if rows else 0
+    assert actual["parallel_blocks"] == partials
+    assert actual["planned_worker_slots"] == slots
+    assert actual["planned_worker_workspace_bytes"] == slots * (3 * 5 + 2) * 8
+    assert reference["planned_worker_slots"] == int(rows > 0)
+    assert reference["planned_worker_workspace_bytes"] == (
+        int(rows > 0) * (3 * 5 + 2) * 8)
+    assert info["batches_submitted"] == int(queued > 0)
+    assert info["tasks_submitted"] == queued
+    assert info["worker_count"] == queued
+    assert info["worker_start_events"] == queued
+
+
+def test_joint_workspace_after_larger_pool_and_parameterized_objective():
+    from pyscarcopula._native import _extension
+
+    module = _extension.load()
+    rng = np.random.default_rng(9822)
+    loadings = rng.normal(0.0, 0.08, (5, 2))
+    observations = rng.uniform(0.03, 0.97, (65, 5))
+    evaluator = FactorStudentEvaluator(FactorCorrelation(loadings), observations)
+    parameterization, parameters = FactorLoadingParameterization.from_loadings(
+        loadings, uniqueness_min=1e-8)
+    module._parallel_runtime_shutdown()
+    try:
+        reference = evaluator.joint_likelihood_and_gradient(5.7, n_threads=1)
+        objective_reference = evaluator.penalized_parameterized_objective_and_gradient(
+            5.7, parameters, parameterization, penalty=0.02,
+            condition_max=1e8, n_threads=1)
+        assert not module._parallel_runtime_info()["initialized"]
+        module._parallel_for_blocks_probe(32, 1, 32)
+        before = dict(module._parallel_runtime_info())
+        actual = evaluator.joint_likelihood_and_gradient(5.7, n_threads=4)
+        objective = evaluator.penalized_parameterized_objective_and_gradient(
+            5.7, parameters, parameterization, penalty=0.02,
+            condition_max=1e8, n_threads=4)
+        after = dict(module._parallel_runtime_info())
+        assert actual.log_likelihood == reference.log_likelihood
+        assert actual.dlog_likelihood_ddf == reference.dlog_likelihood_ddf
+        np.testing.assert_array_equal(
+            actual.dlog_likelihood_dloadings, reference.dlog_likelihood_dloadings)
+        assert objective.objective == objective_reference.objective
+        assert objective.log_likelihood == objective_reference.log_likelihood
+        np.testing.assert_array_equal(objective.gradient, objective_reference.gradient)
+        np.testing.assert_array_equal(objective.loadings, objective_reference.loadings)
+        for result in (actual, objective):
+            assert result.diagnostics["planned_worker_slots"] == 4
+            assert result.diagnostics["planned_worker_workspace_bytes"] == 4 * 17 * 8
+            assert result.diagnostics["reduction_blocks"] == 64
+            assert result.diagnostics["parallel_blocks"] == 64
+        assert after["worker_count"] == before["worker_count"] == 32
+        assert after["tasks_submitted"] - before["tasks_submitted"] == 8
+        assert after["batches_submitted"] - before["batches_submitted"] == 2
+    finally:
+        module._parallel_runtime_shutdown()

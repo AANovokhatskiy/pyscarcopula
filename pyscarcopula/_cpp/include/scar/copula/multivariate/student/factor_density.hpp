@@ -46,6 +46,9 @@ struct FactorStudentJointResult {
     int parallel_blocks = 0;
     std::size_t worker_workspace_peak_bytes = 0;
     std::size_t reduction_workspace_bytes = 0;
+    // Double workspace owned by this joint call; nested execution uses one slot.
+    std::size_t planned_worker_slots = 0;
+    std::size_t planned_worker_workspace_bytes = 0;
 
     bool is_ok() const noexcept {
         return ok(status);
@@ -72,6 +75,9 @@ struct FactorStudentPenalizedObjectiveResult {
     int parallel_blocks = 0;
     std::size_t worker_workspace_peak_bytes = 0;
     std::size_t reduction_workspace_bytes = 0;
+    // Workspace of the inner joint evaluation, excluding parameterization.
+    std::size_t planned_worker_slots = 0;
+    std::size_t planned_worker_workspace_bytes = 0;
 
     bool is_ok() const noexcept {
         return ok(status);

@@ -6,9 +6,12 @@
 
 #include <pybind11/stl.h>
 
+#include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
+#include <thread>
 #include <vector>
 
 namespace py = pybind11;
@@ -244,6 +247,62 @@ void bind_parallel(py::module_& m) {
         py::arg("n_threads"),
         py::arg("throw_block") = -1,
         py::arg("nested_threads") = 0);
+    m.def(
+        "_parallel_execution_probe",
+        [](std::int64_t begin,
+           std::int64_t end,
+           std::size_t block_count,
+           int worker_count) {
+            const auto plan = scar_internal::make_parallel_execution_plan(
+                begin, end, block_count, worker_count);
+            std::vector<std::int64_t> starts(block_count, 0);
+            std::vector<std::int64_t> stops(block_count, 0);
+            std::vector<std::size_t> slots(
+                block_count, std::numeric_limits<std::size_t>::max());
+            std::atomic<std::size_t> active{0};
+            std::atomic<std::size_t> peak{0};
+            std::atomic<std::size_t> completed{0};
+            std::atomic<bool> caller_executed{false};
+            const auto caller = std::this_thread::get_id();
+            {
+                py::gil_scoped_release release;
+                scar_internal::execute_parallel_plan(
+                    plan,
+                    [&](std::int64_t block_begin,
+                        std::int64_t block_end,
+                        const scar_internal::ParallelBlockContext& context) {
+                        const std::size_t running = active.fetch_add(1) + 1;
+                        std::size_t observed = peak.load();
+                        while (observed < running
+                               && !peak.compare_exchange_weak(
+                                   observed, running)) {
+                        }
+                        starts[context.block_id] = block_begin;
+                        stops[context.block_id] = block_end;
+                        slots[context.block_id] = context.worker_slot;
+                        if (std::this_thread::get_id() == caller) {
+                            caller_executed.store(true);
+                        }
+                        completed.fetch_add(1);
+                        active.fetch_sub(1);
+                    });
+            }
+            py::dict out;
+            out["begins"] = starts;
+            out["ends"] = stops;
+            out["worker_slots"] = slots;
+            out["planned_blocks"] = plan.block_count();
+            out["completed_blocks"] = completed.load();
+            out["peak_active_callbacks"] = peak.load();
+            out["caller_executed"] = caller_executed.load();
+            out["runtime"] = runtime_info_to_dict(
+                scar_internal::parallel_runtime_info());
+            return out;
+        },
+        py::arg("begin"),
+        py::arg("end"),
+        py::arg("block_count"),
+        py::arg("worker_count"));
 }
 
 }  // namespace pyscarcopula::bindings

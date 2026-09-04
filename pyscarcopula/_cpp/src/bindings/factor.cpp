@@ -89,6 +89,8 @@ py::dict factor_student_joint_result_to_dict(
         result.worker_workspace_peak_bytes;
     output["reduction_workspace_bytes"] =
         result.reduction_workspace_bytes;
+    output["planned_worker_slots"] = result.planned_worker_slots;
+    output["planned_worker_workspace_bytes"] = result.planned_worker_workspace_bytes;
     return output;
 }
 
@@ -154,6 +156,8 @@ py::dict factor_student_penalized_result_to_dict(
         result.worker_workspace_peak_bytes;
     output["reduction_workspace_bytes"] =
         result.reduction_workspace_bytes;
+    output["planned_worker_slots"] = result.planned_worker_slots;
+    output["planned_worker_workspace_bytes"] = result.planned_worker_workspace_bytes;
     return output;
 }
 

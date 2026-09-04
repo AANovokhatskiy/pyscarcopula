@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import importlib
 import inspect
+import json
 from pathlib import Path
 import re
 
@@ -213,11 +214,30 @@ def test_public_docs_exclude_development_plans_and_phase_reports():
     assert "validation/" not in nav
 
 
-def test_notebooks_do_not_import_private_pyscarcopula_modules():
+def test_notebooks_only_import_the_approved_private_pobs_helper():
+    approved_private_import = "from pyscarcopula._utils import pobs"
     for path in sorted((ROOT / "examples").glob("*.ipynb")):
-        text = path.read_text(encoding="utf-8")
-        assert "from pyscarcopula._" not in text
-        assert "import pyscarcopula._" not in text
+        notebook = json.loads(path.read_text(encoding="utf-8"))
+        code = "\n".join(
+            "".join(cell.get("source", ()))
+            for cell in notebook.get("cells", ())
+            if cell.get("cell_type") == "code"
+        )
+        private_imports = {
+            line.strip()
+            for line in code.splitlines()
+            if line.strip().startswith((
+                "from pyscarcopula._",
+                "import pyscarcopula._",
+            ))
+        }
+        assert private_imports <= {approved_private_import}, (
+            f"{path.relative_to(ROOT)} imports an unapproved private helper: "
+            f"{sorted(private_imports - {approved_private_import})}"
+        )
+        if re.search(r"\bpobs\(", code):
+            assert approved_private_import in private_imports
+            assert "def pobs(" not in code
 
 
 def test_vinecopula_is_the_discoverable_canonical_vine_api():

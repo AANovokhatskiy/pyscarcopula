@@ -433,7 +433,8 @@ class FactorStudentEvaluator:
             rows,
             grid_size,
             dimension_tile,
-            n_threads):
+            n_threads,
+            result_kind="log"):
         cells = rows * grid_size
         width = 4 + 2 * self.rank
         dimension_tiles = (
@@ -450,13 +451,27 @@ class FactorStudentEvaluator:
             dimension_tiles * (width * 8 + 1)
             if dimension_parallel else 0
         )
-        # Native result vectors coexist briefly with the two NumPy copies.
-        output_peak_bytes = 4 * cells * 8
-        return (
-            output_peak_bytes
-            + active_workers * worker_bytes
-            + partial_bytes
-        )
+        workspace_bytes = (
+            active_workers * worker_bytes + partial_bytes)
+        # Preserve the established conservative log-grid requirement: its
+        # binding copies and native workspace are both charged at once.
+        log_peak_bytes = 4 * cells * 8 + workspace_bytes
+        if result_kind == "log":
+            return log_peak_bytes
+        if result_kind == "density":
+            # Retained log arrays coexist with native density vectors and
+            # their two returned array copies.
+            return max(log_peak_bytes, 6 * cells * 8)
+        if result_kind == "stochastic":
+            # The transformed grid and its derivative remain alive through
+            # log evaluation and the native density/pullback conversion.
+            transformed_grid_bytes = 2 * grid_size * 8
+            return max(
+                log_peak_bytes + transformed_grid_bytes,
+                5 * cells * 8 + transformed_grid_bytes,
+                8 * cells * 8,
+            )
+        raise ValueError("unknown factor Student grid result kind")
 
     def _evaluate_grid_block(
             self,
@@ -572,8 +587,26 @@ class FactorStudentEvaluator:
             memory_budget_bytes: int | None = None
     ) -> tuple[np.ndarray, np.ndarray]:
         """Return tiled row/grid densities and df derivatives."""
-        result = self.evaluate_grid(
-            df_grid,
+        dimension_tile = validate_integer(
+            dimension_tile, "dimension_tile", minimum=1)
+        n_threads = _validated_n_threads(n_threads)
+        grid = self._grid_values(df_grid)
+        required = self._grid_peak_bytes(
+            self.n_observations,
+            len(grid),
+            dimension_tile=dimension_tile,
+            n_threads=n_threads,
+            result_kind="density",
+        )
+        _validated_budget(
+            memory_budget_bytes,
+            required,
+            "use pdf_and_grad_on_grid_batches(), reduce batch_rows, or "
+            "increase memory_budget_bytes",
+        )
+        result = self._evaluate_grid_block(
+            self._observations,
+            grid,
             dimension_tile=dimension_tile,
             n_threads=n_threads,
             memory_budget_bytes=memory_budget_bytes,
@@ -605,6 +638,7 @@ class FactorStudentEvaluator:
             len(grid),
             dimension_tile,
             n_threads,
+            result_kind="stochastic",
         )
         _validated_budget(
             memory_budget_bytes,
@@ -683,8 +717,30 @@ class FactorStudentEvaluator:
             memory_budget_bytes: int | None = None
     ) -> Iterator[tuple[np.ndarray, np.ndarray]]:
         """Yield bounded density/gradient grid batches."""
+        batch_rows = validate_integer(batch_rows, "batch_rows", minimum=1)
+        dimension_tile = validate_integer(
+            dimension_tile, "dimension_tile", minimum=1)
+        n_threads = _validated_n_threads(n_threads)
+        grid = self._grid_values(df_grid)
+        planned_rows = (
+            batch_rows
+            if batch_rows < self.n_observations
+            else self.n_observations
+        )
+        required = self._grid_peak_bytes(
+            planned_rows,
+            len(grid),
+            dimension_tile,
+            n_threads,
+            result_kind="density",
+        )
+        _validated_budget(
+            memory_budget_bytes,
+            required,
+            "reduce batch_rows or increase memory_budget_bytes",
+        )
         for result in self.evaluate_grid_batches(
-                df_grid,
+                grid,
                 batch_rows=batch_rows,
                 dimension_tile=dimension_tile,
                 n_threads=n_threads,

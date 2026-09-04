@@ -23,6 +23,8 @@
 #include <variant>
 #include <vector>
 
+int run_parallel_runtime_tests();
+int run_parallel_deferred_tests();
 int run_jacobi_domain_tests();
 int run_jacobi_transition_tests();
 int run_jacobi_evaluator_tests();
@@ -30,6 +32,9 @@ int run_jacobi_sampling_tests();
 int run_pair_model_tests();
 int run_multivariate_gaussian_tests();
 int run_multivariate_student_tests();
+int run_factor_joint_workspace_tests();
+int run_factor_rosenblatt_parallel_tests();
+int run_factor_rosenblatt_gaussian_plan_tests();
 int run_equicorr_stochastic_student_tests();
 int run_gas_model_tests();
 int run_ou_model_tests();
@@ -38,6 +43,14 @@ int run_multivariate_model_tests();
 int run_application_model_tests();
 
 int main() {
+    const int parallel_runtime_status = run_parallel_runtime_tests();
+    if (parallel_runtime_status != 0) {
+        return 750 + parallel_runtime_status;
+    }
+    const int parallel_deferred_status = run_parallel_deferred_tests();
+    if (parallel_deferred_status != 0) {
+        return 760 + parallel_deferred_status;
+    }
     const int jacobi_status = run_jacobi_domain_tests();
     if (jacobi_status != 0) {
         return 100 + jacobi_status;
@@ -66,6 +79,20 @@ int main() {
     const int multivariate_student_status = run_multivariate_student_tests();
     if (multivariate_student_status != 0) {
         return 575 + multivariate_student_status;
+    }
+    const int factor_joint_workspace_status = run_factor_joint_workspace_tests();
+    if (factor_joint_workspace_status != 0) {
+        return 580 + factor_joint_workspace_status;
+    }
+    const int factor_rosenblatt_parallel_status =
+        run_factor_rosenblatt_parallel_tests();
+    if (factor_rosenblatt_parallel_status != 0) {
+        return 600 + factor_rosenblatt_parallel_status;
+    }
+    const int factor_rosenblatt_gaussian_plan_status =
+        run_factor_rosenblatt_gaussian_plan_tests();
+    if (factor_rosenblatt_gaussian_plan_status != 0) {
+        return 610 + factor_rosenblatt_gaussian_plan_status;
     }
     const int equicorr_stochastic_student_status =
         run_equicorr_stochastic_student_tests();

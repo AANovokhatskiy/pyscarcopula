@@ -37,6 +37,23 @@ struct MultivariateRosenblattResult {
     }
 };
 
+#ifdef SCAR_PARALLEL_TESTING
+namespace rosenblatt_testing {
+enum class Operation { Preparation, Rows, Update };
+using FaultHook = void (*)(
+    std::size_t coordinate, Operation operation, std::size_t block,
+    std::int64_t row);
+using OutputObserver = void (*)(const MultivariateRosenblattResult&) noexcept;
+using RecordedObserver = void (*)(
+    std::size_t coordinate, Operation operation, std::size_t block,
+    std::size_t registration) noexcept;
+// Captured from caller TLS before execution; absent from extension builds.
+void set_hooks(
+    FaultHook fault, OutputObserver observer,
+    RecordedObserver recorded = nullptr) noexcept;
+}  // namespace rosenblatt_testing
+#endif
+
 struct RadialSummaryResult {
     std::vector<double> values;
     std::int64_t n_rows = 0;

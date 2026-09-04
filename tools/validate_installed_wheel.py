@@ -14,6 +14,7 @@ import importlib
 import importlib.util
 from importlib import metadata
 import json
+import os
 from pathlib import Path
 import platform
 import sys
@@ -597,6 +598,86 @@ def _loaded_package_boundary(source_root: Path) -> dict:
     return result
 
 
+def _parallel_runtime_contract(extension_sha256: str) -> dict:
+    """Prove the installed binary's default and explicit thread behavior."""
+    import numpy as np
+
+    from pyscarcopula import FactorCorrelation, NumericalConfig
+    from pyscarcopula._native import _extension
+
+    module = _extension.load()
+    if _sha256(Path(module.__file__)) != extension_sha256:
+        raise RuntimeError(
+            "parallel runtime probe loaded a different native extension"
+        )
+    if NumericalConfig().n_threads != 1:
+        raise RuntimeError("installed default n_threads is not one")
+
+    loadings = np.arange(16, dtype=np.float64).reshape(8, 2) / 100.0
+    values = np.arange(512, dtype=np.float64).reshape(64, 8) / 97.0
+    operator = FactorCorrelation(loadings).prepare()
+
+    module._parallel_runtime_shutdown()
+    try:
+        initial = dict(module._parallel_runtime_info())
+        sequential = operator.solve(values)
+        after_default = dict(module._parallel_runtime_info())
+        if initial["initialized"] or after_default["initialized"]:
+            raise RuntimeError(
+                "default n_threads=1 initialized the native thread pool"
+            )
+        if (
+                after_default["batches_submitted"] != 0
+                or after_default["tasks_submitted"] != 0):
+            raise RuntimeError(
+                "default n_threads=1 submitted native queued work"
+            )
+
+        parallel = operator.solve(values, n_threads=2)
+        after_parallel = dict(module._parallel_runtime_info())
+        if not np.array_equal(parallel, sequential):
+            raise RuntimeError(
+                "installed explicit parallel call changed its result"
+            )
+        if (
+                not after_parallel["initialized"]
+                or after_parallel["owner_pid"] != os.getpid()
+                or after_parallel["worker_count"] != 2
+                or after_parallel["batches_submitted"] != 1
+                or after_parallel["tasks_submitted"] != 2):
+            raise RuntimeError(
+                "installed explicit parallel call did not execute one "
+                "two-runner batch"
+            )
+        result_sha256 = hashlib.sha256(
+            np.ascontiguousarray(parallel).tobytes()
+        ).hexdigest()
+    finally:
+        stopped = dict(module._parallel_runtime_shutdown())
+    if stopped["initialized"]:
+        raise RuntimeError("installed parallel runtime did not shut down")
+
+    return {
+        "extension_sha256": extension_sha256,
+        "default_n_threads": 1,
+        "default_call": {
+            "runtime_initialized": after_default["initialized"],
+            "batches_submitted": after_default["batches_submitted"],
+            "tasks_submitted": after_default["tasks_submitted"],
+        },
+        "parallel_call": {
+            "requested_n_threads": 2,
+            "runtime_initialized": after_parallel["initialized"],
+            "owner_pid_matches": after_parallel["owner_pid"] == os.getpid(),
+            "worker_count": after_parallel["worker_count"],
+            "batches_submitted": after_parallel["batches_submitted"],
+            "tasks_submitted": after_parallel["tasks_submitted"],
+        },
+        "result_sha256": result_sha256,
+        "shutdown_initialized": stopped["initialized"],
+    }
+
+
 def validate(source_root: Path, wheel: Path, configuration: str) -> dict:
     source_root = source_root.resolve()
     if not source_root.is_dir():
@@ -617,9 +698,10 @@ def validate(source_root: Path, wheel: Path, configuration: str) -> dict:
     ownership = _ownership_sentinel(context)
     removal = _removal_contracts()
     distribution = _loaded_package_boundary(source_root)
+    parallel_runtime = _parallel_runtime_contract(installed_binary_sha256)
 
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "record_type": "installed_wheel_validation",
         "status": "passed",
         "configuration": configuration,
@@ -634,6 +716,7 @@ def validate(source_root: Path, wheel: Path, configuration: str) -> dict:
         "ownership_sentinel": ownership,
         "removal_contracts": removal,
         "distribution_boundary": distribution,
+        "parallel_runtime_contract": parallel_runtime,
     }
 
 

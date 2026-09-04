@@ -82,6 +82,46 @@ With `n_threads=1`, the native thread pool is not created or consulted. This
 keeps sequential execution safe for an outer rolling-window executor and
 avoids hidden background workers.
 
+## Runtime work and the resident pool
+
+The native runtime uses the following vocabulary when it plans one call:
+
+| Symbol | Meaning |
+|--------|---------|
+| `R` | Numerical partials required by the algorithm, such as `min(N, 64)` for a Factor Student joint reduction |
+| `B` | Stable logical portions, including their ranges and IDs; some reductions use `B = R` |
+| `W` | Executor budget for this call after validation and any kernel-specific cost limit, never above the explicit thread request |
+| `J` | Queued runners for a non-empty prepared call with `B > 1`: `min(B, W)` |
+| `P` | Resident worker threads already owned by the current process |
+
+`B` controls numerical partitioning, ordered reduction, and failure placement.
+Reducing `W` does not renumber the `B` logical portions. Each of the `J`
+runners can process several portions and receives a stable scratch slot. The
+legacy one-thread, small, and empty paths execute directly. A prepared
+`B > 1, W = 1` call made outside a worker still queues one runner. Nested
+prepared work executes all `B` portions locally with scratch slot zero and
+does not change queue counters.
+
+The process pool keeps the largest worker capacity requested so far, so a
+later call can have `P > W` and `P > J`. This history does not increase that
+call's scratch allocation: planned scratch is sized from `J`, while partial
+results that preserve the numerical order remain sized from `B` or `R`.
+Separate concurrent calls own separate scratch and result buffers.
+
+Native diagnostics expose cumulative process counters. `worker_count` is
+`P`; `worker_start_events` counts created resident workers;
+`batches_submitted` counts successfully committed queued calls; and
+`tasks_submitted` counts their queued runners, so a call with `B > W` adds
+`J`, not `B`. `peak_queued_tasks` is the largest observed queue depth. Direct
+calls add no batch or task count. These counters describe scheduling and are
+not a count of numerical rows, cells, or optimizer calls.
+
+Memory budgets apply to one invocation. They check simultaneously live
+outputs, partials, prepared values, scratch slots, and binding-owned copies
+before work begins. They do not reserve process-wide capacity for other calls,
+and the resident pool's thread stacks are process resources rather than part
+of a kernel's `memory_budget_bytes`.
+
 ## Parallelized workloads
 
 The native implementation parallelizes independent blocks while preserving
@@ -246,7 +286,10 @@ Parallel threads do not change the asymptotic representation of a model.
   static likelihood, compact MLE, normal sampling, bounded batches, and exact
   conditioning. Tiled two-stage estimation, persistence, rolling workers, and
   the rank-dimensional Rosenblatt transform preserve the compact
-  representation. The dense Gaussian mode remains the default.
+  representation. A parallel Factor Rosenblatt call queues one row batch.
+  Its shared-preparation path keeps four rank values per active scratch slot,
+  plus alignment padding, and scratch is planned from `J` rather than the
+  retained pool size `P`. The dense Gaussian mode remains the default.
 - The independent `FactorCorrelation` representation stores
   `O(d*k + k^2)` values and exposes prepared Woodbury matrix products,
   solves, quadratic forms, log determinants, and normal sampling. Its row
