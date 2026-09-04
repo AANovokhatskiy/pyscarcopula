@@ -93,7 +93,7 @@ jobs:
             python "{project}/tools/check_cpp_architecture.py" &&
             python "{project}/tools/check_python_ownership.py"
           CIBW_BEFORE_TEST: >-
-            python -m pip install --prefer-binary
+            python -m pip install --only-binary=:all:
             "numpy>=1.22" "scipy>=1.9"
             "joblib>=1.0" "tqdm>=4.0"
           CIBW_TEST_COMMAND: >-
@@ -110,7 +110,8 @@ jobs:
           python -m venv "$RUNNER_TEMP/pyscarcopula-wheel-venv"
           venv_python="$RUNNER_TEMP/pyscarcopula-wheel-venv/bin/python"
           "$venv_python" -m pip install --upgrade pip
-          "$venv_python" -m pip install \
+          # Validate that runtime dependencies have wheels too (no LLVM builds).
+          "$venv_python" -m pip install --only-binary=:all: \
             "$FV7_ARTIFACT_ROOT"/wheelhouse/*.whl
           wheel=$(find "$FV7_ARTIFACT_ROOT/wheelhouse" \
             -maxdepth 1 -name '*.whl' -print -quit)
@@ -132,7 +133,8 @@ jobs:
           & $venvPython -m pip install --upgrade pip
           $wheelDir = Join-Path $env:FV7_ARTIFACT_ROOT "wheelhouse"
           $wheel = (Get-ChildItem -LiteralPath $wheelDir -Filter *.whl -File -ErrorAction Stop).FullName
-          & $venvPython -m pip install $wheel
+          # Validate that runtime dependencies have wheels too (no LLVM builds).
+          & $venvPython -m pip install --only-binary=:all: $wheel
           Set-Location $env:RUNNER_TEMP
           $validator = Join-Path $env:GITHUB_WORKSPACE "tools/validate_installed_wheel.py"
           $validation = Join-Path $env:FV7_ARTIFACT_ROOT "wheel_validation.json"
