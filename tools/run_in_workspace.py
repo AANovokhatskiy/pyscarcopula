@@ -46,14 +46,18 @@ def local_directory(root: Path, relative: str) -> Path:
 def command_environment(root: Path, run_id: str):
     """Override inherited global caches before Python/pip/compiler startup."""
     environment = os.environ.copy()
-    temporary = local_directory(root, f"build/workspace-runs/{run_id}/tmp")
+    run = local_directory(root, f"build/workspace-runs/{run_id}")
+    # multiprocessing appends /pymp-XXXXXXXX/listener-XXXXXXXX. Keep TMPDIR
+    # short enough for macOS's 104-byte Unix socket address on CI checkouts.
+    # Command records can retain their descriptive path independently.
+    temporary = local_directory(root, f"build/t/{run_id}")
     for name in ("TMP", "TEMP", "TMPDIR"):
         environment[name] = str(temporary)
     for name, directory in CACHE_VARIABLES.items():
         environment[name] = str(local_directory(root, f"build/cache/{directory}"))
     environment["PIP_DISABLE_PIP_VERSION_CHECK"] = "1"
     environment["PYTHONNOUSERSITE"] = "1"
-    return environment, temporary.parent
+    return environment, run
 
 
 def main(argv=None):

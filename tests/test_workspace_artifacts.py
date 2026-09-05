@@ -35,7 +35,7 @@ print(json.dumps({'temporary': temporary, 'cache': cache,
                             env=environment, text=True, capture_output=True,
                             check=True, timeout=30)
     record = json.loads(result.stdout)
-    assert Path(record["temporary"]).is_relative_to(run)
+    assert Path(record["temporary"]).is_relative_to(root / "build/t/first")
     assert Path(record["temporary"]).read_bytes() == b"workspace"
     for key in ("cache", "prefix"):
         assert Path(record[key]).is_relative_to(root / "build" / "cache")
@@ -44,6 +44,19 @@ print(json.dumps({'temporary': temporary, 'cache': cache,
     assert list(outside.iterdir()) == []
     _, other = workspace.command_environment(root, "second")
     assert other != run
+
+
+def test_ci_temp_path_leaves_room_for_macos_multiprocessing_socket(monkeypatch):
+    # Check the actual launcher layout without requiring a macOS filesystem.
+    root = Path("/Users/runner/work/pyscarcopula/pyscarcopula")
+    monkeypatch.setattr(workspace, "local_directory",
+                        lambda root, relative: root / relative)
+    for run_id in ("ci", "0123456789ab"):
+        environment, _ = workspace.command_environment(root, run_id)
+        socket_path = (Path(environment["TMPDIR"])
+                       / "pymp-12345678" / "listener-12345678")
+        # sockaddr_un.sun_path includes the terminating NUL byte.
+        assert len(socket_path.as_posix().encode()) + 1 <= 104
 
 
 def test_launcher_uses_selected_local_cwd_and_records_failed_command(tmp_path, monkeypatch):

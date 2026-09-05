@@ -15,6 +15,7 @@ from pyscarcopula.numerical._arrays import (
 )
 from pyscarcopula.numerical.ou_kernels import (
     sample_ou_trajectory,
+    sample_ou_trajectory_batches,
 )
 
 
@@ -110,6 +111,21 @@ def test_sample_ou_trajectory_preserves_scalar_rng_contract(n):
 
     actual = sample_ou_trajectory(kappa, mu, nu, n, actual_rng)
 
+    # NumPy and native libm/FMA rounding can accumulate over 10,001 steps
+    # (about 6.2e-14 absolute on macOS arm64). RNG consumption remains exact.
+    np.testing.assert_allclose(actual, expected, rtol=2e-13, atol=1e-13)
+    np.testing.assert_array_equal(actual_rng.random(8), expected_rng.random(8))
+
+
+@pytest.mark.parametrize("n,batch_rows", [(1, 1), (17, 1), (17, 7), (10001, 256)])
+def test_sample_ou_trajectory_batches_preserve_exact_path_and_rng(n, batch_rows):
+    expected_rng = np.random.default_rng(20260803)
+    actual_rng = np.random.default_rng(20260803)
+    expected = sample_ou_trajectory(1.4, 0.2, 0.9, n, expected_rng)
+    actual = np.concatenate(list(sample_ou_trajectory_batches(
+        1.4, 0.2, 0.9, n, actual_rng, batch_rows=batch_rows)))
+
+    # Both paths use the same native arithmetic: bitwise equality is required.
     np.testing.assert_array_equal(actual, expected)
     np.testing.assert_array_equal(actual_rng.random(8), expected_rng.random(8))
 

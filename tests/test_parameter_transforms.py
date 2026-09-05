@@ -23,8 +23,9 @@ def _hex_values(values):
 
 
 # Frozen outputs of the 0.20.1 native implementation, independently built from
-# its release source. A two-ULP allowance accommodates platform math libraries;
-# the historical tail branches differ from algebraic rewrites by far more.
+# its release source. Keep a two-ULP budget for the forward maps. The inverse
+# needs an absolute allowance near log(expm1(y)) == 0: a one-ULP difference
+# in expm1 can become hundreds of ULP in the small logarithm on another libm.
 @pytest.mark.parametrize(
     "operation,inputs,expected",
     [
@@ -68,7 +69,13 @@ def _hex_values(values):
 def test_softplus_preserves_release_boundary_values(operation, inputs, expected):
     module, spec = _softplus_spec()
     actual = getattr(module, operation)(spec, _hex_values(inputs))
-    np.testing.assert_array_max_ulp(actual, _hex_values(expected), maxulp=2)
+    if operation == "copula_inverse_transform":
+        # Still far below the 5e-9 / 2e-9 jumps at the legacy branch boundaries.
+        eps = np.finfo(np.float64).eps
+        np.testing.assert_allclose(
+            actual, _hex_values(expected), rtol=4 * eps, atol=4 * eps)
+    else:
+        np.testing.assert_array_max_ulp(actual, _hex_values(expected), maxulp=2)
 
 
 def test_softplus_tail_approximations_have_bounded_analytic_error():
