@@ -12,7 +12,7 @@ does not introduce simulation noise.
 | `gtol` | fit kwarg / `scar_optimizer.gtol` | `1e-3` | L-BFGS-B projected-gradient tolerance. Larger values are faster but less precise. |
 | `maxfun` | fit kwarg / `scar_optimizer.maxfun` | `300` | Maximum function evaluations. |
 | `maxiter` | fit kwarg / `scar_optimizer.maxiter` | `100` | Maximum optimizer iterations. |
-| `maxls` | fit kwarg / `scar_optimizer.maxls` | `20` | Maximum L-BFGS-B line-search steps per iteration. |
+| `maxls` | fit kwarg / `scar_optimizer.maxls` | `100` | Maximum L-BFGS-B line-search steps per iteration. |
 | `eps` | fit kwarg / `scar_optimizer.eps` | `1e-4` | Absolute step for numerical-gradient fits when `finite_diff_rel_step` is unset; scaled for physical OU coordinates. Inactive for native analytical gradients. |
 | `finite_diff_rel_step` | fit kwarg / selected optimizer config | `None` | Relative step in optimizer coordinates for numerical-gradient fits. A non-None value takes precedence over `eps`; a non-None fit kwarg overrides the config. Inactive for native analytical gradients. |
 | `K` | strategy kwarg / `default_K` | `300` | Minimum latent grid size. May be increased by the adaptive rule. |
@@ -25,6 +25,7 @@ does not introduce simulation noise.
 | `spectral_basis_order` | strategy kwarg | `'auto'` | Hermite basis size for the spectral likelihood. The auto policy uses 128, 96, 64, or 32 from the current $\kappa\,dt$; pass an integer to fix the basis size. |
 | `spectral_quad_order` | strategy kwarg | auto | Gauss-Hermite quadrature order for spectral multiplication. |
 | `analytical_grad` | strategy kwarg | `True` | Uses the analytical gradient and avoids optimizer finite differences. |
+| `corr_gradient_block_bytes` | strategy kwarg | `67108864` (64 MiB) | Budget for three active blocks in grid-based correlation gradients; larger blocks reduce repeated forward passes. |
 | `smart_init` | strategy kwarg | `True` | Uses a heuristic initial point before falling back to MLE-based init. |
 | `log_stationary_scale_optimization` | strategy kwarg | `None` | For bivariate models, `True` enables `[log(kappa), mu, log(sigma_x)]` with `kappa, sigma_x >= 0.001`; `False` forces scaled physical coordinates; `None` keeps the model default. |
 | `stationary_scale_bounds` | strategy kwarg | `None` | Overrides model bounds for `sigma_x` in log-stationary coordinates. `StochasticStudentCopula` and bivariate models use separate policies, both defaulting to `(0.001, 10000.0)`. |
@@ -48,6 +49,18 @@ optional bivariate log-coordinate mode instead uses the independent
 `maxls=200`. Other SCAR models retain their existing `scar_optimizer`
 configuration. Inspect
 `result.diagnostics['optimizer_parameterization']` when auditing fits.
+
+The correlation-gradient budget covers active entries in the density,
+state-derivative and forward-history blocks. It does not cap total process
+memory: PPF tables, transition operators, checkpoint vectors and allocator
+capacity are additional. The matrix and local backends use this setting;
+ordinary OU-only and spectral gradients keep their existing storage policy.
+`corr_gradient_block_bytes=25165824` (24 MiB) reproduces the former block size.
+The budget must hold at least one row, or `24 * effective_K` bytes. With
+multiple workers, budget each worker separately. This setting does not change
+transition support, grid resolution, backend selection or optimizer tolerances.
+The setting is saved in fit diagnostics and restored for bootstrap refits;
+an explicit constructor override takes precedence over the saved budget.
 
 ```python
 from pyscarcopula import LBFGSBConfig, NumericalConfig
@@ -337,12 +350,19 @@ are finite. Such conversion failures receive the finite optimization penalty
 and are counted as `invalid_parameter_trials`. Unsupported kernels and
 invalid final parameter conversions still raise their original errors.
 
-Sparse matrix transitions retain eight conditional Gaussian standard
-deviations on either side of each transition center. The omitted continuous
-Gaussian probability is below `1.3e-15`; the earlier five-sigma cutoff could
-produce visible likelihood jumps when the integer band width changed during
-a line search. Likelihood and analytical gradient use the same support rule.
-This controls transition truncation, not the separate adaptive-grid error.
+Sparse matrix transitions retain the historical five conditional Gaussian
+standard deviations on either side of each transition center, covering about
+99.99994% of the continuous standard-normal mass. Likelihood and analytical
+gradient use the same support rule. The integer band can change with the OU
+parameters; it is not widened by the optimizer. Transition support and
+adaptive-grid resolution are separate settings.
+
+Bootstrap refits retry once on the same simulated sample after an unsuccessful
+fit. The retry starts from the failed candidate when its parameters are finite
+and retains the original optimizer settings, including explicit `maxls`
+overrides. The shared SCAR default is `maxls=100` from the first attempt,
+both in ordinary fits and bootstrap refits. Convergence tolerances, transition
+support and backend selection are unchanged. A failed retry still raises an error.
 
 Native likelihood information reports `K_requested`, `K_effective`, and
 `grid_was_capped` for grid backends. Fit diagnostics retain their final values

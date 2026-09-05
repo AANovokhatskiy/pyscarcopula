@@ -613,6 +613,11 @@ class SCARTMStrategy:
         treated as numerically degenerate.
     strict_gradient_policy : bool
         Enforce the final projected-gradient tolerance (default False).
+    corr_gradient_block_bytes : int
+        Budget for the three active correlation-gradient blocks (default
+        64 MiB). Excludes PPF caches, transition storage and checkpoints.
+        A smaller budget trades memory for repeated forward passes; it does
+        not change the grid, transition backend or optimizer settings.
     """
 
     _strict_keyword_contract = True
@@ -655,6 +660,7 @@ class SCARTMStrategy:
                  final_growth_limit: float = 1e8,
                  final_rho_tolerance: float = 1e-15,
                  strict_gradient_policy: bool = False,
+                 corr_gradient_block_bytes: int = 67_108_864,
                  **kwargs):
         if "backend" in kwargs:
             raise TypeError(
@@ -677,6 +683,7 @@ class SCARTMStrategy:
             spectral_basis_order)
         self.spectral_quad_order = spectral_quad_order
         self.analytical_grad = analytical_grad
+        self.corr_gradient_block_bytes = corr_gradient_block_bytes
         self.smart_init = smart_init
         if (
                 log_stationary_scale_optimization is not None
@@ -730,6 +737,7 @@ class SCARTMStrategy:
                     gh_order=self.gh_order,
                     r_gh=self.r_gh,
                     n_threads=self.config.n_threads,
+                    corr_gradient_block_bytes=self.corr_gradient_block_bytes,
             )
         )
 
@@ -802,6 +810,7 @@ class SCARTMStrategy:
             gh_order=self.gh_order,
             r_gh=self.r_gh,
             n_threads=self.config.n_threads,
+            corr_gradient_block_bytes=self.corr_gradient_block_bytes,
         )
 
     def _uses_cpp(self, copula):
@@ -1053,6 +1062,7 @@ class SCARTMStrategy:
 
         diagnostics = _new_backend_diagnostics()
         diagnostics["n_threads"] = self.config.n_threads
+        diagnostics["corr_gradient_block_bytes"] = self.corr_gradient_block_bytes
         diagnostics.update({
             "initialization": initialization,
             "optimizer_parameterization": (
@@ -1451,6 +1461,7 @@ class SCARTMStrategy:
         selected_engine = "cpp"
         diagnostics = _new_backend_diagnostics()
         diagnostics["n_threads"] = self.config.n_threads
+        diagnostics["corr_gradient_block_bytes"] = self.corr_gradient_block_bytes
         diagnostics["adaptive_spectral_basis_order"] = (
             self.spectral_basis_order == "auto")
         diagnostics["auto_spectral_basis_order"] = (

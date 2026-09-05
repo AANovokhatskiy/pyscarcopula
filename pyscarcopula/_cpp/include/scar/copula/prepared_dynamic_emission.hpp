@@ -38,6 +38,13 @@ Result<CopulaSpec> prepare_shrinkage_dynamic_spec(
     DoubleView base_correlation,
     double raw_shrinkage);
 
+/// Refresh only the correlation of a call-owned Student spec. Preserve its
+/// dense PPF cache; leave the spec unchanged if correlation preparation fails.
+Result<bool> update_shrinkage_dynamic_spec(
+    CopulaSpec& spec,
+    DoubleView base_correlation,
+    double raw_shrinkage);
+
 /// Per-call scratch storage for a prepared dynamic emission.
 class PreparedDynamicEmissionWorkspace {
 public:

@@ -25,6 +25,25 @@ def test_joint_shrinkage_objective_uses_the_reported_ppf_cache():
     assert joint == pytest.approx(reported, abs=1e-10, rel=0)
 
 
+def test_joint_shrinkage_workspace_does_not_mutate_the_source_or_leak_between_calls():
+    observations = np.random.default_rng(66).uniform(0.001, 0.999, (80, 4))
+    model = StochasticStudentCopula(d=4, corr_mode="shrinkage")
+    model._ensure_corr_initialized(observations)
+    point = np.array([0.03, 0.02, 0.95])
+    reported = gas.negative_log_likelihood(*point, observations, model)
+
+    def joint(raw):
+        return gas.negative_log_likelihood_and_gradient_shrinkage(
+            *point, raw, model._corr_base, observations, model)
+
+    expected = joint(-0.8)
+    joint(2.0)
+    observed = joint(-0.8)
+    assert observed[0] == expected[0]
+    np.testing.assert_array_equal(observed[1], expected[1])
+    assert gas.negative_log_likelihood(*point, observations, model) == reported
+
+
 def test_equicorr_fit_preserves_the_nested_static_model():
     rng = np.random.default_rng(482)
     normal = 0.8 * rng.normal(size=(500, 1)) + 0.6 * rng.normal(size=(500, 6))

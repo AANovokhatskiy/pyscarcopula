@@ -679,6 +679,24 @@ int run_ou_model_tests() {
                 || !finite_values(full_correlation.neg_corr_gradient)) {
                 return base + 1;
             }
+            auto blocked_config = dense_config;
+            blocked_config.corr_gradient_block_bytes =
+                24U * static_cast<std::uint64_t>(dense_config.K);
+            const auto blocked = evaluator.neg_loglik_with_grad_and_corr_matrix(
+                params, spec, multivariate_observations, blocked_config);
+            if (!blocked.is_ok()
+                || !close(blocked.neg_log_likelihood, full_correlation.neg_log_likelihood)
+                || !close_vectors(blocked.neg_gradient, full_correlation.neg_gradient)
+                || !close_vectors(blocked.neg_corr_gradient,
+                                  full_correlation.neg_corr_gradient)) {
+                return base + 8;
+            }
+            blocked_config.corr_gradient_block_bytes = 24U;
+            const auto too_small = evaluator.neg_loglik_with_grad_and_corr_matrix(
+                params, spec, multivariate_observations, blocked_config);
+            if (too_small.status != scar::Status::InvalidSize) {
+                return base + 9;
+            }
         } else if (full_correlation.status
                    != scar::Status::InvalidTransform) {
             return base + 1;

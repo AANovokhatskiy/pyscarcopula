@@ -11,6 +11,8 @@
 #include <cmath>
 #include <cstddef>
 #include <limits>
+#include <optional>
+#include <utility>
 
 namespace scar {
 namespace {
@@ -275,20 +277,32 @@ GasLogLikResult run_log_likelihood(
 GasLogLikResult run_shrinkage_log_likelihood(
     const GasParams& params,
     const CopulaSpec& template_spec,
+    std::optional<CopulaSpec>& workspace,
     DoubleView base_correlation,
     double raw_shrinkage,
     ObservationView u,
     const GasConfig& config) {
 
     GasLogLikResult out;
-    const auto spec = prepare_shrinkage_dynamic_spec(
-        template_spec, base_correlation, raw_shrinkage);
-    if (!spec.is_ok()) {
-        out.status = spec.status;
-        out.failure = spec.failure;
-        return out;
+    if (!workspace) {
+        auto spec = prepare_shrinkage_dynamic_spec(
+            template_spec, base_correlation, raw_shrinkage);
+        if (!spec.is_ok()) {
+            out.status = spec.status;
+            out.failure = spec.failure;
+            return out;
+        }
+        workspace.emplace(std::move(spec.value));
+    } else {
+        const auto updated = update_shrinkage_dynamic_spec(
+            *workspace, base_correlation, raw_shrinkage);
+        if (!updated.is_ok()) {
+            out.status = updated.status;
+            out.failure = updated.failure;
+            return out;
+        }
     }
-    return run_log_likelihood(params, spec.value, u, config);
+    return run_log_likelihood(params, *workspace, u, config);
 }
 
 double optimizer_gradient_step(
@@ -542,6 +556,10 @@ GasEvaluator::negative_log_likelihood_and_gradient_shrinkage(
     ObservationView u,
     const GasConfig& config) const {
 
+    // Own one copy of the immutable PPF table for all finite-difference
+    // evaluations in this call. Only its small correlation payload changes.
+    // Lazy preparation preserves optimizer validation and failure ordering.
+    std::optional<CopulaSpec> workspace;
     return optimizer_value_gradient(
         std::array<double, 4>{
             params.omega, params.gamma, params.beta, raw_shrinkage},
@@ -549,7 +567,7 @@ GasEvaluator::negative_log_likelihood_and_gradient_shrinkage(
         [&](const std::array<double, 4>& values) {
             const GasParams point{values[0], values[1], values[2]};
             return run_shrinkage_log_likelihood(
-                point, copula, base_correlation, values[3], u, config);
+                point, copula, workspace, base_correlation, values[3], u, config);
         });
 }
 

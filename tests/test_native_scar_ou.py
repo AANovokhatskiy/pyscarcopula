@@ -180,7 +180,8 @@ def test_student_checkpoint_gradient_across_emission_blocks(d, T, transition_met
             values, n_boundary=8, n_lo=24, n_hi=16))
     config = AutoTMConfig(
         transition_method=transition_method, K=256, max_K=256,
-        adaptive=False, grid_method="dense", n_threads=4)
+        adaptive=False, grid_method="dense", n_threads=4,
+        corr_gradient_block_bytes=24 * 1024 * 1024)
     prepared = _cpp_scar_ou.prepare_objective(u, copula, config)
     params = np.array([2.0, 0.4, 0.9])
     value, ou_gradient, gradient, _ = (

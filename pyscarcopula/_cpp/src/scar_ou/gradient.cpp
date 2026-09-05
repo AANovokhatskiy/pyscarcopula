@@ -656,9 +656,21 @@ GradLogLikResult grid_neg_loglik_with_grad(
 
     const double* observation_values = observation_data(emission, u);
     const std::size_t K_size = static_cast<std::size_t>(K_eff);
-    const std::int64_t emission_block_rows =
+    std::int64_t emission_block_rows =
         static_cast<std::int64_t>(std::max<std::size_t>(
             1, kGradientEmissionBlockElements / K_size));
+    if (correlation_gradient) {
+        // Three blocks coexist: fi, dfi_dx and alpha_history. Larger blocks
+        // avoid recomputing emissions and forward messages at checkpoints.
+        // This changes storage only, never quadrature or transition support.
+        const std::uint64_t rows = config.corr_gradient_block_bytes
+            / (3U * sizeof(double) * K_size);
+        if (rows == 0) {
+            return invalid_grad(SCAR_INVALID_SIZE, backend);
+        }
+        emission_block_rows = static_cast<std::int64_t>(
+            std::min<std::uint64_t>(rows, static_cast<std::uint64_t>(n_obs)));
+    }
     std::vector<double>& fi = ws.fi;
     std::vector<double>& dfi_dx = ws.dfi_dx;
     std::vector<double>& r_grid = ws.r_grid;

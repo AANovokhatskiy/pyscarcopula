@@ -16,10 +16,19 @@
   retention, objective/static-baseline validation and optimizer diagnostics.
   Use `eps=1e-8` by default and preserve Student PPF caches in joint shrinkage
   objectives so optimization and reported likelihood evaluate the same function.
-- Reject overflowing SCAR optimizer trials with finite penalties. Use the
-  same eight-sigma sparse support for transitions and gradients, expose actual
+  Reuse one call-owned Student PPF cache across joint GAS shrinkage finite
+  differences, avoiding repeated table copies without changing optimizer steps.
+- Reject overflowing SCAR optimizer trials with finite penalties. Preserve the
+  same historical five-sigma support for transitions and gradients, expose actual
   requested/effective grid sizes, and retry unsuccessful bootstrap refits once
   before reporting an error instead of including them in calibrated p-values.
+  Raise the shared SCAR optimizer default `maxls` from 20 to 100 for ordinary
+  fits and bootstrap refits. Retries retain the original optimizer settings;
+  model-specific defaults of 200 and explicit user overrides remain effective.
+- Reduce checkpoint recomputation in grid-based SCAR correlation gradients
+  using a configurable 64 MiB active-block budget (`corr_gradient_block_bytes`).
+  A 24 MiB budget restores the former block size; transition support, grid
+  selection, backend routing and optimizer settings are unchanged.
 - Support rank-deficient factor initialization with complete Householder QR;
   reuse the common `O(T log T)` Kendall kernel and exact factor emission values
   for adjacent repeated degrees of freedom.

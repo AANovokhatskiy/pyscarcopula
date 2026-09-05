@@ -484,6 +484,50 @@ int run_gas_model_tests() {
         0.10, -0.15, 1.0,
     };
     const double raw_shrinkage = 0.35;
+    // Updating a call-owned correlation must neither copy nor invalidate its
+    // PPF table. Invalid updates must leave the previous payload intact.
+    auto cached_source = multivariate_specs[1];
+    cached_source.student_ppf_nodes() = {3.0, 5.0};
+    cached_source.student_ppf_table() = {0.1, 0.2, 0.3, 0.4};
+    auto owned = scar::prepare_shrinkage_dynamic_spec(
+        cached_source, view(base_correlation), raw_shrinkage);
+    if (!owned.is_ok()) {
+        return 252;
+    }
+    const double* table_address = owned.value.student_ppf_table().data();
+    const auto source_correlation = cached_source.dense_inverse_cholesky();
+    for (double raw : {-2.0, 0.7, 2.0}) {
+        const auto expected = scar::prepare_shrinkage_dynamic_spec(
+            cached_source, view(base_correlation), raw);
+        const auto updated = scar::update_shrinkage_dynamic_spec(
+            owned.value, view(base_correlation), raw);
+        if (!expected.is_ok() || !updated.is_ok()
+            || owned.value.dense_inverse_cholesky()
+                != expected.value.dense_inverse_cholesky()
+            || owned.value.dense_log_determinant()
+                != expected.value.dense_log_determinant()
+            || owned.value.student_ppf_table().data() != table_address
+            || owned.value.student_ppf_table() != cached_source.student_ppf_table()
+            || owned.value.student_ppf_nodes() != cached_source.student_ppf_nodes()
+            || cached_source.dense_inverse_cholesky() != source_correlation) {
+            return 253;
+        }
+    }
+    const auto previous_correlation = owned.value.dense_inverse_cholesky();
+    for (const auto base : {view(base_correlation), scar::DoubleView{}}) {
+        const double raw = base.size() == 0 ? 0.0
+            : std::numeric_limits<double>::quiet_NaN();
+        const auto expected = scar::prepare_shrinkage_dynamic_spec(
+            cached_source, base, raw);
+        const auto updated = scar::update_shrinkage_dynamic_spec(
+            owned.value, base, raw);
+        if (updated.is_ok() || updated.status != expected.status
+            || updated.failure.index != expected.failure.index
+            || owned.value.dense_inverse_cholesky() != previous_correlation
+            || owned.value.student_ppf_table().data() != table_address) {
+            return 254;
+        }
+    }
     const auto joint_gradient =
         evaluator.negative_log_likelihood_and_gradient_shrinkage(
             params,

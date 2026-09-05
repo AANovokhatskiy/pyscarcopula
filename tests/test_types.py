@@ -41,7 +41,7 @@ class TestNumericalConfig:
         assert cfg.scar_optimizer.gtol == 1e-3
         assert cfg.scar_optimizer.maxfun == 300
         assert cfg.scar_optimizer.maxiter == 100
-        assert cfg.scar_optimizer.maxls == 20
+        assert cfg.scar_optimizer.maxls == 100
         assert cfg.scar_optimizer.eps == 1e-4
         assert cfg.bivariate_scar_optimizer == cfg.scar_optimizer
         assert cfg.bivariate_log_scar_optimizer.maxfun == 300
@@ -85,7 +85,7 @@ class TestNumericalConfig:
         assert cfg.scar_optimizer.maxls == 50
         assert cfg.scar_optimizer.maxfun == 300
         assert cfg.bivariate_scar_optimizer.maxiter == 700
-        assert cfg.bivariate_scar_optimizer.maxls == 20
+        assert cfg.bivariate_scar_optimizer.maxls == 100
         assert cfg.bivariate_log_scar_optimizer.maxfun == 500
         assert cfg.bivariate_log_scar_optimizer.maxiter == 1000
         assert cfg.bivariate_log_scar_optimizer.maxls == 200

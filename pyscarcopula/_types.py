@@ -122,7 +122,7 @@ DEFAULT_SCAR_OPTIMIZER = LBFGSBConfig(
     gtol=1e-3,
     maxfun=300,
     maxiter=100,
-    maxls=20,
+    maxls=100,
     eps=1e-4,
 )
 DEFAULT_BIVARIATE_LOG_SCAR_OPTIMIZER = LBFGSBConfig(

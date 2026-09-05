@@ -7,10 +7,9 @@
 
 namespace scar_internal {
 
-// Gaussian mass outside this support is below 1.3e-15. In particular,
-// changes in the integer sparse band must not create a visible likelihood
-// jump for an optimizer following the analytical transition derivative.
-inline constexpr double kOuTransitionTailSigma = 8.0;
+// Preserve the five-sigma transition support used by the 0.20.1 contract.
+// Scalar likelihood and analytical gradients must use the same band rule.
+inline constexpr double kOuTransitionTailSigma = 5.0;
 
 struct OuGrid {
     int K = 0;

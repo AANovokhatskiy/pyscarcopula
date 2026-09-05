@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 namespace scar {
 
 /// Numerical representation used for SCAR-OU state propagation.
@@ -37,6 +39,9 @@ struct OuNumericalConfig {
     int spectral_quad_order = 0;
     int n_threads = 1;
     OuGridMethod grid_method = OuGridMethod::Auto;
+    // Active density, state-derivative and forward-history blocks only.
+    // PPF tables, transitions and checkpoint vectors are budgeted separately.
+    std::uint64_t corr_gradient_block_bytes = 64U * 1024U * 1024U;
 };
 
 }  // namespace scar

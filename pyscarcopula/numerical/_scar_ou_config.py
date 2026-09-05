@@ -30,6 +30,7 @@ class AutoTMConfig:
     gh_order: int = 5
     r_gh: float = 3.0
     n_threads: int = 1
+    corr_gradient_block_bytes: int = 67_108_864  # 64 MiB
 
 
 CPP_MAX_GRID_SIZE = 100_000
@@ -91,6 +92,9 @@ def validate_cpp_config(
         "pts_per_sigma", config.pts_per_sigma, 1, 2_147_483_647)
     _cpp_integer_option("gh_order", config.gh_order, 1, CPP_MAX_SPECTRAL_ORDER)
     _cpp_integer_option("n_threads", config.n_threads, 1, 256)
+    _cpp_integer_option(
+        "corr_gradient_block_bytes", config.corr_gradient_block_bytes,
+        24, 9_223_372_036_854_775_807)
 
     basis_order = _cpp_integer_option(
         "basis_order", config.basis_order, 1, CPP_MAX_SPECTRAL_ORDER)

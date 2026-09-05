@@ -16,13 +16,14 @@
 #include <utility>
 
 namespace scar {
+namespace {
 
-Result<CopulaSpec> prepare_shrinkage_dynamic_spec(
+DenseCorrelationPreparationResult prepare_shrinkage_correlation(
     const CopulaSpec& template_spec,
     DoubleView base_correlation,
     double raw_shrinkage) {
 
-    Result<CopulaSpec> result;
+    DenseCorrelationPreparationResult result;
     if (template_spec.family != CopulaFamily::Student
         || template_spec.dim < 2
         || !std::isfinite(raw_shrinkage)) {
@@ -38,23 +39,57 @@ Result<CopulaSpec> prepare_shrinkage_dynamic_spec(
         result.failure = correlation.failure;
         return result;
     }
-    const auto prepared = prepare_dense_correlation(
+    return prepare_dense_correlation(
         {correlation.value.data(), correlation.value.size()}, dimension);
+}
+
+void apply_shrinkage_correlation(
+    CopulaSpec& spec, const DenseCorrelationPreparationResult& prepared) {
+    const bool was_factor = spec.correlation_kind == CorrelationKind::Factor;
+    spec.correlation_kind = CorrelationKind::Shrinkage;
+    // Dense PPF tables do not depend on correlation. Factor storage does.
+    if (was_factor) {
+        spec.reset_model_storage();
+    }
+    spec.dense_inverse_cholesky() = prepared.inverse_cholesky;
+    spec.dense_log_determinant() = prepared.log_determinant;
+}
+
+}  // namespace
+
+Result<CopulaSpec> prepare_shrinkage_dynamic_spec(
+    const CopulaSpec& template_spec,
+    DoubleView base_correlation,
+    double raw_shrinkage) {
+
+    Result<CopulaSpec> result;
+    const auto prepared = prepare_shrinkage_correlation(
+        template_spec, base_correlation, raw_shrinkage);
     if (!prepared.is_ok()) {
         result.status = prepared.status;
         result.failure = prepared.failure;
         return result;
     }
     result.value = template_spec;
-    result.value.correlation_kind = CorrelationKind::Shrinkage;
-    // Fixed and shrinkage correlations use the same dense storage. Resetting
-    // it also discards the Student PPF interpolation table, making the joint
-    // objective differ from the reported/filter likelihood (and much slower).
-    if (template_spec.correlation_kind == CorrelationKind::Factor) {
-        result.value.reset_model_storage();
+    apply_shrinkage_correlation(result.value, prepared);
+    return result;
+}
+
+Result<bool> update_shrinkage_dynamic_spec(
+    CopulaSpec& spec,
+    DoubleView base_correlation,
+    double raw_shrinkage) {
+
+    Result<bool> result;
+    const auto prepared = prepare_shrinkage_correlation(
+        spec, base_correlation, raw_shrinkage);
+    if (!prepared.is_ok()) {
+        result.status = prepared.status;
+        result.failure = prepared.failure;
+        return result;
     }
-    result.value.dense_inverse_cholesky() = prepared.inverse_cholesky;
-    result.value.dense_log_determinant() = prepared.log_determinant;
+    apply_shrinkage_correlation(spec, prepared);
+    result.value = true;
     return result;
 }
 

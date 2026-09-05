@@ -671,6 +671,10 @@ def get_strategy_for_result(result: FitResult,
             result_kwargs[name] = value
 
     if method == 'SCAR-TM-OU':
+        saved_budget = getattr(result, 'diagnostics', {}).get(
+            'corr_gradient_block_bytes')
+        if saved_budget is not None:
+            result_kwargs['corr_gradient_block_bytes'] = saved_budget
         transition_method = getattr(result, 'transition_method', None)
         if transition_method is None:
             result_kwargs['transition_method'] = 'matrix'

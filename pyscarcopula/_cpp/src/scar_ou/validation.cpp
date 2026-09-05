@@ -73,6 +73,7 @@ bool finite_config_doubles(const OuNumericalConfig& config) {
         && std::isfinite(config.r_gh)
         && std::isfinite(config.auto_small_kdt)
         && scar_internal::valid_thread_count(config.n_threads)
+        && config.corr_gradient_block_bytes >= 24U
         && valid_grid_method;
 }
 

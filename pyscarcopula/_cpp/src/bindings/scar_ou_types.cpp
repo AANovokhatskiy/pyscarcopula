@@ -50,6 +50,9 @@ void bind_scar_ou_types(py::module_& m) {
             &scar::OuNumericalConfig::spectral_quad_order)
         .def_readwrite("n_threads", &scar::OuNumericalConfig::n_threads)
         .def_readwrite(
+            "corr_gradient_block_bytes",
+            &scar::OuNumericalConfig::corr_gradient_block_bytes)
+        .def_readwrite(
             "grid_method", &scar::OuNumericalConfig::grid_method);
 }
 

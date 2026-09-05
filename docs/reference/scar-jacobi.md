@@ -14,7 +14,7 @@ latent coordinate.
 | `gtol` | fit kwarg / `scar_optimizer.gtol` | `1e-3` | L-BFGS-B projected-gradient tolerance. |
 | `maxfun` | fit kwarg / `scar_optimizer.maxfun` | `300` | Maximum function evaluations. |
 | `maxiter` | fit kwarg / `scar_optimizer.maxiter` | `100` | Maximum optimizer iterations. |
-| `maxls` | fit kwarg / `scar_optimizer.maxls` | `20` | Maximum L-BFGS-B line-search steps per iteration. |
+| `maxls` | fit kwarg / `scar_optimizer.maxls` | `100` | Maximum L-BFGS-B line-search steps per iteration. |
 | `eps` | fit kwarg / `scar_optimizer.eps` | `1e-4` | Absolute step in raw optimizer coordinates for numerical-gradient fits when `finite_diff_rel_step` is unset. Inactive for native analytical gradients. |
 | `finite_diff_rel_step` | fit kwarg / `scar_optimizer.finite_diff_rel_step` | `None` | Relative step in raw optimizer coordinates for numerical-gradient fits. A non-None value takes precedence over `eps`; a non-None fit kwarg overrides the config. Inactive for native analytical gradients. |
 | `transition_method` | strategy kwarg | `'auto'` | `'auto'`, `'spectral_matrix'`, `'local'`, `'local_fixed'`, or `'spectral_coeff'`. |

@@ -667,6 +667,7 @@ def test_multivariate_scar_gof_preserves_stored_grid_options(
         "gh_order": 7,
         "r_gh": 2.25,
         "n_threads": 1,
+        "corr_gradient_block_bytes": 67_108_864,
     }
 
 
