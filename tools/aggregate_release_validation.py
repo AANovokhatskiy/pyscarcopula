@@ -318,6 +318,41 @@ def aggregate(artifacts: Path, required: tuple[str, ...]) -> dict:
     }
 
 
+def _failure_lines(report: dict) -> list[str]:
+    lines = []
+    if not report["artifact_count"]:
+        lines.append("- No machine-readable artifacts found.")
+    for field in (
+        "missing_configurations",
+        "missing_provenance",
+        "missing_wheel_validation",
+        "parallel_runtime_contract_failures",
+        "parallel_runtime_provenance_failures",
+        "dirty_configurations",
+        "invalid_concurrency",
+        "wheel_provenance_failures",
+        "artifact_integrity_failures",
+        "consistency_errors",
+    ):
+        for failure in report[field]:
+            detail = (
+                json.dumps(failure, sort_keys=True)
+                if isinstance(failure, dict) else failure
+            )
+            lines.append(f"- {field}: {detail}")
+    for record in report["failed_artifacts"]:
+        lines.append(
+            f"- failed_artifacts: {record['artifact']} "
+            f"(status={record['payload'].get('status')!r})"
+        )
+    for record in report["records"]:
+        payload = record["payload"]
+        if payload.get("record_type") == "release_provenance" and payload.get("dirty"):
+            for path in payload.get("dirty_paths", []):
+                lines.append(f"- {payload.get('configuration')} dirty path: {path}")
+    return lines
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--artifacts", required=True, type=Path)
@@ -367,17 +402,12 @@ def main(argv: list[str] | None = None) -> int:
     for configuration in required:
         count = report["configuration_artifact_counts"].get(configuration, 0)
         lines.append(f"- `{configuration}`: `{count}` artifact(s)")
-    if report["missing_configurations"]:
-        lines.extend((
-            "",
-            "## Missing",
-            "",
-            *(
-                f"- `{configuration}`"
-                for configuration in report["missing_configurations"]
-            ),
-        ))
+    if report["verdict"] != "passed":
+        lines.extend(("", "## Failures", "", *_failure_lines(report)))
     markdown_output.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print("\n".join(lines))
+    print(f"\nJSON report: {json_output}")
+    print(f"Markdown report: {markdown_output}")
     return 1 if report["verdict"] != "passed" else 0
 
 

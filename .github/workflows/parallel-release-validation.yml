@@ -648,6 +648,7 @@ jobs:
               raise SystemExit("release-validation matrix is incomplete or failed")
           PY
       - name: Aggregate reports
+        if: ${{ !cancelled() }}
         run: >-
           python tools/aggregate_release_validation.py
           --source-root "${{ github.workspace }}"
@@ -664,13 +665,18 @@ jobs:
           --required-configuration linux-gcc-tsan
           --required-configuration linux-lifecycle-memory
           --required-configuration subinterpreter-rejection
+      - name: Publish validation summary
+        if: ${{ !cancelled() && hashFiles('build/ci/parallel-release-validation/platform_matrix.md') != '' }}
+        run: cat "$RELEASE_REPORT_ROOT/platform_matrix.md" >> "$GITHUB_STEP_SUMMARY"
       - name: Finalize aggregated release evidence
+        if: ${{ !cancelled() && hashFiles('build/ci/parallel-release-validation/platform_matrix.json') != '' }}
         run: >-
           python tools/finalize_release_artifacts.py
           --source-root "${{ github.workspace }}"
           --artifact-root "${{ env.RELEASE_REPORT_ROOT }}"
           --producer "Release validation compiler and sanitizer matrix"
       - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() && hashFiles('build/ci/parallel-release-validation/platform_matrix.json') != '' }}
         with:
           name: parallel-release-validation
           path: ${{ env.RELEASE_REPORT_ROOT }}

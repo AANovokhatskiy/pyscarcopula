@@ -8,6 +8,7 @@ pytest-cache-files-*/
 pytest-tmp*/
 *.egg-info/
 *.pyd
+/pyscarcopula/_native/_scar_cpp*.so
 build/
 site/
 tools/*

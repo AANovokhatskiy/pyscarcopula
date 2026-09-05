@@ -6,11 +6,12 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import subprocess
 import zipfile
 
 import pytest
 
-from tools.aggregate_release_validation import aggregate
+from tools.aggregate_release_validation import aggregate, main as aggregate_main
 from tools.finalize_release_artifacts import finalize, verify
 from tools.validate_installed_wheel import (
     EXPECTED_NATIVE_IDS,
@@ -234,6 +235,73 @@ def test_release_aggregator_rejects_missing_or_inconsistent_matrix(tmp_path):
     assert inconsistent["verdict"] == "failed"
     assert inconsistent["consistency_errors"]
     assert inconsistent["artifact_integrity_failures"]
+
+
+def test_in_place_native_extensions_are_ignored_but_sources_are_not():
+    binaries = [
+        "pyscarcopula/_native/_scar_cpp.cpython-310-x86_64-linux-gnu.so",
+        "pyscarcopula/_native/_scar_cpp.cpython-314-x86_64-linux-gnu.so",
+        "pyscarcopula/_native/_scar_cpp.cpython-312-darwin.so",
+        "pyscarcopula/_native/_scar_cpp.cp312-win_amd64.pyd",
+    ]
+    sources = [
+        "pyscarcopula/_native/new_module.py",
+        "pyscarcopula/_cpp/src/new_source.cpp",
+        "pyscarcopula/_native/unexpected.so",
+    ]
+    completed = subprocess.run(
+        ["git", "-C", str(ROOT), "-c", "core.excludesFile=",
+         "check-ignore", "--no-index", "--", *binaries, *sources],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert completed.stdout.splitlines() == binaries
+
+
+@pytest.mark.parametrize("failure", [None, "dirty", "missing", "integrity"])
+def test_release_aggregator_cli_reports_verdict_and_reasons(
+        tmp_path, capsys, failure):
+    configuration = "linux-clang-py312"
+    artifacts = tmp_path / "artifacts"
+    _, provenance_path = _write_release_pair(artifacts, configuration)
+    dirty_path = " M pyscarcopula/_cpp/src/native.cpp"
+    if failure == "dirty":
+        payload = json.loads(provenance_path.read_text(encoding="utf-8"))
+        payload.update(dirty=True, dirty_paths=[dirty_path])
+        _write_json(provenance_path, payload)
+    finalize(provenance_path.parent, "release CLI test")
+    if failure == "integrity":
+        provenance_path.write_bytes(provenance_path.read_bytes() + b"\n")
+    required = (
+        "windows-msvc-py312" if failure == "missing" else configuration
+    )
+    json_output = tmp_path / "report.json"
+    markdown_output = tmp_path / "report.md"
+    result = aggregate_main([
+        "--source-root", str(ROOT),
+        "--artifacts", str(artifacts),
+        "--json-output", str(json_output),
+        "--markdown-output", str(markdown_output),
+        "--required-configuration", required,
+    ])
+    assert result == (0 if failure is None else 1)
+    report = json.loads(json_output.read_text(encoding="utf-8"))
+    markdown = markdown_output.read_text(encoding="utf-8")
+    stdout = capsys.readouterr().out
+    assert markdown.strip() in stdout
+    assert f"Verdict: **{report['verdict']}**" in stdout
+    assert str(json_output) in stdout
+    if failure == "dirty":
+        assert f"dirty_configurations: {configuration}" in stdout
+        assert dirty_path in stdout
+    elif failure == "missing":
+        assert f"missing_configurations: {required}" in stdout
+    elif failure == "integrity":
+        assert "artifact_integrity_failures" in stdout
+        assert "checksum mismatch: provenance.json" in stdout
+    else:
+        assert "## Failures" not in stdout
 
 
 def test_release_aggregator_rejects_missing_or_foreign_runtime_contract(
