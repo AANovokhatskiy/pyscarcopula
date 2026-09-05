@@ -185,7 +185,7 @@ def test_custom_variadic_strategy_remains_extensible():
 @pytest.mark.parametrize('rotation', [0, 90, 180, 270])
 @pytest.mark.parametrize('coordinate', [0, 1])
 @pytest.mark.parametrize('control', ['bisection_tol', 'bisection_maxiter'])
-def test_native_inverse_controls_change_accuracy(factory, rotation, coordinate, control):
+def test_native_inverse_controls_bound_error_and_report_exhaustion(factory, rotation, coordinate, control):
     copula = factory(rotate=rotation)
     quantiles = np.array([.031, .173, .421, .793, .941])
     given = .43
@@ -198,15 +198,21 @@ def test_native_inverse_controls_change_accuracy(factory, rotation, coordinate, 
             given_value=given, **options)
 
     accurate = sample(tight)
-    limited = sample(coarse)
     conditional = copula.h_pair(accurate[:, 0], accurate[:, 1], 2.3)[1 - coordinate]
     np.testing.assert_allclose(conditional, quantiles, atol=2e-12, rtol=0)
-    assert np.max(np.abs(limited - accurate)) > 1e-5
+    if control == 'bisection_maxiter':
+        with pytest.raises((RuntimeError, ValueError), match='converge|outside|inverse'):
+            sample(coarse)
+    else:
+        # A tolerance is an upper error bound, not a request to degrade a
+        # stable inverse. Check the actual CDF instead of requiring a difference.
+        limited = sample(coarse)
+        conditional = copula.h_pair(limited[:, 0], limited[:, 1], 2.3)[1 - coordinate]
+        np.testing.assert_allclose(conditional, quantiles, atol=.1, rtol=0)
     np.testing.assert_array_equal(accurate[:, coordinate], np.full(len(quantiles), given))
-    # No-config low-level callers keep the established family defaults.
-    legacy = dict(bisection_tol=1e-12, bisection_maxiter=32) if factory is GumbelCopula else {
-        'bisection_tol': 1e-10, 'bisection_maxiter': 50}
-    np.testing.assert_array_equal(sample({}), sample(legacy))
+    default = sample({})
+    conditional = copula.h_pair(default[:, 0], default[:, 1], 2.3)[1 - coordinate]
+    np.testing.assert_allclose(conditional, quantiles, atol=2e-12, rtol=0)
 
 
 @pytest.mark.parametrize('factory', [GumbelCopula, JoeCopula])
@@ -221,9 +227,9 @@ def test_conditional_operations_use_numerical_inverse_config(factory, method, en
             config=config, given={0: .43}, rng=np.random.default_rng(617))
 
     accurate = sample(NumericalConfig(bisection_tol=1e-13, bisection_maxiter=100))
-    limited = sample(NumericalConfig(bisection_tol=1e-13, bisection_maxiter=1))
-    assert np.max(np.abs(limited - accurate)) > 1e-5
-    np.testing.assert_array_equal(limited[:, 0], np.full(7, .43))
+    with pytest.raises((RuntimeError, ValueError), match='converge|outside|inverse'):
+        sample(NumericalConfig(bisection_tol=1e-13, bisection_maxiter=1))
+    np.testing.assert_array_equal(accurate[:, 0], np.full(7, .43))
 
 
 @pytest.mark.parametrize('key,value,error', [

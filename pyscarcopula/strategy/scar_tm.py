@@ -51,6 +51,7 @@ from pyscarcopula._native import (
     validation as native_validation,
 )
 from pyscarcopula.numerical.ou_kernels import sample_ou_trajectory
+from pyscarcopula._native.errors import NativeError
 from pyscarcopula.copula.multivariate.corr_param import (
     _corr_gradient_to_raw_params,
     _shrinkage_raw_corr_direction,
@@ -177,6 +178,25 @@ def _ou_from_log_stationary(values):
     return _cpp_scar_ou.from_log_stationary(values)
 
 
+def _trial_parameters(transform, values, diagnostics):
+    """Reject unrepresentable optimizer trials without hiding model errors.
+
+    A valid optimizer vector can overflow when exponentiated into physical
+    OU parameters. Only parameter/numerical failures in this conversion are
+    recoverable; final parameter conversion still uses the strict adapter.
+    """
+    try:
+        result = transform(values)
+    except (NativeError, FloatingPointError) as exc:
+        if getattr(exc, "status", None) not in (6, 7):
+            raise
+        result = np.full_like(values, np.nan, dtype=np.float64)
+    if not np.all(np.isfinite(result)):
+        diagnostics["invalid_parameter_trials"] = (
+            diagnostics.get("invalid_parameter_trials", 0) + 1)
+    return result
+
+
 def _ou_grad_to_log_stationary(physical, gradient):
     """Apply the chain rule for (log kappa, mu, log sigma_x)."""
     return _cpp_scar_ou.gradient_to_log_stationary(physical, gradient)
@@ -245,6 +265,11 @@ def _record_backend_diagnostics(diagnostics: dict, info: dict,
     diagnostics["last_transition_method"] = info.get("transition_method")
     diagnostics["last_kappa_dt"] = info.get("kappa_dt")
     diagnostics["last_n_obs"] = info.get("n_obs")
+    for name in ("K_requested", "K_effective", "grid_was_capped"):
+        diagnostics["last_" + name] = info.get(name)
+    if info.get("grid_was_capped"):
+        diagnostics["grid_capped_evaluations"] = (
+            diagnostics.get("grid_capped_evaluations", 0) + 1)
     basis_order = info.get("basis_order")
     if basis_order is not None:
         try:
@@ -1115,7 +1140,8 @@ class SCARTMStrategy:
             )
 
         def objective_scaled(x_scaled):
-            joint = optimizer_to_joint(x_scaled)
+            joint = _trial_parameters(
+                optimizer_to_joint, x_scaled, diagnostics)
             if not np.all(np.isfinite(joint)):
                 return model_policy.optimizer_failure_evaluation(
                     x_scaled,
@@ -1125,14 +1151,15 @@ class SCARTMStrategy:
                 )[0]
             try:
                 return evaluate_value(joint)
-            except FloatingPointError as exc:
+            except (FloatingPointError, NativeError) as exc:
                 if verbose:
                     print(f"  error at joint alpha={joint}: {exc}")
                 return model_policy.optimizer_failure_objective(
                     exc, fail_value)
 
         def objective_and_grad_scaled(x_scaled):
-            joint = optimizer_to_joint(x_scaled)
+            joint = _trial_parameters(
+                optimizer_to_joint, x_scaled, diagnostics)
             if not np.all(np.isfinite(joint)):
                 return model_policy.optimizer_failure_evaluation(
                     x_scaled,
@@ -1188,7 +1215,7 @@ class SCARTMStrategy:
                     grad[:3] = _ou_grad_to_log_stationary(
                         joint[:3], grad[:3])
                 return value, _cpp_scar_ou.gradient_to_scaled(grad, scale)
-            except FloatingPointError as exc:
+            except (FloatingPointError, NativeError) as exc:
                 if verbose:
                     print(f"  error at joint alpha={joint}: {exc}")
                 return model_policy.optimizer_numerical_failure_evaluation(
@@ -1470,11 +1497,10 @@ class SCARTMStrategy:
                     *model_policy.ou_scaled_optimizer_bounds(scale))
 
             def objective_and_grad(x_scaled):
-                alpha = (
-                    _ou_from_log_stationary(x_scaled)
-                    if log_stationary
-                    else _cpp_scar_ou.scaled_to_physical(
-                        x_scaled, scale))
+                alpha = _trial_parameters(
+                    (_ou_from_log_stationary if log_stationary else
+                     lambda values: _cpp_scar_ou.scaled_to_physical(
+                         values, scale)), x_scaled, diagnostics)
                 if not np.all(np.isfinite(alpha)):
                     return model_policy.optimizer_failure_evaluation(
                         x_scaled,
@@ -1493,7 +1519,7 @@ class SCARTMStrategy:
                         return val, _ou_grad_to_log_stationary(alpha, grad)
                     return val, _cpp_scar_ou.gradient_to_scaled(
                         grad, scale)
-                except FloatingPointError as e:
+                except (FloatingPointError, NativeError) as e:
                     if verbose:
                         print(f"  error at alpha={alpha}: {e}")
                     return model_policy.optimizer_numerical_failure_evaluation(
@@ -1568,11 +1594,10 @@ class SCARTMStrategy:
                     *model_policy.ou_scaled_optimizer_bounds(scale))
 
             def objective_scaled(x_scaled):
-                alpha = (
-                    _ou_from_log_stationary(x_scaled)
-                    if log_stationary
-                    else _cpp_scar_ou.scaled_to_physical(
-                        x_scaled, scale))
+                alpha = _trial_parameters(
+                    (_ou_from_log_stationary if log_stationary else
+                     lambda values: _cpp_scar_ou.scaled_to_physical(
+                         values, scale)), x_scaled, diagnostics)
                 if not np.all(np.isfinite(alpha)):
                     return model_policy.optimizer_failure_evaluation(
                         x_scaled,
@@ -1587,7 +1612,7 @@ class SCARTMStrategy:
                         kappa_v, mu_v, nu_v, auto_config)
                     _record_backend_diagnostics(diagnostics, info, "cpp")
                     return val
-                except FloatingPointError as e:
+                except (FloatingPointError, NativeError) as e:
                     if verbose:
                         print(f"  error at alpha={alpha}: {e}")
                     return model_policy.optimizer_failure_objective(

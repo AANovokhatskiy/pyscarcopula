@@ -7,8 +7,14 @@
 
 namespace scar_internal {
 
+// Gaussian mass outside this support is below 1.3e-15. In particular,
+// changes in the integer sparse band must not create a visible likelihood
+// jump for an optimizer following the analytical transition derivative.
+inline constexpr double kOuTransitionTailSigma = 8.0;
+
 struct OuGrid {
     int K = 0;
+    double K_requested = 0.0;
     double rho = 0.0;
     double sigma = 0.0;
     double sigma_cond = 0.0;

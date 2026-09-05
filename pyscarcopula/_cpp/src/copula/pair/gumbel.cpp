@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <stdexcept>
 
 namespace scar_internal {
 
@@ -209,106 +210,150 @@ void gumbel_fill_density_gradient_grid_row(
         gradient_row);
 }
 
+namespace {
+
+double gumbel_log_expm1(double value) {
+    return value > 0.6931471805599453
+        ? value + std::log1p(-std::exp(-value))
+        : std::log(std::expm1(value));
+}
+
+}  // namespace
+
+double gumbel_log_h_unrotated(
+    double u, double v, double r, bool reflected = false) {
+    if (!std::isfinite(r) || r < 1.0 || !std::isfinite(u)
+        || !std::isfinite(v) || u < 0.0 || u > 1.0 || v < 0.0 || v > 1.0) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    if (u == 0.0 || u == 1.0 || r == 1.0) {
+        return reflected ? std::log1p(-u) : std::log(u);
+    }
+    if (v == 0.0) {
+        return 0.0;
+    }
+    if (v == 1.0) {
+        return -std::numeric_limits<double>::infinity();
+    }
+    const double x = reflected ? -std::log1p(-u) : -std::log(u);
+    const double y = -std::log(v);
+    const double delta = std::abs(x - y) < 0.5 * y
+        ? std::log1p((x - y) / y) : std::log(x) - std::log(y);
+    const double scaled = r * delta;
+    if (scaled < -36.0) {
+        // Keep a representable survival tail even when exp(scaled) underflows.
+        return -std::exp(scaled + std::log(y / r + (r - 1.0) / r));
+    }
+    const double log_sum = scaled > 0.0
+        ? scaled + std::log1p(std::exp(-scaled))
+        : std::log1p(std::exp(scaled));
+    // log_sum/r must be formed without an overflowing r*delta. The
+    // remaining log term may legitimately tend to infinity (h tends to 0).
+    const double log_ratio = scaled > 0.0
+        ? delta + std::log1p(std::exp(-scaled)) / r : log_sum / r;
+    const double log_h = -y * std::expm1(log_ratio)
+        - ((r - 1.0) / r) * log_sum;
+    return std::min(log_h, 0.0);
+}
+
 double gumbel_h_unrotated(double u, double v, double r) {
-    const double u_clipped = std::min(std::max(u, kHEps), 1.0 - kHEps);
-    const double v_clipped = std::min(std::max(v, kHEps), 1.0 - kHEps);
+    return std::exp(gumbel_log_h_unrotated(u, v, r));
+}
 
-    if (r < 1.0 + 1e-8) {
-        return u_clipped;
-    }
+double gumbel_h_reflected(double u, double v, double r) {
+    return -std::expm1(gumbel_log_h_unrotated(u, v, r, true));
+}
 
-    const double log_u = std::log(u_clipped);
-    const double log_v = std::log(v_clipped);
-    const double y_u = -log_u;
-    const double y_v = -log_v;
-    if (y_u <= 0.0 || y_v <= 0.0) {
-        return u_clipped;
+double gumbel_inverse_log_value(
+    double log_q, double given, double r,
+    const scar::HInverseOptions& options) {
+    const double alpha = 1.0 / r;
+    const double beta = (r - 1.0) / r;
+    const double y = -std::log(given);
+    const double target = -log_q;
+    if (target < 1e-100) {
+        // x itself can be below denorm_min while the returned tail gap is
+        // representable. The linearized equation has relative error O(target).
+        const double log_x = std::log(target) - std::log(alpha * y + beta);
+        return -y * std::exp(alpha * log_x);
     }
+    // x = r*log(A/y). The equation has a nonnegative root and two
+    // independent analytic upper bounds; neither requires powers y^r.
+    double lo = 0.0;
+    double hi = std::min(std::log1p(target / y) / alpha, target / beta);
+    double x = hi;
+    const double tolerance = std::min(options.tolerance, 8e-15);
+    bool converged = false;
+    for (int iteration = 0; iteration < options.max_iterations; ++iteration) {
+        const double ax = alpha * x;
+        const double residual = y * std::expm1(ax) + beta * x - target;
+        if (std::abs(residual) <= tolerance * target) {
+            converged = true;
+            break;
+        }
+        if (residual > 0.0) {
+            hi = x;
+        } else {
+            lo = x;
+        }
+        const double derivative = alpha * y * std::exp(ax) + beta;
+        double candidate = x - residual / derivative;
+        if (!(candidate > lo && candidate < hi) || !std::isfinite(candidate)) {
+            candidate = lo + 0.5 * (hi - lo);
+        }
+        if (candidate == x) {
+            // A collapsed bracket without the requested residual is failure.
+            throw std::runtime_error(
+                "Gumbel conditional inverse did not converge at floating-point precision");
+        }
+        x = candidate;
+    }
+    if (!converged) {
+        throw std::runtime_error(
+            "Gumbel conditional inverse did not converge within max_iterations");
+    }
+    return -y * std::exp(alpha * gumbel_log_expm1(x));
+}
 
-    const double log_y_u = std::log(y_u);
-    const double log_y_v = std::log(y_v);
-    const double a = r * log_y_u;
-    const double b = r * log_y_v;
-    const double log_max = std::max(a, b);
-    const double log_min = std::min(a, b);
-    const double log_S = log_max + std::log1p(std::exp(log_min - log_max));
-    const double A = std::exp(log_S / r);
-    const double log_h =
-        (r - 1.0) * log_y_v
-        + (1.0 / r - 1.0) * log_S
-        - A
-        - log_v;
-
-    const double log_eps = std::log(kHEps);
-    const double log_one_minus_eps = std::log(1.0 - kHEps);
-    if (log_h <= log_eps) {
-        return kHEps;
+double gumbel_h_inverse_impl(
+    double q, double given, double r,
+    const scar::HInverseOptions& options, bool reflected) {
+    const double failure = std::numeric_limits<double>::quiet_NaN();
+    if (!std::isfinite(r) || r < 1.0 || !std::isfinite(q)
+        || !std::isfinite(given) || q < 0.0 || q > 1.0
+        || given < 0.0 || given > 1.0 || options.max_iterations <= 0
+        || !std::isfinite(options.tolerance) || options.tolerance <= 0.0) {
+        return failure;
     }
-    if (log_h >= log_one_minus_eps) {
-        return 1.0 - kHEps;
+    if (q == 0.0 || q == 1.0 || r == 1.0) {
+        return q;
     }
-    return std::exp(log_h);
+    if (given == 0.0 || given == 1.0) {
+        return reflected ? 1.0 - given : given;
+    }
+    const double log_value = gumbel_inverse_log_value(
+        reflected ? std::log1p(-q) : std::log(q), given, r, options);
+    return reflected ? -std::expm1(log_value) : std::exp(log_value);
 }
 
 double gumbel_h_inverse_with_options(
     double q, double given, double r,
     const scar::HInverseOptions& options) {
-    const double q_clipped = std::min(std::max(q, kHEps), 1.0 - kHEps);
-    const double given_clipped = std::min(std::max(given, kHEps), 1.0 - kHEps);
-    if (r < 1.0 + 1e-8) {
-        return q_clipped;
-    }
+    return gumbel_h_inverse_impl(q, given, r, options, false);
+}
 
-    const double y = -std::log(given_clipped);
-    if (y <= 0.0 || !std::isfinite(y)) {
-        return q_clipped;
-    }
-    const double target =
-        std::log(q_clipped) - ((r - 1.0) * std::log(y) - std::log(given_clipped));
-
-    double lo = y;
-    double hi = std::max(y - std::log(q_clipped) + r, y + 1.0);
-    for (int j = 0; j < 24; ++j) {
-        const double f_hi = (1.0 - r) * std::log(hi) - hi - target;
-        if (!(f_hi > 0.0)) {
-            break;
-        }
-        hi *= 2.0;
-    }
-
-    double A = std::min(std::max(y - std::log(q_clipped), lo), hi);
-    for (int j = 0; j < options.max_iterations; ++j) {
-        A = std::min(std::max(A, lo), hi);
-        const double f = (1.0 - r) * std::log(A) - A - target;
-        if (std::abs(f) < options.tolerance) {
-            break;
-        }
-        if (f > 0.0) {
-            lo = A;
-        } else {
-            hi = A;
-        }
-        const double fp = (1.0 - r) / A - 1.0;
-        const double newton = A - f / fp;
-        if (newton > lo && newton < hi && std::isfinite(newton)) {
-            A = newton;
-        } else {
-            A = 0.5 * (lo + hi);
-        }
-    }
-
-    const double A_pow = std::exp(r * std::log(A));
-    const double y_pow = std::exp(r * std::log(y));
-    const double z_pow = A_pow - y_pow;
-    if (!(z_pow > 0.0) || !std::isfinite(z_pow)) {
-        return 1.0 - kHEps;
-    }
-    const double value = std::exp(-std::exp(std::log(z_pow) / r));
-    return std::min(std::max(value, kHEps), 1.0 - kHEps);
+double gumbel_h_inverse_reflected_with_options(
+    double q, double given, double r,
+    const scar::HInverseOptions& options) {
+    return gumbel_h_inverse_impl(q, given, r, options, true);
 }
 
 double gumbel_h_inverse_unrotated(double q, double given, double r) {
-    return gumbel_h_inverse_with_options(q, given, r, {1e-12, 32});
+    return gumbel_h_inverse_with_options(q, given, r, {8e-15, 80});
+}
+
+double gumbel_h_inverse_reflected(double q, double given, double r) {
+    return gumbel_h_inverse_reflected_with_options(q, given, r, {8e-15, 80});
 }
 
 }  // namespace scar_internal
@@ -327,6 +372,9 @@ const PairKernelFunctions& gumbel_kernel() noexcept {
         scar_internal::gumbel_fill_density_grid_row,
         scar_internal::gumbel_fill_density_gradient_grid_row,
         scar_internal::gumbel_h_inverse_with_options,
+        scar_internal::gumbel_h_reflected,
+        scar_internal::gumbel_h_inverse_reflected,
+        scar_internal::gumbel_h_inverse_reflected_with_options,
     };
     return functions;
 }

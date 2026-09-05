@@ -553,6 +553,7 @@ GradLogLikResult grid_neg_loglik_with_grad(
     }
 
     int K_adaptive = config.K;
+    double K_requested = static_cast<double>(config.K);
     if (config.adaptive) {
         const double dz_target =
             sigma_cond / static_cast<double>(config.pts_per_sigma);
@@ -561,6 +562,7 @@ GradLogLikResult grid_neg_loglik_with_grad(
         if (!std::isfinite(K_min_value) || K_min_value < 2.0) {
             return invalid_grad(SCAR_NUMERICAL_FAILURE, backend);
         }
+        K_requested = std::max(K_requested, K_min_value);
         if (K_min_value > static_cast<double>(scar_internal::kMaxGridSize)
             || K_min_value > static_cast<double>(INT_MAX)) {
             if (config.max_K <= 0) {
@@ -631,7 +633,7 @@ GradLogLikResult grid_neg_loglik_with_grad(
             xi, rho, config.gh_order, op);
     } else {
         const double band_value =
-            std::ceil(5.0 * r_kernel_grid);
+            std::ceil(scar_internal::kOuTransitionTailSigma * r_kernel_grid);
         if (!std::isfinite(band_value)
             || band_value < 0.0
             || band_value > static_cast<double>(INT_MAX)) {
@@ -949,6 +951,9 @@ GradLogLikResult grid_neg_loglik_with_grad(
     out.neg_log_likelihood =
         -(std::log(Z0) + cumul_logc + emission_log_scale);
     out.neg_gradient = {-grad[0], -grad[1], -grad[2]};
+    out.K_requested = K_requested;
+    out.K_effective = K_eff;
+    out.grid_was_capped = adaptive_was_capped;
     out.neg_corr_gradient.resize(corr_grad.size());
     for (std::size_t i = 0; i < corr_grad.size(); ++i) {
         out.neg_corr_gradient[i] = -corr_grad[i];

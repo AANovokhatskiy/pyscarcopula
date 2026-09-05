@@ -53,6 +53,26 @@ def test_nonfinite_values_and_ties():
     np.testing.assert_array_equal(pobs(data), expected)
 
 
+@pytest.mark.parametrize("n", [12, 15, 16, 17, 100, 1000])
+def test_equal_values_receive_ranks_in_original_row_order(n):
+    data = np.ones((n, 3))
+    expected = np.broadcast_to(np.arange(1, n + 1)[:, None] / (n + 1), data.shape)
+    np.testing.assert_array_equal(pobs(data), expected)
+    np.testing.assert_array_equal(pobs(data, ties_method="ordinal"), expected)
+
+
+def test_interleaved_ties_are_ranked_per_column():
+    data = np.array([[2, 1], [1, 2], [2, 1], [1, 2]])
+    expected = np.array([[3, 1], [1, 3], [4, 2], [2, 4]]) / 5
+    np.testing.assert_array_equal(pobs(data), expected)
+
+
+@pytest.mark.parametrize("method", ["legacy", "average", "invalid"])
+def test_unsupported_tie_methods_are_explicitly_rejected(method):
+    with pytest.raises(ValueError, match="ties_method must be 'ordinal'"):
+        pobs([[1], [1]], ties_method=method)
+
+
 @pytest.mark.parametrize("data", [1.0, [], [1, 2], np.zeros((2, 3, 4))])
 def test_invalid_shape(data):
     with pytest.raises(ValueError, match="shape"):

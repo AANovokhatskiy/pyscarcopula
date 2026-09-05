@@ -153,6 +153,22 @@ SCAR-TM supports four likelihood transition modes:
   latent grid. This is useful when the OU transition kernel is very narrow.
 - `transition_method='spectral'`: force the Hermite spectral likelihood.
 
+With `auto`, selection is repeated for every optimizer objective evaluation,
+including trials rejected by the line search. The current trial's
+`kappa / (T - 1) < auto_small_kdt` selects `local`; equality and larger values
+try `spectral`. A recoverable spectral numerical failure tries `matrix`,
+followed by `local` if the matrix fails or its grid-resolution policy rejects
+it. Prepared evaluators do not pin the backend chosen at the initial point.
+This applies to analytical and numerical objectives and to joint correlation
+optimization. Explicit `matrix`, `local`, and `spectral` requests remain fixed.
+
+`auto_small_kdt=0.01` is a time-scale threshold. Auto routing checks numerical
+validity and does not compare likelihood values between backends. There is
+no cross-backend likelihood tolerance in this selection policy.
+Different valid approximations can introduce a likelihood jump when the
+optimizer crosses the routing threshold. Increasing `gh_order` alone does
+not remove the local method's interpolation error on a fixed latent grid.
+
 The forward quantities used for prediction, mixture h-functions, and
 Rosenblatt GoF still need a grid posterior state. If `spectral` is selected for
 the likelihood, those forward passes use the grid `auto` fallback internally.
@@ -312,3 +328,32 @@ very small, $\rho$ is close to one, high modes decay slowly, and a global grid
 does not resolve the narrow transition kernel. The default `auto` mode sends the
 narrow-kernel regime to `local`; all other regimes try `spectral`, with
 `matrix` and then `local` as numerical fallbacks.
+
+### Optimizer and grid diagnostics
+
+Optimizer trials in `(log kappa, mu, log stationary_sigma)` can overflow
+when converted to physical OU parameters even though the trial coordinates
+are finite. Such conversion failures receive the finite optimization penalty
+and are counted as `invalid_parameter_trials`. Unsupported kernels and
+invalid final parameter conversions still raise their original errors.
+
+Sparse matrix transitions retain eight conditional Gaussian standard
+deviations on either side of each transition center. The omitted continuous
+Gaussian probability is below `1.3e-15`; the earlier five-sigma cutoff could
+produce visible likelihood jumps when the integer band width changed during
+a line search. Likelihood and analytical gradient use the same support rule.
+This controls transition truncation, not the separate adaptive-grid error.
+
+Native likelihood information reports `K_requested`, `K_effective`, and
+`grid_was_capped` for grid backends. Fit diagnostics retain their final values
+with the `last_` prefix and count `grid_capped_evaluations`. Spectral
+evaluations have no grid size. A caller-selected matrix backend can retain
+`max_K` points while the adaptive rule requests more; this does not increment
+`matrix_capped`, which specifically counts fallback decisions.
+
+Factor Student emissions keep exact quantiles and bounded tile storage.
+Consecutive grid nodes that map to exactly the same floating-point degrees
+of freedom share their density and degrees-of-freedom derivative, with the
+latent-state derivative applied separately at every node. This avoids
+repeated quantile solves in the saturated negative tail of the Softplus
+transform without introducing an interpolated full-sample cache.

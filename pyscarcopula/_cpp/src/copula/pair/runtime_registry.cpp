@@ -315,6 +315,12 @@ double PreparedPairKernel::h(
     double second,
     double parameter) const {
 
+    if (is_supported() && functions_->h_reflected != nullptr
+        && (rotation_ == Rotation::R90 || rotation_ == Rotation::R180)) {
+        return functions_->h_reflected(
+            first, rotation_ == Rotation::R180 ? 1.0 - second : second,
+            parameter);
+    }
     return is_supported() && functions_->h != nullptr
         ? copula::evaluate_rotated_conditional(
             first,
@@ -367,6 +373,15 @@ double PreparedPairKernel::inverse_h(
     double parameter,
     const HInverseOptions* options) const {
 
+    if (is_supported() && functions_->inverse_h_reflected != nullptr
+        && (rotation_ == Rotation::R90 || rotation_ == Rotation::R180)) {
+        const double conditional_given = rotation_ == Rotation::R180 ? 1.0 - given : given;
+        if (options != nullptr && functions_->inverse_h_reflected_with_options != nullptr) {
+            return functions_->inverse_h_reflected_with_options(
+                quantile, conditional_given, parameter, *options);
+        }
+        return functions_->inverse_h_reflected(quantile, conditional_given, parameter);
+    }
     if (is_supported() && options != nullptr
         && functions_->inverse_h_with_options != nullptr) {
         return copula::evaluate_rotated_conditional_with(

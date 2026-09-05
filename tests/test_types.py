@@ -37,7 +37,7 @@ class TestNumericalConfig:
         assert cfg.gas_optimizer.maxfun == 4000
         assert cfg.gas_optimizer.maxiter == 1000
         assert cfg.gas_optimizer.maxls == 100
-        assert cfg.gas_optimizer.eps == 1e-5
+        assert cfg.gas_optimizer.eps == 1e-8
         assert cfg.scar_optimizer.gtol == 1e-3
         assert cfg.scar_optimizer.maxfun == 300
         assert cfg.scar_optimizer.maxiter == 100

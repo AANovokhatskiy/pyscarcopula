@@ -52,6 +52,27 @@ the multivariate and vine APIs. Use
 `BivariateCopula.sample_at_parameter(n, r, ...)` for generation at an
 explicit copula parameter.
 
+Clayton, Gumbel, Frank and Joe sampling uses native conditional inversion.
+Their conditional CDFs and inverses use logarithmic formulas in the tails;
+Gumbel and Joe use safeguarded monotone root solving. Reflected inverse
+functions preserve small probabilities without first forming `1 - q`.
+These corrections can change fixed-seed results relative to 0.20.1.
+
+Conditional CDFs and inverse CDFs can reach the mathematical endpoints 0 and
+1. Unconditional sampling keeps its output in the open unit interval: if an
+interior result rounds to an endpoint, only that endpoint is moved to the
+nearest interior float64 value. There is no artificial `1e-10` sampling floor.
+A failed inverse is reported as an error rather than accepted as a clipped
+finite sample. This does not guarantee an arbitrarily small CDF residual
+when the exact inverse lies between adjacent representable float64 values.
+
+`pobs(data)` computes ordinal ranks in C++ using the standard library:
+rows are sorted by value and then by their original row index. Equal values
+receive successive ranks in input order; the ranks are divided by `n + 1`.
+Integer comparisons retain their original precision, and NaNs sort last.
+The optional `ties_method="ordinal"` selects the same behavior explicitly.
+Historical unstable tie permutations are not reproduced.
+
 All built-in bivariate families share the same fitting surface:
 
 ```python

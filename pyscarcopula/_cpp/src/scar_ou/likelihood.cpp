@@ -269,6 +269,9 @@ LogLikResult ScarOuEvaluator::loglik_local_gh(
     LogLikResult out;
     out.log_likelihood = std::log(result) + log_scale;
     out.backend = OuBackend::LocalGh;
+    out.K_requested = grid.K_requested;
+    out.K_effective = grid.K;
+    out.grid_was_capped = grid.adaptive_was_capped;
     return out;
 }
 
@@ -333,6 +336,9 @@ LogLikResult ScarOuEvaluator::loglik_matrix(
     LogLikResult out;
     out.log_likelihood = value;
     out.backend = OuBackend::Matrix;
+    out.K_requested = grid.K_requested;
+    out.K_effective = grid.K;
+    out.grid_was_capped = grid.adaptive_was_capped;
     return out;
 }
 

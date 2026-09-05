@@ -73,6 +73,66 @@ bool orthonormalize_columns(
     return true;
 }
 
+bool complete_factor_rotation(std::vector<double>& matrix, std::size_t rank) {
+    // The anchor block can be rank deficient (eigenvalues below one produce
+    // exactly zero factors). Householder QR retains a full orthogonal Q even
+    // when R has zero diagonal entries; rejecting such loadings prevents the
+    // existing positive anchor floor from initializing a joint fit.
+    std::vector<double> upper = matrix;
+    matrix.assign(rank * rank, 0.0);
+    for (std::size_t index = 0; index < rank; ++index) {
+        matrix[index * rank + index] = 1.0;
+    }
+    std::vector<double> reflector(rank, 0.0);
+    for (std::size_t column = 0; column < rank; ++column) {
+        double norm = 0.0;
+        for (std::size_t row = column; row < rank; ++row) {
+            norm = std::hypot(norm, upper[row * rank + column]);
+        }
+        if (!std::isfinite(norm)) {
+            return false;
+        }
+        if (norm == 0.0) {
+            continue;
+        }
+        // Scale before forming the reflector to avoid overflow/underflow.
+        for (std::size_t row = column; row < rank; ++row) {
+            reflector[row] = upper[row * rank + column] / norm;
+        }
+        reflector[column] += std::copysign(1.0, reflector[column]);
+        double reflector_norm = 0.0;
+        for (std::size_t row = column; row < rank; ++row) {
+            reflector_norm = std::hypot(reflector_norm, reflector[row]);
+        }
+        for (std::size_t row = column; row < rank; ++row) {
+            reflector[row] /= reflector_norm;
+        }
+        for (std::size_t target = column; target < rank; ++target) {
+            long double projection = 0.0L;
+            for (std::size_t row = column; row < rank; ++row) {
+                projection += static_cast<long double>(reflector[row])
+                    * upper[row * rank + target];
+            }
+            for (std::size_t row = column; row < rank; ++row) {
+                upper[row * rank + target] -=
+                    2.0 * static_cast<double>(projection) * reflector[row];
+            }
+        }
+        for (std::size_t row = 0; row < rank; ++row) {
+            long double projection = 0.0L;
+            for (std::size_t target = column; target < rank; ++target) {
+                projection += static_cast<long double>(matrix[row * rank + target])
+                    * reflector[target];
+            }
+            for (std::size_t target = column; target < rank; ++target) {
+                matrix[row * rank + target] -=
+                    2.0 * static_cast<double>(projection) * reflector[target];
+            }
+        }
+    }
+    return true;
+}
+
 bool symmetric_eigen(
     std::vector<double> matrix,
     std::size_t dimension,
@@ -499,7 +559,7 @@ FactorLoadingParameterizationResult factor_parameterization_from_loadings(
                 loadings[anchors[column] * rank + row];
         }
     }
-    if (!orthonormalize_columns(rotation, rank, rank)) {
+    if (!complete_factor_rotation(rotation, rank)) {
         result.status = Status::NumericalFailure;
         return result;
     }

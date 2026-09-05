@@ -24,9 +24,29 @@ _REVIEW_KINDS = {
         'Reviewed native sampling adapter: Python only creates raw uniform/normal draws, chunks buffers, checks native draw/shape/byte accounting and assembles descriptive counters. Parameter-dependent transforms, state evolution and MCMC acceptance remain native.'),
     'fit_orchestration': ('orchestration',
         'Reviewed optimizer orchestration: model bounds, transforms, scaling, projections, objectives and gradients come from named native entry points. Python only assembles SciPy options, applies generic termination/refinement bookkeeping and constructs result diagnostics/DTO signs and counts.'),
+    'invalid_trial_marker': ('adapter/DTO/validation',
+        'Reviewed status adapter: a NaN-filled array marks a rejected native parameter conversion and increments a diagnostic counter. It is never evaluated as a model parameter or imputed sample; finite penalty values and gradients are obtained from native failure-policy entry points.'),
 }
 
 _SYMBOL_REVIEWS = (
+    # Regression recovery review: SCAR trial conversion forwards to native
+    # transforms and marks only status 6/7 failures for the existing native
+    # penalty path. Grid formulas remain native. Bootstrap retries retain the
+    # same sample and only add status validation and attempt/timing counters.
+    # Covered by tests/test_scar_optimizer_regressions.py.
+    ('pyscarcopula.strategy.scar_tm:_trial_parameters',
+     '32f2b2995464bf8f0401b9e63d2eb614125a1780c3134b1344ab71f47240aa5a', 'invalid_trial_marker', ('arithmetic', 'numeric-fallback')),
+    # GAS multistart/refinement selects native objective evaluations, records
+    # budgets and compares scalar likelihoods. The projected-gradient norm
+    # is a generic optimizer diagnostic on a native gradient and native
+    # bounds, not a model gradient or a projection of observations/states.
+    # Covered by tests/test_gas_regressions.py and test_gas_optimizer.py.
+    ('pyscarcopula.strategy.gas:_fit_gas_starts',
+     '1b2e86ffbb1d3316a5275d1b5f659c3b1aca8a71154198923ae2dc9812ebe2b2', 'fit_orchestration', ('arithmetic', 'numerical-call')),
+    ('pyscarcopula.strategy.gas:_fit_gas_starts.run',
+     'e29e4c49f45cc525416851120e3720c8103bd4587984395bea9cc4446670567d', 'bookkeeping', ('arithmetic',)),
+    ('pyscarcopula.strategy.gas:GASStrategy._build_result',
+     '8a64040abb9f2ae84ee3ce03bedb7a9a376384860129e454e2e4240867f2a4a4', 'bookkeeping', ('arithmetic', 'numerical-call')),
     # Bootstrap fitted defaults/thread routing and exact real/integer input
     # validation preserve the existing native ownership. Only fingerprints
     # of reviewed scopes change; no arithmetic permissions are added.
@@ -310,11 +330,11 @@ _SYMBOL_REVIEWS = (
     ('pyscarcopula.numerical.jacobi_tm:sample_jacobi_grid_trajectory',
      'a87698071c583b044ba091ba2a04353da73210a2b30fd78373d7c71eb09c023a', 'structure', ('arithmetic', 'numerical-call')),
     ('pyscarcopula.stattests:<module>',
-     '369ef16db18f1822e62373d41324a900eb9c1484434c80579df26f9401bcc6d2', 'gof', ('numerical-import',)),
+     'dd1b14462e11893995040219802cffa2b5745e18b36cf3b2b19ca208ec0f5192', 'gof', ('numerical-import',)),
     ('pyscarcopula.stattests:_bootstrap_gof',
      '3c25deed706be6d940b308d5e061b89c69f2de4be9f345e2de8b7d783e3b0496', 'gof', ('arithmetic', 'numerical-call')),
     ('pyscarcopula.stattests:_bootstrap_gof_worker',
-     '9c8e4cac5881ed45b1720a53fd8c6d715a4959641a645f9965f98c891fa80ae1', 'gof', ('arithmetic',)),
+     '71c3e6498bf884b77515b306de07191ee4c3c03adfa7cc654271f0388f02d65b', 'gof', ('arithmetic', 'numerical-call')),
     ('pyscarcopula.stattests:cvm_test',
      '43ff32a725c82da8ea2e763f612dce26482a0de1e41d2eff9fca3e2469938e78', 'gof', ('numerical-call',)),
     ('pyscarcopula.strategy.gas:GASStrategy._fit_joint_static_shrinkage.objective',
@@ -350,7 +370,7 @@ _SYMBOL_REVIEWS = (
     ('pyscarcopula.strategy.scar_tm:_projected_gradient_norm',
      'cf23b4d2607ccc44617e3d39580ffff806a24d79ce971ff791be9ca443d0754b', 'bookkeeping', ('numerical-call',)),
     ('pyscarcopula.strategy.scar_tm:_record_backend_diagnostics',
-     'c70e70e1291f664e499bdf96bc76b7372bbb3ba8cfd71feaf86e567e3cec43af', 'bookkeeping', ('arithmetic',)),
+     '59524e5e9b885d2663c80d4bc6c00ef82b64b8c1b9458a5eb11c025826b150b8', 'bookkeeping', ('arithmetic',)),
     ('pyscarcopula.vine._conditional_rvine:find_rvine_peel_order_for_given_suffix',
      'f41f469cf1aabb43f6610ab7784fd844259728b077fd6282693fb70cc3fdfc26', 'structure', ('arithmetic',)),
     ('pyscarcopula.vine._conditional_rvine:find_rvine_peel_order_for_given_suffix.search',
@@ -514,9 +534,9 @@ _SYMBOL_REVIEWS = (
     ('pyscarcopula.copula.multivariate.student:StudentCopula._fit_joint_factor',
      'e20386a0da4f745cd9251c9a23d5ec77d4e89ab3e652945aba76d698546933d9', 'fit_orchestration', ('numerical-call',)),
     ('pyscarcopula.strategy.gas:GASStrategy._fit_joint_static_shrinkage',
-     '4df2b018f7461b38f8b282917e513b0bccd78393b8615a82096548d1ce6012d1', 'fit_orchestration', ('arithmetic',)),
+     'e33d8977e88aa17fe505604c1268aaed9d68817294f0346ceb1635423803b5aa', 'fit_orchestration', ('arithmetic',)),
     ('pyscarcopula.strategy.gas:GASStrategy.fit',
-     'f1f58361558e09ee3be9bd0520545c65bce802d5bf62803fb08191da8dcfe7e9', 'fit_orchestration', ('arithmetic',)),
+     'a356e4c6a153149a9aaea1da7012c4619a6a53b66b95e93859310486c31943b2', 'fit_orchestration', ('arithmetic',)),
     ('pyscarcopula.strategy.mle:MLEStrategy.fit',
      'b635918888bcc169f3f13806bd5d42db0445b339b5f795c65eca9982c4ed94c0', 'sign', ('arithmetic',)),
     # Final Jacobi validation delegates domain/objective/gradient checks to
@@ -525,11 +545,11 @@ _SYMBOL_REVIEWS = (
     ('pyscarcopula.strategy.scar_jacobi:SCARJacobiStrategy.fit',
      '005523ef561e805c57f748ed9b07ad545c90f0fc2b89bb01c77d0270c75be422', 'fit_orchestration', ('arithmetic',)),
     ('pyscarcopula.strategy.scar_tm:SCARTMStrategy._fit_joint_static',
-     '3df02de50a225cb635d8a42ce9f391ec7307e25a47d649fef3dce8ed5be41f64', 'fit_orchestration', ('arithmetic',)),
+     '7788dfd1022e3c34b5e92621cd86ab6fd5f38da965dd11e21278a6facec08dd6', 'fit_orchestration', ('arithmetic',)),
     ('pyscarcopula.strategy.scar_tm:SCARTMStrategy._fit_joint_static.objective_and_grad_scaled',
-     '291913f1113a16fb02add12708f8b93877ea8d41016b4c2a2da9112150c347b2', 'fit_orchestration', ('arithmetic',)),
+     '0a7df649fc7a0847eee0a344e5bd707f05d6b2951dd72fde93d83a9a1464f72b', 'fit_orchestration', ('arithmetic',)),
     ('pyscarcopula.strategy.scar_tm:SCARTMStrategy.fit',
-     '56bbb58c5334bfca8385ef47398ed46300ea949dc2d61848e4775d358172c8df', 'fit_orchestration', ('arithmetic', 'numerical-call')),
+     '77a0ec15d3011e82565a97eb7f70c59b4662bed6de6844c0a767ce4419ea901b', 'fit_orchestration', ('arithmetic', 'numerical-call')),
 )
 
 EXCEPTIONS = {

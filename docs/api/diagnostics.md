@@ -64,9 +64,14 @@ The returned `BootstrapGoFResult` exposes `statistic`, the calibrated
 `bootstrap_diagnostics`. Parallel execution metadata is available as
 `n_jobs_requested`, resolved `n_jobs`, `n_threads`, and `backend`; reproducible
 execution policy is recorded in `rng_policy` and `worker_model_ownership`.
-Unsuccessful refits retain `bootstrap_fit_success=False` and their messages
-in the diagnostics. Their statistics remain in the calibration sample; check
-these flags before interpreting the calibrated p-value.
+An unsuccessful or nonfinite refit is retried once on the same simulated
+sample, using its finite endpoint as the next initial point when available.
+The retry retains the requested optimizer budget. If it also fails,
+calibration raises an error identifying the replication and optimizer message;
+an unsuccessful fit never contributes a statistic to the calibrated p-value.
+Successful results retain both attempt records in `bootstrap_refit_attempts`
+and expose `bootstrap_refit_retries`. Retrying does not draw replacement data
+or consume another simulation seed.
 
 Common fit diagnostics to inspect before interpreting GoF results include:
 
@@ -75,6 +80,10 @@ Common fit diagnostics to inspect before interpreting GoF results include:
 - SCAR-TM-OU transition attempts and fallback counters such as
   `fallback_spectral_to_matrix`, `fallback_matrix_to_local`,
   `matrix_failures`, and `matrix_capped`;
+- grid resolution fields `last_K_requested`, `last_K_effective`,
+  `last_grid_was_capped`, and `grid_capped_evaluations`. These distinguish
+  an actual adaptive grid cap from a matrix-to-local fallback; explicit
+  matrix evaluation can use a capped grid without taking any fallback;
 - SCAR-TM-JACOBI fields such as `transition_method`, `transition_storage`,
   `stationarity_correction`, `gradient_kind`, `setup_derivative`,
   `filter_derivative`, and spectral negative-mass indicators. Sparse

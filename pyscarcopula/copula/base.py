@@ -382,12 +382,16 @@ class BivariateCopula(CopulaBase):
 
         r: scalar or array (n,).
         Returns (n, 2).
+
         """
+        if isinstance(n, (bool, np.bool_)) or not isinstance(n, (int, np.integer)) or n < 0:
+            raise ValueError("n must be a non-negative integer")
         if rng is None:
             rng = np.random.default_rng()
 
         parameter = np.atleast_1d(
             as_float64_array(r, name="r")).ravel()
+        family = self._native_pair_family
         if parameter.size == 1:
             parameter = np.full(n, parameter[0])
         elif parameter.size != n:
@@ -395,7 +399,6 @@ class BivariateCopula(CopulaBase):
                 f"r must be scalar or array of length {n}, "
                 f"got {parameter.size}")
 
-        family = self._native_pair_family
         if family == "Gaussian":
             draws = rng.standard_normal((n, 2))
             return self._native_adapter().sample_from_rng_draws(

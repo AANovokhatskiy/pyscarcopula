@@ -240,7 +240,10 @@ def gof_test(model, data, to_pobs=True, K=300, grid_range=5.0,
     n_bootstrap : int
         Number of bootstrap replications.
     bootstrap_refit : bool
-        If True, re-estimate the model on each bootstrap sample.
+        If True, re-estimate the model on each bootstrap sample. An
+        unsuccessful refit is retried once on the same sample, starting
+        from its finite endpoint when available. If the retry fails,
+        calibration raises instead of including an invalid statistic.
     bootstrap_fit_kwargs : dict or None
         Extra keyword arguments for each bootstrap fit.
     rng : int, Generator, SeedSequence, or None
@@ -927,6 +930,7 @@ def _bootstrap_gof_worker(task):
         )
 
         fit_start = time.perf_counter()
+        refit_attempts = []
         if bootstrap_refit:
             copula, boot_result = adapter.refit(
                 copula_class,
@@ -939,6 +943,28 @@ def _bootstrap_gof_worker(task):
                 n_threads,
                 config,
             )
+            refit_attempts.append(_fit_result_diagnostics(boot_result))
+            if (not refit_attempts[-1]['bootstrap_fit_success'] or
+                    not np.isfinite(refit_attempts[-1][
+                        'bootstrap_fit_log_likelihood'])):
+                # Reuse the sample and seed stream: drawing replacement
+                # data would condition the bootstrap on fit success.
+                retry_kwargs = dict(refit_kwargs)
+                candidate_start = _bootstrap_fit_kwargs(boot_result, {})
+                for key in ('alpha0', 'gamma0'):
+                    if key in candidate_start and np.all(
+                            np.isfinite(candidate_start[key])):
+                        retry_kwargs[key] = candidate_start[key]
+                copula, boot_result = adapter.refit(
+                    copula_class, constructor_kwargs, u_boot, fit_result,
+                    retry_kwargs, K, grid_range, n_threads, config)
+                refit_attempts.append(_fit_result_diagnostics(boot_result))
+                if (not refit_attempts[-1]['bootstrap_fit_success'] or
+                        not np.isfinite(refit_attempts[-1][
+                            'bootstrap_fit_log_likelihood'])):
+                    raise RuntimeError(
+                        "refit did not converge after 2 attempts: " +
+                        refit_attempts[-1]['bootstrap_fit_message'])
         else:
             boot_result = fit_result
         fit_elapsed = time.perf_counter() - fit_start
@@ -958,12 +984,14 @@ def _bootstrap_gof_worker(task):
             'bootstrap_total_time_sec': float(
                 time.perf_counter() - iter_start),
             'bootstrap_refit': bool(bootstrap_refit),
+            'bootstrap_refit_attempts': tuple(refit_attempts),
+            'bootstrap_refit_retries': max(0, len(refit_attempts) - 1),
         }
         row.update(_fit_result_diagnostics(boot_result))
         return statistic, row
     except Exception as exc:
         raise RuntimeError(
-            f"bootstrap iteration {iteration + 1} failed") from exc
+            f"bootstrap iteration {iteration + 1} failed: {exc}") from exc
 
 
 def _bootstrap_gof(

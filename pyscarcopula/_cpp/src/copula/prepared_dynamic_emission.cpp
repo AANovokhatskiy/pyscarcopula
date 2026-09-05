@@ -47,7 +47,12 @@ Result<CopulaSpec> prepare_shrinkage_dynamic_spec(
     }
     result.value = template_spec;
     result.value.correlation_kind = CorrelationKind::Shrinkage;
-    result.value.reset_model_storage();
+    // Fixed and shrinkage correlations use the same dense storage. Resetting
+    // it also discards the Student PPF interpolation table, making the joint
+    // objective differ from the reported/filter likelihood (and much slower).
+    if (template_spec.correlation_kind == CorrelationKind::Factor) {
+        result.value.reset_model_storage();
+    }
     result.value.dense_inverse_cholesky() = prepared.inverse_cholesky;
     result.value.dense_log_determinant() = prepared.log_determinant;
     return result;

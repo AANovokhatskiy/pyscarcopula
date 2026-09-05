@@ -650,6 +650,11 @@ def _result_info(result, method: str, kappa, n_obs: int,
     if n_obs < 2:
         return info
 
+    if "K_effective" in result:
+        info.update(K_requested=int(result["K_requested"]),
+                    K_effective=int(result["K_effective"]),
+                    grid_was_capped=bool(result["grid_was_capped"]))
+
     if method == "auto" and not fallback_chain:
         selected = select_auto_backend(float(kappa), n_obs, cfg)
         info["selected_backend"] = selected

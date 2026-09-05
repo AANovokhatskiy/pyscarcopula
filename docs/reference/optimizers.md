@@ -69,13 +69,13 @@ $g_t = \omega + \beta g_{t-1} + \gamma\,score_{t-1}$.
 
 | Parameter | Where | Default | Effect |
 |-----------|-------|---------|--------|
-| `gamma0` | fit kwarg | MLE-based | Initial $[\omega, \gamma, \beta]$. |
+| `gamma0` | fit kwarg | Two MLE-based starts | Explicit initial $[\omega, \gamma, \beta]$ selects a single start. |
 | `gtol` | fit kwarg / `gas_optimizer.gtol` | `1e-3` | L-BFGS-B projected-gradient tolerance. |
 | `ftol` | fit kwarg / `gas_optimizer.ftol` | `1e-9` | Relative objective decrease tolerance. |
 | `maxfun` | fit kwarg / `gas_optimizer.maxfun` | `4000` | Maximum scalar objective evaluations, including numerical-gradient probes. |
 | `maxiter` | fit kwarg / `gas_optimizer.maxiter` | `1000` | Maximum optimizer iterations. |
 | `maxls` | fit kwarg / `gas_optimizer.maxls` | `100` | Maximum L-BFGS-B line-search steps per iteration. |
-| `eps` | fit kwarg / `gas_optimizer.eps` | `1e-5` | Absolute native two-point step for the outer optimizer gradient when `finite_diff_rel_step` is unset. |
+| `eps` | fit kwarg / `gas_optimizer.eps` | `1e-8` | Absolute native two-point step for the outer optimizer gradient when `finite_diff_rel_step` is unset. |
 | `finite_diff_rel_step` | fit kwarg / `gas_optimizer.finite_diff_rel_step` | `None` | Relative two-point step in optimizer coordinates; takes precedence over `eps`. |
 | `score_eps` | fit kwarg / `gas_score_eps` | `1e-4` | Finite-difference step for Fisher curvature. |
 | `gamma_bound` | fit kwarg / `gas_gamma_bound` | `20.0` | Bounds score sensitivity to $[-\texttt{gamma\_bound}, \texttt{gamma\_bound}]$. |
@@ -93,10 +93,35 @@ result = fit(
 )
 ```
 
-`ftol` matters for GAS because L-BFGS-B can otherwise report `success=True`
-after a small relative objective decrease even when the gradient is still
-large. If a GAS result looks sensitive to `gamma_bound` even though the fitted
-$\gamma$ is far from the bound, rerun with tighter `ftol` and larger `maxfun`.
+Automatic fitting tries the standard MLE-based score-driven start and a
+nested static start with `gamma=0`. The latter shares the standard start's
+intercept and persistence and exactly reproduces the static MLE path. An explicit `gamma0`
+retains single-start semantics, including joint shrinkage fits. When `ftol`
+is omitted, the best candidate is refined with `ftol=1e-12`. Each start and
+refinement has its own `maxfun` and `maxiter` budget; `nfev` sums the runs.
+The best finite terminal candidate is retained even if a worse candidate
+reported convergence. A trial point that improves log likelihood by more
+than `0.001` is retained with `success=False` if convergence there was not
+established.
+
+`success` additionally requires the optimizer's objective to agree with the
+reported likelihood within `1e-6`, and the likelihood to be no more than
+`0.001` below either the initial nested static likelihood (automatic starts)
+or the constant path at the final intercept and persistence. Joint Student
+shrinkage fitting preserves the quantile interpolation cache so optimization
+and reporting evaluate the same function.
+
+`GASResult.diagnostics` includes `optimizer_stages` (starts, final parameters,
+objectives, raw convergence messages and evaluation counts),
+`optimizer_success`, `optimizer_message`, `projected_gradient_inf_norm`,
+`static_baseline_log_likelihood`, `objective_discrepancy`, and
+`likelihood_validation_passed`. The projected gradient is informational; a
+small relative function decrease can still occur with a large gradient.
+Neither these checks nor multistart establish global optimality or guarantee
+agreement with another version to `0.001`. Inspect alternative starts and
+finite-difference steps for sensitive fits. The smaller default `eps` limits
+perturbations amplified by the recursion; explicit `eps` and
+`finite_diff_rel_step` retain their documented precedence and behavior.
 
 GAS uses the compiled numerical engine for likelihood, score recursion,
 filtering, prediction, and Rosenblatt operations. Unsupported copulas fail
@@ -180,11 +205,14 @@ Per-call keyword arguments override the config values for that fit.
 For conditional bivariate `api.sample` and `api.predict`,
 `bisection_tol` and `bisection_maxiter` configure the iterative inverse-h
 solvers used by Gumbel and Joe (including rotations). The default tolerance
-is `1e-10`, and the iteration limit is `60`. Gumbel tests its transformed
-log-equation residual; Joe tests the h-function residual. A small iteration
-limit can return an inaccurate approximation. These settings do not affect
-analytical inverse-h families or unconditional sampling. Direct low-level
-inverse-h calls without a config retain their established family defaults.
+is `1e-10`, and the iteration limit is `60`. Gumbel tests a relative
+transformed-equation residual; Joe tests a `log(-log(h))` residual or a
+certified root bracket at float64 resolution. Tolerance is an upper bound:
+the kernels can apply a tighter criterion to preserve tail accuracy.
+Exhausting the iteration budget raises an error instead of returning an
+unchecked approximation. These settings do not affect analytical inverse-h
+families or unconditional sampling. Direct low-level inverse-h calls use
+80 iterations and `8e-15` for Gumbel, and 50 iterations and `1e-10` for Joe.
 
 GAS fit uses `config.fail_value` when a numerical objective evaluation raises
 `FloatingPointError`, including joint shrinkage fits. Argument and programming

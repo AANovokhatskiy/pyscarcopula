@@ -234,8 +234,9 @@ def test_internal_cache_keeps_identity_owners_alive_until_disabled():
 def test_history_signature_includes_shape_not_only_observation_bytes():
     data = U.copy()
     before = _PreparedScarOuPosteriorCache._history_signature(data)
-    data.shape = (38, 2)
-    after = _PreparedScarOuPosteriorCache._history_signature(data)
+    reshaped = data.reshape(38, 2)
+    assert np.shares_memory(data, reshaped)
+    after = _PreparedScarOuPosteriorCache._history_signature(reshaped)
     assert before != after
     assert before[2] == after[2]
 
@@ -243,8 +244,9 @@ def test_history_signature_includes_shape_not_only_observation_bytes():
 def test_history_signature_includes_dtype_not_only_observation_bytes():
     data = U.copy()
     before = _PreparedScarOuPosteriorCache._history_signature(data)
-    data.dtype = np.int64
-    after = _PreparedScarOuPosteriorCache._history_signature(data)
+    reinterpreted = data.view(np.int64)
+    assert np.shares_memory(data, reinterpreted)
+    after = _PreparedScarOuPosteriorCache._history_signature(reinterpreted)
     assert before != after
     assert before[0] == after[0]
     assert before[2] == after[2]

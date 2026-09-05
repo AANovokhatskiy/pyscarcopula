@@ -44,6 +44,11 @@ py::dict loglik_result_to_dict(const scar::LogLikResult& result) {
     output["fallback_from"] = result.failure.fallback_from;
     output["fallback_chain"] = backend_chain_to_list(result.fallback_chain);
     output["matrix_fallback_reason"] = result.matrix_fallback_reason;
+    if (result.K_effective > 0) {
+        output["K_requested"] = result.K_requested;
+        output["K_effective"] = result.K_effective;
+        output["grid_was_capped"] = result.grid_was_capped;
+    }
     return output;
 }
 
@@ -58,6 +63,11 @@ py::dict grad_loglik_result_to_dict(const scar::GradLogLikResult& result) {
     output["matrix_fallback_reason"] = result.matrix_fallback_reason;
     output["neg_corr_gradient"] =
         vector_to_array(result.neg_corr_gradient);
+    if (result.K_effective > 0) {
+        output["K_requested"] = result.K_requested;
+        output["K_effective"] = result.K_effective;
+        output["grid_was_capped"] = result.grid_was_capped;
+    }
     return output;
 }
 

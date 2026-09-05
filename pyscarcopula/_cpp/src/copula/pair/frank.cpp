@@ -257,77 +257,88 @@ void frank_fill_density_gradient_grid_row(
         gradient_row);
 }
 
+namespace {
+
+bool frank_conditional_domain(double first, double second, double r) {
+    return std::isfinite(first) && std::isfinite(second) && std::isfinite(r)
+        && first >= 0.0 && first <= 1.0 && second >= 0.0 && second <= 1.0
+        && r >= 0.0;
+}
+
+
+
+
+
+double frank_log_one_minus_exp_product(double r, double u) {
+    const double value = r * u;
+    return value < 1e-8
+        ? std::log(r) + std::log(u) + std::log1p(-0.5 * value)
+        : log1mexp(value);
+}
+
+// h = logistic(-a). This form avoids cancellation of terms of size theta.
+double frank_conditional_log_odds(double u, double v, double r) {
+    return r * (v - u)
+        + frank_log_one_minus_exp_product(r, 1.0 - u)
+        - frank_log_one_minus_exp_product(r, u);
+}
+
+double frank_inverse_log_odds(double log_odds, double given, double r) {
+    const auto direct = [r](double log_Q) {
+        const double log_delta = log1mexp(r)
+            - logsumexp(0.0, log_Q);
+        if (log_delta < -36.0) {
+            // Divide before exponentiating: delta can underflow while u cannot.
+            return std::exp(log_delta - std::log(r));
+        }
+        if (log_delta < -0.6931471805599453094) {
+            return -std::log1p(-std::exp(log_delta)) / r;
+        }
+        const double log_sum = logsumexp(log_Q, -r);
+        return (logsumexp(0.0, log_Q) - log_sum) / r;
+    };
+    const double value = direct(log_odds - r * given);
+    // Radial symmetry evaluates the smaller output tail, without forming 1-q.
+    return value > 0.5
+        ? 1.0 - direct(-log_odds - r * (1.0 - given)) : value;
+}
+
+}  // namespace
+
 double frank_h_unrotated(double u, double v, double r) {
-    const double u_clipped =
-        std::min(std::max(u, kPseudoObsEps), 1.0 - kPseudoObsEps);
-    const double v_clipped =
-        std::min(std::max(v, kPseudoObsEps), 1.0 - kPseudoObsEps);
-    if (std::abs(r) < 1e-8) {
-        return u_clipped;
+    if (!frank_conditional_domain(u, v, r)) return std::numeric_limits<double>::quiet_NaN();
+    if (u == 0.0 || u == 1.0 || r <= 4.0 * std::numeric_limits<double>::epsilon()) {
+        return u;
     }
+    return std::exp(-logsumexp(0.0, frank_conditional_log_odds(u, v, r)));
+}
 
-    const double ru = r * u_clipped;
-    const double rv = r * v_clipped;
-    const double log_numer = -rv + log1mexp(ru);
-    const double log_A = -ru + log1mexp(rv);
-    const double log_B = -rv + log1mexp(r * (1.0 - v_clipped));
-    const double log_h = log_numer - logsumexp(log_A, log_B);
-
-    if (log_h < -700.0) {
-        return kPseudoObsEps;
+double frank_h_reflected(double u, double v, double r) {
+    if (!frank_conditional_domain(u, v, r)) return std::numeric_limits<double>::quiet_NaN();
+    if (u == 0.0 || u == 1.0 || r <= 4.0 * std::numeric_limits<double>::epsilon()) {
+        return u;
     }
-    if (log_h > -kPseudoObsEps) {
-        return 1.0 - kPseudoObsEps;
-    }
-    return std::exp(log_h);
+    const double difference = u > 0.5 ? (1.0 - u) - v : (1.0 - v) - u;
+    const double log_odds = r * difference
+        + frank_log_one_minus_exp_product(r, 1.0 - u)
+        - frank_log_one_minus_exp_product(r, u);
+    return std::exp(-logsumexp(0.0, log_odds));
 }
 
 double frank_h_inverse_unrotated(double q, double given, double r) {
-    const double q_clipped =
-        std::min(std::max(q, kPseudoObsEps), 1.0 - kPseudoObsEps);
-    const double given_clipped =
-        std::min(std::max(given, kPseudoObsEps), 1.0 - kPseudoObsEps);
-    if (std::abs(r) < 1e-8) {
-        return q_clipped;
+    if (!frank_conditional_domain(q, given, r)) return std::numeric_limits<double>::quiet_NaN();
+    if (q == 0.0 || q == 1.0 || r <= 4.0 * std::numeric_limits<double>::epsilon()) {
+        return q;
     }
+    return frank_inverse_log_odds(std::log1p(-q) - std::log(q), given, r);
+}
 
-    const double x3 = std::exp(-r);
-    const double log_Q =
-        std::log1p(-q_clipped) - std::log(q_clipped) - r * given_clipped;
-
-    double t = q_clipped;
-    if (log_Q > 50.0) {
-        const double one_minus_arg =
-            (1.0 - x3) / (std::exp(log_Q) + 1.0);
-        if (one_minus_arg <= 0.0) {
-            t = kPseudoObsEps;
-        } else {
-            t = -std::log1p(-one_minus_arg) / r;
-        }
-    } else if (log_Q < -745.0) {
-        t = 1.0;
-    } else {
-        const double Q = std::exp(log_Q);
-        const double denom = Q + 1.0;
-        if (denom <= 0.0 || !std::isfinite(denom)) {
-            return q_clipped;
-        }
-        const double arg = (Q + x3) / denom;
-        if (arg <= 0.0) {
-            t = 1.0;
-        } else if (arg >= 1.0 - kPseudoObsEps) {
-            const double one_minus_arg = (1.0 - x3) / denom;
-            if (one_minus_arg <= 0.0) {
-                t = kPseudoObsEps;
-            } else {
-                t = -std::log1p(-one_minus_arg) / r;
-            }
-        } else {
-            t = -std::log(arg) / r;
-        }
+double frank_h_inverse_reflected(double q, double given, double r) {
+    if (!frank_conditional_domain(q, given, r)) return std::numeric_limits<double>::quiet_NaN();
+    if (q == 0.0 || q == 1.0 || r <= 4.0 * std::numeric_limits<double>::epsilon()) {
+        return q;
     }
-    return std::min(
-        std::max(t, kPseudoObsEps), 1.0 - kPseudoObsEps);
+    return frank_inverse_log_odds(std::log1p(-q) - std::log(q), 1.0 - given, r);
 }
 
 }  // namespace scar_internal
@@ -345,6 +356,10 @@ const PairKernelFunctions& frank_kernel() noexcept {
         scar_internal::frank_h_inverse_unrotated,
         scar_internal::frank_fill_density_grid_row,
         scar_internal::frank_fill_density_gradient_grid_row,
+        nullptr,
+        scar_internal::frank_h_reflected,
+        scar_internal::frank_h_inverse_reflected,
+        nullptr,
     };
     return functions;
 }

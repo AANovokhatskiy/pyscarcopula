@@ -11,8 +11,8 @@ def _array(values):
     return np.ascontiguousarray(values, dtype=np.float64)
 
 
-def pobs(values):
-    return _extension.load().validation_pobs(values)
+def pobs(values, *, ties_method="ordinal"):
+    return _extension.load().validation_pobs(values, ties_method)
 
 
 def clip_open_unit(values, epsilon):

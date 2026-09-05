@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- Stabilize native Clayton, Gumbel, Frank and Joe conditional CDFs and inverses
+  in the tails. Use log-domain formulas and safeguarded monotone inversion;
+  report failed inversion instead of silently returning a clipped value.
+  Fixed-uniform results may differ from 0.20.1 and earlier dev snapshots.
+  Pair sampling uses conditional inversion; remove the experimental frailty
+  sampler and its method selector.
+
+- Implement native `pobs` with standard-library index sorting and explicit
+  row-order tie breaking. Remove the copied historical sorting implementation
+  and the experimental `ties_method="legacy"` mode.
+- Harden GAS fitting with a nested-static automatic start, best-candidate
+  retention, objective/static-baseline validation and optimizer diagnostics.
+  Use `eps=1e-8` by default and preserve Student PPF caches in joint shrinkage
+  objectives so optimization and reported likelihood evaluate the same function.
+- Reject overflowing SCAR optimizer trials with finite penalties. Use the
+  same eight-sigma sparse support for transitions and gradients, expose actual
+  requested/effective grid sizes, and retry unsuccessful bootstrap refits once
+  before reporting an error instead of including them in calibrated p-values.
+- Support rank-deficient factor initialization with complete Householder QR;
+  reuse the common `O(T log T)` Kendall kernel and exact factor emission values
+  for adjacent repeated degrees of freedom.
 - Move `pobs` ordinal ranking into C++, preserving integer precision and
   ordering tied values by input row (previously an unstable sort). NaNs sort
   last. Remove Numba from core dependencies; install `pyscarcopula[contrib]`

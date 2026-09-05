@@ -271,7 +271,8 @@ int matrix_transition_band(const OuGrid& grid) {
         || grid.r_kernel_grid <= 0.0) {
         return -1;
     }
-    const double band_value = std::ceil(5.0 * grid.r_kernel_grid);
+    const double band_value =
+        std::ceil(kOuTransitionTailSigma * grid.r_kernel_grid);
     if (!std::isfinite(band_value)
         || band_value < 0.0
         || band_value > static_cast<double>(std::numeric_limits<int>::max())) {

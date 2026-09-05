@@ -1,0 +1,701 @@
+{
+  "provenance": "Independent Decimal generator equations: 100-digit direct inverse for unrotated values, 800-digit original-generator Newton solve for reflected values. Generator: PYSCAR_0220_CONDITIONAL_20260905/generate_clayton_gumbel_reference.py",
+  "cases": [
+    {
+      "family": "Clayton",
+      "theta": 1e-12,
+      "given": 1e-300,
+      "q": 0.5,
+      "expected": 0.499999999760942,
+      "reflected": false
+    },
+    {
+      "family": "Clayton",
+      "theta": 1e-12,
+      "given": 1e-12,
+      "q": 0.5,
+      "expected": 0.4999999999907704,
+      "reflected": false
+    },
+    {
+      "family": "Clayton",
+      "theta": 1e-12,
+      "given": 0.01,
+      "q": 0.5,
+      "expected": 0.49999999999875056,
+      "reflected": false
+    },
+    {
+      "family": "Clayton",
+      "theta": 1e-12,
+      "given": 0.5,
+      "q": 1e-300,
+      "expected": 1.0000000002119665e-300,
+      "reflected": false
+    },
+    {
+      "family": "Clayton",
+      "theta": 1e-12,
+      "given": 0.5,
+      "q": 1e-12,
+      "expected": 1.0000000000084786e-12,
+      "reflected": false
+    },
+    {
+      "family": "Clayton",
+      "theta": 1e-12,
+      "given": 0.5,
+      "q": 0.5,
+      "expected": 0.5000000000001064,
+      "reflected": false
+    },
+    {
+      "family": "Clayton",
+      "theta": 1e-12,
+      "given": 0.999999999999,
+      "q": 0.5,
+      "expected": 0.5000000000003466,
+      "reflected": false
+    },
+    {
+      "family": "Clayton",
+      "theta": 1e-08,
+      "given": 1e-300,
+      "q": 0.5,
+      "expected": 0.4999976094176664,
+      "reflected": false
+    },
+    {
+      "family": "Clayton",
+      "theta": 1e-08,
+      "given": 1e-12,
+      "q": 0.5,
+      "expected": 0.4999999077039105,
+      "reflected": false
+    },
+    {
+      "family": "Clayton",
+      "theta": 1e-08,
+      "given": 0.01,
+      "q": 0.5,
+      "expected": 0.49999998750543223,
+      "reflected": false
+    },
+    {
+      "family": "Clayton",
+      "theta": 1e-08,
+      "given": 0.5,
+      "q": 1e-300,
+      "expected": 1.0000021196829296e-300,
+      "reflected": false
+    },
+    {
+      "family": "Clayton",
+      "theta": 1e-08,
+      "given": 0.5,
+      "q": 1e-12,
+      "expected": 1.0000000847865958e-12,
+      "reflected": false
+    },
+    {
+      "family": "Clayton",
+      "theta": 1e-08,
+      "given": 0.5,
+      "q": 0.5,
+      "expected": 0.5000000010634709,
+      "reflected": false
+    },
+    {
+      "family": "Clayton",
+      "theta": 1e-08,
+      "given": 0.999999999999,
+      "q": 0.5,
+      "expected": 0.5000000034657359,
+      "reflected": false
+    },
+    {
+      "family": "Clayton",
+      "theta": 2.0,
+      "given": 1e-300,
+      "q": 0.5,
+      "expected": 1.3047660265041067e-300,
+      "reflected": false
+    },
+    {
+      "family": "Clayton",
+      "theta": 2.0,
+      "given": 1e-12,
+      "q": 0.5,
+      "expected": 1.3047660265041066e-12,
+      "reflected": false
+    },
+    {
+      "family": "Clayton",
+      "theta": 2.0,
+      "given": 0.01,
+      "q": 0.5,
+      "expected": 0.013046549780601322,
+      "reflected": false
+    },
+    {
+      "family": "Clayton",
+      "theta": 2.0,
+      "given": 0.5,
+      "q": 1e-300,
+      "expected": 5e-101,
+      "reflected": false
+    },
+    {
+      "family": "Clayton",
+      "theta": 2.0,
+      "given": 0.5,
+      "q": 1e-12,
+      "expected": 5.00000001875e-05,
+      "reflected": false
+    },
+    {
+      "family": "Clayton",
+      "theta": 2.0,
+      "given": 0.5,
+      "q": 0.5,
+      "expected": 0.5463906428428872,
+      "reflected": false
+    },
+    {
+      "family": "Clayton",
+      "theta": 2.0,
+      "given": 0.999999999999,
+      "q": 0.5,
+      "expected": 0.793700525983806,
+      "reflected": false
+    },
+    {
+      "family": "Clayton",
+      "theta": 20.0,
+      "given": 1e-300,
+      "q": 0.5,
+      "expected": 1.003362679993191e-300,
+      "reflected": false
+    },
+    {
+      "family": "Clayton",
+      "theta": 20.0,
+      "given": 1e-12,
+      "q": 0.5,
+      "expected": 1.003362679993191e-12,
+      "reflected": false
+    },
+    {
+      "family": "Clayton",
+      "theta": 20.0,
+      "given": 0.01,
+      "q": 0.5,
+      "expected": 0.010033626799931911,
+      "reflected": false
+    },
+    {
+      "family": "Clayton",
+      "theta": 20.0,
+      "given": 0.5,
+      "q": 1e-300,
+      "expected": 2.5897373396156057e-15,
+      "reflected": false
+    },
+    {
+      "family": "Clayton",
+      "theta": 20.0,
+      "given": 0.5,
+      "q": 1e-12,
+      "expected": 0.13413478976401128,
+      "reflected": false
+    },
+    {
+      "family": "Clayton",
+      "theta": 20.0,
+      "given": 0.5,
+      "q": 0.5,
+      "expected": 0.5016813144132889,
+      "reflected": false
+    },
+    {
+      "family": "Clayton",
+      "theta": 20.0,
+      "given": 0.999999999999,
+      "q": 0.5,
+      "expected": 0.9675317785234241,
+      "reflected": false
+    },
+    {
+      "family": "Clayton",
+      "theta": 1000.0,
+      "given": 1e-300,
+      "q": 0.5,
+      "expected": 1.0000013853902372e-300,
+      "reflected": false
+    },
+    {
+      "family": "Clayton",
+      "theta": 1000.0,
+      "given": 1e-12,
+      "q": 0.5,
+      "expected": 1.000001385390237e-12,
+      "reflected": false
+    },
+    {
+      "family": "Clayton",
+      "theta": 1000.0,
+      "given": 0.01,
+      "q": 0.5,
+      "expected": 0.010000013853902371,
+      "reflected": false
+    },
+    {
+      "family": "Clayton",
+      "theta": 1000.0,
+      "given": 0.5,
+      "q": 1e-300,
+      "expected": 0.25076660750288465,
+      "reflected": false
+    },
+    {
+      "family": "Clayton",
+      "theta": 1000.0,
+      "given": 0.5,
+      "q": 1e-12,
+      "expected": 0.486387037647747,
+      "reflected": false
+    },
+    {
+      "family": "Clayton",
+      "theta": 1000.0,
+      "given": 0.5,
+      "q": 0.5,
+      "expected": 0.5000006926951186,
+      "reflected": false
+    },
+    {
+      "family": "Clayton",
+      "theta": 1000.0,
+      "given": 0.999999999999,
+      "q": 0.5,
+      "expected": 0.9993077849651119,
+      "reflected": false
+    },
+    {
+      "family": "Gumbel",
+      "theta": 1.000000000001,
+      "given": 1e-300,
+      "q": 0.5,
+      "expected": 0.49999999999726064,
+      "reflected": false
+    },
+    {
+      "family": "Gumbel",
+      "theta": 1.000000000001,
+      "given": 1e-12,
+      "q": 0.5,
+      "expected": 0.49999999999838407,
+      "reflected": false
+    },
+    {
+      "family": "Gumbel",
+      "theta": 1.000000000001,
+      "given": 0.01,
+      "q": 0.5,
+      "expected": 0.49999999999904227,
+      "reflected": false
+    },
+    {
+      "family": "Gumbel",
+      "theta": 1.000000000001,
+      "given": 0.5,
+      "q": 1e-300,
+      "expected": 1.0000000000014262e-300,
+      "reflected": false
+    },
+    {
+      "family": "Gumbel",
+      "theta": 1.000000000001,
+      "given": 0.5,
+      "q": 1e-12,
+      "expected": 1.000000000000454e-12,
+      "reflected": false
+    },
+    {
+      "family": "Gumbel",
+      "theta": 1.000000000001,
+      "given": 0.5,
+      "q": 0.5,
+      "expected": 0.4999999999998661,
+      "reflected": false
+    },
+    {
+      "family": "Gumbel",
+      "theta": 1.000000000001,
+      "given": 0.999999999999,
+      "q": 0.5,
+      "expected": 0.5000000000136334,
+      "reflected": false
+    },
+    {
+      "family": "Gumbel",
+      "theta": 2.0,
+      "given": 1e-300,
+      "q": 0.5,
+      "expected": 3.68917425131783e-14,
+      "reflected": false
+    },
+    {
+      "family": "Gumbel",
+      "theta": 2.0,
+      "given": 1e-12,
+      "q": 0.5,
+      "expected": 0.0022028259575754532,
+      "reflected": false
+    },
+    {
+      "family": "Gumbel",
+      "theta": 2.0,
+      "given": 0.01,
+      "q": 0.5,
+      "expected": 0.09320684216702223,
+      "reflected": false
+    },
+    {
+      "family": "Gumbel",
+      "theta": 2.0,
+      "given": 0.5,
+      "q": 1e-300,
+      "expected": 4.9398861761692795e-298,
+      "reflected": false
+    },
+    {
+      "family": "Gumbel",
+      "theta": 2.0,
+      "given": 0.5,
+      "q": 1e-12,
+      "expected": 1.802670471158364e-11,
+      "reflected": false
+    },
+    {
+      "family": "Gumbel",
+      "theta": 2.0,
+      "given": 0.5,
+      "q": 0.5,
+      "expected": 0.4797500662239751,
+      "reflected": false
+    },
+    {
+      "family": "Gumbel",
+      "theta": 2.0,
+      "given": 0.999999999999,
+      "q": 0.5,
+      "expected": 0.9999999999982679,
+      "reflected": false
+    },
+    {
+      "family": "Gumbel",
+      "theta": 20.0,
+      "given": 1e-300,
+      "q": 0.5,
+      "expected": 2.989295215432577e-247,
+      "reflected": false
+    },
+    {
+      "family": "Gumbel",
+      "theta": 20.0,
+      "given": 1e-12,
+      "q": 0.5,
+      "expected": 4.195089815401857e-12,
+      "reflected": false
+    },
+    {
+      "family": "Gumbel",
+      "theta": 20.0,
+      "given": 0.01,
+      "q": 0.5,
+      "expected": 0.010536067518788805,
+      "reflected": false
+    },
+    {
+      "family": "Gumbel",
+      "theta": 20.0,
+      "given": 0.5,
+      "q": 1e-300,
+      "expected": 9.989756969912392e-246,
+      "reflected": false
+    },
+    {
+      "family": "Gumbel",
+      "theta": 20.0,
+      "given": 0.5,
+      "q": 1e-12,
+      "expected": 0.06898863125135053,
+      "reflected": false
+    },
+    {
+      "family": "Gumbel",
+      "theta": 20.0,
+      "given": 0.5,
+      "q": 0.5,
+      "expected": 0.4996427422085904,
+      "reflected": false
+    },
+    {
+      "family": "Gumbel",
+      "theta": 20.0,
+      "given": 0.999999999999,
+      "q": 0.5,
+      "expected": 0.9999999999989965,
+      "reflected": false
+    },
+    {
+      "family": "Gumbel",
+      "theta": 1000.0,
+      "given": 1e-300,
+      "q": 0.5,
+      "expected": 1.598319536601418e-300,
+      "reflected": false
+    },
+    {
+      "family": "Gumbel",
+      "theta": 1000.0,
+      "given": 1e-12,
+      "q": 0.5,
+      "expected": 1.0010035597100409e-12,
+      "reflected": false
+    },
+    {
+      "family": "Gumbel",
+      "theta": 1000.0,
+      "given": 0.01,
+      "q": 0.5,
+      "expected": 0.010000229721026297,
+      "reflected": false
+    },
+    {
+      "family": "Gumbel",
+      "theta": 1000.0,
+      "given": 0.5,
+      "q": 1e-300,
+      "expected": 0.25082201141012195,
+      "reflected": false
+    },
+    {
+      "family": "Gumbel",
+      "theta": 1000.0,
+      "given": 0.5,
+      "q": 1e-12,
+      "expected": 0.49038109187621276,
+      "reflected": false
+    },
+    {
+      "family": "Gumbel",
+      "theta": 1000.0,
+      "given": 0.5,
+      "q": 0.5,
+      "expected": 0.49999985265758656,
+      "reflected": false
+    },
+    {
+      "family": "Gumbel",
+      "theta": 1000.0,
+      "given": 0.999999999999,
+      "q": 0.5,
+      "expected": 0.999999999999,
+      "reflected": false
+    },
+    {
+      "family": "Clayton",
+      "theta": 2.0,
+      "given": 0.01,
+      "q": 1e-300,
+      "expected": 3.3333333333333336e-297,
+      "reflected": true
+    },
+    {
+      "family": "Clayton",
+      "theta": 2.0,
+      "given": 0.01,
+      "q": 1e-12,
+      "expected": 3.333333316669444e-09,
+      "reflected": true
+    },
+    {
+      "family": "Clayton",
+      "theta": 2.0,
+      "given": 0.5,
+      "q": 1e-300,
+      "expected": 1.3333333333333334e-300,
+      "reflected": true
+    },
+    {
+      "family": "Clayton",
+      "theta": 2.0,
+      "given": 0.5,
+      "q": 1e-12,
+      "expected": 1.3333333333317778e-12,
+      "reflected": true
+    },
+    {
+      "family": "Clayton",
+      "theta": 2.0,
+      "given": 0.99,
+      "q": 1e-300,
+      "expected": 3.401013502023603e-301,
+      "reflected": true
+    },
+    {
+      "family": "Clayton",
+      "theta": 2.0,
+      "given": 0.99,
+      "q": 1e-12,
+      "expected": 3.4010135020247023e-13,
+      "reflected": true
+    },
+    {
+      "family": "Clayton",
+      "theta": 20.0,
+      "given": 0.01,
+      "q": 1e-300,
+      "expected": 4.76190476190476e-262,
+      "reflected": true
+    },
+    {
+      "family": "Clayton",
+      "theta": 20.0,
+      "given": 0.01,
+      "q": 1e-12,
+      "expected": 0.9600920458164475,
+      "reflected": true
+    },
+    {
+      "family": "Clayton",
+      "theta": 20.0,
+      "given": 0.5,
+      "q": 1e-300,
+      "expected": 4.993219047619048e-296,
+      "reflected": true
+    },
+    {
+      "family": "Clayton",
+      "theta": 20.0,
+      "given": 0.5,
+      "q": 1e-12,
+      "expected": 4.9932164297408805e-08,
+      "reflected": true
+    },
+    {
+      "family": "Clayton",
+      "theta": 20.0,
+      "given": 0.99,
+      "q": 1e-300,
+      "expected": 5.822061830033907e-302,
+      "reflected": true
+    },
+    {
+      "family": "Clayton",
+      "theta": 20.0,
+      "given": 0.99,
+      "q": 1e-12,
+      "expected": 5.822061830036031e-14,
+      "reflected": true
+    },
+    {
+      "family": "Gumbel",
+      "theta": 2.0,
+      "given": 0.01,
+      "q": 1e-300,
+      "expected": 2.750846015685457e-150,
+      "reflected": true
+    },
+    {
+      "family": "Gumbel",
+      "theta": 2.0,
+      "given": 0.01,
+      "q": 1e-12,
+      "expected": 2.7508422321128573e-06,
+      "reflected": true
+    },
+    {
+      "family": "Gumbel",
+      "theta": 2.0,
+      "given": 0.5,
+      "q": 1e-300,
+      "expected": 7.533435998395241e-151,
+      "reflected": true
+    },
+    {
+      "family": "Gumbel",
+      "theta": 2.0,
+      "given": 0.5,
+      "q": 1e-12,
+      "expected": 7.533433160766709e-07,
+      "reflected": true
+    },
+    {
+      "family": "Gumbel",
+      "theta": 2.0,
+      "given": 0.99,
+      "q": 1e-300,
+      "expected": 1.4142430853319292e-152,
+      "reflected": true
+    },
+    {
+      "family": "Gumbel",
+      "theta": 2.0,
+      "given": 0.99,
+      "q": 1e-12,
+      "expected": 1.4142430753325618e-08,
+      "reflected": true
+    },
+    {
+      "family": "Gumbel",
+      "theta": 20.0,
+      "given": 0.01,
+      "q": 1e-300,
+      "expected": 4.5671663199102595e-15,
+      "reflected": true
+    },
+    {
+      "family": "Gumbel",
+      "theta": 20.0,
+      "given": 0.01,
+      "q": 1e-12,
+      "expected": 0.682481854449741,
+      "reflected": true
+    },
+    {
+      "family": "Gumbel",
+      "theta": 20.0,
+      "given": 0.5,
+      "q": 1e-300,
+      "expected": 6.936832444812027e-16,
+      "reflected": true
+    },
+    {
+      "family": "Gumbel",
+      "theta": 20.0,
+      "given": 0.5,
+      "q": 1e-12,
+      "expected": 0.15990924638077722,
+      "reflected": true
+    },
+    {
+      "family": "Gumbel",
+      "theta": 20.0,
+      "given": 0.99,
+      "q": 1e-300,
+      "expected": 1.0075878254190419e-17,
+      "reflected": true
+    },
+    {
+      "family": "Gumbel",
+      "theta": 20.0,
+      "given": 0.99,
+      "q": 1e-12,
+      "expected": 0.002527746043289839,
+      "reflected": true
+    }
+  ]
+}

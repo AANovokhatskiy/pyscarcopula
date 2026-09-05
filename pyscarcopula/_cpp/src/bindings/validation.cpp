@@ -105,7 +105,10 @@ py::dict backend_agreement_to_dict(
 }  // namespace
 
 void bind_validation(py::module_& m) {
-    m.def("validation_pobs", [](py::object source) {
+    m.def("validation_pobs", [](py::object source, const std::string& ties_method) {
+        if (ties_method != "ordinal") {
+            throw py::value_error("ties_method must be 'ordinal'; historical tie permutations are not supported");
+        }
         const py::array values = py::array::ensure(source);
         if (!values) {
             throw py::type_error("data must be a real numeric array");
@@ -117,7 +120,7 @@ void bind_validation(py::module_& m) {
         case 'f': return pobs_array<double>(values);
         default: throw py::type_error("data must be a real numeric array");
         }
-    }, py::arg("values"));
+    }, py::arg("values"), py::arg("ties_method") = "ordinal");
 
     m.def(
         "validation_objective_is_invalid",

@@ -1,5 +1,6 @@
 #include "scar/copula/multivariate/correlation/parameterization.hpp"
 
+#include "scar/copula/model_statistics.hpp"
 #include "scar/copula/transforms.hpp"
 #include "scar/detail/linalg.hpp"
 
@@ -47,44 +48,19 @@ double kendall_tau_b_impl(
     std::size_t first,
     std::size_t second) {
 
-    long double numerator = 0.0L;
-    std::uint64_t tied_first = 0;
-    std::uint64_t tied_second = 0;
     const std::size_t rows = observations.n_obs;
-    for (std::size_t left = 0; left < rows; ++left) {
-        const double left_first = observations.row(left)[first];
-        const double left_second = observations.row(left)[second];
-        for (std::size_t right = left + 1; right < rows; ++right) {
-            const double first_difference =
-                left_first - observations.row(right)[first];
-            const double second_difference =
-                left_second - observations.row(right)[second];
-            if (first_difference == 0.0) {
-                ++tied_first;
-            }
-            if (second_difference == 0.0) {
-                ++tied_second;
-            }
-            if (first_difference != 0.0 && second_difference != 0.0) {
-                numerator +=
-                    (first_difference > 0.0) == (second_difference > 0.0)
-                    ? 1.0L
-                    : -1.0L;
-            }
-        }
+    std::vector<double> first_values(rows);
+    std::vector<double> second_values(rows);
+    for (std::size_t row = 0; row < rows; ++row) {
+        first_values[row] = observations.row(row)[first];
+        second_values[row] = observations.row(row)[second];
     }
-    const long double pair_count =
-        static_cast<long double>(rows)
-        * static_cast<long double>(rows - 1) / 2.0L;
-    const long double first_count =
-        pair_count - static_cast<long double>(tied_first);
-    const long double second_count =
-        pair_count - static_cast<long double>(tied_second);
-    if (!(first_count > 0.0L) || !(second_count > 0.0L)) {
-        return std::numeric_limits<double>::quiet_NaN();
-    }
-    return static_cast<double>(
-        numerator / std::sqrt(first_count * second_count));
+    // Share the O(T log T) inversion-count implementation, including marginal
+    // and joint tie corrections, with the statistics and vine APIs.
+    const auto result = kendall_tau(
+        {first_values.data(), rows}, {second_values.data(), rows});
+    return result.is_ok() ? result.value
+        : std::numeric_limits<double>::quiet_NaN();
 }
 
 }  // namespace

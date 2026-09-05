@@ -107,12 +107,13 @@ def _dynamic_fit_kwargs(method):
     if method == "mle":
         return {"gtol": 1e-2, "maxiter": 100, "maxfun": 500}
     if method == "gas":
-        return {"maxiter": 1, "maxfun": 8}
+        return {"gtol": 1e-2, "maxiter": 150, "maxfun": 2000}
     return {
         "K": 12,
         "grid_range": 3.0,
-        "maxiter": 1,
-        "maxfun": 8,
+        "gtol": 1e-2,
+        "maxiter": 150,
+        "maxfun": 2000,
         "transition_method": "matrix",
         "adaptive": False,
     }
@@ -130,11 +131,8 @@ def _assert_dynamic_bootstrap_parallel_parity(
         bootstrap=True,
         n_bootstrap=2,
         bootstrap_refit=bootstrap_refit,
-        bootstrap_fit_kwargs=(
-            {"gtol": 1e-2, "maxiter": 100, "maxfun": 500}
-            if str(fit_result.method).upper() == "MLE"
-            else {"maxiter": 1, "maxfun": 8}
-        ),
+        bootstrap_fit_kwargs={
+            "gtol": 1e-2, "maxiter": 150, "maxfun": 2000},
         rng=930,
     )
     sequential = gof_test(model, u, n_jobs=1, **kwargs)

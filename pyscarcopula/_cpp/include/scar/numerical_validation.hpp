@@ -45,7 +45,7 @@ struct ClipResult {
 };
 
 ClipResult clip_open_unit(DoubleView values, double epsilon);
-/// Column-wise ordinal ranks / (rows + 1), with ties in row order and NaNs last.
+/// Successive ranks / (rows + 1); equal values retain input row order.
 std::vector<double> pseudo_observations(
     DoubleView values, std::size_t rows, std::size_t columns);
 std::vector<double> pseudo_observations(

@@ -22,6 +22,7 @@ constexpr std::size_t kScalarAccumulatorCount = 4;
 struct WorkerResult {
     bool ran = false;
     std::int64_t failure_index = -1;
+    std::uint64_t ppf_exact_values = 0;
 };
 
 bool accumulate_tile(
@@ -249,8 +250,6 @@ FactorStudentGridResult factor_student_log_pdf_and_dlog_ddf_grid(
         cells, std::numeric_limits<double>::quiet_NaN());
     result.dlog_ddf.assign(
         cells, std::numeric_limits<double>::quiet_NaN());
-    result.ppf_exact_values =
-        static_cast<std::uint64_t>(ppf_values);
 
     const bool use_cell_parallelism =
         n_threads > 1
@@ -315,6 +314,15 @@ FactorStudentGridResult factor_student_log_pdf_and_dlog_ddf_grid(
                 static_cast<unsigned char>(1));
             const std::size_t row = cell / grid_size;
             const std::size_t grid = cell % grid_size;
+            // Softplus can map a long negative state-grid tail to exactly
+            // the same representable df. Reuse the exact density and df
+            // score; the state derivative is applied separately by callers.
+            if (grid > 0 && df_grid[grid] == df_grid[grid - 1]) {
+                result.log_pdf[cell] = result.log_pdf[cell - 1];
+                result.dlog_ddf[cell] = result.dlog_ddf[cell - 1];
+                continue;
+            }
+            result.ppf_exact_values += static_cast<std::uint64_t>(dimension);
             const double row_df = df_grid[grid];
             double marginal_constant = 0.0;
             double marginal_constant_derivative = 0.0;
@@ -418,6 +426,16 @@ FactorStudentGridResult factor_student_log_pdf_and_dlog_ddf_grid(
                     static_cast<std::size_t>(cell_index);
                 const std::size_t row = cell / grid_size;
                 const std::size_t grid = cell % grid_size;
+                // A worker only reads its own completed predecessor. This
+                // keeps the shortcut deterministic without synchronization.
+                if (cell_index > begin && grid > 0
+                    && df_grid[grid] == df_grid[grid - 1]) {
+                    result.log_pdf[cell] = result.log_pdf[cell - 1];
+                    result.dlog_ddf[cell] = result.dlog_ddf[cell - 1];
+                    continue;
+                }
+                worker.ppf_exact_values +=
+                    static_cast<std::uint64_t>(dimension);
                 if (!evaluate_cell_sequential_tiles(
                         correlation,
                         observations + row * dimension,
@@ -438,6 +456,7 @@ FactorStudentGridResult factor_student_log_pdf_and_dlog_ddf_grid(
             continue;
         }
         ++result.parallel_blocks;
+        result.ppf_exact_values += worker.ppf_exact_values;
         if (worker.failure_index >= 0
             && (result.failure.index < 0
                 || worker.failure_index < result.failure.index)) {

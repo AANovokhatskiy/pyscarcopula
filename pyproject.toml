@@ -8,6 +8,7 @@ version = "0.22.0"
 description = "Python library for bivariate, multivariate, vine, and stochastic copula models"
 readme = "README.md"
 license = "MIT"
+license-files = ["LICENSE.txt"]
 requires-python = ">=3.10"
 authors = [
     {name = "Alexey Novokhatskiy", email = "aanovokhatskiy@gmail.com"},

@@ -6,6 +6,7 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <stdexcept>
 
 namespace scar_internal {
 
@@ -106,15 +107,6 @@ double invert_positive_tau(
     return 0.5 * (lower + upper);
 }
 
-double joe_log_B(double log_q0, double log_q1) {
-    double q0 = 0.0;
-    if (log_q0 > -745.0) {
-        q0 = std::exp(log_q0);
-    }
-    const double q0_clipped = std::min(std::max(q0, 0.0), 1.0);
-    const double log_one_minus_q0 = std::log1p(-q0_clipped);
-    return logsumexp(log_q0, log_one_minus_q0 + log_q1);
-}
 
 }  // namespace
 
@@ -328,83 +320,164 @@ void joe_fill_density_gradient_grid_row(
         gradient_row);
 }
 
-double joe_h_unrotated(double u, double v, double r) {
-    const double u_clipped = std::min(std::max(u, kHEps), 1.0 - kHEps);
-    const double v_clipped = std::min(std::max(v, kHEps), 1.0 - kHEps);
-    if (r < 1.0 + 1e-8) {
-        return u_clipped;
-    }
+namespace {
 
-    const double log_1mu = std::log(1.0 - u_clipped);
-    const double log_1mv = std::log(1.0 - v_clipped);
-    const double log_qu = r * log_1mu;
-    const double log_qv = r * log_1mv;
-    const double log_B = joe_log_B(log_qu, log_qv);
-    if (!std::isfinite(log_B)) {
-        return u_clipped;
-    }
-
-    const double log_h =
-        log1mexp(-log_qu)
-        + (1.0 / r - 1.0) * log_B
-        + log_qv
-        - log_1mv;
-    const double log_eps = std::log(kHEps);
-    const double log_one_minus_eps = std::log(1.0 - kHEps);
-    if (log_h <= log_eps) {
-        return kHEps;
-    }
-    if (log_h >= log_one_minus_eps) {
-        return 1.0 - kHEps;
-    }
-    if (!std::isfinite(log_h)) {
-        return u_clipped;
-    }
-    return std::exp(log_h);
+bool joe_conditional_domain(double first, double second, double r) {
+    return std::isfinite(first) && std::isfinite(second) && std::isfinite(r)
+        && first >= 0.0 && first <= 1.0 && second >= 0.0 && second <= 1.0
+        && r >= 1.0;
 }
 
-double joe_h_inverse_with_options(
-    double q, double given, double r,
-    const scar::HInverseOptions& options) {
-    const double q_clipped = std::min(std::max(q, kHEps), 1.0 - kHEps);
-    const double given_clipped = std::min(std::max(given, kHEps), 1.0 - kHEps);
-    if (r < 1.0 + 1e-8) {
-        return q_clipped;
-    }
 
-    double lo = kHEps;
-    double hi = 1.0 - kHEps;
-    double t = q_clipped;
-    for (int j = 0; j < options.max_iterations; ++j) {
-        t = std::min(std::max(t, lo), hi);
-        const double h_val = joe_h_unrotated(t, given_clipped, r);
-        const double err = h_val - q_clipped;
-        if (std::abs(err) < options.tolerance) {
-            break;
-        }
-        if (err > 0.0) {
-            hi = t;
-        } else {
-            lo = t;
-        }
 
-        const double dt = std::max(t * 1e-7, 1e-12);
-        const double t_p = std::min(t + dt, 1.0 - kHEps);
-        const double dh_dt = (joe_h_unrotated(t_p, given_clipped, r) - h_val)
-            / std::max(t_p - t, 1e-300);
-        const double newton = t - err / dh_dt;
-        if (std::isfinite(newton) && std::abs(dh_dt) > 1e-300
-            && newton > lo && newton < hi) {
-            t = newton;
-        } else {
-            t = 0.5 * (lo + hi);
-        }
+
+
+
+
+struct JoeConditionalValue {
+    double log_negative_log_h;
+    double derivative;
+};
+
+// x = -log(1-u), y = -log(1-v), t = theta*x, s = theta*y.
+// log(h) = log(1-exp(-t)) - beta*softplus(s-t+log(1-exp(-s))).
+// Work with log(-log(h)) so both probability tails survive underflow.
+JoeConditionalValue joe_conditional_value(double z, double y, double r, double exact_x = -1.0) {
+    const double log_t = std::log(r) + z;
+    const double x = exact_x >= 0.0 ? exact_x : std::exp(z);
+    const double t = r * x;
+    const double beta = (r - 1.0) / r;
+    const double delta = r * (y - x) + log1mexp(r * y);
+    const double first = log_t < -36.0 ? log_t : log1mexp(t);
+    const double log_first = t > 36.0 ? -t : std::log(-first);
+    const double log_second = std::log(beta)
+        + (delta < -36.0 ? delta : std::log(logsumexp(0.0, delta)));
+    const double value = logsumexp(log_first, log_second);
+    const double log_first_derivative = log_t < -36.0
+        ? 0.0 : log_t - t - first;
+    const double log_second_derivative = std::log(beta)
+        + log_t - logsumexp(0.0, -delta);
+    const double derivative = -std::exp(
+        logsumexp(log_first_derivative, log_second_derivative) - value);
+    return {value, derivative};
+}
+
+double joe_inverse_output(double z, bool reflected) {
+    const double x = std::exp(z);
+    return reflected ? std::exp(-x) : -std::expm1(-x);
+}
+
+double joe_inverse_impl(double q, double given, double r,
+                        const scar::HInverseOptions& options, bool reflected) {
+    if (!joe_conditional_domain(q, given, r)
+        || !std::isfinite(options.tolerance) || options.tolerance <= 0.0
+        || options.max_iterations <= 0) return std::numeric_limits<double>::quiet_NaN();
+    if (q == 0.0 || q == 1.0 || r == 1.0) return q;
+    if (given == 1.0) return reflected ? 0.0 : 1.0;
+    const double log_q = reflected ? std::log1p(-q) : std::log(q);
+    const double log_survival = reflected ? std::log(q) : std::log1p(-q);
+    if (given == 0.0) {
+        return reflected ? std::exp(log_survival / r)
+                         : -std::expm1(log_survival / r);
     }
-    return std::min(std::max(t, kHEps), 1.0 - kHEps);
+    const double y = -std::log1p(-given);
+    const double target = std::log(-log_q);
+    // h <= 1-exp(-t), and h <= (1+exp(s-t)*(1-exp(-s)))^(-beta).
+    // These give two rigorous lower bounds. The upper bound ensures h >= q.
+    double lo = std::log(-log_survival) - std::log(r);
+    const double upper_x = y + (0.6931471805599453094 - log_survival) / r;
+    double hi = std::log(upper_x);
+    const double c = -log_q / ((r - 1.0) / r);
+    const double lower_x = y + (log1mexp(r * y)
+        - (c + log1mexp(c))) / r;
+    if (lower_x > 0.0) lo = std::max(lo, std::log(lower_x));
+    if (lo >= hi) {
+        // The certified bounds coincide at floating-point resolution.
+        if (lower_x == y && upper_x == y) return reflected ? 1.0 - given : given;
+        return joe_inverse_output(hi, reflected);
+    }
+    const double guess = y + (log_q - log_survival) / r;
+    double z = guess > 0.0 ? std::log(guess) : lo;
+    z = std::clamp(z, lo, hi);
+    const double tolerance = std::min(options.tolerance, 2e-14);
+    for (int iteration = 0; iteration < options.max_iterations; ++iteration) {
+        const auto value = joe_conditional_value(z, y, r);
+        const double error = value.log_negative_log_h - target;
+        const double output = joe_inverse_output(z, reflected);
+        if (std::abs(error) <= tolerance) return output;
+        if (error < 0.0) hi = z;
+        else lo = z;
+        if (std::nextafter(lo, std::numeric_limits<double>::infinity()) >= hi) {
+            return output;
+        }
+        const double output_lo = joe_inverse_output(lo, reflected);
+        const double output_hi = joe_inverse_output(hi, reflected);
+        if (std::nextafter(std::min(output_lo, output_hi), 1.0)
+            >= std::max(output_lo, output_hi)) return output;
+
+        double next = z - error / value.derivative;
+        if (std::isfinite(next) && std::abs(next - z) < 1e-12 * std::max(1.0, std::abs(z))) {
+            // A large theta can make the target fall between adjacent roots;
+            // certify that bracket instead of demanding an impossible residual.
+            // Near z=0 many adjacent z values exponentiate to the same x, so
+            // certify adjacency in x as well as in the logarithmic coordinate.
+            const double x = std::exp(z);
+            const double x_before = std::nextafter(x, 0.0);
+            const double x_after = std::nextafter(x, std::numeric_limits<double>::infinity());
+            if (x_before > 0.0
+                && joe_conditional_value(std::log(x_after), y, r, x_after).log_negative_log_h <= target
+                && joe_conditional_value(std::log(x_before), y, r, x_before).log_negative_log_h >= target) return output;
+            const double before = std::nextafter(z, -std::numeric_limits<double>::infinity());
+            const double after = std::nextafter(z, std::numeric_limits<double>::infinity());
+            if (joe_conditional_value(after, y, r).log_negative_log_h <= target
+                && joe_conditional_value(before, y, r).log_negative_log_h >= target) return output;
+        }
+        if (!std::isfinite(next) || next <= lo || next >= hi) next = lo + 0.5 * (hi - lo);
+        z = next;
+    }
+    throw std::runtime_error("Joe conditional inverse did not converge within max_iterations");
+}
+
+}  // namespace
+
+double joe_h_unrotated(double u, double v, double r) {
+    if (!joe_conditional_domain(u, v, r)) return std::numeric_limits<double>::quiet_NaN();
+    if (u == 0.0 || u == 1.0 || r == 1.0) return u;
+    if (v == 1.0) return 0.0;
+    if (v == 0.0) return -std::expm1(r * std::log1p(-u));
+    const double x = -std::log1p(-u);
+    const double value = joe_conditional_value(
+        std::log(x), -std::log1p(-v), r, x).log_negative_log_h;
+    return std::exp(-std::exp(value));
+}
+
+double joe_h_reflected(double u, double v, double r) {
+    if (!joe_conditional_domain(u, v, r)) return std::numeric_limits<double>::quiet_NaN();
+    if (u == 0.0 || u == 1.0 || r == 1.0) return u;
+    if (v == 1.0) return 1.0;
+    if (v == 0.0) return std::exp(r * std::log(u));
+    const double x = -std::log(u);
+    const double value = joe_conditional_value(
+        std::log(x), -std::log1p(-v), r, x).log_negative_log_h;
+    return -std::expm1(-std::exp(value));
+}
+
+double joe_h_inverse_with_options(double q, double given, double r,
+                                  const scar::HInverseOptions& options) {
+    return joe_inverse_impl(q, given, r, options, false);
 }
 
 double joe_h_inverse_unrotated(double q, double given, double r) {
-    return joe_h_inverse_with_options(q, given, r, {1e-10, 50});
+    return joe_inverse_impl(q, given, r, {1e-10, 50}, false);
+}
+
+double joe_h_inverse_reflected_with_options(double q, double given, double r,
+                                            const scar::HInverseOptions& options) {
+    return joe_inverse_impl(q, given, r, options, true);
+}
+
+double joe_h_inverse_reflected(double q, double given, double r) {
+    return joe_inverse_impl(q, given, r, {1e-10, 50}, true);
 }
 
 }  // namespace scar_internal
@@ -423,6 +496,9 @@ const PairKernelFunctions& joe_kernel() noexcept {
         scar_internal::joe_fill_density_grid_row,
         scar_internal::joe_fill_density_gradient_grid_row,
         scar_internal::joe_h_inverse_with_options,
+        scar_internal::joe_h_reflected,
+        scar_internal::joe_h_inverse_reflected,
+        scar_internal::joe_h_inverse_reflected_with_options,
     };
     return functions;
 }

@@ -346,6 +346,26 @@ def test_tiled_grid_cell_parallelism_is_thread_exact():
     assert parallel.diagnostics["parallel_blocks"] == 4
 
 
+@pytest.mark.parametrize("rows,dimension_tile", [(8, 7), (1, 4)])
+def test_repeated_grid_parameters_reuse_exact_quantiles(rows, dimension_tile):
+    factor, observations = _problem(
+        dimension=40, rank=4, rows=rows, seed=12116)
+    evaluator = FactorStudentEvaluator(factor, observations)
+    grid = np.array([2.000001, 2.000001, 2.000001, 7., 7., 12.])
+    unique, index = np.unique(grid, return_inverse=True)
+    reference = evaluator.evaluate_grid(unique, dimension_tile=dimension_tile)
+    sequential = evaluator.evaluate_grid(grid, dimension_tile=dimension_tile)
+    parallel = evaluator.evaluate_grid(
+        grid, dimension_tile=dimension_tile, n_threads=4)
+    for result in (sequential, parallel):
+        np.testing.assert_array_equal(result.log_pdf, reference.log_pdf[:, index])
+        np.testing.assert_array_equal(result.dlog_ddf, reference.dlog_ddf[:, index])
+        assert result.diagnostics["ppf_exact_values"] < (
+            rows * len(grid) * factor.dimension)
+    assert sequential.diagnostics["ppf_exact_values"] == (
+        rows * len(unique) * factor.dimension)
+
+
 def test_tiled_grid_dimension_parallelism_is_thread_exact():
     factor, observations = _problem(
         dimension=128, rank=4, rows=1, seed=1212)

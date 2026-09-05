@@ -748,16 +748,19 @@ void bind_copula(py::module_& m) {
            py::array_t<double, py::array::c_style | py::array::forcecast>
                uniforms,
            py::array_t<double, py::array::c_style | py::array::forcecast> r) {
-            const scar::Observations uniform_values =
-                observations_from_array(uniforms);
+            if (uniforms.ndim() != 2 || uniforms.shape(1) != 2) {
+                throw std::invalid_argument("uniforms must have shape (n, 2)");
+            }
             const std::vector<double> parameters = vector_from_array(r);
-            scar::Observations result;
+            py::array_t<double> result({uniforms.shape(0), py::ssize_t(2)});
+            const double* input = uniforms.data();
+            double* output = result.mutable_data();
+            const auto n = static_cast<std::size_t>(uniforms.shape(0));
             {
                 py::gil_scoped_release release;
-                result = scar::copula_sample_from_uniforms(
-                    copula, uniform_values, parameters);
+                scar::copula_sample_from_uniforms_into(copula, input, n, parameters, output);
             }
-            return pair_observations_to_array(result);
+            return result;
         },
         py::arg("copula"),
         py::arg("uniforms"),

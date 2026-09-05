@@ -141,6 +141,11 @@ Observations copula_sample_from_uniforms(
     const Observations& uniforms,
     const std::vector<double>& r);
 
+/// Contiguous variant; input and output contain two values per observation.
+void copula_sample_from_uniforms_into(
+    const CopulaSpec& spec, const double* uniforms, std::size_t n,
+    const std::vector<double>& r, double* output);
+
 Observations copula_conditional_sample_from_uniforms(
     const CopulaSpec& spec,
     const std::vector<double>& uniforms,
@@ -149,10 +154,8 @@ Observations copula_conditional_sample_from_uniforms(
     double given_value,
     const HInverseOptions* options = nullptr);
 
-/// Reproduce the family-specific pre-refactor sampling transform from
-/// caller-owned RNG draws.  ``draws`` always has two columns; ``auxiliary``
-/// carries family-specific RNG results (Clayton frailty or Gumbel angle and
-/// exponential uniform) and is empty for the other pair families.
+/// Gaussian normal-draw transform or pair conditional inversion.
+/// The compatibility auxiliary argument must be empty.
 Observations copula_sample_from_rng_draws(
     const CopulaSpec& spec,
     const Observations& draws,

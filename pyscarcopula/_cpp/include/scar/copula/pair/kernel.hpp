@@ -47,6 +47,12 @@ struct PairKernelFunctions {
     PairDensityGridKernel fill_density_grid_row = nullptr;
     PairDensityGradientGridKernel fill_density_gradient_grid_row = nullptr;
     PairConfiguredInverseKernel inverse_h_with_options = nullptr;
+    // Tail-preserving forms avoid rounding 1-q to one during rotation.
+    // h_reflected(u,v) = 1-h(1-u,v);
+    // inverse_h_reflected(q,v) = 1-inverse_h(1-q,v).
+    PairConditionalKernel h_reflected = nullptr;
+    PairConditionalKernel inverse_h_reflected = nullptr;
+    PairConfiguredInverseKernel inverse_h_reflected_with_options = nullptr;
 };
 
 }  // namespace scar::copula::pair

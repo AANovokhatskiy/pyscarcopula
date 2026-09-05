@@ -116,7 +116,7 @@ DEFAULT_GAS_OPTIMIZER = LBFGSBConfig(
     maxfun=4000,
     maxiter=1000,
     maxls=100,
-    eps=1e-5,
+    eps=1e-8,
 )
 DEFAULT_SCAR_OPTIMIZER = LBFGSBConfig(
     gtol=1e-3,
@@ -148,7 +148,7 @@ DEFAULT_STOCHASTIC_STUDENT_GAS_OPTIMIZER = LBFGSBConfig(
     maxfun=1000,
     maxiter=1000,
     maxls=50,
-    eps=1e-5,
+    eps=1e-8,
 )
 DEFAULT_STOCHASTIC_STUDENT_SCAR_OPTIMIZER = LBFGSBConfig(
     gtol=1e-3,

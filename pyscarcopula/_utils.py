@@ -57,7 +57,7 @@ def broadcast(u1, u2, r):
 # Pseudo-observations
 # ══════════════════════════════════════════════════════════════════
 
-def pobs(data):
+def pobs(data, *, ties_method="ordinal"):
     """Pseudo-observations via rank transform.
 
     u_ij = rank(x_ij) / (n + 1), so u in (0, 1).
@@ -67,12 +67,14 @@ def pobs(data):
     Parameters
     ----------
     data : ndarray (T, d)
+    ties_method : {"ordinal"}, default "ordinal"
+        Equal values receive successive ranks in their input row order.
 
     Returns
     -------
     u : ndarray (T, d), values in (0, 1)
     """
-    return native_validation.pobs(data)
+    return native_validation.pobs(data, ties_method=ties_method)
 
 
 # ══════════════════════════════════════════════════════════════════

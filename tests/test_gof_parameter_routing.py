@@ -142,20 +142,16 @@ def test_dynamic_multivariate_gof_rejects_non_ou_process(kind, wrong_method):
 
 
 @pytest.mark.parametrize("n_jobs", [1, 2])
-def test_bootstrap_keeps_failed_refit_diagnostics(n_jobs):
+def test_bootstrap_rejects_failed_refits_after_bounded_retry(n_jobs):
     u = _observations()
     model = BivariateGaussianCopula()
     result = model.fit(u, to_pobs=False, method="mle")
 
-    actual = gof_test(
-        model, u, to_pobs=False, fit_result=result, bootstrap=True,
-        n_bootstrap=2, bootstrap_fit_kwargs={"maxiter": 1, "maxfun": 2},
-        rng=221, n_jobs=n_jobs)
-
-    assert any(not row["bootstrap_fit_success"]
-               for row in actual.bootstrap_diagnostics)
-    assert actual.n_bootstrap == len(actual.bootstrap_statistics) == 2
-    assert np.isfinite(actual.pvalue)
+    with pytest.raises(RuntimeError, match="refit did not converge after 2 attempts"):
+        gof_test(
+            model, u, to_pobs=False, fit_result=result, bootstrap=True,
+            n_bootstrap=2, bootstrap_fit_kwargs={"maxiter": 1, "maxfun": 2},
+            rng=221, n_jobs=n_jobs)
 
 
 @pytest.mark.parametrize("bad", [
@@ -267,7 +263,9 @@ def test_bootstrap_constructor_overrides_reach_refit_strategy(
     def capture(self, copula, u, **kwargs):
         seen.append({name: getattr(self, name) for name in options})
         assert not set(options).intersection(kwargs)
-        return original(self, copula, u, **kwargs)
+        # This checks constructor routing with an intentionally tiny fit
+        # budget; convergence/failure handling has separate regression tests.
+        return replace(original(self, copula, u, **kwargs), success=True)
 
     monkeypatch.setattr(strategy_class, "fit", wraps(original)(capture))
     actual = gof_test(
@@ -315,7 +313,7 @@ def test_gas_bootstrap_refit_resolves_score_step_at_native_objective(
     def capture_fit(self, copula, u, **kwargs):
         result = original_fit(self, copula, u, **kwargs)
         fitted_steps.append(result.score_eps)
-        return result
+        return replace(result, success=True)
 
     monkeypatch.setattr(
         native, "negative_log_likelihood_and_gradient", capture_objective)
@@ -366,6 +364,19 @@ def test_bootstrap_sampling_delivers_resolved_threads_to_native(
         return original(*args, **kwargs)
 
     monkeypatch.setattr(native, consumer, capture)
+    # Keep the test focused on sampling thread routing. Small-budget refit
+    # endpoints are intentional here and are not an optimizer acceptance test.
+    import pyscarcopula.stattests as st
+
+    def routing_refit(original_refit):
+        def wrapper(*args, **kwargs):
+            fitted_model, fitted_result = original_refit(*args, **kwargs)
+            return fitted_model, replace(fitted_result, success=True)
+        return wrapper
+
+    for name, adapter in list(st._BOOTSTRAP_ADAPTERS.items()):
+        monkeypatch.setitem(st._BOOTSTRAP_ADAPTERS, name, replace(
+            adapter, refit=routing_refit(adapter.refit)))
     fit_kwargs = {"config": NumericalConfig(n_threads=2)}
     if kind != "gaussian":
         fit_kwargs["maxiter"] = 2

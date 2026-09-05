@@ -44,6 +44,7 @@ bool build_ou_grid(
     }
 
     int K_adaptive = K;
+    double K_requested = static_cast<double>(K);
     if (adaptive) {
         const double dz_target = sigma_cond / static_cast<double>(pts_per_sigma);
         const double K_min_value =
@@ -51,6 +52,7 @@ bool build_ou_grid(
         if (!std::isfinite(K_min_value) || K_min_value < 2.0) {
             return false;
         }
+        K_requested = std::max(K_requested, K_min_value);
         if (K_min_value > static_cast<double>(kMaxGridSize)
             || K_min_value > static_cast<double>(INT_MAX)) {
             if (max_K <= 0) {
@@ -74,6 +76,7 @@ bool build_ou_grid(
 
     grid = OuGrid{};
     grid.K = K_eff;
+    grid.K_requested = K_requested;
     grid.rho = rho;
     grid.sigma = sigma;
     grid.sigma_cond = sigma_cond;

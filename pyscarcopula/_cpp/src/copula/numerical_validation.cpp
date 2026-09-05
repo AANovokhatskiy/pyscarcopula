@@ -52,7 +52,7 @@ std::vector<double> rank_observations(
     const double denominator = static_cast<double>(rows) + 1.0;
     for (std::size_t column = 0; column < columns; ++column) {
         std::iota(order.begin(), order.end(), std::size_t{0});
-        std::sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
+        const auto less = [&](std::size_t a, std::size_t b) {
             const T left = values[a * columns + column];
             const T right = values[b * columns + column];
             if constexpr (std::is_floating_point_v<T>) {
@@ -62,8 +62,13 @@ std::vector<double> rank_observations(
             }
             if (left < right) return true;
             if (right < left) return false;
+            // Row index is the explicit secondary key, including for NaNs.
             return a < b;
-        });
+        };
+        // Sort row indices, then scatter ranks back into their original rows.
+        // The total (value, row) ordering makes ties independent of the
+        // standard library's sorting algorithm and leaves the input untouched.
+        std::sort(order.begin(), order.end(), less);
         for (std::size_t rank = 0; rank < rows; ++rank) {
             output[order[rank] * columns + column] =
                 (static_cast<double>(rank) + 1.0) / denominator;

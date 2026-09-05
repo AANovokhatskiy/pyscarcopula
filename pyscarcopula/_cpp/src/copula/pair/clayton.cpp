@@ -208,110 +208,133 @@ void clayton_fill_density_gradient_grid_row(
         gradient_row);
 }
 
+namespace {
+
+double clayton_log_expm1(double value) {
+    return value > 0.6931471805599453
+        ? value + std::log1p(-std::exp(-value))
+        : std::log(std::expm1(value));
+}
+
+}  // namespace
+
+double clayton_log_h_unrotated(
+    double u, double v, double r, bool reflected = false) {
+    if (!std::isfinite(r) || r < 0.0 || !std::isfinite(u)
+        || !std::isfinite(v) || u < 0.0 || u > 1.0 || v < 0.0 || v > 1.0) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    if (u == 0.0 || u == 1.0 || r < 1e-100) {
+        return reflected ? std::log1p(-u) : std::log(u);
+    }
+    if (v == 0.0) {
+        return 0.0;
+    }
+    const double x = reflected ? -std::log1p(-u) : -std::log(u);
+    const double y = -std::log(v);
+    double log_h;
+    if (r < 1e-6) {
+        // log(1 + exp(-r*y) * expm1(r*x)) / r remains accurate
+        // near independence, where subtracting two logarithms would not.
+        const double rx = r * x;
+        const double multiplier = std::exp(-r * y);
+        const double exponential_ratio = rx == 0.0 ? 1.0 : std::expm1(rx) / rx;
+        const double increment = multiplier * std::expm1(rx);
+        const double logarithm_ratio = increment == 0.0
+            ? 1.0 : std::log1p(increment) / increment;
+        log_h = -(1.0 + r) * x * multiplier
+            * exponential_ratio * logarithm_ratio;
+    } else {
+        // Factor v^(-r) out of the generator sum before taking logs.
+        // Form r*(x-y), never r*x-r*y: either term could overflow.
+        const double rx = r * x;
+        const double correction = x > 50.0 / r
+            ? std::log1p(-std::exp(-rx))
+            : (rx == 0.0 ? std::log(r) + std::log(x)
+                         : clayton_log_expm1(rx) - rx);
+        const double term = r * (x - y) + correction;
+        if (term < -36.0) {
+            log_h = -std::exp(term + std::log1p(r) - std::log(r));
+        } else {
+            const double log_sum = term > 50.0
+                ? term : std::log1p(std::exp(term));
+            log_h = -(1.0 + 1.0 / r) * log_sum;
+        }
+    }
+    return std::min(log_h, 0.0);
+}
+
 double clayton_h_unrotated(double u, double v, double r) {
-    const double u_clipped = std::min(std::max(u, kHEps), 1.0 - kHEps);
-    const double v_clipped = std::min(std::max(v, kHEps), 1.0 - kHEps);
+    return std::exp(clayton_log_h_unrotated(u, v, r));
+}
 
-    if (r < 1e-8) {
-        return u_clipped;
-    }
-
-    const double log_u = std::log(u_clipped);
-    const double log_v = std::log(v_clipped);
-    const double a = -r * log_u;
-    const double b = -r * log_v;
-    const double log_max = std::max(a, b);
-    const double log_min = std::min(a, b);
-    const double correction = std::exp(log_min - log_max) - std::exp(-log_max);
-    if (correction <= -1.0) {
-        return u_clipped;
-    }
-
-    const double log_s = log_max + std::log1p(correction);
-    const double log_h = (-r - 1.0) * log_v + (-1.0 - 1.0 / r) * log_s;
-    const double log_eps = std::log(kHEps);
-    const double log_one_minus_eps = std::log(1.0 - kHEps);
-    if (log_h <= log_eps) {
-        return kHEps;
-    }
-    if (log_h >= log_one_minus_eps) {
-        return 1.0 - kHEps;
-    }
-    return std::exp(log_h);
+double clayton_h_reflected(double u, double v, double r) {
+    return -std::expm1(clayton_log_h_unrotated(u, v, r, true));
 }
 
 void clayton_h_pair_unrotated(
-    double u,
-    double v,
-    double r,
-    double& h_uv,
-    double& h_vu) {
+    double u, double v, double r, double& h_uv, double& h_vu) {
+    h_uv = clayton_h_unrotated(u, v, r);
+    h_vu = clayton_h_unrotated(v, u, r);
+}
 
-    const double u_clipped = std::min(std::max(u, kHEps), 1.0 - kHEps);
-    const double v_clipped = std::min(std::max(v, kHEps), 1.0 - kHEps);
-
-    if (r < 1e-8) {
-        h_uv = u_clipped;
-        h_vu = v_clipped;
-        return;
+double clayton_inverse_log_value(double log_q, double given, double r) {
+    const double log_given = std::log(given);
+    const double b = -(r / (1.0 + r)) * log_q;
+    if (r < 1e-6) {
+        const double multiplier = std::exp(-r * log_given);
+        const double exponential_ratio = b == 0.0 ? 1.0 : std::expm1(b) / b;
+        const double increment = multiplier * std::expm1(b);
+        const double logarithm_ratio = increment == 0.0
+            ? 1.0 : std::log1p(increment) / increment;
+        // Divide out r algebraically before an expm1 increment can underflow.
+        return (log_q / (1.0 + r)) * multiplier
+            * exponential_ratio * logarithm_ratio;
     }
-
-    const double log_u = std::log(u_clipped);
-    const double log_v = std::log(v_clipped);
-    const double a = -r * log_u;
-    const double b = -r * log_v;
-    const double log_max = std::max(a, b);
-    const double log_min = std::min(a, b);
-    const double correction = std::exp(log_min - log_max) - std::exp(-log_max);
-    if (correction <= -1.0) {
-        h_uv = u_clipped;
-        h_vu = v_clipped;
-        return;
+    const double log_increment = b == 0.0
+        ? std::log(-log_q) + std::log(r) - std::log1p(r)
+        : clayton_log_expm1(b);
+    // Compare before multiplying r by -log(given), which may overflow.
+    if (-log_given > (50.0 - log_increment) / r) {
+        return log_given - log_increment / r;
     }
-
-    const double log_s = log_max + std::log1p(correction);
-    const double common = (-1.0 - 1.0 / r) * log_s;
-    const double log_eps = std::log(kHEps);
-    const double log_one_minus_eps = std::log(1.0 - kHEps);
-
-    const double log_h_uv = (-r - 1.0) * log_v + common;
-    if (log_h_uv <= log_eps) {
-        h_uv = kHEps;
-    } else if (log_h_uv >= log_one_minus_eps) {
-        h_uv = 1.0 - kHEps;
-    } else {
-        h_uv = std::exp(log_h_uv);
+    const double term = -r * log_given + log_increment;
+    if (term < -36.0) {
+        // exp(term) itself may underflow while exp(term)/r is representable.
+        return -std::exp(term - std::log(r));
     }
-
-    const double log_h_vu = (-r - 1.0) * log_u + common;
-    if (log_h_vu <= log_eps) {
-        h_vu = kHEps;
-    } else if (log_h_vu >= log_one_minus_eps) {
-        h_vu = 1.0 - kHEps;
-    } else {
-        h_vu = std::exp(log_h_vu);
-    }
+    return -std::log1p(std::exp(term)) / r;
 }
 
 double clayton_h_inverse_unrotated(double q, double given, double r) {
-    const double q_clipped = std::min(std::max(q, kHEps), 1.0 - kHEps);
-    const double given_clipped = std::min(std::max(given, kHEps), 1.0 - kHEps);
+    if (!std::isfinite(r) || r < 0.0 || !std::isfinite(q)
+        || !std::isfinite(given) || q < 0.0 || q > 1.0
+        || given < 0.0 || given > 1.0) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    if (q == 0.0 || q == 1.0 || r < 1e-100) {
+        return q;
+    }
+    if (given == 0.0) {
+        return 0.0;
+    }
+    return std::exp(std::min(clayton_inverse_log_value(std::log(q), given, r), 0.0));
+}
 
-    if (r < 1e-8) {
-        return q_clipped;
+double clayton_h_inverse_reflected(double q, double given, double r) {
+    if (!std::isfinite(r) || r < 0.0 || !std::isfinite(q)
+        || !std::isfinite(given) || q < 0.0 || q > 1.0
+        || given < 0.0 || given > 1.0) {
+        return std::numeric_limits<double>::quiet_NaN();
     }
-
-    const double a = q_clipped * std::pow(given_clipped, r + 1.0);
-    if (a < kPdfEps) {
-        return kHEps;
+    if (q == 0.0 || q == 1.0 || r < 1e-100) {
+        return q;
     }
-    const double base =
-        std::pow(a, -r / (1.0 + r)) + 1.0 - std::pow(given_clipped, -r);
-    if (base < kPdfEps) {
-        return kHEps;
+    if (given == 0.0) {
+        return 1.0;
     }
-    const double value = std::pow(base, -1.0 / r);
-    return std::min(std::max(value, kHEps), 1.0 - kHEps);
+    return -std::expm1(std::min(
+        clayton_inverse_log_value(std::log1p(-q), given, r), 0.0));
 }
 
 double clayton_psi(double t, double r) {
@@ -333,6 +356,10 @@ const PairKernelFunctions& clayton_kernel() noexcept {
         scar_internal::clayton_h_inverse_unrotated,
         scar_internal::clayton_fill_density_grid_row,
         scar_internal::clayton_fill_density_gradient_grid_row,
+        nullptr,
+        scar_internal::clayton_h_reflected,
+        scar_internal::clayton_h_inverse_reflected,
+        nullptr,
     };
     return functions;
 }

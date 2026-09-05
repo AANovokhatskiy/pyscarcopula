@@ -29,6 +29,9 @@ struct LogLikResult {
     FailureContext failure{};
     std::vector<OuBackend> fallback_chain;
     int matrix_fallback_reason = SCAR_FALLBACK_NONE;
+    double K_requested = 0.0;
+    int K_effective = 0;
+    bool grid_was_capped = false;
 
     bool is_ok() const noexcept {
         return ok(status);
@@ -45,6 +48,9 @@ struct GradLogLikResult {
     std::vector<OuBackend> fallback_chain;
     int matrix_fallback_reason = SCAR_FALLBACK_NONE;
     std::vector<double> neg_corr_gradient;
+    double K_requested = 0.0;
+    int K_effective = 0;
+    bool grid_was_capped = false;
 
     bool is_ok() const noexcept {
         return ok(status);

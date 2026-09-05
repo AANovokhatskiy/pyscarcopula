@@ -1,7 +1,10 @@
 """Regression values for deterministic SCAR-TM-OU calculations."""
 
+from dataclasses import replace
+
 import numpy as np
 import pytest
+from scipy.special import ndtr
 
 from pyscarcopula.copula.clayton import ClaytonCopula
 from pyscarcopula.copula.gumbel import GumbelCopula
@@ -48,22 +51,24 @@ def _assert_close(actual, expected):
 
 
 @pytest.mark.parametrize(
-    ("copula", "expected"),
+    ("copula", "expected", "legacy_negative"),
     [
         (
             GumbelCopula(),
-            [1.825326483267322e-07, 0.2327475254143381,
-             0.00015166589262193968],
+            [-1.1229412496364802e-07, 0.2327475254639345,
+             0.00015166635329468494],
+            0.1495257769103261,
         ),
         (
             JoeCopula(),
-            [2.455314537472119e-07, 0.11272315528480627,
-             6.858395682600099e-05],
+            [-4.929566429418846e-08, 0.11272315530737549,
+             6.858418218949013e-05],
+            0.078448685578641,
         ),
     ],
 )
-def test_bivariate_scar_matrix_preserves_legacy_gradient_values(
-        copula, expected):
+def test_bivariate_scar_matrix_matches_untruncated_gradient_reference(
+        copula, expected, legacy_negative):
     observations = np.random.default_rng(20260831).uniform(
         0.01, 0.99, size=(64, 2))
     config = AutoTMConfig(
@@ -75,13 +80,36 @@ def test_bivariate_scar_matrix_preserves_legacy_gradient_values(
         grid_method="sparse",
     )
 
-    _, gradient = _cpp_scar_ou.neg_loglik_with_grad(
+    negative, gradient = _cpp_scar_ou.neg_loglik_with_grad(
         100.0, -3.25, 0.14, observations, copula, config)
 
-    # The 0.20.1 reference came from one Windows build. Windows CI also spans
-    # different compilers and math runtimes, so it needs the same numerical
-    # budget as Unix. Accumulated gradient cancellation magnifies ULP counts.
+    # These goldens come from the full dense transition, not a wider sparse
+    # tolerance. The 0.20.1 five-sigma cutoff omitted enough transition mass
+    # to reverse the sign of the very small kappa derivative in both cases.
     np.testing.assert_allclose(gradient, expected, rtol=2e-11, atol=1e-14)
+    dense_config = replace(config, grid_method="dense")
+    dense_negative, dense_gradient = _cpp_scar_ou.neg_loglik_with_grad(
+        100.0, -3.25, 0.14, observations, copula, dense_config)
+    assert negative == pytest.approx(dense_negative, rel=0, abs=2e-13)
+    np.testing.assert_allclose(gradient, dense_gradient, rtol=2e-11, atol=1e-14)
+
+    # Check the derivative against the independent scalar dense likelihood,
+    # using a five-point stencil in physical units to control cancellation.
+    parameters = np.array([100.0, -3.25, 0.14])
+    differences = []
+    for coordinate, step in enumerate((.05, .001, .001)):
+        direction = np.eye(3)[coordinate] * step
+        values = [_cpp_scar_ou.neg_loglik(
+            *(parameters + offset * direction), observations, copula,
+            dense_config) for offset in (-2, -1, 1, 2)]
+        differences.append((values[0] - 8 * values[1]
+                            + 8 * values[2] - values[3]) / (12 * step))
+    np.testing.assert_allclose(gradient, differences, rtol=2e-5, atol=2e-11)
+
+    # Retain the old likelihood comparison at the scale of its discarded
+    # five-sigma tail. This bound applies to these fixed regression data;
+    # it is not a universal likelihood-error bound for arbitrary emissions.
+    assert 0 < legacy_negative - negative < 2 * len(observations) * ndtr(-5)
 
 
 def test_bivariate_scar_matrix_matches_regression_values():

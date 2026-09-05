@@ -1,5 +1,7 @@
 """GAS estimation strategy backed by the native numerical evaluator."""
 
+from copy import copy
+
 import numpy as np
 from scipy.optimize import Bounds, minimize
 
@@ -44,8 +46,9 @@ from pyscarcopula.strategy.predict_helpers import (
 
 
 _DEFAULT_REFINEMENT_FTOL = 1e-12
-_DEFAULT_REFINEMENT_MIN_LOGL_GAIN = 1e-3
-_DEFAULT_OPTIMIZER_GRADIENT_EPS = 1e-5
+_DEFAULT_REFINEMENT_MIN_LOGL_GAIN = 0.0
+_DEFAULT_OPTIMIZER_GRADIENT_EPS = 1e-8
+_MATERIAL_LOGL_GAIN = 1e-3
 
 
 def _native_optimizer_gradient_config(options):
@@ -91,6 +94,112 @@ def _automatic_gas_start(copula, u, config, initial_mle_result=None):
     return model_policy.gas_default_initial_point(mu_mle)
 
 
+def _fit_gas_starts(objective, initial, *, bounds, options, automatic, refine):
+    """Try the nested static model and retain the best finite evaluation.
+
+    A successful relative-function stopping test does not imply a good GAS
+    fit: the score recursion can amplify a tiny parameter change. Starting
+    from gamma=0 supplies a well-behaved, exactly constant parameter path.
+    Explicit user starts retain their single-start semantics.
+    """
+    starts = [np.asarray(initial, dtype=np.float64).copy()]
+    if automatic:
+        static = starts[0].copy()
+        static[1] = 0.0
+        starts.append(static)
+    candidates = []
+    traces = []
+    total_nfev = 0
+    best_evaluation = None
+
+    def tracked(values):
+        nonlocal best_evaluation
+        value, gradient = objective(values)
+        if (np.isfinite(value) and np.all(np.isfinite(gradient))
+                and (best_evaluation is None or value < best_evaluation[0])):
+            best_evaluation = (
+                float(value), np.asarray(values).copy(),
+                np.asarray(gradient).copy())
+        return value, gradient
+
+    def run(start, run_options, label):
+        nonlocal total_nfev
+        initial_objective = None
+
+        def stage_objective(values):
+            nonlocal initial_objective
+            evaluated = tracked(values)
+            if initial_objective is None:
+                initial_objective = float(evaluated[0])
+            return evaluated
+
+        result = _minimize_gas_objective(
+            stage_objective, start, bounds=bounds, options=run_options)
+        total_nfev += int(result.nfev)
+        traces.append({
+            "stage": label, "initial_params": start.copy(),
+            "final_params": np.asarray(result.x).copy(),
+            "objective": float(result.fun),
+            "initial_objective": initial_objective,
+            "optimizer_success": bool(result.success),
+            "optimizer_message": str(result.message),
+            "nfev": int(result.nfev), "nit": int(getattr(result, "nit", 0)),
+        })
+        if np.isfinite(result.fun):
+            candidates.append(result)
+        return result
+
+    for index, start in enumerate(starts):
+        run(start, options, "standard" if index == 0 else "nested_static")
+    if not candidates:
+        raise FloatingPointError("no finite GAS optimization result")
+    selected = min(candidates, key=lambda item: float(item.fun))
+    if refine and float(options["ftol"]) > _DEFAULT_REFINEMENT_FTOL:
+        refinement_options = dict(options, ftol=_DEFAULT_REFINEMENT_FTOL)
+        run(np.asarray(selected.x).copy(), refinement_options, "refinement")
+        selected = min(candidates, key=lambda item: float(item.fun))
+    result = copy(selected)
+    result.raw_optimizer_success = bool(selected.success)
+    result.raw_optimizer_message = str(selected.message)
+    retained_trial = bool(
+        best_evaluation is not None
+        and best_evaluation[0] < float(result.fun) - _MATERIAL_LOGL_GAIN)
+    if retained_trial:
+        result.fun, result.x, result.jac = best_evaluation
+        result.success = False
+        result.message = (
+            f"{result.message}; retained a better finite evaluation; "
+            "convergence at this point was not established")
+    result.nfev = total_nfev
+    diagnostics = {
+        "optimizer_stages": traces,
+        "retained_best_trial": retained_trial,
+        "automatic_multistart": automatic,
+    }
+    if automatic:
+        diagnostics["initial_static_log_likelihood"] = -traces[1]["initial_objective"]
+    if traces[-1]["stage"] == "refinement":
+        previous = min(traces[:-1], key=lambda item: item["objective"])
+        last = traces[-1]
+        diagnostics["optimizer_refinement"] = {
+            "enabled": True,
+            "first_ftol": float(options["ftol"]),
+            "refinement_ftol": _DEFAULT_REFINEMENT_FTOL,
+            "minimum_loglik_gain": _DEFAULT_REFINEMENT_MIN_LOGL_GAIN,
+            "first_objective": previous["objective"],
+            "refined_objective": last["objective"],
+            "loglik_gain": previous["objective"] - last["objective"],
+            "first_success": previous["optimizer_success"],
+            "refined_success": last["optimizer_success"],
+            "first_nfev": sum(stage["nfev"] for stage in traces[:-1]),
+            "refined_nfev": last["nfev"],
+            "selected_stage": (
+                "refined" if last["objective"] < previous["objective"]
+                else "first"),
+        }
+    return result, diagnostics
+
+
 @register_strategy("GAS")
 class GASStrategy:
     """GAS estimation strategy.
@@ -109,6 +218,17 @@ class GASStrategy:
     recursion is computed natively. L-BFGS-B receives the objective and its
     optimizer gradient from one C++ entry point; any required numerical
     differentiation remains inside the native evaluator.
+
+    Automatic initialization tries both the standard score-driven start and
+    a nested static start (gamma=0), then refines the best result when ``ftol``
+    is omitted. Each run has its own optimizer budget. Passing ``gamma0``
+    selects a single start. The default optimizer difference step is 1e-8;
+    ``eps`` and ``finite_diff_rel_step`` explicitly override it.
+
+    ``success`` requires optimizer convergence and consistent finite
+    likelihoods at least as high as the nested static path. It is not a
+    certificate of global optimality. Diagnostics retain each optimizer
+    stage and its raw convergence status, including the projected gradient.
     """
 
     _strict_keyword_contract = True
@@ -232,6 +352,24 @@ class GASStrategy:
         if not np.isfinite(final_log_likelihood):
             raise FloatingPointError(
                 "final GAS log-likelihood is not finite")
+        # A constant path with the same intercept and persistence is nested
+        # in GAS. Reject false optimizer success below this feasible model.
+        static_log_likelihood = gas_loglik(
+            gas_values[0], 0.0, gas_values[2], u, copula,
+            self.scaling, score_eps)
+        static_baseline = max(
+            static_log_likelihood,
+            (diagnostics or {}).get("initial_static_log_likelihood", -np.inf))
+        objective = float(getattr(result, "fun", -final_log_likelihood))
+        objective_discrepancy = final_log_likelihood + objective
+        consistent = abs(objective_discrepancy) <= 1e-6
+        above_static = final_log_likelihood >= static_baseline - _MATERIAL_LOGL_GAIN
+        if not consistent or not above_static:
+            success = False
+            reason = (
+                "optimizer/report likelihood mismatch" if not consistent
+                else "likelihood below the nested static model")
+            message = f"{message}; GAS validation failed: {reason}"
         r_last = gas_predict_param(
             gas_values[0],
             gas_values[1],
@@ -251,7 +389,28 @@ class GASStrategy:
             "filter_derivative": "native_objective_gradient",
             "analytical_grad_requested": False,
             "analytical_grad_used": False,
+            "optimizer_success": bool(getattr(
+                result, "raw_optimizer_success", result.success)),
+            "optimizer_message": str(getattr(
+                result, "raw_optimizer_message", result.message)),
+            "optimizer_objective": objective,
+            "objective_discrepancy": objective_discrepancy,
+            "nested_static_log_likelihood": static_log_likelihood,
+            "static_baseline_log_likelihood": static_baseline,
+            "likelihood_validation_passed": consistent and above_static,
         }
+        gradient = getattr(result, "jac", None)
+        if gradient is not None:
+            gradient = np.asarray(gradient, dtype=np.float64).copy()
+            lower, upper = model_policy.latent_bounds(
+                "gas", gamma_bound=gamma_bound, beta_bound=beta_bound)
+            point = np.asarray(getattr(result, "x", gas_values))
+            for coordinate in range(3):
+                if ((point[coordinate] <= lower[coordinate] and gradient[coordinate] > 0)
+                        or (point[coordinate] >= upper[coordinate] and gradient[coordinate] < 0)):
+                    gradient[coordinate] = 0.0
+            result_diagnostics["projected_gradient_inf_norm"] = float(
+                np.max(np.abs(gradient)))
         result_diagnostics.update(self._correlation_diagnostics(copula))
         if diagnostics:
             result_diagnostics.update(diagnostics)
@@ -284,6 +443,7 @@ class GASStrategy:
         beta_bound,
         verbose,
         initial_mle_result=None,
+        refine=True,
     ):
         n_corr = int(copula._corr_num_params())
         self._ensure_correlation_initialized(copula, u)
@@ -369,11 +529,9 @@ class GASStrategy:
                 f"beta_bound={beta_bound}"
             )
 
-        result = _minimize_gas_objective(
-            objective,
-            joint0,
-            bounds=bounds,
-            options=optimizer_options,
+        result, optimizer_diagnostics = _fit_gas_starts(
+            objective, joint0, bounds=bounds, options=optimizer_options,
+            automatic=gamma0 is None, refine=refine,
         )
         try:
             copula._set_corr_from_params(result.x[3:])
@@ -392,6 +550,7 @@ class GASStrategy:
             "initial_params": joint0.copy(),
             "final_params": np.asarray(result.x, dtype=np.float64).copy(),
         }
+        diagnostics.update(optimizer_diagnostics)
         if gamma0 is None:
             diagnostics["initialization"] = {
                 "mle_source": (
@@ -501,6 +660,7 @@ class GASStrategy:
                 beta_bound,
                 verbose,
                 initial_mle_result,
+                refine=ftol is None,
             )
 
         if gamma0 is None:
@@ -539,67 +699,10 @@ class GASStrategy:
                     directional_gradient=True,
                 )
 
-        result = _minimize_gas_objective(
-            objective,
-            gamma0,
-            bounds=bounds,
-            options=optimizer_options,
+        result, optimizer_diagnostics = _fit_gas_starts(
+            objective, gamma0, bounds=bounds, options=optimizer_options,
+            automatic=automatic_initialization, refine=ftol is None,
         )
-        refinement_diagnostics = None
-        if (
-                ftol is None
-                and float(optimizer_options["ftol"])
-                > _DEFAULT_REFINEMENT_FTOL):
-            refined_options = dict(optimizer_options)
-            refined_options["ftol"] = _DEFAULT_REFINEMENT_FTOL
-            refined = _minimize_gas_objective(
-                objective,
-                np.asarray(result.x, dtype=np.float64),
-                bounds=bounds,
-                options=refined_options,
-            )
-            first_fun = float(result.fun)
-            refined_fun = float(refined.fun)
-            loglik_gain = first_fun - refined_fun
-            first_success = bool(result.success)
-            accept_refined = bool(
-                np.isfinite(refined_fun)
-                and bool(refined.success)
-                and (
-                    not first_success
-                    or loglik_gain
-                    > _DEFAULT_REFINEMENT_MIN_LOGL_GAIN
-                )
-            )
-            first_nfev = int(getattr(result, "nfev", 0) or 0)
-            refined_nfev = int(getattr(refined, "nfev", 0) or 0)
-            first_message = str(getattr(result, "message", "") or "")
-            refined_message = str(
-                getattr(refined, "message", "") or "")
-            selected = refined if accept_refined else result
-            selected.nfev = first_nfev + refined_nfev
-            selected.message = (
-                f"two-stage selected "
-                f"{'refined' if accept_refined else 'first'}; "
-                f"first: {first_message}; refined: {refined_message}"
-            )
-            result = selected
-            refinement_diagnostics = {
-                "enabled": True,
-                "first_ftol": float(optimizer_options["ftol"]),
-                "refinement_ftol": _DEFAULT_REFINEMENT_FTOL,
-                "minimum_loglik_gain": (
-                    _DEFAULT_REFINEMENT_MIN_LOGL_GAIN),
-                "first_objective": first_fun,
-                "refined_objective": refined_fun,
-                "loglik_gain": loglik_gain,
-                "first_success": first_success,
-                "refined_success": bool(refined.success),
-                "first_nfev": first_nfev,
-                "refined_nfev": refined_nfev,
-                "selected_stage": (
-                    "refined" if accept_refined else "first"),
-            }
         parameter_count = None
         corr_effective_num_params = getattr(
             copula, "_corr_effective_num_params", None)
@@ -618,8 +721,7 @@ class GASStrategy:
             "optimizer_gradient_eps": optimizer_gradient_eps,
             "optimizer_gradient_relative": optimizer_gradient_relative,
         })
-        if refinement_diagnostics is not None:
-            diagnostics["optimizer_refinement"] = refinement_diagnostics
+        diagnostics.update(optimizer_diagnostics)
         return self._build_result(
             copula,
             u,
