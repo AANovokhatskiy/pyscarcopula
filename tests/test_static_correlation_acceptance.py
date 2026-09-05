@@ -1,4 +1,4 @@
-"""Final correctness, safety, and ownership gates for static correlation."""
+"""Correctness, safety, and ownership contracts for static correlation."""
 
 from __future__ import annotations
 

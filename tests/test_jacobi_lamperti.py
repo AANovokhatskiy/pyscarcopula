@@ -1,7 +1,6 @@
 """Lamperti--Euler Jacobi sampling contracts and validation checks."""
 
 import os
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -315,16 +314,6 @@ def test_strategy_rejects_invalid_lamperti_configuration(
         option, value, error):
     with pytest.raises(error):
         get_strategy("scar-tm-jacobi", **{option: value})
-
-
-def test_lamperti_python_module_contains_no_state_evolution_kernel():
-    source = (
-        Path(__file__).parents[1]
-        / "pyscarcopula/numerical/jacobi_sampling.py"
-    ).read_text(encoding="utf-8")
-    assert "@njit" not in source
-    assert "_lamperti_chunk_kernel" not in source
-    assert "np.sin(" not in source
 
 
 @pytest.mark.parametrize(

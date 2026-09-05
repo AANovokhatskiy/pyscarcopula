@@ -130,7 +130,7 @@ class IndependentCopula(BivariateCopula):
         else:
             u = as_float64_array(data, name="data")
         u = validate_copula_data(self, u)
-        return self._fit_validated(u)
+        return self._fit_validated(u.copy())
 
     def _fit_validated(self, u):
         """Fit already validated pair data without rescanning vine edges."""

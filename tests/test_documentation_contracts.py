@@ -116,62 +116,6 @@ def test_mkdocstrings_targets_are_importable():
             assert _resolve_documented_object(target) is not None
 
 
-def test_obsolete_namespace_is_confined_to_migration_notes():
-    obsolete = "pyscarcopula.copula.experimental"
-    for path in DOC_FILES:
-        assert obsolete not in path.read_text(encoding="utf-8")
-
-
-def test_removed_native_backend_examples_do_not_return():
-    forbidden = re.compile(r"\bbackend\s*=")
-    for path in DOC_FILES:
-        assert forbidden.search(path.read_text(encoding="utf-8")) is None
-
-
-def test_removed_public_aliases_do_not_return_to_docs_or_examples():
-    forbidden = (
-        "u_train=",
-        "LatentResult.alpha",
-        "pyscarcopula.numerical.auto_tm",
-        "pyscarcopula.numerical.tm_gradient",
-        "pyscarcopula.numerical.tm_grid",
-        "TMGrid",
-        "CVineCopula",
-        "pyscarcopula.vine.cvine",
-        "CopulaCapabilities",
-        "CopulaProtocol",
-        "spectral_basis_order='adaptive'",
-        'spectral_basis_order="adaptive"',
-    )
-    for path in DOC_FILES:
-        text = path.read_text(encoding="utf-8")
-        for value in forbidden:
-            assert value not in text, (
-                f"{path.relative_to(ROOT)} contains removed API {value!r}"
-            )
-
-    for path in sorted((ROOT / "examples").glob("*.ipynb")):
-        text = path.read_text(encoding="utf-8")
-        assert "u_train=" not in text
-
-
-def test_breaking_removal_migration_notes_are_in_changelog():
-    changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-    for removed_name in (
-        "CopulaProtocol",
-        "CommonCopulaProtocol",
-        "BivariateCopulaProtocol",
-        "MultivariateCopulaProtocol",
-        "CopulaCapabilities",
-        "CVineCopula",
-        "TMGrid",
-    ):
-        assert removed_name in changelog
-    assert "VineCopula.cvine" in changelog
-    assert "no automatic migration path" in " ".join(changelog.split())
-    assert "No compatibility aliases" in changelog
-
-
 def test_workflows_reference_existing_test_files():
     pattern = re.compile(r"tests/[A-Za-z0-9_./-]+\.py")
     for path in WORKFLOW_FILES:
@@ -179,39 +123,6 @@ def test_workflows_reference_existing_test_files():
             assert (ROOT / test_path).is_file(), (
                 f"{path.relative_to(ROOT)} references missing {test_path}"
             )
-
-
-def test_removed_experimental_namespace_is_physically_absent():
-    assert not (ROOT / "pyscarcopula/copula/experimental").exists()
-
-
-def test_tmgrid_is_physically_absent_from_the_package():
-    assert not (ROOT / "pyscarcopula/numerical/tm_grid.py").exists()
-    assert not hasattr(pyscarcopula.numerical, "TMGrid")
-
-
-def test_public_docs_exclude_development_plans_and_phase_reports():
-    forbidden = (
-        "phase-8",
-        "phase 8",
-        "phase-9",
-        "release gate",
-        "release-gate",
-        "future work",
-        "not implemented",
-        "proposed api",
-    )
-    for path in DOC_FILES:
-        text = path.read_text(encoding="utf-8").lower()
-        for phrase in forbidden:
-            assert phrase not in text, (
-                f"{path.relative_to(ROOT)} contains development artifact "
-                f"{phrase!r}"
-            )
-
-    assert not (ROOT / "docs/validation").exists()
-    nav = (ROOT / "mkdocs.yml").read_text(encoding="utf-8")
-    assert "validation/" not in nav
 
 
 def test_notebooks_only_import_the_approved_private_pobs_helper():

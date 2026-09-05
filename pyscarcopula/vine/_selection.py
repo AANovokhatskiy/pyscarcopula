@@ -1,10 +1,10 @@
 """
 vine._selection — copula family selection for vine edges.
 
-Two-phase approach (mirroring pyvinecopulib):
-  Phase 1 — Itau screening: compute r = itau(tau) for each
+Screening and refinement (mirroring pyvinecopulib):
+  Screening: compute r = itau(tau) for each
     (family, rotation), evaluate logL analytically (no optimizer).
-  Phase 2 — Refinement: run L-BFGS-B on the top-N candidates.
+  Refinement: run L-BFGS-B on the top-N candidates.
 """
 
 from functools import lru_cache
@@ -170,9 +170,9 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
     """
     Select best bivariate copula for (u1, u2) by AIC/BIC/logL.
 
-    Two-phase approach:
-      Phase 1 — Itau screening: rank by AIC/BIC, keep top-N.
-      Phase 2 — Refinement: L-BFGS-B on top-N, pick winner.
+    Screening and refinement:
+      Screening: rank itau estimates by AIC/BIC, keep top-N.
+      Refinement: run L-BFGS-B on top-N, pick winner.
 
     Always includes IndependentCopula as a baseline competitor.
 
@@ -242,7 +242,7 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
         log_likelihood=0.0, method='MLE',
         copula_name=indep.name, success=True)
 
-    # ── Phase 1: itau screening ──────────────────────────────
+    # ── Screening: itau screening ──────────────────────────────
     itau_candidates = []
     numerical_failures = []
 
@@ -289,7 +289,7 @@ def select_best_copula(u1, u2, candidates, allow_rotations=True,
                 numerical_failures.append(message)
                 warnings.warn(message, RuntimeWarning, stacklevel=2)
 
-    # ── Phase 2: refine top-3 ────────────────────────────────
+    # ── Refinement: refine top-3 ────────────────────────────────
     itau_candidates.sort(key=lambda x: x[0])
     n_refine = min(3, len(itau_candidates))
 

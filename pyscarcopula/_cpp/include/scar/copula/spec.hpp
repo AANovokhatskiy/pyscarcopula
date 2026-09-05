@@ -51,8 +51,8 @@ struct CopulaSpec {
 
     TypedModelDescriptor model_descriptor() const noexcept;
 
-    // Transitional accessors used by the Stage 4 CopulaSpec adapter. New
-    // model code consumes the typed package contracts directly.
+    // Accessors for the CopulaSpec serialization adapter. Model operations
+    // consume the typed package contracts directly.
     std::vector<double>& dense_inverse_cholesky();
     const std::vector<double>& dense_inverse_cholesky() const;
     double& dense_log_determinant();

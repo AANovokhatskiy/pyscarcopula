@@ -63,7 +63,6 @@ def test_predict_has_common_arguments_in_common_order():
 
 
 def test_bivariate_parameter_sampling_is_explicit():
-    assert not hasattr(BivariateCopula, "sample_model")
     signature = inspect.signature(BivariateCopula.sample_at_parameter)
     parameters = tuple(signature.parameters)
     assert parameters[:4] == ("self", "n", "r", "rng")

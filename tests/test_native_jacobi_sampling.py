@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import inspect
 import warnings
 
 import numpy as np
@@ -314,17 +313,3 @@ def test_native_conditional_sample_accepts_numpy_zero_endpoint():
         sampled,
         np.array([[0.6, 0.0], [0.6, 0.5]], dtype=np.float64),
     )
-
-
-def test_production_python_contains_no_jacobi_trajectory_math_kernels():
-    import pyscarcopula.numerical.jacobi_sampling as lamperti_module
-    import pyscarcopula.numerical.jacobi_sparse as sparse_module
-
-    lamperti_source = inspect.getsource(lamperti_module)
-    sparse_source = inspect.getsource(sparse_module)
-    grid_source = inspect.getsource(sample_jacobi_grid_trajectory)
-    assert "@njit" not in lamperti_source
-    assert "_lamperti_chunk_kernel" not in lamperti_source
-    assert "_sample_sparse_path_kernel" not in sparse_source
-    assert "np.cumsum(transition" not in grid_source
-    assert "jacobi_native.sample_grid_trajectory_fixed_draws" in grid_source

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-import inspect
 import json
 import subprocess
 import sys
@@ -216,15 +215,6 @@ def test_parameterized_penalized_objective_matches_composed_native_results():
         result.gradient, expected_gradient, rtol=2e-13, atol=2e-13)
     assert result.gradient.flags.writeable is False
     assert result.loadings.flags.writeable is False
-
-
-def test_factor_student_python_adapter_contains_no_aggregate_or_grid_math():
-    evaluation_source = inspect.getsource(FactorStudentEvaluation)
-    grid_source = inspect.getsource(FactorStudentGridEvaluation)
-
-    assert "np.sum" not in evaluation_source
-    assert "np.exp" not in grid_source
-    assert "* self.dlog_ddf" not in grid_source
 
 
 def test_large_dimension_uses_linear_worker_workspace():

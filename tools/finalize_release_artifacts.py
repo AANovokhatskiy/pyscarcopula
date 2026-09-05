@@ -155,8 +155,8 @@ def main(argv: list[str] | None = None) -> int:
 
     source_root = arguments.source_root.resolve()
     artifact_root = arguments.artifact_root.resolve()
-    if _inside(source_root, artifact_root):
-        parser.error("--artifact-root must be outside the product repository")
+    if _inside(source_root, artifact_root) and not _inside(source_root / "build", artifact_root):
+        parser.error("--artifact-root must be inside build/ or outside the product repository")
     if arguments.verify:
         verify(artifact_root)
     else:

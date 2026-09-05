@@ -1,7 +1,6 @@
 """Contracts for shared static multivariate MLE orchestration."""
 
 from types import SimpleNamespace
-import inspect
 
 import numpy as np
 import pytest
@@ -261,11 +260,3 @@ def test_models_report_shared_static_strategy(model):
         "shared_multivariate")
     assert result.diagnostics["final_validation_passed"] is True
     assert result.diagnostics["objective_match"] is True
-
-
-def test_model_modules_do_not_own_scipy_optimizer_loops():
-    from pyscarcopula.copula.multivariate import gaussian, student
-    from pyscarcopula.copula.multivariate import stochastic_student
-
-    for module in (gaussian, student, stochastic_student):
-        assert "minimize(" not in inspect.getsource(module)

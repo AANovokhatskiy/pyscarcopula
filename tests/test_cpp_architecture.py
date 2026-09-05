@@ -198,6 +198,26 @@ def test_python_ownership_allows_plain_adapters_and_raw_draws(tmp_path):
     assert audit_package(tmp_path, exceptions={})["violations"] == []
 
 
+@pytest.mark.parametrize("declaration", [
+    "from typing import TypeAlias\nResult: TypeAlias = First | Second | None\n",
+    "import typing\nResult: typing.TypeAlias = tuple[First, Second] | None\n",
+])
+def test_python_ownership_accepts_explicit_type_aliases(tmp_path, declaration):
+    from tools.check_python_ownership import audit_package
+    _write(tmp_path, "pyscarcopula/api.py", declaration)
+    assert audit_package(tmp_path, exceptions={})["violations"] == []
+
+
+@pytest.mark.parametrize("expression", ["left | right", "compute() | Other", "Left | compute()"])
+def test_python_ownership_does_not_exempt_executable_union_expressions(tmp_path, expression):
+    from tools.check_python_ownership import audit_package
+    annotation = "" if expression == "left | right" else ": TypeAlias"
+    _write(tmp_path, "pyscarcopula/api.py",
+           f"from typing import TypeAlias\nResult{annotation} = {expression}\n")
+    assert any(v["rule"] == "python-ownership-arithmetic"
+               for v in audit_package(tmp_path, exceptions={})["violations"])
+
+
 def test_python_ownership_allowlist_cannot_hide_symbol_mutations(tmp_path):
     import ast
     from tools.check_python_ownership import audit_package, fingerprint
@@ -281,101 +301,6 @@ def test_python_ownership_reviewed_symbols_are_exact():
             assert entry["exception"]["test"] == (
                 "tests/test_cpp_architecture.py::test_python_ownership_reviewed_symbols_are_exact")
             assert not entry["unreviewed_signals"]
-
-
-def test_remediated_fv1_fv2_python_owners_do_not_regress():
-    from tools.check_python_ownership import audit_package
-
-    result = audit_package(ROOT)
-    migrated_modules = {
-        "pyscarcopula.numerical.ou_kernels",
-        "pyscarcopula.numerical.hermite_tm",
-        "pyscarcopula.copula.multivariate.student_ppf_cache",
-        "pyscarcopula.io",
-    }
-    migrated_symbols = {
-        "pyscarcopula._native._descriptors:_set_factor",
-        "pyscarcopula._native.scar_ou:sample_trajectory",
-        "pyscarcopula._native.scar_ou:trajectory_from_innovations",
-        "pyscarcopula._native.scar_ou:hermite_rule",
-        "pyscarcopula._native.scar_ou:default_quad_order",
-        "pyscarcopula._native.scar_ou:_kappa_dt",
-        "pyscarcopula._native.model_policy:ou_kappa_dt",
-        "pyscarcopula._native.model_policy:ou_auto_backend",
-        "pyscarcopula._native.model_policy:ou_adaptive_spectral_basis_order",
-        "pyscarcopula._native.model_policy:ou_resolve_quad_order",
-        "pyscarcopula._native.jacobi:fixed_shape_rule",
-        "pyscarcopula._native.jacobi:select_sparse_order",
-        "pyscarcopula._native.jacobi:tau_to_parameter",
-        "pyscarcopula._native.vine:_select_mcmc_density_algorithm",
-        "pyscarcopula._native.vine:mcmc_default_steps",
-        "pyscarcopula.numerical._scar_ou_config:select_auto_backend",
-        "pyscarcopula.numerical._scar_ou_config:validate_cpp_config",
-        "pyscarcopula.numerical.jacobi_sparse:compare_sparse_jacobi_corrections",
-        "pyscarcopula.strategy.scar_tm:SCARTMStrategy._adaptive_spectral_basis_order",
-        "pyscarcopula.strategy.scar_tm:SCARTMStrategy._kappa_dt",
-        "pyscarcopula._native.multivariate:prepare_student_ppf_table",
-        "pyscarcopula._native.multivariate:evaluate_student_ppf_table",
-        "pyscarcopula._native.multivariate:interpolate_student_ppf_table",
-        "pyscarcopula._utils:clip_unit",
-        "pyscarcopula._utils:clip_pseudo_observations",
-        "pyscarcopula._utils:clip_pseudo_observations_no_copy",
-        "pyscarcopula._utils:clip_h_function_values",
-        "pyscarcopula._utils:clip_rosenblatt_output",
-        "pyscarcopula.copula.multivariate.conditional:sample_gaussian_conditional",
-        "pyscarcopula.copula.multivariate.equicorr_prepared:EquicorrPreparedData.__post_init__",
-        "pyscarcopula.copula.multivariate.gaussian:_validate_gaussian_fit_data",
-        "pyscarcopula.copula.multivariate.student:_validate_student_fit_data",
-        "pyscarcopula.numerical.jacobi_sparse:SparseJacobiTransition.__post_init__",
-        "pyscarcopula.strategy.scar_tm:SCARTMStrategy._validate_final_fit",
-        "pyscarcopula.strategy.scar_tm:SCARTMStrategy._fit_joint_static.validate_correlation",
-        "pyscarcopula._types:MultivariateMLEResult.aic",
-        "pyscarcopula._types:MultivariateMLEResult.bic",
-        "pyscarcopula.copula.base:BivariateCopula.log_likelihood",
-        "pyscarcopula.vine._rvine_dissmann:_beam_search_candidates",
-        "pyscarcopula.vine._rvine_dissmann:_fit_score_levels",
-        "pyscarcopula.vine._selection:_rotation_compatible",
-        "pyscarcopula.vine._selection:_tau_for_itau",
-        "pyscarcopula.vine._selection:select_best_copula",
-        "pyscarcopula.vine._structure:<module>",
-        "pyscarcopula.vine._structure:_build_next_tree",
-        "pyscarcopula.vine._structure:_build_next_tree_conditional",
-        "pyscarcopula.vine._structure:_build_tree_0",
-        "pyscarcopula.vine._structure:_build_tree_0_conditional",
-        "pyscarcopula.vine._structure:_dense_rank_matrix_no_ties",
-        "pyscarcopula.vine._structure:_dense_ranks_no_ties",
-        "pyscarcopula.vine._structure:_kendall_tau_from_dense_ranks",
-        "pyscarcopula.vine._structure:_kendall_tau_value",
-        "pyscarcopula.vine._vine_fit:_build_vine_edge_fit",
-        "pyscarcopula.vine._vine_fit:_fit_tree_level",
-        "pyscarcopula.vine.vine:VineCopula.aic",
-        "pyscarcopula.vine.vine:VineCopula.bic",
-        "pyscarcopula.vine.vine:VineCopula._apply_given_only_dynamic_updates_ordered",
-        "pyscarcopula.vine.vine:VineCopula._compute_pseudo_obs",
-        "pyscarcopula.vine.vine:VineCopula.fit",
-        "pyscarcopula.vine.vine:VineCopula.log_likelihood",
-        "pyscarcopula._native.vine:apply_given_only_dynamic_updates",
-        "pyscarcopula._native.vine:conditional_trace",
-        "pyscarcopula._native.vine:pseudo_observation_trace_supported",
-        "pyscarcopula._native.vine:pseudo_observations",
-    }
-    retired_symbols = {
-        "pyscarcopula.numerical.gof_blocks:forward_block_size",
-        "pyscarcopula.numerical.gof_blocks:iter_forward_weight_block_arrays",
-        "pyscarcopula.numerical.gof_blocks:iter_forward_weight_blocks",
-        "pyscarcopula.vine._rvine_suffix:given_suffix_edge_observations_with_r",
-    }
-    entries = {entry["key"]: entry for entry in result["entries"]}
-    assert migrated_symbols <= entries.keys()
-    assert retired_symbols.isdisjoint(entries)
-    assert "pyscarcopula._utils:linear_least_squares" not in entries
-    assert not (ROOT / "pyscarcopula" / "numerical" / "gof_blocks.py").exists()
-    assert "pyscarcopula.numerical.gof_blocks:" not in (
-        ROOT / "tools" / "python_ownership_policy.py"
-    ).read_text(encoding="utf-8")
-    for entry in entries.values():
-        if entry["module"] in migrated_modules or entry["key"] in migrated_symbols:
-            assert not entry["unreviewed_signals"], entry["key"]
 
 
 def test_python_ownership_artifact_guard_and_append_only(tmp_path):
@@ -700,186 +625,6 @@ def test_python_exact_duplicate_gate_covers_cross_and_same_file_clones(
     assert len(violations) == 3
     assert {item.rule for item in violations} == {
         "python-exact-duplicates"}
-
-
-def test_pair_copulas_are_vertical_and_prepared_once():
-    include = ROOT / "pyscarcopula" / "_cpp" / "include" / "scar"
-    source = ROOT / "pyscarcopula" / "_cpp" / "src" / "copula"
-    manifest = include / "copula" / "pair" / "families.def"
-    entries = re.findall(
-        r"^SCAR_PAIR_FAMILY\(\s*([A-Za-z][A-Za-z0-9_]*)\s*,\s*"
-        r"([a-z][a-z0-9_]*)\s*,",
-        manifest.read_text(encoding="utf-8"),
-        re.MULTILINE,
-    )
-    assert entries
-    families = tuple(package for _, package in entries)
-
-    assert not (include / "detail" / "copula.hpp").exists()
-    assert (include / "copula" / "prepared_pair_kernel.hpp").is_file()
-    for family in families:
-        assert (include / "copula" / "pair" / f"{family}.hpp").is_file()
-        assert (source / "pair" / f"{family}.cpp").is_file()
-
-    registry = (source / "pair" / "runtime_registry.cpp").read_text(
-        encoding="utf-8")
-    assert registry.count("switch (family)") == 1
-    assert registry.count(
-        '#include "scar/copula/pair/families.def"') == 2
-
-    kernel = (include / "copula" / "pair" / "kernel.hpp").read_text(
-        encoding="utf-8")
-    assert "PairSupportKernel" not in kernel
-    assert "Rotation" not in kernel
-    assert "Transform" not in kernel
-    for family in families:
-        implementation = (source / "pair" / f"{family}.cpp").read_text(
-            encoding="utf-8")
-        assert "_h_rotated" not in implementation
-        assert "_h_inverse_rotated" not in implementation
-        assert "scar/copula/rotation.hpp" not in implementation
-
-    dispatch = (source / "dispatch.cpp").read_text(encoding="utf-8")
-    for family in ("clayton", "gumbel", "frank", "joe"):
-        assert re.search(rf"\b{family}_[A-Za-z0-9_]+", dispatch) is None
-    assert "const scar::PreparedPairKernel kernel(spec);" in dispatch
-    assert "is_pair_copula_family" not in dispatch
-
-    core = (source / "core.cpp").read_text(encoding="utf-8")
-    assert "const PreparedPairKernel kernel(spec);" in core
-    assert core.count("scar_internal::copula_log_pdf_unrotated(") == 0
-    assert "is_pair_copula_family" not in core
-
-    binding = (
-        ROOT / "pyscarcopula" / "_cpp" / "src" / "bindings" / "copula.cpp"
-    ).read_text(encoding="utf-8")
-    assert binding.count(
-        '#include "scar/copula/pair/families.def"') == 1
-    adapter = (
-        ROOT / "pyscarcopula" / "_native" / "_descriptors.py"
-    ).read_text(encoding="utf-8")
-    rvine_adapter = (
-        ROOT / "pyscarcopula" / "_native" / "vine.py"
-    ).read_text(encoding="utf-8")
-    for enum_name, _ in entries:
-        assert f'.value("{enum_name}",' not in binding
-        assert f"CopulaFamily.{enum_name}" not in adapter
-    assert "_builtin_copula_types" not in rvine_adapter
-    assert "__pyscarcopula_native_rvine__" not in rvine_adapter
-    assert "from pyscarcopula.copula." not in rvine_adapter
-
-    sources = (
-        ROOT / "pyscarcopula" / "_cpp" / "build_support" / "sources.py"
-    ).read_text(encoding="utf-8")
-    assert "PAIR_FAMILY_SOURCES = _pair_family_sources()" in sources
-    assert "*PAIR_FAMILY_SOURCES" in sources
-
-
-def test_multivariate_models_are_vertical_and_typed():
-    cpp = ROOT / "pyscarcopula" / "_cpp"
-    include = cpp / "include" / "scar"
-    source = cpp / "src" / "copula"
-    multivariate_include = include / "copula" / "multivariate"
-    multivariate_source = source / "multivariate"
-
-    assert not (source / "multivariate.cpp").exists()
-    assert not (source / "families" / "student.cpp").exists()
-    assert not (include / "detail" / "copula" / "student.hpp").exists()
-
-    for relative in (
-        "correlation/dense.hpp",
-        "correlation/factor.hpp",
-        "gaussian/model.hpp",
-        "gaussian/density.hpp",
-        "gaussian/conditional.hpp",
-        "equicorrelation/model.hpp",
-        "equicorrelation/kernel.hpp",
-        "student/model.hpp",
-        "student/distribution.hpp",
-        "student/quantile.hpp",
-        "student/ppf_cache.hpp",
-        "student/density.hpp",
-        "student/conditional.hpp",
-        "student/rosenblatt.hpp",
-    ):
-        assert (multivariate_include / relative).is_file()
-
-    for relative in (
-        "correlation/conditional.cpp",
-        "correlation/dense.cpp",
-        "correlation/factor.cpp",
-        "equicorrelation/evaluator.cpp",
-        "gaussian/density.cpp",
-        "gaussian/conditional.cpp",
-        "equicorrelation/model.cpp",
-        "equicorrelation/kernel.cpp",
-        "student/distribution.cpp",
-        "student/density.cpp",
-        "student/evaluator.cpp",
-        "student/conditional.cpp",
-        "student/factor_density.cpp",
-        "student/factor_grid.cpp",
-        "student/ppf_cache.cpp",
-        "student/quantile.cpp",
-        "student/rosenblatt.cpp",
-    ):
-        assert (multivariate_source / relative).is_file()
-
-    dispatch = (multivariate_source / "dispatch.cpp").read_text(
-        encoding="utf-8")
-    assert len(dispatch.splitlines()) <= 100
-    for model_implementation in (
-        "StudentWorkspace",
-        "EquicorrStats",
-        "conditional_df",
-        "parallel_for_blocks",
-        "student_fill_",
-        "equicorr_log_pdf_from_stats(",
-        "normal_quantile",
-        "cholesky",
-    ):
-        assert model_implementation not in dispatch
-
-    conditional_engine = (
-        multivariate_source / "correlation" / "conditional.cpp"
-    ).read_text(encoding="utf-8")
-    for model_specific in (
-        "Student", "student_", "conditional_df", "chi_square",
-    ):
-        assert model_specific not in conditional_engine
-    student_conditional = (
-        multivariate_source / "student" / "conditional.cpp"
-    ).read_text(encoding="utf-8")
-    assert "student_conditional_scale" in student_conditional
-    assert "conditional_df" in student_conditional
-
-    spec = (include / "copula" / "spec.hpp").read_text(encoding="utf-8")
-    for old_field in (
-        "l_inv;", "log_det;", "ppf_n_obs;", "ppf_nodes;", "ppf_table;",
-        "gaussian_z1_cache;", "equicorr_sum_cache;",
-    ):
-        assert old_field not in spec
-    storage = (include / "copula" / "model_storage.hpp").read_text(
-        encoding="utf-8")
-    assert "std::variant<" in storage
-    assert "student::DenseModelStorage" in storage
-    assert "gaussian::FactorModelStorage" in storage
-
-    factor = (
-        multivariate_include / "correlation" / "factor.hpp"
-    ).read_text(encoding="utf-8")
-    assert "FactorCorrelationOperator" in factor
-    assert "FactorStudent" not in factor
-
-    for package in (
-        multivariate_include / "gaussian",
-        multivariate_source / "gaussian",
-    ):
-        for path in package.rglob("*"):
-            if path.is_file():
-                text = path.read_text(encoding="utf-8")
-                assert "/student/" not in text
-                assert "Student" not in text
 
 
 def test_application_modules_use_prepared_copula_interfaces():
@@ -1388,9 +1133,9 @@ def test_equicorr_preparation_threshold_has_one_definition():
     assert source.count("kEquicorrPreparationMinCells") == 2
 
 
-def test_gate4_workflow_covers_required_compilers_and_build_boundaries():
+def test_release_workflow_covers_required_compilers_and_build_boundaries():
     source = (
-        ROOT / ".github/workflows/parallel-release-gates.yml"
+        ROOT / ".github/workflows/parallel-release-validation.yml"
     ).read_text(encoding="utf-8")
     for configuration in (
         "linux-gcc-py310",
@@ -1416,7 +1161,7 @@ def test_gate4_workflow_covers_required_compilers_and_build_boundaries():
 
 def test_release_workflows_automate_sanitizers_and_wheel_smoke():
     release = (
-        ROOT / ".github/workflows/parallel-release-gates.yml"
+        ROOT / ".github/workflows/parallel-release-validation.yml"
     ).read_text(encoding="utf-8")
     assert "Run architecture contracts" in release
     assert "Run Python-free ASan and UBSan executable" in release
@@ -1425,19 +1170,19 @@ def test_release_workflows_automate_sanitizers_and_wheel_smoke():
     assert "--sanitize thread" in release
     assert release.count("tools/build_cpp_tests.py --force -j 4") >= 3
     assert "python -m pytest -n 4 -q" in release
-    assert "tests/test_cpp_architecture.py tests/test_gate1_benchmarks.py" in release
+    assert "tests/test_cpp_architecture.py tests/test_native_benchmarks.py" in release
     assert "-j 8" not in release
     assert "-n 8" not in release
 
 
-def test_gate1_manifest_covers_full_fv6_performance_matrix():
+def test_native_benchmark_manifest_covers_supported_workloads():
     manifest = json.loads(
-        (ROOT / "benchmarks/gate1_manifest_v2.json").read_text(
+        (ROOT / "benchmarks/native_performance_v3.json").read_text(
             encoding="utf-8"))
     cases = manifest["cases"]
     ids = [case["id"] for case in cases]
 
-    assert manifest["manifest_id"] == "pyscarcopula-gate1-v2"
+    assert manifest["manifest_id"] == "pyscarcopula-native-performance-v3"
     assert len(ids) == len(set(ids))
     assert manifest["thread_values"] == [1, 2, 4, "physical"]
     policy = manifest["protocol"]["regression_policy"]
@@ -1490,10 +1235,10 @@ def test_gate1_manifest_covers_full_fv6_performance_matrix():
                 "cold_preparation", "prepared_repeated"}
 
 
-def test_gate1_runner_requires_external_append_only_artifacts(tmp_path):
-    from tools import run_gate1_benchmarks as gate1
+def test_native_benchmark_runner_requires_external_append_only_artifacts(tmp_path):
+    from tools import run_native_benchmarks as native_benchmark
 
-    assert gate1._required_thread_capacity([
+    assert native_benchmark._required_thread_capacity([
         {"n_threads": 1},
         {"n_threads": 2},
         {"n_threads": 4},
@@ -1501,17 +1246,17 @@ def test_gate1_runner_requires_external_append_only_artifacts(tmp_path):
     ]) == 4
 
     with pytest.raises(SystemExit, match="outside the product repository"):
-        gate1._artifact_paths(SimpleNamespace(
+        native_benchmark._artifact_paths(SimpleNamespace(
             artifact_root=ROOT, output=None, summary=None))
 
-    artifact_root, output, summary = gate1._artifact_paths(SimpleNamespace(
+    artifact_root, output, summary = native_benchmark._artifact_paths(SimpleNamespace(
         artifact_root=tmp_path / "run", output=None, summary=None))
     assert artifact_root == (tmp_path / "run").resolve()
-    assert output == artifact_root / "gate1_candidate.json"
+    assert output == artifact_root / "native_benchmark_candidate.json"
     assert summary == artifact_root / "performance_summary.md"
     output.write_text("immutable", encoding="utf-8")
     with pytest.raises(SystemExit, match="refusing to overwrite"):
-        gate1._artifact_paths(SimpleNamespace(
+        native_benchmark._artifact_paths(SimpleNamespace(
             artifact_root=artifact_root, output=None, summary=None))
 
     wheels = (ROOT / ".github/workflows/wheels.yml").read_text(

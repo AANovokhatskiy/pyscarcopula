@@ -1,6 +1,6 @@
 """Validate an installed release wheel without importing the source package.
 
-The script is intentionally standalone: it is executed from an external
+The script is intentionally standalone: it is executed from an isolated
 working directory by cibuildwheel and by the release workflows.  The product
 repository supplies this driver, but every ``pyscarcopula`` import must resolve
 to wheel-installed files.
@@ -154,21 +154,23 @@ def _assert_wheel_import(source_root: Path) -> dict:
     from pyscarcopula._native import _extension
 
     source_root = source_root.resolve()
+    distribution = metadata.distribution("pyscarcopula")
+    if distribution.read_text("WHEEL") is None:
+        raise RuntimeError("installed distribution has no WHEEL metadata")
+    installed_root = Path(distribution.locate_file("pyscarcopula")).resolve()
     package_path = Path(pyscarcopula.__file__).resolve()
     extension_path = Path(_extension.load().__file__).resolve()
     for label, path in (
         ("package", package_path),
         ("native extension", extension_path),
     ):
-        if _inside(source_root, path):
+        if (_inside(source_root / "pyscarcopula", path)
+                or not _inside(installed_root, path)):
             raise RuntimeError(
                 f"source-tree leakage: {label} resolved inside "
-                f"{source_root}: {path}"
+                f"the source package or outside installed wheel {installed_root}: {path}"
             )
 
-    distribution = metadata.distribution("pyscarcopula")
-    if distribution.read_text("WHEEL") is None:
-        raise RuntimeError("installed distribution has no WHEEL metadata")
     return {
         "package": str(package_path),
         "extension": str(extension_path),
@@ -576,6 +578,8 @@ def _loaded_package_boundary(source_root: Path) -> dict:
     from pyscarcopula._native.smoke import installed_distribution_boundary
 
     source_root = source_root.resolve()
+    installed_root = Path(
+        metadata.distribution("pyscarcopula").locate_file("pyscarcopula")).resolve()
     leaking = []
     for name, module in sorted(sys.modules.items()):
         if name != "pyscarcopula" and not name.startswith("pyscarcopula."):
@@ -584,7 +588,8 @@ def _loaded_package_boundary(source_root: Path) -> dict:
         if module_file is None:
             continue
         path = Path(module_file).resolve()
-        if _inside(source_root, path):
+        if (_inside(source_root / "pyscarcopula", path)
+                or not _inside(installed_root, path)):
             leaking.append(f"{name}={path}")
     if leaking:
         raise RuntimeError(
@@ -746,8 +751,8 @@ def main(argv: list[str] | None = None) -> int:
     source_root = arguments.source_root.resolve()
     if arguments.output is not None:
         output = arguments.output.resolve()
-        if _inside(source_root, output):
-            parser.error("--output must be outside the product repository")
+        if _inside(source_root, output) and not _inside(source_root / "build", output):
+            parser.error("--output must be inside build/ or outside the product repository")
         if output.exists():
             parser.error("refusing to overwrite existing wheel evidence")
     else:

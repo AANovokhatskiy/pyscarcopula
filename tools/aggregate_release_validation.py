@@ -1,4 +1,4 @@
-"""Aggregate a complete release-gate artifact matrix and reject drift."""
+"""Aggregate a complete release-validation artifact matrix and reject drift."""
 
 from __future__ import annotations
 
@@ -335,8 +335,8 @@ def main(argv: list[str] | None = None) -> int:
     json_output = arguments.json_output.resolve()
     markdown_output = arguments.markdown_output.resolve()
     for output in (json_output, markdown_output):
-        if _inside(source_root, output):
-            parser.error("report outputs must be outside the product repository")
+        if _inside(source_root, output) and not _inside(source_root / "build", output):
+            parser.error("report outputs must be inside build/ or outside the product repository")
         if output.exists():
             parser.error("refusing to overwrite release validation evidence")
 

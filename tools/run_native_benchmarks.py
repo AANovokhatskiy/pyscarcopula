@@ -1,10 +1,9 @@
-"""Capture and compare the permanent Gate 1 native benchmark matrix.
+"""Capture and compare the native performance benchmark matrix.
 
 The manifest owns workload identity.  This driver owns deterministic fixture
 construction, calibration, paired timing samples, memory probes, checksums,
 and host/toolchain metadata.  It deliberately times the
-existing Python/native boundary because the refactor must preserve that
-boundary until its compatibility inventory says otherwise.
+public Python/native boundary so each measurement includes adapter overhead.
 """
 
 from __future__ import annotations
@@ -31,7 +30,10 @@ import numpy as np
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_MANIFEST = ROOT / "benchmarks" / "gate1_manifest_v2.json"
+DEFAULT_MANIFEST = ROOT / "benchmarks" / "native_performance_v3.json"
+MANIFEST_SCHEMA_VERSION = 3
+CAPTURE_SCHEMA_VERSION = 5
+CAPTURE_TYPE = "pyscarcopula-native-benchmark-capture"
 TESTS = ROOT / "tests"
 
 
@@ -39,9 +41,9 @@ def _artifact_paths(args: argparse.Namespace) -> tuple[Path, Path, Path]:
     """Resolve append-only outputs and reject product-checkout artifacts."""
 
     artifact_root = args.artifact_root.resolve()
-    if artifact_root == ROOT or ROOT in artifact_root.parents:
+    if artifact_root.is_relative_to(ROOT) and not artifact_root.is_relative_to(ROOT / "build"):
         raise SystemExit(
-            "--artifact-root must be outside the product repository")
+            "--artifact-root must be inside build/ or outside the product repository")
     artifact_root.mkdir(parents=True, exist_ok=True)
 
     def resolve_output(value: Path | None, default_name: str) -> Path:
@@ -55,7 +57,7 @@ def _artifact_paths(args: argparse.Namespace) -> tuple[Path, Path, Path]:
             raise SystemExit(f"refusing to overwrite append-only artifact: {path}")
         return path
 
-    output = resolve_output(args.output, "gate1_candidate.json")
+    output = resolve_output(args.output, "native_benchmark_candidate.json")
     summary = resolve_output(args.summary, "performance_summary.md")
     return artifact_root, output, summary
 
@@ -1634,8 +1636,19 @@ def compare_benchmark_artifacts(
         baseline: dict[str, Any],
         candidate: dict[str, Any]) -> dict[str, Any]:
     """Apply the declared coarse runtime, memory, and scaling policy."""
-    policy = baseline["protocol"]["regression_policy"]
     failures: list[str] = []
+    for label, artifact in (("baseline", baseline), ("candidate", candidate)):
+        if (artifact.get("schema_version") != CAPTURE_SCHEMA_VERSION
+                or artifact.get("artifact_type") != CAPTURE_TYPE):
+            failures.append(
+                f"{label} has an unsupported capture format; "
+                "record a new baseline and candidate")
+    if failures:
+        return {
+            "passed": False, "policy": None, "failures": failures,
+            "environment_mismatches": [], "cases": [], "parallel_scaling": [],
+        }
+    policy = baseline["protocol"]["regression_policy"]
     if baseline.get("manifest_id") != candidate.get("manifest_id"):
         failures.append("baseline and candidate use different manifests")
     if baseline.get("manifest_sha256") != candidate.get("manifest_sha256"):
@@ -1799,7 +1812,7 @@ def compare_benchmark_artifacts(
 
 def _write_summary(payload: dict[str, Any], path: Path) -> None:
     lines = [
-        "# C++ refactor benchmark capture",
+        "# Native performance measurements",
         "",
         f"- Manifest: `{payload['manifest_id']}`",
         f"- Commit: `{payload['environment']['git_commit']}`",
@@ -1889,6 +1902,8 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("--test-workers must be between 1 and 4")
     manifest_path = args.manifest.resolve()
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest.get("schema_version") != MANIFEST_SCHEMA_VERSION:
+        raise SystemExit("unsupported workload manifest format; use the current manifest")
     cases = manifest["cases"]
     if args.case:
         cases = [
@@ -1967,8 +1982,8 @@ def main(argv: list[str] | None = None) -> int:
         eligibility_failures.append("process affinity was not applied to all cases")
     valid_for_regression_check = not eligibility_failures
     payload = {
-        "schema_version": 4,
-        "artifact_type": "pyscarcopula-gate1-benchmark-capture",
+        "schema_version": CAPTURE_SCHEMA_VERSION,
+        "artifact_type": CAPTURE_TYPE,
         "manifest_id": manifest["manifest_id"],
         "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
         "created_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),

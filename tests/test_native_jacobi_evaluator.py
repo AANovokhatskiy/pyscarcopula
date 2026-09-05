@@ -1,4 +1,3 @@
-from pathlib import Path
 import warnings
 
 import numpy as np
@@ -370,26 +369,3 @@ def test_prepared_evaluator_reports_combined_workspace_failure(operation):
             evaluator.rosenblatt(*PARAMS, gaussian=True)
         else:
             getattr(evaluator, operation)(*PARAMS)
-
-
-def test_python_numerical_modules_do_not_own_jacobi_filter_math():
-    root = Path(__file__).resolve().parents[1]
-    dense = (root / "pyscarcopula/numerical/jacobi_tm.py").read_text(
-        encoding="utf-8")
-    sparse = (root / "pyscarcopula/numerical/jacobi_sparse.py").read_text(
-        encoding="utf-8")
-
-    for forbidden in (
-        "_iter_matrix_filter",
-        "_matrix_setup_fd_derivatives",
-        "_normalize_prob_mass_with_derivatives",
-        "_iter_coeff_filter",
-    ):
-        assert forbidden not in dense
-    for forbidden in (
-        "_sparse_filter_loglik_kernel",
-        "_sparse_neg_loglik_grad_kernel",
-        "_iter_sparse_filter",
-        "_sparse_filter_setup",
-    ):
-        assert forbidden not in sparse

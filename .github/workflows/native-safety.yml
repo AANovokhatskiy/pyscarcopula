@@ -16,7 +16,7 @@ on:
       - "pyscarcopula/strategy/scar_jacobi.py"
       - "tests/test_cpp.py"
       - "tests/test_cpp_architecture.py"
-      - "tests/test_gate1_benchmarks.py"
+      - "tests/test_native_benchmarks.py"
       - "tests/test_cpp_gas_wrapper.py"
       - "tests/test_cpp_rvine_layer.py"
       - "tests/test_cpp_rvine_conditional.py"
@@ -40,9 +40,10 @@ on:
       - "tools/check_cpp_architecture.py"
       - "tools/check_python_ownership.py"
       - "tools/python_ownership_policy.py"
-      - "tools/run_gate1_benchmarks.py"
-      - "benchmarks/gate1_manifest_v2.json"
+      - "tools/run_native_benchmarks.py"
+      - "benchmarks/native_performance_v3.json"
       - "pyproject.toml"
+      - "tools/run_in_workspace.py"
   pull_request:
     paths:
       - ".github/workflows/native-safety.yml"
@@ -57,7 +58,7 @@ on:
       - "pyscarcopula/strategy/scar_jacobi.py"
       - "tests/test_cpp.py"
       - "tests/test_cpp_architecture.py"
-      - "tests/test_gate1_benchmarks.py"
+      - "tests/test_native_benchmarks.py"
       - "tests/test_cpp_gas_wrapper.py"
       - "tests/test_cpp_rvine_layer.py"
       - "tests/test_cpp_rvine_conditional.py"
@@ -81,9 +82,10 @@ on:
       - "tools/check_cpp_architecture.py"
       - "tools/check_python_ownership.py"
       - "tools/python_ownership_policy.py"
-      - "tools/run_gate1_benchmarks.py"
-      - "benchmarks/gate1_manifest_v2.json"
+      - "tools/run_native_benchmarks.py"
+      - "benchmarks/native_performance_v3.json"
       - "pyproject.toml"
+      - "tools/run_in_workspace.py"
   workflow_dispatch:
 
 env:
@@ -97,11 +99,15 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+      - name: Keep build and test files in the workspace
+        run: python -B tools/run_in_workspace.py --github-env
 
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
+      - name: Install dependencies into a workspace venv
+        run: python -B tools/run_in_workspace.py --github-venv
       - name: Check C++ architecture
         run: |
           python tools/check_cpp_architecture.py
@@ -128,7 +134,7 @@ jobs:
           export LD_PRELOAD="${asan_path}:${libstdcpp_path}"
           python -m pytest -vv -s --tb=long \
             tests/test_cpp_architecture.py \
-            tests/test_gate1_benchmarks.py \
+            tests/test_native_benchmarks.py \
             tests/test_cpp.py \
             tests/test_cpp_gas_wrapper.py \
             tests/test_cpp_rvine_layer.py \

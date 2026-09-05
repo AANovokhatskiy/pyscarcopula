@@ -82,6 +82,7 @@ testpaths = ["tests"]
 # concurrently when the caller explicitly supplies ``-n N``.  Without ``-n``
 # pytest remains strictly sequential.
 addopts = "--dist=loadscope"
+cache_dir = "build/cache/pytest"
 markers = [
     "data: tests requiring data/ directory (csv files)",
     "benchmark: optional performance regression checks",

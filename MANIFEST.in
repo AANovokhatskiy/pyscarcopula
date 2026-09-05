@@ -8,7 +8,12 @@ include tools/check_python_ownership.py
 include tools/python_ownership_policy.py
 include tools/build_cpp_tests.py
 include tools/benchmark_timing.py
+include tools/run_native_benchmarks.py
+include tools/run_in_workspace.py
+include tools/prepare_wheel_container.py
+include benchmarks/native_performance_v3.json
 include tools/aggregate_release_validation.py
+include tools/check_repository_naming.py
 include tools/allocation_probe.c
 include tools/native_dependency_audit.py
 include tools/write_release_metadata.py

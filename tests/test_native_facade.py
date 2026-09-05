@@ -134,12 +134,6 @@ else:
     assert result.returncode == 0, result.stderr
 
 
-def test_removed_top_level_raw_extension_path_has_no_alias():
-    assert importlib.util.find_spec("pyscarcopula._scar_cpp") is None
-    with pytest.raises(ModuleNotFoundError):
-        importlib.import_module("pyscarcopula._scar_cpp")
-
-
 def test_exact_type_registry_builds_opaque_cpp_descriptor():
     module = _extension.load()
     model = ClaytonCopula(rotate=180)

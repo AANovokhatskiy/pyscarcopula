@@ -313,8 +313,8 @@ def strategy_support(model, method):
     normalized = str(method).upper().replace("_", "-")
     requirements = STRATEGY_REQUIREMENTS.get(normalized)
     if requirements is None:
-        # User-registered strategies remain a Python extension point during
-        # the staged migration and have no built-in native requirement set.
+        # User-registered strategies are Python extension points and do not
+        # declare a built-in native requirement set.
         return None
     last = None
     for operation in requirements.operations:

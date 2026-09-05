@@ -38,44 +38,80 @@ dependency.
 
 ## Local commands
 
-Build/install the native extension before running the suite:
+Activate a workspace venv as described in the
+[installation guide](../getting-started/installation.md), then build/install the
+native extension before running the suite:
 
 ```bash
-python -m pip install -e ".[test]"
+python -B tools/run_in_workspace.py -- -m pip install -e ".[test]"
 ```
 
 PR smoke:
 
 ```bash
-python -m pytest -q tests/conditional --strict-markers \
+python -B tools/run_in_workspace.py -- -m pytest -q tests/conditional --strict-markers \
   -m "not validation and not benchmark and not external"
 ```
 
 Distributional validation, including non-external high-dimensional cases:
 
 ```bash
-python -m pytest -q tests/conditional --strict-markers --run-validation \
+python -B tools/run_in_workspace.py -- -m pytest -q tests/conditional --strict-markers --run-validation \
   -m "validation and not benchmark and not external"
 ```
 
 Pinned external and high-dimensional one-time layer:
 
 ```bash
-python -m pip install -e ".[test,external]"
-python -m pytest -q tests/conditional --strict-markers --run-validation \
+python -B tools/run_in_workspace.py -- -m pip install -e ".[test,external]"
+python -B tools/run_in_workspace.py -- -m pytest -q tests/conditional --strict-markers --run-validation \
   -m "(external or high_dimensional) and not benchmark"
 ```
 
 Manual benchmark artifact:
 
 ```bash
-python tools/benchmark_conditional_sampling.py \
+python -B tools/run_in_workspace.py -- tools/benchmark_conditional_sampling.py \
   --profile full --n-draws 1024 --mcmc-draws 8 \
   --repeats 5 --warmups 1 --n-threads 4 --include-mcmc
 ```
 
 Set `PYSCA_RUN_BENCHMARKS=1` only when directly running pytest cases marked
 `benchmark`.  The permanent benchmark CLI does not need that variable.
+
+## Public input boundary matrix
+
+The following checks call the production entry points. Object/API means both
+`model.fit/sample/predict` and the corresponding functions in `pyscarcopula.api`.
+Validation performed by a test adapter is not evidence for these contracts.
+
+| Models | Method | Entry points | Boundary and expected behavior | Test module |
+|---|---|---|---|---|
+| Gumbel | MLE, GAS, SCAR-TM-OU, SCAR-TM-JACOBI | Object/API fit, then predict | C/F, strided and read-only inputs; fitting owns its history; later caller mutation leaves seeded prediction unchanged | `test_fit_input_contracts` |
+| Independent | MLE | Object/API fit | Saved observations do not share the caller's buffer | `test_fit_input_contracts` |
+| Gumbel, Independent, Gaussian, Student | MLE | Object/API fit | Ties use ordinal ranks in input order; raw data remains unchanged | `test_fit_input_contracts` |
+| Gumbel, Independent, Gaussian, Student, equicorrelated Gaussian, stochastic Student, C-vine | MLE | Object/API fit | Empty input rejected without publishing fitted state | `test_fit_input_contracts` |
+| Gumbel | MLE, GAS | Object/API fit | One observation accepted | `test_fit_input_contracts` |
+| Gumbel | SCAR-TM-OU, SCAR-TM-JACOBI | Object/API fit | At least two observations required | `test_fit_input_contracts` |
+| Independent, equicorrelated Gaussian, stochastic Student with fixed R | MLE | Object/API fit | One observation accepted | `test_fit_input_contracts` |
+| Gaussian/Student with estimated R, automatically selected C-vine | MLE | Object/API fit | One observation rejected | `test_fit_input_contracts` |
+| Independent, Gaussian, Student, equicorrelated Gaussian, stochastic Student | MLE | Object/API fit | Exact 0/1 and their inward `nextafter` neighbors accepted | `test_fit_input_contracts` |
+| Automatically selected C-vine | MLE | Object/API fit | Exact 0/1 rejected; inward `nextafter` neighbors accepted | `test_fit_input_contracts` |
+| Six pair families, four multivariate families, generic vine | MLE | Object/API sample/predict | Negative, Boolean, floating and string sizes rejected before RNG consumption; NumPy integer sizes accepted; fully conditioned predict also validates size | `conditional/test_api_contracts` |
+| Same MLE families | MLE | Object/API sample/predict | Zero returns an empty array for pair/multivariate models; vine rejects it; RNG unchanged | `conditional/test_api_contracts` |
+| Gumbel after real fitting | GAS, SCAR-TM-OU, SCAR-TM-JACOBI | Object/API sample/predict | Invalid sizes rejected; NumPy integer accepted; zero rejected by GAS and accepted by SCAR without RNG consumption | `test_dynamic_sampling_input_contracts` |
+
+These are explicit coverage subsets, not the complete model/method Cartesian
+product. Singleton acceptance describes input handling, not parameter
+identifiability. Closed-interval input acceptance does not guarantee a finite
+likelihood at singular family boundaries. Distributional and tail tests remain
+necessary in addition to the input matrix.
+
+Shape/dtype/nonfinite inputs, refit rollback, resource limits, conditioning,
+persistence and dynamic horizons have additional coverage in
+`test_static_correlation_acceptance`, `test_real_numeric_inputs`,
+`test_prepared_input_contracts`, `test_sampling_resource_limits`,
+`test_strategy_state_validation` and the conditional test suite.
 
 ## Statistical stability policy
 
@@ -89,6 +125,16 @@ determine whether the problem is a sampler defect, a numerical-boundary case,
 or an unstable test budget.
 
 ## Benchmark evidence
+
+Native performance workloads are defined in
+`benchmarks/native_performance_v3.json`.
+Run `python tools/run_native_benchmarks.py --help` for capture and comparison
+options. The workload manifest uses schema 3
+and captures use schema 5. Record both a new baseline and candidate with these
+formats; captures from earlier formats are rejected for regression comparison.
+Keep local evidence below `build/`, for example by passing
+`--artifact-root build/benchmarks/reference-run`. Evidence tools accept this
+generated directory while rejecting outputs placed among product source files.
 
 The benchmark CLI writes both JSON and CSV.  The artifact includes commit and
 runtime/compiler/CPU metadata; each record includes model case, path, seed,

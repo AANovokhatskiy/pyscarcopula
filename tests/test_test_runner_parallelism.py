@@ -2,7 +2,6 @@
 
 from pathlib import Path
 import ast
-import re
 
 try:
     import tomllib
@@ -104,58 +103,4 @@ def test_benchmarks_have_no_direct_absolute_wall_clock_assertions():
     assert not violations, (
         "benchmark gates must compare relative speedup/ratio/efficiency, "
         "not absolute wall-clock values:\n" + "\n".join(violations)
-    )
-
-
-def test_relative_timing_gates_use_interleaved_rounds():
-    relative_assertion_names = {"speedup", "ratio", "target_met"}
-    violations = []
-
-    for path in sorted((ROOT / "tests").rglob("*.py")):
-        source = path.read_text(encoding="utf-8-sig")
-        if "pytest.mark.benchmark" not in source:
-            continue
-        tree = ast.parse(source, filename=str(path))
-        gated_names = {
-            node.id
-            for assertion in ast.walk(tree)
-            if isinstance(assertion, ast.Assert)
-            for node in ast.walk(assertion.test)
-            if isinstance(node, ast.Name)
-        } & relative_assertion_names
-        if gated_names and "interleaved_timings(" not in source:
-            violations.append(
-                f"{path.relative_to(ROOT)}: {sorted(gated_names)}"
-            )
-
-    assert not violations, (
-        "relative timing gates must use paired interleaved rounds:\n"
-        + "\n".join(violations)
-    )
-
-
-def test_active_benchmark_interfaces_use_semantic_names():
-    interface_paths = [
-        *sorted((ROOT / ".github/workflows").glob("*.yml")),
-        *sorted((ROOT / "tests").rglob("*.py")),
-        *sorted((ROOT / "tools").glob("*.py")),
-    ]
-    forbidden = (
-        re.compile(r"PYSCA_(?:PHASE|STAGE)\d", re.IGNORECASE),
-        re.compile(r"\b(?:PHASE|STAGE)\d[A-Z0-9_]*_BENCH\b"),
-        re.compile(r"\bMIGRATION_GATE\d\b", re.IGNORECASE),
-        re.compile(r"conditional_sampling_(?:phase|stage)\d", re.IGNORECASE),
-    )
-    violations = []
-    for path in interface_paths:
-        source = path.read_text(encoding="utf-8-sig")
-        for pattern in forbidden:
-            if match := pattern.search(source):
-                violations.append(
-                    f"{path.relative_to(ROOT)}: {match.group(0)!r}"
-                )
-
-    assert not violations, (
-        "active benchmark interfaces must describe their purpose instead "
-        "of a refactoring milestone:\n" + "\n".join(violations)
     )

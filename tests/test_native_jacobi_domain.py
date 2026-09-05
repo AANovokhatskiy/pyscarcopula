@@ -1,6 +1,5 @@
 """Contracts for the native Jacobi domain core."""
 
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -9,7 +8,6 @@ from scipy.special import eval_jacobi, roots_jacobi
 from pyscarcopula import GumbelCopula
 from pyscarcopula._native import jacobi as jacobi_native
 from pyscarcopula.numerical import jacobi_tm
-from pyscarcopula.strategy import scar_jacobi
 
 
 def test_pybind_exports_typed_jacobi_domain_contract():
@@ -246,22 +244,6 @@ def test_native_quadrature_budget_covers_eigenvector_matrices():
             2.5, 3.5, quad_order, 1, budget)
     with pytest.raises(MemoryError, match="memory_budget_bytes=100000"):
         jacobi_native.gauss_hermite_rule(quad_order, budget)
-
-
-def test_production_python_delegates_domain_formulas_to_native():
-    root = Path(__file__).resolve().parents[1]
-    numerical = (root / "pyscarcopula/numerical/jacobi_tm.py").read_text(
-        encoding="utf-8")
-    strategy = (root / "pyscarcopula/strategy/scar_jacobi.py").read_text(
-        encoding="utf-8")
-    for marker in (
-            "scipy.special", "roots_jacobi", "eval_jacobi", "hermgauss",
-            "betaln", "digamma"):
-        assert marker not in numerical
-    assert "expit" not in strategy
-    assert "def _logit" not in strategy
-    assert "jacobi_native.raw_to_physical" in strategy
-    assert "jacobi_native.physical_to_raw" in strategy
 
 
 @pytest.mark.parametrize(

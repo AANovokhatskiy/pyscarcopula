@@ -58,7 +58,7 @@ def _report(name, elapsed, *, workload, cache_state):
         "native_extension": "required",
         "timer": "perf_counter median",
     }
-    print("WP0_BENCH " + json.dumps(payload, sort_keys=True), flush=True)
+    print("NUMERICAL_BENCH " + json.dumps(payload, sort_keys=True), flush=True)
 
 
 @pytest.mark.benchmark

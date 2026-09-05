@@ -1033,8 +1033,8 @@ ConditionalSampleResult conditional_sample(
     if (rows == 0) {
         return out;
     }
-    // Preserve the Stage 0 row-chunk contract.  Any future tuning of this
-    // constant requires an explicitly approved Gate 1/Gate 3 change.
+    // Bound per-chunk traversal state independently of the requested sample size.
+    // Keep row batching within the fixed workspace budget below.
     constexpr std::size_t conditional_max_block_rows = 1024;
     constexpr std::size_t conditional_workspace_budget =
         64U * 1024U * 1024U;

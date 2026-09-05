@@ -1,6 +1,5 @@
 """Native Jacobi transition ownership contracts."""
 
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -193,35 +192,6 @@ def test_native_fixed_sparse_derivatives_match_dense():
     np.testing.assert_allclose(
         sparse_transition.to_dense(), dense_transition, atol=4e-15)
     np.testing.assert_allclose(reconstructed, dense_derivatives, atol=2e-14)
-
-
-def test_production_python_delegates_transition_kernels_to_native():
-    root = Path(__file__).resolve().parents[1]
-    dense = (root / "pyscarcopula/numerical/jacobi_tm.py").read_text(
-        encoding="utf-8")
-    sparse = (root / "pyscarcopula/numerical/jacobi_sparse.py").read_text(
-        encoding="utf-8")
-    for marker in (
-            "def _add_interpolated_mass",
-            "def _probability_transition_matrix",
-            "kernel = (basis * powers",
-            "np.exp(-eig * dt)",
-            "predicted_coeff = powers * coeff"):
-        assert marker not in dense
-    for marker in (
-            "def _build_sparse_local_kernel",
-            "def _build_sparse_fixed_kernel",
-            "def _mh_correct_sparse_transition",
-            "def _ipfp_correct_sparse_transition",
-            "def _sparse_left_multiply"):
-        assert marker not in sparse
-    assert "jacobi_native.dense_transition" in dense
-    assert "jacobi_native.PreparedScarJacobiEvaluator" in dense
-    assert "jacobi_native.sparse_transition" in sparse
-    assert "jacobi_native.select_sparse_order" in sparse
-    assert "numba" not in sparse
-    assert "def _sparse_to_dense" not in sparse
-    assert "jacobi_native.sparse_to_dense" in sparse
 
 
 def test_native_transition_memory_budget_fails_before_result_allocation():

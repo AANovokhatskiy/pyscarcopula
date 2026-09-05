@@ -312,25 +312,59 @@ def test_multivariate_gaussian_cpp_suite_is_distribution_isolated():
     assert '"scar/copula/multivariate/correlation/factor.hpp"' in source
 
 
-def test_header_unit_objects_avoid_absolute_output_path_expansion():
-    source = BUILD_TOOL_PATH.read_text(encoding="utf-8")
-    header_block = source[source.index("if check_headers:"):]
-    compile_call = header_block[:header_block.index("compiler.link_executable")]
-    assert "output_dir=None" in compile_call
+@pytest.mark.parametrize("fail_compile", [False, True])
+def test_cpp_build_passes_relative_sources_and_restores_working_directory(
+        tmp_path, monkeypatch, fail_compile):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
 
+    calls = []
+    class Compiler:
+        compiler_type = "unix"
+        def compile(self, sources, **options):
+            cwd = Path.cwd()
+            assert all(not Path(source).is_absolute() for source in sources)
+            assert all((cwd / source).is_file() for source in sources)
+            assert Path(options["output_dir"]).is_absolute()
+            calls.append((cwd, list(sources)))
+            if fail_compile:
+                raise RuntimeError("compile failed")
+            return [str(Path(options["output_dir"]) / (Path(source).stem + ".o"))
+                    for source in sources]
+        def link_executable(self, objects, name, **options):
+            assert objects
+            (Path(options["output_dir"]) / name).touch()
+        def executable_filename(self, name):
+            return name
 
-def test_cpp_objects_avoid_absolute_source_path_expansion():
-    source = BUILD_TOOL_PATH.read_text(encoding="utf-8")
-    build_block = source[
-        source.index("with build_parallel.parallel_compilation"):
-        source.index("if check_headers:")
-    ]
-    assert "with _working_directory(CPP_SOURCE_ROOT):" in build_block
-    assert "list(sources.SCAR_COMPUTE_SOURCES)" in build_block
-    assert 'with _working_directory(ROOT / "tests" / "cpp"):' in build_block
-    assert "[path.name for path in CPP_TEST_SOURCES]" in build_block
-    assert "[str(path) for path in compute_sources]" not in build_block
-    assert "[str(path) for path in CPP_TEST_SOURCES]" not in build_block
+    compiler = Compiler()
+    real_loader = BUILD_CPP_TESTS._load_build_support
+    support = {
+        "sources": real_loader("sources"),
+        "toolchain": SimpleNamespace(
+            prepare_compiler_environment=lambda value: None,
+            standalone_compile_args=lambda value: [],
+            standalone_link_args=lambda value: []),
+        "build_parallel": SimpleNamespace(
+            resolve_build_jobs=lambda value: value,
+            parallel_compilation=lambda value, jobs: nullcontext()),
+    }
+    monkeypatch.setattr(BUILD_CPP_TESTS, "_load_build_support", support.__getitem__)
+    monkeypatch.setattr(BUILD_CPP_TESTS, "new_compiler", lambda **kwargs: compiler)
+    monkeypatch.setattr(BUILD_CPP_TESTS, "customize_compiler", lambda value: None)
+    original = Path.cwd()
+    options = dict(build_dir=tmp_path, compiler_name="unix", build_jobs=1,
+                   debug=False, force=False, check_headers=True, run=False)
+    if fail_compile:
+        with pytest.raises(RuntimeError, match="compile failed"):
+            BUILD_CPP_TESTS.build_cpp_tests(**options)
+    else:
+        assert BUILD_CPP_TESTS.build_cpp_tests(**options).is_file()
+        assert len(calls) == 3
+        assert calls[0][0] == BUILD_CPP_TESTS.CPP_SOURCE_ROOT
+        assert calls[1][0] == ROOT / "tests" / "cpp"
+        assert calls[2][0] == tmp_path / "unix" / "header-units"
+    assert Path.cwd() == original
 
 
 def test_extension_and_cpp_boundary_use_shared_build_support():

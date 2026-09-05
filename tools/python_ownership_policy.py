@@ -42,8 +42,8 @@ _SYMBOL_REVIEWS = (
     # Static MLE input fixes reuse real-value and dense-allocation validators.
     # The reviewed result type union, native-objective signs, and generic
     # optimizer acceptance bookkeeping retain their existing ownership.
-    # Covered by tests/test_static_gaussian_remaining_fixes.py and
-    # tests/test_static_config_remaining_fixes.py. Factor to_dense and Gaussian
+    # Covered by tests/test_gaussian_input_contracts.py and
+    # tests/test_static_configuration_contracts.py. Factor to_dense and Gaussian
     # initialize_factor no longer require arithmetic exceptions.
     # Sampling/conditional routing and numerical-step changes preserve native
     # ownership of model mathematics. The GAS wrapper below only converts
@@ -169,15 +169,8 @@ _SYMBOL_REVIEWS = (
      '59bd705a9f4f4d7071de181f3bdb3c52ba05ad08ba5d89beee0936bf03c27e78', 'structure', ('arithmetic',)),
     ('pyscarcopula._parallel:validate_n_jobs',
      'd42bc191bdb95359ae6800a28f4e47ff6f66bdcf400bb2fa03161a1e4b427f7f', 'structure', ('numerical-call',)),
-    ('pyscarcopula._types:<module>',
-     '0622cc598535b78cf4c0ab48fd0dad8af1d476975e95293f40355b53e94e5e2c', 'structure', ('arithmetic',)),
     ('pyscarcopula._utils:broadcast',
      '6d1523c8a005eaa90268eb0b9db1f7cdecc5ee92933ed56ab3bcb541d94872ee', 'structure', ('numerical-call',)),
-    # API module change adds only an unsupported Vine post-fit config gate;
-    # it does not alter the reviewed result type union or numerical ownership.
-    # Covered by tests/test_vine_postfit_config_routing.py.
-    ('pyscarcopula.api:<module>',
-     '415d4aed26ce02d1097b18cdc7f96d14830fc05dd98f69bb7c67d524da0b9f66', 'structure', ('arithmetic',)),
     ('pyscarcopula.copula._rotation:transposed_bivariate_copula',
      'a89c19be868efff3d3c1430622599ca35dec8db904fe9ca0b97e263d936b1bfe', 'structure', ('arithmetic',)),
     ('pyscarcopula.copula.clayton:ClaytonCopula.tau_to_param',
@@ -435,7 +428,7 @@ _SYMBOL_REVIEWS = (
     # Failure/config coverage: tests/test_rvine_validation_regressions.py and
     # tests/test_vine_selection_validation.py.
     ('pyscarcopula.vine._selection:select_best_copula',
-     'bb791d292ed1ad89c69a72b1af59587f2519e295d230c7718d644a538ec580e9', 'structure', ('numerical-call', 'arithmetic')),
+     'd17996763d2c9a47a435230d6b0168b9681800b542bba1ae5bce9dacbae83cb9', 'structure', ('numerical-call', 'arithmetic')),
     ('pyscarcopula.vine._structure:RVineMatrix._validate',
      'ed389dd0b2b8a27e51d6909997f0060725f3add52504210396212d11c7d4c439', 'structure', ('arithmetic',)),
     ('pyscarcopula.vine._structure:RVineMatrix.edge',
@@ -501,7 +494,7 @@ _SYMBOL_REVIEWS = (
     ('pyscarcopula.vine.vine:VineCopula.predict.timed#2',
      'e144090f4cde100041659fe404de0b727287067a3c25dbaa20f33e9721e97c45', 'bookkeeping', ()),
     ('pyscarcopula.vine.vine:VineCopula.sample',
-     '5925da5b77f4152be4044da4d58c3b3750f8a8e6dc3f1302a12f1892ef2abdc0', 'structure', ('arithmetic', 'numerical-call')),
+     'd74a101fb8fab4c0ac4de81ebe9082c514ddba9c0a681f34744ed905e5be8196', 'structure', ('arithmetic', 'numerical-call')),
     ('pyscarcopula.vine.vine:_structure_kinds',
      '829370bf6c68932195b9cf84a0be806679a79909e7ae5904c7677d9163245c77', 'structure', ('arithmetic', 'numerical-call')),
     ('pyscarcopula._native.jacobi:sample_lamperti_trajectory',

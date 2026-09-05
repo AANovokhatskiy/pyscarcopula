@@ -1,14 +1,13 @@
 """Test that fit methods converge and recover known parameters."""
-import importlib
 import json
 
 import numpy as np
 import pytest
 from pyscarcopula import GumbelCopula, ClaytonCopula, FrankCopula, JoeCopula
-from pyscarcopula.api import fit, predict, sample
+from pyscarcopula.api import fit
 from pyscarcopula._utils import pobs
 from pyscarcopula._types import (
-    MLEResult, LatentResult, GASResult, NumericalConfig, LBFGSBConfig,
+    MLEResult, LatentResult, GASResult, NumericalConfig,
 )
 from pyscarcopula._native import scar_ou as _cpp_scar_ou
 from pyscarcopula._native.errors import NativeUnsupported
@@ -347,13 +346,19 @@ class TestGASConvergence:
 
 
 class TestSmartInit:
-    @pytest.mark.parametrize("smart", [True, False])
-    def test_smart_init_same_optimum(self, crypto_data, smart):
+    def test_smart_init_same_optimum(self, crypto_data):
         u = crypto_data[:500]
-        cop = GumbelCopula(rotate=180)
-        result = fit(cop, u, method='scar-tm-ou',
-                     smart_init=smart, analytical_grad=True)
-        assert result.log_likelihood > 100
+        results = [
+            fit(GumbelCopula(rotate=180), u, method='scar-tm-ou',
+                smart_init=smart, analytical_grad=True)
+            for smart in (True, False)
+        ]
+        assert all(result.success for result in results)
+        assert results[0].log_likelihood == pytest.approx(
+            results[1].log_likelihood, abs=1e-4)
+        np.testing.assert_allclose(
+            results[0].params.values, results[1].params.values,
+            rtol=2e-3, atol=1e-4)
 
     def test_use_gas_returns_gas_initial_point(self, monkeypatch):
         from pyscarcopula.strategy import initial_point

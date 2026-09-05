@@ -33,12 +33,12 @@
   product repository and source distribution. The material remains archived
   outside the repository; current architecture, numerical, parallel, wheel,
   and sanitizer tests continue to validate the product directly.
-- Complete the Stage 9 native architecture gates: validate the full logical
+- Complete the native architecture checks: validate the full logical
   C++ target graph and domain cycles, add focused Python-free model suites,
   compile every public header independently, run standalone ASan/UBSan and
   TSan executables, and automate accuracy/config, pinned-runner performance,
   cross-platform wheel numerical-parity, and import validation over the
-  canonical compute manifest. Gate 3 continues to enforce the frozen
+  canonical compute manifest. Architecture validation continues to enforce the frozen
   conditional-vine row-chunk constant without a post-hoc exception.
 - Move the binary extension to `pyscarcopula._native._scar_cpp`. The former
   raw `pyscarcopula._scar_cpp` import path is removed without a compatibility
@@ -390,7 +390,7 @@ Merge PR: #43 (`2d6ebfc`, 2026-07-26)
 - Adds a dependency-free native linear-algebra layer with scalar and portable
   compiler-vectorizable backends; no Eigen, BLAS, OpenMP, or other external
   runtime dependency is introduced.
-- Adds the parallel release-gate matrix: strict GCC/Clang/MSVC wheels,
+- Adds the parallel release-validation matrix: strict GCC/Clang/MSVC wheels,
   Linux/macOS/Windows dependency audits, ASan/UBSan, ThreadSanitizer, Unix
   process-lifecycle stress, allocation/RSS instrumentation, explicit
   subinterpreter rejection, and aggregate validation artifacts.

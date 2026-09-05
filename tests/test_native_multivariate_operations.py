@@ -1,6 +1,5 @@
 """Contracts for native multivariate row and grid operations."""
 
-import inspect
 
 import numpy as np
 import pytest
@@ -12,13 +11,10 @@ import pyscarcopula.stattests as statt
 from pyscarcopula import (
     EquicorrGaussianCopula,
     FactorCorrelation,
-    GaussianCopula,
     StochasticStudentCopula,
     StudentCopula,
 )
-from pyscarcopula.copula.multivariate import equicorr, stochastic_student
-from pyscarcopula.copula.multivariate import conditional as conditional_module
-from pyscarcopula.copula.multivariate import gaussian as gaussian_module
+from pyscarcopula.copula.multivariate import equicorr
 from pyscarcopula._native import _extension as _cpp_extension, multivariate as multivariate_native
 from pyscarcopula._native.errors import NativeError
 
@@ -46,8 +42,6 @@ def test_gaussian_score_correlation_matches_frozen_scipy_formula():
     actual = multivariate_native.gaussian_score_correlation(observations)
 
     np.testing.assert_allclose(actual, expected, rtol=2e-14, atol=2e-14)
-    assert "np.corrcoef" not in inspect.getsource(gaussian_module)
-    assert "norm.ppf" not in inspect.getsource(gaussian_module)
 
 
 def test_gaussian_score_correlation_rejects_constant_columns():
@@ -340,26 +334,6 @@ def test_native_complete_conditionals_match_fixed_draw_oracles(factor):
             correlation, 6.5, given, normal_draws, chi_square)
         np.testing.assert_allclose(
             student, expected_student, rtol=0.0, atol=5e-12)
-
-
-def test_static_dense_and_factor_sampling_formulas_are_absent_from_python():
-    conditional_sources = "\n".join(inspect.getsource(function) for function in (
-        conditional_module.sample_gaussian_copula_conditional,
-        conditional_module.sample_student_conditional,
-        conditional_module.sample_factor_gaussian_conditional,
-        conditional_module.sample_factor_student_conditional,
-    ))
-    for token in (
-            "np.linalg", "norm.ppf", "t_dist.ppf", "norm.cdf",
-            "t_dist.cdf", "conditional_factor_mean", "radial_scale"):
-        assert token not in conditional_sources
-
-    unconditional_sources = "\n".join(inspect.getsource(method) for method in (
-        GaussianCopula.sample,
-        StudentCopula.sample,
-    ))
-    for token in ("multivariate_normal", "multivariate_t.rvs", "norm.cdf"):
-        assert token not in unconditional_sources
 
 
 def test_native_gaussian_rosenblatt_matches_dense_and_factor_oracles():

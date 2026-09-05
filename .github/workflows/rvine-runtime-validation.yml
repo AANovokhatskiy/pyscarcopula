@@ -18,6 +18,7 @@ on:
       - "conftest.py"
       - "tests/conftest.py"
       - "pyproject.toml"
+      - "tools/run_in_workspace.py"
       - "setup.py"
   push:
     branches: [master]
@@ -37,6 +38,7 @@ on:
       - "conftest.py"
       - "tests/conftest.py"
       - "pyproject.toml"
+      - "tools/run_in_workspace.py"
       - "setup.py"
   workflow_dispatch:
 
@@ -59,10 +61,14 @@ jobs:
       NUMEXPR_NUM_THREADS: "1"
     steps:
       - uses: actions/checkout@v6
+      - name: Keep build and test files in the workspace
+        run: python -B tools/run_in_workspace.py --github-env
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
+      - name: Install dependencies into a workspace venv
+        run: python -B tools/run_in_workspace.py --github-venv
       - name: Build mandatory extension and install tests
         run: python -m pip install -e ".[test]"
       - name: Verify base extension and runtime contracts
@@ -94,10 +100,14 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
+      - name: Keep build and test files in the workspace
+        run: python -B tools/run_in_workspace.py --github-env
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
+      - name: Install dependencies into a workspace venv
+        run: python -B tools/run_in_workspace.py --github-venv
       - name: Build mandatory extension and install tests
         run: python -m pip install -e ".[test]"
       - name: Run native GAS R-vine contracts

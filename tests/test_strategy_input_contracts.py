@@ -1,64 +1,52 @@
-"""Removal contracts for the discontinued SCAR Monte Carlo strategies."""
-
-from dataclasses import fields
-import importlib.util
+"""Strategy support and unsupported persisted-state contracts."""
 import json
-
 import numpy as np
 import pytest
-
-from pyscarcopula import GumbelCopula, VineCopula, load_model
-from pyscarcopula._native import _extension
+from pyscarcopula import ClaytonCopula, GumbelCopula, VineCopula, load_model
+from pyscarcopula._native.errors import NativeUnsupported
 from pyscarcopula._native.registry import STRATEGY_REQUIREMENTS
-from pyscarcopula._types import LatentResult, NumericalConfig, ou_params
+from pyscarcopula._types import LatentResult, ou_params
 from pyscarcopula.api import fit
 from pyscarcopula.io import MODEL_FORMAT, _from_jsonable, _to_jsonable
-from pyscarcopula.strategy._base import (
-    ensure_strategy_supported,
-    get_strategy,
-    list_methods,
-)
+from pyscarcopula.strategy._base import ensure_strategy_supported, get_strategy, list_methods
+from pyscarcopula.strategy.scar_jacobi import SCARJacobiStrategy
+from pyscarcopula.strategy.scar_tm import SCARTMStrategy
 
+UNSUPPORTED_METHODS = ("unknown-method", "SCAR-P-OU", "scar_m_ou")
 
-REMOVED_METHOD_ALIASES = (
-    "scar-p-ou",
-    "SCAR-P-OU",
-    "scar_p_ou",
-    "Scar_P_Ou",
-    "scarpou",
-    "scar-m-ou",
-    "SCAR-M-OU",
-    "scar_m_ou",
-    "Scar_M_Ou",
-    "scarmou",
-)
-
-
-def test_removed_methods_are_absent_from_all_public_and_native_registries():
-    assert list_methods() == ["GAS", "MLE", "SCAR-TM-JACOBI", "SCAR-TM-OU"]
+def test_builtin_methods_have_native_requirements():
+    assert set(list_methods()) == {"MLE", "GAS", "SCAR-TM-OU", "SCAR-TM-JACOBI"}
     assert set(STRATEGY_REQUIREMENTS) == set(list_methods())
 
-    cpp = _extension.load()
-    assert not hasattr(cpp.DynamicsKind, "ScarPOu")
-    assert not hasattr(cpp.DynamicsKind, "ScarMOu")
-    assert not hasattr(cpp, "copula_log_pdf_trajectory_grid")
+def test_unknown_copula_subclass_is_rejected_before_callback_execution():
+    calls = []
+
+    class CallbackCopula(ClaytonCopula):
+        def pdf(self, *args, **kwargs):
+            calls.append("pdf")
+            return super().pdf(*args, **kwargs)
+
+    data = np.random.default_rng(86).uniform(0.01, 0.99, size=(20, 2))
+    with pytest.raises(NativeUnsupported, match="exact registered"):
+        fit(CallbackCopula(), data, method="mle")
+    with pytest.raises(NativeUnsupported, match="exact registered"):
+        VineCopula.cvine(2, candidates=[CallbackCopula])
+    assert calls == []
 
 
-def test_removed_modules_and_public_fields_do_not_exist():
-    assert importlib.util.find_spec("pyscarcopula.strategy.scar_mc") is None
-    assert importlib.util.find_spec("pyscarcopula.numerical.mc_samplers") is None
-    assert importlib.util.find_spec("pyscarcopula.numerical.mc_native") is None
-
-    assert {"default_n_tr", "default_M_iterations"}.isdisjoint(
-        field.name for field in fields(NumericalConfig)
-    )
-    assert {"n_tr", "M_iterations"}.isdisjoint(
-        field.name for field in fields(LatentResult)
-    )
+@pytest.mark.parametrize("alias", ["matrix", "spectral"])
+def test_jacobi_transition_aliases_are_rejected(alias):
+    with pytest.raises(ValueError, match="transition_method"):
+        SCARJacobiStrategy(transition_method=alias)
 
 
-@pytest.mark.parametrize("method", REMOVED_METHOD_ALIASES)
-def test_removed_aliases_are_rejected_without_strategy_fallback(method):
+def test_adaptive_spectral_basis_alias_is_rejected():
+    with pytest.raises(ValueError, match="spectral_basis_order"):
+        SCARTMStrategy(spectral_basis_order="adaptive")
+
+
+@pytest.mark.parametrize("method", UNSUPPORTED_METHODS)
+def test_unknown_methods_are_rejected_without_strategy_fallback(method):
     observations = np.random.default_rng(20260825).uniform(
         0.1, 0.9, size=(12, 2)
     )
@@ -72,7 +60,7 @@ def test_removed_aliases_are_rejected_without_strategy_fallback(method):
 
 
 @pytest.mark.parametrize("method", ("scar-p-ou", "scar_m_ou"))
-def test_vines_reject_removed_methods_before_edge_selection(method):
+def test_vines_reject_unknown_methods_before_edge_selection(method):
     observations = np.random.default_rng(20260826).uniform(
         0.1, 0.9, size=(12, 3)
     )

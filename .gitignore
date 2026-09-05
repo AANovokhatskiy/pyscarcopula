@@ -12,6 +12,7 @@ build/
 site/
 tools/*
 !tools/check_docs.py
+!tools/check_repository_naming.py
 !tools/check_cpp_architecture.py
 !tools/check_python_ownership.py
 !tools/check_python_duplicates.py
@@ -27,9 +28,11 @@ tools/*
 !tools/validate_jacobi_sampling.py
 !tools/compare_copulae_crypto6.py
 !tools/benchmark_conditional_sampling.py
-!tools/run_gate1_benchmarks.py
+!tools/run_native_benchmarks.py
+!tools/run_in_workspace.py
+!tools/prepare_wheel_container.py
 benchmarks/*
-!benchmarks/gate1_manifest_v2.json
+!benchmarks/native_performance_v3.json
 scripts/
 results/
 AGENTS.md

@@ -711,7 +711,6 @@ class TestFitContract:
         assert fitted == fitted_supported
 
 
-
 # ═══════════════════════════════════════════════════════════
 # Matrix and pair copulas agree with each other
 # ═══════════════════════════════════════════════════════════
@@ -1304,7 +1303,7 @@ class TestSampling:
     def test_sample_rejects_bad_n(self):
         u = _sample_dvine_gumbel(200, 3, 2.0, seed=0)
         v = RVineCopula().fit(u)
-        with pytest.raises(ValueError, match="positive int"):
+        with pytest.raises(ValueError, match="must be positive"):
             v.sample(0)
 
     def test_gas_sample_shape_and_unit_interval(self):

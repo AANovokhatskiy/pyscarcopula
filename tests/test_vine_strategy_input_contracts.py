@@ -1,4 +1,4 @@
-"""Regressions for the remaining stage-5 Vine parameter-routing defects."""
+"""Vine strategy input validation across public entry points."""
 
 import numpy as np
 import pytest

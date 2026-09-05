@@ -188,7 +188,7 @@ def fit(
     with transaction:
         # A fit owns its training snapshot before any native call releases
         # the GIL. Immutable prepared statistics already own their buffers.
-        if multivariate and not prepared_input:
+        if not prepared_input:
             u = u.copy()
         if multivariate and not multivariate_mle:
             copula._prepare_dynamic_fit(u)

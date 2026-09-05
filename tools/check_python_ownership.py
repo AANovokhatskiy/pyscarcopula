@@ -49,7 +49,7 @@ def _stable_ast_dump(value):
     Python 3.13 changed :func:`ast.dump` to omit empty fields by default,
     while Python 3.10 and 3.11 do not expose the ``type_params`` fields added
     to definitions in Python 3.12.  Ownership review fingerprints must describe
-    source structure, not the interpreter used to run the release gate.
+    source structure, not the interpreter used to run the release check.
     """
     if isinstance(value, ast.AST):
         fields = list(ast.iter_fields(value))
@@ -121,6 +121,21 @@ def import_base(node, module, is_package):
         return "<unresolved-relative-import>"
 
 
+def _type_expression(node):
+    """Recognize declarative types without exempting executable expressions."""
+    if isinstance(node, (ast.Name, ast.Attribute)):
+        return bool(dotted(node))
+    if isinstance(node, ast.Constant):
+        return node.value is None or isinstance(node.value, str)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+        return _type_expression(node.left) and _type_expression(node.right)
+    if isinstance(node, ast.Subscript):
+        return _type_expression(node.value) and _type_expression(node.slice)
+    if isinstance(node, ast.Tuple):
+        return all(_type_expression(item) for item in node.elts)
+    return False
+
+
 def own_nodes(node):
     """Include defaults/decorators, exclude annotations and nested bodies."""
     def visit(item, initial=False):
@@ -129,6 +144,10 @@ def own_nodes(node):
         yield item
         for field, value in ast.iter_fields(item):
             if field in {"returns", "annotation", "type_comment", "type_params"}:
+                continue
+            if (isinstance(item, ast.AnnAssign) and field == "value"
+                    and dotted(item.annotation) in {"TypeAlias", "typing.TypeAlias"}
+                    and _type_expression(value)):
                 continue
             if isinstance(value, list):
                 for child in value:
@@ -556,8 +575,8 @@ def main(argv=None):
     root=args.root.resolve()
     if args.artifact_root:
         output=args.artifact_root.resolve()
-        if output==root or output.is_relative_to(root):
-            parser.error("--artifact-root must be outside the product repository")
+        if output.is_relative_to(root) and not output.is_relative_to(root / "build"):
+            parser.error("--artifact-root must be inside build/ or outside the product repository")
         targets=[output/n for n in ("python_inventory.json","python_import_graph.json","python_ownership_gate.json")]
         if any(p.exists() for p in targets) or (output/"checksums.sha256").exists():
             parser.error("Refusing to overwrite audit artifacts; use a new external directory")

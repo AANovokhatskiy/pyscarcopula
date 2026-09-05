@@ -1,4 +1,4 @@
-name: Gate 4 release wheels
+name: Release validation release wheels
 
 on:
   push:
@@ -45,24 +45,28 @@ jobs:
             os: macos-15
             arch: arm64
     env:
-      FV7_CONFIGURATION: >-
+      RELEASE_CONFIGURATION: >-
         wheel-${{ matrix.platform.name }}-${{ matrix.python.tag }}
 
     steps:
       - uses: actions/checkout@v6
+      - name: Keep build and test files in the workspace
+        run: python -B tools/run_in_workspace.py --github-env
 
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python.version }}
 
-      - name: Create external artifact root
+      - name: Install dependencies into a workspace venv
+        run: python -B tools/run_in_workspace.py --github-venv
+      - name: Create workspace artifact root
         shell: bash
         env:
-          FV7_ARTIFACT_ROOT: >-
-            ${{ runner.temp }}/pyscarcopula-fv7/wheel-${{ matrix.platform.name }}-${{ matrix.python.tag }}
+          RELEASE_ARTIFACT_ROOT: >-
+            ${{ github.workspace }}/build/ci/pyscarcopula-release/wheel-${{ matrix.platform.name }}-${{ matrix.python.tag }}
         run: |
-          mkdir -p "$FV7_ARTIFACT_ROOT"
-          echo "FV7_ARTIFACT_ROOT=$FV7_ARTIFACT_ROOT" >> "$GITHUB_ENV"
+          mkdir -p "$RELEASE_ARTIFACT_ROOT"
+          echo "RELEASE_ARTIFACT_ROOT=$RELEASE_ARTIFACT_ROOT" >> "$GITHUB_ENV"
 
       - name: Verify runner architecture
         run: >-
@@ -77,7 +81,7 @@ jobs:
         uses: pypa/cibuildwheel@v3.4.1
         with:
           # The action's --output-dir argument overrides CIBW_OUTPUT_DIR.
-          output-dir: "${{ env.FV7_ARTIFACT_ROOT }}/wheelhouse"
+          output-dir: "${{ env.RELEASE_ARTIFACT_ROOT }}/wheelhouse"
         env:
           CIBW_BUILD: "${{ matrix.python.tag }}-*"
           CIBW_BUILD_VERBOSITY: "1"
@@ -87,6 +91,20 @@ jobs:
           CIBW_ARCHS_MACOS: "${{ matrix.platform.arch }}"
           CIBW_ENVIRONMENT: >-
             PYSCA_CPP_STRICT=1 PYSCA_CPP_BUILD_JOBS=4
+          # Container paths differ from host runner paths. The project is /project.
+          CIBW_CONTAINER_ENGINE: >-
+            docker; create_args: --env TMPDIR=/project/build/ci/tmp
+          CIBW_ENVIRONMENT_LINUX: >-
+            PYSCA_CPP_STRICT=1 PYSCA_CPP_BUILD_JOBS=4
+            TMPDIR=/project/build/ci/tmp TEMP=/project/build/ci/tmp TMP=/project/build/ci/tmp
+            PIP_CACHE_DIR=/project/build/cache/pip
+            XDG_CACHE_HOME=/project/build/cache/xdg
+            PYTHONPYCACHEPREFIX=/project/build/cache/python
+            UV_CACHE_DIR=/project/build/cache/uv
+            NUMBA_CACHE_DIR=/project/build/cache/numba
+            VIRTUALENV_OVERRIDE_APP_DATA=/project/build/cache/virtualenv
+          CIBW_BEFORE_ALL_LINUX: >-
+            python "{project}/tools/prepare_wheel_container.py"
           CIBW_BEFORE_BUILD: >-
             python -m pip install
             "tomli>=1.1; python_version < '3.11'" &&
@@ -107,62 +125,62 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          python -m venv "$RUNNER_TEMP/pyscarcopula-wheel-venv"
-          venv_python="$RUNNER_TEMP/pyscarcopula-wheel-venv/bin/python"
+          python -m venv "$PYSCA_WORKSPACE_TEMP/pyscarcopula-wheel-venv"
+          venv_python="$PYSCA_WORKSPACE_TEMP/pyscarcopula-wheel-venv/bin/python"
           "$venv_python" -m pip install --upgrade pip
           # Validate that runtime dependencies have wheels too (no LLVM builds).
           "$venv_python" -m pip install --only-binary=:all: \
-            "$FV7_ARTIFACT_ROOT"/wheelhouse/*.whl
-          wheel=$(find "$FV7_ARTIFACT_ROOT/wheelhouse" \
+            "$RELEASE_ARTIFACT_ROOT"/wheelhouse/*.whl
+          wheel=$(find "$RELEASE_ARTIFACT_ROOT/wheelhouse" \
             -maxdepth 1 -name '*.whl' -print -quit)
-          cd "$RUNNER_TEMP"
+          cd "$PYSCA_WORKSPACE_TEMP"
           "$venv_python" \
             "$GITHUB_WORKSPACE/tools/validate_installed_wheel.py" \
             --source-root "$GITHUB_WORKSPACE" \
             --wheel "$wheel" \
-            --configuration "$FV7_CONFIGURATION" \
-            --output "$FV7_ARTIFACT_ROOT/wheel_validation.json"
+            --configuration "$RELEASE_CONFIGURATION" \
+            --output "$RELEASE_ARTIFACT_ROOT/wheel_validation.json"
 
       - name: Validate wheel again in a fresh venv (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $venv = Join-Path $env:RUNNER_TEMP "pyscarcopula-wheel-venv"
+          $venv = Join-Path $env:PYSCA_WORKSPACE_TEMP "pyscarcopula-wheel-venv"
           python -m venv $venv
           $venvPython = Join-Path $venv "Scripts/python.exe"
           & $venvPython -m pip install --upgrade pip
-          $wheelDir = Join-Path $env:FV7_ARTIFACT_ROOT "wheelhouse"
+          $wheelDir = Join-Path $env:RELEASE_ARTIFACT_ROOT "wheelhouse"
           $wheel = (Get-ChildItem -LiteralPath $wheelDir -Filter *.whl -File -ErrorAction Stop).FullName
           # Validate that runtime dependencies have wheels too (no LLVM builds).
           & $venvPython -m pip install --only-binary=:all: $wheel
-          Set-Location $env:RUNNER_TEMP
+          Set-Location $env:PYSCA_WORKSPACE_TEMP
           $validator = Join-Path $env:GITHUB_WORKSPACE "tools/validate_installed_wheel.py"
-          $validation = Join-Path $env:FV7_ARTIFACT_ROOT "wheel_validation.json"
-          & $venvPython $validator --source-root $env:GITHUB_WORKSPACE --wheel $wheel --configuration $env:FV7_CONFIGURATION --output $validation
+          $validation = Join-Path $env:RELEASE_ARTIFACT_ROOT "wheel_validation.json"
+          & $venvPython $validator --source-root $env:GITHUB_WORKSPACE --wheel $wheel --configuration $env:RELEASE_CONFIGURATION --output $validation
 
       - name: Write source, binary and toolchain provenance
         run: >-
           python tools/write_release_metadata.py
           --source-root "${{ github.workspace }}"
-          --configuration "${{ env.FV7_CONFIGURATION }}"
-          --wheel-dir "${{ env.FV7_ARTIFACT_ROOT }}/wheelhouse"
+          --configuration "${{ env.RELEASE_CONFIGURATION }}"
+          --wheel-dir "${{ env.RELEASE_ARTIFACT_ROOT }}/wheelhouse"
           --validation-file
-          "${{ env.FV7_ARTIFACT_ROOT }}/wheel_validation.json"
+          "${{ env.RELEASE_ARTIFACT_ROOT }}/wheel_validation.json"
           --test-workers 4
           --build-jobs 4
-          --output "${{ env.FV7_ARTIFACT_ROOT }}/provenance.json"
+          --output "${{ env.RELEASE_ARTIFACT_ROOT }}/provenance.json"
 
       - name: Finalize append-only wheel evidence
         run: >-
           python tools/finalize_release_artifacts.py
           --source-root "${{ github.workspace }}"
-          --artifact-root "${{ env.FV7_ARTIFACT_ROOT }}"
-          --producer "Gate 4 ${{ env.FV7_CONFIGURATION }}"
+          --artifact-root "${{ env.RELEASE_ARTIFACT_ROOT }}"
+          --producer "Release validation ${{ env.RELEASE_CONFIGURATION }}"
 
       - uses: actions/upload-artifact@v7
         with:
-          name: fv7-${{ env.FV7_CONFIGURATION }}
-          path: ${{ env.FV7_ARTIFACT_ROOT }}
+          name: release-${{ env.RELEASE_CONFIGURATION }}
+          path: ${{ env.RELEASE_ARTIFACT_ROOT }}
           if-no-files-found: error
 
   build_sdist:
@@ -170,32 +188,36 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Keep build and test files in the workspace
+        run: python -B tools/run_in_workspace.py --github-env
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - name: Build sdist outside checkout
+      - name: Install dependencies into a workspace venv
+        run: python -B tools/run_in_workspace.py --github-venv
+      - name: Build sdist in workspace
         run: |
           python -m pip install build twine
-          mkdir -p "$RUNNER_TEMP/pyscarcopula-sdist"
+          mkdir -p "$PYSCA_WORKSPACE_TEMP/pyscarcopula-sdist"
           python -m build --sdist \
-            --outdir "$RUNNER_TEMP/pyscarcopula-sdist"
-          twine check "$RUNNER_TEMP"/pyscarcopula-sdist/*
+            --outdir "$PYSCA_WORKSPACE_TEMP/pyscarcopula-sdist"
+          twine check "$PYSCA_WORKSPACE_TEMP"/pyscarcopula-sdist/*
       - name: Install and smoke-test sdist outside source tree
-        working-directory: ${{ runner.temp }}
+        working-directory: ${{ github.workspace }}/build/ci
         run: |
           python -m pip install --force-reinstall \
-            "$RUNNER_TEMP"/pyscarcopula-sdist/*.tar.gz
+            "$PYSCA_WORKSPACE_TEMP"/pyscarcopula-sdist/*.tar.gz
           python -m pyscarcopula._native.smoke
       - name: Finalize append-only sdist evidence
         run: >-
           python tools/finalize_release_artifacts.py
           --source-root "${{ github.workspace }}"
-          --artifact-root "${{ runner.temp }}/pyscarcopula-sdist"
-          --producer "Gate 4 source distribution"
+          --artifact-root "${{ github.workspace }}/build/ci/pyscarcopula-sdist"
+          --producer "Release validation source distribution"
       - uses: actions/upload-artifact@v7
         with:
-          name: fv7-sdist
-          path: ${{ runner.temp }}/pyscarcopula-sdist
+          name: release-sdist
+          path: ${{ github.workspace }}/build/ci/pyscarcopula-sdist
           if-no-files-found: error
 
   report:
@@ -205,21 +227,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Keep build and test files in the workspace
+        run: python -B tools/run_in_workspace.py --github-env
       - name: Initialize report path
         env:
-          FV7_REPORT_ROOT: ${{ runner.temp }}/pyscarcopula-fv7-report
-        run: echo "FV7_REPORT_ROOT=$FV7_REPORT_ROOT" >> "$GITHUB_ENV"
+          RELEASE_REPORT_ROOT: ${{ github.workspace }}/build/ci/pyscarcopula-release-report
+        run: echo "RELEASE_REPORT_ROOT=$RELEASE_REPORT_ROOT" >> "$GITHUB_ENV"
       - uses: actions/download-artifact@v8
         with:
-          pattern: fv7-wheel-*
-          path: ${{ runner.temp }}/pyscarcopula-fv7-downloaded
+          pattern: release-wheel-*
+          path: ${{ github.workspace }}/build/ci/pyscarcopula-release-downloaded
       - name: Aggregate and reject incomplete CPython/platform matrix
         run: |
           python tools/aggregate_release_validation.py \
             --source-root "$GITHUB_WORKSPACE" \
-            --artifacts "$RUNNER_TEMP/pyscarcopula-fv7-downloaded" \
-            --json-output "$FV7_REPORT_ROOT/platform_matrix.json" \
-            --markdown-output "$FV7_REPORT_ROOT/platform_matrix.md" \
+            --artifacts "$PYSCA_WORKSPACE_TEMP/pyscarcopula-release-downloaded" \
+            --json-output "$RELEASE_REPORT_ROOT/platform_matrix.json" \
+            --markdown-output "$RELEASE_REPORT_ROOT/platform_matrix.md" \
             --required-configuration wheel-linux-gcc-x86_64-cp310 \
             --required-configuration wheel-linux-gcc-x86_64-cp311 \
             --required-configuration wheel-linux-gcc-x86_64-cp312 \
@@ -244,10 +268,10 @@ jobs:
         run: >-
           python tools/finalize_release_artifacts.py
           --source-root "${{ github.workspace }}"
-          --artifact-root "${{ env.FV7_REPORT_ROOT }}"
-          --producer "Gate 4 complete wheel matrix"
+          --artifact-root "${{ env.RELEASE_REPORT_ROOT }}"
+          --producer "Release validation complete wheel matrix"
       - uses: actions/upload-artifact@v7
         with:
-          name: fv7-platform-matrix
-          path: ${{ env.FV7_REPORT_ROOT }}
+          name: release-platform-matrix
+          path: ${{ env.RELEASE_REPORT_ROOT }}
           if-no-files-found: error

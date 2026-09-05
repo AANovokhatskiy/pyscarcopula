@@ -1,4 +1,4 @@
-"""Opt-in acceptance tests for native parallel release gates."""
+"""Opt-in acceptance tests for native parallel release checks."""
 
 from __future__ import annotations
 

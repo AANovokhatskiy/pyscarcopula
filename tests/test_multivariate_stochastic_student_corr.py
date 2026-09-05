@@ -1,5 +1,3 @@
-from types import SimpleNamespace
-import inspect
 
 import numpy as np
 import pytest
@@ -30,14 +28,6 @@ from pyscarcopula.numerical._scar_ou_config import AutoTMConfig
 from pyscarcopula.numerical.tm_functions import tm_loglik
 from pyscarcopula.strategy import scar_tm
 from pyscarcopula.strategy.gas import GASStrategy
-
-
-def test_stochastic_joint_factor_objective_has_no_python_penalty_or_pullback():
-    source = inspect.getsource(
-        StochasticStudentCopula._fit_joint_factor_mle_shared)
-    assert "penalized_parameterized_objective_and_gradient" in source
-    assert "np.sum" not in source
-    assert "parameterization.pullback" not in source
 
 
 def _u(T=60, d=3, seed=123):

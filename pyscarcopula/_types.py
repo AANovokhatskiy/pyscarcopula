@@ -11,7 +11,7 @@ Design decisions:
 
 from __future__ import annotations
 from dataclasses import dataclass, field, replace as dataclass_replace
-from typing import Any
+from typing import Any, TypeAlias
 import numpy as np
 
 from pyscarcopula._native.threads import validate_n_threads
@@ -823,7 +823,7 @@ class IndependentResult(FitResultBase):
 
 
 # Union type for consumers
-FitResult = (
+FitResult: TypeAlias = (
     MLEResult
     | MultivariateMLEResult
     | LatentResult

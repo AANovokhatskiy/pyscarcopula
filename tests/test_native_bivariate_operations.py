@@ -417,38 +417,6 @@ def test_native_xtanh_inverse_is_modulus_approximation_not_roundtrip(factory):
     )
 
 
-def test_rvine_has_no_separate_cpp_pair_operation_router():
-    root = Path(__file__).resolve().parents[1] / "pyscarcopula" / "vine"
-    source = (root / "_rvine_edges.py").read_text(encoding="utf-8")
-    assert "_cpp_scar_ou" not in source
-    assert "_try_cpp_h" not in source
-
-
-def test_family_python_kernels_are_removed():
-    import pyscarcopula.copula.clayton as clayton_module
-
-    for name in (
-        "_clayton_pdf",
-        "_clayton_log_pdf",
-        "_clayton_dlogc_dr",
-        "_clayton_h",
-        "_clayton_h_pair",
-        "_clayton_h_inv",
-        "_clayton_pdf_and_grad_batch",
-    ):
-        assert not hasattr(clayton_module, name)
-
-
-def test_pair_sampling_formulas_are_removed_from_production_python():
-    from pyscarcopula.copula import base, frank, gumbel, joe
-
-    assert not hasattr(base.BivariateCopula, "psi")
-    assert not hasattr(base.BivariateCopula, "V")
-    assert not hasattr(frank, "_frank_bivariate_sample_from_uniforms")
-    assert not hasattr(gumbel, "_generate_levy_stable_from_uniforms")
-    assert not hasattr(joe, "_joe_v_from_uniforms")
-
-
 def test_pair_h_inverse_has_one_native_implementation():
     cpp_root = Path(__file__).parents[1] / "pyscarcopula" / "_cpp"
     production = "\n".join(

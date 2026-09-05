@@ -12,7 +12,7 @@ from pyscarcopula import (
 )
 
 
-# The wheel release gate runs this suite from outside the source checkout with
+# The wheel release check runs this suite from outside the source checkout with
 # ``--import-mode=importlib``.  Import the production package above first so
 # that gate keeps exercising the installed wheel, then expose only the
 # checkout locations containing test and tooling helpers.
@@ -64,6 +64,18 @@ def pytest_addoption(parser):
         default=False,
         help="run optional validation tests marked with @pytest.mark.validation",
     )
+
+
+def pytest_configure(config):
+    # A fresh directory avoids collisions between simultaneous pytest runs.
+    # Explicit --basetemp remains a caller-controlled override.
+    if config.option.basetemp is None:
+        from uuid import uuid4
+        parent = (_PROJECT_ROOT / "build" / "pytest").resolve()
+        if not parent.is_relative_to(_PROJECT_ROOT):
+            raise pytest.UsageError("pytest temporary directory escapes the workspace")
+        parent.mkdir(parents=True, exist_ok=True)
+        config.option.basetemp = str(parent / uuid4().hex[:12])
 
 
 def pytest_collection_modifyitems(config, items):

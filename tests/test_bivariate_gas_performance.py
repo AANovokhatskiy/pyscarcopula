@@ -8,6 +8,7 @@ import pytest
 
 from pyscarcopula.copula.gumbel import GumbelCopula
 from pyscarcopula._native import gas as _cpp_gas
+from tools.benchmark_timing import interleaved_timings
 
 
 @pytest.mark.benchmark
@@ -70,18 +71,13 @@ def test_native_bivariate_gas_sampling_benchmark_report():
         *params, draws, copula, "unit")
     np.testing.assert_allclose(fused, expected, rtol=0.0, atol=0.0)
 
-    fused_times = []
-    stepwise_times = []
-    for _ in range(3):
-        start = time.perf_counter()
-        _cpp_gas.sample_bivariate(*params, draws, copula, "unit")
-        fused_times.append(time.perf_counter() - start)
-        start = time.perf_counter()
-        stepwise()
-        stepwise_times.append(time.perf_counter() - start)
-
-    fused_median = float(np.median(fused_times))
-    stepwise_median = float(np.median(stepwise_times))
+    measured = interleaved_timings({
+        "fused": lambda: _cpp_gas.sample_bivariate(
+            *params, draws, copula, "unit"),
+        "stepwise": stepwise,
+    }, repeats=4)
+    fused_median = measured.medians["fused"]
+    stepwise_median = measured.medians["stepwise"]
     assert fused_median < stepwise_median
     print(
         "BENCH bivariate_gas_sampling "

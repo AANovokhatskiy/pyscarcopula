@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 
 import numpy as np
 import pytest
 
 from pyscarcopula.api import predict as api_predict
+from pyscarcopula import api
 from pyscarcopula._types import PredictConfig
 
 from ._adapters import draw_conditional
@@ -163,11 +165,58 @@ def test_all_given_shortcut_does_not_advance_rng(runtime):
     np.testing.assert_array_equal(observed_tail, expected_tail)
 
 
-@pytest.mark.parametrize("n_draws", [0, -1, True, 1.5, "3"])
-def test_adapter_rejects_invalid_n_draws(runtime, n_draws):
-    expected = TypeError if isinstance(n_draws, (bool, float, str)) else ValueError
+def _public_draw(runtime, entry, n, rng, given=None):
+    options = {"rng": rng}
+    if entry.endswith("predict"):
+        options["given"] = given
+    if entry.startswith("api."):
+        return getattr(api, entry[4:])(
+            runtime.model, runtime.u_train, runtime.result, n, **options)
+    return getattr(runtime.model, entry)(n, u=runtime.u_train, **options)
+
+
+@pytest.mark.parametrize("entry", ["sample", "predict", "api.sample", "api.predict"])
+@pytest.mark.parametrize("n_draws", [-1, True, np.bool_(True), 1.5, np.float64(2.), "3"])
+def test_public_sampling_rejects_invalid_size_without_consuming_rng(
+        runtime, entry, n_draws):
+    expected = ValueError if n_draws == -1 else TypeError
+    rng = np.random.default_rng(20260905)
+    before = deepcopy(rng.bit_generator.state)
     with pytest.raises(expected):
-        _draw(runtime, n_draws, {0: 0.4})
+        _public_draw(runtime, entry, n_draws, rng, {0: .4})
+    assert rng.bit_generator.state == before
+
+
+@pytest.mark.parametrize("entry", ["sample", "predict", "api.sample", "api.predict"])
+def test_public_zero_size_follows_model_contract_without_consuming_rng(runtime, entry):
+    rng = np.random.default_rng(20260905)
+    before = deepcopy(rng.bit_generator.state)
+    if runtime.model_id == "vine-generic":
+        with pytest.raises(ValueError, match="must be positive"):
+            _public_draw(runtime, entry, 0, rng)
+    else:
+        result = _public_draw(runtime, entry, 0, rng)
+        assert result.shape == (0, runtime.dimension)
+        assert result.dtype == np.float64
+    assert rng.bit_generator.state == before
+
+
+@pytest.mark.parametrize("entry", ["sample", "predict", "api.sample", "api.predict"])
+def test_public_numpy_integer_size_matches_python_integer(runtime, entry):
+    first = _public_draw(runtime, entry, np.int64(1), np.random.default_rng(924))
+    second = _public_draw(runtime, entry, 1, np.random.default_rng(924))
+    _assert_sample_contract(first, runtime, 1, None)
+    np.testing.assert_array_equal(first, second)
+
+
+@pytest.mark.parametrize("entry", ["predict", "api.predict"])
+@pytest.mark.parametrize("n", [True, np.bool_(True), -1, 1.5])
+def test_fully_conditioned_public_prediction_validates_size(runtime, entry, n):
+    rng = np.random.default_rng(925)
+    before = deepcopy(rng.bit_generator.state)
+    with pytest.raises((TypeError, ValueError)):
+        _public_draw(runtime, entry, n, rng, _given_layout(runtime, "all"))
+    assert rng.bit_generator.state == before
 
 
 @pytest.mark.parametrize("given", [[], [(0, 0.5)], np.array([0.5])])

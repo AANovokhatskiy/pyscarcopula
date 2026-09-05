@@ -1,4 +1,4 @@
-"""Permanent FV-7 wheel, provenance, and matrix contracts."""
+"""Permanent release wheel, provenance, and matrix contracts."""
 
 from __future__ import annotations
 
@@ -219,7 +219,7 @@ def test_release_aggregator_rejects_missing_or_inconsistent_matrix(tmp_path):
         _provenance(required[-1]),
     )
     for configuration in required:
-        finalize(artifacts / configuration, "FV-7 unit test")
+        finalize(artifacts / configuration, "release unit test")
 
     assert aggregate(artifacts, required)["verdict"] == "passed"
     missing = aggregate(artifacts, (*required, "windows-msvc-py312"))
@@ -530,7 +530,7 @@ def test_artifact_finalizer_detects_append_only_mutation(tmp_path):
     root.mkdir()
     (root / "evidence.json").write_text('{"status":"passed"}\n')
 
-    index = finalize(root, "FV-7 test producer")
+    index = finalize(root, "release test producer")
 
     assert index["files"][0]["path"] == "evidence.json"
     assert verify(root) == index
@@ -575,16 +575,16 @@ def test_release_wheel_workflow_covers_every_supported_python_and_platform():
     assert "tools/write_release_metadata.py" in workflow
     assert "tools/finalize_release_artifacts.py" in workflow
     assert "--validation-file" in workflow
-    assert "${{ runner.temp }}/pyscarcopula-fv7" in workflow
+    assert "${{ github.workspace }}/build/ci/pyscarcopula-release" in workflow
     assert "--required-configuration" in workflow
     assert workflow.count("--required-configuration wheel-") == 20
     assert "--parallel 8" not in workflow
     assert "PYSCA_CPP_BUILD_JOBS=4" in workflow
 
 
-def test_toolchain_and_sanitizer_workflow_has_complete_gate4_provenance():
+def test_toolchain_and_sanitizer_workflow_has_complete_release_provenance():
     workflow = (
-        ROOT / ".github/workflows/parallel-release-gates.yml"
+        ROOT / ".github/workflows/parallel-release-validation.yml"
     ).read_text(encoding="utf-8")
     for configuration in (
         "linux-gcc-py310",
@@ -607,7 +607,7 @@ def test_toolchain_and_sanitizer_workflow_has_complete_gate4_provenance():
     assert workflow.count("--import-mode=importlib") >= 5
     assert workflow.count("--validation-file") >= 5
     assert "libstdcxx_path" in workflow
-    assert "${{ runner.temp }}/pyscarcopula-fv7" in workflow
+    assert "${{ github.workspace }}/build/ci/pyscarcopula-release" in workflow
     assert "build/release" not in workflow
 
 

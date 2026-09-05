@@ -1971,10 +1971,7 @@ class VineCopula:
         and therefore are not split across batches.
         """
         self._require_fit()
-        if not isinstance(n, (int, np.integer)) or n <= 0:
-            raise ValueError(
-                f"VineCopula.sample: n must be positive int, got {n!r}")
-        n = int(n)
+        n = validate_positive_int(n, "VineCopula.sample: n")
         if batch_rows is None:
             batch_rows = min(n, _DEFAULT_STATIC_SAMPLE_BATCH_ROWS)
         else:
@@ -2676,8 +2673,7 @@ class VineCopula:
             parallel chain. It is not a proof of convergence.
         """
         self._require_fit()
-        if not isinstance(n, (int, np.integer)) or n <= 0:
-            raise ValueError(f"VineCopula.predict: n must be positive int, got {n!r}")
+        n = validate_positive_int(n, "VineCopula.predict: n")
         if predict_config is None:
             pcfg = PredictConfig(
                 given=given,

@@ -323,8 +323,8 @@ def main(argv: list[str] | None = None) -> int:
 
     source_root = arguments.source_root.resolve()
     output = arguments.output.resolve()
-    if _inside(source_root, output):
-        parser.error("--output must be outside the product repository")
+    if _inside(source_root, output) and not _inside(source_root / "build", output):
+        parser.error("--output must be inside build/ or outside the product repository")
     if output.exists():
         parser.error("refusing to overwrite existing release evidence")
     if arguments.test_workers < 1 or arguments.build_jobs < 1:

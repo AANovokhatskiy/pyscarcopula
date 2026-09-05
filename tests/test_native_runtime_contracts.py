@@ -1,4 +1,4 @@
-"""FV-4 runtime proofs for the mandatory native numerical boundary."""
+"""Runtime contracts for the mandatory native numerical boundary."""
 
 from dataclasses import dataclass
 
@@ -473,11 +473,11 @@ def test_public_operation_reaches_raw_native_entry_once_without_fallback(
 
     def fail_native(*args, **kwargs):
         calls.append((args, kwargs))
-        raise NativeUnsupported(f"FV-4 sentinel at {case.name}")
+        raise NativeUnsupported(f"Native runtime sentinel at {case.name}")
 
     monkeypatch.setattr(module, case.raw_symbol, fail_native)
     with pytest.raises(
-            NativeUnsupported, match=f"FV-4 sentinel at {case.name}"):
+            NativeUnsupported, match=f"Native runtime sentinel at {case.name}"):
         operation()
     assert len(calls) == 1
 
@@ -649,7 +649,7 @@ def test_multivariate_optimizer_callback_makes_one_typed_evaluator_call(
     _install_forbidden_numerical_sentinels(monkeypatch)
 
     problem = StaticMLEProblem(
-        family="FV-4",
+        family="Native runtime",
         initial_parameters=np.array([5.0]),
         bounds=((2.001, None),),
         evaluate=evaluate,

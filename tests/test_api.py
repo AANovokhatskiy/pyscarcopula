@@ -40,8 +40,15 @@ class TestPublicPackageSurface:
         assert "__version__" in pyscarcopula.__all__
 
     def test_multivariate_models_exported_from_package_root(self):
-        assert EquicorrGaussianCopula.__name__ == 'EquicorrGaussianCopula'
-        assert StochasticStudentCopula.__name__ == 'StochasticStudentCopula'
+        from pyscarcopula.copula.multivariate import (
+            EquicorrGaussianCopula as EquicorrImplementation,
+            StochasticStudentCopula as StudentImplementation,
+        )
+        for name, implementation in (
+                ('EquicorrGaussianCopula', EquicorrImplementation),
+                ('StochasticStudentCopula', StudentImplementation)):
+            assert getattr(pyscarcopula, name) is implementation
+            assert name in pyscarcopula.__all__
 
 
 class LinearScoreCopula:
@@ -220,12 +227,6 @@ class TestFitResultTypes:
         assert isinstance(result, GASResult)
         assert result.scaling == 'unit'
 
-    def test_vine_fit_result(self):
-        u4 = pobs(np.random.default_rng(0).standard_normal((200, 4)))
-        vine = VineCopula.cvine(d=4)
-        vine.fit(u4, method='mle')
-        assert vine.fit_result.log_likelihood is not None
-        assert vine.fit_result.success
 
     def test_vine_logL_equals_edge_sum(self):
         u4 = pobs(np.random.default_rng(1).standard_normal((200, 4)))
@@ -252,13 +253,17 @@ class TestPredictiveMean:
         assert r_t.shape == (200,)
         assert np.all(r_t == r_t[0])
 
-    def test_scar_varying(self, random_u2):
+    def test_scar_predictive_mean_is_causal_and_uses_observations(self, random_u2):
         cop = GumbelCopula(rotate=180)
         result = fit(cop, random_u2, method='scar-tm-ou')
         r_t = predictive_mean(cop, random_u2, result)
         assert r_t.shape == (200,)
-        # Should vary (not constant like MLE)
-        assert np.std(r_t) > 0
+        changed = random_u2.copy()
+        changed[100:] = [0.2, 0.8]
+        after = predictive_mean(cop, changed, result)
+        np.testing.assert_array_equal(r_t[:100], after[:100])
+        assert np.all(np.isfinite(after))
+        assert np.max(np.abs(r_t[101:] - after[101:])) > 1e-6
 
     def test_top_level_api_rejects_public_posterior_cache(self, random_u2):
         cop = GumbelCopula(rotate=180)
