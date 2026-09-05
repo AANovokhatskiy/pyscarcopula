@@ -71,7 +71,11 @@ rows are sorted by value and then by their original row index. Equal values
 receive successive ranks in input order; the ranks are divided by `n + 1`.
 Integer comparisons retain their original precision, and NaNs sort last.
 The optional `ties_method="ordinal"` selects the same behavior explicitly.
-Historical unstable tie permutations are not reproduced.
+Use `ties_method="legacy"` for the historical 0.20.1 ordering within ties.
+This mode uses a separate native implementation of the historical ordering
+rules; it does not require Numba. Equal values still receive different ranks,
+but their input order is not preserved. Compare versions using the same
+precomputed pseudo-observations when exact input agreement matters.
 
 All built-in bivariate families share the same fitting surface:
 

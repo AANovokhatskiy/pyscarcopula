@@ -36,9 +36,64 @@ double quiet_nan() noexcept {
     return std::numeric_limits<double>::quiet_NaN();
 }
 
+// Historical tie ordering, implemented by collecting partition exchange
+// positions in batches. Only the ordering contract is historical: median of
+// first/middle/last, equal-key exchanges, and stable leaves shorter than 16.
+// Breadth-first scheduling keeps each disjoint range independent of recursion.
+template <typename Less>
+void historical_rank_order(std::vector<std::size_t>& order, Less less) {
+    struct Range { std::size_t begin, end; };
+    std::vector<Range> ranges{{0, order.size()}};
+    std::vector<std::size_t> from_left, from_right;
+    from_left.reserve(order.size());
+    from_right.reserve(order.size());
+
+    for (std::size_t task = 0; task < ranges.size(); ++task) {
+        const auto [begin, end] = ranges[task];
+        if (end - begin < 16) {
+            std::stable_sort(order.begin() + begin, order.begin() + end, less);
+            continue;
+        }
+        const std::size_t last = end - 1;
+        const std::size_t middle = begin + (last - begin) / 2;
+        std::size_t sample[] = {order[begin], order[middle], order[last]};
+        std::stable_sort(sample, sample + 3, less);
+        const std::size_t pivot = sample[1];
+        order[begin] = sample[0];
+        order[middle] = sample[2];
+        order[last] = pivot;
+
+        from_left.clear();
+        from_right.clear();
+        for (std::size_t position = begin; position < last; ++position) {
+            if (!less(order[position], pivot)) from_left.push_back(position);
+            if (!less(pivot, order[position])) from_right.push_back(position);
+        }
+        // Collecting both lists before exchanging elements is equivalent to
+        // pairing the leftmost >= pivot with the rightmost <= pivot. Positions
+        // already paired cannot affect the unprocessed interior positions.
+        std::size_t paired = 0;
+        while (paired < from_left.size() && paired < from_right.size()
+               && from_left[paired] < from_right[from_right.size() - 1 - paired]) {
+            std::swap(order[from_left[paired]],
+                      order[from_right[from_right.size() - 1 - paired]]);
+            ++paired;
+        }
+        // The last exchange creates a new >= pivot position on the right;
+        // it must also act as a stopping position if the original list ends.
+        const std::size_t exchanged_stop = paired == 0
+            ? last : from_right[from_right.size() - paired];
+        const std::size_t next_stop = paired < from_left.size() ? from_left[paired] : last;
+        const std::size_t boundary = std::min(next_stop, exchanged_stop);
+        std::swap(order[boundary], order[last]);
+        if (boundary > begin) ranges.push_back({begin, boundary});
+        if (boundary + 1 < end) ranges.push_back({boundary + 1, end});
+    }
+}
+
 template <typename T>
 std::vector<double> rank_observations(
-    Span<const T> values, std::size_t rows, std::size_t columns) {
+    Span<const T> values, std::size_t rows, std::size_t columns, RankTies ties) {
     std::size_t size = 0;
     if (!core::checked_size_mul(rows, columns, size)
         || size != values.size() || (size != 0 && values.data() == nullptr)) {
@@ -62,13 +117,17 @@ std::vector<double> rank_observations(
             }
             if (left < right) return true;
             if (right < left) return false;
-            // Row index is the explicit secondary key, including for NaNs.
-            return a < b;
+            // Ordinal mode explicitly preserves row order, including NaNs.
+            return ties == RankTies::Ordinal && a < b;
         };
         // Sort row indices, then scatter ranks back into their original rows.
-        // The total (value, row) ordering makes ties independent of the
-        // standard library's sorting algorithm and leaves the input untouched.
-        std::sort(order.begin(), order.end(), less);
+        if (ties == RankTies::Legacy) {
+            historical_rank_order(order, less);
+        } else {
+            // The ordinal (value, row) key defines a total ordering, so the
+            // standard library's choice of sorting algorithm cannot affect ties.
+            std::sort(order.begin(), order.end(), less);
+        }
         for (std::size_t rank = 0; rank < rows; ++rank) {
             output[order[rank] * columns + column] =
                 (static_cast<double>(rank) + 1.0) / denominator;
@@ -80,18 +139,18 @@ std::vector<double> rank_observations(
 }  // namespace
 
 std::vector<double> pseudo_observations(
-    DoubleView values, std::size_t rows, std::size_t columns) {
-    return rank_observations(values, rows, columns);
+    DoubleView values, std::size_t rows, std::size_t columns, RankTies ties) {
+    return rank_observations(values, rows, columns, ties);
 }
 
 std::vector<double> pseudo_observations(
-    Span<const std::int64_t> values, std::size_t rows, std::size_t columns) {
-    return rank_observations(values, rows, columns);
+    Span<const std::int64_t> values, std::size_t rows, std::size_t columns, RankTies ties) {
+    return rank_observations(values, rows, columns, ties);
 }
 
 std::vector<double> pseudo_observations(
-    Span<const std::uint64_t> values, std::size_t rows, std::size_t columns) {
-    return rank_observations(values, rows, columns);
+    Span<const std::uint64_t> values, std::size_t rows, std::size_t columns, RankTies ties) {
+    return rank_observations(values, rows, columns, ties);
 }
 
 bool objective_is_invalid(double value) noexcept {

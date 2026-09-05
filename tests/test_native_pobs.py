@@ -67,7 +67,7 @@ def test_interleaved_ties_are_ranked_per_column():
     np.testing.assert_array_equal(pobs(data), expected)
 
 
-@pytest.mark.parametrize("method", ["legacy", "average", "invalid"])
+@pytest.mark.parametrize("method", ["average", "invalid"])
 def test_unsupported_tie_methods_are_explicitly_rejected(method):
     with pytest.raises(ValueError, match="ties_method must be 'ordinal'"):
         pobs([[1], [1]], ties_method=method)

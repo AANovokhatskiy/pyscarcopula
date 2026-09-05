@@ -63,12 +63,14 @@ def pobs(data, *, ties_method="ordinal"):
     u_ij = rank(x_ij) / (n + 1), so u in (0, 1).
     Ranks are ordinal: ties receive successive ranks in input row order.
     NaNs sort after all other values. Computation is performed in C++.
+    ``legacy`` selects the historical 0.20.1 ordering within equal values.
 
     Parameters
     ----------
     data : ndarray (T, d)
-    ties_method : {"ordinal"}, default "ordinal"
-        Equal values receive successive ranks in their input row order.
+    ties_method : {"ordinal", "legacy"}, default "ordinal"
+        Both modes assign successive ranks. "ordinal" preserves input row
+        order within ties; "legacy" reproduces the historical ordering.
 
     Returns
     -------

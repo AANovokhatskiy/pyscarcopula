@@ -10,8 +10,8 @@
   sampler and its method selector.
 
 - Implement native `pobs` with standard-library index sorting and explicit
-  row-order tie breaking. Remove the copied historical sorting implementation
-  and the experimental `ties_method="legacy"` mode.
+  row-order tie breaking. Add an independently implemented historical ordering
+  mode through `ties_method="legacy"`, with exact 0.20.1 regression references.
 - Harden GAS fitting with a nested-static automatic start, best-candidate
   retention, objective/static-baseline validation and optimizer diagnostics.
   Use `eps=1e-8` by default and preserve Student PPF caches in joint shrinkage

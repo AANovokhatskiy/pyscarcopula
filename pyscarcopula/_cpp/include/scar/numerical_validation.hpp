@@ -45,13 +45,18 @@ struct ClipResult {
 };
 
 ClipResult clip_open_unit(DoubleView values, double epsilon);
-/// Successive ranks / (rows + 1); equal values retain input row order.
+enum class RankTies { Ordinal, Legacy };
+
+/// Successive ranks / (rows + 1); ordinal preserves row order within ties.
 std::vector<double> pseudo_observations(
-    DoubleView values, std::size_t rows, std::size_t columns);
+    DoubleView values, std::size_t rows, std::size_t columns,
+    RankTies ties = RankTies::Ordinal);
 std::vector<double> pseudo_observations(
-    Span<const std::int64_t> values, std::size_t rows, std::size_t columns);
+    Span<const std::int64_t> values, std::size_t rows, std::size_t columns,
+    RankTies ties = RankTies::Ordinal);
 std::vector<double> pseudo_observations(
-    Span<const std::uint64_t> values, std::size_t rows, std::size_t columns);
+    Span<const std::uint64_t> values, std::size_t rows, std::size_t columns,
+    RankTies ties = RankTies::Ordinal);
 Result<bool> open_unit_clip_required(DoubleView values, double epsilon);
 bool objective_is_invalid(double value) noexcept;
 

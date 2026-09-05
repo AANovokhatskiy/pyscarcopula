@@ -17,7 +17,7 @@ namespace pyscarcopula::bindings {
 namespace {
 
 template <typename T>
-py::array_t<double> pobs_array(py::handle source) {
+py::array_t<double> pobs_array(py::handle source, scar::RankTies ties) {
     using Array = py::array_t<T, py::array::c_style | py::array::forcecast>;
     const Array values = Array::ensure(source);
     if (!values) {
@@ -33,7 +33,7 @@ py::array_t<double> pobs_array(py::handle source) {
         result = scar::pseudo_observations(
             scar::Span<const T>{values.data(), static_cast<std::size_t>(info.size)},
             static_cast<std::size_t>(info.shape[0]),
-            static_cast<std::size_t>(info.shape[1]));
+            static_cast<std::size_t>(info.shape[1]), ties);
     }
     return matrix_to_array(result,
         static_cast<std::size_t>(info.shape[0]),
@@ -106,18 +106,19 @@ py::dict backend_agreement_to_dict(
 
 void bind_validation(py::module_& m) {
     m.def("validation_pobs", [](py::object source, const std::string& ties_method) {
-        if (ties_method != "ordinal") {
-            throw py::value_error("ties_method must be 'ordinal'; historical tie permutations are not supported");
+        if (ties_method != "ordinal" && ties_method != "legacy") {
+            throw py::value_error("ties_method must be 'ordinal' or 'legacy'");
         }
+        const auto ties = ties_method == "legacy" ? scar::RankTies::Legacy : scar::RankTies::Ordinal;
         const py::array values = py::array::ensure(source);
         if (!values) {
             throw py::type_error("data must be a real numeric array");
         }
         switch (values.dtype().kind()) {
-        case 'i': return pobs_array<std::int64_t>(values);
-        case 'u': return pobs_array<std::uint64_t>(values);
+        case 'i': return pobs_array<std::int64_t>(values, ties);
+        case 'u': return pobs_array<std::uint64_t>(values, ties);
         case 'b':
-        case 'f': return pobs_array<double>(values);
+        case 'f': return pobs_array<double>(values, ties);
         default: throw py::type_error("data must be a real numeric array");
         }
     }, py::arg("values"), py::arg("ties_method") = "ordinal");
