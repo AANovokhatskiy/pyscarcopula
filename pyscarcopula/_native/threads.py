@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import operator
 
+import numpy as np
+
 
 MIN_NATIVE_THREADS = 1
 MAX_NATIVE_THREADS = 256
@@ -11,7 +13,9 @@ MAX_NATIVE_THREADS = 256
 
 def validate_n_threads(value) -> int:
     """Return an integer thread count in the native supported interval."""
-    if isinstance(value, bool):
+    # NumPy < 2.3 lets bool_ pass operator.index (with a warning).
+    # Reject it explicitly so the public contract is version-independent.
+    if isinstance(value, (bool, np.bool_)):
         raise ValueError("n_threads must be an integer in [1, 256]")
     try:
         resolved = operator.index(value)

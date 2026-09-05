@@ -7,6 +7,7 @@ from pathlib import Path
 from scipy.special import stdtrit
 from scipy.stats import chi2, multivariate_normal, multivariate_t, norm
 from scipy.stats import t as t_dist
+from student_oracles import student_quantile_beta_oracle
 
 from pyscarcopula._constants import PSEUDO_OBS_EPS
 from pyscarcopula.io import load_model, save_model
@@ -355,7 +356,7 @@ def test_student_ppf_table_uses_common_pseudo_observation_boundaries():
     for df in (table.nodes[0], table.nodes[-1]):
         np.testing.assert_allclose(
             table(df),
-            stdtrit(df, clipped),
+            student_quantile_beta_oracle(df, clipped),
             rtol=2e-13,
             atol=2e-13,
         )
@@ -1053,15 +1054,16 @@ def test_mle_optimizer_unexpected_error_propagates(monkeypatch):
 
 def test_student_ppf_table_memory_limit_falls_back_to_exact():
     """M4 regression: over the memory budget the table is skipped and
-    evaluations use the exact stdtrit quantile."""
+    evaluations use the exact native quantile."""
     u = _u()
     table = StudentPPFTable(u, max_table_bytes=1)
     assert table.table is None
     for df in (3.0, 7.5, 300.0):
         np.testing.assert_allclose(
-            table(df), stdtrit(df, table.u), rtol=1e-12, atol=0.0)
+            table(df), student_quantile_beta_oracle(df, table.u),
+            rtol=1e-12, atol=0.0)
     np.testing.assert_allclose(
-        table.rows(4.5, 2, 9), stdtrit(4.5, table.u[2:9]),
+        table.rows(4.5, 2, 9), student_quantile_beta_oracle(4.5, table.u[2:9]),
         rtol=1e-12, atol=0.0)
 
 
@@ -1087,7 +1089,7 @@ def test_student_ppf_exact_path_centre_tails_and_large_df(df):
     probabilities = np.array([[1e-10, 1e-6, 0.01, 0.45, 0.49, 0.4999,
                                0.5, 0.5001, 0.51, 0.99, 1-1e-6, 1-1e-10]])
     table = StudentPPFTable(probabilities, max_table_bytes=1)
-    np.testing.assert_allclose(table(df), stdtrit(df, probabilities),
+    np.testing.assert_allclose(table(df), student_quantile_beta_oracle(df, probabilities),
                                rtol=2e-13, atol=2e-13)
 
 

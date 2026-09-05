@@ -1,9 +1,10 @@
 #pragma once
 
+// Python's feature-test macros must precede all standard-library headers.
+#include <pybind11/numpy.h>
+
 #include "scar/core/span.hpp"
 #include "scar/observation.hpp"
-
-#include <pybind11/numpy.h>
 
 #include <cstddef>
 #include <vector>

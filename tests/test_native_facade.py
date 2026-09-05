@@ -511,7 +511,12 @@ def test_central_thread_validation_accepts_native_range(value):
     assert validate_n_threads(value) == int(value)
 
 
-@pytest.mark.parametrize("value", [True, 0, 257, 1.5, "8"])
+@pytest.mark.parametrize("value", [True, False, np.bool_(True), np.bool_(False),
+                                 0, 257, 1.5, "8"])
 def test_central_thread_validation_rejects_invalid_values(value):
-    with pytest.raises(ValueError, match="n_threads"):
-        validate_n_threads(value)
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+        with pytest.raises(ValueError, match="n_threads"):
+            validate_n_threads(value)

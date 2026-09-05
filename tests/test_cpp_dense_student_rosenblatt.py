@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 from scipy.stats import t as t_dist
+from student_oracles import student_quantile_beta_oracle
 
 import pyscarcopula.stattests as statt
 from pyscarcopula._native import _extension as _cpp_extension
@@ -58,7 +59,7 @@ def _observations():
 
 
 def _student_scipy_oracle(correlation, df, observations):
-    """Frozen pre-8.2 dense Student implementation used only as an oracle."""
+    """Independent dense Student formula with a stable beta-quantile oracle."""
     values = np.asarray(observations)
     df_values = np.asarray(df)
     if df_values.ndim != 0:
@@ -75,7 +76,7 @@ def _student_scipy_oracle(correlation, df, observations):
             ])
 
     clipped = np.clip(values, 1e-10, 1.0 - 1e-10)
-    quantiles = t_dist.ppf(clipped, df=df)
+    quantiles = student_quantile_beta_oracle(df, clipped)
     rows, dimension = quantiles.shape
     transformed = np.empty((rows, dimension))
     transformed[:, 0] = t_dist.cdf(quantiles[:, 0], df=df)
@@ -143,7 +144,7 @@ def test_low_positive_df_mandatory_native_matches_scipy_oracle(
     _assert_native_matches_scipy(actual, expected)
 
 
-def test_low_df_tail_coordinate_preserves_scipy_finite_endpoint(
+def test_low_df_tail_coordinate_preserves_native_finite_endpoint(
         monkeypatch):
     correlation = _correlation()
     observations = np.array(
