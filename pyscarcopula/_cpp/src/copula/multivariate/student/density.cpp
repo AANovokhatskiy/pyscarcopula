@@ -110,7 +110,10 @@ double student_log_pdf_with_work(
     double df,
     std::int64_t row_index,
     StudentWorkspace& workspace,
-    double* dlog_ddf) {
+    double* dlog_ddf,
+    const StudentDistributionParameters* prepared_quantiles = nullptr,
+    const double* precomputed_quantiles = nullptr,
+    const double* precomputed_derivatives = nullptr) {
 
     const int d = model.dimension;
     const bool factor_correlation = model.factor != nullptr;
@@ -124,7 +127,8 @@ double student_log_pdf_with_work(
 
     workspace.resize_x(static_cast<std::size_t>(d));
     const bool use_cache =
-        student_ppf_cache_available(cache, d, row_index)
+        precomputed_quantiles == nullptr && prepared_quantiles == nullptr
+        && student_ppf_cache_available(cache, d, row_index)
         && df >= cache.nodes.front()
         && df <= cache.nodes.back();
     const bool compute_derivative = dlog_ddf != nullptr;
@@ -134,7 +138,10 @@ double student_log_pdf_with_work(
         workspace.dx_ddf.clear();
     }
     PpfInterpolation interpolation;
-    if (use_cache) {
+    if (precomputed_quantiles != nullptr) {
+        // The caller already evaluated these quantiles. Do not count them as
+        // additional inverse-CDF work in this row's diagnostics.
+    } else if (use_cache) {
         interpolation = make_ppf_interpolation(cache.nodes, df);
         workspace.diagnostics.ppf_cache_values +=
             static_cast<std::uint64_t>(d);
@@ -145,7 +152,12 @@ double student_log_pdf_with_work(
         workspace.diagnostics.ppf_exact_values +=
             static_cast<std::uint64_t>(d);
     }
-    if (use_cache) {
+    if (precomputed_quantiles != nullptr) {
+        std::copy_n(precomputed_quantiles, d, workspace.x.data());
+        if (compute_derivative) {
+            std::copy_n(precomputed_derivatives, d, workspace.dx_ddf.data());
+        }
+    } else if (use_cache) {
         interpolate_ppf_row(
             cache,
             d,
@@ -155,14 +167,16 @@ double student_log_pdf_with_work(
             compute_derivative ? workspace.dx_ddf.data() : nullptr);
     } else {
         for (int i = 0; i < d; ++i) {
-            student_quantile_for_emission(
-                cache,
-                row[i],
-                df,
-                workspace.x[static_cast<std::size_t>(i)],
-                compute_derivative
-                    ? &workspace.dx_ddf[static_cast<std::size_t>(i)]
-                    : nullptr);
+            double* slope = compute_derivative
+                ? &workspace.dx_ddf[static_cast<std::size_t>(i)] : nullptr;
+            if (prepared_quantiles) {
+                student_quantile_refined_value_and_derivative(
+                    row[i], *prepared_quantiles,
+                    workspace.x[static_cast<std::size_t>(i)], slope);
+            } else {
+                student_quantile_for_emission(cache, row[i], df,
+                    workspace.x[static_cast<std::size_t>(i)], slope);
+            }
         }
     }
 
@@ -594,6 +608,27 @@ bool student_log_pdf_and_dlog_ddf(
         log_pdf,
         dlog_ddf,
         workspace);
+}
+
+double student_log_pdf_refined(
+    const PreparedStudentDensity& model, const double* row,
+    const StudentDistributionParameters& distribution,
+    StudentWorkspace& workspace, double* dlog_ddf) {
+    return student_log_pdf_with_work(model, row, distribution.df, -1,
+                                     workspace, dlog_ddf, &distribution);
+}
+
+double student_log_pdf_with_precomputed_quantiles(
+    const PreparedStudentDensity& model, scar::DoubleView quantiles,
+    scar::DoubleView derivatives, double df, StudentWorkspace& workspace,
+    double* dlog_ddf) {
+    const auto dimension = static_cast<std::size_t>(model.dimension);
+    if (!model.valid || quantiles.data() == nullptr || quantiles.size() != dimension
+        || (dlog_ddf && (derivatives.data() == nullptr || derivatives.size() != dimension))) {
+        return -std::numeric_limits<double>::infinity();
+    }
+    return student_log_pdf_with_work(model, nullptr, df, -1, workspace, dlog_ddf,
+        nullptr, quantiles.data(), derivatives.data());
 }
 
 bool student_precision_matrix(

@@ -388,6 +388,10 @@ public:
         const std::vector<double>& l_inv,
         double log_det);
 
+    void configure_student_emission_cache(const StudentEmissionCacheConfig& config);
+    void clear_student_emission_cache();
+    StudentEmissionCacheDiagnostics student_emission_cache_info() const;
+
     LogLikResult loglik(
         const OuParams& params) const;
 

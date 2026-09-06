@@ -197,6 +197,22 @@ ObservationView PreparedScarOuEvaluator::view() const noexcept {
     };
 }
 
+void PreparedScarOuEvaluator::configure_student_emission_cache(
+    const StudentEmissionCacheConfig& config) {
+    const std::lock_guard<std::mutex> lock(call_mutex_);
+    emission_.configure_student_emission_cache(view(), config);
+}
+
+void PreparedScarOuEvaluator::clear_student_emission_cache() {
+    const std::lock_guard<std::mutex> lock(call_mutex_);
+    emission_.clear_student_emission_cache();
+}
+
+StudentEmissionCacheDiagnostics PreparedScarOuEvaluator::student_emission_cache_info() const {
+    const std::lock_guard<std::mutex> lock(call_mutex_);
+    return emission_.student_emission_cache_info();
+}
+
 LogLikResult PreparedScarOuEvaluator::loglik(
     const OuParams& params) const {
     const std::lock_guard<std::mutex> lock(call_mutex_);
@@ -212,6 +228,9 @@ GradLogLikResult PreparedScarOuEvaluator::neg_loglik_with_grad(
 GradLogLikResult PreparedScarOuEvaluator::neg_loglik_with_grad_and_corr(
     const OuParams& params) const {
     const std::lock_guard<std::mutex> lock(call_mutex_);
+    if (emission_.student_emission_cache_info().active) {
+        throw std::invalid_argument("clear Student emission cache before requesting correlation gradients");
+    }
     return call_full_corr(params);
 }
 
@@ -220,6 +239,9 @@ PreparedScarOuEvaluator::neg_loglik_with_grad_and_corr_directional(
     const OuParams& params,
     const std::vector<double>& corr_direction) const {
     const std::lock_guard<std::mutex> lock(call_mutex_);
+    if (emission_.student_emission_cache_info().active) {
+        throw std::invalid_argument("clear Student emission cache before requesting correlation gradients");
+    }
     return call_directional_corr(params, corr_direction);
 }
 

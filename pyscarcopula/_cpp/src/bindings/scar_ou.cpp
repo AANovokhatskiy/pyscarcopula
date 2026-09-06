@@ -780,6 +780,58 @@ void bind_scar_ou(py::module_& m) {
     py::class_<scar::PreparedScarOuEvaluator>(m, "PreparedScarOuEvaluator")
         .def(py::init(&make_prepared_scar_ou_evaluator))
         .def(py::init(&make_prepared_equicorr_scar_ou_evaluator))
+        .def("configure_student_emission_cache",
+            [](scar::PreparedScarOuEvaluator& evaluator, double min_coordinate,
+               double max_coordinate, double value_tolerance, double score_tolerance,
+               std::size_t initial_intervals, std::size_t max_knots,
+               int max_depth, std::size_t max_bytes) {
+                scar::StudentEmissionCacheConfig config;
+                config.min_coordinate = min_coordinate;
+                config.max_coordinate = max_coordinate;
+                config.value_tolerance = value_tolerance;
+                config.score_tolerance = score_tolerance;
+                config.initial_intervals = initial_intervals;
+                config.max_knots = max_knots;
+                config.max_depth = max_depth;
+                config.max_bytes = max_bytes;
+                py::gil_scoped_release release;
+                evaluator.configure_student_emission_cache(config);
+            }, py::arg("min_coordinate") = -24.0, py::arg("max_coordinate") = 6.9,
+               py::arg("value_tolerance") = 1e-7, py::arg("score_tolerance") = 1e-6,
+               py::arg("initial_intervals") = 32, py::arg("max_knots") = 1025,
+               py::arg("max_depth") = 12, py::arg("max_bytes") = 128 * 1024 * 1024)
+        .def("clear_student_emission_cache",
+            [](scar::PreparedScarOuEvaluator& evaluator) {
+                py::gil_scoped_release release;
+                evaluator.clear_student_emission_cache();
+            })
+        .def("student_emission_cache_info",
+            [](const scar::PreparedScarOuEvaluator& evaluator) {
+                scar::StudentEmissionCacheDiagnostics info;
+                { py::gil_scoped_release release;
+                  info = evaluator.student_emission_cache_info(); }
+                py::dict out;
+                out["active"] = info.active;
+                out["knots"] = info.knots;
+                out["table_bytes"] = info.table_bytes;
+                out["reserved_bytes"] = info.reserved_bytes;
+                out["sampled_coordinates"] = info.sampled_coordinates;
+                out["reused_samples"] = info.reused_samples;
+                out["unique_probabilities"] = info.unique_probabilities;
+                out["observation_entries"] = info.observation_entries;
+                out["interpolation_hits"] = info.interpolation_hits;
+                out["exact_endpoint_hits"] = info.exact_endpoint_hits;
+                out["exact_fallbacks"] = info.exact_fallbacks;
+                out["min_coordinate"] = info.min_coordinate;
+                out["max_coordinate"] = info.max_coordinate;
+                out["value_tolerance"] = info.value_tolerance;
+                out["score_tolerance"] = info.score_tolerance;
+                out["max_value_residual"] = info.max_value_residual;
+                out["max_score_residual"] = info.max_score_residual;
+                out["integration_certified"] = false;
+                out["residual_check"] = "quarter_midpoint_threequarter";
+                return out;
+            })
         .def(
             "update_student_factor",
             [](scar::PreparedScarOuEvaluator& evaluator,

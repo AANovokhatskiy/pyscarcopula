@@ -543,6 +543,38 @@ int run_equicorr_stochastic_student_tests() {
     }
 
     scar::PreparedDynamicEmission dense_student_emission(dense_student);
+    {
+        scar::PreparedDynamicEmission cached(dense_student);
+        scar::StudentEmissionCacheConfig cache_config;
+        cached.configure_student_emission_cache(
+            {flat.data(), observations.size(), kDimension}, cache_config);
+        // Move the owner after preparation: table storage must remain valid.
+        scar::PreparedDynamicEmission moved(std::move(cached));
+        auto work = moved.make_workspace(true);
+        auto exact_work = dense_student_emission.make_workspace(true);
+        for (double coordinate : {-25.0, -9.153, -1.281, 0.378, 2.597, 7.1}) {
+            const double df = dense_student.offset + std::exp(coordinate);
+            for (std::size_t row = 0; row < observations.size(); ++row) {
+                const auto actual = moved.evaluate_parameter(
+                    observations[row].data(), row, df, true, work);
+                const auto expected = dense_student_emission.evaluate_parameter(
+                    observations[row].data(), -1, df, true, exact_work);
+                if (!actual.is_ok() || !expected.is_ok()
+                    || !close(actual.log_pdf, expected.log_pdf, 2e-7)
+                    || !close(actual.dlog_dparameter * std::exp(coordinate),
+                              expected.dlog_dparameter * std::exp(coordinate), 3e-6)) {
+                    return 35;
+                }
+            }
+        }
+        const auto info = moved.student_emission_cache_info();
+        if (!info.active || info.knots < 33 || info.interpolation_hits == 0
+            || info.exact_fallbacks == 0 || info.reserved_bytes > cache_config.max_bytes) {
+            return 36;
+        }
+        moved.refresh();
+        if (moved.student_emission_cache_info().active) return 37;
+    }
     if (!borrowed_student_refresh_preserves_cache(dense_student, observations)) {
         return 34;
     }

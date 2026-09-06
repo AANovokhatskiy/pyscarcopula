@@ -18,6 +18,37 @@ enum class DynamicEmissionKind : int {
     Equicorrelation = 3,
 };
 
+struct StudentEmissionCacheConfig {
+    double min_coordinate = -24.0;
+    double max_coordinate = 6.9;
+    double value_tolerance = 1e-7;
+    double score_tolerance = 1e-6;
+    std::size_t initial_intervals = 32;
+    std::size_t max_knots = 1025;
+    int max_depth = 12;
+    std::size_t max_bytes = 128 * 1024 * 1024;
+};
+
+struct StudentEmissionCacheDiagnostics {
+    bool active = false;
+    std::size_t knots = 0;
+    std::size_t table_bytes = 0;
+    std::size_t reserved_bytes = 0;
+    std::size_t sampled_coordinates = 0;
+    std::size_t reused_samples = 0;
+    std::size_t unique_probabilities = 0;
+    std::size_t observation_entries = 0;
+    std::uint64_t interpolation_hits = 0;
+    std::uint64_t exact_endpoint_hits = 0;
+    std::uint64_t exact_fallbacks = 0;
+    double min_coordinate = 0.0;
+    double max_coordinate = 0.0;
+    double value_tolerance = 0.0;
+    double score_tolerance = 0.0;
+    double max_value_residual = 0.0;
+    double max_score_residual = 0.0;
+};
+
 struct DynamicEmissionRowResult {
     double parameter = 0.0;
     double log_pdf = 0.0;
@@ -92,6 +123,12 @@ public:
     /// Re-resolve metadata after mutation, retaining the current spec and its
     /// ownership. Does not copy model data or immutable observation caches.
     void refresh();
+
+    // Explicit research approximation. Refresh invalidates this fixed-R cache.
+    void configure_student_emission_cache(
+        ObservationView observations, const StudentEmissionCacheConfig& config);
+    void clear_student_emission_cache();
+    StudentEmissionCacheDiagnostics student_emission_cache_info() const;
 
     DynamicEmissionKind kind() const noexcept;
     CopulaFamily family() const noexcept;
@@ -197,6 +234,11 @@ public:
         double parameter) const;
 
 private:
+    bool fill_cached_student_row(
+        const double* observations, std::int64_t row_index,
+        const std::vector<double>& parameters,
+        const std::vector<double>* derivatives, double* densities,
+        double* gradients, double* log_scale) const;
     struct BorrowedSpecTag {};
     PreparedDynamicEmission(const CopulaSpec& spec, BorrowedSpecTag);
 

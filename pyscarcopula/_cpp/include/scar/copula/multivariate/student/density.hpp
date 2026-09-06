@@ -16,6 +16,8 @@ struct MultivariateRowsResult;
 
 namespace scar_internal {
 
+struct StudentDistributionParameters;
+
 struct PreparedStudentDensity {
     int dimension = 0;
     const scar::copula::multivariate::correlation::DenseCorrelation* dense =
@@ -106,6 +108,16 @@ double student_log_pdf(
     double df,
     std::int64_t row_index,
     StudentWorkspace& workspace);
+// Prepared-constant, refined direct quantiles for opt-in emission reconstruction.
+// Uses the same density algebra and matching implicit quantile derivatives.
+double student_log_pdf_refined(
+    const PreparedStudentDensity& model, const double* row,
+    const StudentDistributionParameters& distribution,
+    StudentWorkspace& workspace, double* dlog_ddf = nullptr);
+double student_log_pdf_with_precomputed_quantiles(
+    const PreparedStudentDensity& model, scar::DoubleView quantiles,
+    scar::DoubleView derivatives, double df, StudentWorkspace& workspace,
+    double* dlog_ddf = nullptr);
 double student_log_pdf(
     const scar::CopulaSpec& spec,
     const double* row,

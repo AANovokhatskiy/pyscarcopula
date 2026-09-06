@@ -264,6 +264,27 @@ double student_quantile_refined_value(
         initial_quantile);
 }
 
+void student_quantile_refined_value_and_derivative(
+    double p, const StudentDistributionParameters& params,
+    double& value, double* derivative) {
+    if (params.df >= kStudentNormalAsymptoticDf) {
+        student_quantile_large_df_refined(p, params.df, value, derivative);
+        return;
+    }
+    value = student_quantile_refined_value(p, params);
+    if (derivative == nullptr) return;
+    if (value == 0.0) {
+        *derivative = 0.0;
+        return;
+    }
+    double survival = 0.0, survival_derivative = 0.0;
+    const double magnitude = std::abs(value);
+    student_survival_positive_df_value_and_derivative(
+        magnitude, params.df, survival, survival_derivative);
+    const double slope = survival_derivative / student_pdf_value(magnitude, params);
+    *derivative = value < 0.0 ? -slope : slope;
+}
+
 double student_quantile_for_observation(
     const scar::CopulaSpec& spec,
     double p,

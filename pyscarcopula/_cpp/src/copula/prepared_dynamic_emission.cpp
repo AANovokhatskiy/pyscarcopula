@@ -3,6 +3,8 @@
 #include "scar/copula/multivariate/equicorrelation/kernel.hpp"
 #include "scar/copula/multivariate/correlation/parameterization.hpp"
 #include "scar/copula/multivariate/student/density.hpp"
+#include "scar/copula/multivariate/student/emission_cache.hpp"
+#include "scar/copula/multivariate/student/distribution.hpp"
 #include "scar/copula/pair/gaussian.hpp"
 #include "scar/copula/prepared_pair_kernel.hpp"
 #include "scar/detail/copula/common.hpp"
@@ -13,6 +15,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <stdexcept>
 #include <utility>
 
 namespace scar {
@@ -116,6 +119,7 @@ struct PreparedDynamicEmission::Impl {
     }
 
     void resolve() {
+        emission_cache.reset();
         pair = PreparedPairKernel(*spec);
         if (pair.is_registered()) {
             kind = DynamicEmissionKind::Pair;
@@ -151,6 +155,7 @@ struct PreparedDynamicEmission::Impl {
     const CopulaSpec* spec = nullptr;
     PreparedPairKernel pair;
     scar_internal::PreparedStudentDensity student;
+    std::unique_ptr<scar_internal::StudentEmissionCache> emission_cache;
     DynamicEmissionKind kind = DynamicEmissionKind::Unsupported;
     bool supported = false;
 };
@@ -180,6 +185,29 @@ void PreparedDynamicEmission::refresh(const CopulaSpec& spec) {
 
 void PreparedDynamicEmission::refresh() {
     impl_->resolve();
+}
+
+void PreparedDynamicEmission::configure_student_emission_cache(
+    ObservationView observations, const StudentEmissionCacheConfig& config) {
+    if (impl_->kind != DynamicEmissionKind::Student || !impl_->supported
+        || impl_->student.dense == nullptr
+        || !ok(validate_observations(observations))) {
+        throw std::invalid_argument("emission cache requires valid dense Student observations");
+    }
+    // Build before swapping: invalid requests and failed refinement preserve
+    // the previous prepared objective exactly.
+    auto candidate = std::make_unique<scar_internal::StudentEmissionCache>(
+        impl_->student, observations, impl_->spec->offset, config);
+    impl_->emission_cache = std::move(candidate);
+}
+
+void PreparedDynamicEmission::clear_student_emission_cache() {
+    impl_->emission_cache.reset();
+}
+
+StudentEmissionCacheDiagnostics PreparedDynamicEmission::student_emission_cache_info() const {
+    return impl_->emission_cache ? impl_->emission_cache->diagnostics()
+                                 : StudentEmissionCacheDiagnostics{};
 }
 
 DynamicEmissionKind PreparedDynamicEmission::kind() const noexcept {
@@ -394,7 +422,18 @@ DynamicEmissionRowResult PreparedDynamicEmission::evaluate_parameter(
             out.status = Status::NullPointer;
             return out;
         }
-        if (derivative) {
+        if (impl_->emission_cache && impl_->emission_cache->evaluate(
+                row_index, parameter, out.log_pdf, out.dlog_dparameter)) {
+            return out;
+        }
+        // Active table misses must use the direct kernel, not the old PPF
+        // interpolant. This also avoids mixing approximations in the tails.
+        if (impl_->emission_cache) {
+            const auto distribution = scar_internal::student_distribution_parameters(parameter);
+            out.log_pdf = scar_internal::student_log_pdf_refined(impl_->student,
+                row, distribution, workspace.impl_->student,
+                derivative ? &out.dlog_dparameter : nullptr);
+        } else if (derivative) {
             if (!scar_internal::student_log_pdf_and_dlog_ddf(
                     impl_->student,
                     row,
@@ -493,6 +532,11 @@ void PreparedDynamicEmission::fill_density_row(
     double* densities,
     double* log_scale) const {
 
+    if (fill_cached_student_row(observations, row_index, parameters,
+            nullptr, densities, nullptr, log_scale)) {
+        return;
+    }
+
     scar_internal::copula_pdf_row_precomputed_flat(
         *impl_->spec,
         observations,
@@ -510,6 +554,11 @@ void PreparedDynamicEmission::fill_density_and_gradient_row(
     double* densities,
     double* gradients,
     double* log_scale) const {
+
+    if (fill_cached_student_row(observations, row_index, parameters,
+            &derivatives, densities, gradients, log_scale)) {
+        return;
+    }
 
     scar_internal::copula_pdf_and_grad_row_precomputed_flat(
         *impl_->spec,
@@ -531,6 +580,27 @@ void PreparedDynamicEmission::fill_density_and_gradient_grid(
     std::vector<double>& gradients,
     int n_threads,
     double* log_scale_sum) const {
+
+    if (impl_->emission_cache) {
+        std::vector<double> scales;
+        const bool valid = fill_density_and_gradient_block(observations, 0,
+            rows, parameters, derivatives, densities, gradients, scales, n_threads);
+        if (log_scale_sum) {
+            *log_scale_sum = 0.0;
+            for (double value : scales) *log_scale_sum += value;
+        } else if (valid) {
+            for (std::size_t row = 0; row < scales.size(); ++row) {
+                const double multiplier = std::exp(scales[row]);
+                for (std::size_t j = 0; j < parameters.size(); ++j) {
+                    const std::size_t index = row * parameters.size() + j;
+                    densities[index] *= multiplier;
+                    gradients[index] *= multiplier;
+                }
+            }
+        }
+        if (!valid) { densities.clear(); gradients.clear(); }
+        return;
+    }
 
     scar_internal::copula_pdf_and_grad_grid_precomputed(
         *impl_->spec,
@@ -564,6 +634,17 @@ bool PreparedDynamicEmission::fill_density_and_gradient_block(
         return false;
     }
     row_log_scales.assign(static_cast<std::size_t>(rows), 0.0);
+    if (impl_->emission_cache) {
+        densities.resize(elements);
+        gradients.resize(elements);
+        for (std::int64_t row = 0; row < rows; ++row) {
+            fill_cached_student_row(observations, first_row + row, parameters,
+                &derivatives, densities.data() + row * parameters.size(),
+                gradients.data() + row * parameters.size(), &row_log_scales[row]);
+        }
+        return std::all_of(row_log_scales.begin(), row_log_scales.end(),
+            [](double value) { return std::isfinite(value); });
+    }
     scar_internal::copula_pdf_and_grad_grid_precomputed(
         *impl_->spec, observations, rows, parameters, derivatives,
         densities, gradients, n_threads, nullptr, first_row,
@@ -580,8 +661,48 @@ void PreparedDynamicEmission::fill_density_row_on_state_grid(
     const std::vector<double>& states,
     std::vector<double>& densities) const {
 
+    if (impl_->emission_cache) {
+        std::vector<double> parameters, derivatives;
+        prepare_grid_transform(states, parameters, derivatives);
+        densities.resize(states.size());
+        fill_cached_student_row(observations, row_index, parameters,
+            nullptr, densities.data(), nullptr, nullptr);
+        return;
+    }
+
     scar_internal::copula_fi_row_on_grid(
         *impl_->spec, observations, row_index, states, densities);
+}
+
+bool PreparedDynamicEmission::fill_cached_student_row(
+    const double* observations, std::int64_t row_index,
+    const std::vector<double>& parameters, const std::vector<double>* derivatives,
+    double* densities, double* gradients, double* log_scale) const {
+    if (!impl_->emission_cache) return false;
+    if (observations == nullptr || row_index < 0 || parameters.empty()
+        || densities == nullptr || (derivatives &&
+            (derivatives->size() != parameters.size() || gradients == nullptr))) {
+        throw std::invalid_argument("invalid cached Student emission row");
+    }
+    auto workspace = make_workspace(derivatives != nullptr);
+    const double* row = observations + row_index * impl_->spec->dim;
+    double scale = -std::numeric_limits<double>::infinity();
+    for (std::size_t j = 0; j < parameters.size(); ++j) {
+        const auto result = evaluate_parameter(row, row_index, parameters[j],
+                                               derivatives != nullptr, workspace);
+        densities[j] = result.log_pdf;
+        if (!result.is_ok()) densities[j] = std::numeric_limits<double>::quiet_NaN();
+        if (derivatives) gradients[j] = result.dlog_dparameter * (*derivatives)[j];
+        scale = std::max(scale, densities[j]);
+    }
+    // Callers without a scale channel require unscaled emission values.
+    if (log_scale) *log_scale = scale;
+    else scale = 0.0;
+    for (std::size_t j = 0; j < parameters.size(); ++j) {
+        densities[j] = std::exp(densities[j] - scale);
+        if (derivatives) gradients[j] *= densities[j];
+    }
+    return true;
 }
 
 double PreparedDynamicEmission::h(

@@ -29,6 +29,9 @@ double student_quantile_refined_value(double p, double df);
 double student_quantile_refined_value(double p, const StudentDistributionParameters& params);
 double student_quantile_refined_value(
     double p, const StudentDistributionParameters& params, double initial_quantile);
+void student_quantile_refined_value_and_derivative(
+    double p, const StudentDistributionParameters& params,
+    double& value, double* derivative);
 double student_quantile_for_observation(
     const scar::CopulaSpec& spec,
     double p,

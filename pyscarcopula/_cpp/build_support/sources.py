@@ -75,6 +75,7 @@ SCAR_COMPUTE_SOURCES = (
     "copula/multivariate/student/conditional.cpp",
     "copula/multivariate/student/distribution.cpp",
     "copula/multivariate/student/density.cpp",
+    "copula/multivariate/student/emission_cache.cpp",
     "copula/multivariate/student/evaluator.cpp",
     "copula/multivariate/student/factor_density.cpp",
     "copula/multivariate/student/factor_grid.cpp",
