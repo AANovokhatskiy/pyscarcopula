@@ -1,119 +1,102 @@
 # Changelog
 
-## Unreleased
+## 0.22.0 - 2026-09-06
 
-- Stabilize native Clayton, Gumbel, Frank and Joe conditional CDFs and inverses
-  in the tails. Use log-domain formulas and safeguarded monotone inversion;
-  report failed inversion instead of silently returning a clipped value.
-  Fixed-uniform results may differ from 0.20.1 and earlier dev snapshots.
+Version: `0.21.0` -> `0.22.0`
+
+- Complete the C++17 model architecture refactor with shared pair-family
+  registration, multivariate kernels, model policies, validation, and typed
+  native results. Built-in numerical operations use the mandatory
+  `pyscarcopula._native` facade; Python retains optimization, RNG, and API
+  orchestration. Move the binary to `pyscarcopula._native._scar_cpp` and remove
+  the former `pyscarcopula._scar_cpp` import path without an alias.
+- Move SCAR-TM-Jacobi domain construction, quadrature, dense/sparse
+  transitions, prepared likelihoods and gradients, filtering, and sampling
+  into C++. Preserve fixed-draw TM-grid and chunked Lamperti--Euler sampling,
+  expose boundary diagnostics, and validate orders, states, and simultaneous
+  workspace requirements before allocation or RNG consumption.
+- Complete native static and dynamic R-vine execution, including Rosenblatt
+  traversal, and remove production Python numerical fallbacks. Correct static
+  MLE family selection, Kendall-tau boundary handling, and dynamic edge failure
+  policies. Invalidate compiled plans and posterior caches after semantic
+  model changes and preserve fitted settings across mixed GAS/Jacobi/OU edges.
+- Remove `CopulaProtocol`, `CommonCopulaProtocol`, `BivariateCopulaProtocol`,
+  `MultivariateCopulaProtocol`, `CopulaCapabilities`, and custom-copula callback
+  execution. Native operations accept exact registered built-in types only.
+- Remove `CVineCopula`, `TMGrid`, and the discontinued `scar-p-ou`/`scar-m-ou`
+  estimators and their execution fallbacks. Fixed C-vines use
+  `VineCopula.cvine(...)`; legacy C-vine and Monte Carlo persisted artifacts
+  fail explicitly and have no automatic migration path.
+- Centralize real-valued input and parameter validation across model, strategy,
+  native, and post-fit APIs. Reject lossy complex coercion, invalid integer
+  options, unknown or misplaced fit keywords, and invalid conditioned states.
+  Route constructor, optimizer, numerical, and sampling settings to their
+  owners while preserving fitted defaults and explicit overrides.
+- Correct Gaussian/Student correlation and dynamic-parameter routing,
+  conditional sampling, and thread propagation. Preserve GAS configuration,
+  correlation metadata, and numerical settings through persistence and model
+  reconstruction; rebuild transient prepared evaluators and caches on demand.
+- Stabilize native Clayton, Gumbel, Frank, and Joe conditional CDFs and inverses
+  in the tails with log-domain formulas and safeguarded monotone inversion.
+  Report failed inversion instead of silently returning a clipped value.
   Pair sampling uses conditional inversion; remove the experimental frailty
-  sampler and its method selector.
-
-- Implement native `pobs` with standard-library index sorting and explicit
-  row-order tie breaking. Add an independently implemented historical ordering
-  mode through `ties_method="legacy"`, with exact 0.20.1 regression references.
+  sampler and its method selector. Fixed-uniform results may differ from
+  0.20.1 and earlier dev snapshots.
+- Move `pobs` into C++, preserving integer precision and sorting NaNs last.
+  The default `ties_method="ordinal"` assigns tied ranks in input row order;
+  `ties_method="legacy"` reproduces historical 0.20.1 ordering. Remove Numba
+  from core dependencies; install `pyscarcopula[contrib]` for the optional
+  marginal and risk helpers that still use it.
 - Harden GAS fitting with a nested-static automatic start, best-candidate
-  retention, objective/static-baseline validation and optimizer diagnostics.
-  Use `eps=1e-8` by default and preserve Student PPF caches in joint shrinkage
-  objectives so optimization and reported likelihood evaluate the same function.
-  Reuse one call-owned Student PPF cache across joint GAS shrinkage finite
-  differences, avoiding repeated table copies without changing optimizer steps.
-- Reject overflowing SCAR optimizer trials with finite penalties. Preserve the
-  same historical five-sigma support for transitions and gradients, expose actual
-  requested/effective grid sizes, and retry unsuccessful bootstrap refits once
-  before reporting an error instead of including them in calibrated p-values.
-  Raise the shared SCAR optimizer default `maxls` from 20 to 100 for ordinary
-  fits and bootstrap refits. Retries retain the original optimizer settings;
-  model-specific defaults of 200 and explicit user overrides remain effective.
-- Reduce checkpoint recomputation in grid-based SCAR correlation gradients
-  using a configurable 64 MiB active-block budget (`corr_gradient_block_bytes`).
-  A 24 MiB budget restores the former block size; transition support, grid
-  selection, backend routing and optimizer settings are unchanged.
-- Support rank-deficient factor initialization with complete Householder QR;
-  reuse the common `O(T log T)` Kendall kernel and exact factor emission values
-  for adjacent repeated degrees of freedom.
-- Move `pobs` ordinal ranking into C++, preserving integer precision and
-  ordering tied values by input row (previously an unstable sort). NaNs sort
-  last. Remove Numba from core dependencies; install `pyscarcopula[contrib]`
-  for the optional marginal and risk helpers that still use it.
-- Reject unknown and misplaced fit keywords in built-in post-fit API calls
-  and negative likelihood objectives. Route constructor settings separately
-  from sampling/prediction arguments, preserving RNG, conditional sampling,
-  numerical overrides and fitted defaults. SCAR-TM-OU smart initialization
-  now uses the caller's MLE optimizer configuration and reuses that static
-  result through heuristic fallbacks, retaining the constant fallback when
-  the static MLE raises. Vine GOF applies OU grid overrides only to OU edges,
-  so mixed GAS/Jacobi/OU traversals retain their fitted numerical settings.
-- Make the SCAR-TM-OU contract consistent across public and native entry
-  points: require at least two observations, reject non-positive automatic
-  backend thresholds and lossy spectral-order values, and reject zero-mass
-  conditioned states. Matrix/local analytical gradients now stream bounded
-  emission blocks with rolling OU sensitivities instead of retaining three
-  `T x K` arrays. Preserve specialized Student batch emissions and use bounded
-  forward-state blocks with balanced checkpoint recomputation for correlation
-  posterior scores, avoiding a transition per correlation parameter.
-  Document all supported Archimedean transforms.
-- Audit every tracked `tests/` and `tools/` file for refactoring artifacts:
-  archive the frozen Python R-vine differential harness, historical provenance
-  fixture, report-only inventory/calibration tools, and generated benchmark
-  captures outside the product repository; retain direct API, numerical,
-  native-boundary, release, and performance contracts under semantic names.
-- Remove the completed C++ architecture-refactor migration harness, historical
-  source snapshots, benchmark captures, and refactor-only CI workflow from the
-  product repository and source distribution. The material remains archived
-  outside the repository; current architecture, numerical, parallel, wheel,
-  and sanitizer tests continue to validate the product directly.
-- Complete the native architecture checks: validate the full logical
-  C++ target graph and domain cycles, add focused Python-free model suites,
-  compile every public header independently, run standalone ASan/UBSan and
-  TSan executables, and automate accuracy/config, pinned-runner performance,
-  cross-platform wheel numerical-parity, and import validation over the
-  canonical compute manifest. Architecture validation continues to enforce the frozen
-  conditional-vine row-chunk constant without a post-hoc exception.
-- Move the binary extension to `pyscarcopula._native._scar_cpp`. The former
-  raw `pyscarcopula._scar_cpp` import path is removed without a compatibility
-  alias; public and production code uses the `pyscarcopula._native` facade.
-- Remove `CopulaProtocol`, `CommonCopulaProtocol`,
-  `BivariateCopulaProtocol`, `MultivariateCopulaProtocol`, custom-copula
-  callback execution, and `CopulaCapabilities`. Native operations now accept
-  exact registered built-in copula types only.
-- Remove `CVineCopula` and its persistence loader. Fixed C-vines use
-  `VineCopula.cvine(...)`; persisted legacy C-vine artifacts fail before class
-  import and have no automatic migration path.
-- Remove `TMGrid` and `pyscarcopula.numerical.tm_grid` from the package. SCAR-OU
-  likelihood, prediction, smoothing, and goodness-of-fit use the compiled
-  evaluator. No compatibility aliases are provided for these removals.
-- Add dependency-free, opt-in source-level parallel compilation for the
-  pybind11 extension and Python-free C++ boundary build. Both paths share one
-  validated `PYSCA_CPP_BUILD_JOBS` policy and remain sequential by default.
-- Include the pair-family registry definition in source distributions so
-  PEP 517 metadata and wheel builds from the sdist can resolve C++ sources,
-  while keeping build-only support modules out of installed wheels.
-- Keep standalone header-unit objects beside their flattened generated sources
-  so MSVC builds do not duplicate absolute paths beyond Windows path limits.
-- Move the SCAR-TM-Jacobi parameter, validation, checked-memory, Lamperti,
-  special-function, Gauss-Jacobi/Gauss-Hermite, and orthonormal-basis domain
-  core to dependency-free C++17. Production Python now delegates these paths
-  through a typed native facade and no longer imports SciPy special functions
-  for Jacobi construction. The memory guard includes the full Golub--Welsch
-  eigenvector peak and the configured Hermite order, including direct
-  quadrature entry points.
-- Move dense/sparse Jacobi TM-grid trajectories and chunked Lamperti--Euler
-  evolution to fixed-draw C++17 contracts with exact RNG-consumption and
-  boundary-intervention diagnostics. Native filtered/conditioned-state
-  sampling owns grid/histogram selection and tau-to-parameter mapping, and
-  built-in conditional pair sampling uses the native inverse-h kernel. The
-  pre-RNG memory guard includes simultaneous Python, binding, native, and
-  returned-array copies; transition aliases normalize before RNG use; and
-  fixed conditional uniforms follow NumPy's `[0, 1)` domain, including zero.
-- Remove the discontinued SCAR Monte Carlo estimators from strategy,
-  capability, conditional/vine, persistence, documentation, and benchmark
-  surfaces. Legacy persisted artifacts now fail with an explicit unsupported
-  format error and have no execution fallback.
+  retention, objective/static-baseline validation, and optimizer diagnostics.
+  Use `eps=1e-8` by default and reuse a call-owned Student PPF cache across
+  joint shrinkage finite differences so optimization and reported likelihood
+  evaluate the same function without repeated table copies.
+- Reject overflowing SCAR optimizer trials with finite penalties and validate
+  final objectives and gradients. Preserve historical five-sigma transition
+  support, expose requested/effective grid sizes, and reuse the caller's MLE
+  configuration and static result during SCAR-TM-OU smart initialization.
+  Raise the shared SCAR optimizer default `maxls` from 20 to 100, retaining
+  model-specific defaults of 200 and explicit overrides. Retry unsuccessful
+  bootstrap refits once before reporting an error instead of including them
+  in calibrated p-values.
+- Bound SCAR-TM-OU gradient memory with streamed emission blocks, rolling
+  sensitivities, and checkpointed correlation scores. Reduce checkpoint
+  recomputation with a configurable 64 MiB active-block budget
+  (`corr_gradient_block_bytes`); 24 MiB restores the former block size.
+- Support rank-deficient factor initialization with complete Householder QR,
+  reuse the shared `O(T log T)` Kendall kernel, and reuse exact factor Student
+  emissions for adjacent repeated degrees of freedom. Improve Student
+  quantile and multivariate numerical consistency.
+- Reduce native thread scheduling and workspace overhead with bounded queued
+  runners, reusable per-call scratch, and prepared factor Rosenblatt kernels.
+  Preserve deterministic logical reductions and the explicit one-thread
+  default independently of resident pool size and concurrent calls.
+- Add `risk_metrics(failure_policy="raise")` as the default for unsuccessful
+  final copula fits and portfolio optimizations, reporting the failing stage
+  and window. `failure_policy="continue"` retains previous result handling.
+  Validate risk and independent-fit parameters before fitting or worker
+  submission and preserve supplied optimizer and numerical settings.
+- Add opt-in parallel C++ compilation through `PYSCA_CPP_BUILD_JOBS`, keeping
+  builds sequential by default. Harden sdist/wheel contents, installed-wheel
+  numerical and import checks, and release artifact provenance. Fix Windows
+  path/cleanup handling, macOS and strict Clang/MSVC builds, and compatibility
+  with supported older NumPy/SciPy versions.
+- Expand Python-free C++ model and standalone-header checks, architecture and
+  ownership validation, ASan/UBSan and TSan suites, numerical regressions,
+  conditional-sampling coverage, and reproducible performance validation.
+  Remove completed migration harnesses and historical captures from the
+  product repository and localize generated build and validation artifacts.
+- Reorganize API and numerical documentation around current model contracts,
+  optimizer settings, parameter routing, sampling, and parallelism. Refresh
+  examples and add documentation rendering and workflow lint checks.
 
 ## 0.21.0 - 2026-08-22
 
 Version: `0.20.2` -> `0.21.0`
+
+Commit: `3a6e2ad`
+Merge PR: #49 (`0c30123`, 2026-08-23)
 
 - Add a shared native R-vine runtime for static unconditional sampling,
   suffix and arbitrary-DAG conditional execution, fused row log-density,
