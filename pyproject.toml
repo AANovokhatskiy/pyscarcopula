@@ -44,6 +44,9 @@ dependencies = [
 [project.optional-dependencies]
 contrib = ["numba>=0.56"]
 test = [
+    # Source build contracts import these outside the isolated build environment.
+    "setuptools>=77.0.3",
+    "pybind11>=3.0.0",
     "numba>=0.56", # Exercises the optional contrib helpers.
     "pytest>=7.0",
     "pytest-xdist>=3.5",
