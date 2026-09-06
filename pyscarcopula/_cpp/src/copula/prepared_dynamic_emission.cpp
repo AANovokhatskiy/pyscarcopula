@@ -178,6 +178,10 @@ void PreparedDynamicEmission::refresh(const CopulaSpec& spec) {
     impl_->replace_owned(spec);
 }
 
+void PreparedDynamicEmission::refresh() {
+    impl_->resolve();
+}
+
 DynamicEmissionKind PreparedDynamicEmission::kind() const noexcept {
     return impl_->kind;
 }

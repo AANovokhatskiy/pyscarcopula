@@ -859,6 +859,10 @@ class SCARTMStrategy:
         diagnostics = {
             "final_validation_passed": False,
             "final_validation_reasons": (),
+            # Candidate checks below do not estimate quadrature or truncation
+            # error, even when a second evaluator happens to agree.
+            "final_integration_status": "not_checked",
+            "final_integration_converged": None,
             "final_selected_engine": selected_engine,
             "final_validation_engine": validation_engine,
         }
@@ -1397,6 +1401,13 @@ class SCARTMStrategy:
         verbose : print progress
         initial_mle_result : MLEResult, optional
             Existing static fit used only for automatic initialization.
+
+        Notes
+        -----
+        ``diagnostics['final_validation_passed']`` reports candidate checks;
+        it does not certify integration accuracy. The separate
+        ``final_integration_status`` remains ``'not_checked'`` until an
+        explicit resolution study is performed outside this fit.
 
         Returns
         -------

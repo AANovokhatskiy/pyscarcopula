@@ -5,6 +5,7 @@
 #include "scar/copula/multivariate/rosenblatt.hpp"
 #include "scar/copula/multivariate/sampling.hpp"
 #include "scar/copula/multivariate/student/factor_grid.hpp"
+#include "scar/copula/multivariate/student/ppf_cache.hpp"
 #include "scar/copula/multivariate/student/rosenblatt.hpp"
 #include "scar/copula/prepared_dynamic_emission.hpp"
 #include "scar/math/normal.hpp"
@@ -17,6 +18,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -105,6 +107,74 @@ scar::CopulaSpec factor_stochastic_student_spec(
     spec.factor_operator() = factor;
     spec.dense_log_determinant() = factor->logdet();
     return spec;
+}
+
+bool borrowed_student_refresh_preserves_cache(
+    const scar::CopulaSpec& original,
+    const scar::Observations& observations) {
+
+    auto spec = original;
+    const auto flat = flatten(observations);
+    auto table = scar::copula::multivariate::student::prepare_ppf_table(
+        view(flat), {});
+    if (!table.is_ok() || !table.value.has_table) {
+        return false;
+    }
+    spec.student_ppf_observation_count() = observations.size();
+    spec.student_ppf_nodes() = std::move(table.value.nodes);
+    spec.student_ppf_table() = std::move(table.value.table);
+    const double* const table_address = spec.student_ppf_table().data();
+    const auto table_values = spec.student_ppf_table();
+    auto borrowed = scar::PreparedDynamicEmission::borrow(spec);
+    auto emission = std::move(borrowed);
+    auto workspace = emission.make_workspace(true);
+
+    for (double correlation : {0.1, 0.4, -0.15, 0.0}) {
+        std::vector<double> matrix(kDimension * kDimension, correlation);
+        for (int i = 0; i < kDimension; ++i) {
+            matrix[i * kDimension + i] = 1.0;
+        }
+        auto prepared = scar::prepare_dense_correlation(view(matrix), kDimension);
+        if (!prepared.is_ok()) {
+            return false;
+        }
+        // Reallocation of mutable correlation storage must not detach or copy
+        // the PPF cache, and the resolved scalar kernel must see the new R.
+        spec.dense_inverse_cholesky().swap(prepared.inverse_cholesky);
+        spec.dense_log_determinant() = prepared.log_determinant;
+        emission.refresh();
+        if (&emission.compatibility_spec() != &spec
+            || emission.compatibility_spec().student_ppf_table().data()
+                != table_address
+            || spec.student_ppf_table() != table_values) {
+            return false;
+        }
+        scar::PreparedDynamicEmission snapshot(spec);
+        auto snapshot_workspace = snapshot.make_workspace(true);
+        for (std::size_t row = 0; row < observations.size(); ++row) {
+            const auto actual = emission.evaluate_state(
+                observations[row].data(), row, 0.25, true, workspace);
+            const auto expected = snapshot.evaluate_state(
+                observations[row].data(), row, 0.25, true, snapshot_workspace);
+            if (!actual.is_ok() || !expected.is_ok()
+                || actual.log_pdf != expected.log_pdf
+                || actual.dlog_dparameter != expected.dlog_dparameter) {
+                return false;
+            }
+        }
+    }
+
+    // The explicit replacement API retains its original owning semantics;
+    // parameterless refresh must also preserve an already owned snapshot.
+    emission.refresh(spec);
+    const double* const owned_address =
+        emission.compatibility_spec().student_ppf_table().data();
+    emission.refresh();
+    return &emission.compatibility_spec() != &spec
+        && owned_address != table_address
+        && emission.compatibility_spec().student_ppf_table().data()
+            == owned_address
+        && emission.compatibility_spec().student_ppf_table() == table_values;
 }
 
 }  // namespace
@@ -473,6 +543,9 @@ int run_equicorr_stochastic_student_tests() {
     }
 
     scar::PreparedDynamicEmission dense_student_emission(dense_student);
+    if (!borrowed_student_refresh_preserves_cache(dense_student, observations)) {
+        return 34;
+    }
     scar::PreparedDynamicEmission factor_student_emission(factor_student);
     auto dense_student_workspace =
         dense_student_emission.make_workspace(true);

@@ -779,6 +779,14 @@ def test_scar_tm_final_validation_accepts_projected_boundary_solution():
     assert diagnostics["final_boundary_flags"] == (True, False, True)
 
 
+def test_scar_tm_candidate_validation_does_not_certify_integration():
+    _, diagnostics = _validate_candidate(
+        [1.0, 0.0, 1.0], validation_value=None)
+    assert diagnostics["final_validation_passed"]
+    assert diagnostics["final_integration_status"] == "not_checked"
+    assert diagnostics["final_integration_converged"] is None
+
+
 def test_scar_tm_gradient_policy_is_disabled_by_default():
     result, diagnostics = _validate_candidate(
         [1.0, 0.0, 1.0],

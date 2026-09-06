@@ -325,6 +325,23 @@ def stochastic_student_initial_point(
         "stochastic Student initial point")
 
 
+def student_initial_stencil(mu):
+    return _parameter_vector(
+        _extension.load().ou_student_initial_stencil(float(mu)),
+        "Student initialization stencil")
+
+
+def student_score_initial_point(
+        log_emissions, theta_mle, mu, static_log_likelihood, step,
+        rho_target=0.96, maximum_stationary_scale=2.0):
+    return _initialization_result(
+        _extension.load().ou_student_score_initial_point(
+            np.ascontiguousarray(log_emissions, dtype=np.float64),
+            float(theta_mle), float(mu), float(static_log_likelihood),
+            float(step), float(rho_target), float(maximum_stationary_scale)),
+        "Student variance-score initial point")
+
+
 def strength_aware_initial_point(
         observations, theta_mle, mu, static_log_likelihood, **options):
     module = _extension.load()

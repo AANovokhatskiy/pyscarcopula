@@ -360,8 +360,8 @@ private:
 /// Evaluator that owns validated observations and a fixed numerical setup.
 ///
 /// Prepared evaluators avoid repeated conversion and allocation inside an
-/// optimizer loop. Like `ScarOuEvaluator`, an instance is not safe for
-/// concurrent calls.
+/// optimizer loop. Calls on an instance are serialized, including correlation
+/// updates. An update followed by evaluation is not an atomic transaction.
 class PreparedScarOuEvaluator {
 public:
     PreparedScarOuEvaluator(
@@ -377,6 +377,12 @@ public:
         std::vector<double> equicorr_sum_squares,
         OuNumericalConfig config,
         std::string method);
+
+    // Internal prepared views borrow member storage at stable addresses.
+    PreparedScarOuEvaluator(const PreparedScarOuEvaluator&) = delete;
+    PreparedScarOuEvaluator& operator=(const PreparedScarOuEvaluator&) = delete;
+    PreparedScarOuEvaluator(PreparedScarOuEvaluator&&) = delete;
+    PreparedScarOuEvaluator& operator=(PreparedScarOuEvaluator&&) = delete;
 
     void update_student_factor(
         const std::vector<double>& l_inv,
@@ -420,6 +426,7 @@ private:
         const OuParams& params,
         bool horizon_next) const;
 
+    // Declaration order keeps the borrowed spec alive until emission_ is gone.
     CopulaSpec copula_;
     PreparedDynamicEmission emission_;
     std::vector<double> observations_;

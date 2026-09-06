@@ -95,9 +95,82 @@ OuInitializationResult ou_stochastic_student_initial_point(
     OuInitialization output;
     output.params = OuParams{
         kappa.value, mu, std::clamp(nu, 0.001, 50.0)};
+    output.stationary_scale = output.params.nu / std::sqrt(2.0 * kappa.value);
     output.theta_mle = theta_mle;
     output.static_log_likelihood = static_log_likelihood;
     output.rho_target = rho_target;
+    return success(output);
+}
+
+Result<std::vector<double>> ou_student_initial_stencil(double mu) {
+    if (!std::isfinite(mu)) return {{}, Status::InvalidParameter, {}};
+    const double step = 0.001 * std::max(1.0, std::abs(mu));
+    if (!std::isfinite(mu - step) || !std::isfinite(mu + step)) {
+        return {{}, Status::InvalidParameter, {}};
+    }
+    return success(std::vector<double>{mu - step, mu, mu + step, step});
+}
+
+OuInitializationResult ou_student_score_initial_point(
+    ObservationView log_emissions,
+    double theta_mle, double mu, double static_log_likelihood,
+    double step, double rho_target, double maximum_stationary_scale) {
+    if (log_emissions.n_obs < 2 || log_emissions.dim != 3
+        || log_emissions.values == nullptr || !std::isfinite(theta_mle)
+        || !std::isfinite(mu) || !std::isfinite(static_log_likelihood)
+        || !std::isfinite(step) || step <= 0.0
+        || !std::isfinite(maximum_stationary_scale)
+        || maximum_stationary_scale < 0.01) return invalid();
+    const auto kappa = ou_initial_kappa(log_emissions.n_obs, rho_target);
+    if (!kappa.is_ok()) return invalid();
+    const double rho = std::exp(-kappa.value
+        / static_cast<double>(log_emissions.n_obs - 1));
+    double previous_score = 0.0, quadratic = 0.0;
+    double score_squares = 0.0, curvature = 0.0;
+    double correlation_squares = 0.0, trace = 0.0;
+    for (std::size_t t = 0; t < log_emissions.n_obs; ++t) {
+        const double* row = log_emissions.values + 3 * t;
+        if (!std::isfinite(row[0]) || !std::isfinite(row[1])
+            || !std::isfinite(row[2])) return invalid();
+        const double score = (row[2] - row[0]) / (2.0 * step);
+        const double second = ((row[2] - row[1]) + (row[0] - row[1]))
+            / (step * step);
+        score_squares += score * score;
+        curvature += second;
+        quadratic += score * score + 2.0 * score * previous_score;
+        previous_score = rho * (previous_score + score);
+        // tr(C_rho^2), with no dense T-by-T allocation.
+        trace += 1.0 + 2.0 * correlation_squares;
+        correlation_squares = rho * rho * (1.0 + correlation_squares);
+    }
+    const double information = score_squares
+        / static_cast<double>(log_emissions.n_obs);
+    const double fisher = 0.5 * information * information * trace;
+    const double variance_score = 0.5 * (quadratic + curvature);
+    if (!std::isfinite(fisher) || !std::isfinite(variance_score)) return invalid();
+    // The v=0 score is exact in the local Taylor model. Its Gaussian
+    // information proxy sets a one-standard-error interior variance floor,
+    // preventing a vanishing log-scale gradient without claiming evidence
+    // for dynamics. The cap matches the existing pair initializer.
+    double floor = maximum_stationary_scale;
+    double scale = maximum_stationary_scale;
+    if (fisher > 0.0) {
+        floor = std::pow(fisher, -0.25);
+        scale = std::sqrt(std::max(floor * floor, variance_score / fisher));
+    }
+    scale = std::clamp(scale, 0.01, maximum_stationary_scale);
+    OuInitialization output;
+    const double nu = scale * std::sqrt(2.0 * kappa.value);
+    if (!std::isfinite(nu)) return invalid();
+    output.params = {kappa.value, mu, nu};
+    output.theta_mle = theta_mle;
+    output.static_log_likelihood = static_log_likelihood;
+    output.rho_target = rho_target;
+    output.stationary_scale = scale;
+    output.variance_score = variance_score;
+    output.variance_information = fisher;
+    output.stationary_scale_floor = std::clamp(
+        floor, 0.01, maximum_stationary_scale);
     return success(output);
 }
 

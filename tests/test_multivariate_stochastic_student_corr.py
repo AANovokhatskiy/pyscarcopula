@@ -874,14 +874,17 @@ def test_prepared_scar_ou_objective_matches_functional_api(
         corr_grad, expected_corr_grad, rtol=0.0, atol=0.0)
 
 
-def test_prepared_scar_ou_updates_student_factor():
+@pytest.mark.parametrize("transition_method", ["matrix", "local", "spectral", "auto"])
+def test_prepared_scar_ou_updates_student_factor(transition_method):
     u = _u(T=18, d=3, seed=20260722)
     model = StochasticStudentCopula(d=3, R=_R(d=3, rho=0.2))
     config = AutoTMConfig(
-        transition_method="matrix",
+        transition_method=transition_method,
         K=10,
         max_K=10,
         adaptive=False,
+        basis_order=16,
+        quad_order=40,
     )
     prepared = _cpp_scar_ou.prepare_objective(u, model, config)
     before_value, _, _ = prepared.neg_loglik_with_grad_info(1.1, 0.3, 0.8)
@@ -906,6 +909,43 @@ def test_prepared_scar_ou_updates_student_factor():
     assert abs(value - before_value) > 1e-10
     np.testing.assert_allclose(value, expected_value, rtol=0.0, atol=0.0)
     np.testing.assert_allclose(grad, expected_grad, rtol=0.0, atol=0.0)
+
+
+@pytest.mark.parametrize("transition_method", ["matrix", "local", "spectral"])
+def test_native_prepared_student_owns_inputs_after_wrapper_deletion(transition_method):
+    import gc
+
+    u = _u(T=18, d=3, seed=20260906)
+    model = StochasticStudentCopula(d=3, R=_R(d=3, rho=0.2))
+    config = AutoTMConfig(
+        transition_method=transition_method, K=10, max_K=10,
+        adaptive=False, basis_order=16, quad_order=40,
+    )
+    prepared = _cpp_scar_ou.prepare_objective(u, model, config)
+    native = prepared._native
+    params = _cpp_scar_ou._params(prepared.module, 1.1, 0.3, 0.8)
+    expected = native.neg_loglik_with_grad_and_corr(params)
+    # The C++ emission may borrow its evaluator's spec, never the Python
+    # descriptor or caller's observations. Destroy all those original owners.
+    u[:] = 0.5
+    del u, prepared, model
+    gc.collect()
+    np.testing.assert_equal(native.neg_loglik_with_grad_and_corr(params), expected)
+
+    for rho in [0.4, -0.1, 0.2]:
+        replacement = StochasticStudentCopula(d=3, R=_R(d=3, rho=rho))
+        original_u = _u(T=18, d=3, seed=20260906)
+        reference = _cpp_scar_ou.prepare_objective(original_u, replacement, config)
+        native.update_student_factor(replacement._L_inv.reshape(-1), replacement._log_det)
+        np.testing.assert_equal(
+            native.neg_loglik_with_grad_and_corr(params),
+            reference._native.neg_loglik_with_grad_and_corr(params))
+
+    before_invalid = native.neg_loglik_with_grad_and_corr(params)
+    with pytest.raises(ValueError, match="finite"):
+        native.update_student_factor(np.full(9, np.nan), 0.0)
+    np.testing.assert_equal(
+        native.neg_loglik_with_grad_and_corr(params), before_invalid)
 
 
 def test_prepared_scar_ou_rejects_invalid_shapes():

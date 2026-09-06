@@ -29,6 +29,10 @@ _REVIEW_KINDS = {
 }
 
 _SYMBOL_REVIEWS = (
+    # Native FD stencil and O(T) variance-score summary; Python only calls rows.
+    # Covered by tests/test_student_score_initialization.py.
+    ('pyscarcopula._native.scar_ou:student_score_initial_point',
+     '7502ddd35d26ec292fd9178897d533c614d52fdb04d27eb284e97e5928f4c987', 'native_policy_adapter', ('model-policy',)),
     # Regression recovery review: SCAR trial conversion forwards to native
     # transforms and marks only status 6/7 failures for the existing native
     # penalty path. Grid formulas remain native. Bootstrap retries retain the
@@ -350,7 +354,7 @@ _SYMBOL_REVIEWS = (
     ('pyscarcopula.strategy.initial_point:_heuristic_initial_point',
      '3c962a2fbe5d2ce0de1d91e666592e2c6430961d9fc64eb24c9f9a3fcf8d29a7', 'native_policy_adapter', ('model-policy',)),
     ('pyscarcopula.strategy.initial_point:_stochastic_student_initial_point',
-     '9356bf0fe2af15735935f72864b78ad8a9ab28a9e3031bbeee0dacb63f7705c6', 'native_policy_adapter', ('model-policy',)),
+     '921cc322b53da88485869a5abb701439ff860170c2d1e6843db9448cccba3bc0', 'native_policy_adapter', ('model-policy',)),
     ('pyscarcopula.strategy.initial_point:_strength_aware_initial_point',
      'dabd612e912a091263a726938ee4a6740e8ff44efbfba1cde0e4cd410edb4829', 'native_policy_adapter', ('model-policy',)),
     ('pyscarcopula.strategy.initial_point:resolve_ou_initial_point',
@@ -549,7 +553,7 @@ _SYMBOL_REVIEWS = (
     ('pyscarcopula.strategy.scar_tm:SCARTMStrategy._fit_joint_static.objective_and_grad_scaled',
      '0a7df649fc7a0847eee0a344e5bd707f05d6b2951dd72fde93d83a9a1464f72b', 'fit_orchestration', ('arithmetic',)),
     ('pyscarcopula.strategy.scar_tm:SCARTMStrategy.fit',
-     'ad9c913e4e92ecaa74ca215b4363b15e82d9ad793a65b018fda74f793fc75c6a', 'fit_orchestration', ('arithmetic', 'numerical-call')),
+     '455b96f3124edcd9b602d2bbf2ece7e85af9fc6e9a811a6ceadb558cab73a44c', 'fit_orchestration', ('arithmetic', 'numerical-call')),
 )
 
 EXCEPTIONS = {

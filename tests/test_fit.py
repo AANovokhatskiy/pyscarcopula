@@ -423,10 +423,11 @@ class TestSmartInit:
         alpha0, info = initial_point.smart_initial_point(u, copula)
 
         expected_kappa = -np.log(0.96) * (len(u) - 1)
-        np.testing.assert_allclose(
-            alpha0,
-            [expected_kappa, inverse_mu0, 0.1],
-        )
+        np.testing.assert_allclose(alpha0[:2], [expected_kappa, inverse_mu0])
+        assert 0.0 < info['sigma_x'] <= 2.0
+        assert info['scale_method'] == 'variance_score'
+        assert info['variance_information'] > 0.0
+        assert alpha0[2] > 0.1
         np.testing.assert_allclose(copula.transform(alpha0[1]), [df0])
         assert info['method'] == 'stochastic_student_mle'
         assert info['df_mle'] == df0

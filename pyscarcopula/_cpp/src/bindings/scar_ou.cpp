@@ -106,6 +106,9 @@ py::dict initialization_to_dict(
     output["sigma_x"] = result.value.stationary_scale;
     output["sigma_x_legacy"] = result.value.legacy_stationary_scale;
     output["rho_target"] = result.value.rho_target;
+    output["variance_score"] = result.value.variance_score;
+    output["variance_information"] = result.value.variance_information;
+    output["stationary_scale_floor"] = result.value.stationary_scale_floor;
     switch (result.value.regime) {
     case scar::OuInitializationRegime::Weak:
         output["regime"] = "weak";
@@ -464,6 +467,32 @@ void bind_scar_ou(py::module_& m) {
         }, py::arg("count"), py::arg("theta_mle"), py::arg("mu"),
         py::arg("static_log_likelihood"),
         py::arg("rho_target") = 0.96, py::arg("nu") = 0.1);
+    m.def("ou_student_initial_stencil", [](double mu) {
+        return parameter_vector_to_dict(scar::ou_student_initial_stencil(mu));
+    }, py::arg("mu"));
+    m.def("ou_student_score_initial_point",
+        [](const Float64Array& log_emissions, double theta_mle,
+           double mu, double static_log_likelihood, double step,
+           double rho_target, double maximum_stationary_scale) {
+            const py::buffer_info info = log_emissions.request();
+            if (info.ndim != 2 || info.shape[1] != 3) {
+                throw std::invalid_argument("initialization log emissions must have shape (T, 3)");
+            }
+            const scar::ObservationView view{
+                static_cast<const double*>(info.ptr),
+                static_cast<std::size_t>(info.shape[0]), 3};
+            scar::OuInitializationResult result;
+            {
+                py::gil_scoped_release release;
+                result = scar::ou_student_score_initial_point(
+                    view, theta_mle, mu, static_log_likelihood, step,
+                    rho_target, maximum_stationary_scale);
+            }
+            return initialization_to_dict(result);
+        }, py::arg("log_emissions"), py::arg("theta_mle"), py::arg("mu"),
+        py::arg("static_log_likelihood"), py::arg("step"),
+        py::arg("rho_target") = 0.96,
+        py::arg("maximum_stationary_scale") = 2.0);
     m.def("ou_strength_aware_initial_point",
         [](const Float64Array& observations, double theta_mle,
            double mu, double static_log_likelihood,

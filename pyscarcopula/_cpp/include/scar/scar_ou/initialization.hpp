@@ -5,6 +5,7 @@
 #include "scar/scar_ou/types.hpp"
 
 #include <cstddef>
+#include <vector>
 
 namespace scar {
 
@@ -36,6 +37,9 @@ struct OuInitialization {
     double stationary_scale = 0.0;
     double legacy_stationary_scale = 0.0;
     double rho_target = 0.0;
+    double variance_score = 0.0;
+    double variance_information = 0.0;
+    double stationary_scale_floor = 0.0;
     OuInitializationRegime regime = OuInitializationRegime::NotApplicable;
 };
 
@@ -59,6 +63,13 @@ OuInitializationResult ou_stochastic_student_initial_point(
     double static_log_likelihood,
     double rho_target = 0.96,
     double nu = 0.1);
+Result<std::vector<double>> ou_student_initial_stencil(double mu);
+// Columns contain log emissions at mu-step, mu, mu+step.
+OuInitializationResult ou_student_score_initial_point(
+    ObservationView log_emissions,
+    double theta_mle, double mu, double static_log_likelihood,
+    double step, double rho_target = 0.96,
+    double maximum_stationary_scale = 2.0);
 OuInitializationResult ou_strength_aware_initial_point(
     ObservationView observations,
     double theta_mle,

@@ -175,6 +175,39 @@ trajectory averaging.
 Here $p_0$ is the stationary OU density,
 $N(\mu,\nu^2/(2\kappa))$.
 
+### Stochastic Student single-start initialization
+
+The default start retains the static degrees-of-freedom MLE as the latent
+mean and the existing target OU autocorrelation policy for kappa. It chooses
+one stationary scale from the local variance score, with no dynamic
+likelihood screening or multiple optimizer starts. Let
+$\ell_t(x)=\log c(u_t;\Psi(x))$, $s_t=\ell'_t(\mu)$,
+$h_t=\ell''_t(\mu)$, and $C_{ij}=\rho^{|i-j|}$. At zero stationary
+variance $v$, the marginal log-likelihood derivative is
+
+$$
+Q=\left.\partial_v\log L\right|_{v=0}
+ =\tfrac12\left(s^\top C s+\sum_t h_t\right).
+$$
+
+Three native row-density evaluations at the static mean and a symmetric
+finite-difference stencil supply these derivatives. A native O(T) recurrence
+computes Q and the Gaussian local-information proxy
+$F=\tfrac12 I^2\operatorname{tr}(C^2)$, where $I=T^{-1}\sum_t s_t^2$.
+The starting variance is $\max(F^{-1/2},Q/F)$, and its square root is
+bounded to [0.01, 2], as in the pair initializer's stationary-scale range.
+For zero information, the bounded interior scale is 2. The upper bound is a
+numerical starting safeguard, not an estimate or parameter-space restriction.
+The likelihood and subsequent optimizer remain unchanged.
+
+The $F^{-1/2}$ variance floor represents one local standard error. It avoids a
+vanishing gradient in log stationary scale even when the data do not support
+latent variation, and decreases with sample information. Q and F are
+initialization diagnostics, not a calibrated test of dynamics. On static data,
+the optimizer may need more iterations to return toward zero variance. The
+finite-difference approximation and Gaussian information proxy do not certify
+global optimality; an explicit user start still takes precedence.
+
 ### OU Backends
 
 `transition_method='spectral'` uses the stationary OU representation. In the

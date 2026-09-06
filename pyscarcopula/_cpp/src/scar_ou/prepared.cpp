@@ -32,7 +32,7 @@ PreparedScarOuEvaluator::PreparedScarOuEvaluator(
     OuNumericalConfig config,
     std::string method)
     : copula_(std::move(copula)),
-      emission_(copula_),
+      emission_(PreparedDynamicEmission::borrow(copula_)),
       observations_(std::move(observations)),
       n_obs_(n_obs),
       dim_(dim),
@@ -104,7 +104,7 @@ PreparedScarOuEvaluator::PreparedScarOuEvaluator(
             copula_.pair_gaussian_second_scores()[row] = x2;
         }
     }
-    emission_.refresh(copula_);
+    emission_.refresh();
 }
 
 PreparedScarOuEvaluator::PreparedScarOuEvaluator(
@@ -114,7 +114,7 @@ PreparedScarOuEvaluator::PreparedScarOuEvaluator(
     OuNumericalConfig config,
     std::string method)
     : copula_(std::move(copula)),
-      emission_(copula_),
+      emission_(PreparedDynamicEmission::borrow(copula_)),
       n_obs_(0),
       dim_(copula_.dim),
       config_(config),
@@ -151,7 +151,7 @@ PreparedScarOuEvaluator::PreparedScarOuEvaluator(
     copula_.equicorr_sum_scores() = std::move(equicorr_sums);
     copula_.equicorr_sum_squares() =
         std::move(equicorr_sum_squares);
-    emission_.refresh(copula_);
+    emission_.refresh();
 }
 
 void PreparedScarOuEvaluator::update_student_factor(
@@ -186,7 +186,7 @@ void PreparedScarOuEvaluator::update_student_factor(
     }
     copula_.dense_inverse_cholesky() = l_inv;
     copula_.dense_log_determinant() = log_det;
-    emission_.refresh(copula_);
+    emission_.refresh();
 }
 
 ObservationView PreparedScarOuEvaluator::view() const noexcept {

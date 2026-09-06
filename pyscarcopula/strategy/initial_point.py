@@ -3,8 +3,8 @@ Smart initial point estimation for SCAR-TM-OU optimization.
 
 The default uses one of two static-MLE-based analytical heuristics:
 
-1. ``StochasticStudentCopula`` starts close to its constant-df MLE with a
-   small diffusion coefficient.
+1. ``StochasticStudentCopula`` keeps the constant-df MLE mean and chooses
+   one interior stationary scale from the local variance score.
 2. Other copulas use the dependence-aware heuristic based on |Kendall tau|
    and static logL / T.
 
@@ -208,17 +208,26 @@ def _kappa_from_target_autocorr(T, rho_target=0.96,
 
 
 def _stochastic_student_initial_point(
-        u, copula, rho_target=0.96, nu0=0.1,
+        u, copula, rho_target=0.96, nu0=None,
         initial_mle_result=None):
-    """Initialize stochastic Student df dynamics near the static MLE."""
+    """Use one variance-score start with mean fixed at the static df MLE."""
     u = np.asarray(u, dtype=np.float64)
     if initial_mle_result is None:
         df0, inverse_mu0, static_loglik = _mle_info(copula, u)
     else:
         df0, inverse_mu0, static_loglik = _mle_info(
             copula, u, initial_mle_result)
-    alpha0, native_info = native_ou.stochastic_student_initial_point(
-        len(u), df0, inverse_mu0, static_loglik, rho_target, nu0)
+    if nu0 is None:
+        left, center, right, step = native_ou.student_initial_stencil(inverse_mu0)
+        log_emissions = np.column_stack([
+            copula.log_pdf_rows(u, copula.transform_scalar(state))
+            for state in (left, center, right)
+        ])
+        alpha0, native_info = native_ou.student_score_initial_point(
+            log_emissions, df0, inverse_mu0, static_loglik, step, rho_target)
+    else:
+        alpha0, native_info = native_ou.stochastic_student_initial_point(
+            len(u), df0, inverse_mu0, static_loglik, rho_target, nu0)
     info = {
         'method': 'stochastic_student_mle',
         'chosen_method': 'stochastic_student_mle',
@@ -227,6 +236,11 @@ def _stochastic_student_initial_point(
         'mu_mle': inverse_mu0,
         'mu0': float(alpha0[1]),
         'df_minus_two': float(native_info['df_minus_two']),
+        'scale_method': 'variance_score' if nu0 is None else 'explicit_diffusion',
+        'sigma_x': float(native_info['sigma_x']),
+        'variance_score': float(native_info['variance_score']),
+        'variance_information': float(native_info['variance_information']),
+        'stationary_scale_floor': float(native_info['stationary_scale_floor']),
         'static_loglik': static_loglik,
         'rho_target': float(rho_target),
         'nu0': float(alpha0[2]),
@@ -413,7 +427,8 @@ def smart_initial_point(
     Compute a static-MLE-based initial point for SCAR-TM-OU optimization.
 
     ``use_gas=True`` preserves the old explicit GAS warm-start behavior.
-    Stochastic Student models start near the constant-df MLE. Other copulas
+    Stochastic Student models use a variance-score scale at the static df MLE.
+    Other copulas
     use a stationary amplitude that broadens with dependence strength.
     """
     if use_gas:
@@ -464,6 +479,14 @@ def smart_initial_point(
             [_initialization_attempt(
                 requested_method, success=True)],
         )
+        if static_df_mle:
+            info['initialization'].update({
+                key: info[key] for key in (
+                    'scale_method', 'df_mle', 'mu_mle', 'sigma_x',
+                    'variance_score', 'variance_information',
+                    'stationary_scale_floor', 'nu0', 'rho_target',
+                    'static_loglik', 'df_minus_two')
+            })
         return alpha0, info
     except Exception as exc:
         alpha0, info = _fallback_initial_point(

@@ -70,9 +70,11 @@ private:
 /// Model-neutral scalar dynamic-emission interface used by GAS and SCAR-OU.
 ///
 /// The compatibility CopulaSpec is copied and resolved once by the owning
-/// constructor. Call-scoped adapters may explicitly borrow a spec to avoid
-/// copying large immutable caches; the borrowed spec must outlive the returned
-/// emission. Application modules call this interface without including
+/// constructor. Adapters may explicitly borrow a spec to avoid copying large
+/// immutable caches; the borrowed spec must outlive the returned emission and
+/// retain its address. After mutating that spec, refresh before evaluation and
+/// serialize mutation/refresh with all emission calls. Application modules call
+/// this interface without including
 /// concrete pair, Student, or equicorrelation headers.
 class PreparedDynamicEmission {
 public:
@@ -85,7 +87,11 @@ public:
     PreparedDynamicEmission(const PreparedDynamicEmission&) = delete;
     PreparedDynamicEmission& operator=(const PreparedDynamicEmission&) = delete;
 
+    /// Replace the current spec with an owned snapshot.
     void refresh(const CopulaSpec& spec);
+    /// Re-resolve metadata after mutation, retaining the current spec and its
+    /// ownership. Does not copy model data or immutable observation caches.
+    void refresh();
 
     DynamicEmissionKind kind() const noexcept;
     CopulaFamily family() const noexcept;

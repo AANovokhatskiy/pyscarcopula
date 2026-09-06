@@ -38,11 +38,16 @@ int run_factor_rosenblatt_gaussian_plan_tests();
 int run_equicorr_stochastic_student_tests();
 int run_gas_model_tests();
 int run_ou_model_tests();
+int run_ou_quadrature_cache_tests();
 int run_vine_model_tests();
 int run_multivariate_model_tests();
 int run_application_model_tests();
 
 int main() {
+    const int ou_quadrature_status = run_ou_quadrature_cache_tests();
+    if (ou_quadrature_status != 0) {
+        return 2200 + ou_quadrature_status;
+    }
     const int parallel_runtime_status = run_parallel_runtime_tests();
     if (parallel_runtime_status != 0) {
         return 750 + parallel_runtime_status;
