@@ -254,9 +254,12 @@ def test_registry_matches_public_signatures(case: ModelCase):
 @pytest.mark.parametrize("case", REGISTRY.models, ids=lambda case: case.id)
 def test_registry_matches_declared_capabilities(case: ModelCase):
     model = _construct_for_capabilities(case)
-    if not case.capability_flags:
-        assert case.category == "vine"
+    if case.category == "vine":
+        assert not case.capability_flags, (
+            f"{case.id}: vine capabilities must be resolved per pair edge"
+        )
         return
+    assert case.capability_flags, f"{case.id}: missing model capability flags"
     pair = is_pair_copula(model)
     gas = strategy_support(model, "GAS")
     scar_ou = strategy_support(model, "SCAR-TM-OU")
@@ -276,13 +279,51 @@ def test_registry_matches_declared_capabilities(case: ModelCase):
         )
 
 
-@pytest.mark.parametrize("case", REGISTRY.models, ids=lambda case: case.id)
+@pytest.mark.parametrize(
+    "case",
+    [case for case in REGISTRY.models if case.category != "vine"],
+    ids=lambda case: case.id,
+)
 def test_registered_positive_strategies_pass_capability_gate(case: ModelCase):
-    if not case.capability_flags:
-        pytest.skip("vine strategies are resolved per fitted pair edge")
+    assert case.capability_flags, f"{case.id}: missing model capability flags"
+    assert case.methods, f"{case.id}: missing supported methods"
     model = _construct_for_capabilities(case)
     for method in case.methods:
         ensure_strategy_supported(model, method)
+
+
+@pytest.mark.parametrize(
+    "vine_case",
+    [case for case in REGISTRY.models if case.category == "vine"],
+    ids=lambda case: case.id,
+)
+@pytest.mark.parametrize(
+    ("pair_case", "rotation"),
+    [
+        pytest.param(case, rotation, id=f"{case.id}-r{rotation}")
+        for case in REGISTRY.models if case.category == "bivariate"
+        for rotation in case.rotations
+    ],
+)
+def test_registered_vine_methods_follow_fitted_pair_capabilities(
+        vine_case: ModelCase, pair_case: ModelCase, rotation: int):
+    pair_class = _public_class(pair_case)
+    vine = _public_class(vine_case).cvine(d=2, order=[0, 1]).fit(
+        _observations(d=2, n=32),
+        method="MLE",
+        copulas=[[(pair_class, rotation)]],
+    )
+    assert len(vine.pair_copulas) == 1
+    pair = vine.pair_copulas[(0, 0)].copula
+    assert type(pair) is pair_class
+    assert vine_case.methods, f"{vine_case.id}: missing edge methods"
+    for method in vine_case.methods:
+        if method in pair_case.methods:
+            ensure_strategy_supported(pair, method)
+        else:
+            with pytest.raises(
+                    TypeError, match=f"{pair_class.__name__} does not support"):
+                ensure_strategy_supported(pair, method)
 
 
 @pytest.mark.parametrize("case", REGISTRY.models, ids=lambda case: case.id)

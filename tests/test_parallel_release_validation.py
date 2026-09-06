@@ -188,20 +188,25 @@ def test_process_lifecycle_stress_has_no_timeouts_or_orphans():
 
 
 @pytest.mark.validation
-def test_subinterpreter_contract_is_immediate_rejection():
+@pytest.mark.parametrize("preload_native", [False, True])
+def test_subinterpreter_contract_is_immediate_rejection(preload_native):
+    # A new interpreter does not inherit the main interpreter's sys.path[0].
+    # Keep source and installed-wheel checks on the same package under test.
     source = (
         "import json\n"
+        "import sys\n"
         "try:\n"
         "    import _xxsubinterpreters as interpreters\n"
         "except ImportError:\n"
         "    print(json.dumps({'status': 'unavailable'}))\n"
         "    raise SystemExit(0)\n"
-        "import pyscarcopula._native._scar_cpp\n"
+        + ("import pyscarcopula._native._scar_cpp\n" if preload_native else "")
+        + "sub_source = ('import sys; sys.path[:] = ' + repr(sys.path)\n"
+        "              + '; import pyscarcopula._native._scar_cpp')\n"
         "interpreter = interpreters.create()\n"
         "try:\n"
         "    try:\n"
-        "        interpreters.run_string("
-        "interpreter, 'import pyscarcopula._native._scar_cpp')\n"
+        "        interpreters.run_string(interpreter, sub_source)\n"
         "    except interpreters.RunFailedError as exc:\n"
         "        print(json.dumps({'status': 'rejected', "
         "'message': str(exc)}))\n"
@@ -209,14 +214,16 @@ def test_subinterpreter_contract_is_immediate_rejection():
         "        print(json.dumps({'status': 'accepted'}))\n"
         "finally:\n"
         "    interpreters.destroy(interpreter)\n"
+        "import pyscarcopula._native._scar_cpp\n"
     )
     completed = subprocess.run(
         [sys.executable, "-c", source],
-        check=True,
+        check=False,
         capture_output=True,
         text=True,
         timeout=20,
     )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
     payload = json.loads(completed.stdout)
     if payload["status"] == "unavailable":
         pytest.skip("_xxsubinterpreters is unavailable")

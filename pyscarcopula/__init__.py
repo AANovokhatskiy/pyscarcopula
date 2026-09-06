@@ -12,6 +12,27 @@ Usage:
 
 # ruff: noqa: E402
 
+
+def _require_main_interpreter():
+    # Reject before importing metadata, NumPy, or pybind11: their extension
+    # modules can deadlock or retain unsafe state after a subinterpreter is
+    # destroyed. The native support slot alone is too late (and absent < 3.12).
+    try:
+        import _interpreters as interpreters  # CPython >= 3.13
+    except ImportError:
+        try:
+            import _xxsubinterpreters as interpreters
+        except ImportError:
+            return  # These optional CPython modules are absent on some builds.
+    if interpreters.get_current() != interpreters.get_main():
+        raise ImportError(
+            "pyscarcopula does not support subinterpreters; "
+            "import it in the main interpreter.")
+
+
+_require_main_interpreter()
+del _require_main_interpreter
+
 from importlib import metadata as _metadata
 
 __version__ = _metadata.version("pyscarcopula")

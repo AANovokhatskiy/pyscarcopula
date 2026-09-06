@@ -438,53 +438,11 @@ def test_stochastic_student_joint_fit_benchmark(corr_mode, d):
 @pytest.mark.benchmark
 @pytest.mark.parametrize(("T", "d", "K"), _LARGE_JOINT_WORKLOADS)
 def test_stochastic_student_large_cholesky_native_gradient_benchmark(
-        T, d, K, monkeypatch):
+        T, d, K):
     _skip_unless_large_enabled()
     _, u = _example_student(d=d, T=T)
-    fallback_totals = {
-        "fd_seconds": 0.0,
-        "ou_gradient_seconds": 0.0,
-        "fd_calls": 0,
-        "ou_gradient_calls": 0,
-    }
-    native_totals = {"seconds": 0.0, "calls": 0}
-    original_value = _cpp_scar_ou.neg_loglik_info
-    original_gradient = _cpp_scar_ou.neg_loglik_with_grad_info
-    original_native = _cpp_scar_ou.neg_loglik_with_grad_and_corr_info
-    original_prepare = _cpp_scar_ou.prepare_objective
 
-    def timed_value(*args, **kwargs):
-        start = time.perf_counter()
-        try:
-            return original_value(*args, **kwargs)
-        finally:
-            fallback_totals["fd_seconds"] += time.perf_counter() - start
-            fallback_totals["fd_calls"] += 1
-
-    def timed_gradient(*args, **kwargs):
-        start = time.perf_counter()
-        try:
-            return original_gradient(*args, **kwargs)
-        finally:
-            fallback_totals[
-                "ou_gradient_seconds"] += time.perf_counter() - start
-            fallback_totals["ou_gradient_calls"] += 1
-
-    def unsupported_native(*args, **kwargs):
-        raise _cpp_scar_ou.NativeUnsupported("benchmark finite-difference path")
-
-    def unsupported_prepare(*args, **kwargs):
-        raise _cpp_scar_ou.NativeUnsupported("benchmark module-level path")
-
-    def timed_native(*args, **kwargs):
-        start = time.perf_counter()
-        try:
-            return original_native(*args, **kwargs)
-        finally:
-            native_totals["seconds"] += time.perf_counter() - start
-            native_totals["calls"] += 1
-
-    def fit_model():
+    def fit_model(*, analytical_grad):
         copula = StochasticStudentCopula(
             d=d,
             corr_mode="cholesky",
@@ -500,95 +458,59 @@ def test_stochastic_student_large_cholesky_native_gradient_benchmark(
             transition_method="matrix",
             maxiter=1,
             maxfun=500,
-            analytical_grad=True,
+            analytical_grad=analytical_grad,
             smart_init=False,
         )
 
-    def run_fallback():
-        before = dict(fallback_totals)
-        monkeypatch.setattr(_cpp_scar_ou, "neg_loglik_info", timed_value)
-        monkeypatch.setattr(
-            _cpp_scar_ou, "neg_loglik_with_grad_info", timed_gradient)
-        monkeypatch.setattr(
-            _cpp_scar_ou,
-            "neg_loglik_with_grad_and_corr_info",
-            unsupported_native,
-        )
-        monkeypatch.setattr(
-            _cpp_scar_ou, "prepare_objective", unsupported_prepare)
-        result = fit_model()
-        return result, {
-            key: fallback_totals[key] - before[key]
-            for key in fallback_totals
-        }
-
-    def run_native():
-        before = dict(native_totals)
-        monkeypatch.setattr(_cpp_scar_ou, "neg_loglik_info", original_value)
-        monkeypatch.setattr(
-            _cpp_scar_ou, "neg_loglik_with_grad_info", original_gradient)
-        monkeypatch.setattr(
-            _cpp_scar_ou, "neg_loglik_with_grad_and_corr_info", timed_native)
-        monkeypatch.setattr(
-            _cpp_scar_ou, "prepare_objective", unsupported_prepare)
-        result = fit_model()
-        return result, {
-            key: native_totals[key] - before[key]
-            for key in native_totals
-        }
-
+    # Use the public finite-difference optimizer mode as the baseline.
+    # Unsupported native operations deliberately propagate; they no longer
+    # select a hybrid gradient fallback. Both modes keep prepared objectives
+    # and native final-fit validation enabled, as in production.
     measured = interleaved_timings(
-        {"fallback": run_fallback, "native": run_native},
+        {
+            "numerical": lambda: fit_model(analytical_grad=False),
+            "native": lambda: fit_model(analytical_grad=True),
+        },
         repeats=2,
     )
-    fallback_seconds = measured.medians["fallback"]
+    numerical_seconds = measured.medians["numerical"]
     native_seconds = measured.medians["native"]
-    fallback_result, fallback_timings = measured.results["fallback"]
-    native_result, native_timings = measured.results["native"]
-    monkeypatch.setattr(
-        _cpp_scar_ou, "prepare_objective", original_prepare)
-
-    fallback = fallback_result.diagnostics
+    numerical_result = measured.results["numerical"]
+    native_result = measured.results["native"]
+    numerical = numerical_result.diagnostics
     native = native_result.diagnostics
-    backend_seconds = (
-        fallback_timings["fd_seconds"]
-        + fallback_timings["ou_gradient_seconds"]
-    )
-    fd_backend_share = fallback_timings["fd_seconds"] / backend_seconds
-    speedup = measured.median_ratio("fallback", "native")
+    speedup = measured.median_ratio("numerical", "native")
 
-    assert np.isfinite(fallback_result.log_likelihood)
+    assert np.isfinite(numerical_result.log_likelihood)
     assert np.isfinite(native_result.log_likelihood)
-    assert fallback["corr_n_params"] == d * (d - 1) // 2
+    assert numerical["corr_n_params"] == d * (d - 1) // 2
     assert native["corr_n_params"] == d * (d - 1) // 2
-    assert fallback_timings["fd_calls"] == (
-        fallback["correlation_fd_evaluations"])
-    assert fallback_timings["ou_gradient_calls"] == (
-        fallback["hybrid_gradient_evaluations"])
-    assert (
-        fallback_timings["fd_calls"]
-        + fallback_timings["ou_gradient_calls"]
-        == fallback["objective_evaluations"]
-    )
+    assert numerical["analytical_grad_requested"] is False
+    assert numerical["analytical_grad_used"] is False
+    assert numerical["optimizer_gradient"] == "numerical"
+    assert native["analytical_grad_requested"] is True
+    assert native["analytical_grad_used"] is True
+    assert native["optimizer_gradient"] == "analytical"
+    for diagnostics in (numerical, native):
+        assert diagnostics["prepared_native_evaluator"] is True
+        assert diagnostics["selected_engine"] == "cpp"
+        assert diagnostics["native_correlation_gradient_evaluations"] > 0
+    # A numerical gradient perturbs all OU and correlation coordinates.
+    assert numerical["objective_evaluations"] >= 3 + numerical["corr_n_params"] + 1
     assert native["correlation_fd_evaluations"] == 0
-    assert native_timings["calls"] == (
+    assert native["objective_evaluations"] == (
         native["native_correlation_gradient_evaluations"])
-    assert native["objective_evaluations"] == native_timings["calls"]
-    assert native["objective_evaluations"] < fallback["objective_evaluations"]
+    assert native["objective_evaluations"] < numerical["objective_evaluations"]
     _print_benchmark(
         "scar_large_cholesky_native_corr_gradient",
         T=T,
         d=d,
         K=K,
         n_corr=native["corr_n_params"],
-        fallback_ms=f"{1e3 * fallback_seconds:.3f}",
+        numerical_ms=f"{1e3 * numerical_seconds:.3f}",
         native_ms=f"{1e3 * native_seconds:.3f}",
         speedup=f"{speedup:.2f}",
-        fallback_objectives=fallback["objective_evaluations"],
+        numerical_objectives=numerical["objective_evaluations"],
         native_objectives=native["objective_evaluations"],
-        fd_calls=fallback_timings["fd_calls"],
-        native_calls=native_timings["calls"],
-        fd_backend_ms=f"{1e3 * fallback_timings['fd_seconds']:.3f}",
-        native_backend_ms=f"{1e3 * native_timings['seconds']:.3f}",
-        fd_backend_share=f"{fd_backend_share:.3f}",
+        native_gradient_calls=native["native_correlation_gradient_evaluations"],
     )
