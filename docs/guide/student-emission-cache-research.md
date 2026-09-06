@@ -16,19 +16,19 @@ large-df approximation; the direct Student kernel retains its existing
 normal-limit implementation at large df. The opt-in sampling/fallback path
 uses the existing refined quantile solver with prepared per-df normalization
 constants. Its implicit derivative is evaluated at that same refined quantile;
-the density formula is shared with the original kernel. Default native
-point-density and PPF interpolation paths are unchanged.
+the density formula is shared with the ordinary kernel. Enabling this cache
+does not change default routing or PPF interpolation.
 
-This distinction is necessary in addition to speed: the original unprepared
-Student quantile solver can stall near `p=.5` and return its remaining bracket
-midpoint. A reproduced case at `p=1261/2516`, `df=523.287105996051` had quantile
-error -0.00149512908675446. Adaptive reconstruction correctly refused the
-resulting nonsmooth density. The refined sampler fixes this opt-in path without
-loosening tolerances; it does not claim to fix the existing default scalar
-quantile implementation. Independent SciPy tests cover this point, neighboring
-df values, interpolation and direct fallback, plus likelihood-gradient finite
-differences. Consequently the original uncached native kernel alone cannot be
-used as a universal accuracy oracle.
+The earlier unprepared Student quantile solver could stall near `p=.5` and
+return its remaining bracket midpoint. A reproduced case at `p=1261/2516`,
+`df=523.287105996051` had quantile error -0.00149512908675446. Adaptive
+reconstruction correctly refused the resulting nonsmooth density. Ordinary
+and refined solvers now share the stable central CDF formula, and exhausted
+iterations report numerical failure. Independent SciPy tests cover ordinary
+quantiles and likelihoods at this point and neighboring df values, as well as
+interpolation, direct fallback, and likelihood-gradient finite differences.
+The uncached native kernel alone should not be used as an independent oracle
+for an approximation built from the same numerical functions.
 
 Adaptive bisection checks the value and the xi derivative at the quarter,
 midpoint, and three-quarter locations for every row. The maximum accepted

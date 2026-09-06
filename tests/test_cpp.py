@@ -118,6 +118,19 @@ def test_cpp_student_quantile_matches_scipy(df):
     np.testing.assert_allclose(got, expected, rtol=2e-9, atol=2e-10)
 
 
+@pytest.mark.parametrize("df", [2.1, 30.0, 100.0, 523.287105996051, 999.0])
+def test_cpp_student_central_quantiles_are_accurate_and_monotone(df):
+    module = _cpp_scar_ou._extension.load()
+    offsets = np.array([1e-9, 1e-6, 1e-3, 1261 / 2516 - 0.5, 0.01])
+    probabilities = np.sort(np.r_[0.5 - offsets, 0.5, 0.5 + offsets])
+    values = np.array([
+        module._student_quantile(float(p), df) for p in probabilities
+    ])
+    np.testing.assert_allclose(
+        values, t_dist.ppf(probabilities, df), rtol=2e-9, atol=2e-12)
+    assert np.all(np.diff(values) > 0)
+
+
 def test_cpp_and_python_quantile_boundary_constants_match():
     module = _cpp_scar_ou._extension.load()
     assert module.PSEUDO_OBS_EPS == PSEUDO_OBS_EPS

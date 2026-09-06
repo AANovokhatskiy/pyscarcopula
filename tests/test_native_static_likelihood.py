@@ -615,6 +615,35 @@ def test_multivariate_gaussian_rows_and_reduction_match_scipy():
         np.sum(expected), abs=2e-7)
 
 
+def test_student_likelihood_has_no_spike_at_central_quantile():
+    correlation = np.full((3, 3), 0.3)
+    np.fill_diagonal(correlation, 1.0)
+    u = np.array([[0.33942766, 1261 / 2516, 0.95389507]])
+    copula = StudentCopula(R=correlation)
+    copula.shape = correlation
+    evaluator = static_likelihood.prepare_student(correlation, u)
+
+    def oracle(df):
+        scores = t_dist.ppf(u, df)
+        return float(multivariate_t.logpdf(scores, shape=correlation, df=df)
+                     - t_dist.logpdf(scores, df).sum())
+
+    df = 523.287105996051
+    for delta in (-1e-4, -1e-6, 0.0, 1e-6, 1e-4):
+        expected = oracle(df + delta)
+        np.testing.assert_allclose(
+            copula.log_pdf_rows(u, df + delta), expected, rtol=0, atol=2e-10)
+        assert copula.log_likelihood(u, df + delta) == pytest.approx(
+            expected, abs=2e-10)
+        value, gradient = evaluator.objective_and_gradient(df + delta)
+        assert value == pytest.approx(-expected, abs=2e-10)
+        step = 0.01
+        expected_gradient = -(oracle(df + delta + step)
+                              - oracle(df + delta - step)) / (2 * step)
+        np.testing.assert_allclose(
+            gradient, expected_gradient, rtol=0, atol=2e-9)
+
+
 def test_multivariate_student_rows_objective_and_gradient():
     u = _observations(35, 3)
     correlation = _correlation()

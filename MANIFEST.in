@@ -8,6 +8,7 @@ include tools/check_python_ownership.py
 include tools/python_ownership_policy.py
 include tools/build_cpp_tests.py
 include tools/benchmark_timing.py
+include tools/benchmark_conditional_sampling.py
 include tools/run_native_benchmarks.py
 include tools/run_in_workspace.py
 include tools/prepare_wheel_container.py
@@ -22,6 +23,8 @@ include tools/finalize_release_artifacts.py
 recursive-include tests *.py
 recursive-include tests/cpp *.cpp
 recursive-include tests/fixtures *.json
+include tests/conditional/support_matrix.json
+include .github/workflows/conditional-sampling.yml
 recursive-include docs *.md
 recursive-exclude data *.csv
 include data/crypto_prices.csv

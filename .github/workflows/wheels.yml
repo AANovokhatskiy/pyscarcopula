@@ -208,6 +208,16 @@ jobs:
           python -m pip install --force-reinstall \
             "$PYSCA_WORKSPACE_TEMP"/pyscarcopula-sdist/*.tar.gz
           python -m pyscarcopula._native.smoke
+      - name: Collect conditional tests from the published source archive
+        working-directory: ${{ github.workspace }}/build/ci
+        run: |
+          python -m pip install pytest pytest-xdist pandas
+          mkdir -p "$PYSCA_WORKSPACE_TEMP/sdist-tests"
+          tar -xf "$PYSCA_WORKSPACE_TEMP"/pyscarcopula-sdist/*.tar.gz \
+            -C "$PYSCA_WORKSPACE_TEMP/sdist-tests" --strip-components=1
+          python -m pytest "$PYSCA_WORKSPACE_TEMP/sdist-tests/tests/conditional" \
+            --confcutdir="$PYSCA_WORKSPACE_TEMP/sdist-tests/tests" \
+            --import-mode=importlib --collect-only -q
       - name: Finalize append-only sdist evidence
         run: >-
           python tools/finalize_release_artifacts.py
@@ -219,6 +229,33 @@ jobs:
           name: release-sdist
           path: ${{ github.workspace }}/build/ci/pyscarcopula-sdist
           if-no-files-found: error
+
+  minimum_build_dependencies:
+    name: Build with minimum setuptools and pybind11
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - name: Keep build and test files in the workspace
+        run: python -B tools/run_in_workspace.py --github-env
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+      - name: Install dependencies into a workspace venv
+        run: python -B tools/run_in_workspace.py --github-venv
+      - name: Build using the declared minimum build dependencies
+        env:
+          PYSCA_CPP_STRICT: "1"
+          PYSCA_CPP_BUILD_JOBS: "4"
+        run: |
+          python -m pip install "setuptools==77.0.3" "pybind11==3.0.0" wheel
+          python -m pip wheel --no-build-isolation --no-deps . \
+            --wheel-dir "$PYSCA_WORKSPACE_TEMP/minimum-wheel"
+      - name: Install and smoke-test the minimum-dependency wheel
+        working-directory: ${{ github.workspace }}/build/ci
+        run: |
+          python -m pip install "$PYSCA_WORKSPACE_TEMP"/minimum-wheel/*.whl
+          python -m pyscarcopula._native.smoke
 
   report:
     name: Aggregate complete wheel matrix

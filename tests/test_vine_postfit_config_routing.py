@@ -51,4 +51,3 @@ def test_vine_postfit_config_is_rejected_before_delegation(
         invoke(vine, config)
 
     delegate.assert_not_called()
-

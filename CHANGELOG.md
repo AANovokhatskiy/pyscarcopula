@@ -4,6 +4,13 @@
 
 Version: `0.21.0` -> `0.22.0`
 
+- Use the stable central Student CDF in ordinary quantile inversion as well
+  as emission caches, removing spurious likelihood jumps near the median.
+  Report nonconvergence instead of returning an unchecked bracket midpoint.
+- Include the conditional-sampling registry in source distributions and
+  collect its tests from the built archive in release CI. Require pybind11
+  3.0.0 for the native interpreter policy and setuptools 77.0.3 for SPDX
+  license metadata; validate these minimum build dependencies in CI.
 - Complete the C++17 model architecture refactor with shared pair-family
   registration, multivariate kernels, model policies, validation, and typed
   native results. Built-in numerical operations use the mandatory

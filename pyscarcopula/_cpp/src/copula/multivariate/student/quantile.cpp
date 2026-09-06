@@ -38,7 +38,6 @@ double student_quantile(
     double df,
     double tolerance = 2e-13,
     int maximum_iterations = 50,
-    bool refined_cdf = false,
     const StudentDistributionParameters* prepared = nullptr,
     double initial_quantile = std::numeric_limits<double>::quiet_NaN()) {
     p = clip_pseudo_observation(p);
@@ -60,11 +59,13 @@ double student_quantile(
     double lo = 0.0;
     double hi = std::isfinite(initial_quantile) && initial > 0.0
         ? initial : std::max(1.0, initial);
-    const auto survival_value = [df, refined_cdf, prepared](double value) {
-        if (prepared != nullptr) return student_cdf_refined_value(-value, *prepared);
-        return refined_cdf
-            ? student_cdf_refined_value(-value, df)
-            : student_survival_positive_value(value, df);
+    // Use the small central beta argument directly near the median. The
+    // complement df/(df+x*x) loses precision there and can stall Newton's
+    // iteration with a wide bracket even when its initial guess is accurate.
+    const StudentDistributionParameters distribution = prepared != nullptr
+        ? *prepared : student_distribution_parameters(df);
+    const auto survival_value = [&distribution](double value) {
+        return student_cdf_refined_value(-value, distribution);
     };
     double hi_survival = survival_value(hi);
     while (hi_survival > tail_probability && hi < 1e12) {
@@ -87,8 +88,7 @@ double student_quantile(
             return negative ? -x : x;
         }
 
-        const double pdf = prepared != nullptr
-            ? student_pdf_value(x, *prepared) : student_pdf_value(x, df);
+        const double pdf = student_pdf_value(x, distribution);
         const double candidate = x + error / pdf;
         if (std::isfinite(candidate) && candidate > lo && candidate < hi) {
             x = candidate;
@@ -96,8 +96,9 @@ double student_quantile(
             x = 0.5 * (lo + hi);
         }
     }
-    const double result = 0.5 * (lo + hi);
-    return negative ? -result : result;
+    // A finite midpoint is not evidence of convergence. Density/sampling
+    // callers translate a nonfinite quantile into a numerical failure.
+    return std::numeric_limits<double>::quiet_NaN();
 }
 
 void student_quantile_large_df(
@@ -259,7 +260,6 @@ double student_quantile_refined_value(
         df,
         16.0 * std::numeric_limits<double>::epsilon(),
         80,
-        true,
         &params,
         initial_quantile);
 }

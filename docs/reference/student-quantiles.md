@@ -20,6 +20,12 @@ expansion above it. Static Student likelihoods carry no dynamic node metadata:
 they use CDF inversion below `df=1000` and the sixth-order expansion above
 that threshold, avoiding cancellation in large-`df` CDF inversion.
 
+Both ordinary and prepared CDF inversion use the small central beta argument
+`x*x / (df + x*x)` near the median. This avoids losing significant bits by
+subtracting `df / (df + x*x)` from one, which previously caused spurious
+quantile and likelihood jumps. Iteration limits remain bounded; an exhausted
+solver reports a numerical failure instead of returning an unchecked midpoint.
+
 Student density normalization also avoids subtracting large log-gamma values.
 At `df >= 32`, native kernels combine integer gamma recurrences in `log1p`
 form with a half-step Stirling expansion through `df^-11`. The derivative uses
