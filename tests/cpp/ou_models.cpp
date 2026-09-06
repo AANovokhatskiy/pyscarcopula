@@ -682,12 +682,15 @@ int run_ou_model_tests() {
             auto blocked_config = dense_config;
             blocked_config.corr_gradient_block_bytes =
                 24U * static_cast<std::uint64_t>(dense_config.K);
-            const auto blocked = evaluator.neg_loglik_with_grad_and_corr_matrix(
-                params, spec, multivariate_observations, blocked_config);
-            if (!blocked.is_ok()
-                || !close(blocked.neg_log_likelihood, full_correlation.neg_log_likelihood)
-                || !close_vectors(blocked.neg_gradient, full_correlation.neg_gradient)
-                || !close_vectors(blocked.neg_corr_gradient,
+            const auto blocked_correlation =
+                evaluator.neg_loglik_with_grad_and_corr_matrix(
+                    params, spec, multivariate_observations, blocked_config);
+            if (!blocked_correlation.is_ok()
+                || !close(blocked_correlation.neg_log_likelihood,
+                          full_correlation.neg_log_likelihood)
+                || !close_vectors(blocked_correlation.neg_gradient,
+                                  full_correlation.neg_gradient)
+                || !close_vectors(blocked_correlation.neg_corr_gradient,
                                   full_correlation.neg_corr_gradient)) {
                 return base + 8;
             }
